@@ -4,7 +4,7 @@ import { useShooAuth } from "@shoojs/react";
 
 /** Handles the Shoo OAuth callback redirect. */
 export default function ShooCallback() {
-  useShooAuth();
+    useShooAuth();
 
-  return <p>Signing in...</p>;
+    return <p>Signing in...</p>;
 }

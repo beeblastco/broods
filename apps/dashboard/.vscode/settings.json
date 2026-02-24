@@ -1,0 +1,15 @@
+{
+    "files.exclude": {
+        "**/__pycache__": true,
+        "**/*.pyc": true,
+        "**/.pytest_cache": true,
+        "**/build": true,
+        "**/dist": true,
+        "**/*.egg-info": true
+    },
+    "chatgpt.openOnStartup": false,
+    "editor.formatOnSave": true,
+    "editor.codeActionsOnSave": {
+        "source.organizeImports": "always"
+    },
+}
