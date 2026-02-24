@@ -10,44 +10,29 @@ import {
 } from "@/app/components/ui/card";
 import { cn } from "@/lib/utils";
 import { useShooAuth } from "@shoojs/react";
+import { useRouter } from "next/navigation";
+import { useEffect } from "react";
 
 /** Displays login card with Google sign-in via Shoo. */
 export function LoginForm({
     className,
     ...props
 }: React.ComponentProps<"div">) {
-    const { identity, claims, loading, signIn, clearIdentity } = useShooAuth();
+    const { identity, loading, signIn } = useShooAuth();
+    const router = useRouter();
 
-    if (loading) {
+    useEffect(() => {
+        if (!loading && identity.userId) {
+            router.replace("/");
+        }
+    }, [loading, identity.userId, router]);
+
+    if (loading || identity.userId) {
         return (
             <div className={cn("flex flex-col gap-6", className)} {...props}>
                 <Card>
                     <CardContent className="flex items-center justify-center py-12" >
                         <p className="text-muted-foreground text-sm" > Loading...</p>
-                    </CardContent>
-                </Card>
-            </div>
-        );
-    }
-
-    if (identity.userId) {
-        return (
-            <div className={cn("flex flex-col gap-6", className)} {...props}>
-                <Card>
-                    <CardHeader>
-                        <CardTitle>Welcome back </CardTitle>
-                        <CardDescription>
-                            Signed in as {claims?.email ?? identity.userId}
-                        </CardDescription>
-                    </CardHeader>
-                    < CardContent >
-                        <Button
-                            variant="outline"
-                            className="w-full"
-                            onClick={clearIdentity}
-                        >
-                            Sign out
-                        </Button>
                     </CardContent>
                 </Card>
             </div>
