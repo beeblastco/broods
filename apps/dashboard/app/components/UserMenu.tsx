@@ -1,8 +1,9 @@
 "use client";
 
+/** Displays the authenticated user avatar with a dropdown menu for sign-out. */
 import { LogOut } from "lucide-react";
 import { useShooAuth } from "@shoojs/react";
-import { useRouter } from "next/navigation";
+import { signOut } from "@/lib/shoo";
 import { Avatar, AvatarFallback, AvatarImage } from "@/app/components/ui/avatar";
 import {
     DropdownMenu,
@@ -13,15 +14,12 @@ import {
     DropdownMenuTrigger,
 } from "@/app/components/ui/dropdown-menu";
 
-/** Displays the authenticated user avatar with a dropdown menu for sign-out. */
 export function UserMenu() {
-    const { identity, claims, clearIdentity } = useShooAuth();
-    const router = useRouter();
+    const { identity, claims } = useShooAuth();
 
-    const handleSignOut = () => {
-        clearIdentity();
-        router.replace("/login");
-    };
+    if (!identity.userId) {
+        return null;
+    }
 
     const email = claims?.email ?? null;
     const name = claims?.name ?? email ?? "User";
@@ -32,10 +30,6 @@ export function UserMenu() {
         .slice(0, 2)
         .join("")
         .toUpperCase();
-
-    if (!identity.userId) {
-        return null;
-    }
 
     return (
         <DropdownMenu>
@@ -62,7 +56,7 @@ export function UserMenu() {
                     </div>
                 </DropdownMenuLabel>
                 <DropdownMenuSeparator />
-                <DropdownMenuItem variant="destructive" onClick={handleSignOut}>
+                <DropdownMenuItem variant="destructive" onClick={signOut}>
                     <LogOut />
                     Sign out
                 </DropdownMenuItem>

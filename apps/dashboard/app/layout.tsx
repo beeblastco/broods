@@ -1,3 +1,4 @@
+import { ConvexClientProvider } from "@/app/components/ConvexClientProvider";
 import type { Metadata } from "next";
 import "./globals.css";
 
@@ -12,8 +13,10 @@ export default function RootLayout({
     children: React.ReactNode;
 }>) {
     return (
-        <html lang="en" className="dark" >
-            <body className="antialiased" > {children} </body>
+        <html lang="en" className="dark">
+            <body className="antialiased">
+                <ConvexClientProvider>{children}</ConvexClientProvider>
+            </body>
         </html>
     );
 }

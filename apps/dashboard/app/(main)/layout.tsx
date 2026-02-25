@@ -1,25 +1,25 @@
 "use client";
 
-import { useShooAuth } from "@shoojs/react";
+/** Protected layout that redirects unauthenticated users to /login. */
+import { useConvexAuth } from "convex/react";
 import { useRouter } from "next/navigation";
 import { useEffect } from "react";
 
-/** Protected layout that redirects unauthenticated users to /login. */
 export default function MainLayout({
     children,
 }: Readonly<{
     children: React.ReactNode;
 }>) {
-    const { identity, loading } = useShooAuth();
+    const { isLoading, isAuthenticated } = useConvexAuth();
     const router = useRouter();
 
     useEffect(() => {
-        if (!loading && !identity.userId) {
+        if (!isLoading && !isAuthenticated) {
             router.replace("/login");
         }
-    }, [loading, identity.userId, router]);
+    }, [isLoading, isAuthenticated, router]);
 
-    if (loading) {
+    if (isLoading) {
         return (
             <div className="flex h-screen w-screen items-center justify-center bg-[#0a0a0a]">
                 <p className="text-sm text-white/50">Loading...</p>
@@ -27,7 +27,7 @@ export default function MainLayout({
         );
     }
 
-    if (!identity.userId) {
+    if (!isAuthenticated) {
         return null;
     }
 
