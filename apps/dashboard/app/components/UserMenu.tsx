@@ -41,7 +41,7 @@ export function UserMenu() {
                 <button className="relative flex size-6 items-center justify-center rounded-full ring-1 ring-white/10 transition-all hover:ring-white/25 focus:outline-none data-[state=open]:ring-2 data-[state=open]:ring-white/40">
                     <Avatar size="sm">
                         {picture && <AvatarImage src={picture} alt={name} />}
-                        <AvatarFallback className="bg-white/10 text-[10px] font-medium text-white/70">
+                        <AvatarFallback className="bg-muted text-[10px] font-medium text-muted-foreground">
                             {initials}
                         </AvatarFallback>
                     </Avatar>
@@ -59,7 +59,10 @@ export function UserMenu() {
                 </DropdownMenuLabel>
                 <DropdownMenuSeparator />
 
-                <DropdownMenuItem onClick={() => setTheme(isDark ? "light" : "dark")}>
+                <DropdownMenuItem
+                    onSelect={(e) => e.preventDefault()}
+                    onClick={() => setTheme(isDark ? "light" : "dark")}
+                >
                     {isDark ? <Sun /> : <Moon />}
                     {isDark ? "Light mode" : "Dark mode"}
                 </DropdownMenuItem>

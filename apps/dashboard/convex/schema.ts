@@ -225,6 +225,7 @@ export const canvasNodeValidator = v.object({
   data: v.object({
     label: v.string(),
     status: v.optional(canvasNodeStatusEnum),
+    agentConfigId: v.optional(v.id("agentConfigs")),
   }),
 });
 

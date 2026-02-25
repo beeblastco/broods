@@ -5,6 +5,7 @@ import { Handle, Position, useStore } from "@xyflow/react";
 export type BaseNodeData = {
     label: string;
     status?: "running" | "idle" | "error";
+    agentConfigId?: string;
 };
 
 const statusConfig = {
@@ -28,7 +29,7 @@ export function BaseNode({
     const { color, text } = statusConfig[data.status ?? "idle"];
 
     return (
-        <div className="min-w-45 min-h-24 rounded-md border border-white/10 bg-[#141414] transition-[border-color,box-shadow] duration-200 hover:border-white/25 hover:shadow-[0_0_16px_rgba(255,255,255,0.06)]">
+        <div className="min-w-45 min-h-24 rounded-md border border-border bg-card transition-[border-color,box-shadow] duration-200 hover:border-border/60 hover:shadow-md">
             <Handle
                 type="target"
                 position={Position.Top}
@@ -40,12 +41,12 @@ export function BaseNode({
                 style={{ transform: `scale(${scale})` }}
             >
                 <div className="flex items-center gap-1.5">
-                    <span className="text-white/40">{icon}</span>
-                    <span className="text-xs font-medium text-white/90 whitespace-nowrap">{data.label}</span>
+                    <span className="text-muted-foreground">{icon}</span>
+                    <span className="text-xs font-medium text-foreground whitespace-nowrap">{data.label}</span>
                 </div>
                 <div className="mt-1 flex items-center gap-1.5">
                     <div className={`h-1.5 w-1.5 rounded-full ${color}`} />
-                    <span className="text-[11px] text-white/40">{text}</span>
+                    <span className="text-[11px] text-muted-foreground">{text}</span>
                 </div>
             </div>
 

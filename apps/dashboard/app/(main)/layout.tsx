@@ -23,8 +23,8 @@ export default function MainLayout({
 
     if (isLoading) {
         return (
-            <div className="flex h-screen w-screen items-center justify-center bg-[#0a0a0a]">
-                <p className="text-sm text-white/50">Loading...</p>
+            <div className="flex h-screen w-screen items-center justify-center bg-background">
+                <p className="text-sm text-muted-foreground">Loading...</p>
             </div>
         );
     }
@@ -34,7 +34,7 @@ export default function MainLayout({
     }
 
     return (
-        <div className="flex h-screen w-screen flex-col bg-[#0a0a0a]">
+        <div className="flex h-screen w-screen flex-col bg-background">
             <Header />
             <OnboardingGate>
                 <div className="flex-1">{children}</div>

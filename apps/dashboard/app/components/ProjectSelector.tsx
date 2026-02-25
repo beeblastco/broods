@@ -65,7 +65,7 @@ export function ProjectSelector() {
         <>
             <DropdownMenu>
                 <DropdownMenuTrigger asChild>
-                    <button className="flex items-center gap-1.5 rounded-md px-2 py-1 text-sm font-medium text-white/70 transition-colors hover:bg-white/5 hover:text-white focus:outline-none data-[state=open]:bg-white/5 data-[state=open]:text-white">
+                    <button className="flex items-center gap-1.5 rounded-md px-2 py-1 text-sm font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus:outline-none data-[state=open]:bg-accent data-[state=open]:text-foreground">
                         {displayName}
                         <ChevronDown className="size-3.5 opacity-50" />
                     </button>

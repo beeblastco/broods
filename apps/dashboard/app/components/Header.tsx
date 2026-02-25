@@ -8,14 +8,14 @@ import { UserMenu } from "@/app/components/UserMenu";
 
 export function Header() {
     return (
-        <header className="flex shrink-0 items-center gap-3 border-b border-white/10 px-5 py-2.5">
-            <span className="text-base font-bold text-white">Clonee</span>
-            <div className="h-4 w-px bg-white/10" />
+        <header className="flex shrink-0 items-center gap-3 border-b border-border px-5 py-2.5">
+            <span className="text-base font-bold text-foreground">Clonee</span>
+            <div className="h-4 w-px bg-border" />
             <ProjectSelector />
 
             <div className="ml-auto flex items-center gap-3">
                 <NavLinks />
-                <div className="h-4 w-px bg-white/10" />
+                <div className="h-4 w-px bg-border" />
                 <CommandMenu />
                 <UserMenu />
             </div>

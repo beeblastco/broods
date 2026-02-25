@@ -8,6 +8,7 @@
  * @module
  */
 
+import type * as agentConfig from "../agentConfig.js";
 import type * as canvas from "../canvas.js";
 import type * as model_ownership_agent from "../model/ownership/agent.js";
 import type * as model_ownership_index from "../model/ownership/index.js";
@@ -24,6 +25,7 @@ import type {
 } from "convex/server";
 
 declare const fullApi: ApiFromModules<{
+  agentConfig: typeof agentConfig;
   canvas: typeof canvas;
   "model/ownership/agent": typeof model_ownership_agent;
   "model/ownership/index": typeof model_ownership_index;

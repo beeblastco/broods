@@ -7,6 +7,8 @@ import { AgentNode } from "@/app/components/node/Agent";
 import { DatabaseNode } from "@/app/components/node/Database";
 import { ToolNode } from "@/app/components/node/Tool";
 import { WorkspaceNode } from "@/app/components/node/Workspace";
+import { AgentSourcePickerDialog } from "@/app/components/AgentSourcePickerDialog";
+import { CreateAgentConfigDialog } from "@/app/components/CreateAgentConfigDialog";
 import { NodeSidePanel } from "@/app/components/NodeSidePanel";
 import type { Id } from "@/convex/_generated/dataModel";
 import {
@@ -34,6 +36,7 @@ import {
 } from "@xyflow/react";
 import { useQuery } from "convex/react";
 import { Bot, Database, FolderOpen, Wrench } from "lucide-react";
+import { useTheme } from "next-themes";
 import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 
 const nodeTypes = {
@@ -53,10 +56,14 @@ const NODE_TEMPLATES = [
 /** Inner canvas that consumes ReactFlow context. */
 function CanvasInner({ projectId }: { projectId: Id<"projects"> }) {
     const canvasLayout = useQuery(api.canvas.getByProject, { projectId: projectId });
+    const { theme } = useTheme();
+    const isDark = theme === "dark";
 
     const [nodes, setNodes, onNodesChange] = useNodesState([] as Node[]);
     const [edges, setEdges, onEdgesChange] = useEdgesState([] as Edge[]);
     const [selectedNode, setSelectedNode] = useState<Node | null>(null);
+    const [sourcePickerOpen, setSourcePickerOpen] = useState(false);
+    const [configDialogOpen, setConfigDialogOpen] = useState(false);
     const { screenToFlowPosition } = useReactFlow();
     const nextId = useRef(1);
     const lastRightClick = useRef({ x: 0, y: 0 });
@@ -140,14 +147,17 @@ function CanvasInner({ projectId }: { projectId: Id<"projects"> }) {
             fitView
             fitViewOptions={{ maxZoom: 1.5, padding: 1 }}
             maxZoom={1.5}
-            colorMode="dark"
+            colorMode={isDark ? "dark" : "light"}
             proOptions={{ hideAttribution: true }}
             defaultEdgeOptions={{
-                style: { stroke: "rgba(255,255,255,0.15)", strokeWidth: 1.5 },
+                style: {
+                    stroke: isDark ? "rgba(255,255,255,0.15)" : "rgba(0,0,0,0.15)",
+                    strokeWidth: 1.5,
+                },
                 animated: true,
             }}
         >
-            <Background gap={24} size={1.5} color="rgba(255,255,255,0.08)" />
+            <Background gap={24} size={1.5} color={isDark ? "rgba(255,255,255,0.08)" : "rgba(0,0,0,0.08)"} />
             <Panel position="top-left">
                 <CanvasControls />
             </Panel>
@@ -168,7 +178,7 @@ function CanvasInner({ projectId }: { projectId: Id<"projects"> }) {
                         </div>
                     </ContextMenuTrigger>
                     <ContextMenuContent
-                        className="w-48 rounded-lg border border-white/10 bg-[#141414]/80 p-1 backdrop-blur-md"
+                        className="w-48 rounded-lg border border-border bg-card/80 p-1 backdrop-blur-md"
                     >
                         <ContextMenuLabel
                             className="text-xs tracking-wider text-muted-foreground pt-2!"
@@ -178,7 +188,13 @@ function CanvasInner({ projectId }: { projectId: Id<"projects"> }) {
                         {NODE_TEMPLATES.map(({ type, label, icon: Icon }, index) => (
                             <Fragment key={type}>
                                 {index === NODE_TEMPLATES.length - 1 && <ContextMenuSeparator />}
-                                <ContextMenuItem onClick={() => addNode(type, label)}>
+                                <ContextMenuItem
+                                    onClick={() =>
+                                        type === "agent"
+                                            ? setSourcePickerOpen(true)
+                                            : addNode(type, label)
+                                    }
+                                >
                                     <Icon />
                                     {label}
                                 </ContextMenuItem>
@@ -188,9 +204,25 @@ function CanvasInner({ projectId }: { projectId: Id<"projects"> }) {
                 </ContextMenu>
             )}
 
-            {isEmpty && <EmptyCanvasGuide />}
+            {isEmpty && (
+                <EmptyCanvasGuide
+                    onCreateConfig={() => setSourcePickerOpen(true)}
+                />
+            )}
 
             <NodeSidePanel node={selectedNode} onClose={() => setSelectedNode(null)} />
+
+            <AgentSourcePickerDialog
+                open={sourcePickerOpen}
+                onOpenChange={setSourcePickerOpen}
+                onCreateNew={() => setConfigDialogOpen(true)}
+            />
+
+            <CreateAgentConfigDialog
+                projectId={projectId}
+                open={configDialogOpen}
+                onOpenChange={setConfigDialogOpen}
+            />
         </div>
     );
 }

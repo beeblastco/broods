@@ -36,7 +36,7 @@ export function OnboardingGate({ children }: OnboardingGateProps) {
     if (projects === undefined) {
         return (
             <div className="flex flex-1 items-center justify-center">
-                <p className="text-sm text-white/50">Loading...</p>
+                <p className="text-sm text-muted-foreground">Loading...</p>
             </div>
         );
     }
@@ -64,10 +64,10 @@ export function OnboardingGate({ children }: OnboardingGateProps) {
         <>
             <div className="flex flex-1 flex-col items-center justify-center gap-6">
                 <div className="flex flex-col items-center gap-2 text-center">
-                    <h2 className="text-xl font-semibold text-white">
+                    <h2 className="text-xl font-semibold text-foreground">
                         Welcome to Clonee
                     </h2>
-                    <p className="max-w-sm text-sm text-white/50">
+                    <p className="max-w-sm text-sm text-muted-foreground">
                         Create your first project to start building and deploying AI agents.
                     </p>
                 </div>
