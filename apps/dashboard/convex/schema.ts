@@ -202,12 +202,46 @@ export const toolApprovalFields = {
   workflowId: v.optional(v.string()),
 };
 
+/** Canvas node type enum. */
+export const canvasNodeTypeEnum = v.union(
+  v.literal("agent"),
+  v.literal("database"),
+  v.literal("workspace"),
+  v.literal("tool"),
+);
+
+/** Canvas node status enum. */
+export const canvasNodeStatusEnum = v.union(
+  v.literal("running"),
+  v.literal("idle"),
+  v.literal("error"),
+);
+
+/** A single node on the canvas. */
+export const canvasNodeValidator = v.object({
+  id: v.string(),
+  type: canvasNodeTypeEnum,
+  position: v.object({ x: v.number(), y: v.number() }),
+  data: v.object({
+    label: v.string(),
+    status: v.optional(canvasNodeStatusEnum),
+  }),
+});
+
+/** A single edge on the canvas. */
+export const canvasEdgeValidator = v.object({
+  id: v.string(),
+  source: v.string(),
+  target: v.string(),
+  animated: v.optional(v.boolean()),
+});
+
 /** Canvas layouts table fields. */
 export const canvasLayoutFields = {
   authId: v.string(),
   projectId: v.id("projects"),
-  nodes: v.string(),
-  edges: v.string(),
+  nodes: v.array(canvasNodeValidator),
+  edges: v.array(canvasEdgeValidator),
   updatedAt: v.number(),
 };
 

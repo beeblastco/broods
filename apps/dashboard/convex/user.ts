@@ -13,7 +13,7 @@ const userValidator = v.object(withSystemFields("users", userFields));
  * Get the current authenticated user record.
  * @returns User document or null if not authenticated or not found
  */
-export const getCurrentUser = query({
+export const getCurrent = query({
   args: {},
   returns: v.union(userValidator, v.null()),
   handler: async (ctx) => {

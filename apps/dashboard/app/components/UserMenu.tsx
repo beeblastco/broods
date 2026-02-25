@@ -1,9 +1,10 @@
 "use client";
 
-/** Displays the authenticated user avatar with a dropdown menu for sign-out. */
-import { LogOut } from "lucide-react";
+/** Displays the authenticated user avatar with a dropdown menu for account actions. */
+import { LogOut, Moon, Sun, User, FileText, HelpCircle } from "lucide-react";
 import { useShooAuth } from "@shoojs/react";
 import { signOut } from "@/lib/shoo";
+import { useTheme } from "next-themes";
 import { Avatar, AvatarFallback, AvatarImage } from "@/app/components/ui/avatar";
 import {
     DropdownMenu,
@@ -16,6 +17,7 @@ import {
 
 export function UserMenu() {
     const { identity, claims } = useShooAuth();
+    const { theme, setTheme } = useTheme();
 
     if (!identity.userId) {
         return null;
@@ -31,12 +33,12 @@ export function UserMenu() {
         .join("")
         .toUpperCase();
 
+    const isDark = theme === "dark";
+
     return (
         <DropdownMenu>
             <DropdownMenuTrigger asChild>
-                <button
-                    className="relative flex size-6 items-center justify-center rounded-full ring-1 ring-white/10 transition-all hover:ring-white/25 focus:outline-none data-[state=open]:ring-2 data-[state=open]:ring-white/40"
-                >
+                <button className="relative flex size-6 items-center justify-center rounded-full ring-1 ring-white/10 transition-all hover:ring-white/25 focus:outline-none data-[state=open]:ring-2 data-[state=open]:ring-white/40">
                     <Avatar size="sm">
                         {picture && <AvatarImage src={picture} alt={name} />}
                         <AvatarFallback className="bg-white/10 text-[10px] font-medium text-white/70">
@@ -56,6 +58,31 @@ export function UserMenu() {
                     </div>
                 </DropdownMenuLabel>
                 <DropdownMenuSeparator />
+
+                <DropdownMenuItem onClick={() => setTheme(isDark ? "light" : "dark")}>
+                    {isDark ? <Sun /> : <Moon />}
+                    {isDark ? "Light mode" : "Dark mode"}
+                </DropdownMenuItem>
+
+                <DropdownMenuItem>
+                    <User />
+                    Account Settings
+                </DropdownMenuItem>
+
+                <DropdownMenuSeparator />
+
+                <DropdownMenuItem>
+                    <FileText />
+                    Documents
+                </DropdownMenuItem>
+
+                <DropdownMenuItem>
+                    <HelpCircle />
+                    Support
+                </DropdownMenuItem>
+
+                <DropdownMenuSeparator />
+
                 <DropdownMenuItem variant="destructive" onClick={signOut}>
                     <LogOut />
                     Sign out

@@ -8,11 +8,13 @@
  * @module
  */
 
+import type * as canvas from "../canvas.js";
 import type * as model_ownership_agent from "../model/ownership/agent.js";
 import type * as model_ownership_index from "../model/ownership/index.js";
 import type * as model_ownership_project from "../model/ownership/project.js";
 import type * as model_ownership_session from "../model/ownership/session.js";
 import type * as model_ownership_user from "../model/ownership/user.js";
+import type * as project from "../project.js";
 import type * as user from "../user.js";
 
 import type {
@@ -22,11 +24,13 @@ import type {
 } from "convex/server";
 
 declare const fullApi: ApiFromModules<{
+  canvas: typeof canvas;
   "model/ownership/agent": typeof model_ownership_agent;
   "model/ownership/index": typeof model_ownership_index;
   "model/ownership/project": typeof model_ownership_project;
   "model/ownership/session": typeof model_ownership_session;
   "model/ownership/user": typeof model_ownership_user;
+  project: typeof project;
   user: typeof user;
 }>;
 

@@ -1,4 +1,5 @@
 import { ConvexClientProvider } from "@/app/components/ConvexClientProvider";
+import { ThemeProvider } from "next-themes";
 import type { Metadata } from "next";
 import "./globals.css";
 
@@ -13,9 +14,15 @@ export default function RootLayout({
     children: React.ReactNode;
 }>) {
     return (
-        <html lang="en" className="dark">
+        <html lang="en" suppressHydrationWarning>
             <body className="antialiased">
-                <ConvexClientProvider>{children}</ConvexClientProvider>
+                <ThemeProvider
+                    attribute="class"
+                    defaultTheme="dark"
+                    enableSystem={false}
+                >
+                    <ConvexClientProvider>{children}</ConvexClientProvider>
+                </ThemeProvider>
             </body>
         </html>
     );

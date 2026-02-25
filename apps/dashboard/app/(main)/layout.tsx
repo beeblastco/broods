@@ -1,9 +1,11 @@
 "use client";
 
-/** Protected layout that redirects unauthenticated users to /login. */
+/** Protected layout that redirects unauthenticated users to /login and shows onboarding for new users. */
 import { useConvexAuth } from "convex/react";
 import { useRouter } from "next/navigation";
 import { useEffect } from "react";
+import { Header } from "@/app/components/Header";
+import { OnboardingGate } from "@/app/components/OnboardingGate";
 
 export default function MainLayout({
     children,
@@ -31,5 +33,12 @@ export default function MainLayout({
         return null;
     }
 
-    return <>{children}</>;
+    return (
+        <div className="flex h-screen w-screen flex-col bg-[#0a0a0a]">
+            <Header />
+            <OnboardingGate>
+                <div className="flex-1">{children}</div>
+            </OnboardingGate>
+        </div>
+    );
 }
