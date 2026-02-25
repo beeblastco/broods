@@ -29,10 +29,14 @@ export const list = query({
     // Check authenticated user
     const user = await ctx.auth.getUserIdentity();
     if (!user) {
-      return [];
+      throw new Error("User not found or not authenticated");
     }
 
-    await verifyProjectOwnership(ctx, projectId, user.subject);
+    // Return empty if project was deleted (e.g. during navigation after deleteById)
+    const project = await ctx.db.get(projectId);
+    if (!project || project.authId !== user.subject) {
+      return [];
+    }
 
     const environments = await ctx.db
       .query("environments")

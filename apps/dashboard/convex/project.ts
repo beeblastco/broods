@@ -21,7 +21,7 @@ export const list = query({
     // Check authenticated user
     const user = await ctx.auth.getUserIdentity();
     if (!user) {
-      return [];
+      throw new Error("User not found or not authenticated");
     }
 
     const projects = await ctx.db
@@ -88,7 +88,7 @@ export const getById = query({
     // Check authenticated user
     const user = await ctx.auth.getUserIdentity();
     if (!user) {
-      return null;
+      throw new Error("User not found or not authenticated");
     }
 
     const project = await ctx.db.get(projectId);

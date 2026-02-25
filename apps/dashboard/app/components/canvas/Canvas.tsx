@@ -211,7 +211,7 @@ function CanvasInner({ projectId }: { projectId: Id<"projects"> }) {
 
             {isEmpty && (
                 <EmptyCanvasGuide
-                    onCreateConfig={() => setSourcePickerOpen(true)}
+                    onCreateConfig={() => setConfigDialogOpen(true)}
                 />
             )}
 

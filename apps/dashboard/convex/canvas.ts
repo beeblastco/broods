@@ -29,7 +29,7 @@ export const getByProject = query({
     // Check authenticated user
     const user = await ctx.auth.getUserIdentity();
     if (!user) {
-      return null;
+      throw new Error("User not found or not authenticated");
     }
 
     const layout = await ctx.db

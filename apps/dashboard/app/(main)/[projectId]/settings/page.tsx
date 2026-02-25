@@ -9,6 +9,7 @@ import type { Id } from "@/convex/_generated/dataModel";
 import { useEnvironment } from "@/app/lib/environment-context";
 import { EnvironmentDot } from "@/app/components/EnvironmentSelector";
 import { Trash2 } from "lucide-react";
+import { cn } from "@/lib/utils";
 import { Button } from "@/app/components/ui/button";
 import { Input } from "@/app/components/ui/input";
 import { Label } from "@/app/components/ui/label";
