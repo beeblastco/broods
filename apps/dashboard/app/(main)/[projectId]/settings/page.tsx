@@ -299,12 +299,11 @@ export default function SettingsPage() {
                         </DialogDescription>
                     </DialogHeader>
                     <div className="grid gap-3 py-2">
-                        <Label htmlFor="confirm-env-phrase">
-                            Type{" "}
-                            <span className="font-mono font-medium text-foreground">
+                        <Label htmlFor="confirm-env-phrase" className="grid gap-1">
+                            <span>Type the following to confirm</span>
+                            <span className="font-mono font-medium text-foreground break-all">
                                 {DELETE_ENV_PHRASE}
-                            </span>{" "}
-                            to confirm
+                            </span>
                         </Label>
                         <Input
                             id="confirm-env-phrase"
@@ -363,12 +362,11 @@ export default function SettingsPage() {
                         </DialogDescription>
                     </DialogHeader>
                     <div className="grid gap-3 py-2">
-                        <Label htmlFor="confirm-project-phrase">
-                            Type{" "}
-                            <span className="font-mono font-medium text-foreground">
+                        <Label htmlFor="confirm-project-phrase" className="grid gap-1">
+                            <span>Type the following to confirm</span>
+                            <span className="font-mono font-medium text-foreground break-all">
                                 {DELETE_PROJECT_PHRASE}
-                            </span>{" "}
-                            to confirm
+                            </span>
                         </Label>
                         <Input
                             id="confirm-project-phrase"
