@@ -61,6 +61,7 @@ export const create = mutation({
       authId: user.subject,
       agentConfigId: agentConfigId,
       endpointId: endpointId,
+      apiKey: rawApiKey,
       apiKeyHash: apiKeyHash,
       status: "active",
       updatedAt: Date.now(),

@@ -1,6 +1,4 @@
-import { anthropic } from "@ai-sdk/anthropic";
-import { google } from "@ai-sdk/google";
-import { openai } from "@ai-sdk/openai";
+import { gateway } from "@ai-sdk/gateway";
 import { ConvexHttpClient } from "convex/browser";
 
 
@@ -240,54 +238,10 @@ export function isRecord(value: unknown): value is Record<string, unknown> {
 
 
 /**
- * Resolves a model ID string to an AI SDK provider model instance.
- * Supports anthropic/, google/, openai/ prefixes and common model name prefixes.
- * @param modelId Model identifier string
- * @returns AI SDK language model
+ * Resolves a model ID to an AI SDK provider model via Vercel AI Gateway.
+ * @param modelId Vercel AI Gateway model ID (e.g. "google/gemini-2.0-flash")
+ * @returns AI SDK language model routed through Vercel AI Gateway
  */
 export function resolveModel(modelId: string) {
-  const trimmed = modelId.trim();
-  const slashIndex = trimmed.indexOf("/");
-  const provider = slashIndex > 0 ? trimmed.slice(0, slashIndex).toLowerCase() : undefined;
-  const modelName = slashIndex > 0 ? trimmed.slice(slashIndex + 1) : trimmed;
-
-  if (provider === "anthropic" || trimmed.startsWith("anthropic.") || modelName.startsWith("claude")) {
-    const resolvedModel = trimmed.startsWith("anthropic.")
-      ? trimmed.replace("anthropic.", "")
-      : modelName;
-
-    return anthropic(resolvedModel);
-  }
-
-  if (provider === "google" || trimmed.startsWith("google.") || modelName.startsWith("gemini")) {
-    const resolvedModel = trimmed.startsWith("google.")
-      ? trimmed.replace("google.", "")
-      : modelName;
-
-    return google(resolvedModel);
-  }
-
-  if (
-    provider === "openai" ||
-    trimmed.startsWith("openai.") ||
-    modelName.startsWith("gpt") ||
-    modelName.startsWith("o1") ||
-    modelName.startsWith("o3") ||
-    modelName.startsWith("o4")
-  ) {
-    const resolvedModel = trimmed.startsWith("openai.")
-      ? trimmed.replace("openai.", "")
-      : modelName;
-
-    return openai(resolvedModel);
-  }
-
-  if (trimmed.includes("claude")) {
-    return anthropic(modelName);
-  }
-  if (trimmed.includes("gemini")) {
-    return google(modelName);
-  }
-
-  return openai(modelName);
+  return gateway(modelId);
 }

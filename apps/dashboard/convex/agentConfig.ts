@@ -118,6 +118,171 @@ export const create = mutation({
 });
 
 /**
+ * Update an agent config's editable fields.
+ * @param configId Agent config ID
+ * @param name Optional new display name
+ * @returns null
+ * @throws Error if user is not authenticated or does not own the config
+ */
+export const update = mutation({
+  args: {
+    configId: v.id("agentConfigs"),
+    name: v.optional(v.string()),
+    description: v.optional(v.string()),
+    systemPrompt: v.optional(v.string()),
+  },
+  returns: v.null(),
+  handler: async (ctx, args): Promise<null> => {
+    const { configId, name, description, systemPrompt } = args;
+
+    // Check authenticated user
+    const user = await ctx.auth.getUserIdentity();
+    if (!user) {
+      throw new Error("User not found or not authenticated");
+    }
+
+    const config = await ctx.db.get(configId);
+    if (!config || config.authId !== user.subject) {
+      throw new Error("Agent config not found or access denied");
+    }
+
+    const patch: Record<string, unknown> = { updatedAt: Date.now() };
+    if (name !== undefined) patch.name = name;
+    if (description !== undefined) patch.description = description;
+    if (systemPrompt !== undefined) patch.systemPrompt = systemPrompt;
+
+    await ctx.db.patch(configId, patch);
+
+    // Also update the canvas node label if name changed
+    if (name !== undefined) {
+      const layout = await ctx.db
+        .query("canvasLayouts")
+        .withIndex("by_projectId_and_environmentId", (q) =>
+          q.eq("projectId", config.projectId).eq("environmentId", config.environmentId),
+        )
+        .first();
+
+      if (layout) {
+        const updatedNodes = layout.nodes.map((n) =>
+          n.data.agentConfigId === configId
+            ? { ...n, data: { ...n.data, label: name } }
+            : n,
+        );
+        await ctx.db.patch(layout._id, { nodes: updatedNodes, updatedAt: Date.now() });
+      }
+    }
+
+    return null;
+  },
+});
+
+/**
+ * Delete an agent config and all related data (deployments, connections, sessions, messages, tasks, memories, canvas node).
+ * @param configId Agent config ID
+ * @returns null
+ * @throws Error if user is not authenticated or does not own the config
+ */
+export const remove = mutation({
+  args: {
+    configId: v.id("agentConfigs"),
+  },
+  returns: v.null(),
+  handler: async (ctx, args): Promise<null> => {
+    const { configId } = args;
+
+    // Check authenticated user
+    const user = await ctx.auth.getUserIdentity();
+    if (!user) {
+      throw new Error("User not found or not authenticated");
+    }
+
+    const config = await ctx.db.get(configId);
+    if (!config || config.authId !== user.subject) {
+      throw new Error("Agent config not found or access denied");
+    }
+
+    // Delete sessions and their nested data (messages, tasks, toolApprovals)
+    const sessions = await ctx.db
+      .query("sessions")
+      .withIndex("by_configId", (q) => q.eq("configId", configId))
+      .collect();
+
+    for (const session of sessions) {
+      const messages = await ctx.db
+        .query("messages")
+        .withIndex("by_sessionId", (q) => q.eq("sessionId", session._id))
+        .collect();
+      for (const msg of messages) {
+        await ctx.db.delete(msg._id);
+      }
+
+      const tasks = await ctx.db
+        .query("tasks")
+        .withIndex("by_sessionId", (q) => q.eq("sessionId", session._id))
+        .collect();
+      for (const task of tasks) {
+        await ctx.db.delete(task._id);
+      }
+
+      const approvals = await ctx.db
+        .query("toolApprovals")
+        .withIndex("by_sessionId", (q) => q.eq("sessionId", session._id))
+        .collect();
+      for (const approval of approvals) {
+        await ctx.db.delete(approval._id);
+      }
+
+      await ctx.db.delete(session._id);
+    }
+
+    // Delete deployments
+    const deployments = await ctx.db
+      .query("agentDeployments")
+      .withIndex("by_agentConfigId", (q) => q.eq("agentConfigId", configId))
+      .collect();
+    for (const dep of deployments) {
+      await ctx.db.delete(dep._id);
+    }
+
+    // Delete connections
+    const connections = await ctx.db
+      .query("agentConnections")
+      .withIndex("by_agentConfigId", (q) => q.eq("agentConfigId", configId))
+      .collect();
+    for (const conn of connections) {
+      await ctx.db.delete(conn._id);
+    }
+
+    // Remove the canvas node referencing this config
+    const layout = await ctx.db
+      .query("canvasLayouts")
+      .withIndex("by_projectId_and_environmentId", (q) =>
+        q.eq("projectId", config.projectId).eq("environmentId", config.environmentId),
+      )
+      .first();
+
+    if (layout) {
+      const filteredNodes = layout.nodes.filter((n) => n.data.agentConfigId !== configId);
+      const removedNodeIds = new Set(
+        layout.nodes.filter((n) => n.data.agentConfigId === configId).map((n) => n.id),
+      );
+      const filteredEdges = layout.edges.filter(
+        (e) => !removedNodeIds.has(e.source) && !removedNodeIds.has(e.target),
+      );
+      await ctx.db.patch(layout._id, {
+        nodes: filteredNodes,
+        edges: filteredEdges,
+        updatedAt: Date.now(),
+      });
+    }
+
+    await ctx.db.delete(configId);
+
+    return null;
+  },
+});
+
+/**
  * Get an agent config by ID for the authenticated user.
  * @param configId Agent config ID
  * @returns Agent config document, or null if not found/unauthorized
@@ -168,8 +333,38 @@ export const getByIdInternal = internalQuery({
 });
 
 /**
+ * List all agent configs for a project (non-subagent only).
+ * @param projectId Project to list configs for
+ * @returns Agent config documents
+ * @throws Error if user is not authenticated or does not own the project
+ */
+export const listByProject = query({
+  args: {
+    projectId: v.id("projects"),
+  },
+  returns: v.array(agentConfigValidator),
+  handler: async (ctx, args) => {
+    const { projectId } = args;
+
+    // Check authenticated user
+    const user = await ctx.auth.getUserIdentity();
+    if (!user) {
+      throw new Error("User not found or not authenticated");
+    }
+
+    await verifyProjectOwnership(ctx, projectId, user.subject);
+
+    const configs = await ctx.db
+      .query("agentConfigs")
+      .withIndex("by_projectId", (q) => q.eq("projectId", projectId))
+      .collect();
+
+    return configs.filter((c) => c.authId === user.subject && !c.isSubAgent);
+  },
+});
+
+/**
  * Resolve available subagents for a parent config in gateway execution.
- * Uses explicit agentConnections first; falls back to same project/environment subagents.
  * @param gatewaySecret Shared gateway secret
  * @param parentConfigId Parent agent config ID
  * @returns Available subagent config summaries

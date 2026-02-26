@@ -210,7 +210,7 @@ export const listWithPreview = query({
 });
 
 /**
- * Permanently delete a project and all its environments, agent configs, and canvas layouts.
+ * Permanently delete a project and all related data (configs, deployments, connections, layouts, environments).
  * @param projectId The project to delete
  * @throws Error if user is not authenticated or does not own the project
  */
@@ -237,6 +237,24 @@ export const remove = mutation({
       .collect();
 
     for (const config of configs) {
+      // Delete deployments for this config
+      const deployments = await ctx.db
+        .query("agentDeployments")
+        .withIndex("by_agentConfigId", (q) => q.eq("agentConfigId", config._id))
+        .collect();
+      for (const dep of deployments) {
+        await ctx.db.delete(dep._id);
+      }
+
+      // Delete connections for this config
+      const connections = await ctx.db
+        .query("agentConnections")
+        .withIndex("by_agentConfigId", (q) => q.eq("agentConfigId", config._id))
+        .collect();
+      for (const conn of connections) {
+        await ctx.db.delete(conn._id);
+      }
+
       await ctx.db.delete(config._id);
     }
 

@@ -277,6 +277,7 @@ export const agentDeploymentFields = {
   authId: v.string(),
   agentConfigId: v.id("agentConfigs"),
   endpointId: v.string(),
+  apiKey: v.optional(v.string()),
   apiKeyHash: v.string(),
   status: deploymentStatusEnum,
   revokedAt: v.optional(v.number()),
@@ -307,7 +308,8 @@ export default defineSchema({
   sessions: defineTable(sessionFields)
     .index("by_authId", ["authId"])
     .index("by_authId_and_isSubagent", ["authId", "isSubagent"])
-    .index("by_projectId", ["projectId"]),
+    .index("by_projectId", ["projectId"])
+    .index("by_configId", ["configId"]),
 
   messages: defineTable(messageFields)
     .index("by_sessionId", ["sessionId"])
