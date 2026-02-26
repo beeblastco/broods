@@ -9,7 +9,7 @@ import {
   canvasNodeValidator,
   projectFields,
 } from "./schema";
-import { verifyProjectOwnership } from "./model/ownership/index";
+import { verifyProjectOwnership } from "./model/ownership";
 
 /** Validator for project records with system fields. */
 const projectValidator = v.object(withSystemFields("projects", projectFields));
@@ -214,7 +214,7 @@ export const listWithPreview = query({
  * @param projectId The project to delete
  * @throws Error if user is not authenticated or does not own the project
  */
-export const deleteById = mutation({
+export const remove = mutation({
   args: {
     projectId: v.id("projects"),
   },

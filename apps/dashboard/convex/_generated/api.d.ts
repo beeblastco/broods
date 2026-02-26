@@ -9,15 +9,20 @@
  */
 
 import type * as agentConfig from "../agentConfig.js";
+import type * as agentDeployments from "../agentDeployments.js";
+import type * as approval from "../approval.js";
 import type * as canvas from "../canvas.js";
 import type * as environment from "../environment.js";
-import type * as model_ownership_agent from "../model/ownership/agent.js";
-import type * as model_ownership_environment from "../model/ownership/environment.js";
-import type * as model_ownership_index from "../model/ownership/index.js";
-import type * as model_ownership_project from "../model/ownership/project.js";
-import type * as model_ownership_session from "../model/ownership/session.js";
-import type * as model_ownership_user from "../model/ownership/user.js";
+import type * as messages from "../messages.js";
+import type * as model_agentConfig from "../model/agentConfig.js";
+import type * as model_gateway from "../model/gateway.js";
+import type * as model_messages from "../model/messages.js";
+import type * as model_ownership from "../model/ownership.js";
+import type * as model_sessions from "../model/sessions.js";
+import type * as model_tasks from "../model/tasks.js";
 import type * as project from "../project.js";
+import type * as sessions from "../sessions.js";
+import type * as tasks from "../tasks.js";
 import type * as user from "../user.js";
 
 import type {
@@ -28,15 +33,20 @@ import type {
 
 declare const fullApi: ApiFromModules<{
   agentConfig: typeof agentConfig;
+  agentDeployments: typeof agentDeployments;
+  approval: typeof approval;
   canvas: typeof canvas;
   environment: typeof environment;
-  "model/ownership/agent": typeof model_ownership_agent;
-  "model/ownership/environment": typeof model_ownership_environment;
-  "model/ownership/index": typeof model_ownership_index;
-  "model/ownership/project": typeof model_ownership_project;
-  "model/ownership/session": typeof model_ownership_session;
-  "model/ownership/user": typeof model_ownership_user;
+  messages: typeof messages;
+  "model/agentConfig": typeof model_agentConfig;
+  "model/gateway": typeof model_gateway;
+  "model/messages": typeof model_messages;
+  "model/ownership": typeof model_ownership;
+  "model/sessions": typeof model_sessions;
+  "model/tasks": typeof model_tasks;
   project: typeof project;
+  sessions: typeof sessions;
+  tasks: typeof tasks;
   user: typeof user;
 }>;
 

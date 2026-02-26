@@ -72,8 +72,8 @@ export default function SettingsPage() {
     const environments = useQuery(api.environment.list, { projectId: projectId });
 
     const updateProject = useMutation(api.project.update);
-    const deleteEnvironment = useMutation(api.environment.deleteById);
-    const deleteProject = useMutation(api.project.deleteById);
+    const deleteEnvironment = useMutation(api.environment.remove);
+    const deleteProject = useMutation(api.project.remove);
 
     // Editable general fields
     const [editName, setEditName] = useState("");
