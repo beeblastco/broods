@@ -1,6 +1,5 @@
-import { executeDeployment } from "./service";
+import { executeDeployment, streamDeployment } from "./service";
 import {
-  createSseResponse,
   jsonResponse,
   parseBearerToken,
   parseExecutePayload,
@@ -45,30 +44,27 @@ const server = Bun.serve({
     }
 
     if (parsed.value.stream) {
-      return createSseResponse(
-        async (emit) => {
-          emit("execution.accepted", {
-            endpointId: endpointId,
-            hasMessage: parsed.value.message !== undefined,
-          });
+      try {
+        const { result, sessionId, taskId } = await streamDeployment({
+          endpointId: endpointId,
+          apiKey: bearerToken,
+          message: parsed.value.message,
+          sessionId: parsed.value.sessionId,
+          abortSignal: request.signal,
+        });
 
-          const result = await executeDeployment({
-            endpointId: endpointId,
-            apiKey: bearerToken,
-            message: parsed.value.message,
-            sessionId: parsed.value.sessionId,
-            emit: emit,
-            abortSignal: request.signal,
-          });
-
-          emit("execution.completed", {
-            output: result.output,
-            sessionId: result.sessionId,
-            taskId: result.taskId,
-          });
-        },
-        request.signal,
-      );
+        return result.toUIMessageStreamResponse({
+          headers: {
+            "X-Session-Id": sessionId,
+            "X-Task-Id": taskId,
+          },
+        });
+      } catch (error) {
+        return jsonResponse(resolveStatusCode(error), {
+          success: false,
+          error: toErrorMessage(error),
+        });
+      }
     }
 
     try {

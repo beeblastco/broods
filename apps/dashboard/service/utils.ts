@@ -8,8 +8,6 @@ export type ParsedExecuteRequest = {
   stream: boolean;
 };
 
-export type EventEmitter = (event: string, data: Record<string, unknown>) => void;
-
 
 /** Creates a ConvexHttpClient from the NEXT_PUBLIC_CONVEX_URL environment variable. */
 export function createConvexClient(): ConvexHttpClient {
@@ -102,71 +100,6 @@ export function resolveStatusCode(error: unknown): number {
   return 500;
 }
 
-/**
- * Creates a Server-Sent Events streaming response.
- * @param run Async function that calls emit to push events
- * @param abortSignal Signal to close the stream on client disconnect
- * @returns SSE Response
- */
-export function createSseResponse(
-  run: (emit: EventEmitter) => Promise<void>,
-  abortSignal: AbortSignal,
-): Response {
-  const encoder = new TextEncoder();
-
-  const stream = new ReadableStream<Uint8Array>({
-    start(controller) {
-      let closed = false;
-
-      const safeClose = () => {
-        if (closed) {
-          return;
-        }
-        closed = true;
-        controller.close();
-      };
-
-      const emit: EventEmitter = (event, data) => {
-        if (closed) {
-          return;
-        }
-
-        controller.enqueue(
-          encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`),
-        );
-      };
-
-      const onAbort = () => {
-        emit("execution.aborted", { reason: "client disconnected" });
-        safeClose();
-      };
-
-      abortSignal.addEventListener("abort", onAbort, { once: true });
-
-      void (async () => {
-        try {
-          await run(emit);
-          emit("done", { ok: true });
-        } catch (error) {
-          emit("error", { message: toErrorMessage(error) });
-        } finally {
-          abortSignal.removeEventListener("abort", onAbort);
-          safeClose();
-        }
-      })();
-    },
-  });
-
-  return new Response(stream, {
-    status: 200,
-    headers: {
-      "Content-Type": "text/event-stream; charset=utf-8",
-      "Cache-Control": "no-cache, no-transform",
-      Connection: "keep-alive",
-      "X-Accel-Buffering": "no",
-    },
-  });
-}
 
 /** Returns a JSON response with the given status and payload. */
 export function jsonResponse(status: number, payload: Record<string, unknown>): Response {
@@ -216,14 +149,6 @@ export function bytesToHex(bytes: Uint8Array): string {
 }
 
 
-/** Coerces an unknown thrown value to an Error instance. */
-export function normalizeError(error: unknown): Error {
-  if (error instanceof Error) {
-    return error;
-  }
-
-  return new Error(String(error));
-}
 
 /** Returns the message string from any thrown value. */
 export function toErrorMessage(error: unknown): string {

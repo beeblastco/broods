@@ -1,5 +1,7 @@
-import type { AssistantContent, ModelMessage, ToolContent, ToolResultOutput } from "@ai-sdk/provider-utils";
+import type { AssistantContent, ModelMessage, ToolContent } from "@ai-sdk/provider-utils";
 import { stepCountIs, streamText } from "ai";
+import type { ToolSet } from "ai";
+import type { ConvexHttpClient } from "convex/browser";
 import { api } from "../convex/_generated/api";
 import type { Id } from "../convex/_generated/dataModel";
 import { buildToolsForAgent, type SubAgentSummary } from "./tools";
@@ -7,31 +9,40 @@ import {
   createConvexClient,
   getGatewaySecret,
   hashApiKey,
-  normalizeError,
   resolveModel,
   timingSafeEqual,
   toErrorMessage,
 } from "./utils";
 
 
-export type ExecuteCompletedResult = {
+export type ExecuteDeploymentResult = {
   status: "completed";
   output: string;
   sessionId: Id<"sessions">;
   taskId: Id<"tasks">;
 };
 
-export type ExecuteDeploymentResult = ExecuteCompletedResult;
-
-export type EventEmitter = (event: string, data: Record<string, unknown>) => void;
-
 export type DeploymentExecutionOptions = {
   endpointId: string;
   apiKey: string;
   message?: string;
   sessionId?: string;
-  emit?: EventEmitter;
   abortSignal?: AbortSignal;
+};
+
+/** Shared context for agent execution after validation and setup. */
+type ExecutionContext = {
+  client: ConvexHttpClient;
+  gatewaySecret: string;
+  sessionId: Id<"sessions">;
+  taskId: Id<"tasks">;
+  messages: ModelMessage[];
+  tools: ToolSet;
+  systemPrompt: string | undefined;
+  modelId: string;
+  temperature: number | undefined;
+  maxTokens: number | undefined;
+  maxTurns: number;
 };
 
 
@@ -150,21 +161,11 @@ export function composeSystemPrompt(baseSystemPrompt?: string): string | undefin
 
 
 /**
- * Executes a deployed agent with AI SDK tool loop.
- * Mirrors my-app-2's fullStream pattern: LLM decides when to use tools,
- * messages persisted at each finish-step.
+ * Validates deployment, creates session, fetches history, and builds tools.
+ * Shared setup for both streaming and non-streaming execution.
  */
-export async function executeDeployment(
-  options: DeploymentExecutionOptions,
-): Promise<ExecuteDeploymentResult> {
-  const {
-    endpointId,
-    apiKey,
-    message,
-    sessionId,
-    emit,
-    abortSignal,
-  } = options;
+async function prepareExecution(options: DeploymentExecutionOptions): Promise<ExecutionContext> {
+  const { endpointId, apiKey, message, sessionId } = options;
 
   if (!message && !sessionId) {
     throw new Error("Provide message or sessionId");
@@ -192,7 +193,6 @@ export async function executeDeployment(
   }
 
   let createdTaskId: Id<"tasks"> | null = null;
-  let createdSessionId: Id<"sessions"> | null = null;
 
   try {
     // Create or continue session with user message
@@ -207,18 +207,11 @@ export async function executeDeployment(
     });
 
     createdTaskId = created.taskId;
-    createdSessionId = created.sessionId;
 
     await client.mutation(api.tasks.updateForGateway, {
       gatewaySecret: gatewaySecret,
       taskId: created.taskId,
       status: "running",
-    });
-
-    emit?.("execution.started", {
-      sessionId: created.sessionId,
-      taskId: created.taskId,
-      configId: resolved.deployment.agentConfigId,
     });
 
     // Fetch conversation history and subagent configs in parallel
@@ -235,7 +228,7 @@ export async function executeDeployment(
 
     const messages = convertToAiSdkMessages(rawMessages);
 
-    // Map Convex config records to SubAgentSummary (Convex uses _id, service uses configId)
+    // Map Convex config records to SubAgentSummary
     const subAgents: SubAgentSummary[] = rawSubAgents.map((config) => ({
       configId: config._id,
       name: config.name,
@@ -257,239 +250,124 @@ export async function executeDeployment(
       subAgents: subAgents,
       allowedTools: resolved.agentConfig.allowedTools,
       disallowedTools: resolved.agentConfig.disallowedTools,
-      emit: emit,
     });
 
-    // Build system prompt with current date
     const systemPrompt = composeSystemPrompt(resolved.agentConfig.systemPrompt);
 
-    emit?.("llm.start", {
-      modelId: resolved.agentConfig.modelId,
-      toolCount: Object.keys(tools).length,
-    });
-
-    if (abortSignal?.aborted) {
-      throw new Error("Request aborted");
-    }
-
-    // Run agent with tool loop via streamText (mirrors my-app-2's fullStream pattern)
-    const textStream = streamText({
-      model: resolveModel(resolved.agentConfig.modelId),
-      messages: messages,
-      tools: tools,
-      ...(systemPrompt ? { system: systemPrompt } : {}),
-      ...(resolved.agentConfig.temperature !== undefined
-        ? { temperature: resolved.agentConfig.temperature }
-        : {}),
-      ...(resolved.agentConfig.maxTokens !== undefined
-        ? { maxOutputTokens: resolved.agentConfig.maxTokens }
-        : {}),
-      stopWhen: stepCountIs(resolved.agentConfig.maxTurns ?? 10),
-      abortSignal: abortSignal,
-    });
-
-    // Track accumulator state per step (reset at each finish-step)
-    let currentTextResponse = "";
-    let currentReasoning = "";
-    let currentToolCalls: Array<{ type: "tool-call"; toolCallId: string; toolName: string; input: unknown }> = [];
-    let currentToolResults: Array<{ type: "tool-result"; toolCallId: string; toolName: string; output: ToolResultOutput }> = [];
-    let finalOutput = "";
-
-    for await (const part of textStream.fullStream) {
-      switch (part.type) {
-        case "text-delta":
-          currentTextResponse += part.text;
-          emit?.("llm.delta", { text: part.text });
-          break;
-
-        case "reasoning-delta":
-          if (part.text) {
-            currentReasoning += part.text;
-          }
-          break;
-
-        case "tool-call":
-          currentToolCalls.push({
-            type: "tool-call",
-            toolCallId: part.toolCallId,
-            toolName: part.toolName,
-            input: part.input,
-          });
-          emit?.("tool.call", {
-            toolName: part.toolName,
-            toolCallId: part.toolCallId,
-          });
-
-          // Update task status to tool_call
-          await client.mutation(api.tasks.updateForGateway, {
-            gatewaySecret: gatewaySecret,
-            taskId: created.taskId,
-            status: "tool_call",
-          });
-          break;
-
-        case "tool-result":
-          currentToolResults.push({
-            type: "tool-result",
-            toolCallId: part.toolCallId,
-            toolName: part.toolName,
-            output: part.output as ToolResultOutput,
-          });
-          emit?.("tool.result", {
-            toolName: part.toolName,
-            toolCallId: part.toolCallId,
-          });
-          break;
-
-        case "finish-step": {
-          // Persist step messages to Convex (mirrors my-app-2 finish-step handling)
-          if (part.finishReason === "tool-calls") {
-            // Save assistant message: reasoning + text + tool-calls
-            const assistantContent: AssistantContent = [];
-
-            if (currentReasoning.trim()) {
-              assistantContent.push({
-                type: "reasoning",
-                text: currentReasoning.trim(),
-              });
-            }
-
-            if (currentTextResponse.trim()) {
-              assistantContent.push({
-                type: "text",
-                text: currentTextResponse.trim(),
-              });
-            }
-
-            for (const tc of currentToolCalls) {
-              assistantContent.push({
-                type: "tool-call",
-                toolCallId: tc.toolCallId,
-                toolName: tc.toolName,
-                input: tc.input as Record<string, unknown>,
-              });
-            }
-
-            if (assistantContent.length > 0) {
-              await client.mutation(api.messages.createForGateway, {
-                gatewaySecret: gatewaySecret,
-                sessionId: created.sessionId,
-                message: {
-                  role: "assistant",
-                  content: assistantContent,
-                },
-                metadata: { finishReason: part.finishReason },
-              });
-            }
-
-            // Save tool results as a separate tool message
-            if (currentToolResults.length > 0) {
-              const toolContent: ToolContent = currentToolResults.map((tr) => ({
-                type: "tool-result" as const,
-                toolCallId: tr.toolCallId,
-                toolName: tr.toolName,
-                output: tr.output,
-              }));
-
-              await client.mutation(api.messages.createForGateway, {
-                gatewaySecret: gatewaySecret,
-                sessionId: created.sessionId,
-                message: {
-                  role: "tool",
-                  content: toolContent,
-                },
-              });
-            }
-
-            // Update task status back to running for the next step
-            await client.mutation(api.tasks.updateForGateway, {
-              gatewaySecret: gatewaySecret,
-              taskId: created.taskId,
-              status: "running",
-            });
-          } else {
-            // Final step (stop, length, content-filter, etc.)
-            const finalContent: AssistantContent = [];
-
-            if (currentReasoning.trim()) {
-              finalContent.push({
-                type: "reasoning",
-                text: currentReasoning.trim(),
-              });
-            }
-
-            if (currentTextResponse.trim()) {
-              finalContent.push({
-                type: "text",
-                text: currentTextResponse.trim(),
-              });
-            }
-
-            if (finalContent.length > 0) {
-              await client.mutation(api.messages.createForGateway, {
-                gatewaySecret: gatewaySecret,
-                sessionId: created.sessionId,
-                message: {
-                  role: "assistant",
-                  content: finalContent,
-                },
-                metadata: { finishReason: String(part.finishReason ?? "unknown") },
-              });
-            }
-
-            finalOutput = currentTextResponse.trim();
-          }
-
-          // Reset accumulators for the next step
-          currentTextResponse = "";
-          currentReasoning = "";
-          currentToolCalls = [];
-          currentToolResults = [];
-          break;
-        }
-
-        case "error":
-          throw normalizeError(part.error);
-      }
-    }
-
-    const output = finalOutput.length > 0 ? finalOutput : "No response generated.";
-    const outputContent: Array<{ type: "text"; text: string }> = [
-      { type: "text", text: output },
-    ];
-
-    // Complete the task
-    await client.mutation(api.tasks.updateForGateway, {
-      gatewaySecret: gatewaySecret,
-      taskId: created.taskId,
-      status: "completed",
-      result: outputContent,
-    });
-
     return {
-      status: "completed",
-      output: output,
+      client: client,
+      gatewaySecret: gatewaySecret,
       sessionId: created.sessionId,
       taskId: created.taskId,
+      messages: messages,
+      tools: tools,
+      systemPrompt: systemPrompt,
+      modelId: resolved.agentConfig.modelId,
+      temperature: resolved.agentConfig.temperature,
+      maxTokens: resolved.agentConfig.maxTokens,
+      maxTurns: resolved.agentConfig.maxTurns ?? 10,
     };
   } catch (error) {
+    // Mark task as failed if it was created before the error
     if (createdTaskId) {
       await client.mutation(api.tasks.updateForGateway, {
         gatewaySecret: gatewaySecret,
         taskId: createdTaskId,
         status: "failed",
         error: toErrorMessage(error),
-      });
-    }
-
-    if (createdSessionId) {
-      emit?.("execution.failed", {
-        sessionId: createdSessionId,
-        taskId: createdTaskId,
-        error: toErrorMessage(error),
-      });
+      }).catch(() => {});
     }
 
     throw error;
   }
+}
+
+
+/**
+ * Streams a deployed agent execution using the native AI SDK data stream protocol.
+ * Returns the stream result for use with toDataStreamResponse().
+ */
+export async function streamDeployment(options: DeploymentExecutionOptions) {
+  const ctx = await prepareExecution(options);
+
+  const result = streamText({
+    model: resolveModel(ctx.modelId),
+    messages: ctx.messages,
+    tools: ctx.tools,
+    ...(ctx.systemPrompt ? { system: ctx.systemPrompt } : {}),
+    ...(ctx.temperature !== undefined ? { temperature: ctx.temperature } : {}),
+    ...(ctx.maxTokens !== undefined ? { maxOutputTokens: ctx.maxTokens } : {}),
+    stopWhen: stepCountIs(ctx.maxTurns),
+    abortSignal: options.abortSignal,
+    onStepFinish: async (step) => {
+      // Persist step messages to Convex
+      for (const msg of step.response.messages) {
+        await ctx.client.mutation(api.messages.createForGateway, {
+          gatewaySecret: ctx.gatewaySecret,
+          sessionId: ctx.sessionId,
+          message: { role: msg.role, content: msg.content },
+          metadata: { finishReason: String(step.finishReason) },
+        });
+      }
+
+      // Update task status for tool call steps
+      if (step.finishReason === "tool-calls") {
+        await ctx.client.mutation(api.tasks.updateForGateway, {
+          gatewaySecret: ctx.gatewaySecret,
+          taskId: ctx.taskId,
+          status: "tool_call",
+        });
+        await ctx.client.mutation(api.tasks.updateForGateway, {
+          gatewaySecret: ctx.gatewaySecret,
+          taskId: ctx.taskId,
+          status: "running",
+        });
+      }
+    },
+  });
+
+  // Manage task lifecycle in background (wrap PromiseLike → Promise for .catch)
+  void Promise.resolve(result.text)
+    .then(async (text: string) => {
+      const output = text.trim() || "No response generated.";
+      await ctx.client.mutation(api.tasks.updateForGateway, {
+        gatewaySecret: ctx.gatewaySecret,
+        taskId: ctx.taskId,
+        status: "completed",
+        result: [{ type: "text", text: output }],
+      });
+    })
+    .catch(async (error: unknown) => {
+      await ctx.client.mutation(api.tasks.updateForGateway, {
+        gatewaySecret: ctx.gatewaySecret,
+        taskId: ctx.taskId,
+        status: "failed",
+        error: toErrorMessage(error),
+      }).catch(() => {});
+    });
+
+  return {
+    result: result,
+    sessionId: ctx.sessionId,
+    taskId: ctx.taskId,
+  };
+}
+
+
+/**
+ * Executes a deployed agent and returns the complete result.
+ * For non-streaming HTTP responses.
+ */
+export async function executeDeployment(
+  options: DeploymentExecutionOptions,
+): Promise<ExecuteDeploymentResult> {
+  const { result, sessionId, taskId } = await streamDeployment(options);
+  const text = await result.text;
+
+  return {
+    status: "completed",
+    output: text.trim() || "No response generated.",
+    sessionId: sessionId,
+    taskId: taskId,
+  };
 }

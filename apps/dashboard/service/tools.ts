@@ -401,9 +401,8 @@ export function createSubAgentTool(options: {
   authId: string;
   parentSessionId: Id<"sessions">;
   subAgents: SubAgentSummary[];
-  emit?: import("./utils").EventEmitter;
 }) {
-  const { client, gatewaySecret, authId, parentSessionId, subAgents, emit } = options;
+  const { client, gatewaySecret, authId, parentSessionId, subAgents } = options;
   const validNames = subAgents.map((s) => s.name);
 
   const agentDescriptions = subAgents.map((s) => {
@@ -433,11 +432,6 @@ export function createSubAgentTool(options: {
       if (!subAgent) {
         return `Agent '${agentName}' not found.`;
       }
-
-      emit?.("subagent.started", {
-        subAgentName: agentName,
-        subAgentConfigId: subAgent.configId,
-      });
 
       // Create subagent session in Convex
       const created = await client.mutation(api.sessions.createForGateway, {
@@ -496,13 +490,6 @@ export function createSubAgentTool(options: {
           result: [{ type: "text", text: output }],
         });
 
-        emit?.("subagent.completed", {
-          subAgentName: agentName,
-          subAgentConfigId: subAgent.configId,
-          subSessionId: created.sessionId,
-          subTaskId: created.taskId,
-        });
-
         return output;
       } catch (error) {
         const errorMessage = toErrorMessage(error);
@@ -511,12 +498,6 @@ export function createSubAgentTool(options: {
           gatewaySecret: gatewaySecret,
           taskId: created.taskId,
           status: "failed",
-          error: errorMessage,
-        });
-
-        emit?.("subagent.failed", {
-          subAgentName: agentName,
-          subAgentConfigId: subAgent.configId,
           error: errorMessage,
         });
 
@@ -538,7 +519,6 @@ export function buildToolsForAgent(options: {
   subAgents: SubAgentSummary[];
   allowedTools?: string[];
   disallowedTools?: string[];
-  emit?: import("./utils").EventEmitter;
 }): ToolSet {
   const {
     client,
@@ -548,7 +528,6 @@ export function buildToolsForAgent(options: {
     subAgents,
     allowedTools,
     disallowedTools,
-    emit,
   } = options;
 
   const allTools: ToolSet = {};
@@ -561,7 +540,6 @@ export function buildToolsForAgent(options: {
       authId: authId,
       parentSessionId: sessionId,
       subAgents: subAgents,
-      emit: emit,
     });
   }
 
