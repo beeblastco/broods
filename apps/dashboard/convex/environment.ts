@@ -7,7 +7,7 @@ import { withSystemFields } from "convex-helpers/validators";
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import { environmentFields } from "./schema";
-import { verifyProjectOwnership, verifyEnvironmentOwnership } from "./model/ownership/index";
+import { verifyProjectOwnership, verifyEnvironmentOwnership } from "./model/ownership";
 import type { Id } from "./_generated/dataModel";
 
 /** Validator for environment records with system fields. */
@@ -32,7 +32,7 @@ export const list = query({
       throw new Error("User not found or not authenticated");
     }
 
-    // Return empty if project was deleted (e.g. during navigation after deleteById)
+    // Return empty if project was deleted (e.g. during navigation after remove)
     const project = await ctx.db.get(projectId);
     if (!project || project.authId !== user.subject) {
       return [];
@@ -236,7 +236,7 @@ export const create = mutation({
  * @param environmentId The environment to delete
  * @throws Error if user is not authenticated, does not own the environment, or it is the default
  */
-export const deleteById = mutation({
+export const remove = mutation({
   args: {
     environmentId: v.id("environments"),
   },

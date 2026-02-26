@@ -1,13 +1,18 @@
 "use client";
 
 /** Displays the top header bar with logo, project selector, environment selector, navigation links, and user menu. */
-import { CommandMenu } from "@/app/components/CommandMenu";
-import { EnvironmentSelector } from "@/app/components/EnvironmentSelector";
-import { NavLinks } from "@/app/components/NavLinks";
-import { ProjectSelector } from "@/app/components/ProjectSelector";
 import { UserMenu } from "@/app/components/UserMenu";
 import Link from "next/link";
+import dynamic from "next/dynamic";
 import { useParams } from "next/navigation";
+
+// Split project-only controls into separate chunks.
+const ProjectHeaderLeft = dynamic(
+    () => import("@/app/components/header/ProjectHeaderLeft").then((mod) => mod.ProjectHeaderLeft),
+);
+const ProjectHeaderRight = dynamic(
+    () => import("@/app/components/header/ProjectHeaderRight").then((mod) => mod.ProjectHeaderRight),
+);
 
 export function Header() {
     const params = useParams<{ projectId?: string }>();
@@ -18,23 +23,10 @@ export function Header() {
             <div className={`flex w-full items-center gap-3 ${isProjectPage ? "px-5" : "mx-auto max-w-5xl"}`}>
                 <Link href="/" className="text-base font-bold text-foreground hover:opacity-80 transition-opacity">Clonee</Link>
 
-                {isProjectPage && (
-                    <>
-                        <div className="h-4 w-px bg-border" />
-                        <ProjectSelector />
-                        <div className="h-4 w-px bg-border" />
-                        <EnvironmentSelector />
-                    </>
-                )}
+                {isProjectPage && <ProjectHeaderLeft />}
 
                 <div className="ml-auto flex items-center gap-3 h-4">
-                    {isProjectPage && (
-                        <>
-                            <NavLinks />
-                            <div className="h-4 w-px bg-border" />
-                            <CommandMenu />
-                        </>
-                    )}
+                    {isProjectPage && <ProjectHeaderRight />}
                     <UserMenu />
                 </div>
             </div>

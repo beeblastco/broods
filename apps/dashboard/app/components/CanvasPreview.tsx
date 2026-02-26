@@ -13,6 +13,7 @@ import {
     type Node,
 } from "@xyflow/react";
 import { useTheme } from "next-themes";
+import { useMemo } from "react";
 
 type CanvasNode = {
     id: string;
@@ -35,6 +36,10 @@ const nodeTypes = {
     tool: ToolNode,
 };
 
+/** Static ReactFlow options hoisted outside components to avoid object churn on re-renders. */
+const FIT_VIEW_OPTIONS = { padding: 0.3, maxZoom: 0.6 } as const;
+const PRO_OPTIONS = { hideAttribution: true } as const;
+
 /** Inner React Flow preview — must be inside a ReactFlowProvider. */
 function PreviewInner({
     nodes,
@@ -46,13 +51,23 @@ function PreviewInner({
     const { resolvedTheme } = useTheme();
     const isDark = resolvedTheme === "dark";
 
+    const defaultEdgeOptions = useMemo(
+        () => ({
+            style: {
+                stroke: isDark ? "rgba(255,255,255,0.15)" : "rgba(0,0,0,0.15)",
+                strokeWidth: 1.5,
+            },
+        }),
+        [isDark],
+    );
+
     return (
         <ReactFlow
             nodes={nodes as Node[]}
             edges={edges as Edge[]}
             nodeTypes={nodeTypes}
             fitView
-            fitViewOptions={{ padding: 0.3, maxZoom: 0.6 }}
+            fitViewOptions={FIT_VIEW_OPTIONS}
             nodesDraggable={false}
             nodesConnectable={false}
             elementsSelectable={false}
@@ -62,13 +77,8 @@ function PreviewInner({
             zoomOnDoubleClick={false}
             preventScrolling={false}
             colorMode={isDark ? "dark" : "light"}
-            proOptions={{ hideAttribution: true }}
-            defaultEdgeOptions={{
-                style: {
-                    stroke: isDark ? "rgba(255,255,255,0.15)" : "rgba(0,0,0,0.15)",
-                    strokeWidth: 1.5,
-                },
-            }}
+            proOptions={PRO_OPTIONS}
+            defaultEdgeOptions={defaultEdgeOptions}
         >
             <Background
                 gap={24}

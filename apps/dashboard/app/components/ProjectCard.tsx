@@ -1,7 +1,7 @@
 "use client";
 
 /** Project card with a flush canvas preview on top and project info on the bottom. */
-import { CanvasPreview } from "@/app/components/CanvasPreview";
+import dynamic from "next/dynamic";
 import {
     Card,
     CardDescription,
@@ -9,6 +9,13 @@ import {
     CardTitle,
 } from "@/app/components/ui/card";
 import { Bot } from "lucide-react";
+import { memo, useCallback } from "react";
+import { useRouter } from "next/navigation";
+
+// Defer loading React Flow preview code until cards render on the client.
+const CanvasPreview = dynamic(
+    () => import("@/app/components/CanvasPreview").then((mod) => mod.CanvasPreview),
+);
 
 type CanvasData = {
     nodes: Array<{
@@ -45,21 +52,23 @@ function getProjectStatus(canvas: CanvasData): ProjectStatus {
 interface ProjectCardProps {
     name: string;
     canvas: CanvasData;
-    onClick: () => void;
+    projectId: string;
 }
 
 /** Renders a project card with a canvas preview on top flush to the border, and project info below on the card background. */
-export function ProjectCard({ name, canvas, onClick }: ProjectCardProps) {
+export const ProjectCard = memo(function ProjectCard({ name, canvas, projectId }: ProjectCardProps) {
+    const router = useRouter();
     const status = getProjectStatus(canvas);
     const { label, color } = STATUS_CONFIG[status];
     const agentCount =
         canvas?.nodes.filter((n) => n.type === "agent").length ?? 0;
     const nodeCount = canvas?.nodes.length ?? 0;
+    const handleClick = useCallback(() => router.push(`/${projectId}`), [router, projectId]);
 
     return (
         <Card
             className="cursor-pointer gap-0 overflow-hidden p-0 transition-all hover:ring-2 hover:ring-primary/50"
-            onClick={onClick}
+            onClick={handleClick}
         >
             {/* Canvas preview — no padding, flush to card top and sides */}
             <div className="aspect-5/3 w-full">
@@ -86,4 +95,4 @@ export function ProjectCard({ name, canvas, onClick }: ProjectCardProps) {
             </CardHeader>
         </Card>
     );
-}
+});

@@ -7,13 +7,11 @@ import { Button } from "@/app/components/ui/button";
 import { api } from "@/convex/_generated/api";
 import { useQuery } from "convex/react";
 import { Plus } from "lucide-react";
-import { useRouter } from "next/navigation";
 import { useState } from "react";
 
 /** Main projects dashboard page. */
 export default function ProjectsDashboard() {
     const projects = useQuery(api.project.listWithPreview);
-    const router = useRouter();
     const [createOpen, setCreateOpen] = useState(false);
 
     if (projects === undefined) {
@@ -52,7 +50,7 @@ export default function ProjectsDashboard() {
                                 key={project._id}
                                 name={project.name}
                                 canvas={project.canvas}
-                                onClick={() => router.push(`/${project._id}`)}
+                                projectId={project._id}
                             />
                         ))}
                     </div>

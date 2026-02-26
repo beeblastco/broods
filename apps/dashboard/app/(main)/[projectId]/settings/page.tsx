@@ -22,6 +22,9 @@ import {
     DialogTitle,
 } from "@/app/components/ui/dialog";
 
+/** Confirmation phrase required to delete an environment. */
+const DELETE_ENV_PHRASE = "delete this environment";
+
 /** Thin horizontal rule between settings sections. */
 function Divider() {
     return <hr className="border-border" />;
@@ -69,8 +72,8 @@ export default function SettingsPage() {
     const environments = useQuery(api.environment.list, { projectId: projectId });
 
     const updateProject = useMutation(api.project.update);
-    const deleteEnvironment = useMutation(api.environment.deleteById);
-    const deleteProject = useMutation(api.project.deleteById);
+    const deleteEnvironment = useMutation(api.environment.remove);
+    const deleteProject = useMutation(api.project.remove);
 
     // Editable general fields
     const [editName, setEditName] = useState("");
@@ -114,7 +117,6 @@ export default function SettingsPage() {
         }
     }
 
-    const DELETE_ENV_PHRASE = "delete this environment";
     const DELETE_PROJECT_PHRASE = `delete ${project?.name ?? ""}`;
 
     async function handleDeleteEnvironment() {

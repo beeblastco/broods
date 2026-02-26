@@ -99,6 +99,6 @@ if (!user) {
 }
 ```
 
-When create function name for update, create or list all the value from the database, use "create", "update", "list", "delete", "getById", "get..." instead of other name. If the function is using internally, add internal at the end, "createInternal, updateInternal, ..."
+When create function name for update, create or list all the value from the database, use "create", "update", "list", "remove", "getById", "get..." instead of other name. If the function is using internally, add internal at the end, "createInternal, updateInternal, ..."
 
 Only use custom function if the function is out of scope from the CRUD basic operation or doing multiple different database query or action.

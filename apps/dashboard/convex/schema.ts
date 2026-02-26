@@ -44,6 +44,12 @@ export const permissionModeEnum = v.union(
   v.literal("bypassPermissions"),
 );
 
+/** Deployment status enum for externally exposed agent endpoints. */
+export const deploymentStatusEnum = v.union(
+  v.literal("active"),
+  v.literal("revoked"),
+);
+
 /** Agent connection target type (matches canvas node types). */
 export const agentConnectionTargetTypeEnum = v.union(
   v.literal("agent"),
@@ -266,6 +272,19 @@ export const agentConnectionFields = {
   updatedAt: v.number(),
 };
 
+/** Agent deployment endpoint fields. */
+export const agentDeploymentFields = {
+  authId: v.string(),
+  agentConfigId: v.id("agentConfigs"),
+  endpointId: v.string(),
+  apiKey: v.optional(v.string()),
+  apiKeyHash: v.string(),
+  status: deploymentStatusEnum,
+  revokedAt: v.optional(v.number()),
+  updatedAt: v.number(),
+};
+
+
 export default defineSchema({
   users: defineTable(userFields)
     .index("by_authId", ["authId"]),
@@ -289,7 +308,8 @@ export default defineSchema({
   sessions: defineTable(sessionFields)
     .index("by_authId", ["authId"])
     .index("by_authId_and_isSubagent", ["authId", "isSubagent"])
-    .index("by_projectId", ["projectId"]),
+    .index("by_projectId", ["projectId"])
+    .index("by_configId", ["configId"]),
 
   messages: defineTable(messageFields)
     .index("by_sessionId", ["sessionId"])
@@ -314,5 +334,10 @@ export default defineSchema({
   agentConnections: defineTable(agentConnectionFields)
     .index("by_agentConfigId", ["agentConfigId"])
     .index("by_targetType_and_targetId", ["targetType", "targetId"]),
+
+  agentDeployments: defineTable(agentDeploymentFields)
+    .index("by_authId", ["authId"])
+    .index("by_endpointId", ["endpointId"])
+    .index("by_agentConfigId", ["agentConfigId"]),
 
 });
