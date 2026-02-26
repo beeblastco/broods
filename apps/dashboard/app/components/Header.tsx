@@ -14,23 +14,29 @@ export function Header() {
     const isProjectPage = Boolean(params.projectId);
 
     return (
-        <header className="flex shrink-0 items-center gap-3 border-b border-border px-5 py-2.5">
-            <Link href="/" className="text-base font-bold text-foreground hover:opacity-80 transition-opacity">Clonee</Link>
+        <header className={`flex h-12 shrink-0 items-center border-b ${isProjectPage ? "border-border" : "border-transparent"}`}>
+            <div className={`flex w-full items-center gap-3 ${isProjectPage ? "px-5" : "mx-auto max-w-5xl"}`}>
+                <Link href="/" className="text-base font-bold text-foreground hover:opacity-80 transition-opacity">Clonee</Link>
 
-            {isProjectPage && (
-                <>
-                    <div className="h-4 w-px bg-border" />
-                    <ProjectSelector />
-                    <div className="h-4 w-px bg-border" />
-                    <EnvironmentSelector />
-                </>
-            )}
+                {isProjectPage && (
+                    <>
+                        <div className="h-4 w-px bg-border" />
+                        <ProjectSelector />
+                        <div className="h-4 w-px bg-border" />
+                        <EnvironmentSelector />
+                    </>
+                )}
 
-            <div className="ml-auto flex items-center gap-3">
-                <NavLinks />
-                <div className="h-4 w-px bg-border" />
-                <CommandMenu />
-                <UserMenu />
+                <div className="ml-auto flex items-center gap-3 h-4">
+                    {isProjectPage && (
+                        <>
+                            <NavLinks />
+                            <div className="h-4 w-px bg-border" />
+                            <CommandMenu />
+                        </>
+                    )}
+                    <UserMenu />
+                </div>
             </div>
         </header>
     );

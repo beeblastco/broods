@@ -6,7 +6,7 @@ import { FileDown, FilePlus, GitBranch, LayoutTemplate } from "lucide-react";
 const SOURCE_OPTIONS = [
     { key: "github", label: "From GitHub", icon: GitBranch },
     { key: "template", label: "From templates", icon: LayoutTemplate },
-    { key: "import", label: "Import config file", icon: FileDown },
+    { key: "import", label: "Import config file .json, .yaml", icon: FileDown },
     { key: "create", label: "Create new config file", icon: FilePlus },
 ] as const;
 
