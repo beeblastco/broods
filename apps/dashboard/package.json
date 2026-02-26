@@ -6,11 +6,17 @@
     "dev": "bun --bun next dev",
     "build": "bun --bun next build",
     "start": "bun --bun next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "service:dev": "bun run service/index.ts",
+    "service:start": "bun run service/index.ts"
   },
   "dependencies": {
+    "@ai-sdk/anthropic": "^3.0.47",
+    "@ai-sdk/google": "^3.0.31",
+    "@ai-sdk/openai": "^3.0.34",
     "@shoojs/react": "^0.2.2",
     "@xyflow/react": "^12.10.1",
+    "ai": "^6.0.101",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "cmdk": "^1.1.1",
@@ -23,13 +29,15 @@
     "react": "19.2.3",
     "react-dom": "19.2.3",
     "tailwind-merge": "^3.5.0",
-    "unique-names-generator": "^4.7.1"
+    "unique-names-generator": "^4.7.1",
+    "zod": "^4.3.6"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4.2.1",
     "@types/node": "^20.19.33",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
+    "bun-types": "^1.3.10",
     "eslint": "^9.39.3",
     "eslint-config-next": "16.1.6",
     "shadcn": "^3.8.5",

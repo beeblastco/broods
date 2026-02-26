@@ -38,7 +38,7 @@ import {
 import { useQuery } from "convex/react";
 import { Bot, Database, FolderOpen, Wrench } from "lucide-react";
 import { useTheme } from "next-themes";
-import { Fragment, useCallback, useEffect, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 const nodeTypes = {
     agent: AgentNode,
@@ -54,6 +54,10 @@ const NODE_TEMPLATES = [
     { type: "tool", label: "Tool", icon: Wrench },
 ] as const;
 
+/** Static ReactFlow options hoisted outside components to avoid object churn on re-renders. */
+const FIT_VIEW_OPTIONS = { maxZoom: 1.5, padding: 1 } as const;
+const PRO_OPTIONS = { hideAttribution: true } as const;
+
 /** Inner canvas that consumes ReactFlow context. */
 function CanvasInner({ projectId }: { projectId: Id<"projects"> }) {
     const { environmentId } = useEnvironment();
@@ -63,6 +67,17 @@ function CanvasInner({ projectId }: { projectId: Id<"projects"> }) {
     );
     const { theme } = useTheme();
     const isDark = theme === "dark";
+
+    const defaultEdgeOptions = useMemo(
+        () => ({
+            style: {
+                stroke: isDark ? "rgba(255,255,255,0.15)" : "rgba(0,0,0,0.15)",
+                strokeWidth: 1.5,
+            },
+            animated: true,
+        }),
+        [isDark],
+    );
 
     const [nodes, setNodes, onNodesChange] = useNodesState([] as Node[]);
     const [edges, setEdges, onEdgesChange] = useEdgesState([] as Edge[]);
@@ -133,9 +148,8 @@ function CanvasInner({ projectId }: { projectId: Id<"projects"> }) {
         [],
     );
 
-    const onPaneClick = useCallback(() => {
-        setSelectedNode(null);
-    }, []);
+    const onPaneClick = useCallback(() => setSelectedNode(null), []);
+    const onOpenCreateConfig = useCallback(() => setConfigDialogOpen(true), []);
 
     const isEmpty = nodes.length === 0;
 
@@ -150,17 +164,11 @@ function CanvasInner({ projectId }: { projectId: Id<"projects"> }) {
             onPaneClick={onPaneClick}
             nodeTypes={nodeTypes}
             fitView
-            fitViewOptions={{ maxZoom: 1.5, padding: 1 }}
+            fitViewOptions={FIT_VIEW_OPTIONS}
             maxZoom={1.5}
             colorMode={isDark ? "dark" : "light"}
-            proOptions={{ hideAttribution: true }}
-            defaultEdgeOptions={{
-                style: {
-                    stroke: isDark ? "rgba(255,255,255,0.15)" : "rgba(0,0,0,0.15)",
-                    strokeWidth: 1.5,
-                },
-                animated: true,
-            }}
+            proOptions={PRO_OPTIONS}
+            defaultEdgeOptions={defaultEdgeOptions}
         >
             <Background gap={24} size={1.5} color={isDark ? "rgba(255,255,255,0.08)" : "rgba(0,0,0,0.08)"} />
             <Panel position="top-left">
@@ -211,16 +219,16 @@ function CanvasInner({ projectId }: { projectId: Id<"projects"> }) {
 
             {isEmpty && (
                 <EmptyCanvasGuide
-                    onCreateConfig={() => setConfigDialogOpen(true)}
+                    onCreateConfig={onOpenCreateConfig}
                 />
             )}
 
-            <NodeSidePanel node={selectedNode} onClose={() => setSelectedNode(null)} />
+            <NodeSidePanel node={selectedNode} onClose={onPaneClick} />
 
             <AgentSourcePickerDialog
                 open={sourcePickerOpen}
                 onOpenChange={setSourcePickerOpen}
-                onCreateNew={() => setConfigDialogOpen(true)}
+                onCreateNew={onOpenCreateConfig}
             />
 
             <CreateAgentConfigDialog

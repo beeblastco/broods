@@ -29,7 +29,7 @@ export function BaseNode({
     const { color, text } = statusConfig[data.status ?? "idle"];
 
     return (
-        <div className="min-w-45 min-h-24 rounded-md border border-border bg-card transition-[border-color,box-shadow] duration-200 hover:border-border/60 hover:shadow-md">
+        <div className="min-w-45 min-h-24 rounded-md border border-border bg-card transition-[border-color,box-shadow] duration-200 hover:border-foreground/25 hover:shadow-md">
             <Handle
                 type="target"
                 position={Position.Top}

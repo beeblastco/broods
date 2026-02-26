@@ -5,7 +5,6 @@ import { useEffect, useState } from "react";
 import { useMutation } from "convex/react";
 import { useRouter } from "next/navigation";
 import { api } from "@/convex/_generated/api";
-import { uniqueNamesGenerator, adjectives, animals, NumberDictionary } from "unique-names-generator";
 import { Button } from "@/app/components/ui/button";
 import { Input } from "@/app/components/ui/input";
 import { Label } from "@/app/components/ui/label";
@@ -18,10 +17,14 @@ import {
     DialogTitle,
 } from "@/app/components/ui/dialog";
 
-const numberDict = NumberDictionary.generate({ min: 100, max: 999 });
-
 /** Generate a random project name like "bold-panda-427". */
-export function randomProjectName(): string {
+export async function randomProjectName(): Promise<string> {
+    // Load the name dictionaries only when the dialog is opened.
+    const { uniqueNamesGenerator, adjectives, animals, NumberDictionary } = await import(
+        "unique-names-generator"
+    );
+    const numberDict = NumberDictionary.generate({ min: 100, max: 999 });
+
     return uniqueNamesGenerator({
         dictionaries: [adjectives, animals, numberDict],
         separator: "-",
@@ -45,7 +48,25 @@ export function CreateProjectDialog({
     const [isCreating, setIsCreating] = useState(false);
 
     useEffect(() => {
-        if (open) setName(randomProjectName());
+        if (!open) return;
+
+        let isCancelled = false;
+
+        randomProjectName()
+            .then((generatedName) => {
+                if (!isCancelled) {
+                    setName(generatedName);
+                }
+            })
+            .catch(() => {
+                if (!isCancelled) {
+                    setName("new-project");
+                }
+            });
+
+        return () => {
+            isCancelled = true;
+        };
     }, [open]);
 
     function handleOpenChange(next: boolean) {
