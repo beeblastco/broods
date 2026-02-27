@@ -65,6 +65,14 @@ export const create = mutation({
       .replace(/[^a-z0-9]+/g, "-")
       .replace(/^-|-$/g, "");
 
+    const existingSlug = await ctx.db
+      .query("projects")
+      .withIndex("by_slug", (q) => q.eq("slug", slug))
+      .first();
+    if (existingSlug) {
+      throw new Error(`A project with slug "${slug}" already exists`);
+    }
+
     const projectId = await ctx.db.insert("projects", {
       authId: user.subject,
       name: name,
@@ -149,6 +157,14 @@ export const update = mutation({
         .toLowerCase()
         .replace(/[^a-z0-9]+/g, "-")
         .replace(/^-|-$/g, "");
+
+      const existingSlug = await ctx.db
+        .query("projects")
+        .withIndex("by_slug", (q) => q.eq("slug", patch.slug!))
+        .first();
+      if (existingSlug && existingSlug._id !== projectId) {
+        throw new Error(`A project with slug "${patch.slug}" already exists`);
+      }
     }
 
     if (description !== undefined) {

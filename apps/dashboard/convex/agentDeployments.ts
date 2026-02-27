@@ -7,7 +7,7 @@ import { mutation, query } from "./_generated/server";
 import { agentConfigFields, agentDeploymentFields } from "./schema";
 import { assertGatewaySecret } from "./model/gateway";
 import { createDeploymentForConfig } from "./model/agentDeployment";
-import { verifyAgentConfigOwnership } from "./model/ownership";
+import { verifyAgentConfigOwnership, verifyDeploymentOwnership } from "./model/ownership";
 
 /** Validator for deployment records with system fields. */
 const agentDeploymentValidator = v.object(
@@ -131,10 +131,7 @@ export const revoke = mutation({
       throw new Error("User not found or not authenticated");
     }
 
-    const deployment = await ctx.db.get(deploymentId);
-    if (!deployment || deployment.authId !== user.subject) {
-      throw new Error("Deployment not found or access denied");
-    }
+    await verifyDeploymentOwnership(ctx, deploymentId, user.subject);
 
     await ctx.db.patch(deploymentId, {
       status: "revoked",

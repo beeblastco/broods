@@ -99,3 +99,27 @@ export async function verifyEnvironmentOwnership(
 
   return environment;
 }
+
+/**
+ * Verify deployment ownership and return the deployment record.
+ * @param ctx Query or mutation context
+ * @param deploymentId Deployment document ID
+ * @param authId User's authentication ID
+ * @returns Deployment document
+ * @throws Error if deployment not found or user doesn't own it
+ */
+export async function verifyDeploymentOwnership(
+  ctx: QueryCtx | MutationCtx,
+  deploymentId: Id<"agentDeployments">,
+  authId: string,
+): Promise<Doc<"agentDeployments">> {
+  const deployment = await ctx.db.get(deploymentId);
+  if (!deployment) {
+    throw new Error("Deployment not found");
+  }
+  if (deployment.authId !== authId) {
+    throw new Error("Access denied");
+  }
+
+  return deployment;
+}

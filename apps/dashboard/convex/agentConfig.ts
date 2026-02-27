@@ -7,7 +7,7 @@ import { internalQuery, mutation, query } from "./_generated/server";
 import { assertGatewaySecret } from "./model/gateway";
 import { resolveConnectedSubAgents } from "./model/agentConfig";
 import { agentConfigFields } from "./schema";
-import { verifyProjectOwnership } from "./model/ownership";
+import { verifyAgentConfigOwnership, verifyProjectOwnership } from "./model/ownership";
 
 /** Bright color palette for node icons. */
 const BRIGHT_COLORS = [
@@ -181,10 +181,7 @@ export const update = mutation({
       throw new Error("User not found or not authenticated");
     }
 
-    const config = await ctx.db.get(configId);
-    if (!config || config.authId !== user.subject) {
-      throw new Error("Agent config not found or access denied");
-    }
+    const config = await verifyAgentConfigOwnership(ctx, configId, user.subject);
 
     const patch: Record<string, unknown> = { updatedAt: Date.now() };
     if (name !== undefined) patch.name = name;
@@ -244,10 +241,7 @@ export const remove = mutation({
       throw new Error("User not found or not authenticated");
     }
 
-    const config = await ctx.db.get(configId);
-    if (!config || config.authId !== user.subject) {
-      throw new Error("Agent config not found or access denied");
-    }
+    const config = await verifyAgentConfigOwnership(ctx, configId, user.subject);
 
     // Delete sessions and their nested data (messages, tasks, toolApprovals)
     const sessions = await ctx.db

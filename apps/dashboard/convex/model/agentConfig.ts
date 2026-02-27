@@ -29,7 +29,7 @@ export async function resolveConnectedSubAgents(
   const resolved = await Promise.all(
     agentConnections.map(async (connection) => {
       const configId = connection.targetId as Id<"agentConfigs">;
-      const config = await ctx.db.get(configId).catch(() => null);
+      const config = await ctx.db.get(configId);
 
       if (!config || config.authId !== authId || !config.isSubAgent) {
         return null;
