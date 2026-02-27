@@ -50,6 +50,7 @@ export const deploymentStatusEnum = v.union(
   v.literal("revoked"),
 );
 
+
 /** Agent connection target type (matches canvas node types). */
 export const agentConnectionTargetTypeEnum = v.union(
   v.literal("agent"),
@@ -283,6 +284,7 @@ export const agentDeploymentFields = {
   authId: v.string(),
   agentConfigId: v.id("agentConfigs"),
   endpointId: v.string(),
+  environmentSlug: v.optional(v.string()),
   apiKey: v.optional(v.string()),
   apiKeyHash: v.string(),
   status: deploymentStatusEnum,

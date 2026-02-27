@@ -8,7 +8,7 @@ import {
     InputGroupTextarea,
 } from "@/app/components/ui/input-group";
 import type { Doc } from "@/convex/_generated/dataModel";
-import { useAgentChat } from "@/hooks/useAgentChat";
+import { useAgentChat } from "@/app/hooks/useAgentChat";
 import type { UIMessage } from "ai";
 import { ArrowUp, Loader2, RotateCcw } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
@@ -36,6 +36,7 @@ export function TestTab({
             endpointId={activeDeployment.endpointId}
             apiKey={activeDeployment.apiKey}
             nodeColor={nodeColor}
+            environmentSlug={activeDeployment.environmentSlug}
         />
     );
 }
@@ -45,14 +46,17 @@ function ChatWindow({
     endpointId,
     apiKey,
     nodeColor,
+    environmentSlug,
 }: {
     endpointId: string;
     apiKey: string;
     nodeColor?: string;
+    environmentSlug?: string;
 }) {
     const { messages, status, error, sendMessage, resetChat } = useAgentChat({
         endpointId: endpointId,
         apiKey: apiKey,
+        environmentSlug: environmentSlug,
     });
     const [input, setInput] = useState("");
     const bottomRef = useRef<HTMLDivElement>(null);

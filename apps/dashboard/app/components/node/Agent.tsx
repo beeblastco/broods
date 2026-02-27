@@ -7,12 +7,12 @@ import type { NodeProps } from "@xyflow/react";
 const DEFAULT_AGENT_COLOR = "rgb(168, 85, 247)";
 
 /** Agent node representing an AI agent on the canvas. */
-export function AgentNode({ data }: NodeProps) {
+export function AgentNode({ id, data }: NodeProps) {
     const nodeData = data as BaseNodeData;
     const withColor: BaseNodeData = {
         ...nodeData,
         properties: nodeData.properties ?? { color: DEFAULT_AGENT_COLOR },
     };
 
-    return <BaseNode data={withColor} icon={null} />;
+    return <BaseNode id={id} nodeType="agent" data={withColor} icon={null} />;
 }

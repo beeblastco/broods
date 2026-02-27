@@ -9,9 +9,11 @@ import { useParams } from "next/navigation";
 // Split project-only controls into separate chunks.
 const ProjectHeaderLeft = dynamic(
     () => import("@/app/components/header/ProjectHeaderLeft").then((mod) => mod.ProjectHeaderLeft),
+    { loading: () => <div className="flex items-center gap-3 h-4" /> },
 );
 const ProjectHeaderRight = dynamic(
     () => import("@/app/components/header/ProjectHeaderRight").then((mod) => mod.ProjectHeaderRight),
+    { loading: () => <div className="flex items-center gap-1 h-4" /> },
 );
 
 export function Header() {

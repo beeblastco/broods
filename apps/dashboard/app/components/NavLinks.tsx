@@ -4,6 +4,7 @@
 import { useParams, usePathname, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { cn } from "@/lib/utils";
+import { Suspense } from "react";
 
 const NAV_ITEMS = [
     { segment: "", label: "Architecture" },
@@ -11,8 +12,8 @@ const NAV_ITEMS = [
     { segment: "/settings", label: "Settings" },
 ] as const;
 
-/** Horizontal nav links styled as tab-like buttons. */
-export function NavLinks() {
+/** Inner nav links that read search params. */
+function NavLinksInner() {
     const pathname = usePathname();
     const params = useParams<{ projectId?: string }>();
     const searchParams = useSearchParams();
@@ -49,5 +50,14 @@ export function NavLinks() {
                 );
             })}
         </nav>
+    );
+}
+
+/** Horizontal nav links wrapped in Suspense for useSearchParams. */
+export function NavLinks() {
+    return (
+        <Suspense fallback={<nav className="flex items-center gap-1 h-8" />}>
+            <NavLinksInner />
+        </Suspense>
     );
 }

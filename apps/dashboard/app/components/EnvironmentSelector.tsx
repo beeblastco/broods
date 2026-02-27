@@ -6,7 +6,7 @@ import { useMutation, useQuery } from "convex/react";
 import { useParams } from "next/navigation";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
-import { useEnvironment } from "@/app/lib/environment-context";
+import { useEnvironment } from "@/app/hooks/useEnvironment";
 import { ChevronDown, Circle, Copy, Plus } from "lucide-react";
 import {
     DropdownMenu,
@@ -28,7 +28,6 @@ import { Button } from "@/app/components/ui/button";
 import { Input } from "@/app/components/ui/input";
 import { Label } from "@/app/components/ui/label";
 import { cn } from "@/lib/utils";
-import { selectionCard } from "@/app/lib/ui-tokens";
 
 /** Color dot indicating environment type: green for production, purple for others. */
 export function EnvironmentDot({ isDefault }: { isDefault: boolean }) {
@@ -180,7 +179,7 @@ export function EnvironmentSelector() {
                                         className={cn(
                                             "flex items-start gap-3 rounded-lg border p-3 text-left transition-colors",
                                             createMode === "empty"
-                                                ? selectionCard.active
+                                                ? "border-cyan-500 bg-cyan-500/10"
                                                 : "border-border hover:bg-accent/50",
                                         )}
                                     >
@@ -199,7 +198,7 @@ export function EnvironmentSelector() {
                                         className={cn(
                                             "flex items-start gap-3 rounded-lg border p-3 text-left transition-colors",
                                             createMode === "duplicate"
-                                                ? selectionCard.active
+                                                ? "border-cyan-500 bg-cyan-500/10"
                                                 : "border-border hover:bg-accent/50",
                                         )}
                                     >

@@ -43,6 +43,7 @@ export function CreateAgentConfigDialog({
     const [credentials, setCredentials] = useState<{
         endpointId: string;
         rawApiKey: string;
+        environmentSlug?: string;
     } | null>(null);
     const [copiedField, setCopiedField] = useState<string | null>(null);
 
@@ -92,7 +93,9 @@ export function CreateAgentConfigDialog({
 
     // Show credentials view after successful creation
     if (credentials) {
-        const curlCommand = `curl -X POST http://localhost:8080/v1/agents/${credentials.endpointId} \\\n  -H "Authorization: Bearer ${credentials.rawApiKey}" \\\n  -H "Content-Type: application/json" \\\n  -d '{"message":"hello","stream":false}'`;
+        const gatewayUrl = process.env.NEXT_PUBLIC_AGENT_GATEWAY_URL ?? "http://localhost:8080";
+        const envPrefix = credentials.environmentSlug ? `/${credentials.environmentSlug}` : "";
+        const curlCommand = `curl -X POST ${gatewayUrl}/v1/agents${envPrefix}/${credentials.endpointId} \\\n  -H "Authorization: Bearer ${credentials.rawApiKey}" \\\n  -H "Content-Type: application/json" \\\n  -d '{"message":"hello","stream":false}'`;
 
         return (
             <Dialog open={open} onOpenChange={() => handleClose()}>

@@ -1,6 +1,6 @@
 "use client";
 
-/** Settings tab with danger zone for agent deletion. */
+/** Settings tab with danger zone for node deletion. */
 import { useState } from "react";
 import { Button } from "@/app/components/ui/button";
 import { Input } from "@/app/components/ui/input";
@@ -13,20 +13,53 @@ import {
     DialogHeader,
     DialogTitle,
 } from "@/app/components/ui/dialog";
-import type { Doc } from "@/convex/_generated/dataModel";
+
+type NodeType = "agent" | "database" | "tool" | "workspace";
+
+/** Delete warning copy per node type. */
+const DELETE_DESCRIPTIONS: Record<NodeType, { summary: string; detail: string }> = {
+    agent: {
+        summary: "Permanently delete this agent and all its data.",
+        detail: "All sessions, messages, tasks, deployments, and connections for this agent will be deleted forever.",
+    },
+    database: {
+        summary: "Delete the database configuration and all associated data.",
+        detail: "The database connection config, all auto-populated sessions, and messages from this database will be deleted permanently.",
+    },
+    tool: {
+        summary: "Delete the tool configuration.",
+        detail: "Only the tool configuration will be removed. This will not interfere with any existing code or tool logic.",
+    },
+    workspace: {
+        summary: "Delete the workspace and all its contents.",
+        detail: "All workspace data, files, and folders will be deleted permanently.",
+    },
+};
+
+/** Capitalised label for each node type. */
+const NODE_TYPE_LABELS: Record<NodeType, string> = {
+    agent: "agent",
+    database: "database",
+    tool: "tool",
+    workspace: "workspace",
+};
 
 export function SettingsTab({
-    agentConfig,
+    nodeType,
+    nodeName,
     onDelete,
 }: {
-    agentConfig: Doc<"agentConfigs"> | null | undefined;
+    nodeType: NodeType;
+    nodeName: string;
     onDelete: () => Promise<void>;
 }) {
     const [deleteOpen, setDeleteOpen] = useState(false);
     const [confirmPhrase, setConfirmPhrase] = useState("");
     const [isDeleting, setIsDeleting] = useState(false);
 
-    const deletePhrase = `delete ${agentConfig?.name ?? ""}`;
+    const deletePhrase = `delete ${nodeName}`;
+    const descriptions = DELETE_DESCRIPTIONS[nodeType];
+    const typeLabel = NODE_TYPE_LABELS[nodeType];
 
     async function handleDelete() {
         if (confirmPhrase !== deletePhrase) return;
@@ -48,7 +81,7 @@ export function SettingsTab({
                         <div>
                             <p className="text-xs font-semibold text-destructive">Danger Zone</p>
                             <p className="mt-0.5 text-[11px] text-muted-foreground">
-                                Permanently delete this agent and all its data.
+                                {descriptions.summary}
                             </p>
                         </div>
                         <Button
@@ -78,32 +111,29 @@ export function SettingsTab({
             >
                 <DialogContent className="sm:max-w-sm">
                     <DialogHeader>
-                        <DialogTitle>Delete agent</DialogTitle>
+                        <DialogTitle>Delete {typeLabel}</DialogTitle>
                         <DialogDescription asChild>
                             <div className="grid gap-3 text-sm text-muted-foreground">
                                 <p>
                                     This will permanently delete{" "}
                                     <span className="font-semibold text-foreground">
-                                        {agentConfig?.name}
+                                        {nodeName}
                                     </span>{" "}
                                     and cannot be undone.
                                 </p>
-                                <p>
-                                    All sessions, messages, tasks, deployments, and connections
-                                    for this agent will be deleted forever.
-                                </p>
+                                <p>{descriptions.detail}</p>
                             </div>
                         </DialogDescription>
                     </DialogHeader>
                     <div className="grid gap-3 py-2">
-                        <Label htmlFor="confirm-delete-agent" className="grid gap-1">
+                        <Label htmlFor="confirm-delete-node" className="grid gap-1">
                             <span>Type the following to confirm</span>
                             <span className="font-mono font-medium text-foreground break-all">
                                 {deletePhrase}
                             </span>
                         </Label>
                         <Input
-                            id="confirm-delete-agent"
+                            id="confirm-delete-node"
                             value={confirmPhrase}
                             onChange={(e) => setConfirmPhrase(e.target.value)}
                             placeholder={deletePhrase}

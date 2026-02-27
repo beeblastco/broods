@@ -24,6 +24,7 @@ export type ExecuteDeploymentResult = {
 
 export type DeploymentExecutionOptions = {
   endpointId: string;
+  environmentSlug?: string;
   apiKey: string;
   message?: string;
   sessionId?: string;
@@ -165,7 +166,7 @@ export function composeSystemPrompt(baseSystemPrompt?: string): string | undefin
  * Shared setup for both streaming and non-streaming execution.
  */
 async function prepareExecution(options: DeploymentExecutionOptions): Promise<ExecutionContext> {
-  const { endpointId, apiKey, message, sessionId } = options;
+  const { endpointId, environmentSlug, apiKey, message, sessionId } = options;
 
   if (!message && !sessionId) {
     throw new Error("Provide message or sessionId");
@@ -177,6 +178,7 @@ async function prepareExecution(options: DeploymentExecutionOptions): Promise<Ex
   // Validate deployment and API key
   const resolved = await client.query(api.agentDeployments.getByEndpointIdForGateway, {
     endpointId: endpointId,
+    environmentSlug: environmentSlug,
     gatewaySecret: gatewaySecret,
   });
   if (!resolved) {

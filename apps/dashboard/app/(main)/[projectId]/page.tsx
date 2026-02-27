@@ -1,9 +1,15 @@
 "use client";
 
 /** Architecture page — renders the canvas for the current project. */
-import { use } from "react";
-import { Canvas } from "@/app/components/canvas/Canvas";
 import type { Id } from "@/convex/_generated/dataModel";
+import dynamic from "next/dynamic";
+import { use } from "react";
+
+// Defer the entire ReactFlow bundle until the user navigates to a project.
+const Canvas = dynamic(
+    () => import("@/app/components/canvas/Canvas").then((mod) => mod.Canvas),
+    { loading: () => <div className="flex h-full items-center justify-center"><p className="text-sm text-muted-foreground">Loading canvas...</p></div> },
+);
 
 export default function ArchitecturePage({
     params,

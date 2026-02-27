@@ -3,7 +3,8 @@
  */
 import { withSystemFields } from "convex-helpers/validators";
 import { v } from "convex/values";
-import { mutation, query } from "./_generated/server";
+import { internalMutation, mutation, query } from "./_generated/server";
+import { internal } from "./_generated/api";
 import {
   canvasEdgeValidator,
   canvasNodeValidator,
@@ -210,7 +211,7 @@ export const listWithPreview = query({
 });
 
 /**
- * Permanently delete a project and all related data (configs, deployments, connections, layouts, environments).
+ * Delete a project and schedule background cleanup of all related data.
  * @param projectId The project to delete
  * @throws Error if user is not authenticated or does not own the project
  */
@@ -230,14 +231,72 @@ export const remove = mutation({
 
     await verifyProjectOwnership(ctx, projectId, user.subject);
 
-    // Delete all agentConfigs for this project
+    // Delete the project record immediately so UI reflects removal
+    await ctx.db.delete(projectId);
+
+    // Schedule background cleanup for all related data
+    await ctx.scheduler.runAfter(0, internal.project.removeCleanupInternal, {
+      projectId: projectId,
+    });
+
+    return null;
+  },
+});
+
+/**
+ * Background cleanup for all data related to a deleted project.
+ * Deletes sessions (with messages, tasks, toolApprovals), agent configs (with deployments, connections), canvas layouts, and environments.
+ * @param projectId The deleted project ID
+ */
+export const removeCleanupInternal = internalMutation({
+  args: {
+    projectId: v.id("projects"),
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const { projectId } = args;
+
+    // Delete all sessions for this project and their nested data
+    const sessions = await ctx.db
+      .query("sessions")
+      .withIndex("by_projectId", (q) => q.eq("projectId", projectId))
+      .collect();
+
+    for (const session of sessions) {
+      const messages = await ctx.db
+        .query("messages")
+        .withIndex("by_sessionId", (q) => q.eq("sessionId", session._id))
+        .collect();
+      for (const msg of messages) {
+        await ctx.db.delete(msg._id);
+      }
+
+      const tasks = await ctx.db
+        .query("tasks")
+        .withIndex("by_sessionId", (q) => q.eq("sessionId", session._id))
+        .collect();
+      for (const task of tasks) {
+        await ctx.db.delete(task._id);
+      }
+
+      const approvals = await ctx.db
+        .query("toolApprovals")
+        .withIndex("by_sessionId", (q) => q.eq("sessionId", session._id))
+        .collect();
+      for (const approval of approvals) {
+        await ctx.db.delete(approval._id);
+      }
+
+      await ctx.db.delete(session._id);
+    }
+
+    // Delete all agent configs and their related data
     const configs = await ctx.db
       .query("agentConfigs")
       .withIndex("by_projectId", (q) => q.eq("projectId", projectId))
       .collect();
 
     for (const config of configs) {
-      // Delete deployments for this config
       const deployments = await ctx.db
         .query("agentDeployments")
         .withIndex("by_agentConfigId", (q) => q.eq("agentConfigId", config._id))
@@ -246,7 +305,6 @@ export const remove = mutation({
         await ctx.db.delete(dep._id);
       }
 
-      // Delete connections for this config
       const connections = await ctx.db
         .query("agentConnections")
         .withIndex("by_agentConfigId", (q) => q.eq("agentConfigId", config._id))
@@ -258,12 +316,11 @@ export const remove = mutation({
       await ctx.db.delete(config._id);
     }
 
-    // Delete all canvasLayouts for this project
+    // Delete all canvas layouts for this project
     const layouts = await ctx.db
       .query("canvasLayouts")
       .withIndex("by_projectId", (q) => q.eq("projectId", projectId))
       .collect();
-
     for (const layout of layouts) {
       await ctx.db.delete(layout._id);
     }
@@ -273,12 +330,9 @@ export const remove = mutation({
       .query("environments")
       .withIndex("by_projectId", (q) => q.eq("projectId", projectId))
       .collect();
-
     for (const env of environments) {
       await ctx.db.delete(env._id);
     }
-
-    await ctx.db.delete(projectId);
 
     return null;
   },

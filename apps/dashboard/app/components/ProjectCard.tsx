@@ -15,6 +15,7 @@ import { useRouter } from "next/navigation";
 // Defer loading React Flow preview code until cards render on the client.
 const CanvasPreview = dynamic(
     () => import("@/app/components/CanvasPreview").then((mod) => mod.CanvasPreview),
+    { loading: () => <div className="flex h-full w-full items-center justify-center"><p className="text-xs text-muted-foreground/40">Loading preview...</p></div> },
 );
 
 type CanvasData = {

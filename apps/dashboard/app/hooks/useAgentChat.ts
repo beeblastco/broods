@@ -15,13 +15,16 @@ type ChatStatus = "ready" | "streaming" | "error";
  * Streams chat messages from the agent gateway and maintains conversation state.
  * @param endpointId Deployment endpoint ID
  * @param apiKey API key for bearer authentication
+ * @param environmentSlug Optional environment slug for the URL path prefix
  */
 export function useAgentChat({
     endpointId,
     apiKey,
+    environmentSlug,
 }: {
     endpointId: string;
     apiKey: string;
+    environmentSlug?: string;
 }) {
     const [messages, setMessages] = useState<UIMessage[]>([]);
     const [status, setStatus] = useState<ChatStatus>("ready");
@@ -52,8 +55,9 @@ export function useAgentChat({
             abortRef.current = controller;
 
             try {
+                const envPrefix = environmentSlug ? `/${environmentSlug}` : "";
                 const response = await fetch(
-                    `${gatewayUrl}/v1/agents/${endpointId}`,
+                    `${gatewayUrl}/v1/agents${envPrefix}/${endpointId}`,
                     {
                         method: "POST",
                         headers: {
@@ -131,7 +135,7 @@ export function useAgentChat({
                 setStatus("error");
             }
         },
-        [endpointId, apiKey, gatewayUrl],
+        [endpointId, apiKey, environmentSlug, gatewayUrl],
     );
 
     /** Reset chat history and server session for a new conversation. */

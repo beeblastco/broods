@@ -26,11 +26,22 @@ const server = Bun.serve({
       return jsonResponse(405, { error: "Method not allowed" });
     }
 
-    const endpointMatch = url.pathname.match(/^\/v1\/agents\/([^/]+)$/);
-    if (!endpointMatch) {
+    // Match /v1/agents/{slug}/{endpointId} or /v1/agents/{endpointId}
+    const slugMatch = url.pathname.match(/^\/v1\/agents\/([^/]+)\/([^/]+)$/);
+    const directMatch = url.pathname.match(/^\/v1\/agents\/([^/]+)$/);
+
+    let endpointId: string;
+    let environmentSlug: string | undefined;
+
+    if (slugMatch) {
+      environmentSlug = slugMatch[1];
+      endpointId = slugMatch[2];
+    } else if (directMatch) {
+      endpointId = directMatch[1];
+      environmentSlug = undefined;
+    } else {
       return jsonResponse(404, { error: "Not found" });
     }
-    const endpointId = endpointMatch[1];
 
     const bearerToken = parseBearerToken(request.headers.get("authorization"));
     if (!bearerToken) {
@@ -53,6 +64,7 @@ const server = Bun.serve({
       try {
         const { result, sessionId, taskId } = await streamDeployment({
           endpointId: endpointId,
+          environmentSlug: environmentSlug,
           apiKey: bearerToken,
           message: parsed.value.message,
           sessionId: parsed.value.sessionId,
@@ -77,6 +89,7 @@ const server = Bun.serve({
     try {
       const result = await executeDeployment({
         endpointId: endpointId,
+        environmentSlug: environmentSlug,
         apiKey: bearerToken,
         message: parsed.value.message,
         sessionId: parsed.value.sessionId,
