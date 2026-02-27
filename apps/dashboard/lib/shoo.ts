@@ -2,20 +2,21 @@
 import type { StartSignInOptions } from "@shoojs/react";
 import { createShooConvexAuth } from "@shoojs/react";
 
-let _auth: ReturnType<typeof createShooConvexAuth> | null = null;
+type ShooConvexAuth = ReturnType<typeof createShooConvexAuth>;
 
-function getAuth() {
-  if (!_auth) {
-    _auth = createShooConvexAuth({
+let shooConvexAuth: ShooConvexAuth | null = null;
+
+function getShooConvexAuth(): ShooConvexAuth {
+  if (!shooConvexAuth) {
+    shooConvexAuth = createShooConvexAuth({
       callbackPath: "/auth/callback",
       requestPii: true,
     });
   }
-
-  return _auth;
+  return shooConvexAuth;
 }
 
-/** Hook for ConvexProviderWithAuth — returns loading state during SSR. */
+/** Hook passed to ConvexProviderWithAuth. */
 export function useAuth() {
   if (typeof window === "undefined") {
     return {
@@ -24,16 +25,15 @@ export function useAuth() {
       fetchAccessToken: async () => null,
     };
   }
-
-  return getAuth().useAuth();
+  return getShooConvexAuth().useAuth();
 }
 
 /** Redirect to Shoo sign-in. */
 export function signIn(opts?: StartSignInOptions) {
-  return getAuth().signIn(opts);
+  return getShooConvexAuth().signIn(opts);
 }
 
 /** Clear identity and reload page. */
 export function signOut() {
-  return getAuth().signOut();
+  return getShooConvexAuth().signOut();
 }
