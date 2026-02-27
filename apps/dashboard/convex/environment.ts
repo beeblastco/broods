@@ -8,6 +8,7 @@ import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import { environmentFields } from "./schema";
 import { verifyProjectOwnership, verifyEnvironmentOwnership } from "./model/ownership";
+import { createDeploymentForConfig } from "./model/agentDeployment";
 import type { Id } from "./_generated/dataModel";
 
 /** Validator for environment records with system fields. */
@@ -172,6 +173,7 @@ export const create = mutation({
         .collect();
 
       const configIdMap = new Map<Id<"agentConfigs">, Id<"agentConfigs">>();
+      const environmentSlug = name.toLowerCase().replace(/\s+/g, "-");
 
       for (const config of sourceConfigs) {
         const newConfigId = await ctx.db.insert("agentConfigs", {
@@ -195,6 +197,9 @@ export const create = mutation({
         });
 
         configIdMap.set(config._id, newConfigId);
+
+        // Auto-deploy the duplicated config with the new environment's slug
+        await createDeploymentForConfig(ctx, user.subject, newConfigId, environmentSlug);
       }
 
       // Copy canvas layout from source environment, remapping agentConfigIds

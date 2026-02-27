@@ -1,6 +1,7 @@
 "use client";
 
 import { Handle, Position, useStore } from "@xyflow/react";
+import { useCallback } from "react";
 
 export type BaseNodeData = {
     label: string;
@@ -19,18 +20,67 @@ const zoomSelector = (state: { transform: [number, number, number] }) => state.t
 
 /** Shared node shell with handles, label, and status indicator. */
 export function BaseNode({
+    id,
+    nodeType,
     data,
     icon,
 }: {
+    id: string;
+    nodeType: string;
     data: BaseNodeData;
     icon: React.ReactNode;
 }) {
     const zoom = useStore(zoomSelector);
     const scale = Math.min(Math.max(1 / Math.sqrt(zoom), 0.9), 1.2);
-    const { color, text } = statusConfig[data.status ?? "idle"];
+
+    const isConnectedToAgent = useStore(
+        useCallback(
+            (state: Record<string, unknown>) => {
+                if (nodeType === "agent") return true;
+                const edges = state.edges as Array<{ source: string; target: string }>;
+                const nodeLookup = state.nodeLookup as Map<string, { type?: string }>;
+                if (!edges || !nodeLookup) return false;
+
+                // Only check edges that involve this node
+                for (const e of edges) {
+                    if (e.source !== id && e.target !== id) continue;
+                    const otherNodeId = e.source === id ? e.target : e.source;
+                    const otherNode = nodeLookup.get(otherNodeId);
+                    if (otherNode?.type === "agent") return true;
+                }
+
+                return false;
+            },
+            [id, nodeType],
+        ),
+    );
+
+    let statusColor: string;
+    let statusText: string;
+
+    if (nodeType === "database") {
+        if (isConnectedToAgent) {
+            statusColor = "bg-emerald-500";
+            statusText = "Connected";
+        } else {
+            statusColor = "bg-red-400";
+            statusText = "Disconnected";
+        }
+    } else if (!isConnectedToAgent) {
+        statusColor = "bg-red-400";
+        statusText = "Unconnected";
+    } else {
+        const config = statusConfig[data.status ?? "idle"];
+        statusColor = config.color;
+        statusText = config.text;
+    }
+
+    const borderClass = !isConnectedToAgent
+        ? "border-red-400/40 hover:border-red-400/60"
+        : "border-border hover:border-foreground/25";
 
     return (
-        <div className="min-w-45 min-h-24 flex flex-col rounded-md border border-border bg-card transition-[border-color,box-shadow] duration-200 hover:border-foreground/25 hover:shadow-md">
+        <div className={`min-w-45 min-h-24 flex flex-col rounded-md border bg-card transition-[border-color,box-shadow] duration-200 hover:shadow-md ${borderClass}`}>
             <Handle
                 type="target"
                 position={Position.Top}
@@ -55,8 +105,8 @@ export function BaseNode({
             </div>
 
             <div className="mt-auto px-3 pb-2.5 flex items-center gap-1.5">
-                <div className={`h-1.5 w-1.5 rounded-full ${color}`} />
-                <span className="text-[11px] text-muted-foreground">{text}</span>
+                <div className={`h-1.5 w-1.5 rounded-full ${statusColor}`} />
+                <span className="text-[11px] text-muted-foreground">{statusText}</span>
             </div>
 
             <Handle

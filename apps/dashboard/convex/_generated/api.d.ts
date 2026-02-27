@@ -15,6 +15,7 @@ import type * as canvas from "../canvas.js";
 import type * as environment from "../environment.js";
 import type * as messages from "../messages.js";
 import type * as model_agentConfig from "../model/agentConfig.js";
+import type * as model_agentDeployment from "../model/agentDeployment.js";
 import type * as model_gateway from "../model/gateway.js";
 import type * as model_messages from "../model/messages.js";
 import type * as model_ownership from "../model/ownership.js";
@@ -39,6 +40,7 @@ declare const fullApi: ApiFromModules<{
   environment: typeof environment;
   messages: typeof messages;
   "model/agentConfig": typeof model_agentConfig;
+  "model/agentDeployment": typeof model_agentDeployment;
   "model/gateway": typeof model_gateway;
   "model/messages": typeof model_messages;
   "model/ownership": typeof model_ownership;

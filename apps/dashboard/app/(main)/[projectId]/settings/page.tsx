@@ -6,7 +6,7 @@ import { useParams, useRouter } from "next/navigation";
 import { useMutation, useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
-import { useEnvironment } from "@/app/lib/environment-context";
+import { useEnvironment } from "@/app/hooks/useEnvironment";
 import { EnvironmentDot } from "@/app/components/EnvironmentSelector";
 import { Trash2 } from "lucide-react";
 import { cn } from "@/lib/utils";

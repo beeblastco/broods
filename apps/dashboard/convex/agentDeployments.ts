@@ -4,9 +4,9 @@
 import { withSystemFields } from "convex-helpers/validators";
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
-import type { MutationCtx } from "./_generated/server";
 import { agentConfigFields, agentDeploymentFields } from "./schema";
 import { assertGatewaySecret } from "./model/gateway";
+import { createDeploymentForConfig } from "./model/agentDeployment";
 import { verifyAgentConfigOwnership } from "./model/ownership";
 
 /** Validator for deployment records with system fields. */
@@ -29,9 +29,10 @@ const deploymentWithConfigValidator = v.union(
 );
 
 /**
- * Create a new deployed endpoint and one-time API key for an agent config.
+ * Create a deployed endpoint with an API key for an agent config.
+ * Resolves the environment slug from the agent config's environment.
  * @param agentConfigId Agent config ID to deploy
- * @returns Endpoint ID and raw API key (shown once)
+ * @returns Endpoint ID, raw API key (shown once), and environment slug
  * @throws Error if user is not authenticated or does not own the config
  */
 export const create = mutation({
@@ -41,6 +42,7 @@ export const create = mutation({
   returns: v.object({
     endpointId: v.string(),
     rawApiKey: v.string(),
+    environmentSlug: v.optional(v.string()),
   }),
   handler: async (ctx, args) => {
     const { agentConfigId } = args;
@@ -53,24 +55,21 @@ export const create = mutation({
 
     await verifyAgentConfigOwnership(ctx, agentConfigId, user.subject);
 
-    const endpointId = await generateUniqueEndpointId(ctx);
-    const rawApiKey = `sk_live_${createSecureToken(48)}`;
-    const apiKeyHash = await hashApiKey(rawApiKey);
+    // Resolve environment slug from the agent config's environment
+    const agentConfig = await ctx.db.get(agentConfigId);
+    if (!agentConfig) {
+      throw new Error("Agent config not found");
+    }
 
-    await ctx.db.insert("agentDeployments", {
-      authId: user.subject,
-      agentConfigId: agentConfigId,
-      endpointId: endpointId,
-      apiKey: rawApiKey,
-      apiKeyHash: apiKeyHash,
-      status: "active",
-      updatedAt: Date.now(),
-    });
+    let environmentSlug: string | undefined;
+    if (agentConfig.environmentId) {
+      const env = await ctx.db.get(agentConfig.environmentId);
+      if (env && !env.isDefault) {
+        environmentSlug = env.name.toLowerCase().replace(/\s+/g, "-");
+      }
+    }
 
-    return {
-      endpointId: endpointId,
-      rawApiKey: rawApiKey,
-    };
+    return await createDeploymentForConfig(ctx, user.subject, agentConfigId, environmentSlug);
   },
 });
 
@@ -150,16 +149,18 @@ export const revoke = mutation({
 /**
  * Resolve deployment and config by external endpoint ID for gateway usage.
  * @param endpointId External endpoint ID from URL
- * @returns Deployment and config, or null if missing
+ * @param environmentSlug Optional environment slug from URL path
+ * @returns Deployment and config, or null if missing/mismatched
  */
 export const getByEndpointIdForGateway = query({
   args: {
     endpointId: v.string(),
+    environmentSlug: v.optional(v.string()),
     gatewaySecret: v.string(),
   },
   returns: deploymentWithConfigValidator,
   handler: async (ctx, args) => {
-    const { endpointId, gatewaySecret } = args;
+    const { endpointId, environmentSlug, gatewaySecret } = args;
 
     assertGatewaySecret(gatewaySecret);
 
@@ -168,6 +169,11 @@ export const getByEndpointIdForGateway = query({
       .withIndex("by_endpointId", (q) => q.eq("endpointId", endpointId))
       .unique();
     if (!deployment) {
+      return null;
+    }
+
+    // Verify environment slug matches the deployment
+    if ((deployment.environmentSlug ?? undefined) !== environmentSlug) {
       return null;
     }
 
@@ -182,58 +188,3 @@ export const getByEndpointIdForGateway = query({
     };
   },
 });
-
-/**
- * Generate an endpoint ID with collision retry.
- * @param ctx Convex query/mutation context
- * @returns Unique endpoint ID
- */
-async function generateUniqueEndpointId(ctx: MutationCtx): Promise<string> {
-  for (let attempt = 0; attempt < 8; attempt += 1) {
-    const endpointId = `ag_${createSecureToken(16)}`;
-    const existing = await ctx.db
-      .query("agentDeployments")
-      .withIndex("by_endpointId", (q) => q.eq("endpointId", endpointId))
-      .unique();
-    if (!existing) {
-      return endpointId;
-    }
-  }
-
-  throw new Error("Failed to generate unique endpoint ID");
-}
-
-/**
- * Generate a secure random token from URL-safe characters.
- * @param length Token length
- * @returns Random token string
- */
-function createSecureToken(length: number): string {
-  const alphabet = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
-  const bytes = crypto.getRandomValues(new Uint8Array(length));
-
-  return Array.from(bytes, (byte) => alphabet[byte % alphabet.length]).join("");
-}
-
-/**
- * Hash an API key using SHA-256 for secure storage.
- * @param apiKey Raw API key
- * @returns Hex encoded hash
- */
-async function hashApiKey(apiKey: string): Promise<string> {
-  const pepper = process.env.AGENT_API_KEY_PEPPER ?? "";
-  const payload = `${pepper}:${apiKey}`;
-  const encoded = new TextEncoder().encode(payload);
-  const digest = await crypto.subtle.digest("SHA-256", encoded);
-
-  return bytesToHex(new Uint8Array(digest));
-}
-
-/**
- * Convert bytes to lowercase hexadecimal string.
- * @param bytes Byte array
- * @returns Hex representation
- */
-function bytesToHex(bytes: Uint8Array): string {
-  return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
-}

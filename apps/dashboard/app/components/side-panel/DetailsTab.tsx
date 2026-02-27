@@ -28,6 +28,10 @@ export function DetailsTab({
     const [showApiKey, setShowApiKey] = useState(false);
     const [copiedField, setCopiedField] = useState<string | null>(null);
 
+    const gatewayUrl = process.env.NEXT_PUBLIC_AGENT_GATEWAY_URL ?? "http://localhost:8080";
+    const envPrefix = activeDeployment?.environmentSlug ? `/${activeDeployment.environmentSlug}` : "";
+    const endpointUrl = activeDeployment ? `${gatewayUrl}/v1/agents${envPrefix}/${activeDeployment.endpointId}` : "";
+
     function handleCopy(value: string, field: string) {
         navigator.clipboard.writeText(value);
         setCopiedField(field);
@@ -102,6 +106,20 @@ export function DetailsTab({
                             />
                             {activeDeployment.status === "active" ? "Active" : "Revoked"}
                         </span>
+                    </div>
+
+                    {/* Endpoint URL */}
+                    <div className="flex flex-col gap-1.5">
+                        <span className="text-[11px] uppercase tracking-wider text-muted-foreground/70">Endpoint URL</span>
+                        <div className="flex items-center gap-2 rounded-md border border-border bg-muted/50 px-2.5 py-1.5">
+                            <code className="flex-1 text-xs text-foreground break-all">{endpointUrl}</code>
+                            <button
+                                onClick={() => handleCopy(endpointUrl, "url")}
+                                className="shrink-0 text-muted-foreground hover:text-foreground transition-colors"
+                            >
+                                {copiedField === "url" ? <Check className="size-3" /> : <Copy className="size-3" />}
+                            </button>
+                        </div>
                     </div>
 
                     {/* Endpoint ID */}
