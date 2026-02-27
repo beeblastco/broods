@@ -9,6 +9,7 @@ import { Check, Copy, Eye, EyeOff } from "lucide-react";
 import type { Doc } from "@/convex/_generated/dataModel";
 
 export function DetailsTab({
+    agentConfig,
     activeDeployment,
     editName,
     setEditName,
@@ -16,6 +17,7 @@ export function DetailsTab({
     nameChanged,
     isSaving,
 }: {
+    agentConfig: Doc<"agentConfigs"> | null | undefined;
     activeDeployment: Doc<"agentDeployments"> | undefined;
     editName: string;
     setEditName: (name: string) => void;
@@ -60,10 +62,47 @@ export function DetailsTab({
                 </div>
             </div>
 
-            {/* Deployment credentials */}
+            {/* Agent info */}
+            {agentConfig && (
+                <>
+                    {agentConfig.description && (
+                        <div className="flex flex-col gap-1.5">
+                            <span className="text-[11px] uppercase tracking-wider text-muted-foreground/70">Description</span>
+                            <p className="text-xs text-foreground">{agentConfig.description}</p>
+                        </div>
+                    )}
+                    <div className="flex flex-col gap-1.5">
+                        <span className="text-[11px] uppercase tracking-wider text-muted-foreground/70">Model</span>
+                        <code className="text-xs text-foreground">{agentConfig.modelId}</code>
+                    </div>
+                </>
+            )}
+
+            {/* Deployment status & credentials */}
             {activeDeployment && (
                 <>
                     <Separator />
+
+                    {/* Status */}
+                    <div className="flex flex-col gap-1.5">
+                        <span className="text-[11px] uppercase tracking-wider text-muted-foreground/70">Status</span>
+                        <span
+                            className={`inline-flex w-fit items-center gap-1.5 rounded-full px-2 py-0.5 text-[11px] font-medium ${
+                                activeDeployment.status === "active"
+                                    ? "bg-emerald-500/10 text-emerald-500"
+                                    : "bg-destructive/10 text-destructive"
+                            }`}
+                        >
+                            <span
+                                className={`size-1.5 rounded-full ${
+                                    activeDeployment.status === "active"
+                                        ? "bg-emerald-500"
+                                        : "bg-destructive"
+                                }`}
+                            />
+                            {activeDeployment.status === "active" ? "Active" : "Revoked"}
+                        </span>
+                    </div>
 
                     {/* Endpoint ID */}
                     <div className="flex flex-col gap-1.5">

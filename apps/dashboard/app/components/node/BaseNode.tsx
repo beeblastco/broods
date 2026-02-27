@@ -6,6 +6,7 @@ export type BaseNodeData = {
     label: string;
     status?: "running" | "idle" | "error";
     agentConfigId?: string;
+    properties?: { color: string };
 };
 
 export const statusConfig = {
@@ -29,7 +30,7 @@ export function BaseNode({
     const { color, text } = statusConfig[data.status ?? "idle"];
 
     return (
-        <div className="min-w-45 min-h-24 rounded-md border border-border bg-card transition-[border-color,box-shadow] duration-200 hover:border-foreground/25 hover:shadow-md">
+        <div className="min-w-45 min-h-24 flex flex-col rounded-md border border-border bg-card transition-[border-color,box-shadow] duration-200 hover:border-foreground/25 hover:shadow-md">
             <Handle
                 type="target"
                 position={Position.Top}
@@ -37,17 +38,25 @@ export function BaseNode({
             />
 
             <div
-                className="px-3 py-2.5 flex flex-col items-start gap-1 h-full origin-top-left"
+                className="px-3 pt-2.5 origin-top-left"
                 style={{ transform: `scale(${scale})` }}
             >
                 <div className="flex items-center gap-1.5">
-                    <span className="text-muted-foreground">{icon}</span>
+                    {data.properties?.color ? (
+                        <span
+                            className="inline-block size-3 rounded-full shrink-0"
+                            style={{ backgroundColor: data.properties.color }}
+                        />
+                    ) : (
+                        <span className="text-muted-foreground">{icon}</span>
+                    )}
                     <span className="text-xs font-medium text-foreground whitespace-nowrap">{data.label}</span>
                 </div>
-                <div className="mt-1 flex items-center gap-1.5">
-                    <div className={`h-1.5 w-1.5 rounded-full ${color}`} />
-                    <span className="text-[11px] text-muted-foreground">{text}</span>
-                </div>
+            </div>
+
+            <div className="mt-auto px-3 pb-2.5 flex items-center gap-1.5">
+                <div className={`h-1.5 w-1.5 rounded-full ${color}`} />
+                <span className="text-[11px] text-muted-foreground">{text}</span>
             </div>
 
             <Handle

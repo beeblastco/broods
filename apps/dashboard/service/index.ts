@@ -1,5 +1,6 @@
 import { executeDeployment, streamDeployment } from "./service";
 import {
+  corsHeaders,
   jsonResponse,
   parseBearerToken,
   parseExecutePayload,
@@ -11,6 +12,11 @@ const server = Bun.serve({
   port: Bun.env.PORT ?? 8080,
   fetch: async (request: Request): Promise<Response> => {
     const url = new URL(request.url);
+
+    // CORS preflight
+    if (request.method === "OPTIONS") {
+      return new Response(null, { status: 204, headers: corsHeaders });
+    }
 
     if (request.method === "GET" && url.pathname === "/healthz") {
       return jsonResponse(200, { ok: true });
@@ -55,6 +61,7 @@ const server = Bun.serve({
 
         return result.toUIMessageStreamResponse({
           headers: {
+            ...corsHeaders,
             "X-Session-Id": sessionId,
             "X-Task-Id": taskId,
           },

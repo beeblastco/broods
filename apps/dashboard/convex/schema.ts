@@ -233,6 +233,11 @@ export const canvasNodeStatusEnum = v.union(
   v.literal("error"),
 );
 
+/** Node properties for visual customization. */
+export const canvasNodePropertiesValidator = v.object({
+  color: v.string(),
+});
+
 /** A single node on the canvas. */
 export const canvasNodeValidator = v.object({
   id: v.string(),
@@ -242,6 +247,7 @@ export const canvasNodeValidator = v.object({
     label: v.string(),
     status: v.optional(canvasNodeStatusEnum),
     agentConfigId: v.optional(v.id("agentConfigs")),
+    properties: v.optional(canvasNodePropertiesValidator),
   }),
 });
 

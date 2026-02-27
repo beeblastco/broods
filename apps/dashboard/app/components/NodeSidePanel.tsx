@@ -1,18 +1,19 @@
 "use client";
 
 /** Side panel displaying agent details and deployment credentials for a selected node. */
-import { useEffect, useState } from "react";
-import { useMutation, useQuery } from "convex/react";
-import { api } from "@/convex/_generated/api";
-import type { Id } from "@/convex/_generated/dataModel";
+import type { BaseNodeData } from "@/app/components/node/BaseNode";
+import { ConfigTab } from "@/app/components/side-panel/ConfigTab";
+import { DetailsTab } from "@/app/components/side-panel/DetailsTab";
+import { SettingsTab } from "@/app/components/side-panel/SettingsTab";
+import { TestTab } from "@/app/components/side-panel/TestTab";
 import { Separator } from "@/app/components/ui/separator";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/app/components/ui/tabs";
+import { api } from "@/convex/_generated/api";
+import type { Id } from "@/convex/_generated/dataModel";
 import type { Node } from "@xyflow/react";
+import { useMutation, useQuery } from "convex/react";
 import { X } from "lucide-react";
-import type { BaseNodeData } from "@/app/components/node/BaseNode";
-import { DetailsTab } from "@/app/components/side-panel/DetailsTab";
-import { ConfigTab } from "@/app/components/side-panel/ConfigTab";
-import { SettingsTab } from "@/app/components/side-panel/SettingsTab";
+import { useEffect, useState } from "react";
 
 /** Config fields extracted from the agent config for JSON editing. */
 const CONFIG_KEYS = [
@@ -145,7 +146,7 @@ export function NodeSidePanel({
 
     return (
         <div
-            className={`absolute right-0 top-0 z-10 flex h-full w-96 flex-col border-l border-border bg-card transition-transform duration-200 ease-out ${node ? "translate-x-0" : "translate-x-full"}`}
+            className={`absolute right-0 top-0 z-10 flex h-full w-1/3 flex-col border-l border-border bg-card transition-transform duration-200 ease-out ${node ? "translate-x-0" : "translate-x-full"}`}
         >
             <div className="flex items-center justify-between px-4 py-3">
                 <h2 className="text-sm font-medium text-foreground">Agent</h2>
@@ -164,11 +165,13 @@ export function NodeSidePanel({
                     <TabsList variant="line" className="w-full shrink-0 px-4 pt-2">
                         <TabsTrigger value="details">Details</TabsTrigger>
                         <TabsTrigger value="config">Config</TabsTrigger>
+                        <TabsTrigger value="test">Test</TabsTrigger>
                         <TabsTrigger value="settings">Settings</TabsTrigger>
                     </TabsList>
 
                     <TabsContent value="details" className="flex flex-col overflow-y-auto">
                         <DetailsTab
+                            agentConfig={agentConfig}
                             activeDeployment={activeDeployment}
                             editName={editName}
                             setEditName={setEditName}
@@ -189,6 +192,13 @@ export function NodeSidePanel({
                             configSaved={configSaved}
                             setConfigSaved={setConfigSaved}
                             onSaveConfig={handleSaveConfig}
+                        />
+                    </TabsContent>
+
+                    <TabsContent value="test" className="flex flex-col overflow-hidden">
+                        <TestTab
+                            activeDeployment={activeDeployment}
+                            nodeColor={nodeData?.properties?.color}
                         />
                     </TabsContent>
 

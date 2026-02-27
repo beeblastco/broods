@@ -101,11 +101,19 @@ export function resolveStatusCode(error: unknown): number {
 }
 
 
+/** CORS headers applied to all gateway responses. */
+export const corsHeaders: Record<string, string> = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Methods": "POST, GET, OPTIONS",
+  "Access-Control-Allow-Headers": "Content-Type, Authorization",
+  "Access-Control-Expose-Headers": "X-Session-Id, X-Task-Id",
+};
+
 /** Returns a JSON response with the given status and payload. */
 export function jsonResponse(status: number, payload: Record<string, unknown>): Response {
   return new Response(JSON.stringify(payload), {
     status: status,
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...corsHeaders },
   });
 }
 

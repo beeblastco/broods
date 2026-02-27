@@ -9,6 +9,20 @@ import { resolveConnectedSubAgents } from "./model/agentConfig";
 import { agentConfigFields } from "./schema";
 import { verifyProjectOwnership } from "./model/ownership";
 
+/** Bright color palette for node icons. */
+const BRIGHT_COLORS = [
+  "rgb(249, 115, 22)",  // orange
+  "rgb(234, 179, 8)",   // yellow
+  "rgb(34, 197, 94)",   // green
+  "rgb(6, 182, 212)",   // cyan
+  "rgb(59, 130, 246)",  // blue
+  "rgb(168, 85, 247)",  // purple
+  "rgb(236, 72, 153)",  // pink
+  "rgb(239, 68, 68)",   // red
+  "rgb(20, 184, 166)",  // teal
+  "rgb(132, 204, 22)",  // lime
+];
+
 /** Validator for agent config records with system fields. */
 const agentConfigValidator = v.object(withSystemFields("agentConfigs", agentConfigFields));
 
@@ -86,6 +100,9 @@ export const create = mutation({
       y: 100,
     };
 
+    // Pick a random bright color for the node icon
+    const color = BRIGHT_COLORS[Math.floor(Math.random() * BRIGHT_COLORS.length)];
+
     const newNode = {
       id: nodeId,
       type: "agent" as const,
@@ -94,6 +111,7 @@ export const create = mutation({
         label: name,
         status: "idle" as const,
         agentConfigId: agentConfigId,
+        properties: { color: color },
       },
     };
 
