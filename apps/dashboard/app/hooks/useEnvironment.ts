@@ -28,7 +28,8 @@ export function useEnvironment() {
             } else {
                 next.delete("env");
             }
-            router.replace(`${pathname}?${next.toString()}`);
+            const query = next.toString();
+            router.replace(query ? `${pathname}?${query}` : pathname);
         },
         [searchParams, pathname, router],
     );

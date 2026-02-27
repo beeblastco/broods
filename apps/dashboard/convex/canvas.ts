@@ -33,6 +33,8 @@ export const getByProject = query({
       throw new Error("User not found or not authenticated");
     }
 
+    await verifyProjectOwnership(ctx, projectId, user.subject);
+
     const layout = await ctx.db
       .query("canvasLayouts")
       .withIndex("by_projectId_and_environmentId", (q) =>

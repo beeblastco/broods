@@ -245,6 +245,12 @@ function CanvasInner({ projectId }: { projectId: Id<"projects"> }) {
         scheduleSave();
     }, [scheduleSave]);
 
+    /** Persist and close side panel when nodes are deleted via keyboard/context actions. */
+    const onNodesDelete = useCallback(() => {
+        setSelectedNode(null);
+        scheduleSave();
+    }, [scheduleSave]);
+
     const onNodeClick: NodeMouseHandler = useCallback(
         (_event, node) => {
             setSelectedNode(node);
@@ -290,6 +296,7 @@ function CanvasInner({ projectId }: { projectId: Id<"projects"> }) {
             onEdgesChange={onEdgesChange}
             onConnect={onConnect}
             onNodeDragStop={onNodeDragStop}
+            onNodesDelete={onNodesDelete}
             onEdgesDelete={scheduleSave}
             onNodeClick={onNodeClick}
             onPaneClick={onPaneClick}

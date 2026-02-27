@@ -4,7 +4,7 @@
  * Streaming chat hook for testing a deployed agent via the gateway API.
  * Uses AI SDK utilities to parse the UIMessage SSE stream.
  */
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { readUIMessageStream, uiMessageChunkSchema } from "ai";
 import { parseJsonEventStream } from "@ai-sdk/provider-utils";
 import type { UIMessage } from "ai";
@@ -32,6 +32,13 @@ export function useAgentChat({
     const sessionIdRef = useRef<string | undefined>(undefined);
     const abortRef = useRef<AbortController | null>(null);
     const gatewayUrl = process.env.NEXT_PUBLIC_AGENT_GATEWAY_URL ?? "http://localhost:8080";
+
+    // Abort in-flight streams when the component using this hook unmounts.
+    useEffect(() => {
+        return () => {
+            abortRef.current?.abort();
+        };
+    }, []);
 
     /** Send a message and stream the assistant response. */
     const sendMessage = useCallback(
