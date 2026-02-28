@@ -1,0 +1,121 @@
+{{- if .Values.agentGateway.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "agentGateway.fullname" . }}
+  namespace: {{ include "clonee.namespace" . }}
+  labels:
+    {{- include "clonee.labels" . | nindent 4 }}
+    {{- include "agentGateway.selectorLabels" . | nindent 4 }}
+spec:
+  {{- if not .Values.agentGateway.autoscaling.enabled }}
+  replicas: {{ .Values.agentGateway.replicaCount }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "agentGateway.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "agentGateway.selectorLabels" . | nindent 8 }}
+      {{- with .Values.agentGateway.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: agent-gateway
+          image: {{ include "agentGateway.image" . }}
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.agentGateway.port }}
+              protocol: TCP
+          env:
+            - name: PORT
+              value: {{ .Values.agentGateway.port | quote }}
+            # Auto-wire sandbox service URL from internal DNS
+            - name: SANDBOX_SERVICE_URL
+              value: {{ include "sandbox.internalUrl" . }}
+            - name: SANDBOX_SHARED_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "clonee.secretName" . }}
+                  key: SANDBOX_SHARED_SECRET
+            - name: CONVEX_SITE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "clonee.secretName" . }}
+                  key: CONVEX_SITE_URL
+            - name: GATEWAY_SHARED_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "clonee.secretName" . }}
+                  key: GATEWAY_SHARED_SECRET
+            - name: AGENT_API_KEY_PEPPER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "clonee.secretName" . }}
+                  key: AGENT_API_KEY_PEPPER
+            - name: AI_GATEWAY_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "clonee.secretName" . }}
+                  key: AI_GATEWAY_API_KEY
+            - name: TAVILY_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "clonee.secretName" . }}
+                  key: TAVILY_API_KEY
+                  optional: true
+            - name: AWS_REGION
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "clonee.secretName" . }}
+                  key: AWS_REGION
+                  optional: true
+            - name: AWS_S3_BUCKET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "clonee.secretName" . }}
+                  key: AWS_S3_BUCKET
+                  optional: true
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "clonee.secretName" . }}
+                  key: AWS_ACCESS_KEY_ID
+                  optional: true
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "clonee.secretName" . }}
+                  key: AWS_SECRET_ACCESS_KEY
+                  optional: true
+          {{- with .Values.agentGateway.readinessProbe }}
+          readinessProbe:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.agentGateway.livenessProbe }}
+          livenessProbe:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          resources:
+            {{- toYaml .Values.agentGateway.resources | nindent 12 }}
+      {{- with .Values.agentGateway.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.agentGateway.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.agentGateway.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}

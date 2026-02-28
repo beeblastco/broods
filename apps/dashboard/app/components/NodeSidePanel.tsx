@@ -2,10 +2,15 @@
 
 /** Side panel displaying node details, configuration, and settings for the selected canvas node. */
 import type { BaseNodeData } from "@/app/components/node/BaseNode";
+import { agentStatusConfig } from "@/app/components/node/BaseNode";
 import { ConfigTab } from "@/app/components/side-panel/ConfigTab";
 import { DetailsTab } from "@/app/components/side-panel/DetailsTab";
+import { ToolConfigTab } from "@/app/components/side-panel/ToolConfigTab";
+import { ToolDetailsTab } from "@/app/components/side-panel/ToolDetailsTab";
 import { SettingsTab } from "@/app/components/side-panel/SettingsTab";
-import { TestTab } from "@/app/components/side-panel/TestTab";
+import { useEnvironment } from "@/app/hooks/useEnvironment";
+import { useAgentHealth, type AgentHealthStatus } from "@/app/hooks/useAgentHealth";
+import { Badge } from "@/app/components/ui/badge";
 import { Button } from "@/app/components/ui/button";
 import { Input } from "@/app/components/ui/input";
 import { Separator } from "@/app/components/ui/separator";
@@ -15,7 +20,39 @@ import type { Id } from "@/convex/_generated/dataModel";
 import type { Node } from "@xyflow/react";
 import { useMutation, useQuery } from "convex/react";
 import { X } from "lucide-react";
-import { memo, useEffect, useState } from "react";
+import dynamic from "next/dynamic";
+import { useParams } from "next/navigation";
+import { memo, useCallback, useEffect, useMemo, useState } from "react";
+
+/** Maps agent health status to Badge variant. */
+const healthBadgeVariant: Record<AgentHealthStatus, "success" | "warning" | "secondary" | "destructive"> = {
+    healthy: "success",
+    deploying: "warning",
+    idle: "secondary",
+    unhealthy: "destructive",
+};
+
+const TestTab = dynamic(
+    () => import("@/app/components/side-panel/TestTab").then((mod) => mod.TestTab),
+    {
+        loading: () => (
+            <div className="flex flex-1 items-center justify-center p-4">
+                <p className="text-center text-xs text-muted-foreground">Loading test tab…</p>
+            </div>
+        ),
+    },
+);
+
+const ToolTestTab = dynamic(
+    () => import("@/app/components/side-panel/ToolTestTab").then((mod) => mod.ToolTestTab),
+    {
+        loading: () => (
+            <div className="flex flex-1 items-center justify-center p-4">
+                <p className="text-center text-xs text-muted-foreground">Loading test tab…</p>
+            </div>
+        ),
+    },
+);
 
 type NodeType = "agent" | "database" | "tool" | "workspace";
 
@@ -34,12 +71,14 @@ const CONFIG_KEYS = [
     "systemPrompt",
     "maxTurns",
     "allowedTools",
-    "disallowedTools",
     "permissionMode",
     "outputFormat",
     "providerOptions",
     "temperature",
     "maxTokens",
+    "memoryToolEnabled",
+    "searchToolEnabled",
+    "searchToolConfig",
 ] as const;
 
 /** Extracts editable config fields from the full agent config document. */
@@ -68,7 +107,14 @@ export const NodeSidePanel = memo(function NodeSidePanel({
     const nodeData = node?.data as BaseNodeData | undefined;
     const nodeType = (node?.type ?? "agent") as NodeType;
     const isAgent = nodeType === "agent";
+    const isTool = nodeType === "tool";
+    const { environmentId } = useEnvironment();
+    const params = useParams<{ projectId: string }>();
+    const projectId = params.projectId as Id<"projects"> | undefined;
     const agentConfigId = nodeData?.agentConfigId as Id<"agentConfigs"> | undefined;
+
+    // Agent health status (agent nodes only)
+    const healthStatus = useAgentHealth(isAgent ? agentConfigId : undefined);
 
     // Agent config for editable name (agent nodes only)
     const agentConfig = useQuery(
@@ -111,9 +157,14 @@ export const NodeSidePanel = memo(function NodeSidePanel({
         ? agentConfig && editName.trim() !== agentConfig.name
         : nodeData && editName.trim() !== nodeData.label;
 
+    /** Memoised server-side config JSON to avoid JSON.stringify on every render. */
+    const serverConfigJson = useMemo(
+        () => agentConfig ? JSON.stringify(extractConfigJson(agentConfig), null, 2) : "",
+        [agentConfig],
+    );
+
     /** Whether the config JSON has been modified from the server value. */
-    const configChanged = agentConfig
-        && configJson !== JSON.stringify(extractConfigJson(agentConfig), null, 2);
+    const configChanged = agentConfig && configJson !== serverConfigJson;
 
     async function handleSaveName() {
         if (!editName.trim() || !nameChanged) return;
@@ -154,9 +205,11 @@ export const NodeSidePanel = memo(function NodeSidePanel({
                 maxTokens: parsed.maxTokens as number | undefined,
                 maxTurns: parsed.maxTurns as number | undefined,
                 allowedTools: parsed.allowedTools as string[] | undefined,
-                disallowedTools: parsed.disallowedTools as string[] | undefined,
                 outputFormat: parsed.outputFormat,
                 providerOptions: parsed.providerOptions,
+                memoryToolEnabled: parsed.memoryToolEnabled as boolean | undefined,
+                searchToolEnabled: parsed.searchToolEnabled as boolean | undefined,
+                searchToolConfig: parsed.searchToolConfig as { searchDepth?: string; topic?: string; maxResults?: number } | undefined,
             });
             setConfigSaved(true);
             setTimeout(() => setConfigSaved(false), 2000);
@@ -175,6 +228,42 @@ export const NodeSidePanel = memo(function NodeSidePanel({
         onClose();
     }
 
+    const handleToggleMemoryTool = useCallback(
+        (enabled: boolean) => {
+            if (agentConfigId) {
+                updateConfig({ configId: agentConfigId, memoryToolEnabled: enabled });
+            }
+        },
+        [agentConfigId, updateConfig],
+    );
+
+    const handleToggleSearchTool = useCallback(
+        (enabled: boolean) => {
+            if (agentConfigId) {
+                updateConfig({ configId: agentConfigId, searchToolEnabled: enabled });
+            }
+        },
+        [agentConfigId, updateConfig],
+    );
+
+    const handleUpdateSearchToolConfig = useCallback(
+        (config: { searchDepth?: string; topic?: string; maxResults?: number }) => {
+            if (agentConfigId) {
+                updateConfig({ configId: agentConfigId, searchToolConfig: config });
+            }
+        },
+        [agentConfigId, updateConfig],
+    );
+
+    const handleUpdateOutputFormat = useCallback(
+        (outputFormat: Record<string, unknown> | null) => {
+            if (agentConfigId) {
+                updateConfig({ configId: agentConfigId, outputFormat: outputFormat });
+            }
+        },
+        [agentConfigId, updateConfig],
+    );
+
     /** Resolved name for the SettingsTab delete confirmation. */
     const resolvedName = isAgent ? (agentConfig?.name ?? "") : (nodeData?.label ?? "");
 
@@ -183,13 +272,18 @@ export const NodeSidePanel = memo(function NodeSidePanel({
             className={`absolute right-0 top-0 z-10 flex h-full w-1/3 flex-col border-l border-border bg-card transition-transform duration-200 ease-out ${node ? "translate-x-0" : "translate-x-full"}`}
         >
             <div className="flex items-center justify-between px-4 py-3">
-                <h2 className="text-sm font-medium text-foreground">{PANEL_TITLES[nodeType]}</h2>
-                <button
-                    onClick={onClose}
-                    className="flex h-6 w-6 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-                >
+                <div className="flex items-center gap-2">
+                    <h2 className="text-sm font-medium text-foreground">{PANEL_TITLES[nodeType]}</h2>
+                    {isAgent && (
+                        <Badge variant={healthBadgeVariant[healthStatus]} className="gap-1.5 text-[10px] py-0">
+                            <span className={`size-1.5 rounded-full ${agentStatusConfig[healthStatus].color}`} />
+                            {agentStatusConfig[healthStatus].text}
+                        </Badge>
+                    )}
+                </div>
+                <Button variant="ghost" size="icon-xs" onClick={onClose}>
                     <X className="h-4 w-4" />
-                </button>
+                </Button>
             </div>
 
             <Separator />
@@ -198,17 +292,18 @@ export const NodeSidePanel = memo(function NodeSidePanel({
                 <Tabs defaultValue="details" className="flex flex-1 flex-col overflow-hidden">
                     <TabsList variant="line" className="w-full shrink-0 px-4 pt-2">
                         <TabsTrigger value="details">Details</TabsTrigger>
-                        {isAgent && <TabsTrigger value="config">Config</TabsTrigger>}
+                        {(isAgent || isTool) && <TabsTrigger value="config">Config</TabsTrigger>}
                         {(isAgent || nodeType === "tool") && (
                             <TabsTrigger value="test">Test</TabsTrigger>
                         )}
                         <TabsTrigger value="settings">Settings</TabsTrigger>
                     </TabsList>
 
-                    {/* Details tab — agent gets full details, others get simple name editor */}
+                    {/* Details tab */}
                     <TabsContent value="details" className="flex flex-col overflow-y-auto">
                         {isAgent ? (
                             <DetailsTab
+                                key={agentConfigId ?? "agent-details"}
                                 agentConfig={agentConfig}
                                 activeDeployment={activeDeployment}
                                 editName={editName}
@@ -216,6 +311,22 @@ export const NodeSidePanel = memo(function NodeSidePanel({
                                 onSaveName={handleSaveName}
                                 nameChanged={!!nameChanged}
                                 isSaving={isSaving}
+                                onToggleMemoryTool={handleToggleMemoryTool}
+                                onToggleSearchTool={handleToggleSearchTool}
+                                onUpdateSearchToolConfig={handleUpdateSearchToolConfig}
+                                onUpdateOutputFormat={handleUpdateOutputFormat}
+                            />
+                        ) : isTool && node ? (
+                            <ToolDetailsTab
+                                projectId={projectId}
+                                environmentId={environmentId}
+                                nodeId={node.id}
+                                nodeLabel={editName || nodeData.label}
+                                editName={editName}
+                                setEditName={setEditName}
+                                onSaveName={handleSaveName}
+                                nameChanged={!!nameChanged}
+                                isSavingName={isSaving}
                             />
                         ) : (
                             <ServiceDetailsTab
@@ -228,7 +339,7 @@ export const NodeSidePanel = memo(function NodeSidePanel({
                         )}
                     </TabsContent>
 
-                    {/* Config tab — agent only */}
+                    {/* Config tab — agent and tool */}
                     {isAgent && (
                         <TabsContent value="config" className="flex flex-col overflow-hidden">
                             <ConfigTab
@@ -244,6 +355,16 @@ export const NodeSidePanel = memo(function NodeSidePanel({
                             />
                         </TabsContent>
                     )}
+                    {isTool && node && (
+                        <TabsContent value="config" className="flex flex-col overflow-hidden">
+                            <ToolConfigTab
+                                projectId={projectId}
+                                environmentId={environmentId}
+                                nodeId={node.id}
+                                nodeLabel={editName || nodeData.label}
+                            />
+                        </TabsContent>
+                    )}
 
                     {/* Test tab — agent and tool only */}
                     {(isAgent || nodeType === "tool") && (
@@ -253,9 +374,13 @@ export const NodeSidePanel = memo(function NodeSidePanel({
                                     activeDeployment={activeDeployment}
                                     nodeColor={nodeData?.properties?.color}
                                 />
-                            ) : (
-                                <ToolTestPlaceholder />
-                            )}
+                            ) : node ? (
+                                <ToolTestTab
+                                    projectId={projectId}
+                                    environmentId={environmentId}
+                                    nodeId={node.id}
+                                />
+                            ) : null}
                         </TabsContent>
                     )}
 
@@ -313,17 +438,6 @@ function ServiceDetailsTab({
                     )}
                 </div>
             </div>
-        </div>
-    );
-}
-
-/** Placeholder test tab for tool nodes. */
-function ToolTestPlaceholder() {
-    return (
-        <div className="flex flex-1 items-center justify-center p-4">
-            <p className="text-center text-xs text-muted-foreground">
-                Tool testing is not configured yet. Connect the tool to an agent to test input and output.
-            </p>
         </div>
     );
 }

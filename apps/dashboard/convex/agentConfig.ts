@@ -4,8 +4,8 @@
 import { withSystemFields } from "convex-helpers/validators";
 import { v } from "convex/values";
 import { internalQuery, mutation, query } from "./_generated/server";
-import { assertGatewaySecret } from "./model/gateway";
-import { resolveConnectedSubAgents } from "./model/agentConfig";
+import { resolveConnectedSubAgents, syncSubAgentFlagsForEnvironment } from "./model/agentConfig";
+import { deleteAgentConfigRelated, deleteSessionCascade } from "./model/cleanup";
 import { agentConfigFields } from "./schema";
 import { verifyAgentConfigOwnership, verifyProjectOwnership } from "./model/ownership";
 
@@ -22,6 +22,12 @@ const BRIGHT_COLORS = [
   "rgb(20, 184, 166)",  // teal
   "rgb(132, 204, 22)",  // lime
 ];
+
+const DEFAULT_SEARCH_TOOL_CONFIG = {
+  searchDepth: "advanced",
+  topic: "general",
+  maxResults: 5,
+} as const;
 
 /** Validator for agent config records with system fields. */
 const agentConfigValidator = v.object(withSystemFields("agentConfigs", agentConfigFields));
@@ -146,7 +152,6 @@ export const create = mutation({
  * @param maxTokens Optional max token limit
  * @param maxTurns Optional max turns limit
  * @param allowedTools Optional list of allowed tool names
- * @param disallowedTools Optional list of disallowed tool names
  * @param outputFormat Optional output format configuration
  * @param providerOptions Optional provider-specific options
  * @returns null
@@ -163,16 +168,19 @@ export const update = mutation({
     maxTokens: agentConfigFields.maxTokens,
     maxTurns: agentConfigFields.maxTurns,
     allowedTools: agentConfigFields.allowedTools,
-    disallowedTools: agentConfigFields.disallowedTools,
     outputFormat: agentConfigFields.outputFormat,
     providerOptions: agentConfigFields.providerOptions,
+    memoryToolEnabled: agentConfigFields.memoryToolEnabled,
+    searchToolEnabled: agentConfigFields.searchToolEnabled,
+    searchToolConfig: agentConfigFields.searchToolConfig,
   },
   returns: v.null(),
   handler: async (ctx, args): Promise<null> => {
     const {
       configId, name, description, systemPrompt, modelId,
-      temperature, maxTokens, maxTurns, allowedTools, disallowedTools,
-      outputFormat, providerOptions,
+      temperature, maxTokens, maxTurns, allowedTools,
+      outputFormat, providerOptions, memoryToolEnabled, searchToolEnabled,
+      searchToolConfig,
     } = args;
 
     // Check authenticated user
@@ -192,9 +200,20 @@ export const update = mutation({
     if (maxTokens !== undefined) patch.maxTokens = maxTokens;
     if (maxTurns !== undefined) patch.maxTurns = maxTurns;
     if (allowedTools !== undefined) patch.allowedTools = allowedTools;
-    if (disallowedTools !== undefined) patch.disallowedTools = disallowedTools;
-    if (outputFormat !== undefined) patch.outputFormat = outputFormat;
+    if (outputFormat !== undefined) {
+      patch.outputFormat = outputFormat === null ? undefined : outputFormat;
+    }
     if (providerOptions !== undefined) patch.providerOptions = providerOptions;
+    if (memoryToolEnabled !== undefined) patch.memoryToolEnabled = memoryToolEnabled;
+    if (searchToolEnabled !== undefined) patch.searchToolEnabled = searchToolEnabled;
+    if (searchToolConfig !== undefined) patch.searchToolConfig = searchToolConfig;
+    if (
+      searchToolEnabled === true &&
+      searchToolConfig === undefined &&
+      config.searchToolConfig === undefined
+    ) {
+      patch.searchToolConfig = DEFAULT_SEARCH_TOOL_CONFIG;
+    }
 
     await ctx.db.patch(configId, patch);
 
@@ -248,52 +267,12 @@ export const remove = mutation({
       .query("sessions")
       .withIndex("by_configId", (q) => q.eq("configId", configId))
       .collect();
-
     for (const session of sessions) {
-      const messages = await ctx.db
-        .query("messages")
-        .withIndex("by_sessionId", (q) => q.eq("sessionId", session._id))
-        .collect();
-      for (const msg of messages) {
-        await ctx.db.delete(msg._id);
-      }
-
-      const tasks = await ctx.db
-        .query("tasks")
-        .withIndex("by_sessionId", (q) => q.eq("sessionId", session._id))
-        .collect();
-      for (const task of tasks) {
-        await ctx.db.delete(task._id);
-      }
-
-      const approvals = await ctx.db
-        .query("toolApprovals")
-        .withIndex("by_sessionId", (q) => q.eq("sessionId", session._id))
-        .collect();
-      for (const approval of approvals) {
-        await ctx.db.delete(approval._id);
-      }
-
-      await ctx.db.delete(session._id);
+      await deleteSessionCascade(ctx, session._id);
     }
 
-    // Delete deployments
-    const deployments = await ctx.db
-      .query("agentDeployments")
-      .withIndex("by_agentConfigId", (q) => q.eq("agentConfigId", configId))
-      .collect();
-    for (const dep of deployments) {
-      await ctx.db.delete(dep._id);
-    }
-
-    // Delete connections
-    const connections = await ctx.db
-      .query("agentConnections")
-      .withIndex("by_agentConfigId", (q) => q.eq("agentConfigId", configId))
-      .collect();
-    for (const conn of connections) {
-      await ctx.db.delete(conn._id);
-    }
+    // Delete deployments and connections
+    await deleteAgentConfigRelated(ctx, configId);
 
     // Remove the canvas node referencing this config
     const layout = await ctx.db
@@ -317,6 +296,11 @@ export const remove = mutation({
         updatedAt: Date.now(),
       });
     }
+
+    await syncSubAgentFlagsForEnvironment(ctx, {
+      projectId: config.projectId,
+      environmentId: config.environmentId,
+    });
 
     await ctx.db.delete(configId);
 
@@ -398,59 +382,32 @@ export const listByProject = query({
 
     const configs = await ctx.db
       .query("agentConfigs")
-      .withIndex("by_projectId", (q) => q.eq("projectId", projectId))
+      .withIndex("by_projectId_and_environmentId", (q) => q.eq("projectId", projectId))
       .collect();
 
-    return configs.filter((c) => c.authId === user.subject && !c.isSubAgent);
+    return configs.filter((c) => !c.isSubAgent);
   },
 });
 
 /**
  * Resolve available subagents for a parent config in gateway execution.
- * @param gatewaySecret Shared gateway secret
  * @param parentConfigId Parent agent config ID
  * @returns Available subagent config summaries
  */
-export const getSubAgentsForGateway = query({
+export const getSubAgentsForGateway = internalQuery({
   args: {
-    gatewaySecret: v.string(),
     parentConfigId: v.id("agentConfigs"),
   },
   returns: v.array(agentConfigValidator),
   handler: async (ctx, args) => {
-    const { gatewaySecret, parentConfigId } = args;
-    assertGatewaySecret(gatewaySecret);
+    const { parentConfigId } = args;
 
     const parentConfig = await ctx.db.get(parentConfigId);
     if (!parentConfig) {
       return [];
     }
 
-    const connectedSubAgents = await resolveConnectedSubAgents(ctx, parentConfigId, parentConfig.authId);
-    if (connectedSubAgents.length > 0) {
-      return connectedSubAgents;
-    }
-
-    const projectConfigs = parentConfig.environmentId
-      ? await ctx.db
-          .query("agentConfigs")
-          .withIndex("by_projectId_and_environmentId", (q) =>
-            q.eq("projectId", parentConfig.projectId).eq("environmentId", parentConfig.environmentId),
-          )
-          .collect()
-      : await ctx.db
-          .query("agentConfigs")
-          .withIndex("by_projectId", (q) => q.eq("projectId", parentConfig.projectId))
-          .collect();
-
-    return projectConfigs.filter(
-      (config) =>
-        config.authId === parentConfig.authId &&
-        config.isSubAgent &&
-        config._id !== parentConfig._id &&
-        config.environmentId === parentConfig.environmentId,
-    );
+    return resolveConnectedSubAgents(ctx, parentConfigId, parentConfig.authId);
   },
 });
-
 

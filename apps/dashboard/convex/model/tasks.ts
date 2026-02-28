@@ -1,7 +1,7 @@
 /**
  * Task guards and status update helpers used by session/task orchestration.
  */
-import type { Id } from "../_generated/dataModel";
+import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 
 /** Statuses that represent a finished task. */
@@ -86,4 +86,41 @@ export async function updateTaskStatus(
   });
 
   return null;
+}
+
+/** Non-terminal statuses that indicate a task is still active. */
+const ACTIVE_STATUSES = new Set(["running", "rerun", "tool_call"]);
+
+/** Maximum time a task can stay in an active status before being reaped (10 minutes). */
+const STUCK_TASK_TTL_MS = 10 * 60 * 1000;
+
+/**
+ * Marks tasks stuck in active states beyond the TTL as failed.
+ * Designed to be called by a cron job to recover from crashed agent processes.
+ * @param ctx Mutation context
+ * @returns Number of tasks reaped
+ */
+export async function reapStuckTasks(ctx: MutationCtx): Promise<number> {
+  const cutoff = Date.now() - STUCK_TASK_TTL_MS;
+  let reaped = 0;
+
+  for (const status of ACTIVE_STATUSES) {
+    const tasks: Doc<"tasks">[] = await ctx.db
+      .query("tasks")
+      .withIndex("by_type_and_status", (q) => q.eq("type", "agent").eq("status", status as "running"))
+      .collect();
+
+    for (const task of tasks) {
+      if (task._creationTime < cutoff) {
+        await ctx.db.patch(task._id, {
+          status: "failed",
+          error: "Task timed out: agent process did not complete within the expected window",
+          completedAt: Date.now(),
+        });
+        reaped += 1;
+      }
+    }
+  }
+
+  return reaped;
 }

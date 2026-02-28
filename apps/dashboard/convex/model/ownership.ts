@@ -123,3 +123,27 @@ export async function verifyDeploymentOwnership(
 
   return deployment;
 }
+
+/**
+ * Verify tool service ownership and return the tool record.
+ * @param ctx Query or mutation context
+ * @param toolServiceId Tool service document ID
+ * @param authId User's authentication ID
+ * @returns Tool service document
+ * @throws Error if tool not found or user doesn't own it
+ */
+export async function verifyToolServiceOwnership(
+  ctx: QueryCtx | MutationCtx,
+  toolServiceId: Id<"toolServices">,
+  authId: string,
+): Promise<Doc<"toolServices">> {
+  const toolService = await ctx.db.get(toolServiceId);
+  if (!toolService) {
+    throw new Error("Tool service not found");
+  }
+  if (toolService.authId !== authId) {
+    throw new Error("Access denied");
+  }
+
+  return toolService;
+}

@@ -8,8 +8,7 @@ RUN bun install --frozen-lockfile
 COPY service ./service
 COPY convex/_generated ./convex/_generated
 
-RUN bun build --compile service/index.ts --outfile agent
-
+RUN bun build --compile service/agent/index.ts --outfile agent
 
 FROM gcr.io/distroless/cc-debian12 AS runtime
 

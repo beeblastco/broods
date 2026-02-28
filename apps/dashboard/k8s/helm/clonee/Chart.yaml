@@ -1,0 +1,13 @@
+apiVersion: v2
+name: clonee
+description: Clonee agent platform — agent-gateway and sandbox services for K3s
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+keywords:
+  - ai-agents
+  - sandbox
+  - gateway
+home: https://github.com/beeblastco/clonee
+maintainers:
+  - name: beeblastco

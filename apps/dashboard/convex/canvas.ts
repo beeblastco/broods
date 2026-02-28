@@ -3,8 +3,11 @@
  */
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
-import { canvasEdgeValidator, canvasNodeValidator } from "./schema";
+import { rebuildAgentConnections, syncToolServicesFromNodes } from "./model/canvas";
+import { syncSubAgentFlagsForEnvironment } from "./model/agentConfig";
 import { verifyProjectOwnership } from "./model/ownership";
+import { syncAgentToolPermissionsForEnvironment } from "./model/toolService";
+import { canvasEdgeValidator, canvasNodeValidator } from "./schema";
 
 /**
  * Get the canvas layout for a given project and environment.
@@ -69,6 +72,7 @@ export const saveLayout = mutation({
   returns: v.null(),
   handler: async (ctx, args): Promise<null> => {
     const { projectId, environmentId, nodes, edges } = args;
+    const now = Date.now();
 
     // Check authenticated user
     const user = await ctx.auth.getUserIdentity();
@@ -89,7 +93,7 @@ export const saveLayout = mutation({
       await ctx.db.patch(existingLayout._id, {
         nodes: nodes,
         edges: edges,
-        updatedAt: Date.now(),
+        updatedAt: now,
       });
     } else {
       await ctx.db.insert("canvasLayouts", {
@@ -98,9 +102,41 @@ export const saveLayout = mutation({
         environmentId: environmentId,
         nodes: nodes,
         edges: edges,
-        updatedAt: Date.now(),
+        updatedAt: now,
       });
     }
+
+    // Sync tool services from tool nodes on the canvas.
+    const staleToolNames = await syncToolServicesFromNodes(ctx, {
+      authId: user.subject,
+      projectId: projectId,
+      environmentId: environmentId,
+      nodes: nodes,
+      now: now,
+    });
+
+    // Rebuild agentConnections from the current edge graph.
+    await rebuildAgentConnections(ctx, {
+      authId: user.subject,
+      projectId: projectId,
+      environmentId: environmentId,
+      nodes: nodes,
+      edges: edges,
+      now: now,
+    });
+
+    // Keep each config's isSubAgent flag in sync with inbound agent connections.
+    await syncSubAgentFlagsForEnvironment(ctx, {
+      projectId: projectId,
+      environmentId: environmentId,
+    });
+
+    // Keep each agent config's allowed/disallowed custom tool names in sync.
+    await syncAgentToolPermissionsForEnvironment(ctx, {
+      projectId: projectId,
+      environmentId: environmentId,
+      extraToolNamesToClear: staleToolNames,
+    });
 
     return null;
   },

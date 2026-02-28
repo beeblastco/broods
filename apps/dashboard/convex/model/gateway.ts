@@ -19,6 +19,19 @@ function timingSafeEqual(a: string, b: string): boolean {
 }
 
 /**
+ * Extract and validate the gateway secret from an HTTP request header.
+ * @param req HTTP request
+ * @throws Error when header is missing or secret is invalid
+ */
+export function assertGatewaySecretFromHeader(req: Request): void {
+  const secret = req.headers.get("X-Gateway-Secret");
+  if (!secret) {
+    throw new Error("Missing X-Gateway-Secret header");
+  }
+  assertGatewaySecret(secret);
+}
+
+/**
  * Validate the shared gateway secret for machine-to-machine API access.
  * @param gatewaySecret Secret provided by gateway service
  * @throws Error when secret is missing or invalid

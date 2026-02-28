@@ -9,10 +9,11 @@ import type { Id } from "@/convex/_generated/dataModel";
 import { useEnvironment } from "@/app/hooks/useEnvironment";
 import { EnvironmentDot } from "@/app/components/EnvironmentSelector";
 import { Trash2 } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { Section } from "@/app/components/Section";
 import { Button } from "@/app/components/ui/button";
 import { Input } from "@/app/components/ui/input";
 import { Label } from "@/app/components/ui/label";
+import { Separator } from "@/app/components/ui/separator";
 import {
     Dialog,
     DialogContent,
@@ -24,43 +25,6 @@ import {
 
 /** Confirmation phrase required to delete an environment. */
 const DELETE_ENV_PHRASE = "delete this environment";
-
-/** Thin horizontal rule between settings sections. */
-function Divider() {
-    return <hr className="border-border" />;
-}
-
-/** A settings section with a title and optional description. */
-function Section({
-    title,
-    description,
-    children,
-    danger,
-}: {
-    title: string;
-    description?: string;
-    children: React.ReactNode;
-    danger?: boolean;
-}) {
-    return (
-        <section className={cn("grid gap-4", danger && "rounded-lg border border-destructive/40 p-6")}>
-            <div>
-                <h2
-                    className={cn(
-                        "text-sm font-semibold",
-                        danger ? "text-destructive" : "text-foreground",
-                    )}
-                >
-                    {title}
-                </h2>
-                {description && (
-                    <p className="mt-0.5 text-xs text-muted-foreground">{description}</p>
-                )}
-            </div>
-            {children}
-        </section>
-    );
-}
 
 export default function SettingsPage() {
     const params = useParams<{ projectId: string }>();
@@ -202,7 +166,7 @@ export default function SettingsPage() {
                     </div>
                 </Section>
 
-                <Divider />
+                <Separator />
 
                 {/* Environments */}
                 <Section
@@ -241,7 +205,7 @@ export default function SettingsPage() {
                     </div>
                 </Section>
 
-                <Divider />
+                <Separator />
 
                 {/* Danger Zone */}
                 <Section

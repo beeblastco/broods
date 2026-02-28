@@ -1,0 +1,32 @@
+Clonee has been deployed to namespace: {{ include "clonee.namespace" . }}
+
+=== Services ===
+{{- if .Values.agentGateway.enabled }}
+
+Agent Gateway:
+  Service: {{ include "agentGateway.fullname" . }}:{{ .Values.agentGateway.service.port }}
+  Replicas: {{ .Values.agentGateway.replicaCount }}
+  {{- if .Values.agentGateway.ingress.enabled }}
+  Ingress:
+    {{- range .Values.agentGateway.ingress.hosts }}
+    - https://{{ .host }}{{ (first .paths).path }}
+    {{- end }}
+  {{- end }}
+{{- end }}
+{{- if .Values.sandbox.enabled }}
+
+Sandbox:
+  Service: {{ include "sandbox.fullname" . }}:{{ .Values.sandbox.service.port }} (cluster-internal only)
+  Replicas: {{ .Values.sandbox.replicaCount }}
+{{- end }}
+
+=== Quick Commands ===
+
+  # Check pod status
+  kubectl get pods -n {{ include "clonee.namespace" . }} -l app.kubernetes.io/instance={{ .Release.Name }}
+
+  # View agent-gateway logs
+  kubectl logs -n {{ include "clonee.namespace" . }} -l app.kubernetes.io/component=agent-gateway -f
+
+  # View sandbox logs
+  kubectl logs -n {{ include "clonee.namespace" . }} -l app.kubernetes.io/component=sandbox -f

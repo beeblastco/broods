@@ -3,9 +3,8 @@
  */
 import { withSystemFields } from "convex-helpers/validators";
 import { v } from "convex/values";
-import { internalMutation, internalQuery, mutation, query } from "./_generated/server";
-import { assertGatewaySecret } from "./model/gateway";
-import { updateTaskStatus } from "./model/tasks";
+import { internalMutation, internalQuery, query } from "./_generated/server";
+import { reapStuckTasks, updateTaskStatus } from "./model/tasks";
 import { verifySessionOwnership } from "./model/ownership";
 import { taskFields, taskStatusEnum } from "./schema";
 
@@ -90,16 +89,14 @@ export const updateStatusInternal = internalMutation({
 
 /**
  * Gateway task status update entrypoint with shared-secret auth.
- * @param gatewaySecret Shared gateway secret
  * @param taskId Task ID
  * @param status Next task status
  * @param result Optional task result
  * @param error Optional task error
  * @returns null
  */
-export const updateForGateway = mutation({
+export const updateForGateway = internalMutation({
   args: {
-    gatewaySecret: v.string(),
     taskId: v.id("tasks"),
     status: taskStatusEnum,
     result: v.optional(v.array(v.any())),
@@ -107,10 +104,20 @@ export const updateForGateway = mutation({
   },
   returns: v.null(),
   handler: async (ctx, args) => {
-    const { gatewaySecret, ...taskArgs } = args;
-    assertGatewaySecret(gatewaySecret);
+    return await updateTaskStatus(ctx, args);
+  },
+});
 
-    return await updateTaskStatus(ctx, taskArgs);
+/**
+ * Reap tasks stuck in active states beyond the TTL (10 min).
+ * Called by cron to recover from crashed agent processes.
+ * @returns Number of tasks reaped
+ */
+export const reapStuckTasksInternal = internalMutation({
+  args: {},
+  returns: v.number(),
+  handler: async (ctx) => {
+    return await reapStuckTasks(ctx);
   },
 });
 

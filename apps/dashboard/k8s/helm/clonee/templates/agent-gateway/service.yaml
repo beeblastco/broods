@@ -1,0 +1,19 @@
+{{- if .Values.agentGateway.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "agentGateway.fullname" . }}
+  namespace: {{ include "clonee.namespace" . }}
+  labels:
+    {{- include "clonee.labels" . | nindent 4 }}
+    {{- include "agentGateway.selectorLabels" . | nindent 4 }}
+spec:
+  type: {{ .Values.agentGateway.service.type }}
+  ports:
+    - port: {{ .Values.agentGateway.service.port }}
+      targetPort: http
+      protocol: TCP
+      name: http
+  selector:
+    {{- include "agentGateway.selectorLabels" . | nindent 4 }}
+{{- end }}

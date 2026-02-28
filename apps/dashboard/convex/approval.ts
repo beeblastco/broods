@@ -3,9 +3,8 @@
  */
 import { withSystemFields } from "convex-helpers/validators";
 import { v } from "convex/values";
-import type { Doc, Id } from "./_generated/dataModel";
-import { mutation, query } from "./_generated/server";
-import { assertGatewaySecret } from "./model/gateway";
+import type { Doc } from "./_generated/dataModel";
+import { internalMutation, internalQuery } from "./_generated/server";
 import {
   approvalStatusEnum,
   approvalTriggerEnum,
@@ -27,19 +26,16 @@ const approvalDecisionValidator = v.object({
 
 /**
  * List pending approvals for one session.
- * @param gatewaySecret Shared gateway secret
  * @param sessionId Session ID
  * @returns Pending approval documents
  */
-export const listPendingForGateway = query({
+export const listPendingForGateway = internalQuery({
   args: {
-    gatewaySecret: v.string(),
     sessionId: v.id("sessions"),
   },
   returns: v.array(toolApprovalValidator),
   handler: async (ctx, args) => {
-    const { gatewaySecret, sessionId } = args;
-    assertGatewaySecret(gatewaySecret);
+    const { sessionId } = args;
 
     return await ctx.db
       .query("toolApprovals")
@@ -52,7 +48,6 @@ export const listPendingForGateway = query({
 
 /**
  * Create an approval request for a tool/subagent step.
- * @param gatewaySecret Shared gateway secret
  * @param sessionId Session ID
  * @param approvalId Stable approval identifier
  * @param toolCallId Tool call identifier
@@ -62,9 +57,8 @@ export const listPendingForGateway = query({
  * @param autoApprove Whether to auto-approve immediately
  * @returns Approval document ID
  */
-export const createForGateway = mutation({
+export const createForGateway = internalMutation({
   args: {
-    gatewaySecret: v.string(),
     sessionId: v.id("sessions"),
     approvalId: v.string(),
     toolCallId: v.string(),
@@ -77,7 +71,6 @@ export const createForGateway = mutation({
   returns: v.id("toolApprovals"),
   handler: async (ctx, args) => {
     const {
-      gatewaySecret,
       sessionId,
       approvalId,
       toolCallId,
@@ -87,7 +80,6 @@ export const createForGateway = mutation({
       autoApprove,
       workflowId,
     } = args;
-    assertGatewaySecret(gatewaySecret);
 
     const existing = await ctx.db
       .query("toolApprovals")
@@ -114,16 +106,14 @@ export const createForGateway = mutation({
 
 /**
  * Respond to one approval by approvalId.
- * @param gatewaySecret Shared gateway secret
  * @param sessionId Session ID for ownership scoping
  * @param approvalId Approval identifier
  * @param approved Decision flag
  * @param reason Optional decision reason
  * @returns Normalized approval decision payload, or null when not found
  */
-export const respondForGateway = mutation({
+export const respondForGateway = internalMutation({
   args: {
-    gatewaySecret: v.string(),
     sessionId: v.id("sessions"),
     approvalId: v.string(),
     approved: v.boolean(),
@@ -131,8 +121,7 @@ export const respondForGateway = mutation({
   },
   returns: v.union(approvalDecisionValidator, v.null()),
   handler: async (ctx, args) => {
-    const { gatewaySecret, sessionId, approvalId, approved, reason } = args;
-    assertGatewaySecret(gatewaySecret);
+    const { sessionId, approvalId, approved, reason } = args;
 
     const approval = await ctx.db
       .query("toolApprovals")
@@ -174,21 +163,18 @@ export const respondForGateway = mutation({
 
 /**
  * Fetch approval docs by IDs (used when resume payload already includes IDs).
- * @param gatewaySecret Shared gateway secret
  * @param sessionId Session scope
  * @param approvalIds Approval IDs to resolve
  * @returns Matching approval docs
  */
-export const listByApprovalIdsForGateway = query({
+export const listByApprovalIdsForGateway = internalQuery({
   args: {
-    gatewaySecret: v.string(),
     sessionId: v.id("sessions"),
     approvalIds: v.array(v.string()),
   },
   returns: v.array(toolApprovalValidator),
   handler: async (ctx, args) => {
-    const { gatewaySecret, sessionId, approvalIds } = args;
-    assertGatewaySecret(gatewaySecret);
+    const { sessionId, approvalIds } = args;
 
     const uniqueIds = Array.from(new Set(approvalIds));
     const approvals = await Promise.all(

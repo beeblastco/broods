@@ -1,0 +1,188 @@
+# -- Global settings shared across services
+global:
+  # -- Container image registry
+  imageRegistry: ghcr.io/beeblastco
+  # -- Pull policy for all images
+  imagePullPolicy: IfNotPresent
+  # -- Image pull secrets (for private registries)
+  imagePullSecrets: []
+  # -- Namespace override (defaults to release namespace)
+  namespace: ""
+
+# =============================================================================
+# Agent Gateway
+# =============================================================================
+agentGateway:
+  enabled: true
+  replicaCount: 2
+
+  image:
+    repository: ""  # defaults to global.imageRegistry/clonee-agent-gateway
+    tag: "latest"
+
+  # -- Container port the agent-gateway listens on
+  port: 8080
+
+  # -- Resource requests and limits
+  resources:
+    requests:
+      cpu: 250m
+      memory: 256Mi
+    limits:
+      cpu: "1"
+      memory: 512Mi
+
+  # -- Readiness probe configuration
+  readinessProbe:
+    httpGet:
+      path: /healthz
+      port: http
+    initialDelaySeconds: 3
+    periodSeconds: 10
+
+  # -- Liveness probe configuration
+  livenessProbe:
+    httpGet:
+      path: /healthz
+      port: http
+    initialDelaySeconds: 10
+    periodSeconds: 20
+
+  # -- Horizontal Pod Autoscaler
+  autoscaling:
+    enabled: false
+    minReplicas: 2
+    maxReplicas: 6
+    targetCPUUtilizationPercentage: 70
+    targetMemoryUtilizationPercentage: 80
+
+  # -- Node selector labels
+  nodeSelector: {}
+
+  # -- Tolerations
+  tolerations: []
+
+  # -- Pod affinity rules
+  affinity: {}
+
+  # -- Additional pod annotations
+  podAnnotations: {}
+
+  # -- Service configuration
+  service:
+    type: ClusterIP
+    port: 80
+
+  # -- Ingress configuration (Traefik is the default K3s ingress)
+  ingress:
+    enabled: true
+    className: traefik
+    annotations:
+      # Traefik sticky sessions and timeouts for streaming
+      traefik.ingress.kubernetes.io/router.entrypoints: websecure
+      traefik.ingress.kubernetes.io/router.tls: "true"
+    hosts:
+      - host: api.example.com
+        paths:
+          - path: /v1
+            pathType: Prefix
+    tls:
+      - secretName: agent-gateway-tls
+        hosts:
+          - api.example.com
+
+  # -- Environment variables from Kubernetes secret
+  # The secret name is {{ Release.Name }}-agent-gateway-secrets
+  env:
+    CONVEX_SITE_URL: ""
+    GATEWAY_SHARED_SECRET: ""
+    AGENT_API_KEY_PEPPER: ""
+    AI_GATEWAY_API_KEY: ""
+    TAVILY_API_KEY: ""
+    AWS_REGION: ""
+    AWS_S3_BUCKET: ""
+    AWS_ACCESS_KEY_ID: ""
+    AWS_SECRET_ACCESS_KEY: ""
+    # SANDBOX_SERVICE_URL and SANDBOX_SHARED_SECRET are auto-wired
+
+# =============================================================================
+# Sandbox
+# =============================================================================
+sandbox:
+  enabled: true
+  replicaCount: 2
+
+  image:
+    repository: ""  # defaults to global.imageRegistry/clonee-sandbox
+    tag: "latest"
+
+  # -- Container port the sandbox listens on
+  port: 8971
+
+  # -- Resource requests and limits (higher memory for subprocess execution)
+  resources:
+    requests:
+      cpu: 250m
+      memory: 256Mi
+    limits:
+      cpu: "1"
+      memory: 512Mi
+
+  # -- Readiness probe configuration
+  readinessProbe:
+    httpGet:
+      path: /healthz
+      port: http
+    initialDelaySeconds: 3
+    periodSeconds: 10
+
+  # -- Liveness probe configuration
+  livenessProbe:
+    httpGet:
+      path: /healthz
+      port: http
+    initialDelaySeconds: 10
+    periodSeconds: 20
+
+  # -- Horizontal Pod Autoscaler
+  autoscaling:
+    enabled: false
+    minReplicas: 2
+    maxReplicas: 4
+    targetCPUUtilizationPercentage: 70
+    targetMemoryUtilizationPercentage: 80
+
+  # -- Node selector labels
+  nodeSelector: {}
+
+  # -- Tolerations
+  tolerations: []
+
+  # -- Pod affinity rules
+  affinity: {}
+
+  # -- Additional pod annotations
+  podAnnotations: {}
+
+  # -- Service configuration (ClusterIP, only accessible within cluster)
+  service:
+    type: ClusterIP
+    port: 8971
+
+  # -- Environment variables from Kubernetes secret
+  env:
+    SANDBOX_SHARED_SECRET: ""
+
+  # -- Security context for sandbox pods (run code in isolation)
+  securityContext:
+    readOnlyRootFilesystem: false
+    allowPrivilegeEscalation: false
+    runAsNonRoot: true
+    runAsUser: 1000
+
+# =============================================================================
+# Secrets (create a K8s Secret with all sensitive values)
+# =============================================================================
+secrets:
+  # -- Set to false if you manage secrets externally (e.g. sealed-secrets, external-secrets)
+  create: true

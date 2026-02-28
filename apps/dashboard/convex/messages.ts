@@ -3,8 +3,7 @@
  */
 import { withSystemFields } from "convex-helpers/validators";
 import { v } from "convex/values";
-import { internalMutation, internalQuery, mutation, query } from "./_generated/server";
-import { assertGatewaySecret } from "./model/gateway";
+import { internalMutation, internalQuery, query } from "./_generated/server";
 import { createMessage, listModelMessages } from "./model/messages";
 import { messageContentFields, messageFields, messageRoleEnum } from "./schema";
 import { verifySessionOwnership } from "./model/ownership";
@@ -68,19 +67,16 @@ export const listInternal = internalQuery({
 
 /**
  * List model messages for gateway execution with shared-secret auth.
- * @param gatewaySecret Shared gateway secret
  * @param sessionId Session ID
  * @returns Messages mapped to AI SDK model-message format
  */
-export const listForGateway = query({
+export const listForGateway = internalQuery({
   args: {
-    gatewaySecret: v.string(),
     sessionId: v.id("sessions"),
   },
   returns: v.array(modelMessageValidator),
   handler: async (ctx, args) => {
-    const { gatewaySecret, sessionId } = args;
-    assertGatewaySecret(gatewaySecret);
+    const { sessionId } = args;
 
     return await listModelMessages(ctx, sessionId);
   },
@@ -112,16 +108,14 @@ export const createInternal = internalMutation({
 
 /**
  * Create one message from gateway with shared-secret auth.
- * @param gatewaySecret Shared gateway secret
  * @param sessionId Session ID
  * @param message Message payload
  * @param providerOptions Optional provider metadata
  * @param metadata Optional custom metadata
  * @returns Created message ID
  */
-export const createForGateway = mutation({
+export const createForGateway = internalMutation({
   args: {
-    gatewaySecret: v.string(),
     sessionId: v.id("sessions"),
     message: v.object({
       role: messageRoleEnum,
@@ -132,10 +126,7 @@ export const createForGateway = mutation({
   },
   returns: v.id("messages"),
   handler: async (ctx, args) => {
-    const { gatewaySecret, ...messageArgs } = args;
-    assertGatewaySecret(gatewaySecret);
-
-    return await createMessage(ctx, messageArgs);
+    return await createMessage(ctx, args);
   },
 });
 

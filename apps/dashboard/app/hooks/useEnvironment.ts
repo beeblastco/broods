@@ -5,7 +5,7 @@
  * Reads and writes the active environment ID via the ?env= search param so the
  * selection is shareable, bookmarkable, and survives page refreshes.
  */
-import { useCallback } from "react";
+import { useCallback, useTransition } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import type { Id } from "@/convex/_generated/dataModel";
 
@@ -17,6 +17,7 @@ export function useEnvironment() {
     const searchParams = useSearchParams();
     const pathname = usePathname();
     const router = useRouter();
+    const [, startTransition] = useTransition();
 
     const environmentId = searchParams.get("env") as Id<"environments"> | null;
 
@@ -29,9 +30,13 @@ export function useEnvironment() {
                 next.delete("env");
             }
             const query = next.toString();
-            router.replace(query ? `${pathname}?${query}` : pathname);
+            // Wrap in startTransition so the URL change is non-urgent and avoids
+            // blocking user interactions while the canvas tree re-renders.
+            startTransition(() => {
+                router.replace(query ? `${pathname}?${query}` : pathname);
+            });
         },
-        [searchParams, pathname, router],
+        [searchParams, pathname, router, startTransition],
     );
 
     return { environmentId, setEnvironmentId };

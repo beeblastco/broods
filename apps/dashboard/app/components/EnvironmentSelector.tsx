@@ -24,6 +24,13 @@ import {
     DialogHeader,
     DialogTitle,
 } from "@/app/components/ui/dialog";
+import {
+    Select,
+    SelectContent,
+    SelectItem,
+    SelectTrigger,
+    SelectValue,
+} from "@/app/components/ui/select";
 import { Button } from "@/app/components/ui/button";
 import { Input } from "@/app/components/ui/input";
 import { Label } from "@/app/components/ui/label";
@@ -107,11 +114,11 @@ export function EnvironmentSelector() {
         <>
             <DropdownMenu>
                 <DropdownMenuTrigger asChild>
-                    <button className="flex items-center gap-1.5 rounded-md px-2 py-1 text-sm font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus:outline-none data-[state=open]:bg-accent data-[state=open]:text-foreground">
+                    <Button variant="ghost" className="h-auto gap-1.5 px-2 py-1 text-sm font-medium text-muted-foreground data-[state=open]:bg-accent data-[state=open]:text-foreground">
                         <EnvironmentDot isDefault={selectedEnv?.isDefault ?? false} />
                         {selectedEnv?.name ?? "Environment"}
                         <ChevronDown className="size-3.5 opacity-50" />
-                    </button>
+                    </Button>
                 </DropdownMenuTrigger>
 
                 <DropdownMenuContent align="start" sideOffset={8} className="w-56">
@@ -216,23 +223,25 @@ export function EnvironmentSelector() {
                             {createMode === "duplicate" && (
                                 <div className="grid gap-2">
                                     <Label htmlFor="dup-source">Copy from</Label>
-                                    <select
-                                        id="dup-source"
+                                    <Select
                                         value={duplicateFromId ?? ""}
-                                        onChange={(e) =>
+                                        onValueChange={(val) =>
                                             setDuplicateFromId(
-                                                e.target.value as Id<"environments"> | null,
+                                                (val || null) as Id<"environments"> | null,
                                             )
                                         }
-                                        className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
                                     >
-                                        <option value="">Select environment…</option>
-                                        {environments.map((env) => (
-                                            <option key={env._id} value={env._id}>
-                                                {env.name}
-                                            </option>
-                                        ))}
-                                    </select>
+                                        <SelectTrigger className="w-full">
+                                            <SelectValue placeholder="Select environment…" />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                            {environments.map((env) => (
+                                                <SelectItem key={env._id} value={env._id}>
+                                                    {env.name}
+                                                </SelectItem>
+                                            ))}
+                                        </SelectContent>
+                                    </Select>
                                 </div>
                             )}
                         </div>

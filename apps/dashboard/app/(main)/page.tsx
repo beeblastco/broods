@@ -51,6 +51,7 @@ export default function ProjectsDashboard() {
                                 name={project.name}
                                 canvas={project.canvas}
                                 projectId={project._id}
+                                deployedAgentCount={project.deployedAgentCount}
                             />
                         ))}
                     </div>

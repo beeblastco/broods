@@ -43,6 +43,7 @@ export function CreateAgentConfigDialog({
     const [credentials, setCredentials] = useState<{
         endpointId: string;
         rawApiKey: string;
+        projectSlug?: string;
         environmentSlug?: string;
     } | null>(null);
     const [copiedField, setCopiedField] = useState<string | null>(null);
@@ -68,12 +69,12 @@ export function CreateAgentConfigDialog({
     }
 
     async function handleCreate() {
-        if (!name.trim() || !modelId.trim()) return;
+        if (!name.trim() || !modelId.trim() || !environmentId) return;
         setIsCreating(true);
         try {
             const { agentConfigId } = await createAgentConfig({
                 projectId: projectId,
-                environmentId: environmentId ?? undefined,
+                environmentId: environmentId,
                 name: name.trim(),
                 modelId: modelId.trim(),
                 description: description.trim() || undefined,
@@ -95,7 +96,8 @@ export function CreateAgentConfigDialog({
     if (credentials) {
         const gatewayUrl = process.env.NEXT_PUBLIC_AGENT_GATEWAY_URL ?? "http://localhost:8080";
         const envPrefix = credentials.environmentSlug ? `/${credentials.environmentSlug}` : "";
-        const curlCommand = `curl -X POST ${gatewayUrl}/v1/agents${envPrefix}/${credentials.endpointId} \\\n  -H "Authorization: Bearer ${credentials.rawApiKey}" \\\n  -H "Content-Type: application/json" \\\n  -d '{"message":"hello","stream":false}'`;
+        const projectPrefix = credentials.projectSlug ? `/${credentials.projectSlug}` : "";
+        const curlCommand = `curl -X POST ${gatewayUrl}/v1${projectPrefix}/agents${envPrefix}/${credentials.endpointId} \\\n  -H "Authorization: Bearer ${credentials.rawApiKey}" \\\n  -H "Content-Type: application/json" \\\n  -d '{"message":"hello","stream":false}'`;
 
         return (
             <Dialog open={open} onOpenChange={() => handleClose()}>
@@ -206,7 +208,7 @@ export function CreateAgentConfigDialog({
                         </Button>
                         <Button
                             type="submit"
-                            disabled={!name.trim() || !modelId.trim() || isCreating}
+                            disabled={!name.trim() || !modelId.trim() || !environmentId || isCreating}
                         >
                             {isCreating ? "Creating..." : "Create"}
                         </Button>

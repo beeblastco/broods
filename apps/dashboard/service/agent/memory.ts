@@ -8,31 +8,14 @@ import {
   PutObjectCommand,
   S3Client,
 } from "@aws-sdk/client-s3";
-import type { ToolSet } from "ai";
-import { generateText, tool } from "ai";
-import type { ConvexHttpClient } from "convex/browser";
+import { tool } from "ai";
+import { posix } from "node:path";
 import { z } from "zod";
-import { api } from "../convex/_generated/api";
-import type { Id } from "../convex/_generated/dataModel";
-import { resolveModel, toErrorMessage } from "./utils";
+import { toErrorMessage } from "./utils";
 
-// S3 client for agent memory storage (filesystem-like, namespaced by authId)
+/** S3 client for agent memory storage (filesystem-like, namespaced by authId). */
 const memoryS3Client = new S3Client({ region: Bun.env.AWS_REGION });
 const memoryS3Bucket = Bun.env.AWS_S3_BUCKET ?? "";
-
-
-export type SubAgentSummary = {
-  configId: Id<"agentConfigs">;
-  name: string;
-  description?: string;
-  modelId: string;
-  systemPrompt?: string;
-  maxTurns?: number;
-  temperature?: number;
-  maxTokens?: number;
-  permissionMode: "default" | "bypassPermissions";
-};
-
 
 /**
  * Converts a memory path to a namespaced S3 key for a given user.
@@ -44,13 +27,17 @@ function memoryPathToS3Key(path: string, authId: string): string {
   if (!path.startsWith("/memories")) {
     throw new Error("Invalid path: must start with /memories");
   }
-  if (path.includes("../") || path.includes("..\\") || path.includes("%2e%2e")) {
-    throw new Error("Invalid path: directory traversal not allowed");
-  }
-  const s3Key = `${authId}/memories${path.slice("/memories".length)}`;
-  if (!s3Key.startsWith(`${authId}/memories`)) {
+
+  // Normalize the path to resolve any traversal sequences (../, .., encoded variants)
+  const decoded = decodeURIComponent(path);
+  const normalized = posix.normalize(decoded);
+
+  // After normalization, the path must still be within /memories
+  if (!normalized.startsWith("/memories")) {
     throw new Error("Invalid path: resolved outside memory directory");
   }
+
+  const s3Key = `${authId}${normalized}`;
 
   return s3Key;
 }
@@ -335,7 +322,7 @@ async function executeMemoryCommand(
  * @param authId User auth ID for namespacing S3 keys
  * @returns AI SDK tool instance
  */
-function createMemoryTool(authId: string) {
+export function createMemoryTool(authId: string) {
   return tool({
     description: [
       "Persistent memory storage tool for reading and writing files. All paths must start with /memories.",
@@ -390,179 +377,3 @@ function createMemoryTool(authId: string) {
     },
   });
 }
-
-/**
- * Creates a subAgent tool that spawns subagents synchronously.
- * The LLM decides when delegation is useful (not a pre-planner).
- */
-export function createSubAgentTool(options: {
-  client: ConvexHttpClient;
-  gatewaySecret: string;
-  authId: string;
-  parentSessionId: Id<"sessions">;
-  subAgents: SubAgentSummary[];
-}) {
-  const { client, gatewaySecret, authId, parentSessionId, subAgents } = options;
-  const validNames = subAgents.map((s) => s.name);
-
-  const agentDescriptions = subAgents.map((s) => {
-    const desc = s.description ?? "No description";
-
-    return `- ${s.name}: ${desc}`;
-  });
-
-  return tool({
-    description: [
-      "Spawn a specialized subagent to handle a task.",
-      "The subagent processes the request and returns the result.",
-      "",
-      "Available subagents:",
-      ...agentDescriptions,
-    ].join("\n"),
-    inputSchema: z.object({
-      agentName: z
-        .enum(validNames as [string, ...string[]])
-        .describe("Name of the subagent to invoke"),
-      content: z
-        .string()
-        .describe("Instructions for the subagent to execute"),
-    }),
-    execute: async ({ agentName, content }) => {
-      const subAgent = subAgents.find((s) => s.name === agentName);
-      if (!subAgent) {
-        return `Agent '${agentName}' not found.`;
-      }
-
-      // Create subagent session in Convex
-      const created = await client.mutation(api.sessions.createForGateway, {
-        gatewaySecret: gatewaySecret,
-        authId: authId,
-        configId: subAgent.configId,
-        parentSessionId: parentSessionId,
-        isSubagent: true,
-        userMessage: [{ type: "text", text: content }],
-      });
-
-      await client.mutation(api.tasks.updateForGateway, {
-        gatewaySecret: gatewaySecret,
-        taskId: created.taskId,
-        status: "running",
-      });
-
-      try {
-        // Run subagent synchronously
-        const subResult = await generateText({
-          model: resolveModel(subAgent.modelId),
-          prompt: content,
-          ...(subAgent.systemPrompt ? { system: subAgent.systemPrompt } : {}),
-          ...(subAgent.temperature !== undefined
-            ? { temperature: subAgent.temperature }
-            : {}),
-          ...(subAgent.maxTokens !== undefined
-            ? { maxOutputTokens: subAgent.maxTokens }
-            : {}),
-        });
-
-        const output =
-          subResult.text.trim().length > 0
-            ? subResult.text.trim()
-            : `Subagent ${agentName} completed without output.`;
-
-        // Save subagent response to its own session
-        await client.mutation(api.messages.createForGateway, {
-          gatewaySecret: gatewaySecret,
-          sessionId: created.sessionId,
-          message: {
-            role: "assistant",
-            content: [{ type: "text", text: output }],
-          },
-          metadata: {
-            finishReason: String(subResult.finishReason ?? "unknown"),
-            delegatedBySessionId: parentSessionId,
-          },
-        });
-
-        // Complete subagent task
-        await client.mutation(api.tasks.updateForGateway, {
-          gatewaySecret: gatewaySecret,
-          taskId: created.taskId,
-          status: "completed",
-          result: [{ type: "text", text: output }],
-        });
-
-        return output;
-      } catch (error) {
-        const errorMessage = toErrorMessage(error);
-
-        await client.mutation(api.tasks.updateForGateway, {
-          gatewaySecret: gatewaySecret,
-          taskId: created.taskId,
-          status: "failed",
-          error: errorMessage,
-        });
-
-        return `Subagent ${agentName} failed: ${errorMessage}`;
-      }
-    },
-  });
-}
-
-/**
- * Assembles the tool set for an agent based on its config.
- * Respects allowedTools whitelist and disallowedTools blacklist.
- */
-export function buildToolsForAgent(options: {
-  client: ConvexHttpClient;
-  gatewaySecret: string;
-  authId: string;
-  sessionId: Id<"sessions">;
-  subAgents: SubAgentSummary[];
-  allowedTools?: string[];
-  disallowedTools?: string[];
-}): ToolSet {
-  const {
-    client,
-    gatewaySecret,
-    authId,
-    sessionId,
-    subAgents,
-    allowedTools,
-    disallowedTools,
-  } = options;
-
-  const allTools: ToolSet = {};
-
-  // Add subAgent tool if subagents are available
-  if (subAgents.length > 0) {
-    allTools.subAgent = createSubAgentTool({
-      client: client,
-      gatewaySecret: gatewaySecret,
-      authId: authId,
-      parentSessionId: sessionId,
-      subAgents: subAgents,
-    });
-  }
-
-  // Add memory tool
-  allTools.memory = createMemoryTool(authId);
-
-  // Apply whitelist/blacklist filtering
-  if (allowedTools && allowedTools.length > 0) {
-    const allowed = new Set(allowedTools);
-    for (const name of Object.keys(allTools)) {
-      if (!allowed.has(name)) {
-        delete allTools[name];
-      }
-    }
-  } else if (disallowedTools && disallowedTools.length > 0) {
-    const disallowed = new Set(disallowedTools);
-    for (const name of Object.keys(allTools)) {
-      if (disallowed.has(name)) {
-        delete allTools[name];
-      }
-    }
-  }
-
-  return allTools;
-}
-

@@ -2,6 +2,7 @@
 
 /** Config tab with JSON editor for agent configuration fields. */
 import { Button } from "@/app/components/ui/button";
+import { Textarea } from "@/app/components/ui/textarea";
 import { Check } from "lucide-react";
 
 export function ConfigTab({
@@ -30,7 +31,7 @@ export function ConfigTab({
             <span className="text-[11px] uppercase tracking-wider text-muted-foreground/70">
                 Agent Configuration
             </span>
-            <textarea
+            <Textarea
                 value={configJson}
                 onChange={(e) => {
                     setConfigJson(e.target.value);
@@ -38,7 +39,7 @@ export function ConfigTab({
                     setConfigSaved(false);
                 }}
                 spellCheck={false}
-                className="flex-1 min-h-0 resize-none rounded-md border border-border bg-muted/50 p-3 font-mono text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+                className="flex-1 min-h-0 resize-none bg-muted/50 font-mono text-xs"
             />
             {configError && (
                 <p className="text-xs text-destructive">{configError}</p>

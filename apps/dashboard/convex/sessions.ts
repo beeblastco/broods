@@ -3,8 +3,7 @@
  */
 import { withSystemFields } from "convex-helpers/validators";
 import { v } from "convex/values";
-import { internalMutation, internalQuery, mutation, query } from "./_generated/server";
-import { assertGatewaySecret } from "./model/gateway";
+import { internalMutation, internalQuery, query } from "./_generated/server";
 import { verifySessionOwnership } from "./model/ownership";
 import { createSessionWithTask, fetchLatestAssistantText } from "./model/sessions";
 import {
@@ -110,7 +109,6 @@ export const createInternal = internalMutation({
 
 /**
  * Gateway session creation entrypoint for machine-to-machine requests.
- * @param gatewaySecret Shared gateway secret
  * @param authId Owner auth ID for the created/updated session
  * @param sessionId Optional existing session ID
  * @param configId Agent config ID
@@ -119,9 +117,8 @@ export const createInternal = internalMutation({
  * @param isSubagent Optional subagent marker
  * @returns Session ID and task ID
  */
-export const createForGateway = mutation({
+export const createForGateway = internalMutation({
   args: {
-    gatewaySecret: v.string(),
     authId: sessionFields.authId,
     sessionId: v.optional(v.id("sessions")),
     configId: v.id("agentConfigs"),
@@ -131,10 +128,7 @@ export const createForGateway = mutation({
   },
   returns: sessionWithTaskValidator,
   handler: async (ctx, args) => {
-    const { gatewaySecret, ...sessionArgs } = args;
-    assertGatewaySecret(gatewaySecret);
-
-    return await createSessionWithTask(ctx, sessionArgs);
+    return await createSessionWithTask(ctx, args);
   },
 });
 

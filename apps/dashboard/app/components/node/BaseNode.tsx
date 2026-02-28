@@ -1,5 +1,8 @@
 "use client";
 
+import { JavaScript } from "@/app/components/icons/JavaScript";
+import { Python } from "@/app/components/icons/Python";
+import type { AgentHealthStatus } from "@/app/hooks/useAgentHealth";
 import { Handle, Position, useStore } from "@xyflow/react";
 import { useCallback } from "react";
 
@@ -16,7 +19,20 @@ export const statusConfig = {
     error: { color: "bg-red-500", text: "Error" },
 };
 
+/** Status display config for agent health states. */
+export const agentStatusConfig: Record<AgentHealthStatus, { color: string; text: string }> = {
+    healthy: { color: "bg-emerald-500", text: "Healthy" },
+    deploying: { color: "bg-amber-500", text: "Deploying" },
+    idle: { color: "bg-zinc-500", text: "Idle" },
+    unhealthy: { color: "bg-red-500", text: "Unhealthy" },
+};
+
 const zoomSelector = (state: { transform: [number, number, number] }) => state.transform[2];
+
+export type ToolMeta = {
+    language: "javascript" | "python";
+    status: "enabled" | "disabled";
+};
 
 /** Shared node shell with handles, label, and status indicator. */
 export function BaseNode({
@@ -24,11 +40,15 @@ export function BaseNode({
     nodeType,
     data,
     icon,
+    agentStatus,
+    toolMeta,
 }: {
     id: string;
     nodeType: string;
     data: BaseNodeData;
     icon: React.ReactNode;
+    agentStatus?: AgentHealthStatus;
+    toolMeta?: ToolMeta;
 }) {
     const zoom = useStore(zoomSelector);
     const scale = Math.min(Math.max(1 / Math.sqrt(zoom), 0.9), 1.2);
@@ -55,10 +75,22 @@ export function BaseNode({
         ),
     );
 
-    let statusColor: string;
-    let statusText: string;
+    let statusColor = "";
+    let statusText = "";
+    let showStatus = true;
 
-    if (nodeType === "database") {
+    if (nodeType === "tool") {
+        if (toolMeta) {
+            statusColor = toolMeta.status === "enabled" ? "bg-emerald-500" : "bg-zinc-500";
+            statusText = toolMeta.status === "enabled" ? "Enabled" : "Disabled";
+        } else {
+            showStatus = false;
+        }
+    } else if (nodeType === "agent" && agentStatus) {
+        const config = agentStatusConfig[agentStatus];
+        statusColor = config.color;
+        statusText = config.text;
+    } else if (nodeType === "database") {
         if (isConnectedToAgent) {
             statusColor = "bg-emerald-500";
             statusText = "Connected";
@@ -80,12 +112,22 @@ export function BaseNode({
         : "border-border hover:border-foreground/25";
 
     return (
-        <div className={`min-w-45 min-h-24 flex flex-col rounded-md border bg-card transition-[border-color,box-shadow] duration-200 hover:shadow-md ${borderClass}`}>
+        <div className={`relative min-w-45 min-h-24 flex flex-col rounded-md border bg-card transition-[border-color,box-shadow] duration-200 hover:shadow-md ${borderClass}`}>
             <Handle
                 type="target"
                 position={Position.Top}
                 className="bg-transparent! w-2.5! h-2.5! border-transparent!"
             />
+
+            {toolMeta && (
+                <span className="absolute top-2 right-2.5 z-10">
+                    {toolMeta.language === "python" ? (
+                        <Python className="size-3.5" />
+                    ) : (
+                        <JavaScript className="size-3.5" />
+                    )}
+                </span>
+            )}
 
             <div
                 className="px-3 pt-2.5 origin-top-left"
@@ -104,10 +146,12 @@ export function BaseNode({
                 </div>
             </div>
 
-            <div className="mt-auto px-3 pb-2.5 flex items-center gap-1.5">
-                <div className={`h-1.5 w-1.5 rounded-full ${statusColor}`} />
-                <span className="text-[11px] text-muted-foreground">{statusText}</span>
-            </div>
+            {showStatus && (
+                <div className="mt-auto px-3 pb-2.5 flex items-center gap-1.5">
+                    <div className={`h-1.5 w-1.5 rounded-full ${statusColor}`} />
+                    <span className="text-[11px] text-muted-foreground">{statusText}</span>
+                </div>
+            )}
 
             <Handle
                 type="source"

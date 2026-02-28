@@ -10,6 +10,7 @@ import {
   canvasNodeValidator,
   projectFields,
 } from "./schema";
+import { deleteAgentConfigRelated, deleteSessionCascade } from "./model/cleanup";
 import { verifyProjectOwnership } from "./model/ownership";
 
 /** Validator for project records with system fields. */
@@ -178,9 +179,9 @@ export const update = mutation({
 });
 
 /**
- * List all projects with their canvas preview data for the dashboard.
+ * List all projects with their canvas preview data and deployment counts for the dashboard.
  * Fetches the first available canvas layout per project for thumbnail rendering.
- * @returns Array of projects each with optional nodes/edges canvas data
+ * @returns Array of projects each with optional canvas data and deployed agent count
  */
 export const listWithPreview = query({
   args: {},
@@ -194,6 +195,7 @@ export const listWithPreview = query({
         }),
         v.null(),
       ),
+      deployedAgentCount: v.number(),
     }),
   ),
   handler: async (ctx) => {
@@ -215,9 +217,27 @@ export const listWithPreview = query({
           .withIndex("by_projectId", (q) => q.eq("projectId", project._id))
           .first();
 
+        // Count agents with active deployments
+        let deployedAgentCount = 0;
+        if (layout) {
+          const agentConfigIds = layout.nodes
+            .filter((n) => n.type === "agent" && n.data.agentConfigId)
+            .map((n) => n.data.agentConfigId!);
+
+          for (const configId of agentConfigIds) {
+            const activeDeployment = await ctx.db
+              .query("agentDeployments")
+              .withIndex("by_agentConfigId", (q) => q.eq("agentConfigId", configId))
+              .filter((q) => q.eq(q.field("status"), "active"))
+              .first();
+            if (activeDeployment) deployedAgentCount++;
+          }
+        }
+
         return {
           ...project,
           canvas: layout ? { nodes: layout.nodes, edges: layout.edges } : null,
+          deployedAgentCount: deployedAgentCount,
         };
       }),
     );
@@ -277,33 +297,8 @@ export const removeCleanupInternal = internalMutation({
       .query("sessions")
       .withIndex("by_projectId", (q) => q.eq("projectId", projectId))
       .collect();
-
     for (const session of sessions) {
-      const messages = await ctx.db
-        .query("messages")
-        .withIndex("by_sessionId", (q) => q.eq("sessionId", session._id))
-        .collect();
-      for (const msg of messages) {
-        await ctx.db.delete(msg._id);
-      }
-
-      const tasks = await ctx.db
-        .query("tasks")
-        .withIndex("by_sessionId", (q) => q.eq("sessionId", session._id))
-        .collect();
-      for (const task of tasks) {
-        await ctx.db.delete(task._id);
-      }
-
-      const approvals = await ctx.db
-        .query("toolApprovals")
-        .withIndex("by_sessionId", (q) => q.eq("sessionId", session._id))
-        .collect();
-      for (const approval of approvals) {
-        await ctx.db.delete(approval._id);
-      }
-
-      await ctx.db.delete(session._id);
+      await deleteSessionCascade(ctx, session._id);
     }
 
     // Delete all agent configs and their related data
@@ -311,25 +306,18 @@ export const removeCleanupInternal = internalMutation({
       .query("agentConfigs")
       .withIndex("by_projectId", (q) => q.eq("projectId", projectId))
       .collect();
-
     for (const config of configs) {
-      const deployments = await ctx.db
-        .query("agentDeployments")
-        .withIndex("by_agentConfigId", (q) => q.eq("agentConfigId", config._id))
-        .collect();
-      for (const dep of deployments) {
-        await ctx.db.delete(dep._id);
-      }
-
-      const connections = await ctx.db
-        .query("agentConnections")
-        .withIndex("by_agentConfigId", (q) => q.eq("agentConfigId", config._id))
-        .collect();
-      for (const conn of connections) {
-        await ctx.db.delete(conn._id);
-      }
-
+      await deleteAgentConfigRelated(ctx, config._id);
       await ctx.db.delete(config._id);
+    }
+
+    // Delete all custom tool services for this project
+    const toolServices = await ctx.db
+      .query("toolServices")
+      .withIndex("by_projectId", (q) => q.eq("projectId", projectId))
+      .collect();
+    for (const toolService of toolServices) {
+      await ctx.db.delete(toolService._id);
     }
 
     // Delete all canvas layouts for this project

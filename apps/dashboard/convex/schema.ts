@@ -50,6 +50,25 @@ export const deploymentStatusEnum = v.union(
   v.literal("revoked"),
 );
 
+/** Tool service status enum for custom tool availability. */
+export const toolServiceStatusEnum = v.union(
+  v.literal("enabled"),
+  v.literal("disabled"),
+);
+
+/** Tool service code language enum. */
+export const toolServiceLanguageEnum = v.union(
+  v.literal("javascript"),
+  v.literal("python"),
+);
+
+/** User pricing plan tier. */
+export const planEnum = v.union(
+  v.literal("hobby"),
+  v.literal("developer"),
+  v.literal("pro"),
+);
+
 
 /** Agent connection target type (matches canvas node types). */
 export const agentConnectionTargetTypeEnum = v.union(
@@ -124,7 +143,11 @@ export const userFields = {
   authId: v.string(),
   email: v.string(),
   name: v.string(),
+  accountHandle: v.optional(v.string()),
   avatarUrl: v.optional(v.string()),
+  plan: v.optional(planEnum),
+  deletionRequestedAt: v.optional(v.number()),
+  deletionScheduledFor: v.optional(v.number()),
   isFirstTime: v.boolean(),
   updatedAt: v.number(),
 };
@@ -151,20 +174,26 @@ export const environmentFields = {
 export const agentConfigFields = {
   authId: v.string(),
   projectId: v.id("projects"),
-  environmentId: v.optional(v.id("environments")),
+  environmentId: v.id("environments"),
   name: v.string(),
   description: v.optional(v.string()),
   modelId: v.string(),
   systemPrompt: v.optional(v.string()),
   maxTurns: v.optional(v.number()),
   allowedTools: v.optional(v.array(v.string())),
-  disallowedTools: v.optional(v.array(v.string())),
   permissionMode: permissionModeEnum,
   outputFormat: v.optional(v.any()),
   providerOptions: v.optional(v.any()),
   temperature: v.optional(v.number()),
   maxTokens: v.optional(v.number()),
   isSubAgent: v.boolean(),
+  memoryToolEnabled: v.optional(v.boolean()),
+  searchToolEnabled: v.optional(v.boolean()),
+  searchToolConfig: v.optional(v.object({
+    searchDepth: v.optional(v.string()),
+    topic: v.optional(v.string()),
+    maxResults: v.optional(v.number()),
+  })),
   updatedAt: v.number(),
 };
 
@@ -264,7 +293,7 @@ export const canvasEdgeValidator = v.object({
 export const canvasLayoutFields = {
   authId: v.string(),
   projectId: v.id("projects"),
-  environmentId: v.optional(v.id("environments")),
+  environmentId: v.id("environments"),
   nodes: v.array(canvasNodeValidator),
   edges: v.array(canvasEdgeValidator),
   updatedAt: v.number(),
@@ -284,11 +313,27 @@ export const agentDeploymentFields = {
   authId: v.string(),
   agentConfigId: v.id("agentConfigs"),
   endpointId: v.string(),
+  projectSlug: v.optional(v.string()),
   environmentSlug: v.optional(v.string()),
   apiKey: v.optional(v.string()),
   apiKeyHash: v.string(),
   status: deploymentStatusEnum,
   revokedAt: v.optional(v.number()),
+  updatedAt: v.number(),
+};
+
+/** Tool service fields for custom sandboxed tools attached to canvas nodes. */
+export const toolServiceFields = {
+  authId: v.string(),
+  projectId: v.id("projects"),
+  environmentId: v.id("environments"),
+  nodeId: v.string(),
+  name: v.string(),
+  description: v.optional(v.string()),
+  parameters: v.optional(v.any()),
+  status: toolServiceStatusEnum,
+  language: toolServiceLanguageEnum,
+  sourceCode: v.string(),
   updatedAt: v.number(),
 };
 
@@ -332,7 +377,6 @@ export default defineSchema({
   toolApprovals: defineTable(toolApprovalFields)
     .index("by_sessionId", ["sessionId"])
     .index("by_sessionId_and_status", ["sessionId", "status"])
-    .index("by_status", ["status"])
     .index("by_approvalId", ["approvalId"]),
 
   canvasLayouts: defineTable(canvasLayoutFields)
@@ -342,6 +386,13 @@ export default defineSchema({
   agentConnections: defineTable(agentConnectionFields)
     .index("by_agentConfigId", ["agentConfigId"])
     .index("by_targetType_and_targetId", ["targetType", "targetId"]),
+
+  toolServices: defineTable(toolServiceFields)
+    .index("by_authId", ["authId"])
+    .index("by_projectId", ["projectId"])
+    .index("by_projectId_and_environmentId", ["projectId", "environmentId"])
+    .index("by_projectId_and_environmentId_and_nodeId", ["projectId", "environmentId", "nodeId"])
+    .index("by_authId_and_name", ["authId", "name"]),
 
   agentDeployments: defineTable(agentDeploymentFields)
     .index("by_authId", ["authId"])

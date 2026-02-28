@@ -3,9 +3,8 @@
  */
 import { withSystemFields } from "convex-helpers/validators";
 import { v } from "convex/values";
-import { mutation, query } from "./_generated/server";
+import { internalQuery, mutation, query } from "./_generated/server";
 import { agentConfigFields, agentDeploymentFields } from "./schema";
-import { assertGatewaySecret } from "./model/gateway";
 import { createDeploymentForConfig } from "./model/agentDeployment";
 import { verifyAgentConfigOwnership, verifyDeploymentOwnership } from "./model/ownership";
 
@@ -42,6 +41,7 @@ export const create = mutation({
   returns: v.object({
     endpointId: v.string(),
     rawApiKey: v.string(),
+    projectSlug: v.optional(v.string()),
     environmentSlug: v.optional(v.string()),
   }),
   handler: async (ctx, args) => {
@@ -55,12 +55,17 @@ export const create = mutation({
 
     await verifyAgentConfigOwnership(ctx, agentConfigId, user.subject);
 
-    // Resolve environment slug from the agent config's environment
+    // Resolve agent config for project and environment lookups
     const agentConfig = await ctx.db.get(agentConfigId);
     if (!agentConfig) {
       throw new Error("Agent config not found");
     }
 
+    // Resolve project slug from the agent config's project
+    const project = await ctx.db.get(agentConfig.projectId);
+    const projectSlug = project?.slug;
+
+    // Resolve environment slug from the agent config's environment
     let environmentSlug: string | undefined;
     if (agentConfig.environmentId) {
       const env = await ctx.db.get(agentConfig.environmentId);
@@ -69,7 +74,7 @@ export const create = mutation({
       }
     }
 
-    return await createDeploymentForConfig(ctx, user.subject, agentConfigId, environmentSlug);
+    return await createDeploymentForConfig(ctx, user.subject, agentConfigId, projectSlug, environmentSlug);
   },
 });
 
@@ -149,17 +154,14 @@ export const revoke = mutation({
  * @param environmentSlug Optional environment slug from URL path
  * @returns Deployment and config, or null if missing/mismatched
  */
-export const getByEndpointIdForGateway = query({
+export const getByEndpointIdForGateway = internalQuery({
   args: {
     endpointId: v.string(),
     environmentSlug: v.optional(v.string()),
-    gatewaySecret: v.string(),
   },
   returns: deploymentWithConfigValidator,
   handler: async (ctx, args) => {
-    const { endpointId, environmentSlug, gatewaySecret } = args;
-
-    assertGatewaySecret(gatewaySecret);
+    const { endpointId, environmentSlug } = args;
 
     const deployment = await ctx.db
       .query("agentDeployments")

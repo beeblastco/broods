@@ -9,7 +9,9 @@ import { internal } from "./_generated/api";
 import { internalMutation, mutation, query } from "./_generated/server";
 import { environmentFields } from "./schema";
 import { verifyProjectOwnership, verifyEnvironmentOwnership } from "./model/ownership";
+import { deleteAgentConfigRelated, deleteSessionCascade } from "./model/cleanup";
 import { createDeploymentForConfig } from "./model/agentDeployment";
+import { syncSubAgentFlagsForEnvironment } from "./model/agentConfig";
 import type { Id } from "./_generated/dataModel";
 
 /** Validator for environment records with system fields. */
@@ -97,30 +99,6 @@ export const ensureDefault = mutation({
       updatedAt: Date.now(),
     });
 
-    // Migrate legacy agentConfigs (no environmentId) to production
-    const legacyConfigs = await ctx.db
-      .query("agentConfigs")
-      .withIndex("by_projectId", (q) => q.eq("projectId", projectId))
-      .collect();
-
-    for (const config of legacyConfigs) {
-      if (!config.environmentId) {
-        await ctx.db.patch(config._id, { environmentId: environmentId });
-      }
-    }
-
-    // Migrate legacy canvasLayouts (no environmentId) to production
-    const legacyLayouts = await ctx.db
-      .query("canvasLayouts")
-      .withIndex("by_projectId", (q) => q.eq("projectId", projectId))
-      .collect();
-
-    for (const layout of legacyLayouts) {
-      if (!layout.environmentId) {
-        await ctx.db.patch(layout._id, { environmentId: environmentId });
-      }
-    }
-
     return environmentId;
   },
 });
@@ -174,6 +152,8 @@ export const create = mutation({
         .collect();
 
       const configIdMap = new Map<Id<"agentConfigs">, Id<"agentConfigs">>();
+      const project = await ctx.db.get(projectId);
+      const projectSlug = project?.slug;
       const environmentSlug = name.toLowerCase().replace(/\s+/g, "-");
 
       for (const config of sourceConfigs) {
@@ -187,21 +167,51 @@ export const create = mutation({
           systemPrompt: config.systemPrompt,
           maxTurns: config.maxTurns,
           allowedTools: config.allowedTools,
-          disallowedTools: config.disallowedTools,
           permissionMode: config.permissionMode,
           outputFormat: config.outputFormat,
           providerOptions: config.providerOptions,
           temperature: config.temperature,
           maxTokens: config.maxTokens,
           isSubAgent: config.isSubAgent,
+          memoryToolEnabled: config.memoryToolEnabled,
+          searchToolEnabled: config.searchToolEnabled,
+          searchToolConfig: config.searchToolConfig,
           updatedAt: Date.now(),
         });
 
         configIdMap.set(config._id, newConfigId);
 
         // Auto-deploy the duplicated config with the new environment's slug
-        await createDeploymentForConfig(ctx, user.subject, newConfigId, environmentSlug);
+        await createDeploymentForConfig(ctx, user.subject, newConfigId, projectSlug, environmentSlug);
       }
+
+      // Copy agentConnections from source configs, remapping IDs to new configs
+      for (const [oldConfigId, newConfigId] of configIdMap) {
+        const connections = await ctx.db
+          .query("agentConnections")
+          .withIndex("by_agentConfigId", (q) => q.eq("agentConfigId", oldConfigId))
+          .collect();
+
+        for (const connection of connections) {
+          const remappedTargetId =
+            connection.targetType === "agent"
+              ? String(configIdMap.get(connection.targetId as Id<"agentConfigs">) ?? connection.targetId)
+              : connection.targetId;
+
+          await ctx.db.insert("agentConnections", {
+            authId: user.subject,
+            agentConfigId: newConfigId,
+            targetType: connection.targetType,
+            targetId: remappedTargetId,
+            updatedAt: Date.now(),
+          });
+        }
+      }
+
+      await syncSubAgentFlagsForEnvironment(ctx, {
+        projectId: projectId,
+        environmentId: environmentId,
+      });
 
       // Copy canvas layout from source environment, remapping agentConfigIds
       const sourceLayout = await ctx.db
@@ -228,6 +238,30 @@ export const create = mutation({
           environmentId: environmentId,
           nodes: newNodes,
           edges: sourceLayout.edges,
+          updatedAt: Date.now(),
+        });
+      }
+
+      // Copy tool services from source environment.
+      const sourceToolServices = await ctx.db
+        .query("toolServices")
+        .withIndex("by_projectId_and_environmentId", (q) =>
+          q.eq("projectId", projectId).eq("environmentId", duplicateFromId),
+        )
+        .collect();
+
+      for (const toolService of sourceToolServices) {
+        await ctx.db.insert("toolServices", {
+          authId: user.subject,
+          projectId: projectId,
+          environmentId: environmentId,
+          nodeId: toolService.nodeId,
+          name: toolService.name,
+          description: toolService.description,
+          parameters: toolService.parameters,
+          status: toolService.status,
+          language: toolService.language,
+          sourceCode: toolService.sourceCode,
           updatedAt: Date.now(),
         });
       }
@@ -307,54 +341,27 @@ export const removeCleanupInternal = internalMutation({
         .query("sessions")
         .withIndex("by_configId", (q) => q.eq("configId", config._id))
         .collect();
-
       for (const session of sessions) {
-        const messages = await ctx.db
-          .query("messages")
-          .withIndex("by_sessionId", (q) => q.eq("sessionId", session._id))
-          .collect();
-        for (const msg of messages) {
-          await ctx.db.delete(msg._id);
-        }
-
-        const tasks = await ctx.db
-          .query("tasks")
-          .withIndex("by_sessionId", (q) => q.eq("sessionId", session._id))
-          .collect();
-        for (const task of tasks) {
-          await ctx.db.delete(task._id);
-        }
-
-        const approvals = await ctx.db
-          .query("toolApprovals")
-          .withIndex("by_sessionId", (q) => q.eq("sessionId", session._id))
-          .collect();
-        for (const approval of approvals) {
-          await ctx.db.delete(approval._id);
-        }
-
-        await ctx.db.delete(session._id);
+        await deleteSessionCascade(ctx, session._id);
       }
 
-      // Delete deployments for the config
-      const deployments = await ctx.db
-        .query("agentDeployments")
-        .withIndex("by_agentConfigId", (q) => q.eq("agentConfigId", config._id))
-        .collect();
-      for (const dep of deployments) {
-        await ctx.db.delete(dep._id);
-      }
-
-      // Delete connections for the config
-      const connections = await ctx.db
-        .query("agentConnections")
-        .withIndex("by_agentConfigId", (q) => q.eq("agentConfigId", config._id))
-        .collect();
-      for (const conn of connections) {
-        await ctx.db.delete(conn._id);
-      }
-
+      // Delete deployments and connections, then the config itself
+      await deleteAgentConfigRelated(ctx, config._id);
       await ctx.db.delete(config._id);
+    }
+
+    // Delete associated tool services
+    const toolServices = await ctx.db
+      .query("toolServices")
+      .withIndex("by_projectId_and_environmentId", (q) =>
+        q
+          .eq("projectId", projectId)
+          .eq("environmentId", environmentId),
+      )
+      .collect();
+
+    for (const toolService of toolServices) {
+      await ctx.db.delete(toolService._id);
     }
 
     // Delete associated canvas layout

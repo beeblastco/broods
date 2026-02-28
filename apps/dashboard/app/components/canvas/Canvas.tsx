@@ -50,6 +50,9 @@ const AgentSourcePickerDialog = dynamic(
 const CreateAgentConfigDialog = dynamic(
     () => import("@/app/components/CreateAgentConfigDialog").then((mod) => mod.CreateAgentConfigDialog),
 );
+const ToolSourcePickerDialog = dynamic(
+    () => import("@/app/components/ToolSourcePickerDialog").then((mod) => mod.ToolSourcePickerDialog),
+);
 
 const nodeTypes = {
     agent: AgentNode,
@@ -118,6 +121,7 @@ function CanvasInner({ projectId }: { projectId: Id<"projects"> }) {
     const [edges, setEdges, onEdgesChange] = useEdgesState([] as Edge[]);
     const [selectedNode, setSelectedNode] = useState<Node | null>(null);
     const [sourcePickerOpen, setSourcePickerOpen] = useState(false);
+    const [toolPickerOpen, setToolPickerOpen] = useState(false);
     const [configDialogOpen, setConfigDialogOpen] = useState(false);
     const { screenToFlowPosition } = useReactFlow();
     const nextId = useRef(1);
@@ -261,6 +265,17 @@ function CanvasInner({ projectId }: { projectId: Id<"projects"> }) {
     const onPaneClick = useCallback(() => setSelectedNode(null), []);
     const onOpenCreateConfig = useCallback(() => setConfigDialogOpen(true), []);
 
+    /** Wrapper matching OnEdgesDelete signature. */
+    const onEdgesDeleteHandler = useCallback(() => {
+        scheduleSave();
+    }, [scheduleSave]);
+
+    /** Stable handler for tool source picker selection. */
+    const onToolSelect = useCallback(() => {
+        // TODO: handle "docker" and "upload" sources with dedicated flows
+        addNode("tool", "Tool");
+    }, [addNode]);
+
     /** Remove a node and its connected edges from the canvas. */
     const removeNode = useCallback(
         (nodeId: string) => {
@@ -297,7 +312,7 @@ function CanvasInner({ projectId }: { projectId: Id<"projects"> }) {
             onConnect={onConnect}
             onNodeDragStop={onNodeDragStop}
             onNodesDelete={onNodesDelete}
-            onEdgesDelete={scheduleSave}
+            onEdgesDelete={onEdgesDeleteHandler}
             onNodeClick={onNodeClick}
             onPaneClick={onPaneClick}
             nodeTypes={nodeTypes}
@@ -344,7 +359,9 @@ function CanvasInner({ projectId }: { projectId: Id<"projects"> }) {
                                     onClick={() =>
                                         type === "agent"
                                             ? setSourcePickerOpen(true)
-                                            : addNode(type, label)
+                                            : type === "tool"
+                                              ? setToolPickerOpen(true)
+                                              : addNode(type, label)
                                     }
                                 >
                                     <Icon />
@@ -380,6 +397,12 @@ function CanvasInner({ projectId }: { projectId: Id<"projects"> }) {
                 environmentId={environmentId}
                 open={configDialogOpen}
                 onOpenChange={setConfigDialogOpen}
+            />
+
+            <ToolSourcePickerDialog
+                open={toolPickerOpen}
+                onOpenChange={setToolPickerOpen}
+                onSelect={onToolSelect}
             />
         </div>
     );

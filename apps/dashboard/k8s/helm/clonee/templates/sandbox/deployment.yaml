@@ -1,0 +1,72 @@
+{{- if .Values.sandbox.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "sandbox.fullname" . }}
+  namespace: {{ include "clonee.namespace" . }}
+  labels:
+    {{- include "clonee.labels" . | nindent 4 }}
+    {{- include "sandbox.selectorLabels" . | nindent 4 }}
+spec:
+  {{- if not .Values.sandbox.autoscaling.enabled }}
+  replicas: {{ .Values.sandbox.replicaCount }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "sandbox.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "sandbox.selectorLabels" . | nindent 8 }}
+      {{- with .Values.sandbox.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: sandbox
+          image: {{ include "sandbox.image" . }}
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.sandbox.port }}
+              protocol: TCP
+          env:
+            - name: SANDBOX_PORT
+              value: {{ .Values.sandbox.port | quote }}
+            - name: SANDBOX_SHARED_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "clonee.secretName" . }}
+                  key: SANDBOX_SHARED_SECRET
+          {{- with .Values.sandbox.securityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.sandbox.readinessProbe }}
+          readinessProbe:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.sandbox.livenessProbe }}
+          livenessProbe:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          resources:
+            {{- toYaml .Values.sandbox.resources | nindent 12 }}
+      {{- with .Values.sandbox.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.sandbox.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.sandbox.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}

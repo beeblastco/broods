@@ -14,6 +14,7 @@ import {
     DropdownMenuSeparator,
     DropdownMenuTrigger,
 } from "@/app/components/ui/dropdown-menu";
+import { Button } from "@/app/components/ui/button";
 import { CreateProjectDialog } from "@/app/components/CreateProjectDialog";
 
 /** Dropdown to list, switch, and create projects. */
@@ -39,10 +40,10 @@ export function ProjectSelector() {
         <>
             <DropdownMenu>
                 <DropdownMenuTrigger asChild>
-                    <button className="flex items-center gap-1.5 rounded-md px-2 py-1 text-sm font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus:outline-none data-[state=open]:bg-accent data-[state=open]:text-foreground">
+                    <Button variant="ghost" className="h-auto gap-1.5 px-2 py-1 text-sm font-medium text-muted-foreground data-[state=open]:bg-accent data-[state=open]:text-foreground">
                         {displayName}
                         <ChevronDown className="size-3.5 opacity-50" />
-                    </button>
+                    </Button>
                 </DropdownMenuTrigger>
 
                 <DropdownMenuContent align="start" sideOffset={8} className="w-56">

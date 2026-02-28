@@ -9,17 +9,20 @@ import type { MutationCtx } from "../_generated/server";
  * @param ctx Convex mutation context
  * @param authId Authenticated user's subject ID
  * @param agentConfigId Agent config to deploy
+ * @param projectSlug Optional project slug for URL prefix
  * @param environmentSlug Optional environment slug for URL prefix and key naming
- * @returns Endpoint ID, raw API key, and environment slug
+ * @returns Endpoint ID, raw API key, project slug, and environment slug
  */
 export async function createDeploymentForConfig(
   ctx: MutationCtx,
   authId: string,
   agentConfigId: Id<"agentConfigs">,
+  projectSlug: string | undefined,
   environmentSlug: string | undefined,
 ): Promise<{
   endpointId: string;
   rawApiKey: string;
+  projectSlug: string | undefined;
   environmentSlug: string | undefined;
 }> {
   const endpointId = await generateUniqueEndpointId(ctx);
@@ -31,6 +34,7 @@ export async function createDeploymentForConfig(
     authId: authId,
     agentConfigId: agentConfigId,
     endpointId: endpointId,
+    projectSlug: projectSlug,
     environmentSlug: environmentSlug,
     apiKey: rawApiKey,
     apiKeyHash: apiKeyHash,
@@ -41,6 +45,7 @@ export async function createDeploymentForConfig(
   return {
     endpointId: endpointId,
     rawApiKey: rawApiKey,
+    projectSlug: projectSlug,
     environmentSlug: environmentSlug,
   };
 }
@@ -72,9 +77,19 @@ async function generateUniqueEndpointId(ctx: MutationCtx): Promise<string> {
  */
 function createSecureToken(length: number): string {
   const alphabet = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
-  const bytes = crypto.getRandomValues(new Uint8Array(length));
+  const maxValid = 256 - (256 % alphabet.length);
+  const result: string[] = [];
 
-  return Array.from(bytes, (byte) => alphabet[byte % alphabet.length]).join("");
+  while (result.length < length) {
+    const bytes = crypto.getRandomValues(new Uint8Array(length - result.length + 16));
+    for (const byte of bytes) {
+      if (byte < maxValid && result.length < length) {
+        result.push(alphabet[byte % alphabet.length]);
+      }
+    }
+  }
+
+  return result.join("");
 }
 
 /**

@@ -2,8 +2,26 @@ services:
   agent-gateway:
     build:
       context: .
-      dockerfile: service/Dockerfile
+      dockerfile: service/agent/Dockerfile
     ports:
       - "8080:8080"
     env_file:
-      - service/.env
+      - service/agent/.env
+    networks:
+      - internal
+
+  sandbox:
+    build:
+      context: .
+      dockerfile: service/sandbox/Dockerfile
+    ports:
+      - "8971:8971" # Expose sandbox port for testing
+    env_file:
+      - service/sandbox/.env
+    networks:
+      - internal
+
+networks:
+  internal:
+    driver: bridge
+    internal: true
