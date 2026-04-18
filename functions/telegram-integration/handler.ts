@@ -1,12 +1,10 @@
-import { SQSClient, SendMessageCommand } from "@aws-sdk/client-sqs";
+import type { ChannelAdapter } from "../_shared/channels.ts";
+import { executeCommand, parseCommand } from "../_shared/commands.ts";
 import { requireEnv } from "../_shared/env.ts";
 import { logError, logInfo } from "../_shared/log.ts";
-import { parseCommand, executeCommand } from "../_shared/commands.ts";
-import type { ChannelAdapter } from "../_shared/channels.ts";
 import { createTelegramChannel } from "../_shared/telegram-channel.ts";
 
-const sqs = new SQSClient({});
-const INBOUND_QUEUE_URL = requireEnv("INBOUND_QUEUE_URL");
+const HARNESS_PROCESSING_URL = requireEnv("HARNESS_PROCESSING_URL");
 const CONVERSATIONS_TABLE_NAME = requireEnv("CONVERSATIONS_TABLE_NAME");
 
 function parseAllowedChatIds(raw: string): Set<number> {
@@ -84,23 +82,19 @@ export async function handler(event: LambdaUrlEvent): Promise<LambdaUrlResponse>
       return ok({ command });
     }
 
-    channel.sendTyping().catch(() => {});
-    channel.reactToMessage().catch(() => {});
+    channel.sendTyping().catch(() => { });
+    channel.reactToMessage().catch(() => { });
 
-    await sqs.send(
-      new SendMessageCommand({
-        QueueUrl: INBOUND_QUEUE_URL,
-        MessageBody: JSON.stringify({
-          eventId: msg.eventId,
-          conversationKey: msg.conversationKey,
-          channel: msg.channelName,
-          content: msg.content,
-          source: msg.source,
-        }),
-      }),
+    await invokeHarnessProcessing(
+      {
+        eventId: msg.eventId,
+        conversationKey: msg.conversationKey,
+        content: msg.content,
+      },
+      channel,
     );
 
-    logInfo("Event enqueued", {
+    logInfo("Harness processing complete", {
       channel: msg.channelName,
       eventId: msg.eventId,
       conversationKey: msg.conversationKey,
@@ -111,5 +105,56 @@ export async function handler(event: LambdaUrlEvent): Promise<LambdaUrlResponse>
       error: err instanceof Error ? err.message : String(err),
     });
     return { statusCode: 500, body: "Internal Server Error" };
+  }
+}
+
+async function invokeHarnessProcessing(
+  payload: {
+    eventId: string;
+    conversationKey: string;
+    content: string;
+  },
+  channel: import("../_shared/channels.ts").ChannelActions,
+): Promise<void> {
+  const response = await fetch(HARNESS_PROCESSING_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    const text = await response.text().catch(() => "");
+    throw new Error(`Harness processing returned HTTP ${response.status}: ${text}`);
+  }
+
+  if (!response.body) return;
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let replyText: string | null = null;
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+
+    for (const line of buffer.split("\n")) {
+      const trimmed = line.replace(/^data:\s*/, "").trim();
+      if (!trimmed) continue;
+      try {
+        const parsed = JSON.parse(trimmed);
+        if (parsed.type === "done" && parsed.text) {
+          replyText = parsed.text;
+        }
+      } catch { }
+    }
+
+    if (replyText) break;
+  }
+  reader.releaseLock();
+
+  if (replyText) {
+    await channel.sendText(replyText);
   }
 }

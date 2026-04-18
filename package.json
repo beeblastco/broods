@@ -1,6 +1,6 @@
 {
   "name": "filthy-panty",
-  "description": "Agentic AI template using Architecture A: Step Functions Express + Lambda tools, deployed with SST.",
+  "description": "Agentic AI chatbot on AWS — Lambda + Google AI + Telegram, deployed with SST.",
   "type": "module",
   "private": true,
   "scripts": {
@@ -19,11 +19,12 @@
     "typescript": "^6.0.2"
   },
   "dependencies": {
+    "@ai-sdk/google": "^3.0.64",
     "@aws-sdk/client-dynamodb": "3.1017.0",
-    "@aws-sdk/client-sfn": "3.1017.0",
-    "@aws-sdk/client-sqs": "3.1017.0",
+    "@aws-sdk/client-lambda": "3.1017.0",
     "@pulumi/aws": "7.23.0",
     "@pulumi/pulumi": "3.228.0",
+    "ai": "^6.0.168",
     "sst": "4.5.10"
   }
 }

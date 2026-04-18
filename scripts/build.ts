@@ -1,5 +1,5 @@
-import { access, readdir } from "node:fs/promises";
 import { $ } from "bun";
+import { access, readdir } from "node:fs/promises";
 
 const FUNCTIONS_DIR = new URL("../functions/", import.meta.url);
 

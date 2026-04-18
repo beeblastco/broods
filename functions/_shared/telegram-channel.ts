@@ -1,7 +1,7 @@
 import type { ChannelActions, ChannelAdapter } from "./channels.ts";
-import type { TelegramUpdate } from "./telegram.ts";
-import { verifyWebhookSecret, sendChatAction, setMessageReaction, sendMessage } from "./telegram.ts";
 import { logWarn } from "./log.ts";
+import type { TelegramUpdate } from "./telegram.ts";
+import { sendChatAction, sendMessage, setMessageReaction, verifyWebhookSecret } from "./telegram.ts";
 
 export function createTelegramChannel(
   botToken: string,

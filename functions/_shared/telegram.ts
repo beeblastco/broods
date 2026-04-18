@@ -1,4 +1,4 @@
-import { timingSafeEqual, createHash } from "node:crypto";
+import { timingSafeEqual } from "node:crypto";
 
 export interface TelegramUpdate {
   update_id: number;
@@ -27,8 +27,9 @@ export function verifyWebhookSecret(
   secret: string,
 ): boolean {
   if (!header) return false;
-  const a = createHash("sha256").update(header).digest();
-  const b = createHash("sha256").update(secret).digest();
+  const a = Buffer.from(header);
+  const b = Buffer.from(secret);
+  if (a.length !== b.length) return false;
   return timingSafeEqual(a, b);
 }
 
@@ -213,10 +214,11 @@ export async function sendMessage(
       body: JSON.stringify({ chat_id: chatId, text: chunk, parse_mode: "HTML" }),
     });
     if (!response.ok) {
+      const plain = chunk.replace(/<[^>]*>/g, "").trim() || "(empty message)";
       response = await fetch(url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ chat_id: chatId, text: chunk.replace(/<[^>]*>/g, "") }),
+        body: JSON.stringify({ chat_id: chatId, text: plain }),
       });
       if (!response.ok) {
         const body = await response.text();
