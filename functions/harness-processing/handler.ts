@@ -43,13 +43,22 @@ interface ConversationTurn {
 
 const enc = new TextEncoder();
 
+function sseEvent(event: Record<string, unknown>): Uint8Array {
+  return enc.encode(`data: ${JSON.stringify(event)}\n\n`);
+}
+
 export async function handler(event: InboundEvent): Promise<ReadableStream<Uint8Array>> {
   const { eventId, conversationKey, content } = event;
   const now = new Date().toISOString();
 
   if (!(await claimEvent(eventId, now))) {
     logInfo("Duplicate event skipped", { eventId });
-    return sseStream("I already processed this message.");
+    return new ReadableStream({
+      start(controller) {
+        controller.enqueue(sseEvent({ type: "text-delta", textDelta: "I already processed this message." }));
+        controller.close();
+      },
+    });
   }
 
   let history: ConversationTurn[];
@@ -65,40 +74,34 @@ export async function handler(event: InboundEvent): Promise<ReadableStream<Uint8
     throw err;
   }
 
-  return new ReadableStream<Uint8Array>({
-    async start(controller) {
-      try {
-        const fullText = await runAgentLoop(
-          conversationKey,
-          content,
-          history,
-          controller,
-        );
+  const fullStream = await runAgentLoop(conversationKey, content, history, eventId);
 
-        controller.enqueue(enc.encode(`data: ${JSON.stringify({ type: "done", text: fullText })}\n\n`));
-        controller.close();
-      } catch (err) {
-        logError("Harness processing failed", {
-          eventId,
-          error: err instanceof Error ? err.message : String(err),
-        });
-        await releaseEvent(eventId).catch((releaseErr) =>
-          logError("releaseEvent failed", { eventId, error: String(releaseErr) }),
-        );
-        controller.error(err);
+  const transformStream = new TransformStream<any, Uint8Array>({
+    transform(chunk, controller) {
+      switch (chunk.type) {
+        case "reasoning":
+          controller.enqueue(sseEvent({ type: "reasoning", textDelta: chunk.textDelta }));
+          break;
+        case "text-delta":
+          controller.enqueue(sseEvent({ type: "text-delta", textDelta: chunk.textDelta }));
+          break;
+        case "tool-call":
+          controller.enqueue(sseEvent({ type: "tool-call", toolName: chunk.toolName, input: chunk.args }));
+          break;
+        case "tool-result":
+          controller.enqueue(sseEvent({ type: "tool-result", toolName: chunk.toolName, result: chunk.result }));
+          break;
+        case "finish":
+          controller.enqueue(sseEvent({ type: "finish", finishReason: chunk.finishReason, usage: chunk.usage }));
+          break;
+        case "error":
+          controller.enqueue(sseEvent({ type: "error", error: String(chunk.error) }));
+          break;
       }
     },
   });
-}
 
-function sseStream(text: string): ReadableStream<Uint8Array> {
-  return new ReadableStream<Uint8Array>({
-    start(controller) {
-      controller.enqueue(enc.encode(`data: ${JSON.stringify({ type: "text-delta", textDelta: text })}\n\n`));
-      controller.enqueue(enc.encode(`data: ${JSON.stringify({ type: "done", text })}\n\n`));
-      controller.close();
-    },
-  });
+  return fullStream.pipeThrough(transformStream);
 }
 
 async function claimEvent(eventId: string, now: string): Promise<boolean> {
@@ -191,8 +194,8 @@ async function runAgentLoop(
   conversationKey: string,
   userContent: string,
   history: ConversationTurn[],
-  controller: ReadableStreamDefaultController<Uint8Array>,
-): Promise<string> {
+  eventId: string,
+): Promise<ReadableStream> {
   const windowStart = Math.max(0, history.length - SLIDING_CONTEXT_WINDOW);
   let recentHistory = history.slice(windowStart);
   while (recentHistory.length > 0 && recentHistory[0]!.role !== "user") {
@@ -246,7 +249,10 @@ async function runAgentLoop(
     },
     onFinish: async ({ text }) => {
       const finalText = text.trim();
-      if (!finalText) throw new Error("Model returned empty response");
+      if (!finalText) {
+        logError("Model returned empty response", { conversationKey, eventId });
+        return;
+      }
       try {
         await persistAssistantMessage(conversationKey, finalText);
         logInfo("Processing complete", { conversationKey });
@@ -259,15 +265,7 @@ async function runAgentLoop(
     },
   });
 
-  let fullText = "";
-  for await (const chunk of result.textStream) {
-    fullText += chunk;
-    controller.enqueue(enc.encode(`data: ${JSON.stringify({ type: "text-delta", textDelta: chunk })}\n\n`));
-  }
-
-  const trimmed = fullText.trim();
-  if (!trimmed) throw new Error("Model returned empty response");
-  return trimmed;
+  return result.fullStream;
 }
 
 async function executeToolCall(

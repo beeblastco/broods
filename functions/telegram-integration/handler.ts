@@ -132,29 +132,29 @@ async function invokeHarnessProcessing(
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
-  let replyText: string | null = null;
+  let replyText = "";
 
   while (true) {
     const { done, value } = await reader.read();
     if (done) break;
     buffer += decoder.decode(value, { stream: true });
 
-    for (const line of buffer.split("\n")) {
+    const lines = buffer.split("\n");
+    buffer = lines.pop() ?? "";
+
+    for (const line of lines) {
       const trimmed = line.replace(/^data:\s*/, "").trim();
       if (!trimmed) continue;
       try {
         const parsed = JSON.parse(trimmed);
-        if (parsed.type === "done" && parsed.text) {
-          replyText = parsed.text;
+        if (parsed.type === "text-delta") {
+          replyText += parsed.textDelta;
         }
       } catch { }
     }
-
-    if (replyText) break;
   }
-  reader.releaseLock();
 
-  if (replyText) {
-    await channel.sendText(replyText);
+  if (replyText.trim()) {
+    await channel.sendText(replyText.trim());
   }
 }
