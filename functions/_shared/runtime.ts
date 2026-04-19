@@ -77,7 +77,23 @@ export async function startStreamingRuntime<TPayload>(
   for (; ;) {
     const res = await fetch(NEXT_URL);
     const { requestId, context } = parseInvocationHeaders(res);
-    const payload = (await res.json()) as TPayload;
+    const payloadText = await res.text();
+
+    let payload: TPayload;
+    try {
+      const parsed = JSON.parse(payloadText);
+      if (parsed.version === "2.0" && parsed.body) {
+        const bodyStr = parsed.isBase64Encoded
+          ? Buffer.from(parsed.body, "base64").toString()
+          : parsed.body;
+        payload = JSON.parse(bodyStr) as TPayload;
+      } else {
+        payload = parsed as TPayload;
+      }
+    } catch (parseErr) {
+      await reportError(requestId, new Error(`Invalid JSON: ${parseErr}`));
+      continue;
+    }
 
     try {
       const stream = await handler(payload, context);

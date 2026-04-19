@@ -10,10 +10,6 @@ declare module "sst" {
       "name": string
       "type": "sst.aws.Dynamo"
     }
-    "GoogleApiKey": {
-      "type": "sst.sst.Secret"
-      "value": string
-    }
     "ProcessedEvents": {
       "name": string
       "type": "sst.aws.Dynamo"
