@@ -148,7 +148,7 @@ async function invokeHarnessProcessing(
       try {
         const parsed = JSON.parse(trimmed);
         if (parsed.type === "text-delta") {
-          replyText += parsed.textDelta;
+          replyText += parsed.delta;
         }
       } catch { }
     }

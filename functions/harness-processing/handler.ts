@@ -55,7 +55,7 @@ export async function handler(event: InboundEvent): Promise<ReadableStream<Uint8
     logInfo("Duplicate event skipped", { eventId });
     return new ReadableStream({
       start(controller) {
-        controller.enqueue(sseEvent({ type: "text-delta", textDelta: "I already processed this message." }));
+        controller.enqueue(sseEvent({ type: "text-delta", delta: "I already processed this message." }));
         controller.close();
       },
     });
@@ -78,26 +78,7 @@ export async function handler(event: InboundEvent): Promise<ReadableStream<Uint8
 
   const transformStream = new TransformStream<any, Uint8Array>({
     transform(chunk, controller) {
-      switch (chunk.type) {
-        case "reasoning":
-          controller.enqueue(sseEvent({ type: "reasoning", textDelta: chunk.textDelta }));
-          break;
-        case "text-delta":
-          controller.enqueue(sseEvent({ type: "text-delta", textDelta: chunk.textDelta }));
-          break;
-        case "tool-call":
-          controller.enqueue(sseEvent({ type: "tool-call", toolName: chunk.toolName, input: chunk.args }));
-          break;
-        case "tool-result":
-          controller.enqueue(sseEvent({ type: "tool-result", toolName: chunk.toolName, result: chunk.result }));
-          break;
-        case "finish":
-          controller.enqueue(sseEvent({ type: "finish", finishReason: chunk.finishReason, usage: chunk.usage }));
-          break;
-        case "error":
-          controller.enqueue(sseEvent({ type: "error", error: String(chunk.error) }));
-          break;
-      }
+      controller.enqueue(sseEvent(chunk));
     },
   });
 
