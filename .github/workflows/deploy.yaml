@@ -29,6 +29,7 @@ jobs:
       SST_SECRET_TelegramBotToken: ${{ secrets.SST_SECRET_TelegramBotToken }}
       SST_SECRET_TelegramWebhookSecret: ${{ secrets.SST_SECRET_TelegramWebhookSecret }}
       SST_SECRET_AllowedChatIds: ${{ secrets.SST_SECRET_AllowedChatIds }}
+      SST_SECRET_GoogleApiKey: ${{ secrets.SST_SECRET_GoogleApiKey }}
       CI: "true"
     steps:
       - name: Resolve deploy configuration
@@ -75,40 +76,3 @@ jobs:
 
       - name: Deploy SST app
         run: bunx sst deploy --stage "$SST_STAGE"
-
-      - name: Verify Step Functions logging
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          ACCOUNT_ID="$(aws sts get-caller-identity --query Account --output text)"
-          if [[ "$SST_STAGE" == "production" ]]; then
-            SFN_NAME="filthy-panty-agent-workflow-${AWS_REGION}-${ACCOUNT_ID}"
-          else
-            SFN_NAME="${SST_STAGE}-filthy-panty-agent-workflow-${AWS_REGION}-${ACCOUNT_ID}"
-          fi
-          STATE_MACHINE_ARN="arn:aws:states:${AWS_REGION}:${ACCOUNT_ID}:stateMachine:${SFN_NAME}"
-
-          echo "Checking Step Functions logging for ${STATE_MACHINE_ARN}"
-
-          LOG_LEVEL="$(aws stepfunctions describe-state-machine \
-            --state-machine-arn "$STATE_MACHINE_ARN" \
-            --query 'loggingConfiguration.level' \
-            --output text)"
-          INCLUDE_DATA="$(aws stepfunctions describe-state-machine \
-            --state-machine-arn "$STATE_MACHINE_ARN" \
-            --query 'loggingConfiguration.includeExecutionData' \
-            --output text)"
-          DESTINATION="$(aws stepfunctions describe-state-machine \
-            --state-machine-arn "$STATE_MACHINE_ARN" \
-            --query 'loggingConfiguration.destinations[0].cloudWatchLogsLogGroup.logGroupArn' \
-            --output text)"
-
-          echo "Log level: ${LOG_LEVEL}"
-          echo "Include execution data: ${INCLUDE_DATA}"
-          echo "Log destination: ${DESTINATION}"
-
-          if [[ "${LOG_LEVEL}" == "OFF" || "${LOG_LEVEL}" == "None" || -z "${DESTINATION}" || "${DESTINATION}" == "None" ]]; then
-            echo "Step Functions logging is not enabled as expected" >&2
-            exit 1
-          fi

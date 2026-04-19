@@ -2,7 +2,7 @@
 
 import type { Output } from "@pulumi/pulumi";
 
-const AWS_REGION = "us-east-1";
+const AWS_REGION = "eu-central-1";
 const AWS_ACCOUNT_ID = "123456789012";
 const PROJECT_NAME = "filthy-panty";
 const PROJECT_OWNER_EMAIL = "owner@example.com";
