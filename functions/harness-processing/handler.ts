@@ -53,12 +53,7 @@ export async function handler(event: InboundEvent): Promise<ReadableStream<Uint8
 
   if (!(await claimEvent(eventId, now))) {
     logInfo("Duplicate event skipped", { eventId });
-    return new ReadableStream({
-      start(controller) {
-        controller.enqueue(sseEvent({ type: "text-delta", delta: "I already processed this message." }));
-        controller.close();
-      },
-    });
+    return new ReadableStream({ start(controller) { controller.close(); } });
   }
 
   let history: ConversationTurn[];
