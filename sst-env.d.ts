@@ -6,14 +6,6 @@
 
 declare module "sst" {
   export interface Resource {
-    "Conversations": {
-      "name": string
-      "type": "sst.aws.Dynamo"
-    }
-    "ProcessedEvents": {
-      "name": string
-      "type": "sst.aws.Dynamo"
-    }
   }
 }
 /// <reference path="sst-env.d.ts" />
