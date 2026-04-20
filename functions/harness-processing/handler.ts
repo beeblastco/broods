@@ -1,14 +1,9 @@
 import { createGoogleGenerativeAI } from "@ai-sdk/google";
-import {
-  DeleteItemCommand,
-  DynamoDBClient,
-  GetItemCommand,
-  PutItemCommand,
-  UpdateItemCommand,
-} from "@aws-sdk/client-dynamodb";
 import { InvokeCommand, LambdaClient } from "@aws-sdk/client-lambda";
-import type { ModelMessage } from "ai";
+import { FetchHttpHandler } from "@smithy/fetch-http-handler";
+import type { ModelMessage, UserContent } from "ai";
 import { jsonSchema, stepCountIs, streamText, tool } from "ai";
+import { createSession } from "./session.ts";
 import { requireEnv } from "../_shared/env.ts";
 import { logError, logInfo } from "../_shared/log.ts";
 import type { ToolOutput } from "../_shared/tools.ts";
@@ -18,12 +13,10 @@ const google = createGoogleGenerativeAI({
   apiKey: requireEnv("GOOGLE_API_KEY"),
 });
 
-const dynamo = new DynamoDBClient({});
-const lambda = new LambdaClient({});
+const fetchHandler = new FetchHttpHandler();
+const lambda = new LambdaClient({ requestHandler: fetchHandler });
 
 const GOOGLE_MODEL_ID = requireEnv("GOOGLE_MODEL_ID");
-const CONVERSATIONS_TABLE_NAME = requireEnv("CONVERSATIONS_TABLE_NAME");
-const PROCESSED_EVENTS_TABLE_NAME = requireEnv("PROCESSED_EVENTS_TABLE_NAME");
 const DEFAULT_SYSTEM_PROMPT = requireEnv("DEFAULT_SYSTEM_PROMPT");
 const SLIDING_CONTEXT_WINDOW = Number(requireEnv("SLIDING_CONTEXT_WINDOW"));
 const MAX_AGENT_ITERATIONS = Number(requireEnv("MAX_AGENT_ITERATIONS"));
@@ -32,13 +25,7 @@ const TOOL_ARN_MAPPING: Record<string, string> = JSON.parse(requireEnv("TOOL_ARN
 interface InboundEvent {
   eventId: string;
   conversationKey: string;
-  content: string;
-}
-
-interface ConversationTurn {
-  role: string;
-  content: string;
-  createdAt: string;
+  content: UserContent;
 }
 
 const enc = new TextEncoder();
@@ -49,27 +36,27 @@ function sseEvent(event: Record<string, unknown>): Uint8Array {
 
 export async function handler(event: InboundEvent): Promise<ReadableStream<Uint8Array>> {
   const { eventId, conversationKey, content } = event;
-  const now = new Date().toISOString();
+  const session = createSession(eventId, conversationKey);
 
-  if (!(await claimEvent(eventId, now))) {
+  if (!(await session.claim())) {
     logInfo("Duplicate event skipped", { eventId });
     return new ReadableStream({ start(controller) { controller.close(); } });
   }
 
-  let history: ConversationTurn[];
+  let history: ModelMessage[];
   try {
-    history = await loadConversation(conversationKey);
-    await persistUserMessage(conversationKey, content, now);
+    history = await session.loadHistory();
+    await session.persistUserMessage(content);
   } catch (err) {
     logError("Pre-processing failed", {
       eventId,
       error: err instanceof Error ? err.message : String(err),
     });
-    await releaseEvent(eventId).catch(() => { });
+    await session.release().catch(() => { });
     throw err;
   }
 
-  const fullStream = await runAgentLoop(conversationKey, content, history, eventId);
+  const fullStream = await runAgentLoop(session, content, history);
 
   const transformStream = new TransformStream<any, Uint8Array>({
     transform(chunk, controller) {
@@ -80,97 +67,10 @@ export async function handler(event: InboundEvent): Promise<ReadableStream<Uint8
   return fullStream.pipeThrough(transformStream);
 }
 
-async function claimEvent(eventId: string, now: string): Promise<boolean> {
-  const ttl = Math.floor(Date.now() / 1000) + 86400;
-  try {
-    await dynamo.send(
-      new PutItemCommand({
-        TableName: PROCESSED_EVENTS_TABLE_NAME,
-        Item: {
-          eventId: { S: eventId },
-          createdAt: { S: now },
-          expiresAt: { N: String(ttl) },
-        },
-        ConditionExpression: "attribute_not_exists(eventId)",
-      }),
-    );
-    return true;
-  } catch (err: unknown) {
-    if (err instanceof Error && err.name === "ConditionalCheckFailedException") {
-      return false;
-    }
-    throw err;
-  }
-}
-
-async function releaseEvent(eventId: string): Promise<void> {
-  await dynamo.send(
-    new DeleteItemCommand({
-      TableName: PROCESSED_EVENTS_TABLE_NAME,
-      Key: { eventId: { S: eventId } },
-    }),
-  );
-}
-
-async function loadConversation(conversationKey: string): Promise<ConversationTurn[]> {
-  const result = await dynamo.send(
-    new GetItemCommand({
-      TableName: CONVERSATIONS_TABLE_NAME,
-      Key: { conversationKey: { S: conversationKey } },
-      ConsistentRead: true,
-    }),
-  );
-
-  const raw = result.Item?.conversation?.L;
-  if (!raw) return [];
-
-  return raw.map((item) => ({
-    role: item.M!.role!.S!,
-    content: item.M!.content!.S!,
-    createdAt: item.M!.createdAt!.S!,
-  }));
-}
-
-async function persistUserMessage(conversationKey: string, content: string, createdAt: string): Promise<void> {
-  await dynamo.send(
-    new UpdateItemCommand({
-      TableName: CONVERSATIONS_TABLE_NAME,
-      Key: { conversationKey: { S: conversationKey } },
-      UpdateExpression: "SET conversation = list_append(if_not_exists(conversation, :empty), :turns), updatedAt = :ts",
-      ExpressionAttributeValues: {
-        ":empty": { L: [] },
-        ":turns": {
-          L: [{ M: { role: { S: "user" }, content: { S: content }, createdAt: { S: createdAt } } }],
-        },
-        ":ts": { S: createdAt },
-      },
-    }),
-  );
-}
-
-async function persistAssistantMessage(conversationKey: string, content: string): Promise<void> {
-  const now = new Date().toISOString();
-  await dynamo.send(
-    new UpdateItemCommand({
-      TableName: CONVERSATIONS_TABLE_NAME,
-      Key: { conversationKey: { S: conversationKey } },
-      UpdateExpression: "SET conversation = list_append(if_not_exists(conversation, :empty), :turns), updatedAt = :ts",
-      ExpressionAttributeValues: {
-        ":empty": { L: [] },
-        ":turns": {
-          L: [{ M: { role: { S: "assistant" }, content: { S: content }, createdAt: { S: now } } }],
-        },
-        ":ts": { S: now },
-      },
-    }),
-  );
-}
-
 async function runAgentLoop(
-  conversationKey: string,
-  userContent: string,
-  history: ConversationTurn[],
-  eventId: string,
+  session: ReturnType<typeof createSession>,
+  userContent: UserContent,
+  history: ModelMessage[],
 ): Promise<ReadableStream> {
   const windowStart = Math.max(0, history.length - SLIDING_CONTEXT_WINDOW);
   let recentHistory = history.slice(windowStart);
@@ -179,10 +79,7 @@ async function runAgentLoop(
   }
 
   const messages: ModelMessage[] = [
-    ...recentHistory.map((turn) => ({
-      role: turn.role as "user" | "assistant",
-      content: turn.content,
-    })),
+    ...recentHistory,
     { role: "user" as const, content: userContent },
   ];
 
@@ -198,7 +95,7 @@ async function runAgentLoop(
       execute: async (input, { toolCallId }) => {
         const result = await executeToolCall(
           { name: spec.toolSpec.name, input: input as Record<string, unknown>, toolCallId },
-          conversationKey,
+          session,
           userContent,
         );
         if (result.action === "immediate_reply") {
@@ -226,15 +123,18 @@ async function runAgentLoop(
     onFinish: async ({ text }) => {
       const finalText = text.trim();
       if (!finalText) {
-        logError("Model returned empty response", { conversationKey, eventId });
+        logError("Model returned empty response", {
+          conversationKey: session.conversationKey,
+          eventId: session.eventId,
+        });
         return;
       }
       try {
-        await persistAssistantMessage(conversationKey, finalText);
-        logInfo("Processing complete", { conversationKey });
+        await session.persistAssistantMessage(finalText);
+        logInfo("Processing complete", { conversationKey: session.conversationKey });
       } catch (err) {
         logError("Post-generation steps failed", {
-          conversationKey,
+          conversationKey: session.conversationKey,
           error: err instanceof Error ? err.message : String(err),
         });
       }
@@ -246,8 +146,8 @@ async function runAgentLoop(
 
 async function executeToolCall(
   toolUse: { name: string; input: Record<string, unknown>; toolCallId: string },
-  conversationKey: string,
-  latestUserMessage: string,
+  session: ReturnType<typeof createSession>,
+  latestUserMessage: UserContent,
 ): Promise<ToolOutput> {
   const functionArn = TOOL_ARN_MAPPING[toolUse.name];
   if (!functionArn) {
@@ -265,7 +165,10 @@ async function executeToolCall(
         JSON.stringify({
           toolUseId: toolUse.toolCallId,
           input: toolUse.input,
-          context: { conversationKey, latestUserMessage },
+          context: {
+            conversationKey: session.conversationKey,
+            latestUserMessage,
+          },
         }),
       ),
     }),
@@ -284,4 +187,3 @@ async function executeToolCall(
 
   return JSON.parse(Buffer.from(result.Payload!).toString());
 }
-

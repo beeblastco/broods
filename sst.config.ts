@@ -17,8 +17,7 @@ const DEFAULT_SYSTEM_PROMPT = [
   "If the user asks something ambiguous, ask a short clarifying question.",
 ].join(" ");
 
-const AWS_PROFILE =
-  process.env.CI ? undefined : (process.env.AWS_PROFILE ?? "default");
+const AWS_PROFILE = process.env.CI ? undefined : (process.env.AWS_PROFILE ?? "default");
 
 function resourceName(service: string, stage: string): string {
   const stagePrefix = stage === "production" ? "" : `${stage}-`;
@@ -70,8 +69,9 @@ export default $config({
     const conversationsTable = new sst.aws.Dynamo("Conversations", {
       fields: {
         conversationKey: "string",
+        createdAt: "string",
       },
-      primaryIndex: { hashKey: "conversationKey" },
+      primaryIndex: { hashKey: "conversationKey", rangeKey: "createdAt" },
       deletionProtection: stage === "production",
       transform: {
         table: {
@@ -121,13 +121,12 @@ export default $config({
       architecture: "arm64",
       bundle: "dist/harness-processing",
       handler: "bootstrap",
-      description:
-        "Runs the agentic AI loop: dedup, load context, Google AI streaming converse, tool execution, persist, and send reply via SSE.",
-      timeout: "5 minutes",
+      description: "Runs the agentic AI loop: dedup, load context, Google AI streaming converse, tool execution, persist, and send reply via SSE.",
+      timeout: "30 minutes",
       memory: "256 MB",
+      streaming: true,
       url: {
         authorization: "none",
-        invokeMode: "response_stream",
       },
       logging: { format: "json", retention: "1 month" },
       environment: {
@@ -138,15 +137,12 @@ export default $config({
         DEFAULT_SYSTEM_PROMPT,
         SLIDING_CONTEXT_WINDOW: String(SLIDING_CONTEXT_WINDOW),
         MAX_AGENT_ITERATIONS: String(MAX_AGENT_ITERATIONS),
-        TOOL_ARN_MAPPING: $resolve(toolArnMapping).apply((resolved) =>
-          JSON.stringify(resolved),
-        ),
+        TOOL_ARN_MAPPING: $resolve(toolArnMapping).apply((resolved) => JSON.stringify(resolved)),
       },
       permissions: [
         {
           actions: [
-            "dynamodb:GetItem",
-            "dynamodb:UpdateItem",
+            "dynamodb:Query",
             "dynamodb:PutItem",
             "dynamodb:DeleteItem",
           ],
@@ -154,11 +150,11 @@ export default $config({
         },
         ...(toolLambdaArns.length > 0
           ? [
-              {
-                actions: ["lambda:InvokeFunction"],
-                resources: toolLambdaArns,
-              },
-            ]
+            {
+              actions: ["lambda:InvokeFunction"],
+              resources: toolLambdaArns,
+            },
+          ]
           : []),
       ],
     });
@@ -171,8 +167,7 @@ export default $config({
       architecture: "arm64",
       bundle: "dist/telegram-integration",
       handler: "bootstrap",
-      description:
-        "Receives Telegram webhook events, handles commands, and streams harness processing via Function URL.",
+      description: "Receives Telegram webhook events, handles commands, and streams harness processing via Function URL.",
       timeout: "60 seconds",
       memory: "128 MB",
       url: true,
@@ -186,7 +181,7 @@ export default $config({
       },
       permissions: [
         {
-          actions: ["dynamodb:DeleteItem"],
+          actions: ["dynamodb:BatchWriteItem", "dynamodb:Query"],
           resources: [conversationsTable.arn],
         },
       ],

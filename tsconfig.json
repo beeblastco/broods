@@ -24,6 +24,7 @@
   "include": [
     "functions/**/*.ts",
     "scripts/**/*.ts",
+    "tests/**/*.ts",
     "sst-env.d.ts"
   ]
 }

@@ -1,8 +1,15 @@
-import { DeleteItemCommand, DynamoDBClient } from "@aws-sdk/client-dynamodb";
+import {
+  BatchWriteItemCommand,
+  DynamoDBClient,
+  QueryCommand,
+  type AttributeValue,
+  type WriteRequest,
+} from "@aws-sdk/client-dynamodb";
+import { FetchHttpHandler } from "@smithy/fetch-http-handler";
 import type { ChannelActions } from "./channels.ts";
 import { logError } from "./log.ts";
 
-const dynamo = new DynamoDBClient({});
+const dynamo = new DynamoDBClient({ requestHandler: new FetchHttpHandler() });
 
 export interface CommandContext {
   conversationKey: string;
@@ -21,12 +28,7 @@ const commands: CommandHandler[] = [
     aliases: ["/new", "/start"],
     description: "Clear conversation context and start fresh",
     async execute(ctx) {
-      await dynamo.send(
-        new DeleteItemCommand({
-          TableName: ctx.conversationsTableName,
-          Key: { conversationKey: { S: ctx.conversationKey } },
-        }),
-      );
+      await clearConversation(ctx.conversationKey, ctx.conversationsTableName);
       return "Context cleared. Starting fresh.";
     },
   },
@@ -66,5 +68,59 @@ export async function executeCommand(
       error: err instanceof Error ? err.message : String(err),
     });
     await ctx.channel.sendText("Something went wrong. Please try again.");
+  }
+}
+
+async function clearConversation(
+  conversationKey: string,
+  tableName: string,
+): Promise<void> {
+  let exclusiveStartKey: Record<string, AttributeValue> | undefined;
+
+  do {
+    const page = await dynamo.send(
+      new QueryCommand({
+        TableName: tableName,
+        KeyConditionExpression: "conversationKey = :conversationKey",
+        ExpressionAttributeValues: {
+          ":conversationKey": { S: conversationKey },
+        },
+        ProjectionExpression: "conversationKey, createdAt",
+        ExclusiveStartKey: exclusiveStartKey,
+      }),
+    );
+
+    const items = page.Items ?? [];
+    for (let index = 0; index < items.length; index += 25) {
+      await deleteConversationChunk(tableName, items.slice(index, index + 25));
+    }
+
+    exclusiveStartKey = page.LastEvaluatedKey;
+  } while (exclusiveStartKey);
+}
+
+async function deleteConversationChunk(
+  tableName: string,
+  items: Record<string, AttributeValue>[],
+): Promise<void> {
+  let pending: WriteRequest[] = items.map((item) => ({
+    DeleteRequest: {
+      Key: {
+        conversationKey: item.conversationKey!,
+        createdAt: item.createdAt!,
+      },
+    },
+  }));
+
+  while (pending.length > 0) {
+    const result = await dynamo.send(
+      new BatchWriteItemCommand({
+        RequestItems: {
+          [tableName]: pending,
+        },
+      }),
+    );
+
+    pending = result.UnprocessedItems?.[tableName] ?? [];
   }
 }

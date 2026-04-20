@@ -1,4 +1,6 @@
+import type { UserContent } from "ai";
 import type { ChannelAdapter } from "../_shared/channels.ts";
+import { extractText } from "../_shared/channels.ts";
 import { executeCommand, parseCommand } from "../_shared/commands.ts";
 import { requireEnv } from "../_shared/env.ts";
 import { logError, logInfo } from "../_shared/log.ts";
@@ -72,7 +74,7 @@ export async function handler(event: LambdaUrlEvent): Promise<LambdaUrlResponse>
 
     const channel = adapter.actions(msg);
 
-    const command = parseCommand(msg.content);
+    const command = parseCommand(extractText(msg.content));
     if (command) {
       await executeCommand(command, {
         conversationKey: msg.conversationKey,
@@ -112,7 +114,7 @@ async function invokeHarnessProcessing(
   payload: {
     eventId: string;
     conversationKey: string;
-    content: string;
+    content: UserContent;
   },
   channel: import("../_shared/channels.ts").ChannelActions,
 ): Promise<void> {
