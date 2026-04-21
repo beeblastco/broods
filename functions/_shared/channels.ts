@@ -1,3 +1,4 @@
+// Shared channel contracts used by webhook adapters, commands, and reply handling.
 import type { UserContent } from "ai";
 
 export interface ChannelActions {

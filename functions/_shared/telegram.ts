@@ -1,3 +1,4 @@
+// Telegram API helpers plus Telegram-specific formatting for replies sent from the bot.
 import { timingSafeEqual } from "node:crypto";
 
 export interface TelegramUpdate {

@@ -1,3 +1,4 @@
+// Telegram-specific ChannelAdapter: verifies webhook requests, parses updates, and exposes reply actions.
 import type { ChannelActions, ChannelAdapter } from "./channels.ts";
 import { logWarn } from "./log.ts";
 import type { TelegramUpdate } from "./telegram.ts";

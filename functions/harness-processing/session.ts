@@ -1,17 +1,18 @@
+// Session persistence for harness-processing: event dedupe plus conversation history reads and writes.
 import {
   DeleteItemCommand,
-  DynamoDBClient,
   PutItemCommand,
   QueryCommand,
   type AttributeValue,
 } from "@aws-sdk/client-dynamodb";
-import { FetchHttpHandler } from "@smithy/fetch-http-handler";
 import type { ModelMessage, UserContent } from "ai";
-import { toAttributeValue, fromAttributeValue } from "../_shared/dynamo.ts";
 import { requireEnv } from "../_shared/env.ts";
-
-const fetchHandler = new FetchHttpHandler();
-const dynamo = new DynamoDBClient({ requestHandler: fetchHandler });
+import {
+  dynamo,
+  fromAttributeValue,
+  isConditionalCheckFailed,
+  toAttributeValue,
+} from "../_shared/dynamo.ts";
 
 const CONVERSATIONS_TABLE_NAME = requireEnv("CONVERSATIONS_TABLE_NAME");
 const PROCESSED_EVENTS_TABLE_NAME = requireEnv("PROCESSED_EVENTS_TABLE_NAME");
@@ -24,21 +25,20 @@ export class Session {
 
   async claim(): Promise<boolean> {
     const ttl = Math.floor(Date.now() / 1000) + 86400;
+
     try {
-      await dynamo.send(
-        new PutItemCommand({
-          TableName: PROCESSED_EVENTS_TABLE_NAME,
-          Item: {
-            eventId: { S: this.eventId },
-            createdAt: { S: new Date().toISOString() },
-            expiresAt: { N: String(ttl) },
-          },
-          ConditionExpression: "attribute_not_exists(eventId)",
-        }),
-      );
+      await dynamo.send(new PutItemCommand({
+        TableName: PROCESSED_EVENTS_TABLE_NAME,
+        Item: {
+          eventId: { S: this.eventId },
+          createdAt: { S: new Date().toISOString() },
+          expiresAt: { N: String(ttl) },
+        },
+        ConditionExpression: "attribute_not_exists(eventId)",
+      }));
       return true;
-    } catch (err: unknown) {
-      if (err instanceof Error && err.name === "ConditionalCheckFailedException") {
+    } catch (err) {
+      if (isConditionalCheckFailed(err)) {
         return false;
       }
       throw err;
@@ -46,26 +46,22 @@ export class Session {
   }
 
   async release(): Promise<void> {
-    await dynamo.send(
-      new DeleteItemCommand({
-        TableName: PROCESSED_EVENTS_TABLE_NAME,
-        Key: { eventId: { S: this.eventId } },
-      }),
-    );
+    await dynamo.send(new DeleteItemCommand({
+      TableName: PROCESSED_EVENTS_TABLE_NAME,
+      Key: { eventId: { S: this.eventId } },
+    }));
   }
 
   async loadHistory(): Promise<ModelMessage[]> {
-    const result = await dynamo.send(
-      new QueryCommand({
-        TableName: CONVERSATIONS_TABLE_NAME,
-        KeyConditionExpression: "conversationKey = :conversationKey",
-        ExpressionAttributeValues: {
-          ":conversationKey": { S: this.conversationKey },
-        },
-        ConsistentRead: true,
-        ScanIndexForward: true,
-      }),
-    );
+    const result = await dynamo.send(new QueryCommand({
+      TableName: CONVERSATIONS_TABLE_NAME,
+      KeyConditionExpression: "conversationKey = :conversationKey",
+      ExpressionAttributeValues: {
+        ":conversationKey": { S: this.conversationKey },
+      },
+      ConsistentRead: true,
+      ScanIndexForward: true,
+    }));
 
     return (result.Items ?? [])
       .map((item) => item.message)
@@ -88,17 +84,14 @@ export class Session {
   }
 
   private async persistMessage(message: ModelMessage): Promise<void> {
-    const createdAt = new Date().toISOString();
-    await dynamo.send(
-      new PutItemCommand({
-        TableName: CONVERSATIONS_TABLE_NAME,
-        Item: {
-          conversationKey: { S: this.conversationKey },
-          createdAt: { S: createdAt },
-          message: toAttributeValue(message),
-        },
-      }),
-    );
+    await dynamo.send(new PutItemCommand({
+      TableName: CONVERSATIONS_TABLE_NAME,
+      Item: {
+        conversationKey: { S: this.conversationKey },
+        createdAt: { S: new Date().toISOString() },
+        message: toAttributeValue(message),
+      },
+    }));
   }
 }
 

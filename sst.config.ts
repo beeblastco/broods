@@ -1,21 +1,14 @@
 /// <reference path="./.sst/platform/config.d.ts" />
 
-import type { Output } from "@pulumi/pulumi";
-
+// SST infrastructure for the direct streaming architecture: Telegram ingress + harness processing + DynamoDB state.
 const AWS_REGION = "eu-central-1";
 const AWS_ACCOUNT_ID = "123456789012";
 const PROJECT_NAME = "filthy-panty";
 const PROJECT_OWNER_EMAIL = "owner@example.com";
 const GOOGLE_MODEL_ID = "gemma-4-31b-it";
-const MAX_AGENT_ITERATIONS = 20;
-const SLIDING_CONTEXT_WINDOW = 20;
-
-const DEFAULT_SYSTEM_PROMPT = [
-  "You are a helpful AI assistant.",
-  "Reply in the same language as the user unless asked otherwise.",
-  "Be concise, helpful, and safe.",
-  "If the user asks something ambiguous, ask a short clarifying question.",
-].join(" ");
+const SLIDING_CONTEXT_WINDOW = "20";
+const MAX_AGENT_ITERATIONS = "20";
+const DEFAULT_SYSTEM_PROMPT = "You are a helpful assistant that can use tools to get information for the user.";
 
 const AWS_PROFILE = process.env.CI ? undefined : (process.env.AWS_PROFILE ?? "default");
 
@@ -64,8 +57,6 @@ export default $config({
     const allowedChatIds = new sst.Secret("AllowedChatIds");
     const googleApiKey = new sst.Secret("GoogleApiKey");
 
-    // ── DynamoDB ──────────────────────────────────────────────────────────
-
     const conversationsTable = new sst.aws.Dynamo("Conversations", {
       fields: {
         conversationKey: "string",
@@ -94,35 +85,14 @@ export default $config({
       },
     });
 
-    // ── Tool Lambdas ──────────────────────────────────────────────────────
-    // Add your tool Lambdas here. Each tool is a small Lambda invoked by
-    // the harness-processing agent loop when the model returns tool_use.
-    //
-    // Example:
-    //   const toolMyTool = new sst.aws.Function("ToolMyTool", {
-    //     name: resourceName("tool-my-tool", stage),
-    //     runtime: "provided.al2023",
-    //     architecture: "arm64",
-    //     bundle: "dist/tool-my-tool",
-    //     handler: "bootstrap",
-    //     timeout: "10 seconds",
-    //     memory: "128 MB",
-    //     logging: { format: "json", retention: "1 month" },
-    //   });
-
-    const toolLambdaArns: Output<string>[] = [];
-    const toolArnMapping: Record<string, Output<string>> = {};
-
-    // ── Harness Processing Lambda ─────────────────────────────────────────
-
     const harnessProcessing = new sst.aws.Function("HarnessProcessing", {
       name: names.harnessProcessing,
       runtime: "provided.al2023",
       architecture: "arm64",
       bundle: "dist/harness-processing",
       handler: "bootstrap",
-      description: "Runs the agentic AI loop: dedup, load context, Google AI streaming converse, tool execution, persist, and send reply via SSE.",
-      timeout: "30 minutes",
+      description: "Runs the streaming agent loop: dedupe, load context, call tools inline, and return SSE.",
+      timeout: "15 minutes",
       memory: "256 MB",
       streaming: true,
       url: {
@@ -135,9 +105,8 @@ export default $config({
         CONVERSATIONS_TABLE_NAME: conversationsTable.name,
         PROCESSED_EVENTS_TABLE_NAME: processedEventsTable.name,
         DEFAULT_SYSTEM_PROMPT,
-        SLIDING_CONTEXT_WINDOW: String(SLIDING_CONTEXT_WINDOW),
-        MAX_AGENT_ITERATIONS: String(MAX_AGENT_ITERATIONS),
-        TOOL_ARN_MAPPING: $resolve(toolArnMapping).apply((resolved) => JSON.stringify(resolved)),
+        SLIDING_CONTEXT_WINDOW,
+        MAX_AGENT_ITERATIONS,
       },
       permissions: [
         {
@@ -148,18 +117,8 @@ export default $config({
           ],
           resources: [conversationsTable.arn, processedEventsTable.arn],
         },
-        ...(toolLambdaArns.length > 0
-          ? [
-            {
-              actions: ["lambda:InvokeFunction"],
-              resources: toolLambdaArns,
-            },
-          ]
-          : []),
       ],
     });
-
-    // ── Telegram Integration Lambda ───────────────────────────────────────
 
     const telegramIntegration = new sst.aws.Function("TelegramIntegration", {
       name: names.telegramIntegration,

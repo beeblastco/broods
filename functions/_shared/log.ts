@@ -1,3 +1,4 @@
+// Minimal structured logger so Lambda output stays machine-readable in CloudWatch.
 function emit(level: string, message: string, data?: Record<string, unknown>) {
   const entry = { time: new Date().toISOString(), level, message, ...data };
   process.stdout.write(JSON.stringify(entry) + "\n");

@@ -1,3 +1,4 @@
+// Channel-agnostic bot commands and the DynamoDB helpers they need to mutate chat history.
 import {
   BatchWriteItemCommand,
   DynamoDBClient,

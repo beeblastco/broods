@@ -1,3 +1,4 @@
+// Telegram webhook handler: authenticate, run commands, call the streaming harness URL, and send the final reply.
 import type { UserContent } from "ai";
 import type { ChannelAdapter } from "../_shared/channels.ts";
 import { extractText } from "../_shared/channels.ts";
@@ -73,7 +74,6 @@ export async function handler(event: LambdaUrlEvent): Promise<LambdaUrlResponse>
     }
 
     const channel = adapter.actions(msg);
-
     const command = parseCommand(extractText(msg.content));
     if (command) {
       await executeCommand(command, {
@@ -129,7 +129,9 @@ async function invokeHarnessProcessing(
     throw new Error(`Harness processing returned HTTP ${response.status}: ${text}`);
   }
 
-  if (!response.body) return;
+  if (!response.body) {
+    return;
+  }
 
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
@@ -138,21 +140,26 @@ async function invokeHarnessProcessing(
 
   while (true) {
     const { done, value } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
+    if (done) {
+      break;
+    }
 
+    buffer += decoder.decode(value, { stream: true });
     const lines = buffer.split("\n");
     buffer = lines.pop() ?? "";
 
     for (const line of lines) {
       const trimmed = line.replace(/^data:\s*/, "").trim();
-      if (!trimmed) continue;
+      if (!trimmed) {
+        continue;
+      }
+
       try {
         const parsed = JSON.parse(trimmed);
         if (parsed.type === "text-delta") {
           replyText += parsed.delta;
         }
-      } catch { }
+      } catch {}
     }
   }
 

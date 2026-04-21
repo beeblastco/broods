@@ -1,37 +1,32 @@
+// Streaming harness: dedupe the event, load conversation history, run Gemini + tools inline, and emit SSE.
 import { createGoogleGenerativeAI } from "@ai-sdk/google";
-import { InvokeCommand, LambdaClient } from "@aws-sdk/client-lambda";
-import { FetchHttpHandler } from "@smithy/fetch-http-handler";
-import type { ModelMessage, UserContent } from "ai";
-import { jsonSchema, stepCountIs, streamText, tool } from "ai";
-import { createSession } from "./session.ts";
+import {
+  stepCountIs,
+  streamText,
+  type ModelMessage,
+  type ToolSet,
+  type UserContent,
+} from "ai";
+import { extractText } from "../_shared/channels.ts";
 import { requireEnv } from "../_shared/env.ts";
 import { logError, logInfo } from "../_shared/log.ts";
-import type { ToolOutput } from "../_shared/tools.ts";
-import { buildToolConfig } from "../_shared/tools.ts";
+import { createSession } from "./session.ts";
+import { createTools } from "./tools/index.ts";
 
 const google = createGoogleGenerativeAI({
   apiKey: requireEnv("GOOGLE_API_KEY"),
 });
 
-const fetchHandler = new FetchHttpHandler();
-const lambda = new LambdaClient({ requestHandler: fetchHandler });
-
 const GOOGLE_MODEL_ID = requireEnv("GOOGLE_MODEL_ID");
 const DEFAULT_SYSTEM_PROMPT = requireEnv("DEFAULT_SYSTEM_PROMPT");
 const SLIDING_CONTEXT_WINDOW = Number(requireEnv("SLIDING_CONTEXT_WINDOW"));
 const MAX_AGENT_ITERATIONS = Number(requireEnv("MAX_AGENT_ITERATIONS"));
-const TOOL_ARN_MAPPING: Record<string, string> = JSON.parse(requireEnv("TOOL_ARN_MAPPING"));
+const enc = new TextEncoder();
 
 interface InboundEvent {
   eventId: string;
   conversationKey: string;
   content: UserContent;
-}
-
-const enc = new TextEncoder();
-
-function sseEvent(event: Record<string, unknown>): Uint8Array {
-  return enc.encode(`data: ${JSON.stringify(event)}\n\n`);
 }
 
 export async function handler(event: InboundEvent): Promise<ReadableStream<Uint8Array>> {
@@ -57,14 +52,11 @@ export async function handler(event: InboundEvent): Promise<ReadableStream<Uint8
   }
 
   const fullStream = await runAgentLoop(session, content, history);
-
-  const transformStream = new TransformStream<any, Uint8Array>({
+  return fullStream.pipeThrough(new TransformStream({
     transform(chunk, controller) {
-      controller.enqueue(sseEvent(chunk));
+      controller.enqueue(sseEvent(chunk as Record<string, unknown>));
     },
-  });
-
-  return fullStream.pipeThrough(transformStream);
+  }));
 }
 
 async function runAgentLoop(
@@ -74,52 +66,40 @@ async function runAgentLoop(
 ): Promise<ReadableStream> {
   const windowStart = Math.max(0, history.length - SLIDING_CONTEXT_WINDOW);
   let recentHistory = history.slice(windowStart);
-  while (recentHistory.length > 0 && recentHistory[0]!.role !== "user") {
+
+  while (recentHistory.length > 0 && recentHistory[0]?.role !== "user") {
     recentHistory = recentHistory.slice(1);
   }
 
   const messages: ModelMessage[] = [
     ...recentHistory,
-    { role: "user" as const, content: userContent },
+    { role: "user", content: userContent },
   ];
 
-  const toolConfig = buildToolConfig();
-  const tools: Record<string, any> = {
+  const tools = {
     google_search: google.tools.googleSearch({}),
-  };
+    ...createTools({
+      conversationKey: session.conversationKey,
+      latestUserMessage: extractText(userContent),
+    }),
+  } satisfies ToolSet;
 
-  for (const spec of toolConfig.tools) {
-    tools[spec.toolSpec.name] = tool({
-      description: spec.toolSpec.description,
-      inputSchema: jsonSchema(spec.toolSpec.inputSchema.json as any),
-      execute: async (input, { toolCallId }) => {
-        const result = await executeToolCall(
-          { name: spec.toolSpec.name, input: input as Record<string, unknown>, toolCallId },
-          session,
-          userContent,
-        );
-        if (result.action === "immediate_reply") {
-          return result.replyText ?? result.content;
-        }
-        return result.content;
+  const providerOptions = {
+    google: {
+      thinkingConfig: {
+        thinkingLevel: "high",
       },
-    });
-  }
+    },
+  };
 
   const result = streamText({
     model: google(GOOGLE_MODEL_ID),
     system: DEFAULT_SYSTEM_PROMPT,
-    messages,
-    tools,
-    stopWhen: stepCountIs(MAX_AGENT_ITERATIONS),
+    messages: messages,
+    tools: tools,
     maxOutputTokens: 16000,
-    providerOptions: {
-      google: {
-        thinkingConfig: {
-          thinkingLevel: "high",
-        },
-      },
-    },
+    providerOptions: providerOptions,
+    stopWhen: stepCountIs(MAX_AGENT_ITERATIONS),
     onFinish: async ({ text }) => {
       const finalText = text.trim();
       if (!finalText) {
@@ -129,6 +109,7 @@ async function runAgentLoop(
         });
         return;
       }
+
       try {
         await session.persistAssistantMessage(finalText);
         logInfo("Processing complete", { conversationKey: session.conversationKey });
@@ -144,46 +125,6 @@ async function runAgentLoop(
   return result.fullStream;
 }
 
-async function executeToolCall(
-  toolUse: { name: string; input: Record<string, unknown>; toolCallId: string },
-  session: ReturnType<typeof createSession>,
-  latestUserMessage: UserContent,
-): Promise<ToolOutput> {
-  const functionArn = TOOL_ARN_MAPPING[toolUse.name];
-  if (!functionArn) {
-    return {
-      toolUseId: toolUse.toolCallId,
-      content: `Unknown tool: ${toolUse.name}`,
-      status: "error",
-    };
-  }
-
-  const result = await lambda.send(
-    new InvokeCommand({
-      FunctionName: functionArn,
-      Payload: Buffer.from(
-        JSON.stringify({
-          toolUseId: toolUse.toolCallId,
-          input: toolUse.input,
-          context: {
-            conversationKey: session.conversationKey,
-            latestUserMessage,
-          },
-        }),
-      ),
-    }),
-  );
-
-  if (result.FunctionError) {
-    const errPayload = result.Payload
-      ? JSON.parse(Buffer.from(result.Payload).toString())
-      : {};
-    return {
-      toolUseId: toolUse.toolCallId,
-      content: `Tool invocation error: ${errPayload.errorMessage ?? result.FunctionError}`,
-      status: "error",
-    };
-  }
-
-  return JSON.parse(Buffer.from(result.Payload!).toString());
+function sseEvent(event: Record<string, unknown>): Uint8Array {
+  return enc.encode(`data: ${JSON.stringify(event)}\n\n`);
 }

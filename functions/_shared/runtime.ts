@@ -1,3 +1,4 @@
+// Custom Bun Lambda runtime adapters for normal request/response and streaming Function URL handlers.
 export type LambdaHandler<TPayload = unknown, TResult = unknown> = (
   payload: TPayload,
   context: LambdaInvocation,
