@@ -1,11 +1,6 @@
-// Tool loader for harness-processing: auto-discovers *.tool.ts files and merges them into one AI SDK ToolSet.
+// Tool registry for harness-processing: imports tool files and merges them into one AI SDK ToolSet.
 import type { ToolSet } from "ai";
-
-declare global {
-  interface ImportMeta {
-    glob(pattern: string, options: { eager: true }): Record<string, unknown>;
-  }
-}
+import weatherTool from "./weather.tool.ts";
 
 export interface ToolContext {
   conversationKey: string;
@@ -13,21 +8,15 @@ export interface ToolContext {
 }
 
 type ToolFactory = (context: ToolContext) => ToolSet;
-type ToolModule = {
-  default?: ToolFactory;
-  createTools?: ToolFactory;
-};
-
-const toolModules = import.meta.glob("./*.tool.ts", { eager: true }) as Record<string, ToolModule>;
+// Add new tool factories here so they are bundled into the compiled Lambda binary.
+const toolFactories: ToolFactory[] = [
+  weatherTool,
+];
 
 export function createTools(context: ToolContext): ToolSet {
   const tools: ToolSet = {};
 
-  for (const [path, module] of Object.entries(toolModules)) {
-    const factory = module.default ?? module.createTools;
-    if (!factory) {
-      throw new Error(`Tool module ${path} must export a default tool factory`);
-    }
+  for (const factory of toolFactories) {
     Object.assign(tools, factory(context));
   }
 

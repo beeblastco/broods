@@ -60,6 +60,6 @@ bun run check      # Type-check
 
 ## Adding Things
 
-- **New tool:** Create `functions/harness-processing/tools/<name>.tool.ts` and export a default tool factory that returns one or more AI SDK tools with their logic in `execute`.
+- **New tool:** Create `functions/harness-processing/tools/<name>.tool.ts`, export a default tool factory that returns one or more AI SDK tools with their logic in `execute`, then import that factory in `functions/harness-processing/tools/index.ts`.
 - **New channel:** Implement `ChannelAdapter` in `functions/_shared/<channel>-channel.ts` and register it in the `channels` array in `functions/telegram-integration/handler.ts`.
 - **New command:** Add entry to `commands` array in `functions/_shared/commands.ts`.

@@ -11,8 +11,8 @@ Key rules:
   - `telegram-integration` — receives Telegram webhooks via Function URL, handles bot commands, calls `harness-processing` over its streaming Function URL, drains the SSE stream, and sends the final reply back to Telegram.
   - `harness-processing` — streaming Function URL (`RESPONSE_STREAM` invoke mode). Runs the full agentic loop using Vercel AI SDK `streamText` with Google AI provider: dedupe, load DynamoDB context, stream generation with Google Search grounding + inline custom tools, persist conversation, and emit SSE events (`text-delta`, `done`) back to the caller.
 - The custom Bun runtime (`functions/_shared/runtime.ts`) supports two modes: `startRuntime` for standard request-response (telegram-integration) and `startStreamingRuntime` for Lambda response streaming (harness-processing).
-- To add a new tool: create `functions/harness-processing/tools/<name>.tool.ts`, export a default tool factory, and return one or more AI SDK tools from it. Put the tool logic directly inside each tool's `execute`.
-- `functions/harness-processing/tools/index.ts` auto-loads every `*.tool.ts` file, so there is no central tool registry to edit.
+- To add a new tool: create `functions/harness-processing/tools/<name>.tool.ts`, export a default tool factory, put the tool logic directly inside each tool's `execute`, and import that factory in `functions/harness-processing/tools/index.ts`.
+- `functions/harness-processing/tools/index.ts` is the static registry used to ensure tool files are bundled into the compiled Lambda binary.
 - Custom tools run inline inside `harness-processing` during the streaming request. Do not add queue-based tool execution or external tool-Lambda wiring unless the architecture intentionally changes.
 - Google Search is enabled as a built-in tool via `google.tools.googleSearch({})`.
 - Shared code goes in `functions/_shared/` only when it is actually shared by multiple Lambdas. Keep harness-only code in `functions/harness-processing/`.
