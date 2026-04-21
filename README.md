@@ -12,15 +12,15 @@ Two Lambda functions behind Function URLs, deployed with SST:
 - **harness-processing** — Streaming Function URL (`RESPONSE_STREAM` invoke mode). Runs the agentic loop: deduplication, DynamoDB conversation history, Vercel AI SDK `streamText` with Google AI (Gemini), tool calling, Google Search grounding, and extended thinking. Emits SSE events back to the caller.
 
 ```mermaid
-Channel Webhook (Telegram, etc.)
-  -> telegram-integration (Function URL)
-    -> POST to harness-processing (Function URL)
-      -> Dedup (DynamoDB)
-      -> Load conversation history (DynamoDB)
-      -> streamText() with tools + thinking
-      -> SSE stream back
-    -> Accumulate text deltas
-  -> Reply to channel
+flowchart TD
+  A["Channel Webhook (Telegram, etc.)"] --> B["telegram-integration (Function URL)"]
+  B --> C["POST to harness-processing (Function URL)"]
+  C --> D["Dedup (DynamoDB)"]
+  D --> E["Load conversation history (DynamoDB)"]
+  E --> F["streamText() with tools + thinking"]
+  F --> G["SSE stream back"]
+  G --> H["Accumulate text deltas"]
+  H --> I["Reply to channel"]
 ```
 
 ## Request Format
@@ -60,6 +60,6 @@ bun run check      # Type-check
 
 ## Adding Things
 
-- **New tool:** Create `functions/tool-<name>/`, add Lambda to `sst.config.ts`, register in `toolArnMapping`, define spec in `functions/_shared/tools.ts`.
-- **New channel:** Implement `ChannelAdapter` in `functions/_shared/<channel>-channel.ts`, register in `channels` array. Add reply branch in harness-processing `sendReply()`.
+- **New tool:** Create `functions/harness-processing/tools/<name>.tool.ts` and export a default tool factory that returns one or more AI SDK tools with their logic in `execute`.
+- **New channel:** Implement `ChannelAdapter` in `functions/_shared/<channel>-channel.ts` and register it in the `channels` array in `functions/telegram-integration/handler.ts`.
 - **New command:** Add entry to `commands` array in `functions/_shared/commands.ts`.
