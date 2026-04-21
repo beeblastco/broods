@@ -92,7 +92,7 @@ export default $config({
       bundle: "dist/harness-processing",
       handler: "bootstrap",
       description: "Runs the streaming agent loop: dedupe, load context, call tools inline, and return SSE.",
-      timeout: "15 minutes",
+      timeout: "10 minutes",
       memory: "256 MB",
       streaming: true,
       url: {
