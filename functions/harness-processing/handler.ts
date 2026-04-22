@@ -99,13 +99,11 @@ async function runAgentLoop(
     maxOutputTokens: 16000,
     providerOptions: providerOptions,
     stopWhen: stepCountIs(MAX_AGENT_ITERATIONS),
-    onFinish: async ({ steps, text }) => {
-      const responseMessages = steps.flatMap((step) => step.response.messages);
-
+    onFinish: async ({ response, text }) => {
       const finalText = text.trim();
 
       try {
-        await session.persistModelMessages(responseMessages);
+        await session.persistModelMessages(response.messages);
 
         if (!finalText) {
           logError("Model returned empty response", {
