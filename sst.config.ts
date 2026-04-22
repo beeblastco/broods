@@ -50,12 +50,14 @@ export default $config({
       conversations: resourceName("conversations", stage),
       processedEvents: resourceName("processed-events", stage),
       harnessProcessing: resourceName("harness-processing", stage),
+      memory: resourceName("memory", stage),
     };
 
     const telegramBotToken = new sst.Secret("TelegramBotToken");
     const telegramWebhookSecret = new sst.Secret("TelegramWebhookSecret");
     const allowedChatIds = new sst.Secret("AllowedChatIds");
     const googleApiKey = new sst.Secret("GoogleApiKey");
+    const tavilyApiKey = new sst.Secret("TavilyApiKey");
 
     const conversationsTable = new sst.aws.Dynamo("Conversations", {
       fields: {
@@ -81,6 +83,14 @@ export default $config({
       transform: {
         table: {
           name: names.processedEvents,
+        },
+      },
+    });
+
+    const memoryBucket = new sst.aws.Bucket("Memory", {
+      transform: {
+        bucket: {
+          bucket: names.memory,
         },
       },
     });
@@ -111,6 +121,8 @@ export default $config({
         TELEGRAM_WEBHOOK_SECRET: telegramWebhookSecret.value,
         ALLOWED_CHAT_IDS: allowedChatIds.value,
         TELEGRAM_REACTION_EMOJI,
+        TAVILY_API_KEY: tavilyApiKey.value,
+        AWS_S3_BUCKET: memoryBucket.name,
       },
       permissions: [
         {
@@ -121,6 +133,18 @@ export default $config({
             "dynamodb:DeleteItem",
           ],
           resources: [conversationsTable.arn, processedEventsTable.arn],
+        },
+        {
+          actions: [
+            "s3:GetObject",
+            "s3:PutObject",
+            "s3:DeleteObject",
+          ],
+          resources: [$interpolate`${memoryBucket.arn}/*`],
+        },
+        {
+          actions: ["s3:ListBucket"],
+          resources: [memoryBucket.arn],
         },
       ],
     });

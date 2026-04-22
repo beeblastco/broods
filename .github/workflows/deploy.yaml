@@ -31,6 +31,7 @@ jobs:
       SST_SECRET_TelegramWebhookSecret: ${{ secrets.SST_SECRET_TelegramWebhookSecret }}
       SST_SECRET_AllowedChatIds: ${{ secrets.SST_SECRET_AllowedChatIds }}
       SST_SECRET_GoogleApiKey: ${{ secrets.SST_SECRET_GoogleApiKey }}
+      SST_SECRET_TavilyApiKey: ${{ secrets.SST_SECRET_TavilyApiKey }}
       CI: "true"
     steps:
       - name: Resolve deploy configuration

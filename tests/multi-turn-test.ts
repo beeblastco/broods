@@ -18,13 +18,13 @@ let totalResponseBytes = 0;
 const r1 = await send("What is my name?", 1);
 totalResponseBytes += r1.responseSizeBytes;
 
-const r2 = await send("What's the weather in Hanoi?", 2);
+const r2 = await send("Search the web for the weather in Hanoi.", 2);
 totalResponseBytes += r2.responseSizeBytes;
 
-const r3 = await send("What's the weather in Ho Chi Minh city?", 3);
+const r3 = await send("Search the web for the weather in Ho Chi Minh city.", 3);
 totalResponseBytes += r3.responseSizeBytes;
 
-const r4 = await send("What's the weather in New York and Los Angeles? Compare them with Hanoi and Ho Chi Minh.", 4);
+const r4 = await send("Search the web for the weather in New York and Los Angeles. Compare them with Hanoi and Ho Chi Minh city.", 4);
 totalResponseBytes += r4.responseSizeBytes;
 
 const r5 = await send("What was the first question I asked you?", 5);
