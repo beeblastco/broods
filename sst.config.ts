@@ -8,10 +8,13 @@ const PROJECT_OWNER_EMAIL = "owner@example.com";
 const GOOGLE_MODEL_ID = "gemma-4-31b-it";
 const SLIDING_CONTEXT_WINDOW = "20";
 const MAX_AGENT_ITERATIONS = "20";
-const DEFAULT_SYSTEM_PROMPT = "You are a helpful assistant that can use tools to get information for the user.";
 const TELEGRAM_REACTION_EMOJI = "👀";
-
 const AWS_PROFILE = process.env.CI ? undefined : (process.env.AWS_PROFILE ?? "default");
+
+const DEFAULT_SYSTEM_PROMPT = `You are a helpful assistant that can use tools to get information for the user.
+
+You have access to a persistent virtual terminal filesystem. Use it to read and write durable files when it helps you complete the user's request.`;
+
 
 function resourceName(service: string, stage: string): string {
   const stagePrefix = stage === "production" ? "" : `${stage}-`;
@@ -86,14 +89,7 @@ export default $config({
         },
       },
     });
-
-    const memoryBucket = new sst.aws.Bucket("Memory", {
-      transform: {
-        bucket: {
-          bucket: names.memory,
-        },
-      },
-    });
+    const memoryBucketArn = `arn:aws:s3:::${names.memory}`;
 
     const harnessProcessing = new sst.aws.Function("HarnessProcessing", {
       name: names.harnessProcessing,
@@ -122,7 +118,7 @@ export default $config({
         ALLOWED_CHAT_IDS: allowedChatIds.value,
         TELEGRAM_REACTION_EMOJI,
         TAVILY_API_KEY: tavilyApiKey.value,
-        AWS_S3_BUCKET: memoryBucket.name,
+        AWS_S3_BUCKET: names.memory,
       },
       permissions: [
         {
@@ -140,13 +136,50 @@ export default $config({
             "s3:PutObject",
             "s3:DeleteObject",
           ],
-          resources: [$interpolate`${memoryBucket.arn}/*`],
+          resources: [`${memoryBucketArn}/*`],
         },
         {
           actions: ["s3:ListBucket"],
-          resources: [memoryBucket.arn],
+          resources: [memoryBucketArn],
         },
       ],
+    });
+
+    const memoryBucket = new sst.aws.Bucket("Memory", {
+      versioning: true,
+      policy: [
+        {
+          effect: "deny",
+          principals: "*",
+          actions: [
+            "s3:GetObject",
+            "s3:PutObject",
+            "s3:DeleteObject",
+            "s3:ListBucket",
+          ],
+          conditions: [
+            {
+              test: "StringNotLikeIfExists",
+              variable: "aws:PrincipalArn",
+              values: [
+                harnessProcessing.nodes.role.arn,
+                $interpolate`arn:aws:sts::${AWS_ACCOUNT_ID}:assumed-role/${harnessProcessing.nodes.role.name}/*`,
+              ],
+            },
+          ],
+        },
+      ],
+      transform: {
+        bucket: {
+          bucket: names.memory,
+        },
+        publicAccessBlock: {
+          blockPublicAcls: true,
+          ignorePublicAcls: true,
+          blockPublicPolicy: true,
+          restrictPublicBuckets: true,
+        },
+      },
     });
 
     return {
@@ -154,6 +187,7 @@ export default $config({
       harnessProcessingUrl: harnessProcessing.url,
       conversationsTableName: conversationsTable.name,
       processedEventsTableName: processedEventsTable.name,
+      memoryBucketName: memoryBucket.name,
     };
   },
 });

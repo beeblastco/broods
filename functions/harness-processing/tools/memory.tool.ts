@@ -20,183 +20,171 @@ const s3 = new S3Client({ region: process.env.AWS_REGION });
 
 const AWS_S3_BUCKET = requireEnv("AWS_S3_BUCKET");
 
-type MemoryCommand = "view" | "create" | "str_replace" | "insert" | "delete" | "rename";
-
 interface MemoryInput {
-  command: MemoryCommand;
-  path?: string;
-  view_range?: { start: number; end: number };
-  file_text?: string;
-  old_str?: string;
-  new_str?: string;
-  insert_line?: number;
-  insert_text?: string;
-  old_path?: string;
-  new_path?: string;
+  shell: string;
 }
 
 type CommandResult = { result: string; isError: boolean };
-type CommandHandler = (input: MemoryInput, authId: string) => Promise<CommandResult>;
 
 const memoryInputSchema = {
   type: "object",
   properties: {
-    command: {
+    shell: {
       type: "string",
-      enum: ["view", "create", "str_replace", "insert", "delete", "rename"],
-      description: `The memory command to execute.
-- view: View file contents with line numbers, or list directory contents
-- create: Create a new file with specified content
-- str_replace: Replace unique text in a file
-- insert: Insert text at a specific line number
-- delete: Delete a file or directory
-- rename: Rename or move a file or directory`,
-    },
-    path: {
-      type: "string",
-      description: "Path to file or directory. Must start with /memories.",
-    },
-    view_range: {
-      type: "object",
-      properties: {
-        start: { type: "number", description: "Start line number (1-indexed)" },
-        end: { type: "number", description: "End line number (1-indexed)" },
-      },
-      required: ["start", "end"],
-      additionalProperties: false,
-      description: "Optional line range for the view command.",
-    },
-    file_text: {
-      type: "string",
-      description: "Full file contents for the create command.",
-    },
-    old_str: {
-      type: "string",
-      description: "Existing text to replace for the str_replace command.",
-    },
-    new_str: {
-      type: "string",
-      description: "Replacement text for the str_replace command.",
-    },
-    insert_line: {
-      type: "number",
-      description: "Line index to insert at. Use 0 to insert at the beginning.",
-    },
-    insert_text: {
-      type: "string",
-      description: "Text to insert for the insert command.",
-    },
-    old_path: {
-      type: "string",
-      description: "Existing file or directory path for the rename command.",
-    },
-    new_path: {
-      type: "string",
-      description: "Destination path for the rename command.",
+      description: `Terminal command to run against the virtual filesystem rooted at /.
+
+Prefer shell mode. Supported commands:
+- pwd
+- ls [path]
+- cat <path>
+- sed -n 'start,endp' <path>
+- mkdir -p <dir>
+- touch <file>
+- rm -r <path>
+- mv <old> <new>
+- cat <<'EOF' > <path> ... EOF
+- cat <<'EOF' >> <path> ... EOF`,
     },
   },
-  required: ["command"],
+  required: ["shell"],
   additionalProperties: false,
 } as const;
 
 const error = (result: string): CommandResult => ({ result, isError: true });
 const success = (result: string): CommandResult => ({ result, isError: false });
 
-const commandHandlers: Record<MemoryCommand, CommandHandler> = {
-  view: async (input, authId) => {
-    if (!input.path) {
-      return error("Error: path is required for view command");
-    }
-
-    const viewRange = input.view_range
-      ? [input.view_range.start, input.view_range.end] as [number, number]
-      : undefined;
-
-    return success(await viewMemoryFile({
-      name: input.path,
-      userId: authId,
-      viewRange,
-    }));
-  },
-
-  create: async (input, authId) => {
-    if (!input.path || input.file_text === undefined) {
-      return error("Error: path and file_text are required for create command");
-    }
-
-    return success(await createMemoryFile({
-      name: input.path,
-      fileText: input.file_text,
-      userId: authId,
-    }));
-  },
-
-  str_replace: async (input, authId) => {
-    if (!input.path || !input.old_str || input.new_str === undefined) {
-      return error("Error: path, old_str, and new_str are required for str_replace command");
-    }
-
-    return success(await strReplaceMemory({
-      name: input.path,
-      oldStr: input.old_str,
-      newStr: input.new_str,
-      userId: authId,
-    }));
-  },
-
-  insert: async (input, authId) => {
-    if (!input.path || input.insert_line === undefined || input.insert_text === undefined) {
-      return error("Error: path, insert_line, and insert_text are required for insert command");
-    }
-
-    return success(await insertAtLineMemory({
-      name: input.path,
-      insertLine: input.insert_line,
-      insertText: input.insert_text,
-      userId: authId,
-    }));
-  },
-
-  delete: async (input, authId) => {
-    if (!input.path) {
-      return error("Error: path is required for delete command");
-    }
-
-    return success(await deleteMemoryFile({
-      name: input.path,
-      userId: authId,
-    }));
-  },
-
-  rename: async (input, authId) => {
-    if (!input.old_path || !input.new_path) {
-      return error("Error: old_path and new_path are required for rename command");
-    }
-
-    return success(await renameMemoryFile({
-      oldName: input.old_path,
-      newName: input.new_path,
-      userId: authId,
-    }));
-  },
-};
-
 export default function memoryTool(_context: ToolContext): ToolSet {
   const memoryNamespace = normalizeMemoryNamespace(_context.conversationKey);
 
   return {
     memory: tool({
-      description: `Persistent memory storage tool for reading and writing files. All paths must start with /memories.
-
-Use this tool to remember user information, store notes and preferences, and manage durable task files.`,
+      description: "Terminal-style filesystem rooted at /. Use shell commands to read and write persistent files.",
       inputSchema: jsonSchema(memoryInputSchema),
       async execute(input) {
-        const handler = commandHandlers[(input as MemoryInput).command];
-        const { result, isError } = await handler(input as MemoryInput, memoryNamespace);
+        const { result, isError } = await executeShellCommand((input as MemoryInput).shell, memoryNamespace);
         return { type: isError ? "error-text" : "text", value: result };
       },
     }),
   };
+}
+
+async function executeShellCommand(shell: string, authId: string): Promise<CommandResult> {
+  const command = shell.trim();
+  if (!command) {
+    return error("Error: shell command is required");
+  }
+
+  if (command === "pwd") {
+    return success(getVisibleRoot(authId));
+  }
+
+  const heredoc = parseHeredocCommand(command);
+  if (heredoc) {
+    return success(await writeMemoryFile({
+      name: heredoc.path,
+      fileText: heredoc.append
+        ? await appendToMemoryFile(heredoc.path, heredoc.body, authId)
+        : heredoc.body,
+      userId: authId,
+      overwrite: true,
+    }));
+  }
+
+  if (command.startsWith("ls")) {
+    const path = parseLsPath(command);
+    return success(await listMemoryEntries(path, authId));
+  }
+
+  const sedMatch = command.match(/^sed\s+-n\s+['"](\d+),(\d+)p['"]\s+(.+)$/s);
+  if (sedMatch) {
+    return success(await readMemoryRange(
+      stripQuotes(sedMatch[3]!),
+      Number(sedMatch[1]),
+      Number(sedMatch[2]),
+      authId,
+    ));
+  }
+
+  const catMatch = command.match(/^cat\s+(.+)$/s);
+  if (catMatch) {
+    return success(await readMemoryRaw(stripQuotes(catMatch[1]!), authId));
+  }
+
+  const mkdirMatch = command.match(/^mkdir\s+-p\s+(.+)$/s);
+  if (mkdirMatch) {
+    return success(await createMemoryDirectory(stripQuotes(mkdirMatch[1]!), authId));
+  }
+
+  const touchMatch = command.match(/^touch\s+(.+)$/s);
+  if (touchMatch) {
+    return success(await touchMemoryFile(stripQuotes(touchMatch[1]!), authId));
+  }
+
+  const rmMatch = command.match(/^rm(?:\s+-[rf]+\s+|\s+-[fr]+\s+|\s+)(.+)$/s);
+  if (rmMatch) {
+    return success(await deleteMemoryFile({
+      name: stripQuotes(rmMatch[1]!),
+      userId: authId,
+    }));
+  }
+
+  const mvMatch = command.match(/^mv\s+(\S+)\s+(\S+)$/);
+  if (mvMatch) {
+    return success(await renameMemoryFile({
+      oldName: stripQuotes(mvMatch[1]!),
+      newName: stripQuotes(mvMatch[2]!),
+      userId: authId,
+    }));
+  }
+
+  return error(`Unsupported shell command.
+Supported commands:
+- pwd
+- ls [path]
+- cat <path>
+- sed -n 'start,endp' <path>
+- mkdir -p <dir>
+- touch <file>
+- rm -r <path>
+- mv <old> <new>
+- cat <<'EOF' > <path> ... EOF
+- cat <<'EOF' >> <path> ... EOF`);
+}
+
+function parseLsPath(command: string): string {
+  const tokens = command.split(/\s+/).slice(1);
+  const path = tokens.find((token) => !token.startsWith("-"));
+  return path ? stripQuotes(path) : "/";
+}
+
+function parseHeredocCommand(command: string): {
+  path: string;
+  body: string;
+  append: boolean;
+} | null {
+  const leading = command.match(/^cat\s+<<['"]?([A-Za-z0-9_]+)['"]?\s*(>>|>)\s*(\S+)\n([\s\S]*?)\n\1\s*$/);
+  if (leading) {
+    return {
+      path: stripQuotes(leading[3]!),
+      body: leading[4]!,
+      append: leading[2] === ">>",
+    };
+  }
+
+  const trailing = command.match(/^cat\s*(>>|>)\s*(\S+)\s*<<['"]?([A-Za-z0-9_]+)['"]?\n([\s\S]*?)\n\3\s*$/);
+  if (trailing) {
+    return {
+      path: stripQuotes(trailing[2]!),
+      body: trailing[4]!,
+      append: trailing[1] === ">>",
+    };
+  }
+
+  return null;
+}
+
+function stripQuotes(value: string): string {
+  return value.replace(/^['"]|['"]$/g, "");
 }
 
 function normalizeMemoryNamespace(conversationKey: string): string {
@@ -206,46 +194,228 @@ function normalizeMemoryNamespace(conversationKey: string): string {
     .replace(/^_+|_+$/g, "") || "default";
 }
 
-function toS3Key(path: string, authId: string): string {
-  if (!path.startsWith("/memories")) {
-    throw new Error("Invalid path: must start with /memories");
+function getVisibleRoot(authId: string): string {
+  return `/${authId}`;
+}
+
+function toScopedPath(path: string, authId: string): string {
+  const normalized = normalizePath(path);
+  const visibleRoot = getVisibleRoot(authId);
+
+  if (normalized === visibleRoot) {
+    return "/";
   }
 
-  if (path.includes("../") || path.includes("..\\") || path.includes("%2e%2e")) {
+  if (normalized.startsWith(`${visibleRoot}/`)) {
+    return normalized.slice(visibleRoot.length) || "/";
+  }
+
+  return normalized;
+}
+
+function toVisiblePath(path: string, authId: string): string {
+  const normalized = normalizePath(path);
+  return normalized === "/" ? getVisibleRoot(authId) : `${getVisibleRoot(authId)}${normalized}`;
+}
+
+function toS3Key(path: string, authId: string): string {
+  const normalizedPath = toScopedPath(path, authId);
+  if (normalizedPath.includes("../") || normalizedPath.includes("..\\") || normalizedPath.includes("%2e%2e")) {
     throw new Error("Invalid path: directory traversal not allowed");
   }
 
-  const relativePath = path.slice("/memories".length);
-  const s3Key = `${authId}/memories${relativePath}`;
+  const relativePath = normalizedPath.slice(1);
+  const s3Key = relativePath ? `${authId}/${relativePath}` : authId;
 
-  if (!s3Key.startsWith(`${authId}/memories`)) {
+  if (s3Key !== authId && !s3Key.startsWith(`${authId}/`)) {
     throw new Error("Invalid path: resolved outside memory directory");
   }
 
   return s3Key;
 }
 
-function toMemoryPath(s3Key: string, authId: string): string {
-  const prefix = `${authId}/memories`;
-  return s3Key.startsWith(prefix) ? `/memories${s3Key.slice(prefix.length)}` : s3Key;
+function normalizePath(path: string): string {
+  const trimmed = stripQuotes(path).trim();
+  if (!trimmed || trimmed === ".") {
+    return "/";
+  }
+
+  const absolute = trimmed.startsWith("/") ? trimmed : `/${trimmed}`;
+  const parts = absolute.split("/").filter(Boolean);
+  return parts.length === 0 ? "/" : `/${parts.join("/")}`;
 }
 
-function formatSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes}`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)}K`;
-  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)}M`;
-  return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)}G`;
+async function readMemoryRaw(path: string, authId: string): Promise<string> {
+  const normalizedPath = toScopedPath(path, authId);
+  const { exists, isDirectory } = await checkPathExists(authId, normalizedPath);
+  if (!exists) {
+    return `cat: ${toVisiblePath(normalizedPath, authId)}: No such file or directory`;
+  }
+
+  if (isDirectory) {
+    return `cat: ${toVisiblePath(normalizedPath, authId)}: Is a directory`;
+  }
+
+  const response = await s3.send(new GetObjectCommand({
+    Bucket: AWS_S3_BUCKET,
+    Key: toS3Key(normalizedPath, authId),
+  }));
+
+  return await response.Body?.transformToString() ?? "";
 }
 
-function formatLineNumber(lineNum: number): string {
-  return lineNum.toString().padStart(6, " ");
+async function readMemoryRange(path: string, start: number, end: number, authId: string): Promise<string> {
+  const content = await readMemoryRaw(path, authId);
+  if (content.startsWith("cat: ")) {
+    return content;
+  }
+
+  return content
+    .split("\n")
+    .slice(Math.max(0, start - 1), Math.max(start - 1, end))
+    .join("\n");
+}
+
+async function writeMemoryFile(params: {
+  name: string;
+  fileText: string;
+  userId: string;
+  overwrite: boolean;
+}): Promise<string> {
+  const { name, fileText, userId: authId, overwrite } = params;
+  const path = toScopedPath(name, authId);
+  if (path === "/") {
+    return `Error: ${toVisiblePath(path, authId)} is a directory`;
+  }
+
+  const { exists, isDirectory } = await checkPathExists(authId, path);
+
+  if (isDirectory) {
+    return `Error: ${toVisiblePath(path, authId)} is a directory`;
+  }
+
+  if (exists && !overwrite) {
+    return `Error: File ${toVisiblePath(path, authId)} already exists`;
+  }
+
+  await s3.send(new PutObjectCommand({
+    Bucket: AWS_S3_BUCKET,
+    Key: toS3Key(path, authId),
+    Body: fileText,
+    ContentType: "text/plain",
+  }));
+
+  return `Wrote ${toVisiblePath(path, authId)}`;
+}
+
+async function appendToMemoryFile(path: string, fileText: string, authId: string): Promise<string> {
+  const normalizedPath = toScopedPath(path, authId);
+  const { exists, isDirectory } = await checkPathExists(authId, normalizedPath);
+  if (isDirectory) {
+    throw new Error(`${toVisiblePath(normalizedPath, authId)} is a directory`);
+  }
+
+  if (!exists) {
+    return fileText;
+  }
+
+  const existing = await readMemoryRaw(normalizedPath, authId);
+  return existing.length > 0 ? `${existing}\n${fileText}` : fileText;
+}
+
+async function createMemoryDirectory(path: string, authId: string): Promise<string> {
+  const normalizedPath = toScopedPath(path, authId);
+  if (normalizedPath === "/") {
+    return `Directory already exists: ${toVisiblePath(normalizedPath, authId)}`;
+  }
+
+  const { exists, isDirectory } = await checkPathExists(authId, normalizedPath);
+  if (exists && isDirectory) {
+    return `Directory already exists: ${toVisiblePath(normalizedPath, authId)}`;
+  }
+
+  if (exists) {
+    return `Error: ${toVisiblePath(normalizedPath, authId)} is a file`;
+  }
+
+  await s3.send(new PutObjectCommand({
+    Bucket: AWS_S3_BUCKET,
+    Key: `${toS3Key(normalizedPath, authId)}/.keep`,
+    Body: "",
+    ContentType: "text/plain",
+  }));
+
+  return `Created directory ${toVisiblePath(normalizedPath, authId)}`;
+}
+
+async function touchMemoryFile(path: string, authId: string): Promise<string> {
+  const normalizedPath = toScopedPath(path, authId);
+  if (normalizedPath === "/") {
+    return `Error: ${toVisiblePath(normalizedPath, authId)} is a directory`;
+  }
+
+  const { exists, isDirectory } = await checkPathExists(authId, normalizedPath);
+  if (isDirectory) {
+    return `Error: ${toVisiblePath(normalizedPath, authId)} is a directory`;
+  }
+
+  if (exists) {
+    return `Touched ${toVisiblePath(normalizedPath, authId)}`;
+  }
+
+  return writeMemoryFile({
+    name: normalizedPath,
+    fileText: "",
+    userId: authId,
+    overwrite: true,
+  });
+}
+
+async function listMemoryEntries(path: string, authId: string): Promise<string> {
+  const normalizedPath = toScopedPath(path, authId);
+  const { exists, isDirectory } = await checkPathExists(authId, normalizedPath);
+
+  if (normalizedPath !== "/" && !exists) {
+    return `ls: ${toVisiblePath(normalizedPath, authId)}: No such file or directory`;
+  }
+
+  if (exists && !isDirectory) {
+    return normalizedPath.split("/").pop() ?? normalizedPath;
+  }
+
+  const prefix = normalizedPath === "/"
+    ? `${authId}/`
+    : `${toS3Key(normalizedPath, authId)}/`;
+
+  const response = await s3.send(new ListObjectsV2Command({
+    Bucket: AWS_S3_BUCKET,
+    Prefix: prefix,
+    Delimiter: "/",
+  }));
+
+  const entries = [
+    ...(response.CommonPrefixes ?? [])
+      .map((item) => item.Prefix?.slice(prefix.length)?.replace(/\/$/, ""))
+      .filter((item): item is string => typeof item === "string" && !item.startsWith("."))
+      .map((item) => `${item}/`),
+    ...(response.Contents ?? [])
+      .map((item) => item.Key?.slice(prefix.length))
+      .filter((item): item is string => typeof item === "string" && item.length > 0 && !item.startsWith(".")),
+  ].sort((a, b) => a.localeCompare(b));
+
+  return entries.join("\n");
 }
 
 async function checkPathExists(
   authId: string,
   path: string,
 ): Promise<{ exists: boolean; isDirectory: boolean }> {
-  const s3Key = toS3Key(path, authId);
+  const normalizedPath = toScopedPath(path, authId);
+  if (normalizedPath === "/") {
+    return { exists: true, isDirectory: true };
+  }
+
+  const s3Key = toS3Key(normalizedPath, authId);
 
   try {
     await s3.send(new HeadObjectCommand({
@@ -268,218 +438,19 @@ async function checkPathExists(
   }
 }
 
-async function listDirectory(params: { path: string; authId: string }): Promise<string> {
-  const { path, authId } = params;
-  const s3Prefix = path === "/memories" || path === "/memories/"
-    ? `${authId}/memories/`
-    : `${toS3Key(path, authId)}/`;
-
-  const response = await s3.send(new ListObjectsV2Command({
-    Bucket: AWS_S3_BUCKET,
-    Prefix: s3Prefix,
-  }));
-
-  const items = response.Contents ?? [];
-  if (items.length === 0) {
-    return `Here're the files and directories up to 2 levels deep in ${path}, excluding hidden items and node_modules:\n0\t${path}`;
-  }
-
-  let totalSize = 0;
-  const fileEntries: { path: string; size: number }[] = [];
-
-  for (const item of items) {
-    if (!item.Key) continue;
-    const filename = item.Key.split("/").pop();
-    if (filename?.startsWith(".")) continue;
-
-    const size = item.Size ?? 0;
-    totalSize += size;
-
-    const memoryPath = toMemoryPath(item.Key, authId);
-    const relativePath = memoryPath.slice("/memories".length + 1);
-    const parts = relativePath.split("/").filter(Boolean);
-    if (parts.length <= 2) {
-      fileEntries.push({ path: memoryPath, size });
-    }
-  }
-
-  const lines = [
-    `${formatSize(totalSize)}\t${path}`,
-    ...fileEntries.map((entry) => `${formatSize(entry.size)}\t${entry.path}`),
-  ];
-
-  return `Here're the files and directories up to 2 levels deep in ${path}, excluding hidden items and node_modules:\n${lines.join("\n")}`;
-}
-
-async function viewMemoryFile(params: {
-  name: string;
-  userId: string;
-  viewRange?: [number, number];
-}): Promise<string> {
-  const { name: path, userId: authId, viewRange } = params;
-
-  if (path === "/memories" || path === "/memories/") {
-    return listDirectory({ path, authId });
-  }
-
-  const { exists, isDirectory } = await checkPathExists(authId, path);
-  if (!exists) {
-    return `The path ${path} does not exist. Please provide a valid path.`;
-  }
-
-  if (isDirectory) {
-    return listDirectory({ path, authId });
-  }
-
-  const s3Key = toS3Key(path, authId);
-  const response = await s3.send(new GetObjectCommand({
-    Bucket: AWS_S3_BUCKET,
-    Key: s3Key,
-  }));
-
-  const content = await response.Body?.transformToString() ?? "";
-  const lines = content.split("\n");
-  if (lines.length > 999999) {
-    return `File ${path} exceeds maximum line limit of 999,999 lines.`;
-  }
-
-  let startLine = 1;
-  let endLine = lines.length;
-  if (viewRange) {
-    startLine = Math.max(1, viewRange[0]);
-    endLine = Math.min(lines.length, viewRange[1]);
-  }
-
-  const formattedLines = lines
-    .slice(startLine - 1, endLine)
-    .map((line, index) => `${formatLineNumber(startLine + index)}\t${line}`)
-    .join("\n");
-
-  return `Here's the content of ${path} with line numbers:\n${formattedLines}`;
-}
-
-async function createMemoryFile(params: {
-  name: string;
-  fileText: string;
-  userId: string;
-}): Promise<string> {
-  const { name: path, fileText, userId: authId } = params;
-  const { exists } = await checkPathExists(authId, path);
-  if (exists) {
-    return `Error: File ${path} already exists`;
-  }
-
-  await s3.send(new PutObjectCommand({
-    Bucket: AWS_S3_BUCKET,
-    Key: toS3Key(path, authId),
-    Body: fileText,
-    ContentType: "text/plain",
-  }));
-
-  return `File created successfully at: ${path}`;
-}
-
-async function strReplaceMemory(params: {
-  name: string;
-  oldStr: string;
-  newStr: string;
-  userId: string;
-}): Promise<string> {
-  const { name: path, oldStr, newStr, userId: authId } = params;
-  const { exists, isDirectory } = await checkPathExists(authId, path);
-  if (!exists || isDirectory) {
-    return `Error: The path ${path} does not exist. Please provide a valid path.`;
-  }
-
-  const s3Key = toS3Key(path, authId);
-  const response = await s3.send(new GetObjectCommand({
-    Bucket: AWS_S3_BUCKET,
-    Key: s3Key,
-  }));
-
-  const content = await response.Body?.transformToString() ?? "";
-  const lines = content.split("\n");
-  const matchingLines: number[] = [];
-
-  for (let index = 0; index < lines.length; index += 1) {
-    if (lines[index]?.includes(oldStr)) {
-      matchingLines.push(index + 1);
-    }
-  }
-
-  const matches = content.split(oldStr).length - 1;
-  if (matches === 0) {
-    return `No replacement was performed, old_str \`${oldStr}\` did not appear verbatim in ${path}.`;
-  }
-
-  if (matches > 1) {
-    return `No replacement was performed. Multiple occurrences of old_str \`${oldStr}\` in lines: ${matchingLines.join(", ")}. Please ensure it is unique`;
-  }
-
-  const newContent = content.replace(oldStr, newStr);
-  await s3.send(new PutObjectCommand({
-    Bucket: AWS_S3_BUCKET,
-    Key: s3Key,
-    Body: newContent,
-    ContentType: "text/plain",
-  }));
-
-  const newLines = newContent.split("\n");
-  const replacementLineIndex = newLines.findIndex((line) => line.includes(newStr));
-  const snippetStart = Math.max(0, replacementLineIndex - 2);
-  const snippetEnd = Math.min(newLines.length, replacementLineIndex + 3);
-  const snippet = newLines
-    .slice(snippetStart, snippetEnd)
-    .map((line, index) => `${formatLineNumber(snippetStart + index + 1)}\t${line}`)
-    .join("\n");
-
-  return `The memory file has been edited.\n${snippet}`;
-}
-
-async function insertAtLineMemory(params: {
-  name: string;
-  insertLine: number;
-  insertText: string;
-  userId: string;
-}): Promise<string> {
-  const { name: path, insertLine, insertText, userId: authId } = params;
-  const { exists, isDirectory } = await checkPathExists(authId, path);
-  if (!exists || isDirectory) {
-    return `Error: The path ${path} does not exist`;
-  }
-
-  const s3Key = toS3Key(path, authId);
-  const response = await s3.send(new GetObjectCommand({
-    Bucket: AWS_S3_BUCKET,
-    Key: s3Key,
-  }));
-
-  const content = await response.Body?.transformToString() ?? "";
-  const lines = content.split("\n");
-  if (insertLine < 0 || insertLine > lines.length) {
-    return `Error: Invalid \`insert_line\` parameter: ${insertLine}. It should be within the range of lines of the file: [0, ${lines.length}]`;
-  }
-
-  lines.splice(insertLine, 0, ...insertText.split("\n"));
-
-  await s3.send(new PutObjectCommand({
-    Bucket: AWS_S3_BUCKET,
-    Key: s3Key,
-    Body: lines.join("\n"),
-    ContentType: "text/plain",
-  }));
-
-  return `The file ${path} has been edited.`;
-}
-
 async function deleteMemoryFile(params: {
   name: string;
   userId: string;
 }): Promise<string> {
-  const { name: path, userId: authId } = params;
+  const { name, userId: authId } = params;
+  const path = toScopedPath(name, authId);
+  if (path === "/") {
+    return `Error: refusing to delete ${toVisiblePath(path, authId)}`;
+  }
+
   const { exists, isDirectory } = await checkPathExists(authId, path);
   if (!exists) {
-    return `Error: The path ${path} does not exist`;
+    return `Error: The path ${toVisiblePath(path, authId)} does not exist`;
   }
 
   if (isDirectory) {
@@ -502,7 +473,7 @@ async function deleteMemoryFile(params: {
     }));
   }
 
-  return `Successfully deleted ${path}`;
+  return `Successfully deleted ${toVisiblePath(path, authId)}`;
 }
 
 async function renameMemoryFile(params: {
@@ -510,15 +481,21 @@ async function renameMemoryFile(params: {
   newName: string;
   userId: string;
 }): Promise<string> {
-  const { oldName: oldPath, newName: newPath, userId: authId } = params;
+  const { userId: authId } = params;
+  const oldPath = toScopedPath(params.oldName, authId);
+  const newPath = toScopedPath(params.newName, authId);
+  if (oldPath === "/" || newPath === "/") {
+    return `Error: cannot rename ${toVisiblePath("/", authId)}`;
+  }
+
   const { exists: sourceExists, isDirectory: sourceIsDirectory } = await checkPathExists(authId, oldPath);
   if (!sourceExists) {
-    return `Error: The path ${oldPath} does not exist`;
+    return `Error: The path ${toVisiblePath(oldPath, authId)} does not exist`;
   }
 
   const { exists: destinationExists } = await checkPathExists(authId, newPath);
   if (destinationExists) {
-    return `Error: The destination ${newPath} already exists`;
+    return `Error: The destination ${toVisiblePath(newPath, authId)} already exists`;
   }
 
   if (sourceIsDirectory) {
@@ -558,5 +535,5 @@ async function renameMemoryFile(params: {
     }));
   }
 
-  return `Successfully renamed ${oldPath} to ${newPath}`;
+  return `Successfully renamed ${toVisiblePath(oldPath, authId)} to ${toVisiblePath(newPath, authId)}`;
 }
