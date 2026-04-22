@@ -99,18 +99,22 @@ async function runAgentLoop(
     maxOutputTokens: 16000,
     providerOptions: providerOptions,
     stopWhen: stepCountIs(MAX_AGENT_ITERATIONS),
-    onFinish: async ({ text }) => {
+    onFinish: async ({ steps, text }) => {
+      const responseMessages = steps.flatMap((step) => step.response.messages);
+
       const finalText = text.trim();
-      if (!finalText) {
-        logError("Model returned empty response", {
-          conversationKey: session.conversationKey,
-          eventId: session.eventId,
-        });
-        return;
-      }
 
       try {
-        await session.persistAssistantMessage(finalText);
+        await session.persistModelMessages(responseMessages);
+
+        if (!finalText) {
+          logError("Model returned empty response", {
+            conversationKey: session.conversationKey,
+            eventId: session.eventId,
+          });
+          return;
+        }
+
         logInfo("Processing complete", { conversationKey: session.conversationKey });
       } catch (err) {
         logError("Post-generation steps failed", {
