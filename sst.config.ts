@@ -9,6 +9,7 @@ const GOOGLE_MODEL_ID = "gemma-4-31b-it";
 const SLIDING_CONTEXT_WINDOW = "20";
 const MAX_AGENT_ITERATIONS = "20";
 const DEFAULT_SYSTEM_PROMPT = "You are a helpful assistant that can use tools to get information for the user.";
+const TELEGRAM_REACTION_EMOJI = "👀";
 
 const AWS_PROFILE = process.env.CI ? undefined : (process.env.AWS_PROFILE ?? "default");
 
@@ -109,6 +110,7 @@ export default $config({
         TELEGRAM_BOT_TOKEN: telegramBotToken.value,
         TELEGRAM_WEBHOOK_SECRET: telegramWebhookSecret.value,
         ALLOWED_CHAT_IDS: allowedChatIds.value,
+        TELEGRAM_REACTION_EMOJI,
       },
       permissions: [
         {

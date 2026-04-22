@@ -21,6 +21,7 @@ export function createTelegramChannel(
   botToken: string,
   webhookSecret: string,
   allowedChatIds: Set<number>,
+  reactionEmoji: string,
 ): ChannelAdapter {
   const transport = new TelegramAdapter({
     botToken,
@@ -69,7 +70,7 @@ export function createTelegramChannel(
     },
 
     actions(msg): ChannelActions {
-      return createTelegramActions(botToken, transport, toTelegramSource(msg.source));
+      return createTelegramActions(botToken, transport, toTelegramSource(msg.source), reactionEmoji);
     },
   };
 }
@@ -78,11 +79,12 @@ export function createTelegramActions(
   botToken: string,
   transport: TelegramAdapter,
   source: TelegramSource,
+  reactionEmoji: string,
 ): ChannelActions {
   return {
     sendText: (text) => sendMessage(botToken, source.chatId, text),
     sendTyping: () => transport.startTyping(source.threadId),
-    reactToMessage: () => transport.addReaction(source.threadId, source.messageId, "\u{1F914}"),
+    reactToMessage: () => transport.addReaction(source.threadId, source.messageId, reactionEmoji),
   };
 }
 

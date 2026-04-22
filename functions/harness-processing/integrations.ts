@@ -19,6 +19,7 @@ const telegramChannel = createTelegramChannel(
   requireEnv("TELEGRAM_BOT_TOKEN"),
   requireEnv("TELEGRAM_WEBHOOK_SECRET"),
   parseAllowedChatIds(requireEnv("ALLOWED_CHAT_IDS")),
+  requireEnv("TELEGRAM_REACTION_EMOJI"),
 );
 
 export interface InboundEvent {
