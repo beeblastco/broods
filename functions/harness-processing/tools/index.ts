@@ -1,6 +1,7 @@
 // Tool registry for harness-processing: imports tool files and merges them into one AI SDK ToolSet.
 import type { ToolSet } from "ai";
 import memoryTool from "./memory.tool.ts";
+import tasksTool from "./tasks.tool.ts";
 import tavilyTool from "./tavily.tool.ts";
 
 export interface ToolContext {
@@ -13,6 +14,7 @@ type ToolFactory = (context: ToolContext) => ToolSet;
 const toolFactories: ToolFactory[] = [
   tavilyTool,
   memoryTool,
+  tasksTool,
 ];
 
 export function createTools(context: ToolContext): ToolSet {
