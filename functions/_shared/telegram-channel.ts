@@ -1,14 +1,34 @@
-// Telegram-specific ChannelAdapter: verifies webhook requests, parses updates, and exposes reply actions.
+/**
+ * Telegram channel adapter implementated as a ChannelAdapter.
+ * Implements Telegram auth, message normalization, and reply actions through low-level telegram.ts helpers.
+ */
+
+import { TelegramAdapter, type TelegramMessage, type TelegramUpdate } from "@chat-adapter/telegram";
+import { ConsoleLogger } from "chat";
 import type { ChannelActions, ChannelAdapter } from "./channels.ts";
 import { logWarn } from "./log.ts";
-import type { TelegramUpdate } from "./telegram.ts";
-import { sendChatAction, sendMessage, setMessageReaction, verifyWebhookSecret } from "./telegram.ts";
+import { sendMessage, verifyWebhookSecret } from "./telegram.ts";
+
+export interface TelegramSource {
+  chatId: number;
+  messageId: string;
+  threadId: string;
+  fromUserId?: number;
+  fromUsername?: string;
+}
 
 export function createTelegramChannel(
   botToken: string,
   webhookSecret: string,
   allowedChatIds: Set<number>,
 ): ChannelAdapter {
+  const transport = new TelegramAdapter({
+    botToken,
+    secretToken: webhookSecret,
+    mode: "webhook",
+    logger: new ConsoleLogger("error").child("telegram"),
+  });
+
   return {
     name: "telegram",
 
@@ -23,7 +43,7 @@ export function createTelegramChannel(
 
     parse(body) {
       const update: TelegramUpdate = JSON.parse(body);
-      const message = update.message ?? update.edited_message;
+      const message = extractInboundMessage(update);
       if (!message?.text) return null;
 
       if (!allowedChatIds.has(message.chat.id)) {
@@ -31,28 +51,59 @@ export function createTelegramChannel(
         return null;
       }
 
+      const parsed = transport.parseMessage(message);
+
       return {
         eventId: `tg-${update.update_id}`,
         conversationKey: `tg:${message.chat.id}`,
         channelName: "telegram",
-        content: message.text,
+        content: parsed.text,
         source: {
           chatId: message.chat.id,
-          messageId: message.message_id,
+          messageId: parsed.id,
+          threadId: parsed.threadId,
           fromUserId: message.from?.id,
           fromUsername: message.from?.username,
-        },
+        } satisfies TelegramSource,
       };
     },
 
     actions(msg): ChannelActions {
-      const chatId = msg.source.chatId as number;
-      const messageId = msg.source.messageId as number;
-      return {
-        sendText: (text) => sendMessage(botToken, chatId, text),
-        sendTyping: () => sendChatAction(botToken, chatId),
-        reactToMessage: () => setMessageReaction(botToken, chatId, messageId),
-      };
+      return createTelegramActions(botToken, transport, toTelegramSource(msg.source));
     },
+  };
+}
+
+export function createTelegramActions(
+  botToken: string,
+  transport: TelegramAdapter,
+  source: TelegramSource,
+): ChannelActions {
+  return {
+    sendText: (text) => sendMessage(botToken, source.chatId, text),
+    sendTyping: () => transport.startTyping(source.threadId),
+    reactToMessage: () => transport.addReaction(source.threadId, source.messageId, "\u{1F914}"),
+  };
+}
+
+function extractInboundMessage(update: TelegramUpdate): TelegramMessage | null {
+  return update.message ?? update.edited_message ?? null;
+}
+
+function toTelegramSource(source: Record<string, unknown>): TelegramSource {
+  if (
+    typeof source.chatId !== "number" ||
+    typeof source.messageId !== "string" ||
+    typeof source.threadId !== "string"
+  ) {
+    throw new Error("Invalid Telegram source payload");
+  }
+
+  return {
+    chatId: source.chatId,
+    messageId: source.messageId,
+    threadId: source.threadId,
+    fromUserId: typeof source.fromUserId === "number" ? source.fromUserId : undefined,
+    fromUsername: typeof source.fromUsername === "string" ? source.fromUsername : undefined,
   };
 }

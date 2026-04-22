@@ -1,4 +1,8 @@
-// Shared channel contracts used by webhook adapters, commands, and reply handling.
+/**
+ * Shared channel contracts.
+ * Define the ChannelAdapter interface and related types that all channel implementations must adhere to. 
+ */
+
 import type { UserContent } from "ai";
 
 export interface ChannelActions {

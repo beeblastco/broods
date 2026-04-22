@@ -1,8 +1,7 @@
-// Custom Bun Lambda runtime adapters for normal request/response and streaming Function URL handlers.
-export type LambdaHandler<TPayload = unknown, TResult = unknown> = (
-  payload: TPayload,
-  context: LambdaInvocation,
-) => Promise<TResult>;
+/**
+ * Shared Bun runtime bridge.
+ * Keep Lambda Runtime API polling and response streaming here.
+ */
 
 export type StreamingLambdaHandler<TPayload = unknown> = (
   payload: TPayload,
@@ -48,49 +47,17 @@ async function reportError(requestId: string, err: unknown): Promise<void> {
   );
 }
 
-export async function startRuntime<TPayload, TResult>(
-  handler: LambdaHandler<TPayload, TResult>,
-): Promise<never> {
-  for (; ;) {
-    const res = await fetch(NEXT_URL);
-    const { requestId, context } = parseInvocationHeaders(res);
-    const payload = (await res.json()) as TPayload;
-
-    try {
-      const result = await handler(payload, context);
-      await fetch(
-        `http://${RUNTIME_API}/2018-06-01/runtime/invocation/${requestId}/response`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(result),
-        },
-      );
-    } catch (err: unknown) {
-      await reportError(requestId, err);
-    }
-  }
-}
-
 export async function startStreamingRuntime<TPayload>(
   handler: StreamingLambdaHandler<TPayload>,
 ): Promise<never> {
-  for (; ;) {
+  for (;;) {
     const res = await fetch(NEXT_URL);
     const { requestId, context } = parseInvocationHeaders(res);
     const payloadText = await res.text();
 
     let payload: TPayload;
     try {
-      const parsed = JSON.parse(payloadText);
-      if (parsed.version === "2.0" && parsed.body) {
-        const bodyStr = parsed.isBase64Encoded
-          ? Buffer.from(parsed.body, "base64").toString()
-          : parsed.body;
-        payload = JSON.parse(bodyStr) as TPayload;
-      } else {
-        payload = parsed as TPayload;
-      }
+      payload = JSON.parse(payloadText) as TPayload;
     } catch (parseErr) {
       await reportError(requestId, new Error(`Invalid JSON: ${parseErr}`));
       continue;

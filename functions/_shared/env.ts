@@ -1,4 +1,7 @@
-// Small helper for required environment variables so config failures fail fast.
+/**
+ * Shared environment helpers.
+ */
+
 export function requireEnv(name: string): string {
   const value = process.env[name];
   if (!value) throw new Error(`Missing required environment variable: ${name}`);

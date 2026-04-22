@@ -1,4 +1,8 @@
-// Session persistence for harness-processing: event dedupe plus conversation history reads and writes.
+/**
+ * Session lifecycle for harness-processing.
+ * Keep dedupe, history reads, and conversation persistence here.
+ */
+
 import {
   DeleteItemCommand,
   PutItemCommand,
@@ -12,13 +16,13 @@ import type {
   UserContent,
   UserModelMessage,
 } from "ai";
-import { requireEnv } from "../_shared/env.ts";
 import {
   dynamo,
   fromAttributeValue,
   isConditionalCheckFailed,
   toAttributeValue,
 } from "../_shared/dynamo.ts";
+import { requireEnv } from "../_shared/env.ts";
 
 const CONVERSATIONS_TABLE_NAME = requireEnv("CONVERSATIONS_TABLE_NAME");
 const PROCESSED_EVENTS_TABLE_NAME = requireEnv("PROCESSED_EVENTS_TABLE_NAME");
@@ -29,7 +33,7 @@ export class Session {
   constructor(
     public readonly eventId: string,
     public readonly conversationKey: string,
-  ) {}
+  ) { }
 
   async claim(): Promise<boolean> {
     const ttl = Math.floor(Date.now() / 1000) + 86400;

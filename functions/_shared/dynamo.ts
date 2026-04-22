@@ -1,4 +1,8 @@
-// Shared DynamoDB client and simple attribute-value marshalling helpers used across Lambdas.
+/**
+ * Shared DynamoDB primitives.
+ * Keep reusable client setup and low-level attribute helpers here.
+ */
+
 import {
   type AttributeValue,
   ConditionalCheckFailedException,

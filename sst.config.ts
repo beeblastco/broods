@@ -1,6 +1,6 @@
 /// <reference path="./.sst/platform/config.d.ts" />
 
-// SST infrastructure for the direct streaming architecture: Telegram ingress + harness processing + DynamoDB state.
+// SST infrastructure for the single-entrypoint architecture: one streaming harness Lambda for both direct API calls and Telegram webhooks.
 const AWS_REGION = "eu-central-1";
 const AWS_ACCOUNT_ID = "123456789012";
 const PROJECT_NAME = "filthy-panty";
@@ -48,7 +48,6 @@ export default $config({
     const names = {
       conversations: resourceName("conversations", stage),
       processedEvents: resourceName("processed-events", stage),
-      telegramIntegration: resourceName("telegram-integration", stage),
       harnessProcessing: resourceName("harness-processing", stage),
     };
 
@@ -107,10 +106,14 @@ export default $config({
         DEFAULT_SYSTEM_PROMPT,
         SLIDING_CONTEXT_WINDOW,
         MAX_AGENT_ITERATIONS,
+        TELEGRAM_BOT_TOKEN: telegramBotToken.value,
+        TELEGRAM_WEBHOOK_SECRET: telegramWebhookSecret.value,
+        ALLOWED_CHAT_IDS: allowedChatIds.value,
       },
       permissions: [
         {
           actions: [
+            "dynamodb:BatchWriteItem",
             "dynamodb:Query",
             "dynamodb:PutItem",
             "dynamodb:DeleteItem",
@@ -120,34 +123,8 @@ export default $config({
       ],
     });
 
-    const telegramIntegration = new sst.aws.Function("TelegramIntegration", {
-      name: names.telegramIntegration,
-      runtime: "provided.al2023",
-      architecture: "arm64",
-      bundle: "dist/telegram-integration",
-      handler: "bootstrap",
-      description: "Receives Telegram webhook events, handles commands, and streams harness processing via Function URL.",
-      timeout: "60 seconds",
-      memory: "128 MB",
-      url: true,
-      logging: { format: "json", retention: "1 month" },
-      environment: {
-        HARNESS_PROCESSING_URL: harnessProcessing.url,
-        TELEGRAM_BOT_TOKEN: telegramBotToken.value,
-        TELEGRAM_WEBHOOK_SECRET: telegramWebhookSecret.value,
-        ALLOWED_CHAT_IDS: allowedChatIds.value,
-        CONVERSATIONS_TABLE_NAME: conversationsTable.name,
-      },
-      permissions: [
-        {
-          actions: ["dynamodb:BatchWriteItem", "dynamodb:Query"],
-          resources: [conversationsTable.arn],
-        },
-      ],
-    });
-
     return {
-      telegramWebhookUrl: telegramIntegration.url,
+      telegramWebhookUrl: harnessProcessing.url,
       harnessProcessingUrl: harnessProcessing.url,
       conversationsTableName: conversationsTable.name,
       processedEventsTableName: processedEventsTable.name,
