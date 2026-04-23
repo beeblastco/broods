@@ -16,6 +16,7 @@ Key rules:
 - Google Search is enabled as a built-in tool via `google.tools.googleSearch({})`.
 - Shared code goes in `functions/_shared/` only when it is actually shared by multiple Lambdas. Keep harness-only code in `functions/harness-processing/`.
 - File header comments must use a block-docstring style:
+
   ```ts
   /**
    * ...
@@ -23,6 +24,7 @@ Key rules:
 
   import ...
   ```
+
 - Leave one blank line between the file header docstring and the first import or code line.
 - Keep file header docstrings short. They should describe the file boundary, what belongs there, and where adjacent logic should go. Do not turn them into a function inventory.
 - Use `bun run build` to compile all functions, then `bun run deploy` to deploy.

@@ -58,6 +58,71 @@ bun run deploy     # Build + deploy
 bun run check      # Type-check
 ```
 
+## Configuration
+
+Most runtime environment variables in this project are injected by SST in `sst.config.ts`, not read from a root `.env` file at runtime.
+
+### Injected By SST
+
+The `harness-processing` Lambda gets these values from the `environment` block in `sst.config.ts`:
+
+- `GOOGLE_API_KEY`
+- `GOOGLE_MODEL_ID`
+- `CONVERSATIONS_TABLE_NAME`
+- `PROCESSED_EVENTS_TABLE_NAME`
+- `DEFAULT_SYSTEM_PROMPT`
+- `SLIDING_CONTEXT_WINDOW`
+- `MAX_AGENT_ITERATIONS`
+- `TELEGRAM_BOT_TOKEN`
+- `TELEGRAM_WEBHOOK_SECRET`
+- `ALLOWED_CHAT_IDS`
+- `TELEGRAM_REACTION_EMOJI`
+- `TAVILY_API_KEY`
+- `AWS_S3_BUCKET`
+
+In addition, `AWS_REGION` is provided by the Lambda runtime in AWS. The repo currently deploys to `eu-central-1` in `sst.config.ts`.
+
+### What Goes In `.env`
+
+For normal SST usage, keep `.env` limited to local CLI settings such as:
+
+- `AWS_PROFILE`
+- `SST_STAGE`
+
+Use `.env.example` as the template for that local file.
+
+### Set SST Secrets
+
+This repo defines these SST secrets in `sst.config.ts`:
+
+- `GoogleApiKey`
+- `TavilyApiKey`
+- `TelegramBotToken`
+- `TelegramWebhookSecret`
+- `AllowedChatIds`
+
+Set them one by one with the SST CLI:
+
+```bash
+sst secret set GoogleApiKey <value>
+sst secret set TavilyApiKey <value>
+sst secret set TelegramBotToken <value>
+sst secret set TelegramWebhookSecret <value>
+sst secret set AllowedChatIds <comma-separated-chat-ids>
+```
+
+SST secrets are stage-specific. If you are not running `sst dev`, run `sst deploy` after setting them so the deployed app picks up the new values.
+
+### Bulk Load Secrets
+
+If you prefer a dotenv-style file for secrets, copy `secrets.env.example` to `secrets.env`, fill in your values, and load them with:
+
+```bash
+sst secret load ./secrets.env
+```
+
+The SST CLI supports loading a dotenv-formatted file this way.
+
 ## Adding Things
 
 - **New tool:** Create `functions/harness-processing/tools/<name>.tool.ts`, export a default tool factory that returns one or more AI SDK tools with their logic in `execute`, then import that factory in `functions/harness-processing/tools/index.ts`.
