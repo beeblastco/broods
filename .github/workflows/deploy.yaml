@@ -27,11 +27,21 @@ jobs:
       AWS_ROLE_ARN: ${{ vars.AWS_ROLE_ARN }}
       INPUT_STAGE: ${{ inputs.stage }}
       DEFAULT_STAGE: ${{ vars.SST_STAGE }}
+      ENABLE_GITHUB_INTEGRATION: "true"
+      ENABLE_SLACK_INTEGRATION: "true"
+      ENABLE_DISCORD_INTEGRATION: "true"
       SST_SECRET_TelegramBotToken: ${{ secrets.SST_SECRET_TelegramBotToken }}
       SST_SECRET_TelegramWebhookSecret: ${{ secrets.SST_SECRET_TelegramWebhookSecret }}
       SST_SECRET_AllowedChatIds: ${{ secrets.SST_SECRET_AllowedChatIds }}
       SST_SECRET_GoogleApiKey: ${{ secrets.SST_SECRET_GoogleApiKey }}
       SST_SECRET_TavilyApiKey: ${{ secrets.SST_SECRET_TavilyApiKey }}
+      SST_SECRET_GitHubWebhookSecret: ${{ secrets.SST_SECRET_GitHubWebhookSecret }}
+      SST_SECRET_GitHubAppId: ${{ secrets.SST_SECRET_GitHubAppId }}
+      SST_SECRET_GitHubPrivateKey: ${{ secrets.SST_SECRET_GitHubPrivateKey }}
+      SST_SECRET_SlackBotToken: ${{ secrets.SST_SECRET_SlackBotToken }}
+      SST_SECRET_SlackSigningSecret: ${{ secrets.SST_SECRET_SlackSigningSecret }}
+      SST_SECRET_DiscordBotToken: ${{ secrets.SST_SECRET_DiscordBotToken }}
+      SST_SECRET_DiscordPublicKey: ${{ secrets.SST_SECRET_DiscordPublicKey }}
       CI: "true"
     steps:
       - name: Resolve deploy configuration
