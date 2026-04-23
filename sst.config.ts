@@ -9,6 +9,12 @@ const GOOGLE_MODEL_ID = "gemma-4-31b-it";
 const SLIDING_CONTEXT_WINDOW = "20";
 const MAX_AGENT_ITERATIONS = "20";
 const TELEGRAM_REACTION_EMOJI = "👀";
+const GITHUB_ALLOWED_REPOS = process.env.GITHUB_ALLOWED_REPOS ?? "open";
+const SLACK_ALLOWED_CHANNEL_IDS = process.env.SLACK_ALLOWED_CHANNEL_IDS ?? "open";
+const DISCORD_ALLOWED_GUILD_IDS = process.env.DISCORD_ALLOWED_GUILD_IDS ?? "open";
+const ENABLE_GITHUB_INTEGRATION = process.env.ENABLE_GITHUB_INTEGRATION === "true";
+const ENABLE_SLACK_INTEGRATION = process.env.ENABLE_SLACK_INTEGRATION === "true";
+const ENABLE_DISCORD_INTEGRATION = process.env.ENABLE_DISCORD_INTEGRATION === "true";
 const AWS_PROFILE = process.env.CI ? undefined : (process.env.AWS_PROFILE ?? "default");
 
 
@@ -61,6 +67,13 @@ export default $config({
     const allowedChatIds = new sst.Secret("AllowedChatIds");
     const googleApiKey = new sst.Secret("GoogleApiKey");
     const tavilyApiKey = new sst.Secret("TavilyApiKey");
+    const gitHubWebhookSecret = ENABLE_GITHUB_INTEGRATION ? new sst.Secret("GitHubWebhookSecret") : null;
+    const gitHubPrivateKey = ENABLE_GITHUB_INTEGRATION ? new sst.Secret("GitHubPrivateKey") : null;
+    const gitHubAppId = ENABLE_GITHUB_INTEGRATION ? new sst.Secret("GitHubAppId") : null;
+    const slackBotToken = ENABLE_SLACK_INTEGRATION ? new sst.Secret("SlackBotToken") : null;
+    const slackSigningSecret = ENABLE_SLACK_INTEGRATION ? new sst.Secret("SlackSigningSecret") : null;
+    const discordBotToken = ENABLE_DISCORD_INTEGRATION ? new sst.Secret("DiscordBotToken") : null;
+    const discordPublicKey = ENABLE_DISCORD_INTEGRATION ? new sst.Secret("DiscordPublicKey") : null;
 
     const conversationsTable = new sst.aws.Dynamo("Conversations", {
       fields: {
@@ -119,6 +132,28 @@ export default $config({
         TELEGRAM_REACTION_EMOJI,
         TAVILY_API_KEY: tavilyApiKey.value,
         AWS_S3_BUCKET: names.memory,
+        ...(ENABLE_GITHUB_INTEGRATION && gitHubWebhookSecret && gitHubPrivateKey && gitHubAppId
+          ? {
+            GITHUB_WEBHOOK_SECRET: gitHubWebhookSecret.value,
+            GITHUB_PRIVATE_KEY: gitHubPrivateKey.value,
+            GITHUB_APP_ID: gitHubAppId.value,
+            GITHUB_ALLOWED_REPOS,
+          }
+          : {}),
+        ...(ENABLE_SLACK_INTEGRATION && slackBotToken && slackSigningSecret
+          ? {
+            SLACK_BOT_TOKEN: slackBotToken.value,
+            SLACK_SIGNING_SECRET: slackSigningSecret.value,
+            SLACK_ALLOWED_CHANNEL_IDS,
+          }
+          : {}),
+        ...(ENABLE_DISCORD_INTEGRATION && discordBotToken && discordPublicKey
+          ? {
+            DISCORD_BOT_TOKEN: discordBotToken.value,
+            DISCORD_PUBLIC_KEY: discordPublicKey.value,
+            DISCORD_ALLOWED_GUILD_IDS,
+          }
+          : {}),
       },
       permissions: [
         {

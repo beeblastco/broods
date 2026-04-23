@@ -1,19 +1,25 @@
 /**
  * Thin communication-channel integration layer for harness-processing.
- * Keep channel integration and message lifecycle handling here.
+ * Keep request normalization, webhook routing, and per-channel lifecycle handling here.
  */
 
 import type { UserContent } from "ai";
 import type { LambdaFunctionURLEvent } from "aws-lambda";
-import type { ChannelActions } from "../_shared/channels.ts";
-import { extractText } from "../_shared/channels.ts";
-import { executeCommand, parseCommand } from "../_shared/commands.ts";
-import { requireEnv } from "../_shared/env.ts";
+import type {
+  ChannelActions,
+  ChannelAdapter,
+  ChannelRequest,
+  ChannelResponse,
+} from "../_shared/channels.ts";
+import { extractText, isOpenAllowList } from "../_shared/channels.ts";
+import { parseCommand } from "../_shared/commands.ts";
+import { createDiscordChannel } from "../_shared/discord-channel.ts";
+import { optionalEnv, requireEnv } from "../_shared/env.ts";
+import { createGitHubChannel } from "../_shared/github-channel.ts";
 import { logError } from "../_shared/log.ts";
+import type { LambdaResponse } from "../_shared/runtime.ts";
+import { createSlackChannel } from "../_shared/slack-channel.ts";
 import { createTelegramChannel } from "../_shared/telegram-channel.ts";
-import { emptyStream, sseEvent } from "./utils.ts";
-
-const CONVERSATIONS_TABLE_NAME = requireEnv("CONVERSATIONS_TABLE_NAME");
 
 const telegramChannel = createTelegramChannel(
   requireEnv("TELEGRAM_BOT_TOKEN"),
@@ -21,6 +27,17 @@ const telegramChannel = createTelegramChannel(
   parseAllowedChatIds(requireEnv("ALLOWED_CHAT_IDS")),
   requireEnv("TELEGRAM_REACTION_EMOJI"),
 );
+
+const githubChannel = createOptionalGitHubChannel();
+const slackChannel = createOptionalSlackChannel();
+const discordChannel = createOptionalDiscordChannel();
+
+const webhookChannels = [
+  telegramChannel,
+  githubChannel,
+  slackChannel,
+  discordChannel,
+].filter((channel): channel is ChannelAdapter => channel !== null);
 
 export interface InboundEvent {
   eventId: string;
@@ -30,19 +47,22 @@ export interface InboundEvent {
 
 export type HandlerEvent = InboundEvent | LambdaFunctionURLEvent;
 
-export interface TelegramInboundEvent extends InboundEvent {
+export interface ChannelInboundEvent extends InboundEvent {
+  channelName: string;
+  source: Record<string, unknown>;
   channel: ChannelActions;
+  commandToken?: string;
 }
 
 interface IntegrationHandlers {
-  handleDirectRequest(event: InboundEvent): Promise<ReadableStream<Uint8Array>>;
-  handleTelegramRequest(event: TelegramInboundEvent): Promise<void>;
+  handleDirectRequest(event: InboundEvent): Promise<LambdaResponse>;
+  handleChannelRequest(event: ChannelInboundEvent): Promise<void>;
 }
 
 export async function routeIncomingEvent(
   event: HandlerEvent,
   handlers: IntegrationHandlers,
-): Promise<ReadableStream<Uint8Array>> {
+): Promise<LambdaResponse> {
   if (!isLambdaUrlEvent(event)) {
     return handlers.handleDirectRequest(event);
   }
@@ -53,75 +73,146 @@ export async function routeIncomingEvent(
 async function handleLambdaUrlEvent(
   event: LambdaFunctionURLEvent,
   handlers: IntegrationHandlers,
-): Promise<ReadableStream<Uint8Array>> {
+): Promise<LambdaResponse> {
   const method = event.requestContext.http.method;
 
   if (method === "GET" || event.rawPath === "/health") {
-    return new ReadableStream({
-      start(controller) {
-        controller.enqueue(sseEvent({ service: "filthy-panty", status: "ok" }));
-        controller.close();
-      },
-    });
+    return {
+      statusCode: 200,
+      headers: { "Content-Type": "text/plain; charset=utf-8" },
+      body: "ok",
+    };
   }
 
   if (method !== "POST") {
-    return emptyStream();
+    return {
+      statusCode: 405,
+      headers: { "Content-Type": "text/plain; charset=utf-8" },
+      body: "Method not allowed",
+    };
   }
 
-  const headers = normalizeHeaders(event.headers);
-  const bodyText = decodeBody(event.body, event.isBase64Encoded);
+  const request = {
+    method,
+    rawPath: event.rawPath,
+    headers: normalizeHeaders(event.headers),
+    body: decodeBody(event.body, event.isBase64Encoded),
+  } satisfies ChannelRequest;
 
-  if (isTelegramWebhook(headers, bodyText)) {
-    return handleTelegramWebhook(headers, bodyText, handlers);
+  const matchedChannel = webhookChannels.find((channel) => channel.canHandle(request));
+  if (matchedChannel) {
+    return handleChannelWebhook(matchedChannel, request, handlers);
   }
 
-  const payload = parseDirectPayload(bodyText);
-  return handlers.handleDirectRequest(payload);
+  const unavailableResponse = detectUnconfiguredChannel(request.headers);
+  if (unavailableResponse) {
+    return unavailableResponse;
+  }
+
+  return handlers.handleDirectRequest(parseDirectPayload(request.body));
 }
 
-async function handleTelegramWebhook(
-  headers: Record<string, string>,
-  bodyText: string,
+async function handleChannelWebhook(
+  adapter: ChannelAdapter,
+  request: ChannelRequest,
   handlers: IntegrationHandlers,
-): Promise<ReadableStream<Uint8Array>> {
+): Promise<LambdaResponse> {
   try {
-    if (!telegramChannel.authenticate(headers, bodyText)) {
-      return emptyStream();
+    if (!(await adapter.authenticate(request))) {
+      return {
+        statusCode: 401,
+        headers: { "Content-Type": "text/plain; charset=utf-8" },
+        body: "Unauthorized",
+      };
     }
 
-    const msg = telegramChannel.parse(bodyText);
-    if (!msg) {
-      return emptyStream();
+    const parsed = adapter.parse(request);
+
+    if (parsed.kind === "response") {
+      return toLambdaResponse(parsed.response);
     }
 
-    const channel = telegramChannel.actions(msg);
-    const command = parseCommand(extractText(msg.content));
-    if (command) {
-      await executeCommand(command, {
-        conversationKey: msg.conversationKey,
-        conversationsTableName: CONVERSATIONS_TABLE_NAME,
-        channel,
-      });
-      return emptyStream();
+    if (parsed.kind === "ignore") {
+      return toLambdaResponse(parsed.response ?? { statusCode: 200 });
     }
 
-    channel.sendTyping().catch(() => { });
-    channel.reactToMessage().catch(() => { });
+    const { message, ack } = parsed;
+    const channel = adapter.actions(message);
+    const response = ack ?? { statusCode: 200 };
 
-    await handlers.handleTelegramRequest({
-      eventId: msg.eventId,
-      conversationKey: msg.conversationKey,
-      content: msg.content,
-      channel,
+    return {
+      statusCode: response.statusCode,
+      headers: response.headers,
+      body: response.body ?? "",
+      afterResponse: processChannelMessage(
+        {
+          eventId: message.eventId,
+          conversationKey: message.conversationKey,
+          content: message.content,
+          channelName: message.channelName,
+          source: message.source,
+          channel,
+        },
+        handlers,
+      ),
+    };
+  } catch (err) {
+    logError("Failed to process webhook request", {
+      channel: adapter.name,
+      error: err instanceof Error ? err.message : String(err),
+    });
+
+    return {
+      statusCode: 500,
+      headers: { "Content-Type": "text/plain; charset=utf-8" },
+      body: "Internal server error",
+    };
+  }
+}
+
+async function processChannelMessage(
+  event: ChannelInboundEvent,
+  handlers: IntegrationHandlers,
+): Promise<void> {
+  try {
+    event.channel.sendTyping().catch(() => { });
+    event.channel.reactToMessage().catch(() => { });
+
+    await handlers.handleChannelRequest({
+      ...event,
+      commandToken: resolveCommandToken(event.content, event.source) ?? undefined,
     });
   } catch (err) {
-    logError("Failed to process Telegram webhook", {
+    logError("Failed to process channel message", {
+      channel: event.channelName,
+      eventId: event.eventId,
       error: err instanceof Error ? err.message : String(err),
     });
   }
+}
 
-  return emptyStream();
+function resolveCommandToken(
+  content: UserContent,
+  source: Record<string, unknown>,
+): string | null {
+  const inlineCommand = parseCommand(extractText(content));
+  if (inlineCommand) {
+    return inlineCommand;
+  }
+
+  if (typeof source.commandToken === "string") {
+    return parseCommand(source.commandToken);
+  }
+
+  return null;
+}
+
+function toLambdaResponse(response: ChannelResponse): LambdaResponse {
+  return {
+    statusCode: response.statusCode,
+    headers: response.headers,
+    body: response.body ?? "",
+  };
 }
 
 function normalizeHeaders(
@@ -147,18 +238,28 @@ function isLambdaUrlEvent(event: HandlerEvent): event is LambdaFunctionURLEvent 
   return typeof event === "object" && event !== null && "version" in event;
 }
 
-function isTelegramWebhook(headers: Record<string, string>, bodyText: string): boolean {
-  if ("x-telegram-bot-api-secret-token" in headers) {
-    return true;
+function detectUnconfiguredChannel(headers: Record<string, string>): LambdaResponse | null {
+  if ("x-github-event" in headers && !githubChannel) {
+    return integrationNotConfigured("GitHub");
   }
 
-  try {
-    const parsed = JSON.parse(bodyText);
-    return typeof parsed.update_id === "number"
-      && (typeof parsed.message === "object" || typeof parsed.edited_message === "object");
-  } catch {
-    return false;
+  if ("x-slack-signature" in headers && !slackChannel) {
+    return integrationNotConfigured("Slack");
   }
+
+  if ("x-signature-ed25519" in headers && !discordChannel) {
+    return integrationNotConfigured("Discord");
+  }
+
+  return null;
+}
+
+function integrationNotConfigured(name: string): LambdaResponse {
+  return {
+    statusCode: 503,
+    headers: { "Content-Type": "text/plain; charset=utf-8" },
+    body: `${name} integration is not configured`,
+  };
 }
 
 function parseDirectPayload(bodyText: string): InboundEvent {
@@ -194,4 +295,61 @@ function parseAllowedChatIds(raw: string): Set<number> {
   }
 
   return new Set(ids);
+}
+
+function parseStringAllowList(raw: string | undefined): Set<string> | null {
+  if (isOpenAllowList(raw)) {
+    return null;
+  }
+
+  const values = raw
+    ?.split(",")
+    .map((value) => value.trim())
+    .filter((value) => value.length > 0) ?? [];
+
+  return values.length > 0 ? new Set(values) : null;
+}
+
+function createOptionalGitHubChannel(): ChannelAdapter | null {
+  const webhookSecret = optionalEnv("GITHUB_WEBHOOK_SECRET");
+  const appId = optionalEnv("GITHUB_APP_ID");
+  const privateKey = optionalEnv("GITHUB_PRIVATE_KEY");
+  if (!webhookSecret || !appId || !privateKey) {
+    return null;
+  }
+
+  return createGitHubChannel(
+    webhookSecret,
+    appId,
+    privateKey,
+    parseStringAllowList(optionalEnv("GITHUB_ALLOWED_REPOS")),
+  );
+}
+
+function createOptionalSlackChannel(): ChannelAdapter | null {
+  const botToken = optionalEnv("SLACK_BOT_TOKEN");
+  const signingSecret = optionalEnv("SLACK_SIGNING_SECRET");
+  if (!botToken || !signingSecret) {
+    return null;
+  }
+
+  return createSlackChannel(
+    botToken,
+    signingSecret,
+    parseStringAllowList(optionalEnv("SLACK_ALLOWED_CHANNEL_IDS")),
+  );
+}
+
+function createOptionalDiscordChannel(): ChannelAdapter | null {
+  const botToken = optionalEnv("DISCORD_BOT_TOKEN");
+  const publicKey = optionalEnv("DISCORD_PUBLIC_KEY");
+  if (!botToken || !publicKey) {
+    return null;
+  }
+
+  return createDiscordChannel(
+    botToken,
+    publicKey,
+    parseStringAllowList(optionalEnv("DISCORD_ALLOWED_GUILD_IDS")),
+  );
 }

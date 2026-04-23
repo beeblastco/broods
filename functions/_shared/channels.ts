@@ -1,6 +1,6 @@
 /**
  * Shared channel contracts.
- * Define the ChannelAdapter interface and related types that all channel implementations must adhere to. 
+ * Define the shared HTTP and channel adapter boundaries for inbound webhook traffic.
  */
 
 import type { UserContent } from "ai";
@@ -11,6 +11,19 @@ export interface ChannelActions {
   reactToMessage(): Promise<void>;
 }
 
+export interface ChannelRequest {
+  method: string;
+  rawPath: string;
+  headers: Record<string, string>;
+  body: string;
+}
+
+export interface ChannelResponse {
+  statusCode: number;
+  headers?: Record<string, string>;
+  body?: string;
+}
+
 export interface InboundMessage {
   eventId: string;
   conversationKey: string;
@@ -19,10 +32,22 @@ export interface InboundMessage {
   source: Record<string, unknown>;
 }
 
+export interface ParsedChannelMessage {
+  kind: "message";
+  message: InboundMessage;
+  ack?: ChannelResponse;
+}
+
+export type ChannelParseResult =
+  | ParsedChannelMessage
+  | { kind: "ignore"; response?: ChannelResponse }
+  | { kind: "response"; response: ChannelResponse };
+
 export interface ChannelAdapter {
   readonly name: string;
-  authenticate(headers: Record<string, string>, body: string): boolean;
-  parse(body: string): InboundMessage | null;
+  canHandle(req: ChannelRequest): boolean;
+  authenticate(req: ChannelRequest): boolean | Promise<boolean>;
+  parse(req: ChannelRequest): ChannelParseResult;
   actions(msg: InboundMessage): ChannelActions;
 }
 
@@ -32,4 +57,8 @@ export function extractText(content: UserContent): string {
     .filter((part): part is { type: "text"; text: string } => part.type === "text")
     .map((part) => part.text)
     .join("");
+}
+
+export function isOpenAllowList(raw: string | undefined): boolean {
+  return !raw || raw.trim() === "" || raw.trim().toLowerCase() === "open";
 }

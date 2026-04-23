@@ -5,7 +5,7 @@
 
 import { TelegramAdapter, type TelegramMessage, type TelegramUpdate } from "@chat-adapter/telegram";
 import { ConsoleLogger } from "chat";
-import type { ChannelActions, ChannelAdapter } from "./channels.ts";
+import type { ChannelActions, ChannelAdapter, ChannelParseResult } from "./channels.ts";
 import { logWarn } from "./log.ts";
 import { sendMessage, verifyWebhookSecret } from "./telegram.ts";
 
@@ -33,8 +33,12 @@ export function createTelegramChannel(
   return {
     name: "telegram",
 
-    authenticate(headers, _body) {
-      const secret = headers["x-telegram-bot-api-secret-token"];
+    canHandle(req) {
+      return "x-telegram-bot-api-secret-token" in req.headers;
+    },
+
+    authenticate(req) {
+      const secret = req.headers["x-telegram-bot-api-secret-token"];
       if (!verifyWebhookSecret(secret, webhookSecret)) {
         logWarn("Webhook secret verification failed");
         return false;
@@ -42,30 +46,35 @@ export function createTelegramChannel(
       return true;
     },
 
-    parse(body) {
-      const update: TelegramUpdate = JSON.parse(body);
+    parse(req): ChannelParseResult {
+      const update: TelegramUpdate = JSON.parse(req.body);
       const message = extractInboundMessage(update);
-      if (!message?.text) return null;
+      if (!message?.text) {
+        return { kind: "ignore" };
+      }
 
       if (!allowedChatIds.has(message.chat.id)) {
         logWarn("Chat not in allow list", { chatId: message.chat.id });
-        return null;
+        return { kind: "ignore" };
       }
 
       const parsed = transport.parseMessage(message);
 
       return {
-        eventId: `tg-${update.update_id}`,
-        conversationKey: `tg:${message.chat.id}`,
-        channelName: "telegram",
-        content: parsed.text,
-        source: {
-          chatId: message.chat.id,
-          messageId: parsed.id,
-          threadId: parsed.threadId,
-          fromUserId: message.from?.id,
-          fromUsername: message.from?.username,
-        } satisfies TelegramSource,
+        kind: "message",
+        message: {
+          eventId: `tg-${update.update_id}`,
+          conversationKey: `tg:${message.chat.id}`,
+          channelName: "telegram",
+          content: parsed.text,
+          source: {
+            chatId: message.chat.id,
+            messageId: parsed.id,
+            threadId: parsed.threadId,
+            fromUserId: message.from?.id,
+            fromUsername: message.from?.username,
+          } satisfies TelegramSource,
+        },
       };
     },
 

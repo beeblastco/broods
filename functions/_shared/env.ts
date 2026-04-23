@@ -7,3 +7,8 @@ export function requireEnv(name: string): string {
   if (!value) throw new Error(`Missing required environment variable: ${name}`);
   return value;
 }
+
+export function optionalEnv(name: string): string | undefined {
+  const value = process.env[name];
+  return value ? value : undefined;
+}
