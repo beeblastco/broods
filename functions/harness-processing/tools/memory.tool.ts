@@ -15,6 +15,7 @@ import {
 import { jsonSchema, tool, type ToolSet } from "ai";
 import { requireEnv } from "../../_shared/env.ts";
 import type { ToolContext } from "./index.ts";
+import { normalizeMemoryNamespace } from "./namespace.ts";
 
 const s3 = new S3Client({ region: process.env.AWS_REGION });
 
@@ -53,8 +54,8 @@ Prefer shell mode. Supported commands:
 const error = (result: string): CommandResult => ({ result, isError: true });
 const success = (result: string): CommandResult => ({ result, isError: false });
 
-export default function memoryTool(_context: ToolContext): ToolSet {
-  const memoryNamespace = normalizeMemoryNamespace(_context.conversationKey);
+export default function memoryTool(context: ToolContext): ToolSet {
+  const memoryNamespace = normalizeMemoryNamespace(context.conversationKey);
 
   return {
     memory: tool({
@@ -86,7 +87,6 @@ async function executeShellCommand(shell: string, authId: string): Promise<Comma
         ? await appendToMemoryFile(heredoc.path, heredoc.body, authId)
         : heredoc.body,
       userId: authId,
-      overwrite: true,
     }));
   }
 
@@ -187,13 +187,6 @@ function stripQuotes(value: string): string {
   return value.replace(/^['"]|['"]$/g, "");
 }
 
-function normalizeMemoryNamespace(conversationKey: string): string {
-  return conversationKey
-    .trim()
-    .replace(/[^a-zA-Z0-9._-]+/g, "_")
-    .replace(/^_+|_+$/g, "") || "default";
-}
-
 function getVisibleRoot(authId: string): string {
   return `/${authId}`;
 }
@@ -280,22 +273,17 @@ async function writeMemoryFile(params: {
   name: string;
   fileText: string;
   userId: string;
-  overwrite: boolean;
 }): Promise<string> {
-  const { name, fileText, userId: authId, overwrite } = params;
+  const { name, fileText, userId: authId } = params;
   const path = toScopedPath(name, authId);
   if (path === "/") {
     return `Error: ${toVisiblePath(path, authId)} is a directory`;
   }
 
-  const { exists, isDirectory } = await checkPathExists(authId, path);
+  const { isDirectory } = await checkPathExists(authId, path);
 
   if (isDirectory) {
     return `Error: ${toVisiblePath(path, authId)} is a directory`;
-  }
-
-  if (exists && !overwrite) {
-    return `Error: File ${toVisiblePath(path, authId)} already exists`;
   }
 
   await s3.send(new PutObjectCommand({
@@ -367,7 +355,6 @@ async function touchMemoryFile(path: string, authId: string): Promise<string> {
     name: normalizedPath,
     fileText: "",
     userId: authId,
-    overwrite: true,
   });
 }
 

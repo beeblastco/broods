@@ -5,16 +5,13 @@
 
 import {
   BatchWriteItemCommand,
-  DynamoDBClient,
   QueryCommand,
   type AttributeValue,
   type WriteRequest,
 } from "@aws-sdk/client-dynamodb";
-import { FetchHttpHandler } from "@smithy/fetch-http-handler";
 import type { ChannelActions } from "./channels.ts";
+import { dynamo } from "./dynamo.ts";
 import { logError } from "./log.ts";
-
-const dynamo = new DynamoDBClient({ requestHandler: new FetchHttpHandler() });
 
 export interface CommandContext {
   conversationKey: string;

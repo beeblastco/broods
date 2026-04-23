@@ -11,7 +11,6 @@ import {
   type ToolSet,
   type UserContent,
 } from "ai";
-import { extractText } from "../_shared/channels.ts";
 import { requireEnv } from "../_shared/env.ts";
 import { logError, logInfo } from "../_shared/log.ts";
 import type { Session } from "./session.ts";
@@ -52,7 +51,6 @@ export function runAgentLoop(
   const tools = {
     ...createTools({
       conversationKey: session.conversationKey,
-      latestUserMessage: extractText(userContent),
     }),
   } satisfies ToolSet;
 

@@ -13,6 +13,7 @@ import {
 import { jsonSchema, tool, type ToolSet } from "ai";
 import { requireEnv } from "../../_shared/env.ts";
 import type { ToolContext } from "./index.ts";
+import { normalizeMemoryNamespace } from "./namespace.ts";
 
 const s3 = new S3Client({ region: process.env.AWS_REGION });
 
@@ -220,7 +221,7 @@ async function findTaskDocumentByTitle(namespace: string, title: string): Promis
   return documents.find((document) => document.title === title) ?? null;
 }
 
-async function parseTaskDocument(key: string, content: string): Promise<TaskDocument> {
+function parseTaskDocument(key: string, content: string): TaskDocument {
   const lines = content.split("\n");
   const titleLine = lines.find((line) => line.startsWith("# "));
   if (!titleLine) {
@@ -282,11 +283,4 @@ function isTaskKey(namespace: string, key: string): boolean {
 
   const fileName = key.slice(prefix.length);
   return /^tasks-[a-z0-9]{8}\.md$/i.test(fileName);
-}
-
-function normalizeMemoryNamespace(conversationKey: string): string {
-  return conversationKey
-    .trim()
-    .replace(/[^a-zA-Z0-9._-]+/g, "_")
-    .replace(/^_+|_+$/g, "") || "default";
 }

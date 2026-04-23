@@ -34,20 +34,6 @@ function calculateLambdaCost(
   };
 }
 
-function parseBilledDuration(sseText: string): number | null {
-  const lines = sseText.split("\n");
-  for (const line of lines) {
-    if (!line.startsWith("data: ")) continue;
-    try {
-      const event = JSON.parse(line.slice(6));
-      if (event.type === "finish-step" && event.usage) {
-        return null;
-      }
-    } catch {}
-  }
-  return null;
-}
-
 interface TimingResult {
   ttfbMs: number;
   totalMs: number;

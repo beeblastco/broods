@@ -38,45 +38,6 @@ export function verifyWebhookSecret(
   return timingSafeEqual(a, b);
 }
 
-export async function setMessageReaction(
-  botToken: string,
-  chatId: number,
-  messageId: number,
-  emoji: string = "\u{1F914}",
-): Promise<void> {
-  const url = `https://api.telegram.org/bot${botToken}/setMessageReaction`;
-  const response = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      chat_id: chatId,
-      message_id: messageId,
-      reaction: [{ type: "emoji", emoji }],
-    }),
-  });
-  if (!response.ok) {
-    const body = await response.text();
-    throw new Error(`Telegram setMessageReaction failed (${response.status}): ${body}`);
-  }
-}
-
-export async function sendChatAction(
-  botToken: string,
-  chatId: number,
-  action: string = "typing",
-): Promise<void> {
-  const url = `https://api.telegram.org/bot${botToken}/sendChatAction`;
-  const response = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ chat_id: chatId, action }),
-  });
-  if (!response.ok) {
-    const body = await response.text();
-    throw new Error(`Telegram sendChatAction failed (${response.status}): ${body}`);
-  }
-}
-
 function escapeHtml(text: string): string {
   return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }

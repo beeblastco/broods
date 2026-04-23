@@ -6,7 +6,6 @@ import tavilyTool from "./tavily.tool.ts";
 
 export interface ToolContext {
   conversationKey: string;
-  latestUserMessage: string;
 }
 
 type ToolFactory = (context: ToolContext) => ToolSet;
