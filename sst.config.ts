@@ -11,10 +11,6 @@ const MAX_AGENT_ITERATIONS = "20";
 const TELEGRAM_REACTION_EMOJI = "👀";
 const AWS_PROFILE = process.env.CI ? undefined : (process.env.AWS_PROFILE ?? "default");
 
-const DEFAULT_SYSTEM_PROMPT = `You are a helpful assistant that can use tools to get information for the user.
-
-You have access to a persistent virtual terminal filesystem. Use it to read and write durable files when it helps you complete the user's request.`;
-
 
 function resourceName(service: string, stage: string): string {
   const stagePrefix = stage === "production" ? "" : `${stage}-`;
@@ -48,6 +44,9 @@ export default $config({
   },
 
   async run() {
+    const { readFileSync } = await import("node:fs");
+    const DEFAULT_SYSTEM_PROMPT = readFileSync(new URL("./SYSTEM.md", import.meta.url), "utf8");
+
     const stage = $app.stage;
     const names = {
       conversations: resourceName("conversations", stage),
