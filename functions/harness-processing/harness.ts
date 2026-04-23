@@ -12,6 +12,7 @@ import {
   type UserContent,
 } from "ai";
 import { requireEnv } from "../_shared/env.ts";
+import { DEFAULT_SYSTEM_PROMPT } from "../_shared/generated-system-prompt.ts";
 import { logError, logInfo } from "../_shared/log.ts";
 import type { Session } from "./session.ts";
 import { createTools } from "./tools/index.ts";
@@ -21,7 +22,6 @@ const google = createGoogleGenerativeAI({
 });
 
 const GOOGLE_MODEL_ID = requireEnv("GOOGLE_MODEL_ID");
-const DEFAULT_SYSTEM_PROMPT = requireEnv("DEFAULT_SYSTEM_PROMPT");
 const SLIDING_CONTEXT_WINDOW = Number(requireEnv("SLIDING_CONTEXT_WINDOW"));
 const MAX_AGENT_ITERATIONS = Number(requireEnv("MAX_AGENT_ITERATIONS"));
 

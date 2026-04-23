@@ -69,7 +69,6 @@ The `harness-processing` Lambda gets these values from the `environment` block i
 - `GOOGLE_MODEL_ID`
 - `CONVERSATIONS_TABLE_NAME`
 - `PROCESSED_EVENTS_TABLE_NAME`
-- `DEFAULT_SYSTEM_PROMPT`
 - `SLIDING_CONTEXT_WINDOW`
 - `MAX_AGENT_ITERATIONS`
 - `TELEGRAM_BOT_TOKEN`
@@ -90,6 +89,8 @@ The `harness-processing` Lambda gets these values from the `environment` block i
 - `AWS_S3_BUCKET`
 
 In addition, `AWS_REGION` is provided by the Lambda runtime in AWS. The repo currently deploys to `eu-central-1` in `sst.config.ts`.
+
+The system prompt is bundled from `SYSTEM.md` at build time and is not injected as a Lambda environment variable.
 
 ### What Goes In `.env`
 

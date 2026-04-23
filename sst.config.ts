@@ -50,10 +50,6 @@ export default $config({
   },
 
   async run() {
-    const { readFileSync } = await import("node:fs");
-    const { join } = await import("node:path");
-    const DEFAULT_SYSTEM_PROMPT = readFileSync(join(process.cwd(), "SYSTEM.md"), "utf8");
-
     const stage = $app.stage;
     const names = {
       conversations: resourceName("conversations", stage),
@@ -123,7 +119,6 @@ export default $config({
         GOOGLE_MODEL_ID,
         CONVERSATIONS_TABLE_NAME: conversationsTable.name,
         PROCESSED_EVENTS_TABLE_NAME: processedEventsTable.name,
-        DEFAULT_SYSTEM_PROMPT,
         SLIDING_CONTEXT_WINDOW,
         MAX_AGENT_ITERATIONS,
         TELEGRAM_BOT_TOKEN: telegramBotToken.value,
