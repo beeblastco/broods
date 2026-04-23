@@ -3,3 +3,4 @@ dist/
 .sst/
 .env
 *.log
+functions/_shared/.generated/

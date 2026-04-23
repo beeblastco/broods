@@ -38,7 +38,7 @@ async function handleDirectRequest(event: InboundEvent): Promise<LambdaResponse>
   }
 
   const history = await loadAndPersistUserMessage(session, event.content);
-  const stream = runAgentLoop(session, event.content, history);
+  const stream = await runAgentLoop(session, event.content, history);
   return {
     statusCode: 200,
     headers: { "Content-Type": "text/event-stream" },
@@ -66,7 +66,7 @@ async function handleChannelRequest(event: ChannelInboundEvent): Promise<void> {
   }
 
   const history = await loadAndPersistUserMessage(session, event.content);
-  const stream = runAgentLoop(session, event.content, history, {
+  const stream = await runAgentLoop(session, event.content, history, {
     onFinalText: (text) => event.channel.sendText(text),
     onErrorText: () => event.channel.sendText("Something went wrong. Please try again."),
   });

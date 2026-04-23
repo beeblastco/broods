@@ -12,12 +12,12 @@ import {
 } from "@aws-sdk/client-s3";
 import { jsonSchema, tool, type ToolSet } from "ai";
 import { requireEnv } from "../../_shared/env.ts";
+import { normalizeFilesystemNamespace } from "../utils.ts";
 import type { ToolContext } from "./index.ts";
-import { normalizeMemoryNamespace } from "./namespace.ts";
 
 const s3 = new S3Client({ region: process.env.AWS_REGION });
 
-const AWS_S3_BUCKET = requireEnv("AWS_S3_BUCKET");
+const FILESYSTEM_BUCKET_NAME = requireEnv("FILESYSTEM_BUCKET_NAME");
 
 const taskInputSchema = {
   type: "object",
@@ -65,7 +65,7 @@ interface TaskDocument {
 }
 
 export default function tasksTool(context: ToolContext): ToolSet {
-  const namespace = normalizeMemoryNamespace(context.conversationKey);
+  const namespace = normalizeFilesystemNamespace(context.conversationKey);
 
   return {
     tasks: tool({
@@ -185,7 +185,7 @@ async function updateTaskList(namespace: string, title: string | undefined, done
 
   if (updatedTasks.every((task) => task.checked)) {
     await s3.send(new DeleteObjectCommand({
-      Bucket: AWS_S3_BUCKET,
+      Bucket: FILESYSTEM_BUCKET_NAME,
       Key: document.key,
     }));
 
@@ -203,7 +203,7 @@ async function updateTaskList(namespace: string, title: string | undefined, done
 
 async function listTaskDocuments(namespace: string): Promise<TaskDocument[]> {
   const response = await s3.send(new ListObjectsV2Command({
-    Bucket: AWS_S3_BUCKET,
+    Bucket: FILESYSTEM_BUCKET_NAME,
     Prefix: `${namespace}/tasks-`,
   }));
 
@@ -259,7 +259,7 @@ function serializeTaskDocument(title: string, tasks: TaskLine[]): string {
 
 async function readObject(key: string): Promise<string> {
   const response = await s3.send(new GetObjectCommand({
-    Bucket: AWS_S3_BUCKET,
+    Bucket: FILESYSTEM_BUCKET_NAME,
     Key: key,
   }));
 
@@ -268,7 +268,7 @@ async function readObject(key: string): Promise<string> {
 
 async function writeObject(key: string, body: string): Promise<void> {
   await s3.send(new PutObjectCommand({
-    Bucket: AWS_S3_BUCKET,
+    Bucket: FILESYSTEM_BUCKET_NAME,
     Key: key,
     Body: body,
     ContentType: "text/markdown",

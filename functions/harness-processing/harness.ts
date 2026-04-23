@@ -12,7 +12,6 @@ import {
   type UserContent,
 } from "ai";
 import { requireEnv } from "../_shared/env.ts";
-import { DEFAULT_SYSTEM_PROMPT } from "../_shared/generated-system-prompt.ts";
 import { logError, logInfo } from "../_shared/log.ts";
 import type { Session } from "./session.ts";
 import { createTools } from "./tools/index.ts";
@@ -30,7 +29,7 @@ export interface AgentReplyHooks {
   onErrorText(): Promise<void>;
 }
 
-export function runAgentLoop(
+export async function runAgentLoop(
   session: Session,
   userContent: UserContent,
   history: ModelMessage[],
@@ -56,9 +55,9 @@ export function runAgentLoop(
 
   return streamText({
     model: google(GOOGLE_MODEL_ID),
-    system: DEFAULT_SYSTEM_PROMPT,
-    messages,
-    tools,
+    system: await session.loadSystemPromptParts(),
+    messages: messages,
+    tools: tools,
     maxOutputTokens: 16000,
     providerOptions: {
       google: {
@@ -68,6 +67,9 @@ export function runAgentLoop(
       },
     },
     stopWhen: stepCountIs(MAX_AGENT_ITERATIONS),
+    prepareStep: async () => ({
+      system: await session.loadSystemPromptParts(),
+    }),
     onError: async ({ error }) => {
       logError("Agent loop failed", {
         conversationKey: session.conversationKey,

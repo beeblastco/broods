@@ -86,7 +86,7 @@ The `harness-processing` Lambda gets these values from the `environment` block i
 - `DISCORD_PUBLIC_KEY` when `ENABLE_DISCORD_INTEGRATION=true`
 - `DISCORD_ALLOWED_GUILD_IDS` when `ENABLE_DISCORD_INTEGRATION=true`
 - `TAVILY_API_KEY`
-- `AWS_S3_BUCKET`
+- `FILESYSTEM_BUCKET_NAME`
 
 In addition, `AWS_REGION` is provided by the Lambda runtime in AWS. The repo currently deploys to `eu-central-1` in `sst.config.ts`.
 

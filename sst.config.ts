@@ -98,7 +98,7 @@ export default $config({
         },
       },
     });
-    const memoryBucketArn = `arn:aws:s3:::${names.memory}`;
+    const filesystemBucketArn = `arn:aws:s3:::${names.memory}`;
 
     const harnessProcessing = new sst.aws.Function("HarnessProcessing", {
       name: names.harnessProcessing,
@@ -126,7 +126,7 @@ export default $config({
         ALLOWED_CHAT_IDS: allowedChatIds.value,
         TELEGRAM_REACTION_EMOJI,
         TAVILY_API_KEY: tavilyApiKey.value,
-        AWS_S3_BUCKET: names.memory,
+        FILESYSTEM_BUCKET_NAME: names.memory,
         ...(ENABLE_GITHUB_INTEGRATION && gitHubWebhookSecret && gitHubPrivateKey && gitHubAppId
           ? {
             GITHUB_WEBHOOK_SECRET: gitHubWebhookSecret.value,
@@ -166,16 +166,16 @@ export default $config({
             "s3:PutObject",
             "s3:DeleteObject",
           ],
-          resources: [`${memoryBucketArn}/*`],
+          resources: [`${filesystemBucketArn}/*`],
         },
         {
           actions: ["s3:ListBucket"],
-          resources: [memoryBucketArn],
+          resources: [filesystemBucketArn],
         },
       ],
     });
 
-    const memoryBucket = new sst.aws.Bucket("Memory", {
+    const filesystemBucket = new sst.aws.Bucket("Memory", {
       versioning: true,
       policy: [
         {
@@ -217,7 +217,7 @@ export default $config({
       harnessProcessingUrl: harnessProcessing.url,
       conversationsTableName: conversationsTable.name,
       processedEventsTableName: processedEventsTable.name,
-      memoryBucketName: memoryBucket.name,
+      filesystemBucketName: filesystemBucket.name,
     };
   },
 });

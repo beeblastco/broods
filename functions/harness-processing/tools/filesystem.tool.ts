@@ -1,6 +1,6 @@
 /**
- * S3-backed persistent memory tool for the harness agent.
- * Keep memory file operations and S3 path safety here.
+ * S3-backed persistent filesystem tool for the harness agent.
+ * Keep filesystem operations and S3 path safety here.
  */
 
 import {
@@ -14,20 +14,20 @@ import {
 } from "@aws-sdk/client-s3";
 import { jsonSchema, tool, type ToolSet } from "ai";
 import { requireEnv } from "../../_shared/env.ts";
+import { normalizeFilesystemNamespace } from "../utils.ts";
 import type { ToolContext } from "./index.ts";
-import { normalizeMemoryNamespace } from "./namespace.ts";
 
 const s3 = new S3Client({ region: process.env.AWS_REGION });
 
-const AWS_S3_BUCKET = requireEnv("AWS_S3_BUCKET");
+const FILESYSTEM_BUCKET_NAME = requireEnv("FILESYSTEM_BUCKET_NAME");
 
-interface MemoryInput {
+interface FilesystemInput {
   shell: string;
 }
 
 type CommandResult = { result: string; isError: boolean };
 
-const memoryInputSchema = {
+const filesystemInputSchema = {
   type: "object",
   properties: {
     shell: {
@@ -54,15 +54,15 @@ Prefer shell mode. Supported commands:
 const error = (result: string): CommandResult => ({ result, isError: true });
 const success = (result: string): CommandResult => ({ result, isError: false });
 
-export default function memoryTool(context: ToolContext): ToolSet {
-  const memoryNamespace = normalizeMemoryNamespace(context.conversationKey);
+export default function filesystemTool(context: ToolContext): ToolSet {
+  const filesystemNamespace = normalizeFilesystemNamespace(context.conversationKey);
 
   return {
-    memory: tool({
+    filesystem: tool({
       description: "Terminal-style filesystem rooted at /. Use shell commands to read and write persistent files.",
-      inputSchema: jsonSchema(memoryInputSchema),
+      inputSchema: jsonSchema(filesystemInputSchema),
       async execute(input) {
-        const { result, isError } = await executeShellCommand((input as MemoryInput).shell, memoryNamespace);
+        const { result, isError } = await executeShellCommand((input as FilesystemInput).shell, filesystemNamespace);
         return { type: isError ? "error-text" : "text", value: result };
       },
     }),
@@ -81,10 +81,10 @@ async function executeShellCommand(shell: string, authId: string): Promise<Comma
 
   const heredoc = parseHeredocCommand(command);
   if (heredoc) {
-    return success(await writeMemoryFile({
+    return success(await writeFilesystemFile({
       name: heredoc.path,
       fileText: heredoc.append
-        ? await appendToMemoryFile(heredoc.path, heredoc.body, authId)
+        ? await appendToFilesystemFile(heredoc.path, heredoc.body, authId)
         : heredoc.body,
       userId: authId,
     }));
@@ -92,12 +92,12 @@ async function executeShellCommand(shell: string, authId: string): Promise<Comma
 
   if (command.startsWith("ls")) {
     const path = parseLsPath(command);
-    return success(await listMemoryEntries(path, authId));
+    return success(await listFilesystemEntries(path, authId));
   }
 
   const sedMatch = command.match(/^sed\s+-n\s+['"](\d+),(\d+)p['"]\s+(.+)$/s);
   if (sedMatch) {
-    return success(await readMemoryRange(
+    return success(await readFilesystemRange(
       stripQuotes(sedMatch[3]!),
       Number(sedMatch[1]),
       Number(sedMatch[2]),
@@ -107,22 +107,22 @@ async function executeShellCommand(shell: string, authId: string): Promise<Comma
 
   const catMatch = command.match(/^cat\s+(.+)$/s);
   if (catMatch) {
-    return success(await readMemoryRaw(stripQuotes(catMatch[1]!), authId));
+    return success(await readFilesystemRaw(stripQuotes(catMatch[1]!), authId));
   }
 
   const mkdirMatch = command.match(/^mkdir\s+-p\s+(.+)$/s);
   if (mkdirMatch) {
-    return success(await createMemoryDirectory(stripQuotes(mkdirMatch[1]!), authId));
+    return success(await createFilesystemDirectory(stripQuotes(mkdirMatch[1]!), authId));
   }
 
   const touchMatch = command.match(/^touch\s+(.+)$/s);
   if (touchMatch) {
-    return success(await touchMemoryFile(stripQuotes(touchMatch[1]!), authId));
+    return success(await touchFilesystemFile(stripQuotes(touchMatch[1]!), authId));
   }
 
   const rmMatch = command.match(/^rm(?:\s+-[rf]+\s+|\s+-[fr]+\s+|\s+)(.+)$/s);
   if (rmMatch) {
-    return success(await deleteMemoryFile({
+    return success(await deleteFilesystemPath({
       name: stripQuotes(rmMatch[1]!),
       userId: authId,
     }));
@@ -130,7 +130,7 @@ async function executeShellCommand(shell: string, authId: string): Promise<Comma
 
   const mvMatch = command.match(/^mv\s+(\S+)\s+(\S+)$/);
   if (mvMatch) {
-    return success(await renameMemoryFile({
+    return success(await renameFilesystemPath({
       oldName: stripQuotes(mvMatch[1]!),
       newName: stripQuotes(mvMatch[2]!),
       userId: authId,
@@ -221,7 +221,7 @@ function toS3Key(path: string, authId: string): string {
   const s3Key = relativePath ? `${authId}/${relativePath}` : authId;
 
   if (s3Key !== authId && !s3Key.startsWith(`${authId}/`)) {
-    throw new Error("Invalid path: resolved outside memory directory");
+    throw new Error("Invalid path: resolved outside filesystem root");
   }
 
   return s3Key;
@@ -238,7 +238,7 @@ function normalizePath(path: string): string {
   return parts.length === 0 ? "/" : `/${parts.join("/")}`;
 }
 
-async function readMemoryRaw(path: string, authId: string): Promise<string> {
+async function readFilesystemRaw(path: string, authId: string): Promise<string> {
   const normalizedPath = toScopedPath(path, authId);
   const { exists, isDirectory } = await checkPathExists(authId, normalizedPath);
   if (!exists) {
@@ -250,15 +250,15 @@ async function readMemoryRaw(path: string, authId: string): Promise<string> {
   }
 
   const response = await s3.send(new GetObjectCommand({
-    Bucket: AWS_S3_BUCKET,
+    Bucket: FILESYSTEM_BUCKET_NAME,
     Key: toS3Key(normalizedPath, authId),
   }));
 
   return await response.Body?.transformToString() ?? "";
 }
 
-async function readMemoryRange(path: string, start: number, end: number, authId: string): Promise<string> {
-  const content = await readMemoryRaw(path, authId);
+async function readFilesystemRange(path: string, start: number, end: number, authId: string): Promise<string> {
+  const content = await readFilesystemRaw(path, authId);
   if (content.startsWith("cat: ")) {
     return content;
   }
@@ -269,7 +269,7 @@ async function readMemoryRange(path: string, start: number, end: number, authId:
     .join("\n");
 }
 
-async function writeMemoryFile(params: {
+async function writeFilesystemFile(params: {
   name: string;
   fileText: string;
   userId: string;
@@ -287,7 +287,7 @@ async function writeMemoryFile(params: {
   }
 
   await s3.send(new PutObjectCommand({
-    Bucket: AWS_S3_BUCKET,
+    Bucket: FILESYSTEM_BUCKET_NAME,
     Key: toS3Key(path, authId),
     Body: fileText,
     ContentType: "text/plain",
@@ -296,7 +296,7 @@ async function writeMemoryFile(params: {
   return `Wrote ${toVisiblePath(path, authId)}`;
 }
 
-async function appendToMemoryFile(path: string, fileText: string, authId: string): Promise<string> {
+async function appendToFilesystemFile(path: string, fileText: string, authId: string): Promise<string> {
   const normalizedPath = toScopedPath(path, authId);
   const { exists, isDirectory } = await checkPathExists(authId, normalizedPath);
   if (isDirectory) {
@@ -307,11 +307,11 @@ async function appendToMemoryFile(path: string, fileText: string, authId: string
     return fileText;
   }
 
-  const existing = await readMemoryRaw(normalizedPath, authId);
+  const existing = await readFilesystemRaw(normalizedPath, authId);
   return existing.length > 0 ? `${existing}\n${fileText}` : fileText;
 }
 
-async function createMemoryDirectory(path: string, authId: string): Promise<string> {
+async function createFilesystemDirectory(path: string, authId: string): Promise<string> {
   const normalizedPath = toScopedPath(path, authId);
   if (normalizedPath === "/") {
     return `Directory already exists: ${toVisiblePath(normalizedPath, authId)}`;
@@ -327,7 +327,7 @@ async function createMemoryDirectory(path: string, authId: string): Promise<stri
   }
 
   await s3.send(new PutObjectCommand({
-    Bucket: AWS_S3_BUCKET,
+    Bucket: FILESYSTEM_BUCKET_NAME,
     Key: `${toS3Key(normalizedPath, authId)}/.keep`,
     Body: "",
     ContentType: "text/plain",
@@ -336,7 +336,7 @@ async function createMemoryDirectory(path: string, authId: string): Promise<stri
   return `Created directory ${toVisiblePath(normalizedPath, authId)}`;
 }
 
-async function touchMemoryFile(path: string, authId: string): Promise<string> {
+async function touchFilesystemFile(path: string, authId: string): Promise<string> {
   const normalizedPath = toScopedPath(path, authId);
   if (normalizedPath === "/") {
     return `Error: ${toVisiblePath(normalizedPath, authId)} is a directory`;
@@ -351,14 +351,14 @@ async function touchMemoryFile(path: string, authId: string): Promise<string> {
     return `Touched ${toVisiblePath(normalizedPath, authId)}`;
   }
 
-  return writeMemoryFile({
+  return writeFilesystemFile({
     name: normalizedPath,
     fileText: "",
     userId: authId,
   });
 }
 
-async function listMemoryEntries(path: string, authId: string): Promise<string> {
+async function listFilesystemEntries(path: string, authId: string): Promise<string> {
   const normalizedPath = toScopedPath(path, authId);
   const { exists, isDirectory } = await checkPathExists(authId, normalizedPath);
 
@@ -375,7 +375,7 @@ async function listMemoryEntries(path: string, authId: string): Promise<string> 
     : `${toS3Key(normalizedPath, authId)}/`;
 
   const response = await s3.send(new ListObjectsV2Command({
-    Bucket: AWS_S3_BUCKET,
+    Bucket: FILESYSTEM_BUCKET_NAME,
     Prefix: prefix,
     Delimiter: "/",
   }));
@@ -406,13 +406,13 @@ async function checkPathExists(
 
   try {
     await s3.send(new HeadObjectCommand({
-      Bucket: AWS_S3_BUCKET,
+      Bucket: FILESYSTEM_BUCKET_NAME,
       Key: s3Key,
     }));
     return { exists: true, isDirectory: false };
   } catch {
     const listResponse = await s3.send(new ListObjectsV2Command({
-      Bucket: AWS_S3_BUCKET,
+      Bucket: FILESYSTEM_BUCKET_NAME,
       Prefix: s3Key.endsWith("/") ? s3Key : `${s3Key}/`,
       MaxKeys: 1,
     }));
@@ -425,7 +425,7 @@ async function checkPathExists(
   }
 }
 
-async function deleteMemoryFile(params: {
+async function deleteFilesystemPath(params: {
   name: string;
   userId: string;
 }): Promise<string> {
@@ -442,20 +442,20 @@ async function deleteMemoryFile(params: {
 
   if (isDirectory) {
     const listResponse = await s3.send(new ListObjectsV2Command({
-      Bucket: AWS_S3_BUCKET,
+      Bucket: FILESYSTEM_BUCKET_NAME,
       Prefix: `${toS3Key(path, authId)}/`,
     }));
 
     for (const item of listResponse.Contents ?? []) {
       if (!item.Key) continue;
       await s3.send(new DeleteObjectCommand({
-        Bucket: AWS_S3_BUCKET,
+        Bucket: FILESYSTEM_BUCKET_NAME,
         Key: item.Key,
       }));
     }
   } else {
     await s3.send(new DeleteObjectCommand({
-      Bucket: AWS_S3_BUCKET,
+      Bucket: FILESYSTEM_BUCKET_NAME,
       Key: toS3Key(path, authId),
     }));
   }
@@ -463,7 +463,7 @@ async function deleteMemoryFile(params: {
   return `Successfully deleted ${toVisiblePath(path, authId)}`;
 }
 
-async function renameMemoryFile(params: {
+async function renameFilesystemPath(params: {
   oldName: string;
   newName: string;
   userId: string;
@@ -489,7 +489,7 @@ async function renameMemoryFile(params: {
     const oldPrefix = `${toS3Key(oldPath, authId)}/`;
     const newPrefix = `${toS3Key(newPath, authId)}/`;
     const listResponse = await s3.send(new ListObjectsV2Command({
-      Bucket: AWS_S3_BUCKET,
+      Bucket: FILESYSTEM_BUCKET_NAME,
       Prefix: oldPrefix,
     }));
 
@@ -498,12 +498,12 @@ async function renameMemoryFile(params: {
 
       const newKey = item.Key.replace(oldPrefix, newPrefix);
       await s3.send(new CopyObjectCommand({
-        Bucket: AWS_S3_BUCKET,
-        CopySource: `${AWS_S3_BUCKET}/${item.Key}`,
+        Bucket: FILESYSTEM_BUCKET_NAME,
+        CopySource: `${FILESYSTEM_BUCKET_NAME}/${item.Key}`,
         Key: newKey,
       }));
       await s3.send(new DeleteObjectCommand({
-        Bucket: AWS_S3_BUCKET,
+        Bucket: FILESYSTEM_BUCKET_NAME,
         Key: item.Key,
       }));
     }
@@ -512,12 +512,12 @@ async function renameMemoryFile(params: {
     const newKey = toS3Key(newPath, authId);
 
     await s3.send(new CopyObjectCommand({
-      Bucket: AWS_S3_BUCKET,
-      CopySource: `${AWS_S3_BUCKET}/${oldKey}`,
+      Bucket: FILESYSTEM_BUCKET_NAME,
+      CopySource: `${FILESYSTEM_BUCKET_NAME}/${oldKey}`,
       Key: newKey,
     }));
     await s3.send(new DeleteObjectCommand({
-      Bucket: AWS_S3_BUCKET,
+      Bucket: FILESYSTEM_BUCKET_NAME,
       Key: oldKey,
     }));
   }

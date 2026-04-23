@@ -1,6 +1,6 @@
 /**
  * Session lifecycle for harness-processing.
- * Keep dedupe, history reads, and conversation persistence here.
+ * Keep dedupe, history reads, prompt memory loading, and conversation persistence here.
  */
 
 import {
@@ -9,9 +9,11 @@ import {
   QueryCommand,
   type AttributeValue,
 } from "@aws-sdk/client-dynamodb";
+import { GetObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import type {
   AssistantModelMessage,
   ModelMessage,
+  SystemModelMessage,
   ToolModelMessage,
   UserContent,
   UserModelMessage,
@@ -23,12 +25,19 @@ import {
   toAttributeValue,
 } from "../_shared/dynamo.ts";
 import { requireEnv } from "../_shared/env.ts";
+import { logError, logInfo } from "../_shared/log.ts";
+import { DEFAULT_SYSTEM_PROMPT } from "../_shared/.generated/system-prompt.ts";
+import { normalizeFilesystemNamespace } from "./utils.ts";
 
 const CONVERSATIONS_TABLE_NAME = requireEnv("CONVERSATIONS_TABLE_NAME");
 const PROCESSED_EVENTS_TABLE_NAME = requireEnv("PROCESSED_EVENTS_TABLE_NAME");
+const FILESYSTEM_BUCKET_NAME = requireEnv("FILESYSTEM_BUCKET_NAME");
+
+const s3 = new S3Client({ region: process.env.AWS_REGION });
 
 export class Session {
   private messageSequence = 0;
+  private hasLoggedMissingMemoryFile = false;
 
   constructor(
     public readonly eventId: string,
@@ -94,6 +103,21 @@ export class Session {
     await this.persistMessages(messages);
   }
 
+  async loadSystemPromptParts(): Promise<SystemModelMessage[]> {
+    const memoryContent = await this.loadMemoryFile();
+
+    return [
+      {
+        role: "system",
+        content: DEFAULT_SYSTEM_PROMPT,
+      },
+      {
+        role: "system",
+        content: formatMemorySystemPrompt(memoryContent),
+      },
+    ];
+  }
+
   private async persistMessages(messages: ModelMessage[]): Promise<void> {
     for (const message of messages) {
       const sanitizedMessage = sanitizeMessageForHistory(message);
@@ -117,10 +141,73 @@ export class Session {
     this.messageSequence += 1;
     return `${new Date().toISOString()}#${this.eventId}#${sequence}`;
   }
+
+  private async loadMemoryFile(): Promise<string | null> {
+    const key = `${this.filesystemNamespace()}/MEMORY.md`;
+
+    try {
+      const response = await s3.send(new GetObjectCommand({
+        Bucket: FILESYSTEM_BUCKET_NAME,
+        Key: key,
+      }));
+
+      return await response.Body?.transformToString() ?? "";
+    } catch (error) {
+      if (isMissingS3Object(error)) {
+        if (!this.hasLoggedMissingMemoryFile) {
+          logInfo("No MEMORY.md found for session prompt", {
+            conversationKey: this.conversationKey,
+            key,
+          });
+          this.hasLoggedMissingMemoryFile = true;
+        }
+        return null;
+      }
+
+      logError("Failed to load MEMORY.md for session prompt", {
+        conversationKey: this.conversationKey,
+        key,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      throw error;
+    }
+  }
+
+  private filesystemNamespace(): string {
+    return normalizeFilesystemNamespace(this.conversationKey);
+  }
 }
 
 export function createSession(eventId: string, conversationKey: string): Session {
   return new Session(eventId, conversationKey);
+}
+
+function formatMemorySystemPrompt(memoryContent: string | null): string {
+  if (memoryContent == null) {
+    return "Current MEMORY.md content for this conversation:\n\n(no MEMORY.md file exists yet)";
+  }
+
+  const normalizedContent = memoryContent.trimEnd();
+  return normalizedContent.length > 0
+    ? `Current MEMORY.md content for this conversation:\n\n${normalizedContent}`
+    : "Current MEMORY.md content for this conversation:\n\n(MEMORY.md exists but is empty)";
+}
+
+function isMissingS3Object(error: unknown): boolean {
+  if (!error || typeof error !== "object") {
+    return false;
+  }
+
+  const candidate = error as {
+    name?: string;
+    Code?: string;
+    $metadata?: { httpStatusCode?: number };
+  };
+
+  return candidate.name === "NoSuchKey" ||
+    candidate.Code === "NoSuchKey" ||
+    candidate.name === "NotFound" ||
+    candidate.$metadata?.httpStatusCode === 404;
 }
 
 function sanitizeMessageForHistory(message: ModelMessage): ModelMessage | null {
