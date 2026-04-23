@@ -45,7 +45,8 @@ export default $config({
 
   async run() {
     const { readFileSync } = await import("node:fs");
-    const DEFAULT_SYSTEM_PROMPT = readFileSync(new URL("./SYSTEM.md", import.meta.url), "utf8");
+    const { join } = await import("node:path");
+    const DEFAULT_SYSTEM_PROMPT = readFileSync(join(process.cwd(), "SYSTEM.md"), "utf8");
 
     const stage = $app.stage;
     const names = {
