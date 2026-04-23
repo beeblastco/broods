@@ -6,6 +6,43 @@
 
 declare module "sst" {
   export interface Resource {
+    "AllowedChatIds": {
+      "type": "sst.sst.Secret"
+      "value": string
+    }
+    "Conversations": {
+      "name": string
+      "type": "sst.aws.Dynamo"
+    }
+    "GoogleApiKey": {
+      "type": "sst.sst.Secret"
+      "value": string
+    }
+    "HarnessProcessing": {
+      "name": string
+      "type": "sst.aws.Function"
+      "url": string
+    }
+    "Memory": {
+      "name": string
+      "type": "sst.aws.Bucket"
+    }
+    "ProcessedEvents": {
+      "name": string
+      "type": "sst.aws.Dynamo"
+    }
+    "TavilyApiKey": {
+      "type": "sst.sst.Secret"
+      "value": string
+    }
+    "TelegramBotToken": {
+      "type": "sst.sst.Secret"
+      "value": string
+    }
+    "TelegramWebhookSecret": {
+      "type": "sst.sst.Secret"
+      "value": string
+    }
   }
 }
 /// <reference path="sst-env.d.ts" />

@@ -43,3 +43,4 @@ Remember:
 - `functions/harness-processing/integrations.ts` owns request normalization and channel/webhook routing.
 - `functions/harness-processing/harness-processing.ts` owns the model/tool execution loop.
 - The example custom tool lives in `functions/harness-processing/tools/weather.tool.ts`.
+- There is no `phicks` stage for deployment, only `dev`. DO NOT put to `phicks` stage.
