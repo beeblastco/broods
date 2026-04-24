@@ -42,6 +42,15 @@ interface TimingResult {
   response: Response;
 }
 
+export function requireTestEnv(name: string): string {
+  const value = process.env[name];
+  if (!value) {
+    throw new Error(`Missing required environment variable: ${name}`);
+  }
+
+  return value;
+}
+
 export async function fetchWithTiming(
   url: string,
   body: unknown,
@@ -53,7 +62,10 @@ export async function fetchWithTiming(
 
   const response = await fetch(url, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": `Bearer ${requireTestEnv("DIRECT_API_SECRET")}`,
+    },
     body: JSON.stringify(body),
   });
 

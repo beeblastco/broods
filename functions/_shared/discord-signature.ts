@@ -3,6 +3,8 @@
  * Keep Ed25519 verification for HTTP interactions here.
  */
 
+const DISCORD_REPLAY_WINDOW_SECONDS = 60 * 5;
+
 export async function verifyDiscordSignature(
   publicKey: string,
   signature: string | undefined,
@@ -13,28 +15,42 @@ export async function verifyDiscordSignature(
     return false;
   }
 
-  const algorithm = { name: "Ed25519" };
-  const bodyBytes = toArrayBuffer(new TextEncoder().encode(timestamp + body));
-  const key = await crypto.subtle.importKey(
-    "raw",
-    toArrayBuffer(decodeHex(publicKey)),
-    algorithm,
-    false,
-    ["verify"],
-  );
+  const unixTimestamp = Number(timestamp);
+  const ageSeconds = Math.abs(Math.floor(Date.now() / 1000) - unixTimestamp);
+  if (!Number.isFinite(unixTimestamp) || ageSeconds > DISCORD_REPLAY_WINDOW_SECONDS) {
+    return false;
+  }
 
-  return crypto.subtle.verify(
-    algorithm,
-    key,
-    toArrayBuffer(decodeHex(signature)),
-    bodyBytes,
-  );
+  try {
+    const algorithm = { name: "Ed25519" };
+    const bodyBytes = toArrayBuffer(new TextEncoder().encode(timestamp + body));
+    const key = await crypto.subtle.importKey(
+      "raw",
+      toArrayBuffer(decodeHex(publicKey)),
+      algorithm,
+      false,
+      ["verify"],
+    );
+
+    return crypto.subtle.verify(
+      algorithm,
+      key,
+      toArrayBuffer(decodeHex(signature)),
+      bodyBytes,
+    );
+  } catch {
+    return false;
+  }
 }
 
 function decodeHex(value: string): Uint8Array {
   const normalized = value.trim();
-  if (normalized.length % 2 !== 0) {
+  if (normalized.length === 0 || normalized.length % 2 !== 0) {
     throw new Error("Hex string must have an even number of characters");
+  }
+
+  if (!/^[\da-f]+$/i.test(normalized)) {
+    throw new Error("Hex string must contain only hexadecimal characters");
   }
 
   const bytes = new Uint8Array(normalized.length / 2);

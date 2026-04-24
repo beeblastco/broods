@@ -1,5 +1,6 @@
-const FUNCTION_URL = "https://redactedharnessurlid.lambda-url.eu-central-1.on.aws/";
-import { fetchWithTiming, printTimingResults } from "./utils";
+import { fetchWithTiming, printTimingResults, requireTestEnv } from "./utils";
+
+const FUNCTION_URL = requireTestEnv("FUNCTION_URL");
 
 const result = await fetchWithTiming(FUNCTION_URL, {
   eventId: `test-${Date.now()}`,

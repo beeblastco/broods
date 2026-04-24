@@ -27,27 +27,16 @@ jobs:
       AWS_ROLE_ARN: ${{ vars.AWS_ROLE_ARN }}
       INPUT_STAGE: ${{ inputs.stage }}
       DEFAULT_STAGE: ${{ vars.SST_STAGE }}
+      ENABLE_DIRECT_API: ${{ vars.ENABLE_DIRECT_API || 'false' }}
       ENABLE_TELEGRAM_INTEGRATION: ${{ vars.ENABLE_TELEGRAM_INTEGRATION || 'false' }}
       ENABLE_GITHUB_INTEGRATION: ${{ vars.ENABLE_GITHUB_INTEGRATION || 'true' }}
       ENABLE_SLACK_INTEGRATION: ${{ vars.ENABLE_SLACK_INTEGRATION || 'true' }}
       ENABLE_DISCORD_INTEGRATION: ${{ vars.ENABLE_DISCORD_INTEGRATION || 'true' }}
-      GITHUB_ALLOWED_REPOS: ${{ vars.GITHUB_ALLOWED_REPOS || 'open' }}
-      SLACK_ALLOWED_CHANNEL_IDS: ${{ vars.SLACK_ALLOWED_CHANNEL_IDS || 'open' }}
-      DISCORD_ALLOWED_GUILD_IDS: ${{ vars.DISCORD_ALLOWED_GUILD_IDS || 'open' }}
+      GITHUB_ALLOWED_REPOS: ${{ vars.GITHUB_ALLOWED_REPOS }}
+      SLACK_ALLOWED_CHANNEL_IDS: ${{ vars.SLACK_ALLOWED_CHANNEL_IDS }}
+      DISCORD_ALLOWED_GUILD_IDS: ${{ vars.DISCORD_ALLOWED_GUILD_IDS }}
       DISCORD_APPLICATION_ID: ${{ vars.DISCORD_APPLICATION_ID }}
       DISCORD_SYNC_GUILD_ID: ${{ vars.DISCORD_SYNC_GUILD_ID }}
-      SST_SECRET_TelegramBotToken: ${{ secrets.SST_SECRET_TelegramBotToken }}
-      SST_SECRET_TelegramWebhookSecret: ${{ secrets.SST_SECRET_TelegramWebhookSecret }}
-      SST_SECRET_AllowedChatIds: ${{ secrets.SST_SECRET_AllowedChatIds }}
-      SST_SECRET_GoogleApiKey: ${{ secrets.SST_SECRET_GoogleApiKey }}
-      SST_SECRET_TavilyApiKey: ${{ secrets.SST_SECRET_TavilyApiKey }}
-      SST_SECRET_GitHubWebhookSecret: ${{ secrets.SST_SECRET_GitHubWebhookSecret }}
-      SST_SECRET_GitHubAppId: ${{ secrets.SST_SECRET_GitHubAppId }}
-      SST_SECRET_GitHubPrivateKey: ${{ secrets.SST_SECRET_GitHubPrivateKey }}
-      SST_SECRET_SlackBotToken: ${{ secrets.SST_SECRET_SlackBotToken }}
-      SST_SECRET_SlackSigningSecret: ${{ secrets.SST_SECRET_SlackSigningSecret }}
-      SST_SECRET_DiscordBotToken: ${{ secrets.SST_SECRET_DiscordBotToken }}
-      SST_SECRET_DiscordPublicKey: ${{ secrets.SST_SECRET_DiscordPublicKey }}
       CI: "true"
     steps:
       - name: Resolve deploy configuration
@@ -72,13 +61,13 @@ jobs:
           echo "SST_STAGE=$STAGE" >> "$GITHUB_ENV"
 
       - name: Checkout repository
-        uses: actions/checkout@v5
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
 
       - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
 
       - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v6
+        uses: aws-actions/configure-aws-credentials@ec61189d14ec14c8efccab744f656cffd0e33f37
         with:
           aws-region: ${{ env.AWS_REGION }}
           role-to-assume: ${{ env.AWS_ROLE_ARN }}
@@ -93,6 +82,20 @@ jobs:
         run: bun run build
 
       - name: Deploy SST app
+        env:
+          SST_SECRET_DirectApiSecret: ${{ secrets.SST_SECRET_DirectApiSecret }}
+          SST_SECRET_TelegramBotToken: ${{ secrets.SST_SECRET_TelegramBotToken }}
+          SST_SECRET_TelegramWebhookSecret: ${{ secrets.SST_SECRET_TelegramWebhookSecret }}
+          SST_SECRET_AllowedChatIds: ${{ secrets.SST_SECRET_AllowedChatIds }}
+          SST_SECRET_GoogleApiKey: ${{ secrets.SST_SECRET_GoogleApiKey }}
+          SST_SECRET_TavilyApiKey: ${{ secrets.SST_SECRET_TavilyApiKey }}
+          SST_SECRET_GitHubWebhookSecret: ${{ secrets.SST_SECRET_GitHubWebhookSecret }}
+          SST_SECRET_GitHubAppId: ${{ secrets.SST_SECRET_GitHubAppId }}
+          SST_SECRET_GitHubPrivateKey: ${{ secrets.SST_SECRET_GitHubPrivateKey }}
+          SST_SECRET_SlackBotToken: ${{ secrets.SST_SECRET_SlackBotToken }}
+          SST_SECRET_SlackSigningSecret: ${{ secrets.SST_SECRET_SlackSigningSecret }}
+          SST_SECRET_DiscordBotToken: ${{ secrets.SST_SECRET_DiscordBotToken }}
+          SST_SECRET_DiscordPublicKey: ${{ secrets.SST_SECRET_DiscordPublicKey }}
         run: bunx sst deploy --stage "$SST_STAGE"
 
       - name: Sync Discord commands
@@ -117,6 +120,9 @@ jobs:
 
       - name: Sync Telegram webhook
         if: ${{ env.ENABLE_TELEGRAM_INTEGRATION == 'true' }}
+        env:
+          SST_SECRET_TelegramBotToken: ${{ secrets.SST_SECRET_TelegramBotToken }}
+          SST_SECRET_TelegramWebhookSecret: ${{ secrets.SST_SECRET_TelegramWebhookSecret }}
         shell: bash
         run: |
           set -euo pipefail

@@ -27,6 +27,10 @@ export async function handler(event: HandlerEvent): Promise<LambdaResponse> {
 }
 
 async function handleDirectRequest(event: DirectInboundEvent): Promise<LambdaResponse> {
+  if (!event.events.some((ingressEvent) => ingressEvent.role === "user")) {
+    return emptySseResponse();
+  }
+
   const session = createSession(event.eventId, event.conversationKey);
   if (!(await claimSession(session))) {
     return emptySseResponse();
@@ -34,10 +38,6 @@ async function handleDirectRequest(event: DirectInboundEvent): Promise<LambdaRes
 
   try {
     const ephemeralSystem = await session.appendIngressEvents(event.events);
-    if (!event.events.some((ingressEvent) => ingressEvent.role === "user")) {
-      return emptySseResponse();
-    }
-
     const turnContext = await session.createTurnContext(ephemeralSystem);
     if (!turnContext.hasPendingUserMessage) {
       return emptySseResponse();

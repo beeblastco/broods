@@ -9,9 +9,10 @@ const GOOGLE_MODEL_ID = "gemma-4-31b-it";
 const SLIDING_CONTEXT_WINDOW = "20";
 const MAX_AGENT_ITERATIONS = "20";
 const TELEGRAM_REACTION_EMOJI = "👀";
-const GITHUB_ALLOWED_REPOS = process.env.GITHUB_ALLOWED_REPOS ?? "open";
-const SLACK_ALLOWED_CHANNEL_IDS = process.env.SLACK_ALLOWED_CHANNEL_IDS ?? "open";
-const DISCORD_ALLOWED_GUILD_IDS = process.env.DISCORD_ALLOWED_GUILD_IDS ?? "open";
+const GITHUB_ALLOWED_REPOS = process.env.GITHUB_ALLOWED_REPOS;
+const SLACK_ALLOWED_CHANNEL_IDS = process.env.SLACK_ALLOWED_CHANNEL_IDS;
+const DISCORD_ALLOWED_GUILD_IDS = process.env.DISCORD_ALLOWED_GUILD_IDS;
+const ENABLE_DIRECT_API = process.env.ENABLE_DIRECT_API === "true";
 const ENABLE_TELEGRAM_INTEGRATION = process.env.ENABLE_TELEGRAM_INTEGRATION === "true";
 const ENABLE_GITHUB_INTEGRATION = process.env.ENABLE_GITHUB_INTEGRATION === "true";
 const ENABLE_SLACK_INTEGRATION = process.env.ENABLE_SLACK_INTEGRATION === "true";
@@ -22,6 +23,28 @@ const AWS_PROFILE = process.env.CI ? undefined : (process.env.AWS_PROFILE ?? "de
 function resourceName(service: string, stage: string): string {
   const stagePrefix = stage === "production" ? "" : `${stage}-`;
   return `${stagePrefix}${PROJECT_NAME}-${service}-${AWS_REGION}-${AWS_ACCOUNT_ID}`;
+}
+
+function requireExplicitAllowList(
+  stage: string,
+  enabled: boolean,
+  name: string,
+  raw: string | undefined,
+): string | undefined {
+  if (!enabled) {
+    return raw;
+  }
+
+  const normalized = raw?.trim();
+  if (stage === "dev") {
+    return normalized;
+  }
+
+  if (!normalized || normalized.toLowerCase() === "open") {
+    throw new Error(`${name} must be explicitly configured when the integration is enabled outside dev`);
+  }
+
+  return normalized;
 }
 
 export default $config({
@@ -52,6 +75,19 @@ export default $config({
 
   async run() {
     const stage = $app.stage;
+    const gitHubAllowedRepos = requireExplicitAllowList(stage, ENABLE_GITHUB_INTEGRATION, "GITHUB_ALLOWED_REPOS", GITHUB_ALLOWED_REPOS);
+    const slackAllowedChannelIds = requireExplicitAllowList(
+      stage,
+      ENABLE_SLACK_INTEGRATION,
+      "SLACK_ALLOWED_CHANNEL_IDS",
+      SLACK_ALLOWED_CHANNEL_IDS,
+    );
+    const discordAllowedGuildIds = requireExplicitAllowList(
+      stage,
+      ENABLE_DISCORD_INTEGRATION,
+      "DISCORD_ALLOWED_GUILD_IDS",
+      DISCORD_ALLOWED_GUILD_IDS,
+    );
     const names = {
       conversations: resourceName("conversations", stage),
       processedEvents: resourceName("processed-events", stage),
@@ -61,6 +97,7 @@ export default $config({
 
     const googleApiKey = new sst.Secret("GoogleApiKey");
     const tavilyApiKey = new sst.Secret("TavilyApiKey");
+    const directApiSecret = ENABLE_DIRECT_API ? new sst.Secret("DirectApiSecret") : null;
     const telegramBotToken = ENABLE_TELEGRAM_INTEGRATION ? new sst.Secret("TelegramBotToken") : null;
     const telegramWebhookSecret = ENABLE_TELEGRAM_INTEGRATION ? new sst.Secret("TelegramWebhookSecret") : null;
     const allowedChatIds = ENABLE_TELEGRAM_INTEGRATION ? new sst.Secret("AllowedChatIds") : null;
@@ -124,6 +161,14 @@ export default $config({
         MAX_AGENT_ITERATIONS,
         TAVILY_API_KEY: tavilyApiKey.value,
         FILESYSTEM_BUCKET_NAME: names.memory,
+        ...(ENABLE_DIRECT_API && directApiSecret
+          ? {
+            ENABLE_DIRECT_API: "true",
+            DIRECT_API_SECRET: directApiSecret.value,
+          }
+          : {
+            ENABLE_DIRECT_API: "false",
+          }),
         ...(ENABLE_TELEGRAM_INTEGRATION && telegramBotToken && telegramWebhookSecret && allowedChatIds
           ? {
             TELEGRAM_BOT_TOKEN: telegramBotToken.value,
@@ -137,21 +182,21 @@ export default $config({
             GITHUB_WEBHOOK_SECRET: gitHubWebhookSecret.value,
             GITHUB_PRIVATE_KEY: gitHubPrivateKey.value,
             GITHUB_APP_ID: gitHubAppId.value,
-            GITHUB_ALLOWED_REPOS,
+            ...(gitHubAllowedRepos ? { GITHUB_ALLOWED_REPOS: gitHubAllowedRepos } : {}),
           }
           : {}),
         ...(ENABLE_SLACK_INTEGRATION && slackBotToken && slackSigningSecret
           ? {
             SLACK_BOT_TOKEN: slackBotToken.value,
             SLACK_SIGNING_SECRET: slackSigningSecret.value,
-            SLACK_ALLOWED_CHANNEL_IDS,
+            ...(slackAllowedChannelIds ? { SLACK_ALLOWED_CHANNEL_IDS: slackAllowedChannelIds } : {}),
           }
           : {}),
         ...(ENABLE_DISCORD_INTEGRATION && discordBotToken && discordPublicKey
           ? {
             DISCORD_BOT_TOKEN: discordBotToken.value,
             DISCORD_PUBLIC_KEY: discordPublicKey.value,
-            DISCORD_ALLOWED_GUILD_IDS,
+            ...(discordAllowedGuildIds ? { DISCORD_ALLOWED_GUILD_IDS: discordAllowedGuildIds } : {}),
           }
           : {}),
       },

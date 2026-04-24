@@ -1,5 +1,6 @@
-const FUNCTION_URL = "https://redactedharnessurlid.lambda-url.eu-central-1.on.aws/";
-import { fetchWithTiming, printTimingResults } from "./utils";
+import { fetchWithTiming, printTimingResults, requireTestEnv } from "./utils";
+
+const FUNCTION_URL = requireTestEnv("FUNCTION_URL");
 
 const conversationKey = `multi-turn-${Date.now()}`;
 
@@ -8,7 +9,12 @@ async function sendLegacy(content: string, turn: number) {
   return fetchWithTiming(FUNCTION_URL, {
     eventId: `${conversationKey}-${turn}`,
     conversationKey,
-    content: [{ type: "text", text: content }],
+    events: [
+      {
+        role: "user",
+        content: [{ type: "text", text: content }],
+      },
+    ],
   });
 }
 

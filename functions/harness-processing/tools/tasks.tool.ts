@@ -1,6 +1,6 @@
 /**
  * Task-list tool backed by the virtual filesystem.
- * Keep task titles and task status management here, while hiding file storage details from the model.
+ * Keep task titles, legacy namespace fallback, and task status management here.
  */
 
 import {
@@ -12,7 +12,10 @@ import {
 } from "@aws-sdk/client-s3";
 import { jsonSchema, tool, type ToolSet } from "ai";
 import { requireEnv } from "../../_shared/env.ts";
-import { normalizeFilesystemNamespace } from "../utils.ts";
+import {
+  filesystemNamespaceCandidates,
+  normalizeFilesystemNamespace,
+} from "../utils.ts";
 import type { ToolContext } from "./index.ts";
 
 const s3 = new S3Client({ region: process.env.AWS_REGION });
@@ -53,6 +56,11 @@ interface TaskInput {
   done?: string[];
 }
 
+interface TaskNamespaceScope {
+  primaryNamespace: string;
+  legacyNamespace: string | null;
+}
+
 interface TaskLine {
   checked: boolean;
   text: string;
@@ -60,12 +68,14 @@ interface TaskLine {
 
 interface TaskDocument {
   key: string;
+  fileName: string;
+  namespace: string;
   title: string;
   tasks: TaskLine[];
 }
 
 export default function tasksTool(context: ToolContext): ToolSet {
-  const namespace = normalizeFilesystemNamespace(context.conversationKey);
+  const scope = createTaskNamespaceScope(context.conversationKey);
 
   return {
     tasks: tool({
@@ -79,17 +89,17 @@ export default function tasksTool(context: ToolContext): ToolSet {
             case "create":
               return {
                 type: "text",
-                value: await createTaskList(namespace, taskInput.title, taskInput.tasks ?? []),
+                value: await createTaskList(scope, taskInput.title, taskInput.tasks ?? []),
               };
             case "list":
               return {
                 type: "text",
-                value: await listTaskLists(namespace),
+                value: await listTaskLists(scope),
               };
             case "update":
               return {
                 type: "text",
-                value: await updateTaskList(namespace, taskInput.title, taskInput.done ?? []),
+                value: await updateTaskList(scope, taskInput.title, taskInput.done ?? []),
               };
             default:
               return {
@@ -108,7 +118,24 @@ export default function tasksTool(context: ToolContext): ToolSet {
   };
 }
 
-async function createTaskList(namespace: string, title: string | undefined, tasks: string[]): Promise<string> {
+function createTaskNamespaceScope(conversationKey: string): TaskNamespaceScope {
+  const primaryNamespace = normalizeFilesystemNamespace(conversationKey);
+  const legacyNamespace = filesystemNamespaceCandidates(conversationKey)
+    .find((candidate) => candidate !== primaryNamespace) ?? null;
+
+  return {
+    primaryNamespace,
+    legacyNamespace,
+  };
+}
+
+function taskNamespaceCandidates(scope: TaskNamespaceScope): string[] {
+  return scope.legacyNamespace == null
+    ? [scope.primaryNamespace]
+    : [scope.primaryNamespace, scope.legacyNamespace];
+}
+
+async function createTaskList(scope: TaskNamespaceScope, title: string | undefined, tasks: string[]): Promise<string> {
   const normalizedTitle = title?.trim();
   if (!normalizedTitle) {
     return "Error: title is required for create";
@@ -122,12 +149,12 @@ async function createTaskList(namespace: string, title: string | undefined, task
     return "Error: tasks must include at least one task item";
   }
 
-  const existing = await findTaskDocumentByTitle(namespace, normalizedTitle);
-  if (existing) {
+  const existing = await findTaskDocumentsByTitle(scope, normalizedTitle);
+  if (existing.length > 0) {
     return `Error: a task list named "${normalizedTitle}" already exists`;
   }
 
-  const key = `${namespace}/tasks-${crypto.randomUUID().slice(0, 8)}.md`;
+  const key = `${scope.primaryNamespace}/tasks-${crypto.randomUUID().slice(0, 8)}.md`;
   const body = serializeTaskDocument(normalizedTitle, cleanedTasks.map((task) => ({
     checked: false,
     text: task,
@@ -137,13 +164,15 @@ async function createTaskList(namespace: string, title: string | undefined, task
 
   return renderTaskDocument({
     key,
+    fileName: key.slice(scope.primaryNamespace.length + 1),
+    namespace: scope.primaryNamespace,
     title: normalizedTitle,
     tasks: cleanedTasks.map((task) => ({ checked: false, text: task })),
   }, `Created task list "${normalizedTitle}"`);
 }
 
-async function listTaskLists(namespace: string): Promise<string> {
-  const documents = await listTaskDocuments(namespace);
+async function listTaskLists(scope: TaskNamespaceScope): Promise<string> {
+  const documents = await listTaskDocuments(scope);
   if (documents.length === 0) {
     return "No task lists found";
   }
@@ -151,7 +180,7 @@ async function listTaskLists(namespace: string): Promise<string> {
   return documents.map((document) => renderTaskDocument(document)).join("\n\n");
 }
 
-async function updateTaskList(namespace: string, title: string | undefined, done: string[]): Promise<string> {
+async function updateTaskList(scope: TaskNamespaceScope, title: string | undefined, done: string[]): Promise<string> {
   const normalizedTitle = title?.trim();
   if (!normalizedTitle) {
     return "Error: title is required for update";
@@ -165,7 +194,8 @@ async function updateTaskList(namespace: string, title: string | undefined, done
     return "Error: done must include at least one task name";
   }
 
-  const document = await findTaskDocumentByTitle(namespace, normalizedTitle);
+  const documents = await findTaskDocumentsByTitle(scope, normalizedTitle);
+  const document = documents[0];
   if (!document) {
     return `Error: task list "${normalizedTitle}" was not found`;
   }
@@ -184,44 +214,74 @@ async function updateTaskList(namespace: string, title: string | undefined, done
   }));
 
   if (updatedTasks.every((task) => task.checked)) {
-    await s3.send(new DeleteObjectCommand({
-      Bucket: FILESYSTEM_BUCKET_NAME,
-      Key: document.key,
-    }));
-
+    await deleteTaskDocuments(documents);
     return `All tasks in "${normalizedTitle}" are done. Removed the task list.`;
   }
 
-  await writeObject(document.key, serializeTaskDocument(normalizedTitle, updatedTasks));
+  const targetKey = `${scope.primaryNamespace}/${document.fileName}`;
+  await writeObject(targetKey, serializeTaskDocument(normalizedTitle, updatedTasks));
+
+  await deleteTaskDocuments(documents.filter((candidate) => candidate.key !== targetKey));
 
   return renderTaskDocument({
-    ...document,
+    key: targetKey,
+    fileName: document.fileName,
+    namespace: scope.primaryNamespace,
     title: normalizedTitle,
     tasks: updatedTasks,
   }, `Updated task list "${normalizedTitle}"`);
 }
 
-async function listTaskDocuments(namespace: string): Promise<TaskDocument[]> {
-  const response = await s3.send(new ListObjectsV2Command({
-    Bucket: FILESYSTEM_BUCKET_NAME,
-    Prefix: `${namespace}/tasks-`,
-  }));
+async function listTaskDocuments(scope: TaskNamespaceScope): Promise<TaskDocument[]> {
+  const documents = await loadTaskDocuments(scope);
+  const deduped = new Map<string, TaskDocument>();
 
-  const keys = (response.Contents ?? [])
-    .map((item) => item.Key)
-    .filter((key): key is string => typeof key === "string" && isTaskKey(namespace, key))
-    .sort((a, b) => a.localeCompare(b));
+  for (const document of documents) {
+    if (!deduped.has(document.title)) {
+      deduped.set(document.title, document);
+    }
+  }
 
-  const documents = await Promise.all(keys.map(async (key) => parseTaskDocument(key, await readObject(key))));
-  return documents.sort((a, b) => a.title.localeCompare(b.title));
+  return Array.from(deduped.values()).sort((a, b) => a.title.localeCompare(b.title));
 }
 
-async function findTaskDocumentByTitle(namespace: string, title: string): Promise<TaskDocument | null> {
-  const documents = await listTaskDocuments(namespace);
-  return documents.find((document) => document.title === title) ?? null;
+async function findTaskDocumentsByTitle(scope: TaskNamespaceScope, title: string): Promise<TaskDocument[]> {
+  const documents = await loadTaskDocuments(scope);
+  return documents.filter((document) => document.title === title);
 }
 
-function parseTaskDocument(key: string, content: string): TaskDocument {
+async function loadTaskDocuments(scope: TaskNamespaceScope): Promise<TaskDocument[]> {
+  const documents: TaskDocument[] = [];
+
+  for (const namespace of taskNamespaceCandidates(scope)) {
+    const response = await s3.send(new ListObjectsV2Command({
+      Bucket: FILESYSTEM_BUCKET_NAME,
+      Prefix: `${namespace}/tasks-`,
+    }));
+
+    const keys = (response.Contents ?? [])
+      .map((item) => item.Key)
+      .filter((key): key is string => typeof key === "string" && isTaskKey(namespace, key))
+      .sort((a, b) => a.localeCompare(b));
+
+    const parsed = await Promise.all(keys.map(async (key) => parseTaskDocument(namespace, key, await readObject(key))));
+    documents.push(...parsed);
+  }
+
+  return documents.sort((a, b) => {
+    if (a.title !== b.title) {
+      return a.title.localeCompare(b.title);
+    }
+
+    if (a.namespace !== b.namespace) {
+      return a.namespace === scope.primaryNamespace ? -1 : 1;
+    }
+
+    return a.key.localeCompare(b.key);
+  });
+}
+
+function parseTaskDocument(namespace: string, key: string, content: string): TaskDocument {
   const lines = content.split("\n");
   const titleLine = lines.find((line) => line.startsWith("# "));
   if (!titleLine) {
@@ -237,7 +297,13 @@ function parseTaskDocument(key: string, content: string): TaskDocument {
       text: match[2]!.trim(),
     }));
 
-  return { key, title, tasks };
+  return {
+    key,
+    fileName: key.slice(namespace.length + 1),
+    namespace,
+    title,
+    tasks,
+  };
 }
 
 function renderTaskDocument(document: TaskDocument, prefix?: string): string {
@@ -273,6 +339,15 @@ async function writeObject(key: string, body: string): Promise<void> {
     Body: body,
     ContentType: "text/markdown",
   }));
+}
+
+async function deleteTaskDocuments(documents: TaskDocument[]): Promise<void> {
+  for (const document of documents) {
+    await s3.send(new DeleteObjectCommand({
+      Bucket: FILESYSTEM_BUCKET_NAME,
+      Key: document.key,
+    }));
+  }
 }
 
 function isTaskKey(namespace: string, key: string): boolean {
