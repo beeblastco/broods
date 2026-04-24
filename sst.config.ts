@@ -1,6 +1,6 @@
 /// <reference path="./.sst/platform/config.d.ts" />
 
-// SST infrastructure for the single-entrypoint architecture: one streaming harness Lambda for both direct API calls and Telegram webhooks.
+// SST infrastructure for the single-entrypoint architecture: one streaming harness Lambda for direct API calls and optional channel webhooks.
 const AWS_REGION = "eu-central-1";
 const AWS_ACCOUNT_ID = "123456789012";
 const PROJECT_NAME = "filthy-panty";
@@ -12,6 +12,7 @@ const TELEGRAM_REACTION_EMOJI = "👀";
 const GITHUB_ALLOWED_REPOS = process.env.GITHUB_ALLOWED_REPOS ?? "open";
 const SLACK_ALLOWED_CHANNEL_IDS = process.env.SLACK_ALLOWED_CHANNEL_IDS ?? "open";
 const DISCORD_ALLOWED_GUILD_IDS = process.env.DISCORD_ALLOWED_GUILD_IDS ?? "open";
+const ENABLE_TELEGRAM_INTEGRATION = process.env.ENABLE_TELEGRAM_INTEGRATION === "true";
 const ENABLE_GITHUB_INTEGRATION = process.env.ENABLE_GITHUB_INTEGRATION === "true";
 const ENABLE_SLACK_INTEGRATION = process.env.ENABLE_SLACK_INTEGRATION === "true";
 const ENABLE_DISCORD_INTEGRATION = process.env.ENABLE_DISCORD_INTEGRATION === "true";
@@ -58,11 +59,11 @@ export default $config({
       memory: resourceName("memory", stage),
     };
 
-    const telegramBotToken = new sst.Secret("TelegramBotToken");
-    const telegramWebhookSecret = new sst.Secret("TelegramWebhookSecret");
-    const allowedChatIds = new sst.Secret("AllowedChatIds");
     const googleApiKey = new sst.Secret("GoogleApiKey");
     const tavilyApiKey = new sst.Secret("TavilyApiKey");
+    const telegramBotToken = ENABLE_TELEGRAM_INTEGRATION ? new sst.Secret("TelegramBotToken") : null;
+    const telegramWebhookSecret = ENABLE_TELEGRAM_INTEGRATION ? new sst.Secret("TelegramWebhookSecret") : null;
+    const allowedChatIds = ENABLE_TELEGRAM_INTEGRATION ? new sst.Secret("AllowedChatIds") : null;
     const gitHubWebhookSecret = ENABLE_GITHUB_INTEGRATION ? new sst.Secret("GitHubWebhookSecret") : null;
     const gitHubPrivateKey = ENABLE_GITHUB_INTEGRATION ? new sst.Secret("GitHubPrivateKey") : null;
     const gitHubAppId = ENABLE_GITHUB_INTEGRATION ? new sst.Secret("GitHubAppId") : null;
@@ -121,12 +122,16 @@ export default $config({
         PROCESSED_EVENTS_TABLE_NAME: processedEventsTable.name,
         SLIDING_CONTEXT_WINDOW,
         MAX_AGENT_ITERATIONS,
-        TELEGRAM_BOT_TOKEN: telegramBotToken.value,
-        TELEGRAM_WEBHOOK_SECRET: telegramWebhookSecret.value,
-        ALLOWED_CHAT_IDS: allowedChatIds.value,
-        TELEGRAM_REACTION_EMOJI,
         TAVILY_API_KEY: tavilyApiKey.value,
         FILESYSTEM_BUCKET_NAME: names.memory,
+        ...(ENABLE_TELEGRAM_INTEGRATION && telegramBotToken && telegramWebhookSecret && allowedChatIds
+          ? {
+            TELEGRAM_BOT_TOKEN: telegramBotToken.value,
+            TELEGRAM_WEBHOOK_SECRET: telegramWebhookSecret.value,
+            ALLOWED_CHAT_IDS: allowedChatIds.value,
+            TELEGRAM_REACTION_EMOJI,
+          }
+          : {}),
         ...(ENABLE_GITHUB_INTEGRATION && gitHubWebhookSecret && gitHubPrivateKey && gitHubAppId
           ? {
             GITHUB_WEBHOOK_SECRET: gitHubWebhookSecret.value,

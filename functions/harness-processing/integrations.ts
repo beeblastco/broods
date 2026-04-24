@@ -3,7 +3,12 @@
  * Keep request normalization, webhook routing, and per-channel lifecycle handling here.
  */
 
-import type { UserContent } from "ai";
+import type {
+  UserContent,
+} from "ai";
+import {
+  modelMessageSchema,
+} from "ai";
 import type { LambdaFunctionURLEvent } from "aws-lambda";
 import type {
   ChannelActions,
@@ -14,20 +19,15 @@ import type {
 import { extractText, isOpenAllowList } from "../_shared/channels.ts";
 import { parseCommand } from "../_shared/commands.ts";
 import { createDiscordChannel } from "../_shared/discord-channel.ts";
-import { optionalEnv, requireEnv } from "../_shared/env.ts";
+import { optionalEnv } from "../_shared/env.ts";
 import { createGitHubChannel } from "../_shared/github-channel.ts";
 import { logError } from "../_shared/log.ts";
 import type { LambdaResponse } from "../_shared/runtime.ts";
 import { createSlackChannel } from "../_shared/slack-channel.ts";
 import { createTelegramChannel } from "../_shared/telegram-channel.ts";
+import type { ConversationIngressEvent } from "./session.ts";
 
-const telegramChannel = createTelegramChannel(
-  requireEnv("TELEGRAM_BOT_TOKEN"),
-  requireEnv("TELEGRAM_WEBHOOK_SECRET"),
-  parseAllowedChatIds(requireEnv("ALLOWED_CHAT_IDS")),
-  requireEnv("TELEGRAM_REACTION_EMOJI"),
-);
-
+const telegramChannel = createOptionalTelegramChannel();
 const githubChannel = createOptionalGitHubChannel();
 const slackChannel = createOptionalSlackChannel();
 const discordChannel = createOptionalDiscordChannel();
@@ -39,15 +39,19 @@ const webhookChannels = [
   discordChannel,
 ].filter((channel): channel is ChannelAdapter => channel !== null);
 
-export interface InboundEvent {
+export interface DirectInboundEvent {
+  eventId: string;
+  conversationKey: string;
+  events: ConversationIngressEvent[];
+}
+
+export type HandlerEvent = DirectInboundEvent | LambdaFunctionURLEvent;
+
+export interface ChannelInboundEvent {
   eventId: string;
   conversationKey: string;
   content: UserContent;
-}
-
-export type HandlerEvent = InboundEvent | LambdaFunctionURLEvent;
-
-export interface ChannelInboundEvent extends InboundEvent {
+  events: ConversationIngressEvent[];
   channelName: string;
   source: Record<string, unknown>;
   channel: ChannelActions;
@@ -55,7 +59,7 @@ export interface ChannelInboundEvent extends InboundEvent {
 }
 
 interface IntegrationHandlers {
-  handleDirectRequest(event: InboundEvent): Promise<LambdaResponse>;
+  handleDirectRequest(event: DirectInboundEvent): Promise<LambdaResponse>;
   handleChannelRequest(event: ChannelInboundEvent): Promise<void>;
 }
 
@@ -149,6 +153,7 @@ async function handleChannelWebhook(
           eventId: message.eventId,
           conversationKey: message.conversationKey,
           content: message.content,
+          events: [{ role: "user", content: message.content }],
           channelName: message.channelName,
           source: message.source,
           channel,
@@ -239,6 +244,10 @@ function isLambdaUrlEvent(event: HandlerEvent): event is LambdaFunctionURLEvent 
 }
 
 function detectUnconfiguredChannel(headers: Record<string, string>): LambdaResponse | null {
+  if ("x-telegram-bot-api-secret-token" in headers && !telegramChannel) {
+    return integrationNotConfigured("Telegram");
+  }
+
   if ("x-github-event" in headers && !githubChannel) {
     return integrationNotConfigured("GitHub");
   }
@@ -262,7 +271,7 @@ function integrationNotConfigured(name: string): LambdaResponse {
   };
 }
 
-function parseDirectPayload(bodyText: string): InboundEvent {
+function parseDirectPayload(bodyText: string): DirectInboundEvent {
   let parsed: unknown;
 
   try {
@@ -275,13 +284,64 @@ function parseDirectPayload(bodyText: string): InboundEvent {
     typeof parsed !== "object" ||
     parsed === null ||
     typeof (parsed as Record<string, unknown>).eventId !== "string" ||
-    typeof (parsed as Record<string, unknown>).conversationKey !== "string" ||
-    !("content" in (parsed as Record<string, unknown>))
+    typeof (parsed as Record<string, unknown>).conversationKey !== "string"
   ) {
-    throw new Error("Request body must include eventId, conversationKey, and content");
+    throw new Error("Request body must include eventId and conversationKey");
   }
 
-  return parsed as InboundEvent;
+  const record = parsed as Record<string, unknown>;
+  const events = parseDirectIngressEvents(record);
+  if (events.length === 0) {
+    throw new Error("Request body must include a non-empty events array");
+  }
+
+  return {
+    eventId: record.eventId as string,
+    conversationKey: record.conversationKey as string,
+    events,
+  };
+}
+
+function parseDirectIngressEvents(record: Record<string, unknown>): ConversationIngressEvent[] {
+  const explicitEvents = record.events;
+
+  if (explicitEvents == null) {
+    return [];
+  }
+
+  if (!Array.isArray(explicitEvents)) {
+    throw new Error("Request body field 'events' must be an array");
+  }
+
+  return explicitEvents.map(parseDirectIngressEvent);
+}
+
+function parseDirectIngressEvent(rawEvent: unknown): ConversationIngressEvent {
+  if (!rawEvent || typeof rawEvent !== "object") {
+    throw new Error("Each direct event must be an object");
+  }
+
+  const candidate = rawEvent as Record<string, unknown>;
+  const persist = candidate.persist;
+  if (persist !== undefined && typeof persist !== "boolean") {
+    throw new Error("Event field 'persist' must be a boolean when provided");
+  }
+
+  if (persist !== undefined && candidate.role !== "system") {
+    throw new Error("Only system-role events may set persist");
+  }
+
+  const parsed = modelMessageSchema.safeParse(candidate);
+  if (!parsed.success) {
+    throw new Error(`Invalid direct event: ${parsed.error.issues[0]?.message ?? "must match ModelMessage"}`);
+  }
+
+  return parsed.data.role === "system"
+    ? {
+      ...parsed.data,
+      ...(persist === undefined ? {} : { persist }),
+    }
+    : parsed.data;
 }
 
 function parseAllowedChatIds(raw: string): Set<number> {
@@ -308,6 +368,22 @@ function parseStringAllowList(raw: string | undefined): Set<string> | null {
     .filter((value) => value.length > 0) ?? [];
 
   return values.length > 0 ? new Set(values) : null;
+}
+
+function createOptionalTelegramChannel(): ChannelAdapter | null {
+  const botToken = optionalEnv("TELEGRAM_BOT_TOKEN");
+  const webhookSecret = optionalEnv("TELEGRAM_WEBHOOK_SECRET");
+  const allowedChatIdsRaw = optionalEnv("ALLOWED_CHAT_IDS");
+  if (!botToken || !webhookSecret || !allowedChatIdsRaw) {
+    return null;
+  }
+
+  return createTelegramChannel(
+    botToken,
+    webhookSecret,
+    parseAllowedChatIds(allowedChatIdsRaw),
+    optionalEnv("TELEGRAM_REACTION_EMOJI") ?? "👀",
+  );
 }
 
 function createOptionalGitHubChannel(): ChannelAdapter | null {

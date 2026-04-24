@@ -4,10 +4,10 @@
   "type": "module",
   "private": true,
   "scripts": {
-    "postinstall": "bun run scripts/sync-system-prompt.ts && sst install",
-    "dev": "bun run scripts/sync-system-prompt.ts && sst dev",
+    "postinstall": "bun run scripts/system-prompt.ts && sst install",
+    "dev": "bun run scripts/system-prompt.ts && sst dev",
     "build": "bun run scripts/build.ts",
-    "check": "bun run scripts/sync-system-prompt.ts && bunx tsc --noEmit",
+    "check": "bun run scripts/system-prompt.ts && bunx tsc --noEmit",
     "deploy": "bun run build && sst deploy",
     "remove": "sst remove"
   },

@@ -8,15 +8,15 @@ It has some quirks, but the goal is cost-optimized (maybe free when usage under 
 
 One public Lambda Function URL, deployed with SST:
 
-- **harness-processing** — Streaming Function URL (`RESPONSE_STREAM` invoke mode). Accepts both direct API calls and supported channel webhooks, verifies and normalizes inbound requests in `functions/harness-processing/integrations.ts`, deduplicates events, loads DynamoDB conversation history, runs the Vercel AI SDK `streamText` loop, and emits SSE only for direct API callers.
+- **harness-processing** — Streaming Function URL (`RESPONSE_STREAM` invoke mode). Accepts direct API calls by default and supported channel webhooks when enabled, verifies and normalizes inbound requests in `functions/harness-processing/integrations.ts`, deduplicates events, loads event-backed conversation context from DynamoDB, runs the Vercel AI SDK `streamText` loop, and emits SSE only for direct API callers.
 
 ```mermaid
 flowchart TD
   A["Direct API caller"] --> B["harness-processing Function URL"]
-  C["Telegram / GitHub / Slack / Discord webhook"] --> B
+  C["Optional Telegram / GitHub / Slack / Discord webhook"] --> B
   B --> D["Normalize + verify in integrations.ts"]
   D --> E["Dedup (DynamoDB)"]
-  E --> F["Load conversation history (DynamoDB)"]
+  E --> F["Load event-backed context (DynamoDB + S3)"]
   F --> G["streamText() with tools + thinking"]
   G --> H["SSE for direct callers"]
   G --> I["Channel reply actions for webhook callers"]
@@ -24,21 +24,48 @@ flowchart TD
 
 ## Request Format
 
-POST to the harness-processing Function URL:
+POST to the harness-processing Function URL with:
 
 ```json
 {
   "eventId": "unique-id-for-dedup",
   "conversationKey": "conversation-identifier",
-  "content": [
-    { "type": "text", "text": "Hello" }
+  "events": [
+    {
+      "role": "user",
+      "content": [
+        { "type": "text", "text": "Hello" }
+      ]
+    }
   ]
 }
 ```
 
-`content` follows the Vercel AI SDK `UserContent` type — accepts a plain string or an array of content parts (`text`, `image`, `file`) for multimodal input.
+`events` is a list of Vercel AI SDK model messages. `eventId` prevents duplicate processing (e.g., webhook retries). `conversationKey` identifies which DynamoDB conversation to load/persist.
 
-`eventId` prevents duplicate processing (e.g., webhook retries). `conversationKey` identifies which DynamoDB conversation to load/persist.
+Direct API callers can send system-role injections too:
+
+```json
+{
+  "eventId": "unique-id-for-dedup",
+  "conversationKey": "conversation-identifier",
+  "events": [
+    {
+      "role": "system",
+      "content": "The next answer should be terse.",
+      "persist": false
+    },
+    {
+      "role": "user",
+      "content": [
+        { "type": "text", "text": "What is the capital of France?" }
+      ]
+    }
+  ]
+}
+```
+
+System-role events are supported only on the direct API path. Set `persist` to `false` for per-request injected context or `true` to store it in the DynamoDB event log for future turns.
 
 ## Stack
 
@@ -71,10 +98,10 @@ The `harness-processing` Lambda gets these values from the `environment` block i
 - `PROCESSED_EVENTS_TABLE_NAME`
 - `SLIDING_CONTEXT_WINDOW`
 - `MAX_AGENT_ITERATIONS`
-- `TELEGRAM_BOT_TOKEN`
-- `TELEGRAM_WEBHOOK_SECRET`
-- `ALLOWED_CHAT_IDS`
-- `TELEGRAM_REACTION_EMOJI`
+- `TELEGRAM_BOT_TOKEN` when `ENABLE_TELEGRAM_INTEGRATION=true`
+- `TELEGRAM_WEBHOOK_SECRET` when `ENABLE_TELEGRAM_INTEGRATION=true`
+- `ALLOWED_CHAT_IDS` when `ENABLE_TELEGRAM_INTEGRATION=true`
+- `TELEGRAM_REACTION_EMOJI` when `ENABLE_TELEGRAM_INTEGRATION=true`
 - `GITHUB_WEBHOOK_SECRET` when `ENABLE_GITHUB_INTEGRATION=true`
 - `GITHUB_APP_ID` when `ENABLE_GITHUB_INTEGRATION=true`
 - `GITHUB_PRIVATE_KEY` when `ENABLE_GITHUB_INTEGRATION=true`
@@ -98,6 +125,7 @@ For normal SST usage, keep `.env` limited to local CLI settings such as:
 
 - `AWS_PROFILE`
 - `SST_STAGE`
+- `ENABLE_TELEGRAM_INTEGRATION`
 - `ENABLE_GITHUB_INTEGRATION`
 - `ENABLE_SLACK_INTEGRATION`
 - `ENABLE_DISCORD_INTEGRATION`
@@ -110,9 +138,9 @@ This repo defines these SST secrets in `sst.config.ts`:
 
 - `GoogleApiKey`
 - `TavilyApiKey`
-- `TelegramBotToken`
-- `TelegramWebhookSecret`
-- `AllowedChatIds`
+- `TelegramBotToken` when `ENABLE_TELEGRAM_INTEGRATION=true`
+- `TelegramWebhookSecret` when `ENABLE_TELEGRAM_INTEGRATION=true`
+- `AllowedChatIds` when `ENABLE_TELEGRAM_INTEGRATION=true`
 - `GitHubWebhookSecret`
 - `GitHubAppId`
 - `GitHubPrivateKey`
@@ -126,9 +154,6 @@ Set them one by one with the SST CLI:
 ```bash
 bunx sst secret set GoogleApiKey <value>
 bunx sst secret set TavilyApiKey <value>
-bunx sst secret set TelegramBotToken <value>
-bunx sst secret set TelegramWebhookSecret <value>
-bunx sst secret set AllowedChatIds <comma-separated-chat-ids>
 bunx sst secret set GitHubWebhookSecret <value>
 bunx sst secret set GitHubAppId <value>
 bunx sst secret set GitHubPrivateKey < private-key.pem
@@ -136,6 +161,14 @@ bunx sst secret set SlackBotToken <value>
 bunx sst secret set SlackSigningSecret <value>
 bunx sst secret set DiscordBotToken <value>
 bunx sst secret set DiscordPublicKey <value>
+```
+
+When Telegram is enabled, also set:
+
+```bash
+bunx sst secret set TelegramBotToken <value>
+bunx sst secret set TelegramWebhookSecret <value>
+bunx sst secret set AllowedChatIds <comma-separated-chat-ids>
 ```
 
 SST secrets are stage-specific. If you are not running `sst dev`, run `sst deploy` after setting them so the deployed app picks up the new values.
@@ -147,6 +180,7 @@ The extra integrations are opt-in in `sst.config.ts`. Set these in your local `.
 - `ENABLE_GITHUB_INTEGRATION=true`
 - `ENABLE_SLACK_INTEGRATION=true`
 - `ENABLE_DISCORD_INTEGRATION=true`
+- `ENABLE_TELEGRAM_INTEGRATION=true`
 
 Optional allow lists are read from the SST config environment and default to `open`:
 

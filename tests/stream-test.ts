@@ -4,7 +4,17 @@ import { fetchWithTiming, printTimingResults } from "./utils";
 const result = await fetchWithTiming(FUNCTION_URL, {
   eventId: `test-${Date.now()}`,
   conversationKey: `test-${Date.now()}`,
-  content: [{ type: "text", text: "Count from 1 to 10 slowly, one number per line." }],
+  events: [
+    {
+      role: "system",
+      content: "Reply with plain text only and no commentary.",
+      persist: false,
+    },
+    {
+      role: "user",
+      content: [{ type: "text", text: "Count from 1 to 10 slowly, one number per line." }],
+    },
+  ],
 });
 
 console.log("\nStatus:", result.response.status);

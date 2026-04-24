@@ -17,3 +17,7 @@ export const DEFAULT_SYSTEM_PROMPT = ${JSON.stringify(systemPrompt)};
   await mkdir(GENERATED_DIR, { recursive: true });
   await writeFile(SYSTEM_PROMPT_MODULE, moduleSource);
 }
+
+if (import.meta.main) {
+  await syncSystemPromptModule();
+}
