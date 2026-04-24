@@ -8,6 +8,7 @@ import type {
   ChannelAdapter,
   ChannelParseResult
 } from "./channels.ts";
+import { formatDiscordMessage } from "./channel-format.ts";
 import { resolveDiscordCommand } from "./commands.ts";
 import { verifyDiscordSignature } from "./discord-signature.ts";
 import { logWarn } from "./log.ts";
@@ -167,7 +168,7 @@ function createDiscordActions(
 ): ChannelActions {
   return {
     async sendText(text) {
-      const chunks = splitDiscordMessage(text);
+      const chunks = splitDiscordMessage(formatDiscordMessage(text));
 
       for (const [index, chunk] of chunks.entries()) {
         const response = await fetch(

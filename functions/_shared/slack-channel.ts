@@ -9,6 +9,7 @@ import type {
   ChannelAdapter,
   ChannelParseResult
 } from "./channels.ts";
+import { formatSlackMessage } from "./channel-format.ts";
 import { logWarn } from "./log.ts";
 
 interface SlackEventEnvelope {
@@ -229,11 +230,13 @@ function createSlackActions(
 ): ChannelActions {
   return {
     async sendText(text) {
+      const formattedText = formatSlackMessage(text);
+
       if (source.responseUrl) {
         const response = await fetch(source.responseUrl, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ text, response_type: "in_channel" }),
+          body: JSON.stringify({ text: formattedText, response_type: "in_channel" }),
         });
         if (!response.ok) {
           throw new Error(`Slack response_url failed (${response.status})`);
@@ -243,7 +246,7 @@ function createSlackActions(
 
       await slackApi(botToken, "chat.postMessage", {
         channel: source.channelId,
-        text,
+        text: formattedText,
         ...(source.threadTs ? { thread_ts: source.threadTs } : {}),
       });
     },
