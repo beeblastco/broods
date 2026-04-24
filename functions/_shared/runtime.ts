@@ -23,11 +23,14 @@ export type StreamingLambdaHandler<TPayload = unknown> = (
   context: LambdaInvocation,
 ) => Promise<LambdaResponse>;
 
-const RUNTIME_API = process.env.AWS_LAMBDA_RUNTIME_API!;
-const NEXT_URL = `http://${RUNTIME_API}/2018-06-01/runtime/invocation/next`;
 const HTTP_INTEGRATION_CONTENT_TYPE = "application/vnd.awslambda.http-integration-response";
 const NULL_SEPARATOR = new Uint8Array(8);
 const textEncoder = new TextEncoder();
+
+interface RuntimeDependencies {
+  fetchImpl?: typeof fetch;
+  runtimeApi?: string;
+}
 
 function parseInvocationHeaders(res: Response): { requestId: string; context: LambdaInvocation } {
   const requestId = res.headers.get("lambda-runtime-aws-request-id")!;
@@ -42,10 +45,14 @@ function parseInvocationHeaders(res: Response): { requestId: string; context: La
   };
 }
 
-async function reportError(requestId: string, err: unknown): Promise<void> {
+async function reportError(
+  requestId: string,
+  err: unknown,
+  dependencies: RuntimeDependencies = {},
+): Promise<void> {
   const error = err instanceof Error ? err : new Error(String(err));
-  await fetch(
-    `http://${RUNTIME_API}/2018-06-01/runtime/invocation/${requestId}/error`,
+  await resolveFetch(dependencies)(
+    `${runtimeBaseUrl(dependencies)}/2018-06-01/runtime/invocation/${requestId}/error`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -58,45 +65,52 @@ async function reportError(requestId: string, err: unknown): Promise<void> {
   );
 }
 
+export async function processNextRuntimeInvocation<TPayload>(
+  handler: StreamingLambdaHandler<TPayload>,
+  dependencies: RuntimeDependencies = {},
+): Promise<void> {
+  const res = await resolveFetch(dependencies)(`${runtimeBaseUrl(dependencies)}/2018-06-01/runtime/invocation/next`);
+  const { requestId, context } = parseInvocationHeaders(res);
+  const payloadText = await res.text();
+
+  let payload: TPayload;
+  try {
+    payload = JSON.parse(payloadText) as TPayload;
+  } catch (parseErr) {
+    await reportError(requestId, new Error(`Invalid JSON: ${parseErr}`), dependencies);
+    return;
+  }
+
+  try {
+    const response = await handler(payload, context);
+    await resolveFetch(dependencies)(
+      `${runtimeBaseUrl(dependencies)}/2018-06-01/runtime/invocation/${requestId}/response`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": HTTP_INTEGRATION_CONTENT_TYPE,
+          "Lambda-Runtime-Function-Response-Mode": "streaming",
+          "Transfer-Encoding": "chunked",
+        },
+        body: encodeResponse(response),
+        duplex: "half",
+      },
+    );
+    await response.afterResponse;
+  } catch (err: unknown) {
+    await reportError(requestId, err, dependencies);
+  }
+}
+
 export async function startStreamingRuntime<TPayload>(
   handler: StreamingLambdaHandler<TPayload>,
 ): Promise<never> {
   for (; ;) {
-    const res = await fetch(NEXT_URL);
-    const { requestId, context } = parseInvocationHeaders(res);
-    const payloadText = await res.text();
-
-    let payload: TPayload;
-    try {
-      payload = JSON.parse(payloadText) as TPayload;
-    } catch (parseErr) {
-      await reportError(requestId, new Error(`Invalid JSON: ${parseErr}`));
-      continue;
-    }
-
-    try {
-      const response = await handler(payload, context);
-      await fetch(
-        `http://${RUNTIME_API}/2018-06-01/runtime/invocation/${requestId}/response`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": HTTP_INTEGRATION_CONTENT_TYPE,
-            "Lambda-Runtime-Function-Response-Mode": "streaming",
-            "Transfer-Encoding": "chunked",
-          },
-          body: encodeResponse(response),
-          duplex: "half",
-        },
-      );
-      await response.afterResponse;
-    } catch (err: unknown) {
-      await reportError(requestId, err);
-    }
+    await processNextRuntimeInvocation(handler);
   }
 }
 
-function encodeResponse(response: LambdaResponse): ReadableStream<Uint8Array> {
+export function encodeResponse(response: LambdaResponse): ReadableStream<Uint8Array> {
   const metadata = {
     statusCode: response.statusCode ?? 200,
     headers: response.headers ?? {},
@@ -139,6 +153,19 @@ function streamFromBytes(bytes: Uint8Array): ReadableStream<Uint8Array> {
       controller.close();
     },
   });
+}
+
+function resolveFetch(dependencies: RuntimeDependencies): typeof fetch {
+  return dependencies.fetchImpl ?? fetch;
+}
+
+function runtimeBaseUrl(dependencies: RuntimeDependencies): string {
+  const runtimeApi = dependencies.runtimeApi ?? process.env.AWS_LAMBDA_RUNTIME_API;
+  if (!runtimeApi) {
+    throw new Error("Missing required environment variable: AWS_LAMBDA_RUNTIME_API");
+  }
+
+  return `http://${runtimeApi}`;
 }
 
 function concatStreams(
