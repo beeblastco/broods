@@ -27,9 +27,13 @@ jobs:
       AWS_ROLE_ARN: ${{ vars.AWS_ROLE_ARN }}
       INPUT_STAGE: ${{ inputs.stage }}
       DEFAULT_STAGE: ${{ vars.SST_STAGE }}
-      ENABLE_GITHUB_INTEGRATION: "true"
-      ENABLE_SLACK_INTEGRATION: "true"
-      ENABLE_DISCORD_INTEGRATION: "true"
+      ENABLE_TELEGRAM_INTEGRATION: ${{ vars.ENABLE_TELEGRAM_INTEGRATION || 'false' }}
+      ENABLE_GITHUB_INTEGRATION: ${{ vars.ENABLE_GITHUB_INTEGRATION || 'true' }}
+      ENABLE_SLACK_INTEGRATION: ${{ vars.ENABLE_SLACK_INTEGRATION || 'true' }}
+      ENABLE_DISCORD_INTEGRATION: ${{ vars.ENABLE_DISCORD_INTEGRATION || 'true' }}
+      GITHUB_ALLOWED_REPOS: ${{ vars.GITHUB_ALLOWED_REPOS || 'open' }}
+      SLACK_ALLOWED_CHANNEL_IDS: ${{ vars.SLACK_ALLOWED_CHANNEL_IDS || 'open' }}
+      DISCORD_ALLOWED_GUILD_IDS: ${{ vars.DISCORD_ALLOWED_GUILD_IDS || 'open' }}
       SST_SECRET_TelegramBotToken: ${{ secrets.SST_SECRET_TelegramBotToken }}
       SST_SECRET_TelegramWebhookSecret: ${{ secrets.SST_SECRET_TelegramWebhookSecret }}
       SST_SECRET_AllowedChatIds: ${{ secrets.SST_SECRET_AllowedChatIds }}
@@ -90,6 +94,7 @@ jobs:
         run: bunx sst deploy --stage "$SST_STAGE"
 
       - name: Sync Telegram webhook
+        if: ${{ env.ENABLE_TELEGRAM_INTEGRATION == 'true' }}
         shell: bash
         run: |
           set -euo pipefail

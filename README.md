@@ -129,8 +129,13 @@ For normal SST usage, keep `.env` limited to local CLI settings such as:
 - `ENABLE_GITHUB_INTEGRATION`
 - `ENABLE_SLACK_INTEGRATION`
 - `ENABLE_DISCORD_INTEGRATION`
+- `GITHUB_ALLOWED_REPOS`
+- `SLACK_ALLOWED_CHANNEL_IDS`
+- `DISCORD_ALLOWED_GUILD_IDS`
 
 Use `.env.example` as the template for that local file.
+
+Do not put deployed API keys, webhook secrets, or bot tokens in `.env`.
 
 ### Set SST Secrets
 
@@ -193,10 +198,42 @@ Optional allow lists are read from the SST config environment and default to `op
 If you prefer a dotenv-style file for secrets, copy `secrets.env.example` to `secrets.env`, fill in your values, and load them with:
 
 ```bash
-sst secret load ./secrets.env
+bunx sst secret load ./secrets.env
 ```
 
 The SST CLI supports loading a dotenv-formatted file this way.
+
+### GitHub Actions Deploy Config
+
+The deploy workflow reads GitHub repository variables for non-secret config:
+
+- `AWS_REGION`
+- `AWS_ROLE_ARN`
+- `SST_STAGE`
+- `ENABLE_TELEGRAM_INTEGRATION`
+- `ENABLE_GITHUB_INTEGRATION`
+- `ENABLE_SLACK_INTEGRATION`
+- `ENABLE_DISCORD_INTEGRATION`
+- `GITHUB_ALLOWED_REPOS`
+- `SLACK_ALLOWED_CHANNEL_IDS`
+- `DISCORD_ALLOWED_GUILD_IDS`
+
+It reads GitHub repository secrets for SST secret values, using the `SST_SECRET_` prefix expected by SST in CI:
+
+- `SST_SECRET_GoogleApiKey`
+- `SST_SECRET_TavilyApiKey`
+- `SST_SECRET_TelegramBotToken` only when `ENABLE_TELEGRAM_INTEGRATION=true`
+- `SST_SECRET_TelegramWebhookSecret` only when `ENABLE_TELEGRAM_INTEGRATION=true`
+- `SST_SECRET_AllowedChatIds` only when `ENABLE_TELEGRAM_INTEGRATION=true`
+- `SST_SECRET_GitHubWebhookSecret` only when `ENABLE_GITHUB_INTEGRATION=true`
+- `SST_SECRET_GitHubAppId` only when `ENABLE_GITHUB_INTEGRATION=true`
+- `SST_SECRET_GitHubPrivateKey` only when `ENABLE_GITHUB_INTEGRATION=true`
+- `SST_SECRET_SlackBotToken` only when `ENABLE_SLACK_INTEGRATION=true`
+- `SST_SECRET_SlackSigningSecret` only when `ENABLE_SLACK_INTEGRATION=true`
+- `SST_SECRET_DiscordBotToken` only when `ENABLE_DISCORD_INTEGRATION=true`
+- `SST_SECRET_DiscordPublicKey` only when `ENABLE_DISCORD_INTEGRATION=true`
+
+If `ENABLE_TELEGRAM_INTEGRATION=false`, the deploy workflow skips Telegram webhook sync and no Telegram GitHub secrets are required.
 
 ## Adding Things
 
