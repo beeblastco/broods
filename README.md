@@ -235,6 +235,8 @@ The deploy workflow reads GitHub repository variables for non-secret config:
 - `GITHUB_ALLOWED_REPOS`
 - `SLACK_ALLOWED_CHANNEL_IDS`
 - `DISCORD_ALLOWED_GUILD_IDS`
+- `DISCORD_APPLICATION_ID` when `ENABLE_DISCORD_INTEGRATION=true`
+- `DISCORD_SYNC_GUILD_ID` optional for immediate guild-scoped Discord command updates
 
 It reads GitHub repository secrets for SST secret values, using the `SST_SECRET_` prefix expected by SST in CI:
 
@@ -250,6 +252,8 @@ It reads GitHub repository secrets for SST secret values, using the `SST_SECRET_
 - `SST_SECRET_SlackSigningSecret` only when `ENABLE_SLACK_INTEGRATION=true`
 - `SST_SECRET_DiscordBotToken` only when `ENABLE_DISCORD_INTEGRATION=true`
 - `SST_SECRET_DiscordPublicKey` only when `ENABLE_DISCORD_INTEGRATION=true`
+
+If `ENABLE_DISCORD_INTEGRATION=true`, the deploy workflow also runs `bun run discord:sync` after `sst deploy`. Set `DISCORD_APPLICATION_ID` as a repository variable, and optionally set `DISCORD_SYNC_GUILD_ID` when you want the workflow to overwrite guild-scoped commands instead of global commands.
 
 If `ENABLE_TELEGRAM_INTEGRATION=false`, the deploy workflow skips Telegram webhook sync and no Telegram GitHub secrets are required.
 

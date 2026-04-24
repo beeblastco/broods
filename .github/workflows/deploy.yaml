@@ -34,6 +34,8 @@ jobs:
       GITHUB_ALLOWED_REPOS: ${{ vars.GITHUB_ALLOWED_REPOS || 'open' }}
       SLACK_ALLOWED_CHANNEL_IDS: ${{ vars.SLACK_ALLOWED_CHANNEL_IDS || 'open' }}
       DISCORD_ALLOWED_GUILD_IDS: ${{ vars.DISCORD_ALLOWED_GUILD_IDS || 'open' }}
+      DISCORD_APPLICATION_ID: ${{ vars.DISCORD_APPLICATION_ID }}
+      DISCORD_SYNC_GUILD_ID: ${{ vars.DISCORD_SYNC_GUILD_ID }}
       SST_SECRET_TelegramBotToken: ${{ secrets.SST_SECRET_TelegramBotToken }}
       SST_SECRET_TelegramWebhookSecret: ${{ secrets.SST_SECRET_TelegramWebhookSecret }}
       SST_SECRET_AllowedChatIds: ${{ secrets.SST_SECRET_AllowedChatIds }}
@@ -92,6 +94,26 @@ jobs:
 
       - name: Deploy SST app
         run: bunx sst deploy --stage "$SST_STAGE"
+
+      - name: Sync Discord commands
+        if: ${{ env.ENABLE_DISCORD_INTEGRATION == 'true' }}
+        env:
+          DISCORD_BOT_TOKEN: ${{ secrets.SST_SECRET_DiscordBotToken }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ -z "${DISCORD_APPLICATION_ID:-}" ]]; then
+            echo "Missing required repository variable: DISCORD_APPLICATION_ID" >&2
+            exit 1
+          fi
+
+          if [[ -z "${DISCORD_BOT_TOKEN:-}" ]]; then
+            echo "Missing required repository secret: SST_SECRET_DiscordBotToken" >&2
+            exit 1
+          fi
+
+          bun run discord:sync
 
       - name: Sync Telegram webhook
         if: ${{ env.ENABLE_TELEGRAM_INTEGRATION == 'true' }}
