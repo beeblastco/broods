@@ -42,7 +42,7 @@ interface TimingResult {
   response: Response;
 }
 
-export function requireTestEnv(name: string): string {
+export function requireManualEnv(name: string): string {
   const value = process.env[name];
   if (!value) {
     throw new Error(`Missing required environment variable: ${name}`);
@@ -64,7 +64,7 @@ export async function fetchWithTiming(
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      "Authorization": `Bearer ${requireTestEnv("DIRECT_API_SECRET")}`,
+      "Authorization": `Bearer ${requireManualEnv("DIRECT_API_SECRET")}`,
     },
     body: JSON.stringify(body),
   });

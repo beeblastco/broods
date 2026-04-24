@@ -32,8 +32,8 @@ import { requireEnv } from "../_shared/env.ts";
 import { logError, logInfo } from "../_shared/log.ts";
 import {
   conversationLeaseKey,
-  filesystemNamespaceCandidates,
-} from "./utils.ts";
+  normalizeFilesystemNamespace,
+} from "./filesystem-namespace.ts";
 
 const CONVERSATIONS_TABLE_NAME = requireEnv("CONVERSATIONS_TABLE_NAME");
 const PROCESSED_EVENTS_TABLE_NAME = requireEnv("PROCESSED_EVENTS_TABLE_NAME");
@@ -323,22 +323,17 @@ export class Session {
   }
 
   private async loadMemoryFile(): Promise<string | null> {
-    const keys = filesystemNamespaceCandidates(this.conversationKey)
-      .map((namespace) => `${namespace}/MEMORY.md`);
+    const key = `${normalizeFilesystemNamespace(this.conversationKey)}/MEMORY.md`;
 
-    for (const key of keys) {
-      try {
-        const response = await s3.send(new GetObjectCommand({
-          Bucket: FILESYSTEM_BUCKET_NAME,
-          Key: key,
-        }));
+    try {
+      const response = await s3.send(new GetObjectCommand({
+        Bucket: FILESYSTEM_BUCKET_NAME,
+        Key: key,
+      }));
 
-        return await response.Body?.transformToString() ?? "";
-      } catch (error) {
-        if (isMissingS3Object(error)) {
-          continue;
-        }
-
+      return await response.Body?.transformToString() ?? "";
+    } catch (error) {
+      if (!isMissingS3Object(error)) {
         logError("Failed to load MEMORY.md for session prompt", {
           conversationKey: this.conversationKey,
           key,
@@ -351,7 +346,7 @@ export class Session {
     if (!this.hasLoggedMissingMemoryFile) {
       logInfo("No MEMORY.md found for session prompt", {
         conversationKey: this.conversationKey,
-        keys,
+        key,
       });
       this.hasLoggedMissingMemoryFile = true;
     }

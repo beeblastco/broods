@@ -29,8 +29,8 @@ import { logError } from "../_shared/log.ts";
 import type { LambdaResponse } from "../_shared/runtime.ts";
 import { createSlackChannel } from "../_shared/slack-channel.ts";
 import { createTelegramChannel } from "../_shared/telegram-channel.ts";
+import { INTERNAL_EVENT_ID_PREFIX } from "./filesystem-namespace.ts";
 import type { ConversationIngressEvent } from "./session.ts";
-import { INTERNAL_EVENT_ID_PREFIX } from "./utils.ts";
 
 const DIRECT_API_EVENT_ID_PREFIX = "api:";
 const DIRECT_API_CONVERSATION_PREFIX = "api:";
@@ -51,25 +51,11 @@ const RESERVED_CONVERSATION_PREFIXES = [
   "tg:",
   "discord:",
 ] as const;
-const ENABLE_DIRECT_API = optionalEnv("ENABLE_DIRECT_API") === "true";
-const DIRECT_API_SECRET = optionalEnv("DIRECT_API_SECRET");
 const CLOSED_ALLOW_LIST = "closed";
 
 type DirectIngressEvent =
   | UserModelMessage
   | (SystemModelMessage & { persist: false });
-
-const telegramChannel = createOptionalTelegramChannel();
-const githubChannel = createOptionalGitHubChannel();
-const slackChannel = createOptionalSlackChannel();
-const discordChannel = createOptionalDiscordChannel();
-
-const webhookChannels = [
-  telegramChannel,
-  githubChannel,
-  slackChannel,
-  discordChannel,
-].filter((channel): channel is ChannelAdapter => channel !== null);
 
 export interface DirectInboundEvent {
   eventId: string;
@@ -77,7 +63,7 @@ export interface DirectInboundEvent {
   events: DirectIngressEvent[];
 }
 
-export type HandlerEvent = DirectInboundEvent | LambdaFunctionURLEvent;
+export type HandlerEvent = LambdaFunctionURLEvent;
 
 export interface ChannelInboundEvent {
   eventId: string;
@@ -95,20 +81,38 @@ interface IntegrationHandlers {
   handleChannelRequest(event: ChannelInboundEvent): Promise<void>;
 }
 
+export interface ChannelRegistry {
+  telegramChannel: ChannelAdapter | null;
+  githubChannel: ChannelAdapter | null;
+  slackChannel: ChannelAdapter | null;
+  discordChannel: ChannelAdapter | null;
+  webhookChannels: ChannelAdapter[];
+}
+
+interface IntegrationRoutingOptions {
+  channelRegistry?: ChannelRegistry;
+}
+
 export async function routeIncomingEvent(
   event: HandlerEvent,
   handlers: IntegrationHandlers,
 ): Promise<LambdaResponse> {
-  if (!isLambdaUrlEvent(event)) {
-    return handlers.handleDirectRequest(event);
-  }
+  return createIncomingEventRouter()(event, handlers);
+}
 
-  return handleLambdaUrlEvent(event, handlers);
+export function createIncomingEventRouter(options: IntegrationRoutingOptions = {}) {
+  const channelRegistry = options.channelRegistry ?? createChannelRegistry();
+
+  return async (
+    event: HandlerEvent,
+    handlers: IntegrationHandlers,
+  ): Promise<LambdaResponse> => handleLambdaUrlEvent(event, handlers, channelRegistry);
 }
 
 async function handleLambdaUrlEvent(
   event: LambdaFunctionURLEvent,
   handlers: IntegrationHandlers,
+  channelRegistry: ChannelRegistry,
 ): Promise<LambdaResponse> {
   const method = event.requestContext.http.method;
 
@@ -135,17 +139,17 @@ async function handleLambdaUrlEvent(
     body: decodeBody(event.body, event.isBase64Encoded),
   } satisfies ChannelRequest;
 
-  const matchedChannel = webhookChannels.find((channel) => channel.canHandle(request));
+  const matchedChannel = channelRegistry.webhookChannels.find((channel) => channel.canHandle(request));
   if (matchedChannel) {
     return handleChannelWebhook(matchedChannel, request, handlers);
   }
 
-  const unavailableResponse = detectUnconfiguredChannel(request.headers);
+  const unavailableResponse = detectUnconfiguredChannel(request.headers, channelRegistry);
   if (unavailableResponse) {
     return unavailableResponse;
   }
 
-  if (!ENABLE_DIRECT_API || !DIRECT_API_SECRET) {
+  if (optionalEnv("ENABLE_DIRECT_API") !== "true" || !optionalEnv("DIRECT_API_SECRET")) {
     return {
       statusCode: 503,
       headers: { "Content-Type": "text/plain; charset=utf-8" },
@@ -153,7 +157,7 @@ async function handleLambdaUrlEvent(
     };
   }
 
-  if (!isAuthorizedDirectApiRequest(request.headers, DIRECT_API_SECRET)) {
+  if (!isAuthorizedDirectApiRequest(request.headers, optionalEnv("DIRECT_API_SECRET") ?? "")) {
     return {
       statusCode: 401,
       headers: { "Content-Type": "text/plain; charset=utf-8" },
@@ -295,24 +299,23 @@ function decodeBody(body: string | undefined, isBase64Encoded?: boolean): string
   return isBase64Encoded ? Buffer.from(raw, "base64").toString("utf-8") : raw;
 }
 
-function isLambdaUrlEvent(event: HandlerEvent): event is LambdaFunctionURLEvent {
-  return typeof event === "object" && event !== null && "version" in event;
-}
-
-function detectUnconfiguredChannel(headers: Record<string, string>): LambdaResponse | null {
-  if ("x-telegram-bot-api-secret-token" in headers && !telegramChannel) {
+function detectUnconfiguredChannel(
+  headers: Record<string, string>,
+  channelRegistry: ChannelRegistry,
+): LambdaResponse | null {
+  if ("x-telegram-bot-api-secret-token" in headers && !channelRegistry.telegramChannel) {
     return integrationNotConfigured("Telegram");
   }
 
-  if ("x-github-event" in headers && !githubChannel) {
+  if ("x-github-event" in headers && !channelRegistry.githubChannel) {
     return integrationNotConfigured("GitHub");
   }
 
-  if ("x-slack-signature" in headers && !slackChannel) {
+  if ("x-slack-signature" in headers && !channelRegistry.slackChannel) {
     return integrationNotConfigured("Slack");
   }
 
-  if ("x-signature-ed25519" in headers && !discordChannel) {
+  if ("x-signature-ed25519" in headers && !channelRegistry.discordChannel) {
     return integrationNotConfigured("Discord");
   }
 
@@ -324,6 +327,26 @@ function integrationNotConfigured(name: string): LambdaResponse {
     statusCode: 503,
     headers: { "Content-Type": "text/plain; charset=utf-8" },
     body: `${name} integration is not configured`,
+  };
+}
+
+function createChannelRegistry(): ChannelRegistry {
+  const telegramChannel = createOptionalTelegramChannel();
+  const githubChannel = createOptionalGitHubChannel();
+  const slackChannel = createOptionalSlackChannel();
+  const discordChannel = createOptionalDiscordChannel();
+
+  return {
+    telegramChannel,
+    githubChannel,
+    slackChannel,
+    discordChannel,
+    webhookChannels: [
+      telegramChannel,
+      githubChannel,
+      slackChannel,
+      discordChannel,
+    ].filter((channel): channel is ChannelAdapter => channel !== null),
   };
 }
 

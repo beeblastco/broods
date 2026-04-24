@@ -1,0 +1,393 @@
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import type { LambdaFunctionURLEvent } from "aws-lambda";
+import {
+  routeIncomingEvent,
+  type ChannelInboundEvent,
+  type DirectInboundEvent,
+} from "../functions/harness-processing/integrations.ts";
+
+const ORIGINAL_ENABLE_DIRECT_API = process.env.ENABLE_DIRECT_API;
+const ORIGINAL_DIRECT_API_SECRET = process.env.DIRECT_API_SECRET;
+
+describe("direct API ingress", () => {
+  beforeEach(() => {
+    delete process.env.ENABLE_DIRECT_API;
+    delete process.env.DIRECT_API_SECRET;
+  });
+
+  afterEach(() => {
+    restoreEnv("ENABLE_DIRECT_API", ORIGINAL_ENABLE_DIRECT_API);
+    restoreEnv("DIRECT_API_SECRET", ORIGINAL_DIRECT_API_SECRET);
+  });
+
+  it("returns 503 when the direct API is disabled", async () => {
+    const response = await routeIncomingEvent(createEvent({
+      eventId: "one",
+      conversationKey: "alpha",
+      events: [{
+        role: "user",
+        content: [{ type: "text", text: "hello" }],
+      }],
+    }), createHandlers());
+
+    expect(response.statusCode).toBe(503);
+    expect(response.body).toBe("Direct API is not configured");
+  });
+
+  it("returns 200 for GET probes without requiring direct API configuration", async () => {
+    const response = await routeIncomingEvent(createEvent(undefined, {}, {
+      method: "GET",
+    }), createHandlers());
+
+    expect(response.statusCode).toBe(200);
+    expect(response.body).toBe("ok");
+  });
+
+  it("returns 405 for unsupported request methods", async () => {
+    const response = await routeIncomingEvent(createEvent(undefined, {}, {
+      method: "PUT",
+    }), createHandlers());
+
+    expect(response.statusCode).toBe(405);
+    expect(response.body).toBe("Method not allowed");
+  });
+
+  it("returns 401 when the bearer token is missing", async () => {
+    process.env.ENABLE_DIRECT_API = "true";
+    process.env.DIRECT_API_SECRET = "secret";
+
+    const response = await routeIncomingEvent(createEvent({
+      eventId: "one",
+      conversationKey: "alpha",
+      events: [{
+        role: "user",
+        content: [{ type: "text", text: "hello" }],
+      }],
+    }), createHandlers());
+
+    expect(response.statusCode).toBe(401);
+    expect(response.body).toBe("Unauthorized");
+  });
+
+  it("returns 401 when the bearer token is malformed", async () => {
+    process.env.ENABLE_DIRECT_API = "true";
+    process.env.DIRECT_API_SECRET = "secret";
+
+    const response = await routeIncomingEvent(createEvent({
+      eventId: "one",
+      conversationKey: "alpha",
+      events: [{
+        role: "user",
+        content: [{ type: "text", text: "hello" }],
+      }],
+    }, {
+      authorization: "Bearer secret extra",
+    }), createHandlers());
+
+    expect(response.statusCode).toBe(401);
+    expect(response.body).toBe("Unauthorized");
+  });
+
+  it("returns 401 when the bearer token does not match", async () => {
+    process.env.ENABLE_DIRECT_API = "true";
+    process.env.DIRECT_API_SECRET = "secret";
+
+    const response = await routeIncomingEvent(createEvent({
+      eventId: "one",
+      conversationKey: "alpha",
+      events: [{
+        role: "user",
+        content: [{ type: "text", text: "hello" }],
+      }],
+    }, {
+      authorization: "Bearer secrets",
+    }), createHandlers());
+
+    expect(response.statusCode).toBe(401);
+    expect(response.body).toBe("Unauthorized");
+  });
+
+  it("returns 400 for invalid direct API JSON", async () => {
+    process.env.ENABLE_DIRECT_API = "true";
+    process.env.DIRECT_API_SECRET = "secret";
+
+    const response = await routeIncomingEvent(createEvent(undefined, {
+      authorization: "Bearer secret",
+    }, {
+      rawBody: "{",
+    }), createHandlers());
+
+    expect(response.statusCode).toBe(400);
+    expect(response.body).toContain("Invalid request JSON:");
+  });
+
+  it("returns 400 when eventId or conversationKey is missing", async () => {
+    process.env.ENABLE_DIRECT_API = "true";
+    process.env.DIRECT_API_SECRET = "secret";
+
+    const response = await routeIncomingEvent(createEvent({
+      eventId: "one",
+      events: [{
+        role: "user",
+        content: [{ type: "text", text: "hello" }],
+      }],
+    }, {
+      authorization: "Bearer secret",
+    }), createHandlers());
+
+    expect(response.statusCode).toBe(400);
+    expect(response.body).toBe("Request body must include eventId and conversationKey");
+  });
+
+  it("rejects reserved direct event prefixes", async () => {
+    process.env.ENABLE_DIRECT_API = "true";
+    process.env.DIRECT_API_SECRET = "secret";
+
+    const response = await routeIncomingEvent(createEvent({
+      eventId: "gh:issue",
+      conversationKey: "alpha",
+      events: [{
+        role: "user",
+        content: [{ type: "text", text: "hello" }],
+      }],
+    }, {
+      authorization: "Bearer secret",
+    }), createHandlers());
+
+    expect(response.statusCode).toBe(400);
+    expect(response.body).toBe("eventId uses a reserved internal prefix");
+  });
+
+  it("rejects reserved direct conversation prefixes", async () => {
+    process.env.ENABLE_DIRECT_API = "true";
+    process.env.DIRECT_API_SECRET = "secret";
+
+    const response = await routeIncomingEvent(createEvent({
+      eventId: "one",
+      conversationKey: "gh:owner/repo:issue:1",
+      events: [{
+        role: "user",
+        content: [{ type: "text", text: "hello" }],
+      }],
+    }, {
+      authorization: "Bearer secret",
+    }), createHandlers());
+
+    expect(response.statusCode).toBe(400);
+    expect(response.body).toBe("conversationKey uses a reserved channel or internal prefix");
+  });
+
+  it("returns 400 when the events field is not an array", async () => {
+    process.env.ENABLE_DIRECT_API = "true";
+    process.env.DIRECT_API_SECRET = "secret";
+
+    const response = await routeIncomingEvent(createEvent({
+      eventId: "one",
+      conversationKey: "alpha",
+      events: "hello",
+    }, {
+      authorization: "Bearer secret",
+    }), createHandlers());
+
+    expect(response.statusCode).toBe(400);
+    expect(response.body).toBe("Request body field 'events' must be an array");
+  });
+
+  it("returns 400 when the events array is empty", async () => {
+    process.env.ENABLE_DIRECT_API = "true";
+    process.env.DIRECT_API_SECRET = "secret";
+
+    const response = await routeIncomingEvent(createEvent({
+      eventId: "one",
+      conversationKey: "alpha",
+      events: [],
+    }, {
+      authorization: "Bearer secret",
+    }), createHandlers());
+
+    expect(response.statusCode).toBe(400);
+    expect(response.body).toBe("Request body must include a non-empty events array");
+  });
+
+  it("returns 400 when a direct event is not an object", async () => {
+    process.env.ENABLE_DIRECT_API = "true";
+    process.env.DIRECT_API_SECRET = "secret";
+
+    const response = await routeIncomingEvent(createEvent({
+      eventId: "one",
+      conversationKey: "alpha",
+      events: ["hello"],
+    }, {
+      authorization: "Bearer secret",
+    }), createHandlers());
+
+    expect(response.statusCode).toBe(400);
+    expect(response.body).toBe("Each direct event must be an object");
+  });
+
+  it("returns 400 when persist is set on a non-system event", async () => {
+    process.env.ENABLE_DIRECT_API = "true";
+    process.env.DIRECT_API_SECRET = "secret";
+
+    const response = await routeIncomingEvent(createEvent({
+      eventId: "one",
+      conversationKey: "alpha",
+      events: [{
+        role: "user",
+        content: [{ type: "text", text: "hello" }],
+        persist: false,
+      }],
+    }, {
+      authorization: "Bearer secret",
+    }), createHandlers());
+
+    expect(response.statusCode).toBe(400);
+    expect(response.body).toBe("Only system-role events may set persist");
+  });
+
+  it("rejects persisted system events", async () => {
+    process.env.ENABLE_DIRECT_API = "true";
+    process.env.DIRECT_API_SECRET = "secret";
+
+    const response = await routeIncomingEvent(createEvent({
+      eventId: "one",
+      conversationKey: "alpha",
+      events: [
+        {
+          role: "system",
+          content: "persist me",
+          persist: true,
+        },
+        {
+          role: "user",
+          content: [{ type: "text", text: "hello" }],
+        },
+      ],
+    }, {
+      authorization: "Bearer secret",
+    }), createHandlers());
+
+    expect(response.statusCode).toBe(400);
+    expect(response.body).toBe("Direct API system events cannot be persisted");
+  });
+
+  it("normalizes direct events before handing them to the application handler", async () => {
+    process.env.ENABLE_DIRECT_API = "true";
+    process.env.DIRECT_API_SECRET = "secret";
+
+    const handledEvents: DirectInboundEvent[] = [];
+    const response = await routeIncomingEvent(createEvent({
+      eventId: "one",
+      conversationKey: "alpha",
+      events: [
+        {
+          role: "system",
+          content: "be brief",
+          persist: false,
+        },
+        {
+          role: "user",
+          content: [{ type: "text", text: "hello" }],
+        },
+      ],
+    }, {
+      authorization: "Bearer secret",
+    }), createHandlers({
+      handleDirectRequest: async (event) => {
+        handledEvents.push(event);
+        return {
+          statusCode: 200,
+          headers: { "Content-Type": "text/plain; charset=utf-8" },
+          body: "ok",
+        };
+      },
+    }));
+
+    expect(response.statusCode).toBe(200);
+    expect(handledEvents).toHaveLength(1);
+    const directEvent = handledEvents[0];
+    if (directEvent == null) {
+      throw new Error("Expected direct event to be handled");
+    }
+    expect(directEvent.eventId).toBe("api:one");
+    expect(directEvent.conversationKey).toBe("api:alpha");
+    expect(directEvent.events).toEqual([
+      {
+        role: "system",
+        content: "be brief",
+        persist: false,
+      },
+      {
+        role: "user",
+        content: [{ type: "text", text: "hello" }],
+      },
+    ]);
+  });
+});
+
+function createHandlers(overrides: Partial<{
+  handleDirectRequest(event: DirectInboundEvent): Promise<ResponseShape>;
+  handleChannelRequest(event: ChannelInboundEvent): Promise<void>;
+}> = {}) {
+  return {
+    handleDirectRequest: overrides.handleDirectRequest ?? (async () => ({
+      statusCode: 200,
+      headers: { "Content-Type": "text/plain; charset=utf-8" },
+      body: "ok",
+    })),
+    handleChannelRequest: overrides.handleChannelRequest ?? (async () => {}),
+  };
+}
+
+function createEvent(
+  body: unknown,
+  headers: Record<string, string> = {},
+  options: Partial<{
+    method: string;
+    rawBody: string;
+    isBase64Encoded: boolean;
+  }> = {},
+): LambdaFunctionURLEvent {
+  return {
+    version: "2.0",
+    routeKey: "$default",
+    rawPath: "/",
+    rawQueryString: "",
+    headers,
+    requestContext: {
+      accountId: "123456789012",
+      apiId: "api-id",
+      domainName: "example.lambda-url.aws",
+      domainPrefix: "example",
+      http: {
+        method: options.method ?? "POST",
+        path: "/",
+        protocol: "HTTP/1.1",
+        sourceIp: "127.0.0.1",
+        userAgent: "bun:test",
+      },
+      requestId: "request-id",
+      routeKey: "$default",
+      stage: "$default",
+      time: "24/Apr/2026:00:00:00 +0000",
+      timeEpoch: Date.now(),
+    },
+    body: options.rawBody ?? JSON.stringify(body),
+    isBase64Encoded: options.isBase64Encoded ?? false,
+  };
+}
+
+function restoreEnv(name: string, value: string | undefined): void {
+  if (value === undefined) {
+    delete process.env[name];
+    return;
+  }
+
+  process.env[name] = value;
+}
+
+interface ResponseShape {
+  statusCode: number;
+  headers?: Record<string, string>;
+  body?: string;
+}

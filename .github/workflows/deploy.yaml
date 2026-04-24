@@ -78,6 +78,9 @@ jobs:
       - name: Typecheck
         run: bun run check
 
+      - name: Run unit tests
+        run: bun run test
+
       - name: Build Lambda binaries
         run: bun run build
 
@@ -127,21 +130,10 @@ jobs:
         run: |
           set -euo pipefail
 
-          ACCOUNT_ID="$(aws sts get-caller-identity --query Account --output text)"
-          STAGE_PREFIX=""
-          if [[ "$SST_STAGE" != "production" ]]; then
-            STAGE_PREFIX="${SST_STAGE}-"
-          fi
-
-          FUNCTION_NAME="${STAGE_PREFIX}filthy-panty-harness-processing-${AWS_REGION}-${ACCOUNT_ID}"
-          FUNCTION_URL="$(aws lambda get-function-url-config \
-            --function-name "$FUNCTION_NAME" \
-            --region "$AWS_REGION" \
-            --query 'FunctionUrl' \
-            --output text)"
+          FUNCTION_URL="$(bun -e 'const outputs = JSON.parse(await Bun.file(".sst/outputs.json").text()); process.stdout.write(outputs.harnessProcessingUrl ?? "")')"
 
           if [[ -z "${FUNCTION_URL:-}" ]]; then
-            echo "Failed to resolve harness Function URL for ${FUNCTION_NAME}" >&2
+            echo "Failed to resolve harnessProcessingUrl from .sst/outputs.json" >&2
             exit 1
           fi
 

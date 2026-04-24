@@ -8,6 +8,7 @@
     "dev": "bun run scripts/system-prompt.ts && sst dev",
     "build": "bun run scripts/build.ts",
     "check": "bun run scripts/system-prompt.ts && bunx tsc --noEmit",
+    "test": "bun test",
     "discord:sync": "bun run scripts/discord-sync.ts",
     "deploy": "bun run build && sst deploy",
     "remove": "sst remove"

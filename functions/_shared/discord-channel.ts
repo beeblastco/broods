@@ -102,6 +102,21 @@ export function createDiscordChannel(
         return unsupportedInteractionResponse();
       }
 
+      if (!payload.guild_id) {
+        logWarn("Discord DM interactions are disabled", { channelId: payload.channel_id });
+        return {
+          kind: "response",
+          response: {
+            statusCode: 200,
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              type: 4,
+              data: { content: "Discord DMs are disabled.", flags: 64 },
+            }),
+          },
+        };
+      }
+
       if (allowedGuildIds && payload.guild_id && !allowedGuildIds.has(payload.guild_id)) {
         logWarn("Discord guild not in allow list", { guildId: payload.guild_id });
         return {
@@ -134,9 +149,7 @@ export function createDiscordChannel(
         },
         message: {
           eventId: `discord:${payload.id}`,
-          conversationKey: payload.guild_id
-            ? `discord:${payload.guild_id}:${payload.channel_id}`
-            : `discord:dm:${payload.channel_id}`,
+          conversationKey: `discord:${payload.guild_id}:${payload.channel_id}`,
           channelName: "discord",
           content: resolvedCommand.contentText
             ? [{ type: "text", text: resolvedCommand.contentText }]

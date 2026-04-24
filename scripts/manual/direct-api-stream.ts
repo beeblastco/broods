@@ -1,6 +1,6 @@
-import { fetchWithTiming, printTimingResults, requireTestEnv } from "./utils";
+import { fetchWithTiming, printTimingResults, requireManualEnv } from "./direct-api-utils.ts";
 
-const FUNCTION_URL = requireTestEnv("FUNCTION_URL");
+const FUNCTION_URL = requireManualEnv("FUNCTION_URL");
 
 const result = await fetchWithTiming(FUNCTION_URL, {
   eventId: `test-${Date.now()}`,

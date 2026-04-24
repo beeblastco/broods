@@ -24,5 +24,8 @@ jobs:
       - name: Typecheck
         run: bun run check
 
+      - name: Run unit tests
+        run: bun run test
+
       - name: Build Lambda binaries
         run: bun run build

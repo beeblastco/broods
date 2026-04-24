@@ -1,10 +1,9 @@
-import { fetchWithTiming, printTimingResults, requireTestEnv } from "./utils";
+import { fetchWithTiming, printTimingResults, requireManualEnv } from "./direct-api-utils.ts";
 
-const FUNCTION_URL = requireTestEnv("FUNCTION_URL");
-
+const FUNCTION_URL = requireManualEnv("FUNCTION_URL");
 const conversationKey = `multi-turn-${Date.now()}`;
 
-async function sendLegacy(content: string, turn: number) {
+async function sendUserTurn(content: string, turn: number) {
   console.log(`\n--- Turn ${turn}: ${content.substring(0, 40)}... ---`);
   return fetchWithTiming(FUNCTION_URL, {
     eventId: `${conversationKey}-${turn}`,
@@ -18,7 +17,7 @@ async function sendLegacy(content: string, turn: number) {
   });
 }
 
-async function sendWithEvents(content: string, turn: number) {
+async function sendPromptedTurn(content: string, turn: number) {
   console.log(`\n--- Turn ${turn} (events): ${content.substring(0, 40)}... ---`);
   return fetchWithTiming(FUNCTION_URL, {
     eventId: `${conversationKey}-${turn}`,
@@ -40,25 +39,25 @@ async function sendWithEvents(content: string, turn: number) {
 const startTime = Date.now();
 let totalResponseBytes = 0;
 
-const r1 = await sendLegacy("Remember that my name is Taylor.", 1);
+const r1 = await sendUserTurn("Remember that my name is Taylor.", 1);
 totalResponseBytes += r1.responseSizeBytes;
 
-const r2 = await sendWithEvents("What is my name?", 2);
+const r2 = await sendPromptedTurn("What is my name?", 2);
 totalResponseBytes += r2.responseSizeBytes;
 
-const r3 = await sendLegacy("Search the web for the weather in Hanoi.", 3);
+const r3 = await sendUserTurn("Search the web for the weather in Hanoi.", 3);
 totalResponseBytes += r3.responseSizeBytes;
 
-const r4 = await sendLegacy("Search the web for the weather in Ho Chi Minh city.", 4);
+const r4 = await sendUserTurn("Search the web for the weather in Ho Chi Minh city.", 4);
 totalResponseBytes += r4.responseSizeBytes;
 
-const r5 = await sendWithEvents("Search the web for the weather in New York and Los Angeles. Compare them with Hanoi and Ho Chi Minh city.", 5);
+const r5 = await sendPromptedTurn("Search the web for the weather in New York and Los Angeles. Compare them with Hanoi and Ho Chi Minh city.", 5);
 totalResponseBytes += r5.responseSizeBytes;
 
-const r6 = await sendLegacy("What was the first question I asked you?", 6);
+const r6 = await sendUserTurn("What was the first question I asked you?", 6);
 totalResponseBytes += r6.responseSizeBytes;
 
-const r7 = await sendLegacy("What name did I ask you to remember?", 7);
+const r7 = await sendUserTurn("What name did I ask you to remember?", 7);
 totalResponseBytes += r7.responseSizeBytes;
 
 const totalMs = Date.now() - startTime;
