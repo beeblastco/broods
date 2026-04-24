@@ -6,40 +6,43 @@
 
 declare module "sst" {
   export interface Resource {
-    "AllowedChatIds": {
-      "type": "sst.sst.Secret"
-      "value": string
-    }
     "Conversations": {
       "name": string
       "type": "sst.aws.Dynamo"
     }
-    "GoogleApiKey": {
+    "DirectApiSecret": {
       "type": "sst.sst.Secret"
       "value": string
     }
-    "HarnessProcessing": {
-      "name": string
-      "type": "sst.aws.Function"
-      "url": string
+    "DiscordBotToken": {
+      "type": "sst.sst.Secret"
+      "value": string
     }
-    "Memory": {
-      "name": string
-      "type": "sst.aws.Bucket"
+    "DiscordPublicKey": {
+      "type": "sst.sst.Secret"
+      "value": string
+    }
+    "GitHubAppId": {
+      "type": "sst.sst.Secret"
+      "value": string
+    }
+    "GitHubPrivateKey": {
+      "type": "sst.sst.Secret"
+      "value": string
+    }
+    "GitHubWebhookSecret": {
+      "type": "sst.sst.Secret"
+      "value": string
     }
     "ProcessedEvents": {
       "name": string
       "type": "sst.aws.Dynamo"
     }
-    "TavilyApiKey": {
+    "SlackBotToken": {
       "type": "sst.sst.Secret"
       "value": string
     }
-    "TelegramBotToken": {
-      "type": "sst.sst.Secret"
-      "value": string
-    }
-    "TelegramWebhookSecret": {
+    "SlackSigningSecret": {
       "type": "sst.sst.Secret"
       "value": string
     }
