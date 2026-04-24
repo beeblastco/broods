@@ -127,6 +127,7 @@ function parseEventCallback(
 
   const text = stripSlackMentions(payload.event.text ?? "");
   const threadTs = payload.event.thread_ts ?? ts;
+  const replyThreadTs = getSlackReplyThreadTs(payload.event, ts);
 
   return {
     kind: "message",
@@ -140,7 +141,7 @@ function parseEventCallback(
         teamId: payload.team_id,
         channelId,
         messageTs: ts,
-        threadTs,
+        threadTs: replyThreadTs,
         userId: payload.event.user,
       } satisfies SlackSource,
     },
@@ -170,6 +171,17 @@ function getSlackConversationKey(
   }
 
   return `slack:${teamId}:${channelId}:${threadTs}`;
+}
+
+function getSlackReplyThreadTs(
+  event: NonNullable<SlackEventEnvelope["event"]>,
+  messageTs: string,
+): string | undefined {
+  if (event.type === "app_mention") {
+    return event.thread_ts ?? messageTs;
+  }
+
+  return event.thread_ts;
 }
 
 function parseSlashCommand(
