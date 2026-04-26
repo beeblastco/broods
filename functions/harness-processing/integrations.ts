@@ -24,12 +24,12 @@ import { extractText, isOpenAllowList } from "../_shared/channels.ts";
 import { parseCommand } from "../_shared/commands.ts";
 import { createDiscordChannel } from "../_shared/discord-channel.ts";
 import { optionalEnv } from "../_shared/env.ts";
+import { INTERNAL_EVENT_ID_PREFIX } from "../_shared/filesystem-namespace.ts";
 import { createGitHubChannel } from "../_shared/github-channel.ts";
 import { logError } from "../_shared/log.ts";
 import type { LambdaResponse } from "../_shared/runtime.ts";
 import { createSlackChannel } from "../_shared/slack-channel.ts";
 import { createTelegramChannel } from "../_shared/telegram-channel.ts";
-import { INTERNAL_EVENT_ID_PREFIX } from "./filesystem-namespace.ts";
 import type { ConversationIngressEvent } from "./session.ts";
 
 const DIRECT_API_EVENT_ID_PREFIX = "api:";

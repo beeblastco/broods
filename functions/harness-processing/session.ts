@@ -29,11 +29,11 @@ import {
   toAttributeValue,
 } from "../_shared/dynamo.ts";
 import { requireEnv } from "../_shared/env.ts";
-import { logError, logInfo } from "../_shared/log.ts";
 import {
   conversationLeaseKey,
   normalizeFilesystemNamespace,
-} from "./filesystem-namespace.ts";
+} from "../_shared/filesystem-namespace.ts";
+import { logError, logInfo } from "../_shared/log.ts";
 
 const CONVERSATIONS_TABLE_NAME = requireEnv("CONVERSATIONS_TABLE_NAME");
 const PROCESSED_EVENTS_TABLE_NAME = requireEnv("PROCESSED_EVENTS_TABLE_NAME");

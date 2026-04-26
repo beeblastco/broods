@@ -14,7 +14,7 @@ import {
 } from "@aws-sdk/client-s3";
 import { jsonSchema, tool, type ToolSet } from "ai";
 import { requireEnv } from "../../_shared/env.ts";
-import { normalizeFilesystemNamespace } from "../filesystem-namespace.ts";
+import { normalizeFilesystemNamespace } from "../../_shared/filesystem-namespace.ts";
 import type { ToolContext } from "./index.ts";
 
 const s3 = new S3Client({ region: process.env.AWS_REGION });
