@@ -24,10 +24,10 @@ flowchart TD
     H["Direct API auth + payload validation"]
     HA["Async API status route"]
     HW["Internal async worker invocation<br/>InvocationType: Event"]
-    DW["Optional Lambda durable workflow<br/>future durable execution path"]
     I["Webhook auth + adapter parse"]
     J["session.ts"]
     S["status.ts"]
+    AW["Async worker handler<br/>handleAsyncWorkerRequest()"]
     N["harness.ts"]
     P["Inline tools registry"]
   end
@@ -41,12 +41,12 @@ flowchart TD
   G --> I
 
   H -->|"POST / sync"| J
-  H -->|"POST /async: create pending result"| S
+  H -->|"POST /async"| S
+  H -->|"start background worker"| HW
   S --> AS["DynamoDB: async results"]
-  S --> HW
-  S -.-> DW
   HW -->|"self-invoke background payload"| F
-  DW -.->|"durable checkpoint / replay"| F
+  F --> AW
+  AW --> J
   HA -->|"GET /status/{eventId}"| S
 
   J --> N
@@ -54,10 +54,10 @@ flowchart TD
   N --> O["Google Gemini via Vercel AI SDK"]
   N --> Q["SSE response for POST /"]
   N --> WC["Optional direct API webhook callback"]
-  N -->|"async final status update"| S
+  AW -->|"completed / failed"| S
 
   I --> ACK["Immediate webhook HTTP ack"]
-  I --> PR["afterResponse -> processChannelMessage()"]
+  I --> PR["afterResponse post-response work<br/>processChannelMessage()"]
   PR --> F2["handler.ts handleChannelRequest()"]
   F2 --> J
   N --> R["Channel reply actions"]
@@ -90,8 +90,8 @@ Request path ownership:
 - `ProcessedEvents` DynamoDB table stores dedup markers and short-lived conversation lease records.
 - `AsyncResults` DynamoDB table stores async direct API state and final results for `/status/{eventId}` polling.
 - The S3 filesystem bucket stores `MEMORY.md` and filesystem-backed tool state under per-conversation namespaces.
-- Tool execution is inline in `harness-processing`. Async direct API requests use Lambda async self-invocation to run the same harness code in the background; there is no secondary public worker Lambda or queue-based tool runner in the deployed path.
-- The async API contract is intentionally compatible with a Lambda durable workflow implementation: `POST /async` starts work and returns a polling URL immediately, while `/status/{eventId}` remains the client-facing result lookup.
+- Tool execution is inline in `harness-processing`. Async direct API requests currently use Lambda async self-invocation to run the same harness code in the background; there is no separate durable workflow Lambda in the deployed path today.
+- The async API contract is intentionally compatible with a future, separate Lambda durable workflow orchestrator: `POST /async` starts work and returns a polling URL immediately, while `/status/{eventId}` remains the client-facing result lookup.
 - The direct API and webhook traffic share the same Lambda, but use separate `conversationKey` prefixes and routing/auth paths.
 
 ## Stack
@@ -279,12 +279,30 @@ bun scripts/manual/async-api-tool-call.ts
 
 ### Durable Workflow Compatibility
 
-The current deployed implementation uses Lambda async self-invocation for the background worker. The API shape is designed so that worker can be replaced by an AWS Lambda durable function without changing direct API clients:
+The current deployed implementation uses Lambda async self-invocation for the background worker. There is no durable workflow Lambda in the deployed stack today. The durable option should be a separate orchestrator Lambda, not another component inside `harness-processing`.
 
-- `POST /async` stays the entrypoint and returns `202 Accepted` with `statusUrl`.
-- The durable function would own the long-running agent workflow, checkpoint model/tool progress, and resume after retries or pauses.
-- `AsyncResults` remains the public polling surface unless a future implementation chooses to expose native durable execution status directly.
-- Webhook callbacks keep the same signed JSON payload and can be fired from the durable workflow completion step.
+Future topology:
+
+```mermaid
+flowchart LR
+  A["Direct API caller<br/>POST /async"] --> B["harness-processing<br/>public Function URL"]
+  B --> C["AsyncResults<br/>pending"]
+  B -.->|"invoke separate durable function"| D["async-workflow-orchestrator<br/>Lambda durable function"]
+  D -.->|"invoke agent execution step"| E["harness-processing<br/>agent loop entrypoint"]
+  E -.-> D
+  D -->|"completed / failed"| C
+  D -->|"optional signed callback"| F["webhookUrl"]
+  A2["Direct API poller<br/>GET /status/{eventId}"] --> B
+  B --> C
+```
+
+In that future model:
+
+- `POST /async` stays the public entrypoint and returns `202 Accepted` with `statusUrl`.
+- The separate durable workflow Lambda owns checkpointing, retry, waits, and orchestration.
+- `harness-processing` stays focused on request normalization, session setup, and agent/model/tool execution.
+- `AsyncResults` remains the public polling surface unless the API intentionally switches to native durable execution status.
+- Webhook callbacks keep the same signed JSON payload and are fired from the durable workflow completion step.
 
 This is useful for longer agent runs because Lambda durable functions support checkpoint and replay semantics through the Durable Execution SDK, including waits without holding compute for the full wall-clock duration. See AWS Lambda durable functions and the Durable Execution SDK docs:
 
