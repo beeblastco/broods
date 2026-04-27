@@ -24,6 +24,7 @@ flowchart TD
     H["Direct API auth + payload validation"]
     HA["Async API status route"]
     HW["Internal async worker invocation<br/>InvocationType: Event"]
+    DW["Optional Lambda durable workflow<br/>future durable execution path"]
     I["Webhook auth + adapter parse"]
     J["session.ts"]
     S["status.ts"]
@@ -43,7 +44,9 @@ flowchart TD
   H -->|"POST /async: create pending result"| S
   S --> AS["DynamoDB: async results"]
   S --> HW
+  S -.-> DW
   HW -->|"self-invoke background payload"| F
+  DW -.->|"durable checkpoint / replay"| F
   HA -->|"GET /status/{eventId}"| S
 
   J --> N
@@ -88,6 +91,7 @@ Request path ownership:
 - `AsyncResults` DynamoDB table stores async direct API state and final results for `/status/{eventId}` polling.
 - The S3 filesystem bucket stores `MEMORY.md` and filesystem-backed tool state under per-conversation namespaces.
 - Tool execution is inline in `harness-processing`. Async direct API requests use Lambda async self-invocation to run the same harness code in the background; there is no secondary public worker Lambda or queue-based tool runner in the deployed path.
+- The async API contract is intentionally compatible with a Lambda durable workflow implementation: `POST /async` starts work and returns a polling URL immediately, while `/status/{eventId}` remains the client-facing result lookup.
 - The direct API and webhook traffic share the same Lambda, but use separate `conversationKey` prefixes and routing/auth paths.
 
 ## Stack
@@ -272,6 +276,20 @@ Live async probe with `FUNCTION_URL` and `DIRECT_API_SECRET` set:
 ```bash
 bun scripts/manual/async-api-tool-call.ts
 ```
+
+### Durable Workflow Compatibility
+
+The current deployed implementation uses Lambda async self-invocation for the background worker. The API shape is designed so that worker can be replaced by an AWS Lambda durable function without changing direct API clients:
+
+- `POST /async` stays the entrypoint and returns `202 Accepted` with `statusUrl`.
+- The durable function would own the long-running agent workflow, checkpoint model/tool progress, and resume after retries or pauses.
+- `AsyncResults` remains the public polling surface unless a future implementation chooses to expose native durable execution status directly.
+- Webhook callbacks keep the same signed JSON payload and can be fired from the durable workflow completion step.
+
+This is useful for longer agent runs because Lambda durable functions support checkpoint and replay semantics through the Durable Execution SDK, including waits without holding compute for the full wall-clock duration. See AWS Lambda durable functions and the Durable Execution SDK docs:
+
+- [Lambda durable functions](https://docs.aws.amazon.com/lambda/latest/dg/durable-functions.html)
+- [Durable Execution SDK](https://docs.aws.amazon.com/lambda/latest/dg/durable-execution-sdk.html)
 
 ### Status API: `GET /status/{eventId}`
 
