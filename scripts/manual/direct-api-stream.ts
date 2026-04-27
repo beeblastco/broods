@@ -1,4 +1,4 @@
-import { fetchWithTiming, printTimingResults, requireManualEnv } from "./direct-api-utils.ts";
+import { fetchWithTiming, printTimingResults, requireManualEnv } from "./utils.ts";
 
 const FUNCTION_URL = requireManualEnv("FUNCTION_URL");
 
