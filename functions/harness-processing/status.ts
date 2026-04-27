@@ -103,12 +103,12 @@ async function updateAsyncResult(
     "#status = :status",
     "updatedAt = :updatedAt",
     "expiresAt = :expiresAt",
-    ...(values.response !== undefined ? ["response = :response"] : []),
-    ...(values.error !== undefined ? ["error = :error"] : []),
+    ...(values.response !== undefined ? ["#response = :response"] : []),
+    ...(values.error !== undefined ? ["#error = :error"] : []),
   ];
   const removeExpressions = [
-    ...(values.response === undefined ? ["response"] : []),
-    ...(values.error === undefined ? ["error"] : []),
+    ...(values.response === undefined ? ["#response"] : []),
+    ...(values.error === undefined ? ["#error"] : []),
   ];
 
   await dynamo.send(new UpdateItemCommand({
@@ -120,6 +120,8 @@ async function updateAsyncResult(
     ].join(" "),
     ExpressionAttributeNames: {
       "#status": "status",
+      "#response": "response",
+      "#error": "error",
     },
     ExpressionAttributeValues: {
       ":status": { S: status },
