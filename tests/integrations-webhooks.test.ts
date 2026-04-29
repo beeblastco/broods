@@ -362,6 +362,43 @@ describe("webhook ingress", () => {
     expect(handledEvents).toHaveLength(1);
     expect(handledEvents[0]?.eventId).toBe("evt-4");
   });
+
+  it("sends unexpected channel processing errors through the channel actions", async () => {
+    const sendText = mock(async () => { });
+    const routeIncomingEvent = createIncomingEventRouter({
+      channelRegistry: createChannelRegistry({
+        webhookChannels: [createAdapter({
+          parse: () => ({
+            kind: "message",
+            message: {
+              eventId: "evt-5",
+              conversationKey: "conv-5",
+              channelName: "test",
+              content: "hello",
+              source: {},
+            },
+          }),
+          actions: () => ({
+            sendText,
+            sendTyping: async () => { },
+            reactToMessage: async () => { },
+          }),
+        })],
+      }),
+    });
+
+    const response = await routeIncomingEvent(createEvent({}, {
+      "x-test-channel": "yes",
+    }), createHandlers({
+      handleChannelRequest: async () => {
+        throw new Error("Model returned empty response");
+      },
+    }));
+
+    await response.afterResponse;
+
+    expect(sendText).toHaveBeenCalledWith("Error: Model returned empty response");
+  });
 });
 
 function createChannelRegistry(overrides: Partial<ChannelRegistry> = {}): ChannelRegistry {

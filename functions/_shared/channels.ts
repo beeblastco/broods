@@ -62,3 +62,7 @@ export function extractText(content: UserContent): string {
 export function isOpenAllowList(raw: string | undefined): boolean {
   return !raw || raw.trim() === "" || raw.trim().toLowerCase() === "open";
 }
+
+export function formatChannelErrorText(error: string): string {
+  return `Error: ${error}`;
+}

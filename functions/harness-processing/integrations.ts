@@ -20,7 +20,7 @@ import type {
   ChannelRequest,
   ChannelResponse,
 } from "../_shared/channels.ts";
-import { extractText, isOpenAllowList } from "../_shared/channels.ts";
+import { extractText, formatChannelErrorText, isOpenAllowList } from "../_shared/channels.ts";
 import { parseCommand } from "../_shared/commands.ts";
 import { createDiscordChannel } from "../_shared/discord-channel.ts";
 import { optionalEnv } from "../_shared/env.ts";
@@ -284,10 +284,18 @@ async function processChannelMessage(
       commandToken: resolveCommandToken(event.content, event.source) ?? undefined,
     });
   } catch (err) {
+    const error = err instanceof Error ? err.message : String(err);
     logError("Failed to process channel message", {
       channel: event.channelName,
       eventId: event.eventId,
-      error: err instanceof Error ? err.message : String(err),
+      error,
+    });
+    await event.channel.sendText(formatChannelErrorText(error)).catch((sendErr) => {
+      logError("Failed to send channel error message", {
+        channel: event.channelName,
+        eventId: event.eventId,
+        error: sendErr instanceof Error ? sendErr.message : String(sendErr),
+      });
     });
   }
 }

@@ -4,6 +4,7 @@
  */
 
 import { InvokeCommand, LambdaClient } from "@aws-sdk/client-lambda";
+import { formatChannelErrorText } from "../_shared/channels.ts";
 import { executeCommand } from "../_shared/commands.ts";
 import { requireEnv } from "../_shared/env.ts";
 import { logError, logInfo } from "../_shared/log.ts";
@@ -26,7 +27,10 @@ import {
   markAsyncResultFailed,
 } from "./status.ts";
 
+type AgentLoopStream = Awaited<ReturnType<typeof runAgentLoop>>;
+
 const CONVERSATIONS_TABLE_NAME = requireEnv("CONVERSATIONS_TABLE_NAME");
+const AGENT_PROCESSING_FAILED = "Agent processing failed";
 const textEncoder = new TextEncoder();
 const lambda = new LambdaClient({ region: process.env.AWS_REGION });
 
@@ -70,11 +74,7 @@ async function handleDirectRequest(event: DirectInboundEvent): Promise<LambdaRes
     return {
       statusCode: 200,
       headers: { "Content-Type": "text/event-stream" },
-      body: stream.fullStream.pipeThrough(new TransformStream({
-        transform(chunk, controller) {
-          controller.enqueue(textEncoder.encode(`data: ${JSON.stringify(chunk)}\n\n`));
-        },
-      })),
+      body: createDirectSseBody(stream),
     };
   } catch (err) {
     logError("Direct request pre-processing failed", {
@@ -175,15 +175,15 @@ async function handleAsyncWorkerRequest(event: DirectInboundEvent): Promise<void
           success: true,
         });
       },
-      onErrorText: async () => {
+      onErrorText: async (error) => {
         didSettle = true;
-        await settleAsyncFailure(event, "Agent processing failed");
+        await settleAsyncFailure(event, error);
       },
     });
 
     await stream.consumeStream();
     if (stream.didFail() && !didSettle) {
-      await settleAsyncFailure(event, "Agent processing failed");
+      await settleAsyncFailure(event, stream.failureText() ?? AGENT_PROCESSING_FAILED);
     }
   } catch (err) {
     logError("Async direct request processing failed", {
@@ -240,7 +240,7 @@ async function handleChannelRequest(event: ChannelInboundEvent): Promise<void> {
 
       const stream = await runAgentLoop(session, turnContext, {
         onFinalText: (text) => event.channel.sendText(text),
-        onErrorText: () => event.channel.sendText("Something went wrong. Please try again."),
+        onErrorText: (error) => event.channel.sendText(formatChannelErrorText(error)),
       });
 
       await stream.consumeStream();
@@ -285,11 +285,11 @@ function directReplyHooks(event: DirectInboundEvent) {
         response: text,
         success: true,
       }),
-      onErrorText: async () => sendWebhook(event, {
+      onErrorText: async (error: string) => sendWebhook(event, {
         eventId: event.publicEventId,
         conversationKey: event.publicConversationKey,
         success: false,
-        error: "Agent processing failed",
+        error,
       }),
     }
     : undefined;
@@ -354,5 +354,38 @@ function isAsyncWorkerInvocation(event: unknown): event is AsyncWorkerInvocation
     event &&
     typeof event === "object" &&
     (event as { kind?: unknown }).kind === "direct-api-async-worker",
+  );
+}
+
+function createDirectSseBody(stream: AgentLoopStream): ReadableStream<Uint8Array> {
+  let emittedErrorChunk = false;
+
+  return stream.fullStream.pipeThrough(new TransformStream({
+    transform(chunk, controller) {
+      if (isErrorStreamChunk(chunk)) {
+        emittedErrorChunk = true;
+      }
+
+      controller.enqueue(textEncoder.encode(`data: ${JSON.stringify(chunk)}\n\n`));
+    },
+    flush(controller) {
+      const failureText = stream.failureText();
+      if (!failureText || emittedErrorChunk) {
+        return;
+      }
+
+      controller.enqueue(textEncoder.encode(`data: ${JSON.stringify({
+        type: "error",
+        error: failureText,
+      })}\n\n`));
+    },
+  }));
+}
+
+function isErrorStreamChunk(chunk: unknown): boolean {
+  return Boolean(
+    chunk &&
+    typeof chunk === "object" &&
+    (chunk as { type?: unknown }).type === "error",
   );
 }

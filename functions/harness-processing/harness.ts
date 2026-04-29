@@ -21,7 +21,7 @@ const google = createGoogleGenerativeAI({ apiKey: requireEnv("GOOGLE_API_KEY") }
 
 export interface AgentReplyHooks {
   onFinalText(text: string): Promise<void>;
-  onErrorText(): Promise<void>;
+  onErrorText(error: string): Promise<void>;
 }
 
 export async function runAgentLoop(
@@ -30,6 +30,7 @@ export async function runAgentLoop(
   reply?: AgentReplyHooks,
 ) {
   let didFail = false;
+  let failureText: string | null = null;
   let promptContext = turnContext.promptContext;
 
   const tools = {
@@ -64,13 +65,15 @@ export async function runAgentLoop(
       };
     },
     onError: async ({ error }) => {
+      const errorText = error instanceof Error ? error.message : String(error);
       didFail = true;
+      failureText = errorText;
       logError("Agent loop failed", {
         conversationKey: session.conversationKey,
-        error: error instanceof Error ? error.message : String(error),
+        error: errorText,
       });
 
-      await reply?.onErrorText().catch(() => { });
+      await reply?.onErrorText(errorText).catch(() => { });
     },
     onFinish: async ({ response, text }) => {
       const finalText = text.trim();
@@ -79,29 +82,35 @@ export async function runAgentLoop(
         await session.persistModelMessages(response.messages);
 
         if (!finalText) {
+          const errorText = "Model returned empty response";
           didFail = true;
-          logError("Model returned empty response", {
+          failureText = errorText;
+          logError(errorText, {
             conversationKey: session.conversationKey,
             eventId: session.eventId,
           });
+          await reply?.onErrorText(errorText).catch(() => { });
           return;
         }
 
         await reply?.onFinalText(finalText);
         logInfo("Processing complete", { conversationKey: session.conversationKey });
       } catch (err) {
+        const errorText = err instanceof Error ? err.message : String(err);
         didFail = true;
+        failureText = errorText;
         logError("Post-generation steps failed", {
           conversationKey: session.conversationKey,
-          error: err instanceof Error ? err.message : String(err),
+          error: errorText,
         });
 
-        await reply?.onErrorText().catch(() => { });
+        await reply?.onErrorText(errorText).catch(() => { });
       }
     },
   });
 
   return Object.assign(stream, {
     didFail: () => didFail,
+    failureText: () => failureText,
   });
 }
