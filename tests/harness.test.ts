@@ -4,6 +4,7 @@
  */
 
 import { afterEach, describe, expect, it, mock } from "bun:test";
+import * as actualAi from "ai";
 
 const ORIGINAL_ENV = { ...process.env };
 
@@ -41,10 +42,8 @@ mock.module("@ai-sdk/google", () => ({
 }));
 
 mock.module("ai", () => ({
-  stepCountIs: () => () => false,
+  ...actualAi,
   streamText: streamTextMock,
-  tool: (definition: unknown) => definition,
-  jsonSchema: (schema: unknown) => schema,
 }));
 
 afterEach(() => {
