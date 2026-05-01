@@ -215,7 +215,7 @@ export default $config({
       description: "Manages accounts, account secrets, and account-level harness configuration.",
       timeout: "10 seconds",
       memory: "128 MB",
-      streaming: false,
+      streaming: true,
       // Can configure additional service for authentication, here we keep it simple
       url: {
         authorization: "none",
