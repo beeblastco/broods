@@ -9,9 +9,9 @@
   },
   "homepage": "https://github.com/beeblastco/pnzu-frontend",
   "scripts": {
-    "dev": "bun --bun next dev",
-    "build": "bun --bun next build",
-    "start": "bun --bun next start",
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
     "lint": "eslint"
   },
   "dependencies": {
