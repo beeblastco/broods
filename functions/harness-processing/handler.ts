@@ -8,6 +8,7 @@ import type { LambdaFunctionURLEvent } from "aws-lambda";
 import { formatChannelErrorText } from "../_shared/channels.ts";
 import { executeCommand } from "../_shared/commands.ts";
 import { requireEnv } from "../_shared/env.ts";
+import { jsonResponse } from "../_shared/http.ts";
 import { logError, logInfo } from "../_shared/log.ts";
 import type { LambdaResponse } from "../_shared/runtime.ts";
 import { fireWebhook, type WebhookConfig } from "../_shared/webhook.ts";
@@ -123,27 +124,19 @@ async function handleAsyncRequest(event: AsyncDirectInboundEvent): Promise<Lambd
 async function handleStatusRequest(event: StatusInboundEvent): Promise<LambdaResponse> {
   const result = await getAsyncResult(event.eventId);
   if (!result) {
-    return {
-      statusCode: 404,
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        eventId: event.publicEventId,
-        status: "not_found",
-      }),
-    };
+    return jsonResponse(404, {
+      eventId: event.publicEventId,
+      status: "not_found",
+    });
   }
 
-  return {
-    statusCode: 200,
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      eventId: event.publicEventId,
-      conversationKey: eventPublicConversationKey(result.conversationKey, event.accountId),
-      status: result.status,
-      ...(result.response ? { response: result.response } : {}),
-      ...(result.error ? { error: result.error } : {}),
-    }),
-  };
+  return jsonResponse(200, {
+    eventId: event.publicEventId,
+    conversationKey: eventPublicConversationKey(result.conversationKey, event.accountId),
+    status: result.status,
+    ...(result.response ? { response: result.response } : {}),
+    ...(result.error ? { error: result.error } : {}),
+  });
 }
 
 async function handleAsyncWorkerRequest(event: DirectInboundEvent): Promise<void> {
@@ -342,11 +335,7 @@ async function invokeAsyncWorker(event: DirectInboundEvent): Promise<void> {
 }
 
 function acceptedAsyncResponse(statusUrl: string): LambdaResponse {
-  return {
-    statusCode: 202,
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ statusUrl }),
-  };
+  return jsonResponse(202, { statusUrl });
 }
 
 function eventPublicConversationKey(conversationKey: string, accountId: string): string {

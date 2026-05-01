@@ -32,6 +32,12 @@ import { parseCommand } from "../_shared/commands.ts";
 import { createDiscordChannel } from "../_shared/discord-channel.ts";
 import { INTERNAL_EVENT_ID_PREFIX } from "../_shared/filesystem-namespace.ts";
 import { createGitHubChannel } from "../_shared/github-channel.ts";
+import {
+  decodeBody,
+  errorResponse,
+  jsonResponse,
+  normalizeHeaders,
+} from "../_shared/http.ts";
 import { logError } from "../_shared/log.ts";
 import type { LambdaResponse } from "../_shared/runtime.ts";
 import { createSlackChannel } from "../_shared/slack-channel.ts";
@@ -172,19 +178,17 @@ async function handleLambdaUrlEvent(
   }
 
   if (method === "GET") {
-    return {
-      statusCode: 200,
-      headers: { "Content-Type": "text/plain; charset=utf-8" },
-      body: "ok",
-    };
+    return jsonResponse(200, {
+      status: "ok",
+      method: "POST",
+    });
   }
 
   if (method !== "POST") {
-    return {
-      statusCode: 405,
-      headers: { "Content-Type": "text/plain; charset=utf-8" },
-      body: "Method not allowed",
-    };
+    return errorResponse(405, "Method not allowed", {
+      method,
+      allowedMethods: ["GET", "POST"],
+    });
   }
 
   const request = {
@@ -247,11 +251,7 @@ async function handleChannelWebhook(
 ): Promise<LambdaResponse> {
   try {
     if (!(await adapter.authenticate(request))) {
-      return {
-        statusCode: 401,
-        headers: { "Content-Type": "text/plain; charset=utf-8" },
-        body: "Unauthorized",
-      };
+      return unauthorizedResponse();
     }
 
     const parsed = adapter.parse(request);
@@ -297,11 +297,7 @@ async function handleChannelWebhook(
       error: err instanceof Error ? err.message : String(err),
     });
 
-    return {
-      statusCode: 500,
-      headers: { "Content-Type": "text/plain; charset=utf-8" },
-      body: "Internal server error",
-    };
+    return errorResponse(500, "Internal server error");
   }
 }
 
@@ -358,31 +354,8 @@ function toLambdaResponse(response: ChannelResponse): LambdaResponse {
   };
 }
 
-function normalizeHeaders(
-  headers: Record<string, string | undefined>,
-): Record<string, string> {
-  const normalized: Record<string, string> = {};
-
-  for (const [key, value] of Object.entries(headers)) {
-    if (typeof value === "string") {
-      normalized[key.toLowerCase()] = value;
-    }
-  }
-
-  return normalized;
-}
-
-function decodeBody(body: string | undefined, isBase64Encoded?: boolean): string {
-  const raw = body ?? "";
-  return isBase64Encoded ? Buffer.from(raw, "base64").toString("utf-8") : raw;
-}
-
 function integrationNotConfigured(name: string): LambdaResponse {
-  return {
-    statusCode: 503,
-    headers: { "Content-Type": "text/plain; charset=utf-8" },
-    body: `${name} integration is not configured`,
-  };
+  return errorResponse(503, `${name} integration is not configured`);
 }
 
 function createChannelRegistry(config: AccountConfig): ChannelRegistry {
@@ -501,27 +474,15 @@ function parseStatusPath(rawPath: string, account: AccountRecord): StatusInbound
 }
 
 function unauthorizedResponse(): LambdaResponse {
-  return {
-    statusCode: 401,
-    headers: { "Content-Type": "text/plain; charset=utf-8" },
-    body: "Unauthorized",
-  };
+  return errorResponse(401, "Unauthorized");
 }
 
 function badRequestResponse(err: unknown): LambdaResponse {
-  return {
-    statusCode: 400,
-    headers: { "Content-Type": "text/plain; charset=utf-8" },
-    body: err instanceof Error ? err.message : "Invalid request",
-  };
+  return errorResponse(400, err instanceof Error ? err.message : "Invalid request");
 }
 
 function notFoundResponse(): LambdaResponse {
-  return {
-    statusCode: 404,
-    headers: { "Content-Type": "text/plain; charset=utf-8" },
-    body: "Not found",
-  };
+  return errorResponse(404, "Not found");
 }
 
 function isAsyncPath(rawPath: string): boolean {

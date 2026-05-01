@@ -15,6 +15,13 @@ import {
     updateAccount,
     type AuthContext,
 } from "../_shared/accounts.ts";
+import {
+    jsonResponse,
+    normalizeHeaders,
+    normalizePath,
+    parseJsonBody,
+    textResponse,
+} from "../_shared/http.ts";
 import type { LambdaResponse } from "../_shared/runtime.ts";
 import { enforceAccountSignupRateLimit, RateLimitExceededError } from "./rate-limit.ts";
 
@@ -105,14 +112,9 @@ export async function handler(event: LambdaFunctionURLEvent): Promise<LambdaResp
         return textResponse(404, "Not found");
     } catch (err) {
         if (err instanceof RateLimitExceededError) {
-            return {
-                statusCode: 429,
-                headers: {
-                    "Content-Type": "text/plain; charset=utf-8",
-                    "Retry-After": String(err.retryAfterSeconds),
-                },
-                body: "Rate limit exceeded",
-            };
+            return textResponse(429, "Rate limit exceeded", {
+                "Retry-After": String(err.retryAfterSeconds),
+            });
         }
         return textResponse(400, err instanceof Error ? err.message : "Invalid request");
     }
@@ -156,54 +158,6 @@ function parseAccountPatch(event: LambdaFunctionURLEvent): unknown {
     return { config: body };
 }
 
-function parseJsonBody(event: LambdaFunctionURLEvent): unknown {
-    const body = decodeBody(event.body, event.isBase64Encoded);
-    if (!body.trim()) {
-        return {};
-    }
-
-    try {
-        return JSON.parse(body);
-    } catch (err) {
-        throw new Error(`Invalid request JSON: ${err instanceof Error ? err.message : String(err)}`);
-    }
-}
-
-function normalizeHeaders(headers: Record<string, string | undefined>): Record<string, string> {
-    const normalized: Record<string, string> = {};
-    for (const [key, value] of Object.entries(headers)) {
-        if (typeof value === "string") {
-            normalized[key.toLowerCase()] = value;
-        }
-    }
-    return normalized;
-}
-
-function normalizePath(rawPath: string): string {
-    return rawPath.length > 1 ? rawPath.replace(/\/+$/, "") : rawPath;
-}
-
-function decodeBody(body: string | undefined, isBase64Encoded?: boolean): string {
-    const raw = body ?? "";
-    return isBase64Encoded ? Buffer.from(raw, "base64").toString("utf-8") : raw;
-}
-
 function isRecord(value: unknown): value is Record<string, unknown> {
     return Boolean(value && typeof value === "object" && !Array.isArray(value));
-}
-
-function jsonResponse(statusCode: number, body: unknown): LambdaResponse {
-    return {
-        statusCode,
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-    };
-}
-
-function textResponse(statusCode: number, body: string): LambdaResponse {
-    return {
-        statusCode,
-        headers: { "Content-Type": "text/plain; charset=utf-8" },
-        body,
-    };
 }

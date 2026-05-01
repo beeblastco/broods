@@ -34,7 +34,7 @@ describe("account webhook ingress", () => {
     const response = await routeIncomingEvent(createTelegramEvent(), createHandlers());
 
     expect(response.statusCode).toBe(404);
-    expect(response.body).toBe("Not found");
+    expect(responseJson(response)).toEqual({ error: "Not found" });
   });
 
   it("returns 503 when the account has not configured the requested channel", async () => {
@@ -48,7 +48,7 @@ describe("account webhook ingress", () => {
     const response = await routeIncomingEvent(createTelegramEvent(), createHandlers());
 
     expect(response.statusCode).toBe(503);
-    expect(response.body).toBe("telegram integration is not configured");
+    expect(responseJson(response)).toEqual({ error: "telegram integration is not configured" });
   });
 
   it("returns 401 when account channel authentication fails", async () => {
@@ -61,7 +61,7 @@ describe("account webhook ingress", () => {
     }), createHandlers());
 
     expect(response.statusCode).toBe(401);
-    expect(response.body).toBe("Unauthorized");
+    expect(responseJson(response)).toEqual({ error: "Unauthorized" });
   });
 
   it("normalizes account webhook events and schedules channel processing", async () => {
@@ -102,7 +102,7 @@ describe("account webhook ingress", () => {
     const response = await routeIncomingEvent(createTelegramEvent(undefined, undefined, "/"), createHandlers());
 
     expect(response.statusCode).toBe(401);
-    expect(response.body).toBe("Unauthorized");
+    expect(responseJson(response)).toEqual({ error: "Unauthorized" });
   });
 
 });
@@ -171,7 +171,15 @@ function telegramUpdate() {
 }
 
 interface ResponseShape {
-  statusCode: number;
+  statusCode?: number;
   headers?: Record<string, string>;
   body?: string;
+}
+
+function responseJson(response: { body?: unknown }): Record<string, unknown> {
+  if (typeof response.body !== "string") {
+    throw new Error("Expected JSON response body to be a string");
+  }
+
+  return JSON.parse(response.body) as Record<string, unknown>;
 }

@@ -42,7 +42,7 @@ describe("direct API ingress", () => {
     }), createHandlers());
 
     expect(response.statusCode).toBe(401);
-    expect(response.body).toBe("Unauthorized");
+    expect(responseJson(response)).toEqual({ error: "Unauthorized" });
   });
 
   it("returns 200 for GET probes without requiring direct API configuration", async () => {
@@ -51,7 +51,7 @@ describe("direct API ingress", () => {
     }), createHandlers());
 
     expect(response.statusCode).toBe(200);
-    expect(response.body).toBe("ok");
+    expect(responseJson(response)).toEqual({ status: "ok", method: "POST" });
   });
 
   it("returns 405 for unsupported request methods", async () => {
@@ -60,7 +60,11 @@ describe("direct API ingress", () => {
     }), createHandlers());
 
     expect(response.statusCode).toBe(405);
-    expect(response.body).toBe("Method not allowed");
+    expect(responseJson(response)).toEqual({
+      error: "Method not allowed",
+      method: "PUT",
+      allowedMethods: ["GET", "POST"],
+    });
   });
 
   it("returns 401 when the bearer token is missing", async () => {
@@ -74,7 +78,7 @@ describe("direct API ingress", () => {
     }), createHandlers());
 
     expect(response.statusCode).toBe(401);
-    expect(response.body).toBe("Unauthorized");
+    expect(responseJson(response)).toEqual({ error: "Unauthorized" });
   });
 
   it("returns 401 when the bearer token is malformed", async () => {
@@ -90,7 +94,7 @@ describe("direct API ingress", () => {
     }), createHandlers());
 
     expect(response.statusCode).toBe(401);
-    expect(response.body).toBe("Unauthorized");
+    expect(responseJson(response)).toEqual({ error: "Unauthorized" });
   });
 
   it("returns 401 when the bearer token does not match", async () => {
@@ -106,7 +110,7 @@ describe("direct API ingress", () => {
     }), createHandlers());
 
     expect(response.statusCode).toBe(401);
-    expect(response.body).toBe("Unauthorized");
+    expect(responseJson(response)).toEqual({ error: "Unauthorized" });
   });
 
   it("returns 400 for invalid direct API JSON", async () => {
@@ -117,7 +121,7 @@ describe("direct API ingress", () => {
     }), createHandlers());
 
     expect(response.statusCode).toBe(400);
-    expect(response.body).toContain("Invalid request JSON:");
+    expect(responseJson(response).error).toContain("Invalid request JSON:");
   });
 
   it("returns 400 when eventId or conversationKey is missing", async () => {
@@ -132,7 +136,7 @@ describe("direct API ingress", () => {
     }), createHandlers());
 
     expect(response.statusCode).toBe(400);
-    expect(response.body).toBe("Request body must include eventId and conversationKey");
+    expect(responseJson(response)).toEqual({ error: "Request body must include eventId and conversationKey" });
   });
 
   it("rejects reserved direct event prefixes", async () => {
@@ -148,7 +152,7 @@ describe("direct API ingress", () => {
     }), createHandlers());
 
     expect(response.statusCode).toBe(400);
-    expect(response.body).toBe("eventId uses a reserved internal prefix");
+    expect(responseJson(response)).toEqual({ error: "eventId uses a reserved internal prefix" });
   });
 
   it("rejects reserved direct conversation prefixes", async () => {
@@ -164,7 +168,7 @@ describe("direct API ingress", () => {
     }), createHandlers());
 
     expect(response.statusCode).toBe(400);
-    expect(response.body).toBe("conversationKey uses a reserved channel or internal prefix");
+    expect(responseJson(response)).toEqual({ error: "conversationKey uses a reserved channel or internal prefix" });
   });
 
   it("returns 400 when the events field is not an array", async () => {
@@ -177,7 +181,7 @@ describe("direct API ingress", () => {
     }), createHandlers());
 
     expect(response.statusCode).toBe(400);
-    expect(response.body).toBe("Request body field 'events' must be an array");
+    expect(responseJson(response)).toEqual({ error: "Request body field 'events' must be an array" });
   });
 
   it("returns 400 when the events array is empty", async () => {
@@ -190,7 +194,7 @@ describe("direct API ingress", () => {
     }), createHandlers());
 
     expect(response.statusCode).toBe(400);
-    expect(response.body).toBe("Request body must include a non-empty events array");
+    expect(responseJson(response)).toEqual({ error: "Request body must include a non-empty events array" });
   });
 
   it("returns 400 when a direct event is not an object", async () => {
@@ -203,7 +207,7 @@ describe("direct API ingress", () => {
     }), createHandlers());
 
     expect(response.statusCode).toBe(400);
-    expect(response.body).toBe("Each direct event must be an object");
+    expect(responseJson(response)).toEqual({ error: "Each direct event must be an object" });
   });
 
   it("returns 400 when persist is set on a non-system event", async () => {
@@ -220,7 +224,7 @@ describe("direct API ingress", () => {
     }), createHandlers());
 
     expect(response.statusCode).toBe(400);
-    expect(response.body).toBe("Only system-role events may set persist");
+    expect(responseJson(response)).toEqual({ error: "Only system-role events may set persist" });
   });
 
   it("rejects persisted system events", async () => {
@@ -243,7 +247,7 @@ describe("direct API ingress", () => {
     }), createHandlers());
 
     expect(response.statusCode).toBe(400);
-    expect(response.body).toBe("Direct API system events cannot be persisted");
+    expect(responseJson(response)).toEqual({ error: "Direct API system events cannot be persisted" });
   });
 
   it("normalizes direct events before handing them to the application handler", async () => {
@@ -380,7 +384,7 @@ describe("direct API ingress", () => {
     }), createHandlers());
 
     expect(response.statusCode).toBe(400);
-    expect(response.body).toBe("X-Webhook-Secret is required when webhookUrl is provided");
+    expect(responseJson(response)).toEqual({ error: "X-Webhook-Secret is required when webhookUrl is provided" });
   });
 
   it("routes status requests through direct API auth", async () => {
@@ -484,4 +488,8 @@ interface ResponseShape {
   statusCode: number;
   headers?: Record<string, string>;
   body?: string;
+}
+
+function responseJson(response: ResponseShape): Record<string, unknown> {
+  return JSON.parse(response.body ?? "{}") as Record<string, unknown>;
 }
