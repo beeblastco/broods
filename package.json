@@ -1,6 +1,6 @@
 {
   "name": "filthy-panty",
-  "description": "Agentic AI chatbot on AWS — Lambda + Google AI + Telegram, deployed with SST.",
+  "description": "Agentic AI chatbot on AWS — Lambda + Google AI + multi-channel integrations, deployed with SST.",
   "type": "module",
   "private": true,
   "scripts": {

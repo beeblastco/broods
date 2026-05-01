@@ -1,4 +1,9 @@
-import { readFileSync } from "node:fs";
+import {
+  outputOrEnv,
+  optionalScriptEnv,
+  parseJson,
+  stripTrailingSlash,
+} from "../utils.ts";
 
 const HARNESS_MEMORY_MB = 256;
 const LAMBDA_ARM64_GB_SECOND = 0.0000133334;
@@ -59,8 +64,7 @@ export interface ManualTestAccount {
 }
 
 export function optionalManualEnv(name: string): string | undefined {
-  const value = process.env[name]?.trim();
-  return value || undefined;
+  return optionalScriptEnv(name);
 }
 
 export function manualFunctionUrl(): string {
@@ -68,7 +72,7 @@ export function manualFunctionUrl(): string {
 }
 
 export function manualAccountManageUrl(): string {
-  return outputOrEnv("ACCOUNT_MANAGE_URL", "accountManageUrl").replace(/\/+$/, "");
+  return stripTrailingSlash(outputOrEnv("ACCOUNT_MANAGE_URL", "accountManageUrl"));
 }
 
 export async function withManualTestAccount<T>(
@@ -202,47 +206,12 @@ async function deleteManualAccount(account: ManualTestAccount): Promise<void> {
   console.log(text ? JSON.stringify(parseJson(text), null, 2) : "{}");
 }
 
-function parseJson(text: string): unknown {
-  try {
-    return JSON.parse(text);
-  } catch (err) {
-    throw new Error(`Invalid JSON response: ${err instanceof Error ? err.message : String(err)}\n${text}`);
-  }
-}
-
 function isCreatedManualAccount(value: unknown): value is CreatedManualAccount {
   return Boolean(
     value &&
     typeof value === "object" &&
     typeof (value as { accountSecret?: unknown }).accountSecret === "string",
   );
-}
-
-function outputOrEnv(envName: string, outputName: string): string {
-  const explicit = optionalManualEnv(envName);
-  if (explicit) {
-    return explicit;
-  }
-
-  const outputs = readSstOutputs();
-  const value = outputs[outputName];
-  if (typeof value !== "string" || value.trim().length === 0) {
-    throw new Error(`Missing ${envName} and .sst output ${outputName}`);
-  }
-
-  return value;
-}
-
-function readSstOutputs(): Record<string, unknown> {
-  try {
-    const raw = readFileSync(".sst/outputs.json", "utf-8");
-    const parsed = JSON.parse(raw);
-    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
-      ? parsed as Record<string, unknown>
-      : {};
-  } catch (err) {
-    throw new Error(`Unable to read .sst/outputs.json: ${err instanceof Error ? err.message : String(err)}`);
-  }
 }
 
 export function printTimingResults(result: TimingResult): void {

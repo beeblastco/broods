@@ -239,13 +239,6 @@ export async function listAccounts(): Promise<AccountRecord[]> {
     .filter((account): account is AccountRecord => account !== null);
 }
 
-export async function updateAccountConfig(
-    accountId: string,
-    config: unknown,
-): Promise<AccountRecord | null> {
-    return updateAccount(accountId, { config });
-}
-
 export async function updateAccount(
     accountId: string,
     input: UpdateAccountInput,
@@ -649,7 +642,7 @@ function decodeStoredAccountConfig(value: unknown): AccountConfig {
         return decryptAccountConfig(value);
     }
 
-    return normalizeAccountConfig(value);
+    throw new Error("Stored account config must be encrypted");
 }
 
 function encryptAccountConfig(config: AccountConfig): EncryptedAccountConfig {

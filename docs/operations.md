@@ -91,11 +91,23 @@ Configure provider webhooks with the returned `accountId`:
 
 Then patch the account config with the provider credentials needed for each channel.
 
-CI/CD configures the default Telegram account after deploy. It creates or updates the `telegram-default` account config from Telegram repository secrets, then registers Telegram to `/webhooks/{accountId}/telegram`.
+CI/CD configures the default Telegram account after deploy. It creates or updates the `telegram-default` account config from Telegram GitHub Actions secrets, then registers Telegram to `/webhooks/{accountId}/telegram`.
+
+## Default Telegram Account
+
+The deploy workflow runs:
+
+```bash
+bun run scripts/configure-telegram-account.ts
+```
+
+The script requires `ADMIN_ACCOUNT_SECRET`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_WEBHOOK_SECRET`, and `ALLOWED_CHAT_IDS`. It reads `ACCOUNT_MANAGE_URL` and `HARNESS_PROCESSING_URL` from environment overrides when present, otherwise from `.sst/outputs.json`.
+
+The script upserts by `TELEGRAM_ACCOUNT_USERNAME` (`telegram-default` by default), writes Telegram credentials into encrypted account config, and calls Telegram `setWebhook` with `/webhooks/{accountId}/telegram`.
 
 ## Live Probes
 
-Manual direct API scripts require:
+Manual direct API scripts accept optional URL overrides:
 
 ```bash
 export FUNCTION_URL=<harnessProcessingUrl>
@@ -139,6 +151,6 @@ bun scripts/manual/async-api-tool-call.ts
 
 - GitHub Actions runs CI on pull requests and non-`main` pushes, and deploys on pushes to `main`.
 - Deploy requires repository secrets `SST_SECRET_GOOGLEAPIKEY`, `SST_SECRET_TAVILYAPIKEY`, `SST_SECRET_ADMINACCOUNTSECRET`, and `SST_SECRET_ACCOUNTCONFIGENCRYPTIONSECRET`.
-- Default Telegram account configuration requires repository secrets `SST_SECRET_TELEGRAMBOTTOKEN`, `SST_SECRET_TELEGRAMWEBHOOKSECRET`, and `SST_SECRET_ALLOWEDCHATIDS`.
+- Default Telegram account configuration requires repository secrets `TELEGRAM_BOT_TOKEN`, `TELEGRAM_WEBHOOK_SECRET`, and `TELEGRAM_ALLOWED_CHAT_IDS`.
 - `bun run test` runs unit tests locally.
 - Use `gh run list` and `gh run view` to inspect pipeline status.

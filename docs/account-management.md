@@ -176,4 +176,4 @@ Provider webhook URLs must include the account id:
 
 Customers only interact with the provider bot/app. They do not receive account secrets.
 
-CI/CD configures the default Telegram account by creating or updating `telegram-default` account config and registering Telegram to `/webhooks/{accountId}/telegram` after deploy.
+CI/CD configures the default Telegram account by running `bun run scripts/configure-telegram-account.ts` after deploy. The script upserts `telegram-default` by username, stores Telegram credentials in encrypted account config, and registers Telegram to `/webhooks/{accountId}/telegram`.

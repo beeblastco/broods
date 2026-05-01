@@ -101,9 +101,9 @@ jobs:
       - name: Configure Telegram account webhook
         env:
           ADMIN_ACCOUNT_SECRET: ${{ secrets.SST_SECRET_ADMINACCOUNTSECRET }}
-          TELEGRAM_BOT_TOKEN: ${{ secrets.SST_SECRET_TELEGRAMBOTTOKEN }}
-          TELEGRAM_WEBHOOK_SECRET: ${{ secrets.SST_SECRET_TELEGRAMWEBHOOKSECRET }}
-          ALLOWED_CHAT_IDS: ${{ secrets.SST_SECRET_ALLOWEDCHATIDS }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_WEBHOOK_SECRET: ${{ secrets.TELEGRAM_WEBHOOK_SECRET }}
+          ALLOWED_CHAT_IDS: ${{ secrets.TELEGRAM_ALLOWED_CHAT_IDS }}
           TELEGRAM_ACCOUNT_USERNAME: telegram-default
           TELEGRAM_ACCOUNT_DESCRIPTION: Default Telegram account managed by CI/CD.
         shell: bash

@@ -40,11 +40,12 @@ export function errorResponse(
   statusCode: number,
   error: string,
   details: Record<string, unknown> = {},
+  headers: Record<string, string> = {},
 ): LambdaResponse {
   return jsonResponse(statusCode, {
     error,
     ...details,
-  });
+  }, headers);
 }
 
 export function parseJsonBody(event: LambdaFunctionURLEvent): unknown {

@@ -3,16 +3,24 @@
  * Creates or updates account config, then registers the account-scoped webhook.
  */
 
+import {
+  isRecord,
+  outputOrEnv,
+  parseJson,
+  requireScriptEnv,
+  stripTrailingSlash,
+} from "./utils.ts";
+
 const DEFAULT_ACCOUNT_USERNAME = "telegram-default";
 const DEFAULT_ACCOUNT_DESCRIPTION = "Default Telegram account managed by CI/CD.";
 const DEFAULT_REACTION_EMOJI = "👀";
 
-const accountManageUrl = stripTrailingSlash(await outputOrEnv("ACCOUNT_MANAGE_URL", "accountManageUrl"));
-const harnessProcessingUrl = stripTrailingSlash(await outputOrEnv("HARNESS_PROCESSING_URL", "harnessProcessingUrl"));
-const adminSecret = requireEnv("ADMIN_ACCOUNT_SECRET");
-const telegramBotToken = requireEnv("TELEGRAM_BOT_TOKEN");
-const telegramWebhookSecret = requireEnv("TELEGRAM_WEBHOOK_SECRET");
-const allowedChatIds = parseAllowedChatIds(requireEnv("ALLOWED_CHAT_IDS"));
+const accountManageUrl = stripTrailingSlash(outputOrEnv("ACCOUNT_MANAGE_URL", "accountManageUrl"));
+const harnessProcessingUrl = stripTrailingSlash(outputOrEnv("HARNESS_PROCESSING_URL", "harnessProcessingUrl"));
+const adminSecret = requireScriptEnv("ADMIN_ACCOUNT_SECRET");
+const telegramBotToken = requireScriptEnv("TELEGRAM_BOT_TOKEN");
+const telegramWebhookSecret = requireScriptEnv("TELEGRAM_WEBHOOK_SECRET");
+const allowedChatIds = parseAllowedChatIds(requireScriptEnv("ALLOWED_CHAT_IDS"));
 const username = process.env.TELEGRAM_ACCOUNT_USERNAME?.trim() || DEFAULT_ACCOUNT_USERNAME;
 const description = process.env.TELEGRAM_ACCOUNT_DESCRIPTION?.trim() || DEFAULT_ACCOUNT_DESCRIPTION;
 
@@ -110,7 +118,7 @@ async function requestJson(url: string, init: RequestInit): Promise<unknown> {
     throw new Error(`${init.method ?? "GET"} ${url} failed: ${response.status} ${bodyText}`);
   }
 
-  return bodyText ? JSON.parse(bodyText) : {};
+  return bodyText ? parseJson(bodyText) : {};
 }
 
 function parseAccountResponse(value: unknown): PublicAccount {
@@ -127,31 +135,6 @@ function isPublicAccount(value: unknown): value is PublicAccount {
     typeof value.username === "string";
 }
 
-async function outputOrEnv(envName: string, outputName: string): Promise<string> {
-  const explicit = process.env[envName]?.trim();
-  if (explicit) {
-    return explicit;
-  }
-
-  const outputs = await readSstOutputs();
-  const value = outputs[outputName];
-  if (typeof value !== "string" || value.trim().length === 0) {
-    throw new Error(`Missing ${envName} and .sst output ${outputName}`);
-  }
-
-  return value;
-}
-
-async function readSstOutputs(): Promise<Record<string, unknown>> {
-  try {
-    const raw = await Bun.file(".sst/outputs.json").text();
-    const parsed = JSON.parse(raw);
-    return isRecord(parsed) ? parsed : {};
-  } catch (err) {
-    throw new Error(`Unable to read .sst/outputs.json: ${err instanceof Error ? err.message : String(err)}`);
-  }
-}
-
 function parseAllowedChatIds(raw: string): number[] {
   const ids = raw
     .split(",")
@@ -163,21 +146,4 @@ function parseAllowedChatIds(raw: string): number[] {
   }
 
   return ids;
-}
-
-function stripTrailingSlash(value: string): string {
-  return value.replace(/\/+$/, "");
-}
-
-function requireEnv(name: string): string {
-  const value = process.env[name]?.trim();
-  if (!value) {
-    throw new Error(`Missing required environment variable: ${name}`);
-  }
-
-  return value;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value && typeof value === "object" && !Array.isArray(value));
 }

@@ -29,6 +29,8 @@ import {
 } from "./status.ts";
 
 type AgentLoopStream = Awaited<ReturnType<typeof runAgentLoop>>;
+type SessionInstance = ReturnType<typeof createSession>;
+type TurnContext = Awaited<ReturnType<SessionInstance["createTurnContext"]>>;
 
 const CONVERSATIONS_TABLE_NAME = requireEnv("CONVERSATIONS_TABLE_NAME");
 const AGENT_PROCESSING_FAILED = "Agent processing failed";
@@ -38,6 +40,11 @@ const lambda = new LambdaClient({ region: process.env.AWS_REGION });
 interface AsyncWorkerInvocation {
   kind: "direct-api-async-worker";
   event: DirectInboundEvent;
+}
+
+interface DirectTurn {
+  session: SessionInstance;
+  turnContext: TurnContext;
 }
 
 export async function handler(event: LambdaFunctionURLEvent | AsyncWorkerInvocation): Promise<LambdaResponse> {
@@ -59,14 +66,13 @@ async function handleDirectRequest(event: DirectInboundEvent): Promise<LambdaRes
     return emptySseResponse();
   }
 
-  const session = createSession(event.eventId, event.conversationKey, event.accountId, event.accountConfig);
-  if (!(await claimSession(session))) {
-    return emptySseResponse();
-  }
-
   try {
-    const ephemeralSystem = await session.appendIngressEvents(event.events);
-    const turnContext = await session.createTurnContext(ephemeralSystem);
+    const turn = await prepareDirectTurn(event);
+    if (!turn) {
+      return emptySseResponse();
+    }
+
+    const { session, turnContext } = turn;
     if (!turnContext.hasPendingUserMessage) {
       return emptySseResponse();
     }
@@ -79,10 +85,9 @@ async function handleDirectRequest(event: DirectInboundEvent): Promise<LambdaRes
     };
   } catch (err) {
     logError("Direct request pre-processing failed", {
-      eventId: session.eventId,
+      eventId: event.eventId,
       error: err instanceof Error ? err.message : String(err),
     });
-    await session.release().catch(() => { });
     throw err;
   }
 }
@@ -140,14 +145,13 @@ async function handleStatusRequest(event: StatusInboundEvent): Promise<LambdaRes
 }
 
 async function handleAsyncWorkerRequest(event: DirectInboundEvent): Promise<void> {
-  const session = createSession(event.eventId, event.conversationKey, event.accountId, event.accountConfig);
-  if (!(await claimSession(session))) {
-    return;
-  }
-
   try {
-    const ephemeralSystem = await session.appendIngressEvents(event.events);
-    const turnContext = await session.createTurnContext(ephemeralSystem);
+    const turn = await prepareDirectTurn(event);
+    if (!turn) {
+      return;
+    }
+
+    const { session, turnContext } = turn;
     if (!turnContext.hasPendingUserMessage) {
       await settleAsyncFailure(event, "Request did not produce a pending user message");
       return;
@@ -184,6 +188,21 @@ async function handleAsyncWorkerRequest(event: DirectInboundEvent): Promise<void
       error: err instanceof Error ? err.message : String(err),
     });
     await settleAsyncFailure(event, err instanceof Error ? err.message : "Async request failed");
+    throw err;
+  }
+}
+
+async function prepareDirectTurn(event: DirectInboundEvent): Promise<DirectTurn | null> {
+  const session = createSession(event.eventId, event.conversationKey, event.accountId, event.accountConfig);
+  if (!(await claimSession(session))) {
+    return null;
+  }
+
+  try {
+    const ephemeralSystem = await session.appendIngressEvents(event.events);
+    const turnContext = await session.createTurnContext(ephemeralSystem);
+    return { session, turnContext };
+  } catch (err) {
     await session.release().catch(() => { });
     throw err;
   }

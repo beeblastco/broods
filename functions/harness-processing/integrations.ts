@@ -114,10 +114,6 @@ interface IntegrationHandlers {
 }
 
 export interface ChannelRegistry {
-  telegramChannel: ChannelAdapter | null;
-  githubChannel: ChannelAdapter | null;
-  slackChannel: ChannelAdapter | null;
-  discordChannel: ChannelAdapter | null;
   webhookChannels: ChannelAdapter[];
 }
 
@@ -365,10 +361,6 @@ function createChannelRegistry(config: AccountConfig): ChannelRegistry {
   const discordChannel = createDiscordChannelFromConfig(config);
 
   return {
-    telegramChannel,
-    githubChannel,
-    slackChannel,
-    discordChannel,
     webhookChannels: [
       telegramChannel,
       githubChannel,

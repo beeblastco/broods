@@ -17,11 +17,11 @@ import {
 } from "../_shared/accounts.ts";
 import { deleteAccountRuntimeData } from "../_shared/account-cleanup.ts";
 import {
+    errorResponse,
     jsonResponse,
     normalizeHeaders,
     normalizePath,
     parseJsonBody,
-    textResponse,
 } from "../_shared/http.ts";
 import type { LambdaResponse } from "../_shared/runtime.ts";
 import { enforceAccountSignupRateLimit, RateLimitExceededError } from "./rate-limit.ts";
@@ -48,7 +48,7 @@ export async function handler(event: LambdaFunctionURLEvent): Promise<LambdaResp
 
         const auth = await resolveBearerAuth(headers);
         if (!auth) {
-            return textResponse(401, "Unauthorized");
+            return errorResponse(401, "Unauthorized");
         }
 
         if (method === "GET" && rawPath === "/accounts/me") {
@@ -72,7 +72,7 @@ export async function handler(event: LambdaFunctionURLEvent): Promise<LambdaResp
         }
 
         if (auth.kind !== "admin") {
-            return textResponse(403, "Forbidden");
+            return errorResponse(403, "Forbidden");
         }
 
         if (method === "GET" && rawPath === "/accounts") {
@@ -87,7 +87,7 @@ export async function handler(event: LambdaFunctionURLEvent): Promise<LambdaResp
                 const account = await getAccount(accountId);
                 return account
                     ? jsonResponse(200, { account: toPublicAccount(account) })
-                    : textResponse(404, "Account not found");
+                    : errorResponse(404, "Account not found");
             }
 
             if (method === "PATCH") {
@@ -97,7 +97,7 @@ export async function handler(event: LambdaFunctionURLEvent): Promise<LambdaResp
             if (method === "DELETE") {
                 const account = await getAccount(accountId);
                 if (!account) {
-                    return textResponse(404, "Account not found");
+                    return errorResponse(404, "Account not found");
                 }
                 return deleteAccountResponse(account);
             }
@@ -108,14 +108,14 @@ export async function handler(event: LambdaFunctionURLEvent): Promise<LambdaResp
             return rotateSecretResponse(decodeURIComponent(rotateMatch[1]));
         }
 
-        return textResponse(404, "Not found");
+        return errorResponse(404, "Not found");
     } catch (err) {
         if (err instanceof RateLimitExceededError) {
-            return textResponse(429, "Rate limit exceeded", {
+            return errorResponse(429, "Rate limit exceeded", {}, {
                 "Retry-After": String(err.retryAfterSeconds),
             });
         }
-        return textResponse(400, err instanceof Error ? err.message : "Invalid request");
+        return errorResponse(400, err instanceof Error ? err.message : "Invalid request");
     }
 }
 
@@ -123,7 +123,7 @@ async function updateAccountResponse(accountId: string, input: unknown): Promise
     const account = await updateAccount(accountId, input as never);
     return account
         ? jsonResponse(200, { account: toPublicAccount(account) })
-        : textResponse(404, "Account not found");
+        : errorResponse(404, "Account not found");
 }
 
 async function rotateSecretResponse(accountId: string): Promise<LambdaResponse> {
@@ -133,7 +133,7 @@ async function rotateSecretResponse(accountId: string): Promise<LambdaResponse> 
             account: toPublicAccount(rotated.account),
             accountSecret: rotated.accountSecret,
         })
-        : textResponse(404, "Account not found");
+        : errorResponse(404, "Account not found");
 }
 
 async function deleteAccountResponse(account: Extract<AuthContext, { kind: "account" }>["account"]): Promise<LambdaResponse> {
