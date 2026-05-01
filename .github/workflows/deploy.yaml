@@ -117,7 +117,7 @@ jobs:
             ALLOWED_CHAT_IDS
           do
             if [[ -z "${!name:-}" ]]; then
-              echo "Missing required Telegram migration secret: $name" >&2
+              echo "Missing required Telegram account configuration secret: $name" >&2
               exit 1
             fi
           done

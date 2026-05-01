@@ -18,7 +18,7 @@ const DISCORD_API_BASE_URL = "https://discord.com/api/v10";
 
 const DISCORD_APPLICATION_ID = requireEnv("DISCORD_APPLICATION_ID");
 const DISCORD_SYNC_GUILD_ID = optionalEnv("DISCORD_SYNC_GUILD_ID");
-const DISCORD_BOT_TOKEN = await loadDiscordBotToken();
+const DISCORD_BOT_TOKEN = requireEnv("DISCORD_BOT_TOKEN");
 
 const route = DISCORD_SYNC_GUILD_ID
   ? `/applications/${DISCORD_APPLICATION_ID}/guilds/${DISCORD_SYNC_GUILD_ID}/commands`
@@ -56,35 +56,3 @@ process.stdout.write(JSON.stringify({
     name: command.name,
   })),
 }, null, 2) + "\n");
-
-async function loadDiscordBotToken(): Promise<string> {
-  const token = optionalEnv("DISCORD_BOT_TOKEN");
-  if (token) {
-    return token;
-  }
-
-  const command = Bun.spawn(
-    ["bunx", "sst", "secret", "list"],
-    {
-      cwd: new URL("..", import.meta.url).pathname,
-      stdout: "pipe",
-      stderr: "pipe",
-      env: process.env,
-    },
-  );
-
-  const stdout = await new Response(command.stdout).text();
-  const stderr = await new Response(command.stderr).text();
-  const exitCode = await command.exited;
-
-  if (exitCode !== 0) {
-    throw new Error(`Unable to load DiscordBotToken from SST secrets: ${stderr.trim() || "sst secret list failed"}`);
-  }
-
-  const match = stdout.match(/^DiscordBotToken=(.+)$/m);
-  if (!match?.[1]) {
-    throw new Error("Missing required environment variable: DISCORD_BOT_TOKEN");
-  }
-
-  return match[1];
-}

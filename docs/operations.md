@@ -91,7 +91,7 @@ Configure provider webhooks with the returned `accountId`:
 
 Then patch the account config with the provider credentials needed for each channel.
 
-CI/CD migrates the default Telegram bot to the account model after deploy. It creates or updates the `telegram-default` account from the existing Telegram repository secrets, then registers Telegram to `/webhooks/{accountId}/telegram`.
+CI/CD configures the default Telegram account after deploy. It creates or updates the `telegram-default` account config from Telegram repository secrets, then registers Telegram to `/webhooks/{accountId}/telegram`.
 
 ## Live Probes
 
@@ -139,6 +139,6 @@ bun scripts/manual/async-api-tool-call.ts
 
 - GitHub Actions runs CI on pull requests and non-`main` pushes, and deploys on pushes to `main`.
 - Deploy requires repository secrets `SST_SECRET_GOOGLEAPIKEY`, `SST_SECRET_TAVILYAPIKEY`, `SST_SECRET_ADMINACCOUNTSECRET`, and `SST_SECRET_ACCOUNTCONFIGENCRYPTIONSECRET`.
-- Default Telegram migration requires repository secrets `SST_SECRET_TELEGRAMBOTTOKEN`, `SST_SECRET_TELEGRAMWEBHOOKSECRET`, and `SST_SECRET_ALLOWEDCHATIDS`.
+- Default Telegram account configuration requires repository secrets `SST_SECRET_TELEGRAMBOTTOKEN`, `SST_SECRET_TELEGRAMWEBHOOKSECRET`, and `SST_SECRET_ALLOWEDCHATIDS`.
 - `bun run test` runs unit tests locally.
 - Use `gh run list` and `gh run view` to inspect pipeline status.

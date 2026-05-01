@@ -1,10 +1,10 @@
 /**
- * CI migration helper for the default Telegram account.
+ * CI configuration helper for the default Telegram account.
  * Creates or updates account config, then registers the account-scoped webhook.
  */
 
 const DEFAULT_ACCOUNT_USERNAME = "telegram-default";
-const DEFAULT_ACCOUNT_DESCRIPTION = "Default Telegram account migrated by CI/CD.";
+const DEFAULT_ACCOUNT_DESCRIPTION = "Default Telegram account managed by CI/CD.";
 const DEFAULT_REACTION_EMOJI = "👀";
 
 const accountManageUrl = stripTrailingSlash(await outputOrEnv("ACCOUNT_MANAGE_URL", "accountManageUrl"));

@@ -19,12 +19,7 @@ curl -X POST "$ACCOUNT_MANAGE_URL/accounts" \
   -H "Content-Type: application/json" \
   -d '{
     "username": "company-a",
-    "description": "Customer support agent for Company A",
-    "config": {
-      "modelId": "gemma-4-31b-it",
-      "memoryNamespace": "support",
-      "channels": {}
-    }
+    "description": "Customer support agent for Company A"
   }'
 ```
 
@@ -37,11 +32,7 @@ Response:
     "username": "company-a",
     "description": "Customer support agent for Company A",
     "status": "active",
-    "config": {
-      "modelId": "gemma-4-31b-it",
-      "memoryNamespace": "support",
-      "channels": {}
-    },
+    "config": {},
     "createdAt": "2026-05-01T00:00:00.000Z",
     "updatedAt": "2026-05-01T00:00:00.000Z"
   },
@@ -50,6 +41,8 @@ Response:
 ```
 
 Store `accountSecret` securely. It is not recoverable; rotate it if lost.
+
+If `config` is omitted, the stored config is `{}`. Runtime then uses the deployed defaults: `GOOGLE_MODEL_ID`, `MAX_AGENT_ITERATIONS`, `SLIDING_CONTEXT_WINDOW`, the generated default system prompt, per-conversation memory/filesystem, and no configured provider channels.
 
 ## Manage Own Account
 
@@ -183,4 +176,4 @@ Provider webhook URLs must include the account id:
 
 Customers only interact with the provider bot/app. They do not receive account secrets.
 
-CI/CD keeps the default Telegram bot on the account model by creating or updating a `telegram-default` account and registering Telegram to `/webhooks/{accountId}/telegram` after deploy.
+CI/CD configures the default Telegram account by creating or updating `telegram-default` account config and registering Telegram to `/webhooks/{accountId}/telegram` after deploy.

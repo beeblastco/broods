@@ -58,15 +58,6 @@ export interface ManualTestAccount {
   accountSecret: string;
 }
 
-export function requireManualEnv(name: string): string {
-  const value = process.env[name];
-  if (!value) {
-    throw new Error(`Missing required environment variable: ${name}`);
-  }
-
-  return value;
-}
-
 export function optionalManualEnv(name: string): string | undefined {
   const value = process.env[name]?.trim();
   return value || undefined;
@@ -119,7 +110,7 @@ export async function withManualTestAccount<T>(
 export async function fetchWithTiming(
   url: string,
   body: unknown,
-  accountSecret: string = requireManualEnv("ACCOUNT_SECRET"),
+  accountSecret: string,
 ): Promise<TimingResult> {
   const startTime = Date.now();
   let firstByteTime: number | null = null;
