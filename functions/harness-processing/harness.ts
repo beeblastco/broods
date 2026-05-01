@@ -1,6 +1,6 @@
 /**
  * Agent-side harness core.
- * Keep turn context assembly, model invocation, and tools orchestration here.
+ * Keep turn context assembly, model invocation, and tools orchestration here. 
  */
 
 import { createGoogleGenerativeAI } from "@ai-sdk/google";
@@ -53,7 +53,7 @@ export async function runAgentLoop(
         thinkingConfig: {
           thinkingLevel: "high",
         },
-      },
+      }
     },
     stopWhen: stepCountIs(accountConfig.maxAgentIterations ?? MAX_AGENT_ITERATIONS),
     prepareStep: async () => {
