@@ -13,17 +13,23 @@ import {
   userModelMessageSchema,
 } from "ai";
 import type { LambdaFunctionURLEvent } from "aws-lambda";
-import { timingSafeEqual } from "node:crypto";
+import {
+  getAccount,
+  resolveBearerAuth,
+  toRuntimeAccountConfig,
+  type AccountConfig,
+  type AccountRecord,
+  type AuthContext,
+} from "../_shared/accounts.ts";
 import type {
   ChannelActions,
   ChannelAdapter,
   ChannelRequest,
   ChannelResponse,
 } from "../_shared/channels.ts";
-import { extractText, formatChannelErrorText, isOpenAllowList } from "../_shared/channels.ts";
+import { extractText, formatChannelErrorText } from "../_shared/channels.ts";
 import { parseCommand } from "../_shared/commands.ts";
 import { createDiscordChannel } from "../_shared/discord-channel.ts";
-import { optionalEnv } from "../_shared/env.ts";
 import { INTERNAL_EVENT_ID_PREFIX } from "../_shared/filesystem-namespace.ts";
 import { createGitHubChannel } from "../_shared/github-channel.ts";
 import { logError } from "../_shared/log.ts";
@@ -35,8 +41,10 @@ import type { ConversationIngressEvent } from "./session.ts";
 
 const DIRECT_API_EVENT_ID_PREFIX = "api:";
 const DIRECT_API_CONVERSATION_PREFIX = "api:";
+const ACCOUNT_NAMESPACE_PREFIX = "acct:";
 const RESERVED_EVENT_ID_PREFIXES = [
   INTERNAL_EVENT_ID_PREFIX,
+  ACCOUNT_NAMESPACE_PREFIX,
   DIRECT_API_EVENT_ID_PREFIX,
   "gh:",
   "slack:",
@@ -46,19 +54,21 @@ const RESERVED_EVENT_ID_PREFIXES = [
 ] as const;
 const RESERVED_CONVERSATION_PREFIXES = [
   INTERNAL_EVENT_ID_PREFIX,
+  ACCOUNT_NAMESPACE_PREFIX,
   DIRECT_API_CONVERSATION_PREFIX,
   "gh:",
   "slack:",
   "tg:",
   "discord:",
 ] as const;
-const CLOSED_ALLOW_LIST = "closed";
 
 type DirectIngressEvent =
   | UserModelMessage
   | (SystemModelMessage & { persist: false });
 
 export interface DirectInboundEvent {
+  accountId: string;
+  accountConfig: AccountConfig;
   eventId: string;
   publicEventId: string;
   conversationKey: string;
@@ -72,13 +82,14 @@ export interface AsyncDirectInboundEvent extends DirectInboundEvent {
 }
 
 export interface StatusInboundEvent {
+  accountId: string;
   eventId: string;
   publicEventId: string;
 }
 
-export type HandlerEvent = LambdaFunctionURLEvent;
-
 export interface ChannelInboundEvent {
+  accountId?: string;
+  accountConfig?: AccountConfig;
   eventId: string;
   conversationKey: string;
   content: UserContent;
@@ -104,40 +115,48 @@ export interface ChannelRegistry {
   webhookChannels: ChannelAdapter[];
 }
 
-interface IntegrationRoutingOptions {
-  channelRegistry?: ChannelRegistry;
+export interface IntegrationRoutingOptions {
+  authResolver?: (headers: Record<string, string>) => Promise<AuthContext | null>;
+  accountLoader?: (accountId: string) => Promise<AccountRecord | null>;
 }
 
 export async function routeIncomingEvent(
-  event: HandlerEvent,
+  event: LambdaFunctionURLEvent,
   handlers: IntegrationHandlers,
 ): Promise<LambdaResponse> {
   return createIncomingEventRouter()(event, handlers);
 }
 
 export function createIncomingEventRouter(options: IntegrationRoutingOptions = {}) {
-  const channelRegistry = options.channelRegistry ?? createChannelRegistry();
+  const authResolver = options.authResolver ?? resolveBearerAuth;
+  const accountLoader = options.accountLoader ?? getAccount;
 
   return async (
-    event: HandlerEvent,
+    event: LambdaFunctionURLEvent,
     handlers: IntegrationHandlers,
-  ): Promise<LambdaResponse> => handleLambdaUrlEvent(event, handlers, channelRegistry);
+  ): Promise<LambdaResponse> => handleLambdaUrlEvent(event, handlers, {
+    authResolver,
+    accountLoader,
+  });
+}
+
+interface LambdaUrlRoutingContext {
+  authResolver(headers: Record<string, string>): Promise<AuthContext | null>;
+  accountLoader(accountId: string): Promise<AccountRecord | null>;
 }
 
 async function handleLambdaUrlEvent(
   event: LambdaFunctionURLEvent,
   handlers: IntegrationHandlers,
-  channelRegistry: ChannelRegistry,
+  context: LambdaUrlRoutingContext,
 ): Promise<LambdaResponse> {
   const method = event.requestContext.http.method;
   const headers = normalizeHeaders(event.headers);
 
   if (method === "GET" && isStatusPath(event.rawPath)) {
-    if (!isDirectApiConfigured()) {
-      return directApiNotConfiguredResponse();
-    }
-
-    if (!isAuthorizedDirectApiRequest(headers, optionalEnv("DIRECT_API_SECRET") ?? "")) {
+    const auth = await context.authResolver(headers);
+    const account = auth?.kind === "account" ? auth.account : null;
+    if (!account) {
       return unauthorizedResponse();
     }
 
@@ -146,7 +165,7 @@ async function handleLambdaUrlEvent(
         return notFoundResponse();
       }
 
-      return handlers.handleStatusRequest(parseStatusPath(event.rawPath));
+      return handlers.handleStatusRequest(parseStatusPath(event.rawPath, account));
     } catch (err) {
       return badRequestResponse(err);
     }
@@ -175,26 +194,34 @@ async function handleLambdaUrlEvent(
     body: decodeBody(event.body, event.isBase64Encoded),
   } satisfies ChannelRequest;
 
-  const matchedChannel = channelRegistry.webhookChannels.find((channel) => channel.canHandle(request));
-  if (matchedChannel) {
-    return handleChannelWebhook(matchedChannel, request, handlers);
+  const accountWebhookMatch = event.rawPath.match(/^\/webhooks\/([^/]+)\/([^/]+)$/);
+  if (accountWebhookMatch?.[1] && accountWebhookMatch[2]) {
+    const account = await context.accountLoader(decodeURIComponent(accountWebhookMatch[1]));
+    if (!account || account.status !== "active") {
+      return notFoundResponse();
+    }
+
+    const accountChannelRegistry = createChannelRegistry(account.config);
+    const channelName = decodeURIComponent(accountWebhookMatch[2]);
+    const accountChannel = accountChannelRegistry.webhookChannels.find((channel) =>
+      channel.name === channelName && channel.canHandle(request)
+    );
+    if (!accountChannel) {
+      const isConfigured = accountChannelRegistry.webhookChannels.some((channel) => channel.name === channelName);
+      return integrationNotConfigured(isConfigured ? `Webhook ${channelName}` : channelName);
+    }
+
+    return handleChannelWebhook(accountChannel, request, handlers, account);
   }
 
-  const unavailableResponse = detectUnconfiguredChannel(request.headers, channelRegistry);
-  if (unavailableResponse) {
-    return unavailableResponse;
-  }
-
-  if (!isDirectApiConfigured()) {
-    return directApiNotConfiguredResponse();
-  }
-
-  if (!isAuthorizedDirectApiRequest(request.headers, optionalEnv("DIRECT_API_SECRET") ?? "")) {
+  const auth = await context.authResolver(request.headers);
+  const account = auth?.kind === "account" ? auth.account : null;
+  if (!account) {
     return unauthorizedResponse();
   }
 
   try {
-    const parsed = parseDirectPayload(request.body, request.headers);
+    const parsed = parseDirectPayload(request.body, request.headers, account);
     if (isAsyncPath(event.rawPath)) {
       if (!handlers.handleAsyncRequest) {
         return notFoundResponse();
@@ -216,6 +243,7 @@ async function handleChannelWebhook(
   adapter: ChannelAdapter,
   request: ChannelRequest,
   handlers: IntegrationHandlers,
+  account?: AccountRecord,
 ): Promise<LambdaResponse> {
   try {
     if (!(await adapter.authenticate(request))) {
@@ -246,13 +274,19 @@ async function handleChannelWebhook(
       body: response.body ?? "",
       afterResponse: processChannelMessage(
         {
-          eventId: message.eventId,
-          conversationKey: message.conversationKey,
+          eventId: account ? accountScopedKey(account.accountId, message.eventId) : message.eventId,
+          conversationKey: account ? accountScopedKey(account.accountId, message.conversationKey) : message.conversationKey,
           content: message.content,
           events: [{ role: "user", content: message.content }],
           channelName: message.channelName,
           source: message.source,
           channel,
+          ...(account
+            ? {
+              accountId: account.accountId,
+              accountConfig: toRuntimeAccountConfig(account.config),
+            }
+            : {}),
         },
         handlers,
       ),
@@ -343,29 +377,6 @@ function decodeBody(body: string | undefined, isBase64Encoded?: boolean): string
   return isBase64Encoded ? Buffer.from(raw, "base64").toString("utf-8") : raw;
 }
 
-function detectUnconfiguredChannel(
-  headers: Record<string, string>,
-  channelRegistry: ChannelRegistry,
-): LambdaResponse | null {
-  if ("x-telegram-bot-api-secret-token" in headers && !channelRegistry.telegramChannel) {
-    return integrationNotConfigured("Telegram");
-  }
-
-  if ("x-github-event" in headers && !channelRegistry.githubChannel) {
-    return integrationNotConfigured("GitHub");
-  }
-
-  if ("x-slack-signature" in headers && !channelRegistry.slackChannel) {
-    return integrationNotConfigured("Slack");
-  }
-
-  if ("x-signature-ed25519" in headers && !channelRegistry.discordChannel) {
-    return integrationNotConfigured("Discord");
-  }
-
-  return null;
-}
-
 function integrationNotConfigured(name: string): LambdaResponse {
   return {
     statusCode: 503,
@@ -374,11 +385,11 @@ function integrationNotConfigured(name: string): LambdaResponse {
   };
 }
 
-function createChannelRegistry(): ChannelRegistry {
-  const telegramChannel = createOptionalTelegramChannel();
-  const githubChannel = createOptionalGitHubChannel();
-  const slackChannel = createOptionalSlackChannel();
-  const discordChannel = createOptionalDiscordChannel();
+function createChannelRegistry(config: AccountConfig): ChannelRegistry {
+  const telegramChannel = createTelegramChannelFromConfig(config);
+  const githubChannel = createGitHubChannelFromConfig(config);
+  const slackChannel = createSlackChannelFromConfig(config);
+  const discordChannel = createDiscordChannelFromConfig(config);
 
   return {
     telegramChannel,
@@ -394,32 +405,11 @@ function createChannelRegistry(): ChannelRegistry {
   };
 }
 
-function isAuthorizedDirectApiRequest(headers: Record<string, string>, secret: string): boolean {
-  const token = extractBearerToken(headers.authorization);
-  if (!token) {
-    return false;
-  }
-
-  const actual = Buffer.from(token);
-  const expected = Buffer.from(secret);
-
-  return actual.length === expected.length && timingSafeEqual(actual, expected);
-}
-
-function extractBearerToken(authorization: string | undefined): string | null {
-  if (!authorization) {
-    return null;
-  }
-
-  const [scheme, token, ...rest] = authorization.trim().split(/\s+/);
-  if (rest.length > 0 || !scheme || !token || scheme.toLowerCase() !== "bearer") {
-    return null;
-  }
-
-  return token;
-}
-
-function parseDirectPayload(bodyText: string, headers: Record<string, string>): DirectInboundEvent {
+function parseDirectPayload(
+  bodyText: string,
+  headers: Record<string, string>,
+  account: AccountRecord,
+): DirectInboundEvent {
   let parsed: unknown;
 
   try {
@@ -455,9 +445,11 @@ function parseDirectPayload(bodyText: string, headers: Record<string, string>): 
   const webhookConfig = parseWebhookConfig(record.webhookUrl, headers["x-webhook-secret"]);
 
   return {
-    eventId: `${DIRECT_API_EVENT_ID_PREFIX}${rawEventId}`,
+    accountId: account.accountId,
+    accountConfig: toRuntimeAccountConfig(account.config),
+    eventId: accountScopedKey(account.accountId, `${DIRECT_API_EVENT_ID_PREFIX}${rawEventId}`),
     publicEventId: rawEventId,
-    conversationKey: `${DIRECT_API_CONVERSATION_PREFIX}${rawConversationKey}`,
+    conversationKey: accountScopedKey(account.accountId, `${DIRECT_API_CONVERSATION_PREFIX}${rawConversationKey}`),
     publicConversationKey: rawConversationKey,
     events,
     ...(webhookConfig ? { webhookConfig } : {}),
@@ -493,7 +485,7 @@ function parseWebhookConfig(rawUrl: unknown, rawSecret: string | undefined): Web
   };
 }
 
-function parseStatusPath(rawPath: string): StatusInboundEvent {
+function parseStatusPath(rawPath: string, account: AccountRecord): StatusInboundEvent {
   const match = rawPath.match(/^\/status\/([^/]+)$/);
   const rawEventId = match?.[1] ? decodeURIComponent(match[1]) : "";
   const publicEventId = normalizeDirectIdentifier("eventId", rawEventId);
@@ -502,20 +494,9 @@ function parseStatusPath(rawPath: string): StatusInboundEvent {
   }
 
   return {
-    eventId: `${DIRECT_API_EVENT_ID_PREFIX}${publicEventId}`,
+    accountId: account.accountId,
+    eventId: accountScopedKey(account.accountId, `${DIRECT_API_EVENT_ID_PREFIX}${publicEventId}`),
     publicEventId,
-  };
-}
-
-function isDirectApiConfigured(): boolean {
-  return optionalEnv("ENABLE_DIRECT_API") === "true" && !!optionalEnv("DIRECT_API_SECRET");
-}
-
-function directApiNotConfiguredResponse(): LambdaResponse {
-  return {
-    statusCode: 503,
-    headers: { "Content-Type": "text/plain; charset=utf-8" },
-    body: "Direct API is not configured",
   };
 }
 
@@ -619,36 +600,6 @@ function parseDirectIngressEvent(rawEvent: unknown): DirectIngressEvent {
   };
 }
 
-function parseAllowedChatIds(raw: string): Set<number> {
-  const ids = raw
-    .split(",")
-    .map((value) => Number(value.trim()))
-    .filter((value) => Number.isFinite(value));
-
-  if (ids.length === 0) {
-    throw new Error("ALLOWED_CHAT_IDS contains no valid numeric IDs");
-  }
-
-  return new Set(ids);
-}
-
-function parseStringAllowList(raw: string | undefined): Set<string> | null {
-  if (raw?.trim().toLowerCase() === CLOSED_ALLOW_LIST) {
-    return new Set();
-  }
-
-  if (isOpenAllowList(raw)) {
-    return null;
-  }
-
-  const values = raw
-    ?.split(",")
-    .map((value) => value.trim())
-    .filter((value) => value.length > 0) ?? [];
-
-  return values.length > 0 ? new Set(values) : null;
-}
-
 function hasReservedConversationPrefix(value: string): boolean {
   return RESERVED_CONVERSATION_PREFIXES.some((prefix) => value.startsWith(prefix));
 }
@@ -666,62 +617,60 @@ function normalizeDirectIdentifier(name: string, value: string): string {
   return normalized;
 }
 
-function createOptionalTelegramChannel(): ChannelAdapter | null {
-  const botToken = optionalEnv("TELEGRAM_BOT_TOKEN");
-  const webhookSecret = optionalEnv("TELEGRAM_WEBHOOK_SECRET");
-  const allowedChatIdsRaw = optionalEnv("ALLOWED_CHAT_IDS");
-  if (!botToken || !webhookSecret || !allowedChatIdsRaw) {
+function createTelegramChannelFromConfig(config: AccountConfig): ChannelAdapter | null {
+  const channel = config.channels?.telegram;
+  if (!channel?.botToken || !channel.webhookSecret || !channel.allowedChatIds) {
     return null;
   }
 
   return createTelegramChannel(
-    botToken,
-    webhookSecret,
-    parseAllowedChatIds(allowedChatIdsRaw),
-    optionalEnv("TELEGRAM_REACTION_EMOJI") ?? "👀",
+    channel.botToken,
+    channel.webhookSecret,
+    new Set(channel.allowedChatIds),
+    channel.reactionEmoji ?? "👀",
   );
 }
 
-function createOptionalGitHubChannel(): ChannelAdapter | null {
-  const webhookSecret = optionalEnv("GITHUB_WEBHOOK_SECRET");
-  const appId = optionalEnv("GITHUB_APP_ID");
-  const privateKey = optionalEnv("GITHUB_PRIVATE_KEY");
-  if (!webhookSecret || !appId || !privateKey) {
+function createGitHubChannelFromConfig(config: AccountConfig): ChannelAdapter | null {
+  const channel = config.channels?.github;
+  if (!channel?.webhookSecret || !channel.appId || !channel.privateKey) {
     return null;
   }
 
   return createGitHubChannel(
-    webhookSecret,
-    appId,
-    privateKey,
-    parseStringAllowList(optionalEnv("GITHUB_ALLOWED_REPOS")),
+    channel.webhookSecret,
+    channel.appId,
+    channel.privateKey,
+    channel.allowedRepos ? new Set(channel.allowedRepos) : null,
   );
 }
 
-function createOptionalSlackChannel(): ChannelAdapter | null {
-  const botToken = optionalEnv("SLACK_BOT_TOKEN");
-  const signingSecret = optionalEnv("SLACK_SIGNING_SECRET");
-  if (!botToken || !signingSecret) {
+function createSlackChannelFromConfig(config: AccountConfig): ChannelAdapter | null {
+  const channel = config.channels?.slack;
+  if (!channel?.botToken || !channel.signingSecret) {
     return null;
   }
 
   return createSlackChannel(
-    botToken,
-    signingSecret,
-    parseStringAllowList(optionalEnv("SLACK_ALLOWED_CHANNEL_IDS")),
+    channel.botToken,
+    channel.signingSecret,
+    channel.allowedChannelIds ? new Set(channel.allowedChannelIds) : null,
   );
 }
 
-function createOptionalDiscordChannel(): ChannelAdapter | null {
-  const botToken = optionalEnv("DISCORD_BOT_TOKEN");
-  const publicKey = optionalEnv("DISCORD_PUBLIC_KEY");
-  if (!botToken || !publicKey) {
+function createDiscordChannelFromConfig(config: AccountConfig): ChannelAdapter | null {
+  const channel = config.channels?.discord;
+  if (!channel?.botToken || !channel.publicKey) {
     return null;
   }
 
   return createDiscordChannel(
-    botToken,
-    publicKey,
-    parseStringAllowList(optionalEnv("DISCORD_ALLOWED_GUILD_IDS")),
+    channel.botToken,
+    channel.publicKey,
+    channel.allowedGuildIds ? new Set(channel.allowedGuildIds) : null,
   );
+}
+
+function accountScopedKey(accountId: string, key: string): string {
+  return `${ACCOUNT_NAMESPACE_PREFIX}${accountId}:${key}`;
 }

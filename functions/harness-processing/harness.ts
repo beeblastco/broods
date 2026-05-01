@@ -9,6 +9,7 @@ import {
   streamText,
   type ToolSet,
 } from "ai";
+import type { AccountConfig } from "../_shared/accounts.ts";
 import { requireEnv } from "../_shared/env.ts";
 import { logError, logInfo } from "../_shared/log.ts";
 import type { Session, TurnContextSnapshot } from "./session.ts";
@@ -27,6 +28,7 @@ export interface AgentReplyHooks {
 export async function runAgentLoop(
   session: Session,
   turnContext: TurnContextSnapshot,
+  accountConfig: AccountConfig,
   reply?: AgentReplyHooks,
 ) {
   let didFail = false;
@@ -36,11 +38,12 @@ export async function runAgentLoop(
   const tools = {
     ...createTools({
       conversationKey: session.conversationKey,
+      filesystemNamespace: session.filesystemNamespace(),
     }),
   } satisfies ToolSet;
 
   const stream = streamText({
-    model: google(GOOGLE_MODEL_ID),
+    model: google(accountConfig.modelId ?? GOOGLE_MODEL_ID),
     system: turnContext.system,
     messages: turnContext.messages,
     tools: tools,
@@ -52,7 +55,7 @@ export async function runAgentLoop(
         },
       },
     },
-    stopWhen: stepCountIs(MAX_AGENT_ITERATIONS),
+    stopWhen: stepCountIs(accountConfig.maxAgentIterations ?? MAX_AGENT_ITERATIONS),
     prepareStep: async () => {
       const refreshed = await session.loadRefreshedSystemPromptParts({
         promptContext: promptContext,

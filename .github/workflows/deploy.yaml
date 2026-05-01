@@ -7,12 +7,12 @@ on:
   workflow_dispatch:
     inputs:
       stage:
-        description: SST stage to deploy. Defaults to repository variable SST_STAGE or production.
+        description: SST stage to deploy. Defaults to repository variable SST_STAGE or dev.
         required: false
         type: string
 
 concurrency:
-  group: sst-deploy-${{ github.event.repository.name }}-${{ inputs.stage || vars.SST_STAGE || 'production' }}
+  group: sst-deploy-${{ github.event.repository.name }}-${{ inputs.stage || vars.SST_STAGE || 'dev' }}
   cancel-in-progress: false
 
 jobs:
@@ -27,16 +27,6 @@ jobs:
       AWS_ROLE_ARN: ${{ vars.AWS_ROLE_ARN }}
       INPUT_STAGE: ${{ inputs.stage }}
       DEFAULT_STAGE: ${{ vars.SST_STAGE }}
-      ENABLE_DIRECT_API: ${{ vars.ENABLE_DIRECT_API || 'false' }}
-      ENABLE_TELEGRAM_INTEGRATION: ${{ vars.ENABLE_TELEGRAM_INTEGRATION || 'false' }}
-      ENABLE_GITHUB_INTEGRATION: ${{ vars.ENABLE_GITHUB_INTEGRATION || 'true' }}
-      ENABLE_SLACK_INTEGRATION: ${{ vars.ENABLE_SLACK_INTEGRATION || 'true' }}
-      ENABLE_DISCORD_INTEGRATION: ${{ vars.ENABLE_DISCORD_INTEGRATION || 'true' }}
-      GITHUB_ALLOWED_REPOS: ${{ vars.GITHUB_ALLOWED_REPOS }}
-      SLACK_ALLOWED_CHANNEL_IDS: ${{ vars.SLACK_ALLOWED_CHANNEL_IDS }}
-      DISCORD_ALLOWED_GUILD_IDS: ${{ vars.DISCORD_ALLOWED_GUILD_IDS }}
-      DISCORD_APPLICATION_ID: ${{ vars.DISCORD_APPLICATION_ID }}
-      DISCORD_SYNC_GUILD_ID: ${{ vars.DISCORD_SYNC_GUILD_ID }}
       CI: "true"
     steps:
       - name: Resolve deploy configuration
@@ -45,7 +35,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          STAGE="${INPUT_STAGE:-${DEFAULT_STAGE:-production}}"
+          STAGE="${INPUT_STAGE:-${DEFAULT_STAGE:-dev}}"
 
           if [[ -z "${AWS_REGION:-}" ]]; then
             echo "Missing required repository variable: AWS_REGION" >&2
@@ -86,69 +76,50 @@ jobs:
 
       - name: Deploy SST app
         env:
-          SST_SECRET_DirectApiSecret: ${{ secrets.SST_SECRET_DirectApiSecret }}
-          SST_SECRET_TelegramBotToken: ${{ secrets.SST_SECRET_TelegramBotToken }}
-          SST_SECRET_TelegramWebhookSecret: ${{ secrets.SST_SECRET_TelegramWebhookSecret }}
-          SST_SECRET_AllowedChatIds: ${{ secrets.SST_SECRET_AllowedChatIds }}
-          SST_SECRET_GoogleApiKey: ${{ secrets.SST_SECRET_GoogleApiKey }}
-          SST_SECRET_TavilyApiKey: ${{ secrets.SST_SECRET_TavilyApiKey }}
-          SST_SECRET_GitHubWebhookSecret: ${{ secrets.SST_SECRET_GitHubWebhookSecret }}
-          SST_SECRET_GitHubAppId: ${{ secrets.SST_SECRET_GitHubAppId }}
-          SST_SECRET_GitHubPrivateKey: ${{ secrets.SST_SECRET_GitHubPrivateKey }}
-          SST_SECRET_SlackBotToken: ${{ secrets.SST_SECRET_SlackBotToken }}
-          SST_SECRET_SlackSigningSecret: ${{ secrets.SST_SECRET_SlackSigningSecret }}
-          SST_SECRET_DiscordBotToken: ${{ secrets.SST_SECRET_DiscordBotToken }}
-          SST_SECRET_DiscordPublicKey: ${{ secrets.SST_SECRET_DiscordPublicKey }}
-        run: bunx sst deploy --stage "$SST_STAGE"
-
-      - name: Sync Discord commands
-        if: ${{ env.ENABLE_DISCORD_INTEGRATION == 'true' }}
-        env:
-          DISCORD_BOT_TOKEN: ${{ secrets.SST_SECRET_DiscordBotToken }}
+          SST_SECRET_GoogleApiKey: ${{ secrets.SST_SECRET_GOOGLEAPIKEY }}
+          SST_SECRET_TavilyApiKey: ${{ secrets.SST_SECRET_TAVILYAPIKEY }}
+          SST_SECRET_AdminAccountSecret: ${{ secrets.SST_SECRET_ADMINACCOUNTSECRET }}
+          SST_SECRET_AccountConfigEncryptionSecret: ${{ secrets.SST_SECRET_ACCOUNTCONFIGENCRYPTIONSECRET }}
         shell: bash
         run: |
           set -euo pipefail
 
-          if [[ -z "${DISCORD_APPLICATION_ID:-}" ]]; then
-            echo "Missing required repository variable: DISCORD_APPLICATION_ID" >&2
-            exit 1
-          fi
+          for name in \
+            SST_SECRET_GoogleApiKey \
+            SST_SECRET_TavilyApiKey \
+            SST_SECRET_AdminAccountSecret \
+            SST_SECRET_AccountConfigEncryptionSecret
+          do
+            if [[ -z "${!name:-}" ]]; then
+              echo "Missing required repository secret: $name" >&2
+              exit 1
+            fi
+          done
 
-          if [[ -z "${DISCORD_BOT_TOKEN:-}" ]]; then
-            echo "Missing required repository secret: SST_SECRET_DiscordBotToken" >&2
-            exit 1
-          fi
+          bunx sst deploy --stage "$SST_STAGE"
 
-          bun run discord:sync
-
-      - name: Sync Telegram webhook
-        if: ${{ env.ENABLE_TELEGRAM_INTEGRATION == 'true' }}
+      - name: Configure Telegram account webhook
         env:
-          SST_SECRET_TelegramBotToken: ${{ secrets.SST_SECRET_TelegramBotToken }}
-          SST_SECRET_TelegramWebhookSecret: ${{ secrets.SST_SECRET_TelegramWebhookSecret }}
+          ADMIN_ACCOUNT_SECRET: ${{ secrets.SST_SECRET_ADMINACCOUNTSECRET }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.SST_SECRET_TELEGRAMBOTTOKEN }}
+          TELEGRAM_WEBHOOK_SECRET: ${{ secrets.SST_SECRET_TELEGRAMWEBHOOKSECRET }}
+          ALLOWED_CHAT_IDS: ${{ secrets.SST_SECRET_ALLOWEDCHATIDS }}
+          TELEGRAM_ACCOUNT_USERNAME: telegram-default
+          TELEGRAM_ACCOUNT_DESCRIPTION: Default Telegram account managed by CI/CD.
         shell: bash
         run: |
           set -euo pipefail
 
-          FUNCTION_URL="$(bun -e 'const outputs = JSON.parse(await Bun.file(".sst/outputs.json").text()); process.stdout.write(outputs.harnessProcessingUrl ?? "")')"
+          for name in \
+            ADMIN_ACCOUNT_SECRET \
+            TELEGRAM_BOT_TOKEN \
+            TELEGRAM_WEBHOOK_SECRET \
+            ALLOWED_CHAT_IDS
+          do
+            if [[ -z "${!name:-}" ]]; then
+              echo "Missing required Telegram migration secret: $name" >&2
+              exit 1
+            fi
+          done
 
-          if [[ -z "${FUNCTION_URL:-}" ]]; then
-            echo "Failed to resolve harnessProcessingUrl from .sst/outputs.json" >&2
-            exit 1
-          fi
-
-          if [[ -z "${SST_SECRET_TelegramBotToken:-}" ]]; then
-            echo "Missing Telegram bot token secret" >&2
-            exit 1
-          fi
-
-          if [[ -z "${SST_SECRET_TelegramWebhookSecret:-}" ]]; then
-            echo "Missing Telegram webhook secret" >&2
-            exit 1
-          fi
-
-          curl --fail --silent --show-error \
-            "https://api.telegram.org/bot${SST_SECRET_TelegramBotToken}/setWebhook" \
-            --data-urlencode "url=${FUNCTION_URL}" \
-            --data-urlencode "secret_token=${SST_SECRET_TelegramWebhookSecret}" \
-            --data 'allowed_updates=["message","edited_message"]'
+          bun run scripts/configure-telegram-account.ts

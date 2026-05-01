@@ -1,28 +1,37 @@
-import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { describe, expect, it } from "bun:test";
 import type { LambdaFunctionURLEvent } from "aws-lambda";
+import type { LambdaResponse } from "../functions/_shared/runtime.ts";
 import {
-  routeIncomingEvent,
+  createIncomingEventRouter,
   type AsyncDirectInboundEvent,
   type ChannelInboundEvent,
   type DirectInboundEvent,
   type StatusInboundEvent,
 } from "../functions/harness-processing/integrations.ts";
 
-const ORIGINAL_ENABLE_DIRECT_API = process.env.ENABLE_DIRECT_API;
-const ORIGINAL_DIRECT_API_SECRET = process.env.DIRECT_API_SECRET;
+const TEST_ACCOUNT = {
+  accountId: "acct_test",
+  username: "test-account",
+  description: "Test account",
+  secretHash: "hash",
+  status: "active" as const,
+  config: {
+    modelId: "gemini-test",
+    memoryNamespace: "support",
+    channels: {
+      slack: {
+        botToken: "xoxb-secret",
+        signingSecret: "signing-secret",
+      },
+    },
+  },
+  createdAt: "2026-04-24T00:00:00.000Z",
+  updatedAt: "2026-04-24T00:00:00.000Z",
+};
 
 describe("direct API ingress", () => {
-  beforeEach(() => {
-    delete process.env.ENABLE_DIRECT_API;
-    delete process.env.DIRECT_API_SECRET;
-  });
 
-  afterEach(() => {
-    restoreEnv("ENABLE_DIRECT_API", ORIGINAL_ENABLE_DIRECT_API);
-    restoreEnv("DIRECT_API_SECRET", ORIGINAL_DIRECT_API_SECRET);
-  });
-
-  it("returns 503 when the direct API is disabled", async () => {
+  it("returns 401 when the account bearer token is missing", async () => {
     const response = await routeIncomingEvent(createEvent({
       eventId: "one",
       conversationKey: "alpha",
@@ -32,8 +41,8 @@ describe("direct API ingress", () => {
       }],
     }), createHandlers());
 
-    expect(response.statusCode).toBe(503);
-    expect(response.body).toBe("Direct API is not configured");
+    expect(response.statusCode).toBe(401);
+    expect(response.body).toBe("Unauthorized");
   });
 
   it("returns 200 for GET probes without requiring direct API configuration", async () => {
@@ -55,9 +64,6 @@ describe("direct API ingress", () => {
   });
 
   it("returns 401 when the bearer token is missing", async () => {
-    process.env.ENABLE_DIRECT_API = "true";
-    process.env.DIRECT_API_SECRET = "secret";
-
     const response = await routeIncomingEvent(createEvent({
       eventId: "one",
       conversationKey: "alpha",
@@ -72,9 +78,6 @@ describe("direct API ingress", () => {
   });
 
   it("returns 401 when the bearer token is malformed", async () => {
-    process.env.ENABLE_DIRECT_API = "true";
-    process.env.DIRECT_API_SECRET = "secret";
-
     const response = await routeIncomingEvent(createEvent({
       eventId: "one",
       conversationKey: "alpha",
@@ -91,9 +94,6 @@ describe("direct API ingress", () => {
   });
 
   it("returns 401 when the bearer token does not match", async () => {
-    process.env.ENABLE_DIRECT_API = "true";
-    process.env.DIRECT_API_SECRET = "secret";
-
     const response = await routeIncomingEvent(createEvent({
       eventId: "one",
       conversationKey: "alpha",
@@ -110,9 +110,6 @@ describe("direct API ingress", () => {
   });
 
   it("returns 400 for invalid direct API JSON", async () => {
-    process.env.ENABLE_DIRECT_API = "true";
-    process.env.DIRECT_API_SECRET = "secret";
-
     const response = await routeIncomingEvent(createEvent(undefined, {
       authorization: "Bearer secret",
     }, {
@@ -124,9 +121,6 @@ describe("direct API ingress", () => {
   });
 
   it("returns 400 when eventId or conversationKey is missing", async () => {
-    process.env.ENABLE_DIRECT_API = "true";
-    process.env.DIRECT_API_SECRET = "secret";
-
     const response = await routeIncomingEvent(createEvent({
       eventId: "one",
       events: [{
@@ -142,9 +136,6 @@ describe("direct API ingress", () => {
   });
 
   it("rejects reserved direct event prefixes", async () => {
-    process.env.ENABLE_DIRECT_API = "true";
-    process.env.DIRECT_API_SECRET = "secret";
-
     const response = await routeIncomingEvent(createEvent({
       eventId: "gh:issue",
       conversationKey: "alpha",
@@ -161,9 +152,6 @@ describe("direct API ingress", () => {
   });
 
   it("rejects reserved direct conversation prefixes", async () => {
-    process.env.ENABLE_DIRECT_API = "true";
-    process.env.DIRECT_API_SECRET = "secret";
-
     const response = await routeIncomingEvent(createEvent({
       eventId: "one",
       conversationKey: "gh:owner/repo:issue:1",
@@ -180,9 +168,6 @@ describe("direct API ingress", () => {
   });
 
   it("returns 400 when the events field is not an array", async () => {
-    process.env.ENABLE_DIRECT_API = "true";
-    process.env.DIRECT_API_SECRET = "secret";
-
     const response = await routeIncomingEvent(createEvent({
       eventId: "one",
       conversationKey: "alpha",
@@ -196,9 +181,6 @@ describe("direct API ingress", () => {
   });
 
   it("returns 400 when the events array is empty", async () => {
-    process.env.ENABLE_DIRECT_API = "true";
-    process.env.DIRECT_API_SECRET = "secret";
-
     const response = await routeIncomingEvent(createEvent({
       eventId: "one",
       conversationKey: "alpha",
@@ -212,9 +194,6 @@ describe("direct API ingress", () => {
   });
 
   it("returns 400 when a direct event is not an object", async () => {
-    process.env.ENABLE_DIRECT_API = "true";
-    process.env.DIRECT_API_SECRET = "secret";
-
     const response = await routeIncomingEvent(createEvent({
       eventId: "one",
       conversationKey: "alpha",
@@ -228,9 +207,6 @@ describe("direct API ingress", () => {
   });
 
   it("returns 400 when persist is set on a non-system event", async () => {
-    process.env.ENABLE_DIRECT_API = "true";
-    process.env.DIRECT_API_SECRET = "secret";
-
     const response = await routeIncomingEvent(createEvent({
       eventId: "one",
       conversationKey: "alpha",
@@ -248,9 +224,6 @@ describe("direct API ingress", () => {
   });
 
   it("rejects persisted system events", async () => {
-    process.env.ENABLE_DIRECT_API = "true";
-    process.env.DIRECT_API_SECRET = "secret";
-
     const response = await routeIncomingEvent(createEvent({
       eventId: "one",
       conversationKey: "alpha",
@@ -274,9 +247,6 @@ describe("direct API ingress", () => {
   });
 
   it("normalizes direct events before handing them to the application handler", async () => {
-    process.env.ENABLE_DIRECT_API = "true";
-    process.env.DIRECT_API_SECRET = "secret";
-
     const handledEvents: DirectInboundEvent[] = [];
     const response = await routeIncomingEvent(createEvent({
       eventId: "one",
@@ -311,9 +281,14 @@ describe("direct API ingress", () => {
     if (directEvent == null) {
       throw new Error("Expected direct event to be handled");
     }
-    expect(directEvent.eventId).toBe("api:one");
+    expect(directEvent.eventId).toBe("acct:acct_test:api:one");
+    expect(directEvent.accountId).toBe("acct_test");
+    expect(directEvent.accountConfig).toEqual({
+      modelId: "gemini-test",
+      memoryNamespace: "support",
+    });
     expect(directEvent.publicEventId).toBe("one");
-    expect(directEvent.conversationKey).toBe("api:alpha");
+    expect(directEvent.conversationKey).toBe("acct:acct_test:api:alpha");
     expect(directEvent.publicConversationKey).toBe("alpha");
     expect(directEvent.events).toEqual([
       {
@@ -329,9 +304,6 @@ describe("direct API ingress", () => {
   });
 
   it("routes async direct API requests with a status URL", async () => {
-    process.env.ENABLE_DIRECT_API = "true";
-    process.env.DIRECT_API_SECRET = "secret";
-
     const handledEvents: AsyncDirectInboundEvent[] = [];
     const response = await routeIncomingEvent(createEvent({
       eventId: "one",
@@ -359,14 +331,11 @@ describe("direct API ingress", () => {
 
     expect(response.statusCode).toBe(202);
     expect(handledEvents).toHaveLength(1);
-    expect(handledEvents[0]?.eventId).toBe("api:one");
+    expect(handledEvents[0]?.eventId).toBe("acct:acct_test:api:one");
     expect(handledEvents[0]?.statusUrl).toBe("https://example.lambda-url.aws/status/one");
   });
 
   it("parses optional webhook config for direct API requests", async () => {
-    process.env.ENABLE_DIRECT_API = "true";
-    process.env.DIRECT_API_SECRET = "secret";
-
     const handledEvents: DirectInboundEvent[] = [];
     const response = await routeIncomingEvent(createEvent({
       eventId: "one",
@@ -398,9 +367,6 @@ describe("direct API ingress", () => {
   });
 
   it("rejects webhook URLs without a webhook secret", async () => {
-    process.env.ENABLE_DIRECT_API = "true";
-    process.env.DIRECT_API_SECRET = "secret";
-
     const response = await routeIncomingEvent(createEvent({
       eventId: "one",
       conversationKey: "alpha",
@@ -418,9 +384,6 @@ describe("direct API ingress", () => {
   });
 
   it("routes status requests through direct API auth", async () => {
-    process.env.ENABLE_DIRECT_API = "true";
-    process.env.DIRECT_API_SECRET = "secret";
-
     const handledEvents: StatusInboundEvent[] = [];
     const response = await routeIncomingEvent(createEvent(undefined, {
       authorization: "Bearer secret",
@@ -439,7 +402,7 @@ describe("direct API ingress", () => {
     }));
 
     expect(response.statusCode).toBe(200);
-    expect(handledEvents).toEqual([{ eventId: "api:one", publicEventId: "one" }]);
+    expect(handledEvents).toEqual([{ accountId: "acct_test", eventId: "acct:acct_test:api:one", publicEventId: "one" }]);
   });
 });
 
@@ -459,6 +422,21 @@ function createHandlers(overrides: Partial<{
     handleStatusRequest: overrides.handleStatusRequest,
     handleChannelRequest: overrides.handleChannelRequest ?? (async () => {}),
   };
+}
+
+async function routeIncomingEvent(
+  event: LambdaFunctionURLEvent,
+  handlers: ReturnType<typeof createHandlers>,
+): Promise<ResponseShape> {
+  const router = createIncomingEventRouter({
+    authResolver: async (headers) =>
+      headers.authorization === "Bearer secret"
+        ? { kind: "account", account: TEST_ACCOUNT }
+        : null,
+  });
+
+  const response = await router(event, handlers);
+  return response as ResponseShape & LambdaResponse;
 }
 
 function createEvent(
@@ -500,15 +478,6 @@ function createEvent(
     body: options.rawBody ?? JSON.stringify(body),
     isBase64Encoded: options.isBase64Encoded ?? false,
   };
-}
-
-function restoreEnv(name: string, value: string | undefined): void {
-  if (value === undefined) {
-    delete process.env[name];
-    return;
-  }
-
-  process.env[name] = value;
 }
 
 interface ResponseShape {

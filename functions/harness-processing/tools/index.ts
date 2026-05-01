@@ -6,6 +6,7 @@ import tavilyTool from "./tavily.tool.ts";
 
 export interface ToolContext {
   conversationKey: string;
+  filesystemNamespace: string;
 }
 
 type ToolFactory = (context: ToolContext) => ToolSet;

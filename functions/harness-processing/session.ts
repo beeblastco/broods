@@ -22,6 +22,7 @@ import {
   systemModelMessageSchema,
 } from "ai";
 import { DEFAULT_SYSTEM_PROMPT } from "../_shared/.generated/system-prompt.ts";
+import type { AccountConfig } from "../_shared/accounts.ts";
 import {
   dynamo,
   fromAttributeValue,
@@ -103,6 +104,8 @@ export class Session {
   constructor(
     public readonly eventId: string,
     public readonly conversationKey: string,
+    public readonly accountId: string | undefined,
+    private readonly accountConfig: AccountConfig = {},
   ) { }
 
   async claim(): Promise<boolean> {
@@ -219,7 +222,10 @@ export class Session {
   async createTurnContext(ephemeralSystem: SystemModelMessage[] = []): Promise<TurnContextSnapshot> {
     const entries = await this.loadConversationEntries();
     const promptContext = createPromptContextSnapshot(entries);
-    const messages = trimProjectedMessages(projectEntriesToMessages(entries));
+    const messages = trimProjectedMessages(
+      projectEntriesToMessages(entries),
+      this.accountConfig.slidingContextWindow ?? SLIDING_CONTEXT_WINDOW,
+    );
 
     return {
       messages,
@@ -255,7 +261,7 @@ export class Session {
       },
       {
         role: "system",
-        content: DEFAULT_SYSTEM_PROMPT,
+        content: this.accountConfig.systemPrompt ?? DEFAULT_SYSTEM_PROMPT,
       },
       {
         role: "system",
@@ -323,7 +329,7 @@ export class Session {
   }
 
   private async loadMemoryFile(): Promise<string | null> {
-    const key = `${normalizeFilesystemNamespace(this.conversationKey)}/MEMORY.md`;
+    const key = `${this.filesystemNamespace()}/MEMORY.md`;
 
     try {
       const response = await s3.send(new GetObjectCommand({
@@ -357,10 +363,24 @@ export class Session {
   private conversationLeaseKey(): string {
     return conversationLeaseKey(this.conversationKey);
   }
+
+  filesystemNamespace(): string {
+    const logicalNamespace = this.accountConfig.memoryNamespace ?? this.conversationKey;
+    const scopedNamespace = this.accountId
+      ? `${this.accountId}:${logicalNamespace}`
+      : logicalNamespace;
+
+    return normalizeFilesystemNamespace(scopedNamespace);
+  }
 }
 
-export function createSession(eventId: string, conversationKey: string): Session {
-  return new Session(eventId, conversationKey);
+export function createSession(
+  eventId: string,
+  conversationKey: string,
+  accountId?: string,
+  accountConfig: AccountConfig = {},
+): Session {
+  return new Session(eventId, conversationKey, accountId, accountConfig);
 }
 
 function formatMemorySystemPrompt(memoryContent: string | null): string {
@@ -476,8 +496,8 @@ function createPromptContextSnapshot(entries: StoredConversationEntry[]): Prompt
   };
 }
 
-function trimProjectedMessages(messages: ModelMessage[]): ModelMessage[] {
-  const windowStart = Math.max(0, messages.length - SLIDING_CONTEXT_WINDOW);
+function trimProjectedMessages(messages: ModelMessage[], slidingContextWindow: number): ModelMessage[] {
+  const windowStart = Math.max(0, messages.length - slidingContextWindow);
   let recentHistory = messages.slice(windowStart);
 
   while (recentHistory.length > 0 && recentHistory[0]?.role !== "user") {

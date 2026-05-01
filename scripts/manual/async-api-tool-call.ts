@@ -1,7 +1,7 @@
 import { requireManualEnv } from "./utils.ts";
 
 const FUNCTION_URL = requireManualEnv("FUNCTION_URL");
-const DIRECT_API_SECRET = requireManualEnv("DIRECT_API_SECRET");
+const ACCOUNT_SECRET = requireManualEnv("ACCOUNT_SECRET");
 const POLL_INTERVAL_MS = Number(process.env.ASYNC_POLL_INTERVAL_MS ?? "2000");
 const POLL_TIMEOUT_MS = Number(process.env.ASYNC_POLL_TIMEOUT_MS ?? "180000");
 
@@ -83,7 +83,7 @@ async function pollStatus(statusUrl: string): Promise<AsyncStatusResponse> {
     const response = await fetch(statusUrl, {
       method: "GET",
       headers: {
-        "Authorization": `Bearer ${DIRECT_API_SECRET}`,
+        "Authorization": `Bearer ${ACCOUNT_SECRET}`,
       },
     });
     const payload = await readJson(response);
@@ -137,7 +137,7 @@ async function readJson(response: Response): Promise<unknown> {
 function authorizedJsonHeaders(): Record<string, string> {
   return {
     "Content-Type": "application/json",
-    "Authorization": `Bearer ${DIRECT_API_SECRET}`,
+    "Authorization": `Bearer ${ACCOUNT_SECRET}`,
   };
 }
 

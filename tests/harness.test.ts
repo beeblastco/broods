@@ -61,6 +61,7 @@ describe("runAgentLoop", () => {
     const stream = await runAgentLoop({
       conversationKey: "tg:7495331456",
       eventId: "tg-900151472",
+      filesystemNamespace: () => "fs-test",
       persistModelMessages,
       loadRefreshedSystemPromptParts: async () => ({
         promptContext: { cursor: null, messages: [] },
@@ -72,7 +73,7 @@ describe("runAgentLoop", () => {
       ephemeralSystem: [],
       hasPendingUserMessage: true,
       promptContext: { cursor: null, messages: [] },
-    }, {
+    }, {}, {
       onFinalText: async () => {
         throw new Error("unexpected final text");
       },

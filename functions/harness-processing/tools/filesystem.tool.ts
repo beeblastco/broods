@@ -14,7 +14,6 @@ import {
 } from "@aws-sdk/client-s3";
 import { jsonSchema, tool, type ToolSet } from "ai";
 import { requireEnv } from "../../_shared/env.ts";
-import { normalizeFilesystemNamespace } from "../../_shared/filesystem-namespace.ts";
 import type { ToolContext } from "./index.ts";
 
 const s3 = new S3Client({ region: process.env.AWS_REGION });
@@ -64,7 +63,7 @@ const error = (result: string): CommandResult => ({ result, isError: true });
 const success = (result: string): CommandResult => ({ result, isError: false });
 
 export default function filesystemTool(context: ToolContext): ToolSet {
-  const namespace = normalizeFilesystemNamespace(context.conversationKey);
+  const namespace = context.filesystemNamespace;
 
   return {
     filesystem: tool({

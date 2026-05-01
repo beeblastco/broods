@@ -1,6 +1,6 @@
 /// <reference path="./.sst/platform/config.d.ts" />
 
-// SST infrastructure for the single-entrypoint architecture: one streaming harness Lambda for direct API calls and optional channel webhooks.
+// SST infrastructure for the account-managed harness: one streaming runtime Lambda and one account-management Lambda.
 const AWS_REGION = "eu-central-1";
 const AWS_ACCOUNT_ID = "123456789012";
 const PROJECT_NAME = "filthy-panty";
@@ -8,43 +8,12 @@ const PROJECT_OWNER_EMAIL = "owner@example.com";
 const GOOGLE_MODEL_ID = "gemma-4-31b-it";
 const SLIDING_CONTEXT_WINDOW = "20";
 const MAX_AGENT_ITERATIONS = "20";
-const TELEGRAM_REACTION_EMOJI = "👀";
-const GITHUB_ALLOWED_REPOS = process.env.GITHUB_ALLOWED_REPOS;
-const SLACK_ALLOWED_CHANNEL_IDS = process.env.SLACK_ALLOWED_CHANNEL_IDS;
-const DISCORD_ALLOWED_GUILD_IDS = process.env.DISCORD_ALLOWED_GUILD_IDS;
-const ENABLE_DIRECT_API = process.env.ENABLE_DIRECT_API === "true";
-const ENABLE_TELEGRAM_INTEGRATION = process.env.ENABLE_TELEGRAM_INTEGRATION === "true";
-const ENABLE_GITHUB_INTEGRATION = process.env.ENABLE_GITHUB_INTEGRATION === "true";
-const ENABLE_SLACK_INTEGRATION = process.env.ENABLE_SLACK_INTEGRATION === "true";
-const ENABLE_DISCORD_INTEGRATION = process.env.ENABLE_DISCORD_INTEGRATION === "true";
 const AWS_PROFILE = process.env.CI ? undefined : (process.env.AWS_PROFILE ?? "default");
 
 
 function resourceName(service: string, stage: string): string {
   const stagePrefix = stage === "production" ? "" : `${stage}-`;
   return `${stagePrefix}${PROJECT_NAME}-${service}-${AWS_REGION}-${AWS_ACCOUNT_ID}`;
-}
-
-function requireExplicitAllowList(
-  stage: string,
-  enabled: boolean,
-  name: string,
-  raw: string | undefined,
-): string | undefined {
-  if (!enabled) {
-    return raw;
-  }
-
-  const normalized = raw?.trim();
-  if (stage === "dev") {
-    return normalized;
-  }
-
-  if (!normalized || normalized.toLowerCase() === "open") {
-    throw new Error(`${name} must be explicitly configured when the integration is enabled outside dev`);
-  }
-
-  return normalized;
 }
 
 export default $config({
@@ -75,40 +44,52 @@ export default $config({
 
   async run() {
     const stage = $app.stage;
-    const gitHubAllowedRepos = requireExplicitAllowList(stage, ENABLE_GITHUB_INTEGRATION, "GITHUB_ALLOWED_REPOS", GITHUB_ALLOWED_REPOS);
-    const slackAllowedChannelIds = requireExplicitAllowList(
-      stage,
-      ENABLE_SLACK_INTEGRATION,
-      "SLACK_ALLOWED_CHANNEL_IDS",
-      SLACK_ALLOWED_CHANNEL_IDS,
-    );
-    const discordAllowedGuildIds = requireExplicitAllowList(
-      stage,
-      ENABLE_DISCORD_INTEGRATION,
-      "DISCORD_ALLOWED_GUILD_IDS",
-      DISCORD_ALLOWED_GUILD_IDS,
-    );
     const names = {
       conversations: resourceName("conversations", stage),
       processedEvents: resourceName("processed-events", stage),
       asyncResults: resourceName("async-results", stage),
+      accountConfigs: resourceName("account-configs", stage),
+      accountSignupRateLimits: resourceName("account-signup-rate-limits", stage),
       harnessProcessing: resourceName("harness-processing", stage),
+      accountManage: resourceName("account-manage", stage),
       memory: resourceName("memory", stage),
     };
 
     const googleApiKey = new sst.Secret("GoogleApiKey");
     const tavilyApiKey = new sst.Secret("TavilyApiKey");
-    const directApiSecret = ENABLE_DIRECT_API ? new sst.Secret("DirectApiSecret") : null;
-    const telegramBotToken = ENABLE_TELEGRAM_INTEGRATION ? new sst.Secret("TelegramBotToken") : null;
-    const telegramWebhookSecret = ENABLE_TELEGRAM_INTEGRATION ? new sst.Secret("TelegramWebhookSecret") : null;
-    const allowedChatIds = ENABLE_TELEGRAM_INTEGRATION ? new sst.Secret("AllowedChatIds") : null;
-    const gitHubWebhookSecret = ENABLE_GITHUB_INTEGRATION ? new sst.Secret("GitHubWebhookSecret") : null;
-    const gitHubPrivateKey = ENABLE_GITHUB_INTEGRATION ? new sst.Secret("GitHubPrivateKey") : null;
-    const gitHubAppId = ENABLE_GITHUB_INTEGRATION ? new sst.Secret("GitHubAppId") : null;
-    const slackBotToken = ENABLE_SLACK_INTEGRATION ? new sst.Secret("SlackBotToken") : null;
-    const slackSigningSecret = ENABLE_SLACK_INTEGRATION ? new sst.Secret("SlackSigningSecret") : null;
-    const discordBotToken = ENABLE_DISCORD_INTEGRATION ? new sst.Secret("DiscordBotToken") : null;
-    const discordPublicKey = ENABLE_DISCORD_INTEGRATION ? new sst.Secret("DiscordPublicKey") : null;
+    const adminAccountSecret = new sst.Secret("AdminAccountSecret");
+    const accountConfigEncryptionSecret = new sst.Secret("AccountConfigEncryptionSecret");
+
+    const accountConfigsTable = new sst.aws.Dynamo("AccountConfig", {
+      fields: {
+        accountId: "string",
+        secretHash: "string",
+      },
+      primaryIndex: { hashKey: "accountId" },
+      globalIndexes: {
+        SecretHashIndex: { hashKey: "secretHash" },
+      },
+      deletionProtection: stage === "production",
+      transform: {
+        table: {
+          name: names.accountConfigs,
+        },
+      },
+    });
+
+    const accountSignupRateLimitTable = new sst.aws.Dynamo("AccountSignupRateLimit", {
+      fields: {
+        rateLimitKey: "string",
+      },
+      primaryIndex: { hashKey: "rateLimitKey" },
+      ttl: "expiresAt",
+      deletionProtection: stage === "production",
+      transform: {
+        table: {
+          name: names.accountSignupRateLimits,
+        },
+      },
+    });
 
     const conversationsTable = new sst.aws.Dynamo("Conversations", {
       fields: {
@@ -173,50 +154,22 @@ export default $config({
         CONVERSATIONS_TABLE_NAME: conversationsTable.name,
         PROCESSED_EVENTS_TABLE_NAME: processedEventsTable.name,
         ASYNC_RESULTS_TABLE_NAME: asyncResultsTable.name,
+        ACCOUNT_CONFIGS_TABLE_NAME: accountConfigsTable.name,
+        ACCOUNT_SECRET_INDEX_NAME: "SecretHashIndex",
+        ACCOUNT_CONFIG_ENCRYPTION_SECRET: accountConfigEncryptionSecret.value,
         SLIDING_CONTEXT_WINDOW,
         MAX_AGENT_ITERATIONS,
         TAVILY_API_KEY: tavilyApiKey.value,
         FILESYSTEM_BUCKET_NAME: names.memory,
-        ...(ENABLE_DIRECT_API && directApiSecret
-          ? {
-            ENABLE_DIRECT_API: "true",
-            DIRECT_API_SECRET: directApiSecret.value,
-          }
-          : {
-            ENABLE_DIRECT_API: "false",
-          }),
-        ...(ENABLE_TELEGRAM_INTEGRATION && telegramBotToken && telegramWebhookSecret && allowedChatIds
-          ? {
-            TELEGRAM_BOT_TOKEN: telegramBotToken.value,
-            TELEGRAM_WEBHOOK_SECRET: telegramWebhookSecret.value,
-            ALLOWED_CHAT_IDS: allowedChatIds.value,
-            TELEGRAM_REACTION_EMOJI,
-          }
-          : {}),
-        ...(ENABLE_GITHUB_INTEGRATION && gitHubWebhookSecret && gitHubPrivateKey && gitHubAppId
-          ? {
-            GITHUB_WEBHOOK_SECRET: gitHubWebhookSecret.value,
-            GITHUB_PRIVATE_KEY: gitHubPrivateKey.value,
-            GITHUB_APP_ID: gitHubAppId.value,
-            ...(gitHubAllowedRepos ? { GITHUB_ALLOWED_REPOS: gitHubAllowedRepos } : {}),
-          }
-          : {}),
-        ...(ENABLE_SLACK_INTEGRATION && slackBotToken && slackSigningSecret
-          ? {
-            SLACK_BOT_TOKEN: slackBotToken.value,
-            SLACK_SIGNING_SECRET: slackSigningSecret.value,
-            ...(slackAllowedChannelIds ? { SLACK_ALLOWED_CHANNEL_IDS: slackAllowedChannelIds } : {}),
-          }
-          : {}),
-        ...(ENABLE_DISCORD_INTEGRATION && discordBotToken && discordPublicKey
-          ? {
-            DISCORD_BOT_TOKEN: discordBotToken.value,
-            DISCORD_PUBLIC_KEY: discordPublicKey.value,
-            ...(discordAllowedGuildIds ? { DISCORD_ALLOWED_GUILD_IDS: discordAllowedGuildIds } : {}),
-          }
-          : {}),
       },
       permissions: [
+        {
+          actions: [
+            "dynamodb:GetItem",
+            "dynamodb:Query",
+          ],
+          resources: [accountConfigsTable.arn, $interpolate`${accountConfigsTable.arn}/index/SecretHashIndex`],
+        },
         {
           actions: [
             "dynamodb:BatchWriteItem",
@@ -249,6 +202,50 @@ export default $config({
         {
           actions: ["s3:ListBucket"],
           resources: [filesystemBucketArn],
+        },
+      ],
+    });
+
+    const accountManage = new sst.aws.Function("AccountManage", {
+      name: names.accountManage,
+      runtime: "provided.al2023",
+      architecture: "arm64",
+      bundle: "dist/account-manage",
+      handler: "bootstrap",
+      description: "Manages accounts, account secrets, and account-level harness configuration.",
+      timeout: "10 seconds",
+      memory: "128 MB",
+      streaming: false,
+      // Can configure additional service for authentication, here we keep it simple
+      url: {
+        authorization: "none",
+      },
+      logging: { format: "json", retention: "1 month" },
+      environment: {
+        ACCOUNT_CONFIGS_TABLE_NAME: accountConfigsTable.name,
+        ACCOUNT_SECRET_INDEX_NAME: "SecretHashIndex",
+        ACCOUNT_SIGNUP_RATE_LIMIT_TABLE_NAME: accountSignupRateLimitTable.name,
+        ACCOUNT_SIGNUP_RATE_LIMIT_PER_HOUR: "5",
+        ADMIN_ACCOUNT_SECRET: adminAccountSecret.value,
+        ACCOUNT_CONFIG_ENCRYPTION_SECRET: accountConfigEncryptionSecret.value,
+      },
+      permissions: [
+        {
+          actions: [
+            "dynamodb:DeleteItem",
+            "dynamodb:GetItem",
+            "dynamodb:PutItem",
+            "dynamodb:Query",
+            "dynamodb:Scan",
+            "dynamodb:UpdateItem",
+          ],
+          resources: [accountConfigsTable.arn, $interpolate`${accountConfigsTable.arn}/index/SecretHashIndex`],
+        },
+        {
+          actions: [
+            "dynamodb:UpdateItem",
+          ],
+          resources: [accountSignupRateLimitTable.arn],
         },
       ],
     });
@@ -291,8 +288,10 @@ export default $config({
     });
 
     return {
-      telegramWebhookUrl: harnessProcessing.url,
       harnessProcessingUrl: harnessProcessing.url,
+      accountManageUrl: accountManage.url,
+      accountConfigsTableName: accountConfigsTable.name,
+      accountSignupRateLimitTableName: accountSignupRateLimitTable.name,
       conversationsTableName: conversationsTable.name,
       processedEventsTableName: processedEventsTable.name,
       asyncResultsTableName: asyncResultsTable.name,

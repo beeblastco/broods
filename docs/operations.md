@@ -2,33 +2,29 @@
 
 ## Configuration
 
-`sst.config.ts` is the source of truth for infra names, tags, regions, secrets, and integration flags.
+`sst.config.ts` is the source of truth for infra names, tags, region, Lambda resources, DynamoDB tables, S3 bucket, and SST secrets.
 
-Use `.env` for local SST inputs and non-secret toggles:
+Use `.env` for local SST inputs only:
 
 - `AWS_PROFILE`
 - `SST_STAGE`
-- `ENABLE_DIRECT_API`
-- `ENABLE_TELEGRAM_INTEGRATION`
-- `ENABLE_GITHUB_INTEGRATION`
-- `ENABLE_SLACK_INTEGRATION`
-- `ENABLE_DISCORD_INTEGRATION`
-- All other variables can be setup, see [`.env.example`](../.env.example).
 
-Use SST secrets for runtime secrets and tokens. See [`secrets.env.example`](../secrets.env.example).
+There is no `phicks` stage for deployment; use `dev` unless another real stage is intentionally added.
 
-Allow-list semantics:
+Runtime secrets are SST secrets:
 
-- In `dev`, you may omit the variable or set it to `open` for intentionally unrestricted local testing.
-- Outside `dev`, configure an explicit comma-separated list whenever the integration is enabled.
-- Set the value to `closed` to deny all resources until explicit IDs or names are configured.
+```bash
+bunx sst secret set GoogleApiKey <value>
+bunx sst secret set TavilyApiKey <value>
+bunx sst secret set AdminAccountSecret <long-random-value>
+bunx sst secret set AccountConfigEncryptionSecret <long-random-value>
+```
 
-Important repo conventions:
+`AdminAccountSecret` authenticates admin account-management requests. `AccountConfigEncryptionSecret` encrypts account config payloads in DynamoDB. Treat both as stable production secrets; rotating the encryption secret requires a re-encryption migration for existing account configs.
 
-- Extra channel integrations are opt-in.
-- GitHub, Slack, and Discord allow-lists must be explicitly configured outside `dev` when those integrations are enabled.
-- The system prompt is bundled at build time by `scripts/system-prompt.ts`.
-- There is no `phicks` stage for deployment; use `dev` unless another real stage is intentionally added.
+Provider integration secrets are no longer global SST secrets. They live in each account's encrypted config.
+
+Public account creation is throttled by `ACCOUNT_SIGNUP_RATE_LIMIT_PER_HOUR`, currently set to `5` in `sst.config.ts`.
 
 ## Local Setup
 
@@ -44,39 +40,7 @@ Copy local config:
 cp .env.example .env
 ```
 
-Keep `.env` for local SST config only. Use at least these values:
-
-```bash
-AWS_PROFILE=default
-SST_STAGE=dev
-```
-
-Do not put deployed secrets in `.env`.
-
-Set required SST secrets:
-
-```bash
-bunx sst secret set GoogleApiKey <value>
-```
-
-Optional:
-
-```bash
-bunx sst secret set TavilyApiKey <value>
-```
-
-If you want the public Function URL to accept direct API requests, also enable `ENABLE_DIRECT_API=true` and set:
-
-```bash
-bunx sst secret set DirectApiSecret <value>
-```
-
-Or bulk load:
-
-```bash
-cp secrets.env.example secrets.env
-bunx sst secret load ./secrets.env
-```
+Keep `.env` for local SST config only. Do not put deployed secrets in `.env`.
 
 ## Run, Build, and Deploy
 
@@ -89,15 +53,72 @@ bun run deploy
 
 `bun run deploy` runs `bun run build` first, then `sst deploy`.
 
-If Discord is enabled, sync slash commands with:
+Deploy outputs include:
+
+- `accountManageUrl`
+- `harnessProcessingUrl`
+- DynamoDB table names
+- `filesystemBucketName`
+
+## Post-Deploy Account Setup
+
+Create an account:
 
 ```bash
-bun run discord:sync
+curl -X POST "$ACCOUNT_MANAGE_URL/accounts" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "username": "company-a",
+    "description": "Customer support agent for Company A",
+    "config": {}
+  }'
 ```
 
-## CI and Live Probes
+Store the returned `accountSecret`. Use it for:
+
+- `account-manage` self-service calls.
+- `harness-processing` direct API calls.
+- `/async` and `/status/{eventId}` calls.
+
+Configure provider webhooks with the returned `accountId`:
+
+```text
+{HARNESS_PROCESSING_URL}/webhooks/{accountId}/telegram
+{HARNESS_PROCESSING_URL}/webhooks/{accountId}/github
+{HARNESS_PROCESSING_URL}/webhooks/{accountId}/slack
+{HARNESS_PROCESSING_URL}/webhooks/{accountId}/discord
+```
+
+Then patch the account config with the provider credentials needed for each channel.
+
+CI/CD migrates the default Telegram bot to the account model after deploy. It creates or updates the `telegram-default` account from the existing Telegram repository secrets, then registers Telegram to `/webhooks/{accountId}/telegram`.
+
+## Live Probes
+
+Manual direct API scripts require:
+
+```bash
+export FUNCTION_URL=<harnessProcessingUrl>
+export ACCOUNT_SECRET=<accountSecret>
+```
+
+Run:
+
+```bash
+bun scripts/manual/direct-api-stream.ts
+bun scripts/manual/direct-api-tool-call.ts
+bun scripts/manual/direct-api-multi-turn.ts
+bun scripts/manual/async-api-tool-call.ts
+```
+
+## Discord Command Sync
+
+`bun run discord:sync` remains a manual utility. It still reads Discord app credentials from local environment variables for command registration and is separate from account runtime config.
+
+## CI
 
 - GitHub Actions runs CI on pull requests and non-`main` pushes, and deploys on pushes to `main`.
-- `bun run test` runs the direct API unit tests locally.
-- `scripts/manual/direct-api-*.ts` and `scripts/manual/async-api-tool-call.ts` are opt-in live probes for a deployed Function URL; they are not part of CI.
+- Deploy requires repository secrets `SST_SECRET_GOOGLEAPIKEY`, `SST_SECRET_TAVILYAPIKEY`, `SST_SECRET_ADMINACCOUNTSECRET`, and `SST_SECRET_ACCOUNTCONFIGENCRYPTIONSECRET`.
+- Default Telegram migration requires repository secrets `SST_SECRET_TELEGRAMBOTTOKEN`, `SST_SECRET_TELEGRAMWEBHOOKSECRET`, and `SST_SECRET_ALLOWEDCHATIDS`.
+- `bun run test` runs unit tests locally.
 - Use `gh run list` and `gh run view` to inspect pipeline status.

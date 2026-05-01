@@ -64,7 +64,7 @@ export async function fetchWithTiming(
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      "Authorization": `Bearer ${requireManualEnv("DIRECT_API_SECRET")}`,
+      "Authorization": `Bearer ${requireManualEnv("ACCOUNT_SECRET")}`,
     },
     body: JSON.stringify(body),
   });

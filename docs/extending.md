@@ -12,8 +12,10 @@ Tool execution is inline inside `harness-processing`. Do not add queue-based too
 ## Add a Channel
 
 1. Implement `ChannelAdapter` in `functions/_shared/<channel>-channel.ts`.
-2. Wire normalization and routing into [`functions/harness-processing/integrations.ts`](../functions/harness-processing/integrations.ts).
-3. Keep reply formatting and send logic inside that channel module.
+2. Add the channel's account config shape and validation to [`functions/_shared/accounts.ts`](../functions/_shared/accounts.ts).
+3. Wire account-scoped adapter creation into [`functions/harness-processing/integrations.ts`](../functions/harness-processing/integrations.ts).
+4. Document the provider webhook URL as `/webhooks/{accountId}/{channel}`.
+5. Keep reply formatting and send logic inside that channel module.
 
 Reply sending should stay inside the channel's `ChannelActions`; do not hardcode channel-specific logic into shared handlers or the core agent loop.
 

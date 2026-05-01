@@ -1,6 +1,12 @@
 # Direct API
 
-The direct API is disabled by default. To use it, set `ENABLE_DIRECT_API=true`, configure `DirectApiSecret`, and send `Authorization: Bearer <DirectApiSecret>` with each request.
+The direct API is account-authenticated. Create an account through `account-manage`, then send:
+
+```http
+Authorization: Bearer <accountSecret>
+```
+
+Direct API state is internally scoped as `acct:<accountId>:api:<key>`, so different accounts can reuse the same public `eventId` or `conversationKey` without colliding.
 
 ## Sync API: `POST /`
 
@@ -21,11 +27,11 @@ POST to the deployed `harness-processing` Function URL with Vercel AI SDK-style 
 }
 ```
 
-- `eventId` is used for deduplication.
-- `conversationKey` selects the persisted direct conversation. The service stores direct API conversations under an internal `api:` namespace so they do not collide with webhook-backed threads.
+- `eventId` is used for account-scoped deduplication.
+- `conversationKey` selects the account-scoped persisted direct conversation.
 - `events` may contain `user` messages and one-off `system` messages only.
 
-Direct API callers can also inject `system` events:
+Direct API callers can inject ephemeral `system` events:
 
 ```json
 {
@@ -51,7 +57,7 @@ Direct API callers can also inject `system` events:
 
 ## Webhook Callback
 
-The sync API can send a webhook after generation completes. Include `webhookUrl` in the JSON body and `X-Webhook-Secret` in the request headers:
+The sync API can send a callback after generation completes. Include `webhookUrl` in the JSON body and `X-Webhook-Secret` in the request headers:
 
 ```json
 {
@@ -81,7 +87,7 @@ POST the same request shape to `/async` when the caller should not hold an SSE c
 }
 ```
 
-The async worker runs the same harness code in the background. If `webhookUrl` and `X-Webhook-Secret` are provided, completion is also delivered to the webhook:
+The async worker runs the same account-scoped harness code in the background. If `webhookUrl` and `X-Webhook-Secret` are provided, completion is also delivered to the callback:
 
 ```json
 {
@@ -92,9 +98,9 @@ The async worker runs the same harness code in the background. If `webhookUrl` a
 }
 ```
 
-Without a webhook, poll the returned status URL.
+Without a callback, poll the returned status URL.
 
-Live async probe with `FUNCTION_URL` and `DIRECT_API_SECRET` set:
+Live async probe with `FUNCTION_URL` and `ACCOUNT_SECRET` set:
 
 ```bash
 bun scripts/manual/async-api-tool-call.ts
@@ -102,7 +108,7 @@ bun scripts/manual/async-api-tool-call.ts
 
 ## Status API: `GET /status/{eventId}`
 
-Status requests require the same `Authorization: Bearer <DirectApiSecret>` header. Responses are backed by the `AsyncResults` DynamoDB table.
+Status requests require the same account bearer header. Responses are backed by the account-scoped `AsyncResults` DynamoDB record.
 
 Processing response:
 

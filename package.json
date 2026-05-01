@@ -21,17 +21,17 @@
     "typescript": "^6.0.3"
   },
   "dependencies": {
-    "@ai-sdk/google": "^3.0.64",
+    "@ai-sdk/google": "^3.0.66",
     "@aws-sdk/client-dynamodb": "3.1017.0",
     "@aws-sdk/client-lambda": "3.1017.0",
-    "@aws-sdk/client-s3": "^3.1035.0",
-    "@chat-adapter/telegram": "^4.26.0",
+    "@aws-sdk/client-s3": "^3.1040.0",
+    "@chat-adapter/telegram": "^4.27.0",
     "@pulumi/aws": "7.23.0",
     "@pulumi/pulumi": "3.228.0",
     "@tavily/ai-sdk": "^0.4.1",
     "@types/node": "^25.6.0",
-    "ai": "^6.0.168",
-    "chat": "^4.26.0",
+    "ai": "^6.0.172",
+    "chat": "^4.27.0",
     "sst": "4.8.0"
   }
 }

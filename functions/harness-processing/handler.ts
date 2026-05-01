@@ -4,6 +4,7 @@
  */
 
 import { InvokeCommand, LambdaClient } from "@aws-sdk/client-lambda";
+import type { LambdaFunctionURLEvent } from "aws-lambda";
 import { formatChannelErrorText } from "../_shared/channels.ts";
 import { executeCommand } from "../_shared/commands.ts";
 import { requireEnv } from "../_shared/env.ts";
@@ -16,7 +17,6 @@ import {
   type AsyncDirectInboundEvent,
   type ChannelInboundEvent,
   type DirectInboundEvent,
-  type HandlerEvent,
   type StatusInboundEvent,
 } from "./integrations.ts";
 import { createSession } from "./session.ts";
@@ -39,7 +39,7 @@ interface AsyncWorkerInvocation {
   event: DirectInboundEvent;
 }
 
-export async function handler(event: HandlerEvent | AsyncWorkerInvocation): Promise<LambdaResponse> {
+export async function handler(event: LambdaFunctionURLEvent | AsyncWorkerInvocation): Promise<LambdaResponse> {
   if (isAsyncWorkerInvocation(event)) {
     await handleAsyncWorkerRequest(event.event);
     return { statusCode: 204 };
@@ -58,7 +58,7 @@ async function handleDirectRequest(event: DirectInboundEvent): Promise<LambdaRes
     return emptySseResponse();
   }
 
-  const session = createSession(event.eventId, event.conversationKey);
+  const session = createSession(event.eventId, event.conversationKey, event.accountId, event.accountConfig);
   if (!(await claimSession(session))) {
     return emptySseResponse();
   }
@@ -70,7 +70,7 @@ async function handleDirectRequest(event: DirectInboundEvent): Promise<LambdaRes
       return emptySseResponse();
     }
 
-    const stream = await runAgentLoop(session, turnContext, directReplyHooks(event));
+    const stream = await runAgentLoop(session, turnContext, event.accountConfig, directReplyHooks(event));
     return {
       statusCode: 200,
       headers: { "Content-Type": "text/event-stream" },
@@ -138,7 +138,7 @@ async function handleStatusRequest(event: StatusInboundEvent): Promise<LambdaRes
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       eventId: event.publicEventId,
-      conversationKey: result.conversationKey.replace(/^api:/, ""),
+      conversationKey: eventPublicConversationKey(result.conversationKey, event.accountId),
       status: result.status,
       ...(result.response ? { response: result.response } : {}),
       ...(result.error ? { error: result.error } : {}),
@@ -147,7 +147,7 @@ async function handleStatusRequest(event: StatusInboundEvent): Promise<LambdaRes
 }
 
 async function handleAsyncWorkerRequest(event: DirectInboundEvent): Promise<void> {
-  const session = createSession(event.eventId, event.conversationKey);
+  const session = createSession(event.eventId, event.conversationKey, event.accountId, event.accountConfig);
   if (!(await claimSession(session))) {
     return;
   }
@@ -161,7 +161,7 @@ async function handleAsyncWorkerRequest(event: DirectInboundEvent): Promise<void
     }
 
     let didSettle = false;
-    const stream = await runAgentLoop(session, turnContext, {
+    const stream = await runAgentLoop(session, turnContext, event.accountConfig, {
       onFinalText: async (text) => {
         didSettle = true;
         await markAsyncResultCompleted({
@@ -197,7 +197,7 @@ async function handleAsyncWorkerRequest(event: DirectInboundEvent): Promise<void
 }
 
 async function handleChannelRequest(event: ChannelInboundEvent): Promise<void> {
-  const session = createSession(event.eventId, event.conversationKey);
+  const session = createSession(event.eventId, event.conversationKey, event.accountId, event.accountConfig ?? {});
   if (!(await claimSession(session))) {
     return;
   }
@@ -238,7 +238,7 @@ async function handleChannelRequest(event: ChannelInboundEvent): Promise<void> {
         return;
       }
 
-      const stream = await runAgentLoop(session, turnContext, {
+      const stream = await runAgentLoop(session, turnContext, event.accountConfig ?? {}, {
         onFinalText: (text) => event.channel.sendText(text),
         onErrorText: (error) => event.channel.sendText(formatChannelErrorText(error)),
       });
@@ -347,6 +347,15 @@ function acceptedAsyncResponse(statusUrl: string): LambdaResponse {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ statusUrl }),
   };
+}
+
+function eventPublicConversationKey(conversationKey: string, accountId: string): string {
+  const accountPrefix = `acct:${accountId}:`;
+  const unscoped = conversationKey.startsWith(accountPrefix)
+    ? conversationKey.slice(accountPrefix.length)
+    : conversationKey;
+
+  return unscoped.replace(/^api:/, "");
 }
 
 function isAsyncWorkerInvocation(event: unknown): event is AsyncWorkerInvocation {
