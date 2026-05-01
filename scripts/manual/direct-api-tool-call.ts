@@ -1,22 +1,24 @@
-import { fetchWithTiming, printTimingResults, requireManualEnv } from "./utils.ts";
+import { fetchWithTiming, manualFunctionUrl, printTimingResults, withManualTestAccount } from "./utils.ts";
 
-const FUNCTION_URL = requireManualEnv("FUNCTION_URL");
+const FUNCTION_URL = manualFunctionUrl();
 
-const result = await fetchWithTiming(FUNCTION_URL, {
-  eventId: `test-${Date.now()}`,
-  conversationKey: `test-${Date.now()}`,
-  events: [
-    {
-      role: "system",
-      content: "Be concise after using tools.",
-      persist: false,
-    },
-    {
-      role: "user",
-      content: [{ type: "text", text: "Search the web for the latest weather in Hanoi." }],
-    },
-  ],
+await withManualTestAccount(async ({ accountSecret }) => {
+  const result = await fetchWithTiming(FUNCTION_URL, {
+    eventId: `test-${Date.now()}`,
+    conversationKey: `test-${Date.now()}`,
+    events: [
+      {
+        role: "system",
+        content: "Be concise after using tools.",
+        persist: false,
+      },
+      {
+        role: "user",
+        content: [{ type: "text", text: "Search the web for the latest weather in Hanoi." }],
+      },
+    ],
+  }, accountSecret);
+
+  console.log("\nStatus:", result.response.status);
+  printTimingResults(result);
 });
-
-console.log("\nStatus:", result.response.status);
-printTimingResults(result);

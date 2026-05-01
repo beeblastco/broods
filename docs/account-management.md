@@ -101,6 +101,29 @@ Patch behavior is a deep merge. Redacted secret placeholders returned by reads (
 
 The admin account is virtual; it is not a normal account record.
 
+## Delete Account
+
+`DELETE /accounts/me` and admin `DELETE /accounts/{accountId}` remove the account and cascade cleanup for account-scoped runtime data:
+
+- direct and channel conversation rows
+- processed event dedupe rows and conversation leases
+- async direct API status rows
+- current account filesystem, memory, and task objects
+
+Response:
+
+```json
+{
+  "deleted": true,
+  "cleanup": {
+    "conversationsDeleted": 12,
+    "processedEventsDeleted": 14,
+    "asyncResultsDeleted": 2,
+    "filesystemObjectsDeleted": 8
+  }
+}
+```
+
 ## Account Config
 
 Top-level runtime config:

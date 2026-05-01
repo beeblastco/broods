@@ -99,12 +99,32 @@ Manual direct API scripts require:
 
 ```bash
 export FUNCTION_URL=<harnessProcessingUrl>
-export ACCOUNT_SECRET=<accountSecret>
+export ACCOUNT_MANAGE_URL=<accountManageUrl>
+```
+
+If either variable is omitted, the scripts read the corresponding value from `.sst/outputs.json`.
+
+Each script creates a temporary account through `ACCOUNT_MANAGE_URL/accounts`, runs the probe with the returned account secret, then deletes the test account through `DELETE /accounts/me` in a cleanup step.
+
+Confirm the harness URL is live:
+
+```bash
+curl "$FUNCTION_URL"
+```
+
+Expected response:
+
+```json
+{
+  "status": "ok",
+  "method": "POST"
+}
 ```
 
 Run:
 
 ```bash
+bun scripts/manual/account-lifecycle.ts
 bun scripts/manual/direct-api-stream.ts
 bun scripts/manual/direct-api-tool-call.ts
 bun scripts/manual/direct-api-multi-turn.ts

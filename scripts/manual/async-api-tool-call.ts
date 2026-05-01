@@ -1,7 +1,6 @@
-import { requireManualEnv } from "./utils.ts";
+import { manualFunctionUrl, withManualTestAccount } from "./utils.ts";
 
-const FUNCTION_URL = requireManualEnv("FUNCTION_URL");
-const ACCOUNT_SECRET = requireManualEnv("ACCOUNT_SECRET");
+const FUNCTION_URL = manualFunctionUrl();
 const POLL_INTERVAL_MS = Number(process.env.ASYNC_POLL_INTERVAL_MS ?? "2000");
 const POLL_TIMEOUT_MS = Number(process.env.ASYNC_POLL_TIMEOUT_MS ?? "180000");
 
@@ -20,47 +19,50 @@ interface AsyncStatusResponse {
 const eventId = `async-tool-${Date.now()}`;
 const conversationKey = `async-tool-${Date.now()}`;
 const asyncUrl = new URL("/async", ensureTrailingSlash(FUNCTION_URL)).toString();
-const startTime = Date.now();
 
-console.log("POST", asyncUrl);
-console.log("eventId:", eventId);
-console.log("conversationKey:", conversationKey);
+await withManualTestAccount(async ({ accountSecret }) => {
+  const startTime = Date.now();
 
-const accepted = await postAsyncRequest(asyncUrl, {
-  eventId,
-  conversationKey,
-  events: [
-    {
-      role: "system",
-      content: "Be concise after using tools.",
-      persist: false,
-    },
-    {
-      role: "user",
-      content: [{ type: "text", text: "Search the web for the latest weather in Hanoi." }],
-    },
-  ],
+  console.log("POST", asyncUrl);
+  console.log("eventId:", eventId);
+  console.log("conversationKey:", conversationKey);
+
+  const accepted = await postAsyncRequest(accountSecret, asyncUrl, {
+    eventId,
+    conversationKey,
+    events: [
+      {
+        role: "system",
+        content: "Be concise after using tools.",
+        persist: false,
+      },
+      {
+        role: "user",
+        content: [{ type: "text", text: "Search the web for the latest weather in Hanoi." }],
+      },
+    ],
+  });
+
+  console.log("\nAccepted:");
+  console.log(JSON.stringify(accepted, null, 2));
+  console.log("\nPolling", accepted.statusUrl);
+
+  const result = await pollStatus(accountSecret, accepted.statusUrl);
+  const totalMs = Date.now() - startTime;
+
+  console.log("\nFinal status:");
+  console.log(JSON.stringify(result, null, 2));
+  console.log(`\nTotal elapsed: ${totalMs}ms`);
+
+  if (result.status !== "completed") {
+    process.exitCode = 1;
+  }
 });
 
-console.log("\nAccepted:");
-console.log(JSON.stringify(accepted, null, 2));
-console.log("\nPolling", accepted.statusUrl);
-
-const result = await pollStatus(accepted.statusUrl);
-const totalMs = Date.now() - startTime;
-
-console.log("\nFinal status:");
-console.log(JSON.stringify(result, null, 2));
-console.log(`\nTotal elapsed: ${totalMs}ms`);
-
-if (result.status !== "completed") {
-  process.exitCode = 1;
-}
-
-async function postAsyncRequest(url: string, body: unknown): Promise<AsyncAcceptedResponse> {
+async function postAsyncRequest(accountSecret: string, url: string, body: unknown): Promise<AsyncAcceptedResponse> {
   const response = await fetch(url, {
     method: "POST",
-    headers: authorizedJsonHeaders(),
+    headers: authorizedJsonHeaders(accountSecret),
     body: JSON.stringify(body),
   });
 
@@ -76,17 +78,25 @@ async function postAsyncRequest(url: string, body: unknown): Promise<AsyncAccept
   return payload as AsyncAcceptedResponse;
 }
 
-async function pollStatus(statusUrl: string): Promise<AsyncStatusResponse> {
+async function pollStatus(accountSecret: string, statusUrl: string): Promise<AsyncStatusResponse> {
   const deadline = Date.now() + POLL_TIMEOUT_MS;
 
   while (Date.now() < deadline) {
     const response = await fetch(statusUrl, {
       method: "GET",
       headers: {
-        "Authorization": `Bearer ${ACCOUNT_SECRET}`,
+        "Authorization": `Bearer ${accountSecret}`,
       },
     });
     const payload = await readJson(response);
+
+    if (response.status === 404) {
+      const status = parseStatusPayload(payload);
+      if (status.status === "not_found") {
+        return status;
+      }
+      throw new Error(`Status API returned 404 with unexpected payload: ${JSON.stringify(payload)}`);
+    }
 
     if (response.status !== 200) {
       throw new Error(`Expected 200 from status API, got ${response.status}: ${JSON.stringify(payload)}`);
@@ -134,10 +144,10 @@ async function readJson(response: Response): Promise<unknown> {
   }
 }
 
-function authorizedJsonHeaders(): Record<string, string> {
+function authorizedJsonHeaders(accountSecret: string): Record<string, string> {
   return {
     "Content-Type": "application/json",
-    "Authorization": `Bearer ${ACCOUNT_SECRET}`,
+    "Authorization": `Bearer ${accountSecret}`,
   };
 }
 

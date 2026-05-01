@@ -15,6 +15,7 @@ import {
     updateAccount,
     type AuthContext,
 } from "../_shared/accounts.ts";
+import { deleteAccountRuntimeData } from "../_shared/account-cleanup.ts";
 import {
     jsonResponse,
     normalizeHeaders,
@@ -67,8 +68,7 @@ export async function handler(event: LambdaFunctionURLEvent): Promise<LambdaResp
 
         if (method === "DELETE" && rawPath === "/accounts/me") {
             const account = requireAccountAuth(auth);
-            await deleteAccount(account.accountId);
-            return jsonResponse(200, { deleted: true });
+            return deleteAccountResponse(account);
         }
 
         if (auth.kind !== "admin") {
@@ -99,8 +99,7 @@ export async function handler(event: LambdaFunctionURLEvent): Promise<LambdaResp
                 if (!account) {
                     return textResponse(404, "Account not found");
                 }
-                await deleteAccount(accountId);
-                return jsonResponse(200, { deleted: true });
+                return deleteAccountResponse(account);
             }
         }
 
@@ -135,6 +134,12 @@ async function rotateSecretResponse(accountId: string): Promise<LambdaResponse> 
             accountSecret: rotated.accountSecret,
         })
         : textResponse(404, "Account not found");
+}
+
+async function deleteAccountResponse(account: Extract<AuthContext, { kind: "account" }>["account"]): Promise<LambdaResponse> {
+    const cleanup = await deleteAccountRuntimeData(account);
+    await deleteAccount(account.accountId);
+    return jsonResponse(200, { deleted: true, cleanup });
 }
 
 function requireAccountAuth(auth: AuthContext): Extract<AuthContext, { kind: "account" }>["account"] {

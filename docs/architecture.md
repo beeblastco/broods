@@ -94,6 +94,8 @@ sequenceDiagram
 
 Provider secrets are not returned in normal account responses. Secret-like fields are redacted as `********`; sending that value back in a patch preserves the existing stored secret.
 
+Deleting an account runs account-scoped cleanup before removing the account record. The cleanup deletes runtime rows whose keys are prefixed with `acct:{accountId}:` and removes the current account filesystem namespaces from S3.
+
 ## Direct and Async API
 
 ```mermaid

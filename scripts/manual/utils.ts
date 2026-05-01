@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+
 const HARNESS_MEMORY_MB = 256;
 const LAMBDA_ARM64_GB_SECOND = 0.0000133334;
 const LAMBDA_REQUEST_COST = 0.0000002;
@@ -42,6 +44,20 @@ interface TimingResult {
   response: Response;
 }
 
+interface CreatedManualAccount {
+  accountSecret: string;
+  account?: {
+    accountId?: string;
+    username?: string;
+  };
+}
+
+export interface ManualTestAccount {
+  accountId?: string;
+  username?: string;
+  accountSecret: string;
+}
+
 export function requireManualEnv(name: string): string {
   const value = process.env[name];
   if (!value) {
@@ -51,9 +67,59 @@ export function requireManualEnv(name: string): string {
   return value;
 }
 
+export function optionalManualEnv(name: string): string | undefined {
+  const value = process.env[name]?.trim();
+  return value || undefined;
+}
+
+export function manualFunctionUrl(): string {
+  return outputOrEnv("FUNCTION_URL", "harnessProcessingUrl");
+}
+
+export function manualAccountManageUrl(): string {
+  return outputOrEnv("ACCOUNT_MANAGE_URL", "accountManageUrl").replace(/\/+$/, "");
+}
+
+export async function withManualTestAccount<T>(
+  run: (account: ManualTestAccount) => Promise<T>,
+): Promise<T> {
+  const account = await createManualAccount();
+  const manualAccount = {
+    accountId: account.account?.accountId,
+    username: account.account?.username,
+    accountSecret: account.accountSecret,
+  } satisfies ManualTestAccount;
+
+  console.log("Created manual test account:");
+  console.log(JSON.stringify({
+    accountId: manualAccount.accountId,
+    username: manualAccount.username,
+  }, null, 2));
+
+  let runFailed = false;
+  try {
+    return await run(manualAccount);
+  } catch (err) {
+    runFailed = true;
+    throw err;
+  } finally {
+    try {
+      await deleteManualAccount(manualAccount);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      if (runFailed) {
+        console.error(`Failed to delete manual test account after probe failure: ${message}`);
+      } else {
+        throw err;
+      }
+    }
+  }
+}
+
 export async function fetchWithTiming(
   url: string,
   body: unknown,
+  accountSecret: string = requireManualEnv("ACCOUNT_SECRET"),
 ): Promise<TimingResult> {
   const startTime = Date.now();
   let firstByteTime: number | null = null;
@@ -64,12 +130,21 @@ export async function fetchWithTiming(
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      "Authorization": `Bearer ${requireManualEnv("ACCOUNT_SECRET")}`,
+      "Accept": "text/event-stream",
+      "Authorization": `Bearer ${accountSecret}`,
     },
     body: JSON.stringify(body),
   });
 
-  const reader = response.body!.getReader();
+  if (!response.ok) {
+    throw new Error(`Direct API request failed with HTTP ${response.status}: ${await response.text()}`);
+  }
+
+  if (!response.body) {
+    throw new Error("Direct API response did not include a stream body");
+  }
+
+  const reader = response.body.getReader();
   const decoder = new TextDecoder();
 
   while (true) {
@@ -88,6 +163,95 @@ export async function fetchWithTiming(
   const totalMs = Date.now() - startTime;
 
   return { ttfbMs, totalMs, responseSizeBytes, sseText, response };
+}
+
+async function createManualAccount(): Promise<CreatedManualAccount> {
+  const accountManageUrl = manualAccountManageUrl();
+  const username = optionalManualEnv("MANUAL_ACCOUNT_USERNAME") ?? `manual-direct-api-${Date.now()}`;
+  const response = await fetch(`${accountManageUrl}/accounts`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      username,
+      description: "Temporary account created by scripts/manual direct API probes.",
+      config: {},
+    }),
+  });
+  const text = await response.text();
+
+  if (!response.ok) {
+    throw new Error(`Manual account creation failed with HTTP ${response.status}: ${text}`);
+  }
+
+  const payload = parseJson(text);
+  if (!isCreatedManualAccount(payload)) {
+    throw new Error(`Manual account creation response did not include accountSecret: ${text}`);
+  }
+
+  return payload;
+}
+
+async function deleteManualAccount(account: ManualTestAccount): Promise<void> {
+  const accountManageUrl = manualAccountManageUrl();
+  const response = await fetch(`${accountManageUrl}/accounts/me`, {
+    method: "DELETE",
+    headers: {
+      "Authorization": `Bearer ${account.accountSecret}`,
+    },
+  });
+  const text = await response.text();
+
+  if (!response.ok) {
+    throw new Error(`Manual account deletion failed with HTTP ${response.status}: ${text}`);
+  }
+
+  console.log("Deleted manual test account:");
+  console.log(text ? JSON.stringify(parseJson(text), null, 2) : "{}");
+}
+
+function parseJson(text: string): unknown {
+  try {
+    return JSON.parse(text);
+  } catch (err) {
+    throw new Error(`Invalid JSON response: ${err instanceof Error ? err.message : String(err)}\n${text}`);
+  }
+}
+
+function isCreatedManualAccount(value: unknown): value is CreatedManualAccount {
+  return Boolean(
+    value &&
+    typeof value === "object" &&
+    typeof (value as { accountSecret?: unknown }).accountSecret === "string",
+  );
+}
+
+function outputOrEnv(envName: string, outputName: string): string {
+  const explicit = optionalManualEnv(envName);
+  if (explicit) {
+    return explicit;
+  }
+
+  const outputs = readSstOutputs();
+  const value = outputs[outputName];
+  if (typeof value !== "string" || value.trim().length === 0) {
+    throw new Error(`Missing ${envName} and .sst output ${outputName}`);
+  }
+
+  return value;
+}
+
+function readSstOutputs(): Record<string, unknown> {
+  try {
+    const raw = readFileSync(".sst/outputs.json", "utf-8");
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? parsed as Record<string, unknown>
+      : {};
+  } catch (err) {
+    throw new Error(`Unable to read .sst/outputs.json: ${err instanceof Error ? err.message : String(err)}`);
+  }
 }
 
 export function printTimingResults(result: TimingResult): void {

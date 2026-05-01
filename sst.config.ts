@@ -224,6 +224,10 @@ export default $config({
       environment: {
         ACCOUNT_CONFIGS_TABLE_NAME: accountConfigsTable.name,
         ACCOUNT_SECRET_INDEX_NAME: "SecretHashIndex",
+        CONVERSATIONS_TABLE_NAME: conversationsTable.name,
+        PROCESSED_EVENTS_TABLE_NAME: processedEventsTable.name,
+        ASYNC_RESULTS_TABLE_NAME: asyncResultsTable.name,
+        FILESYSTEM_BUCKET_NAME: names.memory,
         ACCOUNT_SIGNUP_RATE_LIMIT_TABLE_NAME: accountSignupRateLimitTable.name,
         ACCOUNT_SIGNUP_RATE_LIMIT_PER_HOUR: "5",
         ADMIN_ACCOUNT_SECRET: adminAccountSecret.value,
@@ -243,9 +247,27 @@ export default $config({
         },
         {
           actions: [
+            "dynamodb:BatchWriteItem",
+            "dynamodb:DeleteItem",
+            "dynamodb:Scan",
+          ],
+          resources: [conversationsTable.arn, processedEventsTable.arn, asyncResultsTable.arn],
+        },
+        {
+          actions: [
             "dynamodb:UpdateItem",
           ],
           resources: [accountSignupRateLimitTable.arn],
+        },
+        {
+          actions: [
+            "s3:DeleteObject",
+          ],
+          resources: [`${filesystemBucketArn}/*`],
+        },
+        {
+          actions: ["s3:ListBucket"],
+          resources: [filesystemBucketArn],
         },
       ],
     });
@@ -269,6 +291,8 @@ export default $config({
               values: [
                 harnessProcessing.nodes.role.arn,
                 $interpolate`arn:aws:sts::${AWS_ACCOUNT_ID}:assumed-role/${harnessProcessing.nodes.role.name}/*`,
+                accountManage.nodes.role.arn,
+                $interpolate`arn:aws:sts::${AWS_ACCOUNT_ID}:assumed-role/${accountManage.nodes.role.name}/*`,
               ],
             },
           ],

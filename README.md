@@ -9,7 +9,7 @@ Experimental serverless multi-account AI chatbot and agent harness on AWS Lambda
 
 The deployed architecture uses two public Lambda Function URLs:
 
-- `account-manage`: creates accounts, rotates account API secrets, and manages account metadata/configuration.
+- `account-manage`: creates accounts, rotates account API secrets, manages account metadata/configuration, and deletes account-scoped runtime data when an account is deleted.
 - `harness-processing`: handles account-authenticated direct API traffic, async work, status polling, and account-scoped Telegram, GitHub, Slack, and Discord webhooks.
 
 The design goal is simple infrastructure for low-volume multi-tenant usage: Bun on Lambda, SST for infra, DynamoDB for account/conversation/status state, S3 for filesystem-backed tool state, and the Vercel AI SDK for the agent loop.

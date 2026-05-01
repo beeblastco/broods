@@ -8,6 +8,17 @@ Authorization: Bearer <accountSecret>
 
 Direct API state is internally scoped as `acct:<accountId>:api:<key>`, so different accounts can reuse the same public `eventId` or `conversationKey` without colliding.
 
+## Health Probe: `GET /`
+
+Unauthenticated `GET /` is a lightweight probe for the deployed `harness-processing` Function URL. It returns JSON and points callers at the write method:
+
+```json
+{
+  "status": "ok",
+  "method": "POST"
+}
+```
+
 ## Sync API: `POST /`
 
 POST to the deployed `harness-processing` Function URL with Vercel AI SDK-style messages. This path returns an SSE stream:
@@ -55,6 +66,27 @@ Direct API callers can inject ephemeral `system` events:
 
 `system` events are supported only on the direct API path and must use `persist: false`. The direct API rejects caller-supplied `assistant`, `tool`, and persisted `system` events.
 
+Minimal `curl` request:
+
+```bash
+curl -N "$FUNCTION_URL" \
+  -H "Authorization: Bearer $ACCOUNT_SECRET" \
+  -H "Content-Type: application/json" \
+  -H "Accept: text/event-stream" \
+  -d '{
+    "eventId": "unique-id-for-dedup",
+    "conversationKey": "conversation-identifier",
+    "events": [
+      {
+        "role": "user",
+        "content": [
+          { "type": "text", "text": "Hello" }
+        ]
+      }
+    ]
+  }'
+```
+
 ## Webhook Callback
 
 The sync API can send a callback after generation completes. Include `webhookUrl` in the JSON body and `X-Webhook-Secret` in the request headers:
@@ -100,9 +132,13 @@ The async worker runs the same account-scoped harness code in the background. If
 
 Without a callback, poll the returned status URL.
 
-Live async probe with `FUNCTION_URL` and `ACCOUNT_SECRET` set:
+Live probes use `FUNCTION_URL=<harnessProcessingUrl>` and `ACCOUNT_MANAGE_URL=<accountManageUrl>`, falling back to `.sst/outputs.json` when either variable is omitted. Each script creates a temporary account, runs the probe with that account secret, then deletes the test account:
 
 ```bash
+bun scripts/manual/account-lifecycle.ts
+bun scripts/manual/direct-api-stream.ts
+bun scripts/manual/direct-api-tool-call.ts
+bun scripts/manual/direct-api-multi-turn.ts
 bun scripts/manual/async-api-tool-call.ts
 ```
 
@@ -139,5 +175,34 @@ Failed response:
   "conversationKey": "conversation-identifier",
   "status": "failed",
   "error": "failure details"
+}
+```
+
+Unknown event response (`404`):
+
+```json
+{
+  "eventId": "unique-id-for-dedup",
+  "status": "not_found"
+}
+```
+
+## Error Responses
+
+Non-streaming routing and validation failures return JSON:
+
+```json
+{
+  "error": "Unauthorized"
+}
+```
+
+Unsupported methods return:
+
+```json
+{
+  "error": "Method not allowed",
+  "method": "PUT",
+  "allowedMethods": ["GET", "POST"]
 }
 ```
