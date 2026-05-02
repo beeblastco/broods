@@ -101,9 +101,9 @@ The deploy workflow runs:
 bun run scripts/configure-telegram-account.ts
 ```
 
-The script requires `ADMIN_ACCOUNT_SECRET`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_WEBHOOK_SECRET`, and `ALLOWED_CHAT_IDS`. It reads `ACCOUNT_MANAGE_URL` and `HARNESS_PROCESSING_URL` from environment overrides when present, otherwise from `.sst/outputs.json`.
+The script requires `ADMIN_ACCOUNT_SECRET`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_WEBHOOK_SECRET`, and `ALLOWED_CHAT_IDS`. It also writes the account runtime config used by the harness: `ACCOUNT_MODEL_PROVIDER` defaults to `google`, `ACCOUNT_MODEL_ID` defaults to `gemma-4-31b-it`, and the matching provider API key must be present, for example `ACCOUNT_GOOGLE_API_KEY` for Google. `ACCOUNT_TOOLS_JSON`, `ACCOUNT_MODEL_OPTIONS_JSON`, and `ACCOUNT_PROVIDER_CONFIG_JSON` can override the generated defaults. It reads `ACCOUNT_MANAGE_URL` and `HARNESS_PROCESSING_URL` from environment overrides when present, otherwise from `.sst/outputs.json`.
 
-The script upserts by `TELEGRAM_ACCOUNT_USERNAME` (`telegram-default` by default), writes Telegram credentials into encrypted account config, and calls Telegram `setWebhook` with `/webhooks/{accountId}/telegram`.
+The Discord, GitHub, Slack, and Telegram configure scripts all use the same runtime config helper. Each script upserts by its integration account username, writes channel credentials into encrypted account config, and preserves the generated model/provider/tools config in the same encrypted payload.
 
 ## Live Probes
 
@@ -112,11 +112,12 @@ Manual direct API scripts accept optional URL overrides:
 ```bash
 export FUNCTION_URL=<harnessProcessingUrl>
 export ACCOUNT_MANAGE_URL=<accountManageUrl>
+export ACCOUNT_GOOGLE_API_KEY=<googleApiKey>
 ```
 
 If either variable is omitted, the scripts read the corresponding value from `.sst/outputs.json`.
 
-Each script creates a temporary account through `ACCOUNT_MANAGE_URL/accounts`, runs the probe with the returned account secret, then deletes the test account through `DELETE /accounts/me` in a cleanup step.
+Each script creates a temporary account through `ACCOUNT_MANAGE_URL/accounts`, including the same generated model/provider/tools config used by CI-created channel accounts, runs the probe with the returned account secret, then deletes the test account through `DELETE /accounts/me` in a cleanup step.
 
 Confirm the harness URL is live:
 

@@ -5,6 +5,16 @@
 
 import { readFileSync } from "node:fs";
 
+import type { AccountConfig, AccountModelProviderName } from "../functions/_shared/accounts.ts";
+
+const DEFAULT_ACCOUNT_MODEL_PROVIDER = "google";
+const DEFAULT_ACCOUNT_MODEL_ID = "gemma-4-31b-it";
+
+export interface PublicAccount {
+  accountId: string;
+  username: string;
+}
+
 export function optionalScriptEnv(name: string): string | undefined {
   const value = process.env[name]?.trim();
   return value || undefined;
@@ -34,6 +44,14 @@ export function outputOrEnv(envName: string, outputName: string): string {
   return value;
 }
 
+export function accountManageUrl(): string {
+  return stripTrailingSlash(outputOrEnv("ACCOUNT_MANAGE_URL", "accountManageUrl"));
+}
+
+export function harnessProcessingUrl(): string {
+  return stripTrailingSlash(outputOrEnv("HARNESS_PROCESSING_URL", "harnessProcessingUrl"));
+}
+
 export function readSstOutputs(): Record<string, unknown> {
   try {
     const raw = readFileSync(".sst/outputs.json", "utf-8");
@@ -58,4 +76,273 @@ export function stripTrailingSlash(value: string): string {
 
 export function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value && typeof value === "object" && !Array.isArray(value));
+}
+
+export function createScriptAccountRuntimeConfig(): AccountConfig {
+  const provider = parseAccountModelProvider(optionalScriptEnv("ACCOUNT_MODEL_PROVIDER") ?? DEFAULT_ACCOUNT_MODEL_PROVIDER);
+  const modelId = optionalScriptEnv("ACCOUNT_MODEL_ID") ?? DEFAULT_ACCOUNT_MODEL_ID;
+  const modelOptions = optionalJsonRecord("ACCOUNT_MODEL_OPTIONS_JSON");
+
+  return {
+    model: {
+      provider,
+      modelId,
+      ...(modelOptions ? { options: modelOptions } : {}),
+    },
+    provider: {
+      [provider]: accountProviderConfig(provider),
+    },
+    tools: accountToolsConfig(provider),
+  };
+}
+
+export async function upsertScriptAccount(input: {
+  accountManageUrl: string;
+  adminSecret: string;
+  username: string | undefined;
+  description: string | undefined;
+  config: AccountConfig;
+}): Promise<PublicAccount> {
+  const existing = await findExistingAccount(input.accountManageUrl, input.adminSecret, input.username);
+  const body = {
+    username: input.username,
+    description: input.description,
+    config: input.config,
+  };
+
+  if (existing) {
+    const updated = await accountApi(
+      input.accountManageUrl,
+      input.adminSecret,
+      "PATCH",
+      `/accounts/${encodeURIComponent(existing.accountId)}`,
+      body,
+    );
+    return parseAccountResponse(updated);
+  }
+
+  const created = await publicAccountApi(input.accountManageUrl, "POST", "/accounts", body);
+  return parseAccountResponse(created);
+}
+
+async function findExistingAccount(
+  baseUrl: string,
+  adminSecret: string,
+  username: string | undefined,
+): Promise<PublicAccount | null> {
+  if (!username) {
+    return null;
+  }
+
+  const response = await accountApi(baseUrl, adminSecret, "GET", "/accounts");
+  if (!isRecord(response) || !Array.isArray(response.accounts)) {
+    throw new Error("Account list response must include accounts array");
+  }
+
+  return response.accounts.find((entry): entry is PublicAccount =>
+    isPublicAccount(entry) && entry.username === username,
+  ) ?? null;
+}
+
+async function accountApi(
+  baseUrl: string,
+  adminSecret: string,
+  method: string,
+  path: string,
+  body?: unknown,
+): Promise<unknown> {
+  return requestJson(`${baseUrl}${path}`, {
+    method,
+    headers: {
+      "Authorization": `Bearer ${adminSecret}`,
+      ...(body === undefined ? {} : { "Content-Type": "application/json" }),
+    },
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+  });
+}
+
+async function publicAccountApi(
+  baseUrl: string,
+  method: string,
+  path: string,
+  body: unknown,
+): Promise<unknown> {
+  return requestJson(`${baseUrl}${path}`, {
+    method,
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
+async function requestJson(url: string, init: RequestInit): Promise<unknown> {
+  const response = await fetch(url, init);
+  const bodyText = await response.text();
+  if (!response.ok) {
+    throw new Error(`${init.method ?? "GET"} ${url} failed: ${response.status} ${bodyText}`);
+  }
+
+  return bodyText ? parseJson(bodyText) : {};
+}
+
+function parseAccountResponse(value: unknown): PublicAccount {
+  if (!isRecord(value) || !isPublicAccount(value.account)) {
+    throw new Error("Account response must include account.accountId and account.username");
+  }
+
+  return value.account;
+}
+
+function isPublicAccount(value: unknown): value is PublicAccount {
+  return isRecord(value) &&
+    typeof value.accountId === "string" &&
+    typeof value.username === "string";
+}
+
+function parseAccountModelProvider(value: string): AccountModelProviderName {
+  if (value === "google" || value === "openai" || value === "bedrock" || value === "gateway") {
+    return value;
+  }
+
+  throw new Error("ACCOUNT_MODEL_PROVIDER must be one of: google, openai, bedrock, gateway");
+}
+
+function accountProviderConfig(provider: AccountModelProviderName): Record<string, unknown> {
+  const explicitConfig = optionalJsonRecord("ACCOUNT_PROVIDER_CONFIG_JSON");
+  if (explicitConfig) {
+    return explicitConfig;
+  }
+
+  switch (provider) {
+    case "google":
+      return {
+        apiKey: firstRequiredEnv("ACCOUNT_GOOGLE_API_KEY", "GOOGLE_API_KEY", "SST_SECRET_GoogleApiKey", "SST_SECRET_GOOGLEAPIKEY"),
+      };
+    case "openai":
+      return {
+        apiKey: firstRequiredEnv("ACCOUNT_OPENAI_API_KEY", "OPENAI_API_KEY"),
+        ...optionalStringConfig("baseURL", "ACCOUNT_OPENAI_BASE_URL", "OPENAI_BASE_URL"),
+        ...optionalStringConfig("organization", "ACCOUNT_OPENAI_ORGANIZATION", "OPENAI_ORGANIZATION"),
+        ...optionalStringConfig("project", "ACCOUNT_OPENAI_PROJECT", "OPENAI_PROJECT"),
+      };
+    case "bedrock":
+      return {
+        apiKey: firstRequiredEnv("ACCOUNT_BEDROCK_API_KEY", "BEDROCK_API_KEY", "AWS_BEARER_TOKEN_BEDROCK"),
+        ...optionalStringConfig("region", "ACCOUNT_BEDROCK_REGION", "AWS_REGION"),
+        ...optionalStringConfig("accessKeyId", "ACCOUNT_BEDROCK_ACCESS_KEY_ID", "AWS_ACCESS_KEY_ID"),
+        ...optionalStringConfig("secretAccessKey", "ACCOUNT_BEDROCK_SECRET_ACCESS_KEY", "AWS_SECRET_ACCESS_KEY"),
+        ...optionalStringConfig("sessionToken", "ACCOUNT_BEDROCK_SESSION_TOKEN", "AWS_SESSION_TOKEN"),
+      };
+    case "gateway":
+      return { apiKey: firstRequiredEnv("ACCOUNT_GATEWAY_API_KEY", "AI_GATEWAY_API_KEY") };
+  }
+}
+
+function accountToolsConfig(provider: AccountModelProviderName): Record<string, Record<string, unknown>> {
+  const explicitTools = optionalJsonRecord("ACCOUNT_TOOLS_JSON");
+  if (explicitTools) {
+    return explicitTools as Record<string, Record<string, unknown>>;
+  }
+
+  const tools: Record<string, Record<string, unknown>> = {
+    filesystem: { enabled: envFlag("ACCOUNT_ENABLE_FILESYSTEM_TOOL", true) },
+    tasks: { enabled: envFlag("ACCOUNT_ENABLE_TASKS_TOOL", true) },
+  };
+
+  if (envFlag("ACCOUNT_ENABLE_TAVILY_TOOLS", true)) {
+    tools.tavilySearch = {
+      enabled: true,
+      ...optionalNumberConfig("maxResults", "ACCOUNT_TAVILY_SEARCH_MAX_RESULTS"),
+      ...optionalStringConfig("searchDepth", "ACCOUNT_TAVILY_SEARCH_DEPTH"),
+      ...optionalBooleanConfig("includeAnswer", "ACCOUNT_TAVILY_SEARCH_INCLUDE_ANSWER"),
+      ...optionalStringConfig("topic", "ACCOUNT_TAVILY_SEARCH_TOPIC"),
+    };
+    tools.tavilyExtract = {
+      enabled: true,
+      ...optionalStringConfig("extractDepth", "ACCOUNT_TAVILY_EXTRACT_DEPTH"),
+      ...optionalStringConfig("format", "ACCOUNT_TAVILY_EXTRACT_FORMAT"),
+    };
+  }
+
+  if (provider === "google" && envFlag("ACCOUNT_ENABLE_GOOGLE_SEARCH", true)) {
+    tools.googleSearch = {
+      enabled: true,
+      ...optionalJsonRecord("ACCOUNT_GOOGLE_SEARCH_CONFIG_JSON"),
+    };
+  }
+
+  return Object.fromEntries(
+    Object.entries(tools).filter(([, config]) => config.enabled !== false),
+  );
+}
+
+function optionalJsonRecord(name: string): Record<string, unknown> | undefined {
+  const raw = optionalScriptEnv(name);
+  if (!raw) {
+    return undefined;
+  }
+
+  const parsed = parseJson(raw);
+  if (!isRecord(parsed)) {
+    throw new Error(`${name} must be a JSON object`);
+  }
+
+  return parsed;
+}
+
+function firstRequiredEnv(...names: string[]): string {
+  for (const name of names) {
+    const value = optionalScriptEnv(name);
+    if (value) {
+      return value;
+    }
+  }
+
+  throw new Error(`Missing required environment variable. Set one of: ${names.join(", ")}`);
+}
+
+function envFlag(name: string, defaultValue: boolean): boolean {
+  const value = optionalScriptEnv(name);
+  if (value === undefined) {
+    return defaultValue;
+  }
+
+  if (value === "true") return true;
+  if (value === "false") return false;
+  throw new Error(`${name} must be true or false`);
+}
+
+function optionalStringConfig(key: string, ...envNames: string[]): Record<string, string> {
+  for (const name of envNames) {
+    const value = optionalScriptEnv(name);
+    if (value) {
+      return { [key]: value };
+    }
+  }
+
+  return {};
+}
+
+function optionalNumberConfig(key: string, envName: string): Record<string, number> {
+  const value = optionalScriptEnv(envName);
+  if (!value) {
+    return {};
+  }
+
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) {
+    throw new Error(`${envName} must be a number`);
+  }
+
+  return { [key]: parsed };
+}
+
+function optionalBooleanConfig(key: string, envName: string): Record<string, boolean> {
+  const value = optionalScriptEnv(envName);
+  if (!value) {
+    return {};
+  }
+
+  if (value === "true") return { [key]: true };
+  if (value === "false") return { [key]: false };
+  throw new Error(`${envName} must be true or false`);
 }

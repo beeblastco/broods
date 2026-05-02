@@ -1,8 +1,8 @@
 import {
-  optionalScriptEnv,
-  outputOrEnv,
+  accountManageUrl,
+  createScriptAccountRuntimeConfig,
+  harnessProcessingUrl,
   parseJson,
-  stripTrailingSlash,
 } from "../utils.ts";
 
 const HARNESS_MEMORY_MB = 256;
@@ -40,16 +40,12 @@ export interface ManualTestAccount {
   accountSecret: string;
 }
 
-export function optionalManualEnv(name: string): string | undefined {
-  return optionalScriptEnv(name);
-}
-
 export function manualFunctionUrl(): string {
-  return outputOrEnv("FUNCTION_URL", "harnessProcessingUrl");
+  return harnessProcessingUrl();
 }
 
 export function manualAccountManageUrl(): string {
-  return stripTrailingSlash(outputOrEnv("ACCOUNT_MANAGE_URL", "accountManageUrl"));
+  return accountManageUrl();
 }
 
 export async function withManualTestAccount<T>(
@@ -139,7 +135,7 @@ export async function fetchWithTiming(
 
 async function createManualAccount(): Promise<CreatedManualAccount> {
   const accountManageUrl = manualAccountManageUrl();
-  const username = optionalManualEnv("MANUAL_ACCOUNT_USERNAME") ?? `manual-direct-api-${Date.now()}`;
+  const username = process.env.MANUAL_ACCOUNT_USERNAME?.trim() || `manual-direct-api-${Date.now()}`;
   const response = await fetch(`${accountManageUrl}/accounts`, {
     method: "POST",
     headers: {
@@ -149,6 +145,7 @@ async function createManualAccount(): Promise<CreatedManualAccount> {
       username: username,
       description: "Temporary account created by scripts/manual direct API probes.",
       config: {
+        ...createScriptAccountRuntimeConfig(),
         systemPrompt: "You are a helpful assistant. Do what they ask you to do",
       },
     }),

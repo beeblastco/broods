@@ -134,7 +134,7 @@ The async worker runs the same account-scoped harness code in the background. If
 
 Without a callback, poll the returned status URL.
 
-Live probes use `FUNCTION_URL=<harnessProcessingUrl>` and `ACCOUNT_MANAGE_URL=<accountManageUrl>`, falling back to `.sst/outputs.json` when either variable is omitted. Each script creates a temporary account, runs the probe with that account secret, then deletes the test account:
+Live probes use `FUNCTION_URL=<harnessProcessingUrl>` and `ACCOUNT_MANAGE_URL=<accountManageUrl>`, falling back to `.sst/outputs.json` when either variable is omitted. Temporary accounts use the same generated runtime config as the CI account scripts, so set the matching provider API key, for example `ACCOUNT_GOOGLE_API_KEY` when using the default Google provider. Each script creates a temporary account, runs the probe with that account secret, then deletes the test account:
 
 ```bash
 bun scripts/manual/account-lifecycle.ts
