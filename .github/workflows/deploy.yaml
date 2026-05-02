@@ -75,9 +75,9 @@ jobs:
           fi
 
           if [[ "$STAGE" == "production" ]]; then
-            AWS_REGION="${PRODUCTION_AWS_REGION:-ap-southeast-1}"
+            AWS_REGION="${PRODUCTION_AWS_REGION:-}"
           else
-            AWS_REGION="${DEFAULT_AWS_REGION:-eu-central-1}"
+            AWS_REGION="${DEFAULT_AWS_REGION:-}"
           fi
 
           if [[ -z "${AWS_REGION:-}" ]]; then

@@ -1,8 +1,6 @@
 /// <reference path="./.sst/platform/config.d.ts" />
 
 // SST infrastructure for the account-managed harness: one streaming runtime Lambda and one account-management Lambda.
-const DEVELOPMENT_AWS_REGION = "eu-central-1";
-const PRODUCTION_AWS_REGION = "ap-southeast-1";
 const AWS_ACCOUNT_ID = "123456789012";
 const PROJECT_NAME = "filthy-panty";
 const PROJECT_OWNER_EMAIL = "owner@example.com";
@@ -11,8 +9,17 @@ const SLIDING_CONTEXT_WINDOW = "20";
 const MAX_AGENT_ITERATIONS = "20";
 const AWS_PROFILE = process.env.CI ? undefined : (process.env.AWS_PROFILE ?? "default");
 
-function regionForStage(stage: string): string {
-  return stage === "production" ? PRODUCTION_AWS_REGION : DEVELOPMENT_AWS_REGION;
+function awsRegion(): string {
+  const region = process.env.AWS_REGION ?? process.env.AWS_DEFAULT_REGION;
+  if (region) {
+    return region;
+  }
+
+  if (process.env.CI) {
+    throw new Error("AWS_REGION must be set in CI");
+  }
+
+  return "eu-central-1";
 }
 
 function resourceName(service: string, stage: string, region: string): string {
@@ -23,7 +30,7 @@ function resourceName(service: string, stage: string, region: string): string {
 export default $config({
   app(input) {
     const stage = input?.stage ?? "dev";
-    const region = regionForStage(stage);
+    const region = awsRegion();
 
     return {
       name: PROJECT_NAME,
@@ -49,7 +56,7 @@ export default $config({
 
   async run() {
     const stage = $app.stage;
-    const region = regionForStage(stage);
+    const region = awsRegion();
     const names = {
       conversations: resourceName("conversations", stage, region),
       processedEvents: resourceName("processed-events", stage, region),
