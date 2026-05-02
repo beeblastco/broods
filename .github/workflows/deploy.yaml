@@ -26,6 +26,7 @@ jobs:
       contents: read
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+      AWS_REGION: ${{ vars.AWS_REGION }}
       CI: "true"
     steps:
       - name: Checkout repository
