@@ -263,7 +263,7 @@ function accountToolsConfig(provider: AccountModelProviderName): Record<string, 
     };
   }
 
-  if (provider === "google" && envFlag("ACCOUNT_ENABLE_GOOGLE_SEARCH", true)) {
+  if (provider === "google" && envFlag("ACCOUNT_ENABLE_GOOGLE_SEARCH", false)) {
     tools.googleSearch = {
       enabled: true,
       ...optionalJsonRecord("ACCOUNT_GOOGLE_SEARCH_CONFIG_JSON"),
