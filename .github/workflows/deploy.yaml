@@ -218,7 +218,7 @@ jobs:
           GITHUB_APP_ID: ${{ secrets.GITHUB_APP_ID || secrets.SST_SECRET_GITHUBAPPID }}
           GITHUB_PRIVATE_KEY: ${{ secrets.GITHUB_PRIVATE_KEY || secrets.SST_SECRET_GITHUBPRIVATEKEY }}
           GITHUB_WEBHOOK_SECRET: ${{ secrets.GITHUB_WEBHOOK_SECRET || secrets.SST_SECRET_GITHUBWEBHOOKSECRET }}
-          GITHUB_ALLOWED_REPOS: ${{ secrets.GITHUB_ALLOWED_REPOS || secrets.SST_SECRET_GITHUBALLOWEDREPOS }}
+          GITHUB_ALLOWED_REPOS: ${{ secrets.GITHUB_ALLOWED_REPOS || secrets.SST_SECRET_GITHUBALLOWEDREPOS || github.repository }}
           GITHUB_ACCOUNT_USERNAME: github-default
           GITHUB_ACCOUNT_DESCRIPTION: Default GitHub account managed by CI/CD.
         shell: bash
@@ -256,13 +256,17 @@ jobs:
           for name in \
             ADMIN_ACCOUNT_SECRET \
             SLACK_BOT_TOKEN \
-            SLACK_SIGNING_SECRET \
-            SLACK_ALLOWED_CHANNEL_IDS
+            SLACK_SIGNING_SECRET
           do
             if [[ -z "${!name:-}" ]]; then
               echo "Missing required Slack account configuration secret: $name" >&2
               exit 1
             fi
           done
+
+          if [[ -z "${SLACK_ALLOWED_CHANNEL_IDS:-}" ]]; then
+            echo "Skipping Slack account configuration because SLACK_ALLOWED_CHANNEL_IDS is not configured."
+            exit 0
+          fi
 
           bun run scripts/configure-slack-account.ts
