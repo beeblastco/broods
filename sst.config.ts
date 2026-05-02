@@ -1,8 +1,8 @@
 /// <reference path="./.sst/platform/config.d.ts" />
 
 // SST infrastructure for the account-managed harness: one streaming runtime Lambda and one account-management Lambda.
-const DEVELOPMENT_AWS_REGION = "ap-southeast-1";
-const PRODUCTION_AWS_REGION = "eu-central-1";
+const DEVELOPMENT_AWS_REGION = "eu-central-1";
+const PRODUCTION_AWS_REGION = "ap-southeast-1";
 const AWS_ACCOUNT_ID = "123456789012";
 const PROJECT_NAME = "filthy-panty";
 const PROJECT_OWNER_EMAIL = "owner@example.com";
