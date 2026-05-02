@@ -106,7 +106,7 @@ jobs:
           role-to-assume: ${{ env.AWS_ROLE_ARN }}
 
       - name: Install dependencies
-        run: bun install --frozen-lockfile
+        run: bun install --frozen-lockfile --ignore-scripts
 
       - name: Build Lambda binaries
         run: bun run build
