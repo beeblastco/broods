@@ -136,7 +136,7 @@ async function findExistingAccount(
 
   const response = await accountApi(baseUrl, adminSecret, "GET", "/accounts");
   if (!isRecord(response) || !Array.isArray(response.accounts)) {
-    throw new Error("Account list response must include accounts array");
+    throw new Error(`Account list response must include accounts array. Got: ${JSON.stringify(response)}`);
   }
 
   return response.accounts.find((entry): entry is PublicAccount =>
