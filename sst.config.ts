@@ -315,8 +315,8 @@ export default $config({
     });
 
     return {
-      harnessProcessingUrl: harnessProcessing.url,
-      accountManageUrl: accountManage.url,
+      agentServiceUrl: harnessProcessing.url,
+      accountServiceUrl: accountManage.url,
       accountConfigsTableName: accountConfigsTable.name,
       accountSignupRateLimitTableName: accountSignupRateLimitTable.name,
       conversationsTableName: conversationsTable.name,

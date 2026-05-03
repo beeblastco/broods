@@ -85,10 +85,10 @@ It applies to every runtime path:
 
 ## Configure It
 
-Set or update it through `account-manage`.
+Set or update it through account service.
 
 ```bash
-curl -X PATCH "$ACCOUNT_MANAGE_URL/accounts/me" \
+curl -X PATCH "$ACCOUNT_SERVICE_URL/accounts/me" \
   -H "Authorization: Bearer $ACCOUNT_SECRET" \
   -H "Content-Type: application/json" \
   -d '{
@@ -101,7 +101,7 @@ curl -X PATCH "$ACCOUNT_MANAGE_URL/accounts/me" \
 Set it to `null` when you want memory to go back to per-conversation behavior.
 
 ```bash
-curl -X PATCH "$ACCOUNT_MANAGE_URL/accounts/me" \
+curl -X PATCH "$ACCOUNT_SERVICE_URL/accounts/me" \
   -H "Authorization: Bearer $ACCOUNT_SECRET" \
   -H "Content-Type: application/json" \
   -d '{

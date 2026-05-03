@@ -1,65 +1,16 @@
 /**
  * Shared helpers for local and CI scripts.
- * Keep script-only environment, SST output, and JSON parsing utilities here.
  */
-
-import { readFileSync } from "node:fs";
 
 import type { AccountConfig, AccountModelProviderName } from "../functions/_shared/accounts.ts";
 
+// You can set here or change inisde the GH Actions variables
 const DEFAULT_ACCOUNT_MODEL_PROVIDER = "google";
 const DEFAULT_ACCOUNT_MODEL_ID = "gemma-4-31b-it";
 
 export interface PublicAccount {
   accountId: string;
   username: string;
-}
-
-export function optionalScriptEnv(name: string): string | undefined {
-  const value = process.env[name]?.trim();
-  return value || undefined;
-}
-
-export function requireScriptEnv(name: string): string {
-  const value = optionalScriptEnv(name);
-  if (!value) {
-    throw new Error(`Missing required environment variable: ${name}`);
-  }
-
-  return value;
-}
-
-export function outputOrEnv(envName: string, outputName: string): string {
-  const explicit = optionalScriptEnv(envName);
-  if (explicit) {
-    return explicit;
-  }
-
-  const outputs = readSstOutputs();
-  const value = outputs[outputName];
-  if (typeof value !== "string" || value.trim().length === 0) {
-    throw new Error(`Missing ${envName} and .sst output ${outputName}`);
-  }
-
-  return value;
-}
-
-export function accountManageUrl(): string {
-  return stripTrailingSlash(outputOrEnv("ACCOUNT_MANAGE_URL", "accountManageUrl"));
-}
-
-export function harnessProcessingUrl(): string {
-  return stripTrailingSlash(outputOrEnv("HARNESS_PROCESSING_URL", "harnessProcessingUrl"));
-}
-
-export function readSstOutputs(): Record<string, unknown> {
-  try {
-    const raw = readFileSync(".sst/outputs.json", "utf-8");
-    const parsed = JSON.parse(raw);
-    return isRecord(parsed) ? parsed : {};
-  } catch (err) {
-    throw new Error(`Unable to read .sst/outputs.json: ${err instanceof Error ? err.message : String(err)}`);
-  }
 }
 
 export function parseJson(text: string): unknown {
@@ -70,18 +21,12 @@ export function parseJson(text: string): unknown {
   }
 }
 
-export function stripTrailingSlash(value: string): string {
-  return value.replace(/\/+$/, "");
-}
-
-export function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value && typeof value === "object" && !Array.isArray(value));
-}
-
 export function createScriptAccountRuntimeConfig(): AccountConfig {
-  const provider = parseAccountModelProvider(optionalScriptEnv("ACCOUNT_MODEL_PROVIDER") ?? DEFAULT_ACCOUNT_MODEL_PROVIDER);
-  const modelId = optionalScriptEnv("ACCOUNT_MODEL_ID") ?? DEFAULT_ACCOUNT_MODEL_ID;
-  const modelOptions = optionalJsonRecord("ACCOUNT_MODEL_OPTIONS_JSON");
+  const provider = parseAccountModelProvider(process.env.ACCOUNT_MODEL_PROVIDER ?? DEFAULT_ACCOUNT_MODEL_PROVIDER);
+  const modelId = process.env.ACCOUNT_MODEL_ID ?? DEFAULT_ACCOUNT_MODEL_ID;
+
+  const modelOptionsRaw = process.env.ACCOUNT_MODEL_OPTIONS_JSON;
+  const modelOptions = modelOptionsRaw ? parseJsonRecord(modelOptionsRaw, "ACCOUNT_MODEL_OPTIONS_JSON") : undefined;
 
   return {
     model: {
@@ -97,13 +42,13 @@ export function createScriptAccountRuntimeConfig(): AccountConfig {
 }
 
 export async function upsertScriptAccount(input: {
-  accountManageUrl: string;
+  accountServiceUrl: string;
   adminSecret: string;
   username: string | undefined;
   description: string | undefined;
   config: AccountConfig;
 }): Promise<PublicAccount> {
-  const existing = await findExistingAccount(input.accountManageUrl, input.adminSecret, input.username);
+  const existing = await findExistingAccount(input.accountServiceUrl, input.adminSecret, input.username);
   const body = {
     username: input.username,
     description: input.description,
@@ -112,7 +57,7 @@ export async function upsertScriptAccount(input: {
 
   if (existing) {
     const updated = await accountApi(
-      input.accountManageUrl,
+      input.accountServiceUrl,
       input.adminSecret,
       "PATCH",
       `/accounts/${encodeURIComponent(existing.accountId)}`,
@@ -121,7 +66,7 @@ export async function upsertScriptAccount(input: {
     return parseAccountResponse(updated);
   }
 
-  const created = await publicAccountApi(input.accountManageUrl, "POST", "/accounts", body);
+  const created = await publicAccountApi(input.accountServiceUrl, "POST", "/accounts", body);
   return parseAccountResponse(created);
 }
 
@@ -198,6 +143,10 @@ function isPublicAccount(value: unknown): value is PublicAccount {
     typeof value.username === "string";
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value));
+}
+
 function parseAccountModelProvider(value: string): AccountModelProviderName {
   if (value === "google" || value === "openai" || value === "bedrock" || value === "gateway") {
     return value;
@@ -207,40 +156,39 @@ function parseAccountModelProvider(value: string): AccountModelProviderName {
 }
 
 function accountProviderConfig(provider: AccountModelProviderName): Record<string, unknown> {
-  const explicitConfig = optionalJsonRecord("ACCOUNT_PROVIDER_CONFIG_JSON");
-  if (explicitConfig) {
-    return explicitConfig;
+  const explicitConfigRaw = process.env.ACCOUNT_PROVIDER_CONFIG_JSON;
+  if (explicitConfigRaw) {
+    return parseJsonRecord(explicitConfigRaw, "ACCOUNT_PROVIDER_CONFIG_JSON");
   }
 
   switch (provider) {
     case "google":
-      return {
-        apiKey: firstRequiredEnv("ACCOUNT_GOOGLE_API_KEY"),
-      };
+      return { apiKey: requiredEnv("ACCOUNT_GOOGLE_API_KEY") };
     case "openai":
       return {
-        apiKey: firstRequiredEnv("ACCOUNT_OPENAI_API_KEY"),
-        ...optionalStringConfig("baseURL", "ACCOUNT_OPENAI_BASE_URL", "OPENAI_BASE_URL"),
-        ...optionalStringConfig("organization", "ACCOUNT_OPENAI_ORGANIZATION", "OPENAI_ORGANIZATION"),
-        ...optionalStringConfig("project", "ACCOUNT_OPENAI_PROJECT", "OPENAI_PROJECT"),
+        apiKey: requiredEnv("ACCOUNT_OPENAI_API_KEY"),
+        ...optionalStringEnv("ACCOUNT_OPENAI_BASE_URL", "OPENAI_BASE_URL"),
+        ...optionalStringEnv("ACCOUNT_OPENAI_ORGANIZATION", "OPENAI_ORGANIZATION"),
+        ...optionalStringEnv("ACCOUNT_OPENAI_PROJECT", "OPENAI_PROJECT"),
       };
     case "bedrock":
       return {
-        apiKey: firstRequiredEnv("ACCOUNT_BEDROCK_API_KEY"),
-        ...optionalStringConfig("region", "ACCOUNT_BEDROCK_REGION", "AWS_REGION"),
-        ...optionalStringConfig("accessKeyId", "ACCOUNT_BEDROCK_ACCESS_KEY_ID", "AWS_ACCESS_KEY_ID"),
-        ...optionalStringConfig("secretAccessKey", "ACCOUNT_BEDROCK_SECRET_ACCESS_KEY", "AWS_SECRET_ACCESS_KEY"),
-        ...optionalStringConfig("sessionToken", "ACCOUNT_BEDROCK_SESSION_TOKEN", "AWS_SESSION_TOKEN"),
+        apiKey: requiredEnv("ACCOUNT_BEDROCK_API_KEY"),
+        ...optionalStringEnv("ACCOUNT_BEDROCK_REGION", "AWS_REGION"),
+        ...optionalStringEnv("ACCOUNT_BEDROCK_ACCESS_KEY_ID", "AWS_ACCESS_KEY_ID"),
+        ...optionalStringEnv("ACCOUNT_BEDROCK_SECRET_ACCESS_KEY", "AWS_SECRET_ACCESS_KEY"),
+        ...optionalStringEnv("ACCOUNT_BEDROCK_SESSION_TOKEN", "AWS_SESSION_TOKEN"),
       };
     case "gateway":
-      return { apiKey: firstRequiredEnv("ACCOUNT_GATEWAY_API_KEY") };
+      return { apiKey: requiredEnv("ACCOUNT_GATEWAY_API_KEY") };
   }
 }
 
 function accountToolsConfig(provider: AccountModelProviderName): Record<string, Record<string, unknown>> {
-  const explicitTools = optionalJsonRecord("ACCOUNT_TOOLS_JSON");
-  if (explicitTools) {
-    return explicitTools as Record<string, Record<string, unknown>>;
+  const explicitToolsRaw = process.env.ACCOUNT_TOOLS_JSON;
+  if (explicitToolsRaw) {
+    const parsed = parseJsonRecord(explicitToolsRaw, "ACCOUNT_TOOLS_JSON");
+    return parsed as Record<string, Record<string, unknown>>;
   }
 
   const tools: Record<string, Record<string, unknown>> = {
@@ -249,29 +197,30 @@ function accountToolsConfig(provider: AccountModelProviderName): Record<string, 
   };
 
   if (envFlag("ACCOUNT_ENABLE_TAVILY_TOOLS", false)) {
-    const tavilyApiKey = optionalScriptEnv("ACCOUNT_TAVILY_API_KEY");
+    const tavilyApiKey = process.env.ACCOUNT_TAVILY_API_KEY;
     if (tavilyApiKey) {
       tools.tavilySearch = {
         enabled: true,
         apiKey: tavilyApiKey,
-        ...optionalNumberConfig("maxResults", "ACCOUNT_TAVILY_SEARCH_MAX_RESULTS"),
-        ...optionalStringConfig("searchDepth", "ACCOUNT_TAVILY_SEARCH_DEPTH"),
-        ...optionalBooleanConfig("includeAnswer", "ACCOUNT_TAVILY_SEARCH_INCLUDE_ANSWER"),
-        ...optionalStringConfig("topic", "ACCOUNT_TAVILY_SEARCH_TOPIC"),
+        ...optionalNumberEnv("ACCOUNT_TAVILY_SEARCH_MAX_RESULTS", "maxResults"),
+        ...optionalStringEnv("ACCOUNT_TAVILY_SEARCH_DEPTH", "searchDepth"),
+        ...optionalBooleanEnv("ACCOUNT_TAVILY_SEARCH_INCLUDE_ANSWER", "includeAnswer"),
+        ...optionalStringEnv("ACCOUNT_TAVILY_SEARCH_TOPIC", "topic"),
       };
       tools.tavilyExtract = {
         enabled: true,
         apiKey: tavilyApiKey,
-        ...optionalStringConfig("extractDepth", "ACCOUNT_TAVILY_EXTRACT_DEPTH"),
-        ...optionalStringConfig("format", "ACCOUNT_TAVILY_EXTRACT_FORMAT"),
+        ...optionalStringEnv("ACCOUNT_TAVILY_EXTRACT_DEPTH", "extractDepth"),
+        ...optionalStringEnv("ACCOUNT_TAVILY_EXTRACT_FORMAT", "format"),
       };
     }
   }
 
   if (provider === "google" && envFlag("ACCOUNT_ENABLE_GOOGLE_SEARCH", false)) {
+    const configRaw = process.env.ACCOUNT_GOOGLE_SEARCH_CONFIG_JSON;
     tools.googleSearch = {
       enabled: true,
-      ...optionalJsonRecord("ACCOUNT_GOOGLE_SEARCH_CONFIG_JSON"),
+      ...(configRaw ? parseJsonRecord(configRaw, "ACCOUNT_GOOGLE_SEARCH_CONFIG_JSON") : {}),
     };
   }
 
@@ -280,72 +229,64 @@ function accountToolsConfig(provider: AccountModelProviderName): Record<string, 
   );
 }
 
-function optionalJsonRecord(name: string): Record<string, unknown> | undefined {
-  const raw = optionalScriptEnv(name);
-  if (!raw) {
-    return undefined;
-  }
-
+function parseJsonRecord(raw: string, name: string): Record<string, unknown> {
   const parsed = parseJson(raw);
   if (!isRecord(parsed)) {
     throw new Error(`${name} must be a JSON object`);
   }
-
   return parsed;
 }
 
-function firstRequiredEnv(name: string): string {
-  const value = optionalScriptEnv(name);
-  if (value) {
-    return value;
+function requiredEnv(name: string): string {
+  const value = process.env[name];
+  if (!value) {
+    throw new Error(`Missing required environment variable: ${name}`);
   }
-
-  throw new Error(`Missing required environment variable: ${name}`);
+  return value;
 }
 
 function envFlag(name: string, defaultValue: boolean): boolean {
-  const value = optionalScriptEnv(name);
+  const value = process.env[name];
   if (value === undefined) {
     return defaultValue;
   }
 
   if (value === "true") return true;
   if (value === "false") return false;
-  throw new Error(`${name} must be true or false`);
+
+  console.warn(`Invalid value for ${name}: "${value}", using default: ${defaultValue}`);
+  return defaultValue;
 }
 
-function optionalStringConfig(key: string, ...envNames: string[]): Record<string, string> {
-  for (const name of envNames) {
-    const value = optionalScriptEnv(name);
+function optionalStringEnv(...names: string[]): Record<string, string> {
+  for (const name of names) {
+    const value = process.env[name];
     if (value) {
-      return { [key]: value };
+      return { [name]: value };
     }
   }
-
   return {};
 }
 
-function optionalNumberConfig(key: string, envName: string): Record<string, number> {
-  const value = optionalScriptEnv(envName);
-  if (!value) {
-    return {};
-  }
+function optionalNumberEnv(envName: string, key: string): Record<string, number> {
+  const value = process.env[envName];
+  if (!value) return {};
 
   const parsed = Number(value);
   if (!Number.isFinite(parsed)) {
-    throw new Error(`${envName} must be a number`);
+    console.warn(`Invalid number for ${envName}: "${value}", ignoring`);
+    return {};
   }
-
   return { [key]: parsed };
 }
 
-function optionalBooleanConfig(key: string, envName: string): Record<string, boolean> {
-  const value = optionalScriptEnv(envName);
-  if (!value) {
-    return {};
-  }
+function optionalBooleanEnv(envName: string, key: string): Record<string, boolean> {
+  const value = process.env[envName];
+  if (!value) return {};
 
   if (value === "true") return { [key]: true };
   if (value === "false") return { [key]: false };
-  throw new Error(`${envName} must be true or false`);
+
+  console.warn(`Invalid boolean for ${envName}: "${value}", ignoring`);
+  return {};
 }

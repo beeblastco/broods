@@ -4,18 +4,12 @@
  * Skips gracefully if TELEGRAM_BOT_TOKEN is not provided.
  */
 
-import {
-  accountManageUrl,
-  createScriptAccountRuntimeConfig,
-  harnessProcessingUrl,
-  optionalScriptEnv,
-  requireScriptEnv,
-  upsertScriptAccount,
-} from "./utils.ts";
+import { optionalEnv } from "../functions/_shared/env.ts";
+import { createScriptAccountRuntimeConfig, upsertScriptAccount } from "./utils.ts";
 
-const telegramBotToken = optionalScriptEnv("TELEGRAM_BOT_TOKEN");
-const telegramWebhookSecret = optionalScriptEnv("TELEGRAM_WEBHOOK_SECRET");
-const allowedChatIds = optionalScriptEnv("ALLOWED_CHAT_IDS");
+const telegramBotToken = optionalEnv("TELEGRAM_BOT_TOKEN");
+const telegramWebhookSecret = optionalEnv("TELEGRAM_WEBHOOK_SECRET");
+const allowedChatIds = optionalEnv("ALLOWED_CHAT_IDS");
 
 if (!telegramBotToken) {
   console.warn("Skipping Telegram account setup: TELEGRAM_BOT_TOKEN is not configured");
@@ -32,15 +26,15 @@ if (!allowedChatIds) {
   process.exit(0);
 }
 
-const accountManageUrlValue = accountManageUrl();
-const harnessProcessingUrlValue = harnessProcessingUrl();
-const adminSecret = requireScriptEnv("ADMIN_ACCOUNT_SECRET");
+const accountServiceUrl = process.env.ACCOUNT_SERVICE_URL!;
+const agentServiceUrl = process.env.AGENT_SERVICE_URL!;
+const adminSecret = process.env.ADMIN_ACCOUNT_SECRET!;
 const parsedChatIds = parseAllowedChatIds(allowedChatIds);
-const username = process.env.TELEGRAM_ACCOUNT_USERNAME?.trim();
-const description = process.env.TELEGRAM_ACCOUNT_DESCRIPTION?.trim();
+const username = optionalEnv("TELEGRAM_ACCOUNT_USERNAME")?.trim();
+const description = optionalEnv("TELEGRAM_ACCOUNT_DESCRIPTION")?.trim();
 
 const account = await upsertTelegramAccount();
-const webhookUrl = `${harnessProcessingUrlValue}/webhooks/${encodeURIComponent(account.accountId)}/telegram`;
+const webhookUrl = `${agentServiceUrl}/webhooks/${encodeURIComponent(account.accountId)}/telegram`;
 await setTelegramWebhook(webhookUrl);
 
 console.log(`Configured Telegram account ${account.accountId} and webhook ${webhookUrl}`);
@@ -59,7 +53,7 @@ async function upsertTelegramAccount() {
   };
 
   return upsertScriptAccount({
-    accountManageUrl: accountManageUrlValue,
+    accountServiceUrl,
     adminSecret,
     username,
     description,
@@ -70,7 +64,7 @@ async function upsertTelegramAccount() {
 async function setTelegramWebhook(url: string): Promise<void> {
   const params = new URLSearchParams({
     url,
-    secret_token: telegramWebhookSecret,
+    secret_token: telegramWebhookSecret!,
     allowed_updates: JSON.stringify(["message", "edited_message"]),
   });
   const response = await fetch(`https://api.telegram.org/bot${telegramBotToken}/setWebhook`, {

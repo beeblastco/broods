@@ -71,7 +71,7 @@ Direct API callers can inject ephemeral `system` events:
 Minimal `curl` request:
 
 ```bash
-curl -N "$FUNCTION_URL" \
+curl -N "$AGENT_SERVICE_URL" \
   -H "Authorization: Bearer $ACCOUNT_SECRET" \
   -H "Content-Type: application/json" \
   -H "Accept: text/event-stream" \
@@ -134,14 +134,17 @@ The async worker runs the same account-scoped harness code in the background. If
 
 Without a callback, poll the returned status URL.
 
-Live probes use `FUNCTION_URL=<harnessProcessingUrl>` and `ACCOUNT_MANAGE_URL=<accountManageUrl>`, falling back to `.sst/outputs.json` when either variable is omitted. Temporary accounts use the same generated runtime config as the CI account scripts, so set the matching provider API key, for example `ACCOUNT_GOOGLE_API_KEY` when using the default Google provider. Each script creates a temporary account, runs the probe with that account secret, then deletes the test account:
+Live probes use `AGENT_SERVICE_URL` and `ACCOUNT_SERVICE_URL` environment variables. Set the matching provider API key, for example `ACCOUNT_GOOGLE_API_KEY` when using the default Google provider. Each script creates a temporary account, runs the probe with that account secret, then deletes the test account:
 
 ```bash
-bun scripts/manual/account-lifecycle.ts
-bun scripts/manual/direct-api-stream.ts
-bun scripts/manual/direct-api-tool-call.ts
-bun scripts/manual/direct-api-multi-turn.ts
-bun scripts/manual/async-api-tool-call.ts
+# Account management (Create, Update, Delete)
+bun examples/account.ts
+
+# Stream SSE with tools
+bun examples/stream.ts
+
+# Async endpoint with polling
+bun examples/async.ts
 ```
 
 ## Status API: `GET /status/{eventId}`

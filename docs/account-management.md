@@ -12,10 +12,10 @@ Account API secrets are stored as hashes. Provider tokens and webhook secrets mu
 
 ## Create Account
 
-`POST /accounts` on the `account-manage` Function URL is public and IP-rate-limited.
+`POST /accounts` on the `ACCOUNT_SERVICE_URL` is public and IP-rate-limited.
 
 ```bash
-curl -X POST "$ACCOUNT_MANAGE_URL/accounts" \
+curl -X POST "$ACCOUNT_SERVICE_URL/accounts" \
   -H "Content-Type: application/json" \
   -d '{
     "username": "company-a",
@@ -62,7 +62,7 @@ Endpoints:
 Patch account metadata or config:
 
 ```bash
-curl -X PATCH "$ACCOUNT_MANAGE_URL/accounts/me" \
+curl -X PATCH "$ACCOUNT_SERVICE_URL/accounts/me" \
   -H "Authorization: Bearer $ACCOUNT_SECRET" \
   -H "Content-Type: application/json" \
   -d '{
@@ -142,10 +142,10 @@ Secret-like fields such as `apiKey`, `secret`, `token`, and `privateKey` are enc
 Provider webhook URLs must include the account id:
 
 ```text
-{HARNESS_PROCESSING_URL}/webhooks/{accountId}/telegram
-{HARNESS_PROCESSING_URL}/webhooks/{accountId}/github
-{HARNESS_PROCESSING_URL}/webhooks/{accountId}/slack
-{HARNESS_PROCESSING_URL}/webhooks/{accountId}/discord
+{AGENT_SERVICE_URL}/webhooks/{accountId}/telegram
+{AGENT_SERVICE_URL}/webhooks/{accountId}/github
+{AGENT_SERVICE_URL}/webhooks/{accountId}/slack
+{AGENT_SERVICE_URL}/webhooks/{accountId}/discord
 ```
 
 For deploy this as a customer service, the owner create an account and link the bot integration to the service. Customers only interact with the provider bot/app. CI/CD configures the default Telegram account and other provider, please check the [## CI/CD Account Setup](operations.md##\CI/CD\AccountSetup)

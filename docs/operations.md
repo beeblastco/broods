@@ -54,8 +54,8 @@ bun run deploy
 
 Deploy outputs include:
 
-- `accountManageUrl`
-- `harnessProcessingUrl`
+- `accountServiceUrl`
+- `agentServiceUrl`
 - DynamoDB table names
 - `filesystemBucketName`
 
@@ -64,7 +64,7 @@ Deploy outputs include:
 Create an account:
 
 ```bash
-curl -X POST "$ACCOUNT_MANAGE_URL/accounts" \
+curl -X POST "$ACCOUNT_SERVICE_URL/accounts" \
   -H "Content-Type: application/json" \
   -d '{
     "username": "company-a",
@@ -82,10 +82,10 @@ Store the returned `accountSecret`. Use it for:
 Configure provider webhooks with the returned `accountId`:
 
 ```text
-{HARNESS_PROCESSING_URL}/webhooks/{accountId}/telegram
-{HARNESS_PROCESSING_URL}/webhooks/{accountId}/github
-{HARNESS_PROCESSING_URL}/webhooks/{accountId}/slack
-{HARNESS_PROCESSING_URL}/webhooks/{accountId}/discord
+{AGENT_SERVICE_URL}/webhooks/{accountId}/telegram
+{AGENT_SERVICE_URL}/webhooks/{accountId}/github
+{AGENT_SERVICE_URL}/webhooks/{accountId}/slack
+{AGENT_SERVICE_URL}/webhooks/{accountId}/discord
 ```
 
 Then patch the account config with the provider credentials needed for each channel, plus any model/tool settings. See the example config file at [`examples/example.account.config.json`](../../examples/example.account.config.json) for the supported config shape.
@@ -112,22 +112,21 @@ Each script uses `ADMIN_ACCOUNT_SECRET` for auth.
 
 ## Live Probes
 
-Manual direct API scripts accept optional URL overrides:
+Example scripts use these environment variables:
 
 ```bash
-export FUNCTION_URL=<harnessProcessingUrl>
-export ACCOUNT_MANAGE_URL=<accountManageUrl>
+export AGENT_SERVICE_URL=<agentServiceUrl>
+export ACCOUNT_SERVICE_URL=<accountServiceUrl>
 export ACCOUNT_GOOGLE_API_KEY=<googleApiKey>
+export ACCOUNT_TAVILY_API_KEY=<tavilyApiKey>
 ```
 
-If either variable is omitted, the scripts read the corresponding value from `.sst/outputs.json`.
-
-Each script creates a temporary account through `ACCOUNT_MANAGE_URL/accounts`, including the same generated model/provider/tools config used by CI-created channel accounts, runs the probe with the returned account secret, then deletes the test account through `DELETE /accounts/me` in a cleanup step.
+Each script creates a temporary account through `ACCOUNT_SERVICE_URL/accounts`, runs the probe with the returned account secret, then deletes the test account through `DELETE /accounts/me` in a cleanup step.
 
 Confirm the harness URL is live:
 
 ```bash
-curl "$FUNCTION_URL"
+curl "$AGENT_SERVICE_URL"
 ```
 
 Expected response:
@@ -142,11 +141,14 @@ Expected response:
 Run:
 
 ```bash
-bun scripts/manual/account-lifecycle.ts
-bun scripts/manual/direct-api-stream.ts
-bun scripts/manual/direct-api-tool-call.ts
-bun scripts/manual/direct-api-multi-turn.ts
-bun scripts/manual/async-api-tool-call.ts
+# Account management (Create, Update, Delete)
+bun examples/account.ts
+
+# Stream SSE with tools
+bun examples/stream.ts
+
+# Async endpoint with polling
+bun examples/async.ts
 ```
 
 ## CI

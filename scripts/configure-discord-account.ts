@@ -4,18 +4,12 @@
  * Skips gracefully if DISCORD_BOT_TOKEN is not provided.
  */
 
-import {
-    accountManageUrl,
-    createScriptAccountRuntimeConfig,
-    harnessProcessingUrl,
-    optionalScriptEnv,
-    requireScriptEnv,
-    upsertScriptAccount,
-} from "./utils.ts";
+import { optionalEnv } from "../functions/_shared/env.ts";
+import { createScriptAccountRuntimeConfig, upsertScriptAccount } from "./utils.ts";
 
-const discordBotToken = optionalScriptEnv("DISCORD_BOT_TOKEN");
-const discordPublicKey = optionalScriptEnv("DISCORD_PUBLIC_KEY");
-const allowedGuildIds = optionalScriptEnv("DISCORD_ALLOWED_GUILD_IDS");
+const discordBotToken = optionalEnv("DISCORD_BOT_TOKEN");
+const discordPublicKey = optionalEnv("DISCORD_PUBLIC_KEY");
+const allowedGuildIds = optionalEnv("DISCORD_ALLOWED_GUILD_IDS");
 
 if (!discordBotToken) {
   console.warn("Skipping Discord account setup: DISCORD_BOT_TOKEN is not configured");
@@ -32,15 +26,15 @@ if (!allowedGuildIds) {
   process.exit(0);
 }
 
-const accountManageUrlValue = accountManageUrl();
-const harnessProcessingUrlValue = harnessProcessingUrl();
-const adminSecret = requireScriptEnv("ADMIN_ACCOUNT_SECRET");
+const accountServiceUrl = process.env.ACCOUNT_SERVICE_URL!;
+const agentServiceUrl = process.env.AGENT_SERVICE_URL!;
+const adminSecret = process.env.ADMIN_ACCOUNT_SECRET!;
 const parsedGuildIds = parseAllowedGuildIds(allowedGuildIds);
-const username = process.env.DISCORD_ACCOUNT_USERNAME?.trim();
-const description = process.env.DISCORD_ACCOUNT_DESCRIPTION?.trim();
+const username = optionalEnv("DISCORD_ACCOUNT_USERNAME")?.trim();
+const description = optionalEnv("DISCORD_ACCOUNT_DESCRIPTION")?.trim();
 
 const account = await upsertDiscordAccount();
-const webhookUrl = `${harnessProcessingUrlValue}/webhooks/${encodeURIComponent(account.accountId)}/discord`;
+const webhookUrl = `${agentServiceUrl}/webhooks/${encodeURIComponent(account.accountId)}/discord`;
 
 console.log(`Configured Discord account ${account.accountId}`);
 console.log(`Register this URL in your Discord application: ${webhookUrl}`);
@@ -58,7 +52,7 @@ async function upsertDiscordAccount() {
     };
 
     return upsertScriptAccount({
-        accountManageUrl: accountManageUrlValue,
+        accountServiceUrl,
         adminSecret,
         username,
         description,

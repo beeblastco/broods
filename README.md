@@ -61,7 +61,7 @@ bun run build
 bun run deploy
 ```
 
-After deploy, create an account through the `accountManageUrl` output. The response returns an `accountSecret` once. Use that secret as `Authorization: Bearer <accountSecret>` for direct API calls and account self-management.
+After deploy, create an account through the `accountServiceUrl` output. The response returns an `accountSecret` once. Use that secret as `Authorization: Bearer <accountSecret>` for direct API calls and account self-management.
 
 Accounts control model settings and tool access through encrypted `config`. See [Account management](docs/account-management.md#account-config) for the supported config shape.
 

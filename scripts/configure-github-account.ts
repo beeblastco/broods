@@ -4,19 +4,13 @@
  * Skips gracefully if GITHUB_APP_ID is not provided.
  */
 
-import {
-  accountManageUrl,
-  createScriptAccountRuntimeConfig,
-  harnessProcessingUrl,
-  optionalScriptEnv,
-  requireScriptEnv,
-  upsertScriptAccount,
-} from "./utils.ts";
+import { optionalEnv } from "../functions/_shared/env.ts";
+import { createScriptAccountRuntimeConfig, upsertScriptAccount } from "./utils.ts";
 
-const githubAppId = optionalScriptEnv("GITHUB_APP_ID");
-const githubPrivateKey = optionalScriptEnv("GITHUB_PRIVATE_KEY");
-const githubWebhookSecret = optionalScriptEnv("GITHUB_WEBHOOK_SECRET");
-const allowedRepos = optionalScriptEnv("GITHUB_ALLOWED_REPOS");
+const githubAppId = optionalEnv("GITHUB_APP_ID");
+const githubPrivateKey = optionalEnv("GITHUB_PRIVATE_KEY");
+const githubWebhookSecret = optionalEnv("GITHUB_WEBHOOK_SECRET");
+const allowedRepos = optionalEnv("GITHUB_ALLOWED_REPOS");
 
 if (!githubAppId) {
   console.warn("Skipping GitHub account setup: GITHUB_APP_ID is not configured");
@@ -38,15 +32,15 @@ if (!allowedRepos) {
   process.exit(0);
 }
 
-const accountManageUrlValue = accountManageUrl();
-const harnessProcessingUrlValue = harnessProcessingUrl();
-const adminSecret = requireScriptEnv("ADMIN_ACCOUNT_SECRET");
+const accountServiceUrl = process.env.ACCOUNT_SERVICE_URL!;
+const agentServiceUrl = process.env.AGENT_SERVICE_URL!;
+const adminSecret = process.env.ADMIN_ACCOUNT_SECRET!;
 const parsedRepos = parseAllowedRepos(allowedRepos);
-const username = process.env.GITHUB_ACCOUNT_USERNAME?.trim();
-const description = process.env.GITHUB_ACCOUNT_DESCRIPTION?.trim();
+const username = optionalEnv("GITHUB_ACCOUNT_USERNAME")?.trim();
+const description = optionalEnv("GITHUB_ACCOUNT_DESCRIPTION")?.trim();
 
 const account = await upsertGitHubAccount();
-const webhookUrl = `${harnessProcessingUrlValue}/webhooks/${encodeURIComponent(account.accountId)}/github`;
+const webhookUrl = `${agentServiceUrl}/webhooks/${encodeURIComponent(account.accountId)}/github`;
 
 console.log(`Configured GitHub account ${account.accountId}`);
 console.log(`Register this webhook URL in your GitHub App: ${webhookUrl}`);
@@ -65,7 +59,7 @@ async function upsertGitHubAccount() {
   };
 
   return upsertScriptAccount({
-    accountManageUrl: accountManageUrlValue,
+    accountServiceUrl,
     adminSecret,
     username,
     description,

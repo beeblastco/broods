@@ -153,7 +153,6 @@ jobs:
           bunx sst deploy --stage "$SST_STAGE"
 
       - name: Configure Telegram account webhook
-        if: ${{ vars.ENABLE_TELEGRAM_INTEGRATION == 'true' }}
         env:
           ADMIN_ACCOUNT_SECRET: ${{ secrets.SST_SECRET_ADMINACCOUNTSECRET }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN || secrets.SST_SECRET_TELEGRAMBOTTOKEN }}
@@ -180,7 +179,6 @@ jobs:
           bun run scripts/configure-telegram-account.ts
 
       - name: Configure Discord account
-        if: ${{ vars.ENABLE_DISCORD_INTEGRATION == 'true' }}
         env:
           ADMIN_ACCOUNT_SECRET: ${{ secrets.SST_SECRET_ADMINACCOUNTSECRET }}
           DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN || secrets.SST_SECRET_DISCORDBOTTOKEN }}
@@ -207,7 +205,6 @@ jobs:
           bun run scripts/configure-discord-account.ts
 
       - name: Sync Discord commands
-        if: ${{ vars.ENABLE_DISCORD_INTEGRATION == 'true' }}
         env:
           DISCORD_APPLICATION_ID: ${{ vars.DISCORD_APPLICATION_ID }}
           DISCORD_SYNC_GUILD_ID: ${{ vars.DISCORD_SYNC_GUILD_ID }}
@@ -229,7 +226,6 @@ jobs:
           bun run scripts/discord-sync.ts
 
       - name: Configure GitHub account
-        if: ${{ vars.ENABLE_GITHUB_INTEGRATION == 'true' }}
         env:
           ADMIN_ACCOUNT_SECRET: ${{ secrets.SST_SECRET_ADMINACCOUNTSECRET }}
           GITHUB_APP_ID: ${{ secrets.GITHUB_APP_ID || secrets.SST_SECRET_GITHUBAPPID }}
@@ -258,7 +254,6 @@ jobs:
           bun run scripts/configure-github-account.ts
 
       - name: Configure Slack account
-        if: ${{ vars.ENABLE_SLACK_INTEGRATION == 'true' }}
         env:
           ADMIN_ACCOUNT_SECRET: ${{ secrets.SST_SECRET_ADMINACCOUNTSECRET }}
           SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN || secrets.SST_SECRET_SLACKBOTTOKEN }}
