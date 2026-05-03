@@ -16,6 +16,7 @@ describe("script account runtime config", () => {
   it("generates default Google model, provider, and tool config", () => {
     process.env = {};
     process.env.ACCOUNT_GOOGLE_API_KEY = "google-key";
+    process.env.ACCOUNT_TAVILY_API_KEY = "tavily-key";
 
     expect(createScriptAccountRuntimeConfig()).toEqual({
       model: {
@@ -30,8 +31,8 @@ describe("script account runtime config", () => {
       tools: {
         filesystem: { enabled: true },
         tasks: { enabled: true },
-        tavilySearch: { enabled: true },
-        tavilyExtract: { enabled: true },
+        tavilySearch: { enabled: true, apiKey: "tavily-key" },
+        tavilyExtract: { enabled: true, apiKey: "tavily-key" },
       },
     });
   });

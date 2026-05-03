@@ -254,12 +254,17 @@ function accountToolsConfig(provider: AccountModelProviderName): Record<string, 
 
 const tavilyEnabled = envFlag("ACCOUNT_ENABLE_TAVILY_TOOLS", true);
   if (tavilyEnabled) {
-    tools.tavilySearch = {
-      enabled: true,
-    };
-    tools.tavilyExtract = {
-      enabled: true,
-    };
+    const tavilyApiKey = optionalScriptEnv("ACCOUNT_TAVILY_API_KEY");
+    if (tavilyApiKey) {
+      tools.tavilySearch = {
+        enabled: true,
+        apiKey: tavilyApiKey,
+      };
+      tools.tavilyExtract = {
+        enabled: true,
+        apiKey: tavilyApiKey,
+      };
+    }
   }
 
   if (provider === "google" && envFlag("ACCOUNT_ENABLE_GOOGLE_SEARCH", false)) {
