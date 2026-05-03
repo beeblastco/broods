@@ -18,7 +18,6 @@ import type {
   AccountModelProviderName,
   AccountProviderSettings,
 } from "../_shared/accounts.ts";
-import { requireEnv } from "../_shared/env.ts";
 import { logError, logInfo } from "../_shared/log.ts";
 import type { Session, TurnContextSnapshot } from "./session.ts";
 import { createTools } from "./tools/index.ts";
@@ -29,7 +28,8 @@ interface ResolvedModelProvider {
   model: LanguageModel;
 }
 
-const MAX_AGENT_ITERATIONS = Number(requireEnv("MAX_AGENT_ITERATIONS"));
+// Default max agent iterations to prevent looping or too long execution.
+const MAX_AGENT_ITERATIONS = 30;
 
 export interface AgentReplyHooks {
   onFinalText(text: string): Promise<void>;

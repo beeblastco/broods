@@ -215,25 +215,25 @@ function accountProviderConfig(provider: AccountModelProviderName): Record<strin
   switch (provider) {
     case "google":
       return {
-        apiKey: firstRequiredEnv("ACCOUNT_GOOGLE_API_KEY", "GOOGLE_API_KEY", "SST_SECRET_GoogleApiKey", "SST_SECRET_GOOGLEAPIKEY"),
+        apiKey: firstRequiredEnv("ACCOUNT_GOOGLE_API_KEY"),
       };
     case "openai":
       return {
-        apiKey: firstRequiredEnv("ACCOUNT_OPENAI_API_KEY", "OPENAI_API_KEY"),
+        apiKey: firstRequiredEnv("ACCOUNT_OPENAI_API_KEY"),
         ...optionalStringConfig("baseURL", "ACCOUNT_OPENAI_BASE_URL", "OPENAI_BASE_URL"),
         ...optionalStringConfig("organization", "ACCOUNT_OPENAI_ORGANIZATION", "OPENAI_ORGANIZATION"),
         ...optionalStringConfig("project", "ACCOUNT_OPENAI_PROJECT", "OPENAI_PROJECT"),
       };
     case "bedrock":
       return {
-        apiKey: firstRequiredEnv("ACCOUNT_BEDROCK_API_KEY", "BEDROCK_API_KEY", "AWS_BEARER_TOKEN_BEDROCK"),
+        apiKey: firstRequiredEnv("ACCOUNT_BEDROCK_API_KEY"),
         ...optionalStringConfig("region", "ACCOUNT_BEDROCK_REGION", "AWS_REGION"),
         ...optionalStringConfig("accessKeyId", "ACCOUNT_BEDROCK_ACCESS_KEY_ID", "AWS_ACCESS_KEY_ID"),
         ...optionalStringConfig("secretAccessKey", "ACCOUNT_BEDROCK_SECRET_ACCESS_KEY", "AWS_SECRET_ACCESS_KEY"),
         ...optionalStringConfig("sessionToken", "ACCOUNT_BEDROCK_SESSION_TOKEN", "AWS_SESSION_TOKEN"),
       };
     case "gateway":
-      return { apiKey: firstRequiredEnv("ACCOUNT_GATEWAY_API_KEY", "AI_GATEWAY_API_KEY") };
+      return { apiKey: firstRequiredEnv("ACCOUNT_GATEWAY_API_KEY") };
   }
 }
 
@@ -248,19 +248,24 @@ function accountToolsConfig(provider: AccountModelProviderName): Record<string, 
     tasks: { enabled: envFlag("ACCOUNT_ENABLE_TASKS_TOOL", true) },
   };
 
-  if (envFlag("ACCOUNT_ENABLE_TAVILY_TOOLS", true)) {
-    tools.tavilySearch = {
-      enabled: true,
-      ...optionalNumberConfig("maxResults", "ACCOUNT_TAVILY_SEARCH_MAX_RESULTS"),
-      ...optionalStringConfig("searchDepth", "ACCOUNT_TAVILY_SEARCH_DEPTH"),
-      ...optionalBooleanConfig("includeAnswer", "ACCOUNT_TAVILY_SEARCH_INCLUDE_ANSWER"),
-      ...optionalStringConfig("topic", "ACCOUNT_TAVILY_SEARCH_TOPIC"),
-    };
-    tools.tavilyExtract = {
-      enabled: true,
-      ...optionalStringConfig("extractDepth", "ACCOUNT_TAVILY_EXTRACT_DEPTH"),
-      ...optionalStringConfig("format", "ACCOUNT_TAVILY_EXTRACT_FORMAT"),
-    };
+  if (envFlag("ACCOUNT_ENABLE_TAVILY_TOOLS", false)) {
+    const tavilyApiKey = optionalScriptEnv("ACCOUNT_TAVILY_API_KEY");
+    if (tavilyApiKey) {
+      tools.tavilySearch = {
+        enabled: true,
+        apiKey: tavilyApiKey,
+        ...optionalNumberConfig("maxResults", "ACCOUNT_TAVILY_SEARCH_MAX_RESULTS"),
+        ...optionalStringConfig("searchDepth", "ACCOUNT_TAVILY_SEARCH_DEPTH"),
+        ...optionalBooleanConfig("includeAnswer", "ACCOUNT_TAVILY_SEARCH_INCLUDE_ANSWER"),
+        ...optionalStringConfig("topic", "ACCOUNT_TAVILY_SEARCH_TOPIC"),
+      };
+      tools.tavilyExtract = {
+        enabled: true,
+        apiKey: tavilyApiKey,
+        ...optionalStringConfig("extractDepth", "ACCOUNT_TAVILY_EXTRACT_DEPTH"),
+        ...optionalStringConfig("format", "ACCOUNT_TAVILY_EXTRACT_FORMAT"),
+      };
+    }
   }
 
   if (provider === "google" && envFlag("ACCOUNT_ENABLE_GOOGLE_SEARCH", false)) {
@@ -289,15 +294,13 @@ function optionalJsonRecord(name: string): Record<string, unknown> | undefined {
   return parsed;
 }
 
-function firstRequiredEnv(...names: string[]): string {
-  for (const name of names) {
-    const value = optionalScriptEnv(name);
-    if (value) {
-      return value;
-    }
+function firstRequiredEnv(name: string): string {
+  const value = optionalScriptEnv(name);
+  if (value) {
+    return value;
   }
 
-  throw new Error(`Missing required environment variable. Set one of: ${names.join(", ")}`);
+  throw new Error(`Missing required environment variable: ${name}`);
 }
 
 function envFlag(name: string, defaultValue: boolean): boolean {

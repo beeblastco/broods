@@ -4,9 +4,6 @@
 const AWS_ACCOUNT_ID = "123456789012";
 const PROJECT_NAME = "filthy-panty";
 const PROJECT_OWNER_EMAIL = "owner@example.com";
-const GOOGLE_MODEL_ID = "gemma-4-31b-it";
-const SLIDING_CONTEXT_WINDOW = "20";
-const MAX_AGENT_ITERATIONS = "20";
 const AWS_PROFILE = process.env.CI ? undefined : (process.env.AWS_PROFILE ?? "default");
 
 function awsRegion(): string {
@@ -68,8 +65,6 @@ export default $config({
       memory: resourceName("memory", stage, region),
     };
 
-    const googleApiKey = new sst.Secret("GoogleApiKey");
-    const tavilyApiKey = new sst.Secret("TavilyApiKey");
     const adminAccountSecret = new sst.Secret("AdminAccountSecret");
     const accountConfigEncryptionSecret = new sst.Secret("AccountConfigEncryptionSecret");
 
@@ -162,17 +157,12 @@ export default $config({
       },
       logging: { format: "json", retention: "1 month" },
       environment: {
-        GOOGLE_API_KEY: googleApiKey.value,
-        GOOGLE_MODEL_ID,
         CONVERSATIONS_TABLE_NAME: conversationsTable.name,
         PROCESSED_EVENTS_TABLE_NAME: processedEventsTable.name,
         ASYNC_RESULTS_TABLE_NAME: asyncResultsTable.name,
         ACCOUNT_CONFIGS_TABLE_NAME: accountConfigsTable.name,
         ACCOUNT_SECRET_INDEX_NAME: "SecretHashIndex",
         ACCOUNT_CONFIG_ENCRYPTION_SECRET: accountConfigEncryptionSecret.value,
-        SLIDING_CONTEXT_WINDOW,
-        MAX_AGENT_ITERATIONS,
-        TAVILY_API_KEY: tavilyApiKey.value,
         FILESYSTEM_BUCKET_NAME: names.memory,
       },
       permissions: [

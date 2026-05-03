@@ -119,46 +119,7 @@ Response:
 
 ## Account Config
 
-Top-level runtime config:
-
-```json
-{
-  "provider": {
-    "google": {
-      "apiKey": "..."
-    },
-    "openai": {
-      "apiKey": "..."
-    },
-    "bedrock": {
-      "region": "us-east-1",
-      "apiKey": "..."
-    },
-    "gateway": {
-      "apiKey": "..."
-    }
-  },
-  "model": {
-    "provider": "google",
-    "modelId": "gemini-3-flash",
-    "temperature": 0.2,
-    "maxOutputTokens": 16000,
-    "options": {
-      "google": {
-        "thinkingConfig": {
-          "thinkingLevel": "high"
-        }
-      }
-    }
-  },
-  "maxAgentIterations": 20,
-  "slidingContextWindow": 20,
-  "systemPrompt": "Optional account-specific system prompt.",
-  "memoryNamespace": "support",
-  "tools": {},
-  "channels": {}
-}
-```
+See [`examples/example.account.config.json`](../../examples/example.account.config.json) for the full example with all available fields.
 
 `provider` config stores constructor settings for the selected AI SDK provider. The selected provider entry must exist and include `apiKey`.
 
@@ -178,76 +139,6 @@ Secret-like fields such as `apiKey`, `secret`, `token`, and `privateKey` are enc
 
 `memoryNamespace` controls whether memory/files are per conversation or shared across conversations in the same account. See [Memory and Session](memory-and-session.md) for the visual model.
 
-Tool config:
-
-```json
-{
-  "tools": {
-    "filesystem": { "enabled": true },
-    "tasks": { "enabled": true },
-    "tavilySearch": {
-      "enabled": true,
-      "searchDepth": "advanced",
-      "includeAnswer": true,
-      "maxResults": 5,
-      "topic": "general"
-    },
-    "tavilyExtract": {
-      "enabled": true,
-      "extractDepth": "advanced",
-      "format": "markdown"
-    },
-    "googleSearch": {
-      "enabled": true,
-      "searchTypes": {
-        "webSearch": {}
-      }
-    }
-  }
-}
-```
-
-Tools are opt-in. If `config.tools` is omitted, the agent runs without custom or provider-defined tools. Listed tools are enabled by default; set `"enabled": false` to disable a listed tool without deleting its config. Unknown tool names are rejected during account create/update.
-
-Supported tool names:
-
-- `filesystem`: S3-backed persistent virtual filesystem.
-- `tasks`: task-list helper backed by the virtual filesystem.
-- `tavilySearch`: Tavily web search using the global `TAVILY_API_KEY`.
-- `tavilyExtract`: Tavily page extraction using the global `TAVILY_API_KEY`.
-- `googleSearch`: Google provider-defined search via `google.tools.googleSearch()`.
-
-Channel config:
-
-```json
-{
-  "channels": {
-    "telegram": {
-      "botToken": "...",
-      "webhookSecret": "...",
-      "allowedChatIds": [123456789],
-      "reactionEmoji": "👀"
-    },
-    "github": {
-      "webhookSecret": "...",
-      "appId": "...",
-      "privateKey": "...",
-      "allowedRepos": ["owner/repo"]
-    },
-    "slack": {
-      "botToken": "...",
-      "signingSecret": "...",
-      "allowedChannelIds": ["C123"]
-    },
-    "discord": {
-      "botToken": "...",
-      "publicKey": "...",
-      "allowedGuildIds": ["123"]
-    }
-  }
-}
-```
-
 Provider webhook URLs must include the account id:
 
 ```text
@@ -257,6 +148,4 @@ Provider webhook URLs must include the account id:
 {HARNESS_PROCESSING_URL}/webhooks/{accountId}/discord
 ```
 
-Customers only interact with the provider bot/app. They do not receive account secrets.
-
-CI/CD configures the default Telegram account by running `bun run scripts/configure-telegram-account.ts` after deploy. The script upserts `telegram-default` by username, stores Telegram credentials in encrypted account config, and registers Telegram to `/webhooks/{accountId}/telegram`.
+For deploy this as a customer service, the owner create an account and link the bot integration to the service. Customers only interact with the provider bot/app. CI/CD configures the default Telegram account and other provider, please check the [## CI/CD Account Setup](operations.md##\CI/CD\AccountSetup)

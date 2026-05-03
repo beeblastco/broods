@@ -9,20 +9,19 @@ Use `.env` for local SST inputs only:
 - `AWS_PROFILE`
 - `SST_STAGE`
 
-There is no `phicks` stage for deployment; use `dev` unless another real stage is intentionally added.
-
-Runtime secrets are SST secrets:
+Runtime secrets are SST secrets. Generate your own secret and set
 
 ```bash
-bunx sst secret set GoogleApiKey <value>
-bunx sst secret set TavilyApiKey <value>
 bunx sst secret set AdminAccountSecret <long-random-value>
 bunx sst secret set AccountConfigEncryptionSecret <long-random-value>
 ```
 
-`AdminAccountSecret` authenticates admin account-management requests. `AccountConfigEncryptionSecret` encrypts account config payloads in DynamoDB. Treat both as stable production secrets; rotating the encryption secret requires a re-encryption migration for existing account configs.
+- `AdminAccountSecret` - Authenticates admin account-management requests.
+- `AccountConfigEncryptionSecret` - Encrypts account config payloads in DynamoDB.
 
-Provider integration secrets are no longer global SST secrets. Channel credentials and account-specific model provider keys live in each account's encrypted config. Shared runtime API keys such as `GoogleApiKey` and `TavilyApiKey` remain SST secrets; account config chooses which model/tools may use them.
+Treat `AdminAccountSecret` and `AccountConfigEncryptionSecret` as stable production secrets; rotating the encryption secret requires a re-encryption migration for existing account configs.
+
+Provider API keys are account-specific, not global SST secrets. Each account configures their own provider API key in `config.provider.<provider>.apiKey`. Similarly, tool API keys like Tavily are configured per account in `config.tools.<tool>.apiKey`. This allows different users to use their own API keys.
 
 Public account creation is throttled by `ACCOUNT_SIGNUP_RATE_LIMIT_PER_HOUR`, currently set to `5` in `sst.config.ts`.
 
@@ -89,21 +88,27 @@ Configure provider webhooks with the returned `accountId`:
 {HARNESS_PROCESSING_URL}/webhooks/{accountId}/discord
 ```
 
-Then patch the account config with the provider credentials needed for each channel, plus any model/tool settings. See [Account management](account-management.md#account-config) for the supported config shape.
+Then patch the account config with the provider credentials needed for each channel, plus any model/tool settings. See the example config file at [`examples/example.account.config.json`](../../examples/example.account.config.json) for the supported config shape.
 
-CI/CD configures the default Telegram account after deploy. It creates or updates the `telegram-default` account config from Telegram GitHub Actions secrets, then registers Telegram to `/webhooks/{accountId}/telegram`.
+## CI/CD Account Setup
 
-## Default Telegram Account
-
-The deploy workflow runs:
+After deploy, the GitHub workflow optionally runs configure scripts if credentials are provided. Skip by not setting the channel-specific secrets.
 
 ```bash
+# Optional: run only if TELEGRAM_BOT_TOKEN and all other TELEGRAM_* is token set
 bun run scripts/configure-telegram-account.ts
+
+# Optional: run only if DISCORD_BOT_TOKEN and all other DISCORD_* token is set  
+bun run scripts/configure-discord-account.ts
+
+# Optional: run only if SLACK_BOT_TOKEN and all SLACK_* token is set
+bun run scripts/configure-slack-account.ts
+
+# Optional: run only if GITHUB_APP_ID and all GITHUB_* token is set
+bun run scripts/configure-github-account.ts
 ```
 
-The script requires `ADMIN_ACCOUNT_SECRET`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_WEBHOOK_SECRET`, and `ALLOWED_CHAT_IDS`. It also writes the account runtime config used by the harness: `ACCOUNT_MODEL_PROVIDER` defaults to `google`, `ACCOUNT_MODEL_ID` defaults to `gemma-4-31b-it`, and the matching provider API key must be present, for example `ACCOUNT_GOOGLE_API_KEY` for Google. `ACCOUNT_TOOLS_JSON`, `ACCOUNT_MODEL_OPTIONS_JSON`, and `ACCOUNT_PROVIDER_CONFIG_JSON` can override the generated defaults. It reads `ACCOUNT_MANAGE_URL` and `HARNESS_PROCESSING_URL` from environment overrides when present, otherwise from `.sst/outputs.json`.
-
-The Discord, GitHub, Slack, and Telegram configure scripts all use the same runtime config helper. Each script upserts by its integration account username, writes channel credentials into encrypted account config, and preserves the generated model/provider/tools config in the same encrypted payload.
+Each script uses `ADMIN_ACCOUNT_SECRET` for auth.
 
 ## Live Probes
 
@@ -144,14 +149,7 @@ bun scripts/manual/direct-api-multi-turn.ts
 bun scripts/manual/async-api-tool-call.ts
 ```
 
-## Discord Command Sync
-
-`bun run discord:sync` remains a manual utility. It still reads Discord app credentials from local environment variables for command registration and is separate from account runtime config.
-
 ## CI
 
 - GitHub Actions runs CI on pull requests and non-`main` pushes, and deploys on pushes to `main`.
-- Deploy requires repository secrets `SST_SECRET_GOOGLEAPIKEY`, `SST_SECRET_TAVILYAPIKEY`, `SST_SECRET_ADMINACCOUNTSECRET`, and `SST_SECRET_ACCOUNTCONFIGENCRYPTIONSECRET`.
-- Default Telegram account configuration prefers repository secrets `TELEGRAM_BOT_TOKEN`, `TELEGRAM_WEBHOOK_SECRET`, and `TELEGRAM_ALLOWED_CHAT_IDS`. The deploy workflow also accepts the existing `SST_SECRET_TELEGRAMBOTTOKEN`, `SST_SECRET_TELEGRAMWEBHOOKSECRET`, and `SST_SECRET_ALLOWEDCHATIDS` GitHub secret names as compatibility inputs; these values are written into account config, not loaded as SST runtime secrets.
-- `bun run test` runs unit tests locally.
-- Use `gh run list` and `gh run view` to inspect pipeline status.
+- Deploy requires repository secrets `SST_SECRET_ADMINACCOUNTSECRET` and `SST_SECRET_ACCOUNTCONFIGENCRYPTIONSECRET`.

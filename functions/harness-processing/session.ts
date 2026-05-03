@@ -39,7 +39,9 @@ import { logError, logInfo } from "../_shared/log.ts";
 const CONVERSATIONS_TABLE_NAME = requireEnv("CONVERSATIONS_TABLE_NAME");
 const PROCESSED_EVENTS_TABLE_NAME = requireEnv("PROCESSED_EVENTS_TABLE_NAME");
 const FILESYSTEM_BUCKET_NAME = requireEnv("FILESYSTEM_BUCKET_NAME");
-const SLIDING_CONTEXT_WINDOW = Number(requireEnv("SLIDING_CONTEXT_WINDOW"));
+
+// Default to 30 messages of sliding context window and conversation lease TTL of 15 minutes.
+const SLIDING_CONTEXT_WINDOW = 30;
 const CONVERSATION_LEASE_TTL_SECONDS = 15 * 60;
 
 const s3 = new S3Client({ region: process.env.AWS_REGION });

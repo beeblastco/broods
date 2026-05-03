@@ -1,22 +1,41 @@
 /**
  * CI configuration helper for the default Telegram account.
  * Creates or updates account config, then registers the account-scoped webhook.
+ * Skips gracefully if TELEGRAM_BOT_TOKEN is not provided.
  */
 
 import {
   accountManageUrl,
   createScriptAccountRuntimeConfig,
   harnessProcessingUrl,
+  optionalScriptEnv,
   requireScriptEnv,
   upsertScriptAccount,
 } from "./utils.ts";
 
+const telegramBotToken = optionalScriptEnv("TELEGRAM_BOT_TOKEN");
+const telegramWebhookSecret = optionalScriptEnv("TELEGRAM_WEBHOOK_SECRET");
+const allowedChatIds = optionalScriptEnv("ALLOWED_CHAT_IDS");
+
+if (!telegramBotToken) {
+  console.warn("Skipping Telegram account setup: TELEGRAM_BOT_TOKEN is not configured");
+  process.exit(0);
+}
+
+if (!telegramWebhookSecret) {
+  console.warn("Skipping Telegram account setup: TELEGRAM_WEBHOOK_SECRET is not configured");
+  process.exit(0);
+}
+
+if (!allowedChatIds) {
+  console.warn("Skipping Telegram account setup: ALLOWED_CHAT_IDS is not configured");
+  process.exit(0);
+}
+
 const accountManageUrlValue = accountManageUrl();
 const harnessProcessingUrlValue = harnessProcessingUrl();
 const adminSecret = requireScriptEnv("ADMIN_ACCOUNT_SECRET");
-const telegramBotToken = requireScriptEnv("TELEGRAM_BOT_TOKEN");
-const telegramWebhookSecret = requireScriptEnv("TELEGRAM_WEBHOOK_SECRET");
-const allowedChatIds = parseAllowedChatIds(requireScriptEnv("ALLOWED_CHAT_IDS"));
+const parsedChatIds = parseAllowedChatIds(allowedChatIds);
 const username = process.env.TELEGRAM_ACCOUNT_USERNAME?.trim();
 const description = process.env.TELEGRAM_ACCOUNT_DESCRIPTION?.trim();
 
@@ -33,7 +52,7 @@ async function upsertTelegramAccount() {
       telegram: {
         botToken: telegramBotToken,
         webhookSecret: telegramWebhookSecret,
-        allowedChatIds,
+        allowedChatIds: parsedChatIds,
         reactionEmoji: "👀",
       },
     },

@@ -1,0 +1,86 @@
+{
+  "provider": {
+    "google": {
+      "apiKey": "..."
+    },
+    "openai": {
+      "apiKey": "..."
+    },
+    "bedrock": {
+      "region": "us-east-1",
+      "apiKey": "..."
+    },
+    "gateway": {
+      "apiKey": "..."
+    }
+  },
+  "model": {
+    "provider": "google",
+    "modelId": "gemini-3-flash",
+    "temperature": 0.2,
+    "maxOutputTokens": 16000,
+    "options": {
+      "google": {
+        "thinkingConfig": {
+          "thinkingLevel": "high"
+        }
+      }
+    }
+  },
+  "maxAgentIterations": 20,
+  "slidingContextWindow": 20,
+  "systemPrompt": "Optional account-specific system prompt.",
+  "memoryNamespace": "support",
+  "tools": {
+    "filesystem": {
+      "enabled": true
+    },
+    "tasks": {
+      "enabled": true
+    },
+    "tavilySearch": {
+      "enabled": true,
+      "apiKey": "...",
+      "searchDepth": "advanced",
+      "includeAnswer": true,
+      "maxResults": 5,
+      "topic": "general"
+    },
+    "tavilyExtract": {
+      "enabled": true,
+      "apiKey": "...",
+      "extractDepth": "advanced",
+      "format": "markdown"
+    },
+    "googleSearch": {
+      "enabled": true,
+      "searchTypes": {
+        "webSearch": {}
+      }
+    }
+  },
+  "channels": {
+    "telegram": {
+      "botToken": "...",
+      "webhookSecret": "...",
+      "allowedChatIds": [123456789],
+      "reactionEmoji": "👀"
+    },
+    "github": {
+      "webhookSecret": "...",
+      "appId": "...",
+      "privateKey": "...",
+      "allowedRepos": ["owner/repo"]
+    },
+    "slack": {
+      "botToken": "...",
+      "signingSecret": "...",
+      "allowedChannelIds": ["C123"]
+    },
+    "discord": {
+      "botToken": "...",
+      "publicKey": "...",
+      "allowedGuildIds": ["123"]
+    }
+  }
+}
