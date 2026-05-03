@@ -44,8 +44,8 @@ export function outputOrEnv(envName: string, outputName: string): string {
   return value;
 }
 
-export function accountManageUrl(): string {
-  return stripTrailingSlash(outputOrEnv("ACCOUNT_MANAGE_URL", "accountManageUrl"));
+export function accountServiceUrl(): string {
+  return stripTrailingSlash(outputOrEnv("ACCOUNT_SERVICE_URL", "accountServiceUrl"));
 }
 
 export function harnessProcessingUrl(): string {
@@ -97,13 +97,13 @@ export function createScriptAccountRuntimeConfig(): AccountConfig {
 }
 
 export async function upsertScriptAccount(input: {
-  accountManageUrl: string;
+  accountServiceUrl: string;
   adminSecret: string;
   username: string | undefined;
   description: string | undefined;
   config: AccountConfig;
 }): Promise<PublicAccount> {
-  const existing = await findExistingAccount(input.accountManageUrl, input.adminSecret, input.username);
+  const existing = await findExistingAccount(input.accountServiceUrl, input.adminSecret, input.username);
   const body = {
     username: input.username,
     description: input.description,
@@ -112,7 +112,7 @@ export async function upsertScriptAccount(input: {
 
   if (existing) {
     const updated = await accountApi(
-      input.accountManageUrl,
+      input.accountServiceUrl,
       input.adminSecret,
       "PATCH",
       `/accounts/${encodeURIComponent(existing.accountId)}`,
@@ -121,7 +121,7 @@ export async function upsertScriptAccount(input: {
     return parseAccountResponse(updated);
   }
 
-  const created = await publicAccountApi(input.accountManageUrl, "POST", "/accounts", body);
+  const created = await publicAccountApi(input.accountServiceUrl, "POST", "/accounts", body);
   return parseAccountResponse(created);
 }
 

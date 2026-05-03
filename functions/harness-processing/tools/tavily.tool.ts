@@ -10,7 +10,7 @@ import type { ToolContext } from "./index.ts";
 
 export function tavilySearchTool(context: ToolContext): ToolSet {
   const { enabled: _enabled, apiKey, ...config } = context.config;
-  const tavilyApiKey = apiKey || optionalEnv("TAVILY_API_KEY");
+  const tavilyApiKey = typeof apiKey === "string" ? apiKey : optionalEnv("TAVILY_API_KEY");
 
   if (!tavilyApiKey) {
     throw new Error("config.tools.tavilySearch.apiKey or TAVILY_API_KEY is required.");
@@ -30,7 +30,7 @@ export function tavilySearchTool(context: ToolContext): ToolSet {
 
 export function tavilyExtractTool(context: ToolContext): ToolSet {
   const { enabled: _enabled, apiKey, ...config } = context.config;
-  const tavilyApiKey = apiKey || optionalEnv("TAVILY_API_KEY");
+  const tavilyApiKey = typeof apiKey === "string" ? apiKey : optionalEnv("TAVILY_API_KEY");
 
   if (!tavilyApiKey) {
     throw new Error("config.tools.tavilyExtract.apiKey or TAVILY_API_KEY is required.");
