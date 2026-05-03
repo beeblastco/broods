@@ -32,7 +32,6 @@ describe("script account runtime config", () => {
         tasks: { enabled: true },
         tavilySearch: { enabled: true },
         tavilyExtract: { enabled: true },
-        googleSearch: { enabled: true },
       },
     });
   });
