@@ -88,7 +88,7 @@ Configure provider webhooks with the returned `accountId`:
 {AGENT_SERVICE_URL}/webhooks/{accountId}/discord
 ```
 
-Then patch the account config with the provider credentials needed for each channel, plus any model/tool settings. See the example config file at [`examples/example.account.config.json`](../../examples/example.account.config.json) for the supported config shape.
+Then patch the account config with the provider credentials needed for each channel, plus any model/tool settings. See the example config file at [`examples/account.config.example.json`](../examples/account.config.example.json) for the supported config shape.
 
 ## CI/CD Account Setup
 

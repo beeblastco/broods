@@ -33,16 +33,27 @@ describe("createTools", () => {
     const { createTools } = await import("../functions/harness-processing/tools/index.ts");
 
     const tools = createTools(createToolContext(), {
+      workspace: {
+        enabled: true,
+      },
       tools: {
-        filesystem: { enabled: true },
-        tasks: { enabled: false },
         tavilyExtract: {},
       },
     });
 
-    expect(Object.keys(tools).sort()).toEqual(["filesystem", "tavilyExtract"]);
+    expect(Object.keys(tools).sort()).toEqual(["filesystem", "tasks", "tavilyExtract"]);
     expect(tavilySearchMock).not.toHaveBeenCalled();
     expect(tavilyExtractMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not expose workspace tools when workspace is disabled", async () => {
+    const { createTools } = await import("../functions/harness-processing/tools/index.ts");
+
+    expect(createTools(createToolContext(), {
+      workspace: {
+        enabled: false,
+      },
+    })).toEqual({});
   });
 
   it("passes provider config into Tavily and Google Search tools", async () => {
@@ -86,6 +97,16 @@ describe("createTools", () => {
         googleSearch: { enabled: true },
       },
     })).toThrow("config.tools.googleSearch requires config.model.provider to be google");
+  });
+
+  it("rejects configured tools without a registered factory", async () => {
+    const { createTools } = await import("../functions/harness-processing/tools/index.ts");
+
+    expect(() => createTools(createToolContext(), {
+      tools: {
+        filesystem: { enabled: true },
+      },
+    })).toThrow("config.tools.filesystem is not a supported tool");
   });
 });
 

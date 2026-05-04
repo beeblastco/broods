@@ -20,30 +20,19 @@ import {
     toAttributeValue,
 } from "./dynamo.ts";
 import { optionalEnv, requireEnv } from "./env.ts";
+import {
+  accountModelProviderNames,
+  isAccountModelProviderName,
+  type AccountModelProviderName,
+} from "./providers.ts";
+export type { AccountModelProviderName } from "./providers.ts";
 
 const ACCOUNT_SECRET_PREFIX = "fp_acct_";
 const DEFAULT_ACCOUNT_STATUS = "active";
 const CONFIG_ENCRYPTION_ALGORITHM = "aes-256-gcm";
 const REDACTED_SECRET_VALUE = "********";
-const MAX_ACCOUNT_ITERATIONS_LIMIT = 100;
-const SLIDING_CONTEXT_WINDOW_LIMIT = 200;
-export const ACCOUNT_TOOL_NAMES = [
-  "filesystem",
-  "tasks",
-  "tavilySearch",
-  "tavilyExtract",
-  "googleSearch",
-] as const;
-
-export type AccountToolName = typeof ACCOUNT_TOOL_NAMES[number];
-const ACCOUNT_MODEL_PROVIDER_NAMES = [
-  "google",
-  "openai",
-  "bedrock",
-  "gateway",
-] as const;
-
-export type AccountModelProviderName = typeof ACCOUNT_MODEL_PROVIDER_NAMES[number];
+const AGENT_MAX_TURN_LIMIT = 100; // Limit configurate from allowing runaway model/tool loops
+const SESSION_MAX_CONTEXT_LENGTH_LIMIT = 500_000; // Limit configured for session max context length
 
 export type AccountStatus = "active" | "disabled";
 
@@ -59,14 +48,19 @@ export interface AccountRecord {
 }
 
 export interface AccountConfig {
+  agent?: AccountAgentConfig;
   model?: AccountModelConfig;
   provider?: AccountProviderConfig;
-  maxAgentIterations?: number;
-  slidingContextWindow?: number;
-  systemPrompt?: string;
-  memoryNamespace?: string;
+  workspace?: AccountWorkspaceConfig;
+  session?: AccountSessionConfig;
   channels?: AccountChannelsConfig;
   tools?: AccountToolsConfig;
+  [key: string]: unknown;
+}
+
+export interface AccountAgentConfig {
+  maxTurn?: number;
+  system?: string;
   [key: string]: unknown;
 }
 
@@ -83,7 +77,35 @@ export interface AccountProviderSettings {
   [key: string]: unknown;
 }
 
-export type AccountToolsConfig = Partial<Record<AccountToolName, AccountToolConfig>>;
+export interface AccountWorkspaceConfig {
+  enabled?: boolean;
+  memory?: AccountWorkspaceMemoryConfig;
+  [key: string]: unknown;
+}
+
+export interface AccountWorkspaceMemoryConfig {
+  namespace?: string;
+  [key: string]: unknown;
+}
+
+export interface AccountSessionConfig {
+  pruning?: AccountSessionPruningConfig;
+  compaction?: AccountSessionCompactionConfig;
+  [key: string]: unknown;
+}
+
+export interface AccountSessionPruningConfig {
+  enabled?: boolean;
+  [key: string]: unknown;
+}
+
+export interface AccountSessionCompactionConfig {
+  enabled?: boolean;
+  maxContextLength?: number;
+  [key: string]: unknown;
+}
+
+export type AccountToolsConfig = Record<string, AccountToolConfig>;
 
 export interface AccountToolConfig {
   enabled?: boolean;
@@ -385,22 +407,20 @@ export function toPublicAccount(account: AccountRecord): PublicAccountRecord {
 
 export function toRuntimeAccountConfig(config: AccountConfig): AccountConfig {
   const {
+    agent,
     model,
     provider,
-    maxAgentIterations,
-    slidingContextWindow,
-    systemPrompt,
-    memoryNamespace,
+    workspace,
+    session,
     tools,
   } = config;
 
   return normalizeAccountConfig({
+    ...(agent !== undefined ? { agent } : {}),
     ...(model !== undefined ? { model } : {}),
     ...(provider !== undefined ? { provider } : {}),
-    ...(maxAgentIterations !== undefined ? { maxAgentIterations } : {}),
-    ...(slidingContextWindow !== undefined ? { slidingContextWindow } : {}),
-    ...(systemPrompt !== undefined ? { systemPrompt } : {}),
-    ...(memoryNamespace !== undefined ? { memoryNamespace } : {}),
+    ...(workspace !== undefined ? { workspace } : {}),
+    ...(session !== undefined ? { session } : {}),
     ...(tools !== undefined ? { tools } : {}),
   });
 }
@@ -415,12 +435,11 @@ export function normalizeAccountConfig(value: unknown): AccountConfig {
   }
 
   const config = value as Record<string, unknown>;
+  normalizeAgentConfig(config.agent);
   normalizeModelConfig(config.model);
   normalizeProviderConfig(config.provider);
-  assertOptionalPositiveInteger(config.maxAgentIterations, "config.maxAgentIterations", MAX_ACCOUNT_ITERATIONS_LIMIT);
-  assertOptionalPositiveInteger(config.slidingContextWindow, "config.slidingContextWindow", SLIDING_CONTEXT_WINDOW_LIMIT);
-  assertOptionalString(config.systemPrompt, "config.systemPrompt");
-  assertOptionalNonEmptyString(config.memoryNamespace, "config.memoryNamespace");
+  normalizeWorkspaceConfig(config.workspace);
+  normalizeSessionConfig(config.session);
   normalizeChannelsConfig(config.channels);
   normalizeToolsConfig(config.tools);
 
@@ -484,6 +503,19 @@ function normalizeChannelsConfig(value: unknown): void {
   normalizeDiscordConfig(channels.discord);
 }
 
+function normalizeAgentConfig(value: unknown): void {
+  if (value == null) {
+    return;
+  }
+  if (!isPlainObject(value)) {
+    throw new Error("config.agent must be an object");
+  }
+
+  const config = value as Record<string, unknown>;
+  assertOptionalPositiveInteger(config.maxTurn, "config.agent.maxTurn", AGENT_MAX_TURN_LIMIT);
+  assertOptionalString(config.system, "config.agent.system");
+}
+
 function normalizeModelConfig(value: unknown): void {
   if (value == null) {
     return;
@@ -542,6 +574,73 @@ function normalizeProviderSettings(providerName: AccountModelProviderName, value
   }
 }
 
+function normalizeWorkspaceConfig(value: unknown): void {
+  if (value == null) {
+    return;
+  }
+  if (!isPlainObject(value)) {
+    throw new Error("config.workspace must be an object");
+  }
+
+  const config = value as Record<string, unknown>;
+  assertOptionalBoolean(config.enabled, "config.workspace.enabled");
+  normalizeWorkspaceMemoryConfig(config.memory);
+}
+
+function normalizeWorkspaceMemoryConfig(value: unknown): void {
+  if (value == null) {
+    return;
+  }
+  if (!isPlainObject(value)) {
+    throw new Error("config.workspace.memory must be an object");
+  }
+
+  const config = value as Record<string, unknown>;
+  assertOptionalNonEmptyString(config.namespace, "config.workspace.memory.namespace");
+}
+
+function normalizeSessionConfig(value: unknown): void {
+  if (value == null) {
+    return;
+  }
+  if (!isPlainObject(value)) {
+    throw new Error("config.session must be an object");
+  }
+
+  const config = value as Record<string, unknown>;
+  normalizeSessionPruningConfig(config.pruning);
+  normalizeSessionCompactionConfig(config.compaction);
+}
+
+function normalizeSessionPruningConfig(value: unknown): void {
+  if (value == null) {
+    return;
+  }
+  if (!isPlainObject(value)) {
+    throw new Error("config.session.pruning must be an object");
+  }
+
+  const config = value as Record<string, unknown>;
+  assertOptionalBoolean(config.enabled, "config.session.pruning.enabled");
+}
+
+function normalizeSessionCompactionConfig(value: unknown): void {
+  if (value == null) {
+    return;
+  }
+  if (!isPlainObject(value)) {
+    throw new Error("config.session.compaction must be an object");
+  }
+
+  const config = value as Record<string, unknown>;
+  assertOptionalBoolean(config.enabled, "config.session.compaction.enabled");
+  assertOptionalPositiveInteger(
+    config.maxContextLength,
+    "config.session.compaction.maxContextLength",
+    SESSION_MAX_CONTEXT_LENGTH_LIMIT,
+  );
+}
+
 function normalizeToolsConfig(value: unknown): void {
   if (value == null) {
     return;
@@ -551,16 +650,17 @@ function normalizeToolsConfig(value: unknown): void {
   }
 
   for (const [toolName, toolConfig] of Object.entries(value)) {
-    if (!isAccountToolName(toolName)) {
-      throw new Error(`config.tools.${toolName} is not a supported tool`);
-    }
     normalizeToolConfig(toolName, toolConfig);
   }
 }
 
-function normalizeToolConfig(toolName: AccountToolName, value: unknown): void {
+function normalizeToolConfig(toolName: string, value: unknown): void {
   if (!isPlainObject(value)) {
     throw new Error(`config.tools.${toolName} must be an object`);
+  }
+
+  if (!isSupportedConfigToolName(toolName)) {
+    throw new Error(`config.tools.${toolName} is not a supported tool`);
   }
 
   const config = value as Record<string, unknown>;
@@ -569,9 +669,6 @@ function normalizeToolConfig(toolName: AccountToolName, value: unknown): void {
   }
 
   switch (toolName) {
-    case "filesystem":
-    case "tasks":
-      return;
     case "tavilySearch":
       normalizeTavilySearchToolConfig(config);
       return;
@@ -582,6 +679,10 @@ function normalizeToolConfig(toolName: AccountToolName, value: unknown): void {
       normalizeGoogleSearchToolConfig(config);
       return;
   }
+}
+
+function isSupportedConfigToolName(toolName: string): toolName is "tavilySearch" | "tavilyExtract" | "googleSearch" {
+  return toolName === "tavilySearch" || toolName === "tavilyExtract" || toolName === "googleSearch";
 }
 
 function normalizeTavilySearchToolConfig(config: Record<string, unknown>): void {
@@ -744,14 +845,6 @@ function isAccountStatus(value: string | undefined): value is AccountStatus {
   return value === "active" || value === "disabled";
 }
 
-function isAccountToolName(value: string): value is AccountToolName {
-  return (ACCOUNT_TOOL_NAMES as readonly string[]).includes(value);
-}
-
-function isAccountModelProviderName(value: string): value is AccountModelProviderName {
-  return (ACCOUNT_MODEL_PROVIDER_NAMES as readonly string[]).includes(value);
-}
-
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return Boolean(value && typeof value === "object" && !Array.isArray(value));
 }
@@ -772,7 +865,7 @@ function assertOptionalProviderName(value: unknown, name: string): void {
     return;
   }
   if (typeof value !== "string" || !isAccountModelProviderName(value)) {
-    throw new Error(`${name} must be one of: ${ACCOUNT_MODEL_PROVIDER_NAMES.join(", ")}`);
+    throw new Error(`${name} must be one of: ${accountModelProviderNames().join(", ")}`);
   }
 }
 

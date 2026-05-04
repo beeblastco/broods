@@ -68,7 +68,12 @@ curl -X PATCH "$ACCOUNT_SERVICE_URL/accounts/me" \
   -d '{
     "description": "Updated account purpose",
     "config": {
-      "memoryNamespace": "support",
+      "workspace": {
+        "enabled": true,
+        "memory": {
+          "namespace": "support"
+        }
+      },
       "channels": {
         "telegram": {
           "botToken": "...",
@@ -80,7 +85,7 @@ curl -X PATCH "$ACCOUNT_SERVICE_URL/accounts/me" \
   }'
 ```
 
-Patch behavior is a deep merge. Redacted secret placeholders returned by reads (`********`) preserve the existing stored secret if sent back. Set a config field to `null` to delete it, for example `"memoryNamespace": null`.
+Patch behavior is a deep merge. Redacted secret placeholders returned by reads (`********`) preserve the existing stored secret if sent back. Set a config field to `null` to delete it, for example `"workspace": { "memory": { "namespace": null } }`.
 
 ## Admin Account
 
@@ -119,33 +124,259 @@ Response:
 
 ## Account Config
 
-See [`examples/example.account.config.json`](../../examples/example.account.config.json) for the full example with all available fields.
+The account config is a JSON object passed via `PATCH /accounts/me` (deep-merged). See [`examples/account.config.example.json`](../examples/account.config.example.json) for the full working example.
 
-`provider` config stores constructor settings for the selected AI SDK provider. The selected provider entry must exist and include `apiKey`.
+---
 
-- `google`: passed to `createGoogleGenerativeAI(...)`.
-- `openai`: passed to `createOpenAI(...)`.
-- `bedrock`: passed to `createAmazonBedrock(...)`.
-- `gateway`: passed to `createGateway(...)`.
+### Provider Config
 
-Secret-like fields such as `apiKey`, `secret`, `token`, and `privateKey` are encrypted at rest and redacted from account reads.
+Stores constructor settings for the AI SDK provider. The selected provider entry must exist and include its `apiKey`. Secret-like fields (`apiKey`, `secret`, `token`, `privateKey`) are encrypted at rest and redacted from reads.
 
-`model` config controls the Vercel AI SDK `streamText` call:
+```json
+{
+  "provider": {
+    "google": { "apiKey": "...", "baseURL": "...", "headers": {} },
+    "openai": { "apiKey": "...", "baseURL": "...", "organization": "...", "project": "...", "name": "..." },
+    "bedrock": { "region": "us-east-1", "apiKey": "...", "accessKeyId": "...", "secretAccessKey": "...", "sessionToken": "..." },
+    "gateway": { "apiKey": "...", "baseURL": "...", "headers": {} }
+  }
+}
+```
 
-- `provider`: selects the provider constructor: `google`, `openai`, `bedrock`, or `gateway`.
-- `modelId`: provider model id.
-- `options`: passed to `streamText` as `providerOptions`.
-- Other fields under `model`, such as `temperature`, `maxOutputTokens`, `topP`, `headers`, or `timeout`, are passed through as normal `streamText` settings. Harness-owned fields such as messages, system prompt assembly, tools, callbacks, and stop conditions remain controlled by the runtime.
+| Provider | Field | Type | Description |
+| ---------- | ------- | ------ | ------------- |
+| `google` | `apiKey` | string | Google API key |
+| | `baseURL` | string | Optional custom base URL |
+| | `headers` | object | Optional custom headers |
+| `openai` | `apiKey` | string | OpenAI API key |
+| | `baseURL` | string | Optional custom base URL |
+| | `organization` | string | OpenAI organization ID |
+| | `project` | string | OpenAI project ID |
+| | `name` | string | OpenAI API name |
+| `bedrock` | `region` | string | AWS region (e.g., `us-east-1`) |
+| | `apiKey` | string | AWS credentials or IAM role ARN |
+| | `accessKeyId` | string | AWS access key ID |
+| | `secretAccessKey` | string | AWS secret access key |
+| | `sessionToken` | string | AWS session token for temp credentials |
+| `gateway` | `apiKey` | string | Gateway API key |
+| | `baseURL` | string | Optional custom base URL |
+| | `headers` | object | Optional custom headers |
 
-`memoryNamespace` controls whether memory/files are per conversation or shared across conversations in the same account. See [Memory and Session](memory-and-session.md) for the visual model.
+---
+
+### Model Config
+
+Controls the Vercel AI SDK `streamText` call. All standard `streamText` parameters are passed through directly — see the [Vercel AI SDK `streamText` docs](https://sdk.vercel.ai/providers/custom-providers/vercel-ai-sdk-guide#streamtext) for the full reference. The `options` field maps to `providerOptions`.
+
+```json
+{
+  "model": {
+    "provider": "google",
+    "modelId": "gemini-3-flash",
+    "temperature": 0.2,
+    "maxOutputTokens": 16000,
+    "topP": 0.95,
+    "topK": 40,
+    "stopSequences": ["STOP"],
+    "headers": { "X-Custom-Header": "value" },
+    "timeout": 120,
+    "options": {
+      "google": { "thinkingConfig": { "thinkingLevel": "high" } }
+    }
+  }
+}
+```
+
+| Field | Type | Description |
+| ------- | ------ | ------------- |
+| `provider` | string | Provider constructor: `google`, `openai`, `bedrock`, or `gateway` |
+| `modelId` | string | Provider-specific model identifier |
+| `temperature` | number | Sampling temperature |
+| `maxOutputTokens` | number | Maximum tokens in response |
+| `topP` | number | Nucleus sampling threshold |
+| `topK` | number | Top-k sampling threshold |
+| `stopSequences` | string[] | Stop sequences to end the response |
+| `headers` | object | Custom HTTP headers |
+| `timeout` | number | Request timeout in seconds |
+| `options` | object | Provider-specific `providerOptions` (maps to Vercel AI SDK `providerOptions`) |
+
+Other supported `streamText` settings are passed through. Harness-owned fields, including messages, system prompt assembly, tool definitions, callbacks, and stop conditions, are controlled by the runtime and override account-provided values.
+
+---
+
+### Agent Config
+
+Controls harness behavior.
+
+```json
+{
+  "agent": {
+    "maxTurn": 20,
+    "system": "Optional account-specific system prompt."
+  }
+}
+```
+
+| Field | Type | Description |
+| ------- | ------ | ------------- |
+| `maxTurn` | number | Maximum model/tool loop steps per conversation turn |
+| `system` | string | Replaces the generated default system prompt (not appended) |
+
+---
+
+### Workspace Config
+
+Enables workspace-backed features. See [Memory and Session](memory-and-session.md) for the visual model.
+
+```json
+{
+  "workspace": {
+    "enabled": true,
+    "memory": { "namespace": "support" }
+  }
+}
+```
+
+| Key | Field | Type | Description |
+| ------- | ------ | ------------- | ------------- |
+| `enabled` | | boolean | Enables `MEMORY.md`, filesystem tool, and tasks tool |
+| `memory` | `namespace` | string | Session namespace key; `null` means per-conversation state |
+
+---
+
+### Session Config
+
+Controls model-visible history management.
+
+```json
+{
+  "session": {
+    "pruning": { "enabled": true },
+    "compaction": { "enabled": false, "maxContextLength": 100000 }
+  }
+}
+```
+
+| Key | Field | Type | Description |
+| ------- | ------ | ------------- | ------------- |
+| `pruning` | `enabled` | boolean | Enables automatic history pruning (default: `true`) |
+| `compaction` | `enabled` | boolean | Enables context compaction (default: `false`) |
+| | `maxContextLength` | number | Serialized character-length threshold for compaction triggers |
+
+---
+
+### Tools Config
+
+Enables inline tools. Omitting `tools` or setting `enabled: false` disables the tool. The tool name must match an available tool; invalid names fail when the harness assembles tools for a turn.
+
+Available tools: `tavilySearch`, `tavilyExtract`, `googleSearch`.
+
+```json
+{
+  "tools": {
+    "tavilySearch": {
+      "enabled": true,
+      "apiKey": "...",
+      "searchDepth": "advanced",
+      "includeAnswer": true,
+      "maxResults": 10,
+      "topic": "general"
+    },
+    "tavilyExtract": {
+      "enabled": true,
+      "apiKey": "...",
+      "extractDepth": "advanced",
+      "format": "markdown"
+    },
+    "googleSearch": {
+      "enabled": true,
+      "searchTypes": {
+        "webSearch": {},
+        "imageSearch": {}
+      },
+      "timeRangeFilter": {
+        "startTime": "2026-01-01",
+        "endTime": "2026-05-01"
+      }
+    }
+  }
+}
+```
+
+| Tool | Field | Type | Description |
+| ------ | ------- | ------ | ------------- |
+| `tavilySearch` | `enabled` | boolean | Enable the tool |
+| | `apiKey` | string | Tavily API key; required unless `TAVILY_API_KEY` is set |
+| | `searchDepth` | `basic` \| `advanced` | Search depth |
+| | `includeAnswer` | boolean | Include a direct answer |
+| | `maxResults` | number | Max results (1–20, default: 5) |
+| | `topic` | `general` \| `news` \| `finance` | Search topic |
+| `tavilyExtract` | `enabled` | boolean | Enable the tool |
+| | `apiKey` | string | Tavily API key; required unless `TAVILY_API_KEY` is set |
+| | `extractDepth` | `basic` \| `advanced` | Extraction depth |
+| | `format` | `markdown` \| `text` | Output format |
+| `googleSearch` | `enabled` | boolean | Enable the tool; requires `config.model.provider` to be `google` |
+| | `searchTypes` | object | Keys: `webSearch`, `imageSearch` (each is an empty object or with options) |
+| | `timeRangeFilter.startTime` | string | ISO date string, filter results after this date |
+| | `timeRangeFilter.endTime` | string | ISO date string, filter results before this date |
+
+---
+
+### Channels Config
 
 Provider webhook URLs must include the account id:
 
-```text
+```bash
 {AGENT_SERVICE_URL}/webhooks/{accountId}/telegram
 {AGENT_SERVICE_URL}/webhooks/{accountId}/github
 {AGENT_SERVICE_URL}/webhooks/{accountId}/slack
 {AGENT_SERVICE_URL}/webhooks/{accountId}/discord
 ```
 
-For deploy this as a customer service, the owner create an account and link the bot integration to the service. Customers only interact with the provider bot/app. CI/CD configures the default Telegram account and other provider, please check the [## CI/CD Account Setup](operations.md##\CI/CD\AccountSetup)
+```json
+{
+  "channels": {
+    "telegram": {
+      "botToken": "...",
+      "webhookSecret": "...",
+      "allowedChatIds": [123456789],
+      "reactionEmoji": "👀"
+    },
+    "github": {
+      "webhookSecret": "...",
+      "appId": "...",
+      "privateKey": "...",
+      "allowedRepos": ["owner/repo"]
+    },
+    "slack": {
+      "botToken": "...",
+      "signingSecret": "...",
+      "allowedChannelIds": ["C123"]
+    },
+    "discord": {
+      "botToken": "...",
+      "publicKey": "...",
+      "allowedGuildIds": ["123"]
+    }
+  }
+}
+```
+
+| Channel | Field | Type | Description |
+| --------- | ------- | ------ | ------------- |
+| `telegram` | `botToken` | string | Telegram bot token |
+| | `webhookSecret` | string | Webhook verification secret |
+| | `allowedChatIds` | number[] | List of allowed chat IDs |
+| | `reactionEmoji` | string | Emoji reaction to sent messages |
+| `github` | `webhookSecret` | string | Webhook verification secret |
+| | `appId` | string | GitHub App ID |
+| | `privateKey` | string | GitHub App private key (PEM) |
+| | `allowedRepos` | string[] | Allowed repository slugs (`owner/repo`) |
+| `slack` | `botToken` | string | Slack bot token |
+| | `signingSecret` | string | Slack signing secret |
+| | `allowedChannelIds` | string[] | List of allowed channel IDs |
+| `discord` | `botToken` | string | Discord bot token |
+| | `publicKey` | string | Discord public key for webhook verification |
+| | `allowedGuildIds` | string[] | List of allowed guild/server IDs |
+
+For deploying as a customer service, the owner creates an account and links the bot integration. Customers only interact with the provider bot/app. CI/CD configures the default Telegram account and other providers — see [CI/CD Account Setup](operations.md#ci-cd-account-setup).

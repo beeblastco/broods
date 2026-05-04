@@ -27,17 +27,26 @@
       }
     }
   },
-  "maxAgentIterations": 20,
-  "slidingContextWindow": 20,
-  "systemPrompt": "Optional account-specific system prompt.",
-  "memoryNamespace": "support",
+  "agent": {
+    "maxTurn": 20,
+    "system": "Optional account-specific system prompt."
+  },
+  "workspace": {
+    "enabled": true,
+    "memory": {
+      "namespace": "support"
+    }
+  },
+  "session": {
+    "pruning": {
+      "enabled": true
+    },
+    "compaction": {
+      "enabled": false,
+      "maxContextLength": 100000
+    }
+  },
   "tools": {
-    "filesystem": {
-      "enabled": true
-    },
-    "tasks": {
-      "enabled": true
-    },
     "tavilySearch": {
       "enabled": true,
       "apiKey": "...",
@@ -63,24 +72,32 @@
     "telegram": {
       "botToken": "...",
       "webhookSecret": "...",
-      "allowedChatIds": [123456789],
+      "allowedChatIds": [
+        123456789
+      ],
       "reactionEmoji": "👀"
     },
     "github": {
       "webhookSecret": "...",
       "appId": "...",
       "privateKey": "...",
-      "allowedRepos": ["owner/repo"]
+      "allowedRepos": [
+        "owner/repo"
+      ]
     },
     "slack": {
       "botToken": "...",
       "signingSecret": "...",
-      "allowedChannelIds": ["C123"]
+      "allowedChannelIds": [
+        "C123"
+      ]
     },
     "discord": {
       "botToken": "...",
       "publicKey": "...",
-      "allowedGuildIds": ["123"]
+      "allowedGuildIds": [
+        "123"
+      ]
     }
   }
 }

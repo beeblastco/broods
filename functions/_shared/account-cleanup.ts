@@ -231,8 +231,8 @@ function resolveFilesystemNamespaces(
   const logicalNamespaces = new Set<string>();
   const accountPrefix = accountScopedPrefix(account.accountId);
 
-  if (account.config.memoryNamespace) {
-    logicalNamespaces.add(account.config.memoryNamespace);
+  if (account.config.workspace?.memory?.namespace) {
+    logicalNamespaces.add(account.config.workspace.memory.namespace);
   }
 
   for (const { conversationKey } of conversations) {

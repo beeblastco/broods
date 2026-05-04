@@ -24,8 +24,10 @@ const account = await createAccount(username, {
     provider: "google",
     modelId: "gemma-4-31b-it"
   },
-  // Specific the system prompt
-  systemPrompt: "You are a helpful assistant.",
+  // Specify the agent behavior.
+  agent: {
+    system: "You are a helpful assistant.",
+  },
   // Tools configuration with Tavily search enabled
   tools: {
     tavilySearch: {

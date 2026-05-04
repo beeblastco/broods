@@ -19,12 +19,14 @@
     "noImplicitOverride": true,
     "noUnusedLocals": false,
     "noUnusedParameters": false,
-    "noPropertyAccessFromIndexSignature": false
+    "noPropertyAccessFromIndexSignature": false,
+    "types": ["bun"]
   },
   "include": [
     "functions/**/*.ts",
     "scripts/**/*.ts",
     "tests/**/*.ts",
+    "examples/**/*.ts",
     "sst-env.d.ts"
   ]
 }

@@ -39,7 +39,7 @@ flowchart TD
   Integrations --> Session["session.ts<br/>conversation state + memory"]
   Session --> Harness["harness.ts<br/>model/tool loop"]
   Harness --> Model["Configured AI SDK provider<br/>Google / OpenAI / Bedrock / Gateway"]
-  Harness --> Tools["account-enabled inline tools"]
+  Harness --> Tools["workspace + account-enabled inline tools"]
 
   Session --> Conversations["DynamoDB: Conversations"]
   Session --> Processed["DynamoDB: ProcessedEvents"]
@@ -146,19 +146,19 @@ Customers talk to the provider bot/app owned by the account. They never receive 
 
 ## Memory and Filesystem Boundaries
 
-Memory and filesystem state is account-scoped. By default it is per conversation; setting `config.memoryNamespace` lets multiple conversations in the same account share `MEMORY.md`, filesystem files, and task files.
+Workspace state is account-scoped and disabled unless `config.workspace.enabled` is true. When enabled, it turns on `MEMORY.md`, the filesystem tool, and the tasks tool together. By default workspace state is per conversation; setting `config.workspace.memory.namespace` lets multiple conversations in the same account share `MEMORY.md`, filesystem files, and task files.
 
 ```mermaid
 flowchart LR
-  Conversation["No memoryNamespace"] --> PerConversation["Per-conversation memory"]
-  Namespace["memoryNamespace=support"] --> Shared["Shared account memory"]
+  Conversation["No workspace.memory.namespace"] --> PerConversation["Per-conversation memory"]
+  Namespace["workspace.memory.namespace=support"] --> Shared["Shared account memory"]
 ```
 
 See [Memory and Session](memory-and-session.md) for the full model.
 
 ## Model and Tool Configuration
 
-Accounts control model selection and tool access through encrypted account config. `harness.ts` resolves `config.model`, and `tools/index.ts` creates only the tools enabled under `config.tools`. See [Account management](account-management.md#account-config) for the supported config shape.
+Accounts control model selection and tool access through encrypted account config. `harness.ts` resolves `config.model`; `tools/index.ts` creates workspace tools when `config.workspace.enabled` is true and search/research tools from `config.tools`. See [Account management](account-management.md#account-config) for the supported config shape.
 
 ## Code Ownership
 

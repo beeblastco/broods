@@ -25,7 +25,12 @@ const TEST_ACCOUNT = {
         apiKey: "google-key",
       },
     },
-    memoryNamespace: "support",
+    workspace: {
+      enabled: true,
+      memory: {
+        namespace: "support",
+      },
+    },
     channels: {
       slack: {
         botToken: "xoxb-secret",
@@ -305,7 +310,12 @@ describe("direct API ingress", () => {
           apiKey: "google-key",
         },
       },
-      memoryNamespace: "support",
+      workspace: {
+        enabled: true,
+        memory: {
+          namespace: "support",
+        },
+      },
     });
     expect(directEvent.publicEventId).toBe("one");
     expect(directEvent.conversationKey).toBe("acct:acct_test:api:alpha");

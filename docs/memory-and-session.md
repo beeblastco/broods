@@ -1,6 +1,6 @@
 # Memory and Session
 
-This page explains where conversation history, `MEMORY.md`, and filesystem tool files live.
+This page explains where conversation history, `MEMORY.md`, task files, and filesystem tool files live.
 
 ## Mental Model
 
@@ -17,11 +17,11 @@ flowchart TD
 There are two separate things:
 
 - Conversation history: the chat messages for one conversation.
-- Memory/filesystem: `MEMORY.md`, task files, and files written by the filesystem tool.
+- Workspace state: `MEMORY.md`, task files, and files written by the filesystem tool. Workspace state exists only when `config.workspace.enabled` is true.
 
 ## Default: One Memory Per Conversation
 
-If the account does not set `memoryNamespace`, every conversation gets its own memory and filesystem.
+If `config.workspace.enabled` is true and the account does not set `workspace.memory.namespace`, every conversation gets its own memory, tasks, and filesystem.
 
 ```mermaid
 flowchart LR
@@ -34,12 +34,17 @@ Use this when each chat, issue, thread, or direct API conversation should rememb
 
 ## Shared: One Memory For Many Conversations
 
-Set `config.memoryNamespace` when multiple conversations should share the same memory and files.
+Set `config.workspace.memory.namespace` when multiple conversations should share the same memory, tasks, and files.
 
 ```json
 {
   "config": {
-    "memoryNamespace": "support"
+    "workspace": {
+      "enabled": true,
+      "memory": {
+        "namespace": "support"
+      }
+    }
   }
 }
 ```
@@ -59,29 +64,33 @@ The namespace is always scoped by account.
 
 ```mermaid
 flowchart LR
-  A["Company A<br/>memoryNamespace=support"] --> AM["Company A support memory"]
-  B["Company B<br/>memoryNamespace=support"] --> BM["Company B support memory"]
+  A["Company A<br/>workspace.memory.namespace=support"] --> AM["Company A support memory"]
+  B["Company B<br/>workspace.memory.namespace=support"] --> BM["Company B support memory"]
 ```
 
 So two accounts can both use `"support"` without sharing data.
 
-## What Uses `memoryNamespace`
+## What Uses Workspace
 
 ```mermaid
 flowchart TD
-  Namespace["memoryNamespace"] --> Prompt["MEMORY.md<br/>loaded into prompt"]
-  Namespace --> Fs["filesystem tool"]
-  Namespace --> Tasks["tasks tool"]
+  Workspace["workspace.enabled=true"] --> Prompt["MEMORY.md<br/>loaded into prompt"]
+  Workspace --> Fs["filesystem tool"]
+  Workspace --> Tasks["tasks tool"]
+  Namespace["workspace.memory.namespace"] --> Prompt
+  Namespace --> Fs
+  Namespace --> Tasks
 ```
 
-It applies to every runtime path:
+The filesystem and tasks tools do not need separate `tools` entries. They are enabled together by `workspace.enabled`.
 
-- Direct API: `POST /`
-- Async API: `POST /async`
-- Telegram webhooks
-- GitHub webhooks
-- Slack webhooks
-- Discord webhooks
+## Session Context Management
+
+Session history is managed before each model turn:
+
+- Pruning is enabled by default through `session.pruning.enabled`; it removes older reasoning/tool-call clutter from the model-visible context without changing persisted history.
+- Compaction is disabled by default through `session.compaction.enabled`; when enabled, it uses the account's configured model to summarize older history once the serialized context character count exceeds `session.compaction.maxContextLength`.
+- Compaction persists a system summary, keeps the latest user message active, and includes prior compaction summaries when compacting again.
 
 ## Configure It
 
@@ -93,12 +102,17 @@ curl -X PATCH "$ACCOUNT_SERVICE_URL/accounts/me" \
   -H "Content-Type: application/json" \
   -d '{
     "config": {
-      "memoryNamespace": "support"
+      "workspace": {
+        "enabled": true,
+        "memory": {
+          "namespace": "support"
+        }
+      }
     }
   }'
 ```
 
-Set it to `null` when you want memory to go back to per-conversation behavior.
+Set the namespace to `null` when you want memory to go back to per-conversation behavior. Set `workspace.enabled` to `false` to disable memory, filesystem, and tasks.
 
 ```bash
 curl -X PATCH "$ACCOUNT_SERVICE_URL/accounts/me" \
@@ -106,7 +120,11 @@ curl -X PATCH "$ACCOUNT_SERVICE_URL/accounts/me" \
   -H "Content-Type: application/json" \
   -d '{
     "config": {
-      "memoryNamespace": null
+      "workspace": {
+        "memory": {
+          "namespace": null
+        }
+      }
     }
   }'
 ```

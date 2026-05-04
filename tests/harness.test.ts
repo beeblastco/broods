@@ -18,6 +18,7 @@ const createGatewayMock = mock((_options: unknown) => gatewayModelMock);
 
 const streamTextMock = mock((options: {
   onFinish(args: { response: { messages: unknown[] }; text: string }): Promise<void>;
+  stopWhen?: unknown;
 }) => {
   let consumed = false;
   const fullStream = new ReadableStream({
@@ -183,6 +184,45 @@ describe("runAgentLoop", () => {
         },
       },
     });
+  });
+
+  it("uses agent maxTurn for the model loop limit", async () => {
+    installHarnessEnv();
+    const { runAgentLoop } = await import("../functions/harness-processing/harness.ts");
+
+    const stream = await runAgentLoop({
+      conversationKey: "direct:conversation",
+      eventId: "direct-event",
+      filesystemNamespace: () => "fs-test",
+      persistModelMessages: async () => [],
+      loadRefreshedSystemPromptParts: async () => ({
+        promptContext: { cursor: null, messages: [] },
+        system: [],
+      }),
+    } as never, {
+      messages: [{ role: "user", content: "hello" }],
+      system: [],
+      ephemeralSystem: [],
+      hasPendingUserMessage: true,
+      promptContext: { cursor: null, messages: [] },
+    }, {
+      agent: {
+        maxTurn: 7,
+      },
+      provider: {
+        google: {
+          apiKey: "google-key",
+        },
+      },
+      model: {
+        provider: "google",
+        modelId: "gemini-test",
+      },
+    });
+
+    await stream.consumeStream();
+
+    expect(streamTextMock.mock.calls[0]?.[0].stopWhen).toBeDefined();
   });
 
   it("creates an OpenAI provider from account provider config", async () => {

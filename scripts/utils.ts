@@ -96,6 +96,9 @@ export function createScriptAccountRuntimeConfig(): AccountConfig {
     provider: {
       [provider]: accountProviderConfig(provider),
     },
+    workspace: {
+      enabled: true,
+    },
     tools: accountToolsConfig(provider),
   };
 }
@@ -247,12 +250,9 @@ function accountToolsConfig(provider: AccountModelProviderName): Record<string, 
     return explicitTools as Record<string, Record<string, unknown>>;
   }
 
-  const tools: Record<string, Record<string, unknown>> = {
-    filesystem: { enabled: envFlag("ACCOUNT_ENABLE_FILESYSTEM_TOOL", true) },
-    tasks: { enabled: envFlag("ACCOUNT_ENABLE_TASKS_TOOL", true) },
-  };
+  const tools: Record<string, Record<string, unknown>> = {};
 
-const tavilyEnabled = envFlag("ACCOUNT_ENABLE_TAVILY_TOOLS", true);
+  const tavilyEnabled = envFlag("ACCOUNT_ENABLE_TAVILY_TOOLS", true);
   if (tavilyEnabled) {
     const tavilyApiKey = optionalScriptEnv("ACCOUNT_TAVILY_API_KEY");
     if (tavilyApiKey) {

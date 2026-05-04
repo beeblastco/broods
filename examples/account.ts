@@ -23,16 +23,19 @@ const account = await createAccount(username, {
     provider: "google",
     modelId: "gemma-4-31b-it"
   },
-  // Specific the system prompt
-  systemPrompt: "You are a helpful assistant.",
-  // Disable all tools for this example
-  tools: { filesystem: { enabled: false }, tasks: { enabled: false } },
+  // Specify the agent behavior.
+  agent: {
+    system: "You are a helpful assistant.",
+  },
+  // Workspace defaults to disabled, so memory/filesystem/tasks are off here.
 });
 console.log("Created test account:", JSON.stringify(account));
 
 // Update account
 await updateAccount(account.accountSecret, {
-  systemPrompt: "You are a concise assistant. Keep answers brief.",
+  agent: {
+    system: "You are a concise assistant. Keep answers brief.",
+  },
 });
 console.log("Updated successfully");
 

@@ -28,9 +28,10 @@ describe("script account runtime config", () => {
           apiKey: "google-key",
         },
       },
+      workspace: {
+        enabled: true,
+      },
       tools: {
-        filesystem: { enabled: true },
-        tasks: { enabled: true },
         tavilySearch: { enabled: true, apiKey: "tavily-key" },
         tavilyExtract: { enabled: true, apiKey: "tavily-key" },
       },
@@ -46,7 +47,7 @@ describe("script account runtime config", () => {
       baseURL: "https://example.test/v1",
     });
     process.env.ACCOUNT_TOOLS_JSON = JSON.stringify({
-      tasks: { enabled: true },
+      tavilySearch: { enabled: true },
     });
 
     expect(createScriptAccountRuntimeConfig()).toEqual({
@@ -60,8 +61,11 @@ describe("script account runtime config", () => {
           baseURL: "https://example.test/v1",
         },
       },
+      workspace: {
+        enabled: true,
+      },
       tools: {
-        tasks: { enabled: true },
+        tavilySearch: { enabled: true },
       },
     });
   });

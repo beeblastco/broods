@@ -8,7 +8,7 @@ Authorization: Bearer <accountSecret>
 
 Direct API state is internally scoped as `acct:<accountId>:api:<key>`, so different accounts can reuse the same public `eventId` or `conversationKey` without colliding.
 
-Model behavior and tool access come from the account's encrypted config. If `config.tools` is omitted, direct API turns run without inline or provider-defined tools. See [`examples/example.account.config.json`](../../examples/example.account.config.json) for the supported config shape.
+Model behavior and tool access come from the account's encrypted config. Workspace tools come from `config.workspace.enabled`; search/research tools come from `config.tools`. See [`examples/account.config.example.json`](../examples/account.config.example.json) for the supported config shape.
 
 ## Health Probe: `GET /`
 

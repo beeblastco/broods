@@ -35,13 +35,14 @@ import {
   normalizeFilesystemNamespace,
 } from "../_shared/filesystem-namespace.ts";
 import { logError, logInfo } from "../_shared/log.ts";
+import { compactSessionContext, isCompactionSummaryMessage } from "./compaction.ts";
+import { pruneSessionMessages } from "./pruning.ts";
 
 const CONVERSATIONS_TABLE_NAME = requireEnv("CONVERSATIONS_TABLE_NAME");
 const PROCESSED_EVENTS_TABLE_NAME = requireEnv("PROCESSED_EVENTS_TABLE_NAME");
 const FILESYSTEM_BUCKET_NAME = requireEnv("FILESYSTEM_BUCKET_NAME");
 
-// Default to 30 messages of sliding context window and conversation lease TTL of 15 minutes.
-const SLIDING_CONTEXT_WINDOW = 30;
+// Default conversation lease TTL of 15 minutes.
 const CONVERSATION_LEASE_TTL_SECONDS = 15 * 60;
 
 const s3 = new S3Client({ region: process.env.AWS_REGION });
@@ -210,28 +211,64 @@ export class Session {
     return ephemeralSystem;
   }
 
-  async persistModelMessages(messages: ModelMessage[]): Promise<void> {
+  async persistModelMessages(messages: ModelMessage[]): Promise<string[]> {
+    const createdAtValues: string[] = [];
+
     for (const message of messages) {
       const storedEvent = createStoredEventFromModelMessage(message, this.eventId);
       if (!storedEvent) {
         continue;
       }
 
-      await this.persistStoredEvent(storedEvent);
+      createdAtValues.push(await this.persistStoredEvent(storedEvent));
     }
+
+    return createdAtValues;
   }
 
   async createTurnContext(ephemeralSystem: SystemModelMessage[] = []): Promise<TurnContextSnapshot> {
     const entries = await this.loadConversationEntries();
+    const activeEntries = projectActiveConversationEntries(entries);
     const promptContext = createPromptContextSnapshot(entries);
-    const messages = trimProjectedMessages(
-      projectEntriesToMessages(entries),
-      this.accountConfig.slidingContextWindow ?? SLIDING_CONTEXT_WINDOW,
-    );
+    let messages = projectEntriesToMessages(activeEntries);
+    const system = await this.buildSystemPromptParts(promptContext.messages, ephemeralSystem);
+
+    const compactionSummary = await compactSessionContext({
+      conversationKey: this.conversationKey,
+      system,
+      messages,
+      accountConfig: this.accountConfig,
+    }).catch((error) => {
+      logError("Session context compaction failed; continuing without compaction", {
+        conversationKey: this.conversationKey,
+        eventId: this.eventId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return null;
+    });
+
+    if (compactionSummary) {
+      const [summaryCursor] = await this.persistModelMessages([compactionSummary]);
+      const compactedPromptContext = {
+        cursor: summaryCursor ?? promptContext.cursor,
+        messages: [compactionSummary],
+      };
+      messages = messages.at(-1)?.role === "user" ? [messages.at(-1)!] : [];
+
+      return {
+        messages: pruneSessionMessages(messages, this.accountConfig),
+        system: await this.buildSystemPromptParts(compactedPromptContext.messages, ephemeralSystem),
+        ephemeralSystem,
+        hasPendingUserMessage: messages.at(-1)?.role === "user",
+        promptContext: compactedPromptContext,
+      };
+    }
+
+    messages = pruneSessionMessages(messages, this.accountConfig);
 
     return {
       messages,
-      system: await this.buildSystemPromptParts(promptContext.messages, ephemeralSystem),
+      system,
       ephemeralSystem,
       hasPendingUserMessage: messages.at(-1)?.role === "user",
       promptContext,
@@ -255,6 +292,12 @@ export class Session {
     ephemeralSystem: SystemModelMessage[] = [],
   ): Promise<SystemModelMessage[]> {
     const memoryContent = await this.loadMemoryFile();
+    const memorySystem: SystemModelMessage[] = this.isWorkspaceEnabled()
+      ? [{
+        role: "system",
+        content: formatMemorySystemPrompt(memoryContent),
+      }]
+      : [];
 
     return [
       {
@@ -263,26 +306,25 @@ export class Session {
       },
       {
         role: "system",
-        content: this.accountConfig.systemPrompt ?? DEFAULT_SYSTEM_PROMPT,
+        content: this.accountConfig.agent?.system ?? DEFAULT_SYSTEM_PROMPT,
       },
-      {
-        role: "system",
-        content: formatMemorySystemPrompt(memoryContent),
-      },
+      ...memorySystem,
       ...promptMessages,
       ...ephemeralSystem,
     ];
   }
 
-  private async persistStoredEvent(event: StoredConversationEvent): Promise<void> {
+  private async persistStoredEvent(event: StoredConversationEvent): Promise<string> {
+    const createdAt = this.nextCreatedAt();
     await dynamo.send(new PutItemCommand({
       TableName: CONVERSATIONS_TABLE_NAME,
       Item: {
         conversationKey: { S: this.conversationKey },
-        createdAt: { S: this.nextCreatedAt() },
+        createdAt: { S: createdAt },
         event: toAttributeValue(event),
       },
     }));
+    return createdAt;
   }
 
   private async refreshPromptContextSnapshot(
@@ -331,6 +373,10 @@ export class Session {
   }
 
   private async loadMemoryFile(): Promise<string | null> {
+    if (!this.isWorkspaceEnabled()) {
+      return null;
+    }
+
     const key = `${this.filesystemNamespace()}/MEMORY.md`;
 
     try {
@@ -367,12 +413,16 @@ export class Session {
   }
 
   filesystemNamespace(): string {
-    const logicalNamespace = this.accountConfig.memoryNamespace ?? this.conversationKey;
+    const logicalNamespace = this.accountConfig.workspace?.memory?.namespace ?? this.conversationKey;
     const scopedNamespace = this.accountId
       ? `${this.accountId}:${logicalNamespace}`
       : logicalNamespace;
 
     return normalizeFilesystemNamespace(scopedNamespace);
+  }
+
+  private isWorkspaceEnabled(): boolean {
+    return this.accountConfig.workspace?.enabled === true;
   }
 }
 
@@ -498,25 +548,49 @@ function projectEntriesToMessages(entries: StoredConversationEntry[]): ModelMess
 }
 
 function projectPromptContextMessages(entries: StoredConversationEntry[]): SystemModelMessage[] {
-  return entries.flatMap(({ event }) => event.message.role === "system" ? [event.message] : []);
+  const latestCompactionIndex = findLatestCompactionSummaryIndex(entries);
+
+  return entries.flatMap(({ event }, index) => {
+    if (event.message.role !== "system") {
+      return [];
+    }
+
+    if (isCompactionSummaryMessage(event.message)) {
+      return index === latestCompactionIndex ? [event.message] : [];
+    }
+
+    return latestCompactionIndex === -1 || index > latestCompactionIndex ? [event.message] : [];
+  });
 }
 
 function createPromptContextSnapshot(entries: StoredConversationEntry[]): PromptContextSnapshot {
+  const promptEntries = latestCompactionAwareEntries(entries);
+
   return {
-    cursor: entries.at(-1)?.createdAt ?? null,
-    messages: projectPromptContextMessages(entries),
+    cursor: promptEntries.at(-1)?.createdAt ?? entries.at(-1)?.createdAt ?? null,
+    messages: projectPromptContextMessages(promptEntries),
   };
 }
 
-function trimProjectedMessages(messages: ModelMessage[], slidingContextWindow: number): ModelMessage[] {
-  const windowStart = Math.max(0, messages.length - slidingContextWindow);
-  let recentHistory = messages.slice(windowStart);
+function projectActiveConversationEntries(entries: StoredConversationEntry[]): StoredConversationEntry[] {
+  const latestCompactionIndex = findLatestCompactionSummaryIndex(entries);
+  return latestCompactionIndex === -1 ? entries : entries.slice(latestCompactionIndex + 1);
+}
 
-  while (recentHistory.length > 0 && recentHistory[0]?.role !== "user") {
-    recentHistory = recentHistory.slice(1);
+function latestCompactionAwareEntries(entries: StoredConversationEntry[]): StoredConversationEntry[] {
+  const latestCompactionIndex = findLatestCompactionSummaryIndex(entries);
+  return latestCompactionIndex === -1 ? entries : entries.slice(latestCompactionIndex);
+}
+
+function findLatestCompactionSummaryIndex(entries: StoredConversationEntry[]): number {
+  for (let index = entries.length - 1; index >= 0; index -= 1) {
+    const message = entries[index]?.event.message;
+    if (message?.role === "system" && isCompactionSummaryMessage(message)) {
+      return index;
+    }
   }
 
-  return recentHistory;
+  return -1;
 }
 
 function isMissingS3Object(error: unknown): boolean {

@@ -15,7 +15,12 @@ import {
 describe("account config", () => {
   it("deletes config keys with null patch values and preserves redacted secrets", () => {
     const merged = mergeAccountConfig({
-      memoryNamespace: "support",
+      workspace: {
+        enabled: true,
+        memory: {
+          namespace: "support",
+        },
+      },
       channels: {
         telegram: {
           botToken: "real-token",
@@ -24,7 +29,11 @@ describe("account config", () => {
         },
       },
     }, {
-      memoryNamespace: null,
+      workspace: {
+        memory: {
+          namespace: null,
+        },
+      },
       channels: {
         telegram: {
           botToken: "********",
@@ -34,6 +43,10 @@ describe("account config", () => {
     });
 
     expect(merged).toEqual({
+      workspace: {
+        enabled: true,
+        memory: {},
+      },
       channels: {
         telegram: {
           botToken: "real-token",
@@ -44,14 +57,17 @@ describe("account config", () => {
   });
 
   it("validates runtime numeric config as positive bounded integers", () => {
-    expect(() => normalizeAccountConfig({ maxAgentIterations: 0 })).toThrow(
-      "config.maxAgentIterations must be an integer from 1 to 100",
+    expect(() => normalizeAccountConfig({ agent: { maxTurn: 0 } })).toThrow(
+      "config.agent.maxTurn must be an integer from 1 to 100",
     );
-    expect(() => normalizeAccountConfig({ slidingContextWindow: 1.5 })).toThrow(
-      "config.slidingContextWindow must be an integer from 1 to 200",
+    expect(() => normalizeAccountConfig({ session: { compaction: { maxContextLength: 1.5 } } })).toThrow(
+      "config.session.compaction.maxContextLength must be an integer from 1 to 500000",
     );
-    expect(() => normalizeAccountConfig({ memoryNamespace: "" })).toThrow(
-      "config.memoryNamespace must be a non-empty string",
+    expect(() => normalizeAccountConfig({ workspace: { memory: { namespace: "" } } })).toThrow(
+      "config.workspace.memory.namespace must be a non-empty string",
+    );
+    expect(() => normalizeAccountConfig({ workspace: { enabled: "yes" } })).toThrow(
+      "config.workspace.enabled must be a boolean",
     );
   });
 
@@ -148,7 +164,6 @@ describe("account config", () => {
   it("validates account tool config", () => {
     expect(normalizeAccountConfig({
       tools: {
-        filesystem: {},
         tavilySearch: {
           maxResults: 5,
           includeAnswer: false,
@@ -171,7 +186,6 @@ describe("account config", () => {
       },
     })).toEqual({
       tools: {
-        filesystem: {},
         tavilySearch: {
           maxResults: 5,
           includeAnswer: false,
@@ -196,15 +210,9 @@ describe("account config", () => {
 
     expect(() => normalizeAccountConfig({
       tools: {
-        unknownTool: { enabled: true },
+        unknownTool: { enabled: "yes" },
       },
     })).toThrow("config.tools.unknownTool is not a supported tool");
-
-    expect(() => normalizeAccountConfig({
-      tools: {
-        filesystem: { enabled: "yes" },
-      },
-    })).toThrow("config.tools.filesystem.enabled must be a boolean");
   });
 
   it("projects only runtime settings for agent sessions", () => {
@@ -225,10 +233,26 @@ describe("account config", () => {
           apiKey: "openai-key",
         },
       },
-      maxAgentIterations: 3,
-      memoryNamespace: "support",
+      agent: {
+        maxTurn: 3,
+        system: "custom system",
+      },
+      workspace: {
+        enabled: true,
+        memory: {
+          namespace: "support",
+        },
+      },
+      session: {
+        pruning: {
+          enabled: false,
+        },
+        compaction: {
+          enabled: true,
+          maxContextLength: 100000,
+        },
+      },
       tools: {
-        filesystem: { enabled: true },
         tavilySearch: { maxResults: 3 },
       },
       channels: {
@@ -254,10 +278,26 @@ describe("account config", () => {
           apiKey: "openai-key",
         },
       },
-      maxAgentIterations: 3,
-      memoryNamespace: "support",
+      agent: {
+        maxTurn: 3,
+        system: "custom system",
+      },
+      workspace: {
+        enabled: true,
+        memory: {
+          namespace: "support",
+        },
+      },
+      session: {
+        pruning: {
+          enabled: false,
+        },
+        compaction: {
+          enabled: true,
+          maxContextLength: 100000,
+        },
+      },
       tools: {
-        filesystem: { enabled: true },
         tavilySearch: { maxResults: 3 },
       },
     });

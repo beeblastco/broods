@@ -36,6 +36,7 @@ Key rules:
 - To add a new bot command: add an entry to the `commands` array in `functions/_shared/commands.ts` with aliases, description, and an execute function. Commands receive a `CommandContext` with a channel-agnostic `ChannelActions` interface — do not import channel-specific modules from commands.
 - Reply formatting uses `markdownToHtml()` from `functions/_shared/telegram.ts` for Telegram. New channels should implement their own formatting in their channel module if needed.
 - Core secrets are managed via SST: `AdminAccountSecret`, `AccountConfigEncryptionSecret`, `GoogleApiKey`, and `TavilyApiKey`. Channel/provider credentials live in each account's encrypted config when they are account-specific.
+- When add to fix or change things that may break the current. Don't implement the legacy migration function or care about legacy, notify the user about this and guide them to migrate themself.
 
 Remember:
 
