@@ -9,7 +9,7 @@ import {
   type ToolSet,
 } from "ai";
 import type { AccountConfig } from "../_shared/accounts.ts";
-import { logError, logInfo } from "../_shared/log.ts";
+import { logError, logInfo, logWarn } from "../_shared/log.ts";
 import { modelSettingsFromModelConfig, resolveConfiguredModel } from "./model.ts";
 import type { Session, TurnContextSnapshot } from "./session.ts";
 import { createTools } from "./tools/index.ts";
@@ -75,24 +75,45 @@ export async function runAgentLoop(
       failureText = errorText;
       logError("Agent loop failed", {
         conversationKey: session.conversationKey,
+        eventId: session.eventId,
         error: errorText,
       });
 
       await reply?.onErrorText(errorText).catch(() => { });
     },
-    onFinish: async ({ response, text }) => {
+    onFinish: async ({ response, text, finishReason, steps, toolCalls }) => {
       const finalText = text.trim();
+      const stepCount = steps.length;
+      const toolCallCount = toolCalls.length;
 
       try {
         await session.persistModelMessages(response.messages);
 
         if (!finalText) {
-          const errorText = "Model returned empty response";
+          if (didFail) {
+            logWarn("Model finished empty after a prior agent loop failure", {
+              conversationKey: session.conversationKey,
+              eventId: session.eventId,
+              failureText,
+              finishReason,
+              stepCount,
+              toolCallCount,
+            });
+            return;
+          }
+
+          const errorText = [
+            "Model returned empty response",
+            `(finishReason: ${finishReason}, steps: ${stepCount}, toolCalls: ${toolCallCount})`,
+          ].join(" ");
           didFail = true;
           failureText = errorText;
           logError(errorText, {
             conversationKey: session.conversationKey,
             eventId: session.eventId,
+            finishReason,
+            stepCount,
+            toolCallCount,
           });
           await reply?.onErrorText(errorText).catch(() => { });
           return;

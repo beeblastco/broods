@@ -15,18 +15,34 @@ const bedrockModelMock = mock((modelId: string) => ({ provider: "bedrock", model
 const createBedrockMock = mock((_options: unknown) => bedrockModelMock);
 const gatewayModelMock = mock((modelId: string) => ({ provider: "gateway", modelId }));
 const createGatewayMock = mock((_options: unknown) => gatewayModelMock);
+let streamTextScenario: "empty" | "error-then-empty" = "empty";
 
 const streamTextMock = mock((options: {
-  onFinish(args: { response: { messages: unknown[] }; text: string }): Promise<void>;
+  onError(args: { error: unknown }): Promise<void>;
+  onFinish(args: {
+    response: { messages: unknown[] };
+    text: string;
+    finishReason: string;
+    steps: unknown[];
+    toolCalls: unknown[];
+  }): Promise<void>;
   stopWhen?: unknown;
   tools?: unknown;
 }) => {
   let consumed = false;
   const fullStream = new ReadableStream({
     async start(controller) {
+      if (streamTextScenario === "error-then-empty") {
+        await options.onError({ error: new Error("provider failed") });
+        controller.enqueue({ type: "error", error: new Error("provider failed") });
+      }
+
       await options.onFinish({
         response: { messages: [] },
         text: "   ",
+        finishReason: "stop",
+        steps: [],
+        toolCalls: [],
       });
       controller.enqueue({ type: "finish", finishReason: "stop" });
       controller.close();
@@ -70,6 +86,7 @@ mock.module("ai", () => ({
 
 afterEach(() => {
   process.env = { ...ORIGINAL_ENV };
+  streamTextScenario = "empty";
   streamTextMock.mockClear();
   googleModelMock.mockClear();
   createGoogleMock.mockClear();
@@ -123,10 +140,56 @@ describe("runAgentLoop", () => {
     await stream.consumeStream();
 
     expect(stream.didFail()).toBe(true);
-    expect(stream.failureText()).toBe("Model returned empty response");
-    expect(onErrorText).toHaveBeenCalledWith("Model returned empty response");
+    expect(stream.failureText()).toBe("Model returned empty response (finishReason: stop, steps: 0, toolCalls: 0)");
+    expect(onErrorText).toHaveBeenCalledWith("Model returned empty response (finishReason: stop, steps: 0, toolCalls: 0)");
     expect(streamTextMock.mock.calls[0]?.[0]).not.toHaveProperty("tools");
     expect(streamTextMock.mock.calls[0]?.[0]).not.toHaveProperty("providerOptions");
+  });
+
+  it("keeps the provider error when the stream also finishes with empty text", async () => {
+    streamTextScenario = "error-then-empty";
+    installHarnessEnv();
+    const { runAgentLoop } = await import("../functions/harness-processing/harness.ts");
+    const onErrorText = mock(async () => { });
+
+    const stream = await runAgentLoop({
+      conversationKey: "direct:conversation",
+      eventId: "direct-event",
+      filesystemNamespace: () => "fs-test",
+      persistModelMessages: async () => [],
+      loadRefreshedSystemPromptParts: async () => ({
+        promptContext: { cursor: null, messages: [] },
+        system: [],
+      }),
+    } as never, {
+      messages: [{ role: "user", content: "hello" }],
+      system: [],
+      ephemeralSystem: [],
+      hasPendingUserMessage: true,
+      promptContext: { cursor: null, messages: [] },
+    }, {
+      provider: {
+        google: {
+          apiKey: "google-key",
+        },
+      },
+      model: {
+        provider: "google",
+        modelId: "gemini-test",
+      },
+    }, {
+      onFinalText: async () => {
+        throw new Error("unexpected final text");
+      },
+      onErrorText,
+    });
+
+    await stream.consumeStream();
+
+    expect(stream.didFail()).toBe(true);
+    expect(stream.failureText()).toBe("provider failed");
+    expect(onErrorText).toHaveBeenCalledTimes(1);
+    expect(onErrorText).toHaveBeenCalledWith("provider failed");
   });
 
   it("passes account model config into streamText", async () => {
