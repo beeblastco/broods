@@ -131,17 +131,28 @@ export async function getAgent(accountId: string, agentId: string): Promise<Agen
 }
 
 export async function listAgents(accountId: string): Promise<AgentRecord[]> {
-  const result = await dynamo.send(new QueryCommand({
-    TableName: agentConfigsTableName(),
-    KeyConditionExpression: "accountId = :accountId",
-    ExpressionAttributeValues: {
-      ":accountId": { S: accountId },
-    },
-  }));
+  const agents: AgentRecord[] = [];
+  let exclusiveStartKey: Record<string, AttributeValue> | undefined;
 
-  return (result.Items ?? [])
-    .map(itemToAgent)
-    .filter((agent): agent is AgentRecord => agent !== null);
+  do {
+    const result = await dynamo.send(new QueryCommand({
+      TableName: agentConfigsTableName(),
+      KeyConditionExpression: "accountId = :accountId",
+      ExpressionAttributeValues: {
+        ":accountId": { S: accountId },
+      },
+      ...(exclusiveStartKey ? { ExclusiveStartKey: exclusiveStartKey } : {}),
+    }));
+
+    agents.push(
+      ...(result.Items ?? [])
+        .map(itemToAgent)
+        .filter((agent): agent is AgentRecord => agent !== null),
+    );
+    exclusiveStartKey = result.LastEvaluatedKey;
+  } while (exclusiveStartKey);
+
+  return agents;
 }
 
 export async function updateAgent(
