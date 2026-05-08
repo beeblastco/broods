@@ -47,3 +47,4 @@ Remember:
 - `functions/harness-processing/harness.ts` owns the model/tool execution loop.
 - Existing custom tools live in `functions/harness-processing/tools/`.
 - There is no `phicks` stage for deployment, only `dev`. DO NOT put to `phicks` stage.
+- Update docs, examples, and tests file when changes somethings, refactoring something from the original code or added new features. Make sure that when writing the docs, only added in the suitable files, don’t add in every files, avoid writing too much, focus on visualization, diagrams. Remember to update diagrams as well.

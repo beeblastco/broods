@@ -68,8 +68,7 @@ curl -X POST "$ACCOUNT_SERVICE_URL/accounts" \
   -H "Content-Type: application/json" \
   -d '{
     "username": "company-a",
-    "description": "Customer support agent for Company A",
-    "config": {}
+    "description": "Company A account"
   }'
 ```
 
@@ -79,16 +78,16 @@ Store the returned `accountSecret`. Use it for:
 - `harness-processing` direct API calls.
 - `/async` and `/status/{eventId}` calls.
 
-Configure provider webhooks with the returned `accountId`:
+Create an agent with model, tool, channel, workspace, and skills configuration before sending runtime traffic. Configure provider webhooks with the returned `accountId` and `agentId`:
 
 ```text
-{AGENT_SERVICE_URL}/webhooks/{accountId}/telegram
-{AGENT_SERVICE_URL}/webhooks/{accountId}/github
-{AGENT_SERVICE_URL}/webhooks/{accountId}/slack
-{AGENT_SERVICE_URL}/webhooks/{accountId}/discord
+{AGENT_SERVICE_URL}/webhooks/{accountId}/{agentId}/telegram
+{AGENT_SERVICE_URL}/webhooks/{accountId}/{agentId}/github
+{AGENT_SERVICE_URL}/webhooks/{accountId}/{agentId}/slack
+{AGENT_SERVICE_URL}/webhooks/{accountId}/{agentId}/discord
 ```
 
-Then patch the account config with the provider credentials needed for each channel, plus any model/tool settings. See the example config file at [`examples/account.config.example.json`](../examples/account.config.example.json) for the supported config shape.
+Provider credentials for each channel, plus model/tool settings, live on agent config. See the example config file at [`examples/account.config.example.json`](../examples/account.config.example.json) for the supported config shape.
 
 ## CI/CD Account Setup
 

@@ -19,6 +19,7 @@ const createGatewayMock = mock((_options: unknown) => gatewayModelMock);
 const streamTextMock = mock((options: {
   onFinish(args: { response: { messages: unknown[] }; text: string }): Promise<void>;
   stopWhen?: unknown;
+  tools?: unknown;
 }) => {
   let consumed = false;
   const fullStream = new ReadableStream({
@@ -223,6 +224,103 @@ describe("runAgentLoop", () => {
     await stream.consumeStream();
 
     expect(streamTextMock.mock.calls[0]?.[0].stopWhen).toBeDefined();
+  });
+
+  it("exposes load_skill only when skills are enabled", async () => {
+    installHarnessEnv();
+    const { runAgentLoop } = await import("../functions/harness-processing/harness.ts");
+    const loadSkillPrompt = mock(async () => ({
+      skillPath: "acct_test/support-flow",
+      loadedPaths: ["SKILL.md"],
+      bytes: 120,
+    }));
+
+    const stream = await runAgentLoop({
+      accountId: "acct_test",
+      agentId: "agent_test",
+      conversationKey: "direct:conversation",
+      eventId: "direct-event",
+      filesystemNamespace: () => "fs-test",
+      persistModelMessages: async () => [],
+      loadSkillPrompt,
+      loadRefreshedSystemPromptParts: async () => ({
+        promptContext: { cursor: null, messages: [] },
+        system: [],
+      }),
+    } as never, {
+      messages: [{ role: "user", content: "hello" }],
+      system: [],
+      ephemeralSystem: [],
+      hasPendingUserMessage: true,
+      promptContext: { cursor: null, messages: [] },
+    }, {
+      skills: {
+        enabled: true,
+        allowed: ["acct_test/support-flow"],
+      },
+      provider: {
+        google: {
+          apiKey: "google-key",
+        },
+      },
+      model: {
+        provider: "google",
+        modelId: "gemini-test",
+      },
+    });
+
+    await stream.consumeStream();
+
+    const tools = streamTextMock.mock.calls[0]?.[0].tools as Record<string, { execute(input: unknown): Promise<unknown> }>;
+    expect(tools.load_skill).toBeDefined();
+    const loadSkillTool = tools.load_skill!;
+    await expect(loadSkillTool.execute({
+      skillPath: "acct_test/support-flow",
+      resources: [],
+    })).resolves.toEqual({
+      type: "text",
+      value: "Loaded skill acct_test/support-flow: SKILL.md",
+    });
+    expect(loadSkillPrompt).toHaveBeenCalledWith("acct_test/support-flow", []);
+  });
+
+  it("does not expose load_skill when no skills are configured", async () => {
+    installHarnessEnv();
+    const { runAgentLoop } = await import("../functions/harness-processing/harness.ts");
+
+    const stream = await runAgentLoop({
+      conversationKey: "direct:conversation",
+      eventId: "direct-event",
+      filesystemNamespace: () => "fs-test",
+      persistModelMessages: async () => [],
+      loadRefreshedSystemPromptParts: async () => ({
+        promptContext: { cursor: null, messages: [] },
+        system: [],
+      }),
+    } as never, {
+      messages: [{ role: "user", content: "hello" }],
+      system: [],
+      ephemeralSystem: [],
+      hasPendingUserMessage: true,
+      promptContext: { cursor: null, messages: [] },
+    }, {
+      skills: {
+        enabled: true,
+      },
+      provider: {
+        google: {
+          apiKey: "google-key",
+        },
+      },
+      model: {
+        provider: "google",
+        modelId: "gemini-test",
+      },
+    });
+
+    await stream.consumeStream();
+
+    expect(streamTextMock.mock.calls[0]?.[0]).not.toHaveProperty("tools");
   });
 
   it("creates an OpenAI provider from account provider config", async () => {

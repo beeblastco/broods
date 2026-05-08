@@ -55,12 +55,19 @@ export interface AccountConfig {
   session?: AccountSessionConfig;
   channels?: AccountChannelsConfig;
   tools?: AccountToolsConfig;
+  skills?: AccountSkillsConfig;
   [key: string]: unknown;
 }
 
 export interface AccountAgentConfig {
   maxTurn?: number;
   system?: string;
+  [key: string]: unknown;
+}
+
+export interface AccountSkillsConfig {
+  enabled?: boolean;
+  allowed?: string[];
   [key: string]: unknown;
 }
 
@@ -175,7 +182,6 @@ interface EncryptedAccountConfig {
 export interface CreateAccountInput {
   username: string;
   description?: string;
-  config?: unknown;
 }
 
 export interface UpdateAccountInput {
@@ -244,7 +250,7 @@ export async function createAccount(input: CreateAccountInput): Promise<{
     ...(normalizedInput.description ? { description: normalizedInput.description } : {}),
     secretHash: hashAccountSecret(accountSecret),
     status: DEFAULT_ACCOUNT_STATUS,
-    config: normalizeAccountConfig(normalizedInput.config),
+    config: {},
     createdAt: now,
     updatedAt: now,
   };
@@ -413,6 +419,7 @@ export function toRuntimeAccountConfig(config: AccountConfig): AccountConfig {
     workspace,
     session,
     tools,
+    skills,
   } = config;
 
   return normalizeAccountConfig({
@@ -422,6 +429,7 @@ export function toRuntimeAccountConfig(config: AccountConfig): AccountConfig {
     ...(workspace !== undefined ? { workspace } : {}),
     ...(session !== undefined ? { session } : {}),
     ...(tools !== undefined ? { tools } : {}),
+    ...(skills !== undefined ? { skills } : {}),
   });
 }
 
@@ -442,6 +450,7 @@ export function normalizeAccountConfig(value: unknown): AccountConfig {
   normalizeSessionConfig(config.session);
   normalizeChannelsConfig(config.channels);
   normalizeToolsConfig(config.tools);
+  normalizeSkillsConfig(config.skills);
 
   return config as AccountConfig;
 }
@@ -457,7 +466,6 @@ export function normalizeAccountConfigPatch(value: unknown): AccountConfigPatch 
 
 function normalizeCreateAccountInput(value: unknown): Required<Pick<CreateAccountInput, "username">> & {
   description?: string;
-  config?: unknown;
 } {
   if (!isPlainObject(value)) {
     throw new Error("Request body must include username");
@@ -465,10 +473,12 @@ function normalizeCreateAccountInput(value: unknown): Required<Pick<CreateAccoun
 
   const username = normalizeRequiredString(value.username, "username");
   const description = normalizeOptionalString(value.description, "description");
+  if ("config" in value) {
+    throw new Error("Account config is now created through /accounts/me/agents");
+  }
   return {
     username,
     ...(description ? { description } : {}),
-    config: value.config ?? {},
   };
 }
 
@@ -652,6 +662,19 @@ function normalizeToolsConfig(value: unknown): void {
   for (const [toolName, toolConfig] of Object.entries(value)) {
     normalizeToolConfig(toolName, toolConfig);
   }
+}
+
+function normalizeSkillsConfig(value: unknown): void {
+  if (value == null) {
+    return;
+  }
+  if (!isPlainObject(value)) {
+    throw new Error("config.skills must be an object");
+  }
+
+  const config = value as Record<string, unknown>;
+  assertOptionalBoolean(config.enabled, "config.skills.enabled");
+  assertOptionalStringArray(config.allowed, "config.skills.allowed");
 }
 
 function normalizeToolConfig(toolName: string, value: unknown): void {
@@ -945,7 +968,7 @@ function timingSafeStringEqual(actual: string, expected: string): boolean {
   return actualBytes.length === expectedBytes.length && timingSafeEqual(actualBytes, expectedBytes);
 }
 
-function decodeStoredAccountConfig(value: unknown): AccountConfig {
+export function decodeStoredAccountConfig(value: unknown): AccountConfig {
     if (isEncryptedAccountConfig(value)) {
         return decryptAccountConfig(value);
     }
@@ -953,7 +976,7 @@ function decodeStoredAccountConfig(value: unknown): AccountConfig {
     throw new Error("Stored account config must be encrypted");
 }
 
-function encryptAccountConfig(config: AccountConfig): EncryptedAccountConfig {
+export function encryptAccountConfig(config: AccountConfig): EncryptedAccountConfig {
     const iv = randomBytes(12);
     const cipher = createCipheriv(CONFIG_ENCRYPTION_ALGORITHM, accountConfigEncryptionKey(), iv);
     const plaintext = JSON.stringify(config);
@@ -1039,7 +1062,7 @@ function mergeConfigValue(existing: unknown, patch: unknown): unknown {
     return merged;
 }
 
-function redactAccountConfig(config: AccountConfig): AccountConfig {
+export function redactAccountConfig(config: AccountConfig): AccountConfig {
   return redactSecrets(config) as AccountConfig;
 }
 

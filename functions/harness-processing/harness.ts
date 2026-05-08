@@ -13,6 +13,7 @@ import { logError, logInfo } from "../_shared/log.ts";
 import { modelSettingsFromModelConfig, resolveConfiguredModel } from "./model.ts";
 import type { Session, TurnContextSnapshot } from "./session.ts";
 import { createTools } from "./tools/index.ts";
+import loadSkillTool from "./tools/load-skill.tool.ts";
 
 // Default max agent iterations to prevent looping or too long execution.
 const MAX_AGENT_ITERATIONS = 30;
@@ -40,6 +41,10 @@ export async function runAgentLoop(
       modelProviderName: configuredModel.providerName,
       modelProvider: configuredModel.provider,
     }, accountConfig),
+    // This part is to check if the skill is enabled and allowed to be used.
+    ...(accountConfig.skills?.enabled === true && 
+      (accountConfig.skills.allowed?.length ?? 0) > 0 
+      ? loadSkillTool(session) : {}), // Else return nothing
   } satisfies ToolSet;
   const enabledTools = Object.keys(tools).length > 0 ? tools : undefined;
   const modelSettings = modelSettingsFromModelConfig(accountConfig);

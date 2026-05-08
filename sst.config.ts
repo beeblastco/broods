@@ -59,10 +59,12 @@ export default $config({
       processedEvents: resourceName("processed-events", stage, region),
       asyncResults: resourceName("async-results", stage, region),
       accountConfigs: resourceName("account-configs", stage, region),
+      agentConfigs: resourceName("agent-configs", stage, region),
       accountSignupRateLimits: resourceName("account-signup-rate-limits", stage, region),
       harnessProcessing: resourceName("harness-processing", stage, region),
       accountManage: resourceName("account-manage", stage, region),
       memory: resourceName("memory", stage, region),
+      skills: resourceName("skills", stage, region),
     };
 
     const adminAccountSecret = new sst.Secret("AdminAccountSecret");
@@ -95,6 +97,20 @@ export default $config({
       transform: {
         table: {
           name: names.accountSignupRateLimits,
+        },
+      },
+    });
+
+    const agentConfigsTable = new sst.aws.Dynamo("AgentConfig", {
+      fields: {
+        accountId: "string",
+        agentId: "string",
+      },
+      primaryIndex: { hashKey: "accountId", rangeKey: "agentId" },
+      deletionProtection: stage === "production",
+      transform: {
+        table: {
+          name: names.agentConfigs,
         },
       },
     });
@@ -141,6 +157,7 @@ export default $config({
       },
     });
     const filesystemBucketArn = `arn:aws:s3:::${names.memory}`;
+    const skillsBucketArn = `arn:aws:s3:::${names.skills}`;
 
     const harnessProcessing = new sst.aws.Function("HarnessProcessing", {
       name: names.harnessProcessing,
@@ -161,9 +178,11 @@ export default $config({
         PROCESSED_EVENTS_TABLE_NAME: processedEventsTable.name,
         ASYNC_RESULTS_TABLE_NAME: asyncResultsTable.name,
         ACCOUNT_CONFIGS_TABLE_NAME: accountConfigsTable.name,
+        AGENT_CONFIGS_TABLE_NAME: agentConfigsTable.name,
         ACCOUNT_SECRET_INDEX_NAME: "SecretHashIndex",
         ACCOUNT_CONFIG_ENCRYPTION_SECRET: accountConfigEncryptionSecret.value,
         FILESYSTEM_BUCKET_NAME: names.memory,
+        SKILLS_BUCKET_NAME: names.skills,
       },
       permissions: [
         {
@@ -172,6 +191,13 @@ export default $config({
             "dynamodb:Query",
           ],
           resources: [accountConfigsTable.arn, $interpolate`${accountConfigsTable.arn}/index/SecretHashIndex`],
+        },
+        {
+          actions: [
+            "dynamodb:GetItem",
+            "dynamodb:Query",
+          ],
+          resources: [agentConfigsTable.arn],
         },
         {
           actions: [
@@ -206,6 +232,16 @@ export default $config({
           actions: ["s3:ListBucket"],
           resources: [filesystemBucketArn],
         },
+        {
+          actions: [
+            "s3:GetObject",
+          ],
+          resources: [`${skillsBucketArn}/*`],
+        },
+        {
+          actions: ["s3:ListBucket"],
+          resources: [skillsBucketArn],
+        },
       ],
     });
 
@@ -226,11 +262,13 @@ export default $config({
       logging: { format: "json", retention: "1 month" },
       environment: {
         ACCOUNT_CONFIGS_TABLE_NAME: accountConfigsTable.name,
+        AGENT_CONFIGS_TABLE_NAME: agentConfigsTable.name,
         ACCOUNT_SECRET_INDEX_NAME: "SecretHashIndex",
         CONVERSATIONS_TABLE_NAME: conversationsTable.name,
         PROCESSED_EVENTS_TABLE_NAME: processedEventsTable.name,
         ASYNC_RESULTS_TABLE_NAME: asyncResultsTable.name,
         FILESYSTEM_BUCKET_NAME: names.memory,
+        SKILLS_BUCKET_NAME: names.skills,
         ACCOUNT_SIGNUP_RATE_LIMIT_TABLE_NAME: accountSignupRateLimitTable.name,
         ACCOUNT_SIGNUP_RATE_LIMIT_PER_HOUR: "5",
         ADMIN_ACCOUNT_SECRET: adminAccountSecret.value,
@@ -247,6 +285,16 @@ export default $config({
             "dynamodb:UpdateItem",
           ],
           resources: [accountConfigsTable.arn, $interpolate`${accountConfigsTable.arn}/index/SecretHashIndex`],
+        },
+        {
+          actions: [
+            "dynamodb:DeleteItem",
+            "dynamodb:GetItem",
+            "dynamodb:PutItem",
+            "dynamodb:Query",
+            "dynamodb:UpdateItem",
+          ],
+          resources: [agentConfigsTable.arn],
         },
         {
           actions: [
@@ -271,6 +319,18 @@ export default $config({
         {
           actions: ["s3:ListBucket"],
           resources: [filesystemBucketArn],
+        },
+        {
+          actions: [
+            "s3:GetObject",
+            "s3:PutObject",
+            "s3:DeleteObject",
+          ],
+          resources: [`${skillsBucketArn}/*`],
+        },
+        {
+          actions: ["s3:ListBucket"],
+          resources: [skillsBucketArn],
         },
       ],
     });
@@ -314,15 +374,56 @@ export default $config({
       },
     });
 
+    const skillsBucket = new sst.aws.Bucket("Skills", {
+      versioning: true,
+      policy: [
+        {
+          effect: "deny",
+          principals: "*",
+          actions: [
+            "s3:GetObject",
+            "s3:PutObject",
+            "s3:DeleteObject",
+            "s3:ListBucket",
+          ],
+          conditions: [
+            {
+              test: "StringNotLikeIfExists",
+              variable: "aws:PrincipalArn",
+              values: [
+                harnessProcessing.nodes.role.arn,
+                $interpolate`arn:aws:sts::${AWS_ACCOUNT_ID}:assumed-role/${harnessProcessing.nodes.role.name}/*`,
+                accountManage.nodes.role.arn,
+                $interpolate`arn:aws:sts::${AWS_ACCOUNT_ID}:assumed-role/${accountManage.nodes.role.name}/*`,
+              ],
+            },
+          ],
+        },
+      ],
+      transform: {
+        bucket: {
+          bucket: names.skills,
+        },
+        publicAccessBlock: {
+          blockPublicAcls: true,
+          ignorePublicAcls: true,
+          blockPublicPolicy: true,
+          restrictPublicBuckets: true,
+        },
+      },
+    });
+
     return {
       agentServiceUrl: harnessProcessing.url,
       accountServiceUrl: accountManage.url,
       accountConfigsTableName: accountConfigsTable.name,
+      agentConfigsTableName: agentConfigsTable.name,
       accountSignupRateLimitTableName: accountSignupRateLimitTable.name,
       conversationsTableName: conversationsTable.name,
       processedEventsTableName: processedEventsTable.name,
       asyncResultsTableName: asyncResultsTable.name,
       filesystemBucketName: filesystemBucket.name,
+      skillsBucketName: skillsBucket.name,
     };
   },
 });

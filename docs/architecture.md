@@ -26,14 +26,17 @@ Runtime boundary:
 
 ```mermaid
 flowchart TD
-  Owner["Account owner"] -->|"POST /accounts<br/>PATCH /accounts/me"| ManageUrl["account-manage<br/>Function URL"]
+  Owner["Account owner"] -->|"POST /accounts<br/>agents + skills APIs"| ManageUrl["account-manage<br/>Function URL"]
   Admin["Admin"] -->|"Bearer AdminAccountSecret"| ManageUrl
   Direct["Direct API client"] -->|"Bearer accountSecret<br/>POST / or /async"| HarnessUrl["harness-processing<br/>Function URL"]
   Status["Status poller"] -->|"Bearer accountSecret<br/>GET /status/{eventId}"| HarnessUrl
-  Provider["Telegram / GitHub / Slack / Discord"] -->|"/webhooks/{accountId}/{channel}"| HarnessUrl
+  Provider["Telegram / GitHub / Slack / Discord"] -->|"/webhooks/{accountId}/{agentId}/{channel}"| HarnessUrl
 
-  ManageUrl --> AccountStore["DynamoDB: AccountConfig<br/>secretHash + encrypted config"]
+  ManageUrl --> AccountStore["DynamoDB: AccountConfig<br/>account metadata + secretHash"]
+  ManageUrl --> AgentStore["DynamoDB: AgentConfig<br/>encrypted agent configs"]
+  ManageUrl --> SkillStore["S3: Skills<br/>account-scoped skill bundles"]
   AccountStore -->|Authentication| HarnessUrl
+  AgentStore -->|agentId config lookup| HarnessUrl
   HarnessUrl --> Handler["handler.ts"]
   Handler --> Integrations["integrations.ts<br/>account auth + routing"]
   Integrations --> Session["session.ts<br/>conversation state + memory"]
@@ -43,17 +46,18 @@ flowchart TD
 
   Session --> Conversations["DynamoDB: Conversations"]
   Session --> Processed["DynamoDB: ProcessedEvents"]
-  AccountStore -->|config resolved before session<br/>passed into session for speed| Session
+  AgentStore -->|config resolved before session<br/>passed into session for speed| Session
   Handler --> AsyncResults["DynamoDB: AsyncResults"]
   Session --> Memory["S3: account-scoped MEMORY.md"]
+  Session --> SkillStore
   Tools --> Filesystem["S3: account-scoped filesystem/tasks"]
 ```
 
 ## Account Routing
 
-Every runtime request resolves an account before agent work begins.
+Every runtime request resolves an account and an account-owned agent before agent work begins.
 
-The diagrams show the logical ownership of runtime config. In code, `integrations.ts` resolves and decrypts the account once, then passes the runtime config into `handler.ts` and `session.ts` to avoid extra lookups during the turn. The runtime projection keeps model and tool config, but strips channel credentials before the agent loop.
+The diagrams show the logical ownership of runtime config. In code, `integrations.ts` resolves the account once, loads the selected agent, then passes the runtime config into `handler.ts` and `session.ts` to avoid extra lookups during the turn. The runtime projection keeps model, tool, workspace, and skills config, but strips channel credentials before the agent loop.
 
 ```mermaid
 flowchart TD
@@ -63,15 +67,16 @@ flowchart TD
   Hash --> Lookup["AccountConfig GSI<br/>SecretHashIndex"]
   Lookup --> Account["active AccountRecord"]
 
-  Webhook["POST /webhooks/{accountId}/{channel}"] --> Load["load account by accountId"]
-  Load --> ChannelConfig["read encrypted config<br/>channels.{channel}"]
+  Webhook["POST /webhooks/{accountId}/{agentId}/{channel}"] --> Load["load account by accountId"]
+  Load --> AgentLookup["load agent by agentId"]
+  AgentLookup --> ChannelConfig["read encrypted agent config<br/>channels.{channel}"]
   ChannelConfig --> Verify["verify provider-native signature/secret"]
   Verify --> Account
 
   Account --> Namespace["prefix event/conversation keys<br/>acct:{accountId}:..."]
 ```
 
-Root provider webhooks are not accepted. Provider webhook URLs must include the account id and channel name.
+Root provider webhooks are not accepted. Provider webhook URLs must include the `accountId`, `agentId`, and channel name.
 
 ## Account Management
 
@@ -81,14 +86,22 @@ sequenceDiagram
   participant M as account-manage
   participant A as AccountConfig table
 
-  U->>M: POST /accounts { username, description?, config? }
+  U->>M: POST /accounts { username, description? }
   M->>M: generate accountId + accountSecret
-  M->>A: store secretHash + encrypted config + metadata
+  M->>A: store secretHash + metadata
   M-->>U: account + one-time accountSecret
 
-  U->>M: PATCH /accounts/me (Bearer accountSecret)
+  U->>M: POST /accounts/me/agents (Bearer accountSecret)
+  M->>A: store encrypted agent config
+  M-->>U: agent + agentId
+
+  U->>M: POST /accounts/me/skills (Bearer accountSecret)
+  M->>A: validate + store skill bundle in S3
+  M-->>U: skillPath
+
+  U->>M: PATCH /accounts/me/agents/{agentId}
   M->>A: resolve secretHash
-  M->>A: deep-merge metadata/config
+  M->>A: deep-merge agent metadata/config
   M-->>U: redacted account view
 ```
 
@@ -106,7 +119,8 @@ flowchart TD
   Sync --> Auth["account bearer auth"]
   Async --> Auth
   Auth --> Parse["parse direct payload"]
-  Parse --> Session["session.ts<br/>claim + context"]
+  Parse --> AgentLookup["load selected agent"]
+  AgentLookup --> Session["session.ts<br/>claim + context + skills"]
   Session --> Agent["harness.ts<br/>configured streamText + tools"]
   Agent -->|"SSE chunks"| Caller
 
@@ -128,9 +142,9 @@ The async path stays inside `harness-processing`: `POST /async` stores a process
 
 ```mermaid
 flowchart TD
-  Provider["Provider webhook"] -->|"POST /webhooks/{accountId}/{channel}"| Url["harness-processing URL"]
-  Url --> Load["load account config"]
-  Load --> Adapter["build channel adapter from account config"]
+  Provider["Provider webhook"] -->|"POST /webhooks/{accountId}/{agentId}/{channel}"| Url["harness-processing URL"]
+  Url --> Load["load account + agent config"]
+  Load --> Adapter["build channel adapter from agent config"]
   Adapter --> Auth["verify provider-native auth"]
   Auth --> Parse["parse normalized channel message"]
   Parse --> Ack["immediate provider ACK"]
@@ -146,7 +160,7 @@ Customers talk to the provider bot/app owned by the account. They never receive 
 
 ## Memory and Filesystem Boundaries
 
-Workspace state is account-scoped and disabled unless `config.workspace.enabled` is true. When enabled, it turns on `MEMORY.md`, the filesystem tool, and the tasks tool together. By default workspace state is per conversation; setting `config.workspace.memory.namespace` lets multiple conversations in the same account share `MEMORY.md`, filesystem files, and task files.
+Workspace state is account/agent-scoped and disabled unless the selected agent has `config.workspace.enabled` true. When enabled, it turns on `MEMORY.md`, the filesystem tool, and the tasks tool together. By default workspace state is per conversation; setting `config.workspace.memory.namespace` lets multiple conversations for the same agent share `MEMORY.md`, filesystem files, and task files.
 
 ```mermaid
 flowchart LR
@@ -158,25 +172,29 @@ See [Memory and Session](memory-and-session.md) for the full model.
 
 ## Model and Tool Configuration
 
-Accounts control model selection and tool access through encrypted account config. `harness.ts` resolves `config.model`; `tools/index.ts` creates workspace tools when `config.workspace.enabled` is true and search/research tools from `config.tools`. See [Account management](account-management.md#account-config) for the supported config shape.
+Agents control model selection, channel credentials, optional skills, and tool access through encrypted agent config. `harness.ts` resolves `config.model`; `tools/index.ts` creates workspace tools when `config.workspace.enabled` is true and search/research tools from `config.tools`; `harness.ts` adds `load_skill` only when `config.skills.enabled` is true and `config.skills.allowed` has paths. See [Account management](account-management.md#agent-config) for the supported config shape.
 
 ## Code Ownership
 
-- [`functions/_shared/accounts.ts`](../functions/_shared/accounts.ts): account records, account secret hashing, bearer auth, encrypted config storage, config merge, and redaction.
+- [`functions/_shared/accounts.ts`](../functions/_shared/accounts.ts): account records, account secret hashing, bearer auth, and account metadata storage.
+- [`functions/_shared/agents.ts`](../functions/_shared/agents.ts): account-owned agent records and encrypted agent config storage.
+- [`functions/_shared/skills.ts`](../functions/_shared/skills.ts): skill bundle validation, GitHub URL sanitization, and skills S3 storage.
 - [`functions/account-manage/handler.ts`](../functions/account-manage/handler.ts): account CRUD and admin/self-management HTTP API.
 - [`functions/harness-processing/integrations.ts`](../functions/harness-processing/integrations.ts): account auth, direct request parsing, account webhook routing, and channel normalization.
 - [`functions/harness-processing/handler.ts`](../functions/harness-processing/handler.ts): SSE, async self-invocation, commands, leases, and reply flow.
-- [`functions/harness-processing/session.ts`](../functions/harness-processing/session.ts): event deduplication, conversation persistence, prompt context, and account-scoped memory loading.
+- [`functions/harness-processing/session.ts`](../functions/harness-processing/session.ts): event deduplication, conversation persistence, prompt context, and account/agent-scoped memory loading.
 - [`functions/harness-processing/status.ts`](../functions/harness-processing/status.ts): async direct API result persistence for polling.
 - [`functions/harness-processing/harness.ts`](../functions/harness-processing/harness.ts): configured model execution loop and inline tool orchestration.
 - [`functions/harness-processing/tools/index.ts`](../functions/harness-processing/tools/index.ts): static tool factory registry and account-configured tool selection.
 
 ## Storage Boundaries
 
-- `AccountConfig`: account metadata, account secret hash, and encrypted config payload.
+- `AccountConfig`: account metadata and account secret hash.
+- `AgentConfig`: account-owned encrypted runtime config payloads.
 - `Conversations`: normalized model messages by account-scoped `conversationKey`.
 - `ProcessedEvents`: dedup markers and short-lived conversation lease records.
 - `AsyncResults`: async direct API state and final results for `/status/{eventId}` polling.
-- S3 memory bucket: account-scoped `MEMORY.md`, filesystem, and task state.
+- S3 memory bucket: account/agent-scoped `MEMORY.md`, filesystem, and task state.
+- S3 skills bucket: account-scoped skill bundles under `<accountId>/<skill-name>`.
 
 Tool execution is inline in `harness-processing`. Async direct API requests use Lambda async self-invocation to run the same harness code in the background.

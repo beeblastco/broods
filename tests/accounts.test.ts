@@ -11,6 +11,10 @@ import {
   toRuntimeAccountConfig,
   type AccountRecord,
 } from "../functions/_shared/accounts.ts";
+import {
+  toPublicAgent,
+  type AgentRecord,
+} from "../functions/_shared/agents.ts";
 
 describe("account config", () => {
   it("deletes config keys with null patch values and preserves redacted secrets", () => {
@@ -215,6 +219,32 @@ describe("account config", () => {
     })).toThrow("config.tools.unknownTool is not a supported tool");
   });
 
+  it("validates account skills config", () => {
+    expect(normalizeAccountConfig({
+      skills: {
+        enabled: true,
+        allowed: ["acct_test/support-flow"],
+      },
+    })).toEqual({
+      skills: {
+        enabled: true,
+        allowed: ["acct_test/support-flow"],
+      },
+    });
+
+    expect(() => normalizeAccountConfig({
+      skills: {
+        enabled: "yes",
+      },
+    })).toThrow("config.skills.enabled must be a boolean");
+
+    expect(() => normalizeAccountConfig({
+      skills: {
+        allowed: "acct_test/support-flow",
+      },
+    })).toThrow("config.skills.allowed must be an array of strings");
+  });
+
   it("projects only runtime settings for agent sessions", () => {
     expect(toRuntimeAccountConfig({
       model: {
@@ -358,6 +388,33 @@ describe("account config", () => {
           secretAccessKey: "********",
         },
       },
+    });
+  });
+
+  it("uses explicit accountId and agentId fields in public responses", () => {
+    const account: AccountRecord = {
+      accountId: "acct_test",
+      username: "test",
+      secretHash: "hash",
+      status: "active",
+      config: {},
+      createdAt: "2026-05-01T00:00:00.000Z",
+      updatedAt: "2026-05-01T00:00:00.000Z",
+    };
+    const agent: AgentRecord = {
+      accountId: "acct_test",
+      agentId: "agent_test",
+      name: "test-agent",
+      status: "active",
+      config: {},
+      createdAt: "2026-05-01T00:00:00.000Z",
+      updatedAt: "2026-05-01T00:00:00.000Z",
+    };
+
+    expect(toPublicAccount(account)).toMatchObject({ accountId: "acct_test" });
+    expect(toPublicAgent(agent)).toMatchObject({
+      accountId: "acct_test",
+      agentId: "agent_test",
     });
   });
 });

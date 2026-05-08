@@ -137,7 +137,7 @@ async function handleStatusRequest(event: StatusInboundEvent): Promise<LambdaRes
 
   return jsonResponse(200, {
     eventId: event.publicEventId,
-    conversationKey: eventPublicConversationKey(result.conversationKey, event.accountId),
+    conversationKey: eventPublicConversationKey(result.conversationKey, event.accountId, event.agentId),
     status: result.status,
     ...(result.response ? { response: result.response } : {}),
     ...(result.error ? { error: result.error } : {}),
@@ -193,7 +193,7 @@ async function handleAsyncWorkerRequest(event: DirectInboundEvent): Promise<void
 }
 
 async function prepareDirectTurn(event: DirectInboundEvent): Promise<DirectTurn | null> {
-  const session = createSession(event.eventId, event.conversationKey, event.accountId, event.accountConfig);
+  const session = createSession(event.eventId, event.conversationKey, event.accountId, event.agentId, event.accountConfig);
   if (!(await claimSession(session))) {
     return null;
   }
@@ -209,7 +209,7 @@ async function prepareDirectTurn(event: DirectInboundEvent): Promise<DirectTurn 
 }
 
 async function handleChannelRequest(event: ChannelInboundEvent): Promise<void> {
-  const session = createSession(event.eventId, event.conversationKey, event.accountId, event.accountConfig ?? {});
+  const session = createSession(event.eventId, event.conversationKey, event.accountId, event.agentId, event.accountConfig ?? {});
   if (!(await claimSession(session))) {
     return;
   }
@@ -357,8 +357,8 @@ function acceptedAsyncResponse(statusUrl: string): LambdaResponse {
   return jsonResponse(202, { statusUrl });
 }
 
-function eventPublicConversationKey(conversationKey: string, accountId: string): string {
-  const accountPrefix = `acct:${accountId}:`;
+function eventPublicConversationKey(conversationKey: string, accountId: string, agentId?: string): string {
+  const accountPrefix = agentId ? `acct:${accountId}:agent:${agentId}:` : `acct:${accountId}:`;
   const unscoped = conversationKey.startsWith(accountPrefix)
     ? conversationKey.slice(accountPrefix.length)
     : conversationKey;

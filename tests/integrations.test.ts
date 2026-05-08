@@ -42,6 +42,16 @@ const TEST_ACCOUNT = {
   updatedAt: "2026-04-24T00:00:00.000Z",
 };
 
+const TEST_AGENT = {
+  accountId: "acct_test",
+  agentId: "agent_test",
+  name: "Test agent",
+  status: "active" as const,
+  config: TEST_ACCOUNT.config,
+  createdAt: "2026-04-24T00:00:00.000Z",
+  updatedAt: "2026-04-24T00:00:00.000Z",
+};
+
 describe("direct API ingress", () => {
 
   it("returns 401 when the account bearer token is missing", async () => {
@@ -150,6 +160,42 @@ describe("direct API ingress", () => {
 
     expect(response.statusCode).toBe(400);
     expect(responseJson(response)).toEqual({ error: "Request body must include eventId and conversationKey" });
+  });
+
+  it("requires an agentId for direct API requests", async () => {
+    const response = await routeIncomingEvent(createEvent({
+      agentId: undefined,
+      eventId: "one",
+      conversationKey: "alpha",
+      events: [{
+        role: "user",
+        content: [{ type: "text", text: "hello" }],
+      }],
+    }, {
+      authorization: "Bearer secret",
+    }, {
+      addDefaultAgentId: false,
+    }), createHandlers());
+
+    expect(response.statusCode).toBe(400);
+    expect(responseJson(response)).toEqual({ error: "Request body must include agentId" });
+  });
+
+  it("returns 404 when the requested agent does not exist", async () => {
+    const response = await routeIncomingEvent(createEvent({
+      agentId: "missing-agent",
+      eventId: "one",
+      conversationKey: "alpha",
+      events: [{
+        role: "user",
+        content: [{ type: "text", text: "hello" }],
+      }],
+    }, {
+      authorization: "Bearer secret",
+    }), createHandlers());
+
+    expect(response.statusCode).toBe(404);
+    expect(responseJson(response)).toEqual({ error: "Agent not found" });
   });
 
   it("rejects reserved direct event prefixes", async () => {
@@ -298,8 +344,9 @@ describe("direct API ingress", () => {
     if (directEvent == null) {
       throw new Error("Expected direct event to be handled");
     }
-    expect(directEvent.eventId).toBe("acct:acct_test:api:one");
+    expect(directEvent.eventId).toBe("acct:acct_test:agent:agent_test:api:one");
     expect(directEvent.accountId).toBe("acct_test");
+    expect(directEvent.agentId).toBe("agent_test");
     expect(directEvent.accountConfig).toEqual({
       model: {
         provider: "google",
@@ -318,7 +365,7 @@ describe("direct API ingress", () => {
       },
     });
     expect(directEvent.publicEventId).toBe("one");
-    expect(directEvent.conversationKey).toBe("acct:acct_test:api:alpha");
+    expect(directEvent.conversationKey).toBe("acct:acct_test:agent:agent_test:api:alpha");
     expect(directEvent.publicConversationKey).toBe("alpha");
     expect(directEvent.events).toEqual([
       {
@@ -361,8 +408,8 @@ describe("direct API ingress", () => {
 
     expect(response.statusCode).toBe(202);
     expect(handledEvents).toHaveLength(1);
-    expect(handledEvents[0]?.eventId).toBe("acct:acct_test:api:one");
-    expect(handledEvents[0]?.statusUrl).toBe("https://example.lambda-url.aws/status/one");
+    expect(handledEvents[0]?.eventId).toBe("acct:acct_test:agent:agent_test:api:one");
+    expect(handledEvents[0]?.statusUrl).toBe("https://example.lambda-url.aws/status/one?agentId=agent_test");
   });
 
   it("parses optional webhook config for direct API requests", async () => {
@@ -420,6 +467,7 @@ describe("direct API ingress", () => {
     }, {
       method: "GET",
       rawPath: "/status/one",
+      rawQueryString: "agentId=agent_test",
     }), createHandlers({
       handleStatusRequest: async (event) => {
         handledEvents.push(event);
@@ -432,7 +480,12 @@ describe("direct API ingress", () => {
     }));
 
     expect(response.statusCode).toBe(200);
-    expect(handledEvents).toEqual([{ accountId: "acct_test", eventId: "acct:acct_test:api:one", publicEventId: "one" }]);
+    expect(handledEvents).toEqual([{
+      accountId: "acct_test",
+      agentId: "agent_test",
+      eventId: "acct:acct_test:agent:agent_test:api:one",
+      publicEventId: "one",
+    }]);
   });
 });
 
@@ -463,6 +516,7 @@ async function routeIncomingEvent(
       headers.authorization === "Bearer secret"
         ? { kind: "account", account: TEST_ACCOUNT }
         : null,
+    agentLoader: async (_accountId, agentId) => agentId === TEST_AGENT.agentId ? TEST_AGENT : null,
   });
 
   const response = await router(event, handlers);
@@ -475,17 +529,26 @@ function createEvent(
   options: Partial<{
     method: string;
     rawPath: string;
+    rawQueryString: string;
     rawBody: string;
     isBase64Encoded: boolean;
+    addDefaultAgentId: boolean;
   }> = {},
 ): LambdaFunctionURLEvent {
   const rawPath = options.rawPath ?? "/";
+  const normalizedBody = options.addDefaultAgentId !== false &&
+    body &&
+    typeof body === "object" &&
+    !Array.isArray(body) &&
+    !("agentId" in body)
+    ? { agentId: "agent_test", ...body as Record<string, unknown> }
+    : body;
 
   return {
     version: "2.0",
     routeKey: "$default",
     rawPath,
-    rawQueryString: "",
+    rawQueryString: options.rawQueryString ?? "",
     headers,
     requestContext: {
       accountId: "123456789012",
@@ -505,7 +568,7 @@ function createEvent(
       time: "24/Apr/2026:00:00:00 +0000",
       timeEpoch: Date.now(),
     },
-    body: options.rawBody ?? JSON.stringify(body),
+    body: options.rawBody ?? JSON.stringify(normalizedBody),
     isBase64Encoded: options.isBase64Encoded ?? false,
   };
 }

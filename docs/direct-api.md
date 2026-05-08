@@ -6,9 +6,9 @@ The direct API is account-authenticated. Create an account through `account-mana
 Authorization: Bearer <accountSecret>
 ```
 
-Direct API state is internally scoped as `acct:<accountId>:api:<key>`, so different accounts can reuse the same public `eventId` or `conversationKey` without colliding.
+Direct API state is internally scoped as `acct:<accountId>:agent:<agentId>:api:<key>`, so different accounts and agents can reuse the same public `eventId` or `conversationKey` without colliding.
 
-Model behavior and tool access come from the account's encrypted config. Workspace tools come from `config.workspace.enabled`; search/research tools come from `config.tools`. See [`examples/account.config.example.json`](../examples/account.config.example.json) for the supported config shape.
+Model behavior and tool access come from the selected agent's encrypted config. Workspace tools come from `config.workspace.enabled`; search/research tools come from `config.tools`; skills are optional and load only when `config.skills.enabled` is true and `config.skills.allowed` has paths. See [`examples/account.config.example.json`](../examples/account.config.example.json) for the supported agent config shape.
 
 ## Health Probe: `GET /`
 
@@ -27,6 +27,7 @@ POST to the deployed `harness-processing` Function URL with Vercel AI SDK-style 
 
 ```json
 {
+  "agentId": "agent_...",
   "eventId": "unique-id-for-dedup",
   "conversationKey": "conversation-identifier",
   "events": [
@@ -42,12 +43,14 @@ POST to the deployed `harness-processing` Function URL with Vercel AI SDK-style 
 
 - `eventId` is used for account-scoped deduplication.
 - `conversationKey` selects the account-scoped persisted direct conversation.
+- `agentId` selects the account-owned agent config to run.
 - `events` may contain `user` messages and one-off `system` messages only.
 
 Direct API callers can inject ephemeral `system` events:
 
 ```json
 {
+  "agentId": "agent_...",
   "eventId": "unique-id-for-dedup",
   "conversationKey": "conversation-identifier",
   "events": [
@@ -76,6 +79,7 @@ curl -N "$AGENT_SERVICE_URL" \
   -H "Content-Type: application/json" \
   -H "Accept: text/event-stream" \
   -d '{
+    "agentId": "agent_...",
     "eventId": "unique-id-for-dedup",
     "conversationKey": "conversation-identifier",
     "events": [
@@ -95,6 +99,7 @@ The sync API can send a callback after generation completes. Include `webhookUrl
 
 ```json
 {
+  "agentId": "agent_...",
   "eventId": "unique-id-for-dedup",
   "conversationKey": "conversation-identifier",
   "webhookUrl": "https://example.com/agent-callback",
@@ -117,7 +122,7 @@ POST the same request shape to `/async` when the caller should not hold an SSE c
 
 ```json
 {
-  "statusUrl": "https://your-function-url.lambda-url.../status/unique-id-for-dedup"
+  "statusUrl": "https://your-function-url.lambda-url.../status/unique-id-for-dedup?agentId=agent_..."
 }
 ```
 
@@ -125,6 +130,7 @@ The async worker runs the same account-scoped harness code in the background. If
 
 ```json
 {
+  "agentId": "agent_...",
   "eventId": "unique-id-for-dedup",
   "conversationKey": "conversation-identifier",
   "response": "final response text",
@@ -147,7 +153,7 @@ bun examples/stream.ts
 bun examples/async.ts
 ```
 
-## Status API: `GET /status/{eventId}`
+## Status API: `GET /status/{eventId}?agentId={agentId}`
 
 Status requests require the same account bearer header. Responses are backed by the account-scoped `AsyncResults` DynamoDB record.
 

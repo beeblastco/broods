@@ -2,7 +2,7 @@
  * Example Stream SSE with tools
  */
 
-import { createAccount, deleteAccount, streamSSE } from "./utils.ts";
+import { createAccount, createAgent, deleteAccount, streamSSE } from "./utils.ts";
 
 // Define all the API keys and url required
 const googleApiKey = process.env.ACCOUNT_GOOGLE_API_KEY!;
@@ -11,8 +11,9 @@ const tavilyApiKey = process.env.ACCOUNT_TAVILY_API_KEY!;
 // Test username account
 const username = `stream-${Date.now()}`;
 
-// Create account with tools enabled
-const account = await createAccount(username, {
+// Create account and an agent with tools enabled
+const account = await createAccount(username);
+const agent = await createAgent(account.accountSecret, "Search assistant", {
   // Add Google API key to the google provider.
   provider: {
     google: {
@@ -41,10 +42,12 @@ const account = await createAccount(username, {
   },
 });
 console.log("Created test account:", JSON.stringify(account));
+console.log("Created test agent:", JSON.stringify(agent));
 
 try {
   // Stream SSE response
   const body = {
+    agentId: agent.agent.agentId,
     eventId: `test-${Date.now()}`,
     conversationKey: `test-${Date.now()}`,
     events: [

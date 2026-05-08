@@ -7,9 +7,10 @@ This page explains where conversation history, `MEMORY.md`, task files, and file
 ```mermaid
 flowchart TD
   Request["Direct API / Async API / Webhook"] --> Account["Account"]
-  Account --> Conversation["Conversation"]
+  Account --> Agent["Agent"]
+  Agent --> Conversation["Conversation"]
   Conversation --> History["DynamoDB conversation history"]
-  Account --> MemoryChoice["Memory namespace choice"]
+  Agent --> MemoryChoice["Memory namespace choice  (Workspace)"]
   MemoryChoice --> Memory["S3 MEMORY.md"]
   MemoryChoice --> Files["S3 filesystem + tasks"]
 ```
@@ -17,11 +18,11 @@ flowchart TD
 There are two separate things:
 
 - Conversation history: the chat messages for one conversation.
-- Workspace state: `MEMORY.md`, task files, and files written by the filesystem tool. Workspace state exists only when `config.workspace.enabled` is true.
+- Workspace state: `MEMORY.md`, task files, and files written by the filesystem tool. Workspace state exists only when the selected agent has `config.workspace.enabled` true.
 
 ## Default: One Memory Per Conversation
 
-If `config.workspace.enabled` is true and the account does not set `workspace.memory.namespace`, every conversation gets its own memory, tasks, and filesystem.
+If the selected agent has `config.workspace.enabled` true and does not set `workspace.memory.namespace`, every conversation gets its own memory, tasks, and filesystem.
 
 ```mermaid
 flowchart LR
@@ -34,7 +35,7 @@ Use this when each chat, issue, thread, or direct API conversation should rememb
 
 ## Shared: One Memory For Many Conversations
 
-Set `config.workspace.memory.namespace` when multiple conversations should share the same memory, tasks, and files.
+Set `config.workspace.memory.namespace` on the agent when multiple conversations should share the same memory, tasks, and files.
 
 ```json
 {
@@ -60,12 +61,12 @@ Use this when one account should have a shared knowledge/workspace across channe
 
 ## Account Isolation
 
-The namespace is always scoped by account.
+The namespace is always scoped by account and agent.
 
 ```mermaid
 flowchart LR
-  A["Company A<br/>workspace.memory.namespace=support"] --> AM["Company A support memory"]
-  B["Company B<br/>workspace.memory.namespace=support"] --> BM["Company B support memory"]
+  A["Company A / Agent 1<br/>workspace.memory.namespace=support"] --> AM["Company A Agent 1 support memory"]
+  B["Company A / Agent 2<br/>workspace.memory.namespace=support"] --> BM["Company A Agent 2 support memory"]
 ```
 
 So two accounts can both use `"support"` without sharing data.
@@ -89,15 +90,15 @@ The filesystem and tasks tools do not need separate `tools` entries. They are en
 Session history is managed before each model turn:
 
 - Pruning is enabled by default through `session.pruning.enabled`; it removes older reasoning/tool-call clutter from the model-visible context without changing persisted history.
-- Compaction is disabled by default through `session.compaction.enabled`; when enabled, it uses the account's configured model to summarize older history once the serialized context character count exceeds `session.compaction.maxContextLength`.
+- Compaction is disabled by default through `session.compaction.enabled`; when enabled, it uses the selected agent's configured model to summarize older history once the serialized context character count exceeds `session.compaction.maxContextLength`.
 - Compaction persists a system summary, keeps the latest user message active, and includes prior compaction summaries when compacting again.
 
 ## Configure It
 
-Set or update it through account service.
+Set or update workspace/session config on the agent, not the account.
 
 ```bash
-curl -X PATCH "$ACCOUNT_SERVICE_URL/accounts/me" \
+curl -X PATCH "$ACCOUNT_SERVICE_URL/accounts/me/agents/$AGENT_ID" \
   -H "Authorization: Bearer $ACCOUNT_SECRET" \
   -H "Content-Type: application/json" \
   -d '{
@@ -115,7 +116,7 @@ curl -X PATCH "$ACCOUNT_SERVICE_URL/accounts/me" \
 Set the namespace to `null` when you want memory to go back to per-conversation behavior. Set `workspace.enabled` to `false` to disable memory, filesystem, and tasks.
 
 ```bash
-curl -X PATCH "$ACCOUNT_SERVICE_URL/accounts/me" \
+curl -X PATCH "$ACCOUNT_SERVICE_URL/accounts/me/agents/$AGENT_ID" \
   -H "Authorization: Bearer $ACCOUNT_SECRET" \
   -H "Content-Type: application/json" \
   -d '{
@@ -133,14 +134,14 @@ curl -X PATCH "$ACCOUNT_SERVICE_URL/accounts/me" \
 
 ```mermaid
 flowchart TD
-  Integrations["integrations.ts<br/>account-scoped conversation keys"] --> Session["session.ts<br/>chooses namespace"]
+  Integrations["integrations.ts<br/>account + agent scoped conversation keys"] --> Session["session.ts<br/>chooses namespace"]
   Session --> Harness["harness.ts<br/>passes namespace to tools"]
   Harness --> Tools["filesystem.tool.ts<br/>tasks.tool.ts"]
 ```
 
 Key files:
 
-- [`integrations.ts`](../functions/harness-processing/integrations.ts): builds account-scoped conversation keys.
-- [`session.ts`](../functions/harness-processing/session.ts): chooses per-conversation or shared memory namespace.
+- [`integrations.ts`](../functions/harness-processing/integrations.ts): builds account + agent scoped conversation keys.
+- [`session.ts`](../functions/harness-processing/session.ts): chooses per-conversation or shared memory namespace from the selected agent config.
 - [`filesystem.tool.ts`](../functions/harness-processing/tools/filesystem.tool.ts): stores files under that namespace.
 - [`tasks.tool.ts`](../functions/harness-processing/tools/tasks.tool.ts): stores task files under that namespace.

@@ -9,10 +9,10 @@ Experimental serverless multi-account AI chatbot and agent harness on AWS Lambda
 
 The deployed architecture uses two public Lambda Function URLs:
 
-- `account-manage`: creates accounts, rotates account API secrets, manages account metadata/configuration, and deletes account-scoped runtime data when an account is deleted.
+- `account-manage`: creates accounts, rotates account API secrets, manages account-owned agents and skills, and deletes account-scoped runtime data when an account is deleted.
 - `harness-processing`: handles account-authenticated direct API traffic, async work, status polling, and account-scoped Telegram, GitHub, Slack, and Discord webhooks.
 
-The design goal is simple infrastructure for low-volume multi-tenant usage: Bun on Lambda, SST for infra, DynamoDB for account/conversation/status state, S3 for workspace-backed memory/files/tasks, and the Vercel AI SDK for the agent loop.
+The design goal is simple infrastructure for low-volume multi-tenant usage: Bun on Lambda, SST for infra, DynamoDB for account/agent/conversation/status state, S3 for workspace-backed memory/files/tasks and skill bundles, and the Vercel AI SDK for the agent loop.
 
 ## Overview
 
@@ -21,17 +21,20 @@ The design goal is simple infrastructure for low-volume multi-tenant usage: Bun 
 - Model SDK: Vercel AI SDK `ai` with account-configured Google, OpenAI, Bedrock, and Gateway providers.
 - Persistence: DynamoDB + S3.
 - Streaming: SSE for sync direct API callers only.
-- Account config: stored in DynamoDB with encrypted config payloads and hashed account API secrets.
+- Agent config: stored in DynamoDB with encrypted config payloads; account API secrets are hashed.
 - Public entrypoints: `account-manage` and `harness-processing` Lambda Function URLs.
 
 ```mermaid
 flowchart LR
   Admin["Account owner / admin"] -->|"create + configure account"| Manage["account-manage<br/>Function URL"]
   Client["Direct API client"] -->|"Bearer accountSecret"| Harness["harness-processing<br/>Function URL"]
-  Provider["Telegram / GitHub / Slack / Discord"] -->|"/webhooks/{accountId}/{channel}"| Harness
+  Provider["Telegram / GitHub / Slack / Discord"] -->|"/webhooks/{accountId}/{agentId}/{channel}"| Harness
 
   Manage --> Accounts["DynamoDB<br/>AccountConfig"]
+  Manage --> Agents["DynamoDB<br/>AgentConfig"]
+  Manage --> Skills["S3<br/>Skills"]
   Harness --> Accounts
+  Harness --> Agents
   Harness --> Conversations["DynamoDB<br/>Conversations / ProcessedEvents / AsyncResults"]
   Harness --> Memory["S3<br/>account-scoped MEMORY.md + filesystem + tasks"]
   Harness --> Model["Configured model<br/>Vercel AI SDK"]
@@ -61,7 +64,7 @@ bun run deploy
 
 After deploy, create an account through the `accountServiceUrl` output. The response returns an `accountSecret` once. Use that secret as `Authorization: Bearer <accountSecret>` for direct API calls and account self-management.
 
-Accounts control model settings and tool access through encrypted `config`. See [Account management](docs/account-management.md#account-config) for the supported config shape.
+Create an account, then create an agent with runtime `config`. Direct and async calls include `agentId`. See [Account management](docs/account-management.md#agents) for the supported flow.
 
 ## Common Commands
 
@@ -81,8 +84,10 @@ bun run discord:sync
 
 ## Main Code Paths
 
-- [`functions/_shared/accounts.ts`](functions/_shared/accounts.ts): account records, bearer auth, encrypted config storage, account secret hashing, and public redaction.
-- [`functions/account-manage/handler.ts`](functions/account-manage/handler.ts): account CRUD, account secret rotation, and account metadata/config updates.
+- [`functions/_shared/accounts.ts`](functions/_shared/accounts.ts): account records, bearer auth, account secret hashing, and account metadata storage.
+- [`functions/_shared/agents.ts`](functions/_shared/agents.ts): account-owned agent records and encrypted runtime config storage.
+- [`functions/_shared/skills.ts`](functions/_shared/skills.ts): skill validation, GitHub import sanitization, and S3 skill storage.
+- [`functions/account-manage/handler.ts`](functions/account-manage/handler.ts): account CRUD, account secret rotation, agent config APIs, and skill APIs.
 - [`functions/harness-processing/integrations.ts`](functions/harness-processing/integrations.ts): account auth, direct API parsing, account webhook routing, and channel normalization.
 - [`functions/harness-processing/handler.ts`](functions/harness-processing/handler.ts): SSE, async self-invocation, commands, leases, and reply orchestration.
 - [`functions/harness-processing/session.ts`](functions/harness-processing/session.ts): conversation persistence, deduplication, leases, prompt context, context management, and workspace memory loading.

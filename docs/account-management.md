@@ -1,14 +1,14 @@
 # Account Management
 
-Accounts are the configuration boundary for the harness. Each account has:
+Accounts are the tenant and authentication boundary for the harness. Runtime behavior lives on account-owned agents, so one account can run multiple agents with separate model, tool, channel, workspace, and skills configuration.
 
-- `accountId`: generated stable id used in webhook URLs.
+- `accountId`: generated stable identifier used in webhook URLs.
 - `username`: required human-readable account name.
 - `description`: optional purpose/usage note.
 - `accountSecret`: one-time API secret returned on create or rotation.
-- `config`: encrypted account configuration used by `harness-processing`.
+- `agents`: encrypted runtime configurations created after account signup.
 
-Account API secrets are stored as hashes. Provider tokens and webhook secrets must be usable at runtime, so they are stored inside the encrypted account config payload.
+Account API secrets are stored as hashes. Provider tokens and webhook secrets must be usable at runtime, so they are stored inside encrypted agent config payloads.
 
 ## Create Account
 
@@ -19,7 +19,7 @@ curl -X POST "$ACCOUNT_SERVICE_URL/accounts" \
   -H "Content-Type: application/json" \
   -d '{
     "username": "company-a",
-    "description": "Customer support agent for Company A"
+    "description": "Company A account"
   }'
 ```
 
@@ -30,11 +30,7 @@ Response:
   "account": {
     "accountId": "acct_...",
     "username": "company-a",
-    "description": "Customer support agent for Company A",
-    "status": "active",
-    "config": {},
-    "createdAt": "2026-05-01T00:00:00.000Z",
-    "updatedAt": "2026-05-01T00:00:00.000Z"
+    "description": "Company A account"
   },
   "accountSecret": "fp_acct_..."
 }
@@ -42,7 +38,7 @@ Response:
 
 Store `accountSecret` securely. It is not recoverable; rotate it if lost.
 
-If `config` is omitted, the stored config is `{}`. Runtime requests will fail until `config.model.provider`, `config.model.modelId`, and the matching `config.provider.<provider>.apiKey` are configured.
+Account creation accepts identity only. Create at least one agent before sending runtime traffic.
 
 ## Manage Own Account
 
@@ -58,34 +54,102 @@ Endpoints:
 - `PATCH /accounts/me`
 - `POST /accounts/me/rotate-secret`
 - `DELETE /accounts/me`
+- `POST /accounts/me/agents`
+- `GET /accounts/me/agents`
+- `GET|PATCH|DELETE /accounts/me/agents/{agentId}`
+- `POST /accounts/me/skills`
+- `GET /accounts/me/skills`
+- `GET|PUT|DELETE /accounts/me/skills/{skillName}`
 
-Patch account metadata or config:
+Patch account metadata:
 
 ```bash
 curl -X PATCH "$ACCOUNT_SERVICE_URL/accounts/me" \
   -H "Authorization: Bearer $ACCOUNT_SECRET" \
   -H "Content-Type: application/json" \
   -d '{
-    "description": "Updated account purpose",
+    "description": "Updated account purpose"
+  }'
+```
+
+Agent config patch behavior is a deep merge. Redacted secret placeholders returned by reads (`********`) preserve the existing stored secret if sent back. Set a config field to `null` to delete it, for example `"workspace": { "memory": { "namespace": null } }`.
+
+## Agents
+
+Create an agent after creating the account:
+
+```bash
+curl -X POST "$ACCOUNT_SERVICE_URL/accounts/me/agents" \
+  -H "Authorization: Bearer $ACCOUNT_SECRET" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "support-agent",
+    "description": "Customer support agent",
     "config": {
-      "workspace": {
-        "enabled": true,
-        "memory": {
-          "namespace": "support"
-        }
-      },
-      "channels": {
-        "telegram": {
-          "botToken": "...",
-          "webhookSecret": "...",
-          "allowedChatIds": [123456789]
-        }
-      }
+      "provider": { "google": { "apiKey": "..." } },
+      "model": { "provider": "google", "modelId": "gemini-3-flash" },
+      "agent": { "system": "You are a helpful support assistant." }
     }
   }'
 ```
 
-Patch behavior is a deep merge. Redacted secret placeholders returned by reads (`********`) preserve the existing stored secret if sent back. Set a config field to `null` to delete it, for example `"workspace": { "memory": { "namespace": null } }`.
+Response:
+
+```json
+{
+  "agent": {
+    "accountId": "acct_...",
+    "agentId": "agent_...",
+    "name": "support-agent",
+    "description": "Customer support agent"
+  }
+}
+```
+
+Direct and async runtime requests must include that `agentId`; channel webhook URLs also include it.
+
+## Skills
+
+Skills are account-scoped bundles stored in the skills S3 bucket under `<accountId>/<skill-name>`. Create a JSON skill:
+
+```bash
+curl -X POST "$ACCOUNT_SERVICE_URL/accounts/me/skills" \
+  -H "Authorization: Bearer $ACCOUNT_SECRET" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "source": "json",
+    "name": "support-flow",
+    "description": "Handles support triage. Use when classifying customer support requests.",
+    "content": "# Support Flow\n\nClassify urgency, product area, and next action."
+  }'
+```
+
+Response:
+
+```json
+{
+  "skill": {
+    "skillPath": "acct_.../support-flow",
+    "name": "support-flow",
+    "description": "Handles support triage. Use when classifying customer support requests."
+  }
+}
+```
+
+Add that `skillPath` to an agent with:
+
+```json
+{
+  "config": {
+    "skills": {
+      "enabled": true,
+      "allowed": ["acct_.../support-flow"]
+    }
+  }
+}
+```
+
+Skill uploads also support JSON base64 file bundles and public GitHub tree URLs. Every bundle must include a root `SKILL.md` with `name` and `description` YAML frontmatter. Agent create/update returns `404` for missing same-account skill paths and `401` for skill paths owned by a different account.
 
 ## Admin Account
 
@@ -107,6 +171,8 @@ The admin account is virtual; it is not a normal account record.
 - processed event dedupe rows and conversation leases
 - async direct API status rows
 - current account filesystem, memory, and task objects
+- account-owned agent records
+- account-owned skill objects
 
 Response:
 
@@ -117,14 +183,16 @@ Response:
     "conversationsDeleted": 12,
     "processedEventsDeleted": 14,
     "asyncResultsDeleted": 2,
-    "filesystemObjectsDeleted": 8
+    "filesystemObjectsDeleted": 8,
+    "agentsDeleted": 1,
+    "skillObjectsDeleted": 4
   }
 }
 ```
 
-## Account Config
+## Agent Config
 
-The account config is a JSON object passed via `PATCH /accounts/me` (deep-merged). See [`examples/account.config.example.json`](../examples/account.config.example.json) for the full working example.
+Agent config is a JSON object passed via agent create/update. See [`examples/account.config.example.json`](../examples/account.config.example.json) for the full working example.
 
 ---
 
@@ -204,7 +272,7 @@ Other supported `streamText` settings are passed through. Harness-owned fields, 
 
 ---
 
-### Agent Config
+### Agent Runtime Config
 
 Controls harness behavior.
 
@@ -212,7 +280,7 @@ Controls harness behavior.
 {
   "agent": {
     "maxTurn": 20,
-    "system": "Optional account-specific system prompt."
+    "system": "Optional agent-specific system prompt."
   }
 }
 ```
@@ -221,6 +289,24 @@ Controls harness behavior.
 | ------- | ------ | ------------- |
 | `maxTurn` | number | Maximum model/tool loop steps per conversation turn |
 | `system` | string | Replaces the generated default system prompt (not appended) |
+
+### Skills Config
+
+Optional. Omit `skills` when an agent has no skills. When `enabled` is true and `allowed` contains at least one skill path, the runtime includes allowed skill metadata in the system prompt and exposes the harness-managed `load_skill` tool.
+
+```json
+{
+  "skills": {
+    "enabled": true,
+    "allowed": ["acct_.../support-flow"]
+  }
+}
+```
+
+| Field | Type | Description |
+| ------- | ------ | ------------- |
+| `enabled` | boolean | Enables skill metadata and the `load_skill` tool |
+| `allowed` | string[] | Account-scoped skill paths allowed for this agent |
 
 ---
 
@@ -324,13 +410,13 @@ Available tools: `tavilySearch`, `tavilyExtract`, `googleSearch`.
 
 ### Channels Config
 
-Provider webhook URLs must include the account id:
+Provider webhook URLs must include the `accountId` and `agentId`:
 
 ```bash
-{AGENT_SERVICE_URL}/webhooks/{accountId}/telegram
-{AGENT_SERVICE_URL}/webhooks/{accountId}/github
-{AGENT_SERVICE_URL}/webhooks/{accountId}/slack
-{AGENT_SERVICE_URL}/webhooks/{accountId}/discord
+{AGENT_SERVICE_URL}/webhooks/{accountId}/{agentId}/telegram
+{AGENT_SERVICE_URL}/webhooks/{accountId}/{agentId}/github
+{AGENT_SERVICE_URL}/webhooks/{accountId}/{agentId}/slack
+{AGENT_SERVICE_URL}/webhooks/{accountId}/{agentId}/discord
 ```
 
 ```json
