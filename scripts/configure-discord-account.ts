@@ -30,10 +30,10 @@ const accountServiceUrlValue = accountServiceUrl();
 const agentServiceUrlValue = agentServiceUrl();
 const adminSecret = process.env.ADMIN_ACCOUNT_SECRET!;
 const parsedGuildIds = parseAllowedGuildIds(allowedGuildIds);
-const username = optionalEnv("DISCORD_ACCOUNT_USERNAME")?.trim();
-const description = optionalEnv("DISCORD_ACCOUNT_DESCRIPTION")?.trim();
+const username = optionalEnv("INTEGRATIONS_ACCOUNT_USERNAME")?.trim() ?? "integrations-default";
+const description = optionalEnv("INTEGRATIONS_ACCOUNT_DESCRIPTION")?.trim();
 const agentName = optionalEnv("DISCORD_AGENT_NAME")?.trim() ?? "discord-default";
-const agentDescription = optionalEnv("DISCORD_AGENT_DESCRIPTION")?.trim() ?? description;
+const agentDescription = optionalEnv("DISCORD_AGENT_DESCRIPTION")?.trim();
 
 const { account, agent } = await upsertDiscordAccount();
 const webhookUrl = `${agentServiceUrlValue}/webhooks/${encodeURIComponent(account.accountId)}/${encodeURIComponent(agent.agentId)}/discord`;

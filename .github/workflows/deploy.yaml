@@ -159,8 +159,7 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN || secrets.SST_SECRET_TELEGRAMBOTTOKEN }}
           TELEGRAM_WEBHOOK_SECRET: ${{ secrets.TELEGRAM_WEBHOOK_SECRET || secrets.SST_SECRET_TELEGRAMWEBHOOKSECRET }}
           ALLOWED_CHAT_IDS: ${{ secrets.TELEGRAM_ALLOWED_CHAT_IDS || secrets.SST_SECRET_ALLOWEDCHATIDS }}
-          TELEGRAM_ACCOUNT_USERNAME: telegram-default
-          TELEGRAM_ACCOUNT_DESCRIPTION: Default Telegram account managed by CI/CD.
+          INTEGRATIONS_ACCOUNT_USERNAME: ${{ vars.INTEGRATIONS_ACCOUNT_USERNAME || 'integrations-default' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -185,8 +184,7 @@ jobs:
           DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN || secrets.SST_SECRET_DISCORDBOTTOKEN }}
           DISCORD_PUBLIC_KEY: ${{ secrets.DISCORD_PUBLIC_KEY || secrets.SST_SECRET_DISCORDPUBLICKEY }}
           DISCORD_ALLOWED_GUILD_IDS: ${{ secrets.DISCORD_ALLOWED_GUILD_IDS || secrets.SST_SECRET_DISCORDALLOWEDGUILDIDS || vars.DISCORD_SYNC_GUILD_ID }}
-          DISCORD_ACCOUNT_USERNAME: discord-default
-          DISCORD_ACCOUNT_DESCRIPTION: Default Discord account managed by CI/CD.
+          INTEGRATIONS_ACCOUNT_USERNAME: ${{ vars.INTEGRATIONS_ACCOUNT_USERNAME || 'integrations-default' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -233,8 +231,7 @@ jobs:
           GITHUB_PRIVATE_KEY: ${{ secrets.GITHUB_PRIVATE_KEY || secrets.SST_SECRET_GITHUBPRIVATEKEY }}
           GITHUB_WEBHOOK_SECRET: ${{ secrets.GITHUB_WEBHOOK_SECRET || secrets.SST_SECRET_GITHUBWEBHOOKSECRET }}
           GITHUB_ALLOWED_REPOS: ${{ secrets.GITHUB_ALLOWED_REPOS || secrets.SST_SECRET_GITHUBALLOWEDREPOS || github.repository }}
-          GITHUB_ACCOUNT_USERNAME: github-default
-          GITHUB_ACCOUNT_DESCRIPTION: Default GitHub account managed by CI/CD.
+          INTEGRATIONS_ACCOUNT_USERNAME: ${{ vars.INTEGRATIONS_ACCOUNT_USERNAME || 'integrations-default' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -260,8 +257,7 @@ jobs:
           SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN || secrets.SST_SECRET_SLACKBOTTOKEN }}
           SLACK_SIGNING_SECRET: ${{ secrets.SLACK_SIGNING_SECRET || secrets.SST_SECRET_SLACKSIGNINGSECRET }}
           SLACK_ALLOWED_CHANNEL_IDS: ${{ secrets.SLACK_ALLOWED_CHANNEL_IDS || secrets.SST_SECRET_SLACKALLOWEDCHANNELIDS }}
-          SLACK_ACCOUNT_USERNAME: slack-default
-          SLACK_ACCOUNT_DESCRIPTION: Default Slack account managed by CI/CD.
+          INTEGRATIONS_ACCOUNT_USERNAME: ${{ vars.INTEGRATIONS_ACCOUNT_USERNAME || 'integrations-default' }}
         shell: bash
         run: |
           set -euo pipefail

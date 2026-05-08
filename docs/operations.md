@@ -91,7 +91,7 @@ Provider credentials for each channel, plus model/tool settings, live on agent c
 
 ## CI/CD Account Setup
 
-After deploy, the GitHub workflow optionally runs configure scripts if credentials are provided. Each script creates or updates the channel account, creates or updates a default channel agent, and prints or registers the agent-scoped webhook URL. Skip by not setting the channel-specific secrets.
+After deploy, the GitHub workflow optionally runs configure scripts if credentials are provided. The scripts share one account, `INTEGRATIONS_ACCOUNT_USERNAME` or `integrations-default`, then create or update one default agent per configured channel and print or register the agent-scoped webhook URL. Skip by not setting the channel-specific secrets.
 
 ```bash
 # Optional: run only if TELEGRAM_BOT_TOKEN and all other TELEGRAM_* is token set
@@ -107,7 +107,7 @@ bun run scripts/configure-slack-account.ts
 bun run scripts/configure-github-account.ts
 ```
 
-Each script uses `ADMIN_ACCOUNT_SECRET` for auth.
+Each script uses `ADMIN_ACCOUNT_SECRET` for auth. Account and agent descriptions are optional; set `INTEGRATIONS_ACCOUNT_DESCRIPTION` or channel-specific `*_AGENT_DESCRIPTION` only when you want those fields stored.
 
 Optional agent-name overrides are available when you need stable names other than the defaults: `TELEGRAM_AGENT_NAME`, `DISCORD_AGENT_NAME`, `SLACK_AGENT_NAME`, and `GITHUB_AGENT_NAME`.
 

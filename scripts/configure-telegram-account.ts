@@ -30,10 +30,10 @@ const accountServiceUrlValue = accountServiceUrl();
 const agentServiceUrlValue = agentServiceUrl();
 const adminSecret = process.env.ADMIN_ACCOUNT_SECRET!;
 const parsedChatIds = parseAllowedChatIds(allowedChatIds);
-const username = optionalEnv("TELEGRAM_ACCOUNT_USERNAME")?.trim();
-const description = optionalEnv("TELEGRAM_ACCOUNT_DESCRIPTION")?.trim();
+const username = optionalEnv("INTEGRATIONS_ACCOUNT_USERNAME")?.trim() ?? "integrations-default";
+const description = optionalEnv("INTEGRATIONS_ACCOUNT_DESCRIPTION")?.trim();
 const agentName = optionalEnv("TELEGRAM_AGENT_NAME")?.trim() ?? "telegram-default";
-const agentDescription = optionalEnv("TELEGRAM_AGENT_DESCRIPTION")?.trim() ?? description;
+const agentDescription = optionalEnv("TELEGRAM_AGENT_DESCRIPTION")?.trim();
 
 const { account, agent } = await upsertTelegramAccount();
 const webhookUrl = `${agentServiceUrlValue}/webhooks/${encodeURIComponent(account.accountId)}/${encodeURIComponent(agent.agentId)}/telegram`;

@@ -30,10 +30,10 @@ const accountServiceUrlValue = accountServiceUrl();
 const agentServiceUrlValue = agentServiceUrl();
 const adminSecret = process.env.ADMIN_ACCOUNT_SECRET!;
 const parsedChannelIds = parseAllowedChannelIds(allowedChannelIds);
-const username = optionalEnv("SLACK_ACCOUNT_USERNAME")?.trim();
-const description = optionalEnv("SLACK_ACCOUNT_DESCRIPTION")?.trim();
+const username = optionalEnv("INTEGRATIONS_ACCOUNT_USERNAME")?.trim() ?? "integrations-default";
+const description = optionalEnv("INTEGRATIONS_ACCOUNT_DESCRIPTION")?.trim();
 const agentName = optionalEnv("SLACK_AGENT_NAME")?.trim() ?? "slack-default";
-const agentDescription = optionalEnv("SLACK_AGENT_DESCRIPTION")?.trim() ?? description;
+const agentDescription = optionalEnv("SLACK_AGENT_DESCRIPTION")?.trim();
 
 const { account, agent } = await upsertSlackAccount();
 const webhookUrl = `${agentServiceUrlValue}/webhooks/${encodeURIComponent(account.accountId)}/${encodeURIComponent(agent.agentId)}/slack`;
