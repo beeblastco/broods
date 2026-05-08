@@ -3,6 +3,7 @@
  * Cover generated account runtime config used by CI and manual scripts.
  */
 
+import { readFileSync } from "node:fs";
 import { afterEach, describe, expect, it } from "bun:test";
 import { createScriptAccountRuntimeConfig } from "../scripts/utils.ts";
 
@@ -10,6 +11,29 @@ const ORIGINAL_ENV = { ...process.env };
 
 afterEach(() => {
   process.env = { ...ORIGINAL_ENV };
+});
+
+describe("integration account setup scripts", () => {
+  it("use one shared account username and separate channel agent names", () => {
+    const files = [
+      "scripts/configure-telegram-account.ts",
+      "scripts/configure-discord-account.ts",
+      "scripts/configure-github-account.ts",
+      "scripts/configure-slack-account.ts",
+      ".github/workflows/deploy.yaml",
+    ].map((path) => readFileSync(path, "utf-8"));
+    const combined = files.join("\n");
+
+    expect(combined).toContain("INTEGRATIONS_ACCOUNT_USERNAME");
+    expect(combined).toContain("TELEGRAM_AGENT_NAME");
+    expect(combined).toContain("DISCORD_AGENT_NAME");
+    expect(combined).toContain("GITHUB_AGENT_NAME");
+    expect(combined).toContain("SLACK_AGENT_NAME");
+    expect(combined).not.toContain("TELEGRAM_ACCOUNT_USERNAME");
+    expect(combined).not.toContain("DISCORD_ACCOUNT_USERNAME");
+    expect(combined).not.toContain("GITHUB_ACCOUNT_USERNAME");
+    expect(combined).not.toContain("SLACK_ACCOUNT_USERNAME");
+  });
 });
 
 describe("script account runtime config", () => {
