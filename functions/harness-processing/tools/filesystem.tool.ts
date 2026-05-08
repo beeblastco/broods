@@ -3,20 +3,19 @@
  * Keep filesystem operations and S3 path safety here.
  */
 
-import {
-  CopyObjectCommand,
-  DeleteObjectCommand,
-  GetObjectCommand,
-  HeadObjectCommand,
-  ListObjectsV2Command,
-  PutObjectCommand,
-  S3Client,
-} from "@aws-sdk/client-s3";
 import { jsonSchema, tool, type ToolSet } from "ai";
+import {
+  deleteS3Object,
+  deleteS3Prefix,
+  listS3Prefix,
+  readS3Bytes,
+  readS3Text,
+  s3ObjectExists,
+  writeS3Object,
+} from "../../_shared/bun-s3.ts";
 import { requireEnv } from "../../_shared/env.ts";
 import type { ToolContext } from "./index.ts";
 
-const s3 = new S3Client({ region: process.env.AWS_REGION });
 const FILESYSTEM_BUCKET_NAME = requireEnv("FILESYSTEM_BUCKET_NAME");
 
 interface FilesystemInput {
@@ -257,12 +256,7 @@ async function readFilesystemRaw(path: string, namespace: string): Promise<strin
     return `cat: ${toVisiblePath(normalizedPath, namespace)}: Is a directory`;
   }
 
-  const response = await s3.send(new GetObjectCommand({
-    Bucket: FILESYSTEM_BUCKET_NAME,
-    Key: toStorageKey(normalizedPath, namespace),
-  }));
-
-  return await response.Body?.transformToString() ?? "";
+  return readS3Text(FILESYSTEM_BUCKET_NAME, toStorageKey(normalizedPath, namespace));
 }
 
 async function readFilesystemRange(
@@ -298,12 +292,9 @@ async function writeFilesystemFile(params: {
     return `Error: ${toVisiblePath(path, namespace)} is a directory`;
   }
 
-  await s3.send(new PutObjectCommand({
-    Bucket: FILESYSTEM_BUCKET_NAME,
-    Key: toStorageKey(path, namespace),
-    Body: fileText,
-    ContentType: "text/plain",
-  }));
+  await writeS3Object(FILESYSTEM_BUCKET_NAME, toStorageKey(path, namespace), fileText, {
+    contentType: "text/plain",
+  });
 
   return `Wrote ${toVisiblePath(path, namespace)}`;
 }
@@ -338,12 +329,9 @@ async function createFilesystemDirectory(path: string, namespace: string): Promi
     return `Error: ${toVisiblePath(normalizedPath, namespace)} is a file`;
   }
 
-  await s3.send(new PutObjectCommand({
-    Bucket: FILESYSTEM_BUCKET_NAME,
-    Key: `${toStorageKey(normalizedPath, namespace)}/.keep`,
-    Body: "",
-    ContentType: "text/plain",
-  }));
+  await writeS3Object(FILESYSTEM_BUCKET_NAME, `${toStorageKey(normalizedPath, namespace)}/.keep`, "", {
+    contentType: "text/plain",
+  });
 
   return `Created directory ${toVisiblePath(normalizedPath, namespace)}`;
 }
@@ -394,24 +382,14 @@ async function checkPathExists(namespace: string, path: string): Promise<StoredP
 
   const key = toStorageKey(normalizedPath, namespace);
 
-  try {
-    await s3.send(new HeadObjectCommand({
-      Bucket: FILESYSTEM_BUCKET_NAME,
-      Key: key,
-    }));
+  if (await s3ObjectExists(FILESYSTEM_BUCKET_NAME, key)) {
     return { exists: true, isDirectory: false };
-  } catch {
-    const listResponse = await s3.send(new ListObjectsV2Command({
-      Bucket: FILESYSTEM_BUCKET_NAME,
-      Prefix: `${key}/`,
-      MaxKeys: 1,
-    }));
-
-    return {
-      exists: (listResponse.Contents ?? []).length > 0,
-      isDirectory: (listResponse.Contents ?? []).length > 0,
-    };
   }
+  const listResponse = await listS3Prefix(FILESYSTEM_BUCKET_NAME, `${key}/`);
+  return {
+    exists: listResponse.length > 0,
+    isDirectory: listResponse.length > 0,
+  };
 }
 
 async function listDirectoryEntries(namespace: string, normalizedPath: string): Promise<string[]> {
@@ -419,20 +397,28 @@ async function listDirectoryEntries(namespace: string, normalizedPath: string): 
     ? `${namespace}/`
     : `${toStorageKey(normalizedPath, namespace)}/`;
 
-  const response = await s3.send(new ListObjectsV2Command({
-    Bucket: FILESYSTEM_BUCKET_NAME,
-    Prefix: prefix,
-    Delimiter: "/",
-  }));
+  const objects = await listS3Prefix(FILESYSTEM_BUCKET_NAME, prefix);
+  const directories = new Set<string>();
+  const files = new Set<string>();
+  for (const object of objects) {
+    const relative = object.key.slice(prefix.length);
+    if (!relative || relative.startsWith(".")) {
+      continue;
+    }
+    const [head, ...rest] = relative.split("/");
+    if (!head || head.startsWith(".")) {
+      continue;
+    }
+    if (rest.length > 0) {
+      directories.add(`${head}/`);
+    } else {
+      files.add(head);
+    }
+  }
 
   return [
-    ...(response.CommonPrefixes ?? [])
-      .map((item) => item.Prefix?.slice(prefix.length)?.replace(/\/$/, ""))
-      .filter((item): item is string => typeof item === "string" && !item.startsWith("."))
-      .map((item) => `${item}/`),
-    ...(response.Contents ?? [])
-      .map((item) => item.Key?.slice(prefix.length))
-      .filter((item): item is string => typeof item === "string" && item.length > 0 && !item.startsWith(".")),
+    ...directories,
+    ...files,
   ];
 }
 
@@ -453,23 +439,9 @@ async function deleteFilesystemPath(params: {
 
   if (state.isDirectory) {
     const prefix = `${toStorageKey(path, namespace)}/`;
-    const listResponse = await s3.send(new ListObjectsV2Command({
-      Bucket: FILESYSTEM_BUCKET_NAME,
-      Prefix: prefix,
-    }));
-
-    for (const item of listResponse.Contents ?? []) {
-      if (!item.Key) continue;
-      await s3.send(new DeleteObjectCommand({
-        Bucket: FILESYSTEM_BUCKET_NAME,
-        Key: item.Key,
-      }));
-    }
+    await deleteS3Prefix(FILESYSTEM_BUCKET_NAME, prefix);
   } else {
-    await s3.send(new DeleteObjectCommand({
-      Bucket: FILESYSTEM_BUCKET_NAME,
-      Key: toStorageKey(path, namespace),
-    }));
+    await deleteS3Object(FILESYSTEM_BUCKET_NAME, toStorageKey(path, namespace));
   }
 
   return `Successfully deleted ${toVisiblePath(path, namespace)}`;
@@ -501,33 +473,22 @@ async function renameFilesystemPath(params: {
     const sourceObjects = await collectDirectoryObjects(namespace, oldPath);
 
     for (const object of sourceObjects) {
-      await s3.send(new CopyObjectCommand({
-        Bucket: FILESYSTEM_BUCKET_NAME,
-        CopySource: toCopySource(object.key),
-        Key: `${toStorageKey(newPath, namespace)}/${object.relativeKey}`,
-      }));
+      await writeS3Object(
+        FILESYSTEM_BUCKET_NAME,
+        `${toStorageKey(newPath, namespace)}/${object.relativeKey}`,
+        await readS3Bytes(FILESYSTEM_BUCKET_NAME, object.key),
+      );
     }
 
     for (const object of sourceObjects) {
-      await s3.send(new DeleteObjectCommand({
-        Bucket: FILESYSTEM_BUCKET_NAME,
-        Key: object.key,
-      }));
+      await deleteS3Object(FILESYSTEM_BUCKET_NAME, object.key);
     }
   } else {
     const oldKey = toStorageKey(oldPath, namespace);
     const newKey = toStorageKey(newPath, namespace);
 
-    await s3.send(new CopyObjectCommand({
-      Bucket: FILESYSTEM_BUCKET_NAME,
-      CopySource: toCopySource(oldKey),
-      Key: newKey,
-    }));
-
-    await s3.send(new DeleteObjectCommand({
-      Bucket: FILESYSTEM_BUCKET_NAME,
-      Key: oldKey,
-    }));
+    await writeS3Object(FILESYSTEM_BUCKET_NAME, newKey, await readS3Bytes(FILESYSTEM_BUCKET_NAME, oldKey));
+    await deleteS3Object(FILESYSTEM_BUCKET_NAME, oldKey);
   }
 
   return `Successfully renamed ${toVisiblePath(oldPath, namespace)} to ${toVisiblePath(newPath, namespace)}`;
@@ -536,20 +497,12 @@ async function renameFilesystemPath(params: {
 async function collectDirectoryObjects(namespace: string, path: string): Promise<StoredObject[]> {
   const normalizedPath = toScopedPath(path, namespace);
   const prefix = `${toStorageKey(normalizedPath, namespace)}/`;
-  const response = await s3.send(new ListObjectsV2Command({
-    Bucket: FILESYSTEM_BUCKET_NAME,
-    Prefix: prefix,
-  }));
+  const response = await listS3Prefix(FILESYSTEM_BUCKET_NAME, prefix);
 
-  return (response.Contents ?? [])
-    .map((item) => item.Key)
-    .filter((key): key is string => typeof key === "string")
+  return response
+    .map((item) => item.key)
     .map((key) => ({
       key,
       relativeKey: key.slice(prefix.length),
     }));
-}
-
-function toCopySource(key: string): string {
-  return `${FILESYSTEM_BUCKET_NAME}/${encodeURIComponent(key).replace(/%2F/g, "/")}`;
 }

@@ -25,6 +25,16 @@ const TEST_ACCOUNT = {
   updatedAt: "2026-04-24T00:00:00.000Z",
 };
 
+const TEST_AGENT = {
+  accountId: "acct_test",
+  agentId: "agent_test",
+  name: "Webhook agent",
+  status: "active" as const,
+  config: TEST_ACCOUNT.config,
+  createdAt: "2026-04-24T00:00:00.000Z",
+  updatedAt: "2026-04-24T00:00:00.000Z",
+};
+
 describe("account webhook ingress", () => {
   it("returns 404 for unknown accounts", async () => {
     const routeIncomingEvent = createIncomingEventRouter({
@@ -41,8 +51,8 @@ describe("account webhook ingress", () => {
     const routeIncomingEvent = createIncomingEventRouter({
       accountLoader: async () => ({
         ...TEST_ACCOUNT,
-        config: {},
       }),
+      agentLoader: async () => ({ ...TEST_AGENT, config: {} }),
     });
 
     const response = await routeIncomingEvent(createTelegramEvent(), createHandlers());
@@ -54,6 +64,7 @@ describe("account webhook ingress", () => {
   it("returns 401 when account channel authentication fails", async () => {
     const routeIncomingEvent = createIncomingEventRouter({
       accountLoader: async () => TEST_ACCOUNT,
+      agentLoader: async () => TEST_AGENT,
     });
 
     const response = await routeIncomingEvent(createTelegramEvent(undefined, {
@@ -68,6 +79,7 @@ describe("account webhook ingress", () => {
     const handledEvents: ChannelInboundEvent[] = [];
     const routeIncomingEvent = createIncomingEventRouter({
       accountLoader: async () => TEST_ACCOUNT,
+      agentLoader: async () => TEST_AGENT,
     });
 
     const response = await routeIncomingEvent(createTelegramEvent(), createHandlers({
@@ -84,9 +96,10 @@ describe("account webhook ingress", () => {
     expect(handledEvents).toHaveLength(1);
     expect(handledEvents[0]).toMatchObject({
       accountId: "acct_test",
+      agentId: "agent_test",
       accountConfig: {},
-      eventId: "acct:acct_test:tg-7",
-      conversationKey: "acct:acct_test:tg:123",
+      eventId: "acct:acct_test:agent:agent_test:tg-7",
+      conversationKey: "acct:acct_test:agent:agent_test:tg:123",
       content: "hello",
       events: [{ role: "user", content: "hello" }],
       channelName: "telegram",
@@ -96,6 +109,7 @@ describe("account webhook ingress", () => {
   it("uses account webhook routing only; root provider webhooks are not accepted", async () => {
     const routeIncomingEvent = createIncomingEventRouter({
       accountLoader: async () => TEST_ACCOUNT,
+      agentLoader: async () => TEST_AGENT,
       authResolver: async () => null,
     });
 
@@ -126,7 +140,7 @@ function createTelegramEvent(
   headers: Record<string, string> = {
     "x-telegram-bot-api-secret-token": "telegram-secret",
   },
-  rawPath = "/webhooks/acct_test/telegram",
+  rawPath = "/webhooks/acct_test/agent_test/telegram",
 ): LambdaFunctionURLEvent {
   return {
     version: "2.0",

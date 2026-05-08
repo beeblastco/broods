@@ -9,7 +9,6 @@ import {
   QueryCommand,
   type AttributeValue,
 } from "@aws-sdk/client-dynamodb";
-import { GetObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import type {
   AssistantModelMessage,
   ModelMessage,
@@ -23,6 +22,7 @@ import {
 } from "ai";
 import { DEFAULT_SYSTEM_PROMPT } from "../_shared/.generated/system-prompt.ts";
 import type { AccountConfig } from "../_shared/accounts.ts";
+import { isMissingS3Error, readS3Text } from "../_shared/bun-s3.ts";
 import {
   dynamo,
   fromAttributeValue,
@@ -35,6 +35,11 @@ import {
   normalizeFilesystemNamespace,
 } from "../_shared/filesystem-namespace.ts";
 import { logError, logInfo } from "../_shared/log.ts";
+import {
+  listSkillMetadataForConfig,
+  loadSkillContent,
+  type SkillMetadata,
+} from "../_shared/skills.ts";
 import { compactSessionContext, isCompactionSummaryMessage } from "./compaction.ts";
 import { pruneSessionMessages } from "./pruning.ts";
 
@@ -44,8 +49,6 @@ const FILESYSTEM_BUCKET_NAME = requireEnv("FILESYSTEM_BUCKET_NAME");
 
 // Default conversation lease TTL of 15 minutes.
 const CONVERSATION_LEASE_TTL_SECONDS = 15 * 60;
-
-const s3 = new S3Client({ region: process.env.AWS_REGION });
 
 export type ConversationIngressEvent =
   | UserModelMessage
@@ -103,11 +106,13 @@ interface StoredConversationEntry {
 export class Session {
   private messageSequence = 0;
   private hasLoggedMissingMemoryFile = false;
+  private loadedSkillPrompts: SystemModelMessage[] = [];
 
   constructor(
     public readonly eventId: string,
     public readonly conversationKey: string,
     public readonly accountId: string | undefined,
+    public readonly agentId: string | undefined,
     private readonly accountConfig: AccountConfig = {},
   ) { }
 
@@ -291,11 +296,20 @@ export class Session {
     promptMessages: SystemModelMessage[],
     ephemeralSystem: SystemModelMessage[] = [],
   ): Promise<SystemModelMessage[]> {
-    const memoryContent = await this.loadMemoryFile();
+    const [memoryContent, skillMetadata] = await Promise.all([
+      this.loadMemoryFile(),
+      this.loadSkillMetadata(),
+    ]);
     const memorySystem: SystemModelMessage[] = this.isWorkspaceEnabled()
       ? [{
         role: "system",
         content: formatMemorySystemPrompt(memoryContent),
+      }]
+      : [];
+    const skillsSystem: SystemModelMessage[] = skillMetadata.length > 0
+      ? [{
+        role: "system",
+        content: formatSkillsSystemPrompt(skillMetadata),
       }]
       : [];
 
@@ -309,9 +323,38 @@ export class Session {
         content: this.accountConfig.agent?.system ?? DEFAULT_SYSTEM_PROMPT,
       },
       ...memorySystem,
+      ...skillsSystem,
+      ...this.loadedSkillPrompts,
       ...promptMessages,
       ...ephemeralSystem,
     ];
+  }
+
+  async loadSkillPrompt(skillPath: string, resourcePaths: string[] = []): Promise<{
+    skillPath: string;
+    loadedPaths: string[];
+    bytes: number;
+  }> {
+    if (!this.isSkillsEnabled()) {
+      throw new Error("config.skills.enabled must be true to load skills");
+    }
+    if (!this.accountConfig.skills?.allowed?.includes(skillPath)) {
+      throw new Error(`Skill is not configured for this agent: ${skillPath}`);
+    }
+
+    const loaded = await loadSkillContent(skillPath, resourcePaths);
+    this.loadedSkillPrompts.push({
+      role: "system",
+      content: formatLoadedSkillPrompt(loaded),
+    });
+
+    // TODO: After workflow-style skills are supported, prune or compact loaded skill
+    // instructions once their atomic workflow is complete.
+    return {
+      skillPath,
+      loadedPaths: loaded.parts.map((part) => part.path),
+      bytes: loaded.bytes,
+    };
   }
 
   private async persistStoredEvent(event: StoredConversationEvent): Promise<string> {
@@ -380,14 +423,9 @@ export class Session {
     const key = `${this.filesystemNamespace()}/MEMORY.md`;
 
     try {
-      const response = await s3.send(new GetObjectCommand({
-        Bucket: FILESYSTEM_BUCKET_NAME,
-        Key: key,
-      }));
-
-      return await response.Body?.transformToString() ?? "";
+      return await readS3Text(FILESYSTEM_BUCKET_NAME, key);
     } catch (error) {
-      if (!isMissingS3Object(error)) {
+      if (!isMissingS3Error(error)) {
         logError("Failed to load MEMORY.md for session prompt", {
           conversationKey: this.conversationKey,
           key,
@@ -414,8 +452,9 @@ export class Session {
 
   filesystemNamespace(): string {
     const logicalNamespace = this.accountConfig.workspace?.memory?.namespace ?? this.conversationKey;
-    const scopedNamespace = this.accountId
-      ? `${this.accountId}:${logicalNamespace}`
+    const accountScope = this.accountId && this.agentId ? `${this.accountId}:${this.agentId}` : this.accountId;
+    const scopedNamespace = accountScope
+      ? `${accountScope}:${logicalNamespace}`
       : logicalNamespace;
 
     return normalizeFilesystemNamespace(scopedNamespace);
@@ -424,15 +463,28 @@ export class Session {
   private isWorkspaceEnabled(): boolean {
     return this.accountConfig.workspace?.enabled === true;
   }
+
+  private isSkillsEnabled(): boolean {
+    return this.accountConfig.skills?.enabled === true;
+  }
+
+  private async loadSkillMetadata(): Promise<SkillMetadata[]> {
+    if (!this.isSkillsEnabled() || !this.accountId) {
+      return [];
+    }
+
+    return listSkillMetadataForConfig(this.accountId, this.accountConfig.skills?.allowed ?? []);
+  }
 }
 
 export function createSession(
   eventId: string,
   conversationKey: string,
   accountId?: string,
+  agentId?: string,
   accountConfig: AccountConfig = {},
 ): Session {
-  return new Session(eventId, conversationKey, accountId, accountConfig);
+  return new Session(eventId, conversationKey, accountId, agentId, accountConfig);
 }
 
 function formatMemorySystemPrompt(memoryContent: string | null): string {
@@ -444,6 +496,32 @@ function formatMemorySystemPrompt(memoryContent: string | null): string {
   return normalizedContent.length > 0
     ? `Current MEMORY.md content for this conversation:\n\n${normalizedContent}`
     : "Current MEMORY.md content for this conversation:\n\n(MEMORY.md exists but is empty)";
+}
+
+function formatSkillsSystemPrompt(skills: SkillMetadata[]): string {
+  const skillList = skills
+    .map((skill) => `- ${skill.skillPath} (${skill.name}): ${skill.description}`)
+    .join("\n");
+
+  return `# Skills System
+Select appropriate skills to assist with the user's request. A skill must be loaded with the load_skill tool before using its detailed instructions.
+
+Available skills:
+${skillList}
+
+Workflow:
+1. Check whether the user's task matches any skill description.
+2. Use load_skill with the exact skill path before applying that skill.
+3. Request resource paths only when the loaded SKILL.md references them and they are needed.`;
+}
+
+function formatLoadedSkillPrompt(loaded: Awaited<ReturnType<typeof loadSkillContent>>): string {
+  const parts = loaded.parts.map((part) => `## ${part.path}\n\n${part.text.trim()}`).join("\n\n");
+  // See https://github.com/microsoft/agent-framework/discussions/4239: loaded skills stay in
+  // refreshed system instructions instead of polluting chat history.
+  return `<loaded-skill path="${loaded.skillPath}" name="${loaded.skill.name}">
+${parts}
+</loaded-skill>`;
 }
 
 /**
@@ -591,23 +669,6 @@ function findLatestCompactionSummaryIndex(entries: StoredConversationEntry[]): n
   }
 
   return -1;
-}
-
-function isMissingS3Object(error: unknown): boolean {
-  if (!error || typeof error !== "object") {
-    return false;
-  }
-
-  const candidate = error as {
-    name?: string;
-    Code?: string;
-    $metadata?: { httpStatusCode?: number };
-  };
-
-  return candidate.name === "NoSuchKey" ||
-    candidate.Code === "NoSuchKey" ||
-    candidate.name === "NotFound" ||
-    candidate.$metadata?.httpStatusCode === 404;
 }
 
 /**

@@ -2,14 +2,15 @@
  * Example Async endpoint with polling
  */
 
-import { createAccount, deleteAccount, postAsyncRequest, pollStatus } from "./utils.ts";
+import { createAccount, createAgent, deleteAccount, postAsyncRequest, pollStatus } from "./utils.ts";
 
 // Define all the API keys and url required
 const googleApiKey = process.env.ACCOUNT_GOOGLE_API_KEY!;
 const tavilyApiKey = process.env.ACCOUNT_TAVILY_API_KEY!;
 
-// Create account with tools enabled
-const account = await createAccount(`async-${Date.now()}`, {
+// Create account and an agent with tools enabled
+const account = await createAccount(`async-${Date.now()}`);
+const agent = await createAgent(account.accountSecret, "Async search assistant", {
   // Add Google API key to the google provider.
   provider: {
     google: {
@@ -38,10 +39,12 @@ const account = await createAccount(`async-${Date.now()}`, {
   },
 });
 console.log("Created test account:", JSON.stringify(account));
+console.log("Created test agent:", JSON.stringify(agent));
 
 try {
   // Post async request
   const body = {
+    agentId: agent.agent.agentId,
     eventId: `async-${Date.now()}`,
     conversationKey: `async-${Date.now()}`,
     events: [

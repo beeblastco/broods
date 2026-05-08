@@ -15,6 +15,14 @@ export interface Account {
   accountSecret: string;
 }
 
+export interface Agent {
+  agent: {
+    accountId: string;
+    agentId: string;
+    name: string;
+  };
+}
+
 export interface AsyncStatus {
   status: "processing" | "completed" | "failed" | "not_found";
   response?: string;
@@ -22,11 +30,11 @@ export interface AsyncStatus {
 }
 
 // Create a new account
-export async function createAccount(username: string, config: Record<string, unknown>): Promise<Account> {
+export async function createAccount(username: string): Promise<Account> {
   const response = await fetch(`${ACCOUNT_SERVICE_URL}/accounts`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ username, config }),
+    body: JSON.stringify({ username }),
   });
 
   if (!response.ok) throw new Error(`Create failed: ${response.status} ${await response.text()}`);
@@ -37,6 +45,22 @@ export async function createAccount(username: string, config: Record<string, unk
   }
 
   return payload;
+}
+
+export async function createAgent(
+  accountSecret: string,
+  name: string,
+  config: Record<string, unknown>,
+  description?: string,
+): Promise<Agent> {
+  const response = await fetch(`${ACCOUNT_SERVICE_URL}/accounts/me/agents`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "Authorization": `Bearer ${accountSecret}` },
+    body: JSON.stringify({ name, ...(description ? { description } : {}), config }),
+  });
+
+  if (!response.ok) throw new Error(`Create agent failed: ${response.status} ${await response.text()}`);
+  return await response.json() as Agent;
 }
 
 // Update current account

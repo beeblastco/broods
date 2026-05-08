@@ -2,7 +2,7 @@
  * Example Account Management (Create, Update, Delete)
  */
 
-import { createAccount, updateAccount, deleteAccount } from "./utils.ts";
+import { createAccount, createAgent, deleteAccount } from "./utils.ts";
 
 // Define all the API keys and url required
 const googleApiKey = process.env.ACCOUNT_GOOGLE_API_KEY!;
@@ -10,8 +10,9 @@ const googleApiKey = process.env.ACCOUNT_GOOGLE_API_KEY!;
 // Test username account
 const username = `example-${Date.now()}`;
 
-// Create account
-const account = await createAccount(username, {
+// Create account, then create an agent with runtime configuration.
+const account = await createAccount(username);
+const agent = await createAgent(account.accountSecret, "Example assistant", {
   // Add Google API key to the google provider.
   provider: {
     google: {
@@ -30,14 +31,7 @@ const account = await createAccount(username, {
   // Workspace defaults to disabled, so memory/filesystem/tasks are off here.
 });
 console.log("Created test account:", JSON.stringify(account));
-
-// Update account
-await updateAccount(account.accountSecret, {
-  agent: {
-    system: "You are a concise assistant. Keep answers brief.",
-  },
-});
-console.log("Updated successfully");
+console.log("Created test agent:", JSON.stringify(agent));
 
 // Delete account
 await deleteAccount(account.accountSecret);

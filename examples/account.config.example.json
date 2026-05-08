@@ -29,7 +29,14 @@
   },
   "agent": {
     "maxTurn": 20,
-    "system": "Optional account-specific system prompt."
+    "system": "Optional agent-specific system prompt."
+  },
+  "skills": {
+    "enabled": true,
+    "allowed": [
+      "acct_abc123/support-flow",
+      "acct_abc123/knowledge-base"
+    ]
   },
   "workspace": {
     "enabled": true,

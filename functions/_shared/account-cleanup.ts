@@ -9,22 +9,15 @@ import {
   type AttributeValue,
   type WriteRequest,
 } from "@aws-sdk/client-dynamodb";
-import {
-  DeleteObjectsCommand,
-  ListObjectsV2Command,
-  S3Client,
-  type ObjectIdentifier,
-} from "@aws-sdk/client-s3";
 import type { AccountRecord } from "./accounts.ts";
+import { listAgents, type AgentRecord } from "./agents.ts";
+import { deleteS3Prefix as deleteBunS3Prefix } from "./bun-s3.ts";
 import { dynamo } from "./dynamo.ts";
 import { optionalEnv } from "./env.ts";
 import { normalizeFilesystemNamespace } from "./filesystem-namespace.ts";
 
 const ACCOUNT_NAMESPACE_PREFIX = "acct:";
 const DYNAMO_BATCH_WRITE_LIMIT = 25;
-const S3_DELETE_OBJECT_LIMIT = 1000;
-
-const s3 = new S3Client({ region: process.env.AWS_REGION });
 
 export interface AccountCleanupSummary {
   conversationsDeleted: number;
@@ -39,8 +32,11 @@ interface ConversationReference {
 
 export async function deleteAccountRuntimeData(account: AccountRecord): Promise<AccountCleanupSummary> {
   const accountPrefix = accountScopedPrefix(account.accountId);
-  const conversations = await scanConversationReferences(accountPrefix);
-  const filesystemNamespaces = resolveFilesystemNamespaces(account, conversations);
+  const [conversations, agents] = await Promise.all([
+    scanConversationReferences(accountPrefix),
+    listAgents(account.accountId).catch(() => []),
+  ]);
+  const filesystemNamespaces = resolveFilesystemNamespaces(account, agents, conversations);
 
   const [
     conversationsDeleted,
@@ -226,6 +222,7 @@ function projectKey(
 
 function resolveFilesystemNamespaces(
   account: AccountRecord,
+  agents: AgentRecord[],
   conversations: ConversationReference[],
 ): string[] {
   const logicalNamespaces = new Set<string>();
@@ -235,17 +232,27 @@ function resolveFilesystemNamespaces(
     logicalNamespaces.add(account.config.workspace.memory.namespace);
   }
 
+  for (const agent of agents) {
+    if (agent.config.workspace?.memory?.namespace) {
+      logicalNamespaces.add(`${agent.agentId}:${agent.config.workspace.memory.namespace}`);
+    }
+  }
+
   for (const { conversationKey } of conversations) {
     if (!conversationKey.startsWith(accountPrefix)) {
       continue;
     }
 
-    logicalNamespaces.add(conversationKey);
+    const agentMatch = conversationKey.match(/^acct:[^:]+:agent:([^:]+):/);
+    logicalNamespaces.add(agentMatch?.[1] ? `${agentMatch[1]}:${conversationKey}` : conversationKey);
   }
 
-  return [...logicalNamespaces].map((logicalNamespace) =>
-    normalizeFilesystemNamespace(`${account.accountId}:${logicalNamespace}`)
-  );
+  return [...logicalNamespaces].map((logicalNamespace) => {
+    const [maybeAgentId, ...rest] = logicalNamespace.split(":");
+    return maybeAgentId?.startsWith("agent_") && rest.length > 0
+      ? normalizeFilesystemNamespace(`${account.accountId}:${maybeAgentId}:${rest.join(":")}`)
+      : normalizeFilesystemNamespace(`${account.accountId}:${logicalNamespace}`);
+  });
 }
 
 async function deleteFilesystemNamespaces(namespaces: string[]): Promise<number> {
@@ -263,40 +270,7 @@ async function deleteFilesystemNamespaces(namespaces: string[]): Promise<number>
 }
 
 async function deleteS3Prefix(bucketName: string, prefix: string): Promise<number> {
-  let deleted = 0;
-  let continuationToken: string | undefined;
-
-  do {
-    const listed = await s3.send(new ListObjectsV2Command({
-      Bucket: bucketName,
-      Prefix: prefix,
-      ContinuationToken: continuationToken,
-    }));
-
-    const objects = (listed.Contents ?? [])
-      .map((item): ObjectIdentifier | null => item.Key ? { Key: item.Key } : null)
-      .filter((item): item is ObjectIdentifier => item !== null);
-
-    for (let index = 0; index < objects.length; index += S3_DELETE_OBJECT_LIMIT) {
-      const chunk = objects.slice(index, index + S3_DELETE_OBJECT_LIMIT);
-      if (chunk.length === 0) {
-        continue;
-      }
-
-      await s3.send(new DeleteObjectsCommand({
-        Bucket: bucketName,
-        Delete: {
-          Objects: chunk,
-          Quiet: true,
-        },
-      }));
-      deleted += chunk.length;
-    }
-
-    continuationToken = listed.NextContinuationToken;
-  } while (continuationToken);
-
-  return deleted;
+  return deleteBunS3Prefix(bucketName, prefix);
 }
 
 function accountScopedPrefix(accountId: string): string {
