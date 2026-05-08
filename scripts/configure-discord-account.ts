@@ -1,6 +1,6 @@
 /**
  * CI configuration helper for the default Discord account.
- * Creates or updates account config, then registers the account-scoped webhook.
+ * Creates or updates account and agent config, then registers the agent-scoped webhook.
  * Skips gracefully if DISCORD_BOT_TOKEN is not provided.
  */
 
@@ -32,11 +32,13 @@ const adminSecret = process.env.ADMIN_ACCOUNT_SECRET!;
 const parsedGuildIds = parseAllowedGuildIds(allowedGuildIds);
 const username = optionalEnv("DISCORD_ACCOUNT_USERNAME")?.trim();
 const description = optionalEnv("DISCORD_ACCOUNT_DESCRIPTION")?.trim();
+const agentName = optionalEnv("DISCORD_AGENT_NAME")?.trim() ?? "discord-default";
+const agentDescription = optionalEnv("DISCORD_AGENT_DESCRIPTION")?.trim() ?? description;
 
-const account = await upsertDiscordAccount();
-const webhookUrl = `${agentServiceUrlValue}/webhooks/${encodeURIComponent(account.accountId)}/discord`;
+const { account, agent } = await upsertDiscordAccount();
+const webhookUrl = `${agentServiceUrlValue}/webhooks/${encodeURIComponent(account.accountId)}/${encodeURIComponent(agent.agentId)}/discord`;
 
-console.log(`Configured Discord account ${account.accountId}`);
+console.log(`Configured Discord account ${account.accountId} and agent ${agent.agentId}`);
 console.log(`Register this URL in your Discord application: ${webhookUrl}`);
 
 async function upsertDiscordAccount() {
@@ -56,6 +58,8 @@ async function upsertDiscordAccount() {
         adminSecret,
         username,
         description,
+        agentName,
+        agentDescription,
         config,
     });
 }

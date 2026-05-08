@@ -91,7 +91,7 @@ Provider credentials for each channel, plus model/tool settings, live on agent c
 
 ## CI/CD Account Setup
 
-After deploy, the GitHub workflow optionally runs configure scripts if credentials are provided. Skip by not setting the channel-specific secrets.
+After deploy, the GitHub workflow optionally runs configure scripts if credentials are provided. Each script creates or updates the channel account, creates or updates a default channel agent, and prints or registers the agent-scoped webhook URL. Skip by not setting the channel-specific secrets.
 
 ```bash
 # Optional: run only if TELEGRAM_BOT_TOKEN and all other TELEGRAM_* is token set
@@ -108,6 +108,8 @@ bun run scripts/configure-github-account.ts
 ```
 
 Each script uses `ADMIN_ACCOUNT_SECRET` for auth.
+
+Optional agent-name overrides are available when you need stable names other than the defaults: `TELEGRAM_AGENT_NAME`, `DISCORD_AGENT_NAME`, `SLACK_AGENT_NAME`, and `GITHUB_AGENT_NAME`.
 
 ## Live Probes
 

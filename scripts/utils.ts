@@ -15,6 +15,17 @@ export interface PublicAccount {
   username: string;
 }
 
+export interface PublicAgent {
+  accountId: string;
+  agentId: string;
+  name: string;
+}
+
+export interface ScriptAccountAgent {
+  account: PublicAccount;
+  agent: PublicAgent;
+}
+
 export function optionalScriptEnv(name: string): string | undefined {
   const value = process.env[name]?.trim();
   return value || undefined;
@@ -108,28 +119,33 @@ export async function upsertScriptAccount(input: {
   adminSecret: string;
   username: string | undefined;
   description: string | undefined;
+  agentName?: string;
+  agentDescription?: string;
   config: AccountConfig;
-}): Promise<PublicAccount> {
+}): Promise<ScriptAccountAgent> {
   const existing = await findExistingAccount(input.accountServiceUrl, input.adminSecret, input.username);
-  const body = {
+  const accountBody = {
     username: input.username,
     description: input.description,
-    config: input.config,
   };
 
-  if (existing) {
-    const updated = await accountApi(
+  const account = existing
+    ? parseAccountResponse(await accountApi(
       input.accountServiceUrl,
       input.adminSecret,
       "PATCH",
       `/accounts/${encodeURIComponent(existing.accountId)}`,
-      body,
-    );
-    return parseAccountResponse(updated);
-  }
+      accountBody,
+    ))
+    : parseAccountResponse(await publicAccountApi(input.accountServiceUrl, "POST", "/accounts", accountBody));
+  const agent = await upsertScriptAgent(input.accountServiceUrl, input.adminSecret, {
+    accountId: account.accountId,
+    name: input.agentName ?? "default",
+    description: input.agentDescription ?? input.description,
+    config: input.config,
+  });
 
-  const created = await publicAccountApi(input.accountServiceUrl, "POST", "/accounts", body);
-  return parseAccountResponse(created);
+  return { account, agent };
 }
 
 async function findExistingAccount(
@@ -181,6 +197,55 @@ async function publicAccountApi(
   });
 }
 
+async function upsertScriptAgent(
+  baseUrl: string,
+  adminSecret: string,
+  input: {
+    accountId: string;
+    name: string;
+    description: string | undefined;
+    config: AccountConfig;
+  },
+): Promise<PublicAgent> {
+  const agentsResponse = await accountApi(
+    baseUrl,
+    adminSecret,
+    "GET",
+    `/accounts/${encodeURIComponent(input.accountId)}/agents`,
+  );
+  if (!isRecord(agentsResponse) || !Array.isArray(agentsResponse.agents)) {
+    throw new Error(`Agent list response must include agents array. Got: ${JSON.stringify(agentsResponse)}`);
+  }
+
+  const existing = agentsResponse.agents.find((entry): entry is PublicAgent =>
+    isPublicAgent(entry) && entry.name === input.name,
+  );
+  const body = {
+    name: input.name,
+    description: input.description,
+    config: input.config,
+    status: "active",
+  };
+
+  if (existing) {
+    return parseAgentResponse(await accountApi(
+      baseUrl,
+      adminSecret,
+      "PATCH",
+      `/accounts/${encodeURIComponent(input.accountId)}/agents/${encodeURIComponent(existing.agentId)}`,
+      body,
+    ));
+  }
+
+  return parseAgentResponse(await accountApi(
+    baseUrl,
+    adminSecret,
+    "POST",
+    `/accounts/${encodeURIComponent(input.accountId)}/agents`,
+    body,
+  ));
+}
+
 async function requestJson(url: string, init: RequestInit): Promise<unknown> {
   const response = await fetch(url, init);
   const bodyText = await response.text();
@@ -203,6 +268,21 @@ function isPublicAccount(value: unknown): value is PublicAccount {
   return isRecord(value) &&
     typeof value.accountId === "string" &&
     typeof value.username === "string";
+}
+
+function parseAgentResponse(value: unknown): PublicAgent {
+  if (!isRecord(value) || !isPublicAgent(value.agent)) {
+    throw new Error("Agent response must include agent.accountId, agent.agentId, and agent.name");
+  }
+
+  return value.agent;
+}
+
+function isPublicAgent(value: unknown): value is PublicAgent {
+  return isRecord(value) &&
+    typeof value.accountId === "string" &&
+    typeof value.agentId === "string" &&
+    typeof value.name === "string";
 }
 
 function parseAccountModelProvider(value: string): AccountModelProviderName {

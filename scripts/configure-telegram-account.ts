@@ -1,6 +1,6 @@
 /**
  * CI configuration helper for the default Telegram account.
- * Creates or updates account config, then registers the account-scoped webhook.
+ * Creates or updates account and agent config, then registers the agent-scoped webhook.
  * Skips gracefully if TELEGRAM_BOT_TOKEN is not provided.
  */
 
@@ -32,12 +32,14 @@ const adminSecret = process.env.ADMIN_ACCOUNT_SECRET!;
 const parsedChatIds = parseAllowedChatIds(allowedChatIds);
 const username = optionalEnv("TELEGRAM_ACCOUNT_USERNAME")?.trim();
 const description = optionalEnv("TELEGRAM_ACCOUNT_DESCRIPTION")?.trim();
+const agentName = optionalEnv("TELEGRAM_AGENT_NAME")?.trim() ?? "telegram-default";
+const agentDescription = optionalEnv("TELEGRAM_AGENT_DESCRIPTION")?.trim() ?? description;
 
-const account = await upsertTelegramAccount();
-const webhookUrl = `${agentServiceUrlValue}/webhooks/${encodeURIComponent(account.accountId)}/telegram`;
+const { account, agent } = await upsertTelegramAccount();
+const webhookUrl = `${agentServiceUrlValue}/webhooks/${encodeURIComponent(account.accountId)}/${encodeURIComponent(agent.agentId)}/telegram`;
 await setTelegramWebhook(webhookUrl);
 
-console.log(`Configured Telegram account ${account.accountId} and webhook ${webhookUrl}`);
+console.log(`Configured Telegram account ${account.accountId}, agent ${agent.agentId}, and webhook ${webhookUrl}`);
 
 async function upsertTelegramAccount() {
   const config = {
@@ -57,6 +59,8 @@ async function upsertTelegramAccount() {
     adminSecret,
     username,
     description,
+    agentName,
+    agentDescription,
     config,
   });
 }

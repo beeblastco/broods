@@ -1,6 +1,6 @@
 /**
  * CI configuration helper for the default Slack account.
- * Creates or updates account config, then registers the account-scoped webhook.
+ * Creates or updates account and agent config, then registers the agent-scoped webhook.
  * Skips gracefully if SLACK_BOT_TOKEN is not provided.
  */
 
@@ -32,11 +32,13 @@ const adminSecret = process.env.ADMIN_ACCOUNT_SECRET!;
 const parsedChannelIds = parseAllowedChannelIds(allowedChannelIds);
 const username = optionalEnv("SLACK_ACCOUNT_USERNAME")?.trim();
 const description = optionalEnv("SLACK_ACCOUNT_DESCRIPTION")?.trim();
+const agentName = optionalEnv("SLACK_AGENT_NAME")?.trim() ?? "slack-default";
+const agentDescription = optionalEnv("SLACK_AGENT_DESCRIPTION")?.trim() ?? description;
 
-const account = await upsertSlackAccount();
-const webhookUrl = `${agentServiceUrlValue}/webhooks/${encodeURIComponent(account.accountId)}/slack`;
+const { account, agent } = await upsertSlackAccount();
+const webhookUrl = `${agentServiceUrlValue}/webhooks/${encodeURIComponent(account.accountId)}/${encodeURIComponent(agent.agentId)}/slack`;
 
-console.log(`Configured Slack account ${account.accountId}`);
+console.log(`Configured Slack account ${account.accountId} and agent ${agent.agentId}`);
 console.log(`Register this URL in your Slack app's Event Subscriptions: ${webhookUrl}`);
 
 async function upsertSlackAccount() {
@@ -56,6 +58,8 @@ async function upsertSlackAccount() {
         adminSecret,
         username,
         description,
+        agentName,
+        agentDescription,
         config,
     });
 }

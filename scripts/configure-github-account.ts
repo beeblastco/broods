@@ -1,6 +1,6 @@
 /**
  * CI configuration helper for the default GitHub account.
- * Creates or updates account config for GitHub App integration.
+ * Creates or updates account and agent config for GitHub App integration.
  * Skips gracefully if GITHUB_APP_ID is not provided.
  */
 
@@ -38,11 +38,13 @@ const adminSecret = process.env.ADMIN_ACCOUNT_SECRET!;
 const parsedRepos = parseAllowedRepos(allowedRepos);
 const username = optionalEnv("GITHUB_ACCOUNT_USERNAME")?.trim();
 const description = optionalEnv("GITHUB_ACCOUNT_DESCRIPTION")?.trim();
+const agentName = optionalEnv("GITHUB_AGENT_NAME")?.trim() ?? "github-default";
+const agentDescription = optionalEnv("GITHUB_AGENT_DESCRIPTION")?.trim() ?? description;
 
-const account = await upsertGitHubAccount();
-const webhookUrl = `${agentServiceUrlValue}/webhooks/${encodeURIComponent(account.accountId)}/github`;
+const { account, agent } = await upsertGitHubAccount();
+const webhookUrl = `${agentServiceUrlValue}/webhooks/${encodeURIComponent(account.accountId)}/${encodeURIComponent(agent.agentId)}/github`;
 
-console.log(`Configured GitHub account ${account.accountId}`);
+console.log(`Configured GitHub account ${account.accountId} and agent ${agent.agentId}`);
 console.log(`Register this webhook URL in your GitHub App: ${webhookUrl}`);
 
 async function upsertGitHubAccount() {
@@ -63,6 +65,8 @@ async function upsertGitHubAccount() {
     adminSecret,
     username,
     description,
+    agentName,
+    agentDescription,
     config,
   });
 }
