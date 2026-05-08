@@ -276,37 +276,6 @@ async function claimSession(
   return true;
 }
 
-function emptySseResponse(): LambdaResponse {
-  return {
-    statusCode: 200,
-    headers: { "Content-Type": "text/event-stream" },
-    body: new ReadableStream({
-      start(controller) {
-        controller.close();
-      },
-    }),
-  };
-}
-
-function directReplyHooks(event: DirectInboundEvent) {
-  return event.webhookConfig
-    ? {
-      onFinalText: async (text: string) => sendWebhook(event, {
-        eventId: event.publicEventId,
-        conversationKey: event.publicConversationKey,
-        response: text,
-        success: true,
-      }),
-      onErrorText: async (error: string) => sendWebhook(event, {
-        eventId: event.publicEventId,
-        conversationKey: event.publicConversationKey,
-        success: false,
-        error,
-      }),
-    }
-    : undefined;
-}
-
 async function settleAsyncFailure(event: DirectInboundEvent, error: string): Promise<void> {
   await markAsyncResultFailed({
     eventId: event.eventId,
@@ -351,6 +320,37 @@ async function invokeAsyncWorker(event: DirectInboundEvent): Promise<void> {
       event,
     } satisfies AsyncWorkerInvocation)),
   }));
+}
+
+function emptySseResponse(): LambdaResponse {
+  return {
+    statusCode: 200,
+    headers: { "Content-Type": "text/event-stream" },
+    body: new ReadableStream({
+      start(controller) {
+        controller.close();
+      },
+    }),
+  };
+}
+
+function directReplyHooks(event: DirectInboundEvent) {
+  return event.webhookConfig
+    ? {
+      onFinalText: async (text: string) => sendWebhook(event, {
+        eventId: event.publicEventId,
+        conversationKey: event.publicConversationKey,
+        response: text,
+        success: true,
+      }),
+      onErrorText: async (error: string) => sendWebhook(event, {
+        eventId: event.publicEventId,
+        conversationKey: event.publicConversationKey,
+        success: false,
+        error,
+      }),
+    }
+    : undefined;
 }
 
 function acceptedAsyncResponse(statusUrl: string): LambdaResponse {

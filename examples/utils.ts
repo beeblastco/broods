@@ -92,12 +92,13 @@ export async function* streamSSE(body: unknown, accountSecret: string): AsyncGen
     body: JSON.stringify(body),
   });
 
-  if (!response.ok) throw new Error(`Request failed: ${response.status}`);
+  if (!response.ok) throw new Error(`Request failed: ${response.status} ${await response.text()}`);
   if (!response.body) throw new Error("No response body");
 
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
+  let chunks = 0;
 
   try {
     while (true) {
@@ -107,8 +108,13 @@ export async function* streamSSE(body: unknown, accountSecret: string): AsyncGen
       const lines = buffer.split("\n");
       buffer = lines.pop() ?? "";
       for (const line of lines) {
-        if (line.startsWith("data: ")) yield line.slice(6);
+        if (!line.startsWith("data: ")) continue;
+        chunks += 1;
+        yield line.slice(6);
       }
+    }
+    if (chunks === 0) {
+      throw new Error("SSE stream ended without any data events");
     }
   } finally {
     reader.releaseLock();
