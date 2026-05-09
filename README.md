@@ -35,6 +35,7 @@ flowchart LR
   Manage --> Skills["S3<br/>Skills"]
   Harness --> Accounts
   Harness --> Agents
+  Harness --> Skills["S3<br/>Skills"]
   Harness --> Conversations["DynamoDB<br/>Conversations / ProcessedEvents / AsyncResults"]
   Harness --> Memory["S3<br/>account-scoped MEMORY.md + filesystem + tasks"]
   Harness --> Model["Configured model<br/>Vercel AI SDK"]
@@ -86,11 +87,14 @@ bun run discord:sync
 
 - [`functions/_shared/accounts.ts`](functions/_shared/accounts.ts): account records, bearer auth, account secret hashing, and account metadata storage.
 - [`functions/_shared/agents.ts`](functions/_shared/agents.ts): account-owned agent records and encrypted runtime config storage.
-- [`functions/_shared/skills.ts`](functions/_shared/skills.ts): skill validation, GitHub import sanitization, and S3 skill storage.
-- [`functions/account-manage/handler.ts`](functions/account-manage/handler.ts): account CRUD, account secret rotation, agent config APIs, and skill APIs.
+- [`functions/_shared/skills.ts`](functions/_shared/skills.ts): shared skill path, frontmatter, import URL validation, and S3 read/ownership primitives.
+- [`functions/account-manage/handler.ts`](functions/account-manage/handler.ts): account CRUD, account secret rotation, and agent config APIs.
+- [`functions/account-manage/skills.ts`](functions/account-manage/skills.ts): account skill CRUD, GitHub import handling, and S3 writes.
+- [`functions/account-manage/cleanup.ts`](functions/account-manage/cleanup.ts): account deletion cleanup for runtime rows and S3 namespaces.
 - [`functions/harness-processing/integrations.ts`](functions/harness-processing/integrations.ts): account auth, direct API parsing, account webhook routing, and channel normalization.
 - [`functions/harness-processing/handler.ts`](functions/harness-processing/handler.ts): SSE, async self-invocation, commands, leases, and reply orchestration.
 - [`functions/harness-processing/session.ts`](functions/harness-processing/session.ts): conversation persistence, deduplication, leases, prompt context, context management, and workspace memory loading.
+- [`functions/harness-processing/skills.ts`](functions/harness-processing/skills.ts): enabled skill metadata and `load_skill` prompt content loading.
 - [`functions/harness-processing/status.ts`](functions/harness-processing/status.ts): async direct API status storage for `/status/{eventId}` polling.
 - [`functions/harness-processing/harness.ts`](functions/harness-processing/harness.ts): configured model execution loop and inline tool orchestration.
 - [`functions/harness-processing/tools/index.ts`](functions/harness-processing/tools/index.ts): static tool factory registry and account-configured tool selection.

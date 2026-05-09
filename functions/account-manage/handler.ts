@@ -16,7 +16,6 @@ import {
     type AuthContext,
     type AccountRecord,
 } from "../_shared/accounts.ts";
-import { deleteAccountRuntimeData } from "../_shared/account-cleanup.ts";
 import {
     AgentSkillAuthorizationError,
     AgentSkillNotFoundError,
@@ -37,6 +36,7 @@ import {
     parseJsonBody,
 } from "../_shared/http.ts";
 import type { LambdaResponse } from "../_shared/runtime.ts";
+import { deleteAccountRuntimeData } from "./cleanup.ts";
 import {
     createOrReplaceSkill,
     deleteAccountSkills,
@@ -45,7 +45,7 @@ import {
     listAccountSkills,
     type SkillMetadata,
     type StoredSkill,
-} from "../_shared/skills.ts";
+} from "./skills.ts";
 import { enforceAccountSignupRateLimit, RateLimitExceededError } from "./rate-limit.ts";
 
 export async function handler(event: LambdaFunctionURLEvent): Promise<LambdaResponse> {
