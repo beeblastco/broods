@@ -29,6 +29,16 @@ export interface AsyncStatus {
   error?: string;
 }
 
+export interface Skill {
+  skillPath: string;
+  name: string;
+  description: string;
+  files?: Array<{
+    path: string;
+    size?: number;
+  }>;
+}
+
 // Create a new account
 export async function createAccount(username: string): Promise<Account> {
   const response = await fetch(`${ACCOUNT_SERVICE_URL}/accounts`, {
@@ -61,6 +71,53 @@ export async function createAgent(
 
   if (!response.ok) throw new Error(`Create agent failed: ${response.status} ${await response.text()}`);
   return await response.json() as Agent;
+}
+
+export async function createSkill(accountSecret: string, input: Record<string, unknown>): Promise<Skill> {
+  const response = await fetch(`${ACCOUNT_SERVICE_URL}/accounts/me/skills`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "Authorization": `Bearer ${accountSecret}` },
+    body: JSON.stringify(input),
+  });
+
+  if (!response.ok) throw new Error(`Create skill failed: ${response.status} ${await response.text()}`);
+  const payload = await response.json() as { skill: Skill };
+  return payload.skill;
+}
+
+export async function listSkills(accountSecret: string): Promise<Skill[]> {
+  const response = await fetch(`${ACCOUNT_SERVICE_URL}/accounts/me/skills`, {
+    method: "GET",
+    headers: { "Authorization": `Bearer ${accountSecret}` },
+  });
+
+  if (!response.ok) throw new Error(`List skills failed: ${response.status} ${await response.text()}`);
+  const payload = await response.json() as { skills: Skill[] };
+  return payload.skills;
+}
+
+export async function getSkill(accountSecret: string, skillName: string): Promise<Skill | null> {
+  const response = await fetch(`${ACCOUNT_SERVICE_URL}/accounts/me/skills/${encodeURIComponent(skillName)}`, {
+    method: "GET",
+    headers: { "Authorization": `Bearer ${accountSecret}` },
+  });
+
+  if (response.status === 404) return null;
+  if (!response.ok) throw new Error(`Get skill failed: ${response.status} ${await response.text()}`);
+  const payload = await response.json() as { skill: Skill };
+  return payload.skill;
+}
+
+export async function deleteSkill(accountSecret: string, skillName: string): Promise<boolean> {
+  const response = await fetch(`${ACCOUNT_SERVICE_URL}/accounts/me/skills/${encodeURIComponent(skillName)}`, {
+    method: "DELETE",
+    headers: { "Authorization": `Bearer ${accountSecret}` },
+  });
+
+  if (response.status === 404) return false;
+  if (!response.ok) throw new Error(`Delete skill failed: ${response.status} ${await response.text()}`);
+  const payload = await response.json() as { deleted: boolean };
+  return payload.deleted;
 }
 
 // Update current account
