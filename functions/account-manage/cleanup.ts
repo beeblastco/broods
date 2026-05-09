@@ -1,6 +1,6 @@
 /**
- * Account-scoped data cleanup across runtime stores.
- * Keep destructive account teardown logic here so account APIs stay small.
+ * Account deletion cleanup across runtime stores.
+ * Keep destructive teardown next to account-management routes.
  */
 
 import {
@@ -9,12 +9,12 @@ import {
   type AttributeValue,
   type WriteRequest,
 } from "@aws-sdk/client-dynamodb";
-import type { AccountRecord } from "./accounts.ts";
-import { listAgents, type AgentRecord } from "./agents.ts";
-import { deleteS3Prefix as deleteBunS3Prefix } from "./bun-s3.ts";
-import { dynamo } from "./dynamo.ts";
-import { optionalEnv } from "./env.ts";
-import { normalizeFilesystemNamespace } from "./filesystem-namespace.ts";
+import type { AccountRecord } from "../_shared/accounts.ts";
+import { listAgents, type AgentRecord } from "../_shared/agents.ts";
+import { deleteS3Prefix as deleteBunS3Prefix } from "../_shared/bun-s3.ts";
+import { dynamo } from "../_shared/dynamo.ts";
+import { optionalEnv } from "../_shared/env.ts";
+import { normalizeFilesystemNamespace } from "../_shared/filesystem-namespace.ts";
 
 const ACCOUNT_NAMESPACE_PREFIX = "acct:";
 const DYNAMO_BATCH_WRITE_LIMIT = 25;

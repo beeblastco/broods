@@ -85,6 +85,7 @@ sequenceDiagram
   participant U as Account owner
   participant M as account-manage
   participant A as AccountConfig table
+  participant S as Skills S3 bucket
 
   U->>M: POST /accounts { username, description? }
   M->>M: generate accountId + accountSecret
@@ -96,7 +97,7 @@ sequenceDiagram
   M-->>U: agent + agentId
 
   U->>M: POST /accounts/me/skills (Bearer accountSecret)
-  M->>A: validate + store skill bundle in S3
+  M->>S: validate + store skill bundle
   M-->>U: skillPath
 
   U->>M: PATCH /accounts/me/agents/{agentId}
@@ -178,11 +179,14 @@ Agents control model selection, channel credentials, optional skills, and tool a
 
 - [`functions/_shared/accounts.ts`](../functions/_shared/accounts.ts): account records, account secret hashing, bearer auth, and account metadata storage.
 - [`functions/_shared/agents.ts`](../functions/_shared/agents.ts): account-owned agent records and encrypted agent config storage.
-- [`functions/_shared/skills.ts`](../functions/_shared/skills.ts): skill bundle validation, GitHub URL sanitization, and skills S3 storage.
+- [`functions/_shared/skills.ts`](../functions/_shared/skills.ts): shared skill path, frontmatter, import URL validation, and S3 read/ownership primitives.
 - [`functions/account-manage/handler.ts`](../functions/account-manage/handler.ts): account CRUD and admin/self-management HTTP API.
+- [`functions/account-manage/skills.ts`](../functions/account-manage/skills.ts): account skill CRUD, GitHub import handling, and S3 writes.
+- [`functions/account-manage/cleanup.ts`](../functions/account-manage/cleanup.ts): account deletion cleanup for runtime rows and S3 namespaces.
 - [`functions/harness-processing/integrations.ts`](../functions/harness-processing/integrations.ts): account auth, direct request parsing, account webhook routing, and channel normalization.
 - [`functions/harness-processing/handler.ts`](../functions/harness-processing/handler.ts): SSE, async self-invocation, commands, leases, and reply flow.
 - [`functions/harness-processing/session.ts`](../functions/harness-processing/session.ts): event deduplication, conversation persistence, prompt context, and account/agent-scoped memory loading.
+- [`functions/harness-processing/skills.ts`](../functions/harness-processing/skills.ts): enabled skill metadata and `load_skill` prompt content loading.
 - [`functions/harness-processing/status.ts`](../functions/harness-processing/status.ts): async direct API result persistence for polling.
 - [`functions/harness-processing/harness.ts`](../functions/harness-processing/harness.ts): configured model execution loop and inline tool orchestration.
 - [`functions/harness-processing/tools/index.ts`](../functions/harness-processing/tools/index.ts): static tool factory registry and account-configured tool selection.

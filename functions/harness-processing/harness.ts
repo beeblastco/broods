@@ -12,8 +12,9 @@ import type { AccountConfig } from "../_shared/accounts.ts";
 import { logError, logInfo, logWarn } from "../_shared/log.ts";
 import { modelSettingsFromModelConfig, resolveConfiguredModel } from "./model.ts";
 import type { Session, TurnContextSnapshot } from "./session.ts";
+import { loadConfiguredSkillPrompt } from "./skills.ts";
 import { createTools } from "./tools/index.ts";
-import loadSkillTool from "./tools/load-skill.tool.ts";
+import loadSkillTool, { type LoadSkillPrompt } from "./tools/load-skill.tool.ts";
 
 // Default max agent iterations to prevent looping or too long execution.
 const MAX_AGENT_ITERATIONS = 30;
@@ -33,6 +34,7 @@ export async function runAgentLoop(
   let failureText: string | null = null;
   let promptContext = turnContext.promptContext;
   const configuredModel = resolveConfiguredModel(accountConfig);
+  const allowedSkillPaths = accountConfig.skills?.allowed ?? [];
 
   const tools = {
     ...createTools({
@@ -42,9 +44,8 @@ export async function runAgentLoop(
       modelProvider: configuredModel.provider,
     }, accountConfig),
     // This part is to check if the skill is enabled and allowed to be used.
-    ...(accountConfig.skills?.enabled === true && 
-      (accountConfig.skills.allowed?.length ?? 0) > 0 
-      ? loadSkillTool(session) : {}), // Else return nothing
+    ...(accountConfig.skills?.enabled === true && allowedSkillPaths.length > 0
+      ? loadSkillTool(session, createLoadSkillPrompt(session, allowedSkillPaths)) : {}), // Else return nothing
   } satisfies ToolSet;
   const enabledTools = Object.keys(tools).length > 0 ? tools : undefined;
   const modelSettings = modelSettingsFromModelConfig(accountConfig);
@@ -197,6 +198,21 @@ export async function runAgentLoop(
     didFail: () => didFail,
     failureText: () => failureText,
   });
+}
+
+function createLoadSkillPrompt(session: Session, allowedSkillPaths: string[]): LoadSkillPrompt {
+  const sessionLoader = (session as {
+    loadSkillPrompt?: LoadSkillPrompt;
+  }).loadSkillPrompt;
+  if (sessionLoader) {
+    return sessionLoader.bind(session);
+  }
+
+  return async (skillPath, resourcePaths) => {
+    const loaded = await loadConfiguredSkillPrompt(allowedSkillPaths, skillPath, resourcePaths);
+    session.addLoadedSkillPrompt(loaded.prompt);
+    return loaded;
+  };
 }
 
 function summarizeStreamChunk(chunk: unknown): Record<string, unknown> | null {

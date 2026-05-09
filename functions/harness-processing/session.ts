@@ -36,10 +36,9 @@ import {
 } from "../_shared/filesystem-namespace.ts";
 import { logError, logInfo } from "../_shared/log.ts";
 import {
-  listSkillMetadataForConfig,
-  loadSkillContent,
+  listConfiguredSkillMetadata,
   type SkillMetadata,
-} from "../_shared/skills.ts";
+} from "./skills.ts";
 import { compactSessionContext, isCompactionSummaryMessage } from "./compaction.ts";
 import { pruneSessionMessages } from "./pruning.ts";
 
@@ -330,31 +329,8 @@ export class Session {
     ];
   }
 
-  async loadSkillPrompt(skillPath: string, resourcePaths: string[] = []): Promise<{
-    skillPath: string;
-    loadedPaths: string[];
-    bytes: number;
-  }> {
-    if (!this.isSkillsEnabled()) {
-      throw new Error("config.skills.enabled must be true to load skills");
-    }
-    if (!this.accountConfig.skills?.allowed?.includes(skillPath)) {
-      throw new Error(`Skill is not configured for this agent: ${skillPath}`);
-    }
-
-    const loaded = await loadSkillContent(skillPath, resourcePaths);
-    this.loadedSkillPrompts.push({
-      role: "system",
-      content: formatLoadedSkillPrompt(loaded),
-    });
-
-    // TODO: After workflow-style skills are supported, prune or compact loaded skill
-    // instructions once their atomic workflow is complete.
-    return {
-      skillPath,
-      loadedPaths: loaded.parts.map((part) => part.path),
-      bytes: loaded.bytes,
-    };
+  addLoadedSkillPrompt(prompt: SystemModelMessage): void {
+    this.loadedSkillPrompts.push(prompt);
   }
 
   private async persistStoredEvent(event: StoredConversationEvent): Promise<string> {
@@ -464,16 +440,8 @@ export class Session {
     return this.accountConfig.workspace?.enabled === true;
   }
 
-  private isSkillsEnabled(): boolean {
-    return this.accountConfig.skills?.enabled === true;
-  }
-
   private async loadSkillMetadata(): Promise<SkillMetadata[]> {
-    if (!this.isSkillsEnabled() || !this.accountId) {
-      return [];
-    }
-
-    return listSkillMetadataForConfig(this.accountId, this.accountConfig.skills?.allowed ?? []);
+    return listConfiguredSkillMetadata(this.accountId, this.accountConfig);
   }
 }
 
@@ -513,15 +481,6 @@ Workflow:
 1. Check whether the user's task matches any skill description.
 2. Use load_skill with the exact skill path before applying that skill.
 3. Request resource paths only when the loaded SKILL.md references them and they are needed.`;
-}
-
-function formatLoadedSkillPrompt(loaded: Awaited<ReturnType<typeof loadSkillContent>>): string {
-  const parts = loaded.parts.map((part) => `## ${part.path}\n\n${part.text.trim()}`).join("\n\n");
-  // See https://github.com/microsoft/agent-framework/discussions/4239: loaded skills stay in
-  // refreshed system instructions instead of polluting chat history.
-  return `<loaded-skill path="${loaded.skillPath}" name="${loaded.skill.name}">
-${parts}
-</loaded-skill>`;
 }
 
 /**
