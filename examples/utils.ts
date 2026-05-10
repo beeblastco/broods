@@ -2,6 +2,8 @@
  * Shared utilities for example scripts.
  */
 
+import type { ToolApprovalSummary } from "../functions/harness-processing/harness.ts";
+
 // Service URLs from environment
 export const ACCOUNT_SERVICE_URL = process.env.ACCOUNT_SERVICE_URL!;
 export const AGENT_SERVICE_URL = process.env.AGENT_SERVICE_URL!;
@@ -24,9 +26,10 @@ export interface Agent {
 }
 
 export interface AsyncStatus {
-  status: "processing" | "completed" | "failed" | "not_found";
+  status: "processing" | "awaiting_approval" | "completed" | "failed" | "not_found";
   response?: string;
   error?: string;
+  approvals?: ToolApprovalSummary[];
 }
 
 export interface Skill {
@@ -190,7 +193,31 @@ export async function postAsyncRequest(body: unknown, accountSecret: string): Pr
   return await response.json() as { statusUrl: string };
 }
 
-// Poll async status until completed or failed
+export async function* streamToolApprovalResponse(options: {
+  accountSecret: string;
+  agentId: string;
+  conversationKey: string;
+  approvalId: string;
+  approved: boolean;
+  reason?: string;
+}): AsyncGenerator<string> {
+  yield* streamSSE({
+    agentId: options.agentId,
+    eventId: `approval-${Date.now()}`,
+    conversationKey: options.conversationKey,
+    events: [{
+      role: "tool",
+      content: [{
+        type: "tool-approval-response",
+        approvalId: options.approvalId,
+        approved: options.approved,
+        ...(options.reason ? { reason: options.reason } : {}),
+      }],
+    }],
+  }, options.accountSecret);
+}
+
+// Poll async status until it reaches a terminal or user-actionable state
 export async function pollStatus(accountSecret: string, statusUrl: string): Promise<AsyncStatus> {
   const deadline = Date.now() + 180000;
 
@@ -203,7 +230,9 @@ export async function pollStatus(accountSecret: string, statusUrl: string): Prom
     const payload = await response.json() as AsyncStatus;
     console.log(`Status: ${payload.status}`);
 
-    if (payload.status === "completed" || payload.status === "failed") return payload;
+    if (payload.status === "awaiting_approval" || payload.status === "completed" || payload.status === "failed") {
+      return payload;
+    }
     await new Promise((r) => setTimeout(r, 2000));
   }
 

@@ -380,6 +380,86 @@ describe("direct API ingress", () => {
     ]);
   });
 
+  it("accepts direct tool approval response events", async () => {
+    const handledEvents: DirectInboundEvent[] = [];
+    const response = await routeIncomingEvent(createEvent({
+      eventId: "approval-one",
+      conversationKey: "alpha",
+      events: [{
+        role: "tool",
+        content: [{
+          type: "tool-approval-response",
+          approvalId: "approval-1",
+          approved: true,
+          reason: "confirmed",
+        }],
+      }],
+    }, {
+      authorization: "Bearer secret",
+    }), createHandlers({
+      handleDirectRequest: async (event) => {
+        handledEvents.push(event);
+        return {
+          statusCode: 200,
+          headers: { "Content-Type": "text/plain; charset=utf-8" },
+          body: "ok",
+        };
+      },
+    }));
+
+    expect(response.statusCode).toBe(200);
+    expect(handledEvents[0]?.events).toEqual([{
+      role: "tool",
+      content: [{
+        type: "tool-approval-response",
+        approvalId: "approval-1",
+        approved: true,
+        reason: "confirmed",
+      }],
+    }]);
+  });
+
+  it("rejects direct tool events that are not approval responses", async () => {
+    const response = await routeIncomingEvent(createEvent({
+      eventId: "tool-result",
+      conversationKey: "alpha",
+      events: [{
+        role: "tool",
+        content: [{
+          type: "tool-result",
+          toolCallId: "tool-call-1",
+          toolName: "filesystem",
+          output: { type: "text", value: "done" },
+        }],
+      }],
+    }, {
+      authorization: "Bearer secret",
+    }), createHandlers());
+
+    expect(response.statusCode).toBe(400);
+    expect(responseJson(response)).toEqual({
+      error: "Direct API tool events may include only tool-approval-response parts",
+    });
+  });
+
+  it("rejects empty direct tool events", async () => {
+    const response = await routeIncomingEvent(createEvent({
+      eventId: "empty-tool",
+      conversationKey: "alpha",
+      events: [{
+        role: "tool",
+        content: [],
+      }],
+    }, {
+      authorization: "Bearer secret",
+    }), createHandlers());
+
+    expect(response.statusCode).toBe(400);
+    expect(responseJson(response)).toEqual({
+      error: "Direct API tool events may include only tool-approval-response parts",
+    });
+  });
+
   it("routes async direct API requests with a status URL", async () => {
     const handledEvents: AsyncDirectInboundEvent[] = [];
     const response = await routeIncomingEvent(createEvent({

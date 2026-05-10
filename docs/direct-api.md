@@ -44,7 +44,7 @@ POST to the deployed `harness-processing` Function URL with Vercel AI SDK-style 
 - `eventId` is used for account-scoped deduplication.
 - `conversationKey` selects the account-scoped persisted direct conversation.
 - `agentId` selects the account-owned agent config to run.
-- `events` may contain `user` messages and one-off `system` messages only.
+- `events` may contain `user` messages, one-off `system` messages, and AI SDK `tool-approval-response` tool messages.
 
 Direct API callers can inject ephemeral `system` events:
 
@@ -69,7 +69,53 @@ Direct API callers can inject ephemeral `system` events:
 }
 ```
 
-`system` events are supported only on the direct API path and must use `persist: false`. The direct API rejects caller-supplied `assistant`, `tool`, and persisted `system` events.
+`system` events are supported only on the direct API path and must use `persist: false`. The direct API rejects caller-supplied `assistant`, `tool-result`, arbitrary `tool` content, and persisted `system` events.
+
+## Tool Approval
+
+Agents can require user approval before executing selected tools. Enable this in the selected agent config:
+
+```json
+{
+  "workspace": {
+    "enabled": true,
+    "needsApproval": true,
+    "memory": {
+      "enabled": true,
+      "namespace": "support"
+    },
+    "tasks": { "enabled": true }
+  },
+  "tools": {
+    "tavilySearch": { "enabled": true, "needsApproval": true }
+  }
+}
+```
+
+When a tool needs approval, the SSE stream includes the AI SDK `tool-approval-request` event and the assistant approval request is persisted in the conversation. Send a follow-up request with a fresh `eventId`, the same `conversationKey`, and a native AI SDK tool message:
+
+```json
+{
+  "agentId": "agent_...",
+  "eventId": "fresh-id-for-approval-response",
+  "conversationKey": "conversation-identifier",
+  "events": [
+    {
+      "role": "tool",
+      "content": [
+        {
+          "type": "tool-approval-response",
+          "approvalId": "approval-id-from-stream",
+          "approved": true,
+          "reason": "User confirmed"
+        }
+      ]
+    }
+  ]
+}
+```
+
+The `approvalId` is required so the AI SDK can match the decision to the pending tool call. Set `approved` to `false` to deny the tool execution, and include `reason` when the model should explain or adjust its next response.
 
 Minimal `curl` request:
 
@@ -138,6 +184,25 @@ The async worker runs the same account-scoped harness code in the background. If
 }
 ```
 
+If the async run stops for tool approval, the callback uses the same approval summary shape as the status API:
+
+```json
+{
+  "eventId": "unique-id-for-dedup",
+  "conversationKey": "conversation-identifier",
+  "status": "awaiting_approval",
+  "approvals": [
+    {
+      "approvalId": "approval-id-from-stream",
+      "toolCallId": "tool-call-id",
+      "toolName": "filesystem",
+      "input": { "shell": "rm file.txt" }
+    }
+  ],
+  "success": true
+}
+```
+
 Without a callback, poll the returned status URL.
 
 Live probes use `AGENT_SERVICE_URL` and `ACCOUNT_SERVICE_URL` environment variables. Set the matching provider API key, for example `ACCOUNT_GOOGLE_API_KEY` when using the default Google provider. Each script creates a temporary account, runs the probe with that account secret, then deletes the test account:
@@ -151,6 +216,9 @@ bun examples/stream.ts
 
 # Async endpoint with polling
 bun examples/async.ts
+
+# Tool approval flow
+bun examples/tool-approval.ts
 ```
 
 ## Status API: `GET /status/{eventId}?agentId={agentId}`
@@ -164,6 +232,24 @@ Processing response:
   "eventId": "unique-id-for-dedup",
   "conversationKey": "conversation-identifier",
   "status": "processing"
+}
+```
+
+Awaiting approval response:
+
+```json
+{
+  "eventId": "unique-id-for-dedup",
+  "conversationKey": "conversation-identifier",
+  "status": "awaiting_approval",
+  "approvals": [
+    {
+      "approvalId": "approval-id-from-stream",
+      "toolCallId": "tool-call-id",
+      "toolName": "filesystem",
+      "input": { "shell": "rm file.txt" }
+    }
+  ]
 }
 ```
 

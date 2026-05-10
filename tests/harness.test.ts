@@ -15,7 +15,7 @@ const bedrockModelMock = mock((modelId: string) => ({ provider: "bedrock", model
 const createBedrockMock = mock((_options: unknown) => bedrockModelMock);
 const gatewayModelMock = mock((modelId: string) => ({ provider: "gateway", modelId }));
 const createGatewayMock = mock((_options: unknown) => gatewayModelMock);
-let streamTextScenario: "empty" | "error-then-empty" = "empty";
+let streamTextScenario: "empty" | "error-then-empty" | "approval-request" = "empty";
 
 const streamTextMock = mock((options: {
   experimental_onToolCallStart?: unknown;
@@ -26,10 +26,11 @@ const streamTextMock = mock((options: {
     response: { messages: unknown[] };
     text: string;
     finishReason: string;
-    steps: unknown[];
+    steps: Array<{ content: unknown[] }>;
     toolCalls: unknown[];
   }): Promise<void>;
   stopWhen?: unknown;
+  system?: unknown;
   tools?: unknown;
 }) => {
   let consumed = false;
@@ -38,6 +39,43 @@ const streamTextMock = mock((options: {
       if (streamTextScenario === "error-then-empty") {
         await options.onError({ error: new Error("provider failed") });
         controller.enqueue({ type: "error", error: new Error("provider failed") });
+      }
+
+      if (streamTextScenario === "approval-request") {
+        const approvalPart = {
+          type: "tool-approval-request",
+          approvalId: "approval-1",
+          toolCall: {
+            type: "tool-call",
+            toolCallId: "tool-call-1",
+            toolName: "filesystem",
+            input: { shell: "rm file.txt" },
+          },
+        };
+        await options.onFinish({
+          response: {
+            messages: [{
+              role: "assistant",
+              content: [{
+                type: "tool-approval-request",
+                approvalId: "approval-1",
+                toolCallId: "tool-call-1",
+              }],
+            }],
+          },
+          text: "   ",
+          finishReason: "tool-calls",
+          steps: [{ content: [approvalPart] }],
+          toolCalls: [],
+        });
+        controller.enqueue({
+          type: "tool-approval-request",
+          approvalId: "approval-1",
+          toolCallId: "tool-call-1",
+        });
+        controller.enqueue({ type: "finish", finishReason: "tool-calls" });
+        controller.close();
+        return;
       }
 
       await options.onFinish({
@@ -121,7 +159,6 @@ describe("runAgentLoop", () => {
       messages: [{ role: "user", content: "hello" }],
       system: [],
       ephemeralSystem: [],
-      hasPendingUserMessage: true,
       promptContext: { cursor: null, messages: [] },
     }, {
       provider: {
@@ -171,7 +208,6 @@ describe("runAgentLoop", () => {
       messages: [{ role: "user", content: "hello" }],
       system: [],
       ephemeralSystem: [],
-      hasPendingUserMessage: true,
       promptContext: { cursor: null, messages: [] },
     }, {
       provider: {
@@ -198,6 +234,81 @@ describe("runAgentLoop", () => {
     expect(onErrorText).toHaveBeenCalledWith("provider failed");
   });
 
+  it("treats tool approval requests as pending work instead of empty responses", async () => {
+    streamTextScenario = "approval-request";
+    installHarnessEnv();
+    const { runAgentLoop } = await import("../functions/harness-processing/harness.ts");
+    const persistModelMessages = mock(async () => { });
+    const onErrorText = mock(async () => { });
+    const onApprovalRequired = mock(async () => { });
+
+    const stream = await runAgentLoop({
+      conversationKey: "direct:conversation",
+      eventId: "direct-event",
+      filesystemNamespace: () => "fs-test",
+      persistModelMessages,
+      loadRefreshedSystemPromptParts: async () => ({
+        promptContext: { cursor: null, messages: [] },
+        system: [],
+      }),
+    } as never, {
+      messages: [{ role: "user", content: "delete a file" }],
+      system: [],
+      ephemeralSystem: [],
+      promptContext: { cursor: null, messages: [] },
+    }, {
+      workspace: {
+        enabled: true,
+        needsApproval: true,
+        tasks: {
+          enabled: true,
+        },
+      },
+      provider: {
+        google: {
+          apiKey: "google-key",
+        },
+      },
+      model: {
+        provider: "google",
+        modelId: "gemini-test",
+      },
+    }, {
+      onFinalText: async () => {
+        throw new Error("unexpected final text");
+      },
+      onErrorText,
+      onApprovalRequired,
+    });
+
+    await stream.consumeStream();
+
+    expect(stream.didFail()).toBe(false);
+    expect(stream.failureText()).toBeNull();
+    expect(stream.approvalSummaries()).toEqual([{
+      approvalId: "approval-1",
+      toolCallId: "tool-call-1",
+      toolName: "filesystem",
+      input: { shell: "rm file.txt" },
+    }]);
+    expect(onErrorText).not.toHaveBeenCalled();
+    expect(onApprovalRequired).toHaveBeenCalledWith(stream.approvalSummaries());
+    expect(persistModelMessages).toHaveBeenCalledWith([{
+      role: "assistant",
+      content: [{
+        type: "tool-approval-request",
+        approvalId: "approval-1",
+        toolCallId: "tool-call-1",
+      }],
+    }]);
+    expect(streamTextMock.mock.calls[0]?.[0].tools).toMatchObject({
+      filesystem: {
+        needsApproval: true,
+      },
+    });
+    expect(streamTextMock.mock.calls[0]?.[0].system).toEqual([]);
+  });
+
   it("passes account model config into streamText", async () => {
     installHarnessEnv();
     const { runAgentLoop } = await import("../functions/harness-processing/harness.ts");
@@ -215,7 +326,6 @@ describe("runAgentLoop", () => {
       messages: [{ role: "user", content: "hello" }],
       system: [],
       ephemeralSystem: [],
-      hasPendingUserMessage: true,
       promptContext: { cursor: null, messages: [] },
     }, {
       provider: {
@@ -273,7 +383,6 @@ describe("runAgentLoop", () => {
       messages: [{ role: "user", content: "hello" }],
       system: [],
       ephemeralSystem: [],
-      hasPendingUserMessage: true,
       promptContext: { cursor: null, messages: [] },
     }, {
       agent: {
@@ -320,7 +429,6 @@ describe("runAgentLoop", () => {
       messages: [{ role: "user", content: "hello" }],
       system: [],
       ephemeralSystem: [],
-      hasPendingUserMessage: true,
       promptContext: { cursor: null, messages: [] },
     }, {
       skills: {
@@ -370,7 +478,6 @@ describe("runAgentLoop", () => {
       messages: [{ role: "user", content: "hello" }],
       system: [],
       ephemeralSystem: [],
-      hasPendingUserMessage: true,
       promptContext: { cursor: null, messages: [] },
     }, {
       skills: {
@@ -409,7 +516,6 @@ describe("runAgentLoop", () => {
       messages: [{ role: "user", content: "hello" }],
       system: [],
       ephemeralSystem: [],
-      hasPendingUserMessage: true,
       promptContext: { cursor: null, messages: [] },
     }, {
       provider: {
@@ -454,7 +560,6 @@ describe("runAgentLoop", () => {
       messages: [{ role: "user", content: "hello" }],
       system: [],
       ephemeralSystem: [],
-      hasPendingUserMessage: true,
       promptContext: { cursor: null, messages: [] },
     } as never;
 
@@ -494,7 +599,6 @@ describe("runAgentLoop", () => {
       messages: [{ role: "user", content: "hello" }],
       system: [],
       ephemeralSystem: [],
-      hasPendingUserMessage: true,
       promptContext: { cursor: null, messages: [] },
     } as never;
 

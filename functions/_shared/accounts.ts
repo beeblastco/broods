@@ -86,12 +86,21 @@ export interface AccountProviderSettings {
 
 export interface AccountWorkspaceConfig {
   enabled?: boolean;
+  needsApproval?: boolean;
   memory?: AccountWorkspaceMemoryConfig;
+  filesystem?: AccountWorkspaceToolConfig;
+  tasks?: AccountWorkspaceToolConfig;
   [key: string]: unknown;
 }
 
 export interface AccountWorkspaceMemoryConfig {
+  enabled?: boolean;
   namespace?: string;
+  [key: string]: unknown;
+}
+
+export interface AccountWorkspaceToolConfig {
+  enabled?: boolean;
   [key: string]: unknown;
 }
 
@@ -116,6 +125,7 @@ export type AccountToolsConfig = Record<string, AccountToolConfig>;
 
 export interface AccountToolConfig {
   enabled?: boolean;
+  needsApproval?: boolean;
   [key: string]: unknown;
 }
 
@@ -594,7 +604,10 @@ function normalizeWorkspaceConfig(value: unknown): void {
 
   const config = value as Record<string, unknown>;
   assertOptionalBoolean(config.enabled, "config.workspace.enabled");
+  assertOptionalBoolean(config.needsApproval, "config.workspace.needsApproval");
   normalizeWorkspaceMemoryConfig(config.memory);
+  normalizeWorkspaceToolConfig("filesystem", config.filesystem);
+  normalizeWorkspaceToolConfig("tasks", config.tasks);
 }
 
 function normalizeWorkspaceMemoryConfig(value: unknown): void {
@@ -606,7 +619,20 @@ function normalizeWorkspaceMemoryConfig(value: unknown): void {
   }
 
   const config = value as Record<string, unknown>;
+  assertOptionalBoolean(config.enabled, "config.workspace.memory.enabled");
   assertOptionalNonEmptyString(config.namespace, "config.workspace.memory.namespace");
+}
+
+function normalizeWorkspaceToolConfig(toolName: "filesystem" | "tasks", value: unknown): void {
+  if (value == null) {
+    return;
+  }
+  if (!isPlainObject(value)) {
+    throw new Error(`config.workspace.${toolName} must be an object`);
+  }
+
+  const config = value as Record<string, unknown>;
+  assertOptionalBoolean(config.enabled, `config.workspace.${toolName}.enabled`);
 }
 
 function normalizeSessionConfig(value: unknown): void {
@@ -687,9 +713,8 @@ function normalizeToolConfig(toolName: string, value: unknown): void {
   }
 
   const config = value as Record<string, unknown>;
-  if (config.enabled !== undefined && typeof config.enabled !== "boolean") {
-    throw new Error(`config.tools.${toolName}.enabled must be a boolean`);
-  }
+  assertOptionalBoolean(config.enabled, `config.tools.${toolName}.enabled`);
+  assertOptionalBoolean(config.needsApproval, `config.tools.${toolName}.needsApproval`);
 
   switch (toolName) {
     case "tavilySearch":

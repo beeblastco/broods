@@ -40,8 +40,13 @@
   },
   "workspace": {
     "enabled": true,
+    "needsApproval": true,
     "memory": {
+      "enabled": true,
       "namespace": "support"
+    },
+    "tasks": {
+      "enabled": true
     }
   },
   "session": {

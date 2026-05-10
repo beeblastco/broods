@@ -161,7 +161,7 @@ Customers talk to the provider bot/app owned by the account. They never receive 
 
 ## Memory and Filesystem Boundaries
 
-Workspace state is account/agent-scoped and disabled unless the selected agent has `config.workspace.enabled` true. When enabled, it turns on `MEMORY.md`, the filesystem tool, and the tasks tool together. By default workspace state is per conversation; setting `config.workspace.memory.namespace` lets multiple conversations for the same agent share `MEMORY.md`, filesystem files, and task files.
+Workspace state is account/agent-scoped and disabled unless the selected agent has `config.workspace.enabled` true. When enabled, it turns on workspace memory and tools; `workspace.memory.enabled`, `workspace.filesystem.enabled`, and `workspace.tasks.enabled` can disable those pieces individually. `workspace.needsApproval` requires approval for every enabled workspace tool. By default workspace state is per conversation; setting `config.workspace.memory.namespace` lets multiple conversations for the same agent share `MEMORY.md`, filesystem files, and task files.
 
 ```mermaid
 flowchart LR
@@ -173,7 +173,7 @@ See [Memory and Session](memory-and-session.md) for the full model.
 
 ## Model and Tool Configuration
 
-Agents control model selection, channel credentials, optional skills, and tool access through encrypted agent config. `harness.ts` resolves `config.model`; `tools/index.ts` creates workspace tools when `config.workspace.enabled` is true and search/research tools from `config.tools`; `harness.ts` adds `load_skill` only when `config.skills.enabled` is true and `config.skills.allowed` has paths. See [Account management](account-management.md#agent-config) for the supported config shape.
+Agents control model selection, channel credentials, optional skills, and tool access through encrypted agent config. `harness.ts` resolves `config.model`; `tools/index.ts` creates workspace tools from `config.workspace` and search/research tools from `config.tools`; `harness.ts` adds `load_skill` only when `config.skills.enabled` is true and `config.skills.allowed` has paths. See [Account management](account-management.md#agent-config) for the supported config shape.
 
 ## Code Ownership
 

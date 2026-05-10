@@ -17,13 +17,26 @@ Example account config:
 ```json
 {
   "tools": {
-    "tavilySearch": { "enabled": true, "maxResults": 5 },
+    "tavilySearch": { "enabled": true, "maxResults": 5, "needsApproval": true },
     "googleSearch": { "enabled": true }
   }
 }
 ```
 
-Workspace-backed tools are different: `filesystem` and `tasks` are enabled together with `workspace.enabled`, not with `tools`.
+Workspace-backed tools are different: `filesystem` and `tasks` live under `workspace`, not the top-level `tools` map:
+
+```json
+{
+  "workspace": {
+    "enabled": true,
+    "needsApproval": true,
+    "memory": { "enabled": true, "namespace": "support" },
+    "tasks": { "enabled": true }
+  }
+}
+```
+
+Set `workspace.needsApproval` when every enabled workspace tool should use the AI SDK tool execution approval flow before its `execute` function runs.
 
 If a tool needs account-level options, validate those options in `accounts.ts`, read them from `context.config` in the tool factory, and keep runtime secrets in SST secrets unless they are truly account-specific encrypted config.
 

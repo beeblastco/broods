@@ -318,15 +318,21 @@ Enables workspace-backed features. See [Memory and Session](memory-and-session.m
 {
   "workspace": {
     "enabled": true,
-    "memory": { "namespace": "support" }
+    "needsApproval": true,
+    "memory": { "enabled": true, "namespace": "support" },
+    "tasks": { "enabled": true }
   }
 }
 ```
 
 | Key | Field | Type | Description |
 | ------- | ------ | ------------- | ------------- |
-| `enabled` | | boolean | Enables `MEMORY.md`, filesystem tool, and tasks tool |
-| `memory` | `namespace` | string | Session namespace key; `null` means per-conversation state |
+| `enabled` | | boolean | Enables `MEMORY.md` and workspace tools |
+| `needsApproval` | | boolean | Requires AI SDK approval before every enabled workspace tool execution |
+| `memory` | `enabled` | boolean | Enables or disables `MEMORY.md` when workspace is enabled |
+| | `namespace` | string | Session namespace key; `null` means per-conversation state |
+| `filesystem` | `enabled` | boolean | Enables or disables the filesystem tool when workspace is enabled |
+| `tasks` | `enabled` | boolean | Enables or disables the tasks tool when workspace is enabled |
 
 ---
 
@@ -362,6 +368,7 @@ Available tools: `tavilySearch`, `tavilyExtract`, `googleSearch`.
   "tools": {
     "tavilySearch": {
       "enabled": true,
+      "needsApproval": true,
       "apiKey": "...",
       "searchDepth": "advanced",
       "includeAnswer": true,
@@ -392,16 +399,19 @@ Available tools: `tavilySearch`, `tavilyExtract`, `googleSearch`.
 | Tool | Field | Type | Description |
 | ------ | ------- | ------ | ------------- |
 | `tavilySearch` | `enabled` | boolean | Enable the tool |
+| | `needsApproval` | boolean | Require AI SDK approval before execution |
 | | `apiKey` | string | Tavily API key; required unless `TAVILY_API_KEY` is set |
 | | `searchDepth` | `basic` \| `advanced` | Search depth |
 | | `includeAnswer` | boolean | Include a direct answer |
 | | `maxResults` | number | Max results (1–20, default: 5) |
 | | `topic` | `general` \| `news` \| `finance` | Search topic |
 | `tavilyExtract` | `enabled` | boolean | Enable the tool |
+| | `needsApproval` | boolean | Require AI SDK approval before execution |
 | | `apiKey` | string | Tavily API key; required unless `TAVILY_API_KEY` is set |
 | | `extractDepth` | `basic` \| `advanced` | Extraction depth |
 | | `format` | `markdown` \| `text` | Output format |
 | `googleSearch` | `enabled` | boolean | Enable the tool; requires `config.model.provider` to be `google` |
+| | `needsApproval` | boolean | Require AI SDK approval before execution |
 | | `searchTypes` | object | Keys: `webSearch`, `imageSearch` (each is an empty object or with options) |
 | | `timeRangeFilter.startTime` | string | ISO date string, filter results after this date |
 | | `timeRangeFilter.endTime` | string | ISO date string, filter results before this date |

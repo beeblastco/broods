@@ -34,10 +34,19 @@ export function createTools(context: Omit<ToolContext, "config">, accountConfig:
   assertSupportedConfiguredTools(accountConfig.tools);
 
   if (accountConfig.workspace?.enabled === true) {
+    const needsApproval = accountConfig.workspace.needsApproval === true;
     Object.assign(
       tools,
-      filesystemTool({ ...context, config: {} }),
-      tasksTool({ ...context, config: {} }),
+      ...(accountConfig.workspace.filesystem?.enabled === false ? [] : [
+        withToolApproval(filesystemTool({ ...context, config: {} }), {
+          filesystem: needsApproval,
+        }),
+      ]),
+      ...(accountConfig.workspace.tasks?.enabled === false ? [] : [
+        withToolApproval(tasksTool({ ...context, config: {} }), {
+          tasks: needsApproval,
+        }),
+      ]),
     );
   }
 
@@ -47,13 +56,24 @@ export function createTools(context: Omit<ToolContext, "config">, accountConfig:
       continue;
     }
 
-    Object.assign(tools, toolFactory({
+    Object.assign(tools, withToolApproval(toolFactory({
       ...context,
       config: toolConfig,
+    }), {
+      [toolName]: toolConfig.needsApproval === true,
     }));
   }
 
   return tools;
+}
+
+function withToolApproval(tools: ToolSet, approvals: Record<string, boolean>): ToolSet {
+  return Object.fromEntries(
+    Object.entries(tools).map(([toolName, entry]) => [
+      toolName,
+      approvals[toolName] === true ? { ...entry, needsApproval: true } : entry,
+    ]),
+  ) satisfies ToolSet;
 }
 
 function assertSupportedConfiguredTools(tools: AccountConfig["tools"]): void {

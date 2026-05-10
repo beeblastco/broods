@@ -114,4 +114,41 @@ describe("session compaction", () => {
     expect(compactionPrompt).toContain("new assistant content");
     expect(compactionPrompt).not.toContain("current request");
   });
+
+  it("keeps approval requests with approval responses after compaction", async () => {
+    process.env.CONVERSATIONS_TABLE_NAME = "conversations";
+    process.env.PROCESSED_EVENTS_TABLE_NAME = "processed-events";
+    process.env.FILESYSTEM_BUCKET_NAME = "filesystem";
+    const { selectPostCompactionPendingMessages } = await import("../functions/harness-processing/session.ts");
+    const approvalRequest = {
+      role: "assistant",
+      content: [
+        {
+          type: "tool-call",
+          toolCallId: "tool-call-1",
+          toolName: "filesystem",
+          input: { shell: "rm file.txt" },
+        },
+        {
+          type: "tool-approval-request",
+          approvalId: "approval-1",
+          toolCallId: "tool-call-1",
+        },
+      ],
+    } as actualAi.ModelMessage;
+    const approvalResponse = {
+      role: "tool",
+      content: [{
+        type: "tool-approval-response",
+        approvalId: "approval-1",
+        approved: true,
+      }],
+    } as actualAi.ModelMessage;
+
+    expect(selectPostCompactionPendingMessages([
+      { role: "user", content: "old request" },
+      approvalRequest,
+      approvalResponse,
+    ])).toEqual([approvalRequest, approvalResponse]);
+  });
 });

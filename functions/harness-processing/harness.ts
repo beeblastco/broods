@@ -6,6 +6,8 @@
 import {
   stepCountIs,
   streamText,
+  type StepResult,
+  type ToolApprovalRequestOutput,
   type ToolSet,
 } from "ai";
 import type { AccountConfig } from "../_shared/accounts.ts";
@@ -19,9 +21,19 @@ import loadSkillTool, { type LoadSkillPrompt } from "./tools/load-skill.tool.ts"
 // Default max agent iterations to prevent looping or too long execution.
 const MAX_AGENT_ITERATIONS = 30;
 
+type ApprovalRequestOutput = ToolApprovalRequestOutput<ToolSet>;
+type ApprovalToolCall = ApprovalRequestOutput["toolCall"];
+
+export type ToolApprovalSummary = Pick<ApprovalRequestOutput, "approvalId"> & {
+  toolCallId: ApprovalToolCall["toolCallId"];
+  toolName: ApprovalToolCall["toolName"];
+  input: ApprovalToolCall["input"];
+};
+
 export interface AgentReplyHooks {
   onFinalText(text: string): Promise<void>;
   onErrorText(error: string): Promise<void>;
+  onApprovalRequired?(approvals: ToolApprovalSummary[]): Promise<void>;
 }
 
 export async function runAgentLoop(
@@ -49,6 +61,7 @@ export async function runAgentLoop(
   } satisfies ToolSet;
   const enabledTools = Object.keys(tools).length > 0 ? tools : undefined;
   const modelSettings = modelSettingsFromModelConfig(accountConfig);
+  let approvalSummaries: ToolApprovalSummary[] = [];
 
   const stream = streamText({
     maxOutputTokens: 16000,
@@ -129,9 +142,21 @@ export async function runAgentLoop(
       const finalText = text.trim();
       const stepCount = steps.length;
       const toolCallCount = toolCalls.length;
+      const approvals = extractApprovalSummaries(steps);
 
       try {
         await session.persistModelMessages(response.messages);
+
+        if (approvals.length > 0) {
+          approvalSummaries = approvals;
+          logInfo("Tool approval required", {
+            conversationKey: session.conversationKey,
+            eventId: session.eventId,
+            approvals,
+          });
+          await reply?.onApprovalRequired?.(approvals);
+          return;
+        }
 
         if (!finalText) {
           if (didFail) {
@@ -184,6 +209,7 @@ export async function runAgentLoop(
   return Object.assign(stream, {
     didFail: () => didFail,
     failureText: () => failureText,
+    approvalSummaries: () => approvalSummaries,
   });
 }
 
@@ -204,6 +230,24 @@ function createLoadSkillPrompt(session: Session, allowedSkillPaths: string[]): L
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function extractApprovalSummaries(steps: Array<StepResult<ToolSet>>): ToolApprovalSummary[] {
+  return steps.flatMap((step) =>
+    step.content.flatMap((part) => {
+      if (part.type !== "tool-approval-request") {
+        return [];
+      }
+
+      const toolCall = part.toolCall;
+      return [{
+        approvalId: part.approvalId,
+        toolCallId: toolCall.toolCallId,
+        toolName: toolCall.toolName,
+        input: toolCall.input,
+      }];
+    })
+  );
 }
 
 function serializeError(error: unknown): Record<string, unknown> {

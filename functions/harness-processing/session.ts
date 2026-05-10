@@ -59,7 +59,6 @@ export interface TurnContextSnapshot {
   messages: ModelMessage[];
   system: SystemModelMessage[];
   ephemeralSystem: SystemModelMessage[];
-  hasPendingUserMessage: boolean;
   // Cursor-backed prompt state that prepareStep can refresh incrementally mid-run.
   promptContext: PromptContextSnapshot;
 }
@@ -257,13 +256,14 @@ export class Session {
         cursor: summaryCursor ?? promptContext.cursor,
         messages: [compactionSummary],
       };
-      messages = messages.at(-1)?.role === "user" ? [messages.at(-1)!] : [];
+      // Approval responses need their matching assistant request in model history.
+      // Keep that pending pair outside the compacted summary so the AI SDK can resume it.
+      messages = selectPostCompactionPendingMessages(messages);
 
       return {
         messages: pruneSessionMessages(messages, this.accountConfig),
         system: await this.buildSystemPromptParts(compactedPromptContext.messages, ephemeralSystem),
         ephemeralSystem,
-        hasPendingUserMessage: messages.at(-1)?.role === "user",
         promptContext: compactedPromptContext,
       };
     }
@@ -274,7 +274,6 @@ export class Session {
       messages,
       system,
       ephemeralSystem,
-      hasPendingUserMessage: messages.at(-1)?.role === "user",
       promptContext,
     };
   }
@@ -299,7 +298,7 @@ export class Session {
       this.loadMemoryFile(),
       this.loadSkillMetadata(),
     ]);
-    const memorySystem: SystemModelMessage[] = this.isWorkspaceEnabled()
+    const memorySystem: SystemModelMessage[] = this.isMemoryEnabled()
       ? [{
         role: "system",
         content: formatMemorySystemPrompt(memoryContent),
@@ -392,7 +391,7 @@ export class Session {
   }
 
   private async loadMemoryFile(): Promise<string | null> {
-    if (!this.isWorkspaceEnabled()) {
+    if (!this.isMemoryEnabled()) {
       return null;
     }
 
@@ -438,6 +437,10 @@ export class Session {
 
   private isWorkspaceEnabled(): boolean {
     return this.accountConfig.workspace?.enabled === true;
+  }
+
+  private isMemoryEnabled(): boolean {
+    return this.isWorkspaceEnabled() && this.accountConfig.workspace?.memory?.enabled !== false;
   }
 
   private async loadSkillMetadata(): Promise<SkillMetadata[]> {
@@ -614,6 +617,34 @@ function projectActiveConversationEntries(entries: StoredConversationEntry[]): S
   return latestCompactionIndex === -1 ? entries : entries.slice(latestCompactionIndex + 1);
 }
 
+export function selectPostCompactionPendingMessages(messages: ModelMessage[]): ModelMessage[] {
+  const lastMessage = messages.at(-1);
+  if (lastMessage?.role === "user") {
+    return [lastMessage];
+  }
+
+  if (!isToolApprovalResponseMessage(lastMessage)) {
+    return [];
+  }
+
+  const approvalIds = new Set(
+    lastMessage.content
+      .filter((part) => part.type === "tool-approval-response")
+      .map((part) => part.approvalId),
+  );
+  // The approval response references only approvalId; the prior assistant message
+  // carries the tool call details needed to execute or deny the tool on resume.
+  const approvalRequestMessages = messages.filter((message): message is AssistantModelMessage =>
+    message.role === "assistant" &&
+    typeof message.content !== "string" &&
+    message.content.some((part) => part.type === "tool-approval-request" && approvalIds.has(part.approvalId))
+  );
+
+  return approvalRequestMessages.length > 0
+    ? [...approvalRequestMessages, lastMessage]
+    : [lastMessage];
+}
+
 function latestCompactionAwareEntries(entries: StoredConversationEntry[]): StoredConversationEntry[] {
   const latestCompactionIndex = findLatestCompactionSummaryIndex(entries);
   return latestCompactionIndex === -1 ? entries : entries.slice(latestCompactionIndex);
@@ -683,6 +714,12 @@ function isPersistedToolContentPart(
   part: ToolModelMessage["content"][number],
 ): boolean {
   return part.type === "tool-approval-response" || part.type === "tool-result";
+}
+
+function isToolApprovalResponseMessage(message: ModelMessage | undefined): message is ToolModelMessage {
+  return message?.role === "tool" &&
+    message.content.length > 0 &&
+    message.content.every((part) => part.type === "tool-approval-response");
 }
 
 function loadEnvironmentContextPrompt(): string {
