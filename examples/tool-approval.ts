@@ -2,6 +2,8 @@
  * Example tool approval flow.
  */
 
+import type { ToolApprovalRequestOutput, ToolSet } from "ai";
+
 import {
   createAccount,
   createAgent,
@@ -10,11 +12,7 @@ import {
   streamToolApprovalResponse,
 } from "./utils.ts";
 
-interface ToolApprovalRequestChunk {
-  type: "tool-approval-request";
-  approvalId: string;
-  toolCallId: string;
-}
+type ToolApprovalRequestChunk = ToolApprovalRequestOutput<ToolSet>;
 
 const googleApiKey = process.env.ACCOUNT_GOOGLE_API_KEY!;
 const tavilyApiKey = process.env.ACCOUNT_TAVILY_API_KEY!;
@@ -64,7 +62,7 @@ try {
       }],
     }],
   }, account.accountSecret)) {
-    process.stdout.write(chunk);
+    process.stdout.write(chunk + "\n");
     const parsedChunk = parseToolApprovalRequestChunk(chunk);
     if (parsedChunk) {
       approvalRequest = parsedChunk;
@@ -94,17 +92,27 @@ try {
 
 function parseToolApprovalRequestChunk(chunk: string): ToolApprovalRequestChunk | null {
   try {
-    const parsed = JSON.parse(chunk) as Partial<ToolApprovalRequestChunk>;
-    return parsed.type === "tool-approval-request" &&
-      typeof parsed.approvalId === "string" &&
-      typeof parsed.toolCallId === "string"
-      ? {
-        type: parsed.type,
-        approvalId: parsed.approvalId,
-        toolCallId: parsed.toolCallId,
-      }
-      : null;
+    const parsed = JSON.parse(chunk) as unknown;
+    if (!isRecord(parsed) || parsed.type !== "tool-approval-request" || typeof parsed.approvalId !== "string") {
+      return null;
+    }
+
+    const toolCall = parsed.toolCall;
+    if (
+      !isRecord(toolCall) ||
+      toolCall.type !== "tool-call" ||
+      typeof toolCall.toolCallId !== "string" ||
+      typeof toolCall.toolName !== "string"
+    ) {
+      return null;
+    }
+
+    return parsed as ToolApprovalRequestChunk;
   } catch {
     return null;
   }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === "object");
 }
