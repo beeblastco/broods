@@ -4,6 +4,7 @@
  */
 
 import { InvokeCommand, LambdaClient } from "@aws-sdk/client-lambda";
+import type { ToolModelMessage } from "ai";
 import type { LambdaFunctionURLEvent } from "aws-lambda";
 import { formatChannelErrorText } from "../_shared/channels.ts";
 import { executeCommand } from "../_shared/commands.ts";
@@ -12,7 +13,7 @@ import { jsonResponse } from "../_shared/http.ts";
 import { logError, logInfo } from "../_shared/log.ts";
 import type { LambdaResponse } from "../_shared/runtime.ts";
 import { fireWebhook, type WebhookConfig } from "../_shared/webhook.ts";
-import { runAgentLoop } from "./harness.ts";
+import { runAgentLoop, type ToolApprovalSummary } from "./harness.ts";
 import {
   routeIncomingEvent,
   type AsyncDirectInboundEvent,
@@ -24,16 +25,17 @@ import { createSession } from "./session.ts";
 import {
   createPendingAsyncResult,
   getAsyncResult,
+  markAsyncResultAwaitingApproval,
   markAsyncResultCompleted,
   markAsyncResultFailed,
 } from "./status.ts";
 
 type AgentLoopStream = Awaited<ReturnType<typeof runAgentLoop>>;
 type SessionInstance = ReturnType<typeof createSession>;
-type TurnContext = Awaited<ReturnType<SessionInstance["createTurnContext"]>>;
 
 const CONVERSATIONS_TABLE_NAME = requireEnv("CONVERSATIONS_TABLE_NAME");
 const AGENT_PROCESSING_FAILED = "Agent processing failed";
+const CHANNEL_APPROVAL_DENIAL_REASON = "Tool approval is only supported through the direct API.";
 const textEncoder = new TextEncoder();
 const lambda = new LambdaClient({ region: process.env.AWS_REGION });
 
@@ -44,7 +46,7 @@ interface AsyncWorkerInvocation {
 
 interface DirectTurn {
   session: SessionInstance;
-  turnContext: TurnContext;
+  turnContext: Awaited<ReturnType<SessionInstance["createTurnContext"]>>;
 }
 
 export async function handler(event: LambdaFunctionURLEvent | AsyncWorkerInvocation): Promise<LambdaResponse> {
@@ -62,7 +64,7 @@ export async function handler(event: LambdaFunctionURLEvent | AsyncWorkerInvocat
 }
 
 async function handleDirectRequest(event: DirectInboundEvent): Promise<LambdaResponse> {
-  if (!event.events.some((ingressEvent) => ingressEvent.role === "user")) {
+  if (!hasRunnableDirectEvents(event)) {
     return emptySseResponse();
   }
 
@@ -73,7 +75,7 @@ async function handleDirectRequest(event: DirectInboundEvent): Promise<LambdaRes
     }
 
     const { session, turnContext } = turn;
-    if (!turnContext.hasPendingUserMessage) {
+    if (!isRunnableModelInput(turnContext.messages.at(-1))) {
       return emptySseResponse();
     }
 
@@ -93,14 +95,14 @@ async function handleDirectRequest(event: DirectInboundEvent): Promise<LambdaRes
 }
 
 async function handleAsyncRequest(event: AsyncDirectInboundEvent): Promise<LambdaResponse> {
-  if (!event.events.some((ingressEvent) => ingressEvent.role === "user")) {
+  if (!hasRunnableDirectEvents(event)) {
     await createPendingAsyncResult({
       eventId: event.eventId,
       conversationKey: event.conversationKey,
     });
     await markAsyncResultFailed({
       eventId: event.eventId,
-      error: "Request must include at least one user event",
+      error: "Request must include at least one user event or tool approval response",
     });
     return acceptedAsyncResponse(event.statusUrl);
   }
@@ -141,6 +143,7 @@ async function handleStatusRequest(event: StatusInboundEvent): Promise<LambdaRes
     status: result.status,
     ...(result.response ? { response: result.response } : {}),
     ...(result.error ? { error: result.error } : {}),
+    ...(result.approvals ? { approvals: result.approvals } : {}),
   });
 }
 
@@ -152,8 +155,8 @@ async function handleAsyncWorkerRequest(event: DirectInboundEvent): Promise<void
     }
 
     const { session, turnContext } = turn;
-    if (!turnContext.hasPendingUserMessage) {
-      await settleAsyncFailure(event, "Request did not produce a pending user message");
+    if (!isRunnableModelInput(turnContext.messages.at(-1))) {
+      await settleAsyncFailure(event, "Request did not produce pending model input");
       return;
     }
 
@@ -175,6 +178,20 @@ async function handleAsyncWorkerRequest(event: DirectInboundEvent): Promise<void
       onErrorText: async (error) => {
         didSettle = true;
         await settleAsyncFailure(event, error);
+      },
+      onApprovalRequired: async (approvals) => {
+        await markAsyncResultAwaitingApproval({
+          eventId: event.eventId,
+          approvals,
+        });
+        didSettle = true;
+        await sendWebhook(event, {
+          eventId: event.publicEventId,
+          conversationKey: event.publicConversationKey,
+          status: "awaiting_approval",
+          approvals,
+          success: true,
+        });
       },
     });
 
@@ -246,13 +263,16 @@ async function handleChannelRequest(event: ChannelInboundEvent): Promise<void> {
   try {
     while (true) {
       const turnContext = await session.createTurnContext();
-      if (!turnContext.hasPendingUserMessage) {
+      if (!isRunnableModelInput(turnContext.messages.at(-1))) {
         return;
       }
 
       const stream = await runAgentLoop(session, turnContext, event.accountConfig ?? {}, {
         onFinalText: (text) => event.channel.sendText(text),
         onErrorText: (error) => event.channel.sendText(formatChannelErrorText(error)),
+        onApprovalRequired: async (approvals) => {
+          await session.persistModelMessages([createChannelApprovalDenial(approvals)]);
+        },
       });
 
       await stream.consumeStream();
@@ -349,8 +369,27 @@ function directReplyHooks(event: DirectInboundEvent) {
         success: false,
         error,
       }),
+      onApprovalRequired: async (approvals: ToolApprovalSummary[]) => sendWebhook(event, {
+        eventId: event.publicEventId,
+        conversationKey: event.publicConversationKey,
+        status: "awaiting_approval",
+        approvals,
+        success: true,
+      }),
     }
     : undefined;
+}
+
+function createChannelApprovalDenial(approvals: ToolApprovalSummary[]): ToolModelMessage {
+  return {
+    role: "tool",
+    content: approvals.map((approval) => ({
+      type: "tool-approval-response",
+      approvalId: approval.approvalId,
+      approved: false,
+      reason: CHANNEL_APPROVAL_DENIAL_REASON,
+    })),
+  };
 }
 
 function acceptedAsyncResponse(statusUrl: string): LambdaResponse {
@@ -372,6 +411,19 @@ function isAsyncWorkerInvocation(event: unknown): event is AsyncWorkerInvocation
     typeof event === "object" &&
     (event as { kind?: unknown }).kind === "direct-api-async-worker",
   );
+}
+
+function hasRunnableDirectEvents(event: DirectInboundEvent): boolean {
+  return event.events.some(isRunnableModelInput);
+}
+
+// A persisted tool result is history, not new model input. Only user turns and
+// AI SDK approval responses should start or resume a model run.
+function isRunnableModelInput(message: DirectInboundEvent["events"][number] | DirectTurn["turnContext"]["messages"][number] | undefined): boolean {
+  return message?.role === "user" ||
+    (message?.role === "tool" &&
+      message.content.length > 0 &&
+      message.content.every((part) => part.type === "tool-approval-response"));
 }
 
 function createDirectSseBody(stream: AgentLoopStream): ReadableStream<Uint8Array> {

@@ -5,11 +5,13 @@
 
 import type {
   SystemModelMessage,
+  ToolModelMessage,
   UserContent,
   UserModelMessage,
 } from "ai";
 import {
   systemModelMessageSchema,
+  toolModelMessageSchema,
   userModelMessageSchema,
 } from "ai";
 import type { LambdaFunctionURLEvent } from "aws-lambda";
@@ -74,6 +76,7 @@ const RESERVED_CONVERSATION_PREFIXES = [
 
 type DirectIngressEvent =
   | UserModelMessage
+  | ToolModelMessage
   | (SystemModelMessage & { persist: false });
 
 export interface DirectInboundEvent {
@@ -574,8 +577,23 @@ function parseDirectIngressEvent(rawEvent: unknown): DirectIngressEvent {
     return parsedUser.data;
   }
 
+  if (candidate.role === "tool") {
+    const parsedTool = toolModelMessageSchema.safeParse(candidate);
+    if (!parsedTool.success) {
+      throw new Error(`Invalid direct event: ${parsedTool.error.issues[0]?.message ?? "must match ToolModelMessage"}`);
+    }
+    if (
+      parsedTool.data.content.length === 0 ||
+      !parsedTool.data.content.every((part) => part.type === "tool-approval-response")
+    ) {
+      throw new Error("Direct API tool events may include only tool-approval-response parts");
+    }
+
+    return parsedTool.data;
+  }
+
   if (candidate.role !== "system") {
-    throw new Error("Direct API accepts only user and ephemeral system events");
+    throw new Error("Direct API accepts only user, tool approval, and ephemeral system events");
   }
 
   if (persist === true) {

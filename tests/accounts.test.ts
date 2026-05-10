@@ -73,6 +73,18 @@ describe("account config", () => {
     expect(() => normalizeAccountConfig({ workspace: { enabled: "yes" } })).toThrow(
       "config.workspace.enabled must be a boolean",
     );
+    expect(() => normalizeAccountConfig({ workspace: { needsApproval: "yes" } })).toThrow(
+      "config.workspace.needsApproval must be a boolean",
+    );
+    expect(() => normalizeAccountConfig({ workspace: { memory: { enabled: "yes" } } })).toThrow(
+      "config.workspace.memory.enabled must be a boolean",
+    );
+    expect(() => normalizeAccountConfig({ workspace: { tasks: { enabled: "yes" } } })).toThrow(
+      "config.workspace.tasks.enabled must be a boolean",
+    );
+    expect(() => normalizeAccountConfig({ workspace: { filesystem: { enabled: "yes" } } })).toThrow(
+      "config.workspace.filesystem.enabled must be a boolean",
+    );
   });
 
   it("validates account model config", () => {
@@ -169,6 +181,7 @@ describe("account config", () => {
     expect(normalizeAccountConfig({
       tools: {
         tavilySearch: {
+          needsApproval: true,
           maxResults: 5,
           includeAnswer: false,
           searchDepth: "basic",
@@ -191,6 +204,7 @@ describe("account config", () => {
     })).toEqual({
       tools: {
         tavilySearch: {
+          needsApproval: true,
           maxResults: 5,
           includeAnswer: false,
           searchDepth: "basic",
@@ -217,6 +231,12 @@ describe("account config", () => {
         unknownTool: { enabled: "yes" },
       },
     })).toThrow("config.tools.unknownTool is not a supported tool");
+
+    expect(() => normalizeAccountConfig({
+      tools: {
+        tavilySearch: { needsApproval: "yes" },
+      },
+    })).toThrow("config.tools.tavilySearch.needsApproval must be a boolean");
   });
 
   it("validates account skills config", () => {
@@ -269,8 +289,13 @@ describe("account config", () => {
       },
       workspace: {
         enabled: true,
+        needsApproval: true,
         memory: {
+          enabled: true,
           namespace: "support",
+        },
+        tasks: {
+          enabled: true,
         },
       },
       session: {
@@ -314,8 +339,13 @@ describe("account config", () => {
       },
       workspace: {
         enabled: true,
+        needsApproval: true,
         memory: {
+          enabled: true,
           namespace: "support",
+        },
+        tasks: {
+          enabled: true,
         },
       },
       session: {
