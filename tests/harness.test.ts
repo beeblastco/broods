@@ -18,6 +18,9 @@ const createGatewayMock = mock((_options: unknown) => gatewayModelMock);
 let streamTextScenario: "empty" | "error-then-empty" = "empty";
 
 const streamTextMock = mock((options: {
+  experimental_onToolCallStart?: unknown;
+  experimental_onToolCallFinish?: unknown;
+  onChunk?: unknown;
   onError(args: { error: unknown }): Promise<void>;
   onFinish(args: {
     response: { messages: unknown[] };
@@ -144,6 +147,9 @@ describe("runAgentLoop", () => {
     expect(onErrorText).toHaveBeenCalledWith("Model returned empty response (finishReason: stop, steps: 0, toolCalls: 0)");
     expect(streamTextMock.mock.calls[0]?.[0]).not.toHaveProperty("tools");
     expect(streamTextMock.mock.calls[0]?.[0]).not.toHaveProperty("providerOptions");
+    expect(streamTextMock.mock.calls[0]?.[0]).not.toHaveProperty("onChunk");
+    expect(typeof streamTextMock.mock.calls[0]?.[0].experimental_onToolCallStart).toBe("function");
+    expect(typeof streamTextMock.mock.calls[0]?.[0].experimental_onToolCallFinish).toBe("function");
   });
 
   it("keeps the provider error when the stream also finishes with empty text", async () => {
