@@ -9,7 +9,6 @@ import {
   createAgent,
   deleteAccount,
   streamSSE,
-  streamToolApprovalResponse,
 } from "./utils.ts";
 
 type ToolApprovalRequestChunk = ToolApprovalRequestOutput<ToolSet>;
@@ -53,7 +52,7 @@ try {
   for await (const chunk of streamSSE({
     agentId: agent.agent.agentId,
     eventId: `approval-request-${Date.now()}`,
-    conversationKey,
+    conversationKey: conversationKey,
     events: [{
       role: "user",
       content: [{
@@ -75,19 +74,25 @@ try {
 
   console.log("\n\nApproving tool call:", JSON.stringify(approvalRequest, null, 2));
 
-  for await (const chunk of streamToolApprovalResponse({
-    accountSecret: account.accountSecret,
+  for await (const chunk of streamSSE({
     agentId: agent.agent.agentId,
-    conversationKey,
-    approvalId: approvalRequest.approvalId,
-    approved: true,
-    reason: "Example script approved the search.",
-  })) {
+    eventId: `approval-${Date.now()}`,
+    conversationKey: conversationKey,
+    events: [{
+      role: "tool",
+      content: [{
+        type: "tool-approval-response",
+        approvalId: approvalRequest.approvalId,
+        approved: true,
+        reason: "Approved by example script",
+      }],
+    }],
+  }, account.accountSecret)) {
     process.stdout.write(chunk);
   }
 } finally {
-  await deleteAccount(account.accountSecret);
-  console.log("\n\nDeleted test account");
+  // await deleteAccount(account.accountSecret);
+  // console.log("\n\nDeleted test account");
 }
 
 function parseToolApprovalRequestChunk(chunk: string): ToolApprovalRequestChunk | null {
