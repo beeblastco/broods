@@ -35,6 +35,39 @@ describe("session pruning", () => {
 
     expect(pruneSessionMessages(messages, { session: { pruning: { enabled: false } } })).toBe(messages);
   });
+
+  it("keeps approval tool calls when the latest message is an approval response", async () => {
+    const { pruneSessionMessages } = await import("../functions/harness-processing/pruning.ts");
+    const messages = [
+      { role: "user", content: "delete a file" },
+      {
+        role: "assistant",
+        content: [
+          {
+            type: "tool-call",
+            toolCallId: "tool-call-1",
+            toolName: "filesystem",
+            input: { shell: "rm file.txt" },
+          },
+          {
+            type: "tool-approval-request",
+            approvalId: "approval-1",
+            toolCallId: "tool-call-1",
+          },
+        ],
+      },
+      {
+        role: "tool",
+        content: [{
+          type: "tool-approval-response",
+          approvalId: "approval-1",
+          approved: true,
+        }],
+      },
+    ] as actualAi.ModelMessage[];
+
+    expect(pruneSessionMessages(messages, {})).toEqual(messages);
+  });
 });
 
 describe("session compaction", () => {

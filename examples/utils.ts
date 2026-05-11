@@ -193,30 +193,6 @@ export async function postAsyncRequest(body: unknown, accountSecret: string): Pr
   return await response.json() as { statusUrl: string };
 }
 
-export async function* streamToolApprovalResponse(options: {
-  accountSecret: string;
-  agentId: string;
-  conversationKey: string;
-  approvalId: string;
-  approved: boolean;
-  reason?: string;
-}): AsyncGenerator<string> {
-  yield* streamSSE({
-    agentId: options.agentId,
-    eventId: `approval-${Date.now()}`,
-    conversationKey: options.conversationKey,
-    events: [{
-      role: "tool",
-      content: [{
-        type: "tool-approval-response",
-        approvalId: options.approvalId,
-        approved: options.approved,
-        ...(options.reason ? { reason: options.reason } : {}),
-      }],
-    }],
-  }, options.accountSecret);
-}
-
 // Poll async status until it reaches a terminal or user-actionable state
 export async function pollStatus(accountSecret: string, statusUrl: string): Promise<AsyncStatus> {
   const deadline = Date.now() + 180000;
