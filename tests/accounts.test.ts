@@ -152,7 +152,7 @@ describe("account config", () => {
       model: {
         provider: 12,
       },
-    })).toThrow("config.model.provider must be one of: google, openai, bedrock, gateway");
+    })).toThrow("config.model.provider must be one of: google, openai, bedrock, gateway, minimax");
 
     expect(() => normalizeAccountConfig({
       model: {

@@ -7,6 +7,7 @@ import { createAmazonBedrock } from "@ai-sdk/amazon-bedrock";
 import { createGateway } from "@ai-sdk/gateway";
 import { createGoogleGenerativeAI } from "@ai-sdk/google";
 import { createOpenAI } from "@ai-sdk/openai";
+import { createMinimax } from "vercel-minimax-ai-provider";
 import type { LanguageModel } from "ai";
 import type {
   AccountConfig,
@@ -34,6 +35,8 @@ export function resolveConfiguredModel(accountConfig: AccountConfig): ResolvedMo
       return resolveProviderModel(providerName, createAmazonBedrock(providerConfig as never), modelId);
     case "gateway":
       return resolveProviderModel(providerName, createGateway(providerConfig as never), modelId);
+    case "minimax":
+      return resolveProviderModel(providerName, createMinimax(providerConfig as never), modelId);
   }
 }
 

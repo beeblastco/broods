@@ -206,7 +206,8 @@ Stores constructor settings for the AI SDK provider. The selected provider entry
     "google": { "apiKey": "...", "baseURL": "...", "headers": {} },
     "openai": { "apiKey": "...", "baseURL": "...", "organization": "...", "project": "...", "name": "..." },
     "bedrock": { "region": "us-east-1", "apiKey": "...", "accessKeyId": "...", "secretAccessKey": "...", "sessionToken": "..." },
-    "gateway": { "apiKey": "...", "baseURL": "...", "headers": {} }
+    "gateway": { "apiKey": "...", "baseURL": "...", "headers": {} },
+    "minimax": { "apiKey": "...", "baseURL": "...", "headers": {} }
   }
 }
 ```
@@ -227,6 +228,9 @@ Stores constructor settings for the AI SDK provider. The selected provider entry
 | | `secretAccessKey` | string | AWS secret access key |
 | | `sessionToken` | string | AWS session token for temp credentials |
 | `gateway` | `apiKey` | string | Gateway API key |
+| | `baseURL` | string | Optional custom base URL |
+| | `headers` | object | Optional custom headers |
+| `minimax` | `apiKey` | string | MiniMax API key |
 | | `baseURL` | string | Optional custom base URL |
 | | `headers` | object | Optional custom headers |
 
@@ -257,7 +261,7 @@ Controls the Vercel AI SDK `streamText` call. All standard `streamText` paramete
 
 | Field | Type | Description |
 | ------- | ------ | ------------- |
-| `provider` | string | Provider constructor: `google`, `openai`, `bedrock`, or `gateway` |
+| `provider` | string | Provider constructor: `google`, `openai`, `bedrock`, `gateway`, or `minimax` |
 | `modelId` | string | Provider-specific model identifier |
 | `temperature` | number | Sampling temperature |
 | `maxOutputTokens` | number | Maximum tokens in response |

@@ -15,6 +15,8 @@ const bedrockModelMock = mock((modelId: string) => ({ provider: "bedrock", model
 const createBedrockMock = mock((_options: unknown) => bedrockModelMock);
 const gatewayModelMock = mock((modelId: string) => ({ provider: "gateway", modelId }));
 const createGatewayMock = mock((_options: unknown) => gatewayModelMock);
+const minimaxModelMock = mock((modelId: string) => ({ provider: "minimax", modelId }));
+const createMinimaxMock = mock((_options: unknown) => minimaxModelMock);
 let streamTextScenario: "empty" | "error-then-empty" | "approval-request" = "empty";
 
 const streamTextMock = mock((options: {
@@ -120,6 +122,10 @@ mock.module("@ai-sdk/gateway", () => ({
   createGateway: createGatewayMock,
 }));
 
+mock.module("vercel-minimax-ai-provider", () => ({
+  createMinimax: createMinimaxMock,
+}));
+
 mock.module("ai", () => ({
   ...actualAi,
   streamText: streamTextMock,
@@ -137,6 +143,8 @@ afterEach(() => {
   createBedrockMock.mockClear();
   gatewayModelMock.mockClear();
   createGatewayMock.mockClear();
+  minimaxModelMock.mockClear();
+  createMinimaxMock.mockClear();
 });
 
 describe("runAgentLoop", () => {
@@ -548,6 +556,51 @@ describe("runAgentLoop", () => {
     expect(openAIModelMock).toHaveBeenCalledWith("gpt-5.4");
     expect(streamTextMock.mock.calls[0]?.[0]).toMatchObject({
       model: { provider: "openai", modelId: "gpt-5.4" },
+    });
+  });
+
+  it("creates a MiniMax provider from account provider config", async () => {
+    installHarnessEnv();
+    const { runAgentLoop } = await import("../functions/harness-processing/harness.ts");
+
+    const stream = await runAgentLoop({
+      conversationKey: "direct:conversation",
+      eventId: "direct-event",
+      filesystemNamespace: () => "fs-test",
+      persistModelMessages: async () => { },
+      loadRefreshedSystemPromptParts: async () => ({
+        promptContext: { cursor: null, messages: [] },
+        system: [],
+      }),
+    } as never, {
+      messages: [{ role: "user", content: "hello" }],
+      system: [],
+      ephemeralSystem: [],
+      promptContext: { cursor: null, messages: [] },
+    }, {
+      provider: {
+        minimax: {
+          apiKey: "minimax-key",
+          baseURL: "https://api.minimax.io/anthropic/v1",
+        },
+      },
+      model: {
+        provider: "minimax",
+        modelId: "MiniMax-M2.7",
+        temperature: 1,
+      },
+    });
+
+    await stream.consumeStream();
+
+    expect(createMinimaxMock).toHaveBeenCalledWith({
+      apiKey: "minimax-key",
+      baseURL: "https://api.minimax.io/anthropic/v1",
+    });
+    expect(minimaxModelMock).toHaveBeenCalledWith("MiniMax-M2.7");
+    expect(streamTextMock.mock.calls[0]?.[0]).toMatchObject({
+      model: { provider: "minimax", modelId: "MiniMax-M2.7" },
+      temperature: 1,
     });
   });
 

@@ -12,6 +12,9 @@
     },
     "gateway": {
       "apiKey": "..."
+    },
+    "minimax": {
+      "apiKey": "..."
     }
   },
   "model": {

@@ -8,6 +8,7 @@ export const ACCOUNT_MODEL_PROVIDERS = {
   openai: true,
   bedrock: true,
   gateway: true,
+  minimax: true,
 } as const;
 
 export type AccountModelProviderName = keyof typeof ACCOUNT_MODEL_PROVIDERS;
