@@ -61,7 +61,7 @@ try {
       }],
     }],
   }, account.accountSecret)) {
-    process.stdout.write(chunk + "\n");
+    process.stdout.write(chunk + "\n\n");
     const parsedChunk = parseToolApprovalRequestChunk(chunk);
     if (parsedChunk) {
       approvalRequest = parsedChunk;
@@ -88,7 +88,7 @@ try {
       }],
     }],
   }, account.accountSecret)) {
-    process.stdout.write(chunk);
+    process.stdout.write(chunk + "\n\n");
   }
 } finally {
   // await deleteAccount(account.accountSecret);
