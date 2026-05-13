@@ -5,7 +5,12 @@
 
 import { readFileSync } from "node:fs";
 
-import type { AccountConfig, AccountModelProviderName } from "../functions/_shared/accounts.ts";
+import type { AccountConfig } from "../functions/_shared/accounts.ts";
+import {
+  accountModelProviderNames,
+  isAccountModelProviderName,
+  type AccountModelProviderName,
+} from "../functions/_shared/providers.ts";
 
 const DEFAULT_ACCOUNT_MODEL_PROVIDER = "google";
 const DEFAULT_ACCOUNT_MODEL_ID = "gemma-4-31b-it";
@@ -286,11 +291,11 @@ function isPublicAgent(value: unknown): value is PublicAgent {
 }
 
 function parseAccountModelProvider(value: string): AccountModelProviderName {
-  if (value === "google" || value === "openai" || value === "bedrock" || value === "gateway") {
+  if (isAccountModelProviderName(value)) {
     return value;
   }
 
-  throw new Error("ACCOUNT_MODEL_PROVIDER must be one of: google, openai, bedrock, gateway");
+  throw new Error(`ACCOUNT_MODEL_PROVIDER must be one of: ${accountModelProviderNames().join(", ")}`);
 }
 
 function accountProviderConfig(provider: AccountModelProviderName): Record<string, unknown> {
@@ -321,6 +326,11 @@ function accountProviderConfig(provider: AccountModelProviderName): Record<strin
       };
     case "gateway":
       return { apiKey: firstRequiredEnv("ACCOUNT_GATEWAY_API_KEY") };
+    case "minimax":
+      return {
+        apiKey: firstRequiredEnv("ACCOUNT_MINIMAX_API_KEY"),
+        ...optionalStringConfig("baseURL", "ACCOUNT_MINIMAX_BASE_URL", "MINIMAX_BASE_URL"),
+      };
   }
 }
 

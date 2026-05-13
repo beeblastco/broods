@@ -93,4 +93,29 @@ describe("script account runtime config", () => {
       },
     });
   });
+
+  it("generates MiniMax provider config from environment variables", () => {
+    process.env = {};
+    process.env.ACCOUNT_MODEL_PROVIDER = "minimax";
+    process.env.ACCOUNT_MODEL_ID = "MiniMax-M2.7";
+    process.env.ACCOUNT_MINIMAX_API_KEY = "minimax-key";
+    process.env.ACCOUNT_MINIMAX_BASE_URL = "https://api.minimax.io/anthropic/v1";
+
+    expect(createScriptAccountRuntimeConfig()).toEqual({
+      model: {
+        provider: "minimax",
+        modelId: "MiniMax-M2.7",
+      },
+      provider: {
+        minimax: {
+          apiKey: "minimax-key",
+          baseURL: "https://api.minimax.io/anthropic/v1",
+        },
+      },
+      workspace: {
+        enabled: true,
+      },
+      tools: {},
+    });
+  });
 });
