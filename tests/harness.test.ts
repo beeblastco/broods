@@ -568,11 +568,26 @@ describe("runAgentLoop", () => {
     await tools.run_subagent!.execute({
       tasks: [{ prompt: "research" }],
     }, {
-      messages: [{ role: "user", content: "parent" }],
+      messages: [
+        { role: "user", content: "parent" },
+        {
+          role: "assistant",
+          content: [
+            { type: "reasoning", text: "internal scratch work" },
+            { type: "text", text: "waiting for subagents" },
+          ],
+        },
+      ],
     });
     expect(dispatchSubagents).toHaveBeenCalledWith(
       [{ prompt: "research" }],
-      [{ role: "user", content: "parent" }],
+      [
+        { role: "user", content: "parent" },
+        {
+          role: "assistant",
+          content: [{ type: "text", text: "waiting for subagents" }],
+        },
+      ],
       ephemeralSystem,
     );
   });

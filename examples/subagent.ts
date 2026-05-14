@@ -5,6 +5,8 @@
 import { createAccount, createAgent, deleteAccount, streamSSE } from "./utils.ts";
 
 const googleApiKey = process.env.ACCOUNT_GOOGLE_API_KEY!;
+const tavilyApiKey = process.env.ACCOUNT_TAVILY_API_KEY!;
+
 const account = await createAccount(`subagent-${Date.now()}`);
 const parent = await createAgent(
   account.accountSecret,
@@ -20,7 +22,16 @@ const parent = await createAgent(
       modelId: "gemma-4-31b-it",
     },
     agent: {
-      system: "You are a helpful assistant.",
+      system: "You are a helpful assistant. Please do not use the search tool unless you are asked to.",
+    },
+    tools: {
+        tavilySearch: {
+            enabled: true,
+            apiKey: tavilyApiKey,
+            searchDepth: "advanced",
+            includeAnswer: true,
+            maxResults: 3,
+        },
     },
     subagent: {
       enabled: true,
@@ -45,10 +56,10 @@ try {
         content: [{
           type: "text",
           text: [
-            "Launch two subagents in parallel.",
-            "One should outline the API integration risks for a new provider.",
-            "The other should outline the operational risks for the same rollout.",
-            "Compare their findings and provide a concise implementation checklist.",
+            "Launch two subagents in parallel to ",
+            "research for me the newest model release from OpenAI",
+            "and for Anthropic model",
+            "Compare thier two model in coding capability, which one is better in coding",
           ].join(" "),
         }],
       },

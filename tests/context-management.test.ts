@@ -54,14 +54,36 @@ describe("session environment context", () => {
 });
 
 describe("session pruning", () => {
-  it("returns original messages when pruning is disabled", async () => {
+  it("keeps non-reasoning messages unchanged when pruning is disabled", async () => {
     const { pruneSessionMessages } = await import("../functions/harness-processing/pruning.ts");
     const messages = [
       { role: "user", content: "hello" },
       { role: "assistant", content: "hi" },
     ] as actualAi.ModelMessage[];
 
-    expect(pruneSessionMessages(messages, { session: { pruning: { enabled: false } } })).toBe(messages);
+    expect(pruneSessionMessages(messages, { session: { pruning: { enabled: false } } })).toEqual(messages);
+  });
+
+  it("strips completed assistant reasoning even when pruning is disabled", async () => {
+    const { pruneSessionMessages } = await import("../functions/harness-processing/pruning.ts");
+    const messages = [
+      { role: "user", content: "hello" },
+      {
+        role: "assistant",
+        content: [
+          { type: "reasoning", text: "private scratch work" },
+          { type: "text", text: "visible answer" },
+        ],
+      },
+    ] as actualAi.ModelMessage[];
+
+    expect(pruneSessionMessages(messages, { session: { pruning: { enabled: false } } })).toEqual([
+      { role: "user", content: "hello" },
+      {
+        role: "assistant",
+        content: [{ type: "text", text: "visible answer" }],
+      },
+    ]);
   });
 
   it("keeps approval tool calls when the latest message is an approval response", async () => {
@@ -71,6 +93,10 @@ describe("session pruning", () => {
       {
         role: "assistant",
         content: [
+          {
+            type: "reasoning",
+            text: "approval resume reasoning",
+          },
           {
             type: "tool-call",
             toolCallId: "tool-call-1",
@@ -176,6 +202,32 @@ describe("session compaction", () => {
     expect(compactionPrompt).not.toContain("current request");
   });
 
+  it("strips reasoning before building compaction prompts", async () => {
+    const { compactSessionContext } = await import("../functions/harness-processing/compaction.ts");
+
+    await compactSessionContext({
+      conversationKey: "conversation",
+      system: [],
+      messages: [
+        { role: "user", content: "old request" },
+        {
+          role: "assistant",
+          content: [
+            { type: "reasoning", text: "private scratch work" },
+            { type: "text", text: "visible assistant answer" },
+          ],
+        },
+        { role: "user", content: "current request" },
+      ],
+      accountConfig: compactingAccountConfig,
+    });
+
+    const options = generateTextMock.mock.calls[0]?.[0] as { messages: Array<{ content: string }> } | undefined;
+    const compactionPrompt = options?.messages[0]?.content;
+    expect(compactionPrompt).not.toContain("private scratch work");
+    expect(compactionPrompt).toContain("visible assistant answer");
+  });
+
   it("keeps approval requests with approval responses after compaction", async () => {
     process.env.CONVERSATIONS_TABLE_NAME = "conversations";
     process.env.PROCESSED_EVENTS_TABLE_NAME = "processed-events";
@@ -211,5 +263,39 @@ describe("session compaction", () => {
       approvalRequest,
       approvalResponse,
     ])).toEqual([approvalRequest, approvalResponse]);
+  });
+
+  it("does not compact pending approval resumes", async () => {
+    const { compactSessionContext } = await import("../functions/harness-processing/compaction.ts");
+
+    const result = await compactSessionContext({
+      conversationKey: "conversation",
+      system: [],
+      messages: [
+        { role: "user", content: "delete a file" },
+        {
+          role: "assistant",
+          content: [
+            { type: "reasoning", text: "approval resume reasoning" },
+            {
+              type: "tool-approval-request",
+              approvalId: "approval-1",
+              toolCallId: "tool-call-1",
+            },
+          ],
+        },
+        {
+          role: "tool",
+          content: [{
+            type: "tool-approval-response",
+            approvalId: "approval-1",
+            approved: true,
+          }],
+        },
+      ] as actualAi.ModelMessage[],
+      accountConfig: compactingAccountConfig,
+    });
+
+    expect(result).toBeNull();
   });
 });
