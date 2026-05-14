@@ -8,68 +8,88 @@ const googleApiKey = process.env.ACCOUNT_GOOGLE_API_KEY!;
 const tavilyApiKey = process.env.ACCOUNT_TAVILY_API_KEY!;
 
 const account = await createAccount(`subagent-${Date.now()}`);
-const parent = await createAgent(
-  account.accountSecret,
-  "Subagent parent assistant",
-  {
-    provider: {
-      google: {
-        apiKey: googleApiKey,
-      },
-    },
-    model: {
-      provider: "google",
-      modelId: "gemma-4-31b-it",
-    },
-    agent: {
-      system: "You are a helpful assistant. Please do not use the search tool unless you are asked to.",
-    },
-    tools: {
-        tavilySearch: {
-            enabled: true,
-            apiKey: tavilyApiKey,
-            searchDepth: "advanced",
-            includeAnswer: true,
-            maxResults: 3,
+
+const subagent = await createAgent(account.accountSecret, "Subagent assistant",
+    {
+        provider: {
+            google: {
+                apiKey: googleApiKey,
+            },
         },
+        model: {
+            provider: "google",
+            modelId: "gemma-4-31b-it",
+        },
+        agent: {
+            system: `Knowledge cutoff: Janurary 2025.\n\nYou are a helpful personal assistant that can use tools to get information and perform tasks for the user.\n\nYou also have access to web search and web fetch tools. Always use these tools to research and get up-to-date information or when you are asked for. Your knowledge was limited by cutoff training data date so do not rely on it for up-to-date information or fact checks.`,
+        },
+        tools: {
+            tavilySearch: {
+                enabled: true,
+                apiKey: tavilyApiKey,
+                searchDepth: "advanced",
+                includeAnswer: true,
+                maxResults: 5,
+            },
+        }
     },
-    subagent: {
-      enabled: true,
-      allowed: [],
-      context: "new",
-    },
-  },
+    "Specialized research agent"
 );
 
+const parent = await createAgent(account.accountSecret, "Parent assistant",
+    {
+        provider: {
+            google: {
+                apiKey: googleApiKey,
+            },
+        },
+        model: {
+            provider: "google",
+            modelId: "gemma-4-31b-it",
+        },
+        agent: {
+            system: "You are a helpful assistant.",
+        },
+        subagent: {
+            enabled: true,
+            allowed: [subagent.agent.agentId], // Add the subagent ID here
+            context: "new",
+        },
+    },
+);
+
+
 console.log("Created test account:", JSON.stringify(account));
+console.log("Created subagent:", JSON.stringify(subagent));
 console.log("Created parent agent:", JSON.stringify(parent));
 
 try {
-  const timestamp = Date.now();
-  const body = {
-    agentId: parent.agent.agentId,
-    eventId: `subagent-${timestamp}`,
-    conversationKey: `subagent-${timestamp}`,
-    events: [
-      {
-        role: "user",
-        content: [{
-          type: "text",
-          text: [
-            "Launch two subagents in parallel to ",
-            "research for me the newest model release from OpenAI",
-            "and for Anthropic model",
-            "Compare thier two model in coding capability, which one is better in coding",
-          ].join(" "),
-        }],
-      },
-    ],
-  };
+    const timestamp = Date.now();
+    const body = {
+        agentId: parent.agent.agentId,
+        eventId: `subagent-${timestamp}`,
+        conversationKey: `subagent-${timestamp}`,
+        events: [
+            {
+                role: "user",
+                content: [{
+                    type: "text",
+                    text: [
+                        `Use the predefined subagent ${subagent.agent.agentId} for both tasks; do not create virtual subagents.`,
+                        "Launch two subagents in parallel to",
+                        "research the newest model release from OpenAI",
+                        "and the newest model release from Anthropic.",
+                        "Compare their coding capabilities and say which is better for coding.",
+                    ].join(" "),
+                }],
+            },
+        ],
+    };
 
-  for await (const chunk of streamSSE(body, account.accountSecret)) {
-    process.stdout.write(chunk + "\n\n");
-  }
+    for await (const chunk of streamSSE(body, account.accountSecret)) {
+        process.stdout.write(chunk + "\n\n");
+    }
 } finally {
-  await deleteAccount(account.accountSecret);
-  console.log("\nDeleted test account");
+    await deleteAccount(account.accountSecret);
+    console.log("\nDeleted test account");
 }
