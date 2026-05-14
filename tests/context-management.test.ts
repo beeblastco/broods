@@ -10,6 +10,16 @@ const ORIGINAL_ENV = { ...process.env };
 const googleModelMock = mock((modelId: string) => ({ provider: "google", modelId }));
 const createGoogleMock = mock((_options: unknown) => googleModelMock);
 const generateTextMock = mock(async (_options: unknown) => ({ text: "Earlier context summary." }));
+const getAgentMock = mock(async (_accountId: string, agentId: string) => ({
+  accountId: "acct",
+  agentId,
+  name: "Research assistant",
+  description: "Specialized research agent",
+  status: "active" as const,
+  config: {},
+  createdAt: "2026-01-01T00:00:00.000Z",
+  updatedAt: "2026-01-01T00:00:00.000Z",
+}));
 
 mock.module("@ai-sdk/google", () => ({
   createGoogleGenerativeAI: createGoogleMock,
@@ -20,11 +30,16 @@ mock.module("ai", () => ({
   generateText: generateTextMock,
 }));
 
+mock.module("../functions/_shared/agents.ts", () => ({
+  getAgent: getAgentMock,
+}));
+
 afterEach(() => {
   process.env = { ...ORIGINAL_ENV };
   generateTextMock.mockClear();
   googleModelMock.mockClear();
   createGoogleMock.mockClear();
+  getAgentMock.mockClear();
 });
 
 describe("session environment context", () => {
@@ -49,6 +64,26 @@ describe("session environment context", () => {
       role: "system",
       content: "Agent-specific prompt.",
     });
+  });
+
+  it("tells the model to use matching predefined subagent ids", async () => {
+    process.env.CONVERSATIONS_TABLE_NAME = "conversations";
+    process.env.PROCESSED_EVENTS_TABLE_NAME = "processed-events";
+    process.env.FILESYSTEM_BUCKET_NAME = "filesystem";
+    const { Session } = await import("../functions/harness-processing/session.ts");
+    const session = new Session("event", "conversation", "acct", "agent", {
+      subagent: {
+        enabled: true,
+        allowed: ["agent_research"],
+      },
+    });
+
+    const turnContext = await session.createEphemeralTurnContext([{ role: "user", content: "research" }]);
+    const subagentPrompt = turnContext.system.find((message) => message.content.includes("<subagent_system>"))?.content;
+
+    expect(subagentPrompt).toContain("- agent_research (Research assistant): Specialized research agent");
+    expect(subagentPrompt).toContain("Use the exact agentId from the predefined list when a listed subagent is suitable");
+    expect(subagentPrompt).toContain("Omit agentId only when no predefined subagent is suitable");
   });
 
 });

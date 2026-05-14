@@ -103,6 +103,22 @@ describe("createTools", () => {
     });
 
     expect(Object.keys(tools)).toEqual(["run_subagent"]);
+    expect(tools.run_subagent?.description).toContain("Use an available predefined agentId when a listed subagent matches the task");
+    const runSubagentSchema = tools.run_subagent?.inputSchema as {
+      jsonSchema: {
+        properties: {
+          tasks: {
+            items: {
+              properties: {
+                agentId: { description: string };
+              };
+            };
+          };
+        };
+      };
+    };
+    expect(runSubagentSchema.jsonSchema.properties.tasks.items.properties.agentId.description)
+      .toContain("Include it when a listed subagent is suitable");
     expect((tools.run_subagent as { execute(input: unknown, options: unknown): Promise<unknown> }).execute({
       tasks: [{
         prompt: "research",

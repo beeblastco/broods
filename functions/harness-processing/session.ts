@@ -551,7 +551,8 @@ Workflow:
 }
 
 function formatSubagentSystemPrompt(subagents: SubagentMetadata[]): string {
-  const predefined = subagents.length > 0
+  const hasPredefinedSubagents = subagents.length > 0;
+  const predefined = hasPredefinedSubagents
     ? subagents
       .map((agent) => {
         const description = agent.description?.trim() || "No description provided.";
@@ -567,8 +568,9 @@ Available predefined subagents:
 ${predefined}
 
 Tool guidance:
-1. Include agentId only when choosing one of the predefined subagents above.
-2. Omit agentId for a virtual one-shot subagent that uses this agent's model and tool configuration.</subagent_system>`;
+1. Use the exact agentId from the predefined list when a listed subagent is suitable for the task.
+2. Omit agentId only when no predefined subagent is suitable or the user explicitly asks for a virtual one-shot subagent.
+3. A virtual one-shot subagent uses this agent's model and tool configuration.</subagent_system>`;
 }
 
 // DynamoDB row decoding.

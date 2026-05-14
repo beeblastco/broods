@@ -20,7 +20,7 @@ const runSubagentInputSchema = {
         properties: {
           agentId: {
             type: "string",
-            description: "Optional predefined subagent id from the available subagent metadata.",
+            description: "Exact predefined subagent id to use. Include it when a listed subagent is suitable; omit only for a virtual one-shot subagent.",
           },
           name: {
             type: "string",
@@ -77,7 +77,7 @@ export default function runSubagentTool(context: { dispatchSubagents: RunSubagen
       description: [
         "Dispatch one or more subagents for independent parallel work.",
         "Returns task ids immediately so you can continue working while results are injected into the parent conversation later.",
-        "Omit agentId for a virtual one-shot subagent, or use an available predefined agentId if provided",
+        "Use an available predefined agentId when a listed subagent matches the task; omit agentId only for a virtual one-shot subagent.",
       ].join(" "),
       inputSchema: jsonSchema(runSubagentInputSchema),
       async execute(input, options) {
