@@ -8,6 +8,7 @@ import { DEFAULT_COMPACTION_PROMPT } from "../_shared/.generated/compaction-prom
 import type { AccountConfig } from "../_shared/accounts.ts";
 import { logInfo } from "../_shared/log.ts";
 import { modelSettingsFromModelConfig, resolveConfiguredModel } from "./model.ts";
+import { hasPendingToolApprovalResponse, stripReasoningFromMessages } from "./pruning.ts";
 
 const DEFAULT_COMPACTION_MAX_CONTEXT_LENGTH = 100_000; // Runtime default when compaction is enabled without a max.
 const COMPACTION_MARKER = "<session-compaction-summary>";
@@ -26,14 +27,18 @@ export async function compactSessionContext(input: CompactionInput): Promise<Sys
   if (compactionConfig?.enabled !== true) {
     return null;
   }
-
-  const maxContextLength = compactionConfig.maxContextLength ?? DEFAULT_COMPACTION_MAX_CONTEXT_LENGTH;
-  if (estimateContextLength(input.system, input.messages) <= maxContextLength) {
+  if (hasPendingToolApprovalResponse(input.messages)) {
     return null;
   }
 
-  const keepLastMessage = input.messages.at(-1)?.role === "user";
-  const compactableMessages = keepLastMessage ? input.messages.slice(0, -1) : input.messages;
+  const messages = stripReasoningFromMessages(input.messages);
+  const maxContextLength = compactionConfig.maxContextLength ?? DEFAULT_COMPACTION_MAX_CONTEXT_LENGTH;
+  if (estimateContextLength(input.system, messages) <= maxContextLength) {
+    return null;
+  }
+
+  const keepLastMessage = messages.at(-1)?.role === "user";
+  const compactableMessages = keepLastMessage ? messages.slice(0, -1) : messages;
   const priorSummaries = input.system.filter(isCompactionSummaryMessage);
   const compactableContext = [...priorSummaries, ...compactableMessages];
   if (compactableContext.length === 0) {
@@ -55,7 +60,7 @@ export async function compactSessionContext(input: CompactionInput): Promise<Sys
   const summary = createCompactionSummaryMessage(result.text);
   logInfo("Session context compacted", {
     conversationKey: input.conversationKey,
-    messageCount: input.messages.length,
+    messageCount: messages.length,
     compactedMessageCount: compactableContext.length,
     maxContextLength,
   });

@@ -16,6 +16,7 @@ import {
 import type { AccountConfig } from "../_shared/accounts.ts";
 import { logError, logInfo, logWarn } from "../_shared/log.ts";
 import { modelSettingsFromModelConfig, resolveConfiguredModel } from "./model.ts";
+import { stripReasoningFromMessages } from "./pruning.ts";
 import type { Session, TurnContextSnapshot } from "./session.ts";
 import { createTools } from "./tools/index.ts";
 import type { RunSubagentDispatch } from "./tools/run-subagent.tool.ts";
@@ -69,7 +70,7 @@ export async function runAgentLoop(
       ...(options.dispatchSubagents
         ? {
           dispatchSubagents: (tasks, messages) =>
-            options.dispatchSubagents!(tasks, messages, turnContext.ephemeralSystem),
+            options.dispatchSubagents!(tasks, stripReasoningFromMessages(messages), turnContext.ephemeralSystem),
         }
         : {}),
     }, accountConfig),

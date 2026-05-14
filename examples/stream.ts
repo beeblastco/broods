@@ -61,7 +61,7 @@ try {
     ],
   };
   for await (const chunk of streamSSE(body, account.accountSecret)) {
-    process.stdout.write(chunk);
+    process.stdout.write(chunk + "\n\n");
   }
 } finally {
   // Delete account when finish

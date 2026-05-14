@@ -7,21 +7,32 @@ import { pruneMessages, type ModelMessage } from "ai";
 import type { AccountConfig } from "../_shared/accounts.ts";
 
 export function pruneSessionMessages(messages: ModelMessage[], accountConfig: AccountConfig): ModelMessage[] {
+  const approvalResume = hasPendingToolApprovalResponse(messages);
+  const modelMessages = approvalResume ? messages : stripReasoningFromMessages(messages);
+
   if (accountConfig.session?.pruning?.enabled === false) {
-    return messages;
+    return modelMessages;
   }
 
   return pruneMessages({
-    messages,
-    reasoning: "before-last-message",
+    messages: modelMessages,
+    reasoning: "none",
     // A final approval response needs the preceding assistant tool-call preserved
     // so the AI SDK can match approvalId -> toolCallId on the next model run.
-    toolCalls: hasPendingToolApprovalResponse(messages) ? "before-last-2-messages" : "before-last-message",
+    toolCalls: approvalResume ? "before-last-2-messages" : "before-last-message",
     emptyMessages: "remove",
   });
 }
 
-function hasPendingToolApprovalResponse(messages: ModelMessage[]): boolean {
+export function stripReasoningFromMessages(messages: ModelMessage[]): ModelMessage[] {
+  return pruneMessages({
+    messages,
+    reasoning: "all",
+    emptyMessages: "remove",
+  });
+}
+
+export function hasPendingToolApprovalResponse(messages: ModelMessage[]): boolean {
   const lastMessage = messages.at(-1);
   return lastMessage?.role === "tool" &&
     lastMessage.content.length > 0 &&
