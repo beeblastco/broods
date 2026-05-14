@@ -83,6 +83,12 @@ export class AgentSkillNotFoundError extends Error {
   }
 }
 
+export class AgentSubagentNotFoundError extends Error {
+  constructor(public readonly agentId: string) {
+    super(`Subagent not found: ${agentId}`);
+  }
+}
+
 export function createAgentId(): string {
   return `agent_${randomBytes(12).toString("hex")}`;
 }
@@ -141,6 +147,7 @@ export async function listAgents(accountId: string): Promise<AgentRecord[]> {
       ExpressionAttributeValues: {
         ":accountId": { S: accountId },
       },
+      ConsistentRead: true,
       ...(exclusiveStartKey ? { ExclusiveStartKey: exclusiveStartKey } : {}),
     }));
 
@@ -263,6 +270,15 @@ export async function validateAgentSkillPaths(accountId: string, config: Account
   }
 }
 
+export async function validateAgentSubagentIds(accountId: string, config: AccountConfig): Promise<void> {
+  for (const agentId of config.subagent?.allowed ?? []) {
+    const agent = await getAgent(accountId, agentId);
+    if (!agent || agent.status !== "active") {
+      throw new AgentSubagentNotFoundError(agentId);
+    }
+  }
+}
+
 async function normalizeCreateAgentInput(accountId: string, value: CreateAgentInput): Promise<{
   name: string;
   description?: string;
@@ -276,6 +292,7 @@ async function normalizeCreateAgentInput(accountId: string, value: CreateAgentIn
   const description = normalizeOptionalString(value.description, "description");
   const config = normalizeAccountConfig(value.config);
   await validateAgentSkillPaths(accountId, config);
+  await validateAgentSubagentIds(accountId, config);
   return {
     name,
     ...(description ? { description } : {}),
@@ -296,6 +313,7 @@ async function normalizeUpdateAgentInput(
     ? mergeAccountConfig(existingConfig, normalizeAccountConfigPatch(value.config))
     : existingConfig;
   await validateAgentSkillPaths(accountId, config);
+  await validateAgentSubagentIds(accountId, config);
 
   return {
     ...(value.name !== undefined ? { name: normalizeRequiredString(value.name, "name") } : {}),

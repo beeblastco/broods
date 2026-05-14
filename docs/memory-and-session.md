@@ -134,7 +134,8 @@ curl -X PATCH "$ACCOUNT_SERVICE_URL/accounts/me/agents/$AGENT_ID" \
 
 ```mermaid
 flowchart TD
-  Integrations["integrations.ts<br/>account + agent scoped conversation keys"] --> Session["session.ts<br/>chooses namespace"]
+  Integrations["integrations.ts<br/>normalizes request keys"] --> Keys["_shared/runtime-keys.ts<br/>account + agent scoped keys"]
+  Keys --> Session["session.ts<br/>chooses namespace"]
   Session --> Harness["harness.ts<br/>passes namespace to tools"]
   Harness --> Tools["filesystem.tool.ts<br/>tasks.tool.ts"]
 ```
@@ -142,6 +143,7 @@ flowchart TD
 Key files:
 
 - [`integrations.ts`](../functions/harness-processing/integrations.ts): builds account + agent scoped conversation keys.
+- [`runtime-keys.ts`](../functions/_shared/runtime-keys.ts): validates direct API public keys and derives account-scoped runtime keys and filesystem namespaces.
 - [`session.ts`](../functions/harness-processing/session.ts): chooses per-conversation or shared memory namespace from the selected agent config.
 - [`filesystem.tool.ts`](../functions/harness-processing/tools/filesystem.tool.ts): stores files under that namespace.
 - [`tasks.tool.ts`](../functions/harness-processing/tools/tasks.tool.ts): stores task files under that namespace.

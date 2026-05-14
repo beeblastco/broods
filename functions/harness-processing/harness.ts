@@ -17,9 +17,8 @@ import type { AccountConfig } from "../_shared/accounts.ts";
 import { logError, logInfo, logWarn } from "../_shared/log.ts";
 import { modelSettingsFromModelConfig, resolveConfiguredModel } from "./model.ts";
 import type { Session, TurnContextSnapshot } from "./session.ts";
-import { loadConfiguredSkillPrompt } from "./skills.ts";
 import { createTools } from "./tools/index.ts";
-import loadSkillTool, { type LoadSkillPrompt } from "./tools/load-skill.tool.ts";
+import type { RunSubagentDispatch } from "./tools/run-subagent.tool.ts";
 
 // Default max agent iterations to prevent looping or too long execution.
 const MAX_AGENT_ITERATIONS = 30;
@@ -39,17 +38,22 @@ export interface AgentReplyHooks {
   onApprovalRequired?(approvals: ToolApprovalSummary[]): Promise<void>;
 }
 
+// Optional per-run wiring owned by the request handler.
+export interface AgentLoopOptions {
+  dispatchSubagents?: RunSubagentDispatch;
+}
+
 export async function runAgentLoop(
   session: Session,
   turnContext: TurnContextSnapshot,
   accountConfig: AccountConfig,
   reply?: AgentReplyHooks,
+  options: AgentLoopOptions = {},
 ) {
   let didFail = false;
   let failureText: string | null = null;
-  let promptContext = turnContext.promptContext;
+  let systemContextSnapshot = turnContext.systemContextSnapshot;
   const configuredModel = resolveConfiguredModel(accountConfig);
-  const allowedSkillPaths = accountConfig.skills?.allowed ?? [];
 
   const tools = {
     ...createTools({
@@ -57,10 +61,18 @@ export async function runAgentLoop(
       filesystemNamespace: session.filesystemNamespace(),
       modelProviderName: configuredModel.providerName,
       modelProvider: configuredModel.provider,
+      session: session,
+      // The handler owns subagent lifecycle, so the loop only forwards the
+      // dispatcher into the tool registry for this one model run. Ephemeral
+      // system messages are request-local, so pass the current turn copy into
+      // child dispatch instead of expecting the coordinator to reload it.
+      ...(options.dispatchSubagents
+        ? {
+          dispatchSubagents: (tasks, messages) =>
+            options.dispatchSubagents!(tasks, messages, turnContext.ephemeralSystem),
+        }
+        : {}),
     }, accountConfig),
-    // This part is to check if the skill is enabled and allowed to be used.
-    ...(accountConfig.skills?.enabled === true && allowedSkillPaths.length > 0
-      ? loadSkillTool(session, createLoadSkillPrompt(session, allowedSkillPaths)) : {}), // Else return nothing
   } satisfies ToolSet;
   const enabledTools = Object.keys(tools).length > 0 ? tools : undefined;
   const modelSettings = modelSettingsFromModelConfig(accountConfig);
@@ -76,11 +88,14 @@ export async function runAgentLoop(
     ...(accountConfig.model?.options ? { providerOptions: accountConfig.model.options as never } : {}),
     stopWhen: stepCountIs(accountConfig.agent?.maxTurn ?? MAX_AGENT_ITERATIONS),
     prepareStep: async () => {
+      // `systemContextSnapshot` is the persisted system-message snapshot from
+      // session.ts. Refresh it before each step so dynamic system context added
+      // during a tool loop is included without replaying the full conversation.
       const refreshed = await session.loadRefreshedSystemPromptParts({
-        promptContext: promptContext,
+        systemContextSnapshot: systemContextSnapshot,
         ephemeralSystem: turnContext.ephemeralSystem,
       });
-      promptContext = refreshed.promptContext;
+      systemContextSnapshot = refreshed.systemContextSnapshot;
 
       return {
         system: refreshed.system,
@@ -145,12 +160,10 @@ export async function runAgentLoop(
       const finalText = text.trim();
       const stepCount = steps.length;
       const toolCallCount = toolCalls.length;
-      // Get all the approval request list
       const approvalRequests = extractApprovalRequests(steps);
       const approvals = approvalRequests.map(summarizeApprovalRequest);
 
       try {
-        // Need to summarizeApprovalRequest in case compaction happend during approval request
         await session.persistModelMessages(
           approvalRequests.length > 0
             ? withApprovalToolCalls(response.messages, approvalRequests)
@@ -221,21 +234,6 @@ export async function runAgentLoop(
     failureText: () => failureText,
     approvalSummaries: () => approvalSummaries,
   });
-}
-
-function createLoadSkillPrompt(session: Session, allowedSkillPaths: string[]): LoadSkillPrompt {
-  const sessionLoader = (session as {
-    loadSkillPrompt?: LoadSkillPrompt;
-  }).loadSkillPrompt;
-  if (sessionLoader) {
-    return sessionLoader.bind(session);
-  }
-
-  return async (skillPath, resourcePaths) => {
-    const loaded = await loadConfiguredSkillPrompt(allowedSkillPaths, skillPath, resourcePaths);
-    session.addLoadedSkillPrompt(loaded.prompt);
-    return loaded;
-  };
 }
 
 function errorMessage(error: unknown): string {

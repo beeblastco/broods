@@ -47,6 +47,9 @@ describe("script account runtime config", () => {
         provider: "google",
         modelId: "gemma-4-31b-it",
       },
+      agent: {
+        system: expect.stringContaining("Knowledge cutoff: January 2025."),
+      },
       provider: {
         google: {
           apiKey: "google-key",
@@ -79,6 +82,9 @@ describe("script account runtime config", () => {
         provider: "openai",
         modelId: "gpt-custom",
       },
+      agent: {
+        system: expect.stringContaining("Knowledge cutoff: January 2025."),
+      },
       provider: {
         openai: {
           apiKey: "openai-key",
@@ -106,6 +112,9 @@ describe("script account runtime config", () => {
         provider: "minimax",
         modelId: "MiniMax-M2.7",
       },
+      agent: {
+        system: expect.stringContaining("Knowledge cutoff: January 2025."),
+      },
       provider: {
         minimax: {
           apiKey: "minimax-key",
@@ -117,5 +126,13 @@ describe("script account runtime config", () => {
       },
       tools: {},
     });
+  });
+
+  it("allows integration setup to override the model knowledge cutoff", () => {
+    process.env = {};
+    process.env.ACCOUNT_GOOGLE_API_KEY = "google-key";
+    process.env.ACCOUNT_MODEL_KNOWLEDGE_CUTOFF = "June 2026";
+
+    expect(createScriptAccountRuntimeConfig().agent?.system).toContain("Knowledge cutoff: June 2026.");
   });
 });

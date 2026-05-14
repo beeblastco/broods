@@ -6,6 +6,7 @@
 import { readFileSync } from "node:fs";
 
 import type { AccountConfig } from "../functions/_shared/accounts.ts";
+import { DEFAULT_SYSTEM_PROMPT } from "../functions/_shared/.generated/system-prompt.ts";
 import {
   accountModelProviderNames,
   isAccountModelProviderName,
@@ -14,6 +15,7 @@ import {
 
 const DEFAULT_ACCOUNT_MODEL_PROVIDER = "google";
 const DEFAULT_ACCOUNT_MODEL_ID = "gemma-4-31b-it";
+const DEFAULT_ACCOUNT_KNOWLEDGE_CUTOFF = "January 2025";
 
 export interface PublicAccount {
   accountId: string;
@@ -101,6 +103,7 @@ export function isRecord(value: unknown): value is Record<string, unknown> {
 export function createScriptAccountRuntimeConfig(): AccountConfig {
   const provider = parseAccountModelProvider(optionalScriptEnv("ACCOUNT_MODEL_PROVIDER") ?? DEFAULT_ACCOUNT_MODEL_PROVIDER);
   const modelId = optionalScriptEnv("ACCOUNT_MODEL_ID") ?? DEFAULT_ACCOUNT_MODEL_ID;
+  const knowledgeCutoff = optionalScriptEnv("ACCOUNT_MODEL_KNOWLEDGE_CUTOFF") ?? DEFAULT_ACCOUNT_KNOWLEDGE_CUTOFF;
   const modelOptions = optionalJsonRecord("ACCOUNT_MODEL_OPTIONS_JSON");
 
   return {
@@ -108,6 +111,9 @@ export function createScriptAccountRuntimeConfig(): AccountConfig {
       provider,
       modelId,
       ...(modelOptions ? { options: modelOptions } : {}),
+    },
+    agent: {
+      system: formatScriptAgentSystemPrompt(knowledgeCutoff),
     },
     provider: {
       [provider]: accountProviderConfig(provider),
@@ -117,6 +123,10 @@ export function createScriptAccountRuntimeConfig(): AccountConfig {
     },
     tools: accountToolsConfig(provider),
   };
+}
+
+function formatScriptAgentSystemPrompt(knowledgeCutoff: string): string {
+  return `Knowledge cutoff: ${knowledgeCutoff}.\n\n${DEFAULT_SYSTEM_PROMPT}`;
 }
 
 export async function upsertScriptAccount(input: {

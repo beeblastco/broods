@@ -11,7 +11,8 @@ import { executeCommand } from "../_shared/commands.ts";
 import { requireEnv } from "../_shared/env.ts";
 import { jsonResponse } from "../_shared/http.ts";
 import { logError, logInfo } from "../_shared/log.ts";
-import type { LambdaResponse } from "../_shared/runtime.ts";
+import type { LambdaInvocation, LambdaResponse } from "../_shared/runtime.ts";
+import { publicConversationKeyFromScoped } from "../_shared/runtime-keys.ts";
 import { fireWebhook, type WebhookConfig } from "../_shared/webhook.ts";
 import { runAgentLoop, type ToolApprovalSummary } from "./harness.ts";
 import {
@@ -21,7 +22,7 @@ import {
   type DirectInboundEvent,
   type StatusInboundEvent,
 } from "./integrations.ts";
-import { createSession } from "./session.ts";
+import { Session } from "./session.ts";
 import {
   createPendingAsyncResult,
   getAsyncResult,
@@ -29,13 +30,15 @@ import {
   markAsyncResultCompleted,
   markAsyncResultFailed,
 } from "./status.ts";
+import { SubagentCoordinator } from "./subagents.ts";
 
 type AgentLoopStream = Awaited<ReturnType<typeof runAgentLoop>>;
-type SessionInstance = ReturnType<typeof createSession>;
 
 const CONVERSATIONS_TABLE_NAME = requireEnv("CONVERSATIONS_TABLE_NAME");
 const AGENT_PROCESSING_FAILED = "Agent processing failed";
 const CHANNEL_APPROVAL_DENIAL_REASON = "Tool approval is only supported through the direct API.";
+const LAMBDA_TIMEOUT_SAFETY_MS = 15_000;
+const DEFAULT_PARENT_WAIT_MS = 8 * 60 * 1000;
 const textEncoder = new TextEncoder();
 const lambda = new LambdaClient({ region: process.env.AWS_REGION });
 
@@ -45,25 +48,35 @@ interface AsyncWorkerInvocation {
 }
 
 interface DirectTurn {
-  session: SessionInstance;
-  turnContext: Awaited<ReturnType<SessionInstance["createTurnContext"]>>;
+  session: Session;
+  turnContext: Awaited<ReturnType<Session["createTurnContext"]>>;
 }
 
-export async function handler(event: LambdaFunctionURLEvent | AsyncWorkerInvocation): Promise<LambdaResponse> {
+interface ParentContinuationResult {
+  didFail: boolean;
+  failureText: string | null;
+  finalTexts: string[];
+  approvals: ToolApprovalSummary[];
+}
+
+export async function handler(
+  event: LambdaFunctionURLEvent | AsyncWorkerInvocation,
+  context?: LambdaInvocation,
+): Promise<LambdaResponse> {
   if (isAsyncWorkerInvocation(event)) {
-    await handleAsyncWorkerRequest(event.event);
+    await handleAsyncWorkerRequest(event.event, context);
     return { statusCode: 204 };
   }
 
   return routeIncomingEvent(event, {
-    handleDirectRequest,
+    handleDirectRequest: (directEvent) => handleDirectRequest(directEvent, context),
     handleAsyncRequest,
     handleStatusRequest,
-    handleChannelRequest,
+    handleChannelRequest: (channelEvent) => handleChannelRequest(channelEvent, context),
   });
 }
 
-async function handleDirectRequest(event: DirectInboundEvent): Promise<LambdaResponse> {
+async function handleDirectRequest(event: DirectInboundEvent, context?: LambdaInvocation): Promise<LambdaResponse> {
   if (!hasRunnableDirectEvents(event)) {
     return emptySseResponse();
   }
@@ -79,11 +92,10 @@ async function handleDirectRequest(event: DirectInboundEvent): Promise<LambdaRes
       return emptySseResponse();
     }
 
-    const stream = await runAgentLoop(session, turnContext, event.accountConfig, directReplyHooks(event));
     return {
       statusCode: 200,
       headers: { "Content-Type": "text/event-stream" },
-      body: createDirectSseBody(stream),
+      body: createDirectContinuationSseBody(event, session, turnContext, context),
     };
   } catch (err) {
     logError("Direct request pre-processing failed", {
@@ -147,7 +159,7 @@ async function handleStatusRequest(event: StatusInboundEvent): Promise<LambdaRes
   });
 }
 
-async function handleAsyncWorkerRequest(event: DirectInboundEvent): Promise<void> {
+async function handleAsyncWorkerRequest(event: DirectInboundEvent, context?: LambdaInvocation): Promise<void> {
   try {
     const turn = await prepareDirectTurn(event);
     if (!turn) {
@@ -161,7 +173,7 @@ async function handleAsyncWorkerRequest(event: DirectInboundEvent): Promise<void
     }
 
     let didSettle = false;
-    const stream = await runAgentLoop(session, turnContext, event.accountConfig, {
+    const result = await runAgentLoopUntilSubagentsIdle(session, turnContext, event.accountConfig, context, {
       onFinalText: async (text) => {
         didSettle = true;
         await markAsyncResultCompleted({
@@ -195,9 +207,8 @@ async function handleAsyncWorkerRequest(event: DirectInboundEvent): Promise<void
       },
     });
 
-    await stream.consumeStream();
-    if (stream.didFail() && !didSettle) {
-      await settleAsyncFailure(event, stream.failureText() ?? AGENT_PROCESSING_FAILED);
+    if (result.didFail && !didSettle) {
+      await settleAsyncFailure(event, result.failureText ?? AGENT_PROCESSING_FAILED);
     }
   } catch (err) {
     logError("Async direct request processing failed", {
@@ -210,7 +221,7 @@ async function handleAsyncWorkerRequest(event: DirectInboundEvent): Promise<void
 }
 
 async function prepareDirectTurn(event: DirectInboundEvent): Promise<DirectTurn | null> {
-  const session = createSession(event.eventId, event.conversationKey, event.accountId, event.agentId, event.accountConfig);
+  const session = new Session(event.eventId, event.conversationKey, event.accountId, event.agentId, event.accountConfig);
   if (!(await claimSession(session))) {
     return null;
   }
@@ -225,8 +236,8 @@ async function prepareDirectTurn(event: DirectInboundEvent): Promise<DirectTurn 
   }
 }
 
-async function handleChannelRequest(event: ChannelInboundEvent): Promise<void> {
-  const session = createSession(event.eventId, event.conversationKey, event.accountId, event.agentId, event.accountConfig ?? {});
+async function handleChannelRequest(event: ChannelInboundEvent, context?: LambdaInvocation): Promise<void> {
+  const session = new Session(event.eventId, event.conversationKey, event.accountId, event.agentId, event.accountConfig ?? {});
   if (!(await claimSession(session))) {
     return;
   }
@@ -267,7 +278,7 @@ async function handleChannelRequest(event: ChannelInboundEvent): Promise<void> {
         return;
       }
 
-      const stream = await runAgentLoop(session, turnContext, event.accountConfig ?? {}, {
+      const result = await runAgentLoopUntilSubagentsIdle(session, turnContext, event.accountConfig ?? {}, context, {
         onFinalText: (text) => event.channel.sendText(text),
         onErrorText: (error) => event.channel.sendText(formatChannelErrorText(error)),
         onApprovalRequired: async (approvals) => {
@@ -275,8 +286,7 @@ async function handleChannelRequest(event: ChannelInboundEvent): Promise<void> {
         },
       });
 
-      await stream.consumeStream();
-      if (stream.didFail()) {
+      if (result.didFail) {
         return;
       }
     }
@@ -285,9 +295,7 @@ async function handleChannelRequest(event: ChannelInboundEvent): Promise<void> {
   }
 }
 
-async function claimSession(
-  session: ReturnType<typeof createSession>,
-): Promise<boolean> {
+async function claimSession(session: Session): Promise<boolean> {
   if (!(await session.claim())) {
     logInfo("Duplicate event skipped", { eventId: session.eventId });
     return false;
@@ -354,32 +362,6 @@ function emptySseResponse(): LambdaResponse {
   };
 }
 
-function directReplyHooks(event: DirectInboundEvent) {
-  return event.webhookConfig
-    ? {
-      onFinalText: async (text: string) => sendWebhook(event, {
-        eventId: event.publicEventId,
-        conversationKey: event.publicConversationKey,
-        response: text,
-        success: true,
-      }),
-      onErrorText: async (error: string) => sendWebhook(event, {
-        eventId: event.publicEventId,
-        conversationKey: event.publicConversationKey,
-        success: false,
-        error,
-      }),
-      onApprovalRequired: async (approvals: ToolApprovalSummary[]) => sendWebhook(event, {
-        eventId: event.publicEventId,
-        conversationKey: event.publicConversationKey,
-        status: "awaiting_approval",
-        approvals,
-        success: true,
-      }),
-    }
-    : undefined;
-}
-
 function createChannelApprovalDenial(approvals: ToolApprovalSummary[]): ToolModelMessage {
   return {
     role: "tool",
@@ -397,12 +379,7 @@ function acceptedAsyncResponse(statusUrl: string): LambdaResponse {
 }
 
 function eventPublicConversationKey(conversationKey: string, accountId: string, agentId?: string): string {
-  const accountPrefix = agentId ? `acct:${accountId}:agent:${agentId}:` : `acct:${accountId}:`;
-  const unscoped = conversationKey.startsWith(accountPrefix)
-    ? conversationKey.slice(accountPrefix.length)
-    : conversationKey;
-
-  return unscoped.replace(/^api:/, "");
+  return publicConversationKeyFromScoped(conversationKey, accountId, agentId);
 }
 
 function isAsyncWorkerInvocation(event: unknown): event is AsyncWorkerInvocation {
@@ -426,29 +403,236 @@ function isRunnableModelInput(message: DirectInboundEvent["events"][number] | Di
       message.content.every((part) => part.type === "tool-approval-response"));
 }
 
-function createDirectSseBody(stream: AgentLoopStream): ReadableStream<Uint8Array> {
+function createDirectContinuationSseBody(
+  event: DirectInboundEvent,
+  session: Session,
+  initialTurnContext: DirectTurn["turnContext"],
+  context?: LambdaInvocation,
+): ReadableStream<Uint8Array> {
+  return new ReadableStream({
+    async start(controller) {
+      const coordinator = new SubagentCoordinator(session, event.accountConfig, waitUntilMs(context));
+
+      try {
+        const result = await runParentContinuationLoop({
+          session: session,
+          coordinator: coordinator,
+          initialTurnContext: initialTurnContext,
+          accountConfig: event.accountConfig,
+          consumeStream: (stream) => pipeAgentSseStream(stream, controller),
+          onLoopErrorText: (error) => sendWebhook(event, {
+            eventId: event.publicEventId,
+            conversationKey: event.publicConversationKey,
+            success: false,
+            error,
+          }),
+          onApprovalRequired: (approvals) => sendWebhook(event, {
+            eventId: event.publicEventId,
+            conversationKey: event.publicConversationKey,
+            status: "awaiting_approval",
+            approvals,
+            success: true,
+          }),
+          onHeartbeat: (pendingCount) => enqueueSseComment(controller, `waiting for subagents pending=${pendingCount}`),
+        });
+
+        if (result.finalTexts.length > 0) {
+          await sendWebhook(event, {
+            eventId: event.publicEventId,
+            conversationKey: event.publicConversationKey,
+            response: result.finalTexts.join("\n\n"),
+            success: true,
+          });
+        }
+      } catch (err) {
+        const error = err instanceof Error ? err.message : String(err);
+        logError("Direct continuation stream failed", {
+          eventId: event.eventId,
+          error,
+        });
+        controller.enqueue(textEncoder.encode(`data: ${JSON.stringify({ type: "error", error })}\n\n`));
+        await sendWebhook(event, {
+          eventId: event.publicEventId,
+          conversationKey: event.publicConversationKey,
+          success: false,
+          error,
+        });
+      } finally {
+        controller.close();
+      }
+    },
+  });
+}
+
+async function runAgentLoopUntilSubagentsIdle(
+  session: Session,
+  initialTurnContext: DirectTurn["turnContext"],
+  accountConfig: DirectInboundEvent["accountConfig"],
+  context: LambdaInvocation | undefined,
+  reply: {
+    onFinalText(text: string): Promise<void>;
+    onErrorText(error: string): Promise<void>;
+    onApprovalRequired?(approvals: ToolApprovalSummary[]): Promise<void>;
+  },
+): Promise<{ didFail: boolean; failureText: string | null }> {
+  const coordinator = new SubagentCoordinator(session, accountConfig, waitUntilMs(context));
+  const result = await runParentContinuationLoop({
+    session: session,
+    coordinator: coordinator,
+    initialTurnContext: initialTurnContext,
+    accountConfig: accountConfig,
+    consumeStream: async (stream) => {
+      await stream.consumeStream();
+    },
+  });
+
+  if (result.approvals.length > 0) {
+    await reply.onApprovalRequired?.(result.approvals);
+    return { didFail: false, failureText: null };
+  }
+
+  if (result.didFail) {
+    await reply.onErrorText(result.failureText ?? AGENT_PROCESSING_FAILED);
+    return { didFail: true, failureText: result.failureText };
+  }
+
+  if (result.finalTexts.length > 0) {
+    await reply.onFinalText(result.finalTexts.join("\n\n"));
+  }
+
+  return { didFail: false, failureText: null };
+}
+
+async function runParentContinuationLoop(options: {
+  session: Session;
+  coordinator: SubagentCoordinator;
+  initialTurnContext: DirectTurn["turnContext"];
+  accountConfig: DirectInboundEvent["accountConfig"];
+  consumeStream(stream: AgentLoopStream): Promise<void>;
+  onLoopErrorText?(error: string): Promise<void>;
+  onApprovalRequired?(approvals: ToolApprovalSummary[]): Promise<void>;
+  onHeartbeat?(pendingCount: number): void;
+}): Promise<ParentContinuationResult> {
+  let turnContext = options.initialTurnContext;
+  const finalTexts: string[] = [];
+
+  while (true) {
+    let loopFinalText = "";
+    let approvals: ToolApprovalSummary[] = [];
+    const stream = await runAgentLoop(options.session, turnContext, options.accountConfig, {
+      onFinalText: async (text) => {
+        loopFinalText = text.trim();
+      },
+      onErrorText: async (error) => {
+        await options.onLoopErrorText?.(error);
+      },
+      onApprovalRequired: async (approvalSummaries) => {
+        approvals = approvalSummaries;
+        await options.onApprovalRequired?.(approvalSummaries);
+      },
+    }, {
+      dispatchSubagents: options.coordinator.dispatch,
+    });
+
+    await options.consumeStream(stream);
+    if (loopFinalText) {
+      finalTexts.push(loopFinalText);
+    }
+    if (approvals.length > 0) {
+      return { didFail: false, failureText: null, finalTexts, approvals };
+    }
+    if (stream.didFail()) {
+      return {
+        didFail: true,
+        failureText: stream.failureText(),
+        finalTexts,
+        approvals: [],
+      };
+    }
+
+    const injected = await drainOrWaitForSubagents(options.coordinator, {
+      onHeartbeat: options.onHeartbeat,
+    });
+    if (injected === 0) {
+      return { didFail: false, failureText: null, finalTexts, approvals: [] };
+    }
+
+    turnContext = await options.session.createTurnContext();
+    if (!isRunnableModelInput(turnContext.messages.at(-1))) {
+      return { didFail: false, failureText: null, finalTexts, approvals: [] };
+    }
+  }
+}
+
+/**
+ * Bridges one completed parent model pass to the next continuation pass.
+ *
+ * After the parent stream ends, subagent results may already be queued, still be
+ * running, or be absent. This helper injects queued results immediately, waits
+ * for the next child completion when needed, emits SSE heartbeats through the
+ * coordinator wait path, and injects timeout notices near the Lambda deadline.
+ */
+async function drainOrWaitForSubagents(
+  coordinator: SubagentCoordinator,
+  options: { onHeartbeat?: (pendingCount: number) => void } = {},
+): Promise<number> {
+  const immediate = await coordinator.drainCompletionsToParent();
+  if (immediate > 0) {
+    return immediate;
+  }
+
+  if (coordinator.pendingCount === 0) {
+    return 0;
+  }
+
+  const hasCompletion = await coordinator.waitForNextCompletion(options);
+  if (hasCompletion) {
+    return coordinator.drainCompletionsToParent();
+  }
+
+  return coordinator.injectTimeoutsToParent();
+}
+
+async function pipeAgentSseStream(
+  stream: AgentLoopStream,
+  controller: ReadableStreamDefaultController<Uint8Array>,
+): Promise<void> {
   let emittedErrorChunk = false;
+  const reader = stream.fullStream.getReader();
 
-  return stream.fullStream.pipeThrough(new TransformStream({
-    transform(chunk, controller) {
-      if (isErrorStreamChunk(chunk)) {
-        emittedErrorChunk = true;
-      }
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) {
+      break;
+    }
+    if (isErrorStreamChunk(value)) {
+      emittedErrorChunk = true;
+    }
+    controller.enqueue(textEncoder.encode(`data: ${JSON.stringify(value)}\n\n`));
+  }
 
-      controller.enqueue(textEncoder.encode(`data: ${JSON.stringify(chunk)}\n\n`));
-    },
-    flush(controller) {
-      const failureText = stream.failureText();
-      if (!failureText || emittedErrorChunk) {
-        return;
-      }
+  const failureText = stream.failureText();
+  if (failureText && !emittedErrorChunk) {
+    controller.enqueue(textEncoder.encode(`data: ${JSON.stringify({
+      type: "error",
+      error: failureText,
+    })}\n\n`));
+  }
+}
 
-      controller.enqueue(textEncoder.encode(`data: ${JSON.stringify({
-        type: "error",
-        error: failureText,
-      })}\n\n`));
-    },
-  }));
+function enqueueSseComment(
+  controller: ReadableStreamDefaultController<Uint8Array>,
+  comment: string,
+): void {
+  controller.enqueue(textEncoder.encode(`: ${comment}\n\n`));
+}
+
+function waitUntilMs(context: LambdaInvocation | undefined): number {
+  if (context?.deadlineMs && Number.isFinite(context.deadlineMs)) {
+    return Math.max(Date.now(), context.deadlineMs - LAMBDA_TIMEOUT_SAFETY_MS);
+  }
+
+  return Date.now() + DEFAULT_PARENT_WAIT_MS;
 }
 
 function isErrorStreamChunk(chunk: unknown): boolean {

@@ -22,6 +22,7 @@ import {
 } from "ai";
 import { DEFAULT_SYSTEM_PROMPT } from "../_shared/.generated/system-prompt.ts";
 import type { AccountConfig } from "../_shared/accounts.ts";
+import { getAgent } from "../_shared/agents.ts";
 import { isMissingS3Error, readS3Text } from "../_shared/bun-s3.ts";
 import {
   dynamo,
@@ -33,9 +34,10 @@ import { requireEnv } from "../_shared/env.ts";
 import {
   conversationLeaseKey,
   normalizeFilesystemNamespace,
-} from "../_shared/filesystem-namespace.ts";
+} from "../_shared/runtime-keys.ts";
 import { logError, logInfo } from "../_shared/log.ts";
 import {
+  loadConfiguredSkillPrompt,
   listConfiguredSkillMetadata,
   type SkillMetadata,
 } from "./skills.ts";
@@ -58,16 +60,31 @@ export type ConversationIngressEvent =
 export interface TurnContextSnapshot {
   messages: ModelMessage[];
   system: SystemModelMessage[];
+  // Request-local system messages. These are already included in `system`, but
+  // the harness keeps the source list so prepareStep can rebuild system prompts
+  // during the same model run without dropping temporary instructions.
   ephemeralSystem: SystemModelMessage[];
-  // Cursor-backed prompt state that prepareStep can refresh incrementally mid-run.
-  promptContext: PromptContextSnapshot;
+  // Cursor-backed system context that prepareStep can refresh incrementally mid-run.
+  systemContextSnapshot: SystemContextSnapshot;
 }
 
-export interface PromptContextSnapshot {
+export interface SystemContextSnapshot {
   // Highest conversation row already folded into the dynamic system-context view.
+  // `loadRefreshedSystemPromptParts` uses this as a DynamoDB cursor so each
+  // prepareStep only loads newly persisted system messages instead of
+  // rebuilding system context from the full conversation every time.
   cursor: string | null;
   // Persisted system-role events accumulated up to cursor.
+  // These are not normal chat history. `buildSystemPromptParts` appends them
+  // to the model's `system` prompt while `projectEntriesToMessages` omits them
+  // from the user/assistant/tool message list.
   messages: SystemModelMessage[];
+}
+
+interface SubagentMetadata {
+  agentId: string;
+  name: string;
+  description?: string;
 }
 
 /**
@@ -101,10 +118,15 @@ interface StoredConversationEntry {
   event: StoredConversationEvent;
 }
 
+/**
+ * Agent conversation session.
+ * Owns persistence, leases, prompt assembly, and in-memory child turns.
+ */
 export class Session {
   private messageSequence = 0;
   private hasLoggedMissingMemoryFile = false;
   private loadedSkillPrompts: SystemModelMessage[] = [];
+  private subagentMetadataPromise: Promise<SubagentMetadata[]> | undefined;
 
   constructor(
     public readonly eventId: string,
@@ -199,6 +221,9 @@ export class Session {
         const message = normalizeSystemMessage(event);
 
         if (event.persist === false) {
+          // Direct API system injections are one-turn instructions. They are
+          // returned to the caller and included in the current turn's system
+          // prompt, but never written to DynamoDB.
           ephemeralSystem.push(message);
           continue;
         }
@@ -232,9 +257,12 @@ export class Session {
   async createTurnContext(ephemeralSystem: SystemModelMessage[] = []): Promise<TurnContextSnapshot> {
     const entries = await this.loadConversationEntries();
     const activeEntries = projectActiveConversationEntries(entries);
-    const promptContext = createPromptContextSnapshot(entries);
+    // Snapshot persisted system context separately from chat messages. The
+    // harness passes this through prepareStep so long-running tool loops can
+    // refresh system prompt parts without duplicating old system rows.
+    const systemContextSnapshot = createSystemContextSnapshot(entries);
     let messages = projectEntriesToMessages(activeEntries);
-    const system = await this.buildSystemPromptParts(promptContext.messages, ephemeralSystem);
+    const system = await this.buildSystemPromptParts(systemContextSnapshot.messages, ephemeralSystem);
 
     const compactionSummary = await compactSessionContext({
       conversationKey: this.conversationKey,
@@ -252,8 +280,8 @@ export class Session {
 
     if (compactionSummary) {
       const [summaryCursor] = await this.persistModelMessages([compactionSummary]);
-      const compactedPromptContext = {
-        cursor: summaryCursor ?? promptContext.cursor,
+      const compactedSystemContextSnapshot = {
+        cursor: summaryCursor ?? systemContextSnapshot.cursor,
         messages: [compactionSummary],
       };
       // Approval responses need their matching assistant request in model history.
@@ -262,41 +290,77 @@ export class Session {
 
       return {
         messages: pruneSessionMessages(messages, this.accountConfig),
-        system: await this.buildSystemPromptParts(compactedPromptContext.messages, ephemeralSystem),
-        ephemeralSystem,
-        promptContext: compactedPromptContext,
+        system: await this.buildSystemPromptParts(compactedSystemContextSnapshot.messages, ephemeralSystem),
+        ephemeralSystem: ephemeralSystem,
+        systemContextSnapshot: compactedSystemContextSnapshot,
       };
     }
 
     messages = pruneSessionMessages(messages, this.accountConfig);
 
+    return { messages, system, ephemeralSystem, systemContextSnapshot };
+  }
+
+  async createEphemeralTurnContext(
+    messages: ModelMessage[],
+    ephemeralSystem: SystemModelMessage[] = [],
+  ): Promise<TurnContextSnapshot> {
+    // Ephemeral child turns are in-memory only, but they still need the same
+    // source `ephemeralSystem` list so system prompt refreshes preserve it.
     return {
-      messages,
-      system,
-      ephemeralSystem,
-      promptContext,
+      messages: pruneSessionMessages(messages, this.accountConfig),
+      system: await this.buildSystemPromptParts([], ephemeralSystem),
+      ephemeralSystem: ephemeralSystem,
+      systemContextSnapshot: { cursor: null, messages: [] },
     };
   }
 
+  /**
+   * Called from harness.ts prepareStep. Keep `systemContextSnapshot` updated across
+   * model steps so newly persisted system rows become visible while prior
+   * system rows remain included exactly once.
+   */
   async loadRefreshedSystemPromptParts(options: {
-    promptContext: PromptContextSnapshot;
+    systemContextSnapshot: SystemContextSnapshot;
     ephemeralSystem?: SystemModelMessage[];
-  }): Promise<{ promptContext: PromptContextSnapshot; system: SystemModelMessage[] }> {
-    const promptContext = await this.refreshPromptContextSnapshot(options.promptContext);
+  }): Promise<{ systemContextSnapshot: SystemContextSnapshot; system: SystemModelMessage[] }> {
+    // Incremental refresh for prepareStep: load only conversation rows newer
+    // than the cursor, then fold any system-role rows into the snapshot.
+    const entries = await this.loadConversationEntries({
+      afterCreatedAt: options.systemContextSnapshot.cursor,
+    });
+
+    const systemContextSnapshot: SystemContextSnapshot = entries.length === 0
+      ? options.systemContextSnapshot
+      : {
+        cursor: entries.at(-1)?.createdAt ?? options.systemContextSnapshot.cursor,
+        messages: [...options.systemContextSnapshot.messages, ...projectSystemContextMessages(entries)],
+      };
 
     return {
-      promptContext,
-      system: await this.buildSystemPromptParts(promptContext.messages, options.ephemeralSystem ?? []),
+      systemContextSnapshot: systemContextSnapshot,
+      system: await this.buildSystemPromptParts(systemContextSnapshot.messages, options.ephemeralSystem ?? []),
     };
+  }
+
+  async loadSkillPrompt(
+    allowedSkillPaths: string[],
+    skillPath: string,
+    resourcePaths?: string[],
+  ): Promise<{ skillPath: string; loadedPaths: string[]; bytes: number }> {
+    const loaded = await loadConfiguredSkillPrompt(allowedSkillPaths, skillPath, resourcePaths);
+    this.loadedSkillPrompts.push(loaded.prompt);
+    return loaded;
   }
 
   private async buildSystemPromptParts(
     promptMessages: SystemModelMessage[],
     ephemeralSystem: SystemModelMessage[] = [],
   ): Promise<SystemModelMessage[]> {
-    const [memoryContent, skillMetadata] = await Promise.all([
+    const [memoryContent, skillMetadata, subagentMetadata] = await Promise.all([
       this.loadMemoryFile(),
       this.loadSkillMetadata(),
+      this.loadSubagentMetadata(),
     ]);
     const memorySystem: SystemModelMessage[] = this.isMemoryEnabled()
       ? [{
@@ -308,6 +372,12 @@ export class Session {
       ? [{
         role: "system",
         content: formatSkillsSystemPrompt(skillMetadata),
+      }]
+      : [];
+    const subagentSystem: SystemModelMessage[] = this.accountConfig.subagent?.enabled === true
+      ? [{
+        role: "system",
+        content: formatSubagentSystemPrompt(subagentMetadata),
       }]
       : [];
 
@@ -322,14 +392,11 @@ export class Session {
       },
       ...memorySystem,
       ...skillsSystem,
+      ...subagentSystem,
       ...this.loadedSkillPrompts,
       ...promptMessages,
       ...ephemeralSystem,
     ];
-  }
-
-  addLoadedSkillPrompt(prompt: SystemModelMessage): void {
-    this.loadedSkillPrompts.push(prompt);
   }
 
   private async persistStoredEvent(event: StoredConversationEvent): Promise<string> {
@@ -343,23 +410,6 @@ export class Session {
       },
     }));
     return createdAt;
-  }
-
-  private async refreshPromptContextSnapshot(
-    snapshot: PromptContextSnapshot,
-  ): Promise<PromptContextSnapshot> {
-    const entries = await this.loadConversationEntries({
-      afterCreatedAt: snapshot.cursor,
-    });
-
-    if (entries.length === 0) {
-      return snapshot;
-    }
-
-    return {
-      cursor: entries.at(-1)?.createdAt ?? snapshot.cursor,
-      messages: [...snapshot.messages, ...projectPromptContextMessages(entries)],
-    };
   }
 
   private async loadConversationEntries(options: {
@@ -446,16 +496,30 @@ export class Session {
   private async loadSkillMetadata(): Promise<SkillMetadata[]> {
     return listConfiguredSkillMetadata(this.accountId, this.accountConfig);
   }
-}
 
-export function createSession(
-  eventId: string,
-  conversationKey: string,
-  accountId?: string,
-  agentId?: string,
-  accountConfig: AccountConfig = {},
-): Session {
-  return new Session(eventId, conversationKey, accountId, agentId, accountConfig);
+  private async loadSubagentMetadata(): Promise<SubagentMetadata[]> {
+    if (this.accountConfig.subagent?.enabled !== true || !this.accountId) {
+      return [];
+    }
+    if (!this.subagentMetadataPromise) {
+      this.subagentMetadataPromise = Promise.all(
+        (this.accountConfig.subagent.allowed ?? []).map(async (agentId) => {
+          const agent = await getAgent(this.accountId!, agentId);
+          if (!agent || agent.status !== "active") {
+            return null;
+          }
+
+          return {
+            agentId: agent.agentId,
+            name: agent.name,
+            ...(agent.description ? { description: agent.description } : {}),
+          };
+        }),
+      ).then((metadata) => metadata.filter((entry): entry is SubagentMetadata => entry !== null));
+    }
+
+    return this.subagentMetadataPromise;
+  }
 }
 
 function formatMemorySystemPrompt(memoryContent: string | null): string {
@@ -474,7 +538,7 @@ function formatSkillsSystemPrompt(skills: SkillMetadata[]): string {
     .map((skill) => `- ${skill.skillPath} (${skill.name}): ${skill.description}`)
     .join("\n");
 
-  return `# Skills System
+  return `<skill_system>
 Select appropriate skills to assist with the user's request. A skill must be loaded with the load_skill tool before using its detailed instructions.
 
 Available skills:
@@ -483,12 +547,32 @@ ${skillList}
 Workflow:
 1. Check whether the user's task matches any skill description.
 2. Use load_skill with the exact skill path before applying that skill.
-3. Request resource paths only when the loaded SKILL.md references them and they are needed.`;
+3. Request resource paths only when the loaded SKILL.md references them and they are needed.</skill_system>`;
 }
 
-/**
- * Normalizes system message to schema-compliant format.
- */
+function formatSubagentSystemPrompt(subagents: SubagentMetadata[]): string {
+  const predefined = subagents.length > 0
+    ? subagents
+      .map((agent) => {
+        const description = agent.description?.trim() || "No description provided.";
+        return `- ${agent.agentId} (${agent.name}): ${description}`;
+      })
+      .join("\n")
+    : "- No predefined subagents are configured. Omit agentId to run a virtual one-shot subagent.";
+
+  return `<subagent_system>
+Use run_subagent to dispatch independent work that can continue while you keep working. The tool returns task ids immediately; results are injected into this conversation when the child work finishes.
+
+Available predefined subagents:
+${predefined}
+
+Tool guidance:
+1. Include agentId only when choosing one of the predefined subagents above.
+2. Omit agentId for a virtual one-shot subagent that uses this agent's model and tool configuration.</subagent_system>`;
+}
+
+// DynamoDB row decoding.
+
 function normalizeSystemMessage(message: SystemModelMessage): SystemModelMessage {
   return systemModelMessageSchema.parse({
     role: "system",
@@ -502,16 +586,8 @@ function itemToStoredConversationEntry(item: Record<string, AttributeValue>): St
     return null;
   }
 
-  const event = itemToStoredConversationEvent(item);
+  const event = item.event ? normalizeStoredConversationEvent(fromAttributeValue(item.event)) : null;
   return event ? { createdAt, event } : null;
-}
-
-function itemToStoredConversationEvent(item: Record<string, AttributeValue>): StoredConversationEvent | null {
-  if (item.event) {
-    return normalizeStoredConversationEvent(fromAttributeValue(item.event));
-  }
-
-  return null;
 }
 
 function normalizeStoredConversationEvent(value: unknown): StoredConversationEvent | null {
@@ -534,10 +610,8 @@ function normalizeStoredConversationEvent(value: unknown): StoredConversationEve
     : null;
 }
 
-/**
- * Converts a model message to a stored conversation event. Since some model does not recieved the thinking message. For the next turn.
- * We need to omit that. For some model like Anthropic, this is not the case, we will need pass all the message to the next turn.
- */
+// Message persistence sanitization.
+
 function createStoredEventFromModelMessage(
   message: ModelMessage | undefined,
   sourceEventId: string,
@@ -560,9 +634,6 @@ function createStoredEventFromModelMessage(
   }
 }
 
-/**
- * Wraps a message in a stored event structure.
- */
 function toStoredConversationEvent<TMessage extends StoredConversationEvent["message"]>(
   message: TMessage | null,
   sourceEventId: string,
@@ -573,6 +644,8 @@ function toStoredConversationEvent<TMessage extends StoredConversationEvent["mes
     message,
   } : null;
 }
+
+// Conversation projection.
 
 function projectEntriesToMessages(entries: StoredConversationEntry[]): ModelMessage[] {
   return entries.flatMap(({ event }) => {
@@ -587,7 +660,7 @@ function projectEntriesToMessages(entries: StoredConversationEntry[]): ModelMess
   });
 }
 
-function projectPromptContextMessages(entries: StoredConversationEntry[]): SystemModelMessage[] {
+function projectSystemContextMessages(entries: StoredConversationEntry[]): SystemModelMessage[] {
   const latestCompactionIndex = findLatestCompactionSummaryIndex(entries);
 
   return entries.flatMap(({ event }, index) => {
@@ -603,12 +676,12 @@ function projectPromptContextMessages(entries: StoredConversationEntry[]): Syste
   });
 }
 
-function createPromptContextSnapshot(entries: StoredConversationEntry[]): PromptContextSnapshot {
-  const promptEntries = latestCompactionAwareEntries(entries);
+function createSystemContextSnapshot(entries: StoredConversationEntry[]): SystemContextSnapshot {
+  const systemEntries = entriesSinceLatestCompactionSummary(entries);
 
   return {
-    cursor: promptEntries.at(-1)?.createdAt ?? entries.at(-1)?.createdAt ?? null,
-    messages: projectPromptContextMessages(promptEntries),
+    cursor: systemEntries.at(-1)?.createdAt ?? entries.at(-1)?.createdAt ?? null,
+    messages: projectSystemContextMessages(systemEntries),
   };
 }
 
@@ -616,6 +689,8 @@ function projectActiveConversationEntries(entries: StoredConversationEntry[]): S
   const latestCompactionIndex = findLatestCompactionSummaryIndex(entries);
   return latestCompactionIndex === -1 ? entries : entries.slice(latestCompactionIndex + 1);
 }
+
+// Compaction resume support.
 
 export function selectPostCompactionPendingMessages(messages: ModelMessage[]): ModelMessage[] {
   const lastMessage = messages.at(-1);
@@ -645,7 +720,7 @@ export function selectPostCompactionPendingMessages(messages: ModelMessage[]): M
     : [lastMessage];
 }
 
-function latestCompactionAwareEntries(entries: StoredConversationEntry[]): StoredConversationEntry[] {
+function entriesSinceLatestCompactionSummary(entries: StoredConversationEntry[]): StoredConversationEntry[] {
   const latestCompactionIndex = findLatestCompactionSummaryIndex(entries);
   return latestCompactionIndex === -1 ? entries : entries.slice(latestCompactionIndex);
 }
@@ -723,5 +798,5 @@ function isToolApprovalResponseMessage(message: ModelMessage | undefined): messa
 }
 
 function loadEnvironmentContextPrompt(): string {
-  return `Knowledge cutoff: January 2025.\n\nCurrent time: ${new Date().toISOString()}.\n\nCurrent timezone: ${Intl.DateTimeFormat().resolvedOptions().timeZone}`;
+  return `Current time: ${new Date().toISOString()}.\n\nCurrent timezone: ${Intl.DateTimeFormat().resolvedOptions().timeZone}`;
 }

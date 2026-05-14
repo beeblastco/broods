@@ -56,7 +56,7 @@ describe("telegram channel adapter", () => {
       throw new Error("Expected Telegram message to be accepted");
     }
 
-    expect(parsed.message.eventId).toBe("tg-7");
+    expect(parsed.message.eventId).toBe("tg:7");
     expect(parsed.message.conversationKey).toBe("tg:123");
     expect(parsed.message.channelName).toBe("telegram");
     expect(parsed.message.content).toBe("hello");
@@ -82,7 +82,7 @@ describe("telegram channel adapter", () => {
       throw new Error("Expected Telegram edited message to be accepted");
     }
 
-    expect(parsed.message.eventId).toBe("tg-8");
+    expect(parsed.message.eventId).toBe("tg:8");
     expect(parsed.message.content).toBe("edited");
     expect(parsed.message.source).toEqual({
       chatId: 123,

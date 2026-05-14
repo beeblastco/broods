@@ -14,9 +14,11 @@ import { listAgents, type AgentRecord } from "../_shared/agents.ts";
 import { deleteS3Prefix as deleteBunS3Prefix } from "../_shared/bun-s3.ts";
 import { dynamo } from "../_shared/dynamo.ts";
 import { optionalEnv } from "../_shared/env.ts";
-import { normalizeFilesystemNamespace } from "../_shared/filesystem-namespace.ts";
+import {
+  accountScopedPrefix,
+  normalizeFilesystemNamespace,
+} from "../_shared/runtime-keys.ts";
 
-const ACCOUNT_NAMESPACE_PREFIX = "acct:";
 const DYNAMO_BATCH_WRITE_LIMIT = 25;
 
 export interface AccountCleanupSummary {
@@ -271,10 +273,6 @@ async function deleteFilesystemNamespaces(namespaces: string[]): Promise<number>
 
 async function deleteS3Prefix(bucketName: string, prefix: string): Promise<number> {
   return deleteBunS3Prefix(bucketName, prefix);
-}
-
-function accountScopedPrefix(accountId: string): string {
-  return `${ACCOUNT_NAMESPACE_PREFIX}${accountId}:`;
 }
 
 function conversationsTableName(): string | undefined {

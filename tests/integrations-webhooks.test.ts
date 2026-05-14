@@ -98,7 +98,7 @@ describe("account webhook ingress", () => {
       accountId: "acct_test",
       agentId: "agent_test",
       accountConfig: {},
-      eventId: "acct:acct_test:agent:agent_test:tg-7",
+      eventId: "acct:acct_test:agent:agent_test:tg:7",
       conversationKey: "acct:acct_test:agent:agent_test:tg:123",
       content: "hello",
       events: [{ role: "user", content: "hello" }],

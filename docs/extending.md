@@ -38,6 +38,8 @@ Workspace-backed tools are different: `filesystem` and `tasks` live under `works
 
 Set `workspace.needsApproval` when every enabled workspace tool should use the AI SDK tool execution approval flow before its `execute` function runs.
 
+`run_subagent` is also special: it lives under `config.subagent`, not the top-level `tools` map. Keep its model-facing schema in `functions/harness-processing/tools/run-subagent.tool.ts`, and keep dispatch, child runs, result injection, and parent continuation in `functions/harness-processing/subagents.ts`.
+
 If a tool needs account-level options, validate those options in `accounts.ts`, read them from `context.config` in the tool factory, and keep runtime secrets in SST secrets unless they are truly account-specific encrypted config.
 
 ## Add a Channel

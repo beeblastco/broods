@@ -76,7 +76,7 @@ Agent config patch behavior is a deep merge. Redacted secret placeholders return
 
 ## Agents
 
-Create an agent after creating the account:
+Create an agent after creating the account. A clear `description` is recommended because parent agents see this text when the agent is allowed as a predefined subagent.
 
 ```bash
 curl -X POST "$ACCOUNT_SERVICE_URL/accounts/me/agents" \
@@ -284,7 +284,7 @@ Controls harness behavior.
 {
   "agent": {
     "maxTurn": 20,
-    "system": "Optional agent-specific system prompt."
+    "system": "Knowledge cutoff: January 2025.\n\nOptional agent-specific system prompt."
   }
 }
 ```
@@ -293,6 +293,8 @@ Controls harness behavior.
 | ------- | ------ | ------------- |
 | `maxTurn` | number | Maximum model/tool loop steps per conversation turn |
 | `system` | string | Replaces the generated default system prompt (not appended) |
+
+> **Important:** The runtime always prepends an environment system prompt before this agent prompt. That environment prompt includes current runtime time and runtime timezone. Do not duplicate generic current-time instructions in `agent.system`; only add model knowledge cutoff, timezone, or calendar guidance here when the agent needs that stable rule.
 
 ### Skills Config
 
@@ -311,6 +313,30 @@ Optional. Omit `skills` when an agent has no skills. When `enabled` is true and 
 | ------- | ------ | ------------- |
 | `enabled` | boolean | Enables skill metadata and the `load_skill` tool |
 | `allowed` | string[] | Account-scoped skill paths allowed for this agent |
+
+---
+
+### Subagent Config
+
+Optional. Omit `subagent` when an agent should not dispatch child work. When enabled, the runtime exposes `run_subagent` and adds predefined subagent metadata to the parent prompt.
+
+```json
+{
+  "subagent": {
+    "enabled": true,
+    "allowed": ["agent_..."],
+    "context": "new"
+  }
+}
+```
+
+| Field | Type | Description |
+| ------- | ------ | ------------- |
+| `enabled` | boolean | Enables `run_subagent`; omitted or false disables the tool |
+| `allowed` | string[] | Predefined same-account agent ids the parent may call; empty means virtual subagents only |
+| `context` | enum `"new"` or `"inherited"` | Default child context mode; omitted means `"new"` |
+
+`run_subagent` accepts multiple model-generated tasks. A task may provide one of the allowed `agentId` values, or omit `agentId` to run a virtual one-shot subagent with the parent model and tool config. The runtime generates isolated child conversation keys automatically. Inherited context is passed to the child in memory only and is not copied into the child conversation table. Child results are injected back into the parent conversation as user events so the parent can continue proactively. See [Sub Agents](sub-agents.md).
 
 ---
 

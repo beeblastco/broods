@@ -9,20 +9,32 @@ import {
   type AccountModelProviderName,
   type AccountToolConfig,
 } from "../../_shared/accounts.ts";
+import type { Session } from "../session.ts";
 import filesystemTool from "./filesystem.tool.ts";
 import googleSearchTool from "./google-search.tool.ts";
+import loadSkillTool from "./load-skill.tool.ts";
+import runSubagentTool, {
+  type RunSubagentDispatch,
+} from "./run-subagent.tool.ts";
 import tasksTool from "./tasks.tool.ts";
 import { tavilyExtractTool, tavilySearchTool } from "./tavily.tool.ts";
 
+// Runtime dependencies shared by tool factories. Model-facing input schemas
+// stay inside each individual tool file.
 export interface ToolContext {
   conversationKey: string;
   filesystemNamespace: string;
   config: AccountToolConfig;
   modelProviderName: AccountModelProviderName;
   modelProvider: unknown;
+  session?: Session;
+  dispatchSubagents?: RunSubagentDispatch;
 }
 
 type ToolFactory = (context: ToolContext) => ToolSet;
+
+// Account-configured tools. Workspace and subagent tools are registered below
+// because their enablement is controlled outside config.tools.
 const toolFactories = {
   tavilySearch: tavilySearchTool,
   tavilyExtract: tavilyExtractTool,
@@ -48,6 +60,22 @@ export function createTools(context: Omit<ToolContext, "config">, accountConfig:
         }),
       ]),
     );
+  }
+
+  // Subagent execution is orchestrated by the handler/coordinator. The registry
+  // exposes only the model-facing tool when config and runtime dispatcher agree.
+  if (accountConfig.subagent?.enabled === true && context.dispatchSubagents) {
+    Object.assign(tools, runSubagentTool({
+      dispatchSubagents: context.dispatchSubagents,
+    }));
+  }
+
+  const allowedSkillPaths = accountConfig.skills?.allowed ?? [];
+  if (accountConfig.skills?.enabled === true && allowedSkillPaths.length > 0 && context.session) {
+    Object.assign(tools, loadSkillTool(
+      context.session,
+      (skillPath, resourcePaths) => context.session!.loadSkillPrompt(allowedSkillPaths, skillPath, resourcePaths),
+    ));
   }
 
   for (const [toolName, toolFactory] of Object.entries(toolFactories)) {

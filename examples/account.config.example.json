@@ -32,7 +32,12 @@
   },
   "agent": {
     "maxTurn": 20,
-    "system": "Optional agent-specific system prompt."
+    "system": "Knowledge cutoff: January 2025.\n\nOptional agent-specific system prompt."
+  },
+  "subagent": {
+    "enabled": true,
+    "allowed": [],
+    "context": "new"
   },
   "skills": {
     "enabled": true,

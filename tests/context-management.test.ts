@@ -6,6 +6,7 @@
 import { afterEach, describe, expect, it, mock } from "bun:test";
 import * as actualAi from "ai";
 
+const ORIGINAL_ENV = { ...process.env };
 const googleModelMock = mock((modelId: string) => ({ provider: "google", modelId }));
 const createGoogleMock = mock((_options: unknown) => googleModelMock);
 const generateTextMock = mock(async (_options: unknown) => ({ text: "Earlier context summary." }));
@@ -20,9 +21,36 @@ mock.module("ai", () => ({
 }));
 
 afterEach(() => {
+  process.env = { ...ORIGINAL_ENV };
   generateTextMock.mockClear();
   googleModelMock.mockClear();
   createGoogleMock.mockClear();
+});
+
+describe("session environment context", () => {
+  it("adds current time and timezone without a knowledge cutoff", async () => {
+    process.env.CONVERSATIONS_TABLE_NAME = "conversations";
+    process.env.PROCESSED_EVENTS_TABLE_NAME = "processed-events";
+    process.env.FILESYSTEM_BUCKET_NAME = "filesystem";
+    const { Session } = await import("../functions/harness-processing/session.ts");
+    const session = new Session("event", "conversation", "acct", "agent", {
+      agent: {
+        system: "Agent-specific prompt.",
+      },
+    });
+
+    const turnContext = await session.createEphemeralTurnContext([{ role: "user", content: "hello" }]);
+    const environmentPrompt = turnContext.system[0]?.content;
+
+    expect(environmentPrompt).toContain("Current time:");
+    expect(environmentPrompt).toContain("Current timezone:");
+    expect(environmentPrompt).not.toContain("Knowledge cutoff");
+    expect(turnContext.system[1]).toEqual({
+      role: "system",
+      content: "Agent-specific prompt.",
+    });
+  });
+
 });
 
 describe("session pruning", () => {

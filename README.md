@@ -12,7 +12,7 @@ The deployed architecture uses two public Lambda Function URLs:
 - `account-manage`: creates accounts, rotates account API secrets, manages account-owned agents and skills, and deletes account-scoped runtime data when an account is deleted.
 - `harness-processing`: handles account-authenticated direct API traffic, async work, status polling, and account-scoped Telegram, GitHub, Slack, and Discord webhooks.
 
-The design goal is simple infrastructure for low-volume multi-tenant usage: Bun on Lambda, SST for infra, DynamoDB for account/agent/conversation/status state, S3 for workspace-backed memory/files/tasks and skill bundles, and the Vercel AI SDK for the agent loop.
+The design goal is simple infrastructure for low-volume multi-tenant usage: Bun on Lambda, SST for infra, DynamoDB for account/agent/conversation/status state, S3 for workspace-backed memory/files/tasks and skill bundles, and the Vercel AI SDK for the agent loop. Agents can optionally dispatch subagents that run parallel one-shot tasks and inject results back into the parent conversation.
 
 ## Overview
 
@@ -46,6 +46,7 @@ flowchart LR
 - [Architecture and workflows](docs/architecture.md)
 - [Account management](docs/account-management.md)
 - [Memory and session](docs/memory-and-session.md)
+- [Sub agents](docs/sub-agents.md)
 - [Data security](docs/data-security.md)
 - [Direct API](docs/direct-api.md)
 - [Operations](docs/operations.md)
@@ -93,8 +94,9 @@ bun run discord:sync
 - [`functions/account-manage/cleanup.ts`](functions/account-manage/cleanup.ts): account deletion cleanup for runtime rows and S3 namespaces.
 - [`functions/harness-processing/integrations.ts`](functions/harness-processing/integrations.ts): account auth, direct API parsing, account webhook routing, and channel normalization.
 - [`functions/harness-processing/handler.ts`](functions/harness-processing/handler.ts): SSE, async self-invocation, commands, leases, and reply orchestration.
-- [`functions/harness-processing/session.ts`](functions/harness-processing/session.ts): conversation persistence, deduplication, leases, prompt context, context management, and workspace memory loading.
+- [`functions/harness-processing/session.ts`](functions/harness-processing/session.ts): conversation persistence, deduplication, leases, system context, context management, and workspace memory loading.
 - [`functions/harness-processing/skills.ts`](functions/harness-processing/skills.ts): enabled skill metadata and `load_skill` prompt content loading.
 - [`functions/harness-processing/status.ts`](functions/harness-processing/status.ts): async direct API status storage for `/status/{eventId}` polling.
+- [`functions/harness-processing/subagents.ts`](functions/harness-processing/subagents.ts): in-process subagent dispatch, child runs, result injection, and parent continuation.
 - [`functions/harness-processing/harness.ts`](functions/harness-processing/harness.ts): configured model execution loop and inline tool orchestration.
 - [`functions/harness-processing/tools/index.ts`](functions/harness-processing/tools/index.ts): static tool factory registry and account-configured tool selection.

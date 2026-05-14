@@ -8,10 +8,11 @@ This is an experiment product, so the security model is simple by design. It avo
 flowchart TD
   Account["Account record"] --> Meta["Plain metadata<br/>accountId, username, description, status"]
   Account --> Hash["Account secret hash<br/>secretHash"]
-  Account --> Config["Encrypted config blob<br/>model, tool, and channel settings"]
+  Account --> Config["Encrypted config blob<br/>model, tool, subagent, and channel settings"]
 
   Config --> Model["model provider/options"]
   Config --> Tools["tool allowlist/options"]
+  Config --> Subagents["subagent allowlist/context mode"]
   Config --> Telegram["Telegram token / webhook secret"]
   Config --> GitHub["GitHub app id / private key / webhook secret"]
   Config --> Slack["Slack bot token / signing secret"]

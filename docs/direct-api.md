@@ -8,7 +8,9 @@ Authorization: Bearer <accountSecret>
 
 Direct API state is internally scoped as `acct:<accountId>:agent:<agentId>:api:<key>`, so different accounts and agents can reuse the same public `eventId` or `conversationKey` without colliding.
 
-Model behavior and tool access come from the selected agent's encrypted config. Workspace tools come from `config.workspace.enabled`; search/research tools come from `config.tools`; skills are optional and load only when `config.skills.enabled` is true and `config.skills.allowed` has paths. See [`examples/account.config.example.json`](../examples/account.config.example.json) for the supported agent config shape.
+Model behavior and tool access come from the selected agent's encrypted config. Workspace tools come from `config.workspace.enabled`; subagent dispatch comes from `config.subagent.enabled`; search/research tools come from `config.tools`; skills are optional and load only when `config.skills.enabled` is true and `config.skills.allowed` has paths. See [`examples/account.config.example.json`](../examples/account.config.example.json) for the supported agent config shape.
+
+> **Notice:** Every model invocation receives a runtime environment system prompt before the selected agent's configured system prompt. It includes the current runtime time as an ISO timestamp and the runtime timezone. Do not add generic current-time context when creating or invoking an agent unless the request needs a user-specific locale, timezone, or business-time rule.
 
 ## Health Probe: `GET /`
 
@@ -69,7 +71,9 @@ Direct API callers can inject ephemeral `system` events:
 }
 ```
 
-`system` events are supported only on the direct API path and must use `persist: false`. The direct API rejects caller-supplied `assistant`, `tool-result`, arbitrary `tool` content, and persisted `system` events.
+`system` events are supported only on the direct API path and must use `persist: false`. They are request-local: the runtime includes them in the current model run's system prompt, keeps them through any system-prompt refreshes during that run, and does not store them in DynamoDB. Send the same ephemeral system event again on the next request when the instruction should apply again. The direct API rejects caller-supplied `assistant`, `tool-result`, arbitrary `tool` content, and persisted `system` events.
+
+Use ephemeral `system` events for request-local time overrides, for example when the end user is in a different timezone than the Lambda runtime or when a workflow should interpret "today" against a customer-specific calendar.
 
 ## Tool Approval
 
@@ -219,6 +223,9 @@ bun examples/async.ts
 
 # Tool approval flow
 bun examples/tool-approval.ts
+
+# Subagent dispatch and SSE continuation
+bun examples/subagent.ts
 ```
 
 ## Status API: `GET /status/{eventId}?agentId={agentId}`

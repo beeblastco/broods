@@ -4,7 +4,7 @@
  */
 
 import { afterEach, describe, expect, it, mock } from "bun:test";
-import { DeleteItemCommand, QueryCommand, type AttributeValue } from "@aws-sdk/client-dynamodb";
+import { DeleteItemCommand, GetItemCommand, QueryCommand, type AttributeValue } from "@aws-sdk/client-dynamodb";
 import { dynamo, toAttributeValue } from "../functions/_shared/dynamo.ts";
 
 const ORIGINAL_ENV = { ...process.env };
@@ -18,6 +18,51 @@ afterEach(() => {
 });
 
 describe("agent persistence", () => {
+  it("validates configured predefined subagents as active same-account agents", async () => {
+    process.env.AGENT_CONFIGS_TABLE_NAME = "agent-configs";
+    process.env.ACCOUNT_CONFIG_ENCRYPTION_SECRET = "test-secret";
+    dynamo.send = sendMock as never;
+    const { validateAgentSubagentIds } = await import("../functions/_shared/agents.ts");
+    const { encryptAccountConfig } = await import("../functions/_shared/accounts.ts");
+
+    sendMock.mockImplementation(async (command: unknown) => {
+      if (command instanceof GetItemCommand) {
+        return {
+          Item: agentItem("acct_test", "agent_worker", toAttributeValue(encryptAccountConfig({}))),
+        };
+      }
+      throw new Error("unexpected command");
+    });
+
+    await expect(validateAgentSubagentIds("acct_test", {
+      subagent: {
+        enabled: true,
+        allowed: ["agent_worker"],
+      },
+    })).resolves.toBeUndefined();
+  });
+
+  it("rejects missing predefined subagents", async () => {
+    process.env.AGENT_CONFIGS_TABLE_NAME = "agent-configs";
+    process.env.ACCOUNT_CONFIG_ENCRYPTION_SECRET = "test-secret";
+    dynamo.send = sendMock as never;
+    const { validateAgentSubagentIds } = await import("../functions/_shared/agents.ts");
+
+    sendMock.mockImplementation(async (command: unknown) => {
+      if (command instanceof GetItemCommand) {
+        return {};
+      }
+      throw new Error("unexpected command");
+    });
+
+    await expect(validateAgentSubagentIds("acct_test", {
+      subagent: {
+        enabled: true,
+        allowed: ["agent_missing"],
+      },
+    })).rejects.toThrow("Subagent not found: agent_missing");
+  });
+
   it("deletes all account agents across paginated query results", async () => {
     process.env.AGENT_CONFIGS_TABLE_NAME = "agent-configs";
     process.env.ACCOUNT_CONFIG_ENCRYPTION_SECRET = "test-secret";
@@ -63,6 +108,7 @@ describe("agent persistence", () => {
       .filter((command): command is DeleteItemCommand => command instanceof DeleteItemCommand);
 
     expect(queryCommands).toHaveLength(2);
+    expect(queryCommands[0]?.input.ConsistentRead).toBe(true);
     expect(queryCommands[1]?.input.ExclusiveStartKey).toEqual({
       accountId: { S: "acct_test" },
       agentId: { S: "agent_two" },

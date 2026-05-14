@@ -19,6 +19,7 @@ import {
 import {
     AgentSkillAuthorizationError,
     AgentSkillNotFoundError,
+    AgentSubagentNotFoundError,
     createAgent,
     deleteAccountAgents,
     deleteAgent,
@@ -320,6 +321,9 @@ function errorResponseForError(err: unknown): LambdaResponse {
         return errorResponse(401, err.message);
     }
     if (err instanceof AgentSkillNotFoundError) {
+        return errorResponse(404, err.message);
+    }
+    if (err instanceof AgentSubagentNotFoundError) {
         return errorResponse(404, err.message);
     }
     return errorResponse(400, err instanceof Error ? err.message : "Invalid request");

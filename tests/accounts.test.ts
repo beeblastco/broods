@@ -3,8 +3,10 @@
  * Cover pure validation, patch merge, redaction, and runtime config projection.
  */
 
-import { describe, expect, it } from "bun:test";
+import { ScanCommand } from "@aws-sdk/client-dynamodb";
+import { afterEach, describe, expect, it, mock } from "bun:test";
 import {
+  listAccounts,
   mergeAccountConfig,
   normalizeAccountConfig,
   toPublicAccount,
@@ -15,6 +17,17 @@ import {
   toPublicAgent,
   type AgentRecord,
 } from "../functions/_shared/agents.ts";
+import { dynamo } from "../functions/_shared/dynamo.ts";
+
+const ORIGINAL_ENV = { ...process.env };
+const originalSend = dynamo.send;
+const sendMock = mock(async (_command: unknown) => ({}));
+
+afterEach(() => {
+  process.env = { ...ORIGINAL_ENV };
+  dynamo.send = originalSend;
+  sendMock.mockReset();
+});
 
 describe("account config", () => {
   it("deletes config keys with null patch values and preserves redacted secrets", () => {
@@ -265,6 +278,54 @@ describe("account config", () => {
     })).toThrow("config.skills.allowed must be an array of strings");
   });
 
+  it("validates account subagent config", () => {
+    expect(normalizeAccountConfig({
+      subagent: {
+        enabled: true,
+        allowed: ["agent_worker"],
+        context: "inherited",
+      },
+    })).toEqual({
+      subagent: {
+        enabled: true,
+        allowed: ["agent_worker"],
+        context: "inherited",
+      },
+    });
+
+    expect(normalizeAccountConfig({
+      subagent: {
+        enabled: true,
+        allowed: [],
+        context: "new",
+      },
+    })).toEqual({
+      subagent: {
+        enabled: true,
+        allowed: [],
+        context: "new",
+      },
+    });
+
+    expect(() => normalizeAccountConfig({
+      subagent: {
+        enabled: "yes",
+      },
+    })).toThrow("config.subagent.enabled must be a boolean");
+
+    expect(() => normalizeAccountConfig({
+      subagent: {
+        allowed: "agent_worker",
+      },
+    })).toThrow("config.subagent.allowed must be an array of strings");
+
+    expect(() => normalizeAccountConfig({
+      subagent: {
+        context: "shared",
+      },
+    })).toThrow("config.subagent.context must be one of: new, inherited");
+  });
+
   it("projects only runtime settings for agent sessions", () => {
     expect(toRuntimeAccountConfig({
       model: {
@@ -309,6 +370,11 @@ describe("account config", () => {
       },
       tools: {
         tavilySearch: { maxResults: 3 },
+      },
+      subagent: {
+        enabled: true,
+        allowed: ["agent_worker"],
+        context: "new",
       },
       channels: {
         slack: {
@@ -359,6 +425,11 @@ describe("account config", () => {
       },
       tools: {
         tavilySearch: { maxResults: 3 },
+      },
+      subagent: {
+        enabled: true,
+        allowed: ["agent_worker"],
+        context: "new",
       },
     });
   });
@@ -446,5 +517,23 @@ describe("account config", () => {
       accountId: "acct_test",
       agentId: "agent_test",
     });
+  });
+
+  it("lists accounts with a strongly consistent scan for deploy upserts", async () => {
+    process.env.ACCOUNT_CONFIGS_TABLE_NAME = "account-configs";
+    dynamo.send = sendMock as never;
+
+    sendMock.mockImplementation(async (command: unknown) => {
+      if (command instanceof ScanCommand) {
+        return { Items: [] };
+      }
+      throw new Error("unexpected command");
+    });
+
+    await expect(listAccounts()).resolves.toEqual([]);
+
+    const scanCommand = sendMock.mock.calls[0]?.[0];
+    expect(scanCommand).toBeInstanceOf(ScanCommand);
+    expect((scanCommand as ScanCommand).input.ConsistentRead).toBe(true);
   });
 });

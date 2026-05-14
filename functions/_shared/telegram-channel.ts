@@ -7,6 +7,7 @@ import { TelegramAdapter, type TelegramMessage, type TelegramUpdate } from "@cha
 import { ConsoleLogger } from "chat";
 import type { ChannelActions, ChannelAdapter, ChannelParseResult } from "./channels.ts";
 import { logWarn } from "./log.ts";
+import { TELEGRAM_INTEGRATION_PREFIX } from "./runtime-keys.ts";
 import { sendMessage, verifyWebhookSecret } from "./telegram.ts";
 
 export interface TelegramSource {
@@ -63,8 +64,8 @@ export function createTelegramChannel(
       return {
         kind: "message",
         message: {
-          eventId: `tg-${update.update_id}`,
-          conversationKey: `tg:${message.chat.id}`,
+          eventId: `${TELEGRAM_INTEGRATION_PREFIX}${update.update_id}`,
+          conversationKey: `${TELEGRAM_INTEGRATION_PREFIX}${message.chat.id}`,
           channelName: "telegram",
           content: parsed.text,
           source: {

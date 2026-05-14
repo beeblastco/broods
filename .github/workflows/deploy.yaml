@@ -160,6 +160,7 @@ jobs:
           TELEGRAM_WEBHOOK_SECRET: ${{ secrets.TELEGRAM_WEBHOOK_SECRET || secrets.SST_SECRET_TELEGRAMWEBHOOKSECRET }}
           ALLOWED_CHAT_IDS: ${{ secrets.TELEGRAM_ALLOWED_CHAT_IDS || secrets.SST_SECRET_ALLOWEDCHATIDS }}
           INTEGRATIONS_ACCOUNT_USERNAME: ${{ vars.INTEGRATIONS_ACCOUNT_USERNAME || 'integrations-default' }}
+          ACCOUNT_MODEL_KNOWLEDGE_CUTOFF: ${{ vars.ACCOUNT_MODEL_KNOWLEDGE_CUTOFF || 'January 2025' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -185,6 +186,7 @@ jobs:
           DISCORD_PUBLIC_KEY: ${{ secrets.DISCORD_PUBLIC_KEY || secrets.SST_SECRET_DISCORDPUBLICKEY }}
           DISCORD_ALLOWED_GUILD_IDS: ${{ secrets.DISCORD_ALLOWED_GUILD_IDS || secrets.SST_SECRET_DISCORDALLOWEDGUILDIDS || vars.DISCORD_SYNC_GUILD_ID }}
           INTEGRATIONS_ACCOUNT_USERNAME: ${{ vars.INTEGRATIONS_ACCOUNT_USERNAME || 'integrations-default' }}
+          ACCOUNT_MODEL_KNOWLEDGE_CUTOFF: ${{ vars.ACCOUNT_MODEL_KNOWLEDGE_CUTOFF || 'January 2025' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -232,6 +234,7 @@ jobs:
           GITHUB_WEBHOOK_SECRET: ${{ secrets.GITHUB_WEBHOOK_SECRET || secrets.SST_SECRET_GITHUBWEBHOOKSECRET }}
           GITHUB_ALLOWED_REPOS: ${{ secrets.GITHUB_ALLOWED_REPOS || secrets.SST_SECRET_GITHUBALLOWEDREPOS || github.repository }}
           INTEGRATIONS_ACCOUNT_USERNAME: ${{ vars.INTEGRATIONS_ACCOUNT_USERNAME || 'integrations-default' }}
+          ACCOUNT_MODEL_KNOWLEDGE_CUTOFF: ${{ vars.ACCOUNT_MODEL_KNOWLEDGE_CUTOFF || 'January 2025' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -258,6 +261,7 @@ jobs:
           SLACK_SIGNING_SECRET: ${{ secrets.SLACK_SIGNING_SECRET || secrets.SST_SECRET_SLACKSIGNINGSECRET }}
           SLACK_ALLOWED_CHANNEL_IDS: ${{ secrets.SLACK_ALLOWED_CHANNEL_IDS || secrets.SST_SECRET_SLACKALLOWEDCHANNELIDS }}
           INTEGRATIONS_ACCOUNT_USERNAME: ${{ vars.INTEGRATIONS_ACCOUNT_USERNAME || 'integrations-default' }}
+          ACCOUNT_MODEL_KNOWLEDGE_CUTOFF: ${{ vars.ACCOUNT_MODEL_KNOWLEDGE_CUTOFF || 'January 2025' }}
         shell: bash
         run: |
           set -euo pipefail

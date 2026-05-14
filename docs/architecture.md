@@ -43,6 +43,7 @@ flowchart TD
   Session --> Harness["harness.ts<br/>model/tool loop"]
   Harness --> Model["Configured AI SDK provider<br/>Google / OpenAI / Bedrock / Gateway"]
   Harness --> Tools["workspace + account-enabled inline tools"]
+  Harness --> Subagents["subagents.ts<br/>parallel child runs + parent continuation"]
 
   Session --> Conversations["DynamoDB: Conversations"]
   Session --> Processed["DynamoDB: ProcessedEvents"]
@@ -51,6 +52,8 @@ flowchart TD
   Session --> Memory["S3: account-scoped MEMORY.md"]
   Session --> SkillStore
   Tools --> Filesystem["S3: account-scoped filesystem/tasks"]
+  Subagents --> AsyncResults
+  Subagents --> Session
 ```
 
 ## Account Routing
@@ -122,8 +125,17 @@ flowchart TD
   Auth --> Parse["parse direct payload"]
   Parse --> AgentLookup["load selected agent"]
   AgentLookup --> Session["session.ts<br/>claim + context + skills"]
-  Session --> Agent["harness.ts<br/>configured streamText + tools"]
+  Session --> HandlerLoop["handler.ts<br/>parent continuation loop"]
+  HandlerLoop --> Coordinator["SubagentCoordinator<br/>created per request"]
+  HandlerLoop --> Agent["harness.ts<br/>configured streamText + tools"]
+  Coordinator -->|"dispatchSubagents"| Agent
   Agent -->|"SSE chunks"| Caller
+  Agent -->|"run_subagent tool call"| Coordinator
+  Coordinator --> ChildRuns["subagents.ts<br/>in-process child agent loops"]
+  ChildRuns -->|"queued completion"| Coordinator
+  Coordinator -->|"inject result event"| Session
+  Coordinator -->|"heartbeat comments while parent waits"| Caller
+  HandlerLoop -->|"rerun after injected result"| Agent
 
   Async --> Pending["status.ts<br/>processing"]
   Pending --> AsyncTable["AsyncResults"]
@@ -137,7 +149,7 @@ flowchart TD
   Status --> AsyncTable
 ```
 
-The async path stays inside `harness-processing`: `POST /async` stores a processing record, returns a status URL, and starts an internal async Lambda self-invocation. The worker runs the same account-scoped agent turn and updates `AsyncResults`.
+The async path stays inside `harness-processing`: `POST /async` stores a processing record, returns a status URL, and starts an internal async Lambda self-invocation. The worker runs the same account-scoped agent turn and updates `AsyncResults`. Subagent dispatch does not require a separate child Lambda for SSE continuation; child agent loops run concurrently inside the parent invocation, and their results are injected as parent conversation events before the parent loop runs again.
 
 ## Channel Webhooks
 
@@ -173,21 +185,23 @@ See [Memory and Session](memory-and-session.md) for the full model.
 
 ## Model and Tool Configuration
 
-Agents control model selection, channel credentials, optional skills, and tool access through encrypted agent config. `harness.ts` resolves `config.model`; `tools/index.ts` creates workspace tools from `config.workspace` and search/research tools from `config.tools`; `harness.ts` adds `load_skill` only when `config.skills.enabled` is true and `config.skills.allowed` has paths. See [Account management](account-management.md#agent-config) for the supported config shape.
+Agents control model selection, channel credentials, optional skills, subagents, and tool access through encrypted agent config. `harness.ts` resolves `config.model`; `tools/index.ts` creates workspace tools from `config.workspace`, subagent dispatch from `config.subagent`, search/research tools from `config.tools`, and `load_skill` when `config.skills.enabled` is true and `config.skills.allowed` has paths. See [Account management](account-management.md#agent-config) for the supported config shape.
 
 ## Code Ownership
 
 - [`functions/_shared/accounts.ts`](../functions/_shared/accounts.ts): account records, account secret hashing, bearer auth, and account metadata storage.
 - [`functions/_shared/agents.ts`](../functions/_shared/agents.ts): account-owned agent records and encrypted agent config storage.
+- [`functions/_shared/runtime-keys.ts`](../functions/_shared/runtime-keys.ts): account-scoped runtime keys, direct API public key validation, leases, and filesystem namespaces.
 - [`functions/_shared/skills.ts`](../functions/_shared/skills.ts): shared skill path, frontmatter, import URL validation, and S3 read/ownership primitives.
 - [`functions/account-manage/handler.ts`](../functions/account-manage/handler.ts): account CRUD and admin/self-management HTTP API.
 - [`functions/account-manage/skills.ts`](../functions/account-manage/skills.ts): account skill CRUD, GitHub import handling, and S3 writes.
 - [`functions/account-manage/cleanup.ts`](../functions/account-manage/cleanup.ts): account deletion cleanup for runtime rows and S3 namespaces.
 - [`functions/harness-processing/integrations.ts`](../functions/harness-processing/integrations.ts): account auth, direct request parsing, account webhook routing, and channel normalization.
 - [`functions/harness-processing/handler.ts`](../functions/harness-processing/handler.ts): SSE, async self-invocation, commands, leases, and reply flow.
-- [`functions/harness-processing/session.ts`](../functions/harness-processing/session.ts): event deduplication, conversation persistence, prompt context, and account/agent-scoped memory loading.
+- [`functions/harness-processing/session.ts`](../functions/harness-processing/session.ts): event deduplication, conversation persistence, system context, and account/agent-scoped memory loading.
 - [`functions/harness-processing/skills.ts`](../functions/harness-processing/skills.ts): enabled skill metadata and `load_skill` prompt content loading.
 - [`functions/harness-processing/status.ts`](../functions/harness-processing/status.ts): async direct API result persistence for polling.
+- [`functions/harness-processing/subagents.ts`](../functions/harness-processing/subagents.ts): subagent dispatch, child model runs, status rows, and parent result injection.
 - [`functions/harness-processing/harness.ts`](../functions/harness-processing/harness.ts): configured model execution loop and inline tool orchestration.
 - [`functions/harness-processing/tools/index.ts`](../functions/harness-processing/tools/index.ts): static tool factory registry and account-configured tool selection.
 
@@ -201,4 +215,4 @@ Agents control model selection, channel credentials, optional skills, and tool a
 - S3 memory bucket: account/agent-scoped `MEMORY.md`, filesystem, and task state.
 - S3 skills bucket: account-scoped skill bundles under `<accountId>/<skill-name>`.
 
-Tool execution is inline in `harness-processing`. Async direct API requests use Lambda async self-invocation to run the same harness code in the background.
+Tool execution is inline in `harness-processing`. Async direct API requests use Lambda async self-invocation to run the same harness code in the background. Subagents run as in-process child agent loops for the active parent invocation; status rows are persisted in `AsyncResults`, but parent SSE continuation does not poll child Lambda workers.

@@ -156,18 +156,18 @@ describe("runAgentLoop", () => {
 
     const stream = await runAgentLoop({
       conversationKey: "tg:7495331456",
-      eventId: "tg-900151472",
+      eventId: "tg:900151472",
       filesystemNamespace: () => "fs-test",
       persistModelMessages,
       loadRefreshedSystemPromptParts: async () => ({
-        promptContext: { cursor: null, messages: [] },
+        systemContextSnapshot: { cursor: null, messages: [] },
         system: [],
       }),
     } as never, {
       messages: [{ role: "user", content: "hello" }],
       system: [],
       ephemeralSystem: [],
-      promptContext: { cursor: null, messages: [] },
+      systemContextSnapshot: { cursor: null, messages: [] },
     }, {
       provider: {
         google: {
@@ -209,14 +209,14 @@ describe("runAgentLoop", () => {
       filesystemNamespace: () => "fs-test",
       persistModelMessages: async () => [],
       loadRefreshedSystemPromptParts: async () => ({
-        promptContext: { cursor: null, messages: [] },
+        systemContextSnapshot: { cursor: null, messages: [] },
         system: [],
       }),
     } as never, {
       messages: [{ role: "user", content: "hello" }],
       system: [],
       ephemeralSystem: [],
-      promptContext: { cursor: null, messages: [] },
+      systemContextSnapshot: { cursor: null, messages: [] },
     }, {
       provider: {
         google: {
@@ -256,14 +256,14 @@ describe("runAgentLoop", () => {
       filesystemNamespace: () => "fs-test",
       persistModelMessages,
       loadRefreshedSystemPromptParts: async () => ({
-        promptContext: { cursor: null, messages: [] },
+        systemContextSnapshot: { cursor: null, messages: [] },
         system: [],
       }),
     } as never, {
       messages: [{ role: "user", content: "delete a file" }],
       system: [],
       ephemeralSystem: [],
-      promptContext: { cursor: null, messages: [] },
+      systemContextSnapshot: { cursor: null, messages: [] },
     }, {
       workspace: {
         enabled: true,
@@ -335,14 +335,14 @@ describe("runAgentLoop", () => {
       filesystemNamespace: () => "fs-test",
       persistModelMessages: async () => { },
       loadRefreshedSystemPromptParts: async () => ({
-        promptContext: { cursor: null, messages: [] },
+        systemContextSnapshot: { cursor: null, messages: [] },
         system: [],
       }),
     } as never, {
       messages: [{ role: "user", content: "hello" }],
       system: [],
       ephemeralSystem: [],
-      promptContext: { cursor: null, messages: [] },
+      systemContextSnapshot: { cursor: null, messages: [] },
     }, {
       provider: {
         google: {
@@ -392,14 +392,14 @@ describe("runAgentLoop", () => {
       filesystemNamespace: () => "fs-test",
       persistModelMessages: async () => [],
       loadRefreshedSystemPromptParts: async () => ({
-        promptContext: { cursor: null, messages: [] },
+        systemContextSnapshot: { cursor: null, messages: [] },
         system: [],
       }),
     } as never, {
       messages: [{ role: "user", content: "hello" }],
       system: [],
       ephemeralSystem: [],
-      promptContext: { cursor: null, messages: [] },
+      systemContextSnapshot: { cursor: null, messages: [] },
     }, {
       agent: {
         maxTurn: 7,
@@ -438,14 +438,14 @@ describe("runAgentLoop", () => {
       persistModelMessages: async () => [],
       loadSkillPrompt,
       loadRefreshedSystemPromptParts: async () => ({
-        promptContext: { cursor: null, messages: [] },
+        systemContextSnapshot: { cursor: null, messages: [] },
         system: [],
       }),
     } as never, {
       messages: [{ role: "user", content: "hello" }],
       system: [],
       ephemeralSystem: [],
-      promptContext: { cursor: null, messages: [] },
+      systemContextSnapshot: { cursor: null, messages: [] },
     }, {
       skills: {
         enabled: true,
@@ -474,7 +474,7 @@ describe("runAgentLoop", () => {
       type: "text",
       value: "Loaded skill acct_test/support-flow: SKILL.md",
     });
-    expect(loadSkillPrompt).toHaveBeenCalledWith("acct_test/support-flow", []);
+    expect(loadSkillPrompt).toHaveBeenCalledWith(["acct_test/support-flow"], "acct_test/support-flow", []);
   });
 
   it("does not expose load_skill when no skills are configured", async () => {
@@ -487,14 +487,14 @@ describe("runAgentLoop", () => {
       filesystemNamespace: () => "fs-test",
       persistModelMessages: async () => [],
       loadRefreshedSystemPromptParts: async () => ({
-        promptContext: { cursor: null, messages: [] },
+        systemContextSnapshot: { cursor: null, messages: [] },
         system: [],
       }),
     } as never, {
       messages: [{ role: "user", content: "hello" }],
       system: [],
       ephemeralSystem: [],
-      promptContext: { cursor: null, messages: [] },
+      systemContextSnapshot: { cursor: null, messages: [] },
     }, {
       skills: {
         enabled: true,
@@ -515,6 +515,68 @@ describe("runAgentLoop", () => {
     expect(streamTextMock.mock.calls[0]?.[0]).not.toHaveProperty("tools");
   });
 
+  it("forwards turn ephemeral system messages into subagent dispatch", async () => {
+    installHarnessEnv();
+    const { runAgentLoop } = await import("../functions/harness-processing/harness.ts");
+    const dispatchSubagents = mock(async () => ({
+      tasks: [{
+        taskId: "subagent_1",
+        agentId: "virtual_subagent_1",
+        name: "Virtual subagent",
+        conversationKey: "subagent-subagent_1",
+        statusPath: "/status/subagent_1?agentId=virtual_subagent_1",
+        status: "running" as const,
+      }],
+    }));
+    const ephemeralSystem = [{ role: "system" as const, content: "Use the request-local style." }];
+
+    const stream = await runAgentLoop({
+      conversationKey: "direct:conversation",
+      eventId: "direct-event",
+      filesystemNamespace: () => "fs-test",
+      persistModelMessages: async () => [],
+      loadRefreshedSystemPromptParts: async () => ({
+        systemContextSnapshot: { cursor: null, messages: [] },
+        system: [],
+      }),
+    } as never, {
+      messages: [{ role: "user", content: "delegate this" }],
+      system: ephemeralSystem,
+      ephemeralSystem,
+      systemContextSnapshot: { cursor: null, messages: [] },
+    }, {
+      subagent: {
+        enabled: true,
+      },
+      provider: {
+        google: {
+          apiKey: "google-key",
+        },
+      },
+      model: {
+        provider: "google",
+        modelId: "gemini-test",
+      },
+    }, undefined, {
+      dispatchSubagents,
+    });
+
+    await stream.consumeStream();
+
+    const tools = streamTextMock.mock.calls[0]?.[0].tools as Record<string, { execute(input: unknown, options: { messages: unknown[] }): Promise<unknown> }>;
+    expect(tools.run_subagent).toBeDefined();
+    await tools.run_subagent!.execute({
+      tasks: [{ prompt: "research" }],
+    }, {
+      messages: [{ role: "user", content: "parent" }],
+    });
+    expect(dispatchSubagents).toHaveBeenCalledWith(
+      [{ prompt: "research" }],
+      [{ role: "user", content: "parent" }],
+      ephemeralSystem,
+    );
+  });
+
   it("creates an OpenAI provider from account provider config", async () => {
     installHarnessEnv();
     const { runAgentLoop } = await import("../functions/harness-processing/harness.ts");
@@ -525,14 +587,14 @@ describe("runAgentLoop", () => {
       filesystemNamespace: () => "fs-test",
       persistModelMessages: async () => { },
       loadRefreshedSystemPromptParts: async () => ({
-        promptContext: { cursor: null, messages: [] },
+        systemContextSnapshot: { cursor: null, messages: [] },
         system: [],
       }),
     } as never, {
       messages: [{ role: "user", content: "hello" }],
       system: [],
       ephemeralSystem: [],
-      promptContext: { cursor: null, messages: [] },
+      systemContextSnapshot: { cursor: null, messages: [] },
     }, {
       provider: {
         openai: {
@@ -569,14 +631,14 @@ describe("runAgentLoop", () => {
       filesystemNamespace: () => "fs-test",
       persistModelMessages: async () => { },
       loadRefreshedSystemPromptParts: async () => ({
-        promptContext: { cursor: null, messages: [] },
+        systemContextSnapshot: { cursor: null, messages: [] },
         system: [],
       }),
     } as never, {
       messages: [{ role: "user", content: "hello" }],
       system: [],
       ephemeralSystem: [],
-      promptContext: { cursor: null, messages: [] },
+      systemContextSnapshot: { cursor: null, messages: [] },
     }, {
       provider: {
         minimax: {
@@ -613,7 +675,7 @@ describe("runAgentLoop", () => {
       filesystemNamespace: () => "fs-test",
       persistModelMessages: async () => { },
       loadRefreshedSystemPromptParts: async () => ({
-        promptContext: { cursor: null, messages: [] },
+        systemContextSnapshot: { cursor: null, messages: [] },
         system: [],
       }),
     } as never;
@@ -621,7 +683,7 @@ describe("runAgentLoop", () => {
       messages: [{ role: "user", content: "hello" }],
       system: [],
       ephemeralSystem: [],
-      promptContext: { cursor: null, messages: [] },
+      systemContextSnapshot: { cursor: null, messages: [] },
     } as never;
 
     expect(runAgentLoop(session, turn, {})).rejects.toThrow("config.model.provider is required");
@@ -652,7 +714,7 @@ describe("runAgentLoop", () => {
       filesystemNamespace: () => "fs-test",
       persistModelMessages: async () => { },
       loadRefreshedSystemPromptParts: async () => ({
-        promptContext: { cursor: null, messages: [] },
+        systemContextSnapshot: { cursor: null, messages: [] },
         system: [],
       }),
     } as never;
@@ -660,7 +722,7 @@ describe("runAgentLoop", () => {
       messages: [{ role: "user", content: "hello" }],
       system: [],
       ephemeralSystem: [],
-      promptContext: { cursor: null, messages: [] },
+      systemContextSnapshot: { cursor: null, messages: [] },
     } as never;
 
     const bedrockStream = await runAgentLoop(baseSession, turn, {

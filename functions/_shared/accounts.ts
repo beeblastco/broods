@@ -56,6 +56,7 @@ export interface AccountConfig {
   channels?: AccountChannelsConfig;
   tools?: AccountToolsConfig;
   skills?: AccountSkillsConfig;
+  subagent?: AccountSubagentConfig;
   [key: string]: unknown;
 }
 
@@ -68,6 +69,13 @@ export interface AccountAgentConfig {
 export interface AccountSkillsConfig {
   enabled?: boolean;
   allowed?: string[];
+  [key: string]: unknown;
+}
+
+export interface AccountSubagentConfig {
+  enabled?: boolean;
+  allowed?: string[];
+  context?: "new" | "inherited";
   [key: string]: unknown;
 }
 
@@ -309,6 +317,7 @@ export async function getAccountBySecret(secret: string): Promise<AccountRecord 
 export async function listAccounts(): Promise<AccountRecord[]> {
   const result = await dynamo.send(new ScanCommand({
     TableName: accountConfigsTableName(),
+    ConsistentRead: true,
   }));
 
   return (result.Items ?? [])
@@ -430,6 +439,7 @@ export function toRuntimeAccountConfig(config: AccountConfig): AccountConfig {
     session,
     tools,
     skills,
+    subagent,
   } = config;
 
   return normalizeAccountConfig({
@@ -440,6 +450,7 @@ export function toRuntimeAccountConfig(config: AccountConfig): AccountConfig {
     ...(session !== undefined ? { session } : {}),
     ...(tools !== undefined ? { tools } : {}),
     ...(skills !== undefined ? { skills } : {}),
+    ...(subagent !== undefined ? { subagent } : {}),
   });
 }
 
@@ -461,6 +472,7 @@ export function normalizeAccountConfig(value: unknown): AccountConfig {
   normalizeChannelsConfig(config.channels);
   normalizeToolsConfig(config.tools);
   normalizeSkillsConfig(config.skills);
+  normalizeSubagentConfig(config.subagent);
 
   return config as AccountConfig;
 }
@@ -701,6 +713,20 @@ function normalizeSkillsConfig(value: unknown): void {
   const config = value as Record<string, unknown>;
   assertOptionalBoolean(config.enabled, "config.skills.enabled");
   assertOptionalStringArray(config.allowed, "config.skills.allowed");
+}
+
+function normalizeSubagentConfig(value: unknown): void {
+  if (value == null) {
+    return;
+  }
+  if (!isPlainObject(value)) {
+    throw new Error("config.subagent must be an object");
+  }
+
+  const config = value as Record<string, unknown>;
+  assertOptionalBoolean(config.enabled, "config.subagent.enabled");
+  assertOptionalStringArray(config.allowed, "config.subagent.allowed");
+  assertOptionalEnum(config.context, "config.subagent.context", ["new", "inherited"]);
 }
 
 function normalizeToolConfig(toolName: string, value: unknown): void {

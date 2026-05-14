@@ -77,6 +77,71 @@ describe("createTools", () => {
     })).toEqual({});
   });
 
+  it("exposes run_subagent only when subagents are enabled with a dispatcher", async () => {
+    const { createTools } = await import("../functions/harness-processing/tools/index.ts");
+    const dispatch = mock(async () => ({
+      tasks: [{
+        taskId: "subagent_1",
+        agentId: "virtual_subagent_1",
+        name: "Virtual subagent",
+        conversationKey: "subagent-subagent_1",
+        statusPath: "/status/subagent_1?agentId=virtual_subagent_1",
+        status: "running" as const,
+      }],
+    }));
+
+    expect(createTools(createToolContext(), {
+      subagent: {
+        enabled: true,
+      },
+    })).toEqual({});
+
+    const tools = createTools(createToolContext(undefined, "google", dispatch), {
+      subagent: {
+        enabled: true,
+      },
+    });
+
+    expect(Object.keys(tools)).toEqual(["run_subagent"]);
+    expect((tools.run_subagent as { execute(input: unknown, options: unknown): Promise<unknown> }).execute({
+      tasks: [{
+        prompt: "research",
+      }],
+    }, {
+      messages: [{ role: "user", content: "hello" }],
+    })).resolves.toEqual({
+      tasks: [{
+        taskId: "subagent_1",
+        agentId: "virtual_subagent_1",
+        name: "Virtual subagent",
+        conversationKey: "subagent-subagent_1",
+        statusPath: "/status/subagent_1?agentId=virtual_subagent_1",
+        status: "running",
+      }],
+    });
+    expect(dispatch).toHaveBeenCalledWith([{
+      prompt: "research",
+    }], [{ role: "user", content: "hello" }]);
+
+    expect((tools.run_subagent as { execute(input: unknown, options: unknown): Promise<unknown> }).execute({
+      tasks: [{
+        prompt: "research",
+        conversationKey: "child",
+      }],
+    }, {
+      messages: [{ role: "user", content: "hello" }],
+    })).rejects.toThrow("tasks[0].conversationKey is not supported");
+
+    expect((tools.run_subagent as { execute(input: unknown, options: unknown): Promise<unknown> }).execute({
+      tasks: [{
+        prompt: "research",
+        description: "Use a custom child system prompt",
+      }],
+    }, {
+      messages: [{ role: "user", content: "hello" }],
+    })).rejects.toThrow("tasks[0].description is not supported");
+  });
+
   it("passes provider config into Tavily and Google Search tools", async () => {
     const googleSearchMock = mock((options: unknown) => ({ provider: "googleSearch", options }));
     const { createTools } = await import("../functions/harness-processing/tools/index.ts");
@@ -134,6 +199,7 @@ describe("createTools", () => {
 function createToolContext(
   googleSearch: ((options: unknown) => unknown) | undefined = mock((_options: unknown) => ({ provider: "googleSearch" })),
   modelProviderName = "google",
+  dispatchSubagents?: unknown,
 ) {
   return {
     conversationKey: "conversation",
@@ -144,5 +210,6 @@ function createToolContext(
         googleSearch,
       },
     },
+    ...(dispatchSubagents ? { dispatchSubagents } : {}),
   } as never;
 }

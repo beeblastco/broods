@@ -36,7 +36,6 @@ import type {
 import { extractText, formatChannelErrorText } from "../_shared/channels.ts";
 import { parseCommand } from "../_shared/commands.ts";
 import { createDiscordChannel } from "../_shared/discord-channel.ts";
-import { INTERNAL_EVENT_ID_PREFIX } from "../_shared/filesystem-namespace.ts";
 import { createGitHubChannel } from "../_shared/github-channel.ts";
 import {
   decodeBody,
@@ -48,31 +47,16 @@ import { logError } from "../_shared/log.ts";
 import type { LambdaResponse } from "../_shared/runtime.ts";
 import { createSlackChannel } from "../_shared/slack-channel.ts";
 import { createTelegramChannel } from "../_shared/telegram-channel.ts";
+import {
+  assertValidPublicConversationKey,
+  assertValidPublicEventId,
+  accountAgentScopedKey,
+  normalizeDirectIdentifier,
+  scopedDirectConversationKey,
+  scopedDirectEventId,
+} from "../_shared/runtime-keys.ts";
 import type { WebhookConfig } from "../_shared/webhook.ts";
 import type { ConversationIngressEvent } from "./session.ts";
-
-const DIRECT_API_EVENT_ID_PREFIX = "api:";
-const DIRECT_API_CONVERSATION_PREFIX = "api:";
-const ACCOUNT_NAMESPACE_PREFIX = "acct:";
-const RESERVED_EVENT_ID_PREFIXES = [
-  INTERNAL_EVENT_ID_PREFIX,
-  ACCOUNT_NAMESPACE_PREFIX,
-  DIRECT_API_EVENT_ID_PREFIX,
-  "gh:",
-  "slack:",
-  "slack-command:",
-  "discord:",
-  "tg-",
-] as const;
-const RESERVED_CONVERSATION_PREFIXES = [
-  INTERNAL_EVENT_ID_PREFIX,
-  ACCOUNT_NAMESPACE_PREFIX,
-  DIRECT_API_CONVERSATION_PREFIX,
-  "gh:",
-  "slack:",
-  "tg:",
-  "discord:",
-] as const;
 
 type DirectIngressEvent =
   | UserModelMessage
@@ -424,15 +408,8 @@ async function parseDirectPayload(
     throw new DirectNotFoundError("Agent not found");
   }
 
-  const rawEventId = normalizeDirectIdentifier("eventId", record.eventId as string);
-  if (hasReservedEventIdPrefix(rawEventId)) {
-    throw new Error("eventId uses a reserved internal prefix");
-  }
-
-  const rawConversationKey = normalizeDirectIdentifier("conversationKey", record.conversationKey as string);
-  if (hasReservedConversationPrefix(rawConversationKey)) {
-    throw new Error("conversationKey uses a reserved channel or internal prefix");
-  }
+  const rawEventId = assertValidPublicEventId(record.eventId as string);
+  const rawConversationKey = assertValidPublicConversationKey(record.conversationKey as string);
 
   const events = parseDirectIngressEvents(record);
   if (events.length === 0) {
@@ -444,9 +421,9 @@ async function parseDirectPayload(
     accountId: account.accountId,
     agentId: agent.agentId,
     accountConfig: toRuntimeAccountConfig(agent.config),
-    eventId: accountAgentScopedKey(account.accountId, agent.agentId, `${DIRECT_API_EVENT_ID_PREFIX}${rawEventId}`),
+    eventId: scopedDirectEventId(account.accountId, agent.agentId, rawEventId),
     publicEventId: rawEventId,
-    conversationKey: accountAgentScopedKey(account.accountId, agent.agentId, `${DIRECT_API_CONVERSATION_PREFIX}${rawConversationKey}`),
+    conversationKey: scopedDirectConversationKey(account.accountId, agent.agentId, rawConversationKey),
     publicConversationKey: rawConversationKey,
     events,
     ...(webhookConfig ? { webhookConfig } : {}),
@@ -485,10 +462,7 @@ function parseWebhookConfig(rawUrl: unknown, rawSecret: string | undefined): Web
 function parseStatusPath(rawPath: string, rawQueryString: string, account: AccountRecord): StatusInboundEvent {
   const match = rawPath.match(/^\/status\/([^/]+)$/);
   const rawEventId = match?.[1] ? decodeURIComponent(match[1]) : "";
-  const publicEventId = normalizeDirectIdentifier("eventId", rawEventId);
-  if (hasReservedEventIdPrefix(publicEventId)) {
-    throw new Error("eventId uses a reserved internal prefix");
-  }
+  const publicEventId = assertValidPublicEventId(rawEventId);
 
   const params = new URLSearchParams(rawQueryString);
   const rawAgentId = params.get("agentId");
@@ -500,7 +474,7 @@ function parseStatusPath(rawPath: string, rawQueryString: string, account: Accou
   return {
     accountId: account.accountId,
     agentId,
-    eventId: accountAgentScopedKey(account.accountId, agentId, `${DIRECT_API_EVENT_ID_PREFIX}${publicEventId}`),
+    eventId: scopedDirectEventId(account.accountId, agentId, publicEventId),
     publicEventId,
   };
 }
@@ -611,23 +585,6 @@ function parseDirectIngressEvent(rawEvent: unknown): DirectIngressEvent {
   };
 }
 
-function hasReservedConversationPrefix(value: string): boolean {
-  return RESERVED_CONVERSATION_PREFIXES.some((prefix) => value.startsWith(prefix));
-}
-
-function hasReservedEventIdPrefix(value: string): boolean {
-  return RESERVED_EVENT_ID_PREFIXES.some((prefix) => value.startsWith(prefix));
-}
-
-function normalizeDirectIdentifier(name: string, value: string): string {
-  const normalized = value.trim();
-  if (!normalized) {
-    throw new Error(`${name} must not be empty`);
-  }
-
-  return normalized;
-}
-
 class DirectNotFoundError extends Error { }
 
 function createTelegramChannelFromConfig(config: AccountConfig): ChannelAdapter | null {
@@ -682,12 +639,4 @@ function createDiscordChannelFromConfig(config: AccountConfig): ChannelAdapter |
     channel.publicKey,
     channel.allowedGuildIds ? new Set(channel.allowedGuildIds) : null,
   );
-}
-
-function accountScopedKey(accountId: string, key: string): string {
-  return `${ACCOUNT_NAMESPACE_PREFIX}${accountId}:${key}`;
-}
-
-function accountAgentScopedKey(accountId: string, agentId: string, key: string): string {
-  return accountScopedKey(accountId, `agent:${agentId}:${key}`);
 }
