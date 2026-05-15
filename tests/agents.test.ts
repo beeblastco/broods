@@ -27,6 +27,10 @@ describe("agent persistence", () => {
 
     sendMock.mockImplementation(async (command: unknown) => {
       if (command instanceof GetItemCommand) {
+        if (command.input.Key?.agentId?.S !== "agent_worker") {
+          return {};
+        }
+
         return {
           Item: agentItem("acct_test", "agent_worker", toAttributeValue(encryptAccountConfig({}))),
         };
@@ -47,9 +51,16 @@ describe("agent persistence", () => {
     process.env.ACCOUNT_CONFIG_ENCRYPTION_SECRET = "test-secret";
     dynamo.send = sendMock as never;
     const { validateAgentSubagentIds } = await import("../functions/_shared/agents.ts");
+    const { encryptAccountConfig } = await import("../functions/_shared/accounts.ts");
 
     sendMock.mockImplementation(async (command: unknown) => {
       if (command instanceof GetItemCommand) {
+        if (command.input.Key?.agentId?.S === "agent_worker") {
+          return {
+            Item: agentItem("acct_test", "agent_worker", toAttributeValue(encryptAccountConfig({}))),
+          };
+        }
+
         return {};
       }
       throw new Error("unexpected command");
@@ -89,6 +100,16 @@ describe("agent persistence", () => {
     ];
 
     sendMock.mockImplementation(async (command: unknown) => {
+      if (command instanceof GetItemCommand) {
+        if (command.input.Key?.agentId?.S === "agent_worker") {
+          return {
+            Item: agentItem("acct_test", "agent_worker", encryptedConfig),
+          };
+        }
+
+        return {};
+      }
+
       if (command instanceof QueryCommand) {
         return pages.shift() ?? { Items: [] };
       }
