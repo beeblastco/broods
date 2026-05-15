@@ -21,15 +21,16 @@ const subagent = await createAgent(account.accountSecret, "Subagent assistant",
             modelId: "gemma-4-31b-it",
         },
         agent: {
-            system: `Knowledge cutoff: Janurary 2025.\n\nYou are a helpful personal assistant that can use tools to get information and perform tasks for the user.\n\nYou also have access to web search and web fetch tools. Always use these tools to research and get up-to-date information or when you are asked for. Your knowledge was limited by cutoff training data date so do not rely on it for up-to-date information or fact checks.`,
+            system: `Knowledge cutoff: Janurary 2025.\n\nYou are a helpful personal assistant that can use tools to get information and perform tasks for the user.\n\nYou also have access to web search and web fetch tools. Always use these tools to research and get up-to-date information or when you are asked for. Your knowledge was limited by cutoff training data date so do not rely on it for up-to-date information or fact checks. Only research and answer the question, don't put additional information.`,
         },
         tools: {
             tavilySearch: {
                 enabled: true,
                 apiKey: tavilyApiKey,
                 searchDepth: "advanced",
+                topic: "news",
                 includeAnswer: true,
-                maxResults: 5,
+                maxResults: 3,
             },
         }
     },
@@ -48,7 +49,7 @@ const parent = await createAgent(account.accountSecret, "Parent assistant",
             modelId: "gemma-4-31b-it",
         },
         agent: {
-            system: "You are a helpful assistant.",
+            system: "You are a helpful assistant. Please answer based on the informations provided",
         },
         subagent: {
             enabled: true,
@@ -75,7 +76,6 @@ try {
                 content: [{
                     type: "text",
                     text: [
-                        `Use the predefined subagent ${subagent.agent.agentId} for both tasks; do not create virtual subagents.`,
                         "Launch two subagents in parallel to",
                         "research the newest model release from OpenAI",
                         "and the newest model release from Anthropic.",
