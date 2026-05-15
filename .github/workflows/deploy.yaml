@@ -151,7 +151,7 @@ jobs:
             fi
           done
 
-          bunx sst deploy --stage "$SST_STAGE"
+          bunx sst deploy --stage "$SST_STAGE" --print-logs
 
       - name: Configure Telegram account webhook
         env:
