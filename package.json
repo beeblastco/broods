@@ -8,22 +8,22 @@
     "dev": "bun run scripts/system-prompt.ts && sst dev",
     "build": "bun run scripts/build.ts",
     "check": "bun run scripts/system-prompt.ts && bunx tsc --noEmit",
-    "test": "bun test",
+    "test": "bun test --max-concurrency=1",
     "discord:sync": "bun run scripts/discord-sync.ts",
     "deploy": "bun run build && sst deploy",
     "remove": "sst remove"
   },
   "devDependencies": {
     "@types/aws-lambda": "8.10.161",
-    "@types/bun": "^1.3.13"
+    "@types/bun": "^1.3.14"
   },
   "peerDependencies": {
     "typescript": "^6.0.3"
   },
   "dependencies": {
-    "@ai-sdk/amazon-bedrock": "^4.0.103",
-    "@ai-sdk/gateway": "^3.0.112",
-    "@ai-sdk/google": "^3.0.71",
+    "@ai-sdk/amazon-bedrock": "^4.0.105",
+    "@ai-sdk/gateway": "^3.0.114",
+    "@ai-sdk/google": "^3.0.73",
     "@ai-sdk/openai": "^3.0.63",
     "@aws-sdk/client-dynamodb": "3.1017.0",
     "@aws-sdk/client-lambda": "3.1017.0",
@@ -31,8 +31,8 @@
     "@pulumi/aws": "7.23.0",
     "@pulumi/pulumi": "3.228.0",
     "@tavily/ai-sdk": "^0.4.1",
-    "@types/node": "^25.6.2",
-    "ai": "^6.0.177",
+    "@types/node": "^25.8.0",
+    "ai": "^6.0.182",
     "chat": "^4.28.1",
     "sst": "4.8.0",
     "vercel-minimax-ai-provider": "^0.0.2"

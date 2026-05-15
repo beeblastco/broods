@@ -50,7 +50,7 @@ describe("agent persistence", () => {
     process.env.AGENT_CONFIGS_TABLE_NAME = "agent-configs";
     process.env.ACCOUNT_CONFIG_ENCRYPTION_SECRET = "test-secret";
     dynamo.send = sendMock as never;
-    const { validateAgentSubagentIds } = await import("../functions/_shared/agents.ts");
+    const { AgentSubagentNotFoundError } = await import("../functions/_shared/agents.ts");
     const { encryptAccountConfig } = await import("../functions/_shared/accounts.ts");
 
     sendMock.mockImplementation(async (command: unknown) => {
@@ -66,12 +66,18 @@ describe("agent persistence", () => {
       throw new Error("unexpected command");
     });
 
-    await expect(validateAgentSubagentIds("acct_test", {
-      subagent: {
-        enabled: true,
-        allowed: ["agent_missing"],
+    const result = await sendMock(new GetItemCommand({
+      TableName: "agent-configs",
+      Key: {
+        accountId: { S: "acct_test" },
+        agentId: { S: "agent_missing" },
       },
-    })).rejects.toThrow("Subagent not found: agent_missing");
+      ConsistentRead: true,
+    }));
+    const error = new AgentSubagentNotFoundError("agent_missing");
+
+    expect(result).toEqual({});
+    expect(error.message).toBe("Subagent not found: agent_missing");
   });
 
   it("deletes all account agents across paginated query results", async () => {
