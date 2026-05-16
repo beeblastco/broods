@@ -90,6 +90,29 @@ describe("direct API ingress", () => {
     });
   });
 
+  it("returns 404 for direct sync and async POST when direct API is disabled", async () => {
+    const body = {
+      eventId: "one",
+      conversationKey: "alpha",
+      events: [{
+        role: "user",
+        content: [{ type: "text", text: "hello" }],
+      }],
+    };
+
+    const syncResponse = await routeIncomingEvent(createEvent(body, {
+      authorization: "Bearer secret",
+    }), createHandlers(), { directApiEnabled: false });
+    const asyncResponse = await routeIncomingEvent(createEvent(body, {
+      authorization: "Bearer secret",
+    }, { rawPath: "/async" }), createHandlers(), { directApiEnabled: false });
+
+    expect(syncResponse.statusCode).toBe(404);
+    expect(responseJson(syncResponse)).toEqual({ error: "Direct API is disabled" });
+    expect(asyncResponse.statusCode).toBe(404);
+    expect(responseJson(asyncResponse)).toEqual({ error: "Direct API is disabled" });
+  });
+
   it("returns 401 when the bearer token is missing", async () => {
     const response = await routeIncomingEvent(createEvent({
       eventId: "one",
@@ -590,6 +613,7 @@ function createHandlers(overrides: Partial<{
 async function routeIncomingEvent(
   event: LambdaFunctionURLEvent,
   handlers: ReturnType<typeof createHandlers>,
+  options: { directApiEnabled?: boolean } = {},
 ): Promise<ResponseShape> {
   const router = createIncomingEventRouter({
     authResolver: async (headers) =>
@@ -597,6 +621,7 @@ async function routeIncomingEvent(
         ? { kind: "account", account: TEST_ACCOUNT }
         : null,
     agentLoader: async (_accountId, agentId) => agentId === TEST_AGENT.agentId ? TEST_AGENT : null,
+    ...options,
   });
 
   const response = await router(event, handlers);

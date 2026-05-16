@@ -8,6 +8,9 @@ Use `.env` for local SST inputs only:
 
 - `AWS_PROFILE`
 - `SST_STAGE`
+- `ENABLE_DIRECT_API` - Defaults to `true`; set to `false` to disable direct sync and async POST access to `harness-processing`.
+- `ENABLE_WEBSOCKET` - Set to `true` to enable WebSocket gateway worker invocations.
+- `NATS_URL` - Required when `ENABLE_WEBSOCKET=true`; ignored by the deployed Lambda when WebSocket is disabled.
 
 Runtime secrets are SST secrets. Generate your own secret and set
 
@@ -24,6 +27,8 @@ Treat `AdminAccountSecret` and `AccountConfigEncryptionSecret` as stable product
 Provider API keys are account-specific, not global SST secrets. Each account configures their own provider API key in `config.provider.<provider>.apiKey`. Similarly, tool API keys like Tavily are configured per account in `config.tools.<tool>.apiKey`. This allows different users to use their own API keys.
 
 Public account creation is throttled by `ACCOUNT_SIGNUP_RATE_LIMIT_PER_HOUR`, currently set to `5` in `sst.config.ts`.
+
+WebSocket gateway support is application infrastructure, not agent configuration. `sst.config.ts` fails early when `ENABLE_WEBSOCKET=true` is set without `NATS_URL`. At runtime, `harness-processing` also rejects `nats-worker` invocations unless WebSocket is enabled and the NATS connection can be established.
 
 ## Local Setup
 

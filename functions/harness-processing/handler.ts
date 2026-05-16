@@ -8,9 +8,10 @@ import type { ToolModelMessage } from "ai";
 import type { LambdaFunctionURLEvent } from "aws-lambda";
 import { formatChannelErrorText } from "../_shared/channels.ts";
 import { executeCommand } from "../_shared/commands.ts";
-import { requireEnv } from "../_shared/env.ts";
+import { booleanEnv, requireEnv } from "../_shared/env.ts";
 import { jsonResponse } from "../_shared/http.ts";
 import { logError, logInfo } from "../_shared/log.ts";
+import { LiveNatsPublisher, type NatsPublisher } from "../_shared/nats.ts";
 import type { LambdaInvocation, LambdaResponse } from "../_shared/runtime.ts";
 import { publicConversationKeyFromScoped } from "../_shared/runtime-keys.ts";
 import { fireWebhook, type WebhookConfig } from "../_shared/webhook.ts";
@@ -38,6 +39,8 @@ type AgentLoopStream = Awaited<ReturnType<typeof runAgentLoop>>;
 const CONVERSATIONS_TABLE_NAME = requireEnv("CONVERSATIONS_TABLE_NAME");
 const AGENT_PROCESSING_FAILED = "Agent processing failed";
 const CHANNEL_APPROVAL_DENIAL_REASON = "Tool approval is only supported through the direct API.";
+const ENABLE_DIRECT_API = booleanEnv("ENABLE_DIRECT_API", true);
+const ENABLE_WEBSOCKET = booleanEnv("ENABLE_WEBSOCKET", false);
 const LAMBDA_TIMEOUT_SAFETY_MS = 5 * 60 * 1000;
 const DEFAULT_PARENT_WAIT_MS = 8 * 60 * 1000;
 const textEncoder = new TextEncoder();
@@ -45,6 +48,11 @@ const lambda = new LambdaClient({ region: process.env.AWS_REGION });
 
 interface AsyncWorkerInvocation {
   kind: "direct-api-async-worker";
+  event: DirectInboundEvent;
+}
+
+interface NatsWorkerInvocation {
+  kind: "nats-worker";
   event: DirectInboundEvent;
 }
 
@@ -61,11 +69,16 @@ interface ParentContinuationResult {
 }
 
 export async function handler(
-  event: LambdaFunctionURLEvent | AsyncWorkerInvocation,
+  event: LambdaFunctionURLEvent | AsyncWorkerInvocation | NatsWorkerInvocation,
   context?: LambdaInvocation,
 ): Promise<LambdaResponse> {
   if (isAsyncWorkerInvocation(event)) {
     await handleAsyncWorkerRequest(event.event, context);
+    return { statusCode: 204 };
+  }
+
+  if (isNatsWorkerInvocation(event)) {
+    await handleNatsWorkerRequest(event.event, context);
     return { statusCode: 204 };
   }
 
@@ -74,9 +87,14 @@ export async function handler(
     handleAsyncRequest,
     handleStatusRequest,
     handleChannelRequest: (channelEvent) => handleChannelRequest(channelEvent, context),
+  }, {
+    directApiEnabled: ENABLE_DIRECT_API,
   });
 }
 
+/**
+ * Handle the direct SSE request invoke to the Lambda function.
+ */
 async function handleDirectRequest(event: DirectInboundEvent, context?: LambdaInvocation): Promise<LambdaResponse> {
   if (!hasRunnableDirectEvents(event)) {
     return emptySseResponse();
@@ -107,6 +125,10 @@ async function handleDirectRequest(event: DirectInboundEvent, context?: LambdaIn
   }
 }
 
+/**
+ * Handle the direct Async request invoke to the Lambda function.
+ * Return a 204 Accepted response and trigger AsyncWorkerRequest.
+ */
 async function handleAsyncRequest(event: AsyncDirectInboundEvent): Promise<LambdaResponse> {
   if (!hasRunnableDirectEvents(event)) {
     await createPendingAsyncAgentResult({
@@ -141,25 +163,10 @@ async function handleAsyncRequest(event: AsyncDirectInboundEvent): Promise<Lambd
   return acceptedAsyncResponse(event.statusUrl);
 }
 
-async function handleStatusRequest(event: StatusInboundEvent): Promise<LambdaResponse> {
-  const result = await getAsyncAgentResult(event.eventId);
-  if (!result) {
-    return jsonResponse(404, {
-      eventId: event.publicEventId,
-      status: "not_found",
-    });
-  }
-
-  return jsonResponse(200, {
-    eventId: event.publicEventId,
-    conversationKey: eventPublicConversationKey(result.conversationKey, event.accountId, event.agentId),
-    status: result.status,
-    ...(result.response ? { response: result.response } : {}),
-    ...(result.error ? { error: result.error } : {}),
-    ...(result.approvals ? { approvals: result.approvals } : {}),
-  });
-}
-
+/**
+ * Handle the AsyncWorkerRequest invoke to the Lambda function.
+ * Publish the final result into DynamoDB.
+ */
 async function handleAsyncWorkerRequest(event: DirectInboundEvent, context?: LambdaInvocation): Promise<void> {
   try {
     const turn = await prepareDirectTurn(event);
@@ -221,22 +228,105 @@ async function handleAsyncWorkerRequest(event: DirectInboundEvent, context?: Lam
   }
 }
 
-async function prepareDirectTurn(event: DirectInboundEvent): Promise<DirectTurn | null> {
-  const session = new Session(event.eventId, event.conversationKey, event.accountId, event.agentId, event.accountConfig);
-  if (!(await claimSession(session))) {
-    return null;
+/**
+ * Handle the NatsWorkerRequest invoke to the Lambda function.
+ * Publish the streaming event to NATS subject.
+ */
+async function handleNatsWorkerRequest(event: DirectInboundEvent, context?: LambdaInvocation): Promise<void> {
+  if (!hasRunnableDirectEvents(event)) {
+    return;
+  }
+  if (!ENABLE_WEBSOCKET) {
+    throw new Error("NATS worker requires ENABLE_WEBSOCKET=true");
+  }
+  const connectionId = event.connectionId?.trim();
+  if (!connectionId) {
+    throw new Error("NATS worker event must include connectionId");
+  }
+  const natsUrl = process.env.NATS_URL?.trim();
+  if (!natsUrl) {
+    throw new Error("NATS worker requires NATS_URL");
   }
 
+  const publisher = new LiveNatsPublisher(natsUrl, {
+    accountId: event.accountId,
+    agentId: event.agentId,
+    conversationKey: event.publicConversationKey,
+    eventId: event.publicEventId,
+    connectionId,
+  });
+
   try {
-    const ephemeralSystem = await session.appendIngressEvents(event.events);
-    const turnContext = await session.createTurnContext(ephemeralSystem);
-    return { session, turnContext };
+    await publisher.ready();
+    const turn = await prepareDirectTurn(event);
+    if (!turn) {
+      return;
+    }
+
+    const { session, turnContext } = turn;
+    if (!isRunnableModelInput(turnContext.messages.at(-1))) {
+      return;
+    }
+
+    try {
+      const subagentCoordinator = new SubagentCoordinator(session, event.accountConfig, waitUntilMs(context));
+      const asyncToolCoordinator = new AsyncToolCoordinator(session, waitUntilMs(context));
+
+      const result = await runParentContinuationLoop({
+        session,
+        subagentCoordinator,
+        asyncToolCoordinator,
+        initialTurnContext: turnContext,
+        accountConfig: event.accountConfig,
+        consumeStream: (stream) => pipeAgentNatsStream(stream, publisher),
+        onLoopErrorText: async (error) => {
+          publisher.publish({ type: "error", error }).catch(() => {});
+          await sendWebhook(event, {
+            eventId: event.publicEventId,
+            conversationKey: event.publicConversationKey,
+            success: false,
+            error,
+          });
+        },
+        onApprovalRequired: async (approvals) => {
+          // The event also send additional tool-approval-request so that the webscoket gateway can easily 
+          // extract this data and do sth with it.
+          // This is intentional (the user will recieved the tool-approval-request event seperately)
+          publisher.publish({ type: "tool-approval-request", approvals }).catch(() => {});
+          await sendWebhook(event, {
+            eventId: event.publicEventId,
+            conversationKey: event.publicConversationKey,
+            status: "awaiting_approval",
+            approvals,
+            success: true,
+          });
+        },
+      });
+
+      if (result.finalTexts.length > 0) {
+        await sendWebhook(event, {
+          eventId: event.publicEventId,
+          conversationKey: event.publicConversationKey,
+          response: result.finalTexts.join("\n\n"),
+          success: true,
+        });
+      }
+    } finally {
+      await publisher.close();
+    }
   } catch (err) {
-    await session.release().catch(() => { });
+    logError("NATS worker processing failed", {
+      eventId: event.eventId,
+      error: err instanceof Error ? err.message : String(err),
+    });
     throw err;
   }
 }
 
+/**
+ * Handle the integration channel webhook request to the Lambda function.
+ * Publish the final result back to the channel integration sendText() function.
+ */
 async function handleChannelRequest(event: ChannelInboundEvent, context?: LambdaInvocation): Promise<void> {
   const session = new Session(event.eventId, event.conversationKey, event.accountId, event.agentId, event.accountConfig ?? {});
   if (!(await claimSession(session))) {
@@ -293,6 +383,44 @@ async function handleChannelRequest(event: ChannelInboundEvent, context?: Lambda
     }
   } finally {
     await session.releaseConversationLease().catch(() => { });
+  }
+}
+
+/**
+ * Hanlde the status request invoke to the Lambda function.
+ */
+async function handleStatusRequest(event: StatusInboundEvent): Promise<LambdaResponse> {
+  const result = await getAsyncAgentResult(event.eventId);
+  if (!result) {
+    return jsonResponse(404, {
+      eventId: event.publicEventId,
+      status: "not_found",
+    });
+  }
+
+  return jsonResponse(200, {
+    eventId: event.publicEventId,
+    conversationKey: eventPublicConversationKey(result.conversationKey, event.accountId, event.agentId),
+    status: result.status,
+    ...(result.response ? { response: result.response } : {}),
+    ...(result.error ? { error: result.error } : {}),
+    ...(result.approvals ? { approvals: result.approvals } : {}),
+  });
+}
+
+async function prepareDirectTurn(event: DirectInboundEvent): Promise<DirectTurn | null> {
+  const session = new Session(event.eventId, event.conversationKey, event.accountId, event.agentId, event.accountConfig);
+  if (!(await claimSession(session))) {
+    return null;
+  }
+
+  try {
+    const ephemeralSystem = await session.appendIngressEvents(event.events);
+    const turnContext = await session.createTurnContext(ephemeralSystem);
+    return { session, turnContext };
+  } catch (err) {
+    await session.release().catch(() => { });
+    throw err;
   }
 }
 
@@ -391,6 +519,14 @@ function isAsyncWorkerInvocation(event: unknown): event is AsyncWorkerInvocation
   );
 }
 
+function isNatsWorkerInvocation(event: unknown): event is NatsWorkerInvocation {
+  return Boolean(
+    event &&
+    typeof event === "object" &&
+    (event as { kind?: unknown }).kind === "nats-worker",
+  );
+}
+
 function hasRunnableDirectEvents(event: DirectInboundEvent): boolean {
   return event.events.some(isRunnableModelInput);
 }
@@ -436,7 +572,7 @@ function createDirectContinuationSseBody(
             approvals,
             success: true,
           }),
-          onHeartbeat: (pendingCount) => enqueueSseComment(controller, `waiting for async work pending=${pendingCount}`),
+          onHeartbeat: (pendingCount) => controller.enqueue(textEncoder.encode(`: waiting for async work pending=${pendingCount}\n\n`))
         });
 
         if (result.finalTexts.length > 0) {
@@ -648,11 +784,19 @@ async function pipeAgentSseStream(
   }
 }
 
-function enqueueSseComment(
-  controller: ReadableStreamDefaultController<Uint8Array>,
-  comment: string,
-): void {
-  controller.enqueue(textEncoder.encode(`: ${comment}\n\n`));
+async function pipeAgentNatsStream(
+  stream: AgentLoopStream,
+  publisher: NatsPublisher,
+): Promise<void> {
+  const reader = stream.fullStream.getReader();
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) {
+      break;
+    }
+    publisher.publish(value as Record<string, unknown>).catch(() => {});
+  }
 }
 
 function waitUntilMs(context: LambdaInvocation | undefined): number {

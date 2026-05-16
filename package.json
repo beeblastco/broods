@@ -21,10 +21,10 @@
     "typescript": "^6.0.3"
   },
   "dependencies": {
-    "@ai-sdk/amazon-bedrock": "^4.0.105",
-    "@ai-sdk/gateway": "^3.0.114",
-    "@ai-sdk/google": "^3.0.73",
-    "@ai-sdk/openai": "^3.0.63",
+    "@ai-sdk/amazon-bedrock": "^4.0.107",
+    "@ai-sdk/gateway": "^3.0.115",
+    "@ai-sdk/google": "^3.0.75",
+    "@ai-sdk/openai": "^3.0.64",
     "@aws-sdk/client-dynamodb": "3.1017.0",
     "@aws-sdk/client-lambda": "3.1017.0",
     "@chat-adapter/telegram": "^4.28.1",
@@ -32,8 +32,9 @@
     "@pulumi/pulumi": "3.228.0",
     "@tavily/ai-sdk": "^0.4.1",
     "@types/node": "^25.8.0",
-    "ai": "^6.0.182",
+    "ai": "^6.0.184",
     "chat": "^4.28.1",
+    "nats": "^2.29.3",
     "sst": "4.8.0",
     "vercel-minimax-ai-provider": "^0.0.2"
   }

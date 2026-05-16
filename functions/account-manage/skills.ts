@@ -6,7 +6,7 @@
 import { randomUUID } from "node:crypto";
 import { mkdir, readdir, readFile, rm } from "node:fs/promises";
 import path from "node:path";
-import { deleteS3Prefix, listS3Prefix, s3ObjectExists, writeS3Object } from "../_shared/bun-s3.ts";
+import { deleteS3Prefix, listS3Prefix, s3ObjectExists, writeS3Object } from "../_shared/s3.ts";
 import {
   formatSkillPath,
   normalizeBundlePath,

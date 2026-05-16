@@ -3,7 +3,7 @@
  * Keep endpoint CRUD in account-manage and prompt loading in harness-processing.
  */
 
-import { readS3Text, s3ObjectExists } from "./bun-s3.ts";
+import { readS3Text, s3ObjectExists } from "./s3.ts";
 import { requireEnv } from "./env.ts";
 
 export const SKILL_FILE = "SKILL.md";
