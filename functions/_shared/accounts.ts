@@ -134,6 +134,7 @@ export type AccountToolsConfig = Record<string, AccountToolConfig>;
 export interface AccountToolConfig {
   enabled?: boolean;
   needsApproval?: boolean;
+  async?: boolean;
   [key: string]: unknown;
 }
 
@@ -741,6 +742,7 @@ function normalizeToolConfig(toolName: string, value: unknown): void {
   const config = value as Record<string, unknown>;
   assertOptionalBoolean(config.enabled, `config.tools.${toolName}.enabled`);
   assertOptionalBoolean(config.needsApproval, `config.tools.${toolName}.needsApproval`);
+  assertOptionalBoolean(config.async, `config.tools.${toolName}.async`);
 
   switch (toolName) {
     case "tavilySearch":
@@ -752,11 +754,18 @@ function normalizeToolConfig(toolName: string, value: unknown): void {
     case "googleSearch":
       normalizeGoogleSearchToolConfig(config);
       return;
+    case "test_async":
+      return;
   }
 }
 
-function isSupportedConfigToolName(toolName: string): toolName is "tavilySearch" | "tavilyExtract" | "googleSearch" {
-  return toolName === "tavilySearch" || toolName === "tavilyExtract" || toolName === "googleSearch";
+function isSupportedConfigToolName(
+  toolName: string,
+): toolName is "tavilySearch" | "tavilyExtract" | "googleSearch" | "test_async" {
+  return toolName === "tavilySearch" ||
+    toolName === "tavilyExtract" ||
+    toolName === "googleSearch" ||
+    toolName === "test_async";
 }
 
 function normalizeTavilySearchToolConfig(config: Record<string, unknown>): void {

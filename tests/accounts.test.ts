@@ -194,6 +194,7 @@ describe("account config", () => {
     expect(normalizeAccountConfig({
       tools: {
         tavilySearch: {
+          async: true,
           needsApproval: true,
           maxResults: 5,
           includeAnswer: false,
@@ -212,11 +213,16 @@ describe("account config", () => {
             startTime: "2026-05-01T00:00:00Z",
             endTime: "2026-05-02T00:00:00Z",
           },
+        },
+        test_async: {
+          enabled: true,
+          async: true,
         },
       },
     })).toEqual({
       tools: {
         tavilySearch: {
+          async: true,
           needsApproval: true,
           maxResults: 5,
           includeAnswer: false,
@@ -235,6 +241,10 @@ describe("account config", () => {
             startTime: "2026-05-01T00:00:00Z",
             endTime: "2026-05-02T00:00:00Z",
           },
+        },
+        test_async: {
+          enabled: true,
+          async: true,
         },
       },
     });
@@ -250,6 +260,12 @@ describe("account config", () => {
         tavilySearch: { needsApproval: "yes" },
       },
     })).toThrow("config.tools.tavilySearch.needsApproval must be a boolean");
+
+    expect(() => normalizeAccountConfig({
+      tools: {
+        tavilySearch: { async: "yes" },
+      },
+    })).toThrow("config.tools.tavilySearch.async must be a boolean");
   });
 
   it("validates account skills config", () => {

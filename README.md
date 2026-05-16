@@ -36,7 +36,7 @@ flowchart LR
   Harness --> Accounts
   Harness --> Agents
   Harness --> Skills["S3<br/>Skills"]
-  Harness --> Conversations["DynamoDB<br/>Conversations / ProcessedEvents / AsyncResults"]
+  Harness --> Conversations["DynamoDB<br/>Conversations / ProcessedEvents / AsyncAgentResult / AsyncToolResult"]
   Harness --> Memory["S3<br/>account-scoped MEMORY.md + filesystem + tasks"]
   Harness --> Model["Configured model<br/>Vercel AI SDK"]
 ```
@@ -98,7 +98,9 @@ bun run discord:sync
 - [`functions/harness-processing/handler.ts`](functions/harness-processing/handler.ts): SSE, async self-invocation, commands, leases, and reply orchestration.
 - [`functions/harness-processing/session.ts`](functions/harness-processing/session.ts): conversation persistence, deduplication, leases, system context, context management, and workspace memory loading.
 - [`functions/harness-processing/skills.ts`](functions/harness-processing/skills.ts): enabled skill metadata and `load_skill` prompt content loading.
-- [`functions/harness-processing/status.ts`](functions/harness-processing/status.ts): async direct API status storage for `/status/{eventId}` polling.
+- [`functions/harness-processing/async-agent-result.ts`](functions/harness-processing/async-agent-result.ts): async direct API and subagent status storage for `/status/{eventId}` polling.
+- [`functions/harness-processing/async-tool-result.ts`](functions/harness-processing/async-tool-result.ts): async external tool result storage.
+- [`functions/harness-processing/async-tools.ts`](functions/harness-processing/async-tools.ts): async external tool dispatch, result injection, and parent continuation support.
 - [`functions/harness-processing/subagents.ts`](functions/harness-processing/subagents.ts): in-process subagent dispatch, child runs, result injection, and parent continuation.
 - [`functions/harness-processing/harness.ts`](functions/harness-processing/harness.ts): configured model execution loop and inline tool orchestration.
 - [`functions/harness-processing/tools/index.ts`](functions/harness-processing/tools/index.ts): static tool factory registry and account-configured tool selection.

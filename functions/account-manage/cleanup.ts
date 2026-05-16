@@ -24,7 +24,8 @@ const DYNAMO_BATCH_WRITE_LIMIT = 25;
 export interface AccountCleanupSummary {
   conversationsDeleted: number;
   processedEventsDeleted: number;
-  asyncResultsDeleted: number;
+  asyncAgentResultDeleted: number;
+  asyncToolResultDeleted: number;
   filesystemObjectsDeleted: number;
 }
 
@@ -43,19 +44,22 @@ export async function deleteAccountRuntimeData(account: AccountRecord): Promise<
   const [
     conversationsDeleted,
     processedEventsDeleted,
-    asyncResultsDeleted,
+    asyncAgentResultDeleted,
+    asyncToolResultDeleted,
     filesystemObjectsDeleted,
   ] = await Promise.all([
     deleteConversations(accountPrefix),
     deleteProcessedEvents(accountPrefix),
-    deleteAsyncResults(accountPrefix),
+    deleteAsyncAgentResult(accountPrefix),
+    deleteAsyncToolResult(accountPrefix),
     deleteFilesystemNamespaces(filesystemNamespaces),
   ]);
 
   return {
     conversationsDeleted,
     processedEventsDeleted,
-    asyncResultsDeleted,
+    asyncAgentResultDeleted,
+    asyncToolResultDeleted,
     filesystemObjectsDeleted,
   };
 }
@@ -125,8 +129,8 @@ async function deleteProcessedEvents(accountPrefix: string): Promise<number> {
   });
 }
 
-async function deleteAsyncResults(accountPrefix: string): Promise<number> {
-  const tableName = optionalEnv("ASYNC_RESULTS_TABLE_NAME");
+async function deleteAsyncAgentResult(accountPrefix: string): Promise<number> {
+  const tableName = optionalEnv("ASYNC_AGENT_RESULT_TABLE_NAME");
   if (!tableName) {
     return 0;
   }
@@ -135,6 +139,22 @@ async function deleteAsyncResults(accountPrefix: string): Promise<number> {
     tableName,
     keyAttributes: ["eventId"],
     filterExpression: "begins_with(eventId, :accountPrefix) OR begins_with(conversationKey, :accountPrefix)",
+    expressionAttributeValues: {
+      ":accountPrefix": { S: accountPrefix },
+    },
+  });
+}
+
+async function deleteAsyncToolResult(accountPrefix: string): Promise<number> {
+  const tableName = optionalEnv("ASYNC_TOOL_RESULT_TABLE_NAME");
+  if (!tableName) {
+    return 0;
+  }
+
+  return scanAndBatchDelete({
+    tableName,
+    keyAttributes: ["resultId"],
+    filterExpression: "begins_with(parentEventId, :accountPrefix) OR begins_with(conversationKey, :accountPrefix)",
     expressionAttributeValues: {
       ":accountPrefix": { S: accountPrefix },
     },

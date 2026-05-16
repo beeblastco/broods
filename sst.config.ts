@@ -57,7 +57,8 @@ export default $config({
     const names = {
       conversations: resourceName("conversations", stage, region),
       processedEvents: resourceName("processed-events", stage, region),
-      asyncResults: resourceName("async-results", stage, region),
+      asyncAgentResult: resourceName("async-agent-result", stage, region),
+      asyncToolResult: resourceName("async-tool-result", stage, region),
       accountConfigs: resourceName("account-configs", stage, region),
       agentConfigs: resourceName("agent-configs", stage, region),
       accountSignupRateLimits: resourceName("account-signup-rate-limits", stage, region),
@@ -143,7 +144,7 @@ export default $config({
       },
     });
 
-    const asyncResultsTable = new sst.aws.Dynamo("AsyncResults", {
+    const asyncAgentResultTable = new sst.aws.Dynamo("AsyncAgentResult", {
       fields: {
         eventId: "string",
       },
@@ -152,7 +153,20 @@ export default $config({
       deletionProtection: stage === "production",
       transform: {
         table: {
-          name: names.asyncResults,
+          name: names.asyncAgentResult,
+        },
+      },
+    });
+    const asyncToolResultTable = new sst.aws.Dynamo("AsyncToolResult", {
+      fields: {
+        resultId: "string",
+      },
+      primaryIndex: { hashKey: "resultId" },
+      ttl: "expiresAt",
+      deletionProtection: stage === "production",
+      transform: {
+        table: {
+          name: names.asyncToolResult,
         },
       },
     });
@@ -176,7 +190,8 @@ export default $config({
       environment: {
         CONVERSATIONS_TABLE_NAME: conversationsTable.name,
         PROCESSED_EVENTS_TABLE_NAME: processedEventsTable.name,
-        ASYNC_RESULTS_TABLE_NAME: asyncResultsTable.name,
+        ASYNC_AGENT_RESULT_TABLE_NAME: asyncAgentResultTable.name,
+        ASYNC_TOOL_RESULT_TABLE_NAME: asyncToolResultTable.name,
         ACCOUNT_CONFIGS_TABLE_NAME: accountConfigsTable.name,
         AGENT_CONFIGS_TABLE_NAME: agentConfigsTable.name,
         ACCOUNT_SECRET_INDEX_NAME: "SecretHashIndex",
@@ -214,7 +229,15 @@ export default $config({
             "dynamodb:PutItem",
             "dynamodb:UpdateItem",
           ],
-          resources: [asyncResultsTable.arn],
+          resources: [asyncAgentResultTable.arn],
+        },
+        {
+          actions: [
+            "dynamodb:GetItem",
+            "dynamodb:PutItem",
+            "dynamodb:UpdateItem",
+          ],
+          resources: [asyncToolResultTable.arn],
         },
         {
           actions: ["lambda:InvokeFunction"],
@@ -266,7 +289,8 @@ export default $config({
         ACCOUNT_SECRET_INDEX_NAME: "SecretHashIndex",
         CONVERSATIONS_TABLE_NAME: conversationsTable.name,
         PROCESSED_EVENTS_TABLE_NAME: processedEventsTable.name,
-        ASYNC_RESULTS_TABLE_NAME: asyncResultsTable.name,
+        ASYNC_AGENT_RESULT_TABLE_NAME: asyncAgentResultTable.name,
+        ASYNC_TOOL_RESULT_TABLE_NAME: asyncToolResultTable.name,
         FILESYSTEM_BUCKET_NAME: names.memory,
         SKILLS_BUCKET_NAME: names.skills,
         ACCOUNT_SIGNUP_RATE_LIMIT_TABLE_NAME: accountSignupRateLimitTable.name,
@@ -302,7 +326,7 @@ export default $config({
             "dynamodb:DeleteItem",
             "dynamodb:Scan",
           ],
-          resources: [conversationsTable.arn, processedEventsTable.arn, asyncResultsTable.arn],
+          resources: [conversationsTable.arn, processedEventsTable.arn, asyncAgentResultTable.arn, asyncToolResultTable.arn],
         },
         {
           actions: [
@@ -421,7 +445,8 @@ export default $config({
       accountSignupRateLimitTableName: accountSignupRateLimitTable.name,
       conversationsTableName: conversationsTable.name,
       processedEventsTableName: processedEventsTable.name,
-      asyncResultsTableName: asyncResultsTable.name,
+      asyncAgentResultTableName: asyncAgentResultTable.name,
+      asyncToolResultTableName: asyncToolResultTable.name,
       filesystemBucketName: filesystemBucket.name,
       skillsBucketName: skillsBucket.name,
     };

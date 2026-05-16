@@ -24,13 +24,14 @@ import {
 } from "./integrations.ts";
 import { Session } from "./session.ts";
 import {
-  createPendingAsyncResult,
-  getAsyncResult,
-  markAsyncResultAwaitingApproval,
-  markAsyncResultCompleted,
-  markAsyncResultFailed,
-} from "./status.ts";
+  createPendingAsyncAgentResult,
+  getAsyncAgentResult,
+  markAsyncAgentResultAwaitingApproval,
+  markAsyncAgentResultCompleted,
+  markAsyncAgentResultFailed,
+} from "./async-agent-result.ts";
 import { SubagentCoordinator } from "./subagents.ts";
+import { AsyncToolCoordinator } from "./async-tools.ts";
 
 type AgentLoopStream = Awaited<ReturnType<typeof runAgentLoop>>;
 
@@ -108,18 +109,18 @@ async function handleDirectRequest(event: DirectInboundEvent, context?: LambdaIn
 
 async function handleAsyncRequest(event: AsyncDirectInboundEvent): Promise<LambdaResponse> {
   if (!hasRunnableDirectEvents(event)) {
-    await createPendingAsyncResult({
+    await createPendingAsyncAgentResult({
       eventId: event.eventId,
       conversationKey: event.conversationKey,
     });
-    await markAsyncResultFailed({
+    await markAsyncAgentResultFailed({
       eventId: event.eventId,
       error: "Request must include at least one user event or tool approval response",
     });
     return acceptedAsyncResponse(event.statusUrl);
   }
 
-  const created = await createPendingAsyncResult({
+  const created = await createPendingAsyncAgentResult({
     eventId: event.eventId,
     conversationKey: event.conversationKey,
   });
@@ -141,7 +142,7 @@ async function handleAsyncRequest(event: AsyncDirectInboundEvent): Promise<Lambd
 }
 
 async function handleStatusRequest(event: StatusInboundEvent): Promise<LambdaResponse> {
-  const result = await getAsyncResult(event.eventId);
+  const result = await getAsyncAgentResult(event.eventId);
   if (!result) {
     return jsonResponse(404, {
       eventId: event.publicEventId,
@@ -176,7 +177,7 @@ async function handleAsyncWorkerRequest(event: DirectInboundEvent, context?: Lam
     const result = await runAgentLoopUntilSubagentsIdle(session, turnContext, event.accountConfig, context, {
       onFinalText: async (text) => {
         didSettle = true;
-        await markAsyncResultCompleted({
+        await markAsyncAgentResultCompleted({
           eventId: event.eventId,
           response: text,
         });
@@ -192,7 +193,7 @@ async function handleAsyncWorkerRequest(event: DirectInboundEvent, context?: Lam
         await settleAsyncFailure(event, error);
       },
       onApprovalRequired: async (approvals) => {
-        await markAsyncResultAwaitingApproval({
+        await markAsyncAgentResultAwaitingApproval({
           eventId: event.eventId,
           approvals,
         });
@@ -305,7 +306,7 @@ async function claimSession(session: Session): Promise<boolean> {
 }
 
 async function settleAsyncFailure(event: DirectInboundEvent, error: string): Promise<void> {
-  await markAsyncResultFailed({
+  await markAsyncAgentResultFailed({
     eventId: event.eventId,
     error,
   });
@@ -411,12 +412,14 @@ function createDirectContinuationSseBody(
 ): ReadableStream<Uint8Array> {
   return new ReadableStream({
     async start(controller) {
-      const coordinator = new SubagentCoordinator(session, event.accountConfig, waitUntilMs(context));
+      const subagentCoordinator = new SubagentCoordinator(session, event.accountConfig, waitUntilMs(context));
+      const asyncToolCoordinator = new AsyncToolCoordinator(session, waitUntilMs(context));
 
       try {
         const result = await runParentContinuationLoop({
           session: session,
-          coordinator: coordinator,
+          subagentCoordinator: subagentCoordinator,
+          asyncToolCoordinator: asyncToolCoordinator,
           initialTurnContext: initialTurnContext,
           accountConfig: event.accountConfig,
           consumeStream: (stream) => pipeAgentSseStream(stream, controller),
@@ -433,7 +436,7 @@ function createDirectContinuationSseBody(
             approvals,
             success: true,
           }),
-          onHeartbeat: (pendingCount) => enqueueSseComment(controller, `waiting for subagents pending=${pendingCount}`),
+          onHeartbeat: (pendingCount) => enqueueSseComment(controller, `waiting for async work pending=${pendingCount}`),
         });
 
         if (result.finalTexts.length > 0) {
@@ -475,10 +478,12 @@ async function runAgentLoopUntilSubagentsIdle(
     onApprovalRequired?(approvals: ToolApprovalSummary[]): Promise<void>;
   },
 ): Promise<{ didFail: boolean; failureText: string | null }> {
-  const coordinator = new SubagentCoordinator(session, accountConfig, waitUntilMs(context));
+  const subagentCoordinator = new SubagentCoordinator(session, accountConfig, waitUntilMs(context));
+  const asyncToolCoordinator = new AsyncToolCoordinator(session, waitUntilMs(context));
   const result = await runParentContinuationLoop({
     session: session,
-    coordinator: coordinator,
+    subagentCoordinator: subagentCoordinator,
+    asyncToolCoordinator: asyncToolCoordinator,
     initialTurnContext: initialTurnContext,
     accountConfig: accountConfig,
     consumeStream: async (stream) => {
@@ -505,7 +510,8 @@ async function runAgentLoopUntilSubagentsIdle(
 
 async function runParentContinuationLoop(options: {
   session: Session;
-  coordinator: SubagentCoordinator;
+  subagentCoordinator: SubagentCoordinator;
+  asyncToolCoordinator: AsyncToolCoordinator;
   initialTurnContext: DirectTurn["turnContext"];
   accountConfig: DirectInboundEvent["accountConfig"];
   consumeStream(stream: AgentLoopStream): Promise<void>;
@@ -531,7 +537,8 @@ async function runParentContinuationLoop(options: {
         await options.onApprovalRequired?.(approvalSummaries);
       },
     }, {
-      dispatchSubagents: options.coordinator.dispatch,
+      dispatchSubagents: options.subagentCoordinator.dispatch,
+      dispatchAsyncTools: options.asyncToolCoordinator.dispatch,
     });
 
     await options.consumeStream(stream);
@@ -550,8 +557,8 @@ async function runParentContinuationLoop(options: {
       };
     }
 
-    // Wait for any injected subagents to complete.
-    const injected = await waitAndDrainSubagents(options.coordinator, {
+    // Wait for any injected subagents or async tools to complete.
+    const injected = await waitAndDrainAsyncWork(options.subagentCoordinator, options.asyncToolCoordinator, {
       onHeartbeat: options.onHeartbeat,
     });
     if (injected === 0) {
@@ -568,26 +575,50 @@ async function runParentContinuationLoop(options: {
 /**
  * Bridges one completed parent model pass to the next continuation pass.
  *
- * After the parent stream ends, subagent results may already be queued, still be
- * running, or be absent. This helper waits for the whole outstanding child
- * batch, emits SSE heartbeats while waiting, and injects one parent-visible
- * batch containing all completions plus timeout notices near the Lambda
- * deadline.
+ * After the parent stream ends, subagent and async-tool results may already be
+ * queued, still be running, or be absent. This helper waits for outstanding
+ * work, emits SSE heartbeats while waiting, and injects parent-visible
+ * completions plus timeout notices near the Lambda deadline.
  */
-async function waitAndDrainSubagents(
-  coordinator: SubagentCoordinator,
+async function waitAndDrainAsyncWork(
+  subagentCoordinator: SubagentCoordinator,
+  asyncToolCoordinator: AsyncToolCoordinator,
   options: { onHeartbeat?: (pendingCount: number) => void } = {},
 ): Promise<number> {
-  if (coordinator.pendingCount === 0) {
-    return coordinator.drainCompletionsToParent();
+  if (subagentCoordinator.pendingCount === 0 && asyncToolCoordinator.pendingCount === 0) {
+    const [subagentCount, asyncToolCount] = await Promise.all([
+      subagentCoordinator.drainCompletionsToParent(),
+      asyncToolCoordinator.drainCompletionsToParent(),
+    ]);
+    return subagentCount + asyncToolCount;
   }
 
-  const status = await coordinator.waitForIdle(options);
-  if (status === "idle") {
-    return coordinator.drainCompletionsToParent();
+  const [subagentStatus, asyncToolStatus] = await Promise.all([
+    subagentCoordinator.waitForIdle({
+      onHeartbeat: () => options.onHeartbeat?.(subagentCoordinator.pendingCount + asyncToolCoordinator.pendingCount),
+    }),
+    asyncToolCoordinator.waitForIdle({
+      onHeartbeat: () => options.onHeartbeat?.(subagentCoordinator.pendingCount + asyncToolCoordinator.pendingCount),
+    }),
+  ]);
+
+  if (subagentStatus === "idle" && asyncToolStatus === "idle") {
+    const [subagentCount, asyncToolCount] = await Promise.all([
+      subagentCoordinator.drainCompletionsToParent(),
+      asyncToolCoordinator.drainCompletionsToParent(),
+    ]);
+    return subagentCount + asyncToolCount;
   }
 
-  return coordinator.drainCompletionsAndTimeoutsToParent();
+  const [subagentCount, asyncToolCount] = await Promise.all([
+    subagentStatus === "idle"
+      ? subagentCoordinator.drainCompletionsToParent()
+      : subagentCoordinator.drainCompletionsAndTimeoutsToParent(),
+    asyncToolStatus === "idle"
+      ? asyncToolCoordinator.drainCompletionsToParent()
+      : asyncToolCoordinator.drainCompletionsAndTimeoutsToParent(),
+  ]);
+  return subagentCount + asyncToolCount;
 }
 
 async function pipeAgentSseStream(

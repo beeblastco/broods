@@ -170,6 +170,7 @@ The admin account is virtual; it is not a normal account record.
 - direct and channel conversation rows
 - processed event dedupe rows and conversation leases
 - async direct API status rows
+- async external tool result rows
 - current account filesystem, memory, and task objects
 - account-owned agent records
 - account-owned skill objects
@@ -182,7 +183,8 @@ Response:
   "cleanup": {
     "conversationsDeleted": 12,
     "processedEventsDeleted": 14,
-    "asyncResultsDeleted": 2,
+    "asyncAgentResultDeleted": 2,
+    "asyncToolResultDeleted": 3,
     "filesystemObjectsDeleted": 8,
     "agentsDeleted": 1,
     "skillObjectsDeleted": 4
@@ -389,17 +391,18 @@ Controls model-visible history management.
 
 ### Tools Config
 
-Enables inline tools. Omitting `tools` or setting `enabled: false` disables the tool. The tool name must match an available tool; invalid names fail when the harness assembles tools for a turn.
+Enables external tools. Omitting `tools` or setting `enabled: false` disables the tool. The tool name must match an available tool; invalid names fail when the harness assembles tools for a turn. Local `execute` tools can set `async: true` to return immediately and inject their completed result into the same conversation later.
 
 Developer guide: [External Tools](tools.md).
 
-Available tools: `tavilySearch`, `tavilyExtract`, `googleSearch`.
+Available tools: `tavilySearch`, `tavilyExtract`, `googleSearch`, `test_async`.
 
 ```json
 {
   "tools": {
     "tavilySearch": {
       "enabled": true,
+      "async": true,
       "needsApproval": true,
       "apiKey": "...",
       "searchDepth": "advanced",
@@ -423,6 +426,10 @@ Available tools: `tavilySearch`, `tavilyExtract`, `googleSearch`.
         "startTime": "2026-01-01",
         "endTime": "2026-05-01"
       }
+    },
+    "test_async": {
+      "enabled": true,
+      "async": true
     }
   }
 }
@@ -431,6 +438,7 @@ Available tools: `tavilySearch`, `tavilyExtract`, `googleSearch`.
 | Tool | Field | Type | Description |
 | ------ | ------- | ------ | ------------- |
 | `tavilySearch` | `enabled` | boolean | Enable the tool |
+| | `async` | boolean | Return immediately and inject the completed local `execute` result later |
 | | `needsApproval` | boolean | Require AI SDK approval before execution |
 | | `apiKey` | string | Tavily API key; required unless `TAVILY_API_KEY` is set |
 | | `searchDepth` | `basic` \| `advanced` | Search depth |
@@ -438,15 +446,20 @@ Available tools: `tavilySearch`, `tavilyExtract`, `googleSearch`.
 | | `maxResults` | number | Max results (1–20, default: 5) |
 | | `topic` | `general` \| `news` \| `finance` | Search topic |
 | `tavilyExtract` | `enabled` | boolean | Enable the tool |
+| | `async` | boolean | Return immediately and inject the completed local `execute` result later |
 | | `needsApproval` | boolean | Require AI SDK approval before execution |
 | | `apiKey` | string | Tavily API key; required unless `TAVILY_API_KEY` is set |
 | | `extractDepth` | `basic` \| `advanced` | Extraction depth |
 | | `format` | `markdown` \| `text` | Output format |
 | `googleSearch` | `enabled` | boolean | Enable the tool; requires `config.model.provider` to be `google` |
+| | `async` | boolean | Accepted for config consistency, but provider-defined tools without local `execute` are not detached |
 | | `needsApproval` | boolean | Require AI SDK approval before execution |
 | | `searchTypes` | object | Keys: `webSearch`, `imageSearch` (each is an empty object or with options) |
 | | `timeRangeFilter.startTime` | string | ISO date string, filter results after this date |
 | | `timeRangeFilter.endTime` | string | ISO date string, filter results before this date |
+| `test_async` | `enabled` | boolean | Enable the local async example tool |
+| | `async` | boolean | Return immediately and inject the completed local `execute` result later |
+| | `needsApproval` | boolean | Require AI SDK approval before execution |
 
 ---
 
