@@ -7,7 +7,6 @@
 import { connect, type NatsConnection } from "nats";
 
 export interface NatsPublisher {
-  ready(): Promise<void>;
   publish(data: Record<string, unknown>): Promise<void>;
   close(): Promise<void>;
 }
@@ -46,14 +45,10 @@ export class LiveNatsPublisher implements NatsPublisher {
     return this.connectionPromise;
   }
 
-  async ready(): Promise<void> {
-    await this.getConnection();
-  }
-
   async publish(data: Record<string, unknown>): Promise<void> {
     try {
       const connection = await this.getConnection();
-      this.sequence += 1;
+      this.sequence++;
       const subject = streamResponseSubject(
         this.headers.accountId,
         this.headers.agentId,

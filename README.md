@@ -27,7 +27,8 @@ The design goal is simple infrastructure for low-volume multi-tenant usage: Bun 
 ```mermaid
 flowchart LR
   Admin["Account owner / admin"] -->|"create + configure account"| Manage["account-manage<br/>Function URL"]
-  Client["Direct API client"] -->|"Bearer accountSecret"| Harness["harness-processing<br/>Function URL"]
+  Client["Direct API client"] -->|"Bearer accountSecret<br/>POST / or /async"| Harness["harness-processing<br/>Function URL"]
+  Status["Status poller"] -->|"Bearer accountSecret<br/>GET /status/{eventId}"| Harness
   Provider["Telegram / GitHub / Slack / Discord"] -->|"/webhooks/{accountId}/{agentId}/{channel}"| Harness
 
   Manage --> Accounts["DynamoDB<br/>AccountConfig"]

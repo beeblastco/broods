@@ -257,7 +257,6 @@ async function handleNatsWorkerRequest(event: DirectInboundEvent, context?: Lamb
   });
 
   try {
-    await publisher.ready();
     const turn = await prepareDirectTurn(event);
     if (!turn) {
       return;

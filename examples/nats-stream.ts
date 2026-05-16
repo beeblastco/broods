@@ -1,5 +1,6 @@
 /**
  * Example NATS WebSocket stream invocation with subagents and tools.
+ * Ctr+C to exit when you want to close the connection and exit.
  */
 
 import { InvokeCommand, LambdaClient } from "@aws-sdk/client-lambda";
@@ -10,11 +11,10 @@ import { scopedDirectConversationKey, scopedDirectEventId } from "../functions/_
 import type { DirectInboundEvent } from "../functions/harness-processing/integrations.ts";
 import { createAccount, createAgent, deleteAccount } from "./utils.ts";
 
-const googleApiKey = requiredEnv("ACCOUNT_GOOGLE_API_KEY");
-const tavilyApiKey = requiredEnv("ACCOUNT_TAVILY_API_KEY");
-const lambdaFunctionName = process.env.HARNESS_FUNCTION_NAME?.trim() ||
-  requiredEnv("HARNESS_FUNCTION_ARN");
-const natsUrl = requiredEnv("NATS_URL");
+const googleApiKey = process.env.ACCOUNT_GOOGLE_API_KEY!;
+const tavilyApiKey = process.env.ACCOUNT_TAVILY_API_KEY!;
+const lambdaFunctionName = process.env.HARNESS_FUNCTION_ARN!;
+const natsUrl = process.env.NATS_URL!;
 const connectionId = `ws-test-${Date.now()}`;
 const publicEventId = `nats-${Date.now()}`;
 const publicConversationKey = `nats-${Date.now()}`;
@@ -31,11 +31,7 @@ const researchAgentConfig: AgentConfig = {
     modelId: "gemma-4-31b-it",
   },
   agent: {
-    system: [
-      "Knowledge cutoff: January 2025.",
-      "You are a focused research subagent.",
-      "Use available tools for current facts, cite what you found briefly, and return only the requested research.",
-    ].join("\n\n"),
+      system: `Knowledge cutoff: Janurary 2025.\n\nYou are a helpful personal assistant that can use tools to get information and perform tasks for the user.\n\nYou also have access to web search and web fetch tools. Always use these tools to research and get up-to-date information or when you are asked for. Your knowledge was limited by cutoff training data date so do not rely on it for up-to-date information or fact checks. Only research and answer the question, don't put additional information.`,
   },
   tools: {
     tavilySearch: {
@@ -57,9 +53,9 @@ const lambda = new LambdaClient({ region: "eu-central-1", profile: "default" });
 const account = await createAccount(`nats-stream-${Date.now()}`);
 const researchAgent = await createAgent(
   account.accountSecret,
-  "NATS research subagent",
+  "Research subagent",
   researchAgentConfig,
-  "Researches current model releases using configured tools.",
+  "Specialized research agent",
 );
 
 const agentConfig: AgentConfig = {
@@ -73,11 +69,7 @@ const agentConfig: AgentConfig = {
     modelId: "gemma-4-31b-it",
   },
   agent: {
-    system: [
-      "Knowledge cutoff: January 2025.",
-      "You are a coordinator agent.",
-      "Use subagents for independent research.",
-    ].join("\n\n"),
+      system: "You are a helpful assistant.",
   },
   subagent: {
     enabled: true,
@@ -88,6 +80,7 @@ const agentConfig: AgentConfig = {
 const agent = await createAgent(account.accountSecret, "NATS stream test assistant", agentConfig);
 const subject = streamResponseSubject(account.account.accountId, agent.agent.agentId, connectionId);
 const subscription = nats.subscribe(subject);
+const removeShutdownHandlers = installShutdownHandlers(subscription);
 
 console.log("Created test account:", JSON.stringify(account.account));
 console.log("Created research subagent:", JSON.stringify(researchAgent.agent));
@@ -111,9 +104,10 @@ try {
           {
             type: "text",
             text: [
-              "Launch two subagent tasks in parallel using the configured research subagent:",
-              "one for the newest model release from OpenAI and one for the newest model release from Anthropic.",
-              "Then compare their coding capabilities and say which is better for coding.",
+              "Launch two subagents in parallel to",
+              "research the newest model release from OpenAI",
+              "and the newest model release from Anthropic.",
+              "Compare their coding capabilities and say which is better for coding.",
             ].join(" "),
           },
         ],
@@ -129,10 +123,9 @@ try {
       event: inboundEvent,
     })),
   }));
-
-  console.log("Invoked nats-worker. Streaming response:\n");
   await printNatsStream(subscription);
 } finally {
+  removeShutdownHandlers();
   subscription.unsubscribe();
   await nats.drain().catch(() => { });
   await deleteAccount(account.accountSecret);
@@ -145,23 +138,36 @@ async function printNatsStream(subscription: ReturnType<typeof nats.subscribe>):
   try {
     for await (const message of subscription) {
       const event = JSON.parse(codec.decode(message.data)) as NatsStreamEvent;
-      const data = event.data as { type?: string; text?: string; error?: string };
 
-      process.stdout.write(`\n[${event.sequence}] ${JSON.stringify(data)}\n`);
-
-      if (data.type === "finish" || data.type === "error") {
-        break;
-      }
+      process.stdout.write(`\n[${event.sequence}] ${JSON.stringify(event.data)}\n`);
     }
   } finally {
     clearTimeout(timeout);
   }
 }
 
-function requiredEnv(name: string): string {
-  const value = process.env[name]?.trim();
-  if (!value) {
-    throw new Error(`${name} is required`);
-  }
-  return value;
+function installShutdownHandlers(subscription: ReturnType<typeof nats.subscribe>): () => void {
+  let shutdownRequested = false;
+
+  const requestShutdown = (signal: NodeJS.Signals) => {
+    if (shutdownRequested) {
+      process.exit(signal === "SIGINT" ? 130 : 143);
+    }
+
+    shutdownRequested = true;
+    process.exitCode = signal === "SIGINT" ? 130 : 143;
+    process.stdout.write(`\nReceived ${signal}. Closing NATS stream...\n`);
+    subscription.unsubscribe();
+  };
+
+  const onSigint = () => requestShutdown("SIGINT");
+  const onSigterm = () => requestShutdown("SIGTERM");
+
+  process.once("SIGINT", onSigint);
+  process.once("SIGTERM", onSigterm);
+
+  return () => {
+    process.off("SIGINT", onSigint);
+    process.off("SIGTERM", onSigterm);
+  };
 }
