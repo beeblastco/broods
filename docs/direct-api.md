@@ -1,6 +1,6 @@
 # Direct API
 
-The direct API is account-authenticated. Create an account through `account-manage`, then send:
+The direct API is the account-authenticated HTTP surface for `harness-processing`. Create an account through `account-manage`, create an agent, then send:
 
 ```http
 Authorization: Bearer <accountSecret>
@@ -11,6 +11,18 @@ Direct API state is internally scoped as `acct:<accountId>:agent:<agentId>:api:<
 Model behavior and tool access come from the selected agent's encrypted config. Workspace tools come from `config.workspace.enabled`; subagent dispatch comes from `config.subagent.enabled`; search/research tools come from `config.tools`; skills are optional and load only when `config.skills.enabled` is true and `config.skills.allowed` has paths. See [`examples/account.config.example.json`](../examples/account.config.example.json) for the supported agent config shape.
 
 > **Notice:** Every model invocation receives a runtime environment system prompt before the selected agent's configured system prompt. It includes the current runtime time as an ISO timestamp and the runtime timezone. Do not add generic current-time context when creating or invoking an agent unless the request needs a user-specific locale, timezone, or business-time rule.
+
+## Endpoint Summary
+
+| Method | Path | Auth | Response | Purpose |
+| --- | --- | --- | --- | --- |
+| `GET` | `/` | none | JSON | Health probe |
+| `POST` | `/` | account bearer | SSE | Run a sync direct agent turn |
+| `POST` | `/async` | account bearer | JSON | Queue an async direct agent turn |
+| `GET` | `/status/{eventId}?agentId={agentId}` | account bearer | JSON | Poll async status |
+| `POST` | `/webhooks/{accountId}/{agentId}/{channel}` | provider-native | provider-specific | Channel webhooks, documented in [Channels](channels.md) |
+
+All direct API request bodies use public `eventId` and `conversationKey` values. The service scopes them internally by account and agent.
 
 ## Health Probe: `GET /`
 
@@ -77,7 +89,7 @@ Use ephemeral `system` events for request-local time overrides, for example when
 
 ## Tool Approval
 
-Agents can require user approval before executing selected tools. Enable this in the selected agent config:
+Agents can require user approval before executing selected tools. Enable this in the selected agent config. External tool behavior is covered in [External Tools](tools.md).
 
 ```json
 {
@@ -209,25 +221,6 @@ If the async run stops for tool approval, the callback uses the same approval su
 
 Without a callback, poll the returned status URL.
 
-Live probes use `AGENT_SERVICE_URL` and `ACCOUNT_SERVICE_URL` environment variables. Set the matching provider API key, for example `ACCOUNT_GOOGLE_API_KEY` when using the default Google provider. Each script creates a temporary account, runs the probe with that account secret, then deletes the test account:
-
-```bash
-# Account management (Create, Update, Delete)
-bun examples/account.ts
-
-# Stream SSE with tools
-bun examples/stream.ts
-
-# Async endpoint with polling
-bun examples/async.ts
-
-# Tool approval flow
-bun examples/tool-approval.ts
-
-# Subagent dispatch and SSE continuation
-bun examples/subagent.ts
-```
-
 ## Status API: `GET /status/{eventId}?agentId={agentId}`
 
 Status requests require the same account bearer header. Responses are backed by the account-scoped `AsyncResults` DynamoDB record.
@@ -309,4 +302,25 @@ Unsupported methods return:
   "method": "PUT",
   "allowedMethods": ["GET", "POST"]
 }
+```
+
+## Example Scripts
+
+Live probes use `AGENT_SERVICE_URL` and `ACCOUNT_SERVICE_URL` environment variables. Set the matching provider API key, for example `ACCOUNT_GOOGLE_API_KEY` when using the default Google provider. Each script creates a temporary account, runs the probe with that account secret, then deletes the test account:
+
+```bash
+# Account management (Create, Update, Delete)
+bun examples/account.ts
+
+# Stream SSE with tools
+bun examples/stream.ts
+
+# Async endpoint with polling
+bun examples/async.ts
+
+# Tool approval flow
+bun examples/tool-approval.ts
+
+# Subagent dispatch and SSE continuation
+bun examples/subagent.ts
 ```

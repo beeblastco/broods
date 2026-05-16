@@ -391,6 +391,8 @@ Controls model-visible history management.
 
 Enables inline tools. Omitting `tools` or setting `enabled: false` disables the tool. The tool name must match an available tool; invalid names fail when the harness assembles tools for a turn.
 
+Developer guide: [External Tools](tools.md).
+
 Available tools: `tavilySearch`, `tavilyExtract`, `googleSearch`.
 
 ```json
@@ -451,6 +453,8 @@ Available tools: `tavilySearch`, `tavilyExtract`, `googleSearch`.
 ### Channels Config
 
 Provider webhook URLs must include the `accountId` and `agentId`:
+
+Developer guide: [Channels](channels.md).
 
 ```bash
 {AGENT_SERVICE_URL}/webhooks/{accountId}/{agentId}/telegram

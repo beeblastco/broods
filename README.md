@@ -49,6 +49,8 @@ flowchart LR
 - [Sub agents](docs/sub-agents.md)
 - [Data security](docs/data-security.md)
 - [Direct API](docs/direct-api.md)
+- [External tools](docs/tools.md)
+- [Channels](docs/channels.md)
 - [Operations](docs/operations.md)
 - [Extending](docs/extending.md)
 
