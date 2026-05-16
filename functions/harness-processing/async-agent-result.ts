@@ -1,6 +1,6 @@
 /**
- * Async direct API status persistence.
- * Keep polling state separate from conversation/session storage.
+ * Async agent result persistence.
+ * Keep direct async and subagent polling state separate from tool results.
  */
 
 import {
@@ -18,15 +18,15 @@ import {
 import { requireEnv } from "../_shared/env.ts";
 import type { ToolApprovalSummary } from "./harness.ts";
 
-const ASYNC_RESULTS_TABLE_NAME = requireEnv("ASYNC_RESULTS_TABLE_NAME");
-const ASYNC_RESULT_TTL_SECONDS = 7 * 24 * 60 * 60;
+const ASYNC_AGENT_RESULT_TABLE_NAME = requireEnv("ASYNC_AGENT_RESULT_TABLE_NAME");
+const ASYNC_AGENT_RESULT_TTL_SECONDS = 7 * 24 * 60 * 60;
 
-export type AsyncStatus = "processing" | "awaiting_approval" | "completed" | "failed";
+export type AsyncAgentStatus = "processing" | "awaiting_approval" | "completed" | "failed";
 
-export interface AsyncResultRecord {
+export interface AsyncAgentResultRecord {
   eventId: string;
   conversationKey: string;
-  status: AsyncStatus;
+  status: AsyncAgentStatus;
   createdAt: string;
   updatedAt: string;
   response?: string;
@@ -35,7 +35,7 @@ export interface AsyncResultRecord {
   expiresAt: number;
 }
 
-export async function createPendingAsyncResult(options: {
+export async function createPendingAsyncAgentResult(options: {
   eventId: string;
   conversationKey: string;
 }): Promise<boolean> {
@@ -43,14 +43,14 @@ export async function createPendingAsyncResult(options: {
 
   try {
     await dynamo.send(new PutItemCommand({
-      TableName: ASYNC_RESULTS_TABLE_NAME,
+      TableName: ASYNC_AGENT_RESULT_TABLE_NAME,
       Item: {
         eventId: { S: options.eventId },
         conversationKey: { S: options.conversationKey },
         status: { S: "processing" },
         createdAt: { S: now },
         updatedAt: { S: now },
-        expiresAt: { N: String(asyncResultExpiresAt()) },
+        expiresAt: { N: String(asyncAgentResultExpiresAt()) },
       },
       ConditionExpression: "attribute_not_exists(eventId)",
     }));
@@ -63,56 +63,56 @@ export async function createPendingAsyncResult(options: {
   }
 }
 
-export async function getAsyncResult(eventId: string): Promise<AsyncResultRecord | null> {
+export async function getAsyncAgentResult(eventId: string): Promise<AsyncAgentResultRecord | null> {
   const result = await dynamo.send(new GetItemCommand({
-    TableName: ASYNC_RESULTS_TABLE_NAME,
+    TableName: ASYNC_AGENT_RESULT_TABLE_NAME,
     Key: { eventId: { S: eventId } },
     ConsistentRead: true,
   }));
 
-  return result.Item ? itemToAsyncResult(result.Item) : null;
+  return result.Item ? itemToAsyncAgentResult(result.Item) : null;
 }
 
-export async function markAsyncResultCompleted(options: {
+export async function markAsyncAgentResultCompleted(options: {
   eventId: string;
   response: string;
 }): Promise<void> {
-  await updateAsyncResult(options.eventId, "completed", {
+  await updateAsyncAgentResult(options.eventId, "completed", {
     response: options.response,
     error: undefined,
     approvals: undefined,
   });
 }
 
-export async function markAsyncResultFailed(options: {
+export async function markAsyncAgentResultFailed(options: {
   eventId: string;
   error: string;
 }): Promise<void> {
-  await updateAsyncResult(options.eventId, "failed", {
+  await updateAsyncAgentResult(options.eventId, "failed", {
     error: options.error,
     response: undefined,
     approvals: undefined,
   });
 }
 
-export async function markAsyncResultAwaitingApproval(options: {
+export async function markAsyncAgentResultAwaitingApproval(options: {
   eventId: string;
   approvals: ToolApprovalSummary[];
 }): Promise<void> {
-  await updateAsyncResult(options.eventId, "awaiting_approval", {
+  await updateAsyncAgentResult(options.eventId, "awaiting_approval", {
     approvals: options.approvals,
     response: undefined,
     error: undefined,
   });
 }
 
-function asyncResultExpiresAt(): number {
-  return Math.floor(Date.now() / 1000) + ASYNC_RESULT_TTL_SECONDS;
+function asyncAgentResultExpiresAt(): number {
+  return Math.floor(Date.now() / 1000) + ASYNC_AGENT_RESULT_TTL_SECONDS;
 }
 
-async function updateAsyncResult(
+async function updateAsyncAgentResult(
   eventId: string,
-  status: AsyncStatus,
+  status: AsyncAgentStatus,
   values: { response?: string; error?: string; approvals?: ToolApprovalSummary[] },
 ): Promise<void> {
   const setExpressions = [
@@ -130,7 +130,7 @@ async function updateAsyncResult(
   ];
 
   await dynamo.send(new UpdateItemCommand({
-    TableName: ASYNC_RESULTS_TABLE_NAME,
+    TableName: ASYNC_AGENT_RESULT_TABLE_NAME,
     Key: { eventId: { S: eventId } },
     UpdateExpression: [
       `SET ${setExpressions.join(", ")}`,
@@ -144,7 +144,7 @@ async function updateAsyncResult(
     ExpressionAttributeValues: {
       ":status": { S: status },
       ":updatedAt": { S: new Date().toISOString() },
-      ":expiresAt": { N: String(asyncResultExpiresAt()) },
+      ":expiresAt": { N: String(asyncAgentResultExpiresAt()) },
       ...(values.response !== undefined ? { ":response": { S: values.response } } : {}),
       ...(values.error !== undefined ? { ":error": { S: values.error } } : {}),
       ...(values.approvals !== undefined ? { ":approvals": toAttributeValue(values.approvals) } : {}),
@@ -152,7 +152,7 @@ async function updateAsyncResult(
   }));
 }
 
-function itemToAsyncResult(item: Record<string, AttributeValue>): AsyncResultRecord | null {
+function itemToAsyncAgentResult(item: Record<string, AttributeValue>): AsyncAgentResultRecord | null {
   const eventId = item.eventId?.S;
   const conversationKey = item.conversationKey?.S;
   const status = item.status?.S;
@@ -163,7 +163,7 @@ function itemToAsyncResult(item: Record<string, AttributeValue>): AsyncResultRec
   if (
     !eventId ||
     !conversationKey ||
-    !isAsyncStatus(status) ||
+    !isAsyncAgentStatus(status) ||
     !createdAt ||
     !updatedAt ||
     !Number.isFinite(expiresAtNumber)
@@ -195,7 +195,7 @@ function optionalString(value: AttributeValue | undefined): string | undefined {
   return typeof decoded === "string" ? decoded : undefined;
 }
 
-function isAsyncStatus(value: string | undefined): value is AsyncStatus {
+function isAsyncAgentStatus(value: string | undefined): value is AsyncAgentStatus {
   return value === "processing" || value === "awaiting_approval" || value === "completed" || value === "failed";
 }
 

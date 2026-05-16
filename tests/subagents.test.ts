@@ -9,7 +9,7 @@ import type { UserModelMessage } from "ai";
 process.env.CONVERSATIONS_TABLE_NAME = "conversations";
 process.env.PROCESSED_EVENTS_TABLE_NAME = "processed-events";
 process.env.FILESYSTEM_BUCKET_NAME = "filesystem";
-process.env.ASYNC_RESULTS_TABLE_NAME = "async-results";
+process.env.ASYNC_AGENT_RESULT_TABLE_NAME = "async-agent-result";
 
 interface TestCompletion {
   taskId: string;

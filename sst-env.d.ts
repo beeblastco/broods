@@ -27,7 +27,11 @@ declare module "sst" {
       "type": "sst.sst.Secret"
       "value": string
     }
-    "AsyncResults": {
+    "AsyncAgentResult": {
+      "name": string
+      "type": "sst.aws.Dynamo"
+    }
+    "AsyncToolResult": {
       "name": string
       "type": "sst.aws.Dynamo"
     }

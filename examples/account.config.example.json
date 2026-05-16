@@ -69,6 +69,7 @@
   "tools": {
     "tavilySearch": {
       "enabled": true,
+      "async": true,
       "apiKey": "...",
       "searchDepth": "advanced",
       "includeAnswer": true,
@@ -86,6 +87,10 @@
       "searchTypes": {
         "webSearch": {}
       }
+    },
+    "test_async": {
+      "enabled": true,
+      "async": true
     }
   },
   "channels": {

@@ -18,6 +18,7 @@ import { logError, logInfo, logWarn } from "../_shared/log.ts";
 import { modelSettingsFromModelConfig, resolveConfiguredModel } from "./model.ts";
 import { stripReasoningFromMessages } from "./pruning.ts";
 import type { Session, TurnContextSnapshot } from "./session.ts";
+import type { RunAsyncToolDispatch } from "./async-tools.ts";
 import { createTools } from "./tools/index.ts";
 import type { RunSubagentDispatch } from "./tools/run-subagent.tool.ts";
 
@@ -42,6 +43,7 @@ export interface AgentReplyHooks {
 // Optional per-run wiring owned by the request handler.
 export interface AgentLoopOptions {
   dispatchSubagents?: RunSubagentDispatch;
+  dispatchAsyncTools?: RunAsyncToolDispatch;
 }
 
 export async function runAgentLoop(
@@ -63,6 +65,7 @@ export async function runAgentLoop(
       modelProviderName: configuredModel.providerName,
       modelProvider: configuredModel.provider,
       session: session,
+      dispatchAsyncTools: options.dispatchAsyncTools,
       // The handler owns subagent lifecycle, so the loop only forwards the
       // dispatcher into the tool registry for this one model run. Ephemeral
       // system messages are request-local, so pass the current turn copy into

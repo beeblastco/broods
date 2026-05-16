@@ -129,4 +129,4 @@ The subagent handoff is the bridge between parent passes:
 
 `/async` and channel/webhook requests use the same coordinator loop without SSE heartbeats. They wait for batched child-result parent continuation within the Lambda timeout budget before settling the async result or sending the channel reply.
 
-`AsyncResults` still stores subagent task status for polling, but the SSE continuation path does not need separate child Lambda processors.
+`AsyncAgentResult` still stores subagent task status for polling, but the SSE continuation path does not need separate child Lambda processors.
