@@ -294,7 +294,6 @@ function completionToParentMessage(completion: AsyncToolCompletion): UserModelMe
   const metadata = [
     `resultId: ${completion.resultId}`,
     `toolName: ${completion.toolName}`,
-    `toolCallId: ${completion.toolCallId}`,
     `status: ${completion.status}`,
   ].join("\n");
   const result = completion.status === "completed"
@@ -330,6 +329,7 @@ function isAsyncIterable(value: unknown): value is AsyncIterable<unknown> {
   );
 }
 
+// Format the tool result from unknow to string
 function formatUnknown(value: unknown): string {
   if (typeof value === "string") {
     return value;
