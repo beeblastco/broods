@@ -78,6 +78,9 @@ jobs:
       ACCOUNT_BEDROCK_SECRET_ACCESS_KEY: ${{ secrets.ACCOUNT_BEDROCK_SECRET_ACCESS_KEY }}
       ACCOUNT_BEDROCK_SESSION_TOKEN: ${{ secrets.ACCOUNT_BEDROCK_SESSION_TOKEN }}
       ACCOUNT_GATEWAY_API_KEY: ${{ secrets.ACCOUNT_GATEWAY_API_KEY }}
+      ENABLE_DIRECT_API: ${{ vars.ENABLE_DIRECT_API || 'false' }}
+      ENABLE_WEBSOCKET: ${{ vars.ENABLE_WEBSOCKET || 'false' }}
+      NATS_URL: ${{ secrets.NATS_URL }}
     steps:
       - name: Resolve deploy configuration
         shell: bash
@@ -105,6 +108,11 @@ jobs:
 
           if [[ -z "${AWS_ROLE_ARN:-}" ]]; then
             echo "Missing required repository variable: AWS_ROLE_ARN" >&2
+            exit 1
+          fi
+
+          if [[ "${ENABLE_WEBSOCKET:-false}" == "true" && -z "${NATS_URL:-}" ]]; then
+            echo "NATS_URL must be set when ENABLE_WEBSOCKET=true" >&2
             exit 1
           fi
 
