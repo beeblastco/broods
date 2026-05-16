@@ -191,6 +191,46 @@ describe("createTools", () => {
     });
   });
 
+  it("passes async-enabled external tools through the async coordinator", async () => {
+    const { createTools } = await import("../functions/harness-processing/tools/index.ts");
+    const dispatch = mock((tools: Record<string, unknown>, asyncToolNames: Set<string>) => {
+      expect([...asyncToolNames]).toEqual(["tavilySearch"]);
+      expect((tools.tavilySearch as { needsApproval?: boolean }).needsApproval).toBe(true);
+      return {
+        tavilySearch: {
+          ...(tools.tavilySearch as object),
+          wrapped: true,
+        },
+      };
+    });
+
+    tavilySearchMock.mockImplementationOnce((options: unknown) => ({
+      provider: "tavilySearch",
+      options,
+      execute: mock(async () => ({ ok: true })),
+    }));
+
+    const tools = createTools(createToolContext(undefined, "google", undefined, dispatch), {
+      tools: {
+        tavilySearch: {
+          async: true,
+          needsApproval: true,
+          maxResults: 2,
+        },
+      },
+    });
+
+    expect(dispatch).toHaveBeenCalledTimes(1);
+    expect((tools.tavilySearch as { wrapped?: boolean }).wrapped).toBe(true);
+    expect(tavilySearchMock).toHaveBeenCalledWith({
+      apiKey: "tavily-key",
+      searchDepth: "advanced",
+      includeAnswer: true,
+      maxResults: 2,
+      topic: "general",
+    });
+  });
+
   it("rejects googleSearch for non-Google model providers", async () => {
     const { createTools } = await import("../functions/harness-processing/tools/index.ts");
 
@@ -216,6 +256,7 @@ function createToolContext(
   googleSearch: ((options: unknown) => unknown) | undefined = mock((_options: unknown) => ({ provider: "googleSearch" })),
   modelProviderName = "google",
   dispatchSubagents?: unknown,
+  dispatchAsyncTools?: unknown,
 ) {
   return {
     conversationKey: "conversation",
@@ -227,5 +268,6 @@ function createToolContext(
       },
     },
     ...(dispatchSubagents ? { dispatchSubagents } : {}),
+    ...(dispatchAsyncTools ? { dispatchAsyncTools } : {}),
   } as never;
 }

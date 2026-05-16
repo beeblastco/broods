@@ -14,10 +14,10 @@ import {
 import { runAgentLoop } from "./harness.ts";
 import { Session } from "./session.ts";
 import {
-  createPendingAsyncResult,
-  markAsyncResultCompleted,
-  markAsyncResultFailed,
-} from "./status.ts";
+  createPendingAsyncAgentResult,
+  markAsyncAgentResultCompleted,
+  markAsyncAgentResultFailed,
+} from "./async-agent-result.ts";
 import type {
   RunSubagentDispatch,
   RunSubagentDispatchResult,
@@ -81,7 +81,7 @@ export class SubagentCoordinator {
     // Create status rows before returning task ids so clients can poll the ids
     // as soon as the model sees the tool result.
     await Promise.all(resolvedTasks.map((task) =>
-      createPendingAsyncResult({
+      createPendingAsyncAgentResult({
         eventId: task.eventId,
         conversationKey: task.conversationKey,
       })
@@ -310,7 +310,7 @@ export class SubagentCoordinator {
       throw new Error("Subagent task returned an empty response");
     }
 
-    await markAsyncResultCompleted({
+    await markAsyncAgentResultCompleted({
       eventId: task.eventId,
       response: finalText,
     });
@@ -329,7 +329,7 @@ export class SubagentCoordinator {
     const shouldInjectToParent = this.pending.has(completion.taskId);
 
     if (completion.status === "failed") {
-      await markAsyncResultFailed({
+      await markAsyncAgentResultFailed({
         eventId: scopedDirectEventId(
           requireParentAccountId(this.parentSession),
           completion.agentId,
@@ -424,7 +424,7 @@ function completionToParentMessage(completion: SubagentCompletion): UserModelMes
     role: "user",
     content: [{
       type: "text",
-      text: `Subagent result injected into parent conversation.\n${metadata}\n\nResult:\n${result ?? "(no result)"}`,
+      text: `Subagent and async agent result injected into parent conversation.\n${metadata}\n\nResult:\n${result ?? "(no result)"}`,
     }],
   };
 }

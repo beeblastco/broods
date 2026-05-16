@@ -223,7 +223,7 @@ Without a callback, poll the returned status URL.
 
 ## Status API: `GET /status/{eventId}?agentId={agentId}`
 
-Status requests require the same account bearer header. Responses are backed by the account-scoped `AsyncResults` DynamoDB record.
+Status requests require the same account bearer header. Responses are backed by the account-scoped `AsyncAgentResult` DynamoDB record.
 
 Processing response:
 

@@ -10,6 +10,7 @@ import {
   type AccountToolConfig,
 } from "../../_shared/accounts.ts";
 import type { Session } from "../session.ts";
+import type { RunAsyncToolDispatch } from "../async-tools.ts";
 import filesystemTool from "./filesystem.tool.ts";
 import googleSearchTool from "./google-search.tool.ts";
 import loadSkillTool from "./load-skill.tool.ts";
@@ -18,6 +19,7 @@ import runSubagentTool, {
 } from "./run-subagent.tool.ts";
 import tasksTool from "./tasks.tool.ts";
 import { tavilyExtractTool, tavilySearchTool } from "./tavily.tool.ts";
+import testAsyncTool from "./test.async.tool.ts";
 
 // Runtime dependencies shared by tool factories. Model-facing input schemas
 // stay inside each individual tool file.
@@ -29,6 +31,7 @@ export interface ToolContext {
   modelProvider: unknown;
   session?: Session;
   dispatchSubagents?: RunSubagentDispatch;
+  dispatchAsyncTools?: RunAsyncToolDispatch;
 }
 
 type ToolFactory = (context: ToolContext) => ToolSet;
@@ -39,6 +42,7 @@ const toolFactories = {
   tavilySearch: tavilySearchTool,
   tavilyExtract: tavilyExtractTool,
   googleSearch: googleSearchTool,
+  test_async: testAsyncTool,
 } satisfies Record<string, ToolFactory>;
 
 export function createTools(context: Omit<ToolContext, "config">, accountConfig: AccountConfig): ToolSet {
@@ -86,13 +90,15 @@ export function createTools(context: Omit<ToolContext, "config">, accountConfig:
 
     Object.assign(tools, withToolApproval(toolFactory({
       ...context,
-      config: toolConfig,
+      config: externalToolRuntimeConfig(toolConfig),
     }), {
       [toolName]: toolConfig.needsApproval === true,
     }));
   }
 
-  return tools;
+  return context.dispatchAsyncTools
+    ? context.dispatchAsyncTools(tools, asyncConfiguredToolNames(accountConfig.tools))
+    : tools;
 }
 
 function withToolApproval(tools: ToolSet, approvals: Record<string, boolean>): ToolSet {
@@ -114,4 +120,23 @@ function assertSupportedConfiguredTools(tools: AccountConfig["tools"]): void {
 
 function isToolEnabled(config: AccountToolConfig | undefined): config is AccountToolConfig {
   return config !== undefined && config.enabled !== false;
+}
+
+function asyncConfiguredToolNames(tools: AccountConfig["tools"]): Set<string> {
+  return new Set(
+    Object.entries(tools ?? {})
+      .filter(([, config]) => isToolEnabled(config) && config.async === true)
+      .map(([toolName]) => toolName),
+  );
+}
+
+function externalToolRuntimeConfig(config: AccountToolConfig): AccountToolConfig {
+  const {
+    enabled: _enabled,
+    needsApproval: _needsApproval,
+    async: _async,
+    ...runtimeConfig
+  } = config;
+
+  return runtimeConfig;
 }
