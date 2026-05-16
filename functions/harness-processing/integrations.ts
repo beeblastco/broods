@@ -73,6 +73,7 @@ export interface DirectInboundEvent {
   publicConversationKey: string;
   events: DirectIngressEvent[];
   webhookConfig?: WebhookConfig;
+  connectionId?: string;
 }
 
 export interface AsyncDirectInboundEvent extends DirectInboundEvent {
@@ -115,19 +116,22 @@ export interface IntegrationRoutingOptions {
   authResolver?: (headers: Record<string, string>) => Promise<AuthContext | null>;
   accountLoader?: (accountId: string) => Promise<AccountRecord | null>;
   agentLoader?: (accountId: string, agentId: string) => Promise<AgentRecord | null>;
+  directApiEnabled?: boolean;
 }
 
 export async function routeIncomingEvent(
   event: LambdaFunctionURLEvent,
   handlers: IntegrationHandlers,
+  options: IntegrationRoutingOptions = {},
 ): Promise<LambdaResponse> {
-  return createIncomingEventRouter()(event, handlers);
+  return createIncomingEventRouter(options)(event, handlers);
 }
 
 export function createIncomingEventRouter(options: IntegrationRoutingOptions = {}) {
   const authResolver = options.authResolver ?? resolveBearerAuth;
   const accountLoader = options.accountLoader ?? getAccount;
   const agentLoader = options.agentLoader ?? getAgent;
+  const directApiEnabled = options.directApiEnabled ?? true;
 
   return async (
     event: LambdaFunctionURLEvent,
@@ -136,6 +140,7 @@ export function createIncomingEventRouter(options: IntegrationRoutingOptions = {
     authResolver,
     accountLoader,
     agentLoader,
+    directApiEnabled,
   });
 }
 
@@ -143,6 +148,7 @@ interface LambdaUrlRoutingContext {
   authResolver(headers: Record<string, string>): Promise<AuthContext | null>;
   accountLoader(accountId: string): Promise<AccountRecord | null>;
   agentLoader(accountId: string, agentId: string): Promise<AgentRecord | null>;
+  directApiEnabled: boolean;
 }
 
 async function handleLambdaUrlEvent(
@@ -215,6 +221,10 @@ async function handleLambdaUrlEvent(
     }
 
     return handleChannelWebhook(accountChannel, request, handlers, account, agent);
+  }
+
+  if (!context.directApiEnabled && (event.rawPath === "/" || isAsyncPath(event.rawPath))) {
+    return directApiDisabledResponse();
   }
 
   const auth = await context.authResolver(request.headers);
@@ -357,6 +367,10 @@ function toLambdaResponse(response: ChannelResponse): LambdaResponse {
 
 function integrationNotConfigured(name: string): LambdaResponse {
   return errorResponse(503, `${name} integration is not configured`);
+}
+
+function directApiDisabledResponse(): LambdaResponse {
+  return errorResponse(404, "Direct API is disabled");
 }
 
 function createChannelRegistry(config: AccountConfig): ChannelRegistry {

@@ -12,7 +12,7 @@ import {
   readS3Text,
   s3ObjectExists,
   writeS3Object,
-} from "../../_shared/bun-s3.ts";
+} from "../../_shared/s3.ts";
 import { requireEnv } from "../../_shared/env.ts";
 import type { ToolContext } from "./index.ts";
 

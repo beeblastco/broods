@@ -11,7 +11,7 @@ import {
 } from "@aws-sdk/client-dynamodb";
 import type { AccountRecord } from "../_shared/accounts.ts";
 import { listAgents, type AgentRecord } from "../_shared/agents.ts";
-import { deleteS3Prefix as deleteBunS3Prefix } from "../_shared/bun-s3.ts";
+import { deleteS3Prefix as deleteBunS3Prefix } from "../_shared/s3.ts";
 import { dynamo } from "../_shared/dynamo.ts";
 import { optionalEnv } from "../_shared/env.ts";
 import {

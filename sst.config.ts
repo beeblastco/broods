@@ -5,6 +5,13 @@ const AWS_ACCOUNT_ID = "403012596812";
 const PROJECT_NAME = "filthy-panty";
 const PROJECT_OWNER_EMAIL = "phickstran@beeblast.co";
 const AWS_PROFILE = process.env.CI ? undefined : (process.env.AWS_PROFILE ?? "default");
+const ENABLE_DIRECT_API = parseBooleanEnv("ENABLE_DIRECT_API", false);
+const ENABLE_WEBSOCKET = parseBooleanEnv("ENABLE_WEBSOCKET", false);
+const NATS_URL = process.env.NATS_URL?.trim();
+
+if (ENABLE_WEBSOCKET && !NATS_URL) {
+  throw new Error("NATS_URL must be set when ENABLE_WEBSOCKET=true");
+}
 
 function awsRegion(): string {
   const region = process.env.AWS_REGION ?? process.env.AWS_DEFAULT_REGION;
@@ -22,6 +29,23 @@ function awsRegion(): string {
 function resourceName(service: string, stage: string, region: string): string {
   const stagePrefix = stage === "production" ? "" : `${stage}-`;
   return `${stagePrefix}${PROJECT_NAME}-${service}-${region}-${AWS_ACCOUNT_ID}`;
+}
+
+function parseBooleanEnv(name: string, defaultValue: boolean): boolean {
+  const value = process.env[name];
+  if (!value) {
+    return defaultValue;
+  }
+
+  const normalized = value.trim().toLowerCase();
+  if (["1", "true", "yes", "on"].includes(normalized)) {
+    return true;
+  }
+  if (["0", "false", "no", "off"].includes(normalized)) {
+    return false;
+  }
+
+  throw new Error(`${name} must be a boolean-like value`);
 }
 
 export default $config({
@@ -198,6 +222,9 @@ export default $config({
         ACCOUNT_CONFIG_ENCRYPTION_SECRET: accountConfigEncryptionSecret.value,
         FILESYSTEM_BUCKET_NAME: names.memory,
         SKILLS_BUCKET_NAME: names.skills,
+        ENABLE_DIRECT_API: ENABLE_DIRECT_API ? "true" : "false",
+        ENABLE_WEBSOCKET: ENABLE_WEBSOCKET ? "true" : "false",
+        ...(NATS_URL ? { NATS_URL } : {}),
       },
       permissions: [
         {

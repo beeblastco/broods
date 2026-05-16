@@ -23,7 +23,7 @@ import {
 import { DEFAULT_SYSTEM_PROMPT } from "../_shared/.generated/system-prompt.ts";
 import type { AccountConfig } from "../_shared/accounts.ts";
 import { getAgent } from "../_shared/agents.ts";
-import { isMissingS3Error, readS3Text } from "../_shared/bun-s3.ts";
+import { isMissingS3Error, readS3Text } from "../_shared/s3.ts";
 import {
   dynamo,
   fromAttributeValue,

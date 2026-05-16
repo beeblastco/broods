@@ -8,6 +8,8 @@ Authorization: Bearer <accountSecret>
 
 Direct API state is internally scoped as `acct:<accountId>:agent:<agentId>:api:<key>`, so different accounts and agents can reuse the same public `eventId` or `conversationKey` without colliding.
 
+Direct sync and async POST access is controlled by the service-level `ENABLE_DIRECT_API` environment variable. It defaults to `true`; when set to `false`, `POST /` and `POST /async` return 404 while channel webhooks and internal worker invocations remain available.
+
 Model behavior and tool access come from the selected agent's encrypted config. Workspace tools come from `config.workspace.enabled`; subagent dispatch comes from `config.subagent.enabled`; search/research tools come from `config.tools`; skills are optional and load only when `config.skills.enabled` is true and `config.skills.allowed` has paths. See [`examples/account.config.example.json`](../examples/account.config.example.json) for the supported agent config shape.
 
 > **Notice:** Every model invocation receives a runtime environment system prompt before the selected agent's configured system prompt. It includes the current runtime time as an ISO timestamp and the runtime timezone. Do not add generic current-time context when creating or invoking an agent unless the request needs a user-specific locale, timezone, or business-time rule.
@@ -23,6 +25,54 @@ Model behavior and tool access come from the selected agent's encrypted config. 
 | `POST` | `/webhooks/{accountId}/{agentId}/{channel}` | provider-native | provider-specific | Channel webhooks, documented in [Channels](channels.md) |
 
 All direct API request bodies use public `eventId` and `conversationKey` values. The service scopes them internally by account and agent.
+
+## WebSocket Gateway
+
+The service supports WebSocket connections through a separate gateway when `ENABLE_WEBSOCKET=true`. With WebSocket enabled, `NATS_URL` is required and the Lambda publishes streaming events to NATS during the agent loop, allowing the gateway to forward real-time responses to connected clients.
+
+### Connection Flow
+
+1. Client connects to the WebSocket gateway with `?token=<accountSecret>&connectionId=<unique-id>`
+2. Gateway validates the account secret and extracts `accountId`/`agentId`
+3. Gateway subscribes to `v1.{accountId}.{agentId}.ws.response.{connectionId}`
+4. Gateway invokes `harness-processing` via Lambda Event invocation with `{ kind: "nats-worker", event: {..., connectionId} }`
+5. Lambda runs the agent loop and publishes each Vercel AI SDK stream event to `v1.{accountId}.{agentId}.ws.response.{connectionId}`
+6. Gateway receives the matching NATS events and forwards them to the WebSocket client
+
+The gateway invokes the Lambda asynchronously (Event mode), so no HTTP connection is held open during streaming. After the async invoke is accepted, the gateway can acknowledge the client while the Lambda publishes directly to NATS and returns 204 when complete.
+
+The gateway should subscribe to the connection-scoped response subject before invoking Lambda. Each WebSocket request must include a non-empty `connectionId`. `ENABLE_WEBSOCKET=true` and `NATS_URL` must both be configured on `harness-processing` for `nats-worker` invocations.
+
+Concurrent WebSocket requests are handled as separate Lambda invocations. Each invocation creates its own NATS publisher connection, so draining one completed request only closes that request's connection and does not stop another user's stream. Use a unique subject-safe `connectionId` per WebSocket connection and keep the `eventId` in the forwarded event envelope so the gateway/client can demultiplex messages if one connection allows overlapping turns. If strict conversation ordering is required, the gateway should serialize turns per `conversationKey`.
+
+### NATS Event Format
+
+Each event wraps a Vercel AI SDK stream chunk with routing headers:
+
+```json
+{
+  "type": "stream",
+  "headers": {
+    "accountId": "acct_...",
+    "agentId": "agent_...",
+    "conversationKey": "conversation-identifier",
+    "eventId": "unique-id-for-dedup",
+    "connectionId": "ws-connection-id"
+  },
+  "data": { "type": "text", "text": "Hello" },
+  "sequence": 1
+}
+```
+
+The `data` field contains the raw Vercel AI SDK stream event — `step-start`, `step-finish`, `text`, `tool-call`, `tool-result`, `finish`, `error`, etc. The gateway derives lifecycle state (task boundaries, approval requests, completion) from these events directly.
+
+### NATS Delivery Model
+
+This integration currently uses core NATS, not JetStream. Core `publish()` enqueues the message on the client connection and does not return a per-message server or persistence acknowledgement. The Lambda publisher sends chunks without waiting for an ack per token, then drains the NATS connection when the request finishes so queued outbound messages are sent before that invocation exits.
+
+If this path moves to JetStream later, update the publisher intentionally: JetStream publish acknowledgements, persistence failures, duplicate windows, and async publish backpressure should be handled explicitly instead of relying on the current core NATS drain behavior.
+
+WebSocket enablement is application infrastructure configuration for the gateway and Lambda environment, not an agent config field. When `ENABLE_WEBSOCKET` is not true, the normal direct API operates in SSE-only mode and NATS configuration is ignored.
 
 ## Health Probe: `GET /`
 

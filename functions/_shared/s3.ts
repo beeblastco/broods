@@ -38,14 +38,13 @@ export async function s3ObjectExists(bucket: string, key: string): Promise<boole
 }
 
 export async function listS3Prefix(bucket: string, prefix: string): Promise<S3ObjectInfo[]> {
-  const s3 = client(bucket);
   const objects: S3ObjectInfo[] = [];
   let continuationToken: string | undefined;
 
   do {
-    const result = await s3.list({
-      prefix,
-      continuationToken,
+    const result = await client(bucket).list({
+      prefix: prefix,
+      continuationToken: continuationToken,
       maxKeys: 1000,
     });
 
