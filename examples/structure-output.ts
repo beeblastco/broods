@@ -1,26 +1,25 @@
 /**
- * Example Stream SSE with tools
+ * Example Stream SSE with structured output parsing
  */
 
 import { createAccount, createAgent, deleteAccount, streamSSE } from "./utils.ts";
 
 // Define all the API keys and url required
 const googleApiKey = process.env.ACCOUNT_GOOGLE_API_KEY!;
-const tavilyApiKey = process.env.ACCOUNT_TAVILY_API_KEY!;
 
 // Test username account
 const username = `stream-${Date.now()}`;
 
-// Create account and an agent with tools enabled
+// Create account and an agent with structured output
 const account = await createAccount(username);
-const agent = await createAgent(account.accountSecret, "Search assistant", {
+const agent = await createAgent(account.accountSecret, "Structured assistant", {
   // Add Google API key to the google provider.
   provider: {
     google: {
       apiKey: googleApiKey
     }
   },
-  // Specific the model and provider will use.
+  // Specify the model and provider will use.
   model: {
     provider: "google",
     modelId: "gemma-4-31b-it",
@@ -46,17 +45,6 @@ const agent = await createAgent(account.accountSecret, "Search assistant", {
   agent: {
     system: "You are a helpful assistant that returns structured output.",
   },
-  // Tools configuration with Tavily search enabled
-  tools: {
-    tavilySearch: {
-      enabled: true,
-      apiKey: tavilyApiKey,
-      searchDepth: "advanced",
-      includeAnswer: true,
-      maxResults: 5,
-      topic: "news",
-    },
-  },
 });
 console.log("Created test account:", JSON.stringify(account));
 console.log("Created test agent:", JSON.stringify(agent));
@@ -72,7 +60,7 @@ try {
         role: "user",
         content: [{
           type: "text",
-          text: "What is the newest model release from OpenAI"
+          text: "What is the newest model release from OpenAI? Provide a concise answer and suggest follow-up actions."
         }]
       },
     ],
