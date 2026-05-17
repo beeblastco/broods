@@ -12,6 +12,7 @@ import {
   scopedDirectEventId,
 } from "../_shared/runtime-keys.ts";
 import { runAgentLoop } from "./harness.ts";
+import { createAgentLifecycleEmitter, type AgentLifecycleEmitter, toLifecycleValue } from "./lifecycle.ts";
 import { Session } from "./session.ts";
 import {
   createPendingAsyncAgentResult,
@@ -65,6 +66,7 @@ export class SubagentCoordinator {
     private readonly parentSession: Session,
     private readonly parentAgentConfig: AgentConfig,
     private readonly waitUntilMs: number = Date.now() + DEFAULT_SUBAGENT_WAIT_BUDGET_MS,
+    private readonly lifecycle: AgentLifecycleEmitter = createAgentLifecycleEmitter(parentSession, parentAgentConfig),
   ) { }
 
   dispatch: RunSubagentDispatch = async (
@@ -84,6 +86,16 @@ export class SubagentCoordinator {
       createPendingAsyncAgentResult({
         eventId: task.eventId,
         conversationKey: task.conversationKey,
+      })
+    ));
+
+    await Promise.all(resolvedTasks.map((task) =>
+      this.lifecycle.emit("subagent.task.started", {
+        taskId: task.taskId,
+        agentId: task.agentId,
+        name: task.name,
+        conversationKey: task.publicConversationKey,
+        inheritedContext: task.inheritedContext,
       })
     ));
 
@@ -355,6 +367,15 @@ export class SubagentCoordinator {
       taskId: completion.taskId,
       agentId: completion.agentId,
       status: completion.status,
+    });
+    await this.lifecycle.emit("subagent.task.finished", {
+      taskId: completion.taskId,
+      agentId: completion.agentId,
+      name: completion.name,
+      conversationKey: completion.conversationKey,
+      status: completion.status,
+      ...(completion.response !== undefined ? { response: toLifecycleValue(completion.response) } : {}),
+      ...(completion.error ? { error: completion.error } : {}),
     });
   }
 

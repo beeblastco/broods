@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it, mock } from "bun:test";
 import * as actualAi from "ai";
 
 const ORIGINAL_ENV = { ...process.env };
+const originalFetch = globalThis.fetch;
 const googleModelMock = mock((modelId: string) => ({ provider: "google", modelId }));
 const createGoogleMock = mock((_options: unknown) => googleModelMock);
 const openAIModelMock = mock((modelId: string) => ({ provider: "openai", modelId }));
@@ -155,6 +156,7 @@ mock.module("ai", () => ({
 
 afterEach(() => {
   process.env = { ...ORIGINAL_ENV };
+  globalThis.fetch = originalFetch;
   streamTextScenario = "empty";
   streamTextMock.mockClear();
   googleModelMock.mockClear();
@@ -217,6 +219,73 @@ describe("runAgentLoop", () => {
     expect(streamTextMock.mock.calls[0]?.[0]).not.toHaveProperty("onChunk");
     expect(typeof streamTextMock.mock.calls[0]?.[0].experimental_onToolCallStart).toBe("function");
     expect(typeof streamTextMock.mock.calls[0]?.[0].experimental_onToolCallFinish).toBe("function");
+  });
+
+  it("sends configured lifecycle webhooks for agent events", async () => {
+    installHarnessEnv();
+    const fetchMock = mock(async (_input: Parameters<typeof fetch>[0], _init?: Parameters<typeof fetch>[1]) =>
+      new Response(null, { status: 200 })
+    );
+    globalThis.fetch = fetchMock as never;
+    const { runAgentLoop } = await import("../functions/harness-processing/harness.ts");
+
+    const stream = await runAgentLoop({
+      accountId: "acct_test",
+      agentId: "agent_test",
+      conversationKey: "direct:conversation",
+      eventId: "direct-event",
+      filesystemNamespace: () => "fs-test",
+      persistModelMessages: async () => [],
+      loadRefreshedSystemPromptParts: async () => ({
+        systemContextSnapshot: { cursor: null, messages: [] },
+        system: [],
+      }),
+    } as never, {
+      messages: [{ role: "user", content: "hello" }],
+      system: [],
+      ephemeralSystem: [],
+      systemContextSnapshot: { cursor: null, messages: [] },
+    }, {
+      provider: {
+        google: {
+          apiKey: "google-key",
+        },
+      },
+      model: {
+        provider: "google",
+        modelId: "gemini-test",
+      },
+      hooks: {
+        webhook: {
+          enabled: true,
+          url: "https://hooks.example/agent-events",
+          secret: "hook-secret",
+          events: ["agent.started", "agent.failed"],
+        },
+      },
+    });
+
+    await stream.consumeStream();
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const payloads = fetchMock.mock.calls.map((call) => JSON.parse(String(call[1]?.body)));
+    expect(payloads.map((payload) => payload.type)).toEqual(["agent.started", "agent.failed"]);
+    expect(payloads[0]).toMatchObject({
+      accountId: "acct_test",
+      agentId: "agent_test",
+      eventId: "direct-event",
+      conversationKey: "direct:conversation",
+      payload: {
+        modelProvider: "google",
+        modelId: "gemini-test",
+        messageCount: 1,
+      },
+    });
+    expect(fetchMock.mock.calls[0]?.[0]).toBe("https://hooks.example/agent-events");
+    expect(fetchMock.mock.calls[0]?.[1]?.headers).toMatchObject({
+      "Content-Type": "application/json",
+    });
+    expect(fetchMock.mock.calls[0]?.[1]?.headers).toHaveProperty("X-Webhook-Signature");
   });
 
   it("keeps the provider error when the stream also finishes with empty text", async () => {

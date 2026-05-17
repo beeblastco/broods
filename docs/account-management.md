@@ -330,6 +330,38 @@ Controls harness behavior.
 
 > **Important:** The runtime always prepends an environment system prompt before this agent prompt. That environment prompt includes current runtime time and runtime timezone. Do not duplicate generic current-time instructions in `agent.system`; only add model knowledge cutoff, timezone, or calendar guidance here when the agent needs that stable rule.
 
+### Lifecycle Hooks Config
+
+Lifecycle hooks publish stable agent runtime events. Webhook delivery is best-effort: failed deliveries are logged but do not fail the agent turn. See [Lifecycle Webhooks](webhook.md) for event payloads and signatures.
+
+```json
+{
+  "hooks": {
+    "webhook": {
+      "enabled": true,
+      "url": "https://example.com/agent-events",
+      "secret": "...",
+      "events": [
+        "agent.started",
+        "tool.call.started",
+        "tool.call.finished",
+        "tool.result",
+        "subagent.task.finished",
+        "agent.finished",
+        "agent.failed"
+      ]
+    }
+  }
+}
+```
+
+| Field | Type | Description |
+| ------- | ------ | ------------- |
+| `enabled` | boolean | Enables lifecycle webhook delivery |
+| `url` | string | HTTPS endpoint that receives event JSON |
+| `secret` | string | HMAC signing secret used for `X-Webhook-Signature` |
+| `events` | string[] | Optional allow-list; omitted means all lifecycle events |
+
 ### Skills Config
 
 Optional. Omit `skills` when an agent has no skills. When `enabled` is true and `allowed` contains at least one skill path, the runtime includes allowed skill metadata in the system prompt and exposes the harness-managed `load_skill` tool.

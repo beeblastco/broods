@@ -101,6 +101,56 @@ describe("agent config", () => {
     );
   });
 
+  it("validates lifecycle webhook hook config", () => {
+    expect(normalizeAgentConfig({
+      hooks: {
+        webhook: {
+          enabled: true,
+          url: "https://hooks.example/agent-events",
+          secret: "hook-secret",
+          events: ["agent.started", "tool.result", "subagent.task.finished"],
+        },
+      },
+    })).toMatchObject({
+      hooks: {
+        webhook: {
+          enabled: true,
+          events: ["agent.started", "tool.result", "subagent.task.finished"],
+        },
+      },
+    });
+
+    expect(() => normalizeAgentConfig({
+      hooks: {
+        webhook: {
+          enabled: true,
+          secret: "hook-secret",
+        },
+      },
+    })).toThrow("config.hooks.webhook.url is required when config.hooks.webhook.enabled is true");
+
+    expect(() => normalizeAgentConfig({
+      hooks: {
+        webhook: {
+          enabled: true,
+          url: "http://hooks.example/agent-events",
+          secret: "hook-secret",
+        },
+      },
+    })).toThrow("config.hooks.webhook.url must use https");
+
+    expect(() => normalizeAgentConfig({
+      hooks: {
+        webhook: {
+          enabled: true,
+          url: "https://hooks.example/agent-events",
+          secret: "hook-secret",
+          events: ["unknown.event"],
+        },
+      },
+    })).toThrow("config.hooks.webhook.events must be an array of:");
+  });
+
   it("validates agent model config", () => {
     expect(normalizeAgentConfig({
       provider: {
@@ -532,6 +582,14 @@ describe("agent config", () => {
           maxContextLength: 100000,
         },
       },
+      hooks: {
+        webhook: {
+          enabled: true,
+          url: "https://hooks.example/agent-events",
+          secret: "hook-secret",
+          events: ["agent.finished"],
+        },
+      },
       tools: {
         tavilySearch: { maxResults: 3 },
       },
@@ -585,6 +643,14 @@ describe("agent config", () => {
         compaction: {
           enabled: true,
           maxContextLength: 100000,
+        },
+      },
+      hooks: {
+        webhook: {
+          enabled: true,
+          url: "https://hooks.example/agent-events",
+          secret: "hook-secret",
+          events: ["agent.finished"],
         },
       },
       tools: {
