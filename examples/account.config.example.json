@@ -132,6 +132,11 @@
       "allowedGuildIds": [
         "123"
       ]
+    },
+    "pancake": {
+      "pageId": "page-id",
+      "pageAccessToken": "...",
+      "senderId": "optional-staff-user-id"
     }
   }
 }

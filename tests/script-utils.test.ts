@@ -20,6 +20,7 @@ describe("integration account setup scripts", () => {
       "scripts/configure-discord-account.ts",
       "scripts/configure-github-account.ts",
       "scripts/configure-slack-account.ts",
+      "scripts/configure-pancake-account.ts",
       ".github/workflows/deploy.yaml",
     ].map((path) => readFileSync(path, "utf-8"));
     const combined = files.join("\n");
@@ -29,10 +30,12 @@ describe("integration account setup scripts", () => {
     expect(combined).toContain("DISCORD_AGENT_NAME");
     expect(combined).toContain("GITHUB_AGENT_NAME");
     expect(combined).toContain("SLACK_AGENT_NAME");
+    expect(combined).toContain("PANCAKE_AGENT_NAME");
     expect(combined).not.toContain("TELEGRAM_ACCOUNT_USERNAME");
     expect(combined).not.toContain("DISCORD_ACCOUNT_USERNAME");
     expect(combined).not.toContain("GITHUB_ACCOUNT_USERNAME");
     expect(combined).not.toContain("SLACK_ACCOUNT_USERNAME");
+    expect(combined).not.toContain("PANCAKE_ACCOUNT_USERNAME");
   });
 });
 

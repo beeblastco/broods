@@ -371,6 +371,34 @@ describe("agent config", () => {
     })).toThrow("config.subagent.context must be one of: new, inherited");
   });
 
+  it("validates Pancake channel config", () => {
+    expect(normalizeAgentConfig({
+      channels: {
+        pancake: {
+          pageId: "page-1",
+          pageAccessToken: "page-token",
+          senderId: "sender-1",
+        },
+      },
+    })).toEqual({
+      channels: {
+        pancake: {
+          pageId: "page-1",
+          pageAccessToken: "page-token",
+          senderId: "sender-1",
+        },
+      },
+    });
+
+    expect(() => normalizeAgentConfig({
+      channels: {
+        pancake: {
+          pageAccessToken: 123,
+        },
+      },
+    })).toThrow("config.channels.pancake.pageAccessToken must be a string");
+  });
+
   it("projects only runtime settings for agent sessions", () => {
     expect(toRuntimeAgentConfig({
       model: {

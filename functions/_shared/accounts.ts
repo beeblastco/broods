@@ -141,6 +141,7 @@ export interface AgentChannelsConfig {
   github?: AgentGitHubChannelConfig;
   slack?: AgentSlackChannelConfig;
   discord?: AgentDiscordChannelConfig;
+  pancake?: AgentPancakeChannelConfig;
   [key: string]: unknown;
 }
 
@@ -171,6 +172,13 @@ export interface AgentDiscordChannelConfig {
   botToken?: string;
   publicKey?: string;
   allowedGuildIds?: string[];
+  [key: string]: unknown;
+}
+
+export interface AgentPancakeChannelConfig {
+  pageId?: string;
+  pageAccessToken?: string;
+  senderId?: string;
   [key: string]: unknown;
 }
 
@@ -527,6 +535,7 @@ function normalizeChannelsConfig(value: unknown): void {
   normalizeGitHubConfig(channels.github);
   normalizeSlackConfig(channels.slack);
   normalizeDiscordConfig(channels.discord);
+  normalizePancakeConfig(channels.pancake);
 }
 
 function normalizeAgentBehaviorConfig(value: unknown): void {
@@ -879,6 +888,15 @@ function normalizeDiscordConfig(value: unknown): void {
   assertOptionalString(config.botToken, "config.channels.discord.botToken");
   assertOptionalString(config.publicKey, "config.channels.discord.publicKey");
   assertOptionalStringArray(config.allowedGuildIds, "config.channels.discord.allowedGuildIds");
+}
+
+function normalizePancakeConfig(value: unknown): void {
+  if (value == null) return;
+  if (!isPlainObject(value)) throw new Error("config.channels.pancake must be an object");
+  const config = value as Record<string, unknown>;
+  assertOptionalString(config.pageId, "config.channels.pancake.pageId");
+  assertOptionalString(config.pageAccessToken, "config.channels.pancake.pageAccessToken");
+  assertOptionalString(config.senderId, "config.channels.pancake.senderId");
 }
 
 function accountConfigsTableName(): string {
