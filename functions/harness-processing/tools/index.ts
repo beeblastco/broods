@@ -20,6 +20,7 @@ import runSubagentTool, {
 import tasksTool from "./tasks.tool.ts";
 import { tavilyExtractTool, tavilySearchTool } from "./tavily.tool.ts";
 import testAsyncTool from "./test.async.tool.ts";
+import testExternalAsyncTool from "./test.external-async.tool.ts";
 
 // Runtime dependencies shared by tool factories. Model-facing input schemas
 // stay inside each individual tool file.
@@ -43,6 +44,7 @@ const toolFactories = {
   tavilyExtract: tavilyExtractTool,
   googleSearch: googleSearchTool,
   test_async: testAsyncTool,
+  test_external_async: testExternalAsyncTool,
 } satisfies Record<string, ToolFactory>;
 
 export function createTools(context: Omit<ToolContext, "config">, agentConfig: AgentConfig): ToolSet {
