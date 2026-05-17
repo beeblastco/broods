@@ -83,6 +83,7 @@ export default $config({
       processedEvents: resourceName("processed-events", stage, region),
       asyncAgentResult: resourceName("async-agent-result", stage, region),
       asyncToolResult: resourceName("async-tool-result", stage, region),
+      externalAsyncToolMock: resourceName("async-tool-mock", stage, region),
       accountConfigs: resourceName("account-configs", stage, region),
       agentConfigs: resourceName("agent-configs", stage, region),
       accountSignupRateLimits: resourceName("account-signup-rate-limits", stage, region),
@@ -202,7 +203,7 @@ export default $config({
     const skillsBucketArn = `arn:aws:s3:::${names.skills}`;
 
     const mockExternalAsyncTool = new sst.aws.Function("MockExternalAsyncTool", {
-      name: resourceName("mock-async-tool", stage, region),
+      name: names.externalAsyncToolMock,
       runtime: "python3.12",
       architecture: "arm64",
       bundle: "functions/mock-external-async-tool",

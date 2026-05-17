@@ -159,7 +159,16 @@ jobs:
             fi
           done
 
-          bunx sst deploy --stage "$SST_STAGE" --print-logs
+          for attempt in 1 2 3; do
+            echo "Deploy attempt $attempt/3"
+            if bunx sst deploy --stage "$SST_STAGE" --print-logs; then
+              exit 0
+            fi
+            echo "Deploy failed, retrying in 15s..."
+            sleep 15
+          done
+          echo "All deploy attempts failed" >&2
+          exit 1
 
       - name: Configure Telegram account webhook
         env:
