@@ -6,3 +6,5 @@ secrets.env
 .DS_Store
 *.log
 functions/_shared/.generated/
+
+na_tmp/
