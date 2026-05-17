@@ -43,7 +43,10 @@ describe("test_external_async tool", () => {
       },
     });
 
-    expect(result).toEqual({ type: "text", value: "Dispatched. Waiting for result..." });
+    expect(result).toEqual({
+      type: "text",
+      value: "Dispatched. The result will be injected back to the conversation when finished",
+    });
     expect(calls[0]?.url).toBe("https://mock.example/start");
     expect(calls[0]?.init?.method).toBe("POST");
     const body = JSON.parse(String(calls[0]?.init?.body)) as Record<string, unknown>;
