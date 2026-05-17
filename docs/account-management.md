@@ -431,7 +431,8 @@ Available tools: `tavilySearch`, `tavilyExtract`, `googleSearch`, `test_async`.
     },
     "test_async": {
       "enabled": true,
-      "async": true
+      "async": true,
+      "execution": "same-invocation"
     }
   }
 }
@@ -441,6 +442,7 @@ Available tools: `tavilySearch`, `tavilyExtract`, `googleSearch`, `test_async`.
 | ------ | ------- | ------ | ------------- |
 | `tavilySearch` | `enabled` | boolean | Enable the tool |
 | | `async` | boolean | Return immediately and inject the completed local `execute` result later |
+| | `execution` | `same-invocation` \| `external-dispatch` | Async lifecycle; defaults to `same-invocation` |
 | | `needsApproval` | boolean | Require AI SDK approval before execution |
 | | `apiKey` | string | Tavily API key; required unless `TAVILY_API_KEY` is set |
 | | `searchDepth` | `basic` \| `advanced` | Search depth |
@@ -449,18 +451,21 @@ Available tools: `tavilySearch`, `tavilyExtract`, `googleSearch`, `test_async`.
 | | `topic` | `general` \| `news` \| `finance` | Search topic |
 | `tavilyExtract` | `enabled` | boolean | Enable the tool |
 | | `async` | boolean | Return immediately and inject the completed local `execute` result later |
+| | `execution` | `same-invocation` \| `external-dispatch` | Async lifecycle; defaults to `same-invocation` |
 | | `needsApproval` | boolean | Require AI SDK approval before execution |
 | | `apiKey` | string | Tavily API key; required unless `TAVILY_API_KEY` is set |
 | | `extractDepth` | `basic` \| `advanced` | Extraction depth |
 | | `format` | `markdown` \| `text` | Output format |
 | `googleSearch` | `enabled` | boolean | Enable the tool; requires `config.model.provider` to be `google` |
-| | `async` | boolean | Accepted for config consistency, but provider-defined tools without local `execute` are not detached |
+| | `async` | boolean | Accepted for config consistency, but provider-defined tools without local `execute` cannot use async wrapping |
+| | `execution` | `same-invocation` \| `external-dispatch` | Accepted for config consistency, but ignored without local `execute` |
 | | `needsApproval` | boolean | Require AI SDK approval before execution |
 | | `searchTypes` | object | Keys: `webSearch`, `imageSearch` (each is an empty object or with options) |
 | | `timeRangeFilter.startTime` | string | ISO date string, filter results after this date |
 | | `timeRangeFilter.endTime` | string | ISO date string, filter results before this date |
 | `test_async` | `enabled` | boolean | Enable the local async example tool |
 | | `async` | boolean | Return immediately and inject the completed local `execute` result later |
+| | `execution` | `same-invocation` \| `external-dispatch` | Async lifecycle; defaults to `same-invocation` |
 | | `needsApproval` | boolean | Require AI SDK approval before execution |
 
 ---

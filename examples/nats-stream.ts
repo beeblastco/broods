@@ -140,6 +140,9 @@ async function printNatsStream(subscription: ReturnType<typeof nats.subscribe>):
       const event = JSON.parse(codec.decode(message.data)) as NatsStreamEvent;
 
       process.stdout.write(`\n[${event.sequence}] ${JSON.stringify(event.data)}\n`);
+      if (event.data.type === "done") {
+        break;
+      }
     }
   } finally {
     clearTimeout(timeout);

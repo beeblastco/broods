@@ -196,6 +196,7 @@ describe("agent config", () => {
       tools: {
         tavilySearch: {
           async: true,
+          execution: "external-dispatch",
           needsApproval: true,
           maxResults: 5,
           includeAnswer: false,
@@ -224,6 +225,7 @@ describe("agent config", () => {
       tools: {
         tavilySearch: {
           async: true,
+          execution: "external-dispatch",
           needsApproval: true,
           maxResults: 5,
           includeAnswer: false,
@@ -267,6 +269,12 @@ describe("agent config", () => {
         tavilySearch: { async: "yes" },
       },
     })).toThrow("config.tools.tavilySearch.async must be a boolean");
+
+    expect(() => normalizeAgentConfig({
+      tools: {
+        tavilySearch: { execution: "background" },
+      },
+    })).toThrow("config.tools.tavilySearch.execution must be one of: same-invocation, external-dispatch");
   });
 
   it("validates agent skills config", () => {
