@@ -35,6 +35,19 @@ const SESSION_MAX_CONTEXT_LENGTH_LIMIT = 500_000; // Limit configured for sessio
 
 export type AccountStatus = "active" | "disabled";
 
+const AGENT_LIFECYCLE_EVENT_NAMES = [
+  "agent.started",
+  "agent.step.finished",
+  "agent.finished",
+  "agent.failed",
+  "agent.approval.required",
+  "tool.call.started",
+  "tool.call.finished",
+  "tool.result",
+  "subagent.task.started",
+  "subagent.task.finished",
+] as const satisfies readonly AgentLifecycleEventName[];
+
 export interface AccountRecord {
   accountId: string;
   username: string;
@@ -51,6 +64,7 @@ export interface AgentConfig {
   provider?: AgentProviderConfig;
   workspace?: AgentWorkspaceConfig;
   session?: AgentSessionConfig;
+  hooks?: AgentHooksConfig;
   channels?: AgentChannelsConfig;
   tools?: AgentToolsConfig;
   skills?: AgentSkillsConfig;
@@ -140,6 +154,31 @@ export interface AgentSessionCompactionConfig {
   maxContextLength?: number;
   [key: string]: unknown;
 }
+
+export interface AgentHooksConfig {
+  webhook?: AgentWebhookHookConfig;
+  [key: string]: unknown;
+}
+
+export interface AgentWebhookHookConfig {
+  enabled?: boolean;
+  url?: string;
+  secret?: string;
+  events?: AgentLifecycleEventName[];
+  [key: string]: unknown;
+}
+
+export type AgentLifecycleEventName =
+  | "agent.started"
+  | "agent.step.finished"
+  | "agent.finished"
+  | "agent.failed"
+  | "agent.approval.required"
+  | "tool.call.started"
+  | "tool.call.finished"
+  | "tool.result"
+  | "subagent.task.started"
+  | "subagent.task.finished";
 
 export type AgentToolsConfig = Record<string, AgentToolConfig>;
 
@@ -447,6 +486,7 @@ export function toRuntimeAgentConfig(config: AgentConfig): AgentConfig {
     provider,
     workspace,
     session,
+    hooks,
     tools,
     skills,
     subagent,
@@ -458,6 +498,7 @@ export function toRuntimeAgentConfig(config: AgentConfig): AgentConfig {
     ...(provider !== undefined ? { provider } : {}),
     ...(workspace !== undefined ? { workspace } : {}),
     ...(session !== undefined ? { session } : {}),
+    ...(hooks !== undefined ? { hooks } : {}),
     ...(tools !== undefined ? { tools } : {}),
     ...(skills !== undefined ? { skills } : {}),
     ...(subagent !== undefined ? { subagent } : {}),
@@ -479,6 +520,7 @@ export function normalizeAgentConfig(value: unknown): AgentConfig {
   normalizeProviderConfig(config.provider);
   normalizeWorkspaceConfig(config.workspace);
   normalizeSessionConfig(config.session);
+  normalizeHooksConfig(config.hooks);
   normalizeChannelsConfig(config.channels);
   normalizeToolsConfig(config.tools);
   normalizeSkillsConfig(config.skills);
@@ -748,6 +790,59 @@ function normalizeSessionCompactionConfig(value: unknown): void {
     "config.session.compaction.maxContextLength",
     SESSION_MAX_CONTEXT_LENGTH_LIMIT,
   );
+}
+
+function normalizeHooksConfig(value: unknown): void {
+  if (value == null) {
+    return;
+  }
+  if (!isPlainObject(value)) {
+    throw new Error("config.hooks must be an object");
+  }
+
+  const config = value as Record<string, unknown>;
+  normalizeWebhookHookConfig(config.webhook);
+}
+
+function normalizeWebhookHookConfig(value: unknown): void {
+  if (value == null) {
+    return;
+  }
+  if (!isPlainObject(value)) {
+    throw new Error("config.hooks.webhook must be an object");
+  }
+
+  const config = value as Record<string, unknown>;
+  assertOptionalBoolean(config.enabled, "config.hooks.webhook.enabled");
+  assertOptionalNonEmptyString(config.url, "config.hooks.webhook.url");
+  assertOptionalNonEmptyString(config.secret, "config.hooks.webhook.secret");
+  if (config.events !== undefined) {
+    if (!Array.isArray(config.events) || !config.events.every((event) =>
+      typeof event === "string" && AGENT_LIFECYCLE_EVENT_NAMES.includes(event as AgentLifecycleEventName)
+    )) {
+      throw new Error(`config.hooks.webhook.events must be an array of: ${AGENT_LIFECYCLE_EVENT_NAMES.join(", ")}`);
+    }
+  }
+
+  if (config.enabled === true) {
+    if (typeof config.url !== "string" || config.url.trim().length === 0) {
+      throw new Error("config.hooks.webhook.url is required when config.hooks.webhook.enabled is true");
+    }
+    if (typeof config.secret !== "string" || config.secret.trim().length === 0) {
+      throw new Error("config.hooks.webhook.secret is required when config.hooks.webhook.enabled is true");
+    }
+  }
+
+  if (typeof config.url === "string" && config.url.trim().length > 0) {
+    try {
+      const url = new URL(config.url);
+      if (url.protocol !== "https:") {
+        throw new Error("config.hooks.webhook.url must use https");
+      }
+    } catch (err) {
+      throw new Error(err instanceof Error ? err.message : "config.hooks.webhook.url must be a valid URL");
+    }
+  }
 }
 
 function normalizeToolsConfig(value: unknown): void {

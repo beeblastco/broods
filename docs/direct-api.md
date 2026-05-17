@@ -262,29 +262,6 @@ curl "$AGENT_SERVICE_URL/async-tools/async_tool_.../complete" \
   }'
 ```
 
-## Webhook Callback
-
-The sync API can send a callback after generation completes. Include `webhookUrl` in the JSON body and `X-Webhook-Secret` in the request headers:
-
-```json
-{
-  "agentId": "agent_...",
-  "eventId": "unique-id-for-dedup",
-  "conversationKey": "conversation-identifier",
-  "webhookUrl": "https://example.com/agent-callback",
-  "events": [
-    {
-      "role": "user",
-      "content": [
-        { "type": "text", "text": "Hello" }
-      ]
-    }
-  ]
-}
-```
-
-The HTTP response remains the normal SSE stream. The callback is sent as a JSON `POST` and signed with `X-Webhook-Signature: sha256=<hmac>`.
-
 ## Async API: `POST /async`
 
 POST the same request shape to `/async` when the caller should not hold an SSE connection open. The request returns after the pending status is stored and the background Lambda self-invocation is accepted:
@@ -295,40 +272,7 @@ POST the same request shape to `/async` when the caller should not hold an SSE c
 }
 ```
 
-The async worker runs the same account-scoped harness code in the background. If `webhookUrl` and `X-Webhook-Secret` are provided, completion is also delivered to the callback:
-
-```json
-{
-  "agentId": "agent_...",
-  "eventId": "unique-id-for-dedup",
-  "conversationKey": "conversation-identifier",
-  "response": { "answer": "done" },
-  "success": true
-}
-```
-
-For plain text agents, `response` remains a string. For structured agents, it is the parsed JSON value from `model.output`.
-
-If the async run stops for tool approval, the callback uses the same approval summary shape as the status API:
-
-```json
-{
-  "eventId": "unique-id-for-dedup",
-  "conversationKey": "conversation-identifier",
-  "status": "awaiting_approval",
-  "approvals": [
-    {
-      "approvalId": "approval-id-from-stream",
-      "toolCallId": "tool-call-id",
-      "toolName": "filesystem",
-      "input": { "shell": "rm file.txt" }
-    }
-  ],
-  "success": true
-}
-```
-
-Without a callback, poll the returned status URL.
+The async worker runs the same account-scoped harness code in the background. Poll the returned status URL for completion, failure, or tool approval state. Per-request callback webhooks are not supported; configure agent lifecycle webhooks with `config.hooks.webhook` when external systems need runtime event delivery.
 
 ## Status API: `GET /status/{eventId}?agentId={agentId}`
 

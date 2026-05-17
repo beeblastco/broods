@@ -83,6 +83,22 @@
       "maxContextLength": 100000
     }
   },
+  "hooks": {
+    "webhook": {
+      "enabled": false,
+      "url": "https://example.com/agent-events",
+      "secret": "...",
+      "events": [
+        "agent.started",
+        "tool.call.started",
+        "tool.call.finished",
+        "tool.result",
+        "subagent.task.finished",
+        "agent.finished",
+        "agent.failed"
+      ]
+    }
+  },
   "tools": {
     "tavilySearch": {
       "enabled": true,

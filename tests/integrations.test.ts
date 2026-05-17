@@ -516,8 +516,7 @@ describe("direct API ingress", () => {
     expect(handledEvents[0]?.statusUrl).toBe("https://example.lambda-url.aws/status/one?agentId=agent_test");
   });
 
-  it("parses optional webhook config for direct API requests", async () => {
-    const handledEvents: DirectInboundEvent[] = [];
+  it("rejects per-request webhook callback config for direct API requests", async () => {
     const response = await routeIncomingEvent(createEvent({
       eventId: "one",
       conversationKey: "alpha",
@@ -529,39 +528,12 @@ describe("direct API ingress", () => {
     }, {
       authorization: "Bearer secret",
       "x-webhook-secret": "webhook-secret",
-    }), createHandlers({
-      handleDirectRequest: async (event) => {
-        handledEvents.push(event);
-        return {
-          statusCode: 200,
-          headers: { "Content-Type": "text/plain; charset=utf-8" },
-          body: "ok",
-        };
-      },
-    }));
-
-    expect(response.statusCode).toBe(200);
-    expect(handledEvents[0]?.webhookConfig).toEqual({
-      url: "https://callbacks.example/hook",
-      secret: "webhook-secret",
-    });
-  });
-
-  it("rejects webhook URLs without a webhook secret", async () => {
-    const response = await routeIncomingEvent(createEvent({
-      eventId: "one",
-      conversationKey: "alpha",
-      webhookUrl: "https://callbacks.example/hook",
-      events: [{
-        role: "user",
-        content: [{ type: "text", text: "hello" }],
-      }],
-    }, {
-      authorization: "Bearer secret",
     }), createHandlers());
 
     expect(response.statusCode).toBe(400);
-    expect(responseJson(response)).toEqual({ error: "X-Webhook-Secret is required when webhookUrl is provided" });
+    expect(responseJson(response)).toEqual({
+      error: "Per-request webhook callbacks are no longer supported; configure config.hooks.webhook on the agent",
+    });
   });
 
   it("routes status requests through direct API auth", async () => {

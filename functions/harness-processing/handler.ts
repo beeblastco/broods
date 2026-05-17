@@ -16,7 +16,6 @@ import { logError, logInfo } from "../_shared/log.ts";
 import { LiveNatsPublisher, type NatsPublisher } from "../_shared/nats.ts";
 import type { LambdaInvocation, LambdaResponse } from "../_shared/runtime.ts";
 import { publicConversationKeyFromScoped } from "../_shared/runtime-keys.ts";
-import { fireWebhook, type WebhookConfig } from "../_shared/webhook.ts";
 import { runAgentLoop, type ToolApprovalSummary } from "./harness.ts";
 import {
   routeIncomingEvent,
@@ -286,12 +285,6 @@ async function handleAsyncWorkerRequest(event: DirectInboundEvent, context?: Lam
             response: response,
           })
         ));
-        await sendWebhook(event, {
-          eventId: event.publicEventId,
-          conversationKey: event.publicConversationKey,
-          response: response,
-          success: true,
-        });
       },
       onErrorText: async (error) => {
         didSettle = true;
@@ -305,13 +298,6 @@ async function handleAsyncWorkerRequest(event: DirectInboundEvent, context?: Lam
           })
         ));
         didSettle = true;
-        await sendWebhook(event, {
-          eventId: event.publicEventId,
-          conversationKey: event.publicConversationKey,
-          status: "awaiting_approval",
-          approvals,
-          success: true,
-        });
       },
     });
 
@@ -380,7 +366,7 @@ async function handleNatsWorkerRequest(event: DirectInboundEvent, context?: Lamb
         publicConversationKey: event.publicConversationKey,
       });
 
-      const result = await runParentContinuationLoop({
+      await runParentContinuationLoop({
         session: session,
         subagentCoordinator: subagentCoordinator,
         asyncToolCoordinator: asyncToolCoordinator,
@@ -389,25 +375,12 @@ async function handleNatsWorkerRequest(event: DirectInboundEvent, context?: Lamb
         consumeStream: (stream) => pipeAgentNatsStream(stream, publisher),
         onLoopErrorText: async (error) => {
           publisher.publish({ type: "error", error }).catch(() => {});
-          await sendWebhook(event, {
-            eventId: event.publicEventId,
-            conversationKey: event.publicConversationKey,
-            success: false,
-            error,
-          });
         },
         onApprovalRequired: async (approvals) => {
           // The event also sends additional tool-approval-request so that the websocket gateway can easily
           // extract this data and do sth with it.
           // This is intentional (the user will receive the tool-approval-request event separately)
           publisher.publish({ type: "tool-approval-request", approvals }).catch(() => {});
-          await sendWebhook(event, {
-            eventId: event.publicEventId,
-            conversationKey: event.publicConversationKey,
-            status: "awaiting_approval",
-            approvals,
-            success: true,
-          });
         },
         onHeartbeat: (pendingCount) => {
           publisher.publish({
@@ -426,14 +399,6 @@ async function handleNatsWorkerRequest(event: DirectInboundEvent, context?: Lamb
           reason: "external-async-tools",
         });
       } else {
-        if (result.finalResponse !== undefined) {
-          await sendWebhook(event, {
-            eventId: event.publicEventId,
-            conversationKey: event.publicConversationKey,
-            response: result.finalResponse,
-            success: true,
-          });
-        }
         await publisher.publish({ type: "done" });
       }
     } finally {
@@ -566,29 +531,6 @@ async function settleAsyncFailure(event: DirectInboundEvent, error: string): Pro
       error,
     })
   ));
-  await sendWebhook(event, {
-    eventId: event.publicEventId,
-    conversationKey: event.publicConversationKey,
-    success: false,
-    error,
-  });
-}
-
-async function sendWebhook(
-  event: { webhookConfig?: WebhookConfig },
-  payload: unknown,
-): Promise<void> {
-  if (!event.webhookConfig) {
-    return;
-  }
-
-  try {
-    await fireWebhook(event.webhookConfig, payload);
-  } catch (err) {
-    logError("Webhook delivery failed", {
-      error: err instanceof Error ? err.message : String(err),
-    });
-  }
 }
 
 async function invokeAsyncWorker(event: DirectInboundEvent): Promise<void> {
@@ -734,37 +676,15 @@ function createDirectContinuationSseBody(
       const asyncToolCoordinator = new AsyncToolCoordinator(session, waitUntilMs(context), new Set(["same-invocation"] as const));
 
       try {
-        const result = await runParentContinuationLoop({
+        await runParentContinuationLoop({
           session: session,
           subagentCoordinator: subagentCoordinator,
           asyncToolCoordinator: asyncToolCoordinator,
           initialTurnContext: initialTurnContext,
           agentConfig: event.agentConfig,
           consumeStream: (stream) => pipeAgentSseStream(stream, controller),
-          onLoopErrorText: (error) => sendWebhook(event, {
-            eventId: event.publicEventId,
-            conversationKey: event.publicConversationKey,
-            success: false,
-            error,
-          }),
-          onApprovalRequired: (approvals) => sendWebhook(event, {
-            eventId: event.publicEventId,
-            conversationKey: event.publicConversationKey,
-            status: "awaiting_approval",
-            approvals,
-            success: true,
-          }),
           onHeartbeat: (pendingCount) => controller.enqueue(textEncoder.encode(`: waiting for async work pending=${pendingCount}\n\n`))
         });
-
-        if (result.finalResponse !== undefined) {
-          await sendWebhook(event, {
-            eventId: event.publicEventId,
-            conversationKey: event.publicConversationKey,
-            response: result.finalResponse,
-            success: true,
-          });
-        }
       } catch (err) {
         const error = err instanceof Error ? err.message : String(err);
         logError("Direct continuation stream failed", {
@@ -772,12 +692,6 @@ function createDirectContinuationSseBody(
           error,
         });
         controller.enqueue(textEncoder.encode(`data: ${JSON.stringify({ type: "error", error })}\n\n`));
-        await sendWebhook(event, {
-          eventId: event.publicEventId,
-          conversationKey: event.publicConversationKey,
-          success: false,
-          error,
-        });
       } finally {
         controller.close();
       }

@@ -56,7 +56,6 @@ import {
   scopedDirectConversationKey,
   scopedDirectEventId,
 } from "../_shared/runtime-keys.ts";
-import type { WebhookConfig } from "../_shared/webhook.ts";
 import type { ConversationIngressEvent } from "./session.ts";
 
 type DirectIngressEvent =
@@ -74,7 +73,6 @@ export interface DirectInboundEvent {
   conversationKey: string;
   publicConversationKey: string;
   events: DirectIngressEvent[];
-  webhookConfig?: WebhookConfig;
   connectionId?: string;
 }
 
@@ -465,7 +463,9 @@ async function parseDirectPayload(
   if (events.length === 0) {
     throw new Error("Request body must include a non-empty events array");
   }
-  const webhookConfig = parseWebhookConfig(record.webhookUrl, headers["x-webhook-secret"]);
+  if (record.webhookUrl !== undefined || headers["x-webhook-secret"] !== undefined) {
+    throw new Error("Per-request webhook callbacks are no longer supported; configure config.hooks.webhook on the agent");
+  }
 
   return {
     accountId: account.accountId,
@@ -476,36 +476,6 @@ async function parseDirectPayload(
     conversationKey: scopedDirectConversationKey(account.accountId, agent.agentId, rawConversationKey),
     publicConversationKey: rawConversationKey,
     events,
-    ...(webhookConfig ? { webhookConfig } : {}),
-  };
-}
-
-function parseWebhookConfig(rawUrl: unknown, rawSecret: string | undefined): WebhookConfig | undefined {
-  if (rawUrl == null && rawSecret == null) {
-    return undefined;
-  }
-
-  if (typeof rawUrl !== "string" || rawUrl.trim().length === 0) {
-    throw new Error("webhookUrl must be a non-empty string when X-Webhook-Secret is provided");
-  }
-
-  if (!rawSecret || rawSecret.trim().length === 0) {
-    throw new Error("X-Webhook-Secret is required when webhookUrl is provided");
-  }
-
-  const url = rawUrl.trim();
-  try {
-    const parsed = new URL(url);
-    if (parsed.protocol !== "https:") {
-      throw new Error("webhookUrl must use https");
-    }
-  } catch (err) {
-    throw new Error(err instanceof Error ? err.message : "webhookUrl must be a valid URL");
-  }
-
-  return {
-    url,
-    secret: rawSecret,
   };
 }
 

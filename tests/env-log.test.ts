@@ -4,7 +4,7 @@
  */
 
 import { afterEach, describe, expect, it } from "bun:test";
-import { optionalEnv, requireEnv } from "../functions/_shared/env.ts";
+import { booleanEnv, optionalEnv, requireEnv } from "../functions/_shared/env.ts";
 import { logError, logInfo, logWarn } from "../functions/_shared/log.ts";
 
 const ORIGINAL_ENV = { ...process.env };
@@ -46,6 +46,66 @@ describe("environment helpers", () => {
     expect(optionalEnv("OPTIONAL_SAMPLE")).toBeUndefined();
     expect(optionalEnv("EMPTY_OPTIONAL_SAMPLE")).toBeUndefined();
     expect(optionalEnv("SET_OPTIONAL_SAMPLE")).toBe("value");
+  });
+
+  it("returns default value when boolean env var is unset", () => {
+    delete process.env.BOOL_UNSET;
+
+    expect(booleanEnv("BOOL_UNSET")).toBe(false);
+    expect(booleanEnv("BOOL_UNSET", true)).toBe(true);
+    expect(booleanEnv("BOOL_UNSET", false)).toBe(false);
+  });
+
+  it("returns false when boolean env var is empty", () => {
+    process.env.BOOL_EMPTY = "";
+
+    expect(booleanEnv("BOOL_EMPTY")).toBe(false);
+  });
+
+  it("parses true-like boolean values case-insensitively with trimming", () => {
+    process.env.BOOL_1 = "1";
+    process.env.BOOL_TRUE = "true";
+    process.env.BOOL_YES = "yes";
+    process.env.BOOL_ON = "on";
+    process.env.BOOL_UPPER = "TRUE";
+    process.env.BOOL_MIXED = "Yes";
+    process.env.BOOL_SPACED = "  ON  ";
+
+    expect(booleanEnv("BOOL_1")).toBe(true);
+    expect(booleanEnv("BOOL_TRUE")).toBe(true);
+    expect(booleanEnv("BOOL_YES")).toBe(true);
+    expect(booleanEnv("BOOL_ON")).toBe(true);
+    expect(booleanEnv("BOOL_UPPER")).toBe(true);
+    expect(booleanEnv("BOOL_MIXED")).toBe(true);
+    expect(booleanEnv("BOOL_SPACED")).toBe(true);
+  });
+
+  it("parses false-like boolean values case-insensitively with trimming", () => {
+    process.env.BOOL_0 = "0";
+    process.env.BOOL_FALSE = "false";
+    process.env.BOOL_NO = "no";
+    process.env.BOOL_OFF = "off";
+    process.env.BOOL_UPPER_FALSE = "FALSE";
+    process.env.BOOL_MIXED_NO = "No";
+    process.env.BOOL_SPACED_OFF = "  off  ";
+
+    expect(booleanEnv("BOOL_0")).toBe(false);
+    expect(booleanEnv("BOOL_FALSE")).toBe(false);
+    expect(booleanEnv("BOOL_NO")).toBe(false);
+    expect(booleanEnv("BOOL_OFF")).toBe(false);
+    expect(booleanEnv("BOOL_UPPER_FALSE")).toBe(false);
+    expect(booleanEnv("BOOL_MIXED_NO")).toBe(false);
+    expect(booleanEnv("BOOL_SPACED_OFF")).toBe(false);
+  });
+
+  it("throws on invalid boolean-like values", () => {
+    process.env.BOOL_INVALID = "maybe";
+    process.env.BOOL_INVALID_NUM = "2";
+    process.env.BOOL_INVALID_YEP = "yep";
+
+    expect(() => booleanEnv("BOOL_INVALID")).toThrow("BOOL_INVALID must be a boolean-like value");
+    expect(() => booleanEnv("BOOL_INVALID_NUM")).toThrow("BOOL_INVALID_NUM must be a boolean-like value");
+    expect(() => booleanEnv("BOOL_INVALID_YEP")).toThrow("BOOL_INVALID_YEP must be a boolean-like value");
   });
 });
 
