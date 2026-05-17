@@ -16,8 +16,6 @@ import {
 import { requireEnv } from "../../_shared/env.ts";
 import type { ToolContext } from "./index.ts";
 
-const FILESYSTEM_BUCKET_NAME = requireEnv("FILESYSTEM_BUCKET_NAME");
-
 interface FilesystemInput {
   shell: string;
 }
@@ -60,6 +58,10 @@ Prefer shell mode. Supported commands:
 
 const error = (result: string): CommandResult => ({ result, isError: true });
 const success = (result: string): CommandResult => ({ result, isError: false });
+
+function getFilesystemBucketName(): string {
+  return requireEnv("FILESYSTEM_BUCKET_NAME");
+}
 
 export default function filesystemTool(context: ToolContext): ToolSet {
   const namespace = context.filesystemNamespace;
@@ -256,7 +258,7 @@ async function readFilesystemRaw(path: string, namespace: string): Promise<strin
     return `cat: ${toVisiblePath(normalizedPath, namespace)}: Is a directory`;
   }
 
-  return readS3Text(FILESYSTEM_BUCKET_NAME, toStorageKey(normalizedPath, namespace));
+  return readS3Text(getFilesystemBucketName(), toStorageKey(normalizedPath, namespace));
 }
 
 async function readFilesystemRange(
@@ -292,7 +294,7 @@ async function writeFilesystemFile(params: {
     return `Error: ${toVisiblePath(path, namespace)} is a directory`;
   }
 
-  await writeS3Object(FILESYSTEM_BUCKET_NAME, toStorageKey(path, namespace), fileText, {
+  await writeS3Object(getFilesystemBucketName(), toStorageKey(path, namespace), fileText, {
     contentType: "text/plain",
   });
 
@@ -329,7 +331,7 @@ async function createFilesystemDirectory(path: string, namespace: string): Promi
     return `Error: ${toVisiblePath(normalizedPath, namespace)} is a file`;
   }
 
-  await writeS3Object(FILESYSTEM_BUCKET_NAME, `${toStorageKey(normalizedPath, namespace)}/.keep`, "", {
+  await writeS3Object(getFilesystemBucketName(), `${toStorageKey(normalizedPath, namespace)}/.keep`, "", {
     contentType: "text/plain",
   });
 
@@ -382,10 +384,10 @@ async function checkPathExists(namespace: string, path: string): Promise<StoredP
 
   const key = toStorageKey(normalizedPath, namespace);
 
-  if (await s3ObjectExists(FILESYSTEM_BUCKET_NAME, key)) {
+  if (await s3ObjectExists(getFilesystemBucketName(), key)) {
     return { exists: true, isDirectory: false };
   }
-  const listResponse = await listS3Prefix(FILESYSTEM_BUCKET_NAME, `${key}/`);
+  const listResponse = await listS3Prefix(getFilesystemBucketName(), `${key}/`);
   return {
     exists: listResponse.length > 0,
     isDirectory: listResponse.length > 0,
@@ -397,7 +399,7 @@ async function listDirectoryEntries(namespace: string, normalizedPath: string): 
     ? `${namespace}/`
     : `${toStorageKey(normalizedPath, namespace)}/`;
 
-  const objects = await listS3Prefix(FILESYSTEM_BUCKET_NAME, prefix);
+  const objects = await listS3Prefix(getFilesystemBucketName(), prefix);
   const directories = new Set<string>();
   const files = new Set<string>();
   for (const object of objects) {
@@ -439,9 +441,9 @@ async function deleteFilesystemPath(params: {
 
   if (state.isDirectory) {
     const prefix = `${toStorageKey(path, namespace)}/`;
-    await deleteS3Prefix(FILESYSTEM_BUCKET_NAME, prefix);
+    await deleteS3Prefix(getFilesystemBucketName(), prefix);
   } else {
-    await deleteS3Object(FILESYSTEM_BUCKET_NAME, toStorageKey(path, namespace));
+    await deleteS3Object(getFilesystemBucketName(), toStorageKey(path, namespace));
   }
 
   return `Successfully deleted ${toVisiblePath(path, namespace)}`;
@@ -474,21 +476,21 @@ async function renameFilesystemPath(params: {
 
     for (const object of sourceObjects) {
       await writeS3Object(
-        FILESYSTEM_BUCKET_NAME,
+        getFilesystemBucketName(),
         `${toStorageKey(newPath, namespace)}/${object.relativeKey}`,
-        await readS3Bytes(FILESYSTEM_BUCKET_NAME, object.key),
+        await readS3Bytes(getFilesystemBucketName(), object.key),
       );
     }
 
     for (const object of sourceObjects) {
-      await deleteS3Object(FILESYSTEM_BUCKET_NAME, object.key);
+      await deleteS3Object(getFilesystemBucketName(), object.key);
     }
   } else {
     const oldKey = toStorageKey(oldPath, namespace);
     const newKey = toStorageKey(newPath, namespace);
 
-    await writeS3Object(FILESYSTEM_BUCKET_NAME, newKey, await readS3Bytes(FILESYSTEM_BUCKET_NAME, oldKey));
-    await deleteS3Object(FILESYSTEM_BUCKET_NAME, oldKey);
+    await writeS3Object(getFilesystemBucketName(), newKey, await readS3Bytes(getFilesystemBucketName(), oldKey));
+    await deleteS3Object(getFilesystemBucketName(), oldKey);
   }
 
   return `Successfully renamed ${toVisiblePath(oldPath, namespace)} to ${toVisiblePath(newPath, namespace)}`;
@@ -497,7 +499,7 @@ async function renameFilesystemPath(params: {
 async function collectDirectoryObjects(namespace: string, path: string): Promise<StoredObject[]> {
   const normalizedPath = toScopedPath(path, namespace);
   const prefix = `${toStorageKey(normalizedPath, namespace)}/`;
-  const response = await listS3Prefix(FILESYSTEM_BUCKET_NAME, prefix);
+  const response = await listS3Prefix(getFilesystemBucketName(), prefix);
 
   return response
     .map((item) => item.key)
