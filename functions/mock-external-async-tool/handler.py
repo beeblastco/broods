@@ -26,7 +26,7 @@ def handler(event, context):
 
     req = urllib.request.Request(
         complete_url,
-        data=json.dumps({"status": "completed", "response": {"result": result}}).encode(),
+        data=json.dumps({"status": "completed", "response": result}).encode(),
         headers=headers,
         method="POST",
     )
