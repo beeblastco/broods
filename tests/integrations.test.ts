@@ -4,6 +4,7 @@ import type { LambdaResponse } from "../functions/_shared/runtime.ts";
 import {
   createIncomingEventRouter,
   type AsyncDirectInboundEvent,
+  type AsyncToolCompletionInboundEvent,
   type ChannelInboundEvent,
   type DirectInboundEvent,
   type StatusInboundEvent,
@@ -590,12 +591,63 @@ describe("direct API ingress", () => {
       publicEventId: "one",
     }]);
   });
+
+  it("routes async tool completion requests through account auth", async () => {
+    const handledEvents: AsyncToolCompletionInboundEvent[] = [];
+    const response = await routeIncomingEvent(createEvent({
+      status: "completed",
+      response: { answer: "done" },
+    }, {
+      authorization: "Bearer secret",
+    }, {
+      rawPath: "/async-tools/async_tool_1/complete",
+    }), createHandlers({
+      handleAsyncToolCompletionRequest: async (event) => {
+        handledEvents.push(event);
+        return {
+          statusCode: 202,
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ status: "accepted" }),
+        };
+      },
+    }));
+
+    expect(response.statusCode).toBe(202);
+    expect(handledEvents).toEqual([{
+      accountId: "acct_test",
+      resultId: "async_tool_1",
+      status: "completed",
+      response: { answer: "done" },
+    }]);
+  });
+
+  it("validates async tool failed completion errors", async () => {
+    const response = await routeIncomingEvent(createEvent({
+      status: "failed",
+    }, {
+      authorization: "Bearer secret",
+    }, {
+      rawPath: "/async-tools/async_tool_1/complete",
+    }), createHandlers({
+      handleAsyncToolCompletionRequest: async () => ({
+        statusCode: 202,
+        headers: { "Content-Type": "application/json" },
+        body: "{}",
+      }),
+    }));
+
+    expect(response.statusCode).toBe(400);
+    expect(responseJson(response)).toEqual({
+      error: "Async tool completion error must be a string when status is failed",
+    });
+  });
 });
 
 function createHandlers(overrides: Partial<{
   handleDirectRequest(event: DirectInboundEvent): Promise<ResponseShape>;
   handleAsyncRequest(event: AsyncDirectInboundEvent): Promise<ResponseShape>;
   handleStatusRequest(event: StatusInboundEvent): Promise<ResponseShape>;
+  handleAsyncToolCompletionRequest(event: AsyncToolCompletionInboundEvent): Promise<ResponseShape>;
   handleChannelRequest(event: ChannelInboundEvent): Promise<void>;
 }> = {}) {
   return {
@@ -606,6 +658,7 @@ function createHandlers(overrides: Partial<{
     })),
     handleAsyncRequest: overrides.handleAsyncRequest,
     handleStatusRequest: overrides.handleStatusRequest,
+    handleAsyncToolCompletionRequest: overrides.handleAsyncToolCompletionRequest,
     handleChannelRequest: overrides.handleChannelRequest ?? (async () => {}),
   };
 }

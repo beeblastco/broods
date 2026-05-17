@@ -184,8 +184,12 @@ export default $config({
     const asyncToolResultTable = new sst.aws.Dynamo("AsyncToolResult", {
       fields: {
         resultId: "string",
+        parentEventId: "string",
       },
       primaryIndex: { hashKey: "resultId" },
+      globalIndexes: {
+        ParentEventIdIndex: { hashKey: "parentEventId" },
+      },
       ttl: "expiresAt",
       deletionProtection: stage === "production",
       transform: {

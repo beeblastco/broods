@@ -132,6 +132,7 @@ export interface AgentToolConfig {
   enabled?: boolean;
   needsApproval?: boolean;
   async?: boolean;
+  execution?: "same-invocation" | "external-dispatch";
   [key: string]: unknown;
 }
 
@@ -735,6 +736,7 @@ function normalizeToolConfig(toolName: string, value: unknown): void {
   assertOptionalBoolean(config.enabled, `config.tools.${toolName}.enabled`);
   assertOptionalBoolean(config.needsApproval, `config.tools.${toolName}.needsApproval`);
   assertOptionalBoolean(config.async, `config.tools.${toolName}.async`);
+  assertOptionalEnum(config.execution, `config.tools.${toolName}.execution`, ["same-invocation", "external-dispatch"]);
 
   switch (toolName) {
     case "tavilySearch":

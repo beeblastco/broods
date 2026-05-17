@@ -7,7 +7,6 @@ import type { ToolApprovalRequestOutput, ToolSet } from "ai";
 import {
   createAccount,
   createAgent,
-  deleteAccount,
   streamSSE,
 } from "./utils.ts";
 
