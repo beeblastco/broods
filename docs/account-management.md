@@ -256,6 +256,23 @@ Controls the Vercel AI SDK `streamText` call. All standard `streamText` paramete
     "stopSequences": ["STOP"],
     "headers": { "X-Custom-Header": "value" },
     "timeout": 120,
+    "output": {
+      "type": "object",
+      "name": "AgentAnswer",
+      "description": "A concise answer with optional follow-up actions.",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "answer": { "type": "string" },
+          "actions": {
+            "type": "array",
+            "items": { "type": "string" }
+          }
+        },
+        "required": ["answer"],
+        "additionalProperties": false
+      }
+    },
     "options": {
       "google": { "thinkingConfig": { "thinkingLevel": "high" } }
     }
@@ -274,9 +291,22 @@ Controls the Vercel AI SDK `streamText` call. All standard `streamText` paramete
 | `stopSequences` | string[] | Stop sequences to end the response |
 | `headers` | object | Custom HTTP headers |
 | `timeout` | number | Request timeout in seconds |
+| `output` | object | Optional structured output config, mapped to Vercel AI SDK `Output.*` |
 | `options` | object | Provider-specific `providerOptions` (maps to Vercel AI SDK `providerOptions`) |
 
 Other supported `streamText` settings are passed through. Harness-owned fields, including messages, system prompt assembly, tool definitions, callbacks, and stop conditions, are controlled by the runtime and override account-provided values.
+
+Structured output config is JSON-only so it can be stored in encrypted agent config. Use JSON Schema rather than Zod or custom validation functions.
+
+| Output type | Required fields | Runtime mapping |
+| ------- | ------ | ------------- |
+| `text` | none | Default plain text behavior |
+| `object` | `schema` object | `Output.object({ schema: jsonSchema(schema), name, description })` |
+| `array` | `element` object | `Output.array({ element: jsonSchema(element), name, description })` |
+| `choice` | non-empty `options` string array | `Output.choice({ options, name, description })` |
+| `json` | none | `Output.json({ name, description })` |
+
+When structured output is configured, direct async status and webhook responses return the parsed JSON value. Chat channels receive the same value formatted as pretty JSON.
 
 ---
 

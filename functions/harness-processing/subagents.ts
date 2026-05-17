@@ -3,7 +3,7 @@
  * Keep parent/child orchestration here; the model-facing schema stays in tools.
  */
 
-import type { ModelMessage, SystemModelMessage, UserModelMessage } from "ai";
+import type { ModelMessage, SystemModelMessage, UserModelMessage, JSONValue } from "ai";
 import type { AgentConfig } from "../_shared/accounts.ts";
 import { getAgent, type AgentRecord } from "../_shared/agents.ts";
 import { logError, logInfo } from "../_shared/log.ts";
@@ -36,7 +36,7 @@ interface SubagentCompletion {
   description?: string;
   conversationKey: string;
   status: "completed" | "failed";
-  response?: string;
+  response?: JSONValue;
   error?: string;
 }
 
@@ -283,13 +283,13 @@ export class SubagentCoordinator {
     // Child runs are in-memory turns. Forward parent ephemeral system messages
     // so request-local instructions survive delegation without being persisted.
     const turnContext = await childSession.createEphemeralTurnContext(messages, task.parentEphemeralSystem);
-    let finalText = "";
+    let finalResponse: JSONValue | undefined;
     let approvalRequested = false;
 
     const session = createEphemeralChildSession(childSession, turnContext.system);
     const stream = await runAgentLoop(session, turnContext, task.agentConfig, {
-      onFinalText: async (text) => {
-        finalText = text;
+      onFinalText: async (response) => {
+        finalResponse = response;
       },
       onErrorText: async (error) => {
         throw new Error(error);
@@ -306,13 +306,13 @@ export class SubagentCoordinator {
     if (stream.didFail()) {
       throw new Error(stream.failureText() ?? "Subagent task failed");
     }
-    if (!finalText.trim()) {
+    if (finalResponse === undefined) {
       throw new Error("Subagent task returned an empty response");
     }
 
     await markAsyncAgentResultCompleted({
       eventId: task.eventId,
-      response: finalText,
+      response: finalResponse,
     });
     await this.completeTask({
       taskId: task.taskId,
@@ -321,7 +321,7 @@ export class SubagentCoordinator {
       ...(task.description ? { description: task.description } : {}),
       conversationKey: task.publicConversationKey,
       status: "completed",
-      response: finalText,
+      response: finalResponse,
     });
   }
 
@@ -417,7 +417,7 @@ function completionToParentMessage(completion: SubagentCompletion): UserModelMes
     `status: ${completion.status}`,
   ].join("\n");
   const result = completion.status === "completed"
-    ? completion.response
+    ? completion.response === undefined ? "(no result)" : formatModelValue(completion.response)
     : completion.error;
 
   return {
@@ -427,6 +427,17 @@ function completionToParentMessage(completion: SubagentCompletion): UserModelMes
       text: `Subagent and async agent result injected into parent conversation.\n${metadata}\n\nResult:\n${result ?? "(no result)"}`,
     }],
   };
+}
+
+function formatModelValue(value: unknown): string {
+  if (typeof value === "string") {
+    return value;
+  }
+  try {
+    return JSON.stringify(value) ?? String(value);
+  } catch {
+    return String(value);
+  }
 }
 
 function withoutNestedSubagents(config: AgentConfig): AgentConfig {

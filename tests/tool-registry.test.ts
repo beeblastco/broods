@@ -138,6 +138,16 @@ describe("createTools", () => {
     expect(dispatch).toHaveBeenCalledWith([{
       prompt: "research",
     }], [{ role: "user", content: "hello" }]);
+    expect((tools.run_subagent as {
+      toModelOutput(options: { toolCallId: string; input: unknown; output: unknown }): unknown;
+    }).toModelOutput({
+      toolCallId: "tool-call-1",
+      input: {},
+      output: { tasks: [{ taskId: "subagent_1", status: "running" }] },
+    })).toEqual({
+      type: "json",
+      value: { tasks: [{ taskId: "subagent_1", status: "running" }] },
+    });
 
     expect((tools.run_subagent as { execute(input: unknown, options: unknown): Promise<unknown> }).execute({
       tasks: [{

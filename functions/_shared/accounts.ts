@@ -12,6 +12,7 @@ import {
     UpdateItemCommand,
     type AttributeValue,
 } from "@aws-sdk/client-dynamodb";
+import type { JSONSchema7 } from "ai";
 import { createCipheriv, createDecipheriv, createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import {
     dynamo,
@@ -80,8 +81,22 @@ export interface AgentModelConfig {
   provider?: AccountModelProviderName;
   modelId?: string;
   options?: Record<string, unknown>;
+  output?: AgentModelOutputConfig;
   [key: string]: unknown;
 }
+
+export type AgentModelOutputConfig =
+  | ({ type: "text" } & AgentModelOutputMetadata)
+  | ({ type: "object"; schema: JSONSchema7 } & AgentModelOutputMetadata)
+  | ({ type: "array"; element: JSONSchema7 } & AgentModelOutputMetadata)
+  | ({ type: "choice"; options: string[] } & AgentModelOutputMetadata)
+  | ({ type: "json" } & AgentModelOutputMetadata);
+
+type AgentModelOutputMetadata = {
+  name?: string;
+  description?: string;
+  [key: string]: unknown;
+};
 
 export type AgentProviderConfig = Partial<Record<AccountModelProviderName, AgentProviderSettings>>;
 
@@ -564,6 +579,49 @@ function normalizeModelConfig(value: unknown): void {
   assertOptionalString(config.modelId, "config.model.modelId");
   if (config.options !== undefined && !isPlainObject(config.options)) {
     throw new Error("config.model.options must be an object");
+  }
+  normalizeModelOutputConfig(config.output);
+}
+
+function normalizeModelOutputConfig(value: unknown): void {
+  if (value === undefined) {
+    return;
+  }
+  if (!isPlainObject(value)) {
+    throw new Error("config.model.output must be an object");
+  }
+
+  const config = value as Record<string, unknown>;
+  assertOptionalEnum(config.type, "config.model.output.type", ["text", "object", "array", "choice", "json"]);
+  if (config.type === undefined) {
+    throw new Error("config.model.output.type must be one of: text, object, array, choice, json");
+  }
+  assertOptionalString(config.name, "config.model.output.name");
+  assertOptionalString(config.description, "config.model.output.description");
+
+  switch (config.type) {
+    case "text":
+    case "json":
+      return;
+    case "object":
+      if (!isPlainObject(config.schema)) {
+        throw new Error("config.model.output.schema must be an object");
+      }
+      return;
+    case "array":
+      if (!isPlainObject(config.element)) {
+        throw new Error("config.model.output.element must be an object");
+      }
+      return;
+    case "choice":
+      if (
+        !Array.isArray(config.options) ||
+        config.options.length === 0 ||
+        !config.options.every((entry) => typeof entry === "string")
+      ) {
+        throw new Error("config.model.output.options must be a non-empty array of strings");
+      }
+      return;
   }
 }
 

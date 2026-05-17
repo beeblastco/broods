@@ -3,13 +3,15 @@
  * Cover parent-result batching without running provider models.
  */
 
-import { describe, expect, it, mock } from "bun:test";
+import { beforeEach, describe, expect, it, mock } from "bun:test";
 import type { UserModelMessage } from "ai";
 
-process.env.CONVERSATIONS_TABLE_NAME = "conversations";
-process.env.PROCESSED_EVENTS_TABLE_NAME = "processed-events";
-process.env.FILESYSTEM_BUCKET_NAME = "filesystem";
-process.env.ASYNC_AGENT_RESULT_TABLE_NAME = "async-agent-result";
+beforeEach(() => {
+  process.env.CONVERSATIONS_TABLE_NAME = "conversations";
+  process.env.PROCESSED_EVENTS_TABLE_NAME = "processed-events";
+  process.env.FILESYSTEM_BUCKET_NAME = "filesystem";
+  process.env.ASYNC_AGENT_RESULT_TABLE_NAME = "async-agent-result";
+});
 
 interface TestCompletion {
   taskId: string;
@@ -17,7 +19,7 @@ interface TestCompletion {
   name: string;
   conversationKey: string;
   status: "completed" | "failed";
-  response?: string;
+  response?: unknown;
   error?: string;
 }
 
@@ -98,9 +100,27 @@ describe("SubagentCoordinator", () => {
     expect(messageText(messages[1])).toContain("agentName: Research assistant");
     expect(messageText(messages[1])).toContain("conversationKey: subagent-subagent_2");
   });
+
+  it("stringifies structured subagent results for parent injection", async () => {
+    const { SubagentCoordinator } = await import("../functions/harness-processing/subagents.ts");
+    const persistModelMessages = mock(async (_messages: UserModelMessage[]) => []);
+    const coordinator = new SubagentCoordinator({
+      accountId: "account_1",
+      agentId: "agent_parent",
+      eventId: "event_parent",
+      persistModelMessages,
+    } as never, {}, Date.now() + 1_000);
+    const internals = coordinator as unknown as CoordinatorInternals;
+
+    internals.completions.push(completion("subagent_1", { answer: "done" }));
+
+    await expect(coordinator.drainCompletionsToParent()).resolves.toBe(1);
+    const messages = persistModelMessages.mock.calls[0]?.[0] ?? [];
+    expect(messageText(messages[0])).toContain('{"answer":"done"}');
+  });
 });
 
-function completion(taskId: string, response: string): TestCompletion {
+function completion(taskId: string, response: unknown): TestCompletion {
   return {
     taskId,
     agentId: `agent_${taskId}`,

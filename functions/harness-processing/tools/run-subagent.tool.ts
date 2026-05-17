@@ -3,7 +3,7 @@
  * Keep model-facing input validation here; execution orchestration lives in the harness.
  */
 
-import { jsonSchema, tool, type ModelMessage, type SystemModelMessage, type ToolSet } from "ai";
+import { jsonSchema, tool, type JSONValue, type ModelMessage, type SystemModelMessage, type ToolSet } from "ai";
 
 const MAX_SUBAGENT_TASKS = 10;
 const TASK_KEYS = new Set(["agentId", "name", "prompt", "shareContext"]);
@@ -86,6 +86,10 @@ export default function runSubagentTool(context: { dispatchSubagents: RunSubagen
         // runs and coordinates later parent continuation outside this file.
         return context.dispatchSubagents(tasks, options.messages);
       },
+      toModelOutput: ({ output }) => ({
+        type: "json",
+        value: output as unknown as JSONValue,
+      }),
     }),
   };
 }

@@ -22,6 +22,23 @@
     "modelId": "gemini-3-flash",
     "temperature": 0.2,
     "maxOutputTokens": 16000,
+    "output": {
+      "type": "object",
+      "name": "AgentAnswer",
+      "description": "A concise answer with optional follow-up actions.",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "answer": { "type": "string" },
+          "actions": {
+            "type": "array",
+            "items": { "type": "string" }
+          }
+        },
+        "required": ["answer"],
+        "additionalProperties": false
+      }
+    },
     "options": {
       "google": {
         "thinkingConfig": {
