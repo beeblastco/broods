@@ -202,7 +202,7 @@ export default $config({
     const skillsBucketArn = `arn:aws:s3:::${names.skills}`;
 
     const mockExternalAsyncTool = new sst.aws.Function("MockExternalAsyncTool", {
-      name: resourceName("mock-external-async-tool", stage, region),
+      name: resourceName("mock-async-tool", stage, region),
       runtime: "python3.12",
       architecture: "arm64",
       bundle: "functions/mock-external-async-tool",
