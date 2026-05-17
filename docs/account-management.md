@@ -486,6 +486,7 @@ Developer guide: [Channels](channels.md).
 {AGENT_SERVICE_URL}/webhooks/{accountId}/{agentId}/github
 {AGENT_SERVICE_URL}/webhooks/{accountId}/{agentId}/slack
 {AGENT_SERVICE_URL}/webhooks/{accountId}/{agentId}/discord
+{AGENT_SERVICE_URL}/webhooks/{accountId}/{agentId}/pancake
 ```
 
 ```json
@@ -512,6 +513,11 @@ Developer guide: [Channels](channels.md).
       "botToken": "...",
       "publicKey": "...",
       "allowedGuildIds": ["123"]
+    },
+    "pancake": {
+      "pageId": "page-id",
+      "pageAccessToken": "...",
+      "senderId": "optional-staff-user-id"
     }
   }
 }
@@ -533,5 +539,10 @@ Developer guide: [Channels](channels.md).
 | `discord` | `botToken` | string | Discord bot token |
 | | `publicKey` | string | Discord public key for webhook verification |
 | | `allowedGuildIds` | string[] | List of allowed guild/server IDs |
+| `pancake` | `pageId` | string | Pancake page ID accepted by the webhook |
+| | `pageAccessToken` | string | Pancake page access token for replies |
+| | `senderId` | string | Optional Pancake staff user ID used when sending replies |
 
 For deploying as a customer service, the owner creates an account and links the bot integration. Customers only interact with the provider bot/app. CI/CD configures the default Telegram account and other providers — see [CI/CD Account Setup](operations.md#ci-cd-account-setup).
+
+Pancake webhooks are page-validated because the public Pancake webhook docs do not document a signature or secret header. Keep the webhook URL private and configure the expected `pageId`.

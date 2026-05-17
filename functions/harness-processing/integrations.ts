@@ -44,6 +44,7 @@ import {
   normalizeHeaders,
 } from "../_shared/http.ts";
 import { logError } from "../_shared/log.ts";
+import { createPancakeChannel } from "../_shared/pancake-channel.ts";
 import type { LambdaResponse } from "../_shared/runtime.ts";
 import { createSlackChannel } from "../_shared/slack-channel.ts";
 import { createTelegramChannel } from "../_shared/telegram-channel.ts";
@@ -411,6 +412,7 @@ function createChannelRegistry(config: AgentConfig): ChannelRegistry {
   const githubChannel = createGitHubChannelFromConfig(config);
   const slackChannel = createSlackChannelFromConfig(config);
   const discordChannel = createDiscordChannelFromConfig(config);
+  const pancakeChannel = createPancakeChannelFromConfig(config);
 
   return {
     webhookChannels: [
@@ -418,6 +420,7 @@ function createChannelRegistry(config: AgentConfig): ChannelRegistry {
       githubChannel,
       slackChannel,
       discordChannel,
+      pancakeChannel,
     ].filter((channel): channel is ChannelAdapter => channel !== null),
   };
 }
@@ -720,5 +723,18 @@ function createDiscordChannelFromConfig(config: AgentConfig): ChannelAdapter | n
     channel.botToken,
     channel.publicKey,
     channel.allowedGuildIds ? new Set(channel.allowedGuildIds) : null,
+  );
+}
+
+function createPancakeChannelFromConfig(config: AgentConfig): ChannelAdapter | null {
+  const channel = config.channels?.pancake;
+  if (!channel?.pageId || !channel.pageAccessToken) {
+    return null;
+  }
+
+  return createPancakeChannel(
+    channel.pageId,
+    channel.pageAccessToken,
+    channel.senderId,
   );
 }

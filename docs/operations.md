@@ -90,13 +90,14 @@ Create an agent with model, tool, channel, workspace, skills, and optional subag
 {AGENT_SERVICE_URL}/webhooks/{accountId}/{agentId}/github
 {AGENT_SERVICE_URL}/webhooks/{accountId}/{agentId}/slack
 {AGENT_SERVICE_URL}/webhooks/{accountId}/{agentId}/discord
+{AGENT_SERVICE_URL}/webhooks/{accountId}/{agentId}/pancake
 ```
 
 Provider credentials for each channel, plus model/tool settings, live on agent config. See the example config file at [`examples/account.config.example.json`](../examples/account.config.example.json) for the supported config shape.
 
 ## CI/CD Account Setup
 
-After deploy, the GitHub workflow optionally runs configure scripts if credentials are provided. The scripts share one account, `INTEGRATIONS_ACCOUNT_USERNAME` or `integrations-default`, then create or update one default agent per configured channel and print or register the agent-scoped webhook URL. Skip by not setting the channel-specific secrets.
+After deploy, the GitHub workflow optionally runs configure scripts for the built-in CI channels if credentials are provided. The scripts share one account, `INTEGRATIONS_ACCOUNT_USERNAME` or `integrations-default`, then create or update one default agent per configured channel and print or register the agent-scoped webhook URL. The Pancake helper is available for manual setup because Pancake webhook registration is done in Pancake settings.
 
 ```bash
 # Optional: run only if TELEGRAM_BOT_TOKEN and all other TELEGRAM_* is token set
@@ -110,11 +111,14 @@ bun run scripts/configure-slack-account.ts
 
 # Optional: run only if GITHUB_APP_ID and all GITHUB_* token is set
 bun run scripts/configure-github-account.ts
+
+# Optional: run only if PANCAKE_PAGE_ID and PANCAKE_PAGE_ACCESS_TOKEN are set
+bun run scripts/configure-pancake-account.ts
 ```
 
 Each script uses `ADMIN_ACCOUNT_SECRET` for auth. Account and agent descriptions are optional; set `INTEGRATIONS_ACCOUNT_DESCRIPTION` or channel-specific `*_AGENT_DESCRIPTION` only when you want those fields stored.
 
-Optional agent-name overrides are available when you need stable names other than the defaults: `TELEGRAM_AGENT_NAME`, `DISCORD_AGENT_NAME`, `SLACK_AGENT_NAME`, and `GITHUB_AGENT_NAME`.
+Optional agent-name overrides are available when you need stable names other than the defaults: `TELEGRAM_AGENT_NAME`, `DISCORD_AGENT_NAME`, `SLACK_AGENT_NAME`, `GITHUB_AGENT_NAME`, and `PANCAKE_AGENT_NAME`.
 
 The integration scripts include `Knowledge cutoff: January 2025.` in `config.agent.system` by default. Override it with `ACCOUNT_MODEL_KNOWLEDGE_CUTOFF` when changing `ACCOUNT_MODEL_ID` to a model with a different cutoff.
 

@@ -35,6 +35,18 @@ const TEST_AGENT = {
   updatedAt: "2026-04-24T00:00:00.000Z",
 };
 
+const PANCAKE_AGENT = {
+  ...TEST_AGENT,
+  config: {
+    channels: {
+      pancake: {
+        pageId: "page-1",
+        pageAccessToken: "page-token",
+      },
+    },
+  },
+};
+
 describe("account webhook ingress", () => {
   it("returns 404 for unknown accounts", async () => {
     const routeIncomingEvent = createIncomingEventRouter({
@@ -106,6 +118,36 @@ describe("account webhook ingress", () => {
     });
   });
 
+  it("normalizes Pancake webhook events through account webhook routing", async () => {
+    const handledEvents: ChannelInboundEvent[] = [];
+    const routeIncomingEvent = createIncomingEventRouter({
+      accountLoader: async () => TEST_ACCOUNT,
+      agentLoader: async () => PANCAKE_AGENT,
+    });
+
+    const response = await routeIncomingEvent(createPancakeEvent(), createHandlers({
+      handleChannelRequest: async (event) => {
+        handledEvents.push(event);
+      },
+    }));
+
+    expect(response.statusCode).toBe(200);
+    await response.afterResponse;
+
+    expect(handledEvents).toHaveLength(1);
+    expect(handledEvents[0]).toMatchObject({
+      accountId: "acct_test",
+      agentId: "agent_test",
+      agentConfig: {},
+      conversationKey: "acct:acct_test:agent:agent_test:pancake:page-1:conversation-1",
+      content: [{ type: "text", text: "hello pancake" }],
+      events: [{ role: "user", content: [{ type: "text", text: "hello pancake" }] }],
+      channelName: "pancake",
+    });
+    expect(handledEvents[0]!.eventId.startsWith("acct:acct_test:agent:agent_test:pancake:page-1:message-1:"))
+      .toBe(true);
+  });
+
   it("uses account webhook routing only; root provider webhooks are not accepted", async () => {
     const routeIncomingEvent = createIncomingEventRouter({
       accountLoader: async () => TEST_ACCOUNT,
@@ -133,6 +175,30 @@ function createHandlers(overrides: Partial<{
     })),
     handleChannelRequest: overrides.handleChannelRequest ?? (async () => { }),
   };
+}
+
+function createPancakeEvent(): LambdaFunctionURLEvent {
+  return createTelegramEvent({
+    page_id: "page-1",
+    event_type: "messaging",
+    data: {
+      conversation: {
+        id: "conversation-1",
+        type: "INBOX",
+        from: { id: "customer-1", name: "Ada" },
+      },
+      message: {
+        id: "message-1",
+        conversation_id: "conversation-1",
+        page_id: "page-1",
+        message: "hello pancake",
+        type: "INBOX",
+        from: { id: "customer-1", name: "Ada" },
+      },
+    },
+  }, {
+    "content-type": "application/json",
+  }, "/webhooks/acct_test/agent_test/pancake");
 }
 
 function createTelegramEvent(

@@ -1,6 +1,6 @@
 # Channels
 
-Channels are communication integrations such as Telegram, GitHub, Slack, and Discord. They translate provider webhooks into the shared agent input shape, then send replies through a channel-specific `ChannelActions` implementation.
+Channels are communication integrations such as Telegram, GitHub, Slack, Discord, and Pancake. They translate provider webhooks into the shared agent input shape, then send replies through a channel-specific `ChannelActions` implementation.
 
 Customers interact with the provider bot, app, or webhook. They do not receive account secrets. The webhook URL always includes the account, agent, and channel:
 
@@ -74,8 +74,11 @@ The normalized `InboundMessage` contains:
 | `github` | [`functions/_shared/github-channel.ts`](../functions/_shared/github-channel.ts) | `webhookSecret`, `appId`, `privateKey` |
 | `slack` | [`functions/_shared/slack-channel.ts`](../functions/_shared/slack-channel.ts) | `botToken`, `signingSecret` |
 | `discord` | [`functions/_shared/discord-channel.ts`](../functions/_shared/discord-channel.ts) | `botToken`, `publicKey` |
+| `pancake` | [`functions/_shared/pancake-channel.ts`](../functions/_shared/pancake-channel.ts) | `pageId`, `pageAccessToken` |
 
 The full config field reference lives in [Account Management](account-management.md#channels-config).
+
+Pancake's public webhook docs do not define a signature or secret header. The adapter validates `page_id` against `config.channels.pancake.pageId`, acknowledges unsupported events, and replies through the page-scoped message API with `pageAccessToken`.
 
 ## Add a Channel
 
