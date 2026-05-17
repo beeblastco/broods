@@ -96,7 +96,7 @@ describe("createAgentLifecycleEmitter", () => {
   });
 
   it("fires webhook for subscribed events", async () => {
-    const fetchMock = mock(async () => new Response(null, { status: 200 }));
+    const fetchMock = mock(async (_url: string, _init?: RequestInit) => new Response(null, { status: 200 }));
     globalThis.fetch = fetchMock as never;
 
     const emitter = createAgentLifecycleEmitter(baseSession, {
@@ -114,15 +114,15 @@ describe("createAgentLifecycleEmitter", () => {
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(fetchMock.mock.calls[0]?.[0]).toBe("https://example.com/hook");
-    const init = fetchMock.mock.calls[0]?.[1];
+    const init = fetchMock.mock.calls[0]?.[1] as RequestInit | undefined;
     expect(init).toMatchObject({
       method: "POST",
       headers: {
         "Content-Type": "application/json",
       },
     });
-    expect(init.headers).toHaveProperty("X-Webhook-Signature");
-    const body = JSON.parse(String(init.body));
+    expect(init?.headers).toHaveProperty("X-Webhook-Signature");
+    const body = JSON.parse(String(init?.body));
     expect(body).toMatchObject({
       type: "agent.started",
       accountId: "acct_test",
@@ -173,7 +173,7 @@ describe("createAgentLifecycleEmitter", () => {
   });
 
   it("includes accountId and agentId only when present in session", async () => {
-    const fetchMock = mock(async () => new Response(null, { status: 200 }));
+    const fetchMock = mock(async (_url: string, _init?: RequestInit) => new Response(null, { status: 200 }));
     globalThis.fetch = fetchMock as never;
 
     const emitter = createAgentLifecycleEmitter({
@@ -191,8 +191,8 @@ describe("createAgentLifecycleEmitter", () => {
 
     await emitter.emit("agent.started", {});
 
-    const init = fetchMock.mock.calls[0]?.[1];
-    const body = JSON.parse(String(init.body));
+    const init = fetchMock.mock.calls[0]?.[1] as RequestInit | undefined;
+    const body = JSON.parse(String(init?.body));
     expect(body).not.toHaveProperty("accountId");
     expect(body).not.toHaveProperty("agentId");
     expect(body.eventId).toBe("evt_456");
@@ -200,7 +200,7 @@ describe("createAgentLifecycleEmitter", () => {
   });
 
   it("generates ISO timestamp for each event", async () => {
-    const fetchMock = mock(async () => new Response(null, { status: 200 }));
+    const fetchMock = mock(async (_url: string, _init?: RequestInit) => new Response(null, { status: 200 }));
     globalThis.fetch = fetchMock as never;
 
     const emitter = createAgentLifecycleEmitter(baseSession, {
@@ -215,8 +215,8 @@ describe("createAgentLifecycleEmitter", () => {
 
     await emitter.emit("agent.started", {});
 
-    const init = fetchMock.mock.calls[0]?.[1];
-    const body = JSON.parse(String(init.body));
+    const init = fetchMock.mock.calls[0]?.[1] as RequestInit | undefined;
+    const body = JSON.parse(String(init?.body));
     expect(body.timestamp).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}.\d{3}Z$/);
   });
 });
