@@ -84,6 +84,7 @@ export default $config({
       asyncAgentResult: resourceName("async-agent-result", stage, region),
       asyncToolResult: resourceName("async-tool-result", stage, region),
       externalAsyncToolMock: resourceName("async-tool-mock", stage, region),
+      webhookSubscribeMock: resourceName("webhook-sub-mock", stage, region),
       accountConfigs: resourceName("account-configs", stage, region),
       agentConfigs: resourceName("agent-configs", stage, region),
       accountSignupRateLimits: resourceName("account-signup-rate-limits", stage, region),
@@ -215,6 +216,24 @@ export default $config({
         authorization: "none",
       },
       logging: { format: "json", retention: "1 month" },
+    });
+
+    const mockWebhookSubscribe = new sst.aws.Function("MockWebhookSubscribe", {
+      name: names.webhookSubscribeMock,
+      runtime: "python3.12",
+      architecture: "arm64",
+      bundle: "functions/mock-webhook-subscribe",
+      handler: "handler.handler",
+      description: "Mock webhook subscription endpoint for testing inbound webhooks.",
+      timeout: "30 seconds",
+      memory: "128 MB",
+      url: {
+        authorization: "none",
+      },
+      logging: { format: "json", retention: "1 month" },
+      environment: {
+        MOCK_WEBHOOK_SECRET: process.env.MOCK_WEBHOOK_SECRET ?? "",
+      },
     });
 
     const harnessProcessing = new sst.aws.Function("HarnessProcessing", {
@@ -489,6 +508,7 @@ export default $config({
       agentServiceUrl: harnessProcessing.url,
       accountServiceUrl: accountManage.url,
       mockExternalAsyncToolUrl: mockExternalAsyncTool.url,
+      mockWebhookSubscribeUrl: mockWebhookSubscribe.url,
       accountConfigsTableName: accountConfigsTable.name,
       agentConfigsTableName: agentConfigsTable.name,
       accountSignupRateLimitTableName: accountSignupRateLimitTable.name,

@@ -60,6 +60,7 @@ jobs:
       PRODUCTION_AWS_REGION: ${{ vars.PRODUCTION_AWS_REGION }}
       AWS_ROLE_ARN: ${{ vars.AWS_ROLE_ARN }}
       INPUT_STAGE: ${{ inputs.stage }}
+      # Switches behavior between local development and CI environments
       CI: "true"
       ACCOUNT_MODEL_PROVIDER: ${{ vars.ACCOUNT_MODEL_PROVIDER || 'google' }}
       ACCOUNT_MODEL_ID: ${{ vars.ACCOUNT_MODEL_ID || 'gemma-4-31b-it' }}
@@ -81,6 +82,8 @@ jobs:
       ENABLE_DIRECT_API: ${{ vars.ENABLE_DIRECT_API || 'false' }}
       ENABLE_WEBSOCKET: ${{ vars.ENABLE_WEBSOCKET || 'false' }}
       NATS_URL: ${{ secrets.NATS_URL }}
+      # This is for testing purposes only.
+      MOCK_WEBHOOK_SECRET: ${{ secrets.MOCK_WEBHOOK_SECRET }}
     steps:
       - name: Resolve deploy configuration
         shell: bash
@@ -143,6 +146,7 @@ jobs:
           SST_SECRET_TavilyApiKey: ${{ secrets.SST_SECRET_TAVILYAPIKEY }}
           SST_SECRET_AdminAccountSecret: ${{ secrets.SST_SECRET_ADMINACCOUNTSECRET }}
           SST_SECRET_AccountConfigEncryptionSecret: ${{ secrets.SST_SECRET_ACCOUNTCONFIGENCRYPTIONSECRET }}
+          MOCK_WEBHOOK_SECRET: ${{ secrets.MOCK_WEBHOOK_SECRET }}
         shell: bash
         run: |
           set -euo pipefail
@@ -151,7 +155,8 @@ jobs:
             SST_SECRET_GoogleApiKey \
             SST_SECRET_TavilyApiKey \
             SST_SECRET_AdminAccountSecret \
-            SST_SECRET_AccountConfigEncryptionSecret
+            SST_SECRET_AccountConfigEncryptionSecret \
+            MOCK_WEBHOOK_SECRET
           do
             if [[ -z "${!name:-}" ]]; then
               echo "Missing required repository secret: $name" >&2

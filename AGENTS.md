@@ -30,7 +30,7 @@ Key rules:
 
 - Leave one blank line between the file header docstring and the first import or code line.
 - Keep file header docstrings short. They should describe the file boundary, what belongs there, and where adjacent logic should go. Do not turn them into a function inventory.
-- Use `bun run build` to compile all functions, then `bun run deploy` to deploy.
+- Use `bun run build` to compile all functions, then `bun run deploy` to deploy. Do not deploy except when the user ask to.
 - CI/CD runs automatically on push/PR via GitHub Actions. Use `gh run list` and `gh run view` to monitor pipeline status.
 - To add a new communication channel (e.g. Slack, WhatsApp): create `functions/_shared/<channel>-channel.ts` implementing the `ChannelAdapter` interface from `functions/_shared/channels.ts`, then wire the normalization path into `functions/harness-processing/integrations.ts`. Reply sending should stay inside that channel's `ChannelActions`; do not hardcode channel-specific logic into shared handlers or the core agent loop.
 - To add a new bot command: add an entry to the `commands` array in `functions/_shared/commands.ts` with aliases, description, and an execute function. Commands receive a `CommandContext` with a channel-agnostic `ChannelActions` interface — do not import channel-specific modules from commands.
