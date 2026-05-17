@@ -96,6 +96,8 @@ or:
 }
 ```
 
+The worker needs the absolute `AGENT_SERVICE_URL` plus the relative `options.asyncTool.completePath`; calling the mock worker's own Function URL with that path will only recurse into the mock and leave the DynamoDB row processing. The fixture in [`examples/external-async.ts`](../examples/external-async.ts) passes `completionBaseUrl` and `completionBearerToken` into `config.tools.test_external_async` so the mock can call the real harness completion endpoint.
+
 External-dispatch completion path:
 
 1. The wrapper creates one `AsyncToolResult` row for each async tool call.

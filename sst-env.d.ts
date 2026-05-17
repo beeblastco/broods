@@ -6,59 +6,13 @@
 
 declare module "sst" {
   export interface Resource {
-    "AccountConfig": {
-      "name": string
-      "type": "sst.aws.Dynamo"
-    }
     "AccountConfigEncryptionSecret": {
       "type": "sst.sst.Secret"
       "value": string
     }
-    "AccountManage": {
-      "name": string
-      "type": "sst.aws.Function"
-      "url": string
-    }
-    "AccountSignupRateLimit": {
-      "name": string
-      "type": "sst.aws.Dynamo"
-    }
     "AdminAccountSecret": {
       "type": "sst.sst.Secret"
       "value": string
-    }
-    "AgentConfig": {
-      "name": string
-      "type": "sst.aws.Dynamo"
-    }
-    "AsyncAgentResult": {
-      "name": string
-      "type": "sst.aws.Dynamo"
-    }
-    "AsyncToolResult": {
-      "name": string
-      "type": "sst.aws.Dynamo"
-    }
-    "Conversations": {
-      "name": string
-      "type": "sst.aws.Dynamo"
-    }
-    "HarnessProcessing": {
-      "name": string
-      "type": "sst.aws.Function"
-      "url": string
-    }
-    "Memory": {
-      "name": string
-      "type": "sst.aws.Bucket"
-    }
-    "ProcessedEvents": {
-      "name": string
-      "type": "sst.aws.Dynamo"
-    }
-    "Skills": {
-      "name": string
-      "type": "sst.aws.Bucket"
     }
   }
 }

@@ -415,6 +415,9 @@ bun examples/stream.ts
 # Async endpoint with polling
 bun examples/async.ts
 
+# External-dispatch async tool over NATS
+bun examples/external-async.ts
+
 # Tool approval flow
 bun examples/tool-approval.ts
 
