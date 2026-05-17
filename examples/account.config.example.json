@@ -70,6 +70,7 @@
     "tavilySearch": {
       "enabled": true,
       "async": true,
+      "execution": "same-invocation",
       "apiKey": "...",
       "searchDepth": "advanced",
       "includeAnswer": true,
@@ -90,7 +91,8 @@
     },
     "test_async": {
       "enabled": true,
-      "async": true
+      "async": true,
+      "execution": "same-invocation"
     }
   },
   "channels": {

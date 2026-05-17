@@ -61,8 +61,9 @@ export class LiveNatsPublisher implements NatsPublisher {
         sequence: this.sequence,
       };
       // Core NATS publish only enqueues on this client connection; it does not
-      // return a server ack. If this moves to JetStream, use JetStream publish
-      // acks/backpressure instead of treating drain as persistence confirmation.
+      // return a server ack or replay missed WebSocket chunks. If this moves to
+      // JetStream, use publish acks, durable consumers, replay, and backpressure
+      // instead of treating drain as persistence confirmation.
       connection.publish(subject, new TextEncoder().encode(JSON.stringify(event)));
     } catch {
       // Publishing is best-effort per event; close() drains queued writes.

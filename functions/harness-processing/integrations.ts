@@ -68,6 +68,7 @@ export interface DirectInboundEvent {
   agentId: string;
   agentConfig: AgentConfig;
   eventId: string;
+  asyncResultEventId?: string;
   publicEventId: string;
   conversationKey: string;
   publicConversationKey: string;
@@ -85,6 +86,14 @@ export interface StatusInboundEvent {
   agentId: string;
   eventId: string;
   publicEventId: string;
+}
+
+export interface AsyncToolCompletionInboundEvent {
+  accountId: string;
+  resultId: string;
+  status: "completed" | "failed";
+  response?: unknown;
+  error?: string;
 }
 
 export interface ChannelInboundEvent {
@@ -105,6 +114,7 @@ interface IntegrationHandlers {
   handleDirectRequest(event: DirectInboundEvent): Promise<LambdaResponse>;
   handleAsyncRequest?(event: AsyncDirectInboundEvent): Promise<LambdaResponse>;
   handleStatusRequest?(event: StatusInboundEvent): Promise<LambdaResponse>;
+  handleAsyncToolCompletionRequest?(event: AsyncToolCompletionInboundEvent): Promise<LambdaResponse>;
   handleChannelRequest(event: ChannelInboundEvent): Promise<void>;
 }
 
@@ -198,6 +208,30 @@ async function handleLambdaUrlEvent(
     body: decodeBody(event.body, event.isBase64Encoded),
   } satisfies ChannelRequest;
 
+  // Check for the tool async results return
+  const asyncToolCompletionMatch = event.rawPath.match(/^\/async-tools\/([^/]+)\/complete$/);
+  if (asyncToolCompletionMatch?.[1]) {
+    const auth = await context.authResolver(request.headers);
+    const account = auth?.kind === "account" ? auth.account : null;
+    if (!account) {
+      return unauthorizedResponse();
+    }
+    if (!handlers.handleAsyncToolCompletionRequest) {
+      return notFoundResponse();
+    }
+
+    try {
+      return handlers.handleAsyncToolCompletionRequest(parseAsyncToolCompletionPayload(
+        asyncToolCompletionMatch[1],
+        request.body,
+        account,
+      ));
+    } catch (err) {
+      return badRequestResponse(err);
+    }
+  }
+
+  // Check for the webhook channel integration
   const accountWebhookMatch = event.rawPath.match(/^\/webhooks\/([^/]+)\/([^/]+)\/([^/]+)$/);
   if (accountWebhookMatch?.[1] && accountWebhookMatch[2] && accountWebhookMatch[3]) {
     const account = await context.accountLoader(decodeURIComponent(accountWebhookMatch[1]));
@@ -252,6 +286,9 @@ async function handleLambdaUrlEvent(
   }
 }
 
+/**
+ * This is to handle the response to the external integration webhook
+ */
 async function handleChannelWebhook(
   adapter: ChannelAdapter,
   request: ChannelRequest,
@@ -290,7 +327,7 @@ async function handleChannelWebhook(
           events: [{ role: "user", content: message.content }],
           channelName: message.channelName,
           source: message.source,
-          channel,
+          channel: channel,
           accountId: account.accountId,
           agentId: agent.agentId,
           agentConfig: toRuntimeAgentConfig(agent.config),
@@ -486,6 +523,41 @@ function parseStatusPath(rawPath: string, rawQueryString: string, account: Accou
     agentId,
     eventId: scopedDirectEventId(account.accountId, agentId, publicEventId),
     publicEventId,
+  };
+}
+
+function parseAsyncToolCompletionPayload(
+  rawResultId: string,
+  bodyText: string,
+  account: AccountRecord,
+): AsyncToolCompletionInboundEvent {
+  let parsed: unknown;
+
+  try {
+    parsed = JSON.parse(bodyText);
+  } catch (err) {
+    throw new Error(`Invalid request JSON: ${err instanceof Error ? err.message : String(err)}`);
+  }
+
+  if (!parsed || typeof parsed !== "object") {
+    throw new Error("Async tool completion body must be an object");
+  }
+
+  const record = parsed as Record<string, unknown>;
+  if (record.status !== "completed" && record.status !== "failed") {
+    throw new Error("Async tool completion status must be completed or failed");
+  }
+
+  if (record.status === "failed" && typeof record.error !== "string") {
+    throw new Error("Async tool completion error must be a string when status is failed");
+  }
+
+  return {
+    accountId: account.accountId,
+    resultId: decodeURIComponent(rawResultId),
+    status: record.status,
+    ...(record.response !== undefined ? { response: record.response } : {}),
+    ...(typeof record.error === "string" ? { error: record.error } : {}),
   };
 }
 

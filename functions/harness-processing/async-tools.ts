@@ -7,6 +7,7 @@ import type { ToolSet, UserModelMessage } from "ai";
 import { logError, logInfo, logWarn } from "../_shared/log.ts";
 import {
   createPendingAsyncToolResult,
+  type AsyncToolDelivery,
   markAsyncToolResultCompleted,
   markAsyncToolResultFailed,
 } from "./async-tool-result.ts";
@@ -26,7 +27,7 @@ export interface AsyncToolPendingResult {
   };
 }
 
-interface AsyncToolCompletion {
+export interface AsyncToolCompletion {
   resultId: string;
   toolName: string;
   toolCallId: string;
@@ -46,34 +47,46 @@ interface AsyncToolPendingMetadata {
 type ToolEntry = ToolSet[string];
 type ToolExecute = NonNullable<ToolEntry["execute"]>;
 
-export type RunAsyncToolDispatch = (tools: ToolSet, asyncToolNames: Set<string>) => ToolSet;
+export type AsyncToolExecutionMode = "same-invocation" | "external-dispatch";
+export type AsyncToolModeMap = Map<string, AsyncToolExecutionMode>;
+export type RunAsyncToolDispatch = (tools: ToolSet, asyncToolModes: AsyncToolModeMap) => ToolSet;
 
 export class AsyncToolCoordinator {
   private readonly completions: AsyncToolCompletion[] = [];
   private readonly pending = new Map<string, Promise<void>>();
   private readonly pendingMetadata = new Map<string, AsyncToolPendingMetadata>();
   private readonly waiters = new Set<() => void>();
+  private externalDispatchCount = 0;
 
   constructor(
     private readonly parentSession: Session,
     private readonly waitUntilMs: number = Date.now() + DEFAULT_ASYNC_TOOL_WAIT_BUDGET_MS,
+    private readonly supportedExecutionModes: ReadonlySet<AsyncToolExecutionMode> = new Set<AsyncToolExecutionMode>(["same-invocation", "external-dispatch"]),
+    private readonly delivery?: AsyncToolDelivery,
   ) { }
 
-  dispatch: RunAsyncToolDispatch = (tools: ToolSet, asyncToolNames: Set<string>): ToolSet => {
-    if (asyncToolNames.size === 0) {
+  dispatch: RunAsyncToolDispatch = (tools: ToolSet, asyncToolModes: AsyncToolModeMap): ToolSet => {
+    if (asyncToolModes.size === 0) {
       return tools;
     }
 
     return Object.fromEntries(
-      Object.entries(tools).map(([toolName, entry]) => [
-        toolName,
-        asyncToolNames.has(toolName) ? this.wrapTool(toolName, entry) : entry,
-      ]),
+      Object.entries(tools).map(([toolName, entry]) => {
+        const executionMode = asyncToolModes.get(toolName);
+        return [
+          toolName,
+          executionMode ? this.wrapTool(toolName, entry, executionMode) : entry,
+        ];
+      }),
     ) satisfies ToolSet;
   };
 
   get pendingCount(): number {
     return this.pending.size;
+  }
+
+  get hasExternalDispatches(): boolean {
+    return this.externalDispatchCount > 0;
   }
 
   async waitForIdle(options: {
@@ -136,7 +149,11 @@ export class AsyncToolCoordinator {
     return batch.length;
   }
 
-  private wrapTool(toolName: string, entry: ToolEntry): ToolEntry {
+  private wrapTool(toolName: string, entry: ToolEntry, executionMode: AsyncToolExecutionMode): ToolEntry {
+    if (!this.supportedExecutionModes.has(executionMode)) {
+      throw new Error(`Async tool ${toolName} uses ${executionMode}, which is not supported by this request path`);
+    }
+
     if (!entry.execute) {
       logWarn("Async tool config ignored because tool has no local execute", {
         toolName,
@@ -160,15 +177,32 @@ export class AsyncToolCoordinator {
           toolName,
           toolCallId: options.toolCallId,
           input,
+          ...(executionMode === "external-dispatch" && this.delivery ? { delivery: this.delivery } : {}),
+        });
+        const executeOptions = withAsyncToolMetadata(options, {
+          resultId,
+          parentEventId: this.parentSession.eventId,
+          conversationKey: this.parentSession.conversationKey,
         });
 
-        this.startToolCall({
-          resultId,
-          toolName,
-          toolCallId: options.toolCallId,
-          input,
-          execute: () => originalExecute(input, options),
-        });
+        if (executionMode === "external-dispatch") {
+          this.externalDispatchCount++;
+          await this.dispatchExternalToolCall({
+            resultId,
+            toolName,
+            toolCallId: options.toolCallId,
+            input,
+            execute: () => originalExecute(input, executeOptions),
+          });
+        } else {
+          this.startToolCall({
+            resultId,
+            toolName,
+            toolCallId: options.toolCallId,
+            input,
+            execute: () => originalExecute(input, executeOptions),
+          });
+        }
 
         return {
           resultId,
@@ -215,6 +249,43 @@ export class AsyncToolCoordinator {
       toolCallId: options.toolCallId,
       input: options.input,
     });
+  }
+
+  private async dispatchExternalToolCall(options: {
+    resultId: string;
+    toolName: string;
+    toolCallId: string;
+    input: unknown;
+    execute: () => ReturnType<ToolExecute>;
+  }): Promise<void> {
+    logInfo("Async tool external dispatch started", {
+      parentEventId: this.parentSession.eventId,
+      resultId: options.resultId,
+      toolName: options.toolName,
+      toolCallId: options.toolCallId,
+    });
+
+    try {
+      await resolveToolOutput(options.execute());
+      logInfo("Async tool external dispatch completed", {
+        parentEventId: this.parentSession.eventId,
+        resultId: options.resultId,
+        toolName: options.toolName,
+        toolCallId: options.toolCallId,
+      });
+    } catch (error) {
+      await markAsyncToolResultFailed({
+        resultId: options.resultId,
+        error: error instanceof Error ? error.message : String(error),
+      }).catch((markError) => {
+        logError("Failed to mark async tool dispatch failed", {
+          resultId: options.resultId,
+          toolName: options.toolName,
+          error: markError instanceof Error ? markError.message : String(markError),
+        });
+      });
+      throw error;
+    }
   }
 
   private async runToolCall(options: {
@@ -290,7 +361,7 @@ export class AsyncToolCoordinator {
   }
 }
 
-function completionToParentMessage(completion: AsyncToolCompletion): UserModelMessage {
+export function completionToParentMessage(completion: AsyncToolCompletion): UserModelMessage {
   const metadata = [
     `resultId: ${completion.resultId}`,
     `toolName: ${completion.toolName}`,
@@ -329,7 +400,26 @@ function isAsyncIterable(value: unknown): value is AsyncIterable<unknown> {
   );
 }
 
-// Format the tool result from unknow to string
+function withAsyncToolMetadata(
+  options: Parameters<ToolExecute>[1],
+  metadata: { resultId: string; parentEventId: string; conversationKey: string },
+): Parameters<ToolExecute>[1] {
+  return {
+    ...options,
+    asyncTool: {
+      resultId: metadata.resultId,
+      parentEventId: metadata.parentEventId,
+      conversationKey: metadata.conversationKey,
+      completePath: `/async-tools/${encodeURIComponent(metadata.resultId)}/complete`,
+      statusReference: {
+        table: "AsyncToolResult",
+        resultId: metadata.resultId,
+      },
+    },
+  } as Parameters<ToolExecute>[1];
+}
+
+// Format the tool result from unknown to string
 function formatUnknown(value: unknown): string {
   if (typeof value === "string") {
     return value;

@@ -38,7 +38,7 @@ flowchart TD
 
   ManageUrl --> AccountStore["DynamoDB: AccountConfig<br/>account metadata + secretHash"]
   ManageUrl --> AgentStore["DynamoDB: AgentConfig<br/>encrypted agent configs"]
-  ManageUrl --> SkillStore["S3: Skills<br/>account-scoped skill bundles"]
+  ManageUrl -->|"Manage Skills"| SkillStore["S3: Skills<br/>account-scoped skill bundles"]
   AccountStore -->|Authentication| HarnessUrl
   AgentStore -->|agentId config lookup| HarnessUrl
   HarnessUrl --> Handler["handler.ts"]
@@ -57,7 +57,8 @@ flowchart TD
   Handler --> AsyncAgentResult["DynamoDB: AsyncAgentResult"]
   AsyncTools --> AsyncToolResult["DynamoDB: AsyncToolResult"]
   Session --> Memory["S3: account-scoped MEMORY.md"]
-  Session --> SkillStore
+  SkillStore --> |"Load skills metadata"| Session
+  Harness --> |"Access skills"| SkillStore 
   Tools --> Filesystem["S3: account-scoped filesystem/tasks"]
   Subagents --> AsyncAgentResult
   Subagents --> Session
@@ -149,7 +150,7 @@ flowchart TD
   Coordinator -->|"inject batched result events"| Session
   ToolCoordinator -->|"inject result events"| Session
   Coordinator -->|"heartbeat comments while parent waits"| Caller
-  ToolCoordinator -->|"heartbeat comments while parent waits"| Caller
+  ToolCoordinator -->|"SSE heartbeat comments while parent waits"| Caller
   HandlerLoop -->|"rerun after injected results"| Agent
 
   Async --> Pending["async-agent-result.ts<br/>processing"]
@@ -164,8 +165,19 @@ flowchart TD
   Status --> AsyncTable
 ```
 
-The async path stays inside `harness-processing`: `POST /async` stores a processing record, returns a status URL, and starts an internal async Lambda self-invocation. The worker runs the same account-scoped agent turn and updates `AsyncAgentResult`. Subagent dispatch does not require a separate child Lambda for SSE continuation; child agent loops run concurrently inside the parent invocation, and their results are batched into parent conversation events before the parent loop runs again.
-Async external tools with local `execute` functions also run concurrently inside the active parent invocation. Their status rows are persisted in `AsyncToolResult`, and completed results are injected into the same parent continuation loop.
+The async path stays inside `harness-processing`: `POST /async` creates `AsyncAgentResult`, returns a status URL, and starts an internal Lambda Event invocation. Subagents and `same-invocation` async tools run inside that Lambda. `external-dispatch` async tools store delivery metadata and continue later through `/async-tools/{resultId}/complete`.
+
+```mermaid
+flowchart TD
+  Parent["parent model pass"] --> Kind{"child work type"}
+  Kind -->|"subagent"| InMemory["in-memory pending work"]
+  Kind -->|"async tool: same-invocation"| InMemory
+  Kind -->|"async tool: external-dispatch"| External["external worker"]
+  InMemory -->|"wait only while pendingCount > 0"| Inject["inject result into conversation"]
+  External -->|"complete endpoint"| Group["sealed dispatch group<br/>all siblings settled"]
+  Group --> Inject
+  Inject --> Continue["continue parent agent"]
+```
 
 Direct sync and async POST access is controlled by `ENABLE_DIRECT_API`, which defaults to `true`. When disabled, `POST /` and `POST /async` are closed while channel webhooks and internal worker invocations remain available.
 
@@ -202,9 +214,7 @@ flowchart TD
   GW -->|"forward events"| Client
 ```
 
-The WebSocket integration is additive to the existing SSE direct API and is enabled with application environment config: `ENABLE_WEBSOCKET=true` and `NATS_URL`. The WebSocket gateway owns client authentication, response-subject subscription, and Lambda Event invocation. It invokes `harness-processing` asynchronously with `{ kind: "nats-worker", event: { ...DirectInboundEvent, connectionId } }`, then can acknowledge the client because no HTTP stream is held open. The Lambda runs the account-scoped agent turn and publishes each Vercel AI SDK stream event to a connection-scoped NATS subject. The gateway forwards those events to the connected WebSocket client.
-
-The gateway should subscribe to the response subject before invoking Lambda. A separate NATS-to-Lambda bridge is not required when the gateway can validate auth and has IAM permission to invoke `harness-processing` asynchronously. In that deployment, NATS is only the Lambda-to-gateway streaming path.
+The WebSocket gateway owns client authentication, response-subject subscription, and Lambda Event invocation. Lambda publishes to a connection-scoped NATS subject; the gateway forwards those events to the client.
 
 NATS subject patterns:
 
@@ -212,16 +222,16 @@ NATS subject patterns:
 | --------- | ----------- | --------- |
 | `v1.{accountId}.{agentId}.ws.response.{connectionId}` | Lambda → Gateway | Vercel AI SDK stream events (`step-start`, `text`, `tool-call`, `finish`, `error`, etc.) |
 
-Concurrency notes:
+Notes:
 
 - Lambda can run multiple `nats-worker` invocations at the same time. Each invocation creates its own NATS connection and publisher, so draining one completed request does not close another request's publisher.
 - Response subjects are connection-scoped. If one WebSocket connection allows overlapping turns, the gateway/client should use `headers.eventId` and `sequence` to group events per turn.
+- External async tool completions publish back to the same response subject only while the gateway/client remains subscribed; core NATS does not replay missed WebSocket stream chunks.
+- Future JetStream support can replay missed WebSocket stream chunks from persisted stream/consumer state.
 - If strict conversation ordering is required, the gateway should serialize turns per `conversationKey`.
 - `ENABLE_WEBSOCKET=true` and `NATS_URL` are required for `nats-worker` invocations. When WebSocket is disabled, the normal direct API remains SSE-only and NATS configuration is ignored.
 
-This path currently uses core NATS. Stream chunks are published without per-message acknowledgements, and the publisher drains the connection at the end of the Lambda invocation to send queued outbound messages before exit. If JetStream is introduced later, replace this with explicit publish acknowledgement, duplicate, and backpressure handling.
-
-WebSocket enablement is application infrastructure configuration for the gateway and Lambda environment, not an agent config field. SST fails deployment configuration when `ENABLE_WEBSOCKET=true` is set without `NATS_URL`.
+This path currently uses core NATS. If JetStream is introduced later, replace best-effort publish/drain with explicit publish acknowledgement, durable consumer replay, duplicate, and backpressure handling.
 
 ## Memory and Filesystem Boundaries
 
@@ -245,8 +255,7 @@ Agents control model selection, channel credentials, optional skills, subagents,
 - [`functions/_shared/agents.ts`](../functions/_shared/agents.ts): account-owned agent records and encrypted agent config storage.
 - [`functions/_shared/runtime-keys.ts`](../functions/_shared/runtime-keys.ts): account-scoped runtime keys, direct API public key validation, leases, and filesystem namespaces.
 - [`functions/_shared/skills.ts`](../functions/_shared/skills.ts): shared skill path, frontmatter, import URL validation, and S3 read/ownership primitives.
-- [`functions/_shared/nats-events.ts`](../functions/_shared/nats-events.ts): NATS event types and subject patterns for WebSocket gateway integration.
-- [`functions/_shared/nats.ts`](../functions/_shared/nats.ts): NATS publisher interface for connection-scoped WebSocket stream events.
+- [`functions/_shared/nats.ts`](../functions/_shared/nats.ts): NATS publisher, event types, and subject patterns for connection-scoped WebSocket stream events.
 - [`functions/account-manage/handler.ts`](../functions/account-manage/handler.ts): account CRUD and admin/self-management HTTP API.
 - [`functions/account-manage/skills.ts`](../functions/account-manage/skills.ts): account skill CRUD, GitHub import handling, and S3 writes.
 - [`functions/account-manage/cleanup.ts`](../functions/account-manage/cleanup.ts): account deletion cleanup for runtime rows and S3 namespaces.
@@ -268,8 +277,8 @@ Agents control model selection, channel credentials, optional skills, subagents,
 - `Conversations`: normalized model messages by account-scoped `conversationKey`.
 - `ProcessedEvents`: dedup markers and short-lived conversation lease records.
 - `AsyncAgentResult`: async direct API and subagent state for `/status/{eventId}` polling.
-- `AsyncToolResult`: async external tool call state and structured outputs for parent result injection.
+- `AsyncToolResult`: async external tool call state, same-table dispatch-group rows for external fan-in, delivery metadata for non-SSE continuations, and structured outputs for parent result injection.
 - S3 memory bucket: account/agent-scoped `MEMORY.md`, filesystem, and task state.
 - S3 skills bucket: account-scoped skill bundles under `<accountId>/<skill-name>`.
 
-Tool execution is inline in `harness-processing` unless an agent-configured local `execute` tool sets `async: true`, in which case it is detached within the same invocation and resumed through parent result injection. Async direct API requests use Lambda async self-invocation to run the same harness code in the background. Subagents run as in-process child agent loops for the active parent invocation; status rows are persisted in `AsyncAgentResult`, but parent SSE continuation does not poll child Lambda workers.
+Tool execution is inline unless an agent-configured local `execute` tool sets `async: true`. `execution` chooses `same-invocation` or `external-dispatch`; SSE supports only `same-invocation`, while `/async`, channels, and NATS support both. Subagents are in-process child agent loops; they do not require child Lambda workers.

@@ -6,6 +6,7 @@
 import {
   GetItemCommand,
   PutItemCommand,
+  QueryCommand,
   UpdateItemCommand,
   type AttributeValue,
 } from "@aws-sdk/client-dynamodb";
@@ -19,8 +20,21 @@ import { requireEnv } from "../_shared/env.ts";
 
 const ASYNC_TOOL_RESULT_TABLE_NAME = requireEnv("ASYNC_TOOL_RESULT_TABLE_NAME");
 const ASYNC_TOOL_RESULT_TTL_SECONDS = 7 * 24 * 60 * 60;
+// Current fan-in uses one group item inside AsyncToolResult so completion can
+// collect every external async tool from the same parent event without a second
+// table. When this path moves to JetStream, replace this index/group tracking
+// with stream consumer state instead of maintaining both.
+const PARENT_EVENT_ID_INDEX = "ParentEventIdIndex";
 
 export type AsyncToolStatus = "processing" | "completed" | "failed";
+export type AsyncToolDelivery =
+  | { kind: "async" }
+  | {
+    kind: "nats";
+    connectionId: string;
+    publicEventId: string;
+    publicConversationKey: string;
+  };
 
 export interface AsyncToolResultRecord {
   resultId: string;
@@ -34,7 +48,14 @@ export interface AsyncToolResultRecord {
   updatedAt: string;
   response?: unknown;
   error?: string;
+  delivery?: AsyncToolDelivery;
   expiresAt: number;
+}
+
+export interface ExternalAsyncToolDispatchGroup {
+  parentEventId: string;
+  resultIds: string[];
+  sealed: boolean;
 }
 
 export async function createPendingAsyncToolResult(options: {
@@ -44,6 +65,7 @@ export async function createPendingAsyncToolResult(options: {
   toolName: string;
   toolCallId: string;
   input: unknown;
+  delivery?: AsyncToolDelivery;
 }): Promise<boolean> {
   const now = new Date().toISOString();
 
@@ -57,6 +79,7 @@ export async function createPendingAsyncToolResult(options: {
         toolName: { S: options.toolName },
         toolCallId: { S: options.toolCallId },
         input: toAttributeValue(options.input),
+        ...(options.delivery ? { delivery: toAttributeValue(options.delivery) } : {}),
         status: { S: "processing" },
         createdAt: { S: now },
         updatedAt: { S: now },
@@ -64,6 +87,9 @@ export async function createPendingAsyncToolResult(options: {
       },
       ConditionExpression: "attribute_not_exists(resultId)",
     }));
+    if (options.delivery) {
+      await registerExternalAsyncToolDispatch(options.parentEventId, options.resultId);
+    }
     return true;
   } catch (err) {
     if (isConditionalCheckFailed(err)) {
@@ -71,6 +97,96 @@ export async function createPendingAsyncToolResult(options: {
     }
     throw err;
   }
+}
+
+export async function getExternalAsyncToolDispatchGroup(parentEventId: string): Promise<ExternalAsyncToolDispatchGroup | null> {
+  const result = await dynamo.send(new GetItemCommand({
+    TableName: ASYNC_TOOL_RESULT_TABLE_NAME,
+    Key: { resultId: { S: externalDispatchGroupId(parentEventId) } },
+    ConsistentRead: true,
+  }));
+
+  return result.Item ? itemToExternalDispatchGroup(result.Item) : null;
+}
+
+export async function sealExternalAsyncToolDispatchGroup(parentEventId: string): Promise<ExternalAsyncToolDispatchGroup | null> {
+  const now = new Date().toISOString();
+
+  const result = await dynamo.send(new UpdateItemCommand({
+    TableName: ASYNC_TOOL_RESULT_TABLE_NAME,
+    Key: { resultId: { S: externalDispatchGroupId(parentEventId) } },
+    UpdateExpression: "SET #sealed = :sealed, updatedAt = :updatedAt, expiresAt = :expiresAt",
+    ExpressionAttributeNames: {
+      "#sealed": "sealed",
+    },
+    ExpressionAttributeValues: {
+      ":sealed": { BOOL: true },
+      ":updatedAt": { S: now },
+      ":expiresAt": { N: String(asyncToolResultExpiresAt()) },
+    },
+    ReturnValues: "ALL_NEW",
+  }));
+
+  return result.Attributes ? itemToExternalDispatchGroup(result.Attributes) : null;
+}
+
+export async function listAsyncToolResultsByParentEvent(parentEventId: string): Promise<AsyncToolResultRecord[]> {
+  const records: AsyncToolResultRecord[] = [];
+  let exclusiveStartKey: Record<string, AttributeValue> | undefined;
+
+  do {
+    const result = await dynamo.send(new QueryCommand({
+      TableName: ASYNC_TOOL_RESULT_TABLE_NAME,
+      IndexName: PARENT_EVENT_ID_INDEX,
+      KeyConditionExpression: "parentEventId = :parentEventId",
+      ExpressionAttributeValues: {
+        ":parentEventId": { S: parentEventId },
+      },
+      ConsistentRead: false,
+      ...(exclusiveStartKey ? { ExclusiveStartKey: exclusiveStartKey } : {}),
+    }));
+
+    records.push(
+      ...(result.Items ?? [])
+        .map(itemToAsyncToolResult)
+        .filter((record): record is AsyncToolResultRecord => record !== null),
+    );
+    exclusiveStartKey = result.LastEvaluatedKey;
+  } while (exclusiveStartKey);
+
+  return records;
+}
+
+async function registerExternalAsyncToolDispatch(parentEventId: string, resultId: string): Promise<void> {
+  const now = new Date().toISOString();
+  const setExpressions = [
+    "parentEventId = :parentEventId",
+    "itemType = :itemType",
+    "#sealed = if_not_exists(#sealed, :notSealed)",
+    "updatedAt = :updatedAt",
+    "expiresAt = :expiresAt",
+  ];
+
+  await dynamo.send(new UpdateItemCommand({
+    TableName: ASYNC_TOOL_RESULT_TABLE_NAME,
+    Key: { resultId: { S: externalDispatchGroupId(parentEventId) } },
+    UpdateExpression: `SET ${setExpressions.join(", ")} ADD resultIds :resultIds`,
+    ExpressionAttributeNames: {
+      "#sealed": "sealed",
+    },
+    ExpressionAttributeValues: {
+      ":parentEventId": { S: parentEventId },
+      ":itemType": { S: "external-dispatch-group" },
+      ":notSealed": { BOOL: false },
+      ":updatedAt": { S: now },
+      ":expiresAt": { N: String(asyncToolResultExpiresAt()) },
+      ":resultIds": { SS: [resultId] },
+    },
+  }));
+}
+
+function externalDispatchGroupId(parentEventId: string): string {
+  return `${parentEventId}:async-tool-dispatch-group`;
 }
 
 export async function getAsyncToolResult(resultId: string): Promise<AsyncToolResultRecord | null> {
@@ -103,15 +219,36 @@ export async function markAsyncToolResultFailed(options: {
   });
 }
 
-function asyncToolResultExpiresAt(): number {
-  return Math.floor(Date.now() / 1000) + ASYNC_TOOL_RESULT_TTL_SECONDS;
+export async function settleExternalAsyncToolResult(options: {
+  resultId: string;
+  status: "completed" | "failed";
+  response?: unknown;
+  error?: string;
+}): Promise<AsyncToolResultRecord | null> {
+  try {
+    const result = await updateAsyncToolResult(options.resultId, options.status, {
+      response: options.status === "completed" ? options.response : undefined,
+      error: options.status === "failed" ? options.error ?? "Async tool call failed" : undefined,
+    }, {
+      onlyWhenProcessing: true,
+      returnUpdated: true,
+    });
+
+    return result.Item ? itemToAsyncToolResult(result.Item) : null;
+  } catch (err) {
+    if (isConditionalCheckFailed(err)) {
+      return null;
+    }
+    throw err;
+  }
 }
 
 async function updateAsyncToolResult(
   resultId: string,
   status: AsyncToolStatus,
   values: { response?: unknown; error?: string },
-): Promise<void> {
+  options: { onlyWhenProcessing?: boolean; returnUpdated?: boolean } = {},
+): Promise<{ Item?: Record<string, AttributeValue> }> {
   const setExpressions = [
     "#status = :status",
     "updatedAt = :updatedAt",
@@ -124,7 +261,7 @@ async function updateAsyncToolResult(
     ...(values.error === undefined ? ["#error"] : []),
   ];
 
-  await dynamo.send(new UpdateItemCommand({
+  const result = await dynamo.send(new UpdateItemCommand({
     TableName: ASYNC_TOOL_RESULT_TABLE_NAME,
     Key: { resultId: { S: resultId } },
     UpdateExpression: [
@@ -140,10 +277,18 @@ async function updateAsyncToolResult(
       ":status": { S: status },
       ":updatedAt": { S: new Date().toISOString() },
       ":expiresAt": { N: String(asyncToolResultExpiresAt()) },
+      ...(options.onlyWhenProcessing ? { ":processing": { S: "processing" } } : {}),
       ...(values.response !== undefined ? { ":response": toAttributeValue(values.response) } : {}),
       ...(values.error !== undefined ? { ":error": { S: values.error } } : {}),
     },
+    ...(options.onlyWhenProcessing ? { ConditionExpression: "#status = :processing" } : {}),
+    ...(options.returnUpdated ? { ReturnValues: "ALL_NEW" } : {}),
   }));
+  return { Item: result?.Attributes };
+}
+
+function asyncToolResultExpiresAt(): number {
+  return Math.floor(Date.now() / 1000) + ASYNC_TOOL_RESULT_TTL_SECONDS;
 }
 
 function itemToAsyncToolResult(item: Record<string, AttributeValue>): AsyncToolResultRecord | null {
@@ -183,8 +328,57 @@ function itemToAsyncToolResult(item: Record<string, AttributeValue>): AsyncToolR
     updatedAt,
     response: item.response ? fromAttributeValue(item.response) : undefined,
     error: optionalString(item.error),
+    delivery: optionalDelivery(item.delivery),
     expiresAt: expiresAtNumber as number,
   };
+}
+
+function itemToExternalDispatchGroup(item: Record<string, AttributeValue>): ExternalAsyncToolDispatchGroup | null {
+  const parentEventId = item.parentEventId?.S;
+  const resultIds = item.resultIds?.SS;
+  const sealed = item.sealed?.BOOL;
+
+  if (!parentEventId || !resultIds || sealed === undefined) {
+    return null;
+  }
+
+  return {
+    parentEventId,
+    resultIds: [...resultIds].sort(),
+    sealed,
+  };
+}
+
+function optionalDelivery(value: AttributeValue | undefined): AsyncToolDelivery | undefined {
+  if (!value) {
+    return undefined;
+  }
+
+  const decoded = fromAttributeValue(value);
+  if (!decoded || typeof decoded !== "object") {
+    return undefined;
+  }
+
+  const candidate = decoded as Record<string, unknown>;
+  if (candidate.kind === "async") {
+    return { kind: "async" };
+  }
+
+  if (
+    candidate.kind === "nats" &&
+    typeof candidate.connectionId === "string" &&
+    typeof candidate.publicEventId === "string" &&
+    typeof candidate.publicConversationKey === "string"
+  ) {
+    return {
+      kind: "nats",
+      connectionId: candidate.connectionId,
+      publicEventId: candidate.publicEventId,
+      publicConversationKey: candidate.publicConversationKey,
+    };
+  }
+
+  return undefined;
 }
 
 function optionalString(value: AttributeValue | undefined): string | undefined {

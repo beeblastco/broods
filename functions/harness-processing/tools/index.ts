@@ -1,5 +1,5 @@
 /**
- * Harness tool registry.
+ * Harness tool registry, check for tool mode.
  * Keep static tool imports and agent-configured tool selection here.
  */
 
@@ -10,7 +10,7 @@ import {
   type AgentToolConfig,
 } from "../../_shared/accounts.ts";
 import type { Session } from "../session.ts";
-import type { RunAsyncToolDispatch } from "../async-tools.ts";
+import type { AsyncToolModeMap, RunAsyncToolDispatch } from "../async-tools.ts";
 import filesystemTool from "./filesystem.tool.ts";
 import googleSearchTool from "./google-search.tool.ts";
 import loadSkillTool from "./load-skill.tool.ts";
@@ -97,7 +97,7 @@ export function createTools(context: Omit<ToolContext, "config">, agentConfig: A
   }
 
   return context.dispatchAsyncTools
-    ? context.dispatchAsyncTools(tools, asyncConfiguredToolNames(agentConfig.tools))
+    ? context.dispatchAsyncTools(tools, asyncConfiguredToolModes(agentConfig.tools))
     : tools;
 }
 
@@ -122,11 +122,11 @@ function isToolEnabled(config: AgentToolConfig | undefined): config is AgentTool
   return config !== undefined && config.enabled !== false;
 }
 
-function asyncConfiguredToolNames(tools: AgentConfig["tools"]): Set<string> {
-  return new Set(
+function asyncConfiguredToolModes(tools: AgentConfig["tools"]): AsyncToolModeMap {
+  return new Map(
     Object.entries(tools ?? {})
       .filter(([, config]) => isToolEnabled(config) && config.async === true)
-      .map(([toolName]) => toolName),
+      .map(([toolName, config]) => [toolName, config.execution ?? "same-invocation"]),
   );
 }
 
@@ -135,6 +135,7 @@ function externalToolRuntimeConfig(config: AgentToolConfig): AgentToolConfig {
     enabled: _enabled,
     needsApproval: _needsApproval,
     async: _async,
+    execution: _execution,
     ...runtimeConfig
   } = config;
 

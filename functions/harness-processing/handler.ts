@@ -8,7 +8,9 @@ import type { ToolModelMessage } from "ai";
 import type { LambdaFunctionURLEvent } from "aws-lambda";
 import { formatChannelErrorText } from "../_shared/channels.ts";
 import { executeCommand } from "../_shared/commands.ts";
+import { toRuntimeAgentConfig } from "../_shared/accounts.ts";
 import { booleanEnv, requireEnv } from "../_shared/env.ts";
+import { getAgent } from "../_shared/agents.ts";
 import { jsonResponse } from "../_shared/http.ts";
 import { logError, logInfo } from "../_shared/log.ts";
 import { LiveNatsPublisher, type NatsPublisher } from "../_shared/nats.ts";
@@ -19,6 +21,7 @@ import { runAgentLoop, type ToolApprovalSummary } from "./harness.ts";
 import {
   routeIncomingEvent,
   type AsyncDirectInboundEvent,
+  type AsyncToolCompletionInboundEvent,
   type ChannelInboundEvent,
   type DirectInboundEvent,
   type StatusInboundEvent,
@@ -32,7 +35,15 @@ import {
   markAsyncAgentResultFailed,
 } from "./async-agent-result.ts";
 import { SubagentCoordinator } from "./subagents.ts";
-import { AsyncToolCoordinator } from "./async-tools.ts";
+import { AsyncToolCoordinator, completionToParentMessage, type AsyncToolExecutionMode } from "./async-tools.ts";
+import {
+  getExternalAsyncToolDispatchGroup,
+  getAsyncToolResult,
+  listAsyncToolResultsByParentEvent,
+  sealExternalAsyncToolDispatchGroup,
+  settleExternalAsyncToolResult,
+  type AsyncToolResultRecord,
+} from "./async-tool-result.ts";
 
 type AgentLoopStream = Awaited<ReturnType<typeof runAgentLoop>>;
 
@@ -43,6 +54,7 @@ const ENABLE_DIRECT_API = booleanEnv("ENABLE_DIRECT_API", true);
 const ENABLE_WEBSOCKET = booleanEnv("ENABLE_WEBSOCKET", false);
 const LAMBDA_TIMEOUT_SAFETY_MS = 5 * 60 * 1000;
 const DEFAULT_PARENT_WAIT_MS = 8 * 60 * 1000;
+const DETACHED_REQUEST_ASYNC_TOOL_MODES = new Set<AsyncToolExecutionMode>(["same-invocation", "external-dispatch"]);
 const textEncoder = new TextEncoder();
 const lambda = new LambdaClient({ region: process.env.AWS_REGION });
 
@@ -66,6 +78,7 @@ interface ParentContinuationResult {
   failureText: string | null;
   finalTexts: string[];
   approvals: ToolApprovalSummary[];
+  hasExternalDispatches: boolean;
 }
 
 export async function handler(
@@ -86,9 +99,92 @@ export async function handler(
     handleDirectRequest: (directEvent) => handleDirectRequest(directEvent, context),
     handleAsyncRequest,
     handleStatusRequest,
+    handleAsyncToolCompletionRequest,
     handleChannelRequest: (channelEvent) => handleChannelRequest(channelEvent, context),
   }, {
     directApiEnabled: ENABLE_DIRECT_API,
+  });
+}
+
+/**
+ * Handle the async tool result completion request from external source.
+ * Requires account-scoped authentication and agent validation.
+ */
+async function handleAsyncToolCompletionRequest(event: AsyncToolCompletionInboundEvent): Promise<LambdaResponse> {
+  // Check for existing
+  const existing = await getAsyncToolResult(event.resultId);
+  if (!existing) {
+    return jsonResponse(404, { error: "Async tool result not found" });
+  }
+
+  // Check the event is for the same account and agent
+  const agentId = agentIdFromScopedKey(existing.parentEventId, event.accountId);
+  if (!agentId || !isAccountScopedKey(existing.conversationKey, event.accountId, agentId)) {
+    return jsonResponse(404, { error: "Async tool result not found" });
+  }
+
+  // Check if the result is already processed
+  if (existing.status !== "processing") {
+    return jsonResponse(409, {
+      error: "Async tool result is already settled",
+      status: existing.status,
+    });
+  }
+
+  // Check if agent is valid
+  const agent = await getAgent(event.accountId, agentId);
+  if (!agent || agent.status !== "active") {
+    return jsonResponse(404, { error: "Agent not found" });
+  }
+
+  // Settle the tool result
+  const settled = await settleExternalAsyncToolResult({
+    resultId: event.resultId,
+    status: event.status,
+    ...(event.response !== undefined ? { response: event.response } : {}),
+    ...(event.error ? { error: event.error } : {}),
+  });
+  if (!settled) {
+    return jsonResponse(409, { error: "Async tool result settled got error" });
+  }
+
+  const toolResults = await listCurrentParentToolResults(settled);
+  const dispatchGroup = await getExternalAsyncToolDispatchGroup(settled.parentEventId);
+  const missingCount = Math.max((dispatchGroup?.resultIds.length ?? 0) - toolResults.length, 0);
+  const pendingCount = toolResults.filter((result) => result.status === "processing").length + missingCount;
+  if (!dispatchGroup?.sealed || pendingCount > 0) {
+    return jsonResponse(202, {
+      status: "waiting_for_async_tools",
+      resultId: settled.resultId,
+      pendingCount: dispatchGroup?.sealed ? pendingCount : Math.max(pendingCount, 1),
+    });
+  }
+
+  const continuationEvent = {
+    accountId: event.accountId,
+    agentId: agentId,
+    agentConfig: toRuntimeAgentConfig(agent.config),
+    eventId: asyncToolContinuationEventId(settled.parentEventId),
+    ...(settled.delivery?.kind === "async" ? { asyncResultEventId: settled.parentEventId } : {}),
+    publicEventId: `async-tools-${settled.resultId}`,
+    conversationKey: settled.conversationKey,
+    publicConversationKey: eventPublicConversationKey(settled.conversationKey, event.accountId, agentId),
+    events: settledToolResultsToParentMessages(toolResults),
+  } satisfies DirectInboundEvent;
+
+  const created = await createPendingAsyncAgentResult({
+    eventId: continuationEvent.eventId,
+    conversationKey: continuationEvent.conversationKey,
+  });
+  if (created) {
+    await invokeAsyncToolContinuationWorker(continuationEvent, settled);
+  }
+
+  return jsonResponse(202, {
+    status: "accepted",
+    resultId: settled.resultId,
+    eventId: continuationEvent.publicEventId,
+    invoked: created,
   });
 }
 
@@ -184,10 +280,12 @@ async function handleAsyncWorkerRequest(event: DirectInboundEvent, context?: Lam
     const result = await runAgentLoopUntilSubagentsIdle(session, turnContext, event.agentConfig, context, {
       onFinalText: async (text) => {
         didSettle = true;
-        await markAsyncAgentResultCompleted({
-          eventId: event.eventId,
-          response: text,
-        });
+        await Promise.all(asyncResultEventIds(event).map((eventId) =>
+          markAsyncAgentResultCompleted({
+            eventId,
+            response: text,
+          })
+        ));
         await sendWebhook(event, {
           eventId: event.publicEventId,
           conversationKey: event.publicConversationKey,
@@ -200,10 +298,12 @@ async function handleAsyncWorkerRequest(event: DirectInboundEvent, context?: Lam
         await settleAsyncFailure(event, error);
       },
       onApprovalRequired: async (approvals) => {
-        await markAsyncAgentResultAwaitingApproval({
-          eventId: event.eventId,
-          approvals,
-        });
+        await Promise.all(asyncResultEventIds(event).map((eventId) =>
+          markAsyncAgentResultAwaitingApproval({
+            eventId,
+            approvals,
+          })
+        ));
         didSettle = true;
         await sendWebhook(event, {
           eventId: event.publicEventId,
@@ -217,6 +317,9 @@ async function handleAsyncWorkerRequest(event: DirectInboundEvent, context?: Lam
 
     if (result.didFail && !didSettle) {
       await settleAsyncFailure(event, result.failureText ?? AGENT_PROCESSING_FAILED);
+    }
+    if (result.hasExternalDispatches) {
+      await continueExternalAsyncToolsIfReady(event, event.agentConfig);
     }
   } catch (err) {
     logError("Async direct request processing failed", {
@@ -269,12 +372,18 @@ async function handleNatsWorkerRequest(event: DirectInboundEvent, context?: Lamb
 
     try {
       const subagentCoordinator = new SubagentCoordinator(session, event.agentConfig, waitUntilMs(context));
-      const asyncToolCoordinator = new AsyncToolCoordinator(session, waitUntilMs(context));
+      // Define the async tool mode application map.
+      const asyncToolCoordinator = new AsyncToolCoordinator(session, waitUntilMs(context), DETACHED_REQUEST_ASYNC_TOOL_MODES, {
+        kind: "nats",
+        connectionId,
+        publicEventId: event.publicEventId,
+        publicConversationKey: event.publicConversationKey,
+      });
 
       const result = await runParentContinuationLoop({
-        session,
-        subagentCoordinator,
-        asyncToolCoordinator,
+        session: session,
+        subagentCoordinator: subagentCoordinator,
+        asyncToolCoordinator: asyncToolCoordinator,
         initialTurnContext: turnContext,
         agentConfig: event.agentConfig,
         consumeStream: (stream) => pipeAgentNatsStream(stream, publisher),
@@ -288,9 +397,9 @@ async function handleNatsWorkerRequest(event: DirectInboundEvent, context?: Lamb
           });
         },
         onApprovalRequired: async (approvals) => {
-          // The event also send additional tool-approval-request so that the webscoket gateway can easily 
+          // The event also sends additional tool-approval-request so that the websocket gateway can easily
           // extract this data and do sth with it.
-          // This is intentional (the user will recieved the tool-approval-request event seperately)
+          // This is intentional (the user will receive the tool-approval-request event separately)
           publisher.publish({ type: "tool-approval-request", approvals }).catch(() => {});
           await sendWebhook(event, {
             eventId: event.publicEventId,
@@ -300,15 +409,32 @@ async function handleNatsWorkerRequest(event: DirectInboundEvent, context?: Lamb
             success: true,
           });
         },
+        onHeartbeat: (pendingCount) => {
+          publisher.publish({
+            type: "waiting",
+            reason: "in-process-async-work",
+            pendingCount,
+          }).catch(() => {});
+        },
       });
 
-      if (result.finalTexts.length > 0) {
-        await sendWebhook(event, {
-          eventId: event.publicEventId,
-          conversationKey: event.publicConversationKey,
-          response: result.finalTexts.join("\n\n"),
-          success: true,
+      if (asyncToolCoordinator.hasExternalDispatches) {
+        await sealExternalAsyncToolDispatchGroup(event.eventId);
+        await continueExternalAsyncToolsIfReady(event, event.agentConfig);
+        await publisher.publish({
+          type: "waiting",
+          reason: "external-async-tools",
         });
+      } else {
+        if (result.finalTexts.length > 0) {
+          await sendWebhook(event, {
+            eventId: event.publicEventId,
+            conversationKey: event.publicConversationKey,
+            response: result.finalTexts.join("\n\n"),
+            success: true,
+          });
+        }
+        await publisher.publish({ type: "done" });
       }
     } finally {
       await publisher.close();
@@ -386,7 +512,7 @@ async function handleChannelRequest(event: ChannelInboundEvent, context?: Lambda
 }
 
 /**
- * Hanlde the status request invoke to the Lambda function.
+ * Handle the status request invoke to the Lambda function.
  */
 async function handleStatusRequest(event: StatusInboundEvent): Promise<LambdaResponse> {
   const result = await getAsyncAgentResult(event.eventId);
@@ -433,10 +559,12 @@ async function claimSession(session: Session): Promise<boolean> {
 }
 
 async function settleAsyncFailure(event: DirectInboundEvent, error: string): Promise<void> {
-  await markAsyncAgentResultFailed({
-    eventId: event.eventId,
-    error,
-  });
+  await Promise.all(asyncResultEventIds(event).map((eventId) =>
+    markAsyncAgentResultFailed({
+      eventId,
+      error,
+    })
+  ));
   await sendWebhook(event, {
     eventId: event.publicEventId,
     conversationKey: event.publicConversationKey,
@@ -478,65 +606,119 @@ async function invokeAsyncWorker(event: DirectInboundEvent): Promise<void> {
   }));
 }
 
-function emptySseResponse(): LambdaResponse {
-  return {
-    statusCode: 200,
-    headers: { "Content-Type": "text/event-stream" },
-    body: new ReadableStream({
-      start(controller) {
-        controller.close();
-      },
-    }),
-  };
+async function invokeAsyncToolContinuationWorker(
+  event: DirectInboundEvent,
+  settled: AsyncToolResultRecord,
+): Promise<void> {
+  if (settled.delivery?.kind === "nats") {
+    await invokeNatsWorker({
+      ...event,
+      publicEventId: settled.delivery.publicEventId,
+      publicConversationKey: settled.delivery.publicConversationKey,
+      connectionId: settled.delivery.connectionId,
+    });
+    return;
+  }
+
+  await invokeAsyncWorker(event);
 }
 
-function createChannelApprovalDenial(approvals: ToolApprovalSummary[]): ToolModelMessage {
-  return {
-    role: "tool",
-    content: approvals.map((approval) => ({
-      type: "tool-approval-response",
-      approvalId: approval.approvalId,
-      approved: false,
-      reason: CHANNEL_APPROVAL_DENIAL_REASON,
-    })),
-  };
+async function invokeNatsWorker(event: DirectInboundEvent): Promise<void> {
+  const functionName = process.env.AWS_LAMBDA_FUNCTION_NAME;
+  if (!functionName) {
+    throw new Error("Missing AWS_LAMBDA_FUNCTION_NAME for NATS worker invocation");
+  }
+
+  await lambda.send(new InvokeCommand({
+    FunctionName: functionName,
+    InvocationType: "Event",
+    Payload: textEncoder.encode(JSON.stringify({
+      kind: "nats-worker",
+      event,
+    } satisfies NatsWorkerInvocation)),
+  }));
 }
 
-function acceptedAsyncResponse(statusUrl: string): LambdaResponse {
-  return jsonResponse(202, { statusUrl });
+async function continueExternalAsyncToolsIfReady(
+  event: DirectInboundEvent,
+  agentConfig: DirectInboundEvent["agentConfig"],
+): Promise<boolean> {
+  const dispatchGroup = await getExternalAsyncToolDispatchGroup(event.eventId);
+  if (!dispatchGroup?.sealed) {
+    return false;
+  }
+
+  const toolResults = (await Promise.all(dispatchGroup.resultIds.map((resultId) => getAsyncToolResult(resultId))))
+    .filter((result): result is AsyncToolResultRecord => result?.parentEventId === event.eventId);
+  if (
+    toolResults.length !== dispatchGroup.resultIds.length ||
+    toolResults.some((result) => result.status === "processing")
+  ) {
+    return false;
+  }
+
+  const continuationEvent = {
+    ...event,
+    agentConfig,
+    eventId: asyncToolContinuationEventId(event.eventId),
+    ...(event.connectionId ? {} : { asyncResultEventId: event.asyncResultEventId ?? event.eventId }),
+    events: settledToolResultsToParentMessages(toolResults),
+  } satisfies DirectInboundEvent;
+
+  const created = await createPendingAsyncAgentResult({
+    eventId: continuationEvent.eventId,
+    conversationKey: continuationEvent.conversationKey,
+  });
+  if (!created) {
+    return false;
+  }
+
+  if (continuationEvent.connectionId) {
+    await invokeNatsWorker(continuationEvent);
+  } else {
+    await invokeAsyncWorker(continuationEvent);
+  }
+  return true;
 }
 
-function eventPublicConversationKey(conversationKey: string, accountId: string, agentId?: string): string {
-  return publicConversationKeyFromScoped(conversationKey, accountId, agentId);
+function asyncToolContinuationEventId(parentEventId: string): string {
+  return `${parentEventId}:async-tools`;
 }
 
-function isAsyncWorkerInvocation(event: unknown): event is AsyncWorkerInvocation {
-  return Boolean(
-    event &&
-    typeof event === "object" &&
-    (event as { kind?: unknown }).kind === "direct-api-async-worker",
-  );
+async function listCurrentParentToolResults(settled: AsyncToolResultRecord): Promise<AsyncToolResultRecord[]> {
+  const dispatchGroup = await getExternalAsyncToolDispatchGroup(settled.parentEventId);
+  const queried = dispatchGroup?.sealed
+    ? (await Promise.all(dispatchGroup.resultIds.map((resultId) => getAsyncToolResult(resultId))))
+      .filter((result): result is AsyncToolResultRecord => result?.parentEventId === settled.parentEventId)
+    : await listAsyncToolResultsByParentEvent(settled.parentEventId);
+  const byResultId = new Map(queried.map((result) => [result.resultId, result]));
+  byResultId.set(settled.resultId, settled);
+
+  const refreshed = await Promise.all([...byResultId.values()].map(async (result) => {
+    if (result.status !== "processing") {
+      return result;
+    }
+
+    const latest = await getAsyncToolResult(result.resultId);
+    return latest?.parentEventId === settled.parentEventId ? latest : result;
+  }));
+
+  return refreshed;
 }
 
-function isNatsWorkerInvocation(event: unknown): event is NatsWorkerInvocation {
-  return Boolean(
-    event &&
-    typeof event === "object" &&
-    (event as { kind?: unknown }).kind === "nats-worker",
-  );
-}
-
-function hasRunnableDirectEvents(event: DirectInboundEvent): boolean {
-  return event.events.some(isRunnableModelInput);
-}
-
-// A persisted tool result is history, not new model input. Only user turns and
-// AI SDK approval responses should start or resume a model run.
-function isRunnableModelInput(message: DirectInboundEvent["events"][number] | DirectTurn["turnContext"]["messages"][number] | undefined): boolean {
-  return message?.role === "user" ||
-    (message?.role === "tool" &&
-      message.content.length > 0 &&
-      message.content.every((part) => part.type === "tool-approval-response"));
+function settledToolResultsToParentMessages(results: AsyncToolResultRecord[]): DirectInboundEvent["events"] {
+  return results
+    .filter((result) => result.status === "completed" || result.status === "failed")
+    .sort((left, right) => left.createdAt.localeCompare(right.createdAt))
+    .map((result) => completionToParentMessage({
+      resultId: result.resultId,
+      toolName: result.toolName,
+      toolCallId: result.toolCallId,
+      input: result.input,
+      status: result.status === "completed" ? "completed" : "failed",
+      ...(result.response !== undefined ? { response: result.response } : {}),
+      ...(result.error ? { error: result.error } : {}),
+    }));
 }
 
 function createDirectContinuationSseBody(
@@ -548,7 +730,7 @@ function createDirectContinuationSseBody(
   return new ReadableStream({
     async start(controller) {
       const subagentCoordinator = new SubagentCoordinator(session, event.agentConfig, waitUntilMs(context));
-      const asyncToolCoordinator = new AsyncToolCoordinator(session, waitUntilMs(context));
+      const asyncToolCoordinator = new AsyncToolCoordinator(session, waitUntilMs(context), new Set(["same-invocation"] as const));
 
       try {
         const result = await runParentContinuationLoop({
@@ -612,9 +794,9 @@ async function runAgentLoopUntilSubagentsIdle(
     onErrorText(error: string): Promise<void>;
     onApprovalRequired?(approvals: ToolApprovalSummary[]): Promise<void>;
   },
-): Promise<{ didFail: boolean; failureText: string | null }> {
+): Promise<{ didFail: boolean; failureText: string | null; hasExternalDispatches: boolean }> {
   const subagentCoordinator = new SubagentCoordinator(session, agentConfig, waitUntilMs(context));
-  const asyncToolCoordinator = new AsyncToolCoordinator(session, waitUntilMs(context));
+  const asyncToolCoordinator = new AsyncToolCoordinator(session, waitUntilMs(context), DETACHED_REQUEST_ASYNC_TOOL_MODES, { kind: "async" });
   const result = await runParentContinuationLoop({
     session: session,
     subagentCoordinator: subagentCoordinator,
@@ -625,24 +807,39 @@ async function runAgentLoopUntilSubagentsIdle(
       await stream.consumeStream();
     },
   });
+  const hasExternalDispatches = asyncToolCoordinator.hasExternalDispatches;
+  if (hasExternalDispatches) {
+    await sealExternalAsyncToolDispatchGroup(session.eventId);
+  }
 
   if (result.approvals.length > 0) {
     await reply.onApprovalRequired?.(result.approvals);
-    return { didFail: false, failureText: null };
+    return { didFail: false, failureText: null, hasExternalDispatches };
   }
 
   if (result.didFail) {
     await reply.onErrorText(result.failureText ?? AGENT_PROCESSING_FAILED);
-    return { didFail: true, failureText: result.failureText };
+    return { didFail: true, failureText: result.failureText, hasExternalDispatches };
+  }
+
+  if (hasExternalDispatches) {
+    return { didFail: false, failureText: null, hasExternalDispatches };
   }
 
   if (result.finalTexts.length > 0) {
     await reply.onFinalText(result.finalTexts.join("\n\n"));
   }
 
-  return { didFail: false, failureText: null };
+  return { didFail: false, failureText: null, hasExternalDispatches };
 }
 
+/**
+ * Runs parent model passes until there is no runnable injected work.
+ *
+ * Heartbeats are emitted only while this Lambda waits on in-process subagents
+ * or same-invocation async tools. External-dispatch async tools do not add
+ * pending work here, so the Lambda can exit after sealing the dispatch group.
+ */
 async function runParentContinuationLoop(options: {
   session: Session;
   subagentCoordinator: SubagentCoordinator;
@@ -681,7 +878,13 @@ async function runParentContinuationLoop(options: {
       finalTexts.push(loopFinalText);
     }
     if (approvals.length > 0) {
-      return { didFail: false, failureText: null, finalTexts, approvals };
+      return {
+        didFail: false,
+        failureText: null,
+        finalTexts,
+        approvals,
+        hasExternalDispatches: options.asyncToolCoordinator.hasExternalDispatches,
+      };
     }
     if (stream.didFail()) {
       return {
@@ -689,20 +892,33 @@ async function runParentContinuationLoop(options: {
         failureText: stream.failureText(),
         finalTexts,
         approvals: [],
+        hasExternalDispatches: options.asyncToolCoordinator.hasExternalDispatches,
       };
     }
 
-    // Wait for any injected subagents or async tools to complete.
+    // Wait for any injected subagents or internal async tools to complete.
     const injected = await waitAndDrainAsyncWork(options.subagentCoordinator, options.asyncToolCoordinator, {
       onHeartbeat: options.onHeartbeat,
     });
     if (injected === 0) {
-      return { didFail: false, failureText: null, finalTexts, approvals: [] };
+      return {
+        didFail: false,
+        failureText: null,
+        finalTexts,
+        approvals: [],
+        hasExternalDispatches: options.asyncToolCoordinator.hasExternalDispatches,
+      };
     }
 
     turnContext = await options.session.createTurnContext();
     if (!isRunnableModelInput(turnContext.messages.at(-1))) {
-      return { didFail: false, failureText: null, finalTexts, approvals: [] };
+      return {
+        didFail: false,
+        failureText: null,
+        finalTexts,
+        approvals: [],
+        hasExternalDispatches: options.asyncToolCoordinator.hasExternalDispatches,
+      };
     }
   }
 }
@@ -712,13 +928,17 @@ async function runParentContinuationLoop(options: {
  *
  * After the parent stream ends, subagent and async-tool results may already be
  * queued, still be running, or be absent. This helper waits for outstanding
- * work, emits SSE heartbeats while waiting, and injects parent-visible
- * completions plus timeout notices near the Lambda deadline.
+ * in-process work, emits wait heartbeats while waiting, and injects
+ * parent-visible completions plus timeout notices near the Lambda deadline.
+ * External-dispatch async tools do not add in-memory pending work, so waiting
+ * here only holds the Lambda for subagents and same-invocation async tools.
  */
 async function waitAndDrainAsyncWork(
   subagentCoordinator: SubagentCoordinator,
   asyncToolCoordinator: AsyncToolCoordinator,
-  options: { onHeartbeat?: (pendingCount: number) => void } = {},
+  options: {
+    onHeartbeat?: (pendingCount: number) => void;
+  } = {},
 ): Promise<number> {
   if (subagentCoordinator.pendingCount === 0 && asyncToolCoordinator.pendingCount === 0) {
     const [subagentCount, asyncToolCount] = await Promise.all([
@@ -812,4 +1032,86 @@ function isErrorStreamChunk(chunk: unknown): boolean {
     typeof chunk === "object" &&
     (chunk as { type?: unknown }).type === "error",
   );
+}
+
+function emptySseResponse(): LambdaResponse {
+  return {
+    statusCode: 200,
+    headers: { "Content-Type": "text/event-stream" },
+    body: new ReadableStream({
+      start(controller) {
+        controller.close();
+      },
+    }),
+  };
+}
+
+function createChannelApprovalDenial(approvals: ToolApprovalSummary[]): ToolModelMessage {
+  // TODO: Allow channel webhooks to complete approval requests instead of
+  // auto-denying them once channel-safe approval UX is available.
+  return {
+    role: "tool",
+    content: approvals.map((approval) => ({
+      type: "tool-approval-response",
+      approvalId: approval.approvalId,
+      approved: false,
+      reason: CHANNEL_APPROVAL_DENIAL_REASON,
+    })),
+  };
+}
+
+function acceptedAsyncResponse(statusUrl: string): LambdaResponse {
+  return jsonResponse(202, { statusUrl });
+}
+
+function eventPublicConversationKey(conversationKey: string, accountId: string, agentId?: string): string {
+  return publicConversationKeyFromScoped(conversationKey, accountId, agentId);
+}
+
+function agentIdFromScopedKey(value: string, accountId: string): string | null {
+  const prefix = `acct:${accountId}:agent:`;
+  if (!value.startsWith(prefix)) {
+    return null;
+  }
+
+  const rest = value.slice(prefix.length);
+  const separator = rest.indexOf(":");
+  return separator > 0 ? rest.slice(0, separator) : null;
+}
+
+function isAccountScopedKey(value: string, accountId: string, agentId: string): boolean {
+  return value.startsWith(`acct:${accountId}:agent:${agentId}:`);
+}
+
+function isAsyncWorkerInvocation(event: unknown): event is AsyncWorkerInvocation {
+  return Boolean(
+    event &&
+    typeof event === "object" &&
+    (event as { kind?: unknown }).kind === "direct-api-async-worker",
+  );
+}
+
+function isNatsWorkerInvocation(event: unknown): event is NatsWorkerInvocation {
+  return Boolean(
+    event &&
+    typeof event === "object" &&
+    (event as { kind?: unknown }).kind === "nats-worker",
+  );
+}
+
+function hasRunnableDirectEvents(event: DirectInboundEvent): boolean {
+  return event.events.some(isRunnableModelInput);
+}
+
+// A persisted tool result is history, not new model input. Only user turns and
+// AI SDK approval responses should start or resume a model run.
+function isRunnableModelInput(message: DirectInboundEvent["events"][number] | DirectTurn["turnContext"]["messages"][number] | undefined): boolean {
+  return message?.role === "user" ||
+    (message?.role === "tool" &&
+      message.content.length > 0 &&
+      message.content.every((part) => part.type === "tool-approval-response"));
+}
+
+function asyncResultEventIds(event: DirectInboundEvent): string[] {
+  return [...new Set([event.asyncResultEventId ?? event.eventId, event.eventId])];
 }

@@ -22,6 +22,7 @@ Model behavior and tool access come from the selected agent's encrypted config. 
 | `POST` | `/` | account bearer | SSE | Run a sync direct agent turn |
 | `POST` | `/async` | account bearer | JSON | Queue an async direct agent turn |
 | `GET` | `/status/{eventId}?agentId={agentId}` | account bearer | JSON | Poll async status |
+| `POST` | `/async-tools/{resultId}/complete` | account bearer | JSON | Complete an externally dispatched async tool |
 | `POST` | `/webhooks/{accountId}/{agentId}/{channel}` | provider-native | provider-specific | Channel webhooks, documented in [Channels](channels.md) |
 
 All direct API request bodies use public `eventId` and `conversationKey` values. The service scopes them internally by account and agent.
@@ -30,20 +31,42 @@ All direct API request bodies use public `eventId` and `conversationKey` values.
 
 The service supports WebSocket connections through a separate gateway when `ENABLE_WEBSOCKET=true`. With WebSocket enabled, `NATS_URL` is required and the Lambda publishes streaming events to NATS during the agent loop, allowing the gateway to forward real-time responses to connected clients.
 
-### Connection Flow
+```mermaid
+sequenceDiagram
+  participant Client
+  participant Gateway
+  participant Lambda as harness-processing
+  participant NATS
+  participant Worker as External worker
 
-1. Client connects to the WebSocket gateway with `?token=<accountSecret>&connectionId=<unique-id>`
-2. Gateway validates the account secret and extracts `accountId`/`agentId`
-3. Gateway subscribes to `v1.{accountId}.{agentId}.ws.response.{connectionId}`
-4. Gateway invokes `harness-processing` via Lambda Event invocation with `{ kind: "nats-worker", event: {..., connectionId} }`
-5. Lambda runs the agent loop and publishes each Vercel AI SDK stream event to `v1.{accountId}.{agentId}.ws.response.{connectionId}`
-6. Gateway receives the matching NATS events and forwards them to the WebSocket client
+  Client->>Gateway: WebSocket connect
+  Gateway->>NATS: subscribe response subject
+  Gateway->>Lambda: Event invoke nats-worker
+  Lambda->>NATS: stream model chunks
+  alt same-invocation async tool or subagent
+    Lambda->>Lambda: wait for in-memory work
+    Lambda->>NATS: continue stream, then done
+  else external-dispatch async tool
+    Lambda->>NATS: waiting external-async-tools
+    Lambda-->>Lambda: exit
+    Worker->>Lambda: POST /async-tools/{resultId}/complete
+    Lambda->>NATS: continuation stream, then done
+  end
+  NATS->>Gateway: response events
+  Gateway->>Client: forward
+```
 
 The gateway invokes the Lambda asynchronously (Event mode), so no HTTP connection is held open during streaming. After the async invoke is accepted, the gateway can acknowledge the client while the Lambda publishes directly to NATS and returns 204 when complete.
 
-The gateway should subscribe to the connection-scoped response subject before invoking Lambda. Each WebSocket request must include a non-empty `connectionId`. `ENABLE_WEBSOCKET=true` and `NATS_URL` must both be configured on `harness-processing` for `nats-worker` invocations.
+Key rules:
 
-Concurrent WebSocket requests are handled as separate Lambda invocations. Each invocation creates its own NATS publisher connection, so draining one completed request only closes that request's connection and does not stop another user's stream. Use a unique subject-safe `connectionId` per WebSocket connection and keep the `eventId` in the forwarded event envelope so the gateway/client can demultiplex messages if one connection allows overlapping turns. If strict conversation ordering is required, the gateway should serialize turns per `conversationKey`.
+- Subscribe to `v1.{accountId}.{agentId}.ws.response.{connectionId}` before invoking Lambda.
+- `finish` is one model pass. `data.type === "done"` is the logical request-complete signal.
+- `waiting/in-process-async-work` means the Lambda is still alive for subagents or same-invocation async tools.
+- `waiting/external-async-tools` means the Lambda can exit; completion later re-invokes `nats-worker`.
+- Core NATS does not replay missed chunks. Continuation only reaches a still-subscribed gateway/client.
+- Future: when this path uses JetStream, missed WebSocket stream chunks can be replayed from persisted stream/consumer state.
+- If one WebSocket allows overlapping turns, demultiplex by `headers.eventId` and `sequence`.
 
 ### NATS Event Format
 
@@ -64,15 +87,29 @@ Each event wraps a Vercel AI SDK stream chunk with routing headers:
 }
 ```
 
-The `data` field contains the raw Vercel AI SDK stream event — `step-start`, `step-finish`, `text`, `tool-call`, `tool-result`, `finish`, `error`, etc. The gateway derives lifecycle state (task boundaries, approval requests, completion) from these events directly.
+Most `data` values contain raw Vercel AI SDK stream events: `step-start`, `step-finish`, `text`, `tool-call`, `tool-result`, `finish`, `error`, etc. NATS also emits harness lifecycle events:
+
+```json
+{ "type": "waiting", "reason": "in-process-async-work", "pendingCount": 2 }
+```
+
+```json
+{ "type": "waiting", "reason": "external-async-tools" }
+```
+
+```json
+{ "type": "done" }
+```
+
+The gateway should forward raw model/tool chunks to the WebSocket client and use `done` to close or mark the request complete.
 
 ### NATS Delivery Model
 
-This integration currently uses core NATS, not JetStream. Core `publish()` enqueues the message on the client connection and does not return a per-message server or persistence acknowledgement. The Lambda publisher sends chunks without waiting for an ack per token, then drains the NATS connection when the request finishes so queued outbound messages are sent before that invocation exits.
+> Warning: Core NATS `publish()` does not return per-message persistence acknowledgement and does not replay missed WebSocket chunks. The publisher drains the NATS connection at invocation end so queued outbound messages are sent before exit.
 
-If this path moves to JetStream later, update the publisher intentionally: JetStream publish acknowledgements, persistence failures, duplicate windows, and async publish backpressure should be handled explicitly instead of relying on the current core NATS drain behavior.
+Future JetStream work should handle publish acknowledgements, durable consumers, replay, duplicate windows, persistence failures, and backpressure explicitly.
 
-WebSocket enablement is application infrastructure configuration for the gateway and Lambda environment, not an agent config field. When `ENABLE_WEBSOCKET` is not true, the normal direct API operates in SSE-only mode and NATS configuration is ignored.
+WebSocket enablement is infrastructure config, not an agent config field. `ENABLE_WEBSOCKET=true` requires `NATS_URL`.
 
 ## Health Probe: `GET /`
 
@@ -183,25 +220,35 @@ When a tool needs approval, the SSE stream includes the AI SDK `tool-approval-re
 
 The `approvalId` is required so the AI SDK can match the decision to the pending tool call. Set `approved` to `false` to deny the tool execution, and include `reason` when the model should explain or adjust its next response.
 
+## Async Tool Completion
+
+External-dispatch tools finish through:
+
+```http
+POST /async-tools/{resultId}/complete
+Authorization: Bearer <accountSecret>
+```
+
+Use `{"status":"completed","response":...}` or `{"status":"failed","error":"..."}`. Completion settles one `AsyncToolResult` row through the handler; external workers do not write DynamoDB directly. A sealed dispatch-group item in the same `AsyncToolResult` table waits for every sibling result before continuing the parent.
+
+```mermaid
+flowchart LR
+  Complete["POST /async-tools/{resultId}/complete"] --> Row["settle result row"]
+  Row --> Group{"dispatch group<br/>sealed + all settled?"}
+  Group -->|"no"| Wait["202 waiting_for_async_tools"]
+  Group -->|"yes: async"| Async["invoke direct-api-async-worker<br/>settle original status id"]
+  Group -->|"yes: nats"| Nats["invoke nats-worker<br/>publish to stored connectionId"]
+```
+
 Minimal `curl` request:
 
 ```bash
-curl -N "$AGENT_SERVICE_URL" \
+curl "$AGENT_SERVICE_URL/async-tools/async_tool_.../complete" \
   -H "Authorization: Bearer $ACCOUNT_SECRET" \
   -H "Content-Type: application/json" \
-  -H "Accept: text/event-stream" \
   -d '{
-    "agentId": "agent_...",
-    "eventId": "unique-id-for-dedup",
-    "conversationKey": "conversation-identifier",
-    "events": [
-      {
-        "role": "user",
-        "content": [
-          { "type": "text", "text": "Hello" }
-        ]
-      }
-    ]
+    "status": "completed",
+    "response": { "answer": "done" }
   }'
 ```
 

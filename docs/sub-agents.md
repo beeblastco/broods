@@ -127,6 +127,6 @@ The subagent handoff is the bridge between parent passes:
 
 ## Async And Channels
 
-`/async` and channel/webhook requests use the same coordinator loop without SSE heartbeats. They wait for batched child-result parent continuation within the Lambda timeout budget before settling the async result or sending the channel reply.
+`/async`, NATS WebSocket worker, and channel/webhook requests use the same coordinator loop without SSE comment heartbeats. They still wait for in-process subagents because child runs currently execute inside the same Lambda invocation. When batched child results are injected, the parent model runs a continuation before the async result, WebSocket worker, or channel reply is settled.
 
 `AsyncAgentResult` still stores subagent task status for polling, but the SSE continuation path does not need separate child Lambda processors.
