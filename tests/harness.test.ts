@@ -17,7 +17,7 @@ const gatewayModelMock = mock((modelId: string) => ({ provider: "gateway", model
 const createGatewayMock = mock((_options: unknown) => gatewayModelMock);
 const minimaxModelMock = mock((modelId: string) => ({ provider: "minimax", modelId }));
 const createMinimaxMock = mock((_options: unknown) => minimaxModelMock);
-let streamTextScenario: "empty" | "error-then-empty" | "approval-request" = "empty";
+let streamTextScenario: "empty" | "error-then-empty" | "approval-request" | "structured-output" = "empty";
 
 const streamTextMock = mock((options: {
   experimental_onToolCallStart?: unknown;
@@ -28,9 +28,15 @@ const streamTextMock = mock((options: {
     response: { messages: unknown[] };
     text: string;
     finishReason: string;
+    usage: {
+      inputTokens: number;
+      outputTokens: number;
+      totalTokens: number;
+    };
     steps: Array<{ content: unknown[] }>;
     toolCalls: unknown[];
   }): Promise<void>;
+  output?: unknown;
   stopWhen?: unknown;
   system?: unknown;
   tools?: unknown;
@@ -67,6 +73,7 @@ const streamTextMock = mock((options: {
           },
           text: "   ",
           finishReason: "tool-calls",
+          usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
           steps: [{ content: [approvalPart] }],
           toolCalls: [],
         });
@@ -80,10 +87,25 @@ const streamTextMock = mock((options: {
         return;
       }
 
+      if (streamTextScenario === "structured-output") {
+        await options.onFinish({
+          response: { messages: [{ role: "assistant", content: "{\"answer\":\"done\"}" }] },
+          text: "{\"answer\":\"done\"}",
+          finishReason: "stop",
+          usage: { inputTokens: 4, outputTokens: 6, totalTokens: 10 },
+          steps: [],
+          toolCalls: [],
+        });
+        controller.enqueue({ type: "finish", finishReason: "stop" });
+        controller.close();
+        return;
+      }
+
       await options.onFinish({
         response: { messages: [] },
         text: "   ",
         finishReason: "stop",
+        usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
         steps: [],
         toolCalls: [],
       });
@@ -380,6 +402,63 @@ describe("runAgentLoop", () => {
         },
       },
     });
+  });
+
+  it("passes structured output config into streamText and returns parsed output", async () => {
+    streamTextScenario = "structured-output";
+    installHarnessEnv();
+    const { runAgentLoop } = await import("../functions/harness-processing/harness.ts");
+    const onFinalText = mock(async (_response: unknown) => { });
+
+    const stream = await runAgentLoop({
+      conversationKey: "direct:conversation",
+      eventId: "direct-event",
+      filesystemNamespace: () => "fs-test",
+      persistModelMessages: async () => { },
+      loadRefreshedSystemPromptParts: async () => ({
+        systemContextSnapshot: { cursor: null, messages: [] },
+        system: [],
+      }),
+    } as never, {
+      messages: [{ role: "user", content: "hello" }],
+      system: [],
+      ephemeralSystem: [],
+      systemContextSnapshot: { cursor: null, messages: [] },
+    }, {
+      provider: {
+        google: {
+          apiKey: "google-key",
+        },
+      },
+      model: {
+        provider: "google",
+        modelId: "gemini-custom",
+        output: {
+          type: "object",
+          name: "Answer",
+          schema: {
+            type: "object",
+            properties: {
+              answer: { type: "string" },
+            },
+            required: ["answer"],
+            additionalProperties: false,
+          },
+        },
+      },
+    }, {
+      onFinalText,
+      onErrorText: async (error) => {
+        throw new Error(error);
+      },
+    });
+
+    await stream.consumeStream();
+
+    expect(streamTextMock.mock.calls[0]?.[0]).toHaveProperty("output");
+    expect(stream.hasStructuredOutput()).toBe(true);
+    expect(stream.finalResponse()).toEqual({ answer: "done" });
+    expect(onFinalText).toHaveBeenCalledWith({ answer: "done" });
   });
 
   it("uses agent maxTurn for the model loop limit", async () => {

@@ -29,7 +29,7 @@ export interface AsyncAgentResultRecord {
   status: AsyncAgentStatus;
   createdAt: string;
   updatedAt: string;
-  response?: string;
+  response?: unknown;
   error?: string;
   approvals?: ToolApprovalSummary[];
   expiresAt: number;
@@ -75,7 +75,7 @@ export async function getAsyncAgentResult(eventId: string): Promise<AsyncAgentRe
 
 export async function markAsyncAgentResultCompleted(options: {
   eventId: string;
-  response: string;
+  response: unknown;
 }): Promise<void> {
   await updateAsyncAgentResult(options.eventId, "completed", {
     response: options.response,
@@ -113,7 +113,7 @@ function asyncAgentResultExpiresAt(): number {
 async function updateAsyncAgentResult(
   eventId: string,
   status: AsyncAgentStatus,
-  values: { response?: string; error?: string; approvals?: ToolApprovalSummary[] },
+  values: { response?: unknown; error?: string; approvals?: ToolApprovalSummary[] },
 ): Promise<void> {
   const setExpressions = [
     "#status = :status",
@@ -145,7 +145,7 @@ async function updateAsyncAgentResult(
       ":status": { S: status },
       ":updatedAt": { S: new Date().toISOString() },
       ":expiresAt": { N: String(asyncAgentResultExpiresAt()) },
-      ...(values.response !== undefined ? { ":response": { S: values.response } } : {}),
+      ...(values.response !== undefined ? { ":response": toAttributeValue(values.response) } : {}),
       ...(values.error !== undefined ? { ":error": { S: values.error } } : {}),
       ...(values.approvals !== undefined ? { ":approvals": toAttributeValue(values.approvals) } : {}),
     },
@@ -179,11 +179,19 @@ function itemToAsyncAgentResult(item: Record<string, AttributeValue>): AsyncAgen
     status,
     createdAt,
     updatedAt,
-    response: optionalString(item.response),
+    response: optionalResponse(item.response),
     error: optionalString(item.error),
     approvals: optionalApprovals(item.approvals),
     expiresAt,
   };
+}
+
+function optionalResponse(value: AttributeValue | undefined): unknown {
+  if (!value) {
+    return undefined;
+  }
+
+  return fromAttributeValue(value);
 }
 
 function optionalString(value: AttributeValue | undefined): string | undefined {

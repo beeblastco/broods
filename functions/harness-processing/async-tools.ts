@@ -3,7 +3,7 @@
  * Keep tool wrapping and parent-result injection outside individual tool files.
  */
 
-import type { ToolSet, UserModelMessage } from "ai";
+import type { JSONValue, ToolSet, UserModelMessage } from "ai";
 import { logError, logInfo, logWarn } from "../_shared/log.ts";
 import {
   createPendingAsyncToolResult,
@@ -167,7 +167,10 @@ export class AsyncToolCoordinator {
     const wrapped = {
       ...entry,
       outputSchema: undefined,
-      toModelOutput: undefined,
+      toModelOutput: ({ output }: { output: unknown }) => ({
+        type: "json" as const,
+        value: output as JSONValue,
+      }),
       execute: async (input: never, options: Parameters<ToolExecute>[1]): Promise<AsyncToolPendingResult> => {
         const resultId = `async_tool_${crypto.randomUUID()}`;
         await createPendingAsyncToolResult({
@@ -217,7 +220,7 @@ export class AsyncToolCoordinator {
       },
     };
 
-    return wrapped as ToolEntry;
+    return wrapped as unknown as ToolEntry;
   }
 
   private startToolCall(options: {
@@ -425,7 +428,7 @@ function formatUnknown(value: unknown): string {
     return value;
   }
   try {
-    return JSON.stringify(value, null, 2);
+    return JSON.stringify(value);
   } catch {
     return String(value);
   }

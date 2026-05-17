@@ -98,10 +98,14 @@ Most `data` values contain raw Vercel AI SDK stream events: `step-start`, `step-
 ```
 
 ```json
+{ "type": "structured-output", "output": { "answer": "done" } }
+```
+
+```json
 { "type": "done" }
 ```
 
-The gateway should forward raw model/tool chunks to the WebSocket client and use `done` to close or mark the request complete.
+The gateway should forward raw model/tool chunks to the WebSocket client and use `done` to close or mark the request complete. `structured-output` is emitted only when the selected agent config has `model.output`; it carries the parsed final JSON value.
 
 ### NATS Delivery Model
 
@@ -146,6 +150,12 @@ POST to the deployed `harness-processing` Function URL with Vercel AI SDK-style 
 - `conversationKey` selects the account-scoped persisted direct conversation.
 - `agentId` selects the account-owned agent config to run.
 - `events` may contain `user` messages, one-off `system` messages, and AI SDK `tool-approval-response` tool messages.
+
+When the selected agent config has `model.output`, the SSE stream still includes raw AI SDK chunks and then emits a final parsed structured event:
+
+```json
+{ "type": "structured-output", "output": { "answer": "done" } }
+```
 
 Direct API callers can inject ephemeral `system` events:
 
@@ -292,10 +302,12 @@ The async worker runs the same account-scoped harness code in the background. If
   "agentId": "agent_...",
   "eventId": "unique-id-for-dedup",
   "conversationKey": "conversation-identifier",
-  "response": "final response text",
+  "response": { "answer": "done" },
   "success": true
 }
 ```
+
+For plain text agents, `response` remains a string. For structured agents, it is the parsed JSON value from `model.output`.
 
 If the async run stops for tool approval, the callback uses the same approval summary shape as the status API:
 
@@ -357,7 +369,7 @@ Completed response:
   "eventId": "unique-id-for-dedup",
   "conversationKey": "conversation-identifier",
   "status": "completed",
-  "response": "final response text"
+  "response": { "answer": "done" }
 }
 ```
 

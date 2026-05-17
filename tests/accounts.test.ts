@@ -174,6 +174,97 @@ describe("agent config", () => {
       },
     })).toThrow("config.model.options must be an object");
 
+    expect(normalizeAgentConfig({
+      model: {
+        output: {
+          type: "object",
+          name: "Answer",
+          description: "A structured answer.",
+          schema: {
+            type: "object",
+            properties: { answer: { type: "string" } },
+            required: ["answer"],
+            additionalProperties: false,
+          },
+        },
+      },
+    })).toEqual({
+      model: {
+        output: {
+          type: "object",
+          name: "Answer",
+          description: "A structured answer.",
+          schema: {
+            type: "object",
+            properties: { answer: { type: "string" } },
+            required: ["answer"],
+            additionalProperties: false,
+          },
+        },
+      },
+    });
+
+    expect(normalizeAgentConfig({
+      model: {
+        output: {
+          type: "array",
+          element: {
+            type: "object",
+            properties: { label: { type: "string" } },
+            required: ["label"],
+          },
+        },
+      },
+    })).toMatchObject({ model: { output: { type: "array" } } });
+
+    expect(normalizeAgentConfig({
+      model: {
+        output: {
+          type: "choice",
+          options: ["accept", "reject"],
+        },
+      },
+    })).toMatchObject({ model: { output: { type: "choice" } } });
+
+    expect(normalizeAgentConfig({
+      model: {
+        output: {
+          type: "json",
+        },
+      },
+    })).toMatchObject({ model: { output: { type: "json" } } });
+
+    expect(() => normalizeAgentConfig({
+      model: {
+        output: "bad",
+      },
+    })).toThrow("config.model.output must be an object");
+
+    expect(() => normalizeAgentConfig({
+      model: {
+        output: {
+          type: "object",
+        },
+      },
+    })).toThrow("config.model.output.schema must be an object");
+
+    expect(() => normalizeAgentConfig({
+      model: {
+        output: {
+          type: "array",
+        },
+      },
+    })).toThrow("config.model.output.element must be an object");
+
+    expect(() => normalizeAgentConfig({
+      model: {
+        output: {
+          type: "choice",
+          options: [],
+        },
+      },
+    })).toThrow("config.model.output.options must be a non-empty array of strings");
+
     expect(() => normalizeAgentConfig({
       provider: {
         unknown: {},

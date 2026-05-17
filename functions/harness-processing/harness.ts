@@ -7,6 +7,7 @@ import {
   stepCountIs,
   streamText,
   type AssistantModelMessage,
+  type JSONValue,
   type ModelMessage,
   type StepResult,
   type ToolCallPart,
@@ -15,7 +16,11 @@ import {
 } from "ai";
 import type { AgentConfig } from "../_shared/accounts.ts";
 import { logError, logInfo, logWarn } from "../_shared/log.ts";
-import { modelSettingsFromModelConfig, resolveConfiguredModel } from "./provider.ts";
+import {
+  modelOutputFromModelConfig,
+  modelSettingsFromModelConfig,
+  resolveConfiguredModel,
+} from "./provider.ts";
 import { stripReasoningFromMessages } from "./pruning.ts";
 import type { Session, TurnContextSnapshot } from "./session.ts";
 import type { RunAsyncToolDispatch } from "./async-tools.ts";
@@ -35,7 +40,7 @@ export type ToolApprovalSummary = Pick<ApprovalRequestOutput, "approvalId"> & {
 };
 
 export interface AgentReplyHooks {
-  onFinalText(text: string): Promise<void>;
+  onFinalText(response: JSONValue): Promise<void>;
   onErrorText(error: string): Promise<void>;
   onApprovalRequired?(approvals: ToolApprovalSummary[]): Promise<void>;
 }
@@ -80,7 +85,9 @@ export async function runAgentLoop(
   } satisfies ToolSet;
   const enabledTools = Object.keys(tools).length > 0 ? tools : undefined;
   const modelSettings = modelSettingsFromModelConfig(agentConfig);
+  const modelOutput = modelOutputFromModelConfig(agentConfig);
   let approvalSummaries: ToolApprovalSummary[] = [];
+  let finalResponse: JSONValue | undefined;
 
   const stream = streamText({
     maxOutputTokens: 16000,
@@ -88,6 +95,7 @@ export async function runAgentLoop(
     model: configuredModel.model,
     system: turnContext.system,
     messages: turnContext.messages,
+    ...(modelOutput ? { output: modelOutput } : {}),
     ...(enabledTools ? { tools: enabledTools } : {}),
     ...(agentConfig.model?.options ? { providerOptions: agentConfig.model.options as never } : {}),
     stopWhen: stepCountIs(agentConfig.agent?.maxTurn ?? MAX_AGENT_ITERATIONS),
@@ -160,7 +168,7 @@ export async function runAgentLoop(
 
       await reply?.onErrorText(errorText).catch(() => { });
     },
-    onFinish: async ({ response, text, finishReason, steps, toolCalls }) => {
+    onFinish: async ({ response, text, finishReason, steps, toolCalls, usage }) => {
       const finalText = text.trim();
       const stepCount = steps.length;
       const toolCallCount = toolCalls.length;
@@ -182,6 +190,13 @@ export async function runAgentLoop(
             approvals,
           });
           await reply?.onApprovalRequired?.(approvals);
+          return;
+        }
+
+        if (modelOutput) {
+          finalResponse = await modelOutput.parseCompleteOutput({ text }, { response, usage, finishReason }) as JSONValue;
+          await reply?.onFinalText(finalResponse);
+          logInfo("Processing complete", { conversationKey: session.conversationKey });
           return;
         }
 
@@ -216,6 +231,7 @@ export async function runAgentLoop(
           return;
         }
 
+        finalResponse = finalText;
         await reply?.onFinalText(finalText);
         logInfo("Processing complete", { conversationKey: session.conversationKey });
       } catch (err) {
@@ -237,6 +253,8 @@ export async function runAgentLoop(
     didFail: () => didFail,
     failureText: () => failureText,
     approvalSummaries: () => approvalSummaries,
+    hasStructuredOutput: () => Boolean(modelOutput),
+    finalResponse: () => finalResponse,
   });
 }
 

@@ -4,7 +4,7 @@
  */
 
 import { InvokeCommand, LambdaClient } from "@aws-sdk/client-lambda";
-import type { ToolModelMessage } from "ai";
+import type { ToolModelMessage, JSONValue } from "ai";
 import type { LambdaFunctionURLEvent } from "aws-lambda";
 import { formatChannelErrorText } from "../_shared/channels.ts";
 import { executeCommand } from "../_shared/commands.ts";
@@ -76,7 +76,7 @@ interface DirectTurn {
 interface ParentContinuationResult {
   didFail: boolean;
   failureText: string | null;
-  finalTexts: string[];
+  finalResponse?: JSONValue;
   approvals: ToolApprovalSummary[];
   hasExternalDispatches: boolean;
 }
@@ -278,18 +278,18 @@ async function handleAsyncWorkerRequest(event: DirectInboundEvent, context?: Lam
 
     let didSettle = false;
     const result = await runAgentLoopUntilSubagentsIdle(session, turnContext, event.agentConfig, context, {
-      onFinalText: async (text) => {
+      onFinalText: async (response) => {
         didSettle = true;
         await Promise.all(asyncResultEventIds(event).map((eventId) =>
           markAsyncAgentResultCompleted({
-            eventId,
-            response: text,
+            eventId: eventId,
+            response: response,
           })
         ));
         await sendWebhook(event, {
           eventId: event.publicEventId,
           conversationKey: event.publicConversationKey,
-          response: text,
+          response: response,
           success: true,
         });
       },
@@ -426,11 +426,11 @@ async function handleNatsWorkerRequest(event: DirectInboundEvent, context?: Lamb
           reason: "external-async-tools",
         });
       } else {
-        if (result.finalTexts.length > 0) {
+        if (result.finalResponse !== undefined) {
           await sendWebhook(event, {
             eventId: event.publicEventId,
             conversationKey: event.publicConversationKey,
-            response: result.finalTexts.join("\n\n"),
+            response: result.finalResponse,
             success: true,
           });
         }
@@ -495,7 +495,8 @@ async function handleChannelRequest(event: ChannelInboundEvent, context?: Lambda
       }
 
       const result = await runAgentLoopUntilSubagentsIdle(session, turnContext, event.agentConfig ?? {}, context, {
-        onFinalText: (text) => event.channel.sendText(text),
+        // Sending prettify JSON if json, else string
+        onFinalText: (response) => event.channel.sendText(typeof response === "string" ? response : JSON.stringify(response, null, 2)),
         onErrorText: (error) => event.channel.sendText(formatChannelErrorText(error)),
         onApprovalRequired: async (approvals) => {
           await session.persistModelMessages([createChannelApprovalDenial(approvals)]);
@@ -527,7 +528,7 @@ async function handleStatusRequest(event: StatusInboundEvent): Promise<LambdaRes
     eventId: event.publicEventId,
     conversationKey: eventPublicConversationKey(result.conversationKey, event.accountId, event.agentId),
     status: result.status,
-    ...(result.response ? { response: result.response } : {}),
+    ...(result.response !== undefined ? { response: result.response } : {}),
     ...(result.error ? { error: result.error } : {}),
     ...(result.approvals ? { approvals: result.approvals } : {}),
   });
@@ -756,11 +757,11 @@ function createDirectContinuationSseBody(
           onHeartbeat: (pendingCount) => controller.enqueue(textEncoder.encode(`: waiting for async work pending=${pendingCount}\n\n`))
         });
 
-        if (result.finalTexts.length > 0) {
+        if (result.finalResponse !== undefined) {
           await sendWebhook(event, {
             eventId: event.publicEventId,
             conversationKey: event.publicConversationKey,
-            response: result.finalTexts.join("\n\n"),
+            response: result.finalResponse,
             success: true,
           });
         }
@@ -790,7 +791,7 @@ async function runAgentLoopUntilSubagentsIdle(
   agentConfig: DirectInboundEvent["agentConfig"],
   context: LambdaInvocation | undefined,
   reply: {
-    onFinalText(text: string): Promise<void>;
+    onFinalText(response: JSONValue): Promise<void>;
     onErrorText(error: string): Promise<void>;
     onApprovalRequired?(approvals: ToolApprovalSummary[]): Promise<void>;
   },
@@ -826,8 +827,8 @@ async function runAgentLoopUntilSubagentsIdle(
     return { didFail: false, failureText: null, hasExternalDispatches };
   }
 
-  if (result.finalTexts.length > 0) {
-    await reply.onFinalText(result.finalTexts.join("\n\n"));
+  if (result.finalResponse !== undefined) {
+    await reply.onFinalText(result.finalResponse);
   }
 
   return { didFail: false, failureText: null, hasExternalDispatches };
@@ -852,14 +853,13 @@ async function runParentContinuationLoop(options: {
   onHeartbeat?(pendingCount: number): void;
 }): Promise<ParentContinuationResult> {
   let turnContext = options.initialTurnContext;
-  const finalTexts: string[] = [];
+  let finalResponse: JSONValue | undefined;
 
   while (true) {
-    let loopFinalText = "";
     let approvals: ToolApprovalSummary[] = [];
     const stream = await runAgentLoop(options.session, turnContext, options.agentConfig, {
-      onFinalText: async (text) => {
-        loopFinalText = text.trim();
+      onFinalText: async (response) => {
+        finalResponse = response;
       },
       onErrorText: async (error) => {
         await options.onLoopErrorText?.(error);
@@ -874,14 +874,11 @@ async function runParentContinuationLoop(options: {
     });
 
     await options.consumeStream(stream);
-    if (loopFinalText) {
-      finalTexts.push(loopFinalText);
-    }
     if (approvals.length > 0) {
       return {
         didFail: false,
         failureText: null,
-        finalTexts,
+        ...(finalResponse !== undefined ? { finalResponse } : {}),
         approvals,
         hasExternalDispatches: options.asyncToolCoordinator.hasExternalDispatches,
       };
@@ -890,7 +887,7 @@ async function runParentContinuationLoop(options: {
       return {
         didFail: true,
         failureText: stream.failureText(),
-        finalTexts,
+        ...(finalResponse !== undefined ? { finalResponse } : {}),
         approvals: [],
         hasExternalDispatches: options.asyncToolCoordinator.hasExternalDispatches,
       };
@@ -904,7 +901,7 @@ async function runParentContinuationLoop(options: {
       return {
         didFail: false,
         failureText: null,
-        finalTexts,
+        ...(finalResponse !== undefined ? { finalResponse } : {}),
         approvals: [],
         hasExternalDispatches: options.asyncToolCoordinator.hasExternalDispatches,
       };
@@ -915,7 +912,7 @@ async function runParentContinuationLoop(options: {
       return {
         didFail: false,
         failureText: null,
-        finalTexts,
+        ...(finalResponse !== undefined ? { finalResponse } : {}),
         approvals: [],
         hasExternalDispatches: options.asyncToolCoordinator.hasExternalDispatches,
       };
@@ -1001,6 +998,13 @@ async function pipeAgentSseStream(
       error: failureText,
     })}\n\n`));
   }
+  const finalResponse = stream.finalResponse();
+  if (stream.hasStructuredOutput() && finalResponse !== undefined) {
+    controller.enqueue(textEncoder.encode(`data: ${JSON.stringify({
+      type: "structured-output",
+      output: finalResponse,
+    })}\n\n`));
+  }
 }
 
 async function pipeAgentNatsStream(
@@ -1015,6 +1019,13 @@ async function pipeAgentNatsStream(
       break;
     }
     publisher.publish(value as Record<string, unknown>).catch(() => {});
+  }
+  const finalResponse = stream.finalResponse();
+  if (stream.hasStructuredOutput() && finalResponse !== undefined) {
+    await publisher.publish({
+      type: "structured-output",
+      output: finalResponse,
+    });
   }
 }
 

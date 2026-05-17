@@ -100,6 +100,52 @@ describe("async agent result persistence", () => {
       }],
     });
   });
+
+  it("stores and decodes structured async agent responses", async () => {
+    process.env.ASYNC_AGENT_RESULT_TABLE_NAME = "async-agent-result";
+    dynamo.send = sendMock as never;
+    const { getAsyncAgentResult, markAsyncAgentResultCompleted } = await import("../functions/harness-processing/async-agent-result.ts");
+
+    await markAsyncAgentResultCompleted({
+      eventId: "event-1",
+      response: { answer: "done" },
+    });
+
+    const updateCommand = sendMock.mock.calls[0]?.[0];
+    expect(updateCommand).toBeInstanceOf(UpdateItemCommand);
+    if (!(updateCommand instanceof UpdateItemCommand)) {
+      throw new Error("Expected UpdateItemCommand");
+    }
+    expect(updateCommand.input.ExpressionAttributeValues?.[":response"]).toEqual({
+      M: {
+        answer: { S: "done" },
+      },
+    });
+
+    sendMock.mockReset();
+    sendMock.mockImplementation(async (command: unknown) => {
+      if (command instanceof GetItemCommand) {
+        return {
+          Item: {
+            eventId: { S: "event-1" },
+            conversationKey: { S: "conversation-1" },
+            status: { S: "completed" },
+            createdAt: { S: "2026-05-10T00:00:00.000Z" },
+            updatedAt: { S: "2026-05-10T00:00:01.000Z" },
+            expiresAt: { N: "1770000000" },
+            response: toAttributeValue({ answer: "done" }),
+          },
+        };
+      }
+      throw new Error("unexpected command");
+    });
+
+    await expect(getAsyncAgentResult("event-1")).resolves.toMatchObject({
+      eventId: "event-1",
+      status: "completed",
+      response: { answer: "done" },
+    });
+  });
 });
 
 describe("async tool result persistence", () => {
