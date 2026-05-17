@@ -201,6 +201,21 @@ export default $config({
     const filesystemBucketArn = `arn:aws:s3:::${names.memory}`;
     const skillsBucketArn = `arn:aws:s3:::${names.skills}`;
 
+    const mockExternalAsyncTool = new sst.aws.Function("MockExternalAsyncTool", {
+      name: resourceName("mock-external-async-tool", stage, region),
+      runtime: "python3.12",
+      architecture: "arm64",
+      bundle: "functions/mock-external-async-tool",
+      handler: "handler.handler",
+      description: "Mock external async tool for testing external-dispatch mode.",
+      timeout: "30 seconds",
+      memory: "128 MB",
+      url: {
+        authorization: "none",
+      },
+      logging: { format: "json", retention: "1 month" },
+    });
+
     const harnessProcessing = new sst.aws.Function("HarnessProcessing", {
       name: names.harnessProcessing,
       runtime: "provided.al2023",
@@ -228,6 +243,7 @@ export default $config({
         SKILLS_BUCKET_NAME: names.skills,
         ENABLE_DIRECT_API: ENABLE_DIRECT_API ? "true" : "false",
         ENABLE_WEBSOCKET: ENABLE_WEBSOCKET ? "true" : "false",
+        MOCK_EXTERNAL_ASYNC_TOOL_URL: mockExternalAsyncTool.url,
         ...(NATS_URL ? { NATS_URL } : {}),
       },
       permissions: [
@@ -471,6 +487,7 @@ export default $config({
     return {
       agentServiceUrl: harnessProcessing.url,
       accountServiceUrl: accountManage.url,
+      mockExternalAsyncToolUrl: mockExternalAsyncTool.url,
       accountConfigsTableName: accountConfigsTable.name,
       agentConfigsTableName: agentConfigsTable.name,
       accountSignupRateLimitTableName: accountSignupRateLimitTable.name,
