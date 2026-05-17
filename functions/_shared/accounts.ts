@@ -750,16 +750,19 @@ function normalizeToolConfig(toolName: string, value: unknown): void {
       return;
     case "test_async":
       return;
+    case "test_external_async":
+      return;
   }
 }
 
 function isSupportedConfigToolName(
   toolName: string,
-): toolName is "tavilySearch" | "tavilyExtract" | "googleSearch" | "test_async" {
+): toolName is "tavilySearch" | "tavilyExtract" | "googleSearch" | "test_async" | "test_external_async" {
   return toolName === "tavilySearch" ||
     toolName === "tavilyExtract" ||
     toolName === "googleSearch" ||
-    toolName === "test_async";
+    toolName === "test_async" ||
+    toolName === "test_external_async";
 }
 
 function normalizeTavilySearchToolConfig(config: Record<string, unknown>): void {
