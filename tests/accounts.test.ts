@@ -220,6 +220,13 @@ describe("agent config", () => {
           enabled: true,
           async: true,
         },
+        test_external_async: {
+          enabled: true,
+          async: true,
+          execution: "external-dispatch",
+          completionBaseUrl: "https://agent.example",
+          completionBearerToken: "secret",
+        },
       },
     })).toEqual({
       tools: {
@@ -249,6 +256,13 @@ describe("agent config", () => {
           enabled: true,
           async: true,
         },
+        test_external_async: {
+          enabled: true,
+          async: true,
+          execution: "external-dispatch",
+          completionBaseUrl: "https://agent.example",
+          completionBearerToken: "secret",
+        },
       },
     });
 
@@ -275,6 +289,12 @@ describe("agent config", () => {
         tavilySearch: { execution: "background" },
       },
     })).toThrow("config.tools.tavilySearch.execution must be one of: same-invocation, external-dispatch");
+
+    expect(() => normalizeAgentConfig({
+      tools: {
+        test_external_async: { completionBearerToken: "" },
+      },
+    })).toThrow("config.tools.test_external_async.completionBearerToken must be a non-empty string");
   });
 
   it("validates agent skills config", () => {

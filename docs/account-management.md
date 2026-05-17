@@ -397,7 +397,7 @@ Enables external tools. Omitting `tools` or setting `enabled: false` disables th
 
 Developer guide: [External Tools](tools.md).
 
-Available tools: `tavilySearch`, `tavilyExtract`, `googleSearch`, `test_async`.
+Available tools: `tavilySearch`, `tavilyExtract`, `googleSearch`, `test_async`, `test_external_async`.
 
 ```json
 {
@@ -467,6 +467,11 @@ Available tools: `tavilySearch`, `tavilyExtract`, `googleSearch`, `test_async`.
 | | `async` | boolean | Return immediately and inject the completed local `execute` result later |
 | | `execution` | `same-invocation` \| `external-dispatch` | Async lifecycle; defaults to `same-invocation` |
 | | `needsApproval` | boolean | Require AI SDK approval before execution |
+| `test_external_async` | `enabled` | boolean | Enable the external-dispatch mock tool fixture |
+| | `async` | boolean | Should be `true` for this fixture |
+| | `execution` | `external-dispatch` | Dispatch to the mock worker and continue after callback |
+| | `completionBaseUrl` | string | Harness `AGENT_SERVICE_URL` used to build the callback URL |
+| | `completionBearerToken` | string | Account bearer token used by the mock worker callback |
 
 ---
 

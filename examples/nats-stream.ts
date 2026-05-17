@@ -45,11 +45,9 @@ const researchAgentConfig: AgentConfig = {
   },
 };
 
-// Initialize clients.
-const nats = await connect({ servers: natsUrl, timeout: 5000 });
+const natsClient = await connect({ servers: natsUrl, timeout: 5000 });
 const lambda = new LambdaClient({ region: "eu-central-1", profile: "default" });
 
-// Create account and agents, then subscribe before invoking the worker.
 const account = await createAccount(`nats-stream-${Date.now()}`);
 const researchAgent = await createAgent(
   account.accountSecret,
@@ -78,9 +76,9 @@ const agentConfig: AgentConfig = {
   },
 };
 const agent = await createAgent(account.accountSecret, "NATS stream test assistant", agentConfig);
+
 const subject = streamResponseSubject(account.account.accountId, agent.agent.agentId, connectionId);
-const subscription = nats.subscribe(subject);
-const removeShutdownHandlers = installShutdownHandlers(subscription);
+const subscription = natsClient.subscribe(subject);
 
 console.log("Created test account:", JSON.stringify(account.account));
 console.log("Created research subagent:", JSON.stringify(researchAgent.agent));
@@ -123,54 +121,18 @@ try {
       event: inboundEvent,
     })),
   }));
-  await printNatsStream(subscription);
+
+  for await (const message of subscription) {
+    const event = JSON.parse(codec.decode(message.data)) as NatsStreamEvent;
+    process.stdout.write(`\n[${event.sequence}] ${JSON.stringify(event.data)}\n`);
+    if (event.data.type === "done" || event.data.type === "error") {
+      console.log(`\n[Stream completed with: ${event.data.type}]`);
+      break;
+    }
+  }
 } finally {
-  removeShutdownHandlers();
   subscription.unsubscribe();
-  await nats.drain().catch(() => { });
+  await natsClient.drain().catch(() => {});
   await deleteAccount(account.accountSecret);
   console.log("\nDeleted test account");
-}
-
-async function printNatsStream(subscription: ReturnType<typeof nats.subscribe>): Promise<void> {
-  const timeout = setTimeout(() => { subscription.unsubscribe(); }, 120000);
-
-  try {
-    for await (const message of subscription) {
-      const event = JSON.parse(codec.decode(message.data)) as NatsStreamEvent;
-
-      process.stdout.write(`\n[${event.sequence}] ${JSON.stringify(event.data)}\n`);
-      if (event.data.type === "done") {
-        break;
-      }
-    }
-  } finally {
-    clearTimeout(timeout);
-  }
-}
-
-function installShutdownHandlers(subscription: ReturnType<typeof nats.subscribe>): () => void {
-  let shutdownRequested = false;
-
-  const requestShutdown = (signal: NodeJS.Signals) => {
-    if (shutdownRequested) {
-      process.exit(signal === "SIGINT" ? 130 : 143);
-    }
-
-    shutdownRequested = true;
-    process.exitCode = signal === "SIGINT" ? 130 : 143;
-    process.stdout.write(`\nReceived ${signal}. Closing NATS stream...\n`);
-    subscription.unsubscribe();
-  };
-
-  const onSigint = () => requestShutdown("SIGINT");
-  const onSigterm = () => requestShutdown("SIGTERM");
-
-  process.once("SIGINT", onSigint);
-  process.once("SIGTERM", onSigterm);
-
-  return () => {
-    process.off("SIGINT", onSigint);
-    process.off("SIGTERM", onSigterm);
-  };
 }

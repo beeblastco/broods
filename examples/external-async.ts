@@ -10,7 +10,7 @@ import { toRuntimeAgentConfig, type AgentConfig } from "../functions/_shared/acc
 import { streamResponseSubject, type NatsStreamEvent } from "../functions/_shared/nats.ts";
 import { scopedDirectConversationKey, scopedDirectEventId } from "../functions/_shared/runtime-keys.ts";
 import type { DirectInboundEvent } from "../functions/harness-processing/integrations.ts";
-import { createAccount, createAgent, deleteAccount } from "./utils.ts";
+import { AGENT_SERVICE_URL, createAccount, createAgent, deleteAccount } from "./utils.ts";
 
 const googleApiKey = process.env.ACCOUNT_GOOGLE_API_KEY!;
 const lambdaFunctionName = process.env.HARNESS_FUNCTION_ARN!;
@@ -22,6 +22,7 @@ const codec = StringCodec();
 
 const natsClient = await connect({ servers: natsUrl, timeout: 5000 });
 const lambda = new LambdaClient({ region: "eu-central-1", profile: "default" });
+const account = await createAccount(`external-async-${Date.now()}`);
 
 const agentConfig: AgentConfig = {
   provider: {
@@ -41,11 +42,12 @@ const agentConfig: AgentConfig = {
       enabled: true,
       async: true,
       execution: "external-dispatch", // Using 'external-dispatch' mode
+      completionBaseUrl: AGENT_SERVICE_URL,
+      completionBearerToken: account.accountSecret,
     },
   },
 }
 
-const account = await createAccount(`external-async-${Date.now()}`);
 const agent = await createAgent(account.accountSecret, "External async tool test assistant", agentConfig);
 
 const subject = streamResponseSubject(account.account.accountId, agent.agent.agentId, connectionId);
@@ -80,7 +82,10 @@ try {
   for await (const message of subscription) {
     const event = JSON.parse(codec.decode(message.data)) as NatsStreamEvent;
     process.stdout.write(`\n[${event.sequence}] ${JSON.stringify(event.data)}\n`);
-    if (event.data.type === "done" || event.data.type === "error") break;
+    if (event.data.type === "done" || event.data.type === "error") {
+      console.log(`\n[Stream completed with: ${event.data.type}]`);
+      break;
+    }
   }
 } finally {
   subscription.unsubscribe();

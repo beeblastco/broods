@@ -93,6 +93,13 @@
       "enabled": true,
       "async": true,
       "execution": "same-invocation"
+    },
+    "test_external_async": {
+      "enabled": false,
+      "async": true,
+      "execution": "external-dispatch",
+      "completionBaseUrl": "${AGENT_SERVICE_URL}",
+      "completionBearerToken": "${ACCOUNT_SECRET}"
     }
   },
   "channels": {

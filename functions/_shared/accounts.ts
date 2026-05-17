@@ -751,6 +751,7 @@ function normalizeToolConfig(toolName: string, value: unknown): void {
     case "test_async":
       return;
     case "test_external_async":
+      normalizeTestExternalAsyncToolConfig(config);
       return;
   }
 }
@@ -799,6 +800,11 @@ function normalizeGoogleSearchToolConfig(config: Record<string, unknown>): void 
     assertOptionalString(timeRangeFilter.startTime, "config.tools.googleSearch.timeRangeFilter.startTime");
     assertOptionalString(timeRangeFilter.endTime, "config.tools.googleSearch.timeRangeFilter.endTime");
   }
+}
+
+function normalizeTestExternalAsyncToolConfig(config: Record<string, unknown>): void {
+  assertOptionalNonEmptyString(config.completionBaseUrl, "config.tools.test_external_async.completionBaseUrl");
+  assertOptionalNonEmptyString(config.completionBearerToken, "config.tools.test_external_async.completionBearerToken");
 }
 
 function validateConfigPatch(value: unknown, path: string): void {
