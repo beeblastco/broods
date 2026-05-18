@@ -49,7 +49,7 @@ sequenceDiagram
   else external-dispatch async tool
     Lambda->>NATS: waiting external-async-tools
     Lambda-->>Lambda: exit
-    Worker->>Lambda: POST /async-tools/{resultId}/complete
+    Worker->>Lambda: POST /async-tools/\{resultId\}/complete
     Lambda->>NATS: continuation stream, then done
   end
   NATS->>Gateway: response events
@@ -243,7 +243,7 @@ Use `{"status":"completed","response":...}` or `{"status":"failed","error":"..."
 
 ```mermaid
 flowchart LR
-  Complete["POST /async-tools/{resultId}/complete"] --> Row["settle result row"]
+  Complete["POST /async-tools/\{resultId\}/complete"] --> Row["settle result row"]
   Row --> Group{"dispatch group<br/>sealed + all settled?"}
   Group -->|"no"| Wait["202 waiting_for_async_tools"]
   Group -->|"yes: async"| Async["invoke direct-api-async-worker<br/>settle original status id"]

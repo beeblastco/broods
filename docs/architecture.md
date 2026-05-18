@@ -29,8 +29,8 @@ flowchart TD
   Owner["Account owner"] -->|"POST /accounts<br/>agents + skills APIs"| ManageUrl["account-manage<br/>Function URL"]
   Admin["Admin"] -->|"Bearer AdminAccountSecret"| ManageUrl
   Direct["Direct API client"] -->|"Bearer accountSecret<br/>POST / or /async"| HarnessUrl["harness-processing<br/>Function URL"]
-  Status["Status poller"] -->|"Bearer accountSecret<br/>GET /status/{eventId}"| HarnessUrl
-  Provider["Telegram / GitHub / Slack / Discord"] -->|"/webhooks/{accountId}/{agentId}/{channel}"| HarnessUrl
+  Status["Status poller"] -->|"Bearer accountSecret<br/>GET /status/\{eventId\}"| HarnessUrl
+  Provider["Telegram / GitHub / Slack / Discord"] -->|"/webhooks/\{accountId\}/\{agentId\}/\{channel\}"| HarnessUrl
   WSClient["WebSocket client"] <-->|"wss://gateway"| WSGateway["WebSocket Gateway<br/>(separate service)"]
   WSGateway -->|"Lambda Event invocation"| HarnessUrl
   HarnessUrl -->|"publish stream events"| NATS["NATS Server"]
@@ -57,8 +57,8 @@ flowchart TD
   Handler --> AsyncAgentResult["DynamoDB: AsyncAgentResult"]
   AsyncTools --> AsyncToolResult["DynamoDB: AsyncToolResult"]
   Session --> Memory["S3: account-scoped MEMORY.md"]
-  SkillStore --> |"Load skills metadata"| Session
-  Harness --> |"Access skills"| SkillStore 
+  SkillStore -->|"Load skills metadata"| Session
+  Harness -->|"Access skills"| SkillStore 
   Tools --> Filesystem["S3: account-scoped filesystem/tasks"]
   Subagents --> AsyncAgentResult
   Subagents --> Session
@@ -74,18 +74,18 @@ The diagrams show the logical ownership of runtime config. In code, `integration
 ```mermaid
 flowchart TD
   Direct["POST / or /async"] --> Bearer["Authorization: Bearer accountSecret"]
-  Status["GET /status/{eventId}"] --> Bearer
+  Status["GET /status/\{eventId\}"] --> Bearer
   Bearer --> Hash["hash secret"]
   Hash --> Lookup["AccountConfig GSI<br/>SecretHashIndex"]
   Lookup --> Account["active AccountRecord"]
 
-  Webhook["POST /webhooks/{accountId}/{agentId}/{channel}"] --> Load["load account by accountId"]
+  Webhook["POST /webhooks/\{accountId\}/\{agentId\}/\{channel\}"] --> Load["load account by accountId"]
   Load --> AgentLookup["load agent by agentId"]
-  AgentLookup --> ChannelConfig["read encrypted agent config<br/>channels.{channel}"]
+  AgentLookup --> ChannelConfig["read encrypted agent config<br/>channels.\{channel\}"]
   ChannelConfig --> Verify["verify provider-native signature/secret"]
   Verify --> Account
 
-  Account --> Namespace["prefix event/conversation keys<br/>acct:{accountId}:..."]
+  Account --> Namespace["prefix event/conversation keys<br/>acct:\{accountId\}:..."]
 ```
 
 Root provider webhooks are not accepted. Provider webhook URLs must include the `accountId`, `agentId`, and channel name.
@@ -160,7 +160,7 @@ flowchart TD
   Agent --> Complete["async-agent-result.ts<br/>completed / failed"]
   Complete --> AsyncTable
 
-  Caller -->|"GET /status/{eventId}"| Status["status poll"]
+  Caller -->|"GET /status/\{eventId\}"| Status["status poll"]
   Status --> Auth
   Status --> AsyncTable
 ```
@@ -185,7 +185,7 @@ Direct sync and async POST access is controlled by `ENABLE_DIRECT_API`, which de
 
 ```mermaid
 flowchart TD
-  Provider["Provider webhook"] -->|"POST /webhooks/{accountId}/{agentId}/{channel}"| Url["harness-processing URL"]
+  Provider["Provider webhook"] -->|"POST /webhooks/\{accountId\}/\{agentId\}/\{channel\}"| Url["harness-processing URL"]
   Url --> Load["load account + agent config"]
   Load --> Adapter["build channel adapter from agent config"]
   Adapter --> Auth["verify provider-native auth"]
@@ -207,10 +207,10 @@ Customers talk to the provider bot/app owned by the account. They never receive 
 flowchart TD
   Client["WebSocket Client"] <-->|"wss://gateway"| GW["WebSocket Gateway<br/>(separate service)"]
   GW -->|"validate account secret"| Auth["Account auth"]
-  Auth -->|"subscribe v1.{accountId}.{agentId}.ws.response.{connectionId}"| NATS["NATS Server"]
-  Auth -->|"Lambda Event invocation<br/>{ kind: 'nats-worker', event: {..., connectionId} }"| Harness["harness-processing Lambda"]
+  Auth -->|"subscribe v1.\{accountId\}.\{agentId\}.ws.response.\{connectionId\}"| NATS["NATS Server"]
+  Auth -->|"Lambda Event invocation<br/>\{ kind: 'nats-worker', event: \{..., connectionId\} \}"| Harness["harness-processing Lambda"]
   Harness -->|"publish AI SDK stream chunks"| NATS
-  NATS -->|"subscribe v1.{accountId}.{agentId}.ws.response.{connectionId}"| GW
+  NATS -->|"subscribe v1.\{accountId\}.\{agentId\}.ws.response.\{connectionId\}"| GW
   GW -->|"forward events"| Client
 ```
 
@@ -235,7 +235,7 @@ This path currently uses core NATS. If JetStream is introduced later, replace be
 
 ## Memory and Filesystem Boundaries
 
-Workspace state is account/agent-scoped and disabled unless the selected agent has `config.workspace.enabled` true. When enabled, it turns on workspace memory and tools; `workspace.memory.enabled`, `workspace.filesystem.enabled`, and `workspace.tasks.enabled` can disable those pieces individually. `workspace.needsApproval` requires approval for every enabled workspace tool. By default workspace state is per conversation; setting `config.workspace.memory.namespace` lets multiple conversations for the same agent share `MEMORY.md`, filesystem files, and task files.
+Workspace state is account/agent-scoped and disabled unless the selected agent has `config.workspace.enabled` true. When enabled, it turns on workspace memory and tools; `workspace.memory.enabled`, `workspace.filesystem.enabled`, and `workspace.tasks.enabled` can disable those pieces individually. `workspace.sandbox.enabled` extends the filesystem tool with file-only `node <file.js>` and `python <file.py>` execution through private runtime Lambdas. `workspace.needsApproval` requires approval for every enabled workspace tool. By default workspace state is per conversation; setting `config.workspace.memory.namespace` lets multiple conversations for the same agent share `MEMORY.md`, filesystem files, and task files.
 
 ```mermaid
 flowchart LR
