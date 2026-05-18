@@ -12,7 +12,7 @@ Customers interact with the provider bot, app, or webhook. They do not receive a
 
 ```mermaid
 flowchart TD
-  Provider["Provider webhook"] --> Url["/webhooks/{accountId}/{agentId}/{channel}"]
+  Provider["Provider webhook"] --> Url["/webhooks/\{accountId\}/\{agentId\}/\{channel\}"]
   Url --> Integrations["integrations.ts"]
   Integrations --> Account["load active account"]
   Account --> Agent["load active agent config"]

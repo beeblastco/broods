@@ -67,7 +67,7 @@ sequenceDiagram
     C->>D: processing row + delivery metadata + dispatch group
     C->>W: enqueue/fire external work
     C-->>H: pending result, Lambda can exit
-    W->>H: POST /async-tools/{resultId}/complete
+    W->>H: POST /async-tools/\{resultId\}/complete
     H->>D: settle result row
     H->>P: continue after dispatch group is sealed and all siblings settled
   end
