@@ -421,7 +421,8 @@ Enables workspace-backed features. See [Memory and Session](memory-and-session.m
       "provider": "lambda",
       "timeout": 30,
       "memoryLimit": 512,
-      "outputLimitBytes": 65536
+      "outputLimitBytes": 65536,
+      "filesystem": { "mount": "native" }
     },
     "tasks": { "enabled": true }
   }
@@ -440,8 +441,10 @@ Enables workspace-backed features. See [Memory and Session](memory-and-session.m
 | | `timeout` | number | Per-run timeout in seconds (1–120, default: 30) |
 | | `memoryLimit` | number | Requested memory cap in MB (1–1024); Lambda provider is capped by deployed function memory |
 | | `outputLimitBytes` | number | Captured stdout/stderr limit (1–262144, default: 65536) |
+| | `filesystem.mount` | `native` | Uses the provider-native mounted workspace filesystem |
 | | `options.nodeFunctionName` | string | Optional override for the Node sandbox Lambda function name |
 | | `options.pythonFunctionName` | string | Optional override for the Python sandbox Lambda function name |
+| | `options.workspaceRoot` | string | Optional provider workspace mount root override; Lambda defaults to `/mnt/workspaces` |
 | | `options.apiKey` | string | E2B or Daytona API key; also supports `E2B_API_KEY` and `DAYTONA_API_KEY` env vars |
 | | `options.template` / `templateId` | string | Optional E2B template |
 | | `options.apiUrl`, `target`, `image`, `envVars` | string/object | Optional Daytona SDK settings |

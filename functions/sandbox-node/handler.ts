@@ -3,19 +3,20 @@
  * Keep Node runtime process execution here.
  */
 
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { basename, join } from "node:path";
+import { access } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { readFile, writeFile } from "node:fs/promises";
+import { basename, dirname, relative, resolve } from "node:path";
 import { spawn } from "node:child_process";
 import process from "node:process";
+import ts from "typescript";
 
 interface SandboxRequest {
   runtime: "node";
-  entry: {
-    path: string;
-    content: string;
-  };
+  namespace: string;
+  entryPath: string;
   args?: string[];
+  workspaceRoot?: string;
   timeoutSeconds: number;
   outputLimitBytes: number;
 }
@@ -33,19 +34,20 @@ interface SandboxResponse {
 
 export async function handler(event: SandboxRequest): Promise<SandboxResponse> {
   const startedAt = Date.now();
-  const workdir = await mkdtemp(join(tmpdir(), "sandbox-node-"));
 
   try {
     if (event.runtime !== "node") {
       throw new Error("sandbox-node only supports node requests");
     }
-    if (!event.entry.path.endsWith(".js")) {
-      throw new Error("node sandbox only executes .js files");
+    if (!event.entryPath.endsWith(".js") && !event.entryPath.endsWith(".ts")) {
+      throw new Error("node sandbox only executes .js and .ts files");
     }
 
-    const filePath = join(workdir, basename(event.entry.path));
-    await writeFile(filePath, event.entry.content, "utf8");
-    const result = await runNodeFile(filePath, event.args ?? [], event.timeoutSeconds, event.outputLimitBytes);
+    const workspaceRoot = resolveWorkspaceRoot(event.workspaceRoot, event.namespace);
+    const filePath = resolveWorkspacePath(workspaceRoot, event.entryPath);
+    await access(filePath);
+    const executablePath = event.entryPath.endsWith(".ts") ? await prepareTypescriptEntry(filePath, workspaceRoot) : filePath;
+    const result = await runNodeFile(executablePath, workspaceRoot, event.args ?? [], event.timeoutSeconds, event.outputLimitBytes);
     return {
       ...result,
       runtime: "node",
@@ -60,19 +62,45 @@ export async function handler(event: SandboxRequest): Promise<SandboxResponse> {
       stderr: err instanceof Error ? err.message : String(err),
       durationMs: Date.now() - startedAt,
     };
-  } finally {
-    await rm(workdir, { recursive: true, force: true });
   }
+}
+
+async function prepareTypescriptEntry(filePath: string, workspaceRoot: string): Promise<string> {
+  const source = await readFile(filePath, "utf8");
+  const transpiled = ts.transpileModule(source, {
+    compilerOptions: {
+      module: ts.ModuleKind.ESNext,
+      target: ts.ScriptTarget.ES2022,
+      esModuleInterop: true,
+      sourceMap: false,
+    },
+    fileName: filePath,
+  }).outputText;
+  const generatedPath = resolveTypescriptOutputPath(filePath, workspaceRoot, source);
+  await writeFile(generatedPath, transpiled, "utf8");
+  return generatedPath;
+}
+
+function resolveTypescriptOutputPath(filePath: string, workspaceRoot: string, source: string): string {
+  const fileName = basename(filePath).replace(/\.ts$/, "");
+  const hash = createHash("sha256").update(filePath).update("\0").update(source).digest("hex").slice(0, 16);
+  const generated = resolve(dirname(filePath), `.${fileName}-${hash}.js`);
+  const relation = relative(workspaceRoot, generated);
+  if (relation.startsWith("..") || relation === ".." || relation === "" || relation.startsWith("/")) {
+    throw new Error("Invalid generated entry path: resolved outside workspace root");
+  }
+  return generated;
 }
 
 async function runNodeFile(
   filePath: string,
+  cwd: string,
   args: string[],
   timeoutSeconds: number,
   outputLimitBytes: number,
 ): Promise<Omit<SandboxResponse, "runtime" | "durationMs">> {
   const child = spawn(process.execPath, [filePath, ...args], {
-    cwd: dirname(filePath),
+    cwd: cwd,
     env: {
       PATH: "/usr/local/bin:/usr/bin:/bin",
       HOME: "/tmp",
@@ -83,6 +111,27 @@ async function runNodeFile(
   });
 
   return collectChildResult(child, timeoutSeconds, outputLimitBytes);
+}
+
+function resolveWorkspaceRoot(root: string | undefined, namespace: string): string {
+  assertSafeNamespace(namespace);
+  return resolve(root || "/mnt/workspaces", namespace);
+}
+
+function resolveWorkspacePath(workspaceRoot: string, entryPath: string): string {
+  const normalizedEntry = entryPath.startsWith("/") ? entryPath.slice(1) : entryPath;
+  const resolved = resolve(workspaceRoot, normalizedEntry);
+  const relation = relative(workspaceRoot, resolved);
+  if (relation.startsWith("..") || relation === ".." || relation === "" || relation.startsWith("/")) {
+    throw new Error("Invalid entry path: resolved outside workspace root");
+  }
+  return resolved;
+}
+
+function assertSafeNamespace(namespace: string): void {
+  if (!/^fs-[a-f0-9]{40}$/.test(namespace)) {
+    throw new Error("Invalid workspace namespace");
+  }
 }
 
 async function collectChildResult(
@@ -116,10 +165,6 @@ async function collectChildResult(
     timedOut,
     truncated: stdout.truncated || stderr.truncated,
   };
-}
-
-function dirname(path: string): string {
-  return path.slice(0, path.lastIndexOf("/")) || ".";
 }
 
 function truncateOutput(value: Buffer, limit: number): { value: string; truncated: boolean } {

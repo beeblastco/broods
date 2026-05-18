@@ -77,8 +77,16 @@
       "enabled": false,
       "provider": "lambda",
       "timeout": 30,
-      "memoryLimit": 128,
-      "outputLimitBytes": 65536
+      "memoryLimit": 512,
+      "outputLimitBytes": 65536,
+      "filesystem": {
+        "mount": "native"
+      },
+      "option": {
+        "nodeFunctionName": "my-node-sandbox",
+        "pythonFunctionName": "my-python-sandbox",
+        "workspaceRoot": "/mnt/workspaces"
+      }
     },
     "tasks": {
       "enabled": true

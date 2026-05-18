@@ -239,25 +239,6 @@ export function assertSafeExecutionArgs(args: string[]): void {
   }
 }
 
-export function prepareSandboxEntry(
-  normalizedPath: string,
-  content: string,
-  runtime: WorkspaceSandboxRuntime,
-): { path: string; content: string } {
-  if (runtime === "node" && normalizedPath.endsWith(".ts")) {
-    const transpiled = new Bun.Transpiler({ loader: "ts" }).transformSync(content);
-    return {
-      path: normalizedPath.replace(/\.ts$/, ".js"),
-      content: transpiled,
-    };
-  }
-
-  return {
-    path: normalizedPath,
-    content,
-  };
-}
-
 export function formatSandboxResult(result: WorkspaceSandboxRunResult): JSONObject {
   return {
     output: {

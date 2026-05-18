@@ -146,6 +146,10 @@ export interface AgentWorkspaceSandboxConfig {
   timeout?: number;
   memoryLimit?: number;
   outputLimitBytes?: number;
+  filesystem?: {
+    mount?: "native";
+    [key: string]: unknown;
+  };
   options?: Record<string, unknown>;
   [key: string]: unknown;
 }
@@ -789,6 +793,11 @@ function normalizeWorkspaceSandboxConfig(value: unknown): void {
     "config.workspace.sandbox.outputLimitBytes",
     workspaceSandboxLimits().maxOutputLimitBytes,
   );
+  if (config.filesystem !== undefined && !isPlainObject(config.filesystem)) {
+    throw new Error("config.workspace.sandbox.filesystem must be an object");
+  }
+  const filesystem = isPlainObject(config.filesystem) ? config.filesystem : {};
+  assertOptionalEnum(filesystem.mount, "config.workspace.sandbox.filesystem.mount", ["native"]);
   if (config.options !== undefined && !isPlainObject(config.options)) {
     throw new Error("config.workspace.sandbox.options must be an object");
   }
@@ -802,6 +811,7 @@ function normalizeWorkspaceSandboxConfig(value: unknown): void {
   assertOptionalString(options.apiUrl, "config.workspace.sandbox.options.apiUrl");
   assertOptionalString(options.target, "config.workspace.sandbox.options.target");
   assertOptionalString(options.image, "config.workspace.sandbox.options.image");
+  assertOptionalString(options.workspaceRoot, "config.workspace.sandbox.options.workspaceRoot");
   if (options.envVars !== undefined && !isStringRecord(options.envVars)) {
     throw new Error("config.workspace.sandbox.options.envVars must be an object with string values");
   }

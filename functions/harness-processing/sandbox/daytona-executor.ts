@@ -26,10 +26,9 @@ export class DaytonaWorkspaceSandboxExecutor implements WorkspaceSandboxExecutor
     const sandbox = await client.create(daytonaCreateOptions(request, this.#config));
 
     try {
-      await sandbox.fs.uploadFile(Buffer.from(request.entry.content), request.entry.path, request.timeoutSeconds);
       const response = await sandbox.process.executeCommand(
         commandForFile(request),
-        dirname(request.entry.path),
+        workspacePath(request),
         undefined,
         request.timeoutSeconds,
       );
@@ -56,7 +55,7 @@ export class DaytonaWorkspaceSandboxExecutor implements WorkspaceSandboxExecutor
 
 function commandForFile(request: WorkspaceSandboxRunRequest): string {
   const executable = request.runtime === "node" ? "node" : "python3";
-  return [executable, request.entry.path, ...request.args].map(shellQuote).join(" ");
+  return [executable, entryRelativePath(request.entryPath), ...request.args].map(shellQuote).join(" ");
 }
 
 function shellQuote(value: string): string {
@@ -98,8 +97,12 @@ function isRecordObject(value: unknown): value is Record<string, unknown> {
   return Boolean(value && typeof value === "object" && !Array.isArray(value));
 }
 
-function dirname(path: string): string {
-  return path.slice(0, path.lastIndexOf("/")) || "/";
+function workspacePath(request: WorkspaceSandboxRunRequest): string {
+  return `${request.workspaceRoot.replace(/\/+$/, "")}/${request.namespace}`;
+}
+
+function entryRelativePath(path: string): string {
+  return path.replace(/^\/+/, "");
 }
 
 function artifactStdout(artifacts: unknown): string {

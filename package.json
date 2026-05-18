@@ -29,7 +29,7 @@
     "@aws-sdk/client-lambda": "3.1017.0",
     "@chat-adapter/telegram": "^4.28.1",
     "@daytona/sdk": "^0.175.0",
-    "@pulumi/aws": "7.23.0",
+    "@pulumi/aws": "7.30.0",
     "@pulumi/pulumi": "3.228.0",
     "@tavily/ai-sdk": "^0.4.1",
     "@types/node": "^25.8.0",

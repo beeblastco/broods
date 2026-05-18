@@ -566,7 +566,6 @@ EOF`);
   describe("sandbox execution", () => {
     it("runs an existing JavaScript file through the node sandbox Lambda", async () => {
       s3ObjectExistsMock.mockResolvedValue(true);
-      readS3TextMock.mockResolvedValue("console.log('hello from file');");
 
       const result = await executeShell("node /main.js", "test-ns", {
         enabled: true,
@@ -592,17 +591,16 @@ EOF`);
           truncated: false,
         },
       });
-      expect(readS3TextMock).toHaveBeenCalledWith("test-filesystem-bucket", "test-ns/main.js");
+      expect(readS3TextMock).not.toHaveBeenCalled();
       expect(lambdaSendMock).toHaveBeenCalledTimes(1);
       const command = lambdaSendMock.mock.calls[0]?.[0] as { input: { FunctionName: string; Payload: Uint8Array } };
       expect(command.input.FunctionName).toBe("sandbox-node");
       expect(JSON.parse(new TextDecoder().decode(command.input.Payload))).toMatchObject({
         runtime: "node",
-        entry: {
-          path: "/main.js",
-          content: "console.log('hello from file');",
-        },
+        namespace: "test-ns",
+        entryPath: "/main.js",
         args: [],
+        workspaceRoot: "/mnt/workspaces",
         timeoutSeconds: 15,
         outputLimitBytes: 4096,
       });
@@ -611,7 +609,6 @@ EOF`);
     it("runs an existing Python file through the python sandbox Lambda", async () => {
       process.env.SANDBOX_PYTHON_FUNCTION_NAME = "sandbox-python";
       s3ObjectExistsMock.mockResolvedValue(true);
-      readS3TextMock.mockResolvedValue("print('hello')");
       lambdaSendMock.mockResolvedValueOnce({
         Payload: new TextEncoder().encode(JSON.stringify({
           ok: true,
@@ -646,17 +643,16 @@ EOF`);
       expect(command.input.FunctionName).toBe("sandbox-python");
       expect(JSON.parse(new TextDecoder().decode(command.input.Payload))).toMatchObject({
         runtime: "python",
-        entry: {
-          path: "/main.py",
-          content: "print('hello')",
-        },
+        namespace: "test-ns",
+        entryPath: "/main.py",
         args: [],
+        workspaceRoot: "/mnt/workspaces",
       });
+      expect(readS3TextMock).not.toHaveBeenCalled();
     });
 
-    it("transpiles TypeScript files before running them in the node sandbox Lambda", async () => {
+    it("runs existing TypeScript files through the node sandbox Lambda without reading them first", async () => {
       s3ObjectExistsMock.mockResolvedValue(true);
-      readS3TextMock.mockResolvedValue("const answer: number = 42; console.log(answer);");
 
       const result = await executeShell("node /main.ts --flag", "test-ns", {
         enabled: true,
@@ -669,8 +665,9 @@ EOF`);
       expect(payload.command).toBeUndefined();
       expect(payload.runtime).toBe("node");
       expect(payload.args).toEqual(["--flag"]);
-      expect(payload.entry.path).toBe("/main.js");
-      expect(payload.entry.content).toContain("const answer = 42");
+      expect(payload.entryPath).toBe("/main.ts");
+      expect(readS3TextMock).not.toHaveBeenCalled();
+      expect(writeS3ObjectMock).not.toHaveBeenCalled();
     });
 
     it("rejects execution when workspace sandbox is disabled", async () => {

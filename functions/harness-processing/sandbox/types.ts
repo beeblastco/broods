@@ -12,12 +12,10 @@ export interface WorkspaceSandboxConfig {
   timeout?: number;
   memoryLimit?: number;
   outputLimitBytes?: number;
+  filesystem?: {
+    mount?: "native";
+  };
   options?: Record<string, unknown>;
-}
-
-export interface WorkspaceSandboxFile {
-  path: string;
-  content: string;
 }
 
 export interface WorkspaceSandboxArtifact {
@@ -31,8 +29,10 @@ export interface WorkspaceSandboxArtifact {
 
 export interface WorkspaceSandboxRunRequest {
   runtime: WorkspaceSandboxRuntime;
+  namespace: string;
+  entryPath: string;
   args: string[];
-  entry: WorkspaceSandboxFile;
+  workspaceRoot: string;
   timeoutSeconds: number;
   outputLimitBytes: number;
 }
