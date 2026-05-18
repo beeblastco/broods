@@ -6,6 +6,7 @@ Keep Python runtime process execution here.
 import os
 import shutil
 import subprocess
+import sys
 import tempfile
 import time
 
@@ -53,7 +54,7 @@ def handler(event, context):
 def run_python_file(file_path, args, timeout_seconds, output_limit_bytes):
     try:
         completed = subprocess.run(
-            ["python3", "-I", "-S", file_path, *args],
+            [sys.executable, "-I", "-S", file_path, *args],
             cwd=os.path.dirname(file_path),
             env={
                 "PATH": "/usr/local/bin:/usr/bin:/bin",

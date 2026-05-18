@@ -109,6 +109,8 @@ SST deploys two private runtime Lambdas:
 | `SandboxNode` | `nodejs22.x` | `.js` files generated from `.js` or transpiled `.ts` workspace files |
 | `SandboxPython` | `python3.12` | `.py` files |
 
+Each runtime Lambda executes files with its own interpreter binary (`process.execPath` for Node and `sys.executable` for Python), so execution does not depend on `node` or `python3` being present on the sanitized `PATH`.
+
 The main `harness-processing` Lambda invokes those functions with:
 
 - `SANDBOX_NODE_FUNCTION_NAME`

@@ -7,6 +7,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { spawn } from "node:child_process";
+import process from "node:process";
 
 interface SandboxRequest {
   runtime: "node";
@@ -70,7 +71,7 @@ async function runNodeFile(
   timeoutSeconds: number,
   outputLimitBytes: number,
 ): Promise<Omit<SandboxResponse, "runtime" | "durationMs">> {
-  const child = spawn("node", [filePath, ...args], {
+  const child = spawn(process.execPath, [filePath, ...args], {
     cwd: dirname(filePath),
     env: {
       PATH: "/usr/local/bin:/usr/bin:/bin",
