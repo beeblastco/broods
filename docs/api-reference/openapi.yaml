@@ -1,0 +1,382 @@
+openapi: 3.1.0
+info:
+  title: BeeBlast Direct API
+  description: Account-authenticated HTTP surface for the harness-processing Lambda. Supports sync SSE streaming, async job submission, status polling, and external tool completion.
+  version: 1.0.0
+
+servers:
+  - url: https://{functionUrl}.lambda-url.{region}.on.aws
+    description: Deployed harness-processing Function URL
+    variables:
+      functionUrl:
+        default: your-function-url
+        description: Your deployed Function URL ID
+      region:
+        default: us-east-1
+        description: AWS deployment region
+
+security:
+  - BearerAuth: []
+
+paths:
+  /:
+    get:
+      summary: Health probe
+      description: Unauthenticated lightweight probe for the deployed harness-processing Function URL.
+      security: []
+      responses:
+        '200':
+          description: Service is healthy
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: ok
+                  method:
+                    type: string
+                    example: POST
+
+    post:
+      summary: Sync direct API (SSE)
+      description: |
+        Run a synchronous direct agent turn. Returns an SSE stream with Vercel AI SDK stream events.
+        
+        When the selected agent config has `model.output`, the stream emits a final `structured-output` event with the parsed JSON value.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DirectApiRequest'
+      responses:
+        '200':
+          description: SSE stream of agent execution
+          content:
+            text/event-stream:
+              schema:
+                type: string
+                format: binary
+        '404':
+          description: Direct API disabled (ENABLE_DIRECT_API=false)
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /async:
+    post:
+      summary: Async direct API
+      description: |
+        Queue an async direct agent turn. Returns immediately with a status URL for polling.
+        The async worker runs the same account-scoped harness code in the background.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DirectApiRequest'
+      responses:
+        '200':
+          description: Async job accepted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  statusUrl:
+                    type: string
+                    format: uri
+                    description: URL to poll for job status
+                    example: https://your-function-url.lambda-url.us-east-1.on.aws/status/unique-id-for-dedup?agentId=agent_abc123
+        '404':
+          description: Direct API disabled (ENABLE_DIRECT_API=false)
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /status/{eventId}:
+    get:
+      summary: Poll async status
+      description: |
+        Poll the status of an async job. Responses are backed by the account-scoped AsyncAgentResult DynamoDB record.
+      parameters:
+        - name: eventId
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Unique event ID from the async submission
+        - name: agentId
+          in: query
+          required: true
+          schema:
+            type: string
+          description: Agent ID to scope the status lookup
+      responses:
+        '200':
+          description: Current job status
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/StatusProcessing'
+                  - $ref: '#/components/schemas/StatusAwaitingApproval'
+                  - $ref: '#/components/schemas/StatusCompleted'
+                  - $ref: '#/components/schemas/StatusFailed'
+        '404':
+          description: Unknown event ID
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  eventId:
+                    type: string
+                  status:
+                    type: string
+                    example: not_found
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /async-tools/{resultId}/complete:
+    post:
+      summary: Complete external async tool
+      description: |
+        Complete an externally dispatched async tool. Completion settles one AsyncToolResult row.
+        A sealed dispatch-group item waits for every sibling result before continuing the parent.
+      parameters:
+        - name: resultId
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Async tool result ID from the waiting event
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - $ref: '#/components/schemas/ToolCompletionSuccess'
+                - $ref: '#/components/schemas/ToolCompletionFailure'
+      responses:
+        '200':
+          description: Tool result settled
+        '202':
+          description: Waiting for more async tools in dispatch group
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: waiting_for_async_tools
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      description: Account secret obtained from account-manage
+
+  schemas:
+    DirectApiRequest:
+      type: object
+      required:
+        - agentId
+        - eventId
+        - events
+      properties:
+        agentId:
+          type: string
+          description: Selects the account-owned agent config to run
+          example: agent_abc123
+        eventId:
+          type: string
+          description: Used for account-scoped deduplication
+          example: unique-id-for-dedup
+        conversationKey:
+          type: string
+          description: Selects the account-scoped persisted direct conversation
+          example: conversation-identifier
+        events:
+          type: array
+          description: Vercel AI SDK-style messages
+          items:
+            $ref: '#/components/schemas/Message'
+
+    Message:
+      type: object
+      required:
+        - role
+        - content
+      properties:
+        role:
+          type: string
+          enum: [user, system, tool]
+          description: "Message role. `system` events must use `persist: false` and are only supported on the direct API path."
+        content:
+          oneOf:
+            - type: string
+            - type: array
+              items:
+                $ref: '#/components/schemas/ContentBlock'
+        persist:
+          type: boolean
+          description: Must be `false` for system events. System events are request-local and not stored in DynamoDB.
+
+    ContentBlock:
+      type: object
+      discriminator:
+        propertyName: type
+      oneOf:
+        - $ref: '#/components/schemas/TextContent'
+        - $ref: '#/components/schemas/ToolApprovalResponse'
+
+    TextContent:
+      type: object
+      required:
+        - type
+        - text
+      properties:
+        type:
+          type: string
+          example: text
+        text:
+          type: string
+          example: Hello
+
+    ToolApprovalResponse:
+      type: object
+      required:
+        - type
+        - approvalId
+        - approved
+      properties:
+        type:
+          type: string
+          example: tool-approval-response
+        approvalId:
+          type: string
+          description: Required to match the decision to the pending tool call
+        approved:
+          type: boolean
+          description: Set to false to deny the tool execution
+        reason:
+          type: string
+          description: Reason for approval or denial
+
+    StatusProcessing:
+      type: object
+      properties:
+        eventId:
+          type: string
+        conversationKey:
+          type: string
+        status:
+          type: string
+          example: processing
+
+    StatusAwaitingApproval:
+      type: object
+      properties:
+        eventId:
+          type: string
+        conversationKey:
+          type: string
+        status:
+          type: string
+          example: awaiting_approval
+        approvals:
+          type: array
+          items:
+            type: object
+            properties:
+              approvalId:
+                type: string
+              toolCallId:
+                type: string
+              toolName:
+                type: string
+                example: filesystem
+              input:
+                type: object
+
+    StatusCompleted:
+      type: object
+      properties:
+        eventId:
+          type: string
+        conversationKey:
+          type: string
+        status:
+          type: string
+          example: completed
+        response:
+          type: object
+
+    StatusFailed:
+      type: object
+      properties:
+        eventId:
+          type: string
+        conversationKey:
+          type: string
+        status:
+          type: string
+          example: failed
+        error:
+          type: string
+          description: Failure details
+
+    ToolCompletionSuccess:
+      type: object
+      required:
+        - status
+        - response
+      properties:
+        status:
+          type: string
+          example: completed
+        response:
+          type: object
+          description: Tool execution result
+
+    ToolCompletionFailure:
+      type: object
+      required:
+        - status
+        - error
+      properties:
+        status:
+          type: string
+          example: failed
+        error:
+          type: string
+          description: Error message
+
+    Error:
+      type: object
+      properties:
+        error:
+          type: string
+          example: Unauthorized

@@ -1,0 +1,670 @@
+openapi: 3.1.0
+info:
+  title: BeeBlast Account Management API
+  description: Account creation, agent management, skill uploads, and account secret rotation.
+  version: 1.0.0
+
+servers:
+  - url: https://{functionUrl}.lambda-url.{region}.on.aws
+    description: Deployed account-manage Function URL
+    variables:
+      functionUrl:
+        default: your-account-function-url
+        description: Your deployed account-manage Function URL ID
+      region:
+        default: us-east-1
+        description: AWS deployment region
+
+paths:
+  /accounts:
+    post:
+      summary: Create account
+      description: Public endpoint to create a new account. IP-rate-limited.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - username
+              properties:
+                username:
+                  type: string
+                  description: Required human-readable account name
+                  example: company-a
+                description:
+                  type: string
+                  description: Optional purpose or usage note
+                  example: Company A account
+      responses:
+        '201':
+          description: Account created successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  account:
+                    $ref: '#/components/schemas/Account'
+                  accountSecret:
+                    type: string
+                    description: One-time API secret. Store securely; not recoverable.
+                    example: fp_acct_...
+        '429':
+          description: Rate limited
+
+    get:
+      summary: List all accounts (admin)
+      description: Admin-only endpoint to list all accounts.
+      security:
+        - AdminAuth: []
+      responses:
+        '200':
+          description: List of accounts
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Account'
+
+  /accounts/{accountId}:
+    get:
+      summary: Get account (admin)
+      description: Admin-only endpoint to retrieve a specific account.
+      security:
+        - AdminAuth: []
+      parameters:
+        - name: accountId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Account details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Account'
+
+    patch:
+      summary: Update account (admin)
+      description: Admin-only endpoint to update account metadata.
+      security:
+        - AdminAuth: []
+      parameters:
+        - name: accountId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                username:
+                  type: string
+                description:
+                  type: string
+      responses:
+        '200':
+          description: Account updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Account'
+
+    delete:
+      summary: Delete account (admin)
+      description: Admin-only endpoint to delete an account and cascade cleanup all account-scoped data.
+      security:
+        - AdminAuth: []
+      parameters:
+        - name: accountId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Account deleted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeleteResponse'
+
+  /accounts/{accountId}/rotate-secret:
+    post:
+      summary: Rotate account secret (admin)
+      description: Admin-only endpoint to rotate an account secret.
+      security:
+        - AdminAuth: []
+      parameters:
+        - name: accountId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Secret rotated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  accountSecret:
+                    type: string
+                    description: New one-time API secret
+                    example: fp_acct_...
+
+  /accounts/me:
+    get:
+      summary: Get own account
+      description: Retrieve the authenticated account's metadata.
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Account details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Account'
+
+    patch:
+      summary: Update own account
+      description: Update the authenticated account's metadata. Only accepts account metadata fields.
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                username:
+                  type: string
+                description:
+                  type: string
+      responses:
+        '200':
+          description: Account updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Account'
+
+    delete:
+      summary: Delete own account
+      description: Delete the authenticated account and cascade cleanup all account-scoped data.
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Account deleted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeleteResponse'
+
+  /accounts/me/rotate-secret:
+    post:
+      summary: Rotate own secret
+      description: Rotate the authenticated account's secret.
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Secret rotated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  accountSecret:
+                    type: string
+                    description: New one-time API secret
+                    example: fp_acct_...
+
+  /accounts/me/agents:
+    post:
+      summary: Create agent
+      description: Create a new agent under the authenticated account.
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - name
+              properties:
+                name:
+                  type: string
+                  description: Agent name
+                  example: support-agent
+                description:
+                  type: string
+                  description: Agent description; visible to parent agents when allowed as subagent
+                  example: Customer support agent
+                config:
+                  $ref: '#/components/schemas/AgentConfig'
+      responses:
+        '201':
+          description: Agent created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  agent:
+                    $ref: '#/components/schemas/Agent'
+
+    get:
+      summary: List agents
+      description: List all agents under the authenticated account.
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: List of agents
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Agent'
+
+  /accounts/me/agents/{agentId}:
+    get:
+      summary: Get agent
+      description: Retrieve a specific agent's metadata and config.
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: agentId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Agent details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Agent'
+
+    patch:
+      summary: Update agent
+      description: Update an agent's metadata and config. Config patch is a deep merge.
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: agentId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                description:
+                  type: string
+                config:
+                  $ref: '#/components/schemas/AgentConfig'
+      responses:
+        '200':
+          description: Agent updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Agent'
+
+    delete:
+      summary: Delete agent
+      description: Delete a specific agent.
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: agentId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Agent deleted
+
+  /accounts/me/skills:
+    post:
+      summary: Create skill
+      description: Upload a new skill under the authenticated account.
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - source
+                - name
+                - description
+              properties:
+                source:
+                  type: string
+                  enum: [json, base64, github]
+                  description: Skill source type
+                name:
+                  type: string
+                  description: Skill name
+                  example: support-flow
+                description:
+                  type: string
+                  description: Skill description
+                  example: Handles support triage
+                content:
+                  type: string
+                  description: Skill content (for json source)
+      responses:
+        '201':
+          description: Skill created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  skill:
+                    $ref: '#/components/schemas/Skill'
+
+    get:
+      summary: List skills
+      description: List all skills under the authenticated account.
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: List of skills
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Skill'
+
+  /accounts/me/skills/{skillName}:
+    get:
+      summary: Get skill
+      description: Retrieve a specific skill.
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: skillName
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Skill details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Skill'
+
+    put:
+      summary: Update skill
+      description: Update a specific skill.
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: skillName
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                description:
+                  type: string
+                content:
+                  type: string
+      responses:
+        '200':
+          description: Skill updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Skill'
+
+    delete:
+      summary: Delete skill
+      description: Delete a specific skill.
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: skillName
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Skill deleted
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      description: Account secret obtained from account creation or rotation
+    AdminAuth:
+      type: http
+      scheme: bearer
+      description: AdminAccountSecret from SST secrets
+
+  schemas:
+    Account:
+      type: object
+      properties:
+        accountId:
+          type: string
+          description: Generated stable identifier
+          example: acct_...
+        username:
+          type: string
+          description: Human-readable account name
+          example: company-a
+        description:
+          type: string
+          description: Purpose or usage note
+          example: Company A account
+
+    Agent:
+      type: object
+      properties:
+        accountId:
+          type: string
+          example: acct_...
+        agentId:
+          type: string
+          example: agent_...
+        name:
+          type: string
+          example: support-agent
+        description:
+          type: string
+          example: Customer support agent
+
+    Skill:
+      type: object
+      properties:
+        skillPath:
+          type: string
+          description: Account-scoped skill path
+          example: acct_.../support-flow
+        name:
+          type: string
+          example: support-flow
+        description:
+          type: string
+          example: Handles support triage
+
+    DeleteResponse:
+      type: object
+      properties:
+        deleted:
+          type: boolean
+          example: true
+        cleanup:
+          type: object
+          properties:
+            conversationsDeleted:
+              type: integer
+            processedEventsDeleted:
+              type: integer
+            asyncAgentResultDeleted:
+              type: integer
+            asyncToolResultDeleted:
+              type: integer
+            filesystemObjectsDeleted:
+              type: integer
+            agentsDeleted:
+              type: integer
+            skillObjectsDeleted:
+              type: integer
+
+    AgentConfig:
+      type: object
+      description: Agent runtime configuration. See account-management.md for full field reference.
+      properties:
+        provider:
+          type: object
+          description: Provider constructor settings
+        model:
+          type: object
+          description: Vercel AI SDK streamText settings
+        agent:
+          type: object
+          description: Agent runtime behavior
+          properties:
+            maxTurn:
+              type: integer
+            system:
+              type: string
+        hooks:
+          type: object
+          description: Lifecycle hooks configuration
+        skills:
+          type: object
+          description: Skills configuration
+          properties:
+            enabled:
+              type: boolean
+            allowed:
+              type: array
+              items:
+                type: string
+        subagent:
+          type: object
+          description: Subagent dispatch configuration
+          properties:
+            enabled:
+              type: boolean
+            allowed:
+              type: array
+              items:
+                type: string
+            context:
+              type: string
+              enum: [new, inherited]
+        workspace:
+          type: object
+          description: Workspace-backed features configuration
+          properties:
+            enabled:
+              type: boolean
+            needsApproval:
+              type: boolean
+            memory:
+              type: object
+              properties:
+                enabled:
+                  type: boolean
+                namespace:
+                  type: string
+            sandbox:
+              type: object
+              properties:
+                enabled:
+                  type: boolean
+                provider:
+                  type: string
+                  enum: [lambda, e2b, daytona]
+                timeout:
+                  type: integer
+                memoryLimit:
+                  type: integer
+                outputLimitBytes:
+                  type: integer
+                dependencies:
+                  type: object
+                  properties:
+                    npm:
+                      type: array
+                      items:
+                        type: string
+                    pip:
+                      type: array
+                      items:
+                        type: string
+            tasks:
+              type: object
+              properties:
+                enabled:
+                  type: boolean
+        session:
+          type: object
+          description: Session history management
+          properties:
+            pruning:
+              type: object
+              properties:
+                enabled:
+                  type: boolean
+            compaction:
+              type: object
+              properties:
+                enabled:
+                  type: boolean
+                maxContextLength:
+                  type: integer
+        tools:
+          type: object
+          description: External tools configuration
+        channels:
+          type: object
+          description: Channel webhook configuration

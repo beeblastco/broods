@@ -416,6 +416,13 @@ Enables workspace-backed features. See [Memory and Session](memory-and-session.m
     "enabled": true,
     "needsApproval": true,
     "memory": { "enabled": true, "namespace": "support" },
+    "sandbox": {
+      "enabled": true,
+      "provider": "lambda",
+      "timeout": 30,
+      "memoryLimit": 512,
+      "outputLimitBytes": 65536
+    },
     "tasks": { "enabled": true }
   }
 }
@@ -428,7 +435,19 @@ Enables workspace-backed features. See [Memory and Session](memory-and-session.m
 | `memory` | `enabled` | boolean | Enables or disables `MEMORY.md` when workspace is enabled |
 | | `namespace` | string | Session namespace key; `null` means per-conversation state |
 | `filesystem` | `enabled` | boolean | Enables or disables the filesystem tool when workspace is enabled |
+| `sandbox` | `enabled` | boolean | Enables file-only `node <file.js\|file.ts>` and `python <file.py>` execution from the filesystem tool |
+| | `provider` | `lambda` \| `e2b` \| `daytona` | Execution backend; defaults to private AWS Lambda workers |
+| | `timeout` | number | Per-run timeout in seconds (1–120, default: 30) |
+| | `memoryLimit` | number | Requested memory cap in MB (1–1024); Lambda provider is capped by deployed function memory |
+| | `outputLimitBytes` | number | Captured stdout/stderr limit (1–262144, default: 65536) |
+| | `options.nodeFunctionName` | string | Optional override for the Node sandbox Lambda function name |
+| | `options.pythonFunctionName` | string | Optional override for the Python sandbox Lambda function name |
+| | `options.apiKey` | string | E2B or Daytona API key; also supports `E2B_API_KEY` and `DAYTONA_API_KEY` env vars |
+| | `options.template` / `templateId` | string | Optional E2B template |
+| | `options.apiUrl`, `target`, `image`, `envVars` | string/object | Optional Daytona SDK settings |
 | `tasks` | `enabled` | boolean | Enables or disables the tasks tool when workspace is enabled |
+
+Dependency installation is intentionally not an account config field. Prefer provider images/templates with preinstalled dependencies, or write dependency manifests such as `package.json` / `requirements.txt` into the workspace and use a provider-specific setup path that is explicitly allowed by the backend.
 
 ---
 

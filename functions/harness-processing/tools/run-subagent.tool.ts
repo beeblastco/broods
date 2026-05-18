@@ -3,12 +3,12 @@
  * Keep model-facing input validation here; execution orchestration lives in the harness.
  */
 
-import { jsonSchema, tool, type JSONValue, type ModelMessage, type SystemModelMessage, type ToolSet } from "ai";
+import { jsonSchema, tool, type JSONSchema7, type JSONValue, type ModelMessage, type SystemModelMessage, type ToolSet } from "ai";
 
 const MAX_SUBAGENT_TASKS = 10;
 const TASK_KEYS = new Set(["agentId", "name", "prompt", "shareContext"]);
 
-const runSubagentInputSchema = {
+const runSubagentInputSchema: JSONSchema7 = {
   type: "object",
   properties: {
     tasks: {
@@ -42,7 +42,7 @@ const runSubagentInputSchema = {
   },
   required: ["tasks"],
   additionalProperties: false,
-} as const;
+};
 
 export interface RunSubagentTaskInput {
   agentId?: string;

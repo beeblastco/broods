@@ -3,7 +3,7 @@
  * Keep task titles and task status management here.
  */
 
-import { jsonSchema, tool, type ToolSet } from "ai";
+import { jsonSchema, tool, type JSONSchema7, type ToolSet } from "ai";
 import {
   deleteS3Object,
   listS3Prefix,
@@ -15,7 +15,7 @@ import type { ToolContext } from "./index.ts";
 
 const FILESYSTEM_BUCKET_NAME = requireEnv("FILESYSTEM_BUCKET_NAME");
 
-const taskInputSchema = {
+const taskInputSchema: JSONSchema7 = {
   type: "object",
   properties: {
     command: {
@@ -40,7 +40,7 @@ const taskInputSchema = {
   },
   required: ["command"],
   additionalProperties: false,
-} as const;
+};
 
 interface TaskInput {
   command: "create" | "list" | "update";

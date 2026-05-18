@@ -1,38 +1,50 @@
 /**
  * S3-backed persistent filesystem tool for the harness agent.
- * Keep filesystem operations and S3 path safety here.
+ * Keep model-facing command orchestration here.
  */
 
-import { jsonSchema, tool, type ToolSet } from "ai";
+import { jsonSchema, tool, type JSONSchema7, type Tool, type ToolSet } from "ai";
+import { readS3Text } from "../../_shared/s3.ts";
+import { workspaceSandboxLimits } from "../../_shared/sandbox.ts";
+import { createWorkspaceSandboxExecutor } from "../sandbox/index.ts";
+import type { WorkspaceSandboxConfig, WorkspaceSandboxRuntime } from "../sandbox/types.ts";
 import {
-  deleteS3Object,
-  deleteS3Prefix,
-  listS3Prefix,
-  readS3Bytes,
-  readS3Text,
-  s3ObjectExists,
-  writeS3Object,
-} from "../../_shared/s3.ts";
-import { requireEnv } from "../../_shared/env.ts";
+  appendToFilesystemFile,
+  assertExecutableExtension,
+  assertSafeExecutionArgs,
+  boundedInteger,
+  checkPathExists,
+  createFilesystemDirectory,
+  deleteFilesystemPath,
+  formatSandboxResult,
+  getFilesystemBucketName,
+  getVisibleRoot,
+  listFilesystemEntries,
+  parseExecutionCommand,
+  parseHeredocCommand,
+  parseLsPath,
+  prepareSandboxEntry,
+  readFilesystemRange,
+  readFilesystemRaw,
+  renameFilesystemPath,
+  shellQuote,
+  stripQuotes,
+  toScopedPath,
+  toStorageKey,
+  toVisiblePath,
+  touchFilesystemFile,
+  writeFilesystemFile,
+  type FilesystemInput,
+} from "./filesystem-utils.ts";
 import type { ToolContext } from "./index.ts";
 
-interface FilesystemInput {
-  shell: string;
-}
+type FilesystemToolResult = Awaited<ReturnType<NonNullable<Tool<FilesystemInput, unknown>["toModelOutput"]>>>;
 
-interface StoredPathState {
-  exists: boolean;
-  isDirectory: boolean;
-}
+const errorText = (value: string): FilesystemToolResult => ({ type: "error-text", value });
+const text = (value: string): FilesystemToolResult => ({ type: "text", value });
+const json = (value: ReturnType<typeof formatSandboxResult>): FilesystemToolResult => ({ type: "json", value });
 
-interface StoredObject {
-  key: string;
-  relativeKey: string;
-}
-
-type CommandResult = { result: string; isError: boolean };
-
-const filesystemInputSchema = {
+const filesystemInputSchema: JSONSchema7 = {
   type: "object",
   properties: {
     shell: {
@@ -48,50 +60,52 @@ Prefer shell mode. Supported commands:
 - touch <file>
 - rm -r <path>
 - mv <old> <new>
+- node <file.js|file.ts> --args
+- python3 <file.py> --args
 - cat <<'EOF' > <path> ... EOF
-- cat <<'EOF' >> <path> ... EOF`,
+- cat <<'EOF' >> <path> ... EOF
+
+Note:
+- You cannot set the environment as each execution is stateless. User should already configured the environment variables in the sandbox config, ask user if they haven't already did that or if executed code return errors. The sandbox will auto injected pre-configured environment variables into the runtime`,
     },
   },
   required: ["shell"],
   additionalProperties: false,
-} as const;
-
-const error = (result: string): CommandResult => ({ result, isError: true });
-const success = (result: string): CommandResult => ({ result, isError: false });
-
-function getFilesystemBucketName(): string {
-  return requireEnv("FILESYSTEM_BUCKET_NAME");
-}
+};
 
 export default function filesystemTool(context: ToolContext): ToolSet {
   const namespace = context.filesystemNamespace;
+  const sandboxConfig = context.config as WorkspaceSandboxConfig;
 
   return {
     filesystem: tool({
       description: "Terminal-style filesystem rooted at /. Use shell commands to read and write persistent files.",
       inputSchema: jsonSchema(filesystemInputSchema),
-      async execute(input) {
-        const { result, isError } = await executeShellCommand((input as FilesystemInput).shell, namespace);
-        return { type: isError ? "error-text" : "text", value: result };
+      execute(input) {
+        return executeFilesystemShell((input as FilesystemInput).shell, namespace, sandboxConfig);
       },
     }),
   };
 }
 
-async function executeShellCommand(shell: string, namespace: string): Promise<CommandResult> {
+async function executeFilesystemShell(
+  shell: string,
+  namespace: string,
+  sandboxConfig: WorkspaceSandboxConfig,
+): Promise<FilesystemToolResult> {
   const command = shell.trim();
   if (!command) {
-    return error("Error: shell command is required");
+    return errorText("Error: shell command is required");
   }
 
   if (command === "pwd") {
-    return success(getVisibleRoot(namespace));
+    return text(getVisibleRoot(namespace));
   }
 
   const heredoc = parseHeredocCommand(command);
   if (heredoc) {
     try {
-      return success(await writeFilesystemFile({
+      return text(await writeFilesystemFile({
         name: heredoc.path,
         fileText: heredoc.append
           ? await appendToFilesystemFile(heredoc.path, heredoc.body, namespace)
@@ -99,45 +113,54 @@ async function executeShellCommand(shell: string, namespace: string): Promise<Co
         namespace,
       }));
     } catch (cause) {
-      return error(cause instanceof Error ? cause.message : String(cause));
+      return errorText(cause instanceof Error ? cause.message : String(cause));
     }
   }
 
   if (command.startsWith("ls")) {
-    return success(await listFilesystemEntries(parseLsPath(command), namespace));
+    return text(await listFilesystemEntries(parseLsPath(command), namespace));
   }
 
   const sedMatch = command.match(/^sed\s+-n\s+['"](\d+),(\d+)p['"]\s+(.+)$/s);
   if (sedMatch) {
-    return success(await readFilesystemRange(stripQuotes(sedMatch[3]!), Number(sedMatch[1]), Number(sedMatch[2]), namespace));
+    return text(await readFilesystemRange(stripQuotes(sedMatch[3]!), Number(sedMatch[1]), Number(sedMatch[2]), namespace));
   }
 
   const catMatch = command.match(/^cat\s+(.+)$/s);
   if (catMatch) {
-    return success(await readFilesystemRaw(stripQuotes(catMatch[1]!), namespace));
+    return text(await readFilesystemRaw(stripQuotes(catMatch[1]!), namespace));
   }
 
   const mkdirMatch = command.match(/^mkdir\s+-p\s+(.+)$/s);
   if (mkdirMatch) {
-    return success(await createFilesystemDirectory(stripQuotes(mkdirMatch[1]!), namespace));
+    return text(await createFilesystemDirectory(stripQuotes(mkdirMatch[1]!), namespace));
   }
 
   const touchMatch = command.match(/^touch\s+(.+)$/s);
   if (touchMatch) {
-    return success(await touchFilesystemFile(stripQuotes(touchMatch[1]!), namespace));
+    return text(await touchFilesystemFile(stripQuotes(touchMatch[1]!), namespace));
   }
 
   const rmMatch = command.match(/^rm(?:\s+-[rf]+\s+|\s+-[fr]+\s+|\s+)(.+)$/s);
   if (rmMatch) {
-    return success(await deleteFilesystemPath({ name: stripQuotes(rmMatch[1]!), namespace: namespace }));
+    return text(await deleteFilesystemPath({ name: stripQuotes(rmMatch[1]!), namespace: namespace }));
   }
 
   const mvMatch = command.match(/^mv\s+(\S+)\s+(\S+)$/);
   if (mvMatch) {
-    return success(await renameFilesystemPath({ oldName: stripQuotes(mvMatch[1]!), newName: stripQuotes(mvMatch[2]!), namespace: namespace }));
+    return text(await renameFilesystemPath({ oldName: stripQuotes(mvMatch[1]!), newName: stripQuotes(mvMatch[2]!), namespace: namespace }));
   }
 
-  return error(`Unsupported shell command.
+  try {
+    const execution = parseExecutionCommand(command);
+    if (execution) {
+      return json(await executeWorkspaceFile(execution, namespace, sandboxConfig));
+    }
+  } catch (cause) {
+    return errorText(cause instanceof Error ? cause.message : String(cause));
+  }
+
+  return errorText(`Unsupported shell command.
 Supported commands:
 - pwd
 - ls [path]
@@ -147,364 +170,58 @@ Supported commands:
 - touch <file>
 - rm -r <path>
 - mv <old> <new>
+- node <file.js|file.ts>
+- python3 <file.py>
 - cat <<'EOF' > <path> ... EOF
 - cat <<'EOF' >> <path> ... EOF`);
 }
 
-function parseLsPath(command: string): string {
-  const tokens = command.split(/\s+/).slice(1);
-  const path = tokens.find((token) => !token.startsWith("-"));
-  return path ? stripQuotes(path) : "/";
-}
-
-function parseHeredocCommand(command: string): {
-  path: string;
-  body: string;
-  append: boolean;
-} | null {
-  const leading = command.match(/^cat\s+<<['"]?([A-Za-z0-9_]+)['"]?\s*(>>|>)\s*(\S+)\n([\s\S]*?)\n\1\s*$/);
-  if (leading) {
-    return {
-      path: stripQuotes(leading[3]!),
-      body: leading[4]!,
-      append: leading[2] === ">>",
-    };
-  }
-
-  const trailing = command.match(/^cat\s*(>>|>)\s*(\S+)\s*<<['"]?([A-Za-z0-9_]+)['"]?\n([\s\S]*?)\n\3\s*$/);
-  if (trailing) {
-    return {
-      path: stripQuotes(trailing[2]!),
-      body: trailing[4]!,
-      append: trailing[1] === ">>",
-    };
-  }
-
-  return null;
-}
-
-function stripQuotes(value: string): string {
-  return value.replace(/^['"]|['"]$/g, "");
-}
-
-function getVisibleRoot(namespace: string): string {
-  return `/${namespace}`;
-}
-
-function toScopedPath(path: string, namespace: string): string {
-  const normalized = normalizePath(path);
-  const visibleRoot = getVisibleRoot(namespace);
-
-  if (normalized === visibleRoot) {
-    return "/";
-  }
-
-  if (normalized.startsWith(`${visibleRoot}/`)) {
-    return normalized.slice(visibleRoot.length) || "/";
-  }
-
-  return normalized;
-}
-
-function toVisiblePath(path: string, namespace: string): string {
-  const normalized = normalizePath(path);
-  return normalized === "/" ? getVisibleRoot(namespace) : `${getVisibleRoot(namespace)}${normalized}`;
-}
-
-function toStorageKey(path: string, namespace: string): string {
-  const normalizedPath = toScopedPath(path, namespace);
-  assertSafeScopedPath(normalizedPath);
-
-  const relativePath = normalizedPath.slice(1);
-  const s3Key = relativePath ? `${namespace}/${relativePath}` : namespace;
-
-  if (s3Key !== namespace && !s3Key.startsWith(`${namespace}/`)) {
-    throw new Error("Invalid path: resolved outside filesystem root");
-  }
-
-  return s3Key;
-}
-
-function normalizePath(path: string): string {
-  const trimmed = stripQuotes(path).trim();
-  if (!trimmed || trimmed === ".") {
-    return "/";
-  }
-
-  const absolute = trimmed.startsWith("/") ? trimmed : `/${trimmed}`;
-  const parts = absolute.split("/").filter(Boolean);
-  return parts.length === 0 ? "/" : `/${parts.join("/")}`;
-}
-
-function assertSafeScopedPath(path: string): void {
-  const normalized = path.toLowerCase();
-  if (normalized.includes("%2e%2e")) {
-    throw new Error("Invalid path: directory traversal not allowed");
-  }
-
-  if (path.split("/").some((segment) => segment === "..")) {
-    throw new Error("Invalid path: directory traversal not allowed");
-  }
-}
-
-async function readFilesystemRaw(path: string, namespace: string): Promise<string> {
-  const normalizedPath = toScopedPath(path, namespace);
-  const state = await checkPathExists(namespace, normalizedPath);
-  if (!state.exists) {
-    return `cat: ${toVisiblePath(normalizedPath, namespace)}: No such file or directory`;
-  }
-
-  if (state.isDirectory) {
-    return `cat: ${toVisiblePath(normalizedPath, namespace)}: Is a directory`;
-  }
-
-  return readS3Text(getFilesystemBucketName(), toStorageKey(normalizedPath, namespace));
-}
-
-async function readFilesystemRange(
-  path: string,
-  start: number,
-  end: number,
+async function executeWorkspaceFile(
+  execution: {
+    runtime: WorkspaceSandboxRuntime;
+    executable: "node" | "python" | "python3";
+    path: string;
+    args: string[];
+  },
   namespace: string,
-): Promise<string> {
-  const content = await readFilesystemRaw(path, namespace);
-  if (content.startsWith("cat: ")) {
-    return content;
+  sandboxConfig: WorkspaceSandboxConfig,
+): Promise<ReturnType<typeof formatSandboxResult>> {
+  if (sandboxConfig.enabled !== true) {
+    throw new Error("Error: workspace sandbox execution is disabled");
   }
 
-  return content
-    .split("\n")
-    .slice(Math.max(0, start - 1), Math.max(start - 1, end))
-    .join("\n");
-}
+  const normalizedPath = toScopedPath(execution.path, namespace);
+  assertExecutableExtension(normalizedPath, execution.runtime);
+  assertSafeExecutionArgs(execution.args);
 
-async function writeFilesystemFile(params: {
-  name: string;
-  fileText: string;
-  namespace: string;
-}): Promise<string> {
-  const { name, fileText, namespace } = params;
-  const path = toScopedPath(name, namespace);
-  if (path === "/") {
-    return `Error: ${toVisiblePath(path, namespace)} is a directory`;
-  }
-
-  const { isDirectory } = await checkPathExists(namespace, path);
-  if (isDirectory) {
-    return `Error: ${toVisiblePath(path, namespace)} is a directory`;
-  }
-
-  await writeS3Object(getFilesystemBucketName(), toStorageKey(path, namespace), fileText, {
-    contentType: "text/plain",
-  });
-
-  return `Wrote ${toVisiblePath(path, namespace)}`;
-}
-
-async function appendToFilesystemFile(path: string, fileText: string, namespace: string): Promise<string> {
-  const normalizedPath = toScopedPath(path, namespace);
-  const { exists, isDirectory } = await checkPathExists(namespace, normalizedPath);
-  if (isDirectory) {
-    throw new Error(`${toVisiblePath(normalizedPath, namespace)} is a directory`);
-  }
-
-  if (!exists) {
-    return fileText;
-  }
-
-  const existing = await readFilesystemRaw(normalizedPath, namespace);
-  return existing.length > 0 ? `${existing}\n${fileText}` : fileText;
-}
-
-async function createFilesystemDirectory(path: string, namespace: string): Promise<string> {
-  const normalizedPath = toScopedPath(path, namespace);
-  if (normalizedPath === "/") {
-    return `Directory already exists: ${toVisiblePath(normalizedPath, namespace)}`;
-  }
-
-  const { exists, isDirectory } = await checkPathExists(namespace, normalizedPath);
-  if (exists && isDirectory) {
-    return `Directory already exists: ${toVisiblePath(normalizedPath, namespace)}`;
-  }
-
-  if (exists) {
-    return `Error: ${toVisiblePath(normalizedPath, namespace)} is a file`;
-  }
-
-  await writeS3Object(getFilesystemBucketName(), `${toStorageKey(normalizedPath, namespace)}/.keep`, "", {
-    contentType: "text/plain",
-  });
-
-  return `Created directory ${toVisiblePath(normalizedPath, namespace)}`;
-}
-
-async function touchFilesystemFile(path: string, namespace: string): Promise<string> {
-  const normalizedPath = toScopedPath(path, namespace);
-  if (normalizedPath === "/") {
-    return `Error: ${toVisiblePath(normalizedPath, namespace)} is a directory`;
-  }
-
-  const { exists, isDirectory } = await checkPathExists(namespace, normalizedPath);
-  if (isDirectory) {
-    return `Error: ${toVisiblePath(normalizedPath, namespace)} is a directory`;
-  }
-
-  if (exists) {
-    return `Touched ${toVisiblePath(normalizedPath, namespace)}`;
-  }
-
-  return writeFilesystemFile({
-    name: normalizedPath,
-    fileText: "",
-    namespace,
-  });
-}
-
-async function listFilesystemEntries(path: string, namespace: string): Promise<string> {
-  const normalizedPath = toScopedPath(path, namespace);
   const state = await checkPathExists(namespace, normalizedPath);
-
-  if (normalizedPath !== "/" && !state.exists) {
-    return `ls: ${toVisiblePath(normalizedPath, namespace)}: No such file or directory`;
-  }
-
-  if (state.exists && !state.isDirectory) {
-    return normalizedPath.split("/").pop() ?? normalizedPath;
-  }
-
-  const entries = await listDirectoryEntries(namespace, normalizedPath);
-  return entries.sort((a, b) => a.localeCompare(b)).join("\n");
-}
-
-async function checkPathExists(namespace: string, path: string): Promise<StoredPathState> {
-  const normalizedPath = toScopedPath(path, namespace);
-  if (normalizedPath === "/") {
-    return { exists: true, isDirectory: true };
-  }
-
-  const key = toStorageKey(normalizedPath, namespace);
-
-  if (await s3ObjectExists(getFilesystemBucketName(), key)) {
-    return { exists: true, isDirectory: false };
-  }
-  const listResponse = await listS3Prefix(getFilesystemBucketName(), `${key}/`);
-  return {
-    exists: listResponse.length > 0,
-    isDirectory: listResponse.length > 0,
-  };
-}
-
-async function listDirectoryEntries(namespace: string, normalizedPath: string): Promise<string[]> {
-  const prefix = normalizedPath === "/"
-    ? `${namespace}/`
-    : `${toStorageKey(normalizedPath, namespace)}/`;
-
-  const objects = await listS3Prefix(getFilesystemBucketName(), prefix);
-  const directories = new Set<string>();
-  const files = new Set<string>();
-  for (const object of objects) {
-    const relative = object.key.slice(prefix.length);
-    if (!relative || relative.startsWith(".")) {
-      continue;
-    }
-    const [head, ...rest] = relative.split("/");
-    if (!head || head.startsWith(".")) {
-      continue;
-    }
-    if (rest.length > 0) {
-      directories.add(`${head}/`);
-    } else {
-      files.add(head);
-    }
-  }
-
-  return [
-    ...directories,
-    ...files,
-  ];
-}
-
-async function deleteFilesystemPath(params: {
-  name: string;
-  namespace: string;
-}): Promise<string> {
-  const { name, namespace } = params;
-  const path = toScopedPath(name, namespace);
-  if (path === "/") {
-    return `Error: refusing to delete ${toVisiblePath(path, namespace)}`;
-  }
-
-  const state = await checkPathExists(namespace, path);
   if (!state.exists) {
-    return `Error: The path ${toVisiblePath(path, namespace)} does not exist`;
+    throw new Error(`${execution.executable}: ${toVisiblePath(normalizedPath, namespace)}: No such file or directory`);
   }
-
   if (state.isDirectory) {
-    const prefix = `${toStorageKey(path, namespace)}/`;
-    await deleteS3Prefix(getFilesystemBucketName(), prefix);
-  } else {
-    await deleteS3Object(getFilesystemBucketName(), toStorageKey(path, namespace));
+    throw new Error(`${execution.executable}: ${toVisiblePath(normalizedPath, namespace)}: Is a directory`);
   }
 
-  return `Successfully deleted ${toVisiblePath(path, namespace)}`;
-}
+  const content = await readS3Text(getFilesystemBucketName(), toStorageKey(normalizedPath, namespace));
+  const entry = prepareSandboxEntry(normalizedPath, content, execution.runtime);
+  const executor = createWorkspaceSandboxExecutor(sandboxConfig);
+  const limits = workspaceSandboxLimits();
+  const result = await executor.runFile({
+    runtime: execution.runtime,
+    command: [execution.executable, entry.path, ...execution.args].map(shellQuote).join(" "),
+    args: execution.args,
+    entry: entry,
+    timeoutSeconds: boundedInteger(
+      sandboxConfig.timeout,
+      limits.defaultTimeoutSeconds,
+      limits.maxTimeoutSeconds,
+    ),
+    outputLimitBytes: boundedInteger(
+      sandboxConfig.outputLimitBytes,
+      limits.defaultOutputLimitBytes,
+      limits.maxOutputLimitBytes,
+    ),
+  });
 
-async function renameFilesystemPath(params: {
-  oldName: string;
-  newName: string;
-  namespace: string;
-}): Promise<string> {
-  const { namespace } = params;
-  const oldPath = toScopedPath(params.oldName, namespace);
-  const newPath = toScopedPath(params.newName, namespace);
-  if (oldPath === "/" || newPath === "/") {
-    return `Error: cannot rename ${toVisiblePath("/", namespace)}`;
-  }
-
-  const sourceState = await checkPathExists(namespace, oldPath);
-  if (!sourceState.exists) {
-    return `Error: The path ${toVisiblePath(oldPath, namespace)} does not exist`;
-  }
-
-  const destinationState = await checkPathExists(namespace, newPath);
-  if (destinationState.exists) {
-    return `Error: The destination ${toVisiblePath(newPath, namespace)} already exists`;
-  }
-
-  if (sourceState.isDirectory) {
-    const sourceObjects = await collectDirectoryObjects(namespace, oldPath);
-
-    for (const object of sourceObjects) {
-      await writeS3Object(
-        getFilesystemBucketName(),
-        `${toStorageKey(newPath, namespace)}/${object.relativeKey}`,
-        await readS3Bytes(getFilesystemBucketName(), object.key),
-      );
-    }
-
-    for (const object of sourceObjects) {
-      await deleteS3Object(getFilesystemBucketName(), object.key);
-    }
-  } else {
-    const oldKey = toStorageKey(oldPath, namespace);
-    const newKey = toStorageKey(newPath, namespace);
-
-    await writeS3Object(getFilesystemBucketName(), newKey, await readS3Bytes(getFilesystemBucketName(), oldKey));
-    await deleteS3Object(getFilesystemBucketName(), oldKey);
-  }
-
-  return `Successfully renamed ${toVisiblePath(oldPath, namespace)} to ${toVisiblePath(newPath, namespace)}`;
-}
-
-async function collectDirectoryObjects(namespace: string, path: string): Promise<StoredObject[]> {
-  const normalizedPath = toScopedPath(path, namespace);
-  const prefix = `${toStorageKey(normalizedPath, namespace)}/`;
-  const response = await listS3Prefix(getFilesystemBucketName(), prefix);
-
-  return response
-    .map((item) => item.key)
-    .map((key) => ({
-      key,
-      relativeKey: key.slice(prefix.length),
-    }));
+  return formatSandboxResult(result);
 }

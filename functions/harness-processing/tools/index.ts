@@ -56,7 +56,11 @@ export function createTools(context: Omit<ToolContext, "config">, agentConfig: A
     Object.assign(
       tools,
       ...(agentConfig.workspace.filesystem?.enabled === false ? [] : [
-        withToolApproval(filesystemTool({ ...context, config: {} }), {
+        // Passing the sandbox configure into the filesystem tool.
+        withToolApproval(filesystemTool({ 
+          ...context, 
+          config: agentConfig.workspace.sandbox ?? {} 
+        }), {
           filesystem: needsApproval,
         }),
       ]),
