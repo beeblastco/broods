@@ -235,7 +235,7 @@ This path currently uses core NATS. If JetStream is introduced later, replace be
 
 ## Memory and Filesystem Boundaries
 
-Workspace state is account/agent-scoped and disabled unless the selected agent has `config.workspace.enabled` true. When enabled, it turns on workspace memory and tools; `workspace.memory.enabled`, `workspace.filesystem.enabled`, and `workspace.tasks.enabled` can disable those pieces individually. `workspace.sandbox.enabled` extends the filesystem tool with file-only `node <file.js>` and `python <file.py>` execution through private runtime Lambdas. `workspace.needsApproval` requires approval for every enabled workspace tool. By default workspace state is per conversation; setting `config.workspace.memory.namespace` lets multiple conversations for the same agent share `MEMORY.md`, filesystem files, and task files.
+Workspace state is account/agent-scoped and disabled unless the selected agent has `config.workspace.enabled` true. When enabled, it turns on workspace memory and tools; `workspace.memory.enabled`, `workspace.filesystem.enabled`, and `workspace.tasks.enabled` can disable those pieces individually. `workspace.sandbox.enabled` extends the filesystem tool with file-only `node <file.js|file.ts>` and `python <file.py>` execution through the configured sandbox provider. The default provider invokes private runtime Lambdas; E2B and Daytona adapters use their SDKs behind the same executor contract. `workspace.needsApproval` requires approval for every enabled workspace tool. By default workspace state is per conversation; setting `config.workspace.memory.namespace` lets multiple conversations for the same agent share `MEMORY.md`, filesystem files, and task files.
 
 ```mermaid
 flowchart LR

@@ -1,0 +1,84 @@
+{
+  "$schema": "https://mintlify.com/docs.json",
+  "theme": "aspen",
+  "name": "BeeBlast",
+  "colors": {
+    "dark": "#0A0903",
+    "light": "#F7F3F3",
+    "primary": "#F4D06F"
+  },
+  "logo": {
+    "light": "/logo/light.svg",
+    "dark": "/logo/dark.svg"
+  },
+  "favicon": "/favicon.ico",
+  "icons": {
+    "library": "lucide"
+  },
+  "appearance": {
+    "default": "system",
+    "strict": true
+  },
+  "fonts": {
+    "family": "OpenSans"
+  },
+  "api": {
+    "openapi": [
+      "api-reference/account-management-openapi.yaml",
+      "api-reference/openapi.yaml"
+    ]
+  },
+  "navigation": {
+    "groups": [
+      {
+        "group": "Getting Started",
+        "icon": "book",
+        "pages": [
+          "getting-started",
+          "architecture",
+          "data-security"
+        ]
+      },
+      {
+        "group": "API Reference",
+        "icon": "square-terminal",
+        "pages": [
+          {
+            "group": "Account Management",
+            "openapi": "api-reference/account-management-openapi.yaml"
+          },
+          {
+            "group": "Direct API",
+            "openapi": "api-reference/openapi.yaml"
+          }
+        ]
+      },
+      {
+        "group": "Features",
+        "icon": "puzzle",
+        "pages": [
+          "account-management",
+          "channels",
+          "memory-and-session",
+          "tools",
+          "sub-agents",
+          "webhook",
+          "sandbox"
+        ]
+      },
+      {
+        "group": "Operations",
+        "icon": "settings",
+        "pages": [
+          "operations",
+          "extending"
+        ]
+      }
+    ]
+  },
+  "footer": {
+    "socials": {
+      "github": "https://github.com/anomalyco/filthy-panty"
+    }
+  }
+}

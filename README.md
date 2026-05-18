@@ -44,6 +44,7 @@ flowchart LR
 
 ## Docs
 
+- [Getting started](docs/getting-started.md)
 - [Architecture and workflows](docs/architecture.md)
 - [Account management](docs/account-management.md)
 - [Memory and session](docs/memory-and-session.md)
@@ -57,6 +58,8 @@ flowchart LR
 
 ## Quick Start
 
+See the [Getting Started guide](docs/getting-started.md) for a full walkthrough.
+
 ```bash
 bun install
 cp .env.example .env
@@ -67,9 +70,7 @@ bun run build
 bun run deploy
 ```
 
-After deploy, create an account through the `accountServiceUrl` output. The response returns an `accountSecret` once. Use that secret as `Authorization: Bearer <accountSecret>` for direct API calls and account self-management.
-
-Create an account, then create an agent with runtime `config`. Direct and async calls include `agentId`. See [Account management](docs/account-management.md#agents) for the supported flow.
+After deploy, follow the [Getting Started guide](docs/getting-started.md) to create an account, create an agent, and send your first request.
 
 ## Common Commands
 

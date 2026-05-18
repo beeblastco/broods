@@ -24,6 +24,7 @@ import {
   isAccountModelProviderName,
   type AccountModelProviderName,
 } from "./providers.ts";
+import { workspaceSandboxLimits } from "./sandbox.ts";
 export type { AccountModelProviderName } from "./providers.ts";
 
 const ACCOUNT_SECRET_PREFIX = "fp_acct_";
@@ -124,6 +125,7 @@ export interface AgentWorkspaceConfig {
   memory?: AgentWorkspaceMemoryConfig;
   filesystem?: AgentWorkspaceToolConfig;
   tasks?: AgentWorkspaceToolConfig;
+  sandbox?: AgentWorkspaceSandboxConfig;
   [key: string]: unknown;
 }
 
@@ -135,6 +137,16 @@ export interface AgentWorkspaceMemoryConfig {
 
 export interface AgentWorkspaceToolConfig {
   enabled?: boolean;
+  [key: string]: unknown;
+}
+
+export interface AgentWorkspaceSandboxConfig {
+  enabled?: boolean;
+  provider?: "lambda" | "e2b" | "daytona";
+  timeout?: number;
+  memoryLimit?: number;
+  outputLimitBytes?: number;
+  options?: Record<string, unknown>;
   [key: string]: unknown;
 }
 
@@ -723,6 +735,7 @@ function normalizeWorkspaceConfig(value: unknown): void {
   normalizeWorkspaceMemoryConfig(config.memory);
   normalizeWorkspaceToolConfig("filesystem", config.filesystem);
   normalizeWorkspaceToolConfig("tasks", config.tasks);
+  normalizeWorkspaceSandboxConfig(config.sandbox);
 }
 
 function normalizeWorkspaceMemoryConfig(value: unknown): void {
@@ -748,6 +761,50 @@ function normalizeWorkspaceToolConfig(toolName: "filesystem" | "tasks", value: u
 
   const config = value as Record<string, unknown>;
   assertOptionalBoolean(config.enabled, `config.workspace.${toolName}.enabled`);
+}
+
+function normalizeWorkspaceSandboxConfig(value: unknown): void {
+  if (value == null) {
+    return;
+  }
+  if (!isPlainObject(value)) {
+    throw new Error("config.workspace.sandbox must be an object");
+  }
+
+  const config = value as Record<string, unknown>;
+  assertOptionalBoolean(config.enabled, "config.workspace.sandbox.enabled");
+  assertOptionalEnum(config.provider, "config.workspace.sandbox.provider", ["lambda", "e2b", "daytona"]);
+  assertOptionalPositiveInteger(
+    config.timeout,
+    "config.workspace.sandbox.timeout",
+    workspaceSandboxLimits().maxTimeoutSeconds,
+  );
+  assertOptionalPositiveInteger(
+    config.memoryLimit,
+    "config.workspace.sandbox.memoryLimit",
+    workspaceSandboxLimits().maxMemoryLimitMb,
+  );
+  assertOptionalPositiveInteger(
+    config.outputLimitBytes,
+    "config.workspace.sandbox.outputLimitBytes",
+    workspaceSandboxLimits().maxOutputLimitBytes,
+  );
+  if (config.options !== undefined && !isPlainObject(config.options)) {
+    throw new Error("config.workspace.sandbox.options must be an object");
+  }
+
+  const options = isPlainObject(config.options) ? config.options : {};
+  assertOptionalString(options.nodeFunctionName, "config.workspace.sandbox.options.nodeFunctionName");
+  assertOptionalString(options.pythonFunctionName, "config.workspace.sandbox.options.pythonFunctionName");
+  assertOptionalString(options.apiKey, "config.workspace.sandbox.options.apiKey");
+  assertOptionalString(options.template, "config.workspace.sandbox.options.template");
+  assertOptionalString(options.templateId, "config.workspace.sandbox.options.templateId");
+  assertOptionalString(options.apiUrl, "config.workspace.sandbox.options.apiUrl");
+  assertOptionalString(options.target, "config.workspace.sandbox.options.target");
+  assertOptionalString(options.image, "config.workspace.sandbox.options.image");
+  if (options.envVars !== undefined && !isStringRecord(options.envVars)) {
+    throw new Error("config.workspace.sandbox.options.envVars must be an object with string values");
+  }
 }
 
 function normalizeSessionConfig(value: unknown): void {

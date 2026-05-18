@@ -70,6 +70,16 @@
       "enabled": true,
       "namespace": "support"
     },
+    "filesystem": {
+      "enabled": true
+    },
+    "sandbox": {
+      "enabled": false,
+      "provider": "lambda",
+      "timeout": 30,
+      "memoryLimit": 128,
+      "outputLimitBytes": 65536
+    },
     "tasks": {
       "enabled": true
     }

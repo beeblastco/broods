@@ -99,6 +99,44 @@ describe("agent config", () => {
     expect(() => normalizeAgentConfig({ workspace: { filesystem: { enabled: "yes" } } })).toThrow(
       "config.workspace.filesystem.enabled must be a boolean",
     );
+    expect(normalizeAgentConfig({
+      workspace: {
+        sandbox: {
+          enabled: true,
+          provider: "lambda",
+          timeout: 30,
+          memoryLimit: 512,
+          outputLimitBytes: 65536,
+          options: {
+            nodeFunctionName: "sandbox-node",
+            pythonFunctionName: "sandbox-python",
+          },
+        },
+      },
+    })).toEqual({
+      workspace: {
+        sandbox: {
+          enabled: true,
+          provider: "lambda",
+          timeout: 30,
+          memoryLimit: 512,
+          outputLimitBytes: 65536,
+          options: {
+            nodeFunctionName: "sandbox-node",
+            pythonFunctionName: "sandbox-python",
+          },
+        },
+      },
+    });
+    expect(() => normalizeAgentConfig({ workspace: { sandbox: "yes" } })).toThrow(
+      "config.workspace.sandbox must be an object",
+    );
+    expect(() => normalizeAgentConfig({ workspace: { sandbox: { provider: "docker" } } })).toThrow(
+      "config.workspace.sandbox.provider must be one of: lambda, e2b, daytona",
+    );
+    expect(() => normalizeAgentConfig({ workspace: { sandbox: { timeout: 121 } } })).toThrow(
+      "config.workspace.sandbox.timeout must be an integer from 1 to 120",
+    );
   });
 
   it("validates lifecycle webhook hook config", () => {

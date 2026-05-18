@@ -85,6 +85,8 @@ export default $config({
       asyncToolResult: resourceName("async-tool-result", stage, region),
       externalAsyncToolMock: resourceName("async-tool-mock", stage, region),
       webhookSubscribeMock: resourceName("webhook-sub-mock", stage, region),
+      sandboxNode: resourceName("sandbox-node", stage, region),
+      sandboxPython: resourceName("sandbox-python", stage, region),
       accountConfigs: resourceName("account-configs", stage, region),
       agentConfigs: resourceName("agent-configs", stage, region),
       accountSignupRateLimits: resourceName("account-signup-rate-limits", stage, region),
@@ -203,6 +205,13 @@ export default $config({
     const filesystemBucketArn = `arn:aws:s3:::${names.memory}`;
     const skillsBucketArn = `arn:aws:s3:::${names.skills}`;
 
+    // Setup the VPC for the sandbox connection.
+    // It does not allow connect to outside internet, else we have to enable NAT Gateway which is
+    // expensive asf.
+    const sandboxNetwork = new sst.aws.Vpc("SandboxNetwork", {
+      az: 2, // 2 az same price of 1 az.
+    });
+
     const mockExternalAsyncTool = new sst.aws.Function("MockExternalAsyncTool", {
       name: names.externalAsyncToolMock,
       runtime: "python3.12",
@@ -236,6 +245,31 @@ export default $config({
       },
     });
 
+    const sandboxNode = new sst.aws.Function("SandboxNode", {
+      name: names.sandboxNode,
+      runtime: "nodejs22.x",
+      architecture: "arm64",
+      handler: "functions/sandbox-node/handler.handler",
+      description: "Executes workspace JavaScript files without public network egress.",
+      timeout: "2 minutes",
+      memory: "128 MB", // Configure 128MB for cheap ass cause im broke
+      vpc: sandboxNetwork,
+      logging: { format: "json", retention: "1 month" },
+    });
+
+    const sandboxPython = new sst.aws.Function("SandboxPython", {
+      name: names.sandboxPython,
+      runtime: "python3.12",
+      architecture: "arm64",
+      bundle: "functions/sandbox-python",
+      handler: "handler.handler",
+      description: "Executes workspace Python files without public network egress.",
+      timeout: "2 minutes",
+      memory: "128 MB", // Configure 128MB for cheap ass cause im broke
+      vpc: sandboxNetwork,
+      logging: { format: "json", retention: "1 month" },
+    });
+
     const harnessProcessing = new sst.aws.Function("HarnessProcessing", {
       name: names.harnessProcessing,
       runtime: "provided.al2023",
@@ -264,6 +298,8 @@ export default $config({
         ENABLE_DIRECT_API: ENABLE_DIRECT_API ? "true" : "false",
         ENABLE_WEBSOCKET: ENABLE_WEBSOCKET ? "true" : "false",
         MOCK_EXTERNAL_ASYNC_TOOL_URL: mockExternalAsyncTool.url,
+        SANDBOX_NODE_FUNCTION_NAME: sandboxNode.name,
+        SANDBOX_PYTHON_FUNCTION_NAME: sandboxPython.name,
         ...(NATS_URL ? { NATS_URL } : {}),
       },
       permissions: [
@@ -309,6 +345,13 @@ export default $config({
         {
           actions: ["lambda:InvokeFunction"],
           resources: [`arn:aws:lambda:${region}:${AWS_ACCOUNT_ID}:function:${names.harnessProcessing}`],
+        },
+        {
+          actions: ["lambda:InvokeFunction"],
+          resources: [
+            sandboxNode.arn,
+            sandboxPython.arn,
+          ],
         },
         {
           actions: [
@@ -509,6 +552,8 @@ export default $config({
       accountServiceUrl: accountManage.url,
       mockExternalAsyncToolUrl: mockExternalAsyncTool.url,
       mockWebhookSubscribeUrl: mockWebhookSubscribe.url,
+      sandboxNodeFunctionName: sandboxNode.name,
+      sandboxPythonFunctionName: sandboxPython.name,
       accountConfigsTableName: accountConfigsTable.name,
       agentConfigsTableName: agentConfigsTable.name,
       accountSignupRateLimitTableName: accountSignupRateLimitTable.name,

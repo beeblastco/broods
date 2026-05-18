@@ -14,6 +14,16 @@ const readS3BytesMock = mock(async (_bucket: string, _key: string) => new Uint8A
 const writeS3ObjectMock = mock(async (_bucket: string, _key: string, _body: string | Uint8Array, _options?: { contentType?: string }) => 200);
 const deleteS3ObjectMock = mock(async (_bucket: string, _key: string) => {});
 const deleteS3PrefixMock = mock(async (_bucket: string, _prefix: string) => 0);
+const lambdaSendMock = mock(async (_command: unknown) => ({
+  Payload: new TextEncoder().encode(JSON.stringify({
+    ok: true,
+    runtime: "node",
+    exitCode: 0,
+    stdout: "hello from sandbox\n",
+    stderr: "",
+    durationMs: 12,
+  })),
+}));
 
 mock.module("../functions/_shared/s3.ts", () => ({
   s3ObjectExists: s3ObjectExistsMock,
@@ -25,8 +35,21 @@ mock.module("../functions/_shared/s3.ts", () => ({
   deleteS3Prefix: deleteS3PrefixMock,
 }));
 
+mock.module("@aws-sdk/client-lambda", () => ({
+  LambdaClient: class {
+    send = lambdaSendMock;
+  },
+  InvokeCommand: class {
+    input: unknown;
+    constructor(input: unknown) {
+      this.input = input;
+    }
+  },
+}));
+
 beforeEach(() => {
   process.env.FILESYSTEM_BUCKET_NAME = "test-filesystem-bucket";
+  process.env.SANDBOX_NODE_FUNCTION_NAME = "sandbox-node";
   s3ObjectExistsMock.mockClear();
   listS3PrefixMock.mockClear();
   readS3TextMock.mockClear();
@@ -34,27 +57,28 @@ beforeEach(() => {
   writeS3ObjectMock.mockClear();
   deleteS3ObjectMock.mockClear();
   deleteS3PrefixMock.mockClear();
+  lambdaSendMock.mockClear();
 });
 
 afterEach(() => {
   process.env = { ...ORIGINAL_ENV };
 });
 
-function createToolContext(namespace = "test-ns") {
+function createToolContext(namespace = "test-ns", config: Record<string, unknown> = {}) {
   return {
     conversationKey: "test-conversation",
     filesystemNamespace: namespace,
-    config: {},
+    config,
     modelProviderName: "google",
     modelProvider: {},
   } as never;
 }
 
-async function executeShell(shell: string, namespace = "test-ns") {
+async function executeShell(shell: string, namespace = "test-ns", config: Record<string, unknown> = {}) {
   const { default: filesystemTool } = await import("../functions/harness-processing/tools/filesystem.tool.ts");
-  const tools = filesystemTool(createToolContext(namespace));
+  const tools = filesystemTool(createToolContext(namespace, config));
   const filesystem = tools.filesystem!;
-  return (filesystem as unknown as { execute(input: { shell: string }): Promise<{ type: string; value: string }> }).execute({ shell });
+  return (filesystem as unknown as { execute(input: { shell: string }): Promise<{ type: string; value: any }> }).execute({ shell });
 }
 
 describe("filesystem tool", () => {
@@ -536,6 +560,144 @@ EOF`);
       const result = await executeShell("   ");
       expect(result.type).toBe("error-text");
       expect(result.value).toBe("Error: shell command is required");
+    });
+  });
+
+  describe("sandbox execution", () => {
+    it("runs an existing JavaScript file through the node sandbox Lambda", async () => {
+      s3ObjectExistsMock.mockResolvedValue(true);
+      readS3TextMock.mockResolvedValue("console.log('hello from file');");
+
+      const result = await executeShell("node /main.js", "test-ns", {
+        enabled: true,
+        provider: "lambda",
+        timeout: 15,
+        outputLimitBytes: 4096,
+      });
+
+      expect(result.type).toBe("json");
+      expect(result.value).toEqual({
+        output: {
+          stdout: "hello from sandbox\n",
+          stderr: "",
+          artifacts: [],
+        },
+        status: {
+          ok: true,
+          runtime: "node",
+          provider: "lambda",
+          exitCode: 0,
+          durationMs: 12,
+          timedOut: false,
+          truncated: false,
+        },
+      });
+      expect(readS3TextMock).toHaveBeenCalledWith("test-filesystem-bucket", "test-ns/main.js");
+      expect(lambdaSendMock).toHaveBeenCalledTimes(1);
+      const command = lambdaSendMock.mock.calls[0]?.[0] as { input: { FunctionName: string; Payload: Uint8Array } };
+      expect(command.input.FunctionName).toBe("sandbox-node");
+      expect(JSON.parse(new TextDecoder().decode(command.input.Payload))).toMatchObject({
+        runtime: "node",
+        entry: {
+          path: "/main.js",
+          content: "console.log('hello from file');",
+        },
+        args: [],
+        timeoutSeconds: 15,
+        outputLimitBytes: 4096,
+      });
+    });
+
+    it("runs an existing Python file through the python sandbox Lambda", async () => {
+      process.env.SANDBOX_PYTHON_FUNCTION_NAME = "sandbox-python";
+      s3ObjectExistsMock.mockResolvedValue(true);
+      readS3TextMock.mockResolvedValue("print('hello')");
+      lambdaSendMock.mockResolvedValueOnce({
+        Payload: new TextEncoder().encode(JSON.stringify({
+          ok: true,
+          runtime: "python",
+          exitCode: 0,
+          stdout: "hello\n",
+          stderr: "",
+          durationMs: 10,
+        })),
+      });
+
+      const result = await executeShell("python /main.py", "test-ns", {
+        enabled: true,
+        provider: "lambda",
+      });
+
+      expect(result.type).toBe("json");
+      expect(result.value).toMatchObject({
+        output: {
+          stdout: "hello\n",
+          stderr: "",
+          artifacts: [],
+        },
+        status: {
+          ok: true,
+          runtime: "python",
+          provider: "lambda",
+          exitCode: 0,
+        },
+      });
+      const command = lambdaSendMock.mock.calls[0]?.[0] as { input: { FunctionName: string; Payload: Uint8Array } };
+      expect(command.input.FunctionName).toBe("sandbox-python");
+      expect(JSON.parse(new TextDecoder().decode(command.input.Payload))).toMatchObject({
+        runtime: "python",
+        entry: {
+          path: "/main.py",
+          content: "print('hello')",
+        },
+        args: [],
+      });
+    });
+
+    it("transpiles TypeScript files before running them in the node sandbox Lambda", async () => {
+      s3ObjectExistsMock.mockResolvedValue(true);
+      readS3TextMock.mockResolvedValue("const answer: number = 42; console.log(answer);");
+
+      const result = await executeShell("node /main.ts --flag", "test-ns", {
+        enabled: true,
+        provider: "lambda",
+      });
+
+      expect(result.type).toBe("json");
+      const command = lambdaSendMock.mock.calls[0]?.[0] as { input: { Payload: Uint8Array } };
+      const payload = JSON.parse(new TextDecoder().decode(command.input.Payload));
+      expect(payload.command).toBe("'node' '/main.js' '--flag'");
+      expect(payload.args).toEqual(["--flag"]);
+      expect(payload.entry.path).toBe("/main.js");
+      expect(payload.entry.content).toContain("const answer = 42");
+    });
+
+    it("rejects execution when workspace sandbox is disabled", async () => {
+      const result = await executeShell("node /main.js");
+
+      expect(result.type).toBe("error-text");
+      expect(result.value).toBe("Error: workspace sandbox execution is disabled");
+      expect(lambdaSendMock).not.toHaveBeenCalled();
+    });
+
+    it("rejects inline execution flags", async () => {
+      const result = await executeShell("node -e \"console.log(1)\"", "test-ns", {
+        enabled: true,
+      });
+
+      expect(result.type).toBe("error-text");
+      expect(result.value).toBe("Execution command must reference one workspace file and cannot use inline flags");
+      expect(lambdaSendMock).not.toHaveBeenCalled();
+    });
+
+    it("rejects mismatched file extensions", async () => {
+      const result = await executeShell("python /main.js", "test-ns", {
+        enabled: true,
+      });
+
+      expect(result.type).toBe("error-text");
+      expect(result.value).toBe("python execution only supports .py files");
+      expect(lambdaSendMock).not.toHaveBeenCalled();
     });
   });
 
