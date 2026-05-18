@@ -97,6 +97,11 @@ function denyUnlessPrincipalAllowed(allowedPrincipalArns: $util.Input<string>[])
         variable: "aws:PrincipalArn",
         values: allowedPrincipalArns,
       },
+      {
+        test: "BoolIfExists",
+        variable: "aws:PrincipalIsAWSService",
+        values: ["false"],
+      },
     ],
   };
 }
@@ -330,14 +335,10 @@ export default $config({
             Effect: "Allow",
             Action: [
               "s3:AbortMultipartUpload",
-              "s3:GetObject",
-              "s3:GetObjectVersion",
-              "s3:GetObjectVersionTagging",
-              "s3:PutObject",
-              "s3:PutObjectTagging",
-              "s3:DeleteObject",
-              "s3:DeleteObjectVersion",
-              "s3:ListMultipartUploadParts",
+              "s3:DeleteObject*",
+              "s3:GetObject*",
+              "s3:List*",
+              "s3:PutObject*",
             ],
             Resource: [`${filesystemBucketArn}/*`],
             Condition: {
