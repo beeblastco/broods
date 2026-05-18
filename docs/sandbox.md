@@ -8,9 +8,9 @@ flowchart LR
   B --> C[write file to workspace S3]
   B --> D[node/python file command]
   D --> E{Sandbox provider}
-  E --> F[Private Lambda runtime]
-  E --> G[E2B]
-  E --> H[Daytona]
+  E --> F[Lambda + S3 Files mount]
+  E --> G[E2B mounted workspace]
+  E --> H[Daytona mounted workspace]
   F --> I[Structured result]
   G --> I
   H --> I
@@ -30,8 +30,9 @@ Sandbox execution is available only when workspace and sandbox are enabled for t
       "enabled": true,
       "provider": "lambda",
       "timeout": 30,
-      "memoryLimit": 128,
-      "outputLimitBytes": 65536
+      "memoryLimit": 512,
+      "outputLimitBytes": 65536,
+      "filesystem": { "mount": "native" }
     }
   }
 }
@@ -41,9 +42,9 @@ Sandbox execution is available only when workspace and sandbox are enabled for t
 
 | Provider | Purpose |
 | --- | --- |
-| `lambda` | Default AWS runtime sandbox. Runs private Node and Python Lambda workers. |
-| `e2b` | Uses the E2B SDK adapter. Configure API key/template in `workspace.sandbox.options`. |
-| `daytona` | Uses the Daytona SDK adapter. Configure API key/image/target in `workspace.sandbox.options`. |
+| `lambda` | Default AWS runtime sandbox. Runs private Node and Python Lambda workers on an AWS S3 Files mount. |
+| `e2b` | Uses an E2B template or volume with the workspace mounted at `options.workspaceRoot`. |
+| `daytona` | Uses a Daytona volume or external storage mount at `options.workspaceRoot`. |
 
 ## How Agents Use It
 
@@ -65,12 +66,25 @@ EOF
 python3 /main.py
 ```
 
+Sandboxed code can also read and write nearby workspace files with normal file APIs:
+
+```bash
+python3 analyze.py sample.wav
+```
+
+```py
+from pathlib import Path
+
+data = Path("sample.wav").read_bytes()
+Path("summary.txt").write_text(str(len(data)))
+```
+
 Supported execution commands:
 
 | Runtime | Command |
 | --- | --- |
 | Node | `node <file.js>` |
-| TypeScript | `node <file.ts>`; the harness transpiles it to JavaScript before execution |
+| TypeScript | `node <file.ts>`; the Node runtime transpiles the mounted file inside the namespace before execution |
 | Python | `python <file.py>` or `python3 <file.py>` |
 
 Inline execution is intentionally rejected. Commands such as `node -e "..."` and `python -c "..."` are not allowed.
@@ -100,16 +114,26 @@ Sandbox runs return JSON through the filesystem tool:
 
 `artifacts` is reserved for provider outputs such as charts, images, or files when a provider can return them.
 
+## Mounted Workspace
+
+Every provider uses a native mounted workspace. The runtime executes from the namespace root, so relative paths behave like normal bash.
+
+| Provider | Mount strategy |
+| --- | --- |
+| `lambda` | AWS S3 Files mounted into the private runtime Lambdas at `/mnt/workspaces` |
+| `e2b` | E2B volume or S3/FUSE template mounted at `options.workspaceRoot` |
+| `daytona` | Daytona volume or external storage mounted at `options.workspaceRoot` |
+
 ## Lambda Runtime
 
-SST deploys two private runtime Lambdas:
+SST deploys two private runtime Lambdas and one AWS S3 Files filesystem backed by the workspace S3 bucket:
 
 | Function | Runtime | Executes |
 | --- | --- | --- |
-| `SandboxNode` | `nodejs22.x` | `.js` files generated from `.js` or transpiled `.ts` workspace files |
+| `SandboxNode` | `nodejs22.x` | Mounted `.js` files and mounted `.ts` files transpiled inside the runtime |
 | `SandboxPython` | `python3.12` | `.py` files |
 
-Each runtime Lambda executes files with its own interpreter binary (`process.execPath` for Node and `sys.executable` for Python), so execution does not depend on `node` or `python3` being present on the sanitized `PATH`.
+Each runtime Lambda executes files with its own interpreter binary (`process.execPath` for Node and `sys.executable` for Python), so execution does not depend on `node` or `python3` being present on the sanitized `PATH`. The Lambda functions are configured with at least 512 MB memory because AWS S3 Files direct reads require that for Lambda.
 
 The main `harness-processing` Lambda invokes those functions with:
 
@@ -124,7 +148,8 @@ You can override those names per agent:
     "sandbox": {
       "options": {
         "nodeFunctionName": "my-node-sandbox",
-        "pythonFunctionName": "my-python-sandbox"
+        "pythonFunctionName": "my-python-sandbox",
+        "workspaceRoot": "/mnt/workspaces"
       }
     }
   }
@@ -138,7 +163,7 @@ Dependencies are not an account config field.
 Use provider images/templates for packages:
 
 - Lambda: bundle packages into the runtime artifact or attach a Lambda layer.
-- E2B: use a template with packages installed during template build.
+- E2B: use the mounted template/volume image with packages installed during template build.
 - Daytona: use an image or image builder with packages installed before runtime.
 
 Runtime package installation requires network egress and has a larger security surface. If Lambda runtime installs are needed later, add a separate opt-in sandbox provider mode with:
@@ -151,13 +176,14 @@ Runtime package installation requires network egress and has a larger security s
 
 ## Security Boundaries
 
-The sandbox path is designed around small, file-based runs:
+The sandbox path is designed around mounted, file-based runs:
 
 - only allowlisted runtimes are exposed
 - execution requires an existing workspace file
 - inline code flags are rejected
 - stdout/stderr are truncated
-- Lambda provider runs in private runtime functions
+- Lambda provider runs in private runtime functions on an S3 Files mount
 - sandbox runtime Lambdas do not need account-management permissions
+- child processes run without AWS credentials in their environment
 
 Workspace write/read commands still use the normal `filesystem` tool. Use `workspace.needsApproval` if file writes and code runs should require human approval.

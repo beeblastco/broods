@@ -7,6 +7,7 @@ const PROJECT_OWNER_EMAIL = "phickstran@beeblast.co";
 const AWS_PROFILE = process.env.CI ? undefined : (process.env.AWS_PROFILE ?? "default");
 const ENABLE_DIRECT_API = parseBooleanEnv("ENABLE_DIRECT_API", false);
 const ENABLE_WEBSOCKET = parseBooleanEnv("ENABLE_WEBSOCKET", false);
+const SANDBOX_WORKSPACE_MOUNT_PATH = "/mnt/workspaces";
 const NATS_URL = process.env.NATS_URL?.trim();
 
 if (ENABLE_WEBSOCKET && !NATS_URL) {
@@ -48,6 +49,58 @@ function parseBooleanEnv(name: string, defaultValue: boolean): boolean {
   throw new Error(`${name} must be a boolean-like value`);
 }
 
+function sandboxRuntimePermissions(
+  filesystemBucketArn: string,
+  s3FilesFileSystemArn: $util.Input<string>,
+  s3FilesAccessPointArn: $util.Input<string>,
+) : {
+  actions: string[];
+  resources: $util.Input<string>[];
+}[] {
+  return [
+    {
+      actions: [
+        "s3files:ClientMount",
+        "s3files:ClientWrite",
+      ],
+      resources: [s3FilesFileSystemArn, s3FilesAccessPointArn],
+    },
+    {
+      actions: [
+        "s3:GetObject",
+        "s3:GetObjectVersion",
+        "s3:PutObject",
+        "s3:DeleteObject",
+      ],
+      resources: [`${filesystemBucketArn}/*`],
+    },
+    {
+      actions: ["s3:ListBucket"],
+      resources: [filesystemBucketArn],
+    },
+  ];
+}
+
+function denyUnlessPrincipalAllowed(allowedPrincipalArns: $util.Input<string>[]) {
+  return {
+    effect: "deny" as const,
+    principals: "*" as const,
+    actions: [
+      "s3:GetObject",
+      "s3:PutObject",
+      "s3:DeleteObject",
+      "s3:ListBucket",
+    ],
+    conditions: [
+      {
+        test: "StringNotLikeIfExists",
+        variable: "aws:PrincipalArn",
+        values: allowedPrincipalArns,
+      },
+    ],
+  };
+}
+
 export default $config({
   app(input) {
     const stage = input?.stage ?? "dev";
@@ -61,7 +114,7 @@ export default $config({
       providers: {
         aws: {
           region,
-          version: "7.20.0",
+          version: "7.30.0",
           ...(AWS_PROFILE ? { profile: AWS_PROFILE } : {}),
           defaultTags: {
             tags: {
@@ -76,6 +129,7 @@ export default $config({
   },
 
   async run() {
+    const aws = await import("@pulumi/aws");
     const stage = $app.stage;
     const region = awsRegion();
     const names = {
@@ -204,12 +258,123 @@ export default $config({
     });
     const filesystemBucketArn = `arn:aws:s3:::${names.memory}`;
     const skillsBucketArn = `arn:aws:s3:::${names.skills}`;
+    const filesystemBucketAllowedPrincipalArns: $util.Input<string>[] = [];
+    const skillsBucketAllowedPrincipalArns: $util.Input<string>[] = [];
+
+    const filesystemBucket = new sst.aws.Bucket("Memory", {
+      versioning: true,
+      policy: [denyUnlessPrincipalAllowed(filesystemBucketAllowedPrincipalArns)],
+      transform: {
+        bucket: {
+          bucket: names.memory,
+        },
+        publicAccessBlock: {
+          blockPublicAcls: true,
+          ignorePublicAcls: true,
+          blockPublicPolicy: true,
+          restrictPublicBuckets: true,
+        },
+      },
+    });
+
+    const skillsBucket = new sst.aws.Bucket("Skills", {
+      versioning: true,
+      policy: [denyUnlessPrincipalAllowed(skillsBucketAllowedPrincipalArns)],
+      transform: {
+        bucket: {
+          bucket: names.skills,
+        },
+        publicAccessBlock: {
+          blockPublicAcls: true,
+          ignorePublicAcls: true,
+          blockPublicPolicy: true,
+          restrictPublicBuckets: true,
+        },
+      },
+    });
 
     // Setup the VPC for the sandbox connection.
     // It does not allow connect to outside internet, else we have to enable NAT Gateway which is
     // expensive asf.
     const sandboxNetwork = new sst.aws.Vpc("SandboxNetwork", {
       az: 2, // 2 az same price of 1 az.
+    });
+
+    const s3FilesRole = new aws.iam.Role("SandboxS3FilesRole", {
+      name: resourceName("sandbox-s3files", stage, region),
+      assumeRolePolicy: JSON.stringify({
+        Version: "2012-10-17",
+        Statement: [{
+          Effect: "Allow",
+          Principal: { Service: "s3files.amazonaws.com" },
+          Action: "sts:AssumeRole",
+        }],
+      }),
+    });
+
+    new aws.iam.RolePolicy("SandboxS3FilesRolePolicy", {
+      role: s3FilesRole.id,
+      policy: JSON.stringify({
+        Version: "2012-10-17",
+        Statement: [
+          {
+            Effect: "Allow",
+            Action: [
+              "s3:GetObject",
+              "s3:GetObjectVersion",
+              "s3:PutObject",
+              "s3:DeleteObject",
+            ],
+            Resource: [`${filesystemBucketArn}/*`],
+          },
+          {
+            Effect: "Allow",
+            Action: ["s3:ListBucket"],
+            Resource: [filesystemBucketArn],
+          },
+        ],
+      }),
+    });
+
+    const sandboxS3Files = new aws.s3.FilesFileSystem("SandboxS3Files", {
+      bucket: filesystemBucketArn,
+      roleArn: s3FilesRole.arn,
+      acceptBucketWarning: true,
+    }, {
+      dependsOn: [filesystemBucket],
+    });
+
+    const sandboxS3FilesAccessPoint = new aws.s3.FilesAccessPoint("SandboxS3FilesAccessPoint", {
+      fileSystemId: sandboxS3Files.id,
+      posixUsers: [{ uid: 1000, gid: 1000 }],
+      rootDirectories: [{
+        path: "/",
+        creationPermissions: [{
+          ownerUid: 1000,
+          ownerGid: 1000,
+          permissions: "755",
+        }],
+      }],
+    });
+
+    new aws.vpc.SecurityGroupIngressRule("SandboxS3FilesNfsIngress", {
+      securityGroupId: sandboxNetwork.securityGroups.apply((ids) => ids[0]!),
+      referencedSecurityGroupId: sandboxNetwork.securityGroups.apply((ids) => ids[0]!),
+      ipProtocol: "tcp",
+      fromPort: 2049,
+      toPort: 2049,
+    });
+
+    new aws.s3.FilesMountTarget("SandboxS3FilesMountTargetA", {
+      fileSystemId: sandboxS3Files.id,
+      subnetId: sandboxNetwork.privateSubnets.apply((ids) => ids[0]!),
+      securityGroups: sandboxNetwork.securityGroups,
+    });
+
+    new aws.s3.FilesMountTarget("SandboxS3FilesMountTargetB", {
+      fileSystemId: sandboxS3Files.id,
+      subnetId: sandboxNetwork.privateSubnets.apply((ids) => ids[1]!),
+      securityGroups: sandboxNetwork.securityGroups,
     });
 
     const mockExternalAsyncTool = new sst.aws.Function("MockExternalAsyncTool", {
@@ -252,9 +417,21 @@ export default $config({
       handler: "functions/sandbox-node/handler.handler",
       description: "Executes workspace JavaScript files without public network egress.",
       timeout: "2 minutes",
-      memory: "128 MB", // Configure 128MB for cheap ass cause im broke
+      memory: "512 MB", // Minimal memory required from AWS for S3 mount to sandbox execution.
       vpc: sandboxNetwork,
+      environment: {
+        SANDBOX_WORKSPACE_MOUNT_PATH,
+      },
+      permissions: sandboxRuntimePermissions(filesystemBucketArn, sandboxS3Files.arn, sandboxS3FilesAccessPoint.arn),
       logging: { format: "json", retention: "1 month" },
+      transform: {
+        function: (args) => {
+          args.fileSystemConfig = {
+            arn: sandboxS3FilesAccessPoint.arn,
+            localMountPath: SANDBOX_WORKSPACE_MOUNT_PATH,
+          };
+        },
+      },
     });
 
     const sandboxPython = new sst.aws.Function("SandboxPython", {
@@ -265,9 +442,21 @@ export default $config({
       handler: "handler.handler",
       description: "Executes workspace Python files without public network egress.",
       timeout: "2 minutes",
-      memory: "128 MB", // Configure 128MB for cheap ass cause im broke
+      memory: "512 MB", // Minimal memory required from AWS for S3 mount to sandbox execution.
       vpc: sandboxNetwork,
+      environment: {
+        SANDBOX_WORKSPACE_MOUNT_PATH,
+      },
+      permissions: sandboxRuntimePermissions(filesystemBucketArn, sandboxS3Files.arn, sandboxS3FilesAccessPoint.arn),
       logging: { format: "json", retention: "1 month" },
+      transform: {
+        function: (args) => {
+          args.fileSystemConfig = {
+            arn: sandboxS3FilesAccessPoint.arn,
+            localMountPath: SANDBOX_WORKSPACE_MOUNT_PATH,
+          };
+        },
+      },
     });
 
     const harnessProcessing = new sst.aws.Function("HarnessProcessing", {
@@ -469,83 +658,24 @@ export default $config({
       ],
     });
 
-    const filesystemBucket = new sst.aws.Bucket("Memory", {
-      versioning: true,
-      policy: [
-        {
-          effect: "deny",
-          principals: "*",
-          actions: [
-            "s3:GetObject",
-            "s3:PutObject",
-            "s3:DeleteObject",
-            "s3:ListBucket",
-          ],
-          conditions: [
-            {
-              test: "StringNotLikeIfExists",
-              variable: "aws:PrincipalArn",
-              values: [
-                harnessProcessing.nodes.role.arn,
-                $interpolate`arn:aws:sts::${AWS_ACCOUNT_ID}:assumed-role/${harnessProcessing.nodes.role.name}/*`,
-                accountManage.nodes.role.arn,
-                $interpolate`arn:aws:sts::${AWS_ACCOUNT_ID}:assumed-role/${accountManage.nodes.role.name}/*`,
-              ],
-            },
-          ],
-        },
-      ],
-      transform: {
-        bucket: {
-          bucket: names.memory,
-        },
-        publicAccessBlock: {
-          blockPublicAcls: true,
-          ignorePublicAcls: true,
-          blockPublicPolicy: true,
-          restrictPublicBuckets: true,
-        },
-      },
-    });
+    filesystemBucketAllowedPrincipalArns.push(
+      harnessProcessing.nodes.role.arn,
+      $interpolate`arn:aws:sts::${AWS_ACCOUNT_ID}:assumed-role/${harnessProcessing.nodes.role.name}/*`,
+      accountManage.nodes.role.arn,
+      $interpolate`arn:aws:sts::${AWS_ACCOUNT_ID}:assumed-role/${accountManage.nodes.role.name}/*`,
+      sandboxNode.nodes.role.arn,
+      $interpolate`arn:aws:sts::${AWS_ACCOUNT_ID}:assumed-role/${sandboxNode.nodes.role.name}/*`,
+      sandboxPython.nodes.role.arn,
+      $interpolate`arn:aws:sts::${AWS_ACCOUNT_ID}:assumed-role/${sandboxPython.nodes.role.name}/*`,
+      s3FilesRole.arn,
+    );
 
-    const skillsBucket = new sst.aws.Bucket("Skills", {
-      versioning: true,
-      policy: [
-        {
-          effect: "deny",
-          principals: "*",
-          actions: [
-            "s3:GetObject",
-            "s3:PutObject",
-            "s3:DeleteObject",
-            "s3:ListBucket",
-          ],
-          conditions: [
-            {
-              test: "StringNotLikeIfExists",
-              variable: "aws:PrincipalArn",
-              values: [
-                harnessProcessing.nodes.role.arn,
-                $interpolate`arn:aws:sts::${AWS_ACCOUNT_ID}:assumed-role/${harnessProcessing.nodes.role.name}/*`,
-                accountManage.nodes.role.arn,
-                $interpolate`arn:aws:sts::${AWS_ACCOUNT_ID}:assumed-role/${accountManage.nodes.role.name}/*`,
-              ],
-            },
-          ],
-        },
-      ],
-      transform: {
-        bucket: {
-          bucket: names.skills,
-        },
-        publicAccessBlock: {
-          blockPublicAcls: true,
-          ignorePublicAcls: true,
-          blockPublicPolicy: true,
-          restrictPublicBuckets: true,
-        },
-      },
-    });
+    skillsBucketAllowedPrincipalArns.push(
+      harnessProcessing.nodes.role.arn,
+      $interpolate`arn:aws:sts::${AWS_ACCOUNT_ID}:assumed-role/${harnessProcessing.nodes.role.name}/*`,
+      accountManage.nodes.role.arn,
+      $interpolate`arn:aws:sts::${AWS_ACCOUNT_ID}:assumed-role/${accountManage.nodes.role.name}/*`,
+    );
 
     return {
       agentServiceUrl: harnessProcessing.url,

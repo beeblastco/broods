@@ -107,9 +107,13 @@ describe("agent config", () => {
           timeout: 30,
           memoryLimit: 512,
           outputLimitBytes: 65536,
+          filesystem: {
+            mount: "native",
+          },
           options: {
             nodeFunctionName: "sandbox-node",
             pythonFunctionName: "sandbox-python",
+            workspaceRoot: "/mnt/workspaces",
           },
         },
       },
@@ -121,9 +125,13 @@ describe("agent config", () => {
           timeout: 30,
           memoryLimit: 512,
           outputLimitBytes: 65536,
+          filesystem: {
+            mount: "native",
+          },
           options: {
             nodeFunctionName: "sandbox-node",
             pythonFunctionName: "sandbox-python",
+            workspaceRoot: "/mnt/workspaces",
           },
         },
       },
@@ -133,6 +141,9 @@ describe("agent config", () => {
     );
     expect(() => normalizeAgentConfig({ workspace: { sandbox: { provider: "docker" } } })).toThrow(
       "config.workspace.sandbox.provider must be one of: lambda, e2b, daytona",
+    );
+    expect(() => normalizeAgentConfig({ workspace: { sandbox: { filesystem: { mount: "sync" } } } })).toThrow(
+      "config.workspace.sandbox.filesystem.mount must be one of: native",
     );
     expect(() => normalizeAgentConfig({ workspace: { sandbox: { timeout: 121 } } })).toThrow(
       "config.workspace.sandbox.timeout must be an integer from 1 to 120",

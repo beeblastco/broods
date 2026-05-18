@@ -5,8 +5,6 @@
 import { createAccount, createAgent, deleteAccount, streamSSE } from "./utils.ts";
 
 const googleApiKey = requireEnv("ACCOUNT_GOOGLE_API_KEY");
-const modelId = process.env.ACCOUNT_MODEL_ID ?? "gemma-4-31b-it";
-const sandboxProvider = process.env.SANDBOX_PROVIDER ?? "lambda";
 const username = `sandbox-${Date.now()}`;
 
 const account = await createAccount(username);
@@ -18,15 +16,17 @@ const agent = await createAgent(account.accountSecret, "Sandbox assistant", {
   },
   model: {
     provider: "google",
-    modelId,
+    modelId: "gemma-4-31b-it",
     temperature: 0,
   },
   agent: {
     system: [
       "You are testing the workspace sandbox.",
-      "Use the filesystem tool to write files first, then execute only those files.",
+      "The sandbox uses a native mounted workspace filesystem.",
+      "Use the filesystem tool to write source files and data files first, then execute only those files.",
+      "Sandboxed code should use normal relative file APIs from the workspace root.",
       "Do not use inline execution such as node -e or python -c.",
-      "After running the files, summarize stdout and status for each run.",
+      "After running files, summarize stdout, generated files, and status for each run.",
     ].join("\n"),
   },
   workspace: {
@@ -40,10 +40,13 @@ const agent = await createAgent(account.accountSecret, "Sandbox assistant", {
     },
     sandbox: {
       enabled: true,
-      provider: sandboxProvider,
+      provider: "lambda",
       timeout: 30,
-      memoryLimit: 128,
+      memoryLimit: 512, // Minimal configure for Lambda function required for Sandbox
       outputLimitBytes: 65536,
+      filesystem: {
+        mount: "native",
+      },
     },
     tasks: {
       enabled: false,
@@ -65,13 +68,15 @@ try {
         content: [{
           type: "text",
           text: [
-            "Run this exact sandbox smoke test.",
+            "Run this exact native mounted sandbox smoke test.",
             "",
-            "1. Write /sandbox-demo.js with JavaScript that prints JSON.stringify({ language: 'javascript', answer: 21 * 2 }).",
-            "2. Run node /sandbox-demo.js.",
-            "3. Write /sandbox-demo.py with Python that prints {'language': 'python', 'answer': 6 * 7}.",
-            "4. Run python3 /sandbox-demo.py.",
-            "5. Return the stdout and status objects from both runs.",
+            "1. Write /numbers.json with {\"left\":21,\"right\":2}.",
+            "2. Write /sandbox-demo.js with JavaScript that reads ./numbers.json using fs.readFileSync, then prints JSON.stringify({ language: 'javascript', answer: left * right }).",
+            "3. Run node /sandbox-demo.js.",
+            "4. Write /sandbox-demo.py with Python that reads numbers.json with pathlib.Path, writes result.json with {'language': 'python', 'answer': 6 * 7}, and prints the result JSON.",
+            "5. Run python3 /sandbox-demo.py.",
+            "6. Read /result.json with the filesystem tool.",
+            "7. Return the stdout and status objects from both runs, plus the result.json content.",
           ].join("\n"),
         }],
       },

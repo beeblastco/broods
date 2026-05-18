@@ -4,7 +4,6 @@
  */
 
 import { jsonSchema, tool, type JSONSchema7, type Tool, type ToolSet } from "ai";
-import { readS3Text } from "../../_shared/s3.ts";
 import { workspaceSandboxLimits } from "../../_shared/sandbox.ts";
 import { createWorkspaceSandboxExecutor } from "../sandbox/index.ts";
 import type { WorkspaceSandboxConfig, WorkspaceSandboxRuntime } from "../sandbox/types.ts";
@@ -17,19 +16,16 @@ import {
   createFilesystemDirectory,
   deleteFilesystemPath,
   formatSandboxResult,
-  getFilesystemBucketName,
   getVisibleRoot,
   listFilesystemEntries,
   parseExecutionCommand,
   parseHeredocCommand,
   parseLsPath,
-  prepareSandboxEntry,
   readFilesystemRange,
   readFilesystemRaw,
   renameFilesystemPath,
   stripQuotes,
   toScopedPath,
-  toStorageKey,
   toVisiblePath,
   touchFilesystemFile,
   writeFilesystemFile,
@@ -201,14 +197,14 @@ async function executeWorkspaceFile(
     throw new Error(`${execution.executable}: ${toVisiblePath(normalizedPath, namespace)}: Is a directory`);
   }
 
-  const content = await readS3Text(getFilesystemBucketName(), toStorageKey(normalizedPath, namespace));
-  const entry = prepareSandboxEntry(normalizedPath, content, execution.runtime);
   const executor = createWorkspaceSandboxExecutor(sandboxConfig);
   const limits = workspaceSandboxLimits();
   const result = await executor.runFile({
     runtime: execution.runtime,
+    namespace: namespace,
+    entryPath: normalizedPath,
     args: execution.args,
-    entry: entry,
+    workspaceRoot: workspaceRootFor(sandboxConfig),
     timeoutSeconds: boundedInteger(
       sandboxConfig.timeout,
       limits.defaultTimeoutSeconds,
@@ -222,4 +218,13 @@ async function executeWorkspaceFile(
   });
 
   return formatSandboxResult(result);
+}
+
+function workspaceRootFor(sandboxConfig: WorkspaceSandboxConfig): string {
+  const options = sandboxConfig.options && typeof sandboxConfig.options === "object" && !Array.isArray(sandboxConfig.options)
+    ? sandboxConfig.options
+    : {};
+  return typeof options.workspaceRoot === "string" && options.workspaceRoot.trim()
+    ? options.workspaceRoot.trim()
+    : "/mnt/workspaces";
 }

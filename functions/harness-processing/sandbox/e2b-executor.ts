@@ -24,9 +24,8 @@ export class E2BWorkspaceSandboxExecutor implements WorkspaceSandboxExecutor {
     const sandbox = await Sandbox.create(e2bCreateOptions(this.#config));
 
     try {
-      await sandbox.files.write(request.entry.path, request.entry.content);
       const result = await sandbox.commands.run(commandForFile(request), {
-        cwd: dirname(request.entry.path),
+        cwd: workspacePath(request),
         timeoutMs: request.timeoutSeconds * 1000,
       });
       return formatResult({
@@ -46,7 +45,7 @@ export class E2BWorkspaceSandboxExecutor implements WorkspaceSandboxExecutor {
 
 function commandForFile(request: WorkspaceSandboxRunRequest): string {
   const executable = request.runtime === "node" ? "node" : "python3";
-  return [executable, request.entry.path, ...request.args].map(shellQuote).join(" ");
+  return [executable, entryRelativePath(request.entryPath), ...request.args].map(shellQuote).join(" ");
 }
 
 function shellQuote(value: string): string {
@@ -95,8 +94,12 @@ function isRecordObject(value: unknown): value is Record<string, unknown> {
   return Boolean(value && typeof value === "object" && !Array.isArray(value));
 }
 
-function dirname(path: string): string {
-  return path.slice(0, path.lastIndexOf("/")) || "/";
+function workspacePath(request: WorkspaceSandboxRunRequest): string {
+  return `${request.workspaceRoot.replace(/\/+$/, "")}/${request.namespace}`;
+}
+
+function entryRelativePath(path: string): string {
+  return path.replace(/^\/+/, "");
 }
 
 function truncateText(value: string, limit: number): { value: string; truncated: boolean } {
