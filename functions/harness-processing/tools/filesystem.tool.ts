@@ -27,7 +27,6 @@ import {
   readFilesystemRange,
   readFilesystemRaw,
   renameFilesystemPath,
-  shellQuote,
   stripQuotes,
   toScopedPath,
   toStorageKey,
@@ -208,7 +207,6 @@ async function executeWorkspaceFile(
   const limits = workspaceSandboxLimits();
   const result = await executor.runFile({
     runtime: execution.runtime,
-    command: [execution.executable, entry.path, ...execution.args].map(shellQuote).join(" "),
     args: execution.args,
     entry: entry,
     timeoutSeconds: boundedInteger(
