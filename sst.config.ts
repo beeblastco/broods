@@ -305,9 +305,18 @@ export default $config({
       assumeRolePolicy: JSON.stringify({
         Version: "2012-10-17",
         Statement: [{
+          Sid: "AllowS3FilesAssumeRole",
           Effect: "Allow",
-          Principal: { Service: "s3files.amazonaws.com" },
+          Principal: { Service: "elasticfilesystem.amazonaws.com" },
           Action: "sts:AssumeRole",
+          Condition: {
+            StringEquals: {
+              "aws:SourceAccount": AWS_ACCOUNT_ID,
+            },
+            ArnLike: {
+              "aws:SourceArn": `arn:aws:s3files:${region}:${AWS_ACCOUNT_ID}:file-system/*`,
+            },
+          },
         }],
       }),
     });
@@ -320,17 +329,63 @@ export default $config({
           {
             Effect: "Allow",
             Action: [
+              "s3:AbortMultipartUpload",
               "s3:GetObject",
               "s3:GetObjectVersion",
+              "s3:GetObjectVersionTagging",
               "s3:PutObject",
+              "s3:PutObjectTagging",
               "s3:DeleteObject",
+              "s3:DeleteObjectVersion",
+              "s3:ListMultipartUploadParts",
             ],
             Resource: [`${filesystemBucketArn}/*`],
+            Condition: {
+              StringEquals: {
+                "aws:ResourceAccount": AWS_ACCOUNT_ID,
+              },
+            },
           },
           {
             Effect: "Allow",
-            Action: ["s3:ListBucket"],
+            Action: [
+              "s3:ListBucket",
+              "s3:ListBucketVersions",
+              "s3:ListBucketMultipartUploads",
+            ],
             Resource: [filesystemBucketArn],
+            Condition: {
+              StringEquals: {
+                "aws:ResourceAccount": AWS_ACCOUNT_ID,
+              },
+            },
+          },
+          {
+            Effect: "Allow",
+            Action: [
+              "events:DeleteRule",
+              "events:DisableRule",
+              "events:EnableRule",
+              "events:PutRule",
+              "events:PutTargets",
+              "events:RemoveTargets",
+            ],
+            Resource: ["arn:aws:events:*:*:rule/DO-NOT-DELETE-S3-Files*"],
+            Condition: {
+              StringEquals: {
+                "events:ManagedBy": "elasticfilesystem.amazonaws.com",
+              },
+            },
+          },
+          {
+            Effect: "Allow",
+            Action: [
+              "events:DescribeRule",
+              "events:ListRuleNamesByTarget",
+              "events:ListRules",
+              "events:ListTargetsByRule",
+            ],
+            Resource: ["arn:aws:events:*:*:rule/*"],
           },
         ],
       }),
@@ -668,6 +723,7 @@ export default $config({
       sandboxPython.nodes.role.arn,
       $interpolate`arn:aws:sts::${AWS_ACCOUNT_ID}:assumed-role/${sandboxPython.nodes.role.name}/*`,
       s3FilesRole.arn,
+      $interpolate`arn:aws:sts::${AWS_ACCOUNT_ID}:assumed-role/${s3FilesRole.name}/*`,
     );
 
     skillsBucketAllowedPrincipalArns.push(
