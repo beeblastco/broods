@@ -28,7 +28,7 @@ export class DaytonaWorkspaceSandboxExecutor implements WorkspaceSandboxExecutor
     try {
       await sandbox.fs.uploadFile(Buffer.from(request.entry.content), request.entry.path, request.timeoutSeconds);
       const response = await sandbox.process.executeCommand(
-        request.command,
+        commandForFile(request),
         dirname(request.entry.path),
         undefined,
         request.timeoutSeconds,
@@ -52,6 +52,15 @@ export class DaytonaWorkspaceSandboxExecutor implements WorkspaceSandboxExecutor
       await sandbox.delete();
     }
   }
+}
+
+function commandForFile(request: WorkspaceSandboxRunRequest): string {
+  const executable = request.runtime === "node" ? "node" : "python3";
+  return [executable, request.entry.path, ...request.args].map(shellQuote).join(" ");
+}
+
+function shellQuote(value: string): string {
+  return `'${value.replaceAll("'", "'\\''")}'`;
 }
 
 function daytonaClientOptions(config: WorkspaceSandboxConfig): Record<string, unknown> {

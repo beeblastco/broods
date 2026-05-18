@@ -31,7 +31,6 @@ export interface WorkspaceSandboxArtifact {
 
 export interface WorkspaceSandboxRunRequest {
   runtime: WorkspaceSandboxRuntime;
-  command: string;
   args: string[];
   entry: WorkspaceSandboxFile;
   timeoutSeconds: number;

@@ -319,10 +319,6 @@ function isJsonValue(value: unknown): value is JSONValue {
   return false;
 }
 
-export function shellQuote(value: string): string {
-  return `'${value.replaceAll("'", "'\\''")}'`;
-}
-
 export function boundedInteger(value: unknown, defaultValue: number, max: number): number {
   if (value === undefined) {
     return defaultValue;

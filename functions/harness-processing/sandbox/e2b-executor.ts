@@ -25,7 +25,7 @@ export class E2BWorkspaceSandboxExecutor implements WorkspaceSandboxExecutor {
 
     try {
       await sandbox.files.write(request.entry.path, request.entry.content);
-      const result = await sandbox.commands.run(request.command, {
+      const result = await sandbox.commands.run(commandForFile(request), {
         cwd: dirname(request.entry.path),
         timeoutMs: request.timeoutSeconds * 1000,
       });
@@ -42,6 +42,15 @@ export class E2BWorkspaceSandboxExecutor implements WorkspaceSandboxExecutor {
       await sandbox.kill();
     }
   }
+}
+
+function commandForFile(request: WorkspaceSandboxRunRequest): string {
+  const executable = request.runtime === "node" ? "node" : "python3";
+  return [executable, request.entry.path, ...request.args].map(shellQuote).join(" ");
+}
+
+function shellQuote(value: string): string {
+  return `'${value.replaceAll("'", "'\\''")}'`;
 }
 
 function formatResult(params: {
