@@ -51,6 +51,9 @@ jobs:
     needs: validate
     if: ${{ github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev')) }}
     runs-on: ubuntu-24.04
+    concurrency:
+      group: ${{ github.workflow }}-deploy-${{ github.event_name == 'workflow_dispatch' && inputs.stage || github.ref_name }}
+      cancel-in-progress: false
     permissions:
       contents: read
       id-token: write
@@ -139,6 +142,12 @@ jobs:
 
       - name: Build Lambda binaries
         run: bun run build
+
+      - name: Clear stale SST deploy lock
+        shell: bash
+        run: |
+          set -euo pipefail
+          bunx sst unlock --stage "$SST_STAGE" || true
 
       - name: Deploy SST app
         env:
