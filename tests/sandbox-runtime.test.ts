@@ -99,6 +99,16 @@ describe("sandbox runtime lambdas", () => {
       ok: true,
       exitCode: 0,
       stdout: "{\"input\":\"mounted workspace\",\"args\":[\"--mode\",\"fast\"]}\n",
+      artifacts: [
+        {
+          kind: "file",
+          path: "/output.txt",
+          dataBase64: Buffer.from("mounted workspace:--mode,fast").toString("base64"),
+          metadata: {
+            size: 29,
+          },
+        },
+      ],
     });
     await expect(readFile(join(root, namespace, "output.txt"), "utf8"))
       .resolves.toBe("mounted workspace:--mode,fast");

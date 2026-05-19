@@ -5,9 +5,11 @@
 
 import { InvokeCommand, LambdaClient } from "@aws-sdk/client-lambda";
 import { optionalEnv } from "../../_shared/env.ts";
+import { ensureS3DirectoryMarkers, writeS3Object } from "../../_shared/s3.ts";
 import type {
   WorkspaceSandboxConfig,
   WorkspaceSandboxExecutor,
+  WorkspaceSandboxArtifact,
   WorkspaceSandboxRunRequest,
   WorkspaceSandboxRunResult,
 } from "./types.ts";
@@ -37,6 +39,7 @@ export class LambdaWorkspaceSandboxExecutor implements WorkspaceSandboxExecutor 
     }
 
     const result = parseSandboxResponse(payloadText);
+    await persistGeneratedFiles(request.namespace, result.artifacts);
     return {
       ...result,
       provider: "lambda",
@@ -55,6 +58,38 @@ export class LambdaWorkspaceSandboxExecutor implements WorkspaceSandboxExecutor 
       optionalEnv("SANDBOX_NODE_FUNCTION_NAME") ??
       missingFunctionName("node");
   }
+}
+
+async function persistGeneratedFiles(namespace: string, artifacts: WorkspaceSandboxArtifact[] | undefined): Promise<void> {
+  const bucket = optionalEnv("FILESYSTEM_BUCKET_NAME");
+  if (!bucket || !artifacts?.length) {
+    return;
+  }
+
+  for (const artifact of artifacts) {
+    if (artifact.kind !== "file" || !artifact.path || !artifact.dataBase64) {
+      continue;
+    }
+
+    const key = toStorageKey(namespace, artifact.path);
+    const body = Uint8Array.from(Buffer.from(artifact.dataBase64, "base64"));
+    await ensureS3DirectoryMarkers(bucket, key);
+    await writeS3Object(bucket, key, body, {
+      contentType: artifact.mediaType,
+    });
+  }
+}
+
+function toStorageKey(namespace: string, artifactPath: string): string {
+  const normalizedPath = artifactPath.startsWith("/") ? artifactPath.slice(1) : artifactPath;
+  if (
+    !normalizedPath ||
+    normalizedPath.split("/").some((part) => !part || part === "." || part === "..")
+  ) {
+    throw new Error(`Sandbox Lambda returned invalid artifact path: ${artifactPath}`);
+  }
+
+  return `${namespace}/${normalizedPath}`;
 }
 
 function parseSandboxResponse(payloadText: string): Omit<WorkspaceSandboxRunResult, "provider"> {

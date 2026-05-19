@@ -658,6 +658,47 @@ EOF`);
       expect(readS3TextMock).not.toHaveBeenCalled();
     });
 
+    it("persists changed Lambda sandbox file artifacts back to S3", async () => {
+      process.env.SANDBOX_PYTHON_FUNCTION_NAME = "sandbox-python";
+      s3ObjectExistsMock.mockResolvedValue(true);
+      lambdaSendMock.mockResolvedValueOnce({
+        Payload: new TextEncoder().encode(JSON.stringify({
+          ok: true,
+          runtime: "python",
+          exitCode: 0,
+          stdout: "{\"ok\":true}\n",
+          stderr: "",
+          durationMs: 11,
+          artifacts: [{
+            kind: "file",
+            path: "/result.json",
+            mediaType: "application/json",
+            dataBase64: Buffer.from("{\"ok\":true}").toString("base64"),
+            metadata: { size: 11 },
+          }],
+        })),
+      });
+
+      const result = await executeShell("python3 /main.py", "test-ns", {
+        enabled: true,
+        provider: "lambda",
+      });
+
+      expect(result.type).toBe("json");
+      expect(ensureS3DirectoryMarkersMock).toHaveBeenCalledWith(
+        "test-filesystem-bucket",
+        "test-ns/result.json",
+      );
+      expect(writeS3ObjectMock).toHaveBeenCalledWith(
+        "test-filesystem-bucket",
+        "test-ns/result.json",
+        expect.any(Uint8Array),
+        { contentType: "application/json" },
+      );
+      const body = writeS3ObjectMock.mock.calls.at(-1)?.[2] as Uint8Array;
+      expect(new TextDecoder().decode(body)).toBe("{\"ok\":true}");
+    });
+
     it("runs existing TypeScript files through the node sandbox Lambda without reading them first", async () => {
       s3ObjectExistsMock.mockResolvedValue(true);
 
