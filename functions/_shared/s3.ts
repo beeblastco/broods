@@ -3,6 +3,7 @@
  * Keep bucket helpers here so runtime code does not import the AWS S3 SDK.
  */
 
+import { HeadObjectCommand, S3Client as AwsS3Client } from "@aws-sdk/client-s3";
 import { logError, logInfo } from "./log.ts";
 
 export interface S3ObjectInfo {
@@ -17,6 +18,12 @@ function client(bucket: string): Bun.S3Client {
   return new Bun.S3Client({
     bucket,
     region,
+  });
+}
+
+function awsClient(): AwsS3Client {
+  return new AwsS3Client({
+    region: process.env.AWS_REGION,
   });
 }
 
@@ -56,10 +63,18 @@ export async function writeS3Object(
 export async function s3ObjectExists(bucket: string, key: string): Promise<boolean> {
   logInfo("s3.exists start", { bucket, key });
   try {
-    const result = await client(bucket).file(key).exists();
-    logInfo("s3.exists result", { bucket, key, exists: result });
-    return result;
+    await awsClient().send(new HeadObjectCommand({
+      Bucket: bucket,
+      Key: key,
+    }));
+    logInfo("s3.exists result", { bucket, key, exists: true });
+    return true;
   } catch (err) {
+    if (isMissingS3Error(err)) {
+      logInfo("s3.exists result", { bucket, key, exists: false });
+      return false;
+    }
+
     const details: Record<string, unknown> = {
       bucket,
       key,
