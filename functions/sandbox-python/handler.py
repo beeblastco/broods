@@ -8,6 +8,8 @@ import subprocess
 import sys
 import time
 
+MAX_ARTIFACT_BYTES = 256 * 1024
+
 
 def handler(event, context):
     started_at = time.time()
@@ -23,6 +25,7 @@ def handler(event, context):
         file_path = resolve_workspace_path(workspace_root, entry_path)
         if not os.path.isfile(file_path):
             raise FileNotFoundError(file_path)
+        before = snapshot_workspace(workspace_root)
         result = run_python_file(
             file_path,
             workspace_root,
@@ -32,6 +35,7 @@ def handler(event, context):
         )
         result.update({
             "runtime": "python",
+            "artifacts": collect_changed_artifacts(workspace_root, before),
             "durationMs": int((time.time() - started_at) * 1000),
         })
         return result
@@ -95,6 +99,54 @@ def resolve_workspace_path(workspace_root, entry_path):
     if common != workspace_root or resolved == workspace_root:
         raise ValueError("Invalid entry path: resolved outside workspace root")
     return resolved
+
+
+def snapshot_workspace(root):
+    files = {}
+    for path in iter_workspace_files(root):
+        stats = os.stat(path)
+        files[os.path.relpath(path, root)] = {
+            "mtime_ns": stats.st_mtime_ns,
+            "size": stats.st_size,
+        }
+    return files
+
+
+def collect_changed_artifacts(root, before):
+    import base64
+
+    artifacts = []
+    for path in iter_workspace_files(root):
+        relative_path = os.path.relpath(path, root)
+        stats = os.stat(path)
+        previous = before.get(relative_path)
+        if previous and previous["mtime_ns"] == stats.st_mtime_ns and previous["size"] == stats.st_size:
+            continue
+        if stats.st_size > MAX_ARTIFACT_BYTES:
+            continue
+
+        with open(path, "rb") as file:
+            content = file.read()
+
+        artifacts.append({
+            "kind": "file",
+            "path": f"/{relative_path}",
+            "mediaType": "application/octet-stream",
+            "dataBase64": base64.b64encode(content).decode("ascii"),
+            "metadata": {
+                "size": stats.st_size,
+            },
+        })
+    return artifacts
+
+
+def iter_workspace_files(root):
+    for current_root, dirs, files in os.walk(root):
+        dirs[:] = [name for name in dirs if name not in (".", "..")]
+        for file_name in files:
+            path = os.path.join(current_root, file_name)
+            if os.path.isfile(path):
+                yield path
 
 
 def assert_safe_namespace(namespace):

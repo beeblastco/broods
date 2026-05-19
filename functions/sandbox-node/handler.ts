@@ -3,13 +3,14 @@
  * Keep Node runtime process execution here.
  */
 
-import { access } from "node:fs/promises";
+import { access, readdir, stat } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";
 import { basename, dirname, relative, resolve } from "node:path";
 import { spawn } from "node:child_process";
 import process from "node:process";
 import ts from "typescript";
+import type { Stats } from "node:fs";
 
 interface SandboxRequest {
   runtime: "node";
@@ -27,10 +28,27 @@ interface SandboxResponse {
   exitCode: number | null;
   stdout: string;
   stderr: string;
+  artifacts?: SandboxArtifact[];
   durationMs: number;
   timedOut?: boolean;
   truncated?: boolean;
 }
+
+interface SandboxArtifact {
+  kind: "file";
+  path: string;
+  mediaType: string;
+  dataBase64: string;
+  metadata: {
+    size: number;
+  };
+}
+
+interface WorkspaceSnapshot {
+  files: Map<string, { mtimeMs: number; size: number }>;
+}
+
+const MAX_ARTIFACT_BYTES = 256 * 1024;
 
 export async function handler(event: SandboxRequest): Promise<SandboxResponse> {
   const startedAt = Date.now();
@@ -46,11 +64,13 @@ export async function handler(event: SandboxRequest): Promise<SandboxResponse> {
     const workspaceRoot = resolveWorkspaceRoot(event.workspaceRoot, event.namespace);
     const filePath = resolveWorkspacePath(workspaceRoot, event.entryPath);
     await access(filePath);
+    const before = await snapshotWorkspace(workspaceRoot);
     const executablePath = event.entryPath.endsWith(".ts") ? await prepareTypescriptEntry(filePath, workspaceRoot) : filePath;
     const result = await runNodeFile(executablePath, workspaceRoot, event.args ?? [], event.timeoutSeconds, event.outputLimitBytes);
     return {
       ...result,
       runtime: "node",
+      artifacts: await collectChangedArtifacts(workspaceRoot, before),
       durationMs: Date.now() - startedAt,
     };
   } catch (err) {
@@ -79,6 +99,64 @@ async function prepareTypescriptEntry(filePath: string, workspaceRoot: string): 
   const generatedPath = resolveTypescriptOutputPath(filePath, workspaceRoot, source);
   await writeFile(generatedPath, transpiled, "utf8");
   return generatedPath;
+}
+
+async function snapshotWorkspace(root: string): Promise<WorkspaceSnapshot> {
+  const files = new Map<string, { mtimeMs: number; size: number }>();
+  await walkWorkspace(root, async (path, stats) => {
+    files.set(relative(root, path), {
+      mtimeMs: stats.mtimeMs,
+      size: stats.size,
+    });
+  });
+  return { files };
+}
+
+async function collectChangedArtifacts(root: string, before: WorkspaceSnapshot): Promise<SandboxArtifact[]> {
+  const artifacts: SandboxArtifact[] = [];
+  await walkWorkspace(root, async (path, stats) => {
+    const relativePath = relative(root, path);
+    const previous = before.files.get(relativePath);
+    if (previous?.mtimeMs === stats.mtimeMs && previous.size === stats.size) {
+      return;
+    }
+    if (stats.size > MAX_ARTIFACT_BYTES) {
+      return;
+    }
+
+    const content = await readFile(path);
+    artifacts.push({
+      kind: "file",
+      path: `/${relativePath}`,
+      mediaType: "application/octet-stream",
+      dataBase64: content.toString("base64"),
+      metadata: {
+        size: stats.size,
+      },
+    });
+  });
+  return artifacts;
+}
+
+async function walkWorkspace(
+  root: string,
+  visit: (path: string, stats: Stats) => Promise<void>,
+): Promise<void> {
+  for (const entry of await readdir(root, { withFileTypes: true })) {
+    if (entry.name === "." || entry.name === "..") {
+      continue;
+    }
+
+    const path = resolve(root, entry.name);
+    const stats = await stat(path);
+    if (stats.isDirectory()) {
+      await walkWorkspace(path, visit);
+      continue;
+    }
+    if (stats.isFile()) {
+      await visit(path, stats);
+    }
+  }
 }
 
 function resolveTypescriptOutputPath(filePath: string, workspaceRoot: string, source: string): string {
