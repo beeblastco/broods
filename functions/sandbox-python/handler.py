@@ -9,7 +9,8 @@ import sys
 import time
 
 MAX_ARTIFACT_BYTES = 256 * 1024
-
+ENTRY_FILE_WAIT_MS = 5000
+ENTRY_FILE_WAIT_INTERVAL_MS = 100
 
 def handler(event, context):
     started_at = time.time()
@@ -23,6 +24,7 @@ def handler(event, context):
 
         workspace_root = resolve_workspace_root(event.get("workspaceRoot"), event.get("namespace", ""))
         file_path = resolve_workspace_path(workspace_root, entry_path)
+        await_file(file_path)
         if not os.path.isfile(file_path):
             raise FileNotFoundError(file_path)
         before = snapshot_workspace(workspace_root)
@@ -48,6 +50,24 @@ def handler(event, context):
             "stderr": str(err),
             "durationMs": int((time.time() - started_at) * 1000),
         }
+
+def await_file(file_path: str) -> None:
+    deadline = time.time() * 1000 + ENTRY_FILE_WAIT_MS
+    last_error = None
+
+    while time.time() * 1000 < deadline:
+        try:
+            if os.path.isfile(file_path):
+                return
+        except Exception as err:
+            last_error = err
+            time.sleep(ENTRY_FILE_WAIT_INTERVAL_MS / 1000)
+            continue
+
+    if last_error:
+        raise last_error
+    if not os.path.isfile(file_path):
+        raise FileNotFoundError(file_path)
 
 
 def run_python_file(file_path, cwd, args, timeout_seconds, output_limit_bytes):

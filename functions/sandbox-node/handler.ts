@@ -49,6 +49,8 @@ interface WorkspaceSnapshot {
 }
 
 const MAX_ARTIFACT_BYTES = 256 * 1024;
+const ENTRY_FILE_WAIT_MS = 5000;
+const ENTRY_FILE_WAIT_INTERVAL_MS = 100;
 
 export async function handler(event: SandboxRequest): Promise<SandboxResponse> {
   const startedAt = Date.now();
@@ -63,7 +65,7 @@ export async function handler(event: SandboxRequest): Promise<SandboxResponse> {
 
     const workspaceRoot = resolveWorkspaceRoot(event.workspaceRoot, event.namespace);
     const filePath = resolveWorkspacePath(workspaceRoot, event.entryPath);
-    await access(filePath);
+    await waitForFile(filePath);
     const before = await snapshotWorkspace(workspaceRoot);
     const executablePath = event.entryPath.endsWith(".ts") ? await prepareTypescriptEntry(filePath, workspaceRoot) : filePath;
     const result = await runNodeFile(executablePath, workspaceRoot, event.args ?? [], event.timeoutSeconds, event.outputLimitBytes);
@@ -99,6 +101,26 @@ async function prepareTypescriptEntry(filePath: string, workspaceRoot: string): 
   const generatedPath = resolveTypescriptOutputPath(filePath, workspaceRoot, source);
   await writeFile(generatedPath, transpiled, "utf8");
   return generatedPath;
+}
+
+async function waitForFile(filePath: string): Promise<void> {
+  const deadline = Date.now() + ENTRY_FILE_WAIT_MS;
+  let lastError: unknown;
+
+  while (Date.now() < deadline) {
+    try {
+      await access(filePath);
+      return;
+    } catch (err) {
+      lastError = err;
+      await new Promise((resolve) => setTimeout(resolve, ENTRY_FILE_WAIT_INTERVAL_MS));
+    }
+  }
+
+  if (lastError) {
+    throw lastError;
+  }
+  await access(filePath);
 }
 
 async function snapshotWorkspace(root: string): Promise<WorkspaceSnapshot> {
