@@ -422,13 +422,13 @@ export default $config({
       fileSystemId: sandboxS3Files.id,
       subnetId: sandboxNetwork.privateSubnets.apply((ids) => ids[0]!),
       securityGroups: sandboxNetwork.securityGroups,
-    }, { import: "fsmt-022089f8846dc0572" });
+    });
 
     new aws.s3.FilesMountTarget("SandboxS3FilesMountTargetB", {
       fileSystemId: sandboxS3Files.id,
       subnetId: sandboxNetwork.privateSubnets.apply((ids) => ids[1]!),
       securityGroups: sandboxNetwork.securityGroups,
-    }, { import: "fsmt-0f7079a34e423fb2b" });
+    });
 
     const mockExternalAsyncTool = new sst.aws.Function("MockExternalAsyncTool", {
       name: names.externalAsyncToolMock,
