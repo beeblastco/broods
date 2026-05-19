@@ -14,6 +14,7 @@ import {
   writeS3Object,
 } from "../../_shared/s3.ts";
 import { requireEnv } from "../../_shared/env.ts";
+import { logError, logInfo } from "../../_shared/log.ts";
 import type {
   WorkspaceSandboxRunResult,
   WorkspaceSandboxRuntime,
@@ -328,9 +329,25 @@ export async function writeFilesystemFile(params: {
     return `Error: ${toVisiblePath(path, namespace)} is a directory`;
   }
 
-  await writeS3Object(getFilesystemBucketName(), toStorageKey(path, namespace), fileText, {
-    contentType: "text/plain",
-  });
+  const bucket = getFilesystemBucketName();
+  const key = toStorageKey(path, namespace);
+  logInfo("filesystem writeS3Object start", { bucket, key, contentType: "text/plain", bodyLength: fileText.length });
+
+  try {
+    await writeS3Object(bucket, key, fileText, {
+      contentType: "text/plain",
+    });
+    logInfo("filesystem writeS3Object success", { bucket, key });
+  } catch (err) {
+    logError("filesystem writeS3Object failed", {
+      bucket,
+      key,
+      error: err instanceof Error ? err.message : String(err),
+      errorName: err instanceof Error ? err.name : typeof err,
+      errorStack: err instanceof Error ? err.stack : undefined,
+    });
+    throw err;
+  }
 
   return `Wrote ${toVisiblePath(path, namespace)}`;
 }

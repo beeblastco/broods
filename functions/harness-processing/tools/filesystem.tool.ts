@@ -16,6 +16,7 @@ import {
   createFilesystemDirectory,
   deleteFilesystemPath,
   formatSandboxResult,
+  getFilesystemBucketName,
   getVisibleRoot,
   listFilesystemEntries,
   parseExecutionCommand,
@@ -32,6 +33,7 @@ import {
   type FilesystemInput,
 } from "./filesystem-utils.ts";
 import type { ToolContext } from "./index.ts";
+import { logError, logInfo } from "../../_shared/log.ts";
 
 type FilesystemToolResult = Awaited<ReturnType<NonNullable<Tool<FilesystemInput, unknown>["toModelOutput"]>>>;
 
@@ -93,13 +95,18 @@ async function executeFilesystemShell(
     return errorText("Error: shell command is required");
   }
 
+  logInfo("filesystem tool command", { namespace, command });
+
   if (command === "pwd") {
     return text(getVisibleRoot(namespace));
   }
 
   const heredoc = parseHeredocCommand(command);
   if (heredoc) {
+    logInfo("filesystem heredoc detected", { namespace, path: heredoc.path, append: heredoc.append, bodyLength: heredoc.body.length });
     try {
+      const bucketName = getFilesystemBucketName();
+      logInfo("filesystem writing file", { namespace, path: heredoc.path, bucket: bucketName });
       return text(await writeFilesystemFile({
         name: heredoc.path,
         fileText: heredoc.append
@@ -108,6 +115,12 @@ async function executeFilesystemShell(
         namespace,
       }));
     } catch (cause) {
+      logError("filesystem heredoc write failed", {
+        namespace,
+        path: heredoc.path,
+        error: cause instanceof Error ? cause.message : String(cause),
+        stack: cause instanceof Error ? cause.stack : undefined,
+      });
       return errorText(cause instanceof Error ? cause.message : String(cause));
     }
   }

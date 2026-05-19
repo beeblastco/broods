@@ -3,6 +3,8 @@
  * Keep bucket helpers here so runtime code does not import the AWS S3 SDK.
  */
 
+import { logError, logInfo } from "./log.ts";
+
 export interface S3ObjectInfo {
   key: string;
   size?: number;
@@ -30,7 +32,23 @@ export async function writeS3Object(
   body: string | Uint8Array,
   options: { contentType?: string } = {},
 ): Promise<number> {
-  return client(bucket).file(key).write(body, options.contentType ? { type: options.contentType } : undefined);
+  const size = typeof body === "string" ? body.length : body.byteLength;
+  logInfo("s3.write start", { bucket, key, contentType: options.contentType, size });
+  try {
+    const result = await client(bucket).file(key).write(body, options.contentType ? { type: options.contentType } : undefined);
+    logInfo("s3.write success", { bucket, key, result });
+    return result;
+  } catch (err) {
+    logError("s3.write failed", {
+      bucket,
+      key,
+      error: err instanceof Error ? err.message : String(err),
+      errorName: err instanceof Error ? err.name : typeof err,
+      errorStack: err instanceof Error ? err.stack : undefined,
+      errorCause: err instanceof Error && err.cause ? String(err.cause) : undefined,
+    });
+    throw err;
+  }
 }
 
 export async function s3ObjectExists(bucket: string, key: string): Promise<boolean> {
