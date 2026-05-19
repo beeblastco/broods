@@ -332,6 +332,7 @@ export default $config({
               "s3:AbortMultipartUpload",
               "s3:DeleteObject*",
               "s3:GetObject*",
+              "s3:HeadObject",
               "s3:List*",
               "s3:PutObject*",
             ],
@@ -345,6 +346,7 @@ export default $config({
           {
             Effect: "Allow",
             Action: [
+              "s3:HeadBucket",
               "s3:ListBucket",
               "s3:ListBucketVersions",
               "s3:ListBucketMultipartUploads",
