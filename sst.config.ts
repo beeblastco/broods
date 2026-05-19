@@ -598,6 +598,7 @@ export default $config({
         {
           actions: [
             "s3:GetObject",
+            "s3:HeadObject",
             "s3:PutObject",
             "s3:DeleteObject",
           ],
