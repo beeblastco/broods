@@ -70,16 +70,13 @@ export async function s3ObjectExists(bucket: string, key: string): Promise<boole
     };
     if (err && typeof err === "object") {
       const e = err as Record<string, unknown>;
-      details.statusCode = e.statusCode ?? e.status ?? e.$metadata?.httpStatusCode;
+      const metadata = e.$metadata as Record<string, unknown> | undefined;
+      details.statusCode = e.statusCode ?? e.status ?? metadata?.httpStatusCode;
       details.errorCode = e.code ?? e.Code;
-      details.errorRequestId = e.requestId ?? e.$metadata?.requestId;
+      details.errorRequestId = e.requestId ?? metadata?.requestId;
       details.errorKeys = Object.keys(e);
     }
     logError("s3.exists failed", details);
-    throw err;
-  }
-}
-    logError("s3.exists failed", errorDetails);
     throw err;
   }
 }
