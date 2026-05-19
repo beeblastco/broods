@@ -5,7 +5,6 @@
 import { createAccount, createAgent, deleteAccount, streamSSE } from "./utils.ts";
 
 const googleApiKey = requireEnv("ACCOUNT_GOOGLE_API_KEY");
-const modelId = process.env.ACCOUNT_GOOGLE_MODEL_ID?.trim() || "gemini-2.5-flash";
 const username = `sandbox-${Date.now()}`;
 
 const account = await createAccount(username);
@@ -17,7 +16,7 @@ const agent = await createAgent(account.accountSecret, "Sandbox assistant", {
   },
   model: {
     provider: "google",
-    modelId,
+    modelId: "gemma-4-31b-it",
     temperature: 0,
   },
   agent: {
