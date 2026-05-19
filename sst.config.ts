@@ -97,11 +97,6 @@ function denyUnlessPrincipalAllowed(allowedPrincipalArns: $util.Input<string>[])
         variable: "aws:PrincipalArn",
         values: allowedPrincipalArns,
       },
-      {
-        test: "BoolIfExists",
-        variable: "aws:PrincipalIsAWSService",
-        values: ["false"],
-      },
     ],
   };
 }
