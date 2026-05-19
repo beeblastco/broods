@@ -12,6 +12,7 @@ const listS3PrefixMock = mock(async (_bucket: string, _prefix: string) => [] as 
 const readS3TextMock = mock(async (_bucket: string, _key: string) => "");
 const readS3BytesMock = mock(async (_bucket: string, _key: string) => new Uint8Array());
 const writeS3ObjectMock = mock(async (_bucket: string, _key: string, _body: string | Uint8Array, _options?: { contentType?: string }) => 200);
+const ensureS3DirectoryMarkersMock = mock(async (_bucket: string, _key: string) => {});
 const deleteS3ObjectMock = mock(async (_bucket: string, _key: string) => {});
 const deleteS3PrefixMock = mock(async (_bucket: string, _prefix: string) => 0);
 const lambdaSendMock = mock(async (_command: unknown) => ({
@@ -31,6 +32,7 @@ mock.module("../functions/_shared/s3.ts", () => ({
   readS3Text: readS3TextMock,
   readS3Bytes: readS3BytesMock,
   writeS3Object: writeS3ObjectMock,
+  ensureS3DirectoryMarkers: ensureS3DirectoryMarkersMock,
   deleteS3Object: deleteS3ObjectMock,
   deleteS3Prefix: deleteS3PrefixMock,
 }));
@@ -55,6 +57,7 @@ beforeEach(() => {
   readS3TextMock.mockClear();
   readS3BytesMock.mockClear();
   writeS3ObjectMock.mockClear();
+  ensureS3DirectoryMarkersMock.mockClear();
   deleteS3ObjectMock.mockClear();
   deleteS3PrefixMock.mockClear();
   lambdaSendMock.mockClear();
@@ -450,6 +453,10 @@ EOF`);
         "test-ns/file.txt",
         "hello world",
         { contentType: "text/plain" },
+      );
+      expect(ensureS3DirectoryMarkersMock).toHaveBeenCalledWith(
+        "test-filesystem-bucket",
+        "test-ns/file.txt",
       );
     });
 

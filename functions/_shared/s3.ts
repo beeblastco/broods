@@ -3,7 +3,14 @@
  * Keep bucket helpers here so runtime code does not import the AWS S3 SDK.
  */
 
-import { HeadObjectCommand, S3Client as AwsS3Client } from "@aws-sdk/client-s3";
+import {
+  DeleteObjectCommand,
+  GetObjectCommand,
+  HeadObjectCommand,
+  ListObjectsV2Command,
+  PutObjectCommand,
+  S3Client as AwsS3Client,
+} from "@aws-sdk/client-s3";
 import { logError, logInfo } from "./log.ts";
 
 export interface S3ObjectInfo {
@@ -12,14 +19,8 @@ export interface S3ObjectInfo {
   lastModified?: string;
 }
 
-function client(bucket: string): Bun.S3Client {
-  const region = process.env.AWS_REGION;
-  logInfo("s3.client created", { bucket, region });
-  return new Bun.S3Client({
-    bucket,
-    region,
-  });
-}
+const SANDBOX_UID = "993";
+const SANDBOX_GID = "990";
 
 function awsClient(): AwsS3Client {
   return new AwsS3Client({
@@ -28,11 +29,13 @@ function awsClient(): AwsS3Client {
 }
 
 export async function readS3Text(bucket: string, key: string): Promise<string> {
-  return client(bucket).file(key).text();
+  const body = await readS3Body(bucket, key);
+  return body.transformToString();
 }
 
 export async function readS3Bytes(bucket: string, key: string): Promise<Uint8Array> {
-  return client(bucket).file(key).bytes();
+  const body = await readS3Body(bucket, key);
+  return body.transformToByteArray();
 }
 
 export async function writeS3Object(
@@ -44,9 +47,12 @@ export async function writeS3Object(
   const size = typeof body === "string" ? body.length : body.byteLength;
   logInfo("s3.write start", { bucket, key, contentType: options.contentType, size });
   try {
-    const result = await client(bucket).file(key).write(body, options.contentType ? { type: options.contentType } : undefined);
-    logInfo("s3.write success", { bucket, key, result });
-    return result;
+    await putS3Object(bucket, key, body, {
+      contentType: options.contentType,
+      metadata: posixMetadata(key.endsWith("/") ? "directory" : "file"),
+    });
+    logInfo("s3.write success", { bucket, key, result: size });
+    return size;
   } catch (err) {
     logError("s3.write failed", {
       bucket,
@@ -57,6 +63,20 @@ export async function writeS3Object(
       errorCause: err instanceof Error && err.cause ? String(err.cause) : undefined,
     });
     throw err;
+  }
+}
+
+export async function ensureS3DirectoryMarkers(bucket: string, key: string): Promise<void> {
+  const parts = key.split("/").filter(Boolean);
+  parts.pop();
+
+  let prefix = "";
+  for (const part of parts) {
+    prefix = prefix ? `${prefix}/${part}` : part;
+    await putS3Object(bucket, `${prefix}/`, "", {
+      contentType: "application/x-directory",
+      metadata: posixMetadata("directory"),
+    });
   }
 }
 
@@ -103,21 +123,25 @@ export async function listS3Prefix(bucket: string, prefix: string): Promise<S3Ob
 
   try {
     do {
-      const result = await client(bucket).list({
-        prefix: prefix,
-        continuationToken: continuationToken,
-        maxKeys: 1000,
-      });
+      const result = await awsClient().send(new ListObjectsV2Command({
+        Bucket: bucket,
+        Prefix: prefix,
+        ContinuationToken: continuationToken,
+        MaxKeys: 1000,
+      }));
 
-      for (const item of result.contents ?? []) {
+      for (const item of result.Contents ?? []) {
+        if (!item.Key) {
+          continue;
+        }
         objects.push({
-          key: item.key,
-          ...(item.size !== undefined ? { size: item.size } : {}),
-          ...(item.lastModified !== undefined ? { lastModified: item.lastModified } : {}),
+          key: item.Key,
+          ...(item.Size !== undefined ? { size: item.Size } : {}),
+          ...(item.LastModified !== undefined ? { lastModified: item.LastModified.toISOString() } : {}),
         });
       }
 
-      continuationToken = result.nextContinuationToken;
+      continuationToken = result.NextContinuationToken;
     } while (continuationToken);
 
     logInfo("s3.list success", { bucket, prefix, count: objects.length });
@@ -137,13 +161,55 @@ export async function listS3Prefix(bucket: string, prefix: string): Promise<S3Ob
 }
 
 export async function deleteS3Object(bucket: string, key: string): Promise<void> {
-  await client(bucket).file(key).delete();
+  await awsClient().send(new DeleteObjectCommand({
+    Bucket: bucket,
+    Key: key,
+  }));
 }
 
 export async function deleteS3Prefix(bucket: string, prefix: string): Promise<number> {
   const objects = await listS3Prefix(bucket, prefix);
   await Promise.all(objects.map((object) => deleteS3Object(bucket, object.key)));
   return objects.length;
+}
+
+async function readS3Body(bucket: string, key: string) {
+  const result = await awsClient().send(new GetObjectCommand({
+    Bucket: bucket,
+    Key: key,
+  }));
+
+  if (!result.Body) {
+    throw new Error(`S3 object has no body: ${key}`);
+  }
+
+  return result.Body;
+}
+
+async function putS3Object(
+  bucket: string,
+  key: string,
+  body: string | Uint8Array,
+  options: { contentType?: string; metadata?: Record<string, string> } = {},
+): Promise<void> {
+  await awsClient().send(new PutObjectCommand({
+    Bucket: bucket,
+    Key: key,
+    Body: body,
+    ...(options.contentType ? { ContentType: options.contentType } : {}),
+    ...(options.metadata ? { Metadata: options.metadata } : {}),
+  }));
+}
+
+function posixMetadata(kind: "file" | "directory"): Record<string, string> {
+  const now = `${Date.now()}000000ns`;
+  return {
+    "file-owner": SANDBOX_UID,
+    "file-group": SANDBOX_GID,
+    "file-permissions": kind === "directory" ? "0040777" : "0100666",
+    "file-atime": now,
+    "file-mtime": now,
+  };
 }
 
 export function isMissingS3Error(error: unknown): boolean {

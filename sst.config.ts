@@ -81,7 +81,7 @@ function sandboxRuntimePermissions(
   ];
 }
 
-function denyUnlessProjectAccountPrincipal() {
+function denyUnlessProjectPrincipal(stage: string, region: string) {
   return {
     effect: "deny" as const,
     principals: "*" as const,
@@ -91,8 +91,13 @@ function denyUnlessProjectAccountPrincipal() {
         test: "StringNotLikeIfExists",
         variable: "aws:PrincipalArn",
         values: [
-          `arn:aws:iam::${AWS_ACCOUNT_ID}:*`,
-          `arn:aws:sts::${AWS_ACCOUNT_ID}:*`,
+          `arn:aws:iam::${AWS_ACCOUNT_ID}:role/${PROJECT_NAME}-${stage}-AccountManageRole-*`,
+          `arn:aws:iam::${AWS_ACCOUNT_ID}:role/${PROJECT_NAME}-${stage}-HarnessProcessingRole-*`,
+          `arn:aws:iam::${AWS_ACCOUNT_ID}:role/${PROJECT_NAME}-${stage}-SandboxNodeRole-*`,
+          `arn:aws:iam::${AWS_ACCOUNT_ID}:role/${PROJECT_NAME}-${stage}-SandboxPythonRole-*`,
+          `arn:aws:iam::${AWS_ACCOUNT_ID}:role/${resourceName("sandbox-s3files", stage, region)}`,
+          `arn:aws:iam::${AWS_ACCOUNT_ID}:role/github-actions-aws-infra-deploy`,
+          `arn:aws:iam::${AWS_ACCOUNT_ID}:role/github-actions-aws-sst-infra-deploy`,
         ],
       },
     ],
@@ -258,7 +263,7 @@ export default $config({
     const skillsBucketArn = `arn:aws:s3:::${names.skills}`;
     const filesystemBucket = new sst.aws.Bucket("Memory", {
       versioning: true,
-      policy: [denyUnlessProjectAccountPrincipal()],
+      policy: [denyUnlessProjectPrincipal(stage, region)],
       transform: {
         bucket: {
           bucket: names.memory,
@@ -274,7 +279,7 @@ export default $config({
 
     const skillsBucket = new sst.aws.Bucket("Skills", {
       versioning: true,
-      policy: [denyUnlessProjectAccountPrincipal()],
+      policy: [denyUnlessProjectPrincipal(stage, region)],
       transform: {
         bucket: {
           bucket: names.skills,

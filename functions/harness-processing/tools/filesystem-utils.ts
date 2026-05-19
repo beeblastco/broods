@@ -7,6 +7,7 @@ import type { JSONObject, JSONValue } from "@ai-sdk/provider";
 import {
   deleteS3Object,
   deleteS3Prefix,
+  ensureS3DirectoryMarkers,
   listS3Prefix,
   readS3Bytes,
   readS3Text,
@@ -336,6 +337,7 @@ export async function writeFilesystemFile(params: {
   logInfo("filesystem writeS3Object start", { bucket, key, contentType: "text/plain", bodyLength: fileText.length });
 
   try {
+    await ensureS3DirectoryMarkers(bucket, key);
     await writeS3Object(bucket, key, fileText, {
       contentType: "text/plain",
     });
@@ -384,7 +386,12 @@ export async function createFilesystemDirectory(path: string, namespace: string)
     return `Error: ${toVisiblePath(normalizedPath, namespace)} is a file`;
   }
 
-  await writeS3Object(getFilesystemBucketName(), `${toStorageKey(normalizedPath, namespace)}/.keep`, "", {
+  const bucket = getFilesystemBucketName();
+  const directoryKey = `${toStorageKey(normalizedPath, namespace)}/`;
+  await writeS3Object(bucket, directoryKey, "", {
+    contentType: "application/x-directory",
+  });
+  await writeS3Object(bucket, `${directoryKey}.keep`, "", {
     contentType: "text/plain",
   });
 
