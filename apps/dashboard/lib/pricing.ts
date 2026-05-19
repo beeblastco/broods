@@ -3,12 +3,15 @@
  * Single source of truth for plan display, defaults, and upgrade links.
  */
 
-/** Valid plan tier identifiers. */
-export type PlanTier = "hobby" | "developer" | "pro";
+/** Valid plan tier identifiers stored in the database. */
+export type PlanTier = "hobby" | "developer" | "pro" | "free";
+
+/** Plan tiers that have display configs (excludes "free" which maps to "hobby"). */
+export type ConfiguredPlanTier = "hobby" | "developer" | "pro";
 
 /** Metadata for a single pricing tier. */
 export interface PlanConfig {
-  key: PlanTier;
+  key: ConfiguredPlanTier;
   label: string;
   description: string;
   order: number;
@@ -27,7 +30,7 @@ export const UPGRADE_URL =
   process.env.NEXT_PUBLIC_UPGRADE_URL ?? "https://github.com/beeblastco/pnzu-frontend";
 
 /** Tier metadata keyed by plan identifier. */
-export const PLAN_CONFIGS: Record<PlanTier, PlanConfig> = {
+export const PLAN_CONFIGS: Record<ConfiguredPlanTier, PlanConfig> = {
   hobby: {
     key: "hobby",
     label: "Hobby",
@@ -56,8 +59,9 @@ export const PLAN_CONFIGS: Record<PlanTier, PlanConfig> = {
  * @param plan raw plan value from database
  * @returns resolved plan tier
  */
-export function resolvePlan(plan: PlanTier | undefined): PlanTier {
-  return plan ?? DEFAULT_PLAN;
+export function resolvePlan(plan: PlanTier | undefined): ConfiguredPlanTier {
+  if (plan === "free" || plan === undefined) return "hobby";
+  return plan;
 }
 
 /**

@@ -16,7 +16,7 @@ export default function MainLayout({
 
     useEffect(() => {
         if (!isLoading && !isAuthenticated) {
-            router.replace("/login");
+            router.replace("/auth/sign-in?returnTo=/");
         }
     }, [isLoading, isAuthenticated, router]);
 

@@ -10,14 +10,12 @@ import { FULL_ROUTE_PREFETCH } from "@/app/lib/prefetch";
 const NAV_ITEMS = [
     { segment: "", label: "Architecture" },
     { segment: "/tracing", label: "Tracing" },
-    { segment: "/settings", label: "Settings" },
 ] as const;
 type ProjectNavSegment = (typeof NAV_ITEMS)[number]["segment"];
 
 const ROUTE_MODULE_PRELOADERS: Record<ProjectNavSegment, () => Promise<unknown>> = {
     "": () => import("@/app/components/canvas/Canvas"),
     "/tracing": () => import("@/app/(main)/[projectId]/tracing/page"),
-    "/settings": () => import("@/app/(main)/[projectId]/settings/page"),
 };
 
 /** Inner nav links that read search params. */

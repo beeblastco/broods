@@ -7,7 +7,6 @@ export default authkitMiddleware({
     middlewareAuth: {
         enabled: true,
         unauthenticatedPaths: [
-            "/",
             "/login",
             "/auth/callback",
             "/auth/sign-in",

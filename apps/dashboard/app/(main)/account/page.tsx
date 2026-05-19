@@ -8,7 +8,7 @@ import { api } from "@/convex/_generated/api";
 import { ArrowUpRight } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { resolvePlan, isMaxPlan, PLAN_CONFIGS, UPGRADE_URL } from "@/lib/pricing";
-import type { PlanTier } from "@/lib/pricing";
+import type { PlanTier, ConfiguredPlanTier } from "@/lib/pricing";
 import { Section } from "@/app/components/Section";
 import { Avatar, AvatarFallback, AvatarImage } from "@/app/components/ui/avatar";
 import { Badge } from "@/app/components/ui/badge";
@@ -82,7 +82,7 @@ export default function AccountSettingsPage() {
     const avatarUrl = currentUser?.avatarUrl ?? claimAvatar;
     const accountId = currentUser?._id ?? identity?.userId ?? "";
     const email = currentUser?.email ?? claimEmail;
-    const userPlan: PlanTier = resolvePlan(currentUser?.plan as PlanTier | undefined);
+    const userPlan: ConfiguredPlanTier = resolvePlan(currentUser?.plan as PlanTier | undefined);
     const planConfig = PLAN_CONFIGS[userPlan];
     const showUpgrade = !isMaxPlan(userPlan);
     const effectiveDeletionAt = scheduledDeletionAt ?? currentUser?.deletionScheduledFor ?? null;
@@ -161,12 +161,13 @@ export default function AccountSettingsPage() {
     }
 
     return (
-        <div className="mx-auto w-full max-w-2xl px-6 py-10">
-            <h1 className="mb-2 text-xl font-semibold text-foreground">Account Settings</h1>
-            <p className="mb-8 text-sm text-muted-foreground">
-                Update your account attributes, preferences, and lifecycle settings.
-            </p>
-            <div className="grid gap-8">
+        <div className="flex h-full flex-col overflow-auto">
+            <div className="mx-auto w-full max-w-2xl px-6 py-10">
+                <h1 className="mb-2 text-xl font-semibold text-foreground">Account Settings</h1>
+                <p className="mb-8 text-sm text-muted-foreground">
+                    Update your account attributes, preferences, and lifecycle settings.
+                </p>
+                <div className="grid gap-8">
                 <Section title="Profile" description="Editable attributes for your account.">
                     <div className="grid gap-4">
                         <div className="grid gap-2">
@@ -404,5 +405,6 @@ export default function AccountSettingsPage() {
                 </DialogContent>
             </Dialog>
         </div>
+    </div>
     );
 }
