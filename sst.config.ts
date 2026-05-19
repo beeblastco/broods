@@ -81,21 +81,19 @@ function sandboxRuntimePermissions(
   ];
 }
 
-function denyUnlessPrincipalAllowed(allowedPrincipalArns: $util.Input<string>[]) {
+function denyUnlessProjectAccountPrincipal() {
   return {
     effect: "deny" as const,
     principals: "*" as const,
-    actions: [
-      "s3:GetObject",
-      "s3:PutObject",
-      "s3:DeleteObject",
-      "s3:ListBucket",
-    ],
+    actions: ["s3:*"],
     conditions: [
       {
         test: "StringNotLikeIfExists",
         variable: "aws:PrincipalArn",
-        values: allowedPrincipalArns,
+        values: [
+          `arn:aws:iam::${AWS_ACCOUNT_ID}:*`,
+          `arn:aws:sts::${AWS_ACCOUNT_ID}:*`,
+        ],
       },
     ],
   };
@@ -258,12 +256,9 @@ export default $config({
     });
     const filesystemBucketArn = `arn:aws:s3:::${names.memory}`;
     const skillsBucketArn = `arn:aws:s3:::${names.skills}`;
-    const filesystemBucketAllowedPrincipalArns: $util.Input<string>[] = [];
-    const skillsBucketAllowedPrincipalArns: $util.Input<string>[] = [];
-
     const filesystemBucket = new sst.aws.Bucket("Memory", {
       versioning: true,
-      policy: [denyUnlessPrincipalAllowed(filesystemBucketAllowedPrincipalArns)],
+      policy: [denyUnlessProjectAccountPrincipal()],
       transform: {
         bucket: {
           bucket: names.memory,
@@ -279,7 +274,7 @@ export default $config({
 
     const skillsBucket = new sst.aws.Bucket("Skills", {
       versioning: true,
-      policy: [denyUnlessPrincipalAllowed(skillsBucketAllowedPrincipalArns)],
+      policy: [denyUnlessProjectAccountPrincipal()],
       transform: {
         bucket: {
           bucket: names.skills,
@@ -711,26 +706,6 @@ export default $config({
         },
       ],
     });
-
-    filesystemBucketAllowedPrincipalArns.push(
-      harnessProcessing.nodes.role.arn,
-      $interpolate`arn:aws:sts::${AWS_ACCOUNT_ID}:assumed-role/${harnessProcessing.nodes.role.name}/*`,
-      accountManage.nodes.role.arn,
-      $interpolate`arn:aws:sts::${AWS_ACCOUNT_ID}:assumed-role/${accountManage.nodes.role.name}/*`,
-      sandboxNode.nodes.role.arn,
-      $interpolate`arn:aws:sts::${AWS_ACCOUNT_ID}:assumed-role/${sandboxNode.nodes.role.name}/*`,
-      sandboxPython.nodes.role.arn,
-      $interpolate`arn:aws:sts::${AWS_ACCOUNT_ID}:assumed-role/${sandboxPython.nodes.role.name}/*`,
-      s3FilesRole.arn,
-      $interpolate`arn:aws:sts::${AWS_ACCOUNT_ID}:assumed-role/${s3FilesRole.name}/*`,
-    );
-
-    skillsBucketAllowedPrincipalArns.push(
-      harnessProcessing.nodes.role.arn,
-      $interpolate`arn:aws:sts::${AWS_ACCOUNT_ID}:assumed-role/${harnessProcessing.nodes.role.name}/*`,
-      accountManage.nodes.role.arn,
-      $interpolate`arn:aws:sts::${AWS_ACCOUNT_ID}:assumed-role/${accountManage.nodes.role.name}/*`,
-    );
 
     return {
       agentServiceUrl: harnessProcessing.url,
