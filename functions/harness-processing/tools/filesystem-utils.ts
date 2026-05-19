@@ -35,7 +35,9 @@ interface StoredObject {
 }
 
 export function getFilesystemBucketName(): string {
-  return requireEnv("FILESYSTEM_BUCKET_NAME");
+  const name = requireEnv("FILESYSTEM_BUCKET_NAME");
+  logInfo("filesystem bucket resolved", { bucket: name, region: process.env.AWS_REGION });
+  return name;
 }
 
 export function parseExecutionCommand(command: string): {
@@ -434,11 +436,13 @@ export async function checkPathExists(namespace: string, path: string): Promise<
   }
 
   const key = toStorageKey(normalizedPath, namespace);
+  const bucket = getFilesystemBucketName();
+  logInfo("filesystem checkPathExists", { namespace, path: normalizedPath, bucket, key });
 
-  if (await s3ObjectExists(getFilesystemBucketName(), key)) {
+  if (await s3ObjectExists(bucket, key)) {
     return { exists: true, isDirectory: false };
   }
-  const listResponse = await listS3Prefix(getFilesystemBucketName(), `${key}/`);
+  const listResponse = await listS3Prefix(bucket, `${key}/`);
   return {
     exists: listResponse.length > 0,
     isDirectory: listResponse.length > 0,

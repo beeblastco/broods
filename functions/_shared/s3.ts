@@ -12,9 +12,11 @@ export interface S3ObjectInfo {
 }
 
 function client(bucket: string): Bun.S3Client {
+  const region = process.env.AWS_REGION;
+  logInfo("s3.client created", { bucket, region });
   return new Bun.S3Client({
     bucket,
-    region: process.env.AWS_REGION,
+    region,
   });
 }
 
@@ -52,30 +54,60 @@ export async function writeS3Object(
 }
 
 export async function s3ObjectExists(bucket: string, key: string): Promise<boolean> {
-  return client(bucket).file(key).exists();
+  logInfo("s3.exists start", { bucket, key });
+  try {
+    const result = await client(bucket).file(key).exists();
+    logInfo("s3.exists result", { bucket, key, exists: result });
+    return result;
+  } catch (err) {
+    logError("s3.exists failed", {
+      bucket,
+      key,
+      error: err instanceof Error ? err.message : String(err),
+      errorName: err instanceof Error ? err.name : typeof err,
+      errorStack: err instanceof Error ? err.stack : undefined,
+      errorCause: err instanceof Error && err.cause ? String(err.cause) : undefined,
+    });
+    throw err;
+  }
 }
 
 export async function listS3Prefix(bucket: string, prefix: string): Promise<S3ObjectInfo[]> {
+  logInfo("s3.list start", { bucket, prefix });
   const objects: S3ObjectInfo[] = [];
   let continuationToken: string | undefined;
 
-  do {
-    const result = await client(bucket).list({
-      prefix: prefix,
-      continuationToken: continuationToken,
-      maxKeys: 1000,
-    });
-
-    for (const item of result.contents ?? []) {
-      objects.push({
-        key: item.key,
-        ...(item.size !== undefined ? { size: item.size } : {}),
-        ...(item.lastModified !== undefined ? { lastModified: item.lastModified } : {}),
+  try {
+    do {
+      const result = await client(bucket).list({
+        prefix: prefix,
+        continuationToken: continuationToken,
+        maxKeys: 1000,
       });
-    }
 
-    continuationToken = result.nextContinuationToken;
-  } while (continuationToken);
+      for (const item of result.contents ?? []) {
+        objects.push({
+          key: item.key,
+          ...(item.size !== undefined ? { size: item.size } : {}),
+          ...(item.lastModified !== undefined ? { lastModified: item.lastModified } : {}),
+        });
+      }
+
+      continuationToken = result.nextContinuationToken;
+    } while (continuationToken);
+
+    logInfo("s3.list success", { bucket, prefix, count: objects.length });
+  } catch (err) {
+    logError("s3.list failed", {
+      bucket,
+      prefix,
+      error: err instanceof Error ? err.message : String(err),
+      errorName: err instanceof Error ? err.name : typeof err,
+      errorStack: err instanceof Error ? err.stack : undefined,
+      errorCause: err instanceof Error && err.cause ? String(err.cause) : undefined,
+    });
+    throw err;
+  }
 
   return objects;
 }
