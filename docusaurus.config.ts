@@ -2,8 +2,8 @@
  * Docusaurus configuration for BeeBlast documentation.
  */
 
-import type { Config } from '@docusaurus/types';
 import type * as Preset from '@docusaurus/preset-classic';
+import type { Config } from '@docusaurus/types';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -102,7 +102,7 @@ const config: Config = {
       },
       items: [
         {
-          href: 'https://dasboard.beeblast.co/',
+          href: 'https://dashboard.beeblast.co/',
           label: 'Dashboard',
           position: 'right',
         },
