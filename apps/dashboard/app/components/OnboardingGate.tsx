@@ -1,13 +1,13 @@
 "use client";
 
 /** Gates content behind project creation — shows onboarding when user has no projects. */
+import { CreateProjectDialog } from "@/app/components/CreateProjectDialog";
+import { Button } from "@/app/components/ui/button";
+import { api } from "@/convex/_generated/api";
+import { useQuery } from "convex/react";
+import { Plus } from "lucide-react";
 import type { ReactNode } from "react";
 import { useState } from "react";
-import { useQuery } from "convex/react";
-import { api } from "@/convex/_generated/api";
-import { Plus } from "lucide-react";
-import { Button } from "@/app/components/ui/button";
-import { CreateProjectDialog } from "@/app/components/CreateProjectDialog";
 
 interface OnboardingGateProps {
     children: ReactNode;
@@ -38,7 +38,7 @@ export function OnboardingGate({ children }: OnboardingGateProps) {
             <div className="flex flex-1 flex-col items-center justify-center gap-6">
                 <div className="flex flex-col items-center gap-2 text-center">
                     <h2 className="text-xl font-semibold text-foreground">
-                        Welcome to Cherry Coke
+                        Welcome to BeeBlast Dashboard
                     </h2>
                     <p className="max-w-sm text-sm text-muted-foreground">
                         Create your first project to start building and deploying AI agents.
