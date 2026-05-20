@@ -13,6 +13,7 @@ import {
 } from "@aws-sdk/client-dynamodb";
 import { dynamo, toAttributeValue } from "../functions/_shared/dynamo.ts";
 import type { AccountRecord } from "../functions/_shared/accounts.ts";
+import { normalizeFilesystemNamespace } from "../functions/_shared/runtime-keys.ts";
 
 let mockDeleteS3PrefixResult = 0;
 let mockDeleteS3PrefixCalls: [string, string][] = [];
@@ -28,6 +29,7 @@ mock.module("../functions/_shared/s3.ts", () => ({
   s3ObjectExists: mock(async () => false),
   listS3Prefix: mock(async () => []),
   deleteS3Object: mock(async () => {}),
+  ensureS3DirectoryMarkers: mock(async () => {}),
   isMissingS3Error: mock(() => false),
 }));
 
@@ -180,6 +182,64 @@ describe("deleteAccountRuntimeData", () => {
     const summary = await deleteAccountRuntimeData(testAccount);
 
     expect(summary.asyncAgentResultDeleted).toBe(1);
+  });
+
+  it("cascades persistent subagent conversations, status rows, and filesystem namespaces", async () => {
+    process.env.CONVERSATIONS_TABLE_NAME = "conversations";
+    process.env.ASYNC_AGENT_RESULT_TABLE_NAME = "async-agent-results";
+    process.env.FILESYSTEM_BUCKET_NAME = "test-bucket";
+    process.env.AGENT_CONFIGS_TABLE_NAME = "agent-configs";
+    mockDeleteS3PrefixResult = 1;
+    dynamo.send = sendMock as never;
+    const { deleteAccountRuntimeData } = await import("../functions/account-manage/cleanup.ts");
+
+    const parentConversationKey = "acct:acct_test:agent:agent_parent:api:parent";
+    const childConversationKey = "acct:acct_test:agent:virtual_subagent_subagent_1:api:subagent-persistent-1";
+    sendMock.mockImplementation(async (command: unknown) => {
+      if (command instanceof ScanCommand) {
+        if (command.input.TableName === "conversations" && command.input.ProjectionExpression === "conversationKey") {
+          return {
+            Items: [
+              { conversationKey: { S: parentConversationKey } },
+              { conversationKey: { S: childConversationKey } },
+            ],
+          };
+        }
+        if (command.input.TableName === "conversations" && command.input.ProjectionExpression === "conversationKey, createdAt") {
+          return {
+            Items: [
+              conversationItem(parentConversationKey, "2026-05-01T00:00:00.000Z"),
+              conversationItem(childConversationKey, "2026-05-01T00:00:01.000Z"),
+            ],
+          };
+        }
+        if (command.input.TableName === "async-agent-results") {
+          return {
+            Items: [
+              { eventId: { S: "acct:acct_test:agent:virtual_subagent_subagent_1:api:subagent_1" }, conversationKey: { S: childConversationKey } },
+            ],
+          };
+        }
+        return { Items: [] };
+      }
+      if (command instanceof QueryCommand) {
+        return { Items: [] };
+      }
+      if (command instanceof BatchWriteItemCommand) {
+        return {};
+      }
+      throw new Error(`unexpected command: ${command}`);
+    });
+
+    const summary = await deleteAccountRuntimeData(testAccount);
+
+    expect(summary.conversationsDeleted).toBe(2);
+    expect(summary.asyncAgentResultDeleted).toBe(1);
+    expect(summary.filesystemObjectsDeleted).toBe(2);
+    expect(mockDeleteS3PrefixCalls).toContainEqual([
+      "test-bucket",
+      `${normalizeFilesystemNamespace(`acct_test:virtual_subagent_subagent_1:${childConversationKey}`)}/`,
+    ]);
   });
 
   it("deletes async tool results with parent-event and conversation filters", async () => {

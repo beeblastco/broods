@@ -89,6 +89,7 @@ export interface AgentSubagentConfig {
   enabled?: boolean;
   allowed?: string[];
   context?: "new" | "inherited";
+  mode?: "ephemeral" | "persistent";
   [key: string]: unknown;
 }
 
@@ -950,6 +951,7 @@ function normalizeSubagentConfig(value: unknown): void {
   assertOptionalBoolean(config.enabled, "config.subagent.enabled");
   assertOptionalStringArray(config.allowed, "config.subagent.allowed");
   assertOptionalEnum(config.context, "config.subagent.context", ["new", "inherited"]);
+  assertOptionalEnum(config.mode, "config.subagent.mode", ["ephemeral", "persistent"]);
 }
 
 function normalizeToolConfig(toolName: string, value: unknown): void {

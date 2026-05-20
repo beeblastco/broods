@@ -1533,6 +1533,10 @@ components:
           type: string
           enum: [new, inherited]
           description: Default child context mode; omitted means `new`
+        mode:
+          type: string
+          enum: [ephemeral, persistent]
+          description: Child conversation persistence mode; omitted means `ephemeral`
 
     WorkspaceConfig:
       type: object

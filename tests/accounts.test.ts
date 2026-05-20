@@ -519,12 +519,14 @@ describe("agent config", () => {
         enabled: true,
         allowed: ["agent_worker"],
         context: "inherited",
+        mode: "persistent",
       },
     })).toEqual({
       subagent: {
         enabled: true,
         allowed: ["agent_worker"],
         context: "inherited",
+        mode: "persistent",
       },
     });
 
@@ -533,12 +535,14 @@ describe("agent config", () => {
         enabled: true,
         allowed: [],
         context: "new",
+        mode: "ephemeral",
       },
     })).toEqual({
       subagent: {
         enabled: true,
         allowed: [],
         context: "new",
+        mode: "ephemeral",
       },
     });
 
@@ -559,6 +563,12 @@ describe("agent config", () => {
         context: "shared",
       },
     })).toThrow("config.subagent.context must be one of: new, inherited");
+
+    expect(() => normalizeAgentConfig({
+      subagent: {
+        mode: "durable",
+      },
+    })).toThrow("config.subagent.mode must be one of: ephemeral, persistent");
   });
 
   it("validates Pancake channel config", () => {

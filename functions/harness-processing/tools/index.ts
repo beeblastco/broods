@@ -77,6 +77,7 @@ export function createTools(context: Omit<ToolContext, "config">, agentConfig: A
   if (agentConfig.subagent?.enabled === true && context.dispatchSubagents) {
     Object.assign(tools, runSubagentTool({
       dispatchSubagents: context.dispatchSubagents,
+      mode: agentConfig.subagent.mode,
     }));
   }
 

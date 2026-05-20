@@ -33,7 +33,6 @@ const VIRTUAL_AGENT_PREFIX = "virtual_subagent_";
 interface SubagentCompletion {
   taskId: string;
   agentId: string;
-  name: string;
   description?: string;
   conversationKey: string;
   status: "completed" | "failed";
@@ -46,7 +45,6 @@ interface ResolvedSubagentTask {
   eventId: string;
   agentId: string;
   agentConfig: AgentConfig;
-  name: string;
   description?: string;
   publicConversationKey: string;
   conversationKey: string;
@@ -54,6 +52,8 @@ interface ResolvedSubagentTask {
   inheritedContext: boolean;
   parentMessages: ModelMessage[];
   parentEphemeralSystem: SystemModelMessage[];
+  persistent: boolean;
+  resuming: boolean;
 }
 
 export class SubagentCoordinator {
@@ -68,6 +68,10 @@ export class SubagentCoordinator {
     private readonly waitUntilMs: number = Date.now() + DEFAULT_SUBAGENT_WAIT_BUDGET_MS,
     private readonly lifecycle: AgentLifecycleEmitter = createAgentLifecycleEmitter(parentSession, parentAgentConfig),
   ) { }
+
+  private get isPersistentMode(): boolean {
+    return this.parentAgentConfig.subagent?.mode === "persistent";
+  }
 
   dispatch: RunSubagentDispatch = async (
     tasks: RunSubagentTaskInput[],
@@ -93,9 +97,10 @@ export class SubagentCoordinator {
       this.lifecycle.emit("subagent.task.started", {
         taskId: task.taskId,
         agentId: task.agentId,
-        name: task.name,
         conversationKey: task.publicConversationKey,
         inheritedContext: task.inheritedContext,
+        persistent: task.persistent,
+        resuming: task.resuming,
       })
     ));
 
@@ -152,7 +157,6 @@ export class SubagentCoordinator {
       return {
         taskId: metadata?.taskId ?? taskId,
         agentId: metadata?.agentId ?? "unknown",
-        name: metadata?.name ?? "Pending subagent",
         ...(metadata?.description ? { description: metadata.description } : {}),
         conversationKey: metadata?.conversationKey ?? "unknown",
         status: "failed",
@@ -174,8 +178,14 @@ export class SubagentCoordinator {
   ): Promise<ResolvedSubagentTask> {
     const accountId = requireParentAccountId(this.parentSession);
     const taskId = `subagent_${crypto.randomUUID()}`;
-    const publicConversationKey = `subagent-${taskId}`;
-    const inheritedContext = task.shareContext ?? this.parentAgentConfig.subagent?.context === "inherited";
+    const persistent = this.isPersistentMode;
+    if (!persistent && task.conversationKey !== undefined) {
+      throw new Error("Subagent conversationKey is only supported in persistent mode");
+    }
+    const resuming = persistent && task.conversationKey !== undefined;
+    const publicConversationKey = task.conversationKey
+      ?? (persistent ? `subagent-persistent-${crypto.randomUUID()}` : `subagent-${taskId}`);
+    const inheritedContext = this.parentAgentConfig.subagent?.context === "inherited";
     if (task.agentId) {
       const agent = await this.resolveAllowedAgent(accountId, task.agentId);
       return {
@@ -183,7 +193,6 @@ export class SubagentCoordinator {
         eventId: scopedDirectEventId(accountId, agent.agentId, taskId),
         agentId: agent.agentId,
         agentConfig: withoutNestedSubagents(agent.config),
-        name: agent.name,
         ...(agent.description ? { description: agent.description } : {}),
         publicConversationKey,
         conversationKey: scopedDirectConversationKey(accountId, agent.agentId, publicConversationKey),
@@ -191,6 +200,8 @@ export class SubagentCoordinator {
         inheritedContext,
         parentMessages,
         parentEphemeralSystem,
+        persistent,
+        resuming,
       };
     }
 
@@ -200,13 +211,14 @@ export class SubagentCoordinator {
       eventId: scopedDirectEventId(accountId, virtualAgentId, taskId),
       agentId: virtualAgentId,
       agentConfig: withoutNestedSubagents(this.parentAgentConfig),
-      name: task.name ?? "Virtual subagent",
       publicConversationKey,
       conversationKey: scopedDirectConversationKey(accountId, virtualAgentId, publicConversationKey),
       prompt: task.prompt,
       inheritedContext,
       parentMessages,
       parentEphemeralSystem,
+      persistent,
+      resuming,
     };
   }
 
@@ -237,7 +249,6 @@ export class SubagentCoordinator {
       .catch((error) => this.completeTask({
         taskId: task.taskId,
         agentId: task.agentId,
-        name: task.name,
         ...(task.description ? { description: task.description } : {}),
         conversationKey: task.publicConversationKey,
         status: "failed",
@@ -253,7 +264,6 @@ export class SubagentCoordinator {
     this.pendingMetadata.set(task.taskId, {
       taskId: task.taskId,
       agentId: task.agentId,
-      name: task.name,
       ...(task.description ? { description: task.description } : {}),
       conversationKey: task.publicConversationKey,
     });
@@ -262,10 +272,9 @@ export class SubagentCoordinator {
   /**
    * Executes a one-shot child agent turn and records the result.
    *
-   * Child turns use an ephemeral session wrapper: inherited parent context and
-   * generated child messages are visible to the model, but they are not copied
-   * into the child conversation table. Only task status and the final result or
-   * error are persisted for polling and parent continuation.
+   * Ephemeral child turns use an in-memory session wrapper. Persistent child
+   * turns write the task prompt and generated child messages to the child
+   * conversation while keeping inherited parent context ephemeral.
    */
   private async runTask(task: ResolvedSubagentTask): Promise<void> {
     logInfo("Subagent task started", {
@@ -274,6 +283,8 @@ export class SubagentCoordinator {
       agentId: task.agentId,
       conversationKey: task.conversationKey,
       inheritedContext: task.inheritedContext,
+      persistent: task.persistent,
+      resuming: task.resuming,
     });
 
     // Initialize an isolated child session using the generated conversation key.
@@ -288,17 +299,16 @@ export class SubagentCoordinator {
       role: "user",
       content: [{ type: "text", text: task.prompt }],
     };
-    const messages = [
-      ...(task.inheritedContext ? task.parentMessages : []),
-      promptMessage,
-    ] satisfies ModelMessage[];
-    // Child runs are in-memory turns. Forward parent ephemeral system messages
-    // so request-local instructions survive delegation without being persisted.
-    const turnContext = await childSession.createEphemeralTurnContext(messages, task.parentEphemeralSystem);
+    // `persistent` controls whether the child uses a real persisted Session or
+    // the in-memory wrapper. Persistent mode writes the task prompt first so
+    // the child model response and any tool messages append to that conversation.
+    const turnContext = await this.createChildTurnContext(childSession, task, promptMessage);
     let finalResponse: JSONValue | undefined;
     let approvalRequested = false;
 
-    const session = createEphemeralChildSession(childSession, turnContext.system);
+    const session = task.persistent
+      ? childSession
+      : createEphemeralChildSession(childSession, turnContext.system);
     const stream = await runAgentLoop(session, turnContext, task.agentConfig, {
       onFinalText: async (response) => {
         finalResponse = response;
@@ -329,12 +339,37 @@ export class SubagentCoordinator {
     await this.completeTask({
       taskId: task.taskId,
       agentId: task.agentId,
-      name: task.name,
       ...(task.description ? { description: task.description } : {}),
       conversationKey: task.publicConversationKey,
       status: "completed",
       response: finalResponse,
     });
+  }
+
+  private async createChildTurnContext(
+    childSession: Session,
+    task: ResolvedSubagentTask,
+    promptMessage: UserModelMessage,
+  ) {
+    if (!task.persistent) {
+      return childSession.createEphemeralTurnContext([
+        ...(task.inheritedContext ? task.parentMessages : []),
+        promptMessage,
+      ], task.parentEphemeralSystem);
+    }
+
+    await childSession.persistModelMessages([promptMessage]);
+    // `resuming` means the caller supplied an existing public conversationKey.
+    // That is enough to load prior child history; when omitted, this is a new
+    // persistent child conversation with a generated public key.
+    if (task.resuming || !task.inheritedContext) {
+      return childSession.createTurnContext(task.parentEphemeralSystem);
+    }
+
+    return childSession.createEphemeralTurnContext([
+      ...task.parentMessages,
+      promptMessage,
+    ], task.parentEphemeralSystem);
   }
 
   private async completeTask(completion: SubagentCompletion): Promise<void> {
@@ -371,7 +406,6 @@ export class SubagentCoordinator {
     await this.lifecycle.emit("subagent.task.finished", {
       taskId: completion.taskId,
       agentId: completion.agentId,
-      name: completion.name,
       conversationKey: completion.conversationKey,
       status: completion.status,
       ...(completion.response !== undefined ? { response: toLifecycleValue(completion.response) } : {}),
@@ -420,7 +454,6 @@ function toDispatch(task: ResolvedSubagentTask): RunSubagentTaskDispatch {
   return {
     taskId: task.taskId,
     agentId: task.agentId,
-    name: task.name,
     ...(task.description ? { description: task.description } : {}),
     conversationKey: task.publicConversationKey,
     statusPath: `/status/${encodeURIComponent(task.taskId)}?agentId=${encodeURIComponent(task.agentId)}`,
@@ -432,7 +465,6 @@ function completionToParentMessage(completion: SubagentCompletion): UserModelMes
   const metadata = [
     `taskId: ${completion.taskId}`,
     `agentId: ${completion.agentId}`,
-    `agentName: ${completion.name}`,
     ...(completion.description ? [`agentDescription: ${completion.description}`] : []),
     `conversationKey: ${completion.conversationKey}`,
     `status: ${completion.status}`,

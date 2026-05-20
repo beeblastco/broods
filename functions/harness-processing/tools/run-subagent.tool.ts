@@ -6,55 +6,57 @@
 import { jsonSchema, tool, type JSONSchema7, type JSONValue, type ModelMessage, type SystemModelMessage, type ToolSet } from "ai";
 
 const MAX_SUBAGENT_TASKS = 10;
-const TASK_KEYS = new Set(["agentId", "name", "prompt", "shareContext"]);
+const TASK_KEYS = new Set(["agentId", "prompt", "conversationKey"]);
+type RunSubagentMode = "ephemeral" | "persistent";
 
-const runSubagentInputSchema: JSONSchema7 = {
-  type: "object",
-  properties: {
-    tasks: {
-      type: "array",
-      minItems: 1,
-      maxItems: MAX_SUBAGENT_TASKS,
-      items: {
-        type: "object",
-        properties: {
-          agentId: {
-            type: "string",
-            description: "Exact predefined subagent id to use. Include it when a listed subagent is suitable; omit only for a virtual one-shot subagent.",
-          },
-          name: {
-            type: "string",
-            description: "Optional display name for a virtual subagent when agentId is omitted.",
-          },
-          prompt: {
-            type: "string",
-            description: "The task prompt for the subagent.",
-          },
-          shareContext: {
-            type: "boolean",
-            description: "Optional per-task override. true inherits parent context in memory; false starts fresh.",
-          },
+export function buildRunSubagentInputSchema(mode?: RunSubagentMode): JSONSchema7 {
+  const taskProperties: Record<string, JSONSchema7> = {
+    agentId: {
+      type: "string",
+      description: "Exact predefined subagent id to use. Include it when a listed subagent is suitable; omit only for a virtual one-shot subagent.",
+    },
+    prompt: {
+      type: "string",
+      description: "The task prompt for the subagent.",
+    },
+  };
+
+  if (mode === "persistent") {
+    taskProperties.conversationKey = {
+      type: "string",
+      description: "Existing subagent conversation key to resume. Omit to start a new persistent conversation.",
+    };
+  }
+
+  return {
+    type: "object",
+    properties: {
+      tasks: {
+        type: "array",
+        minItems: 1,
+        maxItems: MAX_SUBAGENT_TASKS,
+        items: {
+          type: "object",
+          properties: taskProperties,
+          required: ["prompt"],
+          additionalProperties: false,
         },
-        required: ["prompt"],
-        additionalProperties: false,
       },
     },
-  },
-  required: ["tasks"],
-  additionalProperties: false,
-};
+    required: ["tasks"],
+    additionalProperties: false,
+  };
+}
 
 export interface RunSubagentTaskInput {
   agentId?: string;
-  name?: string;
   prompt: string;
-  shareContext?: boolean;
+  conversationKey?: string;
 }
 
 export interface RunSubagentTaskDispatch {
   taskId: string;
   agentId: string;
-  name: string;
   description?: string;
   conversationKey: string;
   statusPath: string;
@@ -71,17 +73,23 @@ export type RunSubagentDispatch = (
   parentEphemeralSystem?: SystemModelMessage[],
 ) => Promise<RunSubagentDispatchResult>;
 
-export default function runSubagentTool(context: { dispatchSubagents: RunSubagentDispatch }): ToolSet {
+export default function runSubagentTool(context: {
+  dispatchSubagents: RunSubagentDispatch;
+  mode?: RunSubagentMode;
+}): ToolSet {
   return {
     run_subagent: tool({
       description: [
         "Dispatch one or more subagents for independent parallel work.",
         "Returns task ids immediately so you can continue working while results are injected into the parent conversation later.",
         "Use an available predefined agentId when a listed subagent matches the task; omit agentId only for a virtual one-shot subagent.",
+        ...(context.mode === "persistent"
+          ? ["Use conversationKey to resume an existing persistent subagent conversation; omit it to start a new one."]
+          : []),
       ].join(" "),
-      inputSchema: jsonSchema(runSubagentInputSchema),
+      inputSchema: jsonSchema(buildRunSubagentInputSchema(context.mode)),
       async execute(input, options) {
-        const tasks = normalizeInput(input);
+        const tasks = normalizeInput(input, context.mode);
         // Keep the tool as a thin AI SDK adapter. The dispatcher starts child
         // runs and coordinates later parent continuation outside this file.
         return context.dispatchSubagents(tasks, options.messages);
@@ -94,7 +102,7 @@ export default function runSubagentTool(context: { dispatchSubagents: RunSubagen
   };
 }
 
-function normalizeInput(input: unknown): RunSubagentTaskInput[] {
+function normalizeInput(input: unknown, mode?: RunSubagentMode): RunSubagentTaskInput[] {
   if (!input || typeof input !== "object" || !Array.isArray((input as { tasks?: unknown }).tasks)) {
     throw new Error("tasks must be a non-empty array");
   }
@@ -107,10 +115,10 @@ function normalizeInput(input: unknown): RunSubagentTaskInput[] {
     throw new Error(`tasks must include at most ${MAX_SUBAGENT_TASKS} subagent tasks`);
   }
 
-  return tasks.map((task, index) => normalizeTask(task, index));
+  return tasks.map((task, index) => normalizeTask(task, index, mode));
 }
 
-function normalizeTask(value: unknown, index: number): RunSubagentTaskInput {
+function normalizeTask(value: unknown, index: number, mode?: RunSubagentMode): RunSubagentTaskInput {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw new Error(`tasks[${index}] must be an object`);
   }
@@ -124,17 +132,17 @@ function normalizeTask(value: unknown, index: number): RunSubagentTaskInput {
 
   const prompt = normalizeRequiredString(task.prompt, `tasks[${index}].prompt`);
   const agentId = normalizeOptionalString(task.agentId, `tasks[${index}].agentId`);
-  const name = normalizeOptionalString(task.name, `tasks[${index}].name`);
-  const shareContext = task.shareContext;
-  if (shareContext !== undefined && typeof shareContext !== "boolean") {
-    throw new Error(`tasks[${index}].shareContext must be a boolean`);
+  if (mode !== "persistent" && task.conversationKey !== undefined) {
+    throw new Error(`tasks[${index}].conversationKey is only supported in persistent mode`);
   }
+  const conversationKey = mode === "persistent"
+    ? normalizeOptionalString(task.conversationKey, `tasks[${index}].conversationKey`)
+    : undefined;
 
   return {
     ...(agentId ? { agentId } : {}),
-    ...(name ? { name } : {}),
     prompt,
-    ...(shareContext !== undefined ? { shareContext } : {}),
+    ...(conversationKey ? { conversationKey } : {}),
   };
 }
 
