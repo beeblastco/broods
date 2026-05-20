@@ -76,7 +76,7 @@ The normalized `InboundMessage` contains:
 | `discord` | [`functions/_shared/discord-channel.ts`](../functions/_shared/discord-channel.ts) | `botToken`, `publicKey` |
 | `pancake` | [`functions/_shared/pancake-channel.ts`](../functions/_shared/pancake-channel.ts) | `pageId`, `pageAccessToken` |
 
-The full config field reference lives in [Account Management](account-management.md#channels-config).
+The full config field reference lives in the [API Reference](/api-reference) under `AgentConfig.channels`.
 
 Pancake's public webhook docs do not define a signature or secret header. The adapter validates `page_id` against `config.channels.pancake.pageId`, acknowledges unsupported events, and replies through the page-scoped message API with `pageAccessToken`.
 
@@ -90,7 +90,7 @@ Pancake's public webhook docs do not define a signature or secret header. The ad
 6. Import the channel factory in [`functions/harness-processing/integrations.ts`](../functions/harness-processing/integrations.ts).
 7. Add `create<Channel>ChannelFromConfig()` and include it in `createChannelRegistry()`.
 8. Document the webhook URL as `/webhooks/{accountId}/{agentId}/{channel}`.
-9. Update [Account Management](account-management.md#channels-config), [`examples/account.config.example.json`](../examples/account.config.example.json), setup scripts, and focused tests/examples when the public config changes.
+9. Update the [API Reference](/api-reference) `AgentConfig.channels` schema, [`examples/account.config.example.json`](../examples/account.config.example.json), setup scripts, and focused tests/examples when the public config changes.
 
 Do not hardcode channel-specific behavior in commands, shared handlers, or the core agent loop. Commands receive only the channel-agnostic `ChannelActions` interface.
 

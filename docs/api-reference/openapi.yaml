@@ -54,6 +54,11 @@ paths:
                   method:
                     type: string
                     example: POST
+              examples:
+                healthy:
+                  value:
+                    status: ok
+                    method: POST
 
     post:
       tags:
@@ -62,13 +67,39 @@ paths:
       description: |
         Run a synchronous direct agent turn. Returns an SSE stream with Vercel AI SDK stream events.
 
-        When the selected agent config has `model.output`, the stream emits a final `structured-output` event with the parsed JSON value.
+        The SSE stream uses the [Vercel AI SDK wire protocol](https://sdk.vercel.ai/docs/ai-sdk-core/streaming#data-stream-protocol). Common event types include `step-start`, `text`, `tool-call`, `tool-result`, `tool-approval-request`, `step-finish`, and `finish`. When `model.output` is configured, a final `structured-output` event carries the parsed JSON value.
       requestBody:
         required: true
         content:
           application/json:
             schema:
               $ref: '#/components/schemas/DirectApiRequest'
+            examples:
+              basic:
+                summary: Basic request
+                value:
+                  agentId: agent_abc123
+                  eventId: unique-id-for-dedup
+                  conversationKey: conversation-identifier
+                  events:
+                    - role: user
+                      content:
+                        - type: text
+                          text: Hello
+              withSystem:
+                summary: With ephemeral system event
+                value:
+                  agentId: agent_abc123
+                  eventId: unique-id-for-dedup
+                  conversationKey: conversation-identifier
+                  events:
+                    - role: system
+                      content: The next answer should be terse.
+                      persist: false
+                    - role: user
+                      content:
+                        - type: text
+                          text: What is the capital of France?
       responses:
         '200':
           description: SSE stream of agent execution
@@ -77,6 +108,27 @@ paths:
               schema:
                 type: string
                 format: binary
+              examples:
+                streamEvents:
+                  summary: Common SSE events
+                  value: |
+                    event: 0
+                    data: {"type":"step-start","messageId":"msg_123"}
+
+                    event: 0
+                    data: {"type":"text","text":"Hello"}
+
+                    event: 0
+                    data: {"type":"tool-call","toolCallId":"tc_1","toolName":"filesystem","input":{"shell":"ls"}}
+
+                    event: 0
+                    data: {"type":"tool-result","toolCallId":"tc_1","toolName":"filesystem","output":"file.txt"}
+
+                    event: 0
+                    data: {"type":"step-finish","finishReason":"stop","usage":{"promptTokens":100,"completionTokens":50}}
+
+                    event: 0
+                    data: {"type":"finish","finishReason":"stop"}
         '404':
           description: Direct API disabled (ENABLE_DIRECT_API=false)
         '401':
@@ -85,21 +137,35 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
+              examples:
+                unauthorized:
+                  value:
+                    error: Unauthorized
 
   /async:
     post:
       tags:
         - Direct API
       summary: Async direct API
-      description: |
-        Queue an async direct agent turn. Returns immediately with a status URL for polling.
-        The async worker runs the same account-scoped harness code in the background.
+      description: Queue an async direct agent turn. Returns immediately with a status URL for polling. The async worker runs the same account-scoped harness code in the background.
       requestBody:
         required: true
         content:
           application/json:
             schema:
               $ref: '#/components/schemas/DirectApiRequest'
+            examples:
+              basic:
+                summary: Basic async request
+                value:
+                  agentId: agent_abc123
+                  eventId: async-unique-id
+                  conversationKey: conversation-identifier
+                  events:
+                    - role: user
+                      content:
+                        - type: text
+                          text: Generate a summary of today's news
       responses:
         '200':
           description: Async job accepted
@@ -111,8 +177,10 @@ paths:
                   statusUrl:
                     type: string
                     format: uri
-                    description: URL to poll for job status
-                    example: https://your-function-url.lambda-url.us-east-1.on.aws/status/unique-id-for-dedup?agentId=agent_abc123
+              examples:
+                accepted:
+                  value:
+                    statusUrl: https://your-function-url.lambda-url.us-east-1.on.aws/status/async-unique-id?agentId=agent_abc123
         '404':
           description: Direct API disabled (ENABLE_DIRECT_API=false)
         '401':
@@ -121,27 +189,28 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
+              examples:
+                unauthorized:
+                  value:
+                    error: Unauthorized
 
   /status/{eventId}:
     get:
       tags:
         - Direct API
       summary: Poll async status
-      description: |
-        Poll the status of an async job. Responses are backed by the account-scoped AsyncAgentResult DynamoDB record.
+      description: Poll the status of an async job. Responses are backed by the account-scoped `AsyncAgentResult` DynamoDB record.
       parameters:
         - name: eventId
           in: path
           required: true
           schema:
             type: string
-          description: Unique event ID from the async submission
         - name: agentId
           in: query
           required: true
           schema:
             type: string
-          description: Agent ID to scope the status lookup
       responses:
         '200':
           description: Current job status
@@ -153,6 +222,40 @@ paths:
                   - $ref: '#/components/schemas/StatusAwaitingApproval'
                   - $ref: '#/components/schemas/StatusCompleted'
                   - $ref: '#/components/schemas/StatusFailed'
+              examples:
+                processing:
+                  summary: Job still running
+                  value:
+                    eventId: unique-id-for-dedup
+                    conversationKey: conversation-identifier
+                    status: processing
+                awaitingApproval:
+                  summary: Tool approval needed
+                  value:
+                    eventId: unique-id-for-dedup
+                    conversationKey: conversation-identifier
+                    status: awaiting_approval
+                    approvals:
+                      - approvalId: approval-123
+                        toolCallId: tool-call-456
+                        toolName: filesystem
+                        input:
+                          shell: rm file.txt
+                completed:
+                  summary: Job finished
+                  value:
+                    eventId: unique-id-for-dedup
+                    conversationKey: conversation-identifier
+                    status: completed
+                    response:
+                      answer: done
+                failed:
+                  summary: Job failed
+                  value:
+                    eventId: unique-id-for-dedup
+                    conversationKey: conversation-identifier
+                    status: failed
+                    error: Model provider returned 503
         '404':
           description: Unknown event ID
           content:
@@ -164,29 +267,34 @@ paths:
                     type: string
                   status:
                     type: string
-                    example: not_found
+              examples:
+                notFound:
+                  value:
+                    eventId: unknown-id
+                    status: not_found
         '401':
           description: Unauthorized
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
+              examples:
+                unauthorized:
+                  value:
+                    error: Unauthorized
 
   /async-tools/{resultId}/complete:
     post:
       tags:
         - Direct API
       summary: Complete external async tool
-      description: |
-        Complete an externally dispatched async tool. Completion settles one AsyncToolResult row.
-        A sealed dispatch-group item waits for every sibling result before continuing the parent.
+      description: Complete an externally dispatched async tool. Completion settles one `AsyncToolResult` row. A sealed dispatch-group item waits for every sibling result before continuing the parent.
       parameters:
         - name: resultId
           in: path
           required: true
           schema:
             type: string
-          description: Async tool result ID from the waiting event
       requestBody:
         required: true
         content:
@@ -195,6 +303,22 @@ paths:
               oneOf:
                 - $ref: '#/components/schemas/ToolCompletionSuccess'
                 - $ref: '#/components/schemas/ToolCompletionFailure'
+            examples:
+              success:
+                summary: Tool completed
+                value:
+                  status: completed
+                  response:
+                    answer: done
+                    data:
+                      - 1
+                      - 2
+                      - 3
+              failure:
+                summary: Tool failed
+                value:
+                  status: failed
+                  error: External service timeout after 30s
       responses:
         '200':
           description: Tool result settled
@@ -207,20 +331,27 @@ paths:
                 properties:
                   status:
                     type: string
-                    example: waiting_for_async_tools
+              examples:
+                waiting:
+                  value:
+                    status: waiting_for_async_tools
         '401':
           description: Unauthorized
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
+              examples:
+                unauthorized:
+                  value:
+                    error: Unauthorized
 
   /accounts:
     post:
       tags:
         - Accounts
       summary: Create account
-      description: Public endpoint to create a new account. IP-rate-limited.
+      description: Public endpoint to create a new account. IP-rate-limited. Store `accountSecret` securely — it is not recoverable.
       security: []
       requestBody:
         required: true
@@ -234,14 +365,20 @@ paths:
                 username:
                   type: string
                   description: Required human-readable account name
-                  example: company-a
                 description:
                   type: string
                   description: Optional purpose or usage note
-                  example: Company A account
+            examples:
+              basic:
+                value:
+                  username: company-a
+              withDescription:
+                value:
+                  username: company-a
+                  description: Company A account
       responses:
         '201':
-          description: Account created successfully
+          description: Account created
           content:
             application/json:
               schema:
@@ -251,8 +388,14 @@ paths:
                     $ref: '#/components/schemas/Account'
                   accountSecret:
                     type: string
-                    description: One-time API secret. Store securely; not recoverable.
-                    example: fp_acct_...
+              examples:
+                created:
+                  value:
+                    account:
+                      accountId: acct_abc123
+                      username: company-a
+                      description: Company A account
+                    accountSecret: fp_acct_xyz789...
         '429':
           description: Rate limited
 
@@ -260,7 +403,7 @@ paths:
       tags:
         - Accounts
       summary: List all accounts (admin)
-      description: Admin-only endpoint to list all accounts.
+      description: Admin-only endpoint. Requires `AdminAccountSecret` from SST secrets.
       security:
         - AdminAuth: []
       responses:
@@ -272,13 +415,21 @@ paths:
                 type: array
                 items:
                   $ref: '#/components/schemas/Account'
+              examples:
+                list:
+                  value:
+                    - accountId: acct_abc123
+                      username: company-a
+                      description: Company A account
+                    - accountId: acct_def456
+                      username: company-b
+                      description: Company B account
 
   /accounts/{accountId}:
     get:
       tags:
         - Accounts
       summary: Get account (admin)
-      description: Admin-only endpoint to retrieve a specific account.
       security:
         - AdminAuth: []
       parameters:
@@ -299,7 +450,6 @@ paths:
       tags:
         - Accounts
       summary: Update account (admin)
-      description: Admin-only endpoint to update account metadata.
       security:
         - AdminAuth: []
       parameters:
@@ -331,7 +481,7 @@ paths:
       tags:
         - Accounts
       summary: Delete account (admin)
-      description: Admin-only endpoint to delete an account and cascade cleanup all account-scoped data.
+      description: Deletes the account and cascades cleanup for all account-scoped data (conversations, agents, skills, filesystem objects, async results).
       security:
         - AdminAuth: []
       parameters:
@@ -347,13 +497,24 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/DeleteResponse'
+              examples:
+                deleted:
+                  value:
+                    deleted: true
+                    cleanup:
+                      conversationsDeleted: 12
+                      processedEventsDeleted: 14
+                      asyncAgentResultDeleted: 2
+                      asyncToolResultDeleted: 3
+                      filesystemObjectsDeleted: 8
+                      agentsDeleted: 1
+                      skillObjectsDeleted: 4
 
   /accounts/{accountId}/rotate-secret:
     post:
       tags:
         - Accounts
       summary: Rotate account secret (admin)
-      description: Admin-only endpoint to rotate an account secret.
       security:
         - AdminAuth: []
       parameters:
@@ -372,15 +533,16 @@ paths:
                 properties:
                   accountSecret:
                     type: string
-                    description: New one-time API secret
-                    example: fp_acct_...
+              examples:
+                rotated:
+                  value:
+                    accountSecret: fp_acct_new...
 
   /accounts/me:
     get:
       tags:
         - Accounts
       summary: Get own account
-      description: Retrieve the authenticated account's metadata.
       security:
         - BearerAuth: []
       responses:
@@ -395,7 +557,7 @@ paths:
       tags:
         - Accounts
       summary: Update own account
-      description: Update the authenticated account's metadata. Only accepts account metadata fields.
+      description: Update account metadata only. Runtime config is managed through agent endpoints.
       security:
         - BearerAuth: []
       requestBody:
@@ -409,6 +571,10 @@ paths:
                   type: string
                 description:
                   type: string
+            examples:
+              updateDescription:
+                value:
+                  description: Updated account purpose
       responses:
         '200':
           description: Account updated
@@ -416,12 +582,18 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Account'
+              examples:
+                updated:
+                  value:
+                    accountId: acct_abc123
+                    username: company-a
+                    description: Updated account purpose
 
     delete:
       tags:
         - Accounts
       summary: Delete own account
-      description: Delete the authenticated account and cascade cleanup all account-scoped data.
+      description: Deletes the authenticated account and cascades cleanup for all account-scoped data.
       security:
         - BearerAuth: []
       responses:
@@ -437,7 +609,6 @@ paths:
       tags:
         - Accounts
       summary: Rotate own secret
-      description: Rotate the authenticated account's secret.
       security:
         - BearerAuth: []
       responses:
@@ -450,15 +621,17 @@ paths:
                 properties:
                   accountSecret:
                     type: string
-                    description: New one-time API secret
-                    example: fp_acct_...
+              examples:
+                rotated:
+                  value:
+                    accountSecret: fp_acct_new...
 
   /accounts/me/agents:
     post:
       tags:
         - Agents
       summary: Create agent
-      description: Create a new agent under the authenticated account.
+      description: Create a new agent under the authenticated account. The `agentId` in the response is required for all runtime requests.
       security:
         - BearerAuth: []
       requestBody:
@@ -472,14 +645,53 @@ paths:
               properties:
                 name:
                   type: string
-                  description: Agent name
-                  example: support-agent
                 description:
                   type: string
-                  description: Agent description; visible to parent agents when allowed as subagent
-                  example: Customer support agent
+                  description: Visible to parent agents when allowed as subagent
                 config:
                   $ref: '#/components/schemas/AgentConfig'
+            examples:
+              basic:
+                summary: Minimal agent
+                value:
+                  name: support-agent
+                  description: Customer support agent
+                  config:
+                    provider:
+                      google:
+                        apiKey: your-api-key
+                    model:
+                      provider: google
+                      modelId: gemini-3-flash
+                    agent:
+                      system: You are a helpful support assistant.
+              withWorkspace:
+                summary: Agent with workspace and tools
+                value:
+                  name: research-agent
+                  description: Research assistant with web search
+                  config:
+                    provider:
+                      google:
+                        apiKey: your-api-key
+                    model:
+                      provider: google
+                      modelId: gemini-3-flash
+                      temperature: 0.2
+                    agent:
+                      system: You are a research assistant. Always cite sources.
+                    workspace:
+                      enabled: true
+                      memory:
+                        enabled: true
+                        namespace: research
+                      tasks:
+                        enabled: true
+                    tools:
+                      tavilySearch:
+                        enabled: true
+                        apiKey: your-tavily-key
+                        searchDepth: advanced
       responses:
         '201':
           description: Agent created
@@ -490,12 +702,19 @@ paths:
                 properties:
                   agent:
                     $ref: '#/components/schemas/Agent'
+              examples:
+                created:
+                  value:
+                    agent:
+                      accountId: acct_abc123
+                      agentId: agent_xyz789
+                      name: support-agent
+                      description: Customer support agent
 
     get:
       tags:
         - Agents
       summary: List agents
-      description: List all agents under the authenticated account.
       security:
         - BearerAuth: []
       responses:
@@ -513,7 +732,6 @@ paths:
       tags:
         - Agents
       summary: Get agent
-      description: Retrieve a specific agent's metadata and config.
       security:
         - BearerAuth: []
       parameters:
@@ -534,7 +752,7 @@ paths:
       tags:
         - Agents
       summary: Update agent
-      description: Update an agent's metadata and config. Config patch is a deep merge.
+      description: Config patch is a deep merge. Redacted secret placeholders (`********`) preserve existing secrets. Set a field to `null` to delete it.
       security:
         - BearerAuth: []
       parameters:
@@ -568,7 +786,6 @@ paths:
       tags:
         - Agents
       summary: Delete agent
-      description: Delete a specific agent.
       security:
         - BearerAuth: []
       parameters:
@@ -586,7 +803,7 @@ paths:
       tags:
         - Skills
       summary: Create skill
-      description: Upload a new skill under the authenticated account.
+      description: Upload a skill. Skills are stored in S3 under `<accountId>/<skill-name>`. Every bundle must include a root `SKILL.md` with `name` and `description` YAML frontmatter.
       security:
         - BearerAuth: []
       requestBody:
@@ -603,18 +820,20 @@ paths:
                 source:
                   type: string
                   enum: [json, base64, github]
-                  description: Skill source type
                 name:
                   type: string
-                  description: Skill name
-                  example: support-flow
                 description:
                   type: string
-                  description: Skill description
-                  example: Handles support triage
                 content:
                   type: string
                   description: Skill content (for json source)
+            examples:
+              json:
+                value:
+                  source: json
+                  name: support-flow
+                  description: Handles support triage
+                  content: "# Support Flow\n\nClassify urgency, product area, and next action."
       responses:
         '201':
           description: Skill created
@@ -625,12 +844,18 @@ paths:
                 properties:
                   skill:
                     $ref: '#/components/schemas/Skill'
+              examples:
+                created:
+                  value:
+                    skill:
+                      skillPath: acct_abc123/support-flow
+                      name: support-flow
+                      description: Handles support triage
 
     get:
       tags:
         - Skills
       summary: List skills
-      description: List all skills under the authenticated account.
       security:
         - BearerAuth: []
       responses:
@@ -648,7 +873,6 @@ paths:
       tags:
         - Skills
       summary: Get skill
-      description: Retrieve a specific skill.
       security:
         - BearerAuth: []
       parameters:
@@ -669,7 +893,6 @@ paths:
       tags:
         - Skills
       summary: Update skill
-      description: Update a specific skill.
       security:
         - BearerAuth: []
       parameters:
@@ -701,7 +924,6 @@ paths:
       tags:
         - Skills
       summary: Delete skill
-      description: Delete a specific skill.
       security:
         - BearerAuth: []
       parameters:
@@ -736,15 +958,12 @@ components:
         agentId:
           type: string
           description: Selects the account-owned agent config to run
-          example: agent_abc123
         eventId:
           type: string
           description: Used for account-scoped deduplication
-          example: unique-id-for-dedup
         conversationKey:
           type: string
           description: Selects the account-scoped persisted direct conversation
-          example: conversation-identifier
         events:
           type: array
           description: Vercel AI SDK-style messages
@@ -760,7 +979,7 @@ components:
         role:
           type: string
           enum: [user, system, tool]
-          description: "Message role. `system` events must use `persist: false` and are only supported on the direct API path."
+          description: "System events must use `persist: false` and are only supported on the direct API path"
         content:
           oneOf:
             - type: string
@@ -769,7 +988,7 @@ components:
                 $ref: '#/components/schemas/ContentBlock'
         persist:
           type: boolean
-          description: Must be `false` for system events. System events are request-local and not stored in DynamoDB.
+          description: Must be `false` for system events. Request-local, not stored in DynamoDB.
 
     ContentBlock:
       type: object
@@ -787,10 +1006,8 @@ components:
       properties:
         type:
           type: string
-          example: text
         text:
           type: string
-          example: Hello
 
     ToolApprovalResponse:
       type: object
@@ -801,16 +1018,12 @@ components:
       properties:
         type:
           type: string
-          example: tool-approval-response
         approvalId:
           type: string
-          description: Required to match the decision to the pending tool call
         approved:
           type: boolean
-          description: Set to false to deny the tool execution
         reason:
           type: string
-          description: Reason for approval or denial
 
     StatusProcessing:
       type: object
@@ -821,7 +1034,6 @@ components:
           type: string
         status:
           type: string
-          example: processing
 
     StatusAwaitingApproval:
       type: object
@@ -832,7 +1044,6 @@ components:
           type: string
         status:
           type: string
-          example: awaiting_approval
         approvals:
           type: array
           items:
@@ -844,7 +1055,6 @@ components:
                 type: string
               toolName:
                 type: string
-                example: filesystem
               input:
                 type: object
 
@@ -857,9 +1067,9 @@ components:
           type: string
         status:
           type: string
-          example: completed
         response:
           type: object
+          description: Parsed JSON value when structured output is configured
 
     StatusFailed:
       type: object
@@ -870,10 +1080,8 @@ components:
           type: string
         status:
           type: string
-          example: failed
         error:
           type: string
-          description: Failure details
 
     ToolCompletionSuccess:
       type: object
@@ -883,10 +1091,8 @@ components:
       properties:
         status:
           type: string
-          example: completed
         response:
           type: object
-          description: Tool execution result
 
     ToolCompletionFailure:
       type: object
@@ -896,70 +1102,52 @@ components:
       properties:
         status:
           type: string
-          example: failed
         error:
           type: string
-          description: Error message
 
     Error:
       type: object
       properties:
         error:
           type: string
-          example: Unauthorized
 
     Account:
       type: object
       properties:
         accountId:
           type: string
-          description: Generated stable identifier
-          example: acct_...
         username:
           type: string
-          description: Human-readable account name
-          example: company-a
         description:
           type: string
-          description: Purpose or usage note
-          example: Company A account
 
     Agent:
       type: object
       properties:
         accountId:
           type: string
-          example: acct_...
         agentId:
           type: string
-          example: agent_...
         name:
           type: string
-          example: support-agent
         description:
           type: string
-          example: Customer support agent
 
     Skill:
       type: object
       properties:
         skillPath:
           type: string
-          description: Account-scoped skill path
-          example: acct_.../support-flow
         name:
           type: string
-          example: support-flow
         description:
           type: string
-          example: Handles support triage
 
     DeleteResponse:
       type: object
       properties:
         deleted:
           type: boolean
-          example: true
         cleanup:
           type: object
           properties:
@@ -980,112 +1168,452 @@ components:
 
     AgentConfig:
       type: object
-      description: Agent runtime configuration. See account-management.md for full field reference.
+      description: Agent runtime configuration passed via agent create/update. Config patch is a deep merge.
       properties:
         provider:
-          type: object
-          description: Provider constructor settings
+          $ref: '#/components/schemas/ProviderConfig'
         model:
-          type: object
-          description: Vercel AI SDK streamText settings
+          $ref: '#/components/schemas/ModelConfig'
         agent:
-          type: object
-          description: Agent runtime behavior
-          properties:
-            maxTurn:
-              type: integer
-            system:
-              type: string
+          $ref: '#/components/schemas/AgentRuntimeConfig'
         hooks:
-          type: object
-          description: Lifecycle hooks configuration
+          $ref: '#/components/schemas/HooksConfig'
         skills:
-          type: object
-          description: Skills configuration
-          properties:
-            enabled:
-              type: boolean
-            allowed:
-              type: array
-              items:
-                type: string
+          $ref: '#/components/schemas/SkillsConfig'
         subagent:
+          $ref: '#/components/schemas/SubagentConfig'
+        workspace:
+          $ref: '#/components/schemas/WorkspaceConfig'
+        session:
+          $ref: '#/components/schemas/SessionConfig'
+        tools:
+          $ref: '#/components/schemas/ToolsConfig'
+        channels:
+          $ref: '#/components/schemas/ChannelsConfig'
+
+    ProviderConfig:
+      type: object
+      description: Constructor settings for the AI SDK provider. The selected provider entry must exist and include its `apiKey`. Secret-like fields are encrypted at rest and redacted from reads.
+      properties:
+        google:
           type: object
-          description: Subagent dispatch configuration
+          description: Google Generative AI provider
+          properties:
+            apiKey:
+              type: string
+            baseURL:
+              type: string
+            headers:
+              type: object
+        openai:
+          type: object
+          description: OpenAI provider
+          properties:
+            apiKey:
+              type: string
+            baseURL:
+              type: string
+            organization:
+              type: string
+            project:
+              type: string
+            name:
+              type: string
+        bedrock:
+          type: object
+          description: AWS Bedrock provider
+          properties:
+            region:
+              type: string
+            apiKey:
+              type: string
+            accessKeyId:
+              type: string
+            secretAccessKey:
+              type: string
+            sessionToken:
+              type: string
+        gateway:
+          type: object
+          description: Gateway provider
+          properties:
+            apiKey:
+              type: string
+            baseURL:
+              type: string
+            headers:
+              type: object
+        minimax:
+          type: object
+          description: MiniMax provider
+          properties:
+            apiKey:
+              type: string
+            baseURL:
+              type: string
+            headers:
+              type: object
+
+    ModelConfig:
+      type: object
+      description: Controls the Vercel AI SDK `streamText` call. All standard `streamText` parameters pass through directly. The `options` field maps to `providerOptions`.
+      properties:
+        provider:
+          type: string
+          description: Provider constructor key matching `provider` config
+        modelId:
+          type: string
+          description: Provider-specific model identifier
+        temperature:
+          type: number
+        maxOutputTokens:
+          type: integer
+        topP:
+          type: number
+        topK:
+          type: integer
+        stopSequences:
+          type: array
+          items:
+            type: string
+        headers:
+          type: object
+        timeout:
+          type: integer
+          description: Request timeout in seconds
+        output:
+          $ref: '#/components/schemas/OutputConfig'
+        options:
+          type: object
+          description: Provider-specific `providerOptions`
+
+    OutputConfig:
+      type: object
+      description: Structured output config. JSON-only so it can be stored in encrypted agent config. Use JSON Schema rather than Zod.
+      properties:
+        type:
+          type: string
+          enum: [text, object, array, choice, json]
+        name:
+          type: string
+        description:
+          type: string
+        schema:
+          type: object
+          description: JSON Schema for `object` type
+        element:
+          type: object
+          description: JSON Schema for `array` element type
+        options:
+          type: array
+          items:
+            type: string
+          description: String options for `choice` type
+
+    AgentRuntimeConfig:
+      type: object
+      description: Controls harness behavior. The runtime always prepends an environment system prompt (current time, timezone) before this agent prompt.
+      properties:
+        maxTurn:
+          type: integer
+          description: Maximum model/tool loop steps per conversation turn
+        system:
+          type: string
+          description: Replaces the generated default system prompt. Do not duplicate current-time instructions.
+
+    HooksConfig:
+      type: object
+      description: Lifecycle hooks publish stable agent runtime events. Delivery is best-effort.
+      properties:
+        webhook:
+          type: object
           properties:
             enabled:
               type: boolean
-            allowed:
+            url:
+              type: string
+              description: HTTPS endpoint for event JSON
+            secret:
+              type: string
+              description: HMAC signing secret for `X-Webhook-Signature`
+            events:
               type: array
               items:
                 type: string
-            context:
-              type: string
-              enum: [new, inherited]
-        workspace:
+              description: Optional allow-list; omitted means all events
+
+    SkillsConfig:
+      type: object
+      description: When enabled, the runtime includes allowed skill metadata in the system prompt and exposes the `load_skill` tool.
+      properties:
+        enabled:
+          type: boolean
+        allowed:
+          type: array
+          items:
+            type: string
+          description: Account-scoped skill paths (e.g., `acct_.../support-flow`)
+
+    SubagentConfig:
+      type: object
+      description: When enabled, the runtime exposes `run_subagent` and adds predefined subagent metadata to the parent prompt.
+      properties:
+        enabled:
+          type: boolean
+        allowed:
+          type: array
+          items:
+            type: string
+          description: Predefined same-account agent ids; empty means virtual subagents only
+        context:
+          type: string
+          enum: [new, inherited]
+          description: Default child context mode; omitted means `new`
+
+    WorkspaceConfig:
+      type: object
+      description: Enables workspace-backed features including `MEMORY.md`, filesystem, sandbox execution, and tasks.
+      properties:
+        enabled:
+          type: boolean
+        needsApproval:
+          type: boolean
+          description: Requires AI SDK approval before every workspace tool execution
+        memory:
           type: object
-          description: Workspace-backed features configuration
           properties:
             enabled:
               type: boolean
-            needsApproval:
-              type: boolean
-            memory:
-              type: object
-              properties:
-                enabled:
-                  type: boolean
-                namespace:
-                  type: string
-            sandbox:
-              type: object
-              properties:
-                enabled:
-                  type: boolean
-                provider:
-                  type: string
-                  enum: [lambda, e2b, daytona]
-                timeout:
-                  type: integer
-                memoryLimit:
-                  type: integer
-                outputLimitBytes:
-                  type: integer
-                dependencies:
-                  type: object
-                  properties:
-                    npm:
-                      type: array
-                      items:
-                        type: string
-                    pip:
-                      type: array
-                      items:
-                        type: string
-            tasks:
-              type: object
-              properties:
-                enabled:
-                  type: boolean
-        session:
+            namespace:
+              type: string
+              description: Session namespace key; `null` means per-conversation state
+        sandbox:
           type: object
-          description: Session history management
+          description: File-only `node` and `python` execution from the filesystem tool
           properties:
-            pruning:
+            enabled:
+              type: boolean
+            provider:
+              type: string
+              enum: [lambda, e2b, daytona]
+            timeout:
+              type: integer
+              description: "Per-run timeout in seconds (1–120, default: 30)"
+            memoryLimit:
+              type: integer
+              description: Requested memory cap in MB (1–1024)
+            outputLimitBytes:
+              type: integer
+              description: "Captured stdout/stderr limit (1–262144, default: 65536)"
+            filesystem:
               type: object
               properties:
-                enabled:
-                  type: boolean
-            compaction:
-              type: object
-              properties:
-                enabled:
-                  type: boolean
-                maxContextLength:
-                  type: integer
-        tools:
+                mount:
+                  type: string
+                  enum: [native]
+        tasks:
           type: object
-          description: External tools configuration
-        channels:
+          properties:
+            enabled:
+              type: boolean
+
+    SessionConfig:
+      type: object
+      description: Controls model-visible history management.
+      properties:
+        pruning:
           type: object
-          description: Channel webhook configuration
+          properties:
+            enabled:
+              type: boolean
+              description: "Automatic history pruning (default: `true`)"
+        compaction:
+          type: object
+          properties:
+            enabled:
+              type: boolean
+              description: "Context compaction (default: `false`)"
+            maxContextLength:
+              type: integer
+              description: Serialized character-length threshold
+
+    ToolsConfig:
+      type: object
+      description: "Enables external tools. Keys must match available tool names. Omitting or `enabled: false` disables the tool."
+      properties:
+        tavilySearch:
+          $ref: '#/components/schemas/TavilySearchConfig'
+        tavilyExtract:
+          $ref: '#/components/schemas/TavilyExtractConfig'
+        googleSearch:
+          $ref: '#/components/schemas/GoogleSearchConfig'
+        test_async:
+          $ref: '#/components/schemas/TestAsyncConfig'
+        test_external_async:
+          $ref: '#/components/schemas/TestExternalAsyncConfig'
+
+    TavilySearchConfig:
+      type: object
+      properties:
+        enabled:
+          type: boolean
+        async:
+          type: boolean
+        execution:
+          type: string
+          enum: [same-invocation, external-dispatch]
+        needsApproval:
+          type: boolean
+        apiKey:
+          type: string
+        searchDepth:
+          type: string
+          enum: [basic, advanced]
+        includeAnswer:
+          type: boolean
+        maxResults:
+          type: integer
+          description: "1–20, default: 5"
+        topic:
+          type: string
+          enum: [general, news, finance]
+
+    TavilyExtractConfig:
+      type: object
+      properties:
+        enabled:
+          type: boolean
+        async:
+          type: boolean
+        execution:
+          type: string
+          enum: [same-invocation, external-dispatch]
+        needsApproval:
+          type: boolean
+        apiKey:
+          type: string
+        extractDepth:
+          type: string
+          enum: [basic, advanced]
+        format:
+          type: string
+          enum: [markdown, text]
+
+    GoogleSearchConfig:
+      type: object
+      description: Requires `config.model.provider` to be `google`. Provider-defined tools cannot use async wrapping.
+      properties:
+        enabled:
+          type: boolean
+        needsApproval:
+          type: boolean
+        searchTypes:
+          type: object
+          description: "Keys: `webSearch`, `imageSearch`"
+        timeRangeFilter:
+          type: object
+          properties:
+            startTime:
+              type: string
+              description: ISO date string
+            endTime:
+              type: string
+              description: ISO date string
+
+    TestAsyncConfig:
+      type: object
+      description: Local async example tool for testing
+      properties:
+        enabled:
+          type: boolean
+        async:
+          type: boolean
+        execution:
+          type: string
+          enum: [same-invocation, external-dispatch]
+        needsApproval:
+          type: boolean
+
+    TestExternalAsyncConfig:
+      type: object
+      description: External-dispatch mock tool fixture for testing
+      properties:
+        enabled:
+          type: boolean
+        async:
+          type: boolean
+        execution:
+          type: string
+          enum: [external-dispatch]
+        completionBaseUrl:
+          type: string
+          description: Harness `AGENT_SERVICE_URL` for callback URL
+        completionBearerToken:
+          type: string
+          description: Account bearer token for mock worker callback
+
+    ChannelsConfig:
+      type: object
+      description: Channel webhook configuration. Webhook URLs follow the pattern `/webhooks/{accountId}/{agentId}/{channel}`.
+      properties:
+        telegram:
+          type: object
+          properties:
+            botToken:
+              type: string
+            webhookSecret:
+              type: string
+            allowedChatIds:
+              type: array
+              items:
+                type: integer
+            reactionEmoji:
+              type: string
+        github:
+          type: object
+          properties:
+            webhookSecret:
+              type: string
+            appId:
+              type: string
+            privateKey:
+              type: string
+              description: GitHub App private key (PEM)
+            allowedRepos:
+              type: array
+              items:
+                type: string
+              description: Repository slugs (`owner/repo`)
+        slack:
+          type: object
+          properties:
+            botToken:
+              type: string
+            signingSecret:
+              type: string
+            allowedChannelIds:
+              type: array
+              items:
+                type: string
+        discord:
+          type: object
+          properties:
+            botToken:
+              type: string
+            publicKey:
+              type: string
+            allowedGuildIds:
+              type: array
+              items:
+                type: string
+        pancake:
+          type: object
+          description: Page-validated (no signature header). Keep webhook URL private.
+          properties:
+            pageId:
+              type: string
+            pageAccessToken:
+              type: string
+            senderId:
+              type: string
+              description: Optional staff user ID for replies

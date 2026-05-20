@@ -70,21 +70,9 @@ const sidebars: SidebarsConfig = {
       ],
     },
     {
-      type: 'category',
+      type: 'link',
       label: 'API Reference',
-      collapsed: false,
-      items: [
-        {
-          type: 'doc',
-          id: 'direct-api',
-          label: 'Direct API Guide',
-        },
-        {
-          type: 'doc',
-          id: 'account-management',
-          label: 'Account Management Guide',
-        },
-      ],
+      href: '/api-reference',
     },
   ],
 };

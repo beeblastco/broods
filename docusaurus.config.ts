@@ -14,7 +14,7 @@ const config: Config = {
   title: 'BeeBlast Developer Docs',
   favicon: 'img/favicon.ico',
 
-  url: 'https://docs.beeblast.io',
+  url: 'https://docs.beeblast.co',
   baseUrl: '/',
 
   onBrokenLinks: 'throw',

@@ -154,7 +154,7 @@ Set `execution: "external-dispatch"` only for tools whose `execute` enqueues out
 
 See [`examples/tool-async.ts`](../examples/tool-async.ts) for a runnable direct SSE example that enables `config.tools.test_async.async` and asks the agent to call the `test_async` tool.
 
-The full config field reference lives in [Account Management](account-management.md#tools-config).
+The full config field reference lives in the [API Reference](/api-reference) under `AgentConfig.tools`.
 
 ## Add an External Tool
 
@@ -166,7 +166,7 @@ The full config field reference lives in [Account Management](account-management
 6. Add the factory to the static `toolFactories` map with the exact model-facing tool name.
 7. Add config validation in [`functions/_shared/accounts.ts`](../functions/_shared/accounts.ts) only for options the account can set.
 8. Optionally set `config.tools.<name>.async: true` for slow local `execute` tools. Use `execution: "same-invocation"` for SSE continuation or `execution: "external-dispatch"` only when `execute` starts external work and returns quickly.
-9. Update [Account Management](account-management.md#tools-config), [`examples/account.config.example.json`](../examples/account.config.example.json), and focused tests/examples when the public config shape changes.
+9. Update the [API Reference](/api-reference) `AgentConfig.tools` schema, [`examples/account.config.example.json`](../examples/account.config.example.json), and focused tests/examples when the public config shape changes.
 
 Keep the factory small. It should read `context.config`, resolve any API key, return a `ToolSet`, and leave unrelated orchestration to `harness.ts`.
 
