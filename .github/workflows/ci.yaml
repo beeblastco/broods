@@ -2,9 +2,23 @@ name: CI
 
 on:
   pull_request:
+    paths-ignore:
+      - 'docs/**'
+      - 'static/**'
+      - 'docusaurus.config.ts'
+      - 'sidebar.ts'
+      - '.github/workflows/deploy-docs.yaml'
+      - '**/*.md'
   push:
     branches-ignore:
       - main
+    paths-ignore:
+      - 'docs/**'
+      - 'static/**'
+      - 'docusaurus.config.ts'
+      - 'sidebar.ts'
+      - '.github/workflows/deploy-docs.yaml'
+      - '**/*.md'
 
 jobs:
   validate:

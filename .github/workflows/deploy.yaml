@@ -5,7 +5,21 @@ on:
     branches:
       - main
       - dev
+    paths-ignore:
+      - 'docs/**'
+      - 'static/**'
+      - 'docusaurus.config.ts'
+      - 'sidebar.ts'
+      - '.github/workflows/deploy-docs.yaml'
+      - '**/*.md'
   pull_request:
+    paths-ignore:
+      - 'docs/**'
+      - 'static/**'
+      - 'docusaurus.config.ts'
+      - 'sidebar.ts'
+      - '.github/workflows/deploy-docs.yaml'
+      - '**/*.md'
   create:
   workflow_dispatch:
     inputs:
