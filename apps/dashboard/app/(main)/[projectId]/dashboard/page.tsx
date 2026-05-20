@@ -53,7 +53,7 @@ export default function DashboardPage() {
             case "tracing":
                 return <TracingPanel />;
             case "tokens":
-                return <TokensUsagePanel />;
+                return <TokensUsagePanel projectId={projectId} />;
             case "billing":
                 return <BillingPanel projectId={projectId} />;
             default:

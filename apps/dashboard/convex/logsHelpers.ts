@@ -1,9 +1,9 @@
 /** Helper queries used by the logs action. */
 
 import { v } from "convex/values";
-import { query } from "./_generated/server";
+import { internalQuery } from "./_generated/server";
 
-export const getActiveDeploymentsInternal = query({
+export const getActiveDeploymentsInternal = internalQuery({
     args: {
         authId: v.string(),
         projectId: v.id("projects"),
