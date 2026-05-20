@@ -167,3 +167,27 @@ bun examples/async.ts
 
 - GitHub Actions runs CI on pull requests and non-`main` pushes, and deploys on pushes to `main`.
 - Deploy requires repository secrets `SST_SECRET_ADMINACCOUNTSECRET` and `SST_SECRET_ACCOUNTCONFIGENCRYPTIONSECRET`.
+
+## Runtime Telemetry
+
+`harness-processing` writes compact JSON log lines for metric-bearing model and tool events so CloudWatch Logs Insights, metric filters, and dashboards can graph model usage without parsing SSE payloads.
+
+```mermaid
+flowchart LR
+  Harness["harness.ts"] -->|"model.step.finished"| Logs["CloudWatch Logs"]
+  Harness -->|"tool.call.finished / failed"| Logs
+  Harness -->|"model.invocation.finished / failed"| Logs
+  Logs --> Metrics["metric filters<br/>tokens, duration, tools"]
+  Metrics --> Dashboards["usage + monitoring dashboards"]
+```
+
+Common fields:
+
+- `eventType` - stable metric key, for example `model.step.finished` or `tool.call.finished`
+- `accountId`, `agentId`, `conversationKey`, `eventId`
+- `modelProvider`, `modelId`, `stepNumber`, `durationMs`
+- `model.step.finished` carries per-model-call `durationMs`, the AI SDK `usage`, response ID/model/timestamp, provider metadata, warning counts, and tool call/result counts
+- `model.invocation.finished` and `model.invocation.failed` carry final turn status, whole-run `durationMs`, AI SDK total token `usage`, step count, and tool call count
+- `toolName`, `toolCallId`, and `durationMs` for tool events
+
+Prompts, full tool inputs, tool outputs, request bodies, response bodies, and response headers are not logged by default. This keeps the CloudWatch stream useful for usage visualization while avoiding high-volume or sensitive payloads.

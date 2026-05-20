@@ -47,6 +47,7 @@ flowchart TD
   Session --> Harness["harness.ts<br/>model/tool loop"]
   Harness --> Model["Configured AI SDK provider<br/>Google / OpenAI / Bedrock / Gateway"]
   Harness --> Tools["workspace + account-enabled tools"]
+  Harness -->|"structured JSON logs<br/>usage + tool metadata"| CloudWatch["CloudWatch Logs<br/>metrics + dashboards"]
   Harness --> AsyncTools["async-tools.ts<br/>async external tool wrapper"]
   Harness --> Subagents["subagents.ts<br/>parallel child runs + parent continuation"]
   Handler -->|"nats-worker publishes stream events"| NATS

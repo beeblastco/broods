@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it, mock } from "bun:test";
 import * as actualAi from "ai";
 
 const ORIGINAL_ENV = { ...process.env };
+const ORIGINAL_STDOUT_WRITE = process.stdout.write.bind(process.stdout);
 const originalFetch = globalThis.fetch;
 const googleModelMock = mock((modelId: string) => ({ provider: "google", modelId }));
 const createGoogleMock = mock((_options: unknown) => googleModelMock);
@@ -21,12 +22,26 @@ const createMinimaxMock = mock((_options: unknown) => minimaxModelMock);
 let streamTextScenario: "empty" | "error-then-empty" | "approval-request" | "structured-output" = "empty";
 
 const streamTextMock = mock((options: {
+  experimental_onStepStart?: (args: {
+    stepNumber: number;
+    model: { provider: string; modelId: string };
+    messages: unknown[];
+    tools?: Record<string, unknown>;
+    activeTools?: string[];
+    metadata?: Record<string, unknown>;
+  }) => Promise<void>;
   experimental_onToolCallStart?: unknown;
   experimental_onToolCallFinish?: unknown;
   onChunk?: unknown;
   onError(args: { error: unknown }): Promise<void>;
   onFinish(args: {
-    response: { messages: unknown[] };
+    response: {
+      messages: unknown[];
+      id?: string;
+      modelId?: string;
+      timestamp?: Date;
+      headers?: Record<string, string>;
+    };
     text: string;
     finishReason: string;
     usage: {
@@ -36,6 +51,33 @@ const streamTextMock = mock((options: {
     };
     steps: Array<{ content: unknown[] }>;
     toolCalls: unknown[];
+    rawFinishReason?: string;
+    totalUsage?: {
+      inputTokens: number;
+      outputTokens: number;
+      totalTokens: number;
+    };
+    request?: Record<string, unknown>;
+    providerMetadata?: Record<string, unknown>;
+    metadata?: Record<string, unknown>;
+  }): Promise<void>;
+  onStepFinish?(args: {
+    stepNumber: number;
+    model: { provider: string; modelId: string };
+    finishReason: string;
+    rawFinishReason?: string;
+    usage: {
+      inputTokens: number;
+      outputTokens: number;
+      totalTokens: number;
+    };
+    toolCalls: unknown[];
+    toolResults: unknown[];
+    warnings?: unknown[];
+    request: Record<string, unknown>;
+    response: { messages: unknown[]; id: string; modelId: string; timestamp: Date; headers?: Record<string, string> };
+    providerMetadata?: Record<string, unknown>;
+    metadata?: Record<string, unknown>;
   }): Promise<void>;
   output?: unknown;
   stopWhen?: unknown;
@@ -89,13 +131,57 @@ const streamTextMock = mock((options: {
       }
 
       if (streamTextScenario === "structured-output") {
+        await options.experimental_onStepStart?.({
+          stepNumber: 0,
+          model: { provider: "google", modelId: "gemini-custom" },
+          messages: [{ role: "user", content: "hello" }],
+          tools: options.tools as Record<string, unknown> | undefined,
+          metadata: { run: "test" },
+        });
+        await options.onStepFinish?.({
+          stepNumber: 0,
+          model: { provider: "google", modelId: "gemini-custom" },
+          finishReason: "stop",
+          rawFinishReason: "STOP",
+          usage: { inputTokens: 4, outputTokens: 6, totalTokens: 10 },
+          toolCalls: [],
+          toolResults: [],
+          warnings: [],
+          request: {},
+          response: {
+            messages: [{ role: "assistant", content: "{\"answer\":\"done\"}" }],
+            id: "response-1",
+            modelId: "gemini-custom",
+            timestamp: new Date("2024-01-02T03:04:05.000Z"),
+            headers: {
+              "x-request-id": "request-1",
+              authorization: "redacted",
+            },
+          },
+          providerMetadata: { google: { safetyRatings: [] } },
+          metadata: { run: "test" },
+        });
         await options.onFinish({
-          response: { messages: [{ role: "assistant", content: "{\"answer\":\"done\"}" }] },
+          response: {
+            messages: [{ role: "assistant", content: "{\"answer\":\"done\"}" }],
+            id: "response-1",
+            modelId: "gemini-custom",
+            timestamp: new Date("2024-01-02T03:04:05.000Z"),
+            headers: {
+              "x-request-id": "request-1",
+              authorization: "redacted",
+            },
+          },
           text: "{\"answer\":\"done\"}",
           finishReason: "stop",
+          rawFinishReason: "STOP",
           usage: { inputTokens: 4, outputTokens: 6, totalTokens: 10 },
+          totalUsage: { inputTokens: 4, outputTokens: 6, totalTokens: 10 },
           steps: [],
           toolCalls: [],
+          request: {},
+          providerMetadata: { google: { safetyRatings: [] } },
+          metadata: { run: "test" },
         });
         controller.enqueue({ type: "finish", finishReason: "stop" });
         controller.close();
@@ -156,6 +242,7 @@ mock.module("ai", () => ({
 
 afterEach(() => {
   process.env = { ...ORIGINAL_ENV };
+  process.stdout.write = ORIGINAL_STDOUT_WRITE;
   globalThis.fetch = originalFetch;
   streamTextScenario = "empty";
   streamTextMock.mockClear();
@@ -528,6 +615,77 @@ describe("runAgentLoop", () => {
     expect(stream.hasStructuredOutput()).toBe(true);
     expect(stream.finalResponse()).toEqual({ answer: "done" });
     expect(onFinalText).toHaveBeenCalledWith({ answer: "done" });
+  });
+
+  it("emits structured CloudWatch telemetry for model invocations and steps", async () => {
+    streamTextScenario = "structured-output";
+    installHarnessEnv();
+    const lines: string[] = [];
+    process.stdout.write = ((chunk: string | Uint8Array) => {
+      lines.push(typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf8"));
+      return true;
+    }) as typeof process.stdout.write;
+    const { runAgentLoop } = await import("../functions/harness-processing/harness.ts");
+
+    const stream = await runAgentLoop({
+      accountId: "acct_test",
+      agentId: "agent_test",
+      conversationKey: "direct:conversation",
+      eventId: "direct-event",
+      filesystemNamespace: () => "fs-test",
+      persistModelMessages: async () => { },
+      loadRefreshedSystemPromptParts: async () => ({
+        systemContextSnapshot: { cursor: null, messages: [] },
+        system: [],
+      }),
+    } as never, {
+      messages: [{ role: "user", content: "hello" }],
+      system: [],
+      ephemeralSystem: [],
+      systemContextSnapshot: { cursor: null, messages: [] },
+    }, {
+      provider: {
+        google: {
+          apiKey: "google-key",
+        },
+      },
+      model: {
+        provider: "google",
+        modelId: "gemini-custom",
+      },
+    });
+
+    await stream.consumeStream();
+
+    const logs = lines.map((line) => JSON.parse(line));
+    expect(logs.map((log) => log.eventType).filter(Boolean)).toEqual([
+      "model.step.finished",
+      "model.invocation.finished",
+    ]);
+    expect(logs.find((log) => log.eventType === "model.step.finished")).toMatchObject({
+      accountId: "acct_test",
+      agentId: "agent_test",
+      conversationKey: "direct:conversation",
+      eventId: "direct-event",
+      modelProvider: "google",
+      modelId: "gemini-custom",
+      usage: { inputTokens: 4, outputTokens: 6, totalTokens: 10 },
+      responseMetadata: {
+        id: "response-1",
+        modelId: "gemini-custom",
+        timestamp: "2024-01-02T03:04:05.000Z",
+      },
+      providerMetadata: {
+        google: {
+          safetyRatings: [],
+        },
+      },
+    });
+    expect(typeof logs.find((log) => log.eventType === "model.step.finished").durationMs).toBe("number");
+    expect(logs.find((log) => log.eventType === "model.invocation.finished")).toMatchObject({
+      usage: { inputTokens: 4, outputTokens: 6, totalTokens: 10 },
+    });
+    expect(logs.find((log) => log.eventType === "model.step.finished").responseMetadata).not.toHaveProperty("headers");
   });
 
   it("uses agent maxTurn for the model loop limit", async () => {

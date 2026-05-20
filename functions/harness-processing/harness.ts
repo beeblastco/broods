@@ -15,7 +15,7 @@ import {
   type ToolSet,
 } from "ai";
 import type { AgentConfig } from "../_shared/accounts.ts";
-import { logError, logInfo, logWarn } from "../_shared/log.ts";
+import { logError, logInfo } from "../_shared/log.ts";
 import {
   modelOutputFromModelConfig,
   modelSettingsFromModelConfig,
@@ -91,6 +91,18 @@ export async function runAgentLoop(
   let approvalSummaries: ToolApprovalSummary[] = [];
   let finalResponse: JSONValue | undefined;
 
+  // Log context
+  const runStartedAt = Date.now();
+  const stepStartedAt = new Map<number, number>();
+  const logContext = {
+    accountId: session.accountId,
+    agentId: session.agentId,
+    conversationKey: session.conversationKey,
+    eventId: session.eventId,
+    modelProvider: configuredModel.providerName,
+    modelId: agentConfig.model?.modelId,
+  };
+
   await lifecycle.emit("agent.started", {
     modelProvider: configuredModel.providerName,
     modelId: agentConfig.model?.modelId,
@@ -121,34 +133,33 @@ export async function runAgentLoop(
         system: refreshed.system,
       };
     },
+    experimental_onStepStart: async ({ stepNumber }) => {
+      stepStartedAt.set(stepNumber, Date.now());
+    },
     experimental_onToolCallStart: async ({ stepNumber, toolCall }) => {
+      if (stepNumber !== undefined && !stepStartedAt.has(stepNumber)) {
+        stepStartedAt.set(stepNumber, Date.now());
+      }
       await lifecycle.emit("tool.call.started", {
-        stepNumber,
+        stepNumber: stepNumber,
         toolCall: toLifecycleValue(toolCall),
-      });
-      logInfo("Tool call started", {
-        conversationKey: session.conversationKey,
-        eventId: session.eventId,
-        stepNumber,
-        toolName: toolCall.toolName,
-        toolCallId: toolCall.toolCallId,
       });
     },
     experimental_onToolCallFinish: async ({ stepNumber, toolCall, durationMs, success, error }) => {
       await lifecycle.emit("tool.call.finished", {
-        stepNumber,
+        stepNumber: stepNumber,
         toolCall: toLifecycleValue(toolCall),
-        durationMs,
-        success,
+        durationMs: durationMs,
+        success: success,
         ...(success ? {} : { error: errorMessage(error) }),
       });
       const details = {
-        conversationKey: session.conversationKey,
-        eventId: session.eventId,
-        stepNumber,
+        eventType: success ? "tool.call.finished" : "tool.call.failed",
+        ...logContext,
+        stepNumber: stepNumber,
         toolName: toolCall.toolName,
         toolCallId: toolCall.toolCallId,
-        durationMs,
+        durationMs: durationMs,
       };
 
       if (success) {
@@ -162,10 +173,24 @@ export async function runAgentLoop(
         errorDetails: serializeError(error),
       });
     },
-    onStepFinish: async ({ stepNumber, finishReason, usage, toolCalls, toolResults, warnings }) => {
+    onStepFinish: async ({
+      stepNumber,
+      finishReason,
+      rawFinishReason,
+      usage,
+      toolCalls,
+      toolResults,
+      warnings,
+      response,
+      providerMetadata,
+    }) => {
+      const startedAt = stepStartedAt.get(stepNumber);
+      const durationMs = startedAt === undefined ? undefined : Date.now() - startedAt;
+      stepStartedAt.delete(stepNumber);
+
       await lifecycle.emit("agent.step.finished", {
-        stepNumber,
-        finishReason,
+        stepNumber: stepNumber,
+        finishReason: finishReason,
         usage: toLifecycleValue(usage),
         toolCallCount: toolCalls.length,
         toolResultCount: toolResults.length,
@@ -173,19 +198,26 @@ export async function runAgentLoop(
       });
       await Promise.all(toolResults.map((toolResult) =>
         lifecycle.emit("tool.result", {
-          stepNumber,
+          stepNumber: stepNumber,
           toolResult: toLifecycleValue(toolResult),
         })
       ));
       logInfo("Agent loop step finished", {
-        conversationKey: session.conversationKey,
-        eventId: session.eventId,
-        stepNumber,
-        finishReason,
+        eventType: "model.step.finished",
+        ...logContext,
+        stepNumber: stepNumber,
+        finishReason: finishReason,
+        rawFinishReason: rawFinishReason,
+        durationMs: durationMs,
         toolCallCount: toolCalls.length,
-        toolResultCount: toolResults.length,
-        usage,
-        warningCount: warnings?.length ?? 0,
+        toolCalls: toolCalls.map(({ toolCallId, toolName }) => ({ toolCallId, toolName })),
+        usage: usage,
+        responseMetadata: {
+          id: response.id,
+          modelId: response.modelId,
+          timestamp: response.timestamp.toISOString(),
+        },
+        providerMetadata,
       });
     },
     onError: async ({ error }) => {
@@ -193,8 +225,9 @@ export async function runAgentLoop(
       didFail = true;
       failureText = errorText;
       logError("Agent loop failed", {
-        conversationKey: session.conversationKey,
-        eventId: session.eventId,
+        eventType: "model.invocation.failed",
+        ...logContext,
+        durationMs: Date.now() - runStartedAt,
         error: errorText,
         errorDetails: serializeError(error),
       });
@@ -202,12 +235,31 @@ export async function runAgentLoop(
       await lifecycle.emit("agent.failed", { error: errorText });
       await reply?.onErrorText(errorText).catch(() => { });
     },
-    onFinish: async ({ response, text, finishReason, steps, toolCalls, usage }) => {
+    onFinish: async ({
+      response,
+      text,
+      finishReason,
+      rawFinishReason,
+      steps,
+      toolCalls,
+      usage,
+      totalUsage,
+    }) => {
       const finalText = text.trim();
       const stepCount = steps.length;
       const toolCallCount = toolCalls.length;
       const approvalRequests = extractApprovalRequests(steps);
       const approvals = approvalRequests.map(summarizeApprovalRequest);
+      const finishLog = {
+        eventType: "model.invocation.finished",
+        ...logContext,
+        rawFinishReason: rawFinishReason,
+        durationMs: Date.now() - runStartedAt,
+        finishReason: finishReason,
+        stepCount: stepCount,
+        toolCallCount: toolCallCount,
+        usage: totalUsage,
+      };
 
       try {
         await session.persistModelMessages(
@@ -218,11 +270,7 @@ export async function runAgentLoop(
 
         if (approvals.length > 0) {
           approvalSummaries = approvals;
-          logInfo("Tool approval required", {
-            conversationKey: session.conversationKey,
-            eventId: session.eventId,
-            approvals,
-          });
+          logInfo("Model invocation finished", finishLog);
           await lifecycle.emit("agent.approval.required", {
             approvals: toLifecycleValue(approvals),
           });
@@ -233,26 +281,18 @@ export async function runAgentLoop(
         if (modelOutput) {
           finalResponse = await modelOutput.parseCompleteOutput({ text }, { response, usage, finishReason }) as JSONValue;
           await reply?.onFinalText(finalResponse);
+          logInfo("Model invocation finished", finishLog);
           await lifecycle.emit("agent.finished", {
-            finishReason,
-            stepCount,
-            toolCallCount,
+            finishReason: finishReason,
+            stepCount: stepCount,
+            toolCallCount: toolCallCount,
             response: toLifecycleValue(finalResponse),
           });
-          logInfo("Processing complete", { conversationKey: session.conversationKey });
           return;
         }
 
         if (!finalText) {
           if (didFail) {
-            logWarn("Model finished empty after a prior agent loop failure", {
-              conversationKey: session.conversationKey,
-              eventId: session.eventId,
-              failureText,
-              finishReason,
-              stepCount,
-              toolCallCount,
-            });
             return;
           }
 
@@ -263,18 +303,19 @@ export async function runAgentLoop(
           didFail = true;
           failureText = errorText;
           logError(errorText, {
-            conversationKey: session.conversationKey,
-            eventId: session.eventId,
-            finishReason,
-            stepCount,
-            toolCallCount,
-            responseMessageCount: response.messages.length,
+            eventType: "model.invocation.failed",
+            ...logContext,
+            durationMs: Date.now() - runStartedAt,
+            finishReason: finishReason,
+            stepCount: stepCount,
+            toolCallCount: toolCallCount,
+            usage: totalUsage ?? usage,
           });
           await lifecycle.emit("agent.failed", {
             error: errorText,
-            finishReason,
-            stepCount,
-            toolCallCount,
+            finishReason: finishReason,
+            stepCount: stepCount,
+            toolCallCount: toolCallCount,
           });
           await reply?.onErrorText(errorText).catch(() => { });
           return;
@@ -282,19 +323,21 @@ export async function runAgentLoop(
 
         finalResponse = finalText;
         await reply?.onFinalText(finalText);
+        logInfo("Model invocation finished", finishLog);
         await lifecycle.emit("agent.finished", {
-          finishReason,
-          stepCount,
-          toolCallCount,
+          finishReason: finishReason,
+          stepCount: stepCount,
+          toolCallCount: toolCallCount,
           response: finalText,
         });
-        logInfo("Processing complete", { conversationKey: session.conversationKey });
       } catch (err) {
         const errorText = errorMessage(err);
         didFail = true;
         failureText = errorText;
         logError("Post-generation steps failed", {
-          conversationKey: session.conversationKey,
+          eventType: "model.invocation.failed",
+          ...logContext,
+          durationMs: Date.now() - runStartedAt,
           error: errorText,
           errorDetails: serializeError(err),
         });
