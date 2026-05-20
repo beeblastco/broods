@@ -6,7 +6,7 @@ import type { Config } from '@docusaurus/types';
 import type * as Preset from '@docusaurus/preset-classic';
 
 const config: Config = {
-  title: 'BeeBlast Docs',
+  title: 'BeeBlast Developer Docs',
   favicon: 'img/favicon.ico',
 
   url: 'https://docs.beeblast.io',
@@ -73,10 +73,20 @@ const config: Config = {
       title: 'Docs',
       logo: {
         alt: 'BeeBlast Logo',
+        // href: 'https://beeblast.co',
         src: 'img/light-full.svg',
         srcDark: 'img/dark-full.svg',
       },
       items: [
+        {
+          href: 'https://dasboard.beeblast.co/',
+          position: 'right',
+        },
+        {
+          href: 'https://discord.gg/F48633Uca',
+          label: 'Discord',
+          position: 'right',
+        },
         {
           href: 'https://github.com/beeblastco/filthy-panty',
           label: 'GitHub',
