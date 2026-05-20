@@ -1,67 +1,157 @@
 "use client";
 
-/** Monitoring panel showing system-wide metrics and status. */
-import { Activity, Server, Clock, AlertCircle, CheckCircle } from "lucide-react";
-import { Section } from "@/app/components/Section";
+/** Monitoring panel: direct CloudWatch Logs query + error management. */
 import { Badge } from "@/app/components/ui/badge";
+import { Button } from "@/app/components/ui/button";
+import { Section } from "@/app/components/Section";
+import { api } from "@/convex/_generated/api";
+import type { Id } from "@/convex/_generated/dataModel";
+import { useAction } from "convex/react";
+import { AlertCircle, ExternalLink, RefreshCw, Server } from "lucide-react";
+import { useEffect, useState } from "react";
+import { toErrorMessage } from "@/app/lib/errors";
 
-const SYSTEM_METRICS = [
-    { label: "System Status", value: "Operational", icon: CheckCircle, color: "text-emerald-500" },
-    { label: "Active Agents", value: "12", icon: Activity, color: "text-blue-500" },
-    { label: "Avg Response Time", value: "340ms", icon: Clock, color: "text-amber-500" },
-    { label: "Server Load", value: "67%", icon: Server, color: "text-purple-500" },
-];
+interface Props {
+    projectId: Id<"projects">;
+}
 
-const RECENT_EVENTS = [
-    { time: "2 min ago", event: "Agent 'Data Processor' completed task", status: "success" as const },
-    { time: "5 min ago", event: "Webhook delivery failed (retry 2/3)", status: "warning" as const },
-    { time: "12 min ago", event: "New environment 'staging' deployed", status: "info" as const },
-    { time: "18 min ago", event: "Rate limit threshold reached (80%)", status: "warning" as const },
-    { time: "25 min ago", event: "Agent 'Email Handler' started execution", status: "info" as const },
-    { time: "32 min ago", event: "System health check passed", status: "success" as const },
-];
+const LEVEL_COLORS: Record<string, string> = {
+    ERROR: "text-red-500",
+    WARN: "text-amber-500",
+    INFO: "text-blue-400",
+    DEBUG: "text-muted-foreground",
+};
 
-export function MonitoringPanel() {
+const LEVEL_BADGE: Record<string, "destructive" | "warning" | "secondary"> = {
+    ERROR: "destructive",
+    WARN: "warning",
+    INFO: "secondary",
+    DEBUG: "secondary",
+};
+
+function formatTime(ms: number): string {
+    return new Date(ms).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+}
+
+export function MonitoringPanel({ projectId }: Props) {
+    const [isFetching, setIsFetching] = useState(false);
+    const [fetchError, setFetchError] = useState<string | null>(null);
+    const [logEntries, setLogEntries] = useState<Awaited<ReturnType<typeof api.logs.fetchForProject>> | null>(null);
+
+    const fetchForProject = useAction(api.logs.fetchForProject);
+
+    async function handleRefresh() {
+        setIsFetching(true);
+        setFetchError(null);
+        try {
+            const logs = await fetchForProject({ projectId: projectId });
+            setLogEntries(logs);
+        } catch (err) {
+            setFetchError(toErrorMessage(err));
+        } finally {
+            setIsFetching(false);
+        }
+    }
+
+    useEffect(() => {
+        handleRefresh();
+    }, []);
+
+    const errorCount = logEntries?.filter((e) => e.level === "ERROR").length ?? 0;
+    const warnCount = logEntries?.filter((e) => e.level === "WARN").length ?? 0;
+
     return (
         <div className="grid gap-8">
-            <Section title="System Overview" description="Current health and performance metrics.">
+            <Section title="System Overview" description="Error and warning counts from CloudWatch Logs.">
                 <div className="grid grid-cols-2 gap-3">
-                    {SYSTEM_METRICS.map((metric) => (
-                        <div key={metric.label} className="rounded-lg border border-border bg-card px-4 py-3">
-                            <div className="flex items-center gap-2">
-                                <metric.icon className={`size-4 ${metric.color}`} />
-                                <span className="text-xs text-muted-foreground">{metric.label}</span>
-                            </div>
-                            <p className="mt-2 text-2xl font-semibold text-foreground">{metric.value}</p>
+                    <div className="rounded-lg border border-border bg-card px-4 py-3">
+                        <div className="flex items-center gap-2">
+                            <AlertCircle className="size-4 text-red-500" />
+                            <span className="text-xs text-muted-foreground">Errors</span>
                         </div>
-                    ))}
+                        <p className="mt-2 text-2xl font-semibold text-foreground">{errorCount}</p>
+                    </div>
+                    <div className="rounded-lg border border-border bg-card px-4 py-3">
+                        <div className="flex items-center gap-2">
+                            <AlertCircle className="size-4 text-amber-500" />
+                            <span className="text-xs text-muted-foreground">Warnings</span>
+                        </div>
+                        <p className="mt-2 text-2xl font-semibold text-foreground">{warnCount}</p>
+                    </div>
                 </div>
             </Section>
 
-            <Section title="Recent Events" description="Latest system activity and notifications.">
-                <div className="rounded-lg border border-border bg-card divide-y divide-border">
-                    {RECENT_EVENTS.map((event, i) => (
-                        <div key={i} className="flex items-start gap-3 px-4 py-3">
-                            {event.status === "success" ? (
-                                <CheckCircle className="size-4 text-emerald-500 mt-0.5 shrink-0" />
-                            ) : event.status === "warning" ? (
-                                <AlertCircle className="size-4 text-amber-500 mt-0.5 shrink-0" />
-                            ) : (
-                                <Activity className="size-4 text-blue-500 mt-0.5 shrink-0" />
-                            )}
-                            <div className="flex-1 min-w-0">
-                                <p className="text-sm text-foreground">{event.event}</p>
-                                <p className="text-xs text-muted-foreground mt-0.5">{event.time}</p>
-                            </div>
-                            <Badge
-                                variant={event.status === "success" ? "success" : event.status === "warning" ? "warning" : "secondary"}
-                                className="text-xs"
-                            >
-                                {event.status}
-                            </Badge>
-                        </div>
-                    ))}
+            <Section
+                title="CloudWatch Logs"
+                description="Live log stream queried directly from AWS CloudWatch."
+            >
+                <div className="flex items-center justify-between mb-3">
+                    <div className="flex items-center gap-2">
+                        <Server className="size-4 text-muted-foreground" />
+                        <span className="text-xs text-muted-foreground">
+                            {logEntries?.length ?? 0} entries
+                        </span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                        <Button
+                            size="sm"
+                            variant="outline"
+                            className="cursor-pointer gap-1.5"
+                            onClick={handleRefresh}
+                            disabled={isFetching}
+                        >
+                            <RefreshCw className={`size-3.5 ${isFetching ? "animate-spin" : ""}`} />
+                            {isFetching ? "Fetching…" : "Refresh Logs"}
+                        </Button>
+                    </div>
                 </div>
+
+                {fetchError && (
+                    <p className="mb-3 text-sm text-destructive">{fetchError}</p>
+                )}
+
+                {logEntries === null && !isFetching && (
+                    <div className="rounded-lg border border-border bg-card px-4 py-6 text-center">
+                        <p className="text-sm text-muted-foreground">No logs loaded yet.</p>
+                        <p className="text-xs text-muted-foreground mt-1">
+                            Click &ldquo;Refresh Logs&rdquo; to query CloudWatch.
+                        </p>
+                    </div>
+                )}
+
+                {logEntries !== null && logEntries.length === 0 && (
+                    <div className="rounded-lg border border-border bg-card px-4 py-8 text-center">
+                        <Server className="size-8 mx-auto mb-2 text-muted-foreground" />
+                        <p className="text-sm text-muted-foreground">No logs found in CloudWatch.</p>
+                        <p className="text-xs text-muted-foreground mt-1">
+                            Logs may not exist yet for these deployments.
+                        </p>
+                    </div>
+                )}
+
+                {logEntries !== null && logEntries.length > 0 && (
+                    <div className="rounded-lg border border-border bg-card divide-y divide-border font-mono text-xs overflow-hidden">
+                        {logEntries.map((entry, i) => (
+                            <div key={i} className="flex items-start gap-3 px-4 py-2.5">
+                                <span className="shrink-0 text-muted-foreground tabular-nums">
+                                    {formatTime(entry.timestamp)}
+                                </span>
+                                <Badge
+                                    variant={LEVEL_BADGE[entry.level] ?? "secondary"}
+                                    className="shrink-0 text-[10px] px-1.5"
+                                >
+                                    {entry.level}
+                                </Badge>
+                                <span className="shrink-0 text-muted-foreground/60">
+                                    {entry.functionName}
+                                </span>
+                                <span className={`flex-1 break-all ${LEVEL_COLORS[entry.level] ?? ""}`}>
+                                    {entry.message}
+                                </span>
+                            </div>
+                        ))}
+                    </div>
+                )}
             </Section>
         </div>
     );

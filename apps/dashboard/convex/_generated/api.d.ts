@@ -15,9 +15,12 @@ import type * as canvas from "../canvas.js";
 import type * as environment from "../environment.js";
 import type * as http from "../http.js";
 import type * as lib_slug from "../lib/slug.js";
+import type * as logs from "../logs.js";
+import type * as logsHelpers from "../logsHelpers.js";
 import type * as model_ownership_environment from "../model/ownership/environment.js";
 import type * as model_ownership_project from "../model/ownership/project.js";
 import type * as project from "../project.js";
+import type * as stripe from "../stripe.js";
 import type * as toolService from "../toolService.js";
 import type * as user from "../user.js";
 
@@ -35,9 +38,12 @@ declare const fullApi: ApiFromModules<{
   environment: typeof environment;
   http: typeof http;
   "lib/slug": typeof lib_slug;
+  logs: typeof logs;
+  logsHelpers: typeof logsHelpers;
   "model/ownership/environment": typeof model_ownership_environment;
   "model/ownership/project": typeof model_ownership_project;
   project: typeof project;
+  stripe: typeof stripe;
   toolService: typeof toolService;
   user: typeof user;
 }>;
@@ -70,4 +76,5 @@ export declare const internal: FilterApi<
 
 export declare const components: {
   workOSAuthKit: import("@convex-dev/workos-authkit/_generated/component.js").ComponentApi<"workOSAuthKit">;
+  stripe: import("@convex-dev/stripe/_generated/component.js").ComponentApi<"stripe">;
 };

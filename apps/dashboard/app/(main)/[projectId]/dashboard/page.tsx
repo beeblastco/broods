@@ -1,10 +1,10 @@
 "use client";
 
-/** Dashboard page with sidebar for monitoring, tracing, tokens usage, and billing. */
+/** Dashboard page with sidebar navigation and a titled content panel. */
 import { Button } from "@/app/components/ui/button";
+import { cn } from "@/app/lib/utils";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
-import { cn } from "@/app/lib/utils";
 import { useQuery } from "convex/react";
 import { useParams } from "next/navigation";
 import { useState } from "react";
@@ -25,7 +25,7 @@ type DashboardTab = (typeof TABS)[number]["id"];
 export default function DashboardPage() {
     const params = useParams<{ projectId: string }>();
     const projectId = params.projectId as Id<"projects">;
-    const project = useQuery(api.project.getById, { projectId });
+    const project = useQuery(api.project.getById, { projectId: projectId });
     const [activeTab, setActiveTab] = useState<DashboardTab>("monitoring");
 
     if (project === undefined) {
@@ -44,28 +44,31 @@ export default function DashboardPage() {
         );
     }
 
+    const activeLabel = TABS.find((t) => t.id === activeTab)?.label ?? "";
+
     const renderPanel = () => {
         switch (activeTab) {
             case "monitoring":
-                return <MonitoringPanel />;
+                return <MonitoringPanel projectId={projectId} />;
             case "tracing":
                 return <TracingPanel />;
             case "tokens":
                 return <TokensUsagePanel />;
             case "billing":
-                return <BillingPanel />;
+                return <BillingPanel projectId={projectId} />;
             default:
-                return <MonitoringPanel />;
+                return <MonitoringPanel projectId={projectId} />;
         }
     };
 
     return (
         <div className="flex h-full">
+            {/* Sidebar */}
             <aside className="flex w-48 shrink-0 flex-col bg-transparent">
                 <div className="px-6 pt-9.25 pb-3">
-                    <h2 className="text-lg font-semibold text-foreground">Dashboard</h2>
+                    <h2 className="text-xl font-semibold text-foreground">Dashboard</h2>
                 </div>
-                <nav className="flex flex-col gap-0.5 px-6">
+                <nav className="flex flex-col gap-0.5 px-3">
                     {TABS.map((tab) => (
                         <Button
                             key={tab.id}
@@ -85,8 +88,13 @@ export default function DashboardPage() {
                 </nav>
             </aside>
 
+            {/* Content area */}
             <div className="flex flex-1 flex-col overflow-auto">
-                <div className="mx-auto w-full max-w-2xl px-6 py-10">
+                {/* Page title — aligned with sidebar header height */}
+                <div className="px-8 pt-9.25 pb-5 mx-auto w-full max-w-2xl shrink-0">
+                    <h2 className="text-xl font-semibold text-foreground">{activeLabel}</h2>
+                </div>
+                <div className="mx-auto w-full max-w-2xl px-8 pb-12">
                     {renderPanel()}
                 </div>
             </div>

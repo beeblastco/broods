@@ -90,6 +90,8 @@ export const toolServicesFields = {
     updatedAt: v.number(),
 };
 
+
+
 export default defineSchema({
     users: defineTable(usersFields)
         .index("by_authId", ["authId"])
@@ -106,7 +108,8 @@ export default defineSchema({
     canvasLayouts: defineTable(canvasLayoutsFields)
         .index("by_projectId_and_environmentId", ["projectId", "environmentId"]),
     agentDeployments: defineTable(agentDeploymentsFields)
-        .index("by_agentConfigId", ["agentConfigId"]),
+        .index("by_agentConfigId", ["agentConfigId"])
+        .index("by_authId", ["authId"]),
     toolServices: defineTable(toolServicesFields)
         .index("by_projectId_environmentId_and_nodeId", [
             "projectId",

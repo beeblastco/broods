@@ -81,8 +81,8 @@ export const { authKitEvent } = authKit.events({
         }
         await ctx.db.delete(user._id);
     },
-    "session.created": async () => {},
-    "session.revoked": async () => {},
+    "session.created": async () => { },
+    "session.revoked": async () => { },
 });
 
 /**

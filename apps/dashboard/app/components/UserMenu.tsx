@@ -5,7 +5,7 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/app/components/ui/avatar"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/app/components/ui/dropdown-menu";
 import { useAuth } from "@workos-inc/authkit-nextjs/components";
 import { useConvexAuth } from "convex/react";
-import { FileText, HelpCircle, LogOut, Moon, Settings, Sun } from "lucide-react";
+import { FileText, HelpCircle, LogOut, Moon, ScrollText, Settings, Shield, Sun } from "lucide-react";
 import { useTheme } from "next-themes";
 import { useParams, useRouter } from "next/navigation";
 
@@ -61,11 +61,19 @@ export function UserMenu() {
                     </DropdownMenuItem>
                 )}
                 <DropdownMenuSeparator />
-                <DropdownMenuItem
-                    className="cursor-pointer"
-                    asChild>
+                <DropdownMenuItem className="cursor-pointer" asChild>
                     <a href="https://docs.beeblast.co/" target="_blank" rel="noopener noreferrer">
                         <FileText />Documents
+                    </a>
+                </DropdownMenuItem>
+                <DropdownMenuItem className="cursor-pointer" asChild>
+                    <a href="https://beeblast.co/terms" target="_blank" rel="noopener noreferrer">
+                        <ScrollText />Terms of Service
+                    </a>
+                </DropdownMenuItem>
+                <DropdownMenuItem className="cursor-pointer" asChild>
+                    <a href="https://beeblast.co/privacy" target="_blank" rel="noopener noreferrer">
+                        <Shield />Privacy Policy
                     </a>
                 </DropdownMenuItem>
                 <DropdownMenuItem><HelpCircle />Support</DropdownMenuItem>
