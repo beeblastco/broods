@@ -46,6 +46,7 @@
     "@mermaid-js/layout-elk": "^0.1.9",
     "@pulumi/aws": "7.30.0",
     "@pulumi/pulumi": "3.228.0",
+    "@scalar/docusaurus": "^0.8.16",
     "@tavily/ai-sdk": "^0.4.1",
     "@types/node": "^25.8.0",
     "ai": "^6.0.184",

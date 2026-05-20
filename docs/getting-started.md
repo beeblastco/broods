@@ -370,7 +370,7 @@ Key config sections:
 
 ## Next Steps
 
-- [API Reference](api-reference.md) — OpenAPI specs for the Direct API and Account Management API
+- [API Reference](/api-reference) — Interactive OpenAPI docs for all endpoints
 - [Account Management](account-management.md) — accounts, agents, skills, and config
 - [Direct API](direct-api.md) — sync SSE, async, status polling, and tool completion
 - [Architecture](architecture.md) — how the platform works under the hood

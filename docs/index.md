@@ -11,7 +11,7 @@ BeeBlast is a serverless AI agent platform that lets you build, deploy, and mana
 ## Quick Start
 
 - [Getting Started](getting-started.md) — Set up your account and send your first request
-- [API Reference](api-reference.md) — OpenAPI specs for all endpoints
+- [API Reference](/api-reference) — Interactive OpenAPI docs for all endpoints
 - [Architecture](architecture.md) — How the platform works
 - [Data Security](data-security.md) — Privacy and compliance information
 

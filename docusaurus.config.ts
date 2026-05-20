@@ -4,6 +4,11 @@
 
 import type { Config } from '@docusaurus/types';
 import type * as Preset from '@docusaurus/preset-classic';
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const config: Config = {
   title: 'BeeBlast Developer Docs',
@@ -40,6 +45,19 @@ const config: Config = {
   ],
 
   plugins: [
+    [
+      '@scalar/docusaurus',
+      {
+        id: 'api-reference',
+        label: 'API Reference',
+        route: '/api-reference',
+        configuration: {
+          spec: {
+            content: fs.readFileSync(path.resolve(__dirname, 'docs/api-reference/openapi.yaml'), 'utf8'),
+          },
+        },
+      },
+    ],
     function generatedModulesWebpackMode() {
       return {
         name: 'generated-modules-webpack-mode',
@@ -51,6 +69,12 @@ const config: Config = {
                   test: /\.js$/,
                   include: /[\\/]\.docusaurus[\\/]/,
                   type: 'javascript/auto',
+                },
+                {
+                  test: /\.js$/,
+                  resolve: {
+                    fullySpecified: false,
+                  },
                 },
               ],
             },
@@ -73,13 +97,13 @@ const config: Config = {
       title: 'Docs',
       logo: {
         alt: 'BeeBlast Logo',
-        // href: 'https://beeblast.co',
         src: 'img/light-full.svg',
         srcDark: 'img/dark-full.svg',
       },
       items: [
         {
           href: 'https://dasboard.beeblast.co/',
+          label: 'Dashboard',
           position: 'right',
         },
         {

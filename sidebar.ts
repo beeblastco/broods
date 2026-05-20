@@ -76,18 +76,13 @@ const sidebars: SidebarsConfig = {
       items: [
         {
           type: 'doc',
-          id: 'api-reference',
-          label: 'Overview',
-        },
-        {
-          type: 'doc',
           id: 'direct-api',
-          label: 'Direct API',
+          label: 'Direct API Guide',
         },
         {
           type: 'doc',
           id: 'account-management',
-          label: 'Account Management',
+          label: 'Account Management Guide',
         },
       ],
     },
