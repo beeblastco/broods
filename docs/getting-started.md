@@ -370,10 +370,12 @@ Key config sections:
 
 ## Next Steps
 
-- [Account Management](account-management.md) — full API reference for accounts, agents, skills, and config
-- [Direct API](direct-api.md) — sync SSE, async, status polling, tool approval, and WebSocket gateway
+- [API Reference](api-reference.md) — OpenAPI specs for the Direct API and Account Management API
+- [Account Management](account-management.md) — accounts, agents, skills, and config
+- [Direct API](direct-api.md) — sync SSE, async, status polling, and tool completion
 - [Architecture](architecture.md) — how the platform works under the hood
 - [External Tools](tools.md) — add custom tools for your agents
 - [Memory and Session](memory-and-session.md) — workspace-backed memory, filesystem, and tasks
 - [Sub Agents](sub-agents.md) — dispatch parallel subagent tasks
-- [Operations](operations.md) — deployment, CI/CD, and live probes
+- [Deployment](deployment.md) — SST secrets, deployment, account setup, and live probes
+- [CI/CD](ci-cd.md) — GitHub Actions deployment and integration account setup

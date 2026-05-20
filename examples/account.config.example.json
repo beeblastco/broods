@@ -82,7 +82,7 @@
       "filesystem": {
         "mount": "native"
       },
-      "option": {
+      "options": {
         "nodeFunctionName": "my-node-sandbox",
         "pythonFunctionName": "my-python-sandbox",
         "workspaceRoot": "/mnt/workspaces"

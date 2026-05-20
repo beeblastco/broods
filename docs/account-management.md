@@ -627,6 +627,6 @@ Developer guide: [Channels](channels.md).
 | | `pageAccessToken` | string | Pancake page access token for replies |
 | | `senderId` | string | Optional Pancake staff user ID used when sending replies |
 
-For deploying as a customer service, the owner creates an account and links the bot integration. Customers only interact with the provider bot/app. CI/CD configures the default Telegram account and other providers — see [CI/CD Account Setup](operations.md#ci-cd-account-setup).
+For deploying as a customer service, the owner creates an account and links the bot integration. Customers only interact with the provider bot/app. CI/CD configures the default Telegram account and other providers — see [CI/CD Account Setup](ci-cd.md#account-setup).
 
 Pancake webhooks are page-validated because the public Pancake webhook docs do not document a signature or secret header. Keep the webhook URL private and configure the expected `pageId`.

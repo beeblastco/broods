@@ -15,9 +15,19 @@ servers:
         default: us-east-1
         description: AWS deployment region
 
+tags:
+  - name: Accounts
+    description: Account lifecycle, metadata, and secret rotation.
+  - name: Agents
+    description: Account-owned agent configuration.
+  - name: Skills
+    description: Account-owned skill package management.
+
 paths:
   /accounts:
     post:
+      tags:
+        - Accounts
       summary: Create account
       description: Public endpoint to create a new account. IP-rate-limited.
       security: []
@@ -56,6 +66,8 @@ paths:
           description: Rate limited
 
     get:
+      tags:
+        - Accounts
       summary: List all accounts (admin)
       description: Admin-only endpoint to list all accounts.
       security:
@@ -72,6 +84,8 @@ paths:
 
   /accounts/{accountId}:
     get:
+      tags:
+        - Accounts
       summary: Get account (admin)
       description: Admin-only endpoint to retrieve a specific account.
       security:
@@ -91,6 +105,8 @@ paths:
                 $ref: '#/components/schemas/Account'
 
     patch:
+      tags:
+        - Accounts
       summary: Update account (admin)
       description: Admin-only endpoint to update account metadata.
       security:
@@ -121,6 +137,8 @@ paths:
                 $ref: '#/components/schemas/Account'
 
     delete:
+      tags:
+        - Accounts
       summary: Delete account (admin)
       description: Admin-only endpoint to delete an account and cascade cleanup all account-scoped data.
       security:
@@ -141,6 +159,8 @@ paths:
 
   /accounts/{accountId}/rotate-secret:
     post:
+      tags:
+        - Accounts
       summary: Rotate account secret (admin)
       description: Admin-only endpoint to rotate an account secret.
       security:
@@ -166,6 +186,8 @@ paths:
 
   /accounts/me:
     get:
+      tags:
+        - Accounts
       summary: Get own account
       description: Retrieve the authenticated account's metadata.
       security:
@@ -179,6 +201,8 @@ paths:
                 $ref: '#/components/schemas/Account'
 
     patch:
+      tags:
+        - Accounts
       summary: Update own account
       description: Update the authenticated account's metadata. Only accepts account metadata fields.
       security:
@@ -203,6 +227,8 @@ paths:
                 $ref: '#/components/schemas/Account'
 
     delete:
+      tags:
+        - Accounts
       summary: Delete own account
       description: Delete the authenticated account and cascade cleanup all account-scoped data.
       security:
@@ -217,6 +243,8 @@ paths:
 
   /accounts/me/rotate-secret:
     post:
+      tags:
+        - Accounts
       summary: Rotate own secret
       description: Rotate the authenticated account's secret.
       security:
@@ -236,6 +264,8 @@ paths:
 
   /accounts/me/agents:
     post:
+      tags:
+        - Agents
       summary: Create agent
       description: Create a new agent under the authenticated account.
       security:
@@ -271,6 +301,8 @@ paths:
                     $ref: '#/components/schemas/Agent'
 
     get:
+      tags:
+        - Agents
       summary: List agents
       description: List all agents under the authenticated account.
       security:
@@ -287,6 +319,8 @@ paths:
 
   /accounts/me/agents/{agentId}:
     get:
+      tags:
+        - Agents
       summary: Get agent
       description: Retrieve a specific agent's metadata and config.
       security:
@@ -306,6 +340,8 @@ paths:
                 $ref: '#/components/schemas/Agent'
 
     patch:
+      tags:
+        - Agents
       summary: Update agent
       description: Update an agent's metadata and config. Config patch is a deep merge.
       security:
@@ -338,6 +374,8 @@ paths:
                 $ref: '#/components/schemas/Agent'
 
     delete:
+      tags:
+        - Agents
       summary: Delete agent
       description: Delete a specific agent.
       security:
@@ -354,6 +392,8 @@ paths:
 
   /accounts/me/skills:
     post:
+      tags:
+        - Skills
       summary: Create skill
       description: Upload a new skill under the authenticated account.
       security:
@@ -396,6 +436,8 @@ paths:
                     $ref: '#/components/schemas/Skill'
 
     get:
+      tags:
+        - Skills
       summary: List skills
       description: List all skills under the authenticated account.
       security:
@@ -412,6 +454,8 @@ paths:
 
   /accounts/me/skills/{skillName}:
     get:
+      tags:
+        - Skills
       summary: Get skill
       description: Retrieve a specific skill.
       security:
@@ -431,6 +475,8 @@ paths:
                 $ref: '#/components/schemas/Skill'
 
     put:
+      tags:
+        - Skills
       summary: Update skill
       description: Update a specific skill.
       security:
@@ -461,6 +507,8 @@ paths:
                 $ref: '#/components/schemas/Skill'
 
     delete:
+      tags:
+        - Skills
       summary: Delete skill
       description: Delete a specific skill.
       security:

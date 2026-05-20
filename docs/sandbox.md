@@ -9,11 +9,12 @@ flowchart LR
   B --> D[node/python file command]
   D --> E{Sandbox provider}
   E --> F[Lambda + S3 Files mount]
-  E --> G[E2B mounted workspace]
-  E --> H[Daytona mounted workspace]
+  E --> G[E2B template with mounted workspace]
+  E --> H[Daytona image with mounted workspace]
   F --> I[Structured result]
   G --> I
   H --> I
+  I --> J[generated file artifacts persisted to S3]
 ```
 
 ## Enable It
@@ -45,6 +46,8 @@ Sandbox execution is available only when workspace and sandbox are enabled for t
 | `lambda` | Default AWS runtime sandbox. Runs private Node and Python Lambda workers on an AWS S3 Files mount. |
 | `e2b` | Uses an E2B template or volume with the workspace mounted at `options.workspaceRoot`. |
 | `daytona` | Uses a Daytona volume or external storage mount at `options.workspaceRoot`. |
+
+Third-party providers are configured per agent with `workspace.sandbox.options`. Secret-like fields such as `apiKey` are stored in encrypted agent config and redacted from account reads.
 
 ## How Agents Use It
 
@@ -112,7 +115,7 @@ Sandbox runs return JSON through the filesystem tool:
 }
 ```
 
-`artifacts` is reserved for provider outputs such as charts, images, or files when a provider can return them.
+For Lambda runs, changed files created by the sandbox runtime are returned as file artifacts and persisted back into the workspace S3 bucket. This is what makes a file such as `result.json`, written from Python or Node with normal relative file APIs, readable later through `cat /result.json`.
 
 ## Mounted Workspace
 
@@ -123,6 +126,8 @@ Every provider uses a native mounted workspace. The runtime executes from the na
 | `lambda` | AWS S3 Files mounted into the private runtime Lambdas at `/mnt/workspaces` |
 | `e2b` | E2B volume or S3/FUSE template mounted at `options.workspaceRoot` |
 | `daytona` | Daytona volume or external storage mounted at `options.workspaceRoot` |
+
+The filesystem tool persists workspace files under the account/agent namespace before the sandbox starts. Third-party providers must make that same namespace visible under `options.workspaceRoot`; otherwise the command can start but the file the agent just wrote will not exist inside the provider sandbox.
 
 ## Lambda Runtime
 
@@ -156,6 +161,65 @@ You can override those names per agent:
 }
 ```
 
+The default Lambda provider is deployed by SST. Do not configure public Lambda Function URLs for `SandboxNode` or `SandboxPython`; `harness-processing` invokes them by function ARN.
+
+## Third-Party Providers
+
+E2B and Daytona work the same as Lambda — the agent writes a file, then runs it. You are responsible for mounting the workspace namespace at `<workspaceRoot>/<namespace>` so the file the agent wrote is visible inside the sandbox.
+
+### E2B
+
+Use a template with Node and Python installed, mount the workspace at `options.workspaceRoot`:
+
+```json
+{
+  "workspace": {
+    "sandbox": {
+      "enabled": true,
+      "provider": "e2b",
+      "options": {
+        "apiKey": "...",
+        "template": "mounted-template",
+        "workspaceRoot": "/workspace"
+      }
+    }
+  }
+}
+```
+
+`apiKey` can be omitted when `E2B_API_KEY` is set on the harness runtime. `templateId` is an alias for `template`.
+
+### Daytona
+
+Use an image or target with Node and Python installed, mount the workspace at `options.workspaceRoot`:
+
+```json
+{
+  "workspace": {
+    "sandbox": {
+      "enabled": true,
+      "provider": "daytona",
+      "options": {
+        "apiKey": "...",
+        "apiUrl": "https://app.daytona.io/api",
+        "target": "default",
+        "image": "sandbox-image",
+        "workspaceRoot": "/mnt/workspaces"
+      }
+    }
+  }
+}
+```
+
+`apiKey`, `apiUrl`, and `target` can be omitted when `DAYTONA_API_KEY`, `DAYTONA_API_URL`, and `DAYTONA_TARGET` are set. `envVars` can pass additional environment variables.
+
+### Security Notes
+
+- Preinstall dependencies in provider images/templates.
+- Do not mount account config, API keys, or AWS credentials unless explicitly needed.
+- Treat third-party sandboxes as external compute — files may leave AWS depending on your mount backend.
+- Use isolated provider workspaces per run; do not share a writable root across accounts.
+
 ## Dependency Strategy
 
 Dependencies are not an account config field.
@@ -183,7 +247,11 @@ The sandbox path is designed around mounted, file-based runs:
 - inline code flags are rejected
 - stdout/stderr are truncated
 - Lambda provider runs in private runtime functions on an S3 Files mount
+- Lambda sandbox functions have no public Function URLs
+- the S3 Files mount target allows NFS only from the sandbox VPC security group
+- workspace and skills buckets block public access and deny S3 actions for principals outside the project runtime/deploy roles
 - sandbox runtime Lambdas do not need account-management permissions
 - child processes run without AWS credentials in their environment
+- generated Lambda sandbox file artifacts are capped before being persisted back to S3
 
 Workspace write/read commands still use the normal `filesystem` tool. Use `workspace.needsApproval` if file writes and code runs should require human approval.
