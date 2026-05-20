@@ -261,13 +261,15 @@ function resolveFilesystemNamespaces(
       continue;
     }
 
+    // Persistent subagents use the same account/agent-scoped conversation
+    // shape as direct requests, including virtual_subagent_* agent ids.
     const agentMatch = conversationKey.match(/^acct:[^:]+:agent:([^:]+):/);
     logicalNamespaces.add(agentMatch?.[1] ? `${agentMatch[1]}:${conversationKey}` : conversationKey);
   }
 
   return [...logicalNamespaces].map((logicalNamespace) => {
     const [maybeAgentId, ...rest] = logicalNamespace.split(":");
-    return maybeAgentId?.startsWith("agent_") && rest.length > 0
+    return rest.length > 0
       ? normalizeFilesystemNamespace(`${account.accountId}:${maybeAgentId}:${rest.join(":")}`)
       : normalizeFilesystemNamespace(`${account.accountId}:${logicalNamespace}`);
   });

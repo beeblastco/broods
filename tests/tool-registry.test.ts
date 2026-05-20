@@ -83,7 +83,6 @@ describe("createTools", () => {
       tasks: [{
         taskId: "subagent_1",
         agentId: "virtual_subagent_1",
-        name: "Virtual subagent",
         conversationKey: "subagent-subagent_1",
         statusPath: "/status/subagent_1?agentId=virtual_subagent_1",
         status: "running" as const,
@@ -111,6 +110,7 @@ describe("createTools", () => {
             items: {
               properties: {
                 agentId: { description: string };
+                shareContext?: unknown;
               };
             };
           };
@@ -119,6 +119,7 @@ describe("createTools", () => {
     };
     expect(runSubagentSchema.jsonSchema.properties.tasks.items.properties.agentId.description)
       .toContain("Include it when a listed subagent is suitable");
+    expect(runSubagentSchema.jsonSchema.properties.tasks.items.properties.shareContext).toBeUndefined();
     expect((tools.run_subagent as { execute(input: unknown, options: unknown): Promise<unknown> }).execute({
       tasks: [{
         prompt: "research",
@@ -129,7 +130,6 @@ describe("createTools", () => {
       tasks: [{
         taskId: "subagent_1",
         agentId: "virtual_subagent_1",
-        name: "Virtual subagent",
         conversationKey: "subagent-subagent_1",
         statusPath: "/status/subagent_1?agentId=virtual_subagent_1",
         status: "running",
@@ -156,7 +156,16 @@ describe("createTools", () => {
       }],
     }, {
       messages: [{ role: "user", content: "hello" }],
-    })).rejects.toThrow("tasks[0].conversationKey is not supported");
+    })).rejects.toThrow("tasks[0].conversationKey is only supported in persistent mode");
+
+    expect((tools.run_subagent as { execute(input: unknown, options: unknown): Promise<unknown> }).execute({
+      tasks: [{
+        prompt: "research",
+        shareContext: true,
+      }],
+    }, {
+      messages: [{ role: "user", content: "hello" }],
+    })).rejects.toThrow("tasks[0].shareContext is not supported");
 
     expect((tools.run_subagent as { execute(input: unknown, options: unknown): Promise<unknown> }).execute({
       tasks: [{
@@ -166,6 +175,46 @@ describe("createTools", () => {
     }, {
       messages: [{ role: "user", content: "hello" }],
     })).rejects.toThrow("tasks[0].description is not supported");
+  });
+
+  it("exposes subagent conversation keys in persistent mode", async () => {
+    const { createTools } = await import("../functions/harness-processing/tools/index.ts");
+    const dispatch = mock(async () => ({ tasks: [] }));
+    const tools = createTools(createToolContext(undefined, "google", dispatch), {
+      subagent: {
+        enabled: true,
+        mode: "persistent",
+      },
+    });
+    const runSubagentSchema = tools.run_subagent?.inputSchema as unknown as {
+      jsonSchema: {
+        properties: {
+          tasks: {
+            items: {
+              properties: {
+                conversationKey?: { description: string };
+              };
+            };
+          };
+        };
+      };
+    };
+
+    expect(tools.run_subagent?.description).toContain("Use conversationKey to resume");
+    expect(runSubagentSchema.jsonSchema.properties.tasks.items.properties.conversationKey?.description)
+      .toContain("Existing subagent conversation key");
+    await expect((tools.run_subagent as { execute(input: unknown, options: unknown): Promise<unknown> }).execute({
+      tasks: [{
+        prompt: "continue",
+        conversationKey: "subagent-persistent-1",
+      }],
+    }, {
+      messages: [{ role: "user", content: "hello" }],
+    })).resolves.toEqual({ tasks: [] });
+    expect(dispatch).toHaveBeenCalledWith([{
+      prompt: "continue",
+      conversationKey: "subagent-persistent-1",
+    }], [{ role: "user", content: "hello" }]);
   });
 
   it("passes provider config into Tavily and Google Search tools", async () => {
