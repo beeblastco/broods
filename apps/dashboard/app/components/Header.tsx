@@ -2,10 +2,10 @@
 
 /** Displays the top header bar with logo, project selector, environment selector, navigation links, and user menu. */
 import { UserMenu } from "@/app/components/UserMenu";
-import Link from "next/link";
-import dynamic from "next/dynamic";
-import { useParams } from "next/navigation";
 import { useTheme } from "next-themes";
+import dynamic from "next/dynamic";
+import Link from "next/link";
+import { useParams } from "next/navigation";
 
 // Split project-only controls into separate chunks.
 const ProjectHeaderLeft = dynamic(
@@ -30,9 +30,9 @@ export function Header() {
                     className="hover:opacity-80 transition-opacity cursor-pointer"
                 >
                     {resolvedTheme === "dark" ? (
-                        <img src="/assets/logo/dark.svg" alt="Logo" className="h-7 w-auto" />
+                        <img src="/assets/logo/dark-full.svg" alt="Logo" className="h-7 w-auto" />
                     ) : (
-                        <img src="/assets/logo/light.svg" alt="Logo" className="h-7 w-auto" />
+                        <img src="/assets/logo/light-full.svg" alt="Logo" className="h-7 w-auto" />
                     )}
                 </Link>
 
