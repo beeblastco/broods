@@ -69,11 +69,6 @@ const sidebars: SidebarsConfig = {
         },
       ],
     },
-    {
-      type: 'link',
-      label: 'API Reference',
-      href: '/api-reference',
-    },
   ],
 };
 

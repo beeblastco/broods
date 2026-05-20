@@ -6,7 +6,7 @@ info:
 
     - **Direct API** — account-authenticated agent runtime endpoint (sync SSE, async jobs, status polling, external tool completion)
     - **Account Management** — tenant configuration (accounts, agents, skills, secrets)
-  version: 1.0.0
+  version: 0.1.0
 
 servers:
   - url: https://{functionUrl}.lambda-url.{region}.on.aws
