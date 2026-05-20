@@ -83,7 +83,6 @@ describe("createTools", () => {
       tasks: [{
         taskId: "subagent_1",
         agentId: "virtual_subagent_1",
-        name: "Virtual subagent",
         conversationKey: "subagent-subagent_1",
         statusPath: "/status/subagent_1?agentId=virtual_subagent_1",
         status: "running" as const,
@@ -131,7 +130,6 @@ describe("createTools", () => {
       tasks: [{
         taskId: "subagent_1",
         agentId: "virtual_subagent_1",
-        name: "Virtual subagent",
         conversationKey: "subagent-subagent_1",
         statusPath: "/status/subagent_1?agentId=virtual_subagent_1",
         status: "running",

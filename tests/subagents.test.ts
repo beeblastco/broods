@@ -16,7 +16,6 @@ beforeEach(() => {
 interface TestCompletion {
   taskId: string;
   agentId: string;
-  name: string;
   conversationKey: string;
   status: "completed" | "failed";
   response?: unknown;
@@ -93,7 +92,6 @@ describe("SubagentCoordinator", () => {
     internals.pendingMetadata.set("subagent_2", {
       taskId: "subagent_2",
       agentId: "agent_research",
-      name: "Research assistant",
       conversationKey: "subagent-subagent_2",
     });
 
@@ -107,7 +105,6 @@ describe("SubagentCoordinator", () => {
     expect(messageText(messages[0])).toContain("finished before timeout");
     expect(messageText(messages[1])).toContain("Subagent task is still pending near the parent request timeout.");
     expect(messageText(messages[1])).toContain("agentId: agent_research");
-    expect(messageText(messages[1])).toContain("agentName: Research assistant");
     expect(messageText(messages[1])).toContain("conversationKey: subagent-subagent_2");
   });
 
@@ -185,7 +182,6 @@ function completion(taskId: string, response: unknown): TestCompletion {
   return {
     taskId,
     agentId: `agent_${taskId}`,
-    name: `Subagent ${taskId}`,
     conversationKey: `conversation_${taskId}`,
     status: "completed",
     response,

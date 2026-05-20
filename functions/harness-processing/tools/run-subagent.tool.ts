@@ -6,7 +6,7 @@
 import { jsonSchema, tool, type JSONSchema7, type JSONValue, type ModelMessage, type SystemModelMessage, type ToolSet } from "ai";
 
 const MAX_SUBAGENT_TASKS = 10;
-const TASK_KEYS = new Set(["agentId", "name", "prompt", "conversationKey"]);
+const TASK_KEYS = new Set(["agentId", "prompt", "conversationKey"]);
 type RunSubagentMode = "ephemeral" | "persistent";
 
 export function buildRunSubagentInputSchema(mode?: RunSubagentMode): JSONSchema7 {
