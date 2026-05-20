@@ -62,7 +62,10 @@ export default function DashboardPage() {
     return (
         <div className="flex h-full">
             <aside className="flex w-48 shrink-0 flex-col bg-transparent">
-                <nav className="flex flex-col gap-0.5 px-2 py-4">
+                <div className="px-6 pt-9.25 pb-3">
+                    <h2 className="text-lg font-semibold text-foreground">Dashboard</h2>
+                </div>
+                <nav className="flex flex-col gap-0.5 px-6">
                     {TABS.map((tab) => (
                         <Button
                             key={tab.id}
@@ -84,9 +87,6 @@ export default function DashboardPage() {
 
             <div className="flex flex-1 flex-col overflow-auto">
                 <div className="mx-auto w-full max-w-2xl px-6 py-10">
-                    <h1 className="mb-2 text-xl font-semibold text-foreground">
-                        {TABS.find((tab) => tab.id === activeTab)?.label}
-                    </h1>
                     {renderPanel()}
                 </div>
             </div>
