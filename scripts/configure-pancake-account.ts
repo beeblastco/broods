@@ -50,9 +50,14 @@ async function upsertPancakeAccount() {
         ...(pancakeSenderId ? { senderId: pancakeSenderId } : {}),
         ...(pancakeSupabaseUrl && pancakeSupabaseServiceRoleKey
           ? {
-            supabase: {
-              url: pancakeSupabaseUrl,
-              serviceRoleKey: pancakeSupabaseServiceRoleKey,
+            options: {
+              components: {
+                conversationState: {
+                  provider: "supabase",
+                  url: pancakeSupabaseUrl,
+                  serviceRoleKey: pancakeSupabaseServiceRoleKey,
+                },
+              },
             },
           }
           : {}),

@@ -1,22 +1,23 @@
 /**
- * Optional Pancake conversation-state persistence backed by customer Supabase.
- * Keep this layer scoped to Pancake channel runtime hooks.
+ * Supabase-backed conversation state lifecycle component.
+ * Keep customer-service state persistence out of provider channel adapters.
  */
 
 import type { JSONValue, SystemModelMessage } from "ai";
+import { extractText } from "../../_shared/channels.ts";
+import { logError, logInfo, logWarn } from "../../_shared/log.ts";
 import type {
-  ChannelContextResult,
+  ChannelLifecycleComponent,
   ChannelLifecycleContext,
-  ChannelPreparationResult,
-} from "./channels.ts";
-import { extractText } from "./channels.ts";
-import { logError, logInfo, logWarn } from "./log.ts";
+  ChannelLifecycleContextResult,
+  ChannelLifecycleDecision,
+} from "./types.ts";
 
 const SUPABASE_REST_PATH = "rest/v1/";
 
 type ReplyMode = "auto" | "human" | "paused";
 
-export interface PancakeSupabaseConfig {
+export interface SupabaseConversationStateConfig {
   url: string;
   serviceRoleKey: string;
 }
@@ -47,7 +48,7 @@ interface ConversationStateRecord {
   updated_at?: string;
 }
 
-interface PancakeConversationSource {
+interface ChannelConversationSource {
   pageId: string;
   conversationId: string;
   messageId: string;
@@ -67,20 +68,22 @@ class SupabaseRequestError extends Error {
   }
 }
 
-export function createPancakeSupabaseLayer(config: PancakeSupabaseConfig) {
+export function createSupabaseConversationStateComponent(
+  config: SupabaseConversationStateConfig,
+): ChannelLifecycleComponent {
   return {
-    prepareMessage: (context: ChannelLifecycleContext) => preparePancakeConversationState(config, context),
-    loadContext: (context: ChannelLifecycleContext) => loadPancakeConversationStateContext(config, context),
-    recordReply: (context: ChannelLifecycleContext, responseText: string) =>
-      recordPancakeAgentReply(config, context, responseText),
+    name: "supabase-conversation-state",
+    prepareMessage: (context) => prepareConversationState(config, context),
+    loadContext: (context) => loadConversationStateContext(config, context),
+    recordReply: (context, responseText) => recordAgentReply(config, context, responseText),
   };
 }
 
-async function preparePancakeConversationState(
-  config: PancakeSupabaseConfig,
+async function prepareConversationState(
+  config: SupabaseConversationStateConfig,
   context: ChannelLifecycleContext,
-): Promise<ChannelPreparationResult> {
-  const source = pancakeSource(context.source);
+): Promise<ChannelLifecycleDecision> {
+  const source = conversationSource(context.source);
   if (!source || !context.accountId || !context.agentId) {
     return { shouldContinue: true };
   }
@@ -116,7 +119,7 @@ async function preparePancakeConversationState(
   });
 
   if (!inserted) {
-    logInfo("Duplicate Pancake Supabase conversation message skipped", {
+    logInfo("Duplicate Supabase conversation message skipped", {
       conversationKey: context.conversationKey,
       providerMessageId: source.messageId,
     });
@@ -128,11 +131,11 @@ async function preparePancakeConversationState(
     : { shouldContinue: false, reason: `reply_mode_${state.reply_mode}` };
 }
 
-async function loadPancakeConversationStateContext(
-  config: PancakeSupabaseConfig,
+async function loadConversationStateContext(
+  config: SupabaseConversationStateConfig,
   context: ChannelLifecycleContext,
-): Promise<ChannelContextResult> {
-  const source = pancakeSource(context.source);
+): Promise<ChannelLifecycleContextResult> {
+  const source = conversationSource(context.source);
   if (!source) {
     return { canReply: true };
   }
@@ -158,12 +161,12 @@ async function loadPancakeConversationStateContext(
   };
 }
 
-async function recordPancakeAgentReply(
-  config: PancakeSupabaseConfig,
+async function recordAgentReply(
+  config: SupabaseConversationStateConfig,
   context: ChannelLifecycleContext,
   responseText: string,
 ): Promise<void> {
-  const source = pancakeSource(context.source);
+  const source = conversationSource(context.source);
   if (!source || !context.accountId || !context.agentId) {
     return;
   }
@@ -194,7 +197,7 @@ async function recordPancakeAgentReply(
 }
 
 async function upsertConversationState(
-  config: PancakeSupabaseConfig,
+  config: SupabaseConversationStateConfig,
   input: {
     conversationKey: string;
     accountId: string;
@@ -230,14 +233,14 @@ async function upsertConversationState(
   ) ?? [];
 
   if (!state) {
-    throw new Error("Pancake Supabase conversation state upsert returned no row");
+    throw new Error("Supabase conversation state upsert returned no row");
   }
 
   return state;
 }
 
 async function loadConversationState(
-  config: PancakeSupabaseConfig,
+  config: SupabaseConversationStateConfig,
   conversationKey: string,
 ): Promise<ConversationStateRecord | null> {
   const query = new URLSearchParams({
@@ -250,7 +253,7 @@ async function loadConversationState(
 }
 
 async function insertConversationMessage(
-  config: PancakeSupabaseConfig,
+  config: SupabaseConversationStateConfig,
   input: {
     conversationKey: string;
     accountId: string;
@@ -297,7 +300,7 @@ async function insertConversationMessage(
 }
 
 async function updateConversationStateTimestamps(
-  config: PancakeSupabaseConfig,
+  config: SupabaseConversationStateConfig,
   conversationKey: string,
   patch: Pick<ConversationStateRecord, "last_agent_reply_at" | "updated_at">,
 ): Promise<void> {
@@ -310,7 +313,7 @@ async function updateConversationStateTimestamps(
 }
 
 async function supabaseRequest<T>(
-  config: PancakeSupabaseConfig,
+  config: SupabaseConversationStateConfig,
   path: string,
   init: RequestInit = {},
 ): Promise<T | null> {
@@ -364,7 +367,7 @@ function formatOptionalLine(name: string, value: string | null | undefined): str
   return value ? `- ${name}: ${value}` : null;
 }
 
-function pancakeSource(source: Record<string, unknown>): PancakeConversationSource | null {
+function conversationSource(source: Record<string, unknown>): ChannelConversationSource | null {
   if (
     typeof source.pageId !== "string" ||
     typeof source.conversationId !== "string" ||
@@ -392,7 +395,7 @@ function normalizeTimestamp(value: string | undefined): string | undefined {
 
   const timestamp = new Date(value);
   if (Number.isNaN(timestamp.getTime())) {
-    logWarn("Ignoring invalid Pancake provider timestamp", { value });
+    logWarn("Ignoring invalid provider timestamp", { value });
     return undefined;
   }
 
@@ -403,7 +406,7 @@ function toJsonPayload(value: unknown): JSONValue {
   try {
     return JSON.parse(JSON.stringify(value)) as JSONValue;
   } catch (err) {
-    logError("Failed to serialize Pancake Supabase raw payload", {
+    logError("Failed to serialize Supabase raw payload", {
       error: err instanceof Error ? err.message : String(err),
     });
     return {};

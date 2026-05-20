@@ -1781,16 +1781,7 @@ components:
             senderId:
               type: string
               description: Optional staff user ID for replies
-            supabase:
+            options:
               type: object
-              description: Optional customer-specific Pancake conversation state store
-              properties:
-                enabled:
-                  type: boolean
-                  description: Set to false to keep the config shape without enabling Supabase hooks
-                url:
-                  type: string
-                  description: Supabase project URL
-                serviceRoleKey:
-                  type: string
-                  description: Supabase service_role key; encrypted in agent config and used only by the Pancake channel layer
+              description: Opaque channel extension options used by harness lifecycle components
+              additionalProperties: true

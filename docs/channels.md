@@ -17,19 +17,23 @@ flowchart TD
   Integrations --> Account["load active account"]
   Account --> Agent["load active agent config"]
   Agent --> Registry["createChannelRegistry(config)"]
+  Agent --> Lifecycle["createChannelLifecycleComponents(config)"]
   Registry --> Adapter["ChannelAdapter"]
   Adapter --> Auth["authenticate(req)"]
   Auth --> Parse["parse(req)"]
   Parse -->|"message"| Ack["provider ACK"]
   Ack --> After["afterResponse"]
-  After --> Prepare["ChannelActions.prepareMessage?"]
+  Lifecycle --> Prepare
+  After --> Prepare["lifecycle.prepareMessage?"]
   Prepare --> Handler["handler.ts<br/>handleChannelRequest"]
   Handler --> Session["session.ts"]
-  Handler --> Context["ChannelActions.loadContext?"]
+  Lifecycle --> Context
+  Handler --> Context["lifecycle.loadContext?"]
   Context --> Session
   Session --> Harness["harness.ts<br/>model + tools"]
   Harness --> Actions["ChannelActions"]
-  Actions --> Record["ChannelActions.recordReply?"]
+  Lifecycle --> Record
+  Actions --> Record["lifecycle.recordReply?"]
   Actions --> Provider
 ```
 
@@ -52,14 +56,6 @@ Each channel implements `ChannelAdapter` from [`functions/_shared/channels.ts`](
 | `parse(req)` | Converts the webhook into `message`, `ignore`, or direct `response` |
 | `actions(msg)` | Returns reply, typing, and reaction actions scoped to the inbound message |
 
-`ChannelActions` may also expose optional lifecycle hooks for channel-specific behavior, such as Pancake's customer Supabase state layer:
-
-| Hook | Purpose |
-| --- | --- |
-| `prepareMessage(context)` | Run after ACK and before the session append; can stop duplicates or handoff conversations |
-| `loadContext(context)` | Add ephemeral system context or stop reply immediately before a model turn |
-| `recordReply(context, text)` | Record a sent reply after `sendText()` succeeds |
-
 `parse()` returns one of three outcomes:
 
 | Result | Meaning |
@@ -78,6 +74,16 @@ The normalized `InboundMessage` contains:
 
 `integrations.ts` scopes `eventId` and `conversationKey` with `accountId` and `agentId` before the session sees them.
 
+## Lifecycle Components
+
+Harness-owned lifecycle components can extend channel request handling without changing provider adapters. They are built by [`functions/harness-processing/channel-lifecycle/index.ts`](../functions/harness-processing/channel-lifecycle/index.ts) from generic channel `options`.
+
+| Hook | Purpose |
+| --- | --- |
+| `prepareMessage(context)` | Run after ACK and before the session append; can stop duplicates or handoff conversations |
+| `loadContext(context)` | Add ephemeral system context or stop reply immediately before a model turn |
+| `recordReply(context, text)` | Record a sent reply after `sendText()` succeeds |
+
 ## Current Channels
 
 | Channel | Adapter | Required config |
@@ -92,7 +98,7 @@ The full config field reference lives in the [API Reference](/api-reference) und
 
 Pancake's public webhook docs do not define a signature or secret header. The adapter validates `page_id` against `config.channels.pancake.pageId`, acknowledges unsupported events, and replies through the page-scoped message API with `pageAccessToken`.
 
-Pancake can optionally persist customer conversation state to a customer's Supabase project through `config.channels.pancake.supabase`. This is channel-scoped customization: if the Pancake config omits `supabase`, the runtime does not install the Supabase hooks and no global SST or GitHub Supabase secrets are required.
+Pancake can optionally persist customer conversation state to a customer's Supabase project through a lifecycle component configured under `config.channels.pancake.options`. This keeps Supabase out of the Pancake adapter and avoids global SST or GitHub Supabase secrets.
 
 ```json
 {
@@ -101,9 +107,14 @@ Pancake can optionally persist customer conversation state to a customer's Supab
       "pageId": "page-id",
       "pageAccessToken": "...",
       "senderId": "optional-staff-user-id",
-      "supabase": {
-        "url": "https://project.supabase.co",
-        "serviceRoleKey": "customer-service-role-key"
+      "options": {
+        "components": {
+          "conversationState": {
+            "provider": "supabase",
+            "url": "https://project.supabase.co",
+            "serviceRoleKey": "customer-service-role-key"
+          }
+        }
       }
     }
   }

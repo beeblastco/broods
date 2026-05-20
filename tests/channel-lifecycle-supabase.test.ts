@@ -1,15 +1,18 @@
 /**
- * Pancake Supabase layer tests.
- * Cover opt-in channel hooks for customer-specific conversation state.
+ * Supabase conversation-state lifecycle tests.
+ * Cover opt-in channel component behavior for customer-specific state.
  */
 
 import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
-import type { ChannelLifecycleContext } from "../functions/_shared/channels.ts";
-import { createPancakeChannel } from "../functions/_shared/pancake-channel.ts";
+import {
+  createChannelLifecycleComponents,
+  type ChannelLifecycleComponent,
+  type ChannelLifecycleContext,
+} from "../functions/harness-processing/channel-lifecycle/index.ts";
 
 const ORIGINAL_FETCH = globalThis.fetch;
 
-describe("pancake Supabase channel layer", () => {
+describe("Supabase conversation-state lifecycle component", () => {
   beforeEach(() => {
     globalThis.fetch = ORIGINAL_FETCH;
   });
@@ -18,12 +21,17 @@ describe("pancake Supabase channel layer", () => {
     globalThis.fetch = ORIGINAL_FETCH;
   });
 
-  it("does not install Supabase hooks unless Pancake config opts in", () => {
-    const actions = createPancakeChannel("page-1", "page-token").actions(createPancakeMessage());
+  it("does not install a component unless channel options opt in", () => {
+    const components = createChannelLifecycleComponents({
+      channels: {
+        pancake: {
+          pageId: "page-1",
+          pageAccessToken: "page-token",
+        },
+      },
+    }, "pancake");
 
-    expect(actions.prepareMessage).toBeUndefined();
-    expect(actions.loadContext).toBeUndefined();
-    expect(actions.recordReply).toBeUndefined();
+    expect(components).toEqual([]);
   });
 
   it("upserts conversation state and inserts the inbound customer message", async () => {
@@ -35,9 +43,9 @@ describe("pancake Supabase channel layer", () => {
       }
       return new Response(null, { status: 201 });
     }) as never;
-    const actions = createSupabaseActions();
+    const component = createSupabaseComponent();
 
-    const result = await actions.prepareMessage!(createLifecycleContext());
+    const result = await component.prepareMessage!(createLifecycleContext());
 
     expect(result).toEqual({ shouldContinue: true });
     expect(fetchCalls).toHaveLength(2);
@@ -77,9 +85,9 @@ describe("pancake Supabase channel layer", () => {
       }
       return new Response(JSON.stringify({ code: "23505" }), { status: 409 });
     }) as never;
-    const actions = createSupabaseActions();
+    const component = createSupabaseComponent();
 
-    const result = await actions.prepareMessage!(createLifecycleContext());
+    const result = await component.prepareMessage!(createLifecycleContext());
 
     expect(result).toEqual({ shouldContinue: false, reason: "duplicate_message" });
   });
@@ -93,9 +101,9 @@ describe("pancake Supabase channel layer", () => {
       }
       return new Response(null, { status: 201 });
     }) as never;
-    const actions = createSupabaseActions();
+    const component = createSupabaseComponent();
 
-    const result = await actions.prepareMessage!(createLifecycleContext());
+    const result = await component.prepareMessage!(createLifecycleContext());
 
     expect(result).toEqual({ shouldContinue: false, reason: "reply_mode_human" });
   });
@@ -109,9 +117,9 @@ describe("pancake Supabase channel layer", () => {
         intent: "price_check",
       }),
     ])) as never;
-    const actions = createSupabaseActions();
+    const component = createSupabaseComponent();
 
-    const result = await actions.loadContext!(createLifecycleContext());
+    const result = await component.loadContext!(createLifecycleContext());
 
     expect(result.canReply).toBe(true);
     expect(result.system?.[0]?.role).toBe("system");
@@ -125,9 +133,9 @@ describe("pancake Supabase channel layer", () => {
       fetchCalls.push({ url: String(url), init });
       return new Response(null, { status: fetchCalls.length === 1 ? 201 : 204 });
     }) as never;
-    const actions = createSupabaseActions();
+    const component = createSupabaseComponent();
 
-    await actions.recordReply!(createLifecycleContext(), "Agent reply");
+    await component.recordReply!(createLifecycleContext(), "Agent reply");
 
     expect(fetchCalls).toHaveLength(2);
     expect(fetchCalls[0]!.url).toBe("https://supabase.example/rest/v1/conversation_messages");
@@ -143,31 +151,30 @@ describe("pancake Supabase channel layer", () => {
   });
 });
 
-function createSupabaseActions() {
-  return createPancakeChannel("page-1", "page-token", undefined, {
-    url: "https://supabase.example",
-    serviceRoleKey: "service-key",
-  }).actions(createPancakeMessage());
-}
-
-function createPancakeMessage() {
-  return {
-    eventId: "pancake:page-1:message-1:abc",
-    conversationKey: "pancake:page-1:conversation-1",
-    channelName: "pancake",
-    content: [{ type: "text" as const, text: "hello pancake" }],
-    source: {
-      pageId: "page-1",
-      conversationId: "conversation-1",
-      messageId: "message-1",
-      messageType: "INBOX",
-      fromId: "customer-1",
-      fromName: "Ada",
-      pageCustomerId: "page-customer-1",
-      insertedAt: "2026-05-20T01:02:03.000000",
-      rawPayload: { event_type: "messaging" },
+function createSupabaseComponent(): ChannelLifecycleComponent {
+  const [component] = createChannelLifecycleComponents({
+    channels: {
+      pancake: {
+        pageId: "page-1",
+        pageAccessToken: "page-token",
+        options: {
+          components: {
+            conversationState: {
+              provider: "supabase",
+              url: "https://supabase.example",
+              serviceRoleKey: "service-key",
+            },
+          },
+        },
+      },
     },
-  };
+  }, "pancake");
+
+  if (!component) {
+    throw new Error("Expected Supabase conversation-state component");
+  }
+
+  return component;
 }
 
 function createLifecycleContext(): ChannelLifecycleContext {

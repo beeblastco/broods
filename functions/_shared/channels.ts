@@ -3,36 +3,12 @@
  * Define the shared HTTP and channel adapter boundaries for inbound webhook traffic.
  */
 
-import type { SystemModelMessage, UserContent } from "ai";
+import type { UserContent } from "ai";
 
 export interface ChannelActions {
   sendText(text: string): Promise<void>;
   sendTyping(): Promise<void>;
   reactToMessage(): Promise<void>;
-  prepareMessage?(context: ChannelLifecycleContext): Promise<ChannelPreparationResult>;
-  loadContext?(context: ChannelLifecycleContext): Promise<ChannelContextResult>;
-  recordReply?(context: ChannelLifecycleContext, responseText: string): Promise<void>;
-}
-
-export interface ChannelLifecycleContext {
-  accountId?: string;
-  agentId?: string;
-  eventId: string;
-  conversationKey: string;
-  channelName: string;
-  content: UserContent;
-  source: Record<string, unknown>;
-}
-
-export interface ChannelPreparationResult {
-  shouldContinue: boolean;
-  reason?: string;
-}
-
-export interface ChannelContextResult {
-  canReply: boolean;
-  system?: SystemModelMessage[];
-  reason?: string;
 }
 
 export interface ChannelRequest {

@@ -4,9 +4,9 @@
  */
 
 import { InvokeCommand, LambdaClient } from "@aws-sdk/client-lambda";
-import type { ToolModelMessage, JSONValue } from "ai";
+import type { ToolModelMessage, JSONValue, SystemModelMessage } from "ai";
 import type { LambdaFunctionURLEvent } from "aws-lambda";
-import { formatChannelErrorText, type ChannelLifecycleContext } from "../_shared/channels.ts";
+import { formatChannelErrorText } from "../_shared/channels.ts";
 import { executeCommand } from "../_shared/commands.ts";
 import { toRuntimeAgentConfig } from "../_shared/accounts.ts";
 import { booleanEnv, requireEnv } from "../_shared/env.ts";
@@ -43,6 +43,7 @@ import {
   settleExternalAsyncToolResult,
   type AsyncToolResultRecord,
 } from "./async-tool-result.ts";
+import type { ChannelLifecycleContext } from "./channel-lifecycle/index.ts";
 
 type AgentLoopStream = Awaited<ReturnType<typeof runAgentLoop>>;
 
@@ -433,13 +434,8 @@ async function handleChannelRequest(event: ChannelInboundEvent, context?: Lambda
   }
 
   try {
-    const preparation = await event.channel.prepareMessage?.(channelLifecycleContext(event));
-    if (preparation && !preparation.shouldContinue) {
-      logInfo("Channel request stopped by channel preparation", {
-        eventId: session.eventId,
-        conversationKey: session.conversationKey,
-        reason: preparation.reason ?? "channel_preparation_blocked",
-      });
+    const preparation = await runChannelPrepare(event, channelLifecycleContext(event));
+    if (!preparation.shouldContinue) {
       return;
     }
 
@@ -464,17 +460,12 @@ async function handleChannelRequest(event: ChannelInboundEvent, context?: Lambda
 
   try {
     while (true) {
-      const channelContext = await event.channel.loadContext?.(channelLifecycleContext(event));
-      if (channelContext && !channelContext.canReply) {
-        logInfo("Channel request stopped by channel context", {
-          eventId: session.eventId,
-          conversationKey: session.conversationKey,
-          reason: channelContext.reason ?? "channel_context_blocked",
-        });
+      const channelContext = await loadChannelContext(event, channelLifecycleContext(event));
+      if (!channelContext.canReply) {
         return;
       }
 
-      const turnContext = await session.createTurnContext(channelContext?.system ?? []);
+      const turnContext = await session.createTurnContext(channelContext.system);
       if (!isRunnableModelInput(turnContext.messages.at(-1))) {
         return;
       }
@@ -484,13 +475,7 @@ async function handleChannelRequest(event: ChannelInboundEvent, context?: Lambda
         onFinalText: async (response) => {
           const responseText = typeof response === "string" ? response : JSON.stringify(response, null, 2);
           await event.channel.sendText(responseText);
-          await event.channel.recordReply?.(channelLifecycleContext(event), responseText).catch((err) => {
-            logError("Failed to run channel reply recorder", {
-              eventId: session.eventId,
-              conversationKey: session.conversationKey,
-              error: err instanceof Error ? err.message : String(err),
-            });
-          });
+          await recordChannelReply(event, channelLifecycleContext(event), responseText);
         },
         onErrorText: (error) => event.channel.sendText(formatChannelErrorText(error)),
         onApprovalRequired: async (approvals) => {
@@ -505,6 +490,72 @@ async function handleChannelRequest(event: ChannelInboundEvent, context?: Lambda
   } finally {
     await session.releaseConversationLease().catch(() => { });
   }
+}
+
+async function runChannelPrepare(
+  event: ChannelInboundEvent,
+  lifecycleContext: ChannelLifecycleContext,
+): Promise<{ shouldContinue: boolean }> {
+  for (const component of event.lifecycle ?? []) {
+    const preparation = await component.prepareMessage?.(lifecycleContext);
+    if (preparation && !preparation.shouldContinue) {
+      logInfo("Channel request stopped by lifecycle preparation", {
+        eventId: event.eventId,
+        conversationKey: event.conversationKey,
+        component: component.name,
+        reason: preparation.reason ?? "lifecycle_preparation_blocked",
+      });
+      return { shouldContinue: false };
+    }
+  }
+
+  return { shouldContinue: true };
+}
+
+async function loadChannelContext(
+  event: ChannelInboundEvent,
+  lifecycleContext: ChannelLifecycleContext,
+): Promise<{ canReply: boolean; system: SystemModelMessage[] }> {
+  const system: SystemModelMessage[] = [];
+  for (const component of event.lifecycle ?? []) {
+    const context = await component.loadContext?.(lifecycleContext);
+    if (context && !context.canReply) {
+      logInfo("Channel request stopped by lifecycle context", {
+        eventId: event.eventId,
+        conversationKey: event.conversationKey,
+        component: component.name,
+        reason: context.reason ?? "lifecycle_context_blocked",
+      });
+      return { canReply: false, system };
+    }
+
+    if (context?.system) {
+      system.push(...context.system);
+    }
+  }
+
+  return { canReply: true, system };
+}
+
+async function recordChannelReply(
+  event: ChannelInboundEvent,
+  lifecycleContext: ChannelLifecycleContext,
+  responseText: string,
+): Promise<void> {
+  await Promise.all((event.lifecycle ?? []).map(async (component) => {
+    if (!component.recordReply) {
+      return;
+    }
+
+    await component.recordReply(lifecycleContext, responseText).catch((err) => {
+      logError("Failed to run channel lifecycle reply recorder", {
+        eventId: event.eventId,
+        conversationKey: event.conversationKey,
+        component: component.name,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    });
+  }));
 }
 
 function channelLifecycleContext(event: ChannelInboundEvent): ChannelLifecycleContext {

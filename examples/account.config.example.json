@@ -188,9 +188,14 @@
       "pageId": "page-id",
       "pageAccessToken": "...",
       "senderId": "optional-staff-user-id",
-      "supabase": {
-        "url": "https://project.supabase.co",
-        "serviceRoleKey": "optional-customer-service-role-key"
+      "options": {
+        "components": {
+          "conversationState": {
+            "provider": "supabase",
+            "url": "https://project.supabase.co",
+            "serviceRoleKey": "optional-customer-service-role-key"
+          }
+        }
       }
     }
   }

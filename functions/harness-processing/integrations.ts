@@ -20,7 +20,6 @@ import {
   resolveBearerAuth,
   toRuntimeAgentConfig,
   type AgentConfig,
-  type AgentPancakeSupabaseConfig,
   type AccountRecord,
   type AuthContext,
 } from "../_shared/accounts.ts";
@@ -46,7 +45,6 @@ import {
 } from "../_shared/http.ts";
 import { logError } from "../_shared/log.ts";
 import { createPancakeChannel } from "../_shared/pancake-channel.ts";
-import type { PancakeSupabaseConfig } from "../_shared/pancake-supabase.ts";
 import type { LambdaResponse } from "../_shared/runtime.ts";
 import { createSlackChannel } from "../_shared/slack-channel.ts";
 import { createTelegramChannel } from "../_shared/telegram-channel.ts";
@@ -58,6 +56,7 @@ import {
   scopedDirectConversationKey,
   scopedDirectEventId,
 } from "../_shared/runtime-keys.ts";
+import { createChannelLifecycleComponents, type ChannelLifecycleComponent } from "./channel-lifecycle/index.ts";
 import type { ConversationIngressEvent } from "./session.ts";
 
 type DirectIngressEvent =
@@ -108,6 +107,7 @@ export interface ChannelInboundEvent {
   channelName: string;
   source: Record<string, unknown>;
   channel: ChannelActions;
+  lifecycle?: ChannelLifecycleComponent[];
   commandToken?: string;
 }
 
@@ -314,6 +314,7 @@ async function handleChannelWebhook(
 
     const { message, ack } = parsed;
     const channel = adapter.actions(message);
+    const lifecycle = createChannelLifecycleComponents(agent.config, message.channelName);
     const response = ack ?? { statusCode: 200 };
 
     return {
@@ -329,6 +330,7 @@ async function handleChannelWebhook(
           channelName: message.channelName,
           source: message.source,
           channel: channel,
+          lifecycle,
           accountId: account.accountId,
           agentId: agent.agentId,
           agentConfig: toRuntimeAgentConfig(agent.config),
@@ -708,17 +710,5 @@ function createPancakeChannelFromConfig(config: AgentConfig): ChannelAdapter | n
     channel.pageId,
     channel.pageAccessToken,
     channel.senderId,
-    toPancakeSupabaseConfig(channel.supabase),
   );
-}
-
-function toPancakeSupabaseConfig(config: AgentPancakeSupabaseConfig | undefined): PancakeSupabaseConfig | undefined {
-  if (!config || config.enabled === false || !config.url || !config.serviceRoleKey) {
-    return undefined;
-  }
-
-  return {
-    url: config.url,
-    serviceRoleKey: config.serviceRoleKey,
-  };
 }
