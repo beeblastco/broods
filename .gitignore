@@ -8,3 +8,6 @@ secrets.env
 functions/_shared/.generated/
 
 na_tmp/
+.docusaurus/
+build/
+.docusaurus.d

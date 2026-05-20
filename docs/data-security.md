@@ -10,9 +10,12 @@ flowchart TD
   Account --> Hash["Account secret hash<br/>secretHash"]
   Account --> Agent["Agent records"]
   Agent --> Config["Encrypted agent config blob<br/>model, tool, subagent, and channel settings"]
+  Agent --> Workspace["Workspace S3 objects<br/>memory, files, tasks"]
+  Agent --> Skills["Skill S3 objects<br/>account-scoped bundles"]
 
   Config --> Model["model provider/options"]
   Config --> Tools["tool allowlist/options"]
+  Config --> Sandbox["sandbox provider/options"]
   Config --> Subagents["subagent allowlist/context mode"]
   Config --> Telegram["Telegram token / webhook secret"]
   Config --> GitHub["GitHub app id / private key / webhook secret"]
@@ -23,6 +26,8 @@ flowchart TD
 The account API secret is never stored directly. It is returned once on create or rotation, then only `secretHash` is stored.
 
 Provider credentials and account-specific runtime options must be usable at runtime, so they cannot be hashed. They are stored inside encrypted account-owned agent config. Normal account and agent responses recursively redact secret-like field names such as `token`, `secret`, `privateKey`, and `apiKey`, including inside tool config.
+
+Workspace files, memory, tasks, and skill bundles are stored as account-scoped S3 objects. The buckets block public access and use a deny-by-default bucket policy that allows only the project runtime roles, sandbox runtime roles, the AWS S3 Files role, and deployment roles for the active stage.
 
 ## How Config Encryption Works
 
@@ -72,3 +77,4 @@ This keeps the product easy to run and change:
 - Lambdas with the encryption secret and table access can decrypt config.
 - Key rotation needs a migration.
 - This protects against accidental table-read exposure, not compromised application code.
+- Third-party sandbox providers such as E2B and Daytona run outside the AWS Lambda sandbox boundary. Configure them with isolated mounts, minimal environment variables, provider-side egress controls, and no account/provider secrets unless a workload explicitly needs them.

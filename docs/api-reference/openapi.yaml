@@ -18,9 +18,15 @@ servers:
 security:
   - BearerAuth: []
 
+tags:
+  - name: Direct API
+    description: Sync, async, status, and external tool completion endpoints.
+
 paths:
   /:
     get:
+      tags:
+        - Direct API
       summary: Health probe
       description: Unauthenticated lightweight probe for the deployed harness-processing Function URL.
       security: []
@@ -40,6 +46,8 @@ paths:
                     example: POST
 
     post:
+      tags:
+        - Direct API
       summary: Sync direct API (SSE)
       description: |
         Run a synchronous direct agent turn. Returns an SSE stream with Vercel AI SDK stream events.
@@ -70,6 +78,8 @@ paths:
 
   /async:
     post:
+      tags:
+        - Direct API
       summary: Async direct API
       description: |
         Queue an async direct agent turn. Returns immediately with a status URL for polling.
@@ -104,6 +114,8 @@ paths:
 
   /status/{eventId}:
     get:
+      tags:
+        - Direct API
       summary: Poll async status
       description: |
         Poll the status of an async job. Responses are backed by the account-scoped AsyncAgentResult DynamoDB record.
@@ -152,6 +164,8 @@ paths:
 
   /async-tools/{resultId}/complete:
     post:
+      tags:
+        - Direct API
       summary: Complete external async tool
       description: |
         Complete an externally dispatched async tool. Completion settles one AsyncToolResult row.
