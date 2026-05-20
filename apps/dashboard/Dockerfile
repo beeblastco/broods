@@ -18,7 +18,7 @@ COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 RUN bun run build
 
-FROM node:24-alpine AS runner
+FROM oven/bun:1.3.3-alpine AS runner
 WORKDIR /app
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
@@ -31,4 +31,4 @@ COPY --from=builder --chown=1001:1001 /app/.next/static ./.next/static
 COPY --from=builder --chown=1001:1001 /app/.next/standalone ./
 USER 1001
 EXPOSE 3000
-CMD ["node", "server.js"]
+CMD ["bun", "server.js"]
