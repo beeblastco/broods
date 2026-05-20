@@ -7,6 +7,7 @@ export default authkitMiddleware({
     middlewareAuth: {
         enabled: true,
         unauthenticatedPaths: [
+            "/healthz",
             "/login",
             "/auth/callback",
             "/auth/sign-in",

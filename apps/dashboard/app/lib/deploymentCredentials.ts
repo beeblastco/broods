@@ -8,7 +8,7 @@ type StoredDeploymentCredential = {
     savedAt: number;
 };
 
-const STORAGE_KEY = "pnzu-frontend.deploymentCredentials.v1";
+const STORAGE_KEY = "cherry-coke.deploymentCredentials.v1";
 const LEGACY_STORAGE_KEY = "clonee.deploymentCredentials.v1";
 
 function canUseSessionStorage(): boolean {

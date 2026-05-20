@@ -1,0 +1,56 @@
+name: Build Image
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+env:
+  IMAGE_NAME: ghcr.io/beeblastco/cherry-coke
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Validate build variables
+        shell: bash
+        env:
+          NEXT_PUBLIC_CONVEX_URL: ${{ vars.NEXT_PUBLIC_CONVEX_URL }}
+        run: |
+          if [[ -z "$NEXT_PUBLIC_CONVEX_URL" ]]; then
+            echo "Missing repository variable: NEXT_PUBLIC_CONVEX_URL" >&2
+            exit 1
+          fi
+
+      - name: Build and push image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ env.IMAGE_NAME }}:main
+            ${{ env.IMAGE_NAME }}:${{ github.sha }}
+          build-args: |
+            NEXT_PUBLIC_AGENT_GATEWAY_URL=${{ vars.NEXT_PUBLIC_AGENT_GATEWAY_URL }}
+            NEXT_PUBLIC_CONVEX_SITE_URL=${{ vars.NEXT_PUBLIC_CONVEX_SITE_URL }}
+            NEXT_PUBLIC_CONVEX_URL=${{ vars.NEXT_PUBLIC_CONVEX_URL }}
+            NEXT_PUBLIC_WORKOS_REDIRECT_URI=${{ vars.NEXT_PUBLIC_WORKOS_REDIRECT_URI }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

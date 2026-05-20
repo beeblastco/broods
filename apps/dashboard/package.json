@@ -1,13 +1,13 @@
 {
-  "name": "pnzu-frontend",
-  "description": "Frontend UX/UI for pnzu, backed by pnzu cloud services.",
+  "name": "cherry-coke",
+  "description": "BeeBlast dashboard frontend.",
   "version": "0.1.0",
   "private": true,
   "repository": {
     "type": "git",
-    "url": "https://github.com/beeblastco/pnzu-frontend.git"
+    "url": "https://github.com/beeblastco/cherry-coke.git"
   },
-  "homepage": "https://github.com/beeblastco/pnzu-frontend",
+  "homepage": "https://github.com/beeblastco/cherry-coke",
   "scripts": {
     "dev": "next dev",
     "build": "next build",

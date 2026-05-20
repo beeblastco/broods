@@ -216,7 +216,7 @@ export default function SettingsPage() {
     }
 
     function handleGenerateApiKey() {
-        const newKey = `pnzu_prod_sk_${generateSecret()}`;
+        const newKey = `cherry_coke_prod_sk_${generateSecret()}`;
         setGeneratedKey(newKey);
         setApiKeys((prev) => [
             ...prev,

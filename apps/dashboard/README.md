@@ -1,6 +1,6 @@
-# pnzu-frontend
+# cherry-coke
 
-Frontend UX/UI for `pnzu`.
+BeeBlast dashboard frontend.
 
 The local backend runtime that used to live in this repo has been removed. `pnzu`
 now provides the agent gateway and custom-tool execution backend services.
@@ -8,7 +8,7 @@ now provides the agent gateway and custom-tool execution backend services.
 client-side Convex contract shim under `convex/_generated` so the frontend can
 talk to the deployed `pnzu` backend.
 
-The GitHub repository for this frontend is `beeblastco/pnzu-frontend`.
+The GitHub repository for this frontend is `beeblastco/cherry-coke`.
 
 Configure the frontend against deployed services with:
 
