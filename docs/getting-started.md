@@ -351,7 +351,7 @@ Each script creates a temporary account, runs the test, and cleans up.
 
 ### Define Your Own Agent Config
 
-The agent config is a JSON object that controls everything about how your agent runs. See [`examples/account.config.example.json`](../examples/account.config.example.json) for a full working example, or reference the [Account Management](account-management.md#agent-config) docs for every supported field.
+The agent config is a JSON object that controls everything about how your agent runs. See [`examples/account.config.example.json`](../examples/account.config.example.json) for a full working example, or reference the [API Reference](/api-reference) for the complete `AgentConfig` schema.
 
 Key config sections:
 
@@ -371,8 +371,6 @@ Key config sections:
 ## Next Steps
 
 - [API Reference](/api-reference) — Interactive OpenAPI docs for all endpoints
-- [Account Management](account-management.md) — accounts, agents, skills, and config
-- [Direct API](direct-api.md) — sync SSE, async, status polling, and tool completion
 - [Architecture](architecture.md) — how the platform works under the hood
 - [External Tools](tools.md) — add custom tools for your agents
 - [Memory and Session](memory-and-session.md) — workspace-backed memory, filesystem, and tasks
