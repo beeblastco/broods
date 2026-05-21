@@ -37,8 +37,7 @@ import type {
 } from "../_shared/channels.ts";
 import { extractText, formatChannelErrorText } from "../_shared/channels.ts";
 import { parseCommand } from "../_shared/commands.ts";
-import { getPancakeSupabaseReplyModeConfig } from "../_components/index.ts";
-import { applyPancakeSupabaseReplyMode } from "../_components/pancake/supabase-reply-mode.component.ts";
+import { createPancakeWebhookComponent } from "../_components/pancake/index.ts";
 import { createDiscordChannel } from "../_shared/discord-channel.ts";
 import { createGitHubChannel } from "../_shared/github-channel.ts";
 import {
@@ -436,7 +435,7 @@ function createChannelRegistry(
   const slackChannel = createSlackChannelFromConfig(config);
   const discordChannel = createDiscordChannelFromConfig(config);
   const pancakeChannel = createPancakeChannelFromConfig(config);
-  const pancakeReplyModeConfig = getPancakeSupabaseReplyModeConfig(config);
+  const pancakeComponent = createPancakeWebhookComponent(config, scope);
 
   return {
     webhookChannels: [
@@ -444,14 +443,7 @@ function createChannelRegistry(
       registerWebhookChannel(githubChannel),
       registerWebhookChannel(slackChannel),
       registerWebhookChannel(discordChannel),
-      registerWebhookChannel(
-        pancakeChannel,
-        pancakeReplyModeConfig
-          ? {
-            apply: (parsed) => applyPancakeSupabaseReplyMode(pancakeReplyModeConfig, scope, parsed),
-          }
-          : undefined,
-      ),
+      registerWebhookChannel(pancakeChannel, pancakeComponent ?? undefined),
     ].filter((registration): registration is WebhookChannelRegistration => registration !== null),
   };
 }

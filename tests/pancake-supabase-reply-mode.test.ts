@@ -4,7 +4,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
-import { getPancakeSupabaseReplyModeConfig } from "../functions/_components/index.ts";
+import { getPancakeSupabaseReplyModeConfig } from "../functions/_components/pancake/index.ts";
 import { getPancakeSupabaseReplyMode } from "../functions/_components/pancake/supabase-reply-mode.component.ts";
 
 const ORIGINAL_FETCH = globalThis.fetch;

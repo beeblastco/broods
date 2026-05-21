@@ -1,12 +1,37 @@
 /**
- * Optional customer/channel component config helpers.
- * Keep concrete customer behavior out of the harness runtime path.
+ * Pancake channel component factory.
+ * Keep optional Pancake-specific customer components here.
  */
 
+import type { AgentConfig } from "../../_shared/accounts.ts";
+import type { ChannelParseResult, ParsedChannelMessage } from "../../_shared/channels.ts";
 import {
+  applyPancakeSupabaseReplyMode,
   type PancakeSupabaseReplyModeConfig,
-} from "./pancake/supabase-reply-mode.component.ts";
-import type { AgentConfig } from "../_shared/accounts.ts";
+} from "./supabase-reply-mode.component.ts";
+
+export interface PancakeWebhookComponentScope {
+  accountId: string;
+  agentId: string;
+}
+
+export interface PancakeWebhookComponent {
+  apply(parsed: ParsedChannelMessage): Promise<ChannelParseResult>;
+}
+
+export function createPancakeWebhookComponent(
+  config: AgentConfig,
+  scope: PancakeWebhookComponentScope,
+): PancakeWebhookComponent | null {
+  const replyModeConfig = getPancakeSupabaseReplyModeConfig(config);
+  if (!replyModeConfig) {
+    return null;
+  }
+
+  return {
+    apply: (parsed) => applyPancakeSupabaseReplyMode(replyModeConfig, scope, parsed),
+  };
+}
 
 export function getPancakeSupabaseReplyModeConfig(
   config: AgentConfig,
