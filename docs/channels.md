@@ -23,17 +23,15 @@ flowchart TD
   Auth --> Parse["parse(req)"]
   Parse -->|"message"| Ack["provider ACK"]
   Ack --> After["afterResponse"]
-  Lifecycle --> Prepare
-  After --> Prepare["lifecycle.beforeSessionAppend?"]
-  Prepare --> Handler["handler.ts<br/>handleChannelRequest"]
+  Lifecycle --> Before
+  After --> Before["lifecycle.before?"]
+  Before --> Handler["handler.ts<br/>handleChannelRequest"]
   Handler --> Session["session.ts"]
-  Lifecycle --> Context
-  Handler --> Context["lifecycle.beforeModel?"]
-  Context --> Session
+  Before --> Session
   Session --> Harness["harness.ts<br/>model + tools"]
   Harness --> Actions["ChannelActions"]
   Lifecycle --> Record
-  Actions --> Record["lifecycle.afterChannelSend?"]
+  Actions --> Record["lifecycle.after?"]
   Actions --> Provider
 ```
 
@@ -76,13 +74,12 @@ The normalized `InboundMessage` contains:
 
 ## Lifecycle Components
 
-Harness-owned lifecycle components can extend channel request handling without changing provider adapters. They are built by [`functions/harness-processing/channel-lifecycle/index.ts`](../functions/harness-processing/channel-lifecycle/index.ts) from generic channel `options`.
+Lifecycle components can extend channel request handling without changing provider adapters. The harness owns the generic hook contract and runner; optional customer/channel components live outside the harness, for example under `functions/_components`.
 
 | Hook | Purpose |
 | --- | --- |
-| `beforeSessionAppend(context)` | Run after ACK and before the session append; can stop duplicates or handoff conversations |
-| `beforeModel(context)` | Add ephemeral system context or stop processing immediately before a model turn |
-| `afterChannelSend(context, result)` | Run after `sendText()` succeeds, usually for audit logs or analytics |
+| `before(context)` | Run after ACK and before the session append; can stop processing or return ephemeral system context for the next model turn |
+| `after(context, result)` | Run after `sendText()` succeeds, usually for audit logs or analytics |
 
 ## Current Channels
 
@@ -108,13 +105,13 @@ Pancake can optionally persist customer conversation state to a customer's Supab
       "pageAccessToken": "...",
       "senderId": "optional-staff-user-id",
       "options": {
-        "components": {
-          "conversationState": {
-            "provider": "supabase",
+        "components": [
+          {
+            "type": "pancake-supabase-conversation-state",
             "url": "https://project.supabase.co",
             "serviceRoleKey": "customer-service-role-key"
           }
-        }
+        ]
       }
     }
   }

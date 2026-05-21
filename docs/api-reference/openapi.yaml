@@ -1783,5 +1783,5 @@ components:
               description: Optional staff user ID for replies
             options:
               type: object
-              description: Opaque channel extension options used by harness lifecycle components
+              description: Opaque channel extension options used by optional lifecycle components
               additionalProperties: true

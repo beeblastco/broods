@@ -51,13 +51,13 @@ async function upsertPancakeAccount() {
         ...(pancakeSupabaseUrl && pancakeSupabaseServiceRoleKey
           ? {
             options: {
-              components: {
-                conversationState: {
-                  provider: "supabase",
+              components: [
+                {
+                  type: "pancake-supabase-conversation-state",
                   url: pancakeSupabaseUrl,
                   serviceRoleKey: pancakeSupabaseServiceRoleKey,
                 },
-              },
+              ],
             },
           }
           : {}),

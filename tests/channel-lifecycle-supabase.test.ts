@@ -45,9 +45,10 @@ describe("Supabase conversation-state lifecycle component", () => {
     }) as never;
     const component = createSupabaseComponent();
 
-    const result = await component.beforeSessionAppend!(createLifecycleContext());
+    const result = await component.before!(createLifecycleContext());
 
-    expect(result).toEqual({ shouldContinue: true });
+    expect(result?.stop).toBeUndefined();
+    expect(result?.ephemeralSystem?.[0]?.content).toContain("reply_mode: auto");
     expect(fetchCalls).toHaveLength(2);
     expect(fetchCalls[0]!.url).toContain("/rest/v1/conversation_states?");
     expect(fetchCalls[0]!.init?.method).toBe("POST");
@@ -61,10 +62,8 @@ describe("Supabase conversation-state lifecycle component", () => {
       account_id: "acct_test",
       agent_id: "agent_test",
       channel: "pancake",
-      provider_page_id: "page-1",
       provider_conversation_id: "conversation-1",
       customer_external_id: "page-customer-1",
-      customer_name: "Ada",
     });
     expect(fetchCalls[1]!.url).toBe("https://supabase.example/rest/v1/conversation_messages");
     expect(JSON.parse(String(fetchCalls[1]!.init?.body))).toMatchObject({
@@ -73,6 +72,15 @@ describe("Supabase conversation-state lifecycle component", () => {
       sender_id: "page-customer-1",
       sender_name: "Ada",
       body: "hello pancake",
+      metadata: {
+        provider: {
+          page_id: "page-1",
+          conversation_id: "conversation-1",
+        },
+        customer: {
+          name: "Ada",
+        },
+      },
     });
   });
 
@@ -87,9 +95,9 @@ describe("Supabase conversation-state lifecycle component", () => {
     }) as never;
     const component = createSupabaseComponent();
 
-    const result = await component.beforeSessionAppend!(createLifecycleContext());
+    const result = await component.before!(createLifecycleContext());
 
-    expect(result).toEqual({ shouldContinue: false, reason: "duplicate_message" });
+    expect(result).toEqual({ stop: true, reason: "duplicate_message" });
   });
 
   it("blocks auto-reply when the state is in human mode", async () => {
@@ -103,27 +111,37 @@ describe("Supabase conversation-state lifecycle component", () => {
     }) as never;
     const component = createSupabaseComponent();
 
-    const result = await component.beforeSessionAppend!(createLifecycleContext());
+    const result = await component.before!(createLifecycleContext());
 
-    expect(result).toEqual({ shouldContinue: false, reason: "reply_mode_human" });
+    expect(result).toEqual({ stop: true, reason: "reply_mode_human" });
   });
 
   it("loads a compact system prompt for auto-mode conversation state", async () => {
-    globalThis.fetch = mock(async () => jsonResponse([
-      stateRow({
-        reply_mode: "auto",
-        status: "open",
-        current_product_name: "AquaSilk Serum",
-        intent: "price_check",
-      }),
-    ])) as never;
+    let callCount = 0;
+    globalThis.fetch = mock(async (url: string | URL, init?: RequestInit) => {
+      callCount += 1;
+      if (callCount === 1) {
+        return jsonResponse([
+          stateRow({
+            reply_mode: "auto",
+            metadata: {
+              current_product: {
+                name: "AquaSilk Serum",
+              },
+              intent: "price_check",
+            },
+          }),
+        ]);
+      }
+      return new Response(null, { status: 201 });
+    }) as never;
     const component = createSupabaseComponent();
 
-    const result = await component.beforeModel!(createLifecycleContext());
+    const result = await component.before!(createLifecycleContext());
 
-    expect(result?.system?.[0]?.role).toBe("system");
-    expect(result?.system?.[0]?.content).toContain("current_product_name: AquaSilk Serum");
-    expect(result?.system?.[0]?.content).toContain("intent: price_check");
+    expect(result?.ephemeralSystem?.[0]?.role).toBe("system");
+    expect(result?.ephemeralSystem?.[0]?.content).toContain("AquaSilk Serum");
+    expect(result?.ephemeralSystem?.[0]?.content).toContain("price_check");
   });
 
   it("records agent replies after channel send succeeds", async () => {
@@ -134,7 +152,7 @@ describe("Supabase conversation-state lifecycle component", () => {
     }) as never;
     const component = createSupabaseComponent();
 
-    await component.afterChannelSend!(createLifecycleContext(), { text: "Agent reply" });
+    await component.after!(createLifecycleContext(), { text: "Agent reply" });
 
     expect(fetchCalls).toHaveLength(2);
     expect(fetchCalls[0]!.url).toBe("https://supabase.example/rest/v1/conversation_messages");
@@ -157,13 +175,13 @@ function createSupabaseComponent(): ChannelLifecycleComponent {
         pageId: "page-1",
         pageAccessToken: "page-token",
         options: {
-          components: {
-            conversationState: {
-              provider: "supabase",
+          components: [
+            {
+              type: "pancake-supabase-conversation-state",
               url: "https://supabase.example",
               serviceRoleKey: "service-key",
             },
-          },
+          ],
         },
       },
     },
@@ -204,10 +222,8 @@ function stateRow(overrides: Partial<Record<string, unknown>> = {}) {
     account_id: "acct_test",
     agent_id: "agent_test",
     channel: "pancake",
-    provider_page_id: "page-1",
     provider_conversation_id: "conversation-1",
     reply_mode: "auto",
-    status: "open",
     metadata: {},
     ...overrides,
   };

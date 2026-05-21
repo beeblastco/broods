@@ -9,7 +9,7 @@ import { logError, logInfo } from "../../_shared/log.ts";
 import type {
   ChannelLifecycleComponent,
   ChannelLifecycleContext,
-  ChannelSendResult,
+  ChannelReplyResult,
 } from "./types.ts";
 
 export function createChannelLifecycleContext(event: ChannelInboundEvent): ChannelLifecycleContext {
@@ -24,63 +24,43 @@ export function createChannelLifecycleContext(event: ChannelInboundEvent): Chann
   };
 }
 
-export async function runBeforeSessionAppend(
+export async function runBeforeChannelReply(
   components: ChannelLifecycleComponent[] | undefined,
   context: ChannelLifecycleContext,
-): Promise<{ shouldContinue: boolean }> {
+): Promise<{ stop: boolean; ephemeralSystem: SystemModelMessage[] }> {
+  const ephemeralSystem: SystemModelMessage[] = [];
   for (const component of components ?? []) {
-    const preparation = await component.beforeSessionAppend?.(context);
-    if (preparation && !preparation.shouldContinue) {
-      logInfo("Channel request stopped by lifecycle preparation", {
+    const result = await component.before?.(context);
+    if (result?.stop) {
+      logInfo("Channel request stopped by lifecycle component", {
         eventId: context.eventId,
         conversationKey: context.conversationKey,
         component: component.name,
-        reason: preparation.reason ?? "lifecycle_preparation_blocked",
+        reason: result.reason ?? "lifecycle_blocked",
       });
-      return { shouldContinue: false };
+      return { stop: true, ephemeralSystem };
+    }
+
+    if (result?.ephemeralSystem) {
+      ephemeralSystem.push(...result.ephemeralSystem);
     }
   }
 
-  return { shouldContinue: true };
+  return { stop: false, ephemeralSystem };
 }
 
-export async function runBeforeModel(
+export async function runAfterChannelReply(
   components: ChannelLifecycleComponent[] | undefined,
   context: ChannelLifecycleContext,
-): Promise<{ shouldContinue: boolean; system: SystemModelMessage[] }> {
-  const system: SystemModelMessage[] = [];
-  for (const component of components ?? []) {
-    const result = await component.beforeModel?.(context);
-    if (result?.shouldContinue === false) {
-      logInfo("Channel request stopped by lifecycle context", {
-        eventId: context.eventId,
-        conversationKey: context.conversationKey,
-        component: component.name,
-        reason: result.reason ?? "lifecycle_context_blocked",
-      });
-      return { shouldContinue: false, system };
-    }
-
-    if (result?.system) {
-      system.push(...result.system);
-    }
-  }
-
-  return { shouldContinue: true, system };
-}
-
-export async function runAfterChannelSend(
-  components: ChannelLifecycleComponent[] | undefined,
-  context: ChannelLifecycleContext,
-  result: ChannelSendResult,
+  result: ChannelReplyResult,
 ): Promise<void> {
   await Promise.all((components ?? []).map(async (component) => {
-    if (!component.afterChannelSend) {
+    if (!component.after) {
       return;
     }
 
-    await component.afterChannelSend(context, result).catch((err) => {
-      logError("Failed to run channel lifecycle after-send hook", {
+    await component.after(context, result).catch((err) => {
+      logError("Failed to run channel lifecycle after hook", {
         eventId: context.eventId,
         conversationKey: context.conversationKey,
         component: component.name,

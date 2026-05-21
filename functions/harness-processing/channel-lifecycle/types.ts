@@ -15,24 +15,18 @@ export interface ChannelLifecycleContext {
   source: Record<string, unknown>;
 }
 
-export interface ChannelLifecycleDecision {
-  shouldContinue: boolean;
+export interface ChannelHookResult {
+  stop?: boolean;
   reason?: string;
+  ephemeralSystem?: SystemModelMessage[];
 }
 
-export interface ChannelBeforeModelResult {
-  shouldContinue?: boolean;
-  system?: SystemModelMessage[];
-  reason?: string;
-}
-
-export interface ChannelSendResult {
+export interface ChannelReplyResult {
   text: string;
 }
 
 export interface ChannelLifecycleComponent {
   readonly name: string;
-  beforeSessionAppend?(context: ChannelLifecycleContext): Promise<ChannelLifecycleDecision | void>;
-  beforeModel?(context: ChannelLifecycleContext): Promise<ChannelBeforeModelResult | void>;
-  afterChannelSend?(context: ChannelLifecycleContext, result: ChannelSendResult): Promise<void>;
+  before?(context: ChannelLifecycleContext): Promise<ChannelHookResult | void>;
+  after?(context: ChannelLifecycleContext, result: ChannelReplyResult): Promise<void>;
 }

@@ -4,10 +4,7 @@
  */
 
 import type { AgentConfig } from "../../_shared/accounts.ts";
-import {
-  createSupabaseConversationStateComponent,
-  type SupabaseConversationStateConfig,
-} from "./supabase-conversation-state.plugin.ts";
+import { createChannelLifecycleComponent } from "../../_components/index.ts";
 import type { ChannelLifecycleComponent } from "./types.ts";
 
 export type { ChannelLifecycleComponent, ChannelLifecycleContext } from "./types.ts";
@@ -17,39 +14,20 @@ export function createChannelLifecycleComponents(
   channelName: string,
 ): ChannelLifecycleComponent[] {
   const channelOptions = getChannelOptions(config, channelName);
-  const componentsConfig = recordValue(channelOptions.components);
-  if (!componentsConfig) {
+  const componentsConfig = channelOptions.components;
+  if (componentsConfig === undefined) {
     return [];
   }
 
-  return [
-    createConversationStateComponent(componentsConfig.conversationState),
-  ].filter((component): component is ChannelLifecycleComponent => component !== null);
-}
-
-function createConversationStateComponent(value: unknown): ChannelLifecycleComponent | null {
-  const config = recordValue(value);
-  if (!config || config.enabled === false) {
-    return null;
+  if (!Array.isArray(componentsConfig)) {
+    throw new Error(`config.channels.${channelName}.options.components must be an array`);
   }
 
-  switch (config.provider) {
-    case "supabase":
-      return createSupabaseConversationStateComponent(parseSupabaseConversationStateConfig(config));
-    case undefined:
-      return null;
-    default:
-      throw new Error(`Unsupported conversationState provider: ${String(config.provider)}`);
-  }
-}
-
-function parseSupabaseConversationStateConfig(
-  config: Record<string, unknown>,
-): SupabaseConversationStateConfig {
-  const url = requiredString(config.url, "conversationState.url");
-  const serviceRoleKey = requiredString(config.serviceRoleKey, "conversationState.serviceRoleKey");
-
-  return { url, serviceRoleKey };
+  return componentsConfig
+    .map((componentConfig, index) =>
+      createChannelLifecycleComponent(componentConfig, `config.channels.${channelName}.options.components[${index}]`)
+    )
+    .filter((component): component is ChannelLifecycleComponent => component !== null);
 }
 
 function getChannelOptions(config: AgentConfig, channelName: string): Record<string, unknown> {
@@ -59,12 +37,4 @@ function getChannelOptions(config: AgentConfig, channelName: string): Record<str
 
 function recordValue(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
-}
-
-function requiredString(value: unknown, name: string): string {
-  if (typeof value !== "string" || value.trim().length === 0) {
-    throw new Error(`${name} must be a non-empty string`);
-  }
-
-  return value.trim();
 }

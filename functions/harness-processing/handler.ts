@@ -4,7 +4,7 @@
  */
 
 import { InvokeCommand, LambdaClient } from "@aws-sdk/client-lambda";
-import type { ToolModelMessage, JSONValue } from "ai";
+import type { ToolModelMessage, JSONValue, SystemModelMessage } from "ai";
 import type { LambdaFunctionURLEvent } from "aws-lambda";
 import { formatChannelErrorText } from "../_shared/channels.ts";
 import { executeCommand } from "../_shared/commands.ts";
@@ -45,9 +45,8 @@ import {
 } from "./async-tool-result.ts";
 import {
   createChannelLifecycleContext,
-  runAfterChannelSend,
-  runBeforeModel,
-  runBeforeSessionAppend,
+  runAfterChannelReply,
+  runBeforeChannelReply,
 } from "./channel-lifecycle/runner.ts";
 
 type AgentLoopStream = Awaited<ReturnType<typeof runAgentLoop>>;
@@ -438,12 +437,14 @@ async function handleChannelRequest(event: ChannelInboundEvent, context?: Lambda
     return;
   }
 
+  const lifecycleContext = createChannelLifecycleContext(event);
+  let ephemeralSystem: SystemModelMessage[] = [];
   try {
-    const lifecycleContext = createChannelLifecycleContext(event);
-    const preparation = await runBeforeSessionAppend(event.lifecycle, lifecycleContext);
-    if (!preparation.shouldContinue) {
+    const beforeReply = await runBeforeChannelReply(event.lifecycle, lifecycleContext);
+    if (beforeReply.stop) {
       return;
     }
+    ephemeralSystem = beforeReply.ephemeralSystem;
 
     await session.appendIngressEvents(event.events);
   } catch (err) {
@@ -466,13 +467,7 @@ async function handleChannelRequest(event: ChannelInboundEvent, context?: Lambda
 
   try {
     while (true) {
-      const lifecycleContext = createChannelLifecycleContext(event);
-      const channelContext = await runBeforeModel(event.lifecycle, lifecycleContext);
-      if (!channelContext.shouldContinue) {
-        return;
-      }
-
-      const turnContext = await session.createTurnContext(channelContext.system);
+      const turnContext = await session.createTurnContext(ephemeralSystem);
       if (!isRunnableModelInput(turnContext.messages.at(-1))) {
         return;
       }
@@ -482,7 +477,7 @@ async function handleChannelRequest(event: ChannelInboundEvent, context?: Lambda
         onFinalText: async (response) => {
           const responseText = typeof response === "string" ? response : JSON.stringify(response, null, 2);
           await event.channel.sendText(responseText);
-          await runAfterChannelSend(event.lifecycle, lifecycleContext, { text: responseText });
+          await runAfterChannelReply(event.lifecycle, lifecycleContext, { text: responseText });
         },
         onErrorText: (error) => event.channel.sendText(formatChannelErrorText(error)),
         onApprovalRequired: async (approvals) => {

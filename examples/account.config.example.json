@@ -189,13 +189,13 @@
       "pageAccessToken": "...",
       "senderId": "optional-staff-user-id",
       "options": {
-        "components": {
-          "conversationState": {
-            "provider": "supabase",
+        "components": [
+          {
+            "type": "pancake-supabase-conversation-state",
             "url": "https://project.supabase.co",
             "serviceRoleKey": "optional-customer-service-role-key"
           }
-        }
+        ]
       }
     }
   }

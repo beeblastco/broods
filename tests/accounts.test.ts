@@ -569,13 +569,13 @@ describe("agent config", () => {
           pageAccessToken: "page-token",
           senderId: "sender-1",
           options: {
-            components: {
-              conversationState: {
-                provider: "supabase",
+            components: [
+              {
+                type: "pancake-supabase-conversation-state",
                 url: "https://supabase.example",
                 serviceRoleKey: "service-key",
               },
-            },
+            ],
           },
         },
       },
@@ -586,13 +586,13 @@ describe("agent config", () => {
           pageAccessToken: "page-token",
           senderId: "sender-1",
           options: {
-            components: {
-              conversationState: {
-                provider: "supabase",
+            components: [
+              {
+                type: "pancake-supabase-conversation-state",
                 url: "https://supabase.example",
                 serviceRoleKey: "service-key",
               },
-            },
+            ],
           },
         },
       },
