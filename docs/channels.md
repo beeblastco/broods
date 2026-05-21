@@ -30,8 +30,6 @@ flowchart TD
   Before --> Session
   Session --> Harness["harness.ts<br/>model + tools"]
   Harness --> Actions["ChannelActions"]
-  Lifecycle --> Record
-  Actions --> Record["lifecycle.after?"]
   Actions --> Provider
 ```
 
@@ -74,12 +72,11 @@ The normalized `InboundMessage` contains:
 
 ## Lifecycle Components
 
-Lifecycle components can extend channel request handling without changing provider adapters. The harness owns the generic hook contract and runner; optional customer/channel components live outside the harness, for example under `functions/_components`.
+Lifecycle components run custom code around channel processing without changing provider adapters. Optional customer/channel components live under `functions/_components`.
 
 | Hook | Purpose |
 | --- | --- |
-| `before(context)` | Run after ACK and before the session append; can stop processing or return ephemeral system context for the next model turn |
-| `after(context, result)` | Run after `sendText()` succeeds, usually for audit logs or analytics |
+| `before(context)` | Runs custom component code after provider ACK and before the session append |
 
 ## Current Channels
 
@@ -95,7 +92,7 @@ The full config field reference lives in the [API Reference](/api-reference) und
 
 Pancake's public webhook docs do not define a signature or secret header. The adapter validates `page_id` against `config.channels.pancake.pageId`, acknowledges unsupported events, and replies through the page-scoped message API with `pageAccessToken`.
 
-Pancake can optionally persist customer conversation state to a customer's Supabase project through a lifecycle component configured under `config.channels.pancake.options`. This keeps Supabase out of the Pancake adapter and avoids global SST or GitHub Supabase secrets.
+Pancake can optionally check `reply_mode` from a customer's Supabase `conversation_states` table through a component configured under `config.channels.pancake.options`. This keeps Supabase out of the Pancake adapter and avoids global SST or GitHub Supabase secrets.
 
 ```json
 {
@@ -107,7 +104,7 @@ Pancake can optionally persist customer conversation state to a customer's Supab
       "options": {
         "components": [
           {
-            "type": "pancake-supabase-conversation-state",
+            "type": "pancake-supabase-reply-mode",
             "url": "https://project.supabase.co",
             "serviceRoleKey": "customer-service-role-key"
           }

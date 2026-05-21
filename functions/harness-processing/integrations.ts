@@ -30,6 +30,7 @@ import {
 import type {
   ChannelActions,
   ChannelAdapter,
+  ChannelLifecycleComponent,
   ChannelRequest,
   ChannelResponse,
 } from "../_shared/channels.ts";
@@ -56,7 +57,7 @@ import {
   scopedDirectConversationKey,
   scopedDirectEventId,
 } from "../_shared/runtime-keys.ts";
-import { createChannelLifecycleComponents, type ChannelLifecycleComponent } from "./channel-lifecycle/index.ts";
+import { createChannelLifecycleComponents } from "../_components/index.ts";
 import type { ConversationIngressEvent } from "./session.ts";
 
 type DirectIngressEvent =

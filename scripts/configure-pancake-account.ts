@@ -53,7 +53,7 @@ async function upsertPancakeAccount() {
             options: {
               components: [
                 {
-                  type: "pancake-supabase-conversation-state",
+                  type: "pancake-supabase-reply-mode",
                   url: pancakeSupabaseUrl,
                   serviceRoleKey: pancakeSupabaseServiceRoleKey,
                 },

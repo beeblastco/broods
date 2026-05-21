@@ -4,10 +4,32 @@
  */
 
 import {
-  createSupabaseConversationStateComponent,
-  type SupabaseConversationStateConfig,
-} from "./pancake/supabase-conversation-state.component.ts";
-import type { ChannelLifecycleComponent } from "../harness-processing/channel-lifecycle/types.ts";
+  createPancakeSupabaseReplyModeComponent,
+  type PancakeSupabaseReplyModeConfig,
+} from "./pancake/supabase-reply-mode.component.ts";
+import type { AgentConfig } from "../_shared/accounts.ts";
+import type { ChannelLifecycleComponent } from "../_shared/channels.ts";
+
+export function createChannelLifecycleComponents(
+  config: AgentConfig,
+  channelName: string,
+): ChannelLifecycleComponent[] {
+  const channelOptions = getChannelOptions(config, channelName);
+  const componentsConfig = channelOptions.components;
+  if (componentsConfig === undefined) {
+    return [];
+  }
+
+  if (!Array.isArray(componentsConfig)) {
+    throw new Error(`config.channels.${channelName}.options.components must be an array`);
+  }
+
+  return componentsConfig
+    .map((componentConfig, index) =>
+      createChannelLifecycleComponent(componentConfig, `config.channels.${channelName}.options.components[${index}]`)
+    )
+    .filter((component): component is ChannelLifecycleComponent => component !== null);
+}
 
 export function createChannelLifecycleComponent(
   value: unknown,
@@ -19,8 +41,8 @@ export function createChannelLifecycleComponent(
   }
 
   switch (config.type) {
-    case "pancake-supabase-conversation-state":
-      return createSupabaseConversationStateComponent(parseSupabaseConversationStateConfig(config, path));
+    case "pancake-supabase-reply-mode":
+      return createPancakeSupabaseReplyModeComponent(parsePancakeSupabaseReplyModeConfig(config, path));
     case undefined:
       return null;
     default:
@@ -28,14 +50,19 @@ export function createChannelLifecycleComponent(
   }
 }
 
-function parseSupabaseConversationStateConfig(
+function parsePancakeSupabaseReplyModeConfig(
   config: Record<string, unknown>,
   path: string,
-): SupabaseConversationStateConfig {
+): PancakeSupabaseReplyModeConfig {
   const url = requiredString(config.url, `${path}.url`);
   const serviceRoleKey = requiredString(config.serviceRoleKey, `${path}.serviceRoleKey`);
 
   return { url, serviceRoleKey };
+}
+
+function getChannelOptions(config: AgentConfig, channelName: string): Record<string, unknown> {
+  const channelConfig = recordValue(config.channels?.[channelName]);
+  return recordValue(channelConfig?.options) ?? {};
 }
 
 function recordValue(value: unknown): Record<string, unknown> | null {

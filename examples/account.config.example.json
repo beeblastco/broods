@@ -191,7 +191,7 @@
       "options": {
         "components": [
           {
-            "type": "pancake-supabase-conversation-state",
+            "type": "pancake-supabase-reply-mode",
             "url": "https://project.supabase.co",
             "serviceRoleKey": "optional-customer-service-role-key"
           }

@@ -571,7 +571,7 @@ describe("agent config", () => {
           options: {
             components: [
               {
-                type: "pancake-supabase-conversation-state",
+                type: "pancake-supabase-reply-mode",
                 url: "https://supabase.example",
                 serviceRoleKey: "service-key",
               },
@@ -588,7 +588,7 @@ describe("agent config", () => {
           options: {
             components: [
               {
-                type: "pancake-supabase-conversation-state",
+                type: "pancake-supabase-reply-mode",
                 url: "https://supabase.example",
                 serviceRoleKey: "service-key",
               },

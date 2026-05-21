@@ -1,18 +1,18 @@
 /**
- * Supabase conversation-state lifecycle tests.
- * Cover opt-in channel component behavior for customer-specific state.
+ * Supabase reply-mode lifecycle component tests.
+ * Cover opt-in Pancake behavior for a minimal conversation state gate.
  */
 
 import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
-import {
-  createChannelLifecycleComponents,
-  type ChannelLifecycleComponent,
-  type ChannelLifecycleContext,
-} from "../functions/harness-processing/channel-lifecycle/index.ts";
+import { createChannelLifecycleComponents } from "../functions/_components/index.ts";
+import type {
+  ChannelLifecycleComponent,
+  ChannelLifecycleContext,
+} from "../functions/_shared/channels.ts";
 
 const ORIGINAL_FETCH = globalThis.fetch;
 
-describe("Supabase conversation-state lifecycle component", () => {
+describe("Supabase reply-mode lifecycle component", () => {
   beforeEach(() => {
     globalThis.fetch = ORIGINAL_FETCH;
   });
@@ -34,22 +34,18 @@ describe("Supabase conversation-state lifecycle component", () => {
     expect(components).toEqual([]);
   });
 
-  it("upserts conversation state and inserts the inbound customer message", async () => {
+  it("upserts a conversation state row and continues in auto mode", async () => {
     const fetchCalls: Array<{ url: string; init?: RequestInit }> = [];
     globalThis.fetch = mock(async (url: string | URL, init?: RequestInit) => {
       fetchCalls.push({ url: String(url), init });
-      if (fetchCalls.length === 1) {
-        return jsonResponse([stateRow({ reply_mode: "auto" })]);
-      }
-      return new Response(null, { status: 201 });
+      return jsonResponse([stateRow({ reply_mode: "auto" })]);
     }) as never;
     const component = createSupabaseComponent();
 
     const result = await component.before!(createLifecycleContext());
 
-    expect(result?.stop).toBeUndefined();
-    expect(result?.ephemeralSystem?.[0]?.content).toContain("reply_mode: auto");
-    expect(fetchCalls).toHaveLength(2);
+    expect(result).toEqual({});
+    expect(fetchCalls).toHaveLength(1);
     expect(fetchCalls[0]!.url).toContain("/rest/v1/conversation_states?");
     expect(fetchCalls[0]!.init?.method).toBe("POST");
     expect(fetchCalls[0]!.init?.headers).toMatchObject({
@@ -57,58 +53,13 @@ describe("Supabase conversation-state lifecycle component", () => {
       Authorization: "Bearer service-key",
       Prefer: "resolution=merge-duplicates,return=representation",
     });
-    expect(JSON.parse(String(fetchCalls[0]!.init?.body))).toMatchObject({
+    expect(JSON.parse(String(fetchCalls[0]!.init?.body))).toEqual({
       conversation_key: "acct:acct_test:agent:agent_test:pancake:page-1:conversation-1",
-      account_id: "acct_test",
-      agent_id: "agent_test",
-      channel: "pancake",
-      provider_conversation_id: "conversation-1",
-      customer_external_id: "page-customer-1",
     });
-    expect(fetchCalls[1]!.url).toBe("https://supabase.example/rest/v1/conversation_messages");
-    expect(JSON.parse(String(fetchCalls[1]!.init?.body))).toMatchObject({
-      provider_message_id: "message-1",
-      sender_type: "customer",
-      sender_id: "page-customer-1",
-      sender_name: "Ada",
-      body: "hello pancake",
-      metadata: {
-        provider: {
-          page_id: "page-1",
-          conversation_id: "conversation-1",
-        },
-        customer: {
-          name: "Ada",
-        },
-      },
-    });
-  });
-
-  it("blocks duplicate provider messages", async () => {
-    let callCount = 0;
-    globalThis.fetch = mock(async () => {
-      callCount += 1;
-      if (callCount === 1) {
-        return jsonResponse([stateRow({ reply_mode: "auto" })]);
-      }
-      return new Response(JSON.stringify({ code: "23505" }), { status: 409 });
-    }) as never;
-    const component = createSupabaseComponent();
-
-    const result = await component.before!(createLifecycleContext());
-
-    expect(result).toEqual({ stop: true, reason: "duplicate_message" });
   });
 
   it("blocks auto-reply when the state is in human mode", async () => {
-    let callCount = 0;
-    globalThis.fetch = mock(async () => {
-      callCount += 1;
-      if (callCount === 1) {
-        return jsonResponse([stateRow({ reply_mode: "human" })]);
-      }
-      return new Response(null, { status: 201 });
-    }) as never;
+    globalThis.fetch = mock(async () => jsonResponse([stateRow({ reply_mode: "human" })])) as never;
     const component = createSupabaseComponent();
 
     const result = await component.before!(createLifecycleContext());
@@ -116,55 +67,13 @@ describe("Supabase conversation-state lifecycle component", () => {
     expect(result).toEqual({ stop: true, reason: "reply_mode_human" });
   });
 
-  it("loads a compact system prompt for auto-mode conversation state", async () => {
-    let callCount = 0;
-    globalThis.fetch = mock(async (url: string | URL, init?: RequestInit) => {
-      callCount += 1;
-      if (callCount === 1) {
-        return jsonResponse([
-          stateRow({
-            reply_mode: "auto",
-            metadata: {
-              current_product: {
-                name: "AquaSilk Serum",
-              },
-              intent: "price_check",
-            },
-          }),
-        ]);
-      }
-      return new Response(null, { status: 201 });
-    }) as never;
+  it("blocks auto-reply when the state is paused", async () => {
+    globalThis.fetch = mock(async () => jsonResponse([stateRow({ reply_mode: "paused" })])) as never;
     const component = createSupabaseComponent();
 
     const result = await component.before!(createLifecycleContext());
 
-    expect(result?.ephemeralSystem?.[0]?.role).toBe("system");
-    expect(result?.ephemeralSystem?.[0]?.content).toContain("AquaSilk Serum");
-    expect(result?.ephemeralSystem?.[0]?.content).toContain("price_check");
-  });
-
-  it("records agent replies after channel send succeeds", async () => {
-    const fetchCalls: Array<{ url: string; init?: RequestInit }> = [];
-    globalThis.fetch = mock(async (url: string | URL, init?: RequestInit) => {
-      fetchCalls.push({ url: String(url), init });
-      return new Response(null, { status: fetchCalls.length === 1 ? 201 : 204 });
-    }) as never;
-    const component = createSupabaseComponent();
-
-    await component.after!(createLifecycleContext(), { text: "Agent reply" });
-
-    expect(fetchCalls).toHaveLength(2);
-    expect(fetchCalls[0]!.url).toBe("https://supabase.example/rest/v1/conversation_messages");
-    expect(JSON.parse(String(fetchCalls[0]!.init?.body))).toMatchObject({
-      provider_message_id: "agent:acct:acct_test:agent:agent_test:pancake:page-1:message-1:abc",
-      sender_type: "agent",
-      sender_id: "agent_test",
-      body: "Agent reply",
-    });
-    expect(fetchCalls[1]!.url).toContain("/rest/v1/conversation_states?");
-    expect(fetchCalls[1]!.init?.method).toBe("PATCH");
-    expect(JSON.parse(String(fetchCalls[1]!.init?.body))).toHaveProperty("last_agent_reply_at");
+    expect(result).toEqual({ stop: true, reason: "reply_mode_paused" });
   });
 });
 
@@ -177,7 +86,7 @@ function createSupabaseComponent(): ChannelLifecycleComponent {
         options: {
           components: [
             {
-              type: "pancake-supabase-conversation-state",
+              type: "pancake-supabase-reply-mode",
               url: "https://supabase.example",
               serviceRoleKey: "service-key",
             },
@@ -188,7 +97,7 @@ function createSupabaseComponent(): ChannelLifecycleComponent {
   }, "pancake");
 
   if (!component) {
-    throw new Error("Expected Supabase conversation-state component");
+    throw new Error("Expected Supabase reply-mode component");
   }
 
   return component;
@@ -206,12 +115,6 @@ function createLifecycleContext(): ChannelLifecycleContext {
       pageId: "page-1",
       conversationId: "conversation-1",
       messageId: "message-1",
-      messageType: "INBOX",
-      fromId: "customer-1",
-      fromName: "Ada",
-      pageCustomerId: "page-customer-1",
-      insertedAt: "2026-05-20T01:02:03.000000",
-      rawPayload: { event_type: "messaging" },
     },
   };
 }
@@ -219,12 +122,7 @@ function createLifecycleContext(): ChannelLifecycleContext {
 function stateRow(overrides: Partial<Record<string, unknown>> = {}) {
   return {
     conversation_key: "acct:acct_test:agent:agent_test:pancake:page-1:conversation-1",
-    account_id: "acct_test",
-    agent_id: "agent_test",
-    channel: "pancake",
-    provider_conversation_id: "conversation-1",
     reply_mode: "auto",
-    metadata: {},
     ...overrides,
   };
 }

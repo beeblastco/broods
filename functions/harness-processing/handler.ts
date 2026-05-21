@@ -4,9 +4,9 @@
  */
 
 import { InvokeCommand, LambdaClient } from "@aws-sdk/client-lambda";
-import type { ToolModelMessage, JSONValue, SystemModelMessage } from "ai";
+import type { ToolModelMessage, JSONValue } from "ai";
 import type { LambdaFunctionURLEvent } from "aws-lambda";
-import { formatChannelErrorText } from "../_shared/channels.ts";
+import { formatChannelErrorText, type ChannelLifecycleContext } from "../_shared/channels.ts";
 import { executeCommand } from "../_shared/commands.ts";
 import { toRuntimeAgentConfig } from "../_shared/accounts.ts";
 import { booleanEnv, requireEnv } from "../_shared/env.ts";
@@ -43,11 +43,6 @@ import {
   settleExternalAsyncToolResult,
   type AsyncToolResultRecord,
 } from "./async-tool-result.ts";
-import {
-  createChannelLifecycleContext,
-  runAfterChannelReply,
-  runBeforeChannelReply,
-} from "./channel-lifecycle/runner.ts";
 
 type AgentLoopStream = Awaited<ReturnType<typeof runAgentLoop>>;
 
@@ -437,14 +432,11 @@ async function handleChannelRequest(event: ChannelInboundEvent, context?: Lambda
     return;
   }
 
-  const lifecycleContext = createChannelLifecycleContext(event);
-  let ephemeralSystem: SystemModelMessage[] = [];
   try {
-    const beforeReply = await runBeforeChannelReply(event.lifecycle, lifecycleContext);
-    if (beforeReply.stop) {
+    const lifecycleContext = createChannelLifecycleContext(event);
+    if (await shouldStopChannelRequest(event, lifecycleContext)) {
       return;
     }
-    ephemeralSystem = beforeReply.ephemeralSystem;
 
     await session.appendIngressEvents(event.events);
   } catch (err) {
@@ -467,7 +459,7 @@ async function handleChannelRequest(event: ChannelInboundEvent, context?: Lambda
 
   try {
     while (true) {
-      const turnContext = await session.createTurnContext(ephemeralSystem);
+      const turnContext = await session.createTurnContext();
       if (!isRunnableModelInput(turnContext.messages.at(-1))) {
         return;
       }
@@ -477,7 +469,6 @@ async function handleChannelRequest(event: ChannelInboundEvent, context?: Lambda
         onFinalText: async (response) => {
           const responseText = typeof response === "string" ? response : JSON.stringify(response, null, 2);
           await event.channel.sendText(responseText);
-          await runAfterChannelReply(event.lifecycle, lifecycleContext, { text: responseText });
         },
         onErrorText: (error) => event.channel.sendText(formatChannelErrorText(error)),
         onApprovalRequired: async (approvals) => {
@@ -514,6 +505,40 @@ async function handleStatusRequest(event: StatusInboundEvent): Promise<LambdaRes
     ...(result.error ? { error: result.error } : {}),
     ...(result.approvals ? { approvals: result.approvals } : {}),
   });
+}
+
+function createChannelLifecycleContext(event: ChannelInboundEvent): ChannelLifecycleContext {
+  return {
+    accountId: event.accountId,
+    agentId: event.agentId,
+    eventId: event.eventId,
+    conversationKey: event.conversationKey,
+    channelName: event.channelName,
+    content: event.content,
+    source: event.source,
+  };
+}
+
+async function shouldStopChannelRequest(
+  event: ChannelInboundEvent,
+  context: ChannelLifecycleContext,
+): Promise<boolean> {
+  for (const component of event.lifecycle ?? []) {
+    const result = await component.before?.(context);
+    if (!result?.stop) {
+      continue;
+    }
+
+    logInfo("Channel request stopped by lifecycle component", {
+      eventId: context.eventId,
+      conversationKey: context.conversationKey,
+      component: component.name,
+      reason: result.reason ?? "lifecycle_blocked",
+    });
+    return true;
+  }
+
+  return false;
 }
 
 async function prepareDirectTurn(event: DirectInboundEvent): Promise<DirectTurn | null> {
