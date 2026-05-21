@@ -8,7 +8,7 @@ Use [External Tools](tools.md) for Tavily-style, Google Search-style, or other a
 
 ## Add a Channel
 
-Use [Channels](channels.md) for Telegram, GitHub, Slack, Discord, or any new communication channel that receives provider webhooks and sends provider replies.
+Use [Channels](channels/index.md) for Telegram, GitHub, Slack, Discord, or any new communication channel that receives provider webhooks and sends provider replies.
 
 ## Add a Command
 

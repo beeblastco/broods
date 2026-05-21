@@ -1,4 +1,4 @@
-import { describe, expect, it } from "bun:test";
+import { afterEach, describe, expect, it, mock } from "bun:test";
 import type { LambdaFunctionURLEvent } from "aws-lambda";
 import {
   createIncomingEventRouter,
@@ -47,7 +47,31 @@ const PANCAKE_AGENT = {
   },
 };
 
+const PANCAKE_SUPABASE_AGENT = {
+  ...PANCAKE_AGENT,
+  config: {
+    channels: {
+      pancake: {
+        pageId: "page-1",
+        pageAccessToken: "page-token",
+        options: {
+          supabase: {
+            url: "https://supabase.example",
+            serviceRoleKey: "service-key",
+          },
+        },
+      },
+    },
+  },
+};
+
+const ORIGINAL_FETCH = globalThis.fetch;
+
 describe("account webhook ingress", () => {
+  afterEach(() => {
+    globalThis.fetch = ORIGINAL_FETCH;
+  });
+
   it("returns 404 for unknown accounts", async () => {
     const routeIncomingEvent = createIncomingEventRouter({
       accountLoader: async () => null,
@@ -146,6 +170,38 @@ describe("account webhook ingress", () => {
     });
     expect(handledEvents[0]!.eventId.startsWith("acct:acct_test:agent:agent_test:pancake:page-1:message-1:"))
       .toBe(true);
+  });
+
+  it("lets Pancake Supabase options ignore human-mode conversations", async () => {
+    const handledEvents: ChannelInboundEvent[] = [];
+    const fetchCalls: Array<{ url: string; init?: RequestInit }> = [];
+    globalThis.fetch = mock(async (url: string | URL, init?: RequestInit) => {
+      fetchCalls.push({ url: String(url), init });
+      return supabaseResponse([
+        {
+          conversation_key: "acct:acct_test:agent:agent_test:pancake:page-1:conversation-1",
+          reply_mode: "human",
+        },
+      ]);
+    }) as never;
+    const routeIncomingEvent = createIncomingEventRouter({
+      accountLoader: async () => TEST_ACCOUNT,
+      agentLoader: async () => PANCAKE_SUPABASE_AGENT,
+    });
+
+    const response = await routeIncomingEvent(createPancakeEvent(), createHandlers({
+      handleChannelRequest: async (event) => {
+        handledEvents.push(event);
+      },
+    }));
+
+    expect(response.statusCode).toBe(200);
+    expect(response.afterResponse).toBeUndefined();
+    expect(handledEvents).toHaveLength(0);
+    expect(fetchCalls).toHaveLength(1);
+    expect(JSON.parse(String(fetchCalls[0]!.init?.body))).toEqual({
+      conversation_key: "acct:acct_test:agent:agent_test:pancake:page-1:conversation-1",
+    });
   });
 
   it("uses account webhook routing only; root provider webhooks are not accepted", async () => {
@@ -262,4 +318,11 @@ function responseJson(response: { body?: unknown }): Record<string, unknown> {
   }
 
   return JSON.parse(response.body) as Record<string, unknown>;
+}
+
+function supabaseResponse(body: unknown): Response {
+  return new Response(JSON.stringify(body), {
+    status: 200,
+    headers: { "Content-Type": "application/json" },
+  });
 }

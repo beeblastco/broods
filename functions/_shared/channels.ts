@@ -38,6 +38,10 @@ export interface ParsedChannelMessage {
   ack?: ChannelResponse;
 }
 
+/**
+ * Channel parse results describe what the webhook should do before the agent runs.
+ * Some providers need an immediate HTTP response, while others can be acknowledged and processed later.
+ */
 export type ChannelParseResult =
   | ParsedChannelMessage
   | { kind: "ignore"; response?: ChannelResponse }
@@ -47,7 +51,11 @@ export interface ChannelAdapter {
   readonly name: string;
   canHandle(req: ChannelRequest): boolean;
   authenticate(req: ChannelRequest): boolean | Promise<boolean>;
-  parse(req: ChannelRequest): ChannelParseResult;
+  /**
+   * Normalize a webhook request into a channel message, provider response, or ignored event.
+   * Parsing may be async when a channel must check external state before deciding to run the agent.
+   */
+  parse(req: ChannelRequest): ChannelParseResult | Promise<ChannelParseResult>;
   actions(msg: InboundMessage): ChannelActions;
 }
 

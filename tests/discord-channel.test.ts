@@ -2,10 +2,10 @@ import { describe, expect, it } from "bun:test";
 import { createDiscordChannel } from "../functions/_shared/discord-channel.ts";
 
 describe("discord channel adapter", () => {
-  it("rejects DM interactions", () => {
+  it("rejects DM interactions", async () => {
     const adapter = createDiscordChannel("bot-token", "public-key", new Set(["guild-1"]));
 
-    const parsed = adapter.parse(createRequest({
+    const parsed = await adapter.parse(createRequest({
       id: "interaction-1",
       type: 2,
       token: "token-1",
@@ -24,10 +24,10 @@ describe("discord channel adapter", () => {
     expect(parsed.response.body).toContain("Discord DMs are disabled.");
   });
 
-  it("rejects guild interactions outside the allow list", () => {
+  it("rejects guild interactions outside the allow list", async () => {
     const adapter = createDiscordChannel("bot-token", "public-key", new Set(["guild-1"]));
 
-    const parsed = adapter.parse(createRequest({
+    const parsed = await adapter.parse(createRequest({
       id: "interaction-2",
       type: 2,
       token: "token-2",
@@ -47,10 +47,10 @@ describe("discord channel adapter", () => {
     expect(parsed.response.body).toContain("This server is not allowed.");
   });
 
-  it("accepts guild interactions inside the allow list", () => {
+  it("accepts guild interactions inside the allow list", async () => {
     const adapter = createDiscordChannel("bot-token", "public-key", new Set(["guild-1"]));
 
-    const parsed = adapter.parse(createRequest({
+    const parsed = await adapter.parse(createRequest({
       id: "interaction-3",
       type: 2,
       token: "token-3",

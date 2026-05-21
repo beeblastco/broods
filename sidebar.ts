@@ -42,8 +42,68 @@ const sidebars: SidebarsConfig = {
           id: 'tools',
           label: 'External Tool',
         },
-        'channels',
-        'sandbox',
+        {
+          type: 'category',
+          label: 'Channels',
+          collapsed: true,
+          link: {
+            type: 'doc',
+            id: 'channels/index',
+          },
+          items: [
+            {
+              type: 'doc',
+              id: 'channels/telegram',
+              label: 'Telegram',
+            },
+            {
+              type: 'doc',
+              id: 'channels/github',
+              label: 'GitHub',
+            },
+            {
+              type: 'doc',
+              id: 'channels/slack',
+              label: 'Slack',
+            },
+            {
+              type: 'doc',
+              id: 'channels/discord',
+              label: 'Discord',
+            },
+            {
+              type: 'doc',
+              id: 'channels/pancake',
+              label: 'Pancake',
+            },
+          ],
+        },
+        {
+          type: 'category',
+          label: 'Sandbox',
+          collapsed: true,
+          link: {
+            type: 'doc',
+            id: 'sandbox/index',
+          },
+          items: [
+            {
+              type: 'doc',
+              id: 'sandbox/daytona',
+              label: 'Daytona',
+            },
+            {
+              type: 'doc',
+              id: 'sandbox/e2b',
+              label: 'E2B',
+            },
+            {
+              type: 'doc',
+              id: 'sandbox/lambda',
+              label: 'Lambda',
+            },
+          ],
+        },
         {
           type: 'doc',
           id: 'sub-agents',

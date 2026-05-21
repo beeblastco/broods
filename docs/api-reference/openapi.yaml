@@ -1567,18 +1567,9 @@ components:
             timeout:
               type: integer
               description: "Per-run timeout in seconds (1–120, default: 30)"
-            memoryLimit:
-              type: integer
-              description: Requested memory cap in MB (1–1024)
             outputLimitBytes:
               type: integer
               description: "Captured stdout/stderr limit (1–262144, default: 65536)"
-            filesystem:
-              type: object
-              properties:
-                mount:
-                  type: string
-                  enum: [native]
         tasks:
           type: object
           properties:
@@ -1785,3 +1776,15 @@ components:
             senderId:
               type: string
               description: Optional staff user ID for replies
+            options:
+              type: object
+              description: Optional Pancake adapter settings.
+              properties:
+                supabase:
+                  type: object
+                  description: Enables Supabase-backed Pancake reply-mode gating when provided.
+                  properties:
+                    url:
+                      type: string
+                    serviceRoleKey:
+                      type: string

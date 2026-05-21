@@ -77,11 +77,7 @@
       "enabled": false,
       "provider": "lambda",
       "timeout": 30,
-      "memoryLimit": 512,
       "outputLimitBytes": 65536,
-      "filesystem": {
-        "mount": "native"
-      },
       "options": {
         "nodeFunctionName": "my-node-sandbox",
         "pythonFunctionName": "my-python-sandbox",

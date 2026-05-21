@@ -8,9 +8,15 @@ import type {
   ChannelActions,
   ChannelAdapter,
   ChannelParseResult,
+  ChannelRequest,
+  ParsedChannelMessage,
 } from "./channels.ts";
-import { logWarn } from "./log.ts";
-import { PANCAKE_INTEGRATION_PREFIX } from "./runtime-keys.ts";
+import { logInfo, logWarn } from "./log.ts";
+import { accountAgentScopedKey, PANCAKE_INTEGRATION_PREFIX } from "./runtime-keys.ts";
+
+const SUPABASE_REST_PATH = "rest/v1/";
+
+type ReplyMode = "auto" | "human" | "paused";
 
 interface PancakeWebhookPayload {
   page_id?: string;
@@ -63,11 +69,30 @@ export interface PancakeSource {
   pageCustomerId?: string;
 }
 
+export interface PancakeSupabaseOptions {
+  url: string;
+  serviceRoleKey: string;
+}
+
+export interface PancakeChannelOptions {
+  accountId?: string;
+  agentId?: string;
+  configOptions?: Record<string, unknown>;
+}
+
+interface ConversationStateRecord {
+  conversation_key: string;
+  reply_mode: ReplyMode;
+}
+
 export function createPancakeChannel(
   pageId: string,
   pageAccessToken: string,
   senderId?: string,
+  options: PancakeChannelOptions = {},
 ): ChannelAdapter {
+  const supabase = resolvePancakeSupabaseOptions(options.configOptions);
+
   return {
     name: "pancake",
 
@@ -79,55 +104,125 @@ export function createPancakeChannel(
       return true;
     },
 
-    parse(req): ChannelParseResult {
-      const payload = JSON.parse(req.body) as PancakeWebhookPayload;
-
-      if (payload.event_type !== "messaging") {
-        return { kind: "ignore" };
+    parse(req): ChannelParseResult | Promise<ChannelParseResult> {
+      const parsed = parsePancakeWebhook(req, pageId);
+      if (parsed.kind !== "message" || !supabase) {
+        return parsed;
       }
 
-      if (payload.page_id !== pageId) {
-        logWarn("Pancake page not in allow list", { pageId: payload.page_id });
-        return { kind: "ignore" };
-      }
-
-      const conversation = payload.data?.conversation;
-      const message = payload.data?.message;
-      const text = message?.message?.trim();
-      if (!conversation?.id || !message?.id || !text || !isPancakeMessageType(message.type)) {
-        return { kind: "ignore" };
-      }
-
-      if (message.is_hidden || message.is_removed || message.from?.id === pageId) {
-        return { kind: "ignore" };
-      }
-
-      return {
-        kind: "message",
-        ack: { statusCode: 200 },
-        message: {
-          eventId: `${PANCAKE_INTEGRATION_PREFIX}${pageId}:${message.id}:${hashEventText(text)}`,
-          conversationKey: `${PANCAKE_INTEGRATION_PREFIX}${pageId}:${conversation.id}`,
-          channelName: "pancake",
-          content: [{ type: "text", text }],
-          source: {
-            pageId,
-            conversationId: conversation.id,
-            messageId: message.id,
-            messageType: message.type,
-            postId: payload.data?.post?.id,
-            fromId: message.from?.id ?? conversation.from?.id,
-            fromName: message.from?.name ?? conversation.from?.name,
-            pageCustomerId: message.from?.page_customer_id,
-          } satisfies PancakeSource,
-        },
-      };
+      return applyPancakeSupabaseReplyMode(supabase, options, parsed);
     },
 
     actions(msg): ChannelActions {
       return createPancakeActions(pageAccessToken, toPancakeSource(msg.source), senderId);
     },
   };
+}
+
+function resolvePancakeSupabaseOptions(configOptions: Record<string, unknown> | undefined): PancakeSupabaseOptions | null {
+  const supabase = configOptions?.supabase;
+  if (!supabase || typeof supabase !== "object" || Array.isArray(supabase)) {
+    return null;
+  }
+
+  const record = supabase as Record<string, unknown>;
+  if (typeof record.url !== "string" || typeof record.serviceRoleKey !== "string") {
+    return null;
+  }
+
+  const url = record.url.trim();
+  const serviceRoleKey = record.serviceRoleKey.trim();
+  if (!url || !serviceRoleKey) {
+    return null;
+  }
+
+  return { url, serviceRoleKey };
+}
+
+function parsePancakeWebhook(req: ChannelRequest, pageId: string): ChannelParseResult {
+  const payload = JSON.parse(req.body) as PancakeWebhookPayload;
+
+  if (payload.event_type !== "messaging") {
+    return { kind: "ignore" };
+  }
+
+  if (payload.page_id !== pageId) {
+    logWarn("Pancake page not in allow list", { pageId: payload.page_id });
+    return { kind: "ignore" };
+  }
+
+  const conversation = payload.data?.conversation;
+  const message = payload.data?.message;
+  const text = message?.message?.trim();
+  if (!conversation?.id || !message?.id || !text || !isPancakeMessageType(message.type)) {
+    return { kind: "ignore" };
+  }
+
+  if (message.is_hidden || message.is_removed || message.from?.id === pageId) {
+    return { kind: "ignore" };
+  }
+
+  return {
+    kind: "message",
+    ack: { statusCode: 200 },
+    message: {
+      eventId: `${PANCAKE_INTEGRATION_PREFIX}${pageId}:${message.id}:${hashEventText(text)}`,
+      conversationKey: `${PANCAKE_INTEGRATION_PREFIX}${pageId}:${conversation.id}`,
+      channelName: "pancake",
+      content: [{ type: "text", text }],
+      source: {
+        pageId,
+        conversationId: conversation.id,
+        messageId: message.id,
+        messageType: message.type,
+        postId: payload.data?.post?.id,
+        fromId: message.from?.id ?? conversation.from?.id,
+        fromName: message.from?.name ?? conversation.from?.name,
+        pageCustomerId: message.from?.page_customer_id,
+      } satisfies PancakeSource,
+    },
+  };
+}
+
+async function applyPancakeSupabaseReplyMode(
+  config: PancakeSupabaseOptions,
+  options: PancakeChannelOptions,
+  parsed: ParsedChannelMessage,
+): Promise<ChannelParseResult> {
+  if (!options.accountId || !options.agentId) {
+    throw new Error("Pancake Supabase options require accountId and agentId");
+  }
+
+  const conversationKey = accountAgentScopedKey(
+    options.accountId,
+    options.agentId,
+    parsed.message.conversationKey,
+  );
+  const replyMode = await getPancakeSupabaseReplyMode(config, conversationKey);
+
+  if (replyMode === "auto") {
+    return parsed;
+  }
+
+  logInfo("Pancake Supabase reply mode skipped agent reply", {
+    accountId: options.accountId,
+    agentId: options.agentId,
+    conversationKey,
+    replyMode,
+  });
+
+  return {
+    kind: "ignore",
+    response: parsed.ack ?? { statusCode: 200 },
+  };
+}
+
+export async function getPancakeSupabaseReplyMode(
+  config: PancakeSupabaseOptions,
+  conversationKey: string,
+): Promise<ReplyMode> {
+  const state = await upsertConversationState(config, conversationKey);
+  return state.reply_mode;
 }
 
 export function createPancakeActions(
@@ -185,6 +280,66 @@ async function sendPancakeMessage(
       `Pancake send message failed (${response.status}): ${formatPancakeError(body, bodyText)}`,
     );
   }
+}
+
+async function upsertConversationState(
+  config: PancakeSupabaseOptions,
+  conversationKey: string,
+): Promise<ConversationStateRecord> {
+  const params = new URLSearchParams({
+    on_conflict: "conversation_key",
+    select: "conversation_key,reply_mode",
+  });
+  const [state] = await supabaseRequest<ConversationStateRecord[]>(
+    config,
+    `conversation_states?${params}`,
+    {
+      method: "POST",
+      headers: { "Prefer": "resolution=merge-duplicates,return=representation" },
+      body: JSON.stringify({
+        conversation_key: conversationKey,
+      }),
+    },
+  ) ?? [];
+
+  if (!state) {
+    throw new Error("Supabase conversation state upsert returned no row");
+  }
+
+  return state;
+}
+
+async function supabaseRequest<T>(
+  config: PancakeSupabaseOptions,
+  path: string,
+  init: RequestInit = {},
+): Promise<T | null> {
+  const response = await fetch(supabaseUrl(config.url, path), {
+    ...init,
+    headers: {
+      "Accept": "application/json",
+      "apikey": config.serviceRoleKey,
+      "Authorization": `Bearer ${config.serviceRoleKey}`,
+      ...(init.body === undefined ? {} : { "Content-Type": "application/json" }),
+      ...init.headers,
+    },
+  });
+  const bodyText = await response.text();
+
+  if (!response.ok) {
+    throw new Error(`Supabase request failed (${response.status}): ${bodyText || "empty response"}`);
+  }
+
+  if (!bodyText.trim()) {
+    return null;
+  }
+
+  return JSON.parse(bodyText) as T;
+}
+
+function supabaseUrl(baseUrl: string, path: string): string {
+  const base = baseUrl.endsWith("/") ? baseUrl : `${baseUrl}/`;
+  return new URL(`${SUPABASE_REST_PATH}${path.replace(/^\/+/, "")}`, base).toString();
 }
 
 function toPancakeSource(source: Record<string, unknown>): PancakeSource {

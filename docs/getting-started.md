@@ -329,7 +329,7 @@ Users can now message your bot on Telegram and get responses from your agent.
 | GitHub | `webhookSecret`, `appId`, `privateKey` |
 | Pancake | `pageId`, `pageAccessToken` |
 
-See [Channels](channels.md) for full setup details.
+See [Channels](channels/index.md) for full setup details.
 
 ### Run Example Scripts
 

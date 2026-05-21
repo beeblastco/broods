@@ -1,6 +1,6 @@
 /**
- * Thin communication-channel integration layer for harness-processing.
- * Keep request normalization, webhook routing, and per-channel lifecycle handling here.
+ * HTTP ingress and channel routing for harness-processing.
+ * Keep request normalization, account/agent lookup, provider ACKs, and normalized channel events here.
  */
 
 import type {
@@ -243,7 +243,10 @@ async function handleLambdaUrlEvent(
       return notFoundResponse();
     }
 
-    const accountChannelRegistry = createChannelRegistry(agent.config);
+    const accountChannelRegistry = createChannelRegistry(agent.config, {
+      accountId: account.accountId,
+      agentId,
+    });
     const channelName = decodeURIComponent(accountWebhookMatch[3]);
     const accountChannel = accountChannelRegistry.webhookChannels.find((channel) =>
       channel.name === channelName && channel.canHandle(request)
@@ -300,16 +303,26 @@ async function handleChannelWebhook(
       return unauthorizedResponse();
     }
 
-    const parsed = adapter.parse(request);
+    // Parse event and check if it should be ignored
+    // This is based on the channel integration
+    const parsed = await adapter.parse(request);
 
+    // Global event check for webhook event.
+    // Provider needs a direct HTTP response, but no agent run. 
+    // Example: Slack URL verification or Discord interaction response.
     if (parsed.kind === "response") {
       return toLambdaResponse(parsed.response);
     }
 
+    // Webhook is valid enough to accept, but should not run the agent. 
+    // Example: unsupported Pancake event, wrong page ID, hidden/removed message, page-originated message, 
+    // or Supabase reply_mode is human/paused
     if (parsed.kind === "ignore") {
       return toLambdaResponse(parsed.response ?? { statusCode: 200 });
     }
 
+    // Else webhook contains a real user message.
+    // Send the webhook ACK immediately then use afterResponse to conitnue into normal channle processing
     const { message, ack } = parsed;
     const channel = adapter.actions(message);
     const response = ack ?? { statusCode: 200 };
@@ -405,12 +418,15 @@ function directApiDisabledResponse(): LambdaResponse {
   return errorResponse(404, "Direct API is disabled");
 }
 
-function createChannelRegistry(config: AgentConfig): ChannelRegistry {
+function createChannelRegistry(
+  config: AgentConfig,
+  scope: { accountId: string; agentId: string },
+): ChannelRegistry {
   const telegramChannel = createTelegramChannelFromConfig(config);
   const githubChannel = createGitHubChannelFromConfig(config);
   const slackChannel = createSlackChannelFromConfig(config);
   const discordChannel = createDiscordChannelFromConfig(config);
-  const pancakeChannel = createPancakeChannelFromConfig(config);
+  const pancakeChannel = createPancakeChannelFromConfig(config, scope);
 
   return {
     webhookChannels: [
@@ -696,7 +712,10 @@ function createDiscordChannelFromConfig(config: AgentConfig): ChannelAdapter | n
   );
 }
 
-function createPancakeChannelFromConfig(config: AgentConfig): ChannelAdapter | null {
+function createPancakeChannelFromConfig(
+  config: AgentConfig,
+  scope: { accountId: string; agentId: string },
+): ChannelAdapter | null {
   const channel = config.channels?.pancake;
   if (!channel?.pageId || !channel.pageAccessToken) {
     return null;
@@ -706,5 +725,10 @@ function createPancakeChannelFromConfig(config: AgentConfig): ChannelAdapter | n
     channel.pageId,
     channel.pageAccessToken,
     channel.senderId,
+    {
+      accountId: scope.accountId,
+      agentId: scope.agentId,
+      configOptions: channel.options,
+    },
   );
 }

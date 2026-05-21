@@ -42,11 +42,7 @@ const agent = await createAgent(account.accountSecret, "Sandbox assistant", {
       enabled: true,
       provider: "lambda",
       timeout: 30,
-      memoryLimit: 512, // Minimal configure for Lambda function required for Sandbox
       outputLimitBytes: 65536,
-      filesystem: {
-        mount: "native",
-      },
     },
     tasks: {
       enabled: false,

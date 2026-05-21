@@ -250,6 +250,7 @@ export interface AgentPancakeChannelConfig {
   pageId?: string;
   pageAccessToken?: string;
   senderId?: string;
+  options?: Record<string, unknown>;
   [key: string]: unknown;
 }
 
@@ -1119,6 +1120,23 @@ function normalizePancakeConfig(value: unknown): void {
   assertOptionalString(config.pageId, "config.channels.pancake.pageId");
   assertOptionalString(config.pageAccessToken, "config.channels.pancake.pageAccessToken");
   assertOptionalString(config.senderId, "config.channels.pancake.senderId");
+  if (config.options !== undefined && !isPlainObject(config.options)) {
+    throw new Error("config.channels.pancake.options must be an object");
+  }
+  const options = isPlainObject(config.options) ? config.options : {};
+  if (options.supabase !== undefined) {
+    if (!isPlainObject(options.supabase)) {
+      throw new Error("config.channels.pancake.options.supabase must be an object");
+    }
+    assertOptionalNonEmptyString(options.supabase.url, "config.channels.pancake.options.supabase.url");
+    assertOptionalNonEmptyString(
+      options.supabase.serviceRoleKey,
+      "config.channels.pancake.options.supabase.serviceRoleKey",
+    );
+    if (!options.supabase.url || !options.supabase.serviceRoleKey) {
+      throw new Error("config.channels.pancake.options.supabase requires url and serviceRoleKey");
+    }
+  }
 }
 
 function accountConfigsTableName(): string {
