@@ -43,10 +43,10 @@ describe("slack channel adapter", () => {
     })).toBe(false);
   });
 
-  it("responds to url_verification challenges", () => {
+  it("responds to url_verification challenges", async () => {
     const adapter = createSlackChannel("bot-token", "signing-secret", null);
 
-    const parsed = adapter.parse(createEventRequest({
+    const parsed = await adapter.parse(createEventRequest({
       type: "url_verification",
       challenge: "challenge-token",
     }));
@@ -60,10 +60,10 @@ describe("slack channel adapter", () => {
     expect(parsed.response.body).toBe(JSON.stringify({ challenge: "challenge-token" }));
   });
 
-  it("normalizes app mentions into threaded conversations and strips bot mentions", () => {
+  it("normalizes app mentions into threaded conversations and strips bot mentions", async () => {
     const adapter = createSlackChannel("bot-token", "signing-secret", new Set(["C1"]));
 
-    const parsed = adapter.parse(createEventRequest({
+    const parsed = await adapter.parse(createEventRequest({
       type: "event_callback",
       event_id: "evt-2",
       team_id: "T1",
@@ -95,10 +95,10 @@ describe("slack channel adapter", () => {
     });
   });
 
-  it("keeps direct messages channel-scoped instead of thread-scoped", () => {
+  it("keeps direct messages channel-scoped instead of thread-scoped", async () => {
     const adapter = createSlackChannel("bot-token", "signing-secret", null);
 
-    const parsed = adapter.parse(createEventRequest({
+    const parsed = await adapter.parse(createEventRequest({
       type: "event_callback",
       event_id: "evt-3",
       team_id: "T1",
@@ -127,10 +127,10 @@ describe("slack channel adapter", () => {
     });
   });
 
-  it("normalizes slash commands and carries the command token in source", () => {
+  it("normalizes slash commands and carries the command token in source", async () => {
     const adapter = createSlackChannel("bot-token", "signing-secret", new Set(["C1"]));
 
-    const parsed = adapter.parse(createSlashCommandRequest(
+    const parsed = await adapter.parse(createSlashCommandRequest(
       "team_id=T1&channel_id=C1&command=%2Fnew&text=reset+context&user_id=U1&response_url=https%3A%2F%2Fslack.example%2Fresponse",
     ));
 

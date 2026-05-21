@@ -25,28 +25,28 @@ describe("telegram channel adapter", () => {
     }))).toBe(false);
   });
 
-  it("ignores updates without text content", () => {
+  it("ignores updates without text content", async () => {
     const adapter = createTelegramChannel("bot-token", "secret", new Set([123]), "👀");
 
-    expect(adapter.parse(createRequest({
+    expect(await adapter.parse(createRequest({
       update_id: 1,
       message: createMessage({ text: undefined }),
     }))).toEqual({ kind: "ignore" });
   });
 
-  it("ignores chats outside the allow list", () => {
+  it("ignores chats outside the allow list", async () => {
     const adapter = createTelegramChannel("bot-token", "secret", new Set([999]), "👀");
 
-    expect(adapter.parse(createRequest({
+    expect(await adapter.parse(createRequest({
       update_id: 1,
       message: createMessage({ text: "hello" }),
     }))).toEqual({ kind: "ignore" });
   });
 
-  it("normalizes inbound messages from the main message payload", () => {
+  it("normalizes inbound messages from the main message payload", async () => {
     const adapter = createTelegramChannel("bot-token", "secret", new Set([123]), "👀");
 
-    const parsed = adapter.parse(createRequest({
+    const parsed = await adapter.parse(createRequest({
       update_id: 7,
       message: createMessage({ text: "hello", message_id: 42 }),
     }));
@@ -69,10 +69,10 @@ describe("telegram channel adapter", () => {
     });
   });
 
-  it("uses edited_message when no main message is present", () => {
+  it("uses edited_message when no main message is present", async () => {
     const adapter = createTelegramChannel("bot-token", "secret", new Set([123]), "👀");
 
-    const parsed = adapter.parse(createRequest({
+    const parsed = await adapter.parse(createRequest({
       update_id: 8,
       edited_message: createMessage({ text: "edited", message_id: 99 }),
     }));

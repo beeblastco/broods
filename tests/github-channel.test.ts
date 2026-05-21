@@ -31,10 +31,10 @@ describe("github channel adapter", () => {
     }))).toBe(false);
   });
 
-  it("responds to ping events", () => {
+  it("responds to ping events", async () => {
     const adapter = createGitHubChannel("webhook-secret", "app-id", "private-key", null);
 
-    const parsed = adapter.parse(createRequest(JSON.stringify({ zen: "pong" }), {
+    const parsed = await adapter.parse(createRequest(JSON.stringify({ zen: "pong" }), {
       "x-github-event": "ping",
     }));
 
@@ -47,10 +47,10 @@ describe("github channel adapter", () => {
     expect(parsed.response.body).toBe("ok");
   });
 
-  it("ignores repositories outside the allow list", () => {
+  it("ignores repositories outside the allow list", async () => {
     const adapter = createGitHubChannel("webhook-secret", "app-id", "private-key", new Set(["owner/allowed"]));
 
-    const parsed = adapter.parse(createRequest(JSON.stringify({
+    const parsed = await adapter.parse(createRequest(JSON.stringify({
       action: "opened",
       repository: createRepository(),
       issue: { number: 1, title: "Issue title", body: "Issue body" },
@@ -63,10 +63,10 @@ describe("github channel adapter", () => {
     expect(parsed).toEqual({ kind: "ignore" });
   });
 
-  it("normalizes issue events into issue conversation keys", () => {
+  it("normalizes issue events into issue conversation keys", async () => {
     const adapter = createGitHubChannel("webhook-secret", "app-id", "private-key", null);
 
-    const parsed = adapter.parse(createRequest(JSON.stringify({
+    const parsed = await adapter.parse(createRequest(JSON.stringify({
       action: "opened",
       repository: createRepository(),
       issue: { number: 7, title: "Bug", body: "Details" },
@@ -94,10 +94,10 @@ describe("github channel adapter", () => {
     });
   });
 
-  it("routes pull request issue comments into pr conversation keys", () => {
+  it("routes pull request issue comments into pr conversation keys", async () => {
     const adapter = createGitHubChannel("webhook-secret", "app-id", "private-key", null);
 
-    const parsed = adapter.parse(createRequest(JSON.stringify({
+    const parsed = await adapter.parse(createRequest(JSON.stringify({
       action: "created",
       repository: createRepository(),
       issue: { number: 12, pull_request: {} },
@@ -130,10 +130,10 @@ describe("github channel adapter", () => {
     });
   });
 
-  it("ignores issue comments from bot actors", () => {
+  it("ignores issue comments from bot actors", async () => {
     const adapter = createGitHubChannel("webhook-secret", "app-id", "private-key", null);
 
-    const parsed = adapter.parse(createRequest(JSON.stringify({
+    const parsed = await adapter.parse(createRequest(JSON.stringify({
       action: "created",
       repository: createRepository(),
       issue: { number: 12 },
