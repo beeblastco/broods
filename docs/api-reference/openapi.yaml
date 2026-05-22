@@ -1606,8 +1606,6 @@ components:
           $ref: '#/components/schemas/TavilyExtractConfig'
         googleSearch:
           $ref: '#/components/schemas/GoogleSearchConfig'
-        pancake_handoff_to_human:
-          $ref: '#/components/schemas/PancakeHandoffToHumanConfig'
         test_async:
           $ref: '#/components/schemas/TestAsyncConfig'
         test_external_async:
@@ -1680,15 +1678,6 @@ components:
             endTime:
               type: string
               description: ISO date string
-
-    PancakeHandoffToHumanConfig:
-      type: object
-      description: Pancake handoff tool. Requires `config.channels.pancake.options.supabase`.
-      properties:
-        enabled:
-          type: boolean
-        needsApproval:
-          type: boolean
 
     TestAsyncConfig:
       type: object

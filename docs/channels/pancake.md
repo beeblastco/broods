@@ -4,15 +4,10 @@ Pancake is an omni-channel customer service and inbox management platform. The P
 
 ## Configuration
 
-To enable the Pancake channel with optional Supabase handoff, configure your agent's settings as shown below:
+To enable the Pancake channel with optional Supabase reply-mode gating, configure your agent's settings as shown below:
 
 ```json
 {
-  "tools": {
-    "pancake_handoff_to_human": {
-      "enabled": true
-    }
-  },
   "channels": {
     "pancake": {
       "pageId": "your-page-id",
@@ -63,11 +58,3 @@ flowchart TD
 2. **Toggle Modes**:
    - **`auto`**: The agent operates normally and automatically handles responses.
    - **`human` or `paused`**: The adapter ignores the event and returns a `200 OK` to Pancake, bypassing the agent run entirely. This allows human operators to respond manually in the Pancake dashboard without interference from the agent.
-
-### Agent-Initiated Handoff
-
-Enable `config.tools.pancake_handoff_to_human` when the agent should be able to hand off the current Pancake conversation. The tool updates the current scoped `conversation_key` from `auto` to `human`.
-
-When the tool succeeds, it tells the model to return exactly `__NO_CUSTOMER_REPLY__`. The Pancake adapter suppresses that exact sentinel and sends nothing to the customer. Future Pancake webhooks for the same conversation are ignored until the Supabase row is changed back to `auto`.
-
-Put the business rules for when to hand off in the agent system prompt; the tool only performs the state change.

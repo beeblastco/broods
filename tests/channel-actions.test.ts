@@ -5,10 +5,7 @@
 
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { createDiscordChannel } from "../functions/_shared/discord-channel.ts";
-import {
-  createPancakeChannel,
-  PANCAKE_NO_CUSTOMER_REPLY,
-} from "../functions/_shared/pancake-channel.ts";
+import { createPancakeChannel } from "../functions/_shared/pancake-channel.ts";
 import { createSlackChannel } from "../functions/_shared/slack-channel.ts";
 
 type FetchInput = string | URL | Request;
@@ -304,23 +301,6 @@ describe("pancake channel actions", () => {
       message_id: "comment-1",
       message: "hello comment",
     });
-  });
-
-  it("suppresses the Pancake no-reply sentinel", async () => {
-    const fetchMock = installFetchMock();
-
-    const actions = createPancakeChannel("page-1", "page-token").actions(
-      createMessage({
-        pageId: "page-1",
-        conversationId: "conversation-1",
-        messageId: "message-1",
-        messageType: "INBOX",
-      }),
-    );
-
-    await actions.sendText(` ${PANCAKE_NO_CUSTOMER_REPLY} `);
-
-    expect(fetchMock.calls).toHaveLength(0);
   });
 
   it("throws on Pancake API failures and rejects invalid source payloads", async () => {

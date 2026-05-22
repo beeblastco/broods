@@ -136,9 +136,6 @@
         "webSearch": {}
       }
     },
-    "pancake_handoff_to_human": {
-      "enabled": false
-    },
     "test_async": {
       "enabled": true,
       "async": true,

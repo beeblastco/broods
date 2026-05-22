@@ -412,6 +412,8 @@ describe("agent config", () => {
         },
         pancake_handoff_to_human: {
           enabled: true,
+          async: true,
+          execution: "same-invocation",
         },
         test_external_async: {
           enabled: true,
@@ -451,6 +453,8 @@ describe("agent config", () => {
         },
         pancake_handoff_to_human: {
           enabled: true,
+          async: true,
+          execution: "same-invocation",
         },
         test_external_async: {
           enabled: true,

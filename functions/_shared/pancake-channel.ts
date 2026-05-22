@@ -16,8 +16,6 @@ import { accountAgentScopedKey, PANCAKE_INTEGRATION_PREFIX } from "./runtime-key
 
 const SUPABASE_REST_PATH = "rest/v1/";
 
-export const PANCAKE_NO_CUSTOMER_REPLY = "__NO_CUSTOMER_REPLY__";
-
 export type ReplyMode = "auto" | "human" | "paused";
 
 interface PancakeWebhookPayload {
@@ -258,13 +256,7 @@ export function createPancakeActions(
   senderId?: string,
 ): ChannelActions {
   return {
-    sendText: async (text) => {
-      if (text.trim() === PANCAKE_NO_CUSTOMER_REPLY) {
-        return;
-      }
-
-      return sendPancakeMessage(pageAccessToken, source, text, senderId);
-    },
+    sendText: (text) => sendPancakeMessage(pageAccessToken, source, text, senderId),
     async sendTyping() {
       return;
     },

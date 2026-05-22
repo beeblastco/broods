@@ -5,7 +5,6 @@
 
 import { jsonSchema, tool, type ToolSet } from "ai";
 import {
-  PANCAKE_NO_CUSTOMER_REPLY,
   resolvePancakeSupabaseOptions,
   setPancakeSupabaseReplyModeToHuman,
 } from "../../_shared/pancake-channel.ts";
@@ -16,8 +15,8 @@ export default function pancakeHandoffToHumanTool(context: ToolContext, agentCon
   return {
     pancake_handoff_to_human: tool({
       description:
-        `Switch the current Pancake conversation from automatic replies to human handoff. ` +
-        `After this tool succeeds, the final response must be exactly ${PANCAKE_NO_CUSTOMER_REPLY} and no other text.`,
+        "Switch the current Pancake conversation from automatic replies to human handoff. " +
+        "After this tool succeeds, tell the customer that the request has been raised with human staff.",
       inputSchema: jsonSchema({
         type: "object",
         properties: {},
@@ -39,7 +38,7 @@ export default function pancakeHandoffToHumanTool(context: ToolContext, agentCon
             result.changed
               ? "reply_mode changed from auto to human."
               : "reply_mode was not changed because the current mode is not auto.",
-            `Final response must be exactly ${PANCAKE_NO_CUSTOMER_REPLY} and no other text.`,
+            "Tell the customer that the request has been raised with human staff and staff will follow up.",
           ].join(" "),
         };
       },

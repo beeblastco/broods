@@ -53,7 +53,11 @@ async function upsertPancakeAccount() {
       ? {
         tools: {
           ...(baseConfig.tools ?? {}),
-          pancake_handoff_to_human: { enabled: true },
+          pancake_handoff_to_human: {
+            enabled: true,
+            async: true,
+            execution: "same-invocation" as const,
+          },
         },
       }
       : {}),

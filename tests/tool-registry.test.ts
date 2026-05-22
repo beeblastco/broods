@@ -263,6 +263,25 @@ describe("createTools", () => {
     expect(tools.pancake_handoff_to_human?.description).toContain("human handoff");
   });
 
+  it("passes async pancake_handoff_to_human through the async coordinator", async () => {
+    const { createTools } = await import("../functions/harness-processing/tools/index.ts");
+    const dispatch = mock((tools: Record<string, unknown>, asyncToolModes: Map<string, string>) => {
+      expect([...asyncToolModes.entries()]).toEqual([["pancake_handoff_to_human", "same-invocation"]]);
+      return tools;
+    });
+
+    createTools(createToolContext(undefined, "google", undefined, dispatch), {
+      tools: {
+        pancake_handoff_to_human: {
+          enabled: true,
+          async: true,
+        },
+      },
+    });
+
+    expect(dispatch).toHaveBeenCalledTimes(1);
+  });
+
   it("passes async-enabled external tools through the async coordinator", async () => {
     const { createTools } = await import("../functions/harness-processing/tools/index.ts");
     const dispatch = mock((tools: Record<string, unknown>, asyncToolModes: Map<string, string>) => {

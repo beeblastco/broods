@@ -4,7 +4,6 @@
  */
 
 import { afterEach, describe, expect, it, mock } from "bun:test";
-import { PANCAKE_NO_CUSTOMER_REPLY } from "../functions/_shared/pancake-channel.ts";
 import pancakeHandoffToHumanTool from "../functions/harness-processing/tools/pancake-handoff-to-human.tool.ts";
 
 const ORIGINAL_FETCH = globalThis.fetch;
@@ -31,7 +30,7 @@ describe("pancake_handoff_to_human tool", () => {
 
     expect(result).toEqual({
       type: "text",
-      value: expect.stringContaining(PANCAKE_NO_CUSTOMER_REPLY),
+      value: expect.stringContaining("request has been raised with human staff"),
     });
     expect(fetchCalls).toHaveLength(1);
     const url = new URL(fetchCalls[0]!.url);

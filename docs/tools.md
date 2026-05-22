@@ -21,7 +21,6 @@ flowchart LR
 | `tavilySearch` | [`functions/harness-processing/tools/tavily.tool.ts`](../functions/harness-processing/tools/tavily.tool.ts) | Tavily AI SDK search | `config.tools.tavilySearch` |
 | `tavilyExtract` | [`functions/harness-processing/tools/tavily.tool.ts`](../functions/harness-processing/tools/tavily.tool.ts) | Tavily AI SDK extract | `config.tools.tavilyExtract` |
 | `googleSearch` | [`functions/harness-processing/tools/google-search.tool.ts`](../functions/harness-processing/tools/google-search.tool.ts) | Google provider-defined tool | `config.tools.googleSearch` |
-| `pancake_handoff_to_human` | [`functions/harness-processing/tools/pancake-handoff-to-human.tool.ts`](../functions/harness-processing/tools/pancake-handoff-to-human.tool.ts) | Pancake human handoff state switch | `config.tools.pancake_handoff_to_human` |
 | `test_async` | [`functions/harness-processing/tools/test.async.tool.ts`](../functions/harness-processing/tools/test.async.tool.ts) | Local async example tool | `config.tools.test_async` |
 
 Workspace tools are configured separately under `config.workspace`. Skills use `config.skills`. Subagents use `config.subagent`.
@@ -144,9 +143,6 @@ Use `config.tools` for external tools:
     },
     "googleSearch": {
       "enabled": true
-    },
-    "pancake_handoff_to_human": {
-      "enabled": false
     }
   }
 }
