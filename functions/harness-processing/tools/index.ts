@@ -17,7 +17,7 @@ import loadSkillTool from "./load-skill.tool.ts";
 import runSubagentTool, {
   type RunSubagentDispatch,
 } from "./run-subagent.tool.ts";
-import setReplyModeTool from "./set-reply-mode.tool.ts";
+import pancakeHandoffToHumanTool from "./pancake-handoff-to-human.tool.ts";
 import tasksTool from "./tasks.tool.ts";
 import { tavilyExtractTool, tavilySearchTool } from "./tavily.tool.ts";
 import testAsyncTool from "./test.async.tool.ts";
@@ -44,7 +44,7 @@ const toolFactories = {
   tavilySearch: tavilySearchTool,
   tavilyExtract: tavilyExtractTool,
   googleSearch: googleSearchTool,
-  set_reply_mode: setReplyModeTool,
+  pancake_handoff_to_human: pancakeHandoffToHumanTool,
   test_async: testAsyncTool,
   test_external_async: testExternalAsyncTool,
 } satisfies Record<string, ToolFactory>;

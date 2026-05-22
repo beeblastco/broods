@@ -1606,8 +1606,8 @@ components:
           $ref: '#/components/schemas/TavilyExtractConfig'
         googleSearch:
           $ref: '#/components/schemas/GoogleSearchConfig'
-        set_reply_mode:
-          $ref: '#/components/schemas/SetReplyModeConfig'
+        pancake_handoff_to_human:
+          $ref: '#/components/schemas/PancakeHandoffToHumanConfig'
         test_async:
           $ref: '#/components/schemas/TestAsyncConfig'
         test_external_async:
@@ -1681,7 +1681,7 @@ components:
               type: string
               description: ISO date string
 
-    SetReplyModeConfig:
+    PancakeHandoffToHumanConfig:
       type: object
       description: Pancake handoff tool. Requires `config.channels.pancake.options.supabase`.
       properties:

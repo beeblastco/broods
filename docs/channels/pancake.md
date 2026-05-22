@@ -9,7 +9,7 @@ To enable the Pancake channel with optional Supabase handoff, configure your age
 ```json
 {
   "tools": {
-    "set_reply_mode": {
+    "pancake_handoff_to_human": {
       "enabled": true
     }
   },
@@ -66,7 +66,7 @@ flowchart TD
 
 ### Agent-Initiated Handoff
 
-Enable `config.tools.set_reply_mode` when the agent should be able to hand off the current Pancake conversation. The tool updates the current scoped `conversation_key` from `auto` to `human`.
+Enable `config.tools.pancake_handoff_to_human` when the agent should be able to hand off the current Pancake conversation. The tool updates the current scoped `conversation_key` from `auto` to `human`.
 
 When the tool succeeds, it tells the model to return exactly `__NO_CUSTOMER_REPLY__`. The Pancake adapter suppresses that exact sentinel and sends nothing to the customer. Future Pancake webhooks for the same conversation are ignored until the Supabase row is changed back to `auto`.
 

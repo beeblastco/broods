@@ -250,17 +250,17 @@ describe("createTools", () => {
     });
   });
 
-  it("exposes set_reply_mode when enabled", async () => {
+  it("exposes pancake_handoff_to_human when enabled", async () => {
     const { createTools } = await import("../functions/harness-processing/tools/index.ts");
 
     const tools = createTools(createToolContext(), {
       tools: {
-        set_reply_mode: { enabled: true },
+        pancake_handoff_to_human: { enabled: true },
       },
     });
 
-    expect(Object.keys(tools)).toEqual(["set_reply_mode"]);
-    expect(tools.set_reply_mode?.description).toContain("human handoff");
+    expect(Object.keys(tools)).toEqual(["pancake_handoff_to_human"]);
+    expect(tools.pancake_handoff_to_human?.description).toContain("human handoff");
   });
 
   it("passes async-enabled external tools through the async coordinator", async () => {

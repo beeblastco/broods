@@ -410,7 +410,7 @@ describe("agent config", () => {
           enabled: true,
           async: true,
         },
-        set_reply_mode: {
+        pancake_handoff_to_human: {
           enabled: true,
         },
         test_external_async: {
@@ -449,7 +449,7 @@ describe("agent config", () => {
           enabled: true,
           async: true,
         },
-        set_reply_mode: {
+        pancake_handoff_to_human: {
           enabled: true,
         },
         test_external_async: {

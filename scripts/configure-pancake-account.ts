@@ -53,7 +53,7 @@ async function upsertPancakeAccount() {
       ? {
         tools: {
           ...(baseConfig.tools ?? {}),
-          set_reply_mode: { enabled: true },
+          pancake_handoff_to_human: { enabled: true },
         },
       }
       : {}),

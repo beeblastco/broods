@@ -5,11 +5,11 @@
 
 import { afterEach, describe, expect, it, mock } from "bun:test";
 import { PANCAKE_NO_CUSTOMER_REPLY } from "../functions/_shared/pancake-channel.ts";
-import setReplyModeTool from "../functions/harness-processing/tools/set-reply-mode.tool.ts";
+import pancakeHandoffToHumanTool from "../functions/harness-processing/tools/pancake-handoff-to-human.tool.ts";
 
 const ORIGINAL_FETCH = globalThis.fetch;
 
-describe("set_reply_mode tool", () => {
+describe("pancake_handoff_to_human tool", () => {
   afterEach(() => {
     globalThis.fetch = ORIGINAL_FETCH;
   });
@@ -24,8 +24,8 @@ describe("set_reply_mode tool", () => {
       }]);
     }) as never;
 
-    const tools = setReplyModeTool(createToolContext(), createAgentConfig());
-    const result = await (tools.set_reply_mode as unknown as {
+    const tools = pancakeHandoffToHumanTool(createToolContext(), createAgentConfig());
+    const result = await (tools.pancake_handoff_to_human as unknown as {
       execute(input: unknown): Promise<unknown>;
     }).execute({});
 
@@ -47,7 +47,7 @@ describe("set_reply_mode tool", () => {
   });
 
   it("requires Pancake Supabase channel options", async () => {
-    const tools = setReplyModeTool(createToolContext(), createAgentConfig({
+    const tools = pancakeHandoffToHumanTool(createToolContext(), createAgentConfig({
       channels: {
         pancake: {
           pageId: "page-1",
@@ -56,9 +56,9 @@ describe("set_reply_mode tool", () => {
       },
     }));
 
-    await expect((tools.set_reply_mode as unknown as {
+    await expect((tools.pancake_handoff_to_human as unknown as {
       execute(input: unknown): Promise<unknown>;
-    }).execute({})).rejects.toThrow("set_reply_mode requires config.channels.pancake.options.supabase");
+    }).execute({})).rejects.toThrow("pancake_handoff_to_human requires config.channels.pancake.options.supabase");
   });
 });
 

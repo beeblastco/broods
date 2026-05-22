@@ -136,7 +136,7 @@
         "webSearch": {}
       }
     },
-    "set_reply_mode": {
+    "pancake_handoff_to_human": {
       "enabled": false
     },
     "test_async": {

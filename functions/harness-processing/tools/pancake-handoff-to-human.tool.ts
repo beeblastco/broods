@@ -12,9 +12,9 @@ import {
 import type { AgentConfig } from "../../_shared/accounts.ts";
 import type { ToolContext } from "./index.ts";
 
-export default function setReplyModeTool(context: ToolContext, agentConfig: AgentConfig): ToolSet {
+export default function pancakeHandoffToHumanTool(context: ToolContext, agentConfig: AgentConfig): ToolSet {
   return {
-    set_reply_mode: tool({
+    pancake_handoff_to_human: tool({
       description:
         `Switch the current Pancake conversation from automatic replies to human handoff. ` +
         `After this tool succeeds, the final response must be exactly ${PANCAKE_NO_CUSTOMER_REPLY} and no other text.`,
@@ -26,10 +26,10 @@ export default function setReplyModeTool(context: ToolContext, agentConfig: Agen
       async execute() {
         const supabase = resolvePancakeSupabaseOptions(agentConfig.channels?.pancake?.options);
         if (!supabase) {
-          throw new Error("set_reply_mode requires config.channels.pancake.options.supabase");
+          throw new Error("pancake_handoff_to_human requires config.channels.pancake.options.supabase");
         }
         if (!context.conversationKey.includes(":pancake:")) {
-          throw new Error("set_reply_mode only supports Pancake conversations");
+          throw new Error("pancake_handoff_to_human only supports Pancake conversations");
         }
 
         const result = await setPancakeSupabaseReplyModeToHuman(supabase, context.conversationKey);
