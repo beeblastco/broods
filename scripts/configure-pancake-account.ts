@@ -46,8 +46,17 @@ console.log(`Configured Pancake account ${account.accountId} and agent ${agent.a
 console.log(`Register this URL in Pancake webhook settings: ${webhookUrl}`);
 
 async function upsertPancakeAccount() {
+  const baseConfig = createScriptAgentConfig();
   const config = {
-    ...createScriptAgentConfig(),
+    ...baseConfig,
+    ...(pancakeSupabaseUrl && pancakeSupabaseServiceRoleKey
+      ? {
+        tools: {
+          ...(baseConfig.tools ?? {}),
+          set_reply_mode: { enabled: true },
+        },
+      }
+      : {}),
     channels: {
       pancake: {
         pageId: pancakePageId,

@@ -980,6 +980,8 @@ function normalizeToolConfig(toolName: string, value: unknown): void {
     case "googleSearch":
       normalizeGoogleSearchToolConfig(config);
       return;
+    case "set_reply_mode":
+      return;
     case "test_async":
       return;
     case "test_external_async":
@@ -990,10 +992,11 @@ function normalizeToolConfig(toolName: string, value: unknown): void {
 
 function isSupportedConfigToolName(
   toolName: string,
-): toolName is "tavilySearch" | "tavilyExtract" | "googleSearch" | "test_async" | "test_external_async" {
+): toolName is "tavilySearch" | "tavilyExtract" | "googleSearch" | "set_reply_mode" | "test_async" | "test_external_async" {
   return toolName === "tavilySearch" ||
     toolName === "tavilyExtract" ||
     toolName === "googleSearch" ||
+    toolName === "set_reply_mode" ||
     toolName === "test_async" ||
     toolName === "test_external_async";
 }

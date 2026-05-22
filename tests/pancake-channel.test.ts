@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
 import {
   createPancakeChannel,
   getPancakeSupabaseReplyMode,
+  setPancakeSupabaseReplyModeToHuman,
 } from "../functions/_shared/pancake-channel.ts";
 
 const ORIGINAL_FETCH = globalThis.fetch;
@@ -139,6 +140,36 @@ describe("pancake channel adapter", () => {
     });
     expect(JSON.parse(String(fetchCalls[0]!.init?.body))).toEqual({
       conversation_key: "acct:acct_test:agent:agent_test:pancake:page-1:conversation-1",
+    });
+  });
+
+  it("switches Supabase conversation state from auto to human", async () => {
+    const fetchCalls: Array<{ url: string; init?: RequestInit }> = [];
+    globalThis.fetch = mock(async (url: string | URL, init?: RequestInit) => {
+      fetchCalls.push({ url: String(url), init });
+      return jsonResponse([stateRow({ reply_mode: "human" })]);
+    }) as never;
+
+    const result = await setPancakeSupabaseReplyModeToHuman(
+      { url: "https://supabase.example", serviceRoleKey: "service-key" },
+      "acct:acct_test:agent:agent_test:pancake:page-1:conversation-1",
+    );
+
+    expect(result).toEqual({ changed: true, replyMode: "human" });
+    expect(fetchCalls).toHaveLength(1);
+    const url = new URL(fetchCalls[0]!.url);
+    expect(url.pathname).toBe("/rest/v1/conversation_states");
+    expect(url.searchParams.get("conversation_key")).toBe(
+      "eq.acct:acct_test:agent:agent_test:pancake:page-1:conversation-1",
+    );
+    expect(url.searchParams.get("reply_mode")).toBe("eq.auto");
+    expect(url.searchParams.get("select")).toBe("conversation_key,reply_mode");
+    expect(fetchCalls[0]!.init?.method).toBe("PATCH");
+    expect(fetchCalls[0]!.init?.headers).toMatchObject({
+      Prefer: "return=representation",
+    });
+    expect(JSON.parse(String(fetchCalls[0]!.init?.body))).toEqual({
+      reply_mode: "human",
     });
   });
 

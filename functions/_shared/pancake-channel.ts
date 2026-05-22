@@ -16,7 +16,9 @@ import { accountAgentScopedKey, PANCAKE_INTEGRATION_PREFIX } from "./runtime-key
 
 const SUPABASE_REST_PATH = "rest/v1/";
 
-type ReplyMode = "auto" | "human" | "paused";
+export const PANCAKE_NO_CUSTOMER_REPLY = "__NO_CUSTOMER_REPLY__";
+
+export type ReplyMode = "auto" | "human" | "paused";
 
 interface PancakeWebhookPayload {
   page_id?: string;
@@ -119,7 +121,7 @@ export function createPancakeChannel(
   };
 }
 
-function resolvePancakeSupabaseOptions(configOptions: Record<string, unknown> | undefined): PancakeSupabaseOptions | null {
+export function resolvePancakeSupabaseOptions(configOptions: Record<string, unknown> | undefined): PancakeSupabaseOptions | null {
   const supabase = configOptions?.supabase;
   if (!supabase || typeof supabase !== "object" || Array.isArray(supabase)) {
     return null;
@@ -225,13 +227,44 @@ export async function getPancakeSupabaseReplyMode(
   return state.reply_mode;
 }
 
+export async function setPancakeSupabaseReplyModeToHuman(
+  config: PancakeSupabaseOptions,
+  conversationKey: string,
+): Promise<{ changed: boolean; replyMode: ReplyMode | null }> {
+  const params = new URLSearchParams({
+    conversation_key: `eq.${conversationKey}`,
+    reply_mode: "eq.auto",
+    select: "conversation_key,reply_mode",
+  });
+  const [state] = await supabaseRequest<ConversationStateRecord[]>(
+    config,
+    `conversation_states?${params}`,
+    {
+      method: "PATCH",
+      headers: { "Prefer": "return=representation" },
+      body: JSON.stringify({ reply_mode: "human" }),
+    },
+  ) ?? [];
+
+  return {
+    changed: Boolean(state),
+    replyMode: state?.reply_mode ?? null,
+  };
+}
+
 export function createPancakeActions(
   pageAccessToken: string,
   source: PancakeSource,
   senderId?: string,
 ): ChannelActions {
   return {
-    sendText: (text) => sendPancakeMessage(pageAccessToken, source, text, senderId),
+    sendText: async (text) => {
+      if (text.trim() === PANCAKE_NO_CUSTOMER_REPLY) {
+        return;
+      }
+
+      return sendPancakeMessage(pageAccessToken, source, text, senderId);
+    },
     async sendTyping() {
       return;
     },

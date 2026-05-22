@@ -410,6 +410,9 @@ describe("agent config", () => {
           enabled: true,
           async: true,
         },
+        set_reply_mode: {
+          enabled: true,
+        },
         test_external_async: {
           enabled: true,
           async: true,
@@ -445,6 +448,9 @@ describe("agent config", () => {
         test_async: {
           enabled: true,
           async: true,
+        },
+        set_reply_mode: {
+          enabled: true,
         },
         test_external_async: {
           enabled: true,

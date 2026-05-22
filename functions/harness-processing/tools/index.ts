@@ -17,6 +17,7 @@ import loadSkillTool from "./load-skill.tool.ts";
 import runSubagentTool, {
   type RunSubagentDispatch,
 } from "./run-subagent.tool.ts";
+import setReplyModeTool from "./set-reply-mode.tool.ts";
 import tasksTool from "./tasks.tool.ts";
 import { tavilyExtractTool, tavilySearchTool } from "./tavily.tool.ts";
 import testAsyncTool from "./test.async.tool.ts";
@@ -35,7 +36,7 @@ export interface ToolContext {
   dispatchAsyncTools?: RunAsyncToolDispatch;
 }
 
-type ToolFactory = (context: ToolContext) => ToolSet;
+type ToolFactory = (context: ToolContext, agentConfig: AgentConfig) => ToolSet;
 
 // Agent-configured tools. Workspace and subagent tools are registered below
 // because their enablement is controlled outside config.tools.
@@ -43,6 +44,7 @@ const toolFactories = {
   tavilySearch: tavilySearchTool,
   tavilyExtract: tavilyExtractTool,
   googleSearch: googleSearchTool,
+  set_reply_mode: setReplyModeTool,
   test_async: testAsyncTool,
   test_external_async: testExternalAsyncTool,
 } satisfies Record<string, ToolFactory>;
@@ -98,7 +100,7 @@ export function createTools(context: Omit<ToolContext, "config">, agentConfig: A
     Object.assign(tools, withToolApproval(toolFactory({
       ...context,
       config: externalToolRuntimeConfig(toolConfig),
-    }), {
+    }, agentConfig), {
       [toolName]: toolConfig.needsApproval === true,
     }));
   }

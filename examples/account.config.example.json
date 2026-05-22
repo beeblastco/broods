@@ -136,6 +136,9 @@
         "webSearch": {}
       }
     },
+    "set_reply_mode": {
+      "enabled": false
+    },
     "test_async": {
       "enabled": true,
       "async": true,
@@ -183,7 +186,13 @@
     "pancake": {
       "pageId": "page-id",
       "pageAccessToken": "...",
-      "senderId": "optional-staff-user-id"
+      "senderId": "optional-staff-user-id",
+      "options": {
+        "supabase": {
+          "url": "https://your-project.supabase.co",
+          "serviceRoleKey": "..."
+        }
+      }
     }
   }
 }
