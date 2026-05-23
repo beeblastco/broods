@@ -663,14 +663,14 @@ export default $config({
 
     new aws.iam.RolePolicy("CronSchedulerRolePolicy", {
       role: cronSchedulerRole.id,
-      policy: JSON.stringify({
+      policy: harnessProcessing.arn.apply((arn) => JSON.stringify({
         Version: "2012-10-17",
         Statement: [{
           Effect: "Allow",
           Action: ["lambda:InvokeFunction"],
-          Resource: [harnessProcessing.arn],
+          Resource: [arn],
         }],
-      }),
+      })),
     });
 
     const accountManage = new sst.aws.Function("AccountManage", {
