@@ -31,6 +31,8 @@ tags:
     description: Account-owned agent configuration.
   - name: Skills
     description: Account-owned skill package management.
+  - name: Cron Jobs
+    description: Account-owned scheduled agent runs.
 
 paths:
   /:
@@ -936,6 +938,130 @@ paths:
         '200':
           description: Skill deleted
 
+  /accounts/me/cron-jobs:
+    post:
+      tags:
+        - Cron Jobs
+      summary: Create cron job
+      description: Create a scheduled agent run.
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CronJobCreate'
+            examples:
+              agentRun:
+                value:
+                  name: Daily maintenance
+                  agentId: agent_maintainer
+                  conversationKey: cron:daily-maintenance
+                  prompt: Run daily maintenance.
+                  scheduleExpression: cron(0 8 * * ? *)
+                  timezone: Europe/Amsterdam
+      responses:
+        '201':
+          description: Cron job created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  cronJob:
+                    $ref: '#/components/schemas/CronJob'
+        '503':
+          description: Cron jobs unavailable
+
+    get:
+      tags:
+        - Cron Jobs
+      summary: List cron jobs
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: List of cron jobs
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  cronJobs:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/CronJob'
+
+  /accounts/me/cron-jobs/{cronJobId}:
+    get:
+      tags:
+        - Cron Jobs
+      summary: Get cron job
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: cronJobId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Cron job details
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  cronJob:
+                    $ref: '#/components/schemas/CronJob'
+
+    patch:
+      tags:
+        - Cron Jobs
+      summary: Update cron job
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: cronJobId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CronJobPatch'
+      responses:
+        '200':
+          description: Cron job updated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  cronJob:
+                    $ref: '#/components/schemas/CronJob'
+
+    delete:
+      tags:
+        - Cron Jobs
+      summary: Delete cron job
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: cronJobId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Cron job deleted
+
 components:
   securitySchemes:
     BearerAuth:
@@ -1307,6 +1433,104 @@ components:
         description:
           type: string
 
+    CronJob:
+      type: object
+      properties:
+        accountId:
+          type: string
+        cronJobId:
+          type: string
+        name:
+          type: string
+        description:
+          type: string
+        agentId:
+          type: string
+          description: Account-owned agent to run
+        prompt:
+          type: string
+          description: User prompt sent to the agent on each schedule invocation
+        conversationKey:
+          type: string
+          description: Optional public conversation key. Defaults to `cron:{cronJobId}`.
+        scheduleExpression:
+          type: string
+          description: EventBridge Scheduler expression, such as `cron(...)`, `rate(...)`, or `at(...)`
+        timezone:
+          type: string
+        status:
+          type: string
+          enum: [active, paused]
+        createdAt:
+          type: string
+        updatedAt:
+          type: string
+        lastInvokedAt:
+          type: string
+        lastStatus:
+          type: string
+          enum: [started, completed, failed]
+        lastError:
+          type: string
+
+    CronJobCreate:
+      type: object
+      required:
+        - name
+        - agentId
+        - prompt
+        - scheduleExpression
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        agentId:
+          type: string
+          example: agent_maintainer
+        prompt:
+          type: string
+          example: Run daily maintenance.
+        conversationKey:
+          type: string
+          example: cron:daily-maintenance
+        scheduleExpression:
+          type: string
+          example: cron(0 8 * * ? *)
+        timezone:
+          type: string
+          example: Europe/Amsterdam
+        status:
+          type: string
+          enum: [active, paused]
+
+    CronJobPatch:
+      type: object
+      properties:
+        name:
+          type: string
+        description:
+          oneOf:
+            - type: string
+            - type: "null"
+        agentId:
+          type: string
+        prompt:
+          type: string
+        conversationKey:
+          oneOf:
+            - type: string
+            - type: "null"
+        scheduleExpression:
+          type: string
+        timezone:
+          oneOf:
+            - type: string
+            - type: "null"
+        status:
+          type: string
+          enum: [active, paused]
+
     DeleteResponse:
       type: object
       properties:
@@ -1328,6 +1552,8 @@ components:
             agentsDeleted:
               type: integer
             skillObjectsDeleted:
+              type: integer
+            cronJobsDeleted:
               type: integer
 
     AgentConfig:

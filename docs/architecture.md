@@ -39,6 +39,8 @@ flowchart TD
   ManageUrl --> AccountStore["DynamoDB: AccountConfig<br/>account metadata + secretHash"]
   ManageUrl --> AgentStore["DynamoDB: AgentConfig<br/>encrypted agent configs"]
   ManageUrl -->|"Manage Skills"| SkillStore["S3: Skills<br/>account-scoped skill bundles"]
+  ManageUrl -->|"Manage Cron Jobs"| CronJobs["DynamoDB: CronJobs"]
+  ManageUrl -->|"Create/update/delete schedules"| Scheduler["EventBridge Scheduler"]
   AccountStore -->|Authentication| HarnessUrl
   AgentStore -->|agentId config lookup| HarnessUrl
   HarnessUrl --> Handler["handler.ts"]
@@ -57,6 +59,8 @@ flowchart TD
   AgentStore -->|config resolved before session<br/>passed into session for speed| Session
   Handler --> AsyncAgentResult["DynamoDB: AsyncAgentResult"]
   AsyncTools --> AsyncToolResult["DynamoDB: AsyncToolResult"]
+  Scheduler -->|"cron-job event"| HarnessUrl
+  HarnessUrl --> CronJobs["DynamoDB: CronJobs"]
   Session --> Memory["S3: account-scoped MEMORY.md"]
   SkillStore -->|"Load skills metadata"| Session
   Harness -->|"Access skills"| SkillStore 
@@ -182,6 +186,22 @@ flowchart TD
 
 Direct sync and async POST access is controlled by `ENABLE_DIRECT_API`, which defaults to `true`. When disabled, `POST /` and `POST /async` are closed while channel webhooks and internal worker invocations remain available.
 
+## Cron Jobs
+
+Cron jobs are included in the default stack as a small scheduled-agent add-on, not a workflow DSL. `account-manage` owns cron job create, update, delete, and list operations: it stores the account-scoped cron job in DynamoDB and creates, updates, or deletes the matching EventBridge Scheduler schedule. EventBridge Scheduler wakes `harness-processing` with `{ kind: "cron-job", accountId, cronJobId }`, and the harness starts the configured agent asynchronously.
+
+```mermaid
+flowchart TD
+  Manage["account-manage<br/>cron create/update/delete/list"] --> Jobs["DynamoDB: CronJobs"]
+  Manage --> Scheduler["EventBridge Scheduler<br/>schedule lifecycle"]
+  Scheduler -->|"cron-job event"| Harness["harness-processing"]
+  Harness --> Jobs
+  Harness -->|"internal async worker event"| Harness
+  Harness --> AsyncAgentResult["AsyncAgentResult"]
+```
+
+Developers who need custom chaining, cleanup, polling, or external workflow behavior can deploy their own scheduled worker and call the existing direct or async API.
+
 ## Channel Webhooks
 
 ```mermaid
@@ -249,27 +269,6 @@ See [Memory and Session](memory-and-session.md) for the full model.
 ## Model and Tool Configuration
 
 Agents control model selection, channel credentials, optional skills, subagents, and tool access through encrypted agent config. `harness.ts` resolves `config.model`; `tools/index.ts` creates workspace tools from `config.workspace`, subagent dispatch from `config.subagent`, search/research tools from `config.tools`, and `load_skill` when `config.skills.enabled` is true and `config.skills.allowed` has paths. See the [API Reference](/api-reference) for the complete `AgentConfig` schema.
-
-## Code Ownership
-
-- [`functions/_shared/accounts.ts`](../functions/_shared/accounts.ts): account records, account secret hashing, bearer auth, and account metadata storage.
-- [`functions/_shared/agents.ts`](../functions/_shared/agents.ts): account-owned agent records and encrypted agent config storage.
-- [`functions/_shared/runtime-keys.ts`](../functions/_shared/runtime-keys.ts): account-scoped runtime keys, direct API public key validation, leases, and filesystem namespaces.
-- [`functions/_shared/skills.ts`](../functions/_shared/skills.ts): shared skill path, frontmatter, import URL validation, and S3 read/ownership primitives.
-- [`functions/_shared/nats.ts`](../functions/_shared/nats.ts): NATS publisher, event types, and subject patterns for connection-scoped WebSocket stream events.
-- [`functions/account-manage/handler.ts`](../functions/account-manage/handler.ts): account CRUD and admin/self-management HTTP API.
-- [`functions/account-manage/skills.ts`](../functions/account-manage/skills.ts): account skill CRUD, GitHub import handling, and S3 writes.
-- [`functions/account-manage/cleanup.ts`](../functions/account-manage/cleanup.ts): account deletion cleanup for runtime rows and S3 namespaces.
-- [`functions/harness-processing/integrations.ts`](../functions/harness-processing/integrations.ts): account auth, direct request parsing, account webhook routing, and channel normalization.
-- [`functions/harness-processing/handler.ts`](../functions/harness-processing/handler.ts): SSE, async self-invocation, commands, leases, and reply flow.
-- [`functions/harness-processing/session.ts`](../functions/harness-processing/session.ts): event deduplication, conversation persistence, system context, and account/agent-scoped memory loading.
-- [`functions/harness-processing/skills.ts`](../functions/harness-processing/skills.ts): enabled skill metadata and `load_skill` prompt content loading.
-- [`functions/harness-processing/async-agent-result.ts`](../functions/harness-processing/async-agent-result.ts): async direct API and subagent result persistence for polling.
-- [`functions/harness-processing/async-tool-result.ts`](../functions/harness-processing/async-tool-result.ts): async external tool result persistence.
-- [`functions/harness-processing/async-tools.ts`](../functions/harness-processing/async-tools.ts): async external tool dispatch, result injection, and parent continuation support.
-- [`functions/harness-processing/subagents.ts`](../functions/harness-processing/subagents.ts): subagent dispatch, child model runs, status rows, and parent result injection.
-- [`functions/harness-processing/harness.ts`](../functions/harness-processing/harness.ts): configured model execution loop and inline tool orchestration.
-- [`functions/harness-processing/tools/index.ts`](../functions/harness-processing/tools/index.ts): static tool factory registry and agent-configured tool selection.
 
 ## Storage Boundaries
 

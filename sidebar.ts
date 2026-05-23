@@ -109,6 +109,11 @@ const sidebars: SidebarsConfig = {
           id: 'sub-agents',
           label: 'Subagent',
         },
+        {
+          type: 'doc',
+          id: 'cron-jobs',
+          label: 'Cron Jobs',
+        },
       ],
     },
     {

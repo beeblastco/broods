@@ -4,18 +4,29 @@
  */
 
 import { InvokeCommand, LambdaClient } from "@aws-sdk/client-lambda";
-import type { ToolModelMessage, JSONValue } from "ai";
+import type { ToolModelMessage, JSONValue, UserModelMessage } from "ai";
 import type { LambdaFunctionURLEvent } from "aws-lambda";
 import { formatChannelErrorText } from "../_shared/channels.ts";
 import { executeCommand } from "../_shared/commands.ts";
 import { toRuntimeAgentConfig } from "../_shared/accounts.ts";
+import {
+  getCronJob,
+  markCronJobCompleted,
+  markCronJobFailed,
+  markCronJobStarted,
+  type CronJobRecord,
+} from "../_shared/cron-jobs.ts";
 import { booleanEnv, requireEnv } from "../_shared/env.ts";
 import { getAgent } from "../_shared/agents.ts";
 import { jsonResponse } from "../_shared/http.ts";
 import { logError, logInfo } from "../_shared/log.ts";
 import { LiveNatsPublisher, type NatsPublisher } from "../_shared/nats.ts";
 import type { LambdaInvocation, LambdaResponse } from "../_shared/runtime.ts";
-import { publicConversationKeyFromScoped } from "../_shared/runtime-keys.ts";
+import {
+  publicConversationKeyFromScoped,
+  scopedDirectConversationKey,
+  scopedDirectEventId,
+} from "../_shared/runtime-keys.ts";
 import { runAgentLoop, type ToolApprovalSummary } from "./harness.ts";
 import {
   routeIncomingEvent,
@@ -67,6 +78,12 @@ interface NatsWorkerInvocation {
   event: DirectInboundEvent;
 }
 
+interface CronJobInvocation {
+  kind: "cron-job";
+  accountId: string;
+  cronJobId: string;
+}
+
 interface DirectTurn {
   session: Session;
   turnContext: Awaited<ReturnType<Session["createTurnContext"]>>;
@@ -81,7 +98,7 @@ interface ParentContinuationResult {
 }
 
 export async function handler(
-  event: LambdaFunctionURLEvent | AsyncWorkerInvocation | NatsWorkerInvocation,
+  event: LambdaFunctionURLEvent | AsyncWorkerInvocation | NatsWorkerInvocation | CronJobInvocation,
   context?: LambdaInvocation,
 ): Promise<LambdaResponse> {
   if (isAsyncWorkerInvocation(event)) {
@@ -94,6 +111,11 @@ export async function handler(
     return { statusCode: 204 };
   }
 
+  if (isCronJobInvocation(event)) {
+    await handleScheduledCronJob(event);
+    return { statusCode: 204 };
+  }
+
   return routeIncomingEvent(event, {
     handleDirectRequest: (directEvent) => handleDirectRequest(directEvent, context),
     handleAsyncRequest,
@@ -103,6 +125,51 @@ export async function handler(
   }, {
     directApiEnabled: ENABLE_DIRECT_API,
   });
+}
+
+/**
+ * Handle scheduled cron jobs invoked by EventBridge Scheduler.
+ */
+async function handleScheduledCronJob(event: CronJobInvocation): Promise<void> {
+  const job = await getCronJob(event.accountId, event.cronJobId);
+  if (!job) {
+    logInfo("Cron job skipped because it no longer exists", {
+      accountId: event.accountId,
+      cronJobId: event.cronJobId,
+    });
+    return;
+  }
+  if (job.status !== "active") {
+    logInfo("Cron job skipped because it is paused", {
+      accountId: event.accountId,
+      cronJobId: event.cronJobId,
+    });
+    return;
+  }
+
+  await markCronJobStarted(job.accountId, job.cronJobId);
+
+  try {
+    const result = await startScheduledAgentRun(job);
+    logInfo("Cron agent run invoked", {
+      accountId: job.accountId,
+      cronJobId: job.cronJobId,
+      agentId: job.agentId,
+      eventId: result.eventId,
+      conversationKey: result.conversationKey,
+    });
+    await markCronJobCompleted(job.accountId, job.cronJobId);
+  } catch (err) {
+    const error = err instanceof Error ? err.message : String(err);
+    logError("Cron agent run failed", {
+      accountId: job.accountId,
+      cronJobId: job.cronJobId,
+      agentId: job.agentId,
+      error,
+    });
+    await markCronJobFailed(job.accountId, job.cronJobId, error);
+    throw err;
+  }
 }
 
 /**
@@ -264,6 +331,11 @@ async function handleAsyncRequest(event: AsyncDirectInboundEvent): Promise<Lambd
  */
 async function handleAsyncWorkerRequest(event: DirectInboundEvent, context?: LambdaInvocation): Promise<void> {
   try {
+    await createPendingAsyncAgentResult({
+      eventId: event.asyncResultEventId ?? event.eventId,
+      conversationKey: event.conversationKey,
+    });
+
     const turn = await prepareDirectTurn(event);
     if (!turn) {
       return;
@@ -374,20 +446,20 @@ async function handleNatsWorkerRequest(event: DirectInboundEvent, context?: Lamb
         agentConfig: event.agentConfig,
         consumeStream: (stream) => pipeAgentNatsStream(stream, publisher),
         onLoopErrorText: async (error) => {
-          publisher.publish({ type: "error", error }).catch(() => {});
+          publisher.publish({ type: "error", error }).catch(() => { });
         },
         onApprovalRequired: async (approvals) => {
           // The event also sends additional tool-approval-request so that the websocket gateway can easily
           // extract this data and do sth with it.
           // This is intentional (the user will receive the tool-approval-request event separately)
-          publisher.publish({ type: "tool-approval-request", approvals }).catch(() => {});
+          publisher.publish({ type: "tool-approval-request", approvals }).catch(() => { });
         },
         onHeartbeat: (pendingCount) => {
           publisher.publish({
             type: "waiting",
             reason: "in-process-async-work",
             pendingCount,
-          }).catch(() => {});
+          }).catch(() => { });
         },
       });
 
@@ -533,22 +605,21 @@ async function settleAsyncFailure(event: DirectInboundEvent, error: string): Pro
   ));
 }
 
+/**
+ * Invokes the harness-processing Lambda asynchronously to process a direct API async request.
+ * Used for background processing of non-streaming requests.
+ */
 async function invokeAsyncWorker(event: DirectInboundEvent): Promise<void> {
-  const functionName = process.env.AWS_LAMBDA_FUNCTION_NAME;
-  if (!functionName) {
-    throw new Error("Missing AWS_LAMBDA_FUNCTION_NAME for async worker invocation");
-  }
-
-  await lambda.send(new InvokeCommand({
-    FunctionName: functionName,
-    InvocationType: "Event",
-    Payload: textEncoder.encode(JSON.stringify({
-      kind: "direct-api-async-worker",
-      event,
-    } satisfies AsyncWorkerInvocation)),
-  }));
+  await invokeHarnessWorker({
+    kind: "direct-api-async-worker",
+    event,
+  } satisfies AsyncWorkerInvocation);
 }
 
+/**
+ * Invokes the appropriate worker (NATS or async) to continue processing after async tool completion.
+ * Routes to NATS worker if the original request was a WebSocket connection, otherwise uses async worker.
+ */
 async function invokeAsyncToolContinuationWorker(
   event: DirectInboundEvent,
   settled: AsyncToolResultRecord,
@@ -566,19 +637,31 @@ async function invokeAsyncToolContinuationWorker(
   await invokeAsyncWorker(event);
 }
 
+/**
+ * Invokes the harness-processing Lambda asynchronously to handle NATS-based WebSocket streaming.
+ * Used for real-time streaming responses to connected clients.
+ */
 async function invokeNatsWorker(event: DirectInboundEvent): Promise<void> {
+  await invokeHarnessWorker({
+    kind: "nats-worker",
+    event,
+  } satisfies NatsWorkerInvocation);
+}
+
+/**
+ * Generic worker invocation helper that sends an event to the harness-processing Lambda.
+ * Uses Event invocation type to run the worker asynchronously.
+ */
+async function invokeHarnessWorker(payload: AsyncWorkerInvocation | NatsWorkerInvocation): Promise<void> {
   const functionName = process.env.AWS_LAMBDA_FUNCTION_NAME;
   if (!functionName) {
-    throw new Error("Missing AWS_LAMBDA_FUNCTION_NAME for NATS worker invocation");
+    throw new Error("Missing AWS_LAMBDA_FUNCTION_NAME for worker invocation");
   }
 
   await lambda.send(new InvokeCommand({
     FunctionName: functionName,
     InvocationType: "Event",
-    Payload: textEncoder.encode(JSON.stringify({
-      kind: "nats-worker",
-      event,
-    } satisfies NatsWorkerInvocation)),
+    Payload: textEncoder.encode(JSON.stringify(payload)),
   }));
 }
 
@@ -626,6 +709,39 @@ async function continueExternalAsyncToolsIfReady(
 
 function asyncToolContinuationEventId(parentEventId: string): string {
   return `${parentEventId}:async-tools`;
+}
+
+async function startScheduledAgentRun(job: CronJobRecord): Promise<{ eventId: string; conversationKey: string }> {
+  const event = await createCronDirectEvent(job);
+  await invokeAsyncWorker(event);
+
+  return {
+    eventId: event.publicEventId,
+    conversationKey: event.publicConversationKey,
+  };
+}
+
+async function createCronDirectEvent(job: CronJobRecord): Promise<DirectInboundEvent> {
+  const agent = await getAgent(job.accountId, job.agentId);
+  if (!agent || agent.status !== "active") {
+    throw new Error(`Agent not found: ${job.agentId}`);
+  }
+
+  const publicEventId = `${job.cronJobId}-${crypto.randomUUID()}`;
+  const publicConversationKey = job.conversationKey ?? `cron:${job.cronJobId}`;
+  return {
+    accountId: job.accountId,
+    agentId: job.agentId,
+    agentConfig: toRuntimeAgentConfig(agent.config),
+    eventId: scopedDirectEventId(job.accountId, job.agentId, publicEventId),
+    publicEventId,
+    conversationKey: scopedDirectConversationKey(job.accountId, job.agentId, publicConversationKey),
+    publicConversationKey,
+    events: [{
+      role: "user",
+      content: [{ type: "text", text: job.prompt }],
+    }],
+  } satisfies DirectInboundEvent;
 }
 
 async function listCurrentParentToolResults(settled: AsyncToolResultRecord): Promise<AsyncToolResultRecord[]> {
@@ -932,7 +1048,7 @@ async function pipeAgentNatsStream(
     if (done) {
       break;
     }
-    publisher.publish(value as Record<string, unknown>).catch(() => {});
+    publisher.publish(value as Record<string, unknown>).catch(() => { });
   }
   const finalResponse = stream.finalResponse();
   if (stream.hasStructuredOutput() && finalResponse !== undefined) {
@@ -1021,6 +1137,16 @@ function isNatsWorkerInvocation(event: unknown): event is NatsWorkerInvocation {
     event &&
     typeof event === "object" &&
     (event as { kind?: unknown }).kind === "nats-worker",
+  );
+}
+
+function isCronJobInvocation(event: unknown): event is CronJobInvocation {
+  return Boolean(
+    event &&
+    typeof event === "object" &&
+    (event as { kind?: unknown }).kind === "cron-job" &&
+    typeof (event as { accountId?: unknown }).accountId === "string" &&
+    typeof (event as { cronJobId?: unknown }).cronJobId === "string"
   );
 }
 

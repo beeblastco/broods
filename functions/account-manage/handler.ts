@@ -17,6 +17,15 @@ import {
     type AccountRecord,
 } from "../_shared/accounts.ts";
 import {
+    applyCronJobPatch,
+    createCronJob,
+    deleteCronJob,
+    getCronJob,
+    listCronJobs,
+    updateCronJob,
+    type CronJobRecord,
+} from "../_shared/cron-jobs.ts";
+import {
     AgentSkillAuthorizationError,
     AgentSkillNotFoundError,
     AgentSubagentNotFoundError,
@@ -48,6 +57,14 @@ import {
     type StoredSkill,
 } from "./skills.ts";
 import { enforceAccountSignupRateLimit, RateLimitExceededError } from "./rate-limit.ts";
+import {
+    assertCronJobsAvailable,
+    createCronSchedule,
+    CronJobsUnavailableError,
+    deleteCronSchedule,
+    schedulerGroupName,
+    updateCronSchedule,
+} from "./cron.ts";
 
 export async function handler(event: LambdaFunctionURLEvent): Promise<LambdaResponse> {
     const method = event.requestContext.http.method;
@@ -108,6 +125,13 @@ export async function handler(event: LambdaFunctionURLEvent): Promise<LambdaResp
             return handleSkillRoute(method, account.accountId, selfSkillMatch?.[1], event);
         }
 
+        const selfCronCollection = rawPath === "/accounts/me/cron-jobs";
+        const selfCronMatch = rawPath.match(/^\/accounts\/me\/cron-jobs\/([^/]+)$/);
+        if (selfCronCollection || selfCronMatch?.[1]) {
+            const account = requireAccountAuth(auth);
+            return await handleCronJobRoute(method, account.accountId, selfCronMatch?.[1], event);
+        }
+
         if (auth.kind !== "admin") {
             return errorResponse(403, "Forbidden");
         }
@@ -155,6 +179,11 @@ export async function handler(event: LambdaFunctionURLEvent): Promise<LambdaResp
             return handleSkillRoute(method, decodeURIComponent(adminSkillMatch[1]), adminSkillMatch[2], event);
         }
 
+        const adminCronMatch = rawPath.match(/^\/accounts\/([^/]+)\/cron-jobs(?:\/([^/]+))?$/);
+        if (adminCronMatch?.[1]) {
+            return await handleCronJobRoute(method, decodeURIComponent(adminCronMatch[1]), adminCronMatch[2], event);
+        }
+
         return errorResponse(404, "Not found");
     } catch (err) {
         if (err instanceof RateLimitExceededError) {
@@ -164,6 +193,64 @@ export async function handler(event: LambdaFunctionURLEvent): Promise<LambdaResp
         }
         return errorResponseForError(err);
     }
+}
+
+async function handleCronJobRoute(
+    method: string,
+    accountId: string,
+    rawCronJobId: string | undefined,
+    event: LambdaFunctionURLEvent,
+): Promise<LambdaResponse> {
+    assertCronJobsAvailable();
+    const cronJobId = rawCronJobId ? decodeURIComponent(rawCronJobId) : undefined;
+
+    if (!cronJobId) {
+        if (method === "GET") {
+            const cronJobs = await listCronJobs(accountId);
+            return jsonResponse(200, { cronJobs: cronJobs.map(toCronJobResponse) });
+        }
+        if (method === "POST") {
+            const cronJob = await createCronJob(accountId, parseJsonBody(event) as never, {
+                schedulerGroupName: schedulerGroupName(),
+            });
+            try {
+                await createCronSchedule(cronJob);
+            } catch (err) {
+                await deleteCronJob(accountId, cronJob.cronJobId).catch(() => { });
+                throw err;
+            }
+            return jsonResponse(201, { cronJob: toCronJobResponse(cronJob) });
+        }
+        return errorResponse(405, "Method not allowed", { method, allowedMethods: ["GET", "POST"] });
+    }
+
+    if (method === "GET") {
+        const cronJob = await getCronJob(accountId, cronJobId);
+        return cronJob ? jsonResponse(200, { cronJob: toCronJobResponse(cronJob) }) : errorResponse(404, "Cron job not found");
+    }
+    if (method === "PATCH") {
+        const existing = await getCronJob(accountId, cronJobId);
+        if (!existing) {
+            return errorResponse(404, "Cron job not found");
+        }
+
+        const patch = parseJsonBody(event);
+        const patched = applyCronJobPatch(existing, patch as never);
+        await updateCronSchedule(patched);
+        const cronJob = await updateCronJob(accountId, cronJobId, patch as never);
+        return cronJob ? jsonResponse(200, { cronJob: toCronJobResponse(cronJob) }) : errorResponse(404, "Cron job not found");
+    }
+    if (method === "DELETE") {
+        const existing = await getCronJob(accountId, cronJobId);
+        if (!existing) {
+            return errorResponse(404, "Cron job not found");
+        }
+        await deleteCronSchedule(existing);
+        const deleted = await deleteCronJob(accountId, cronJobId);
+        return deleted ? jsonResponse(200, { deleted: true }) : errorResponse(404, "Cron job not found");
+    }
+
+    return errorResponse(405, "Method not allowed", { method, allowedMethods: ["GET", "PATCH", "DELETE"] });
 }
 
 async function handleAgentRoute(
@@ -260,13 +347,14 @@ async function rotateSecretResponse(accountId: string): Promise<LambdaResponse> 
 }
 
 async function deleteAccountResponse(account: Extract<AuthContext, { kind: "account" }>["account"]): Promise<LambdaResponse> {
-    const [cleanup, agentsDeleted, skillObjectsDeleted] = await Promise.all([
+    const [cleanup, agentsDeleted, skillObjectsDeleted, cronJobsDeleted] = await Promise.all([
         deleteAccountRuntimeData(account),
         deleteAccountAgents(account.accountId),
         deleteAccountSkills(account.accountId),
+        deleteAccountCronJobs(account.accountId),
     ]);
     await deleteAccount(account.accountId);
-    return jsonResponse(200, { deleted: true, cleanup: { ...cleanup, agentsDeleted, skillObjectsDeleted } });
+    return jsonResponse(200, { deleted: true, cleanup: { ...cleanup, agentsDeleted, skillObjectsDeleted, cronJobsDeleted } });
 }
 
 function requireAccountAuth(auth: AuthContext): Extract<AuthContext, { kind: "account" }>["account"] {
@@ -303,11 +391,52 @@ function toSkillResponse(skill: SkillMetadata | StoredSkill): Record<string, unk
     };
 }
 
+function toCronJobResponse(cronJob: CronJobRecord): Record<string, unknown> {
+    return {
+        accountId: cronJob.accountId,
+        cronJobId: cronJob.cronJobId,
+        name: cronJob.name,
+        ...(cronJob.description ? { description: cronJob.description } : {}),
+        agentId: cronJob.agentId,
+        prompt: cronJob.prompt,
+        ...(cronJob.conversationKey ? { conversationKey: cronJob.conversationKey } : {}),
+        scheduleExpression: cronJob.scheduleExpression,
+        ...(cronJob.timezone ? { timezone: cronJob.timezone } : {}),
+        status: cronJob.status,
+        createdAt: cronJob.createdAt,
+        updatedAt: cronJob.updatedAt,
+        ...(cronJob.lastInvokedAt ? { lastInvokedAt: cronJob.lastInvokedAt } : {}),
+        ...(cronJob.lastStatus ? { lastStatus: cronJob.lastStatus } : {}),
+        ...(cronJob.lastError ? { lastError: cronJob.lastError } : {}),
+    };
+}
+
+async function deleteAccountCronJobs(accountId: string): Promise<number> {
+    try {
+        assertCronJobsAvailable();
+    } catch (err) {
+        if (err instanceof CronJobsUnavailableError) {
+            return 0;
+        }
+        throw err;
+    }
+
+    const cronJobs = await listCronJobs(accountId);
+    await Promise.all(cronJobs.map(async (cronJob) => {
+        await deleteCronSchedule(cronJob);
+        await deleteCronJob(accountId, cronJob.cronJobId);
+    }));
+    return cronJobs.length;
+}
+
 function parseAccountPatch(event: LambdaFunctionURLEvent): unknown {
     return parseJsonBody(event);
 }
 
 function errorResponseForError(err: unknown): LambdaResponse {
+    if (err instanceof CronJobsUnavailableError) {
+        return errorResponse(503, err.message);
+    }
     if (err instanceof AgentSkillAuthorizationError) {
         return errorResponse(401, err.message);
     }

@@ -147,6 +147,8 @@ export default $config({
       accountConfigs: resourceName("account-configs", stage, region),
       agentConfigs: resourceName("agent-configs", stage, region),
       accountSignupRateLimits: resourceName("account-signup-rate-limits", stage, region),
+      cronJobs: resourceName("cron-jobs", stage, region),
+      cronSchedules: resourceName("cron-schedules", stage, region),
       harnessProcessing: resourceName("harness-processing", stage, region),
       accountManage: resourceName("account-manage", stage, region),
       memory: resourceName("memory", stage, region),
@@ -197,6 +199,20 @@ export default $config({
       transform: {
         table: {
           name: names.agentConfigs,
+        },
+      },
+    });
+
+    const cronJobsTable = new sst.aws.Dynamo("CronJob", {
+      fields: {
+        accountId: "string",
+        cronJobId: "string",
+      },
+      primaryIndex: { hashKey: "accountId", rangeKey: "cronJobId" },
+      deletionProtection: stage === "production",
+      transform: {
+        table: {
+          name: names.cronJobs,
         },
       },
     });
@@ -542,6 +558,7 @@ export default $config({
         MOCK_EXTERNAL_ASYNC_TOOL_URL: mockExternalAsyncTool.url,
         SANDBOX_NODE_FUNCTION_NAME: sandboxNode.name,
         SANDBOX_PYTHON_FUNCTION_NAME: sandboxPython.name,
+        CRON_JOBS_TABLE_NAME: cronJobsTable.name,
         ...(NATS_URL ? { NATS_URL } : {}),
       },
       permissions: [
@@ -585,6 +602,13 @@ export default $config({
           resources: [asyncToolResultTable.arn],
         },
         {
+          actions: [
+            "dynamodb:GetItem",
+            "dynamodb:UpdateItem",
+          ],
+          resources: [cronJobsTable.arn],
+        },
+        {
           actions: ["lambda:InvokeFunction"],
           resources: [`arn:aws:lambda:${region}:${AWS_ACCOUNT_ID}:function:${names.harnessProcessing}`],
         },
@@ -621,6 +645,34 @@ export default $config({
       ],
     });
 
+    const cronScheduleGroup = new aws.scheduler.ScheduleGroup("CronScheduleGroup", {
+      name: names.cronSchedules,
+    });
+
+    const cronSchedulerRole = new aws.iam.Role("CronSchedulerRole", {
+      name: resourceName("cron-scheduler", stage, region),
+      assumeRolePolicy: JSON.stringify({
+        Version: "2012-10-17",
+        Statement: [{
+          Effect: "Allow",
+          Principal: { Service: "scheduler.amazonaws.com" },
+          Action: "sts:AssumeRole",
+        }],
+      }),
+    });
+
+    new aws.iam.RolePolicy("CronSchedulerRolePolicy", {
+      role: cronSchedulerRole.id,
+      policy: JSON.stringify({
+        Version: "2012-10-17",
+        Statement: [{
+          Effect: "Allow",
+          Action: ["lambda:InvokeFunction"],
+          Resource: [harnessProcessing.arn],
+        }],
+      }),
+    });
+
     const accountManage = new sst.aws.Function("AccountManage", {
       name: names.accountManage,
       runtime: "provided.al2023",
@@ -650,6 +702,10 @@ export default $config({
         ACCOUNT_SIGNUP_RATE_LIMIT_PER_HOUR: "5",
         ADMIN_ACCOUNT_SECRET: adminAccountSecret.value,
         ACCOUNT_CONFIG_ENCRYPTION_SECRET: accountConfigEncryptionSecret.value,
+        CRON_JOBS_TABLE_NAME: cronJobsTable.name,
+        CRON_SCHEDULER_TARGET_FUNCTION_ARN: harnessProcessing.arn,
+        CRON_SCHEDULER_ROLE_ARN: cronSchedulerRole.arn,
+        CRON_SCHEDULER_GROUP_NAME: cronScheduleGroup.name,
       },
       permissions: [
         {
@@ -672,6 +728,28 @@ export default $config({
             "dynamodb:UpdateItem",
           ],
           resources: [agentConfigsTable.arn],
+        },
+        {
+          actions: [
+            "dynamodb:DeleteItem",
+            "dynamodb:GetItem",
+            "dynamodb:PutItem",
+            "dynamodb:Query",
+            "dynamodb:UpdateItem",
+          ],
+          resources: [cronJobsTable.arn],
+        },
+        {
+          actions: [
+            "scheduler:CreateSchedule",
+            "scheduler:DeleteSchedule",
+            "scheduler:UpdateSchedule",
+          ],
+          resources: [$interpolate`arn:aws:scheduler:${region}:${AWS_ACCOUNT_ID}:schedule/${cronScheduleGroup.name}/*`],
+        },
+        {
+          actions: ["iam:PassRole"],
+          resources: [cronSchedulerRole.arn],
         },
         {
           actions: [
@@ -721,11 +799,13 @@ export default $config({
       sandboxPythonFunctionName: sandboxPython.name,
       accountConfigsTableName: accountConfigsTable.name,
       agentConfigsTableName: agentConfigsTable.name,
+      cronJobsTableName: cronJobsTable.name,
       accountSignupRateLimitTableName: accountSignupRateLimitTable.name,
       conversationsTableName: conversationsTable.name,
       processedEventsTableName: processedEventsTable.name,
       asyncAgentResultTableName: asyncAgentResultTable.name,
       asyncToolResultTableName: asyncToolResultTable.name,
+      cronScheduleGroupName: cronScheduleGroup.name,
       filesystemBucketName: filesystemBucket.name,
       skillsBucketName: skillsBucket.name,
     };

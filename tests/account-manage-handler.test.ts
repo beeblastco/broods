@@ -37,6 +37,17 @@ describe("account management HTTP handler", () => {
     expect(response.statusCode).toBe(404);
     expect(responseJson(response)).toEqual({ error: "Not found" });
   });
+
+  it("reports cron routes as unavailable when scheduler env is missing", async () => {
+    process.env.ADMIN_ACCOUNT_SECRET = "admin-secret";
+    delete process.env.CRON_JOBS_TABLE_NAME;
+    const response = await handler(createEvent("GET", "/accounts/acct_test/cron-jobs", {
+      authorization: "Bearer admin-secret",
+    }));
+
+    expect(response.statusCode).toBe(503);
+    expect(responseJson(response)).toEqual({ error: "Cron jobs are unavailable" });
+  });
 });
 
 function responseJson(response: LambdaResponse): unknown {
