@@ -1,7 +1,8 @@
-# Deploy pipeline. Validates (typecheck + test + build) then deploys via SST.
-# `main` = SaaS production: inits the private convex-adapter submodule so the
-#   Convex provider is bundled. Requires SUBMODULE_PAT secret.
-# `dev` (and any other branch) = OSS / community: DynamoDB only, no submodule.
+# Deploy pipeline. Triggered on merge to main / dev. Assumes PR CI
+# already validated the code — does not re-run typecheck/test/build.
+# `main` = SaaS production: inits the private convex-adapter submodule
+#   so the Convex provider is bundled. Requires SUBMODULE_PAT secret.
+# `dev` = OSS / community staging: DynamoDB only, no submodule.
 
 name: Deploy
 
@@ -17,15 +18,6 @@ on:
       - 'sidebar.ts'
       - '.github/workflows/deploy-docs.yaml'
       - '**/*.md'
-  pull_request:
-    paths-ignore:
-      - 'docs/**'
-      - 'static/**'
-      - 'docusaurus.config.ts'
-      - 'sidebar.ts'
-      - '.github/workflows/deploy-docs.yaml'
-      - '**/*.md'
-  create:
   workflow_dispatch:
     inputs:
       stage:
@@ -38,40 +30,7 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  validate:
-    if: ${{ github.event_name != 'create' || github.event.ref_type == 'branch' }}
-    runs-on: ubuntu-24.04
-    permissions:
-      contents: read
-    env:
-      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-      AWS_REGION: ${{ vars.AWS_REGION }}
-      CI: "true"
-      IS_SAAS_BRANCH: ${{ github.ref == 'refs/heads/main' }}
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
-        with:
-          submodules: ${{ env.IS_SAAS_BRANCH == 'true' && 'recursive' || 'false' }}
-          token: ${{ env.IS_SAAS_BRANCH == 'true' && secrets.SUBMODULE_PAT || github.token }}
-
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
-
-      - name: Install dependencies
-        run: bun install --frozen-lockfile
-
-      - name: Typecheck
-        run: bun run check
-
-      - name: Run unit tests
-        run: bun run test
-
-      - name: Build Lambda binaries
-        run: bun run build
-
   deploy:
-    needs: validate
     if: ${{ github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev')) }}
     runs-on: ubuntu-24.04
     concurrency:
