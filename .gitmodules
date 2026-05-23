@@ -1,3 +1,3 @@
-[submodule "vendor/convex-filthy-cherry"]
-	path = vendor/convex-filthy-cherry
+[submodule "convex"]
+	path = convex
 	url = https://github.com/beeblastco/convex-filthy-cherry.git
