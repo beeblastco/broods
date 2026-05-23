@@ -1,10 +1,10 @@
 # Storage Provider
 
-Pluggable persistence layer. Same Lambda binary works with DynamoDB (OSS default) or Convex (SaaS).
+Pluggable persistence layer.
 
 ## Folder Structure
 
-```
+```sh
 storage/
 ├── types.ts          # StorageProvider interface (domain-shaped)
 ├── index.ts          # Factory: reads STORAGE_PROVIDER env
@@ -19,12 +19,8 @@ storage/
 │   ├── accounts.ts
 │   ├── agents.ts
 │   └── cron-jobs.ts
-└── convex/           # Convex implementation (private submodule)
-    ├── index.ts
-    ├── client.ts
-    ├── accounts.ts
-    ├── agents.ts
-    └── cron-jobs.ts
+├── convex/           # Convex implementation (private submodule)
+└── ...               # Your other providers
 ```
 
 ## Why Separate?
@@ -42,5 +38,3 @@ Community builds skip the private submodule. SaaS deployments get both.
 2. Implement `AccountStore`, `AgentStore`, `CronJobStore` from `types.ts`
 3. Export `mydbStorageProvider` from `storage/mydb/index.ts`
 4. Add case in `storage/index.ts` factory
-
-That's it. Same interface, different implementation.
