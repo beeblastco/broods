@@ -14,8 +14,21 @@ export function getStorage(): StorageProvider {
   const provider = (optionalEnv("STORAGE_PROVIDER") ?? "dynamodb").toLowerCase();
 
   if (provider === "convex") {
-    const { convexStorageProvider } = require("./convex/index.ts");
-    cached = convexStorageProvider as StorageProvider;
+    // The Convex adapter lives in a private submodule mounted at ./convex.
+    // Community / open-source builds don't init the submodule, so the path
+    // is computed at runtime to defeat Bun's static bundler analysis.
+    // SaaS builds init the submodule before bundling, at which point the
+    // resolved path is present on disk.
+    const convexPath = "./convex/index.ts";
+    try {
+      const mod = require(convexPath);
+      cached = mod.convexStorageProvider as StorageProvider;
+    } catch (err) {
+      throw new Error(
+        "STORAGE_PROVIDER=convex requires the filthy-panty-convex-adapter submodule. " +
+          "Run `git submodule update --init --recursive` (SaaS deployments only).",
+      );
+    }
   } else if (provider === "dynamodb" || provider === "dynamo") {
     const { dynamoStorageProvider } = require("./dynamo/index.ts");
     cached = dynamoStorageProvider as StorageProvider;

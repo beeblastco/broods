@@ -28,8 +28,12 @@ jobs:
     env:
       AWS_REGION: ${{ vars.AWS_REGION }}
     steps:
+      # Community / non-main builds skip the private convex-adapter submodule.
+      # Only `main` (SaaS) needs it; the DDB build path runs cleanly without.
       - name: Checkout repository
         uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+        with:
+          submodules: false
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
