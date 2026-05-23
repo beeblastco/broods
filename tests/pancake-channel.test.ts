@@ -5,10 +5,7 @@
 
 import { createHash } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
-import {
-  createPancakeChannel,
-  getPancakeSupabaseReplyMode,
-} from "../functions/_shared/pancake-channel.ts";
+import { createPancakeChannel } from "../functions/_shared/pancake-channel.ts";
 
 const ORIGINAL_FETCH = globalThis.fetch;
 
@@ -81,7 +78,11 @@ describe("pancake channel adapter", () => {
           page_id: "page-1",
           message: "price?",
           type: "COMMENT",
-          from: { id: "customer-1", name: "Ada" },
+          from: {
+            id: "customer-1",
+            name: "Ada",
+            page_customer_id: "page-customer-1",
+          },
         },
         post: { id: "post-1" },
       },
@@ -114,57 +115,29 @@ describe("pancake channel adapter", () => {
     expect(await adapter.parse(createPancakeRequest(validPayload({
       message: { from: { id: "page-1", name: "Page" } },
     })))).toEqual({ kind: "ignore" });
+    expect(await adapter.parse(createPancakeRequest(validPayload({
+      message: { from: { id: "customer-1", name: "Ada" } },
+    })))).toEqual({ kind: "ignore" });
   });
 
-  it("upserts a Supabase conversation state row and allows auto mode", async () => {
-    const fetchCalls: Array<{ url: string; init?: RequestInit }> = [];
-    globalThis.fetch = mock(async (url: string | URL, init?: RequestInit) => {
-      fetchCalls.push({ url: String(url), init });
-      return jsonResponse([stateRow({ reply_mode: "auto" })]);
-    }) as never;
-
-    const result = await getPancakeSupabaseReplyMode(
-      { url: "https://supabase.example", serviceRoleKey: "service-key" },
-      "acct:acct_test:agent:agent_test:pancake:page-1:conversation-1",
-    );
-
-    expect(result).toBe("auto");
-    expect(fetchCalls).toHaveLength(1);
-    expect(fetchCalls[0]!.url).toContain("/rest/v1/conversation_states?");
-    expect(fetchCalls[0]!.init?.method).toBe("POST");
-    expect(fetchCalls[0]!.init?.headers).toMatchObject({
-      apikey: "service-key",
-      Authorization: "Bearer service-key",
-      Prefer: "resolution=merge-duplicates,return=representation",
-    });
-    expect(JSON.parse(String(fetchCalls[0]!.init?.body))).toEqual({
-      conversation_key: "acct:acct_test:agent:agent_test:pancake:page-1:conversation-1",
-    });
-  });
-
-  it("uses Supabase options to ignore human and paused reply modes", async () => {
+  it("uses the configured handoff tag to ignore human-owned conversations", async () => {
     const adapter = createPancakeChannel("page-1", "page-token", undefined, {
       accountId: "acct_test",
       agentId: "agent_test",
       configOptions: {
-        supabase: { url: "https://supabase.example", serviceRoleKey: "service-key" },
+        handoff: { tagId: "123" },
       },
     });
-    globalThis.fetch = mock(async () => jsonResponse([stateRow({ reply_mode: "human" })])) as never;
 
-    const humanParsed = await adapter.parse(createPancakeRequest(validPayload()));
+    globalThis.fetch = mock(async () => {
+      throw new Error("Pancake handoff tag check should not call fetch");
+    }) as never;
 
-    expect(humanParsed.kind).toBe("ignore");
-    expect(humanParsed).toEqual({
-      kind: "ignore",
-      response: { statusCode: 200 },
-    });
+    const parsed = await adapter.parse(createPancakeRequest(validPayload({
+      conversation: { tags: [123] },
+    })));
 
-    globalThis.fetch = mock(async () => jsonResponse([stateRow({ reply_mode: "paused" })])) as never;
-
-    const pausedParsed = await adapter.parse(createPancakeRequest(validPayload()));
-
-    expect(pausedParsed).toEqual({
+    expect(parsed).toEqual({
       kind: "ignore",
       response: { statusCode: 200 },
     });
@@ -182,20 +155,30 @@ function createPancakeRequest(payload: Record<string, unknown>) {
 
 function validPayload(overrides: {
   page_id?: string;
+  conversation?: Record<string, unknown>;
   message?: Record<string, unknown>;
 } = {}) {
   return {
     page_id: overrides.page_id ?? "page-1",
     event_type: "messaging",
     data: {
-      conversation: { id: "conversation-1", type: "INBOX" },
+      conversation: {
+        id: "conversation-1",
+        type: "INBOX",
+        tags: [],
+        ...overrides.conversation,
+      },
       message: {
         id: "message-1",
         conversation_id: "conversation-1",
         page_id: overrides.page_id ?? "page-1",
         message: "hello",
         type: "INBOX",
-        from: { id: "customer-1", name: "Ada" },
+        from: {
+          id: "customer-1",
+          name: "Ada",
+          page_customer_id: "page-customer-1",
+        },
         ...overrides.message,
       },
     },
@@ -204,19 +187,4 @@ function validPayload(overrides: {
 
 function hashText(text: string): string {
   return createHash("sha256").update(text).digest("hex").slice(0, 12);
-}
-
-function stateRow(overrides: Partial<Record<string, unknown>> = {}) {
-  return {
-    conversation_key: "acct:acct_test:agent:agent_test:pancake:page-1:conversation-1",
-    reply_mode: "auto",
-    ...overrides,
-  };
-}
-
-function jsonResponse(body: unknown): Response {
-  return new Response(JSON.stringify(body), {
-    status: 200,
-    headers: { "Content-Type": "application/json" },
-  });
 }

@@ -1124,17 +1124,14 @@ function normalizePancakeConfig(value: unknown): void {
     throw new Error("config.channels.pancake.options must be an object");
   }
   const options = isPlainObject(config.options) ? config.options : {};
-  if (options.supabase !== undefined) {
-    if (!isPlainObject(options.supabase)) {
-      throw new Error("config.channels.pancake.options.supabase must be an object");
+  if (options.handoff !== undefined) {
+    if (!isPlainObject(options.handoff)) {
+      throw new Error("config.channels.pancake.options.handoff must be an object");
     }
-    assertOptionalNonEmptyString(options.supabase.url, "config.channels.pancake.options.supabase.url");
-    assertOptionalNonEmptyString(
-      options.supabase.serviceRoleKey,
-      "config.channels.pancake.options.supabase.serviceRoleKey",
-    );
-    if (!options.supabase.url || !options.supabase.serviceRoleKey) {
-      throw new Error("config.channels.pancake.options.supabase requires url and serviceRoleKey");
+    assertOptionalNonEmptyString(options.handoff.tagId, "config.channels.pancake.options.handoff.tagId");
+    assertOptionalStringArray(options.handoff.assigneeIds, "config.channels.pancake.options.handoff.assigneeIds");
+    if (!options.handoff.tagId) {
+      throw new Error("config.channels.pancake.options.handoff requires tagId");
     }
   }
 }

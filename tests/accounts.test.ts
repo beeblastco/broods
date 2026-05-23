@@ -579,9 +579,9 @@ describe("agent config", () => {
           pageAccessToken: "page-token",
           senderId: "sender-1",
           options: {
-            supabase: {
-              url: "https://supabase.example",
-              serviceRoleKey: "service-key",
+            handoff: {
+              tagId: "123",
+              assigneeIds: ["staff-1"],
             },
           },
         },
@@ -593,9 +593,9 @@ describe("agent config", () => {
           pageAccessToken: "page-token",
           senderId: "sender-1",
           options: {
-            supabase: {
-              url: "https://supabase.example",
-              serviceRoleKey: "service-key",
+            handoff: {
+              tagId: "123",
+              assigneeIds: ["staff-1"],
             },
           },
         },
@@ -626,13 +626,11 @@ describe("agent config", () => {
           pageId: "page-1",
           pageAccessToken: "page-token",
           options: {
-            supabase: {
-              url: "https://supabase.example",
-            },
+            handoff: {},
           },
         },
       },
-    })).toThrow("config.channels.pancake.options.supabase requires url and serviceRoleKey");
+    })).toThrow("config.channels.pancake.options.handoff requires tagId");
   });
 
   it("projects only runtime settings for agent sessions", () => {

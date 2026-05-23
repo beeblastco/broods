@@ -315,8 +315,8 @@ async function handleChannelWebhook(
     }
 
     // Webhook is valid enough to accept, but should not run the agent. 
-    // Example: unsupported Pancake event, wrong page ID, hidden/removed message, page-originated message, 
-    // or Supabase reply_mode is human/paused
+    // Example: unsupported Pancake event, wrong page ID, hidden/removed message, page-originated message,
+    // or a configured channel handoff gate.
     if (parsed.kind === "ignore") {
       return toLambdaResponse(parsed.response ?? { statusCode: 200 });
     }

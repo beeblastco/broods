@@ -1,6 +1,6 @@
 # Pancake
 
-Pancake is an omni-channel customer service and inbox management platform. The Pancake channel adapter allows your agent to handle messages (`INBOX`) and post/page comments (`COMMENT`) directly from Pancake, and supports a toggle-mode feature to allow manual interference/override by humans.
+Pancake is an omni-channel customer service and inbox management platform. The Pancake channel adapter allows your agent to handle messages (`INBOX`) and post/page comments (`COMMENT`) directly from Pancake, and can skip conversations with a configured handoff tag so staff can take over in Pancake.
 
 ## Configuration
 
@@ -14,9 +14,8 @@ To enable the Pancake channel, configure your agent's settings as shown below:
       "pageAccessToken": "your-page-access-token",
       "senderId": "optional-staff-user-id",
       "options": {
-        "supabase": {
-          "url": "https://your-project.supabase.co",
-          "serviceRoleKey": "your-supabase-service-role-key"
+        "handoff": {
+          "tagId": "123"
         }
       }
     }
@@ -30,31 +29,30 @@ To enable the Pancake channel, configure your agent's settings as shown below:
 - `pageAccessToken` (Required): The access token generated within Pancake to authorize API calls.
 - `senderId` (Optional): The ID of the staff/user in Pancake who sends the replies. If set, responses sent by the agent will appear as sent by this user.
 - `options` (Optional):
-  - `supabase` (Optional): Configuration for checking human interference state.
-    - `url`: The base URL of your Supabase project (e.g., `https://xxxxxx.supabase.co`).
-    - `serviceRoleKey`: The secret service role JWT key used to manage conversation states.
+  - `handoff` (Optional): Configuration for skipping conversations that staff should handle manually.
+    - `tagId`: Pancake conversation tag ID that marks a conversation as human handoff.
+    - `assigneeIds` (Optional): Staff IDs for handoff tooling. The adapter does not use this field for webhook gating.
 
 ---
 
-## Interfere by Human / Toggle Mode
+## Human Handoff Tag
 
-When human staff need to take over a conversation, Pancake can check the conversation's active state in an external database (Supabase) to toggle between AI-agent automation and manual human intervention.
+When human staff need to take over a conversation, add the configured handoff tag in Pancake. The adapter checks the tag IDs already included in the Pancake webhook payload.
 
 ### How it Works
 
-When `options.supabase` is configured, every incoming message webhook executes a pre-flight check in your Supabase database:
+When `options.handoff.tagId` is configured, every incoming message webhook checks `conversation.tags`:
 
 ```mermaid
 flowchart TD
-    Webhook[Incoming Message Webhook] --> CheckSupabase{Supabase Options Configured?}
-    CheckSupabase -- No --> ExecuteAgent[Run Agent Loop & Send Reply]
-    CheckSupabase -- Yes --> UpsertRow[Upsert Row in conversation_states]
-    UpsertRow --> CheckReplyMode{Read reply_mode}
-    CheckReplyMode -- auto --> ExecuteAgent
-    CheckReplyMode -- human or paused --> SkipAgent[Ignore Event - Staff Handle Manually]
+    Webhook[Incoming Message Webhook] --> CheckHandoff{Handoff Tag Configured?}
+    CheckHandoff -- No --> ExecuteAgent[Run Agent Loop & Send Reply]
+    CheckHandoff -- Yes --> ReadTags[Read conversation.tags]
+    ReadTags --> HasTag{Handoff tag present?}
+    HasTag -- No --> ExecuteAgent
+    HasTag -- Yes --> SkipAgent[Ignore Event - Staff Handle Manually]
 ```
 
-1. **State Persistence & Check**: The adapter runs an `UPSERT` against your Supabase `conversation_states` table using the scoped `conversation_key` as a unique identifier. This row maintains the current active `reply_mode`.
-2. **Toggle Modes**:
-   - **`auto`**: The agent operates normally and automatically handles responses.
-   - **`human` or `paused`**: The adapter ignores the event and returns a `200 OK` to Pancake, bypassing the agent run entirely. This allows human operators to respond manually in the Pancake dashboard without interference from the agent.
+1. **No handoff tag**: The agent operates normally and automatically handles responses.
+2. **Handoff tag present**: The adapter ignores the event and returns `200 OK` to Pancake, bypassing the agent run entirely. This allows human operators to respond manually in the Pancake dashboard without interference from the agent.
+3. **Return to auto mode**: Remove the handoff tag in Pancake. The next customer message can run the agent again.
