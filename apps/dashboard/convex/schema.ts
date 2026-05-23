@@ -1,5 +1,6 @@
 import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
+import { backendTables } from "./backend/schema";
 
 /**
  * Field definitions for the users table.
@@ -90,7 +91,25 @@ export const toolServicesFields = {
     updatedAt: v.number(),
 };
 
+/**
+ * Cherry-coke SaaS workspace. Owns the per-tenant filthy-panty `accounts` row;
+ * `orgId` on `accounts` (in backend/schema.ts) points back to one of these.
+ */
+export const orgsFields = {
+    name: v.string(),
+    slug: v.string(),
+    ownerAuthId: v.string(),
+    plan: v.union(v.literal("free"), v.literal("pro"), v.literal("enterprise")),
+    createdAt: v.number(),
+};
 
+/** Membership join table between users and orgs with role-based access. */
+export const orgMembersFields = {
+    orgId: v.id("orgs"),
+    userId: v.id("users"),
+    role: v.union(v.literal("owner"), v.literal("admin"), v.literal("member")),
+    createdAt: v.number(),
+};
 
 export default defineSchema({
     users: defineTable(usersFields)
@@ -116,4 +135,12 @@ export default defineSchema({
             "environmentId",
             "nodeId",
         ]),
+    orgs: defineTable(orgsFields)
+        .index("by_slug", ["slug"])
+        .index("by_ownerAuthId", ["ownerAuthId"]),
+    orgMembers: defineTable(orgMembersFields)
+        .index("by_orgId", ["orgId"])
+        .index("by_userId", ["userId"])
+        .index("by_orgId_and_userId", ["orgId", "userId"]),
+    ...backendTables,
 });

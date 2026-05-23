@@ -1,0 +1,3 @@
+[submodule "convex/backend"]
+	path = convex/backend
+	url = /Users/phicks/Workspace/projects/beeblast-convex
