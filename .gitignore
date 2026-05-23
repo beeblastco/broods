@@ -11,3 +11,4 @@ na_tmp/
 .docusaurus/
 build/
 .docusaurus.d
+.claude

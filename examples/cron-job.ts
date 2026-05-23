@@ -5,7 +5,7 @@
 
 import { ACCOUNT_SERVICE_URL, createAccount, createAgent } from "./utils.ts";
 
-const googleApiKey = requiredEnv("ACCOUNT_GOOGLE_API_KEY");
+const googleApiKey = process.env.ACCOUNT_GOOGLE_API_KEY!;
 const timezone = process.env.CRON_TIMEZONE ?? "Europe/Amsterdam";
 
 const account = await createAccount(`cron-${Date.now()}`);
@@ -68,12 +68,4 @@ function atExpressionOneMinuteFromNow(timeZone: string): string {
   }).formatToParts(date);
   const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
   return `at(${values.year}-${values.month}-${values.day}T${values.hour}:${values.minute}:${values.second})`;
-}
-
-function requiredEnv(name: string): string {
-  const value = process.env[name];
-  if (!value) {
-    throw new Error(`Missing required environment variable: ${name}`);
-  }
-  return value;
 }
