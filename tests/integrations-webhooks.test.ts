@@ -47,7 +47,7 @@ const PANCAKE_AGENT = {
   },
 };
 
-const PANCAKE_SUPABASE_AGENT = {
+const PANCAKE_HANDOFF_AGENT = {
   ...PANCAKE_AGENT,
   config: {
     channels: {
@@ -55,10 +55,7 @@ const PANCAKE_SUPABASE_AGENT = {
         pageId: "page-1",
         pageAccessToken: "page-token",
         options: {
-          supabase: {
-            url: "https://supabase.example",
-            serviceRoleKey: "service-key",
-          },
+          handoff: { tagId: "123" },
         },
       },
     },
@@ -172,24 +169,19 @@ describe("account webhook ingress", () => {
       .toBe(true);
   });
 
-  it("lets Pancake Supabase options ignore human-mode conversations", async () => {
+  it("lets Pancake handoff tag ignore human-owned conversations", async () => {
     const handledEvents: ChannelInboundEvent[] = [];
-    const fetchCalls: Array<{ url: string; init?: RequestInit }> = [];
-    globalThis.fetch = mock(async (url: string | URL, init?: RequestInit) => {
-      fetchCalls.push({ url: String(url), init });
-      return supabaseResponse([
-        {
-          conversation_key: "acct:acct_test:agent:agent_test:pancake:page-1:conversation-1",
-          reply_mode: "human",
-        },
-      ]);
+    globalThis.fetch = mock(async () => {
+      throw new Error("Pancake handoff tag check should not call fetch");
     }) as never;
     const routeIncomingEvent = createIncomingEventRouter({
       accountLoader: async () => TEST_ACCOUNT,
-      agentLoader: async () => PANCAKE_SUPABASE_AGENT,
+      agentLoader: async () => PANCAKE_HANDOFF_AGENT,
     });
 
-    const response = await routeIncomingEvent(createPancakeEvent(), createHandlers({
+    const response = await routeIncomingEvent(createPancakeEvent({
+      conversation: { tags: [123] },
+    }), createHandlers({
       handleChannelRequest: async (event) => {
         handledEvents.push(event);
       },
@@ -198,10 +190,6 @@ describe("account webhook ingress", () => {
     expect(response.statusCode).toBe(200);
     expect(response.afterResponse).toBeUndefined();
     expect(handledEvents).toHaveLength(0);
-    expect(fetchCalls).toHaveLength(1);
-    expect(JSON.parse(String(fetchCalls[0]!.init?.body))).toEqual({
-      conversation_key: "acct:acct_test:agent:agent_test:pancake:page-1:conversation-1",
-    });
   });
 
   it("uses account webhook routing only; root provider webhooks are not accepted", async () => {
@@ -233,7 +221,10 @@ function createHandlers(overrides: Partial<{
   };
 }
 
-function createPancakeEvent(): LambdaFunctionURLEvent {
+function createPancakeEvent(overrides: {
+  conversation?: Record<string, unknown>;
+  message?: Record<string, unknown>;
+} = {}): LambdaFunctionURLEvent {
   return createTelegramEvent({
     page_id: "page-1",
     event_type: "messaging",
@@ -241,7 +232,9 @@ function createPancakeEvent(): LambdaFunctionURLEvent {
       conversation: {
         id: "conversation-1",
         type: "INBOX",
+        tags: [],
         from: { id: "customer-1", name: "Ada" },
+        ...overrides.conversation,
       },
       message: {
         id: "message-1",
@@ -249,7 +242,8 @@ function createPancakeEvent(): LambdaFunctionURLEvent {
         page_id: "page-1",
         message: "hello pancake",
         type: "INBOX",
-        from: { id: "customer-1", name: "Ada" },
+        from: { id: "customer-1", name: "Ada", page_customer_id: "page-customer-1" },
+        ...overrides.message,
       },
     },
   }, {
@@ -318,11 +312,4 @@ function responseJson(response: { body?: unknown }): Record<string, unknown> {
   }
 
   return JSON.parse(response.body) as Record<string, unknown>;
-}
-
-function supabaseResponse(body: unknown): Response {
-  return new Response(JSON.stringify(body), {
-    status: 200,
-    headers: { "Content-Type": "application/json" },
-  });
 }

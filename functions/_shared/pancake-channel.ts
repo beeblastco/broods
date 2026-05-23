@@ -12,11 +12,7 @@ import type {
   ParsedChannelMessage,
 } from "./channels.ts";
 import { logInfo, logWarn } from "./log.ts";
-import { accountAgentScopedKey, PANCAKE_INTEGRATION_PREFIX } from "./runtime-keys.ts";
-
-const SUPABASE_REST_PATH = "rest/v1/";
-
-type ReplyMode = "auto" | "human" | "paused";
+import { PANCAKE_INTEGRATION_PREFIX } from "./runtime-keys.ts";
 
 interface PancakeWebhookPayload {
   page_id?: string;
@@ -31,6 +27,7 @@ interface PancakeWebhookPayload {
 interface PancakeConversation {
   id?: string;
   type?: string;
+  tags?: unknown[];
   from?: {
     id?: string;
     name?: string;
@@ -67,11 +64,11 @@ export interface PancakeSource {
   fromId?: string;
   fromName?: string;
   pageCustomerId?: string;
+  tagIds?: string[];
 }
 
-export interface PancakeSupabaseOptions {
-  url: string;
-  serviceRoleKey: string;
+export interface PancakeHandoffOptions {
+  tagId: string;
 }
 
 export interface PancakeChannelOptions {
@@ -80,18 +77,13 @@ export interface PancakeChannelOptions {
   configOptions?: Record<string, unknown>;
 }
 
-interface ConversationStateRecord {
-  conversation_key: string;
-  reply_mode: ReplyMode;
-}
-
 export function createPancakeChannel(
   pageId: string,
   pageAccessToken: string,
   senderId?: string,
   options: PancakeChannelOptions = {},
 ): ChannelAdapter {
-  const supabase = resolvePancakeSupabaseOptions(options.configOptions);
+  const handoff = resolvePancakeHandoffOptions(options.configOptions);
 
   return {
     name: "pancake",
@@ -106,11 +98,11 @@ export function createPancakeChannel(
 
     parse(req): ChannelParseResult | Promise<ChannelParseResult> {
       const parsed = parsePancakeWebhook(req, pageId);
-      if (parsed.kind !== "message" || !supabase) {
+      if (parsed.kind !== "message" || !handoff) {
         return parsed;
       }
 
-      return applyPancakeSupabaseReplyMode(supabase, options, parsed);
+      return applyPancakeHandoffTag(handoff, parsed);
     },
 
     actions(msg): ChannelActions {
@@ -119,24 +111,23 @@ export function createPancakeChannel(
   };
 }
 
-function resolvePancakeSupabaseOptions(configOptions: Record<string, unknown> | undefined): PancakeSupabaseOptions | null {
-  const supabase = configOptions?.supabase;
-  if (!supabase || typeof supabase !== "object" || Array.isArray(supabase)) {
+function resolvePancakeHandoffOptions(configOptions: Record<string, unknown> | undefined): PancakeHandoffOptions | null {
+  const handoff = configOptions?.handoff;
+  if (!handoff || typeof handoff !== "object" || Array.isArray(handoff)) {
     return null;
   }
 
-  const record = supabase as Record<string, unknown>;
-  if (typeof record.url !== "string" || typeof record.serviceRoleKey !== "string") {
+  const record = handoff as Record<string, unknown>;
+  if (typeof record.tagId !== "string") {
     return null;
   }
 
-  const url = record.url.trim();
-  const serviceRoleKey = record.serviceRoleKey.trim();
-  if (!url || !serviceRoleKey) {
+  const tagId = record.tagId.trim();
+  if (!tagId) {
     return null;
   }
 
-  return { url, serviceRoleKey };
+  return { tagId };
 }
 
 function parsePancakeWebhook(req: ChannelRequest, pageId: string): ChannelParseResult {
@@ -158,7 +149,7 @@ function parsePancakeWebhook(req: ChannelRequest, pageId: string): ChannelParseR
     return { kind: "ignore" };
   }
 
-  if (message.is_hidden || message.is_removed || message.from?.id === pageId) {
+  if (message.is_hidden || message.is_removed || message.from?.id === pageId || !message.from?.page_customer_id) {
     return { kind: "ignore" };
   }
 
@@ -179,50 +170,30 @@ function parsePancakeWebhook(req: ChannelRequest, pageId: string): ChannelParseR
         fromId: message.from?.id ?? conversation.from?.id,
         fromName: message.from?.name ?? conversation.from?.name,
         pageCustomerId: message.from?.page_customer_id,
+        tagIds: normalizePancakeTagIds(conversation.tags),
       } satisfies PancakeSource,
     },
   };
 }
 
-async function applyPancakeSupabaseReplyMode(
-  config: PancakeSupabaseOptions,
-  options: PancakeChannelOptions,
+function applyPancakeHandoffTag(
+  config: PancakeHandoffOptions,
   parsed: ParsedChannelMessage,
-): Promise<ChannelParseResult> {
-  if (!options.accountId || !options.agentId) {
-    throw new Error("Pancake Supabase options require accountId and agentId");
-  }
-
-  const conversationKey = accountAgentScopedKey(
-    options.accountId,
-    options.agentId,
-    parsed.message.conversationKey,
-  );
-  const replyMode = await getPancakeSupabaseReplyMode(config, conversationKey);
-
-  if (replyMode === "auto") {
+): ChannelParseResult {
+  const tagIds = normalizePancakeTagIds(parsed.message.source.tagIds);
+  if (!tagIds.includes(config.tagId)) {
     return parsed;
   }
 
-  logInfo("Pancake Supabase reply mode skipped agent reply", {
-    accountId: options.accountId,
-    agentId: options.agentId,
-    conversationKey,
-    replyMode,
+  logInfo("Pancake handoff tag skipped agent reply", {
+    conversationKey: parsed.message.conversationKey,
+    tagId: config.tagId,
   });
 
   return {
     kind: "ignore",
     response: parsed.ack ?? { statusCode: 200 },
   };
-}
-
-export async function getPancakeSupabaseReplyMode(
-  config: PancakeSupabaseOptions,
-  conversationKey: string,
-): Promise<ReplyMode> {
-  const state = await upsertConversationState(config, conversationKey);
-  return state.reply_mode;
 }
 
 export function createPancakeActions(
@@ -282,66 +253,6 @@ async function sendPancakeMessage(
   }
 }
 
-async function upsertConversationState(
-  config: PancakeSupabaseOptions,
-  conversationKey: string,
-): Promise<ConversationStateRecord> {
-  const params = new URLSearchParams({
-    on_conflict: "conversation_key",
-    select: "conversation_key,reply_mode",
-  });
-  const [state] = await supabaseRequest<ConversationStateRecord[]>(
-    config,
-    `conversation_states?${params}`,
-    {
-      method: "POST",
-      headers: { "Prefer": "resolution=merge-duplicates,return=representation" },
-      body: JSON.stringify({
-        conversation_key: conversationKey,
-      }),
-    },
-  ) ?? [];
-
-  if (!state) {
-    throw new Error("Supabase conversation state upsert returned no row");
-  }
-
-  return state;
-}
-
-async function supabaseRequest<T>(
-  config: PancakeSupabaseOptions,
-  path: string,
-  init: RequestInit = {},
-): Promise<T | null> {
-  const response = await fetch(supabaseUrl(config.url, path), {
-    ...init,
-    headers: {
-      "Accept": "application/json",
-      "apikey": config.serviceRoleKey,
-      "Authorization": `Bearer ${config.serviceRoleKey}`,
-      ...(init.body === undefined ? {} : { "Content-Type": "application/json" }),
-      ...init.headers,
-    },
-  });
-  const bodyText = await response.text();
-
-  if (!response.ok) {
-    throw new Error(`Supabase request failed (${response.status}): ${bodyText || "empty response"}`);
-  }
-
-  if (!bodyText.trim()) {
-    return null;
-  }
-
-  return JSON.parse(bodyText) as T;
-}
-
-function supabaseUrl(baseUrl: string, path: string): string {
-  const base = baseUrl.endsWith("/") ? baseUrl : `${baseUrl}/`;
-  return new URL(`${SUPABASE_REST_PATH}${path.replace(/^\/+/, "")}`, base).toString();
-}
-
 function toPancakeSource(source: Record<string, unknown>): PancakeSource {
   if (
     typeof source.pageId !== "string" ||
@@ -362,6 +273,19 @@ function toPancakeSource(source: Record<string, unknown>): PancakeSource {
     fromName: typeof source.fromName === "string" ? source.fromName : undefined,
     pageCustomerId: typeof source.pageCustomerId === "string" ? source.pageCustomerId : undefined,
   };
+}
+
+function normalizePancakeTagIds(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value.flatMap((tag) => {
+    if (typeof tag === "string" || typeof tag === "number") {
+      return [String(tag)];
+    }
+    return [];
+  });
 }
 
 function isPancakeMessageType(value: unknown): value is PancakeSource["messageType"] {

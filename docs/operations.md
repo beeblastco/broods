@@ -118,6 +118,8 @@ bun run scripts/configure-pancake-account.ts
 
 Each script uses `ADMIN_ACCOUNT_SECRET` for auth. Account and agent descriptions are optional; set `INTEGRATIONS_ACCOUNT_DESCRIPTION` or channel-specific `*_AGENT_DESCRIPTION` only when you want those fields stored.
 
+For Pancake handoff mode, set `PANCAKE_HANDOFF_TAG_ID` to the Pancake conversation tag ID that should pause agent replies while staff handle the conversation.
+
 Optional agent-name overrides are available when you need stable names other than the defaults: `TELEGRAM_AGENT_NAME`, `DISCORD_AGENT_NAME`, `SLACK_AGENT_NAME`, `GITHUB_AGENT_NAME`, and `PANCAKE_AGENT_NAME`.
 
 The integration scripts include `Knowledge cutoff: January 2025.` in `config.agent.system` by default. Override it with `ACCOUNT_MODEL_KNOWLEDGE_CUTOFF` when changing `ACCOUNT_MODEL_ID` to a model with a different cutoff.
