@@ -1,4 +1,6 @@
-/** Helper queries used by the logs action. */
+/**
+ * Helper queries used by the logs action.
+ */
 
 import { v } from "convex/values";
 import { internalQuery } from "./_generated/server";
@@ -13,18 +15,13 @@ export const getActiveDeploymentsInternal = internalQuery({
         endpointId: v.string(),
     })),
     handler: async (ctx, args) => {
-        const { authId } = args;
-
         const deployments = await ctx.db
             .query("agentDeployments")
-            .withIndex("by_authId", (q) => q.eq("authId", authId))
+            .withIndex("by_authId", (q) => q.eq("authId", args.authId))
             .collect();
 
-        const active = deployments.filter((d) => d.status === "active");
-
-        return active.map((d) => ({
-            _id: d._id,
-            endpointId: d.endpointId,
-        }));
+        return deployments
+            .filter((d) => d.status === "active")
+            .map((d) => ({ _id: d._id, endpointId: d.endpointId }));
     },
 });

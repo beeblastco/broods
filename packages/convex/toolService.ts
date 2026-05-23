@@ -1,12 +1,17 @@
 /**
- * Temporary tool service persistence and execution proxy for the canvas UI.
+ * Tool service persistence and execution proxy for canvas nodes.
  */
+
+import type { GenericMutationCtx, GenericQueryCtx } from "convex/server";
 import { v } from "convex/values";
+import type { DataModel, Id } from "./_generated/dataModel";
 import { action, mutation, query } from "./_generated/server";
 import { authKit } from "./auth";
 import { getOwnedEnvironment } from "./model/ownership/environment";
 import { getOwnedProject } from "./model/ownership/project";
 import { toolServicesFields } from "./schema";
+
+type Ctx = GenericQueryCtx<DataModel> | GenericMutationCtx<DataModel>;
 
 const toolServiceDoc = v.object({
     ...toolServicesFields,
@@ -14,13 +19,20 @@ const toolServiceDoc = v.object({
     _creationTime: v.number(),
 });
 
-/**
- * Loads a tool service configuration for a canvas node.
- * @param projectId Parent project id
- * @param environmentId Environment id
- * @param nodeId Canvas node id
- * @returns Tool service document or null when not configured
- */
+async function requireOwnedProjectEnv(
+    ctx: Ctx,
+    authId: string,
+    projectId: Id<"projects">,
+    environmentId: Id<"environments">,
+) {
+    const project = await getOwnedProject(ctx, authId, projectId);
+    if (!project) throw new Error("Project not found.");
+    const environment = await getOwnedEnvironment(ctx, authId, environmentId);
+    if (!environment || environment.projectId !== projectId) {
+        throw new Error("Environment not found.");
+    }
+}
+
 export const getByNode = query({
     args: {
         projectId: v.id("projects"),
@@ -28,45 +40,20 @@ export const getByNode = query({
         nodeId: v.string(),
     },
     returns: v.union(v.null(), toolServiceDoc),
-    handler: async (ctx, args) => {
-        const { projectId, environmentId, nodeId } = args;
-
-        // Check authenticated user
+    handler: async (ctx, { projectId, environmentId, nodeId }) => {
         const authUser = await authKit.getAuthUser(ctx);
-        if (!authUser) {
-            throw new Error("User not found or not authenticated");
-        }
+        if (!authUser) throw new Error("User not found or not authenticated");
+        await requireOwnedProjectEnv(ctx, authUser.id, projectId, environmentId);
 
-        const project = await getOwnedProject(ctx, authUser.id, projectId);
-        if (!project) {
-            throw new Error("Project not found.");
-        }
-
-        const environment = await getOwnedEnvironment(ctx, authUser.id, environmentId);
-        if (!environment || environment.projectId !== projectId) {
-            throw new Error("Environment not found.");
-        }
-
-        return await ctx.db
+        return ctx.db
             .query("toolServices")
             .withIndex("by_projectId_environmentId_and_nodeId", (q) =>
-                q
-                    .eq("projectId", projectId)
-                    .eq("environmentId", environmentId)
-                    .eq("nodeId", nodeId),
+                q.eq("projectId", projectId).eq("environmentId", environmentId).eq("nodeId", nodeId),
             )
             .first();
     },
 });
 
-/**
- * Creates or updates a tool service for a canvas node.
- * @param projectId Parent project id
- * @param environmentId Environment id
- * @param nodeId Canvas node id
- * @param nodeLabel Tool display label
- * @returns Tool service document id
- */
 export const upsertForNode = mutation({
     args: {
         projectId: v.id("projects"),
@@ -78,34 +65,16 @@ export const upsertForNode = mutation({
         status: v.optional(v.union(v.literal("enabled"), v.literal("disabled"))),
     },
     returns: v.id("toolServices"),
-    handler: async (ctx, args) => {
-        const { projectId, environmentId, nodeId, nodeLabel, sourceCode, language, status } =
-            args;
-
-        // Check authenticated user
+    handler: async (ctx, { projectId, environmentId, nodeId, nodeLabel, sourceCode, language, status }) => {
         const authUser = await authKit.getAuthUser(ctx);
-        if (!authUser) {
-            throw new Error("User not found or not authenticated");
-        }
-
-        const project = await getOwnedProject(ctx, authUser.id, projectId);
-        if (!project) {
-            throw new Error("Project not found.");
-        }
-
-        const environment = await getOwnedEnvironment(ctx, authUser.id, environmentId);
-        if (!environment || environment.projectId !== projectId) {
-            throw new Error("Environment not found.");
-        }
+        if (!authUser) throw new Error("User not found or not authenticated");
+        await requireOwnedProjectEnv(ctx, authUser.id, projectId, environmentId);
 
         const now = Date.now();
         const existing = await ctx.db
             .query("toolServices")
             .withIndex("by_projectId_environmentId_and_nodeId", (q) =>
-                q
-                    .eq("projectId", projectId)
-                    .eq("environmentId", environmentId)
-                    .eq("nodeId", nodeId),
+                q.eq("projectId", projectId).eq("environmentId", environmentId).eq("nodeId", nodeId),
             )
             .first();
 
@@ -117,15 +86,14 @@ export const upsertForNode = mutation({
                 status: status ?? existing.status,
                 updatedAt: now,
             });
-
             return existing._id;
         }
 
-        return await ctx.db.insert("toolServices", {
+        return ctx.db.insert("toolServices", {
             authId: authUser.id,
-            projectId: projectId,
-            environmentId: environmentId,
-            nodeId: nodeId,
+            projectId,
+            environmentId,
+            nodeId,
             nodeLabel: nodeLabel.trim() || "Tool",
             language: language ?? "javascript",
             sourceCode: sourceCode ?? "",
@@ -135,13 +103,6 @@ export const upsertForNode = mutation({
     },
 });
 
-/**
- * Executes tool source code via the configured custom tool executor.
- * @param language Tool runtime language
- * @param sourceCode Tool handler source
- * @param input JSON input payload
- * @returns Executor response body
- */
 export const execute = action({
     args: {
         language: v.union(v.literal("javascript"), v.literal("python")),
@@ -150,12 +111,10 @@ export const execute = action({
         timeoutMs: v.optional(v.number()),
     },
     returns: v.any(),
-    handler: async (_ctx, args) => {
-        const { language, sourceCode, input, timeoutMs } = args;
-
+    handler: async (_ctx, { language, sourceCode, input, timeoutMs }) => {
         const url = process.env.CUSTOM_TOOL_EXECUTOR_URL?.trim().replace(/\/+$/, "") ?? "";
         const secret = process.env.CUSTOM_TOOL_EXECUTOR_SECRET?.trim() ?? "";
-        const secretHeaderName =
+        const secretHeader =
             process.env.CUSTOM_TOOL_EXECUTOR_SECRET_HEADER?.trim() || "X-Executor-Secret";
 
         if (!url || !secret) {
@@ -168,14 +127,9 @@ export const execute = action({
             method: "POST",
             headers: {
                 "Content-Type": "application/json",
-                [secretHeaderName]: secret,
+                [secretHeader]: secret,
             },
-            body: JSON.stringify({
-                language: language,
-                sourceCode: sourceCode,
-                input: input ?? {},
-                timeoutMs: timeoutMs,
-            }),
+            body: JSON.stringify({ language, sourceCode, input: input ?? {}, timeoutMs }),
         });
 
         const body = (await upstream.json().catch(() => ({}))) as Record<string, unknown>;

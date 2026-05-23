@@ -2,6 +2,7 @@
  * Message append + list for a conversation. Both accountId and conversationId
  * are validated on every write so a leaked deploy key cannot cross-tenant.
  */
+
 import { v } from "convex/values";
 import { internalMutation, internalQuery } from "./_generated/server";
 import { messagesFields } from "./schema";
@@ -12,7 +13,6 @@ const messageDoc = v.object({
     _creationTime: v.number(),
 });
 
-/** Lists every message in a conversation owned by the supplied account. */
 export const list = internalQuery({
     args: {
         accountId: v.id("accounts"),
@@ -20,28 +20,20 @@ export const list = internalQuery({
     },
     returns: v.array(messageDoc),
     handler: async (ctx, args) => {
-        const { accountId, conversationId } = args;
-
-        const conversation = await ctx.db.get(conversationId);
-        if (!conversation || conversation.accountId !== accountId) {
+        const conversation = await ctx.db.get(args.conversationId);
+        if (!conversation || conversation.accountId !== args.accountId) {
             return [];
         }
 
-        const messages = await ctx.db
+        return await ctx.db
             .query("messages")
             .withIndex("by_conversationId", (q) =>
-                q.eq("conversationId", conversationId),
+                q.eq("conversationId", args.conversationId),
             )
             .collect();
-
-        return messages;
     },
 });
 
-/**
- * Appends a message to a conversation and bumps its lastMessageAt. Verifies
- * both account ownership and conversation ownership.
- */
 export const create = internalMutation({
     args: {
         accountId: v.id("accounts"),
@@ -57,26 +49,22 @@ export const create = internalMutation({
     },
     returns: v.id("messages"),
     handler: async (ctx, args) => {
-        const { accountId, conversationId, role, content, metadata } = args;
-
-        const conversation = await ctx.db.get(conversationId);
-        if (!conversation || conversation.accountId !== accountId) {
-            throw new Error(
-                "Conversation does not belong to the supplied accountId",
-            );
+        const conversation = await ctx.db.get(args.conversationId);
+        if (!conversation || conversation.accountId !== args.accountId) {
+            throw new Error("Conversation does not belong to the supplied accountId");
         }
 
         const now = Date.now();
         const messageId = await ctx.db.insert("messages", {
-            conversationId: conversationId,
-            accountId: accountId,
-            role: role,
-            content: content,
-            metadata: metadata,
+            conversationId: args.conversationId,
+            accountId: args.accountId,
+            role: args.role,
+            content: args.content,
+            metadata: args.metadata,
             createdAt: now,
         });
 
-        await ctx.db.patch(conversationId, { lastMessageAt: now });
+        await ctx.db.patch(args.conversationId, { lastMessageAt: now });
 
         return messageId;
     },

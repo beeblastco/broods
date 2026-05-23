@@ -1,6 +1,7 @@
 /**
- * Temporary canvas layout API backed by the canvasLayouts table.
+ * Canvas layout persistence keyed by (project, environment).
  */
+
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import { authKit } from "./auth";
@@ -26,12 +27,6 @@ const canvasEdgeValidator = v.object({
     animated: v.optional(v.boolean()),
 });
 
-/**
- * Loads the saved canvas layout for a project environment.
- * @param projectId Parent project id
- * @param environmentId Target environment id
- * @returns Canvas nodes and edges, or null when none saved yet
- */
 export const getByProject = query({
     args: {
         projectId: v.id("projects"),
@@ -44,19 +39,12 @@ export const getByProject = query({
             edges: v.array(canvasEdgeValidator),
         }),
     ),
-    handler: async (ctx, args) => {
-        const { projectId, environmentId } = args;
-
-        // Check authenticated user
+    handler: async (ctx, { projectId, environmentId }) => {
         const authUser = await authKit.getAuthUser(ctx);
-        if (!authUser) {
-            throw new Error("User not found or not authenticated");
-        }
+        if (!authUser) throw new Error("User not found or not authenticated");
 
         const project = await getOwnedProject(ctx, authUser.id, projectId);
-        if (!project) {
-            throw new Error("Project not found.");
-        }
+        if (!project) throw new Error("Project not found.");
 
         const environment = await getOwnedEnvironment(ctx, authUser.id, environmentId);
         if (!environment || environment.projectId !== projectId) {
@@ -70,25 +58,10 @@ export const getByProject = query({
             )
             .unique();
 
-        if (!layout) {
-            return null;
-        }
-
-        return {
-            nodes: layout.nodes,
-            edges: layout.edges,
-        };
+        return layout ? { nodes: layout.nodes, edges: layout.edges } : null;
     },
 });
 
-/**
- * Persists the current canvas layout for a project environment.
- * @param projectId Parent project id
- * @param environmentId Target environment id
- * @param nodes React Flow nodes to save
- * @param edges React Flow edges to save
- * @returns Saved canvas layout document id
- */
 export const saveLayout = mutation({
     args: {
         projectId: v.id("projects"),
@@ -97,19 +70,12 @@ export const saveLayout = mutation({
         edges: v.array(canvasEdgeValidator),
     },
     returns: v.id("canvasLayouts"),
-    handler: async (ctx, args) => {
-        const { projectId, environmentId, nodes, edges } = args;
-
-        // Check authenticated user
+    handler: async (ctx, { projectId, environmentId, nodes, edges }) => {
         const authUser = await authKit.getAuthUser(ctx);
-        if (!authUser) {
-            throw new Error("User not found or not authenticated");
-        }
+        if (!authUser) throw new Error("User not found or not authenticated");
 
         const project = await getOwnedProject(ctx, authUser.id, projectId);
-        if (!project) {
-            throw new Error("Project not found.");
-        }
+        if (!project) throw new Error("Project not found.");
 
         const environment = await getOwnedEnvironment(ctx, authUser.id, environmentId);
         if (!environment || environment.projectId !== projectId) {
@@ -125,21 +91,16 @@ export const saveLayout = mutation({
             .unique();
 
         if (existing) {
-            await ctx.db.patch(existing._id, {
-                nodes: nodes,
-                edges: edges,
-                updatedAt: now,
-            });
-
+            await ctx.db.patch(existing._id, { nodes, edges, updatedAt: now });
             return existing._id;
         }
 
-        return await ctx.db.insert("canvasLayouts", {
+        return ctx.db.insert("canvasLayouts", {
             authId: authUser.id,
-            projectId: projectId,
-            environmentId: environmentId,
-            nodes: nodes,
-            edges: edges,
+            projectId,
+            environmentId,
+            nodes,
+            edges,
             updatedAt: now,
         });
     },

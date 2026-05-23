@@ -1,3 +1,7 @@
+/**
+ * Stripe subscription queries, checkout/portal actions, and webhook plan sync.
+ */
+
 import { StripeSubscriptions } from "@convex-dev/stripe";
 import { v } from "convex/values";
 import { components } from "./_generated/api";
@@ -26,8 +30,6 @@ export const createCheckoutSession = action({
     args: { successUrl: v.string(), cancelUrl: v.string() },
     returns: v.object({ url: v.string() }),
     handler: async (ctx, args) => {
-        const { successUrl, cancelUrl } = args;
-
         const authUser = await authKit.getAuthUser(ctx);
         if (!authUser) throw new Error("Not authenticated");
 
@@ -43,8 +45,8 @@ export const createCheckoutSession = action({
             priceId: priceId,
             customerId: customerId,
             mode: "subscription",
-            successUrl: successUrl,
-            cancelUrl: cancelUrl,
+            successUrl: args.successUrl,
+            cancelUrl: args.cancelUrl,
             subscriptionMetadata: { authId: authUser.id },
         });
 
@@ -58,8 +60,6 @@ export const createPortalSession = action({
     args: { returnUrl: v.string() },
     returns: v.object({ url: v.string() }),
     handler: async (ctx, args) => {
-        const { returnUrl } = args;
-
         const authUser = await authKit.getAuthUser(ctx);
         if (!authUser) throw new Error("Not authenticated");
 
@@ -70,7 +70,7 @@ export const createPortalSession = action({
 
         return await stripeClient.createCustomerPortalSession(ctx, {
             customerId: customerId,
-            returnUrl: returnUrl,
+            returnUrl: args.returnUrl,
         });
     },
 });
@@ -79,16 +79,14 @@ export const syncPlanInternal = internalMutation({
     args: { authId: v.string(), status: v.string() },
     returns: v.null(),
     handler: async (ctx, args) => {
-        const { authId, status } = args;
-
         const user = await ctx.db
             .query("users")
-            .withIndex("by_authId", (q) => q.eq("authId", authId))
+            .withIndex("by_authId", (q) => q.eq("authId", args.authId))
             .first();
 
         if (!user) return null;
 
-        const plan = status === "active" || status === "trialing" ? "pro" as const : "free" as const;
+        const plan = args.status === "active" || args.status === "trialing" ? "pro" as const : "free" as const;
         await ctx.db.patch(user._id, { plan: plan });
 
         return null;

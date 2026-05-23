@@ -1,10 +1,9 @@
+/**
+ * Slug helpers for project naming.
+ */
+
 import type { QueryCtx } from "../_generated/server";
 
-/**
- * Converts a display name into a URL-safe slug segment.
- * @param name Raw project or environment name
- * @returns Lowercase hyphenated slug
- */
 export function slugifyName(name: string): string {
     const slug = name
         .trim()
@@ -16,13 +15,6 @@ export function slugifyName(name: string): string {
     return slug.length > 0 ? slug : "project";
 }
 
-/**
- * Resolves a unique project slug for the authenticated user.
- * @param ctx Convex query context
- * @param authId WorkOS user id owning the project
- * @param baseName Project name used to derive the slug
- * @returns Unused slug for this user
- */
 export async function uniqueProjectSlug(
     ctx: QueryCtx,
     authId: string,
@@ -40,10 +32,7 @@ export async function uniqueProjectSlug(
             )
             .first();
 
-        if (!existing) {
-            return candidate;
-        }
-
+        if (!existing) return candidate;
         suffix += 1;
     }
 }

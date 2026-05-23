@@ -2,10 +2,12 @@
  * Cron job CRUD scoped to an account. Mirrors filthy-panty's
  * functions/_shared/cron-jobs.ts so the SaaS dashboard can drive the same
  * lifecycle through Convex live queries. The AWS EventBridge Scheduler
- * names (`schedulerName`, `schedulerGroupName`) are stored here for
- * visibility; the Lambda is still responsible for the actual EBS calls.
+ * names are stored here for visibility; the Lambda invokes EBS.
  */
+
+import type { GenericMutationCtx, GenericQueryCtx } from "convex/server";
 import { v } from "convex/values";
+import type { DataModel, Id } from "./_generated/dataModel";
 import { internalMutation, internalQuery } from "./_generated/server";
 import { cronJobsFields } from "./schema";
 
@@ -15,10 +17,7 @@ const cronJobDoc = v.object({
     _creationTime: v.number(),
 });
 
-const cronJobStatusValidator = v.union(
-    v.literal("active"),
-    v.literal("paused"),
-);
+const cronJobStatusValidator = v.union(v.literal("active"), v.literal("paused"));
 
 const cronJobLastStatusValidator = v.union(
     v.literal("started"),
@@ -26,77 +25,59 @@ const cronJobLastStatusValidator = v.union(
     v.literal("failed"),
 );
 
-/** Returns a cron job only when it belongs to the supplied account. */
+type Ctx = GenericQueryCtx<DataModel> | GenericMutationCtx<DataModel>;
+
+async function getOwned(ctx: Ctx, accountId: Id<"accounts">, cronJobId: Id<"cronJobs">) {
+    const cronJob = await ctx.db.get(cronJobId);
+    return cronJob && cronJob.accountId === accountId ? cronJob : null;
+}
+
 export const getById = internalQuery({
     args: {
         accountId: v.id("accounts"),
         cronJobId: v.id("cronJobs"),
     },
     returns: v.union(cronJobDoc, v.null()),
-    handler: async (ctx, args) => {
-        const { accountId, cronJobId } = args;
-        const cronJob = await ctx.db.get(cronJobId);
-        if (!cronJob || cronJob.accountId !== accountId) {
-            return null;
-        }
-
-        return cronJob;
-    },
+    handler: (ctx, { accountId, cronJobId }) => getOwned(ctx, accountId, cronJobId),
 });
 
-/** Lists every cron job owned by the supplied account. */
 export const list = internalQuery({
     args: { accountId: v.id("accounts") },
     returns: v.array(cronJobDoc),
-    handler: async (ctx, args) => {
-        const { accountId } = args;
-        const cronJobs = await ctx.db
+    handler: (ctx, { accountId }) =>
+        ctx.db
             .query("cronJobs")
             .withIndex("by_accountId", (q) => q.eq("accountId", accountId))
-            .collect();
-
-        return cronJobs;
-    },
+            .collect(),
 });
 
-/** Lists cron jobs filtered by status (e.g. only `active` ones). */
 export const listByStatus = internalQuery({
     args: {
         accountId: v.id("accounts"),
         status: cronJobStatusValidator,
     },
     returns: v.array(cronJobDoc),
-    handler: async (ctx, args) => {
-        const { accountId, status } = args;
-        const cronJobs = await ctx.db
+    handler: (ctx, { accountId, status }) =>
+        ctx.db
             .query("cronJobs")
             .withIndex("by_accountId_and_status", (q) =>
                 q.eq("accountId", accountId).eq("status", status),
             )
-            .collect();
-
-        return cronJobs;
-    },
+            .collect(),
 });
 
-/** Lookup helper for EBS callbacks; resolves a schedulerName to its row. */
 export const getBySchedulerName = internalQuery({
     args: { schedulerName: v.string() },
     returns: v.union(cronJobDoc, v.null()),
-    handler: async (ctx, args) => {
-        const { schedulerName } = args;
+    handler: async (ctx, { schedulerName }) => {
         const cronJob = await ctx.db
             .query("cronJobs")
-            .withIndex("by_schedulerName", (q) =>
-                q.eq("schedulerName", schedulerName),
-            )
+            .withIndex("by_schedulerName", (q) => q.eq("schedulerName", schedulerName))
             .unique();
-
         return cronJob ?? null;
     },
 });
 
-/** Creates a cron job owned by the supplied account and agent. */
 export const create = internalMutation({
     args: {
         accountId: v.id("accounts"),
@@ -113,50 +94,24 @@ export const create = internalMutation({
     },
     returns: v.id("cronJobs"),
     handler: async (ctx, args) => {
-        const {
-            accountId,
-            name,
-            description,
-            agentId,
-            prompt,
-            conversationKey,
-            scheduleExpression,
-            timezone,
-            status,
-            schedulerName,
-            schedulerGroupName,
-        } = args;
-
-        const agent = await ctx.db.get(agentId);
-        if (!agent || agent.accountId !== accountId) {
+        const agent = await ctx.db.get(args.agentId);
+        if (!agent || agent.accountId !== args.accountId) {
             throw new Error("Agent does not belong to the supplied accountId");
         }
 
         const now = Date.now();
-        const cronJobId = await ctx.db.insert("cronJobs", {
-            accountId: accountId,
-            name: name,
-            description: description,
-            agentId: agentId,
-            prompt: prompt,
-            conversationKey: conversationKey,
-            scheduleExpression: scheduleExpression,
-            timezone: timezone,
-            status: status ?? "active",
-            schedulerName: schedulerName,
-            schedulerGroupName: schedulerGroupName,
+        return ctx.db.insert("cronJobs", {
+            ...args,
+            status: args.status ?? "active",
             lastInvokedAt: undefined,
             lastStatus: undefined,
             lastError: undefined,
             createdAt: now,
             updatedAt: now,
         });
-
-        return cronJobId;
     },
 });
 
-/** Patches cron-job fields after verifying account ownership. */
 export const update = internalMutation({
     args: {
         accountId: v.id("accounts"),
@@ -172,24 +127,11 @@ export const update = internalMutation({
     },
     returns: v.null(),
     handler: async (ctx, args) => {
-        const {
-            accountId,
-            cronJobId,
-            name,
-            description,
-            agentId,
-            prompt,
-            conversationKey,
-            scheduleExpression,
-            timezone,
-            status,
-        } = args;
+        const { accountId, cronJobId, agentId, ...patch } = args;
 
-        const cronJob = await ctx.db.get(cronJobId);
-        if (!cronJob || cronJob.accountId !== accountId) {
-            throw new Error(
-                "Cron job does not belong to the supplied accountId",
-            );
+        const cronJob = await getOwned(ctx, accountId, cronJobId);
+        if (!cronJob) {
+            throw new Error("Cron job does not belong to the supplied accountId");
         }
 
         if (agentId !== undefined) {
@@ -199,29 +141,18 @@ export const update = internalMutation({
             }
         }
 
-        await ctx.db.patch(cronJobId, {
-            ...(name !== undefined ? { name: name } : {}),
-            ...(description !== undefined ? { description: description } : {}),
-            ...(agentId !== undefined ? { agentId: agentId } : {}),
-            ...(prompt !== undefined ? { prompt: prompt } : {}),
-            ...(conversationKey !== undefined
-                ? { conversationKey: conversationKey }
-                : {}),
-            ...(scheduleExpression !== undefined
-                ? { scheduleExpression: scheduleExpression }
-                : {}),
-            ...(timezone !== undefined ? { timezone: timezone } : {}),
-            ...(status !== undefined ? { status: status } : {}),
-            updatedAt: Date.now(),
-        });
+        const defined = Object.fromEntries(
+            Object.entries({ ...patch, agentId }).filter(([, v]) => v !== undefined),
+        );
 
+        await ctx.db.patch(cronJobId, { ...defined, updatedAt: Date.now() });
         return null;
     },
 });
 
 /**
- * Records the result of an invocation. Called by filthy-panty Lambda when an
- * EBS event fires; status transitions are: undefined -> started -> completed | failed.
+ * Records the result of an invocation. Status transitions:
+ * undefined -> started -> completed | failed.
  */
 export const recordInvocation = internalMutation({
     args: {
@@ -232,43 +163,31 @@ export const recordInvocation = internalMutation({
         lastInvokedAt: v.optional(v.number()),
     },
     returns: v.null(),
-    handler: async (ctx, args) => {
-        const { accountId, cronJobId, lastStatus, lastError, lastInvokedAt } =
-            args;
-
-        const cronJob = await ctx.db.get(cronJobId);
-        if (!cronJob || cronJob.accountId !== accountId) {
-            throw new Error(
-                "Cron job does not belong to the supplied accountId",
-            );
+    handler: async (ctx, { accountId, cronJobId, lastStatus, lastError, lastInvokedAt }) => {
+        const cronJob = await getOwned(ctx, accountId, cronJobId);
+        if (!cronJob) {
+            throw new Error("Cron job does not belong to the supplied accountId");
         }
 
         await ctx.db.patch(cronJobId, {
-            lastStatus: lastStatus,
-            lastError: lastError,
+            lastStatus,
+            lastError,
             lastInvokedAt: lastInvokedAt ?? Date.now(),
             updatedAt: Date.now(),
         });
-
         return null;
     },
 });
 
-/** Removes a cron job after verifying account ownership. */
 export const remove = internalMutation({
     args: {
         accountId: v.id("accounts"),
         cronJobId: v.id("cronJobs"),
     },
     returns: v.null(),
-    handler: async (ctx, args) => {
-        const { accountId, cronJobId } = args;
-        const cronJob = await ctx.db.get(cronJobId);
-        if (!cronJob || cronJob.accountId !== accountId) {
-            return null;
-        }
-        await ctx.db.delete(cronJobId);
-
+    handler: async (ctx, { accountId, cronJobId }) => {
+        const cronJob = await getOwned(ctx, accountId, cronJobId);
+        if (cronJob) await ctx.db.delete(cronJobId);
         return null;
     },
 });

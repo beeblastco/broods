@@ -2,6 +2,7 @@
  * Agent CRUD scoped to an account. Every mutation revalidates the agent's
  * accountId against the caller-supplied accountId for defence in depth.
  */
+
 import { v } from "convex/values";
 import { internalMutation, internalQuery } from "./_generated/server";
 import { agentsFields } from "./schema";
@@ -12,25 +13,6 @@ const agentDoc = v.object({
     _creationTime: v.number(),
 });
 
-async function requireAccountOwnsAgent(
-    ctx: { db: { get: (id: import("./_generated/dataModel").Id<"agents">) => Promise<unknown> } },
-    accountId: import("./_generated/dataModel").Id<"accounts">,
-    agentId: import("./_generated/dataModel").Id<"agents">,
-) {
-    const agent = (await ctx.db.get(agentId)) as
-        | (typeof agentsFields & { _id: import("./_generated/dataModel").Id<"agents">; accountId: import("./_generated/dataModel").Id<"accounts"> })
-        | null;
-    if (!agent) {
-        throw new Error(`Agent not found: ${agentId}`);
-    }
-    if (agent.accountId !== accountId) {
-        throw new Error("Agent does not belong to the supplied accountId");
-    }
-
-    return agent;
-}
-
-/** Returns an agent only when it belongs to the supplied accountId. */
 export const getById = internalQuery({
     args: {
         accountId: v.id("accounts"),
@@ -38,9 +20,8 @@ export const getById = internalQuery({
     },
     returns: v.union(agentDoc, v.null()),
     handler: async (ctx, args) => {
-        const { accountId, agentId } = args;
-        const agent = await ctx.db.get(agentId);
-        if (!agent || agent.accountId !== accountId) {
+        const agent = await ctx.db.get(args.agentId);
+        if (!agent || agent.accountId !== args.accountId) {
             return null;
         }
 
@@ -48,22 +29,17 @@ export const getById = internalQuery({
     },
 });
 
-/** Lists every agent owned by the supplied account. */
 export const list = internalQuery({
     args: { accountId: v.id("accounts") },
     returns: v.array(agentDoc),
     handler: async (ctx, args) => {
-        const { accountId } = args;
-        const agents = await ctx.db
+        return await ctx.db
             .query("agents")
-            .withIndex("by_accountId", (q) => q.eq("accountId", accountId))
+            .withIndex("by_accountId", (q) => q.eq("accountId", args.accountId))
             .collect();
-
-        return agents;
     },
 });
 
-/** Creates an agent owned by the supplied account. */
 export const create = internalMutation({
     args: {
         accountId: v.id("accounts"),
@@ -75,37 +51,25 @@ export const create = internalMutation({
     },
     returns: v.id("agents"),
     handler: async (ctx, args) => {
-        const {
-            accountId,
-            name,
-            description,
-            encryptedConfig,
-            encryptionIv,
-            encryptionTag,
-        } = args;
-
-        const account = await ctx.db.get(accountId);
+        const account = await ctx.db.get(args.accountId);
         if (!account) {
-            throw new Error(`Account not found: ${accountId}`);
+            throw new Error(`Account not found: ${args.accountId}`);
         }
 
         const now = Date.now();
-        const agentId = await ctx.db.insert("agents", {
-            accountId: accountId,
-            name: name,
-            description: description,
-            encryptedConfig: encryptedConfig,
-            encryptionIv: encryptionIv,
-            encryptionTag: encryptionTag,
+        return await ctx.db.insert("agents", {
+            accountId: args.accountId,
+            name: args.name,
+            description: args.description,
+            encryptedConfig: args.encryptedConfig,
+            encryptionIv: args.encryptionIv,
+            encryptionTag: args.encryptionTag,
             createdAt: now,
             updatedAt: now,
         });
-
-        return agentId;
     },
 });
 
-/** Patches agent fields. Verifies the agent belongs to the supplied account. */
 export const update = internalMutation({
     args: {
         accountId: v.id("accounts"),
@@ -118,26 +82,18 @@ export const update = internalMutation({
     },
     returns: v.null(),
     handler: async (ctx, args) => {
-        const {
-            accountId,
-            agentId,
-            name,
-            description,
-            encryptedConfig,
-            encryptionIv,
-            encryptionTag,
-        } = args;
-
-        await requireAccountOwnsAgent(ctx, accountId, agentId);
+        const { accountId, agentId, ...patch } = args;
+        const agent = await ctx.db.get(agentId);
+        if (!agent || agent.accountId !== accountId) {
+            throw new Error("Agent does not belong to the supplied accountId");
+        }
 
         await ctx.db.patch(agentId, {
-            ...(name !== undefined ? { name: name } : {}),
-            ...(description !== undefined ? { description: description } : {}),
-            ...(encryptedConfig !== undefined
-                ? { encryptedConfig: encryptedConfig }
-                : {}),
-            ...(encryptionIv !== undefined ? { encryptionIv: encryptionIv } : {}),
-            ...(encryptionTag !== undefined ? { encryptionTag: encryptionTag } : {}),
+            ...(patch.name !== undefined && { name: patch.name }),
+            ...(patch.description !== undefined && { description: patch.description }),
+            ...(patch.encryptedConfig !== undefined && { encryptedConfig: patch.encryptedConfig }),
+            ...(patch.encryptionIv !== undefined && { encryptionIv: patch.encryptionIv }),
+            ...(patch.encryptionTag !== undefined && { encryptionTag: patch.encryptionTag }),
             updatedAt: Date.now(),
         });
 
@@ -145,7 +101,6 @@ export const update = internalMutation({
     },
 });
 
-/** Removes an agent after verifying account ownership. */
 export const remove = internalMutation({
     args: {
         accountId: v.id("accounts"),
@@ -153,9 +108,11 @@ export const remove = internalMutation({
     },
     returns: v.null(),
     handler: async (ctx, args) => {
-        const { accountId, agentId } = args;
-        await requireAccountOwnsAgent(ctx, accountId, agentId);
-        await ctx.db.delete(agentId);
+        const agent = await ctx.db.get(args.agentId);
+        if (!agent || agent.accountId !== args.accountId) {
+            throw new Error("Agent does not belong to the supplied accountId");
+        }
+        await ctx.db.delete(args.agentId);
 
         return null;
     },

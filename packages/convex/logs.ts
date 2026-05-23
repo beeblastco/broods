@@ -1,9 +1,5 @@
 /**
- * Direct CloudWatch Logs query — no caching, returns logs to client immediately.
- *
- * Required env vars:
- *   AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_REGION
- *   CLOUDWATCH_LOG_GROUP_PREFIX  — e.g. "/aws/lambda/" (defaults to "/aws/lambda/")
+ * Direct CloudWatch Logs queries for deployment logs and token-usage stats.
  */
 
 "use node";
@@ -16,6 +12,7 @@ import {
 } from "@aws-sdk/client-cloudwatch-logs";
 import { v } from "convex/values";
 import { internal } from "./_generated/api";
+import type { Id } from "./_generated/dataModel";
 import { action } from "./_generated/server";
 import { authKit } from "./auth";
 
@@ -74,11 +71,7 @@ const usageStats = v.object({
     }),
 });
 
-/**
- * Range -> lookback / bucket / Insights query window configuration.
- * Insights enforces a max of 10_000 returned rows, so coarse bins are required
- * for longer windows.
- */
+// Insights caps results at 10_000 rows, so longer windows need coarser bins.
 const RANGE_CONFIG: Record<
     "1h" | "3h" | "1d" | "7d" | "30d" | "1y",
     { lookbackMs: number; binSeconds: number }
@@ -107,59 +100,41 @@ async function fetchFromCloudWatch(opts: {
     endTimeMs: number;
     limit: number;
     errorOnly: boolean;
-}): Promise<Array<{
-    timestamp: number;
-    message: string;
-    level: "INFO" | "WARN" | "ERROR" | "DEBUG";
-    logGroup: string;
-    logStream?: string;
-    requestId?: string;
-}>> {
+}) {
     const logGroup = `/aws/lambda/${opts.functionName}`;
-    const client = makeClient();
-
-    const command = new FilterLogEventsCommand({
-        logGroupName: logGroup,
-        startTime: opts.startTimeMs,
-        endTime: opts.endTimeMs,
-        limit: opts.limit,
-        ...(opts.errorOnly ? { filterPattern: '{ $.level = "ERROR" }' } : {}),
-    });
 
     let response;
     try {
-        response = await client.send(command);
+        response = await makeClient().send(new FilterLogEventsCommand({
+            logGroupName: logGroup,
+            startTime: opts.startTimeMs,
+            endTime: opts.endTimeMs,
+            limit: opts.limit,
+            ...(opts.errorOnly ? { filterPattern: '{ $.level = "ERROR" }' } : {}),
+        }));
     } catch (err) {
         console.warn(`CloudWatch log group ${logGroup} not found or inaccessible:`, err);
-
         return [];
     }
 
-    const events = response.events ?? [];
-
-    return events.map((event) => {
+    return (response.events ?? []).map((event) => {
         const msg = event.message ?? "";
-        const level = detectLogLevel(msg);
-        const requestId = extractRequestId(msg);
-
         return {
             timestamp: event.timestamp ?? Date.now(),
             message: msg.trim(),
-            level: level,
-            logGroup: logGroup,
+            level: detectLogLevel(msg),
+            logGroup,
             logStream: event.logStreamName,
-            requestId: requestId,
+            requestId: extractRequestId(msg),
         };
     });
 }
 
 function detectLogLevel(msg: string): "INFO" | "WARN" | "ERROR" | "DEBUG" {
-    // Logs are JSON lines from filthy-panty's logInfo/logError; prefer parsing.
     const trimmed = msg.trim();
     if (trimmed.startsWith("{")) {
         try {
-            const parsed = JSON.parse(trimmed);
-            const lvl = typeof parsed.level === "string" ? parsed.level.toUpperCase() : "";
+            const lvl = String(JSON.parse(trimmed).level ?? "").toUpperCase();
             if (lvl === "ERROR" || lvl === "WARN" || lvl === "INFO" || lvl === "DEBUG") {
                 return lvl;
             }
@@ -169,68 +144,51 @@ function detectLogLevel(msg: string): "INFO" | "WARN" | "ERROR" | "DEBUG" {
     }
 
     const upper = msg.toUpperCase();
-    if (upper.includes("[ERROR]") || upper.includes("ERROR") || upper.startsWith("ERROR")) return "ERROR";
-    if (upper.includes("[WARN]") || upper.includes("WARNING") || upper.startsWith("WARN")) return "WARN";
+    if (upper.includes("ERROR")) return "ERROR";
+    if (upper.includes("WARN")) return "WARN";
     if (upper.includes("[DEBUG]") || upper.startsWith("DEBUG")) return "DEBUG";
-
     return "INFO";
 }
 
 function extractRequestId(msg: string): string | undefined {
-    const match = msg.match(/RequestId:\s*([a-f0-9-]{36})/i);
-
-    return match ? match[1] : undefined;
+    return msg.match(/RequestId:\s*([a-f0-9-]{36})/i)?.[1];
 }
 
-/**
- * Run a CloudWatch Logs Insights query across multiple log groups and poll
- * until it completes. Returns the parsed rows as `{field -> value}` maps.
- */
 async function runInsightsQuery(opts: {
     logGroupNames: string[];
     startTimeSec: number;
     endTimeSec: number;
     queryString: string;
 }): Promise<Array<Record<string, string>>> {
-    if (opts.logGroupNames.length === 0) {
-        return [];
-    }
+    if (opts.logGroupNames.length === 0) return [];
 
     const client = makeClient();
 
     let queryId: string | undefined;
     try {
-        const start = await client.send(
-            new StartQueryCommand({
-                logGroupNames: opts.logGroupNames,
-                startTime: opts.startTimeSec,
-                endTime: opts.endTimeSec,
-                queryString: opts.queryString,
-                limit: 10000,
-            }),
-        );
+        const start = await client.send(new StartQueryCommand({
+            logGroupNames: opts.logGroupNames,
+            startTime: opts.startTimeSec,
+            endTime: opts.endTimeSec,
+            queryString: opts.queryString,
+            limit: 10000,
+        }));
         queryId = start.queryId;
     } catch (err) {
         console.warn("CloudWatch Logs Insights StartQuery failed:", err);
-
         return [];
     }
+    if (!queryId) return [];
 
-    if (!queryId) {
-        return [];
-    }
-
-    // Poll for results — Insights has no synchronous mode.
     const deadline = Date.now() + 60_000;
     while (Date.now() < deadline) {
         await new Promise((resolve) => setTimeout(resolve, 1000));
 
         let result;
         try {
-            result = await client.send(new GetQueryResultsCommand({ queryId: queryId }));
+            result = await client.send(new GetQueryResultsCommand({ queryId }));
         } catch (err) {
             console.warn("CloudWatch Logs Insights GetQueryResults failed:", err);
-
             return [];
         }
 
@@ -239,23 +197,18 @@ async function runInsightsQuery(opts: {
             return (result.results ?? []).map((row) => {
                 const out: Record<string, string> = {};
                 for (const field of row) {
-                    if (field.field) {
-                        out[field.field] = field.value ?? "";
-                    }
+                    if (field.field) out[field.field] = field.value ?? "";
                 }
-
                 return out;
             });
         }
         if (status === "Failed" || status === "Cancelled" || status === "Timeout") {
             console.warn(`CloudWatch Logs Insights query ${status.toLowerCase()}`);
-
             return [];
         }
     }
 
     console.warn("CloudWatch Logs Insights query timed out client-side");
-
     return [];
 }
 
@@ -268,56 +221,33 @@ export const fetchForProject = action({
     },
     returns: v.array(logEntry),
     handler: async (ctx, args) => {
-        const { projectId, lookbackMs, limit, errorOnly } = args;
-
-        // Check authenticated user
         const authUser = await authKit.getAuthUser(ctx);
-        if (!authUser) {
-            return [];
-        }
+        if (!authUser) return [];
 
         const now = Date.now();
-        const startTime = now - (lookbackMs ?? 60 * 60 * 1000);
+        const startTime = now - (args.lookbackMs ?? 60 * 60 * 1000);
 
-        const deployments = await ctx.runQuery(internal.logsHelpers.getActiveDeploymentsInternal, {
-            authId: authUser.id,
-            projectId: projectId,
-        });
-
-        if (deployments.length === 0) {
-            return [];
-        }
-
-        const allLogs: Array<{
-            timestamp: number;
-            message: string;
-            level: "INFO" | "WARN" | "ERROR" | "DEBUG";
-            logGroup: string;
-            logStream?: string;
-            functionName: string;
-            requestId?: string;
-        }> = [];
-
-        for (const deployment of deployments) {
-            const entries = await fetchFromCloudWatch({
-                functionName: deployment.endpointId,
-                startTimeMs: startTime,
-                endTimeMs: now,
-                limit: limit ?? 100,
-                errorOnly: errorOnly ?? false,
+        const deployments: { _id: Id<"agentDeployments">; endpointId: string }[] =
+            await ctx.runQuery(internal.logsHelpers.getActiveDeploymentsInternal, {
+                authId: authUser.id,
+                projectId: args.projectId,
             });
+        if (deployments.length === 0) return [];
 
-            for (const entry of entries) {
-                allLogs.push({
-                    ...entry,
-                    functionName: deployment.endpointId,
+        const batches = await Promise.all(
+            deployments.map(async (d) => {
+                const entries = await fetchFromCloudWatch({
+                    functionName: d.endpointId,
+                    startTimeMs: startTime,
+                    endTimeMs: now,
+                    limit: args.limit ?? 100,
+                    errorOnly: args.errorOnly ?? false,
                 });
-            }
-        }
+                return entries.map((e) => ({ ...e, functionName: d.endpointId }));
+            }),
+        );
 
-        allLogs.sort((a, b) => b.timestamp - a.timestamp);
-
-        return allLogs;
+        return batches.flat().sort((a, b) => b.timestamp - a.timestamp);
     },
 });
 
@@ -371,7 +301,7 @@ export const fetchUsageStats = action({
             return empty;
         }
 
-        const logGroupNames = deployments.map((d) => `/aws/lambda/${d.endpointId}`);
+        const logGroupNames = deployments.map((d: { endpointId: string }) => `/aws/lambda/${d.endpointId}`);
 
         // Single Insights query: bucket by time + (provider, model) and aggregate token usage.
         // Counts: `invocations` = model.invocation.finished (tasks),

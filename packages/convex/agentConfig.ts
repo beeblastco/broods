@@ -1,6 +1,7 @@
 /**
- * Temporary agent config API with minimal persistence for canvas UI.
+ * Agent config CRUD for the canvas UI. Scoped to authenticated user.
  */
+
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import { authKit } from "./auth";
@@ -21,41 +22,18 @@ const agentConfigDoc = v.object({
     _creationTime: v.number(),
 });
 
-/**
- * Loads an agent config owned by the authenticated user.
- * @param configId Agent config document id
- * @returns Agent config document or null when not found
- */
 export const getById = query({
-    args: {
-        configId: v.id("agentConfigs"),
-    },
+    args: { configId: v.id("agentConfigs") },
     returns: v.union(v.null(), agentConfigDoc),
-    handler: async (ctx, args) => {
-        const { configId } = args;
-
-        // Check authenticated user
+    handler: async (ctx, { configId }) => {
         const authUser = await authKit.getAuthUser(ctx);
-        if (!authUser) {
-            throw new Error("User not found or not authenticated");
-        }
+        if (!authUser) throw new Error("User not found or not authenticated");
 
         const config = await ctx.db.get(configId);
-        if (!config || config.authId !== authUser.id) {
-            return null;
-        }
-
-        return config;
+        return config && config.authId === authUser.id ? config : null;
     },
 });
 
-/**
- * Creates a minimal agent config for the canvas.
- * @param projectId Parent project id
- * @param environmentId Target environment id
- * @param name Display name
- * @returns New agent config document id
- */
 export const create = mutation({
     args: {
         projectId: v.id("projects"),
@@ -69,19 +47,13 @@ export const create = mutation({
     },
     returns: v.id("agentConfigs"),
     handler: async (ctx, args) => {
-        const { projectId, environmentId, name, provider, modelId, description, systemPrompt, position } =
-            args;
+        const { projectId, environmentId, name, provider, modelId, description, systemPrompt, position } = args;
 
-        // Check authenticated user
         const authUser = await authKit.getAuthUser(ctx);
-        if (!authUser) {
-            throw new Error("User not found or not authenticated");
-        }
+        if (!authUser) throw new Error("User not found or not authenticated");
 
         const project = await getOwnedProject(ctx, authUser.id, projectId);
-        if (!project) {
-            throw new Error("Project not found.");
-        }
+        if (!project) throw new Error("Project not found.");
 
         const environment = await getOwnedEnvironment(ctx, authUser.id, environmentId);
         if (!environment || environment.projectId !== projectId) {
@@ -89,14 +61,15 @@ export const create = mutation({
         }
 
         const now = Date.now();
+        const trimmedName = name.trim();
         const configId = await ctx.db.insert("agentConfigs", {
             authId: authUser.id,
-            name: name.trim(),
+            name: trimmedName,
             description: description?.trim() || undefined,
             agentId: undefined,
-            projectId: projectId,
-            environmentId: environmentId,
-            provider: provider,
+            projectId,
+            environmentId,
+            provider,
             modelId: modelId?.trim() || "gpt-4.1-mini",
             systemPrompt: systemPrompt?.trim() || undefined,
             memoryToolEnabled: true,
@@ -116,13 +89,12 @@ export const create = mutation({
                 )
                 .unique();
 
-            const nodeId = String(Date.now());
             const nextNode = {
-                id: nodeId,
+                id: String(now),
                 type: "agent" as const,
-                position: position,
+                position,
                 data: {
-                    label: name.trim(),
+                    label: trimmedName,
                     status: "idle" as const,
                     agentConfigId: configId,
                 },
@@ -136,8 +108,8 @@ export const create = mutation({
             } else {
                 await ctx.db.insert("canvasLayouts", {
                     authId: authUser.id,
-                    projectId: projectId,
-                    environmentId: environmentId,
+                    projectId,
+                    environmentId,
                     nodes: [nextNode],
                     edges: [],
                     updatedAt: now,
@@ -149,11 +121,6 @@ export const create = mutation({
     },
 });
 
-/**
- * Updates editable agent config fields for the authenticated owner.
- * @param configId Agent config document id
- * @returns Updated agent config document id
- */
 export const update = mutation({
     args: {
         configId: v.id("agentConfigs"),
@@ -178,51 +145,30 @@ export const update = mutation({
         agentId: v.optional(v.string()),
     },
     returns: v.id("agentConfigs"),
-    handler: async (ctx, args) => {
-        const { configId, ...updates } = args;
-
-        // Check authenticated user
+    handler: async (ctx, { configId, ...updates }) => {
         const authUser = await authKit.getAuthUser(ctx);
-        if (!authUser) {
-            throw new Error("User not found or not authenticated");
-        }
+        if (!authUser) throw new Error("User not found or not authenticated");
 
         const existing = await ctx.db.get(configId);
         if (!existing || existing.authId !== authUser.id) {
             throw new Error("Agent config not found.");
         }
 
-        const patch: Record<string, unknown> = { updatedAt: Date.now() };
-        for (const [key, value] of Object.entries(updates)) {
-            if (value !== undefined) {
-                patch[key] = value;
-            }
-        }
+        const patch = Object.fromEntries(
+            Object.entries(updates).filter(([, v]) => v !== undefined),
+        );
 
-        await ctx.db.patch(configId, patch);
-
+        await ctx.db.patch(configId, { ...patch, updatedAt: Date.now() });
         return configId;
     },
 });
 
-/**
- * Permanently deletes an agent config owned by the authenticated user.
- * @param configId Agent config document id
- * @returns Deleted agent config document id
- */
 export const remove = mutation({
-    args: {
-        configId: v.id("agentConfigs"),
-    },
+    args: { configId: v.id("agentConfigs") },
     returns: v.id("agentConfigs"),
-    handler: async (ctx, args) => {
-        const { configId } = args;
-
-        // Check authenticated user
+    handler: async (ctx, { configId }) => {
         const authUser = await authKit.getAuthUser(ctx);
-        if (!authUser) {
-            throw new Error("User not found or not authenticated");
-        }
+        if (!authUser) throw new Error("User not found or not authenticated");
 
         const existing = await ctx.db.get(configId);
         if (!existing || existing.authId !== authUser.id) {
@@ -234,10 +180,7 @@ export const remove = mutation({
             .withIndex("by_agentConfigId", (q) => q.eq("agentConfigId", configId))
             .collect();
 
-        for (const deployment of deployments) {
-            await ctx.db.delete(deployment._id);
-        }
-
+        for (const d of deployments) await ctx.db.delete(d._id);
         await ctx.db.delete(configId);
 
         return configId;

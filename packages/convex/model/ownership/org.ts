@@ -1,3 +1,7 @@
+/**
+ * Org membership lookups and role enforcement.
+ */
+
 import type { Id } from "../../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../../_generated/server";
 
@@ -9,10 +13,6 @@ const ROLE_RANK: Record<OrgRole, number> = {
     member: 1,
 };
 
-/**
- * Returns the membership row for a user in an org, or null when the user is
- * not a member.
- */
 export async function getOrgMembership(
     ctx: QueryCtx | MutationCtx,
     orgId: Id<"orgs">,
@@ -29,9 +29,7 @@ export async function getOrgMembership(
 }
 
 /**
- * Loads the user's most recently created org membership, or null when they
- * have not joined any org. Single-org-per-user UX uses this to resolve the
- * active workspace.
+ * Most recently created org for the user, or null when they belong to none.
  */
 export async function getActiveOrgForUser(
     ctx: QueryCtx | MutationCtx,
@@ -41,22 +39,14 @@ export async function getActiveOrgForUser(
         .query("orgMembers")
         .withIndex("by_userId", (q) => q.eq("userId", userId))
         .collect();
-    if (memberships.length === 0) {
-        return null;
-    }
+    if (memberships.length === 0) return null;
 
-    const newest = memberships.sort(
-        (left, right) => right.createdAt - left.createdAt,
-    )[0];
+    const newest = memberships.sort((a, b) => b.createdAt - a.createdAt)[0];
     const org = await ctx.db.get(newest.orgId);
 
     return org ?? null;
 }
 
-/**
- * Throws when the user is not a member of the org or lacks the required role.
- * @returns The membership row when the check passes
- */
 export async function requireOrgMember(
     ctx: QueryCtx | MutationCtx,
     orgId: Id<"orgs">,
@@ -68,9 +58,7 @@ export async function requireOrgMember(
         throw new Error("Not a member of this org");
     }
     if (requiredRole && ROLE_RANK[membership.role] < ROLE_RANK[requiredRole]) {
-        throw new Error(
-            `Role ${requiredRole} required; caller has ${membership.role}`,
-        );
+        throw new Error(`Role ${requiredRole} required; caller has ${membership.role}`);
     }
 
     return membership;

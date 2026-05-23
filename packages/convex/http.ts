@@ -1,6 +1,9 @@
+/**
+ * HTTP route registration for AuthKit and Stripe webhook handlers.
+ */
+
 import { registerRoutes } from "@convex-dev/stripe";
 import { httpRouter } from "convex/server";
-import type Stripe from "stripe";
 import { components, internal } from "./_generated/api";
 import { authKit } from "./auth";
 
@@ -8,10 +11,9 @@ const http = httpRouter();
 
 authKit.registerRoutes(http);
 
-// Register route for stripe webhooks
 registerRoutes(http, components.stripe, {
     events: {
-        "customer.subscription.updated": async (ctx, event: Stripe.CustomerSubscriptionUpdatedEvent) => {
+        "customer.subscription.updated": async (ctx, event) => {
             const sub = event.data.object;
             const authId = sub.metadata?.authId;
             if (authId) {
@@ -21,7 +23,7 @@ registerRoutes(http, components.stripe, {
                 });
             }
         },
-        "customer.subscription.deleted": async (ctx, event: Stripe.CustomerSubscriptionDeletedEvent) => {
+        "customer.subscription.deleted": async (ctx, event) => {
             const sub = event.data.object;
             const authId = sub.metadata?.authId;
             if (authId) {

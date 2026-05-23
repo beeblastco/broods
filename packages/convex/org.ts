@@ -3,6 +3,7 @@
  * own multiple orgs; membership is tracked in the `orgMembers` join table.
  */
 import { v } from "convex/values";
+import type { MutationCtx } from "./_generated/server";
 import { mutation, query } from "./_generated/server";
 import { authKit } from "./auth";
 import { slugifyName } from "./lib/slug";
@@ -20,24 +21,15 @@ const orgDoc = v.object({
 });
 
 async function uniqueOrgSlug(
-    ctx: { db: { query: (table: "orgs") => { withIndex: (...args: unknown[]) => { first: () => Promise<unknown> } } } },
+    ctx: MutationCtx,
     baseName: string,
 ): Promise<string> {
     const baseSlug = slugifyName(baseName);
     let suffix = 0;
     while (true) {
         const candidate = suffix === 0 ? baseSlug : `${baseSlug}-${suffix}`;
-        const existing = await (ctx as unknown as {
-            db: {
-                query: (table: "orgs") => {
-                    withIndex: (
-                        name: "by_slug",
-                        builder: (q: { eq: (field: "slug", value: string) => unknown }) => unknown,
-                    ) => { first: () => Promise<unknown> };
-                };
-            };
-        })
-            .db.query("orgs")
+        const existing = await ctx.db
+            .query("orgs")
             .withIndex("by_slug", (q) => q.eq("slug", candidate))
             .first();
         if (!existing) {
