@@ -1780,11 +1780,15 @@ components:
               type: object
               description: Optional Pancake adapter settings.
               properties:
-                supabase:
+                handoff:
                   type: object
-                  description: Enables Supabase-backed Pancake reply-mode gating when provided.
+                  description: Skips conversations that include the configured Pancake handoff tag.
                   properties:
-                    url:
+                    tagId:
                       type: string
-                    serviceRoleKey:
-                      type: string
+                      description: Pancake conversation tag ID for human handoff.
+                    assigneeIds:
+                      type: array
+                      items:
+                        type: string
+                      description: Optional staff IDs used by handoff tooling.
