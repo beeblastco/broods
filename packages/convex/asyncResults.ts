@@ -4,7 +4,7 @@
  * for the dashboard's "Tasks" view.
  */
 import { v } from "convex/values";
-import { internalMutation, internalQuery } from "../_generated/server";
+import { internalMutation, internalQuery } from "./_generated/server";
 import { asyncResultsFields } from "./schema";
 
 const asyncResultDoc = v.object({

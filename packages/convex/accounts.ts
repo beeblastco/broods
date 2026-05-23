@@ -3,7 +3,7 @@
  * ConvexStorageProvider (via deploy key) and by cherry-coke's org lifecycle.
  */
 import { v } from "convex/values";
-import { internalMutation, internalQuery } from "../_generated/server";
+import { internalMutation, internalQuery } from "./_generated/server";
 import { accountsFields } from "./schema";
 
 const accountDoc = v.object({

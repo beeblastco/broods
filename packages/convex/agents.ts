@@ -3,7 +3,7 @@
  * accountId against the caller-supplied accountId for defence in depth.
  */
 import { v } from "convex/values";
-import { internalMutation, internalQuery } from "../_generated/server";
+import { internalMutation, internalQuery } from "./_generated/server";
 import { agentsFields } from "./schema";
 
 const agentDoc = v.object({
@@ -13,12 +13,12 @@ const agentDoc = v.object({
 });
 
 async function requireAccountOwnsAgent(
-    ctx: { db: { get: (id: import("../_generated/dataModel").Id<"agents">) => Promise<unknown> } },
-    accountId: import("../_generated/dataModel").Id<"accounts">,
-    agentId: import("../_generated/dataModel").Id<"agents">,
+    ctx: { db: { get: (id: import("./_generated/dataModel").Id<"agents">) => Promise<unknown> } },
+    accountId: import("./_generated/dataModel").Id<"accounts">,
+    agentId: import("./_generated/dataModel").Id<"agents">,
 ) {
     const agent = (await ctx.db.get(agentId)) as
-        | (typeof agentsFields & { _id: import("../_generated/dataModel").Id<"agents">; accountId: import("../_generated/dataModel").Id<"accounts"> })
+        | (typeof agentsFields & { _id: import("./_generated/dataModel").Id<"agents">; accountId: import("./_generated/dataModel").Id<"accounts"> })
         | null;
     if (!agent) {
         throw new Error(`Agent not found: ${agentId}`);

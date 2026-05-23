@@ -3,7 +3,7 @@
  * this table only stores pointers and human-readable info.
  */
 import { v } from "convex/values";
-import { internalMutation, internalQuery } from "../_generated/server";
+import { internalMutation, internalQuery } from "./_generated/server";
 import { skillsFields } from "./schema";
 
 const skillDoc = v.object({

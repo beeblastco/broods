@@ -3,7 +3,7 @@
  * conversation's accountId for defence in depth.
  */
 import { v } from "convex/values";
-import { internalMutation, internalQuery } from "../_generated/server";
+import { internalMutation, internalQuery } from "./_generated/server";
 import { conversationsFields } from "./schema";
 
 const conversationDoc = v.object({

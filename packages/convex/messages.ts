@@ -3,7 +3,7 @@
  * are validated on every write so a leaked deploy key cannot cross-tenant.
  */
 import { v } from "convex/values";
-import { internalMutation, internalQuery } from "../_generated/server";
+import { internalMutation, internalQuery } from "./_generated/server";
 import { messagesFields } from "./schema";
 
 const messageDoc = v.object({
