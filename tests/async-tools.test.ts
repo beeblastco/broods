@@ -6,7 +6,7 @@
 import { afterEach, describe, expect, it, mock } from "bun:test";
 import { PutItemCommand, UpdateItemCommand } from "@aws-sdk/client-dynamodb";
 import { jsonSchema, tool, type UserModelMessage } from "ai";
-import { dynamo } from "../functions/_shared/dynamo.ts";
+import { dynamo } from "../functions/_shared/storage/dynamo/client.ts";
 
 process.env.ASYNC_TOOL_RESULT_TABLE_NAME = "async-tool-result";
 

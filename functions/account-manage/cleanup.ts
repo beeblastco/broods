@@ -9,10 +9,10 @@ import {
   type AttributeValue,
   type WriteRequest,
 } from "@aws-sdk/client-dynamodb";
-import type { AccountRecord } from "../_shared/accounts.ts";
-import { listAgents, type AgentRecord } from "../_shared/agents.ts";
+import type { AccountRecord } from "../_shared/storage/index.ts";
+import { getStorage, type AgentRecord } from "../_shared/storage/index.ts";
 import { deleteS3Prefix as deleteBunS3Prefix } from "../_shared/s3.ts";
-import { dynamo } from "../_shared/dynamo.ts";
+import { dynamo } from "../_shared/storage/dynamo/client.ts";
 import { optionalEnv } from "../_shared/env.ts";
 import {
   accountScopedPrefix,
@@ -37,7 +37,7 @@ export async function deleteAccountRuntimeData(account: AccountRecord): Promise<
   const accountPrefix = accountScopedPrefix(account.accountId);
   const [conversations, agents] = await Promise.all([
     scanConversationReferences(accountPrefix),
-    listAgents(account.accountId).catch(() => []),
+    getStorage().agents.list(account.accountId).catch(() => []),
   ]);
   const filesystemNamespaces = resolveFilesystemNamespaces(account, agents, conversations);
 

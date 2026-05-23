@@ -1,3 +1,10 @@
+# Deploy pipeline.
+# `main` = SaaS production: PR CI already validated, skip re-validation and
+#   deploy directly. Inits the private convex-adapter submodule (requires
+#   SUBMODULE_PAT secret).
+# `dev` = OSS / community staging: re-validates (typecheck + test + build)
+#   before deploying. DynamoDB only, no submodule.
+
 name: Deploy
 
 on:
@@ -12,15 +19,6 @@ on:
       - 'sidebar.ts'
       - '.github/workflows/deploy-docs.yaml'
       - '**/*.md'
-  pull_request:
-    paths-ignore:
-      - 'docs/**'
-      - 'static/**'
-      - 'docusaurus.config.ts'
-      - 'sidebar.ts'
-      - '.github/workflows/deploy-docs.yaml'
-      - '**/*.md'
-  create:
   workflow_dispatch:
     inputs:
       stage:
@@ -34,17 +32,19 @@ concurrency:
 
 jobs:
   validate:
-    if: ${{ github.event_name != 'create' || github.event.ref_type == 'branch' }}
+    # main trusts PR CI; everything else (dev, manual dispatch) re-validates.
+    if: ${{ github.ref != 'refs/heads/main' }}
     runs-on: ubuntu-24.04
     permissions:
       contents: read
     env:
-      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
       AWS_REGION: ${{ vars.AWS_REGION }}
       CI: "true"
     steps:
       - name: Checkout repository
         uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+        with:
+          submodules: false
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
@@ -63,7 +63,8 @@ jobs:
 
   deploy:
     needs: validate
-    if: ${{ github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev')) }}
+    # Run if validate succeeded OR validate was skipped (main branch).
+    if: ${{ always() && (needs.validate.result == 'success' || needs.validate.result == 'skipped') && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev'))) }}
     runs-on: ubuntu-24.04
     concurrency:
       group: ${{ github.workflow }}-deploy-${{ github.event_name == 'workflow_dispatch' && inputs.stage || github.ref_name }}
@@ -79,6 +80,7 @@ jobs:
       INPUT_STAGE: ${{ inputs.stage }}
       # Switches behavior between local development and CI environments
       CI: "true"
+      IS_SAAS_BRANCH: ${{ github.ref == 'refs/heads/main' }}
       ACCOUNT_MODEL_PROVIDER: ${{ vars.ACCOUNT_MODEL_PROVIDER || 'google' }}
       ACCOUNT_MODEL_ID: ${{ vars.ACCOUNT_MODEL_ID || 'gemma-4-31b-it' }}
       ACCOUNT_MODEL_OPTIONS_JSON: ${{ vars.ACCOUNT_MODEL_OPTIONS_JSON }}
@@ -141,6 +143,9 @@ jobs:
 
       - name: Checkout repository
         uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+        with:
+          submodules: ${{ env.IS_SAAS_BRANCH == 'true' && 'recursive' || 'false' }}
+          token: ${{ env.IS_SAAS_BRANCH == 'true' && secrets.SUBMODULE_PAT || github.token }}
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6

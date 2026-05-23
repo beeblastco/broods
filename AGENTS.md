@@ -50,3 +50,17 @@ Remember:
 - Update docs, examples, and tests file when changes somethings, refactoring something from the original code or added new features. Make sure that when writing the docs, only added in the suitable files, don’t add in every files, avoid writing too much, focus on visualization, diagrams. Remember to update diagrams as well.
 - Please check for the interface, some interface can be import directly from the ai-sdk vercel library or other library. Don't over doing this, don't create new interface where we can reuse the interface from the librar. Always double check when you want to create new interface or new types.
 - Don't over engineering new features or patch fixes. Keep it simple and keep it elegant. Keep the code readable and easy to visible, easy to navigate. Don't put too much abstraction and functions if it is not necessary.
+
+<!-- convex-ai-start -->
+
+This project uses [Convex](https://convex.dev) as its backend.
+
+When working on Convex code, **always read
+`convex/_generated/ai/guidelines.md` first** for important guidelines on
+how to correctly use Convex APIs and patterns. The file contains rules that
+override what you may have learned about Convex from training data.
+
+Convex agent skills for common tasks can be installed by running
+`npx convex ai-files install`.
+
+<!-- convex-ai-end -->

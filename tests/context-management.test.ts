@@ -3,7 +3,7 @@
  * Cover pruning defaults and compaction threshold behavior.
  */
 
-import { afterEach, describe, expect, it, mock } from "bun:test";
+import { afterAll, afterEach, describe, expect, it, mock } from "bun:test";
 import * as actualAi from "ai";
 
 const ORIGINAL_ENV = { ...process.env };
@@ -30,9 +30,8 @@ mock.module("ai", () => ({
   generateText: generateTextMock,
 }));
 
-mock.module("../functions/_shared/agents.ts", () => ({
-  getAgent: getAgentMock,
-}));
+const { setStorageForTests } = await import("../functions/_shared/storage/index.ts");
+setStorageForTests({ kind: "dynamodb", agents: { getById: getAgentMock } } as never);
 
 afterEach(() => {
   process.env = { ...ORIGINAL_ENV };
@@ -40,6 +39,11 @@ afterEach(() => {
   googleModelMock.mockClear();
   createGoogleMock.mockClear();
   getAgentMock.mockClear();
+  setStorageForTests({ kind: "dynamodb", agents: { getById: getAgentMock } } as never);
+});
+
+afterAll(() => {
+  setStorageForTests(null);
 });
 
 describe("session environment context", () => {

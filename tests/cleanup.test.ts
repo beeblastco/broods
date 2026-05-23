@@ -11,8 +11,8 @@ import {
   ScanCommand,
   type AttributeValue,
 } from "@aws-sdk/client-dynamodb";
-import { dynamo, toAttributeValue } from "../functions/_shared/dynamo.ts";
-import type { AccountRecord } from "../functions/_shared/accounts.ts";
+import { dynamo, toAttributeValue } from "../functions/_shared/storage/dynamo/client.ts";
+import type { AccountRecord } from "../functions/_shared/storage/index.ts";
 import { normalizeFilesystemNamespace } from "../functions/_shared/runtime-keys.ts";
 
 let mockDeleteS3PrefixResult = 0;
@@ -440,7 +440,7 @@ describe("deleteAccountRuntimeData", () => {
     process.env.ACCOUNT_CONFIG_ENCRYPTION_SECRET = "test-secret-32-bytes-long!!";
     dynamo.send = sendMock as never;
 
-    const { encryptAgentConfig } = await import("../functions/_shared/accounts.ts");
+    const { encryptAgentConfig } = await import("../functions/_shared/storage/index.ts");
     const { deleteAccountRuntimeData } = await import("../functions/account-manage/cleanup.ts");
 
     const encryptedConfig = toAttributeValue(encryptAgentConfig({

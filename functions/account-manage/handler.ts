@@ -4,40 +4,21 @@
  */
 
 import type { LambdaFunctionURLEvent } from "aws-lambda";
-import {
-    createAccount,
-    deleteAccount,
-    getAccount,
-    listAccounts,
-    resolveBearerAuth,
-    rotateAccountSecret,
-    toPublicAccount,
-    updateAccount,
-    type AuthContext,
-    type AccountRecord,
-} from "../_shared/accounts.ts";
-import {
-    applyCronJobPatch,
-    createCronJob,
-    deleteCronJob,
-    getCronJob,
-    listCronJobs,
-    updateCronJob,
-    type CronJobRecord,
-} from "../_shared/cron-jobs.ts";
+import { resolveBearerAuth, type AuthContext } from "../_shared/auth.ts";
 import {
     AgentSkillAuthorizationError,
     AgentSkillNotFoundError,
     AgentSubagentNotFoundError,
-    createAgent,
-    deleteAccountAgents,
-    deleteAgent,
-    getAgent,
-    listAgents,
+    applyCronJobPatch,
+    getStorage,
+    normalizeCreateAccountInput,
+    normalizeUpdateAccountInput,
+    toPublicAccount,
     toPublicAgent,
-    updateAgent,
+    type AccountRecord,
     type AgentRecord,
-} from "../_shared/agents.ts";
+    type CronJobRecord,
+} from "../_shared/storage/index.ts";
 import {
     errorResponse,
     jsonResponse,
@@ -79,7 +60,7 @@ export async function handler(event: LambdaFunctionURLEvent): Promise<LambdaResp
         if (method === "POST" && rawPath === "/accounts") {
             await enforceAccountSignupRateLimit(event);
             const body = parseJsonBody(event);
-            const created = await createAccount(body as never);
+            const created = await getStorage().accounts.create(normalizeCreateAccountInput(body));
             return jsonResponse(201, {
                 account: toCreateAccountResponse(created.account),
                 accountSecret: created.accountSecret,
@@ -137,7 +118,7 @@ export async function handler(event: LambdaFunctionURLEvent): Promise<LambdaResp
         }
 
         if (method === "GET" && rawPath === "/accounts") {
-            const accounts = await listAccounts();
+            const accounts = await getStorage().accounts.list();
             return jsonResponse(200, { accounts: accounts.map(toPublicAccount) });
         }
 
@@ -145,7 +126,7 @@ export async function handler(event: LambdaFunctionURLEvent): Promise<LambdaResp
         if (accountMatch?.[1]) {
             const accountId = decodeURIComponent(accountMatch[1]);
             if (method === "GET") {
-                const account = await getAccount(accountId);
+                const account = await getStorage().accounts.getById(accountId);
                 return account
                     ? jsonResponse(200, { account: toPublicAccount(account) })
                     : errorResponse(404, "Account not found");
@@ -156,7 +137,7 @@ export async function handler(event: LambdaFunctionURLEvent): Promise<LambdaResp
             }
 
             if (method === "DELETE") {
-                const account = await getAccount(accountId);
+                const account = await getStorage().accounts.getById(accountId);
                 if (!account) {
                     return errorResponse(404, "Account not found");
                 }
@@ -204,19 +185,20 @@ async function handleCronJobRoute(
     assertCronJobsAvailable();
     const cronJobId = rawCronJobId ? decodeURIComponent(rawCronJobId) : undefined;
 
+    const cronJobs = getStorage().cronJobs;
     if (!cronJobId) {
         if (method === "GET") {
-            const cronJobs = await listCronJobs(accountId);
-            return jsonResponse(200, { cronJobs: cronJobs.map(toCronJobResponse) });
+            const records = await cronJobs.list(accountId);
+            return jsonResponse(200, { cronJobs: records.map(toCronJobResponse) });
         }
         if (method === "POST") {
-            const cronJob = await createCronJob(accountId, parseJsonBody(event) as never, {
+            const cronJob = await cronJobs.create(accountId, parseJsonBody(event) as never, {
                 schedulerGroupName: schedulerGroupName(),
             });
             try {
                 await createCronSchedule(cronJob);
             } catch (err) {
-                await deleteCronJob(accountId, cronJob.cronJobId).catch(() => { });
+                await cronJobs.remove(accountId, cronJob.cronJobId).catch(() => { });
                 throw err;
             }
             return jsonResponse(201, { cronJob: toCronJobResponse(cronJob) });
@@ -225,11 +207,11 @@ async function handleCronJobRoute(
     }
 
     if (method === "GET") {
-        const cronJob = await getCronJob(accountId, cronJobId);
+        const cronJob = await cronJobs.getById(accountId, cronJobId);
         return cronJob ? jsonResponse(200, { cronJob: toCronJobResponse(cronJob) }) : errorResponse(404, "Cron job not found");
     }
     if (method === "PATCH") {
-        const existing = await getCronJob(accountId, cronJobId);
+        const existing = await cronJobs.getById(accountId, cronJobId);
         if (!existing) {
             return errorResponse(404, "Cron job not found");
         }
@@ -237,16 +219,16 @@ async function handleCronJobRoute(
         const patch = parseJsonBody(event);
         const patched = applyCronJobPatch(existing, patch as never);
         await updateCronSchedule(patched);
-        const cronJob = await updateCronJob(accountId, cronJobId, patch as never);
+        const cronJob = await cronJobs.update(accountId, cronJobId, patch as never);
         return cronJob ? jsonResponse(200, { cronJob: toCronJobResponse(cronJob) }) : errorResponse(404, "Cron job not found");
     }
     if (method === "DELETE") {
-        const existing = await getCronJob(accountId, cronJobId);
+        const existing = await cronJobs.getById(accountId, cronJobId);
         if (!existing) {
             return errorResponse(404, "Cron job not found");
         }
         await deleteCronSchedule(existing);
-        const deleted = await deleteCronJob(accountId, cronJobId);
+        const deleted = await cronJobs.remove(accountId, cronJobId);
         return deleted ? jsonResponse(200, { deleted: true }) : errorResponse(404, "Cron job not found");
     }
 
@@ -261,28 +243,29 @@ async function handleAgentRoute(
 ): Promise<LambdaResponse> {
     const agentId = rawAgentId ? decodeURIComponent(rawAgentId) : undefined;
 
+    const agents = getStorage().agents;
     if (!agentId) {
         if (method === "GET") {
-            const agents = await listAgents(accountId);
-            return jsonResponse(200, { agents: agents.map(toPublicAgent) });
+            const records = await agents.list(accountId);
+            return jsonResponse(200, { agents: records.map(toPublicAgent) });
         }
         if (method === "POST") {
-            const agent = await createAgent(accountId, parseJsonBody(event) as never);
+            const agent = await agents.create(accountId, parseJsonBody(event) as never);
             return jsonResponse(201, { agent: toCreateAgentResponse(agent) });
         }
         return errorResponse(405, "Method not allowed", { method, allowedMethods: ["GET", "POST"] });
     }
 
     if (method === "GET") {
-        const agent = await getAgent(accountId, agentId);
+        const agent = await agents.getById(accountId, agentId);
         return agent ? jsonResponse(200, { agent: toPublicAgent(agent) }) : errorResponse(404, "Agent not found");
     }
     if (method === "PATCH") {
-        const agent = await updateAgent(accountId, agentId, parseJsonBody(event) as never);
+        const agent = await agents.update(accountId, agentId, parseJsonBody(event) as never);
         return agent ? jsonResponse(200, { agent: toPublicAgent(agent) }) : errorResponse(404, "Agent not found");
     }
     if (method === "DELETE") {
-        const deleted = await deleteAgent(accountId, agentId);
+        const deleted = await agents.remove(accountId, agentId);
         return deleted ? jsonResponse(200, { deleted: true }) : errorResponse(404, "Agent not found");
     }
 
@@ -330,14 +313,14 @@ async function handleSkillRoute(
 }
 
 async function updateAccountResponse(accountId: string, input: unknown): Promise<LambdaResponse> {
-    const account = await updateAccount(accountId, input as never);
+    const account = await getStorage().accounts.update(accountId, normalizeUpdateAccountInput(input));
     return account
         ? jsonResponse(200, { account: toPublicAccount(account) })
         : errorResponse(404, "Account not found");
 }
 
 async function rotateSecretResponse(accountId: string): Promise<LambdaResponse> {
-    const rotated = await rotateAccountSecret(accountId);
+    const rotated = await getStorage().accounts.rotateSecret(accountId);
     return rotated
         ? jsonResponse(200, {
             account: toPublicAccount(rotated.account),
@@ -349,11 +332,11 @@ async function rotateSecretResponse(accountId: string): Promise<LambdaResponse> 
 async function deleteAccountResponse(account: Extract<AuthContext, { kind: "account" }>["account"]): Promise<LambdaResponse> {
     const [cleanup, agentsDeleted, skillObjectsDeleted, cronJobsDeleted] = await Promise.all([
         deleteAccountRuntimeData(account),
-        deleteAccountAgents(account.accountId),
+        getStorage().agents.removeAllForAccount(account.accountId),
         deleteAccountSkills(account.accountId),
         deleteAccountCronJobs(account.accountId),
     ]);
-    await deleteAccount(account.accountId);
+    await getStorage().accounts.remove(account.accountId);
     return jsonResponse(200, { deleted: true, cleanup: { ...cleanup, agentsDeleted, skillObjectsDeleted, cronJobsDeleted } });
 }
 
@@ -421,10 +404,11 @@ async function deleteAccountCronJobs(accountId: string): Promise<number> {
         throw err;
     }
 
-    const cronJobs = await listCronJobs(accountId);
+    const cronJobsStore = getStorage().cronJobs;
+    const cronJobs = await cronJobsStore.list(accountId);
     await Promise.all(cronJobs.map(async (cronJob) => {
         await deleteCronSchedule(cronJob);
-        await deleteCronJob(accountId, cronJob.cronJobId);
+        await cronJobsStore.remove(accountId, cronJob.cronJobId);
     }));
     return cronJobs.length;
 }

@@ -6,7 +6,7 @@
 import { afterEach, describe, expect, it, mock } from "bun:test";
 import { UpdateItemCommand } from "@aws-sdk/client-dynamodb";
 import type { LambdaFunctionURLEvent } from "aws-lambda";
-import { dynamo } from "../functions/_shared/dynamo.ts";
+import { dynamo } from "../functions/_shared/storage/dynamo/client.ts";
 import {
   enforceAccountSignupRateLimit,
   RateLimitExceededError,

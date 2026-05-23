@@ -12,7 +12,7 @@ import {
   UpdateItemCommand,
   type AttributeValue,
 } from "@aws-sdk/client-dynamodb";
-import { dynamo } from "../functions/_shared/dynamo.ts";
+import { dynamo } from "../functions/_shared/storage/dynamo/client.ts";
 
 const ORIGINAL_ENV = { ...process.env };
 const originalSend = dynamo.send;
@@ -28,9 +28,10 @@ describe("cron job persistence", () => {
   it("creates account-scoped cron job records", async () => {
     process.env.CRON_JOBS_TABLE_NAME = "cron-jobs";
     dynamo.send = sendMock as never;
-    const { createCronJob } = await import("../functions/_shared/cron-jobs.ts");
+    const { getStorage, resetStorageForTests } = await import("../functions/_shared/storage/index.ts");
+    resetStorageForTests();
 
-    const cronJob = await createCronJob("acct_test", {
+    const cronJob = await getStorage().cronJobs.create("acct_test", {
       name: "Daily maintainer",
       agentId: "agent_main",
       prompt: "Run maintenance.",
@@ -57,7 +58,8 @@ describe("cron job persistence", () => {
   it("lists cron jobs by account", async () => {
     process.env.CRON_JOBS_TABLE_NAME = "cron-jobs";
     dynamo.send = sendMock as never;
-    const { listCronJobs } = await import("../functions/_shared/cron-jobs.ts");
+    const { getStorage, resetStorageForTests } = await import("../functions/_shared/storage/index.ts");
+    resetStorageForTests();
     sendMock.mockImplementation(async (command: unknown) => {
       if (command instanceof QueryCommand) {
         return {
@@ -67,7 +69,7 @@ describe("cron job persistence", () => {
       throw new Error("unexpected command");
     });
 
-    const jobs = await listCronJobs("acct_test");
+    const jobs = await getStorage().cronJobs.list("acct_test");
 
     expect(jobs.map((job) => job.cronJobId)).toEqual(["cron_one"]);
     const queryCommand = sendMock.mock.calls[0]?.[0] as QueryCommand;
@@ -78,7 +80,8 @@ describe("cron job persistence", () => {
   it("updates and deletes cron jobs", async () => {
     process.env.CRON_JOBS_TABLE_NAME = "cron-jobs";
     dynamo.send = sendMock as never;
-    const { deleteCronJob, updateCronJob } = await import("../functions/_shared/cron-jobs.ts");
+    const { getStorage, resetStorageForTests } = await import("../functions/_shared/storage/index.ts");
+    resetStorageForTests();
     sendMock.mockImplementation(async (command: unknown) => {
       if (command instanceof UpdateItemCommand) {
         return {
@@ -94,8 +97,8 @@ describe("cron job persistence", () => {
       throw new Error("unexpected command");
     });
 
-    const updated = await updateCronJob("acct_test", "cron_one", { status: "paused" });
-    const deleted = await deleteCronJob("acct_test", "cron_one");
+    const updated = await getStorage().cronJobs.update("acct_test", "cron_one", { status: "paused" });
+    const deleted = await getStorage().cronJobs.remove("acct_test", "cron_one");
 
     expect(updated?.status).toBe("paused");
     expect(deleted).toBe(true);
@@ -106,7 +109,8 @@ describe("cron job persistence", () => {
   it("loads one cron job by account and id", async () => {
     process.env.CRON_JOBS_TABLE_NAME = "cron-jobs";
     dynamo.send = sendMock as never;
-    const { getCronJob } = await import("../functions/_shared/cron-jobs.ts");
+    const { getStorage, resetStorageForTests } = await import("../functions/_shared/storage/index.ts");
+    resetStorageForTests();
     sendMock.mockImplementation(async (command: unknown) => {
       if (command instanceof GetItemCommand) {
         return { Item: cronJobItem("acct_test", "cron_one") };
@@ -114,7 +118,7 @@ describe("cron job persistence", () => {
       throw new Error("unexpected command");
     });
 
-    const job = await getCronJob("acct_test", "cron_one");
+    const job = await getStorage().cronJobs.getById("acct_test", "cron_one");
 
     expect(job?.cronJobId).toBe("cron_one");
     expect(job?.agentId).toBe("agent_main");

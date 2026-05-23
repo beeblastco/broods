@@ -6,7 +6,7 @@
 
 import { InvokeCommand, LambdaClient } from "@aws-sdk/client-lambda";
 import { connect, StringCodec } from "nats";
-import { toRuntimeAgentConfig, type AgentConfig } from "../functions/_shared/accounts.ts";
+import { toRuntimeAgentConfig, type AgentConfig } from "../functions/_shared/storage/index.ts";
 import { streamResponseSubject, type NatsStreamEvent } from "../functions/_shared/nats.ts";
 import { scopedDirectConversationKey, scopedDirectEventId } from "../functions/_shared/runtime-keys.ts";
 import type { DirectInboundEvent } from "../functions/harness-processing/integrations.ts";

@@ -14,7 +14,7 @@ import {
   fromAttributeValue,
   isConditionalCheckFailed,
   toAttributeValue,
-} from "../_shared/dynamo.ts";
+} from "../_shared/storage/dynamo/client.ts";
 import { requireEnv } from "../_shared/env.ts";
 import type { ToolApprovalSummary } from "./harness.ts";
 

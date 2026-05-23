@@ -4,8 +4,8 @@
  */
 
 import type { ModelMessage, SystemModelMessage, UserModelMessage, JSONValue } from "ai";
-import type { AgentConfig } from "../_shared/accounts.ts";
-import { getAgent, type AgentRecord } from "../_shared/agents.ts";
+import type { AgentConfig } from "../_shared/storage/index.ts";
+import { getStorage, type AgentRecord } from "../_shared/storage/index.ts";
 import { logError, logInfo } from "../_shared/log.ts";
 import {
   scopedDirectConversationKey,
@@ -228,7 +228,7 @@ export class SubagentCoordinator {
       throw new Error(`Subagent is not allowed: ${agentId}`);
     }
 
-    const agent = await getAgent(accountId, agentId);
+    const agent = await getStorage().agents.getById(accountId, agentId);
     if (!agent || agent.status !== "active") {
       throw new Error(`Subagent not found: ${agentId}`);
     }

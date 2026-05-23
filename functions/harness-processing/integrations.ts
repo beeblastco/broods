@@ -15,18 +15,14 @@ import {
   userModelMessageSchema,
 } from "ai";
 import type { LambdaFunctionURLEvent } from "aws-lambda";
+import { resolveBearerAuth, type AuthContext } from "../_shared/auth.ts";
 import {
-  getAccount,
-  resolveBearerAuth,
+  getStorage,
   toRuntimeAgentConfig,
-  type AgentConfig,
   type AccountRecord,
-  type AuthContext,
-} from "../_shared/accounts.ts";
-import {
-  getAgent,
+  type AgentConfig,
   type AgentRecord,
-} from "../_shared/agents.ts";
+} from "../_shared/storage/index.ts";
 import type {
   ChannelActions,
   ChannelAdapter,
@@ -138,8 +134,8 @@ export async function routeIncomingEvent(
 
 export function createIncomingEventRouter(options: IntegrationRoutingOptions = {}) {
   const authResolver = options.authResolver ?? resolveBearerAuth;
-  const accountLoader = options.accountLoader ?? getAccount;
-  const agentLoader = options.agentLoader ?? getAgent;
+  const accountLoader = options.accountLoader ?? ((accountId: string) => getStorage().accounts.getById(accountId));
+  const agentLoader = options.agentLoader ?? ((accountId: string, agentId: string) => getStorage().agents.getById(accountId, agentId));
   const directApiEnabled = options.directApiEnabled ?? true;
 
   return async (

@@ -8,7 +8,7 @@ import {
   BatchWriteItemCommand,
   QueryCommand,
 } from "@aws-sdk/client-dynamodb";
-import { dynamo } from "../functions/_shared/dynamo.ts";
+import { dynamo } from "../functions/_shared/storage/dynamo/client.ts";
 import type { ChannelActions } from "../functions/_shared/channels.ts";
 import {
   commands,

@@ -1,40 +1,24 @@
 /**
- * Shared account auth, tenant metadata, and runtime config validation.
- * Keep account storage here; active agent config storage lives in agents.ts.
+ * Agent configuration: types for the per-agent settings object, input
+ * normalization, encryption helpers, patch-merge, and redaction.
+ * Account types and auth live in `./accounts.ts` and `../auth.ts`.
  */
 
-import {
-    DeleteItemCommand,
-    GetItemCommand,
-    PutItemCommand,
-    QueryCommand,
-    ScanCommand,
-    UpdateItemCommand,
-    type AttributeValue,
-} from "@aws-sdk/client-dynamodb";
 import type { JSONSchema7 } from "ai";
-import { createCipheriv, createDecipheriv, createHash, randomBytes, timingSafeEqual } from "node:crypto";
-import {
-    dynamo,
-    isConditionalCheckFailed,
-} from "./dynamo.ts";
-import { optionalEnv, requireEnv } from "./env.ts";
+import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto";
+import { requireEnv } from "../env.ts";
 import {
   accountModelProviderNames,
   isAccountModelProviderName,
   type AccountModelProviderName,
-} from "./providers.ts";
-import { workspaceSandboxLimits } from "./sandbox.ts";
-export type { AccountModelProviderName } from "./providers.ts";
+} from "../providers.ts";
+import { workspaceSandboxLimits } from "../sandbox.ts";
+export type { AccountModelProviderName } from "../providers.ts";
 
-const ACCOUNT_SECRET_PREFIX = "fp_acct_";
-const DEFAULT_ACCOUNT_STATUS = "active";
 const CONFIG_ENCRYPTION_ALGORITHM = "aes-256-gcm";
 const REDACTED_SECRET_VALUE = "********";
-const AGENT_MAX_TURN_LIMIT = 100; // Limit configurate from allowing runaway model/tool loops
-const SESSION_MAX_CONTEXT_LENGTH_LIMIT = 500_000; // Limit configured for session max context length
-
-export type AccountStatus = "active" | "disabled";
+const AGENT_MAX_TURN_LIMIT = 100;
+const SESSION_MAX_CONTEXT_LENGTH_LIMIT = 500_000;
 
 const AGENT_LIFECYCLE_EVENT_NAMES = [
   "agent.started",
@@ -48,16 +32,6 @@ const AGENT_LIFECYCLE_EVENT_NAMES = [
   "subagent.task.started",
   "subagent.task.finished",
 ] as const satisfies readonly AgentLifecycleEventName[];
-
-export interface AccountRecord {
-  accountId: string;
-  username: string;
-  description?: string;
-  secretHash: string;
-  status: AccountStatus;
-  createdAt: string;
-  updatedAt: string;
-}
 
 export interface AgentConfig {
   agent?: AgentBehaviorConfig;
@@ -254,19 +228,6 @@ export interface AgentPancakeChannelConfig {
   [key: string]: unknown;
 }
 
-export type AuthContext =
-  | { kind: "admin" }
-  | { kind: "account"; account: AccountRecord };
-
-export interface PublicAccountRecord {
-  accountId: string;
-  username: string;
-  description?: string;
-  status: AccountStatus;
-  createdAt: string;
-  updatedAt: string;
-}
-
 interface EncryptedAgentConfig {
     encrypted: true;
     algorithm: typeof CONFIG_ENCRYPTION_ALGORITHM;
@@ -275,227 +236,7 @@ interface EncryptedAgentConfig {
     ciphertext: string;
 }
 
-export interface CreateAccountInput {
-  username: string;
-  description?: string;
-}
-
-export interface UpdateAccountInput {
-  username?: string;
-  description?: string | null;
-}
-
 type AgentConfigPatch = Record<string, unknown>;
-
-export function createAccountId(): string {
-  return `acct_${randomBytes(12).toString("hex")}`;
-}
-
-export function createAccountSecret(): string {
-  return `${ACCOUNT_SECRET_PREFIX}${randomBytes(32).toString("base64url")}`;
-}
-
-export function hashAccountSecret(secret: string): string {
-  return createHash("sha256").update(secret).digest("hex");
-}
-
-export function extractBearerToken(authorization: string | undefined): string | null {
-  if (!authorization) {
-    return null;
-  }
-
-  const [scheme, token, ...rest] = authorization.trim().split(/\s+/);
-  if (rest.length > 0 || !scheme || !token || scheme.toLowerCase() !== "bearer") {
-    return null;
-  }
-
-  return token;
-}
-
-export async function resolveBearerAuth(headers: Record<string, string>): Promise<AuthContext | null> {
-  const token = extractBearerToken(headers.authorization);
-  if (!token) {
-    return null;
-  }
-
-  const adminSecret = optionalEnv("ADMIN_ACCOUNT_SECRET");
-  if (adminSecret && timingSafeStringEqual(token, adminSecret)) {
-    return { kind: "admin" };
-  }
-
-  const account = await getAccountBySecret(token);
-  if (!account || account.status !== "active") {
-    return null;
-  }
-
-  return { kind: "account", account };
-}
-
-export async function createAccount(input: CreateAccountInput): Promise<{
-  account: AccountRecord;
-  accountSecret: string;
-}> {
-  const normalizedInput = normalizeCreateAccountInput(input);
-  const accountId = createAccountId();
-  const accountSecret = createAccountSecret();
-  const now = new Date().toISOString();
-  const account: AccountRecord = {
-    accountId,
-    username: normalizedInput.username,
-    ...(normalizedInput.description ? { description: normalizedInput.description } : {}),
-    secretHash: hashAccountSecret(accountSecret),
-    status: DEFAULT_ACCOUNT_STATUS,
-    createdAt: now,
-    updatedAt: now,
-  };
-
-  try {
-    await dynamo.send(new PutItemCommand({
-      TableName: accountConfigsTableName(),
-      Item: accountToItem(account),
-      ConditionExpression: "attribute_not_exists(accountId)",
-    }));
-  } catch (err) {
-    if (isConditionalCheckFailed(err)) {
-      return createAccount(input);
-    }
-    throw err;
-  }
-
-  return { account, accountSecret };
-}
-
-export async function getAccount(accountId: string): Promise<AccountRecord | null> {
-  const result = await dynamo.send(new GetItemCommand({
-    TableName: accountConfigsTableName(),
-    Key: { accountId: { S: accountId } },
-    ConsistentRead: true,
-  }));
-
-  return result.Item ? itemToAccount(result.Item) : null;
-}
-
-export async function getAccountBySecret(secret: string): Promise<AccountRecord | null> {
-  const result = await dynamo.send(new QueryCommand({
-    TableName: accountConfigsTableName(),
-    IndexName: accountSecretIndexName(),
-    KeyConditionExpression: "secretHash = :secretHash",
-    ExpressionAttributeValues: {
-      ":secretHash": { S: hashAccountSecret(secret) },
-    },
-    Limit: 1,
-  }));
-
-  const item = result.Items?.[0];
-  return item ? itemToAccount(item) : null;
-}
-
-export async function listAccounts(): Promise<AccountRecord[]> {
-  const result = await dynamo.send(new ScanCommand({
-    TableName: accountConfigsTableName(),
-    ConsistentRead: true,
-  }));
-
-  return (result.Items ?? [])
-    .map(itemToAccount)
-    .filter((account): account is AccountRecord => account !== null);
-}
-
-export async function updateAccount(
-    accountId: string,
-    input: UpdateAccountInput,
-): Promise<AccountRecord | null> {
-    const normalizedInput = normalizeUpdateAccountInput(input);
-    const existing = await getAccount(accountId);
-    if (!existing) {
-        return null;
-    }
-
-    const setExpressions = [
-        "updatedAt = :updatedAt",
-        ...(normalizedInput.username !== undefined ? ["username = :username"] : []),
-        ...(normalizedInput.description !== undefined && normalizedInput.description !== null
-            ? ["description = :description"]
-            : []),
-    ];
-    const removeExpressions = normalizedInput.description === null ? ["description"] : [];
-    const result = await dynamo.send(new UpdateItemCommand({
-        TableName: accountConfigsTableName(),
-        Key: { accountId: { S: accountId } },
-        UpdateExpression: [
-            `SET ${setExpressions.join(", ")}`,
-            ...(removeExpressions.length > 0 ? [`REMOVE ${removeExpressions.join(", ")}`] : []),
-        ].join(" "),
-        ConditionExpression: "attribute_exists(accountId)",
-        ExpressionAttributeValues: {
-            ":updatedAt": { S: new Date().toISOString() },
-            ...(normalizedInput.username !== undefined ? { ":username": { S: normalizedInput.username } } : {}),
-            ...(normalizedInput.description !== undefined && normalizedInput.description !== null
-                ? { ":description": { S: normalizedInput.description } }
-                : {}),
-        },
-        ReturnValues: "ALL_NEW",
-    })).catch((err) => {
-        if (isConditionalCheckFailed(err)) {
-            return null;
-        }
-        throw err;
-    });
-
-    return result?.Attributes ? itemToAccount(result.Attributes) : null;
-}
-
-export async function rotateAccountSecret(accountId: string): Promise<{
-  account: AccountRecord;
-  accountSecret: string;
-} | null> {
-  const accountSecret = createAccountSecret();
-  const result = await dynamo.send(new UpdateItemCommand({
-    TableName: accountConfigsTableName(),
-    Key: { accountId: { S: accountId } },
-    UpdateExpression: "SET secretHash = :secretHash, updatedAt = :updatedAt",
-    ConditionExpression: "attribute_exists(accountId)",
-    ExpressionAttributeValues: {
-      ":secretHash": { S: hashAccountSecret(accountSecret) },
-      ":updatedAt": { S: new Date().toISOString() },
-    },
-    ReturnValues: "ALL_NEW",
-  })).catch((err) => {
-    if (isConditionalCheckFailed(err)) {
-      return null;
-    }
-    throw err;
-  });
-
-  const account = result?.Attributes ? itemToAccount(result.Attributes) : null;
-  return account ? { account, accountSecret } : null;
-}
-
-export async function deleteAccount(accountId: string): Promise<boolean> {
-  const result = await dynamo.send(new DeleteItemCommand({
-    TableName: accountConfigsTableName(),
-    Key: { accountId: { S: accountId } },
-    ConditionExpression: "attribute_exists(accountId)",
-  })).catch((err) => {
-    if (isConditionalCheckFailed(err)) {
-      return false;
-    }
-    throw err;
-  });
-
-  return result !== false;
-}
-
-export function toPublicAccount(account: AccountRecord): PublicAccountRecord {
-  return {
-    accountId: account.accountId,
-    username: account.username,
-    ...(account.description ? { description: account.description } : {}),
-    status: account.status,
-    createdAt: account.createdAt,
-    updatedAt: account.updatedAt,
-  };
-}
 
 export function toRuntimeAgentConfig(config: AgentConfig): AgentConfig {
   const {
@@ -554,47 +295,6 @@ export function normalizeAgentConfigPatch(value: unknown): AgentConfigPatch {
 
   validateConfigPatch(value, "config");
   return value;
-}
-
-function normalizeCreateAccountInput(value: unknown): Required<Pick<CreateAccountInput, "username">> & {
-  description?: string;
-} {
-  if (!isPlainObject(value)) {
-    throw new Error("Request body must include username");
-  }
-
-  const username = normalizeRequiredString(value.username, "username");
-  const description = normalizeOptionalString(value.description, "description");
-  if ("config" in value) {
-    throw new Error("Agent config is created through /accounts/me/agents");
-  }
-  return {
-    username,
-    ...(description ? { description } : {}),
-  };
-}
-
-function normalizeUpdateAccountInput(value: UpdateAccountInput): UpdateAccountInput {
-  if (!isPlainObject(value)) {
-    throw new Error("Request body must be an object");
-  }
-  if ("config" in value) {
-    throw new Error("Agent config must be updated through /accounts/me/agents/{agentId}");
-  }
-
-  const normalized = {
-    ...(value.username !== undefined
-      ? { username: normalizeRequiredString(value.username, "username") }
-      : {}),
-    ...(value.description !== undefined
-      ? { description: value.description === null ? null : normalizeOptionalString(value.description, "description") }
-      : {}),
-  };
-  if (Object.keys(normalized).length === 0) {
-    throw new Error("Request body must include username or description");
-  }
-
-  return normalized;
 }
 
 function normalizeChannelsConfig(value: unknown): void {
@@ -1136,54 +836,6 @@ function normalizePancakeConfig(value: unknown): void {
   }
 }
 
-function accountConfigsTableName(): string {
-  return requireEnv("ACCOUNT_CONFIGS_TABLE_NAME");
-}
-
-function accountSecretIndexName(): string {
-  return optionalEnv("ACCOUNT_SECRET_INDEX_NAME") ?? "SecretHashIndex";
-}
-
-function accountToItem(account: AccountRecord): Record<string, AttributeValue> {
-  return {
-    accountId: { S: account.accountId },
-    username: { S: account.username },
-    ...(account.description ? { description: { S: account.description } } : {}),
-    secretHash: { S: account.secretHash },
-    status: { S: account.status },
-    createdAt: { S: account.createdAt },
-    updatedAt: { S: account.updatedAt },
-  };
-}
-
-function itemToAccount(item: Record<string, AttributeValue>): AccountRecord | null {
-  const accountId = item.accountId?.S;
-  const username = item.username?.S ?? accountId;
-  const description = item.description?.S;
-  const secretHash = item.secretHash?.S;
-  const status = item.status?.S;
-  const createdAt = item.createdAt?.S;
-  const updatedAt = item.updatedAt?.S;
-
-  if (!accountId || !username || !secretHash || !isAccountStatus(status) || !createdAt || !updatedAt) {
-    return null;
-  }
-
-  return {
-    accountId,
-    username,
-    ...(description ? { description } : {}),
-    secretHash,
-    status,
-    createdAt,
-    updatedAt,
-  };
-}
-
-function isAccountStatus(value: string | undefined): value is AccountStatus {
-  return value === "active" || value === "disabled";
-}
-
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return Boolean(value && typeof value === "object" && !Array.isArray(value));
 }
@@ -1275,13 +927,6 @@ function assertOptionalNumberArray(value: unknown, name: string): void {
   if (!Array.isArray(value) || !value.every((entry) => Number.isFinite(entry) && typeof entry === "number")) {
     throw new Error(`${name} must be an array of numbers`);
   }
-}
-
-function timingSafeStringEqual(actual: string, expected: string): boolean {
-  const actualBytes = Buffer.from(actual);
-  const expectedBytes = Buffer.from(expected);
-
-  return actualBytes.length === expectedBytes.length && timingSafeEqual(actualBytes, expectedBytes);
 }
 
 export function decodeStoredAgentConfig(value: unknown): AgentConfig {

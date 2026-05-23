@@ -10,7 +10,7 @@ import {
   fromAttributeValue,
   isConditionalCheckFailed,
   toAttributeValue,
-} from "../functions/_shared/dynamo.ts";
+} from "../functions/_shared/storage/dynamo/client.ts";
 
 describe("dynamo helpers", () => {
   it("exports a shared DynamoDB client", () => {

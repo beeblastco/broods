@@ -4,7 +4,7 @@
  */
 
 import { pruneMessages, type ModelMessage } from "ai";
-import type { AgentConfig } from "../_shared/accounts.ts";
+import type { AgentConfig } from "../_shared/storage/index.ts";
 
 export function pruneSessionMessages(messages: ModelMessage[], agentConfig: AgentConfig): ModelMessage[] {
   const approvalResume = hasPendingToolApprovalResponse(messages);

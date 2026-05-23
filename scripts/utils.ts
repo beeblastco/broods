@@ -5,7 +5,7 @@
 
 import { readFileSync } from "node:fs";
 
-import type { AgentConfig } from "../functions/_shared/accounts.ts";
+import type { AgentConfig } from "../functions/_shared/storage/index.ts";
 import { DEFAULT_SYSTEM_PROMPT } from "../functions/_shared/.generated/system-prompt.ts";
 import {
   accountModelProviderNames,

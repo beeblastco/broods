@@ -8,7 +8,7 @@ import {
   type AgentConfig,
   type AccountModelProviderName,
   type AgentToolConfig,
-} from "../../_shared/accounts.ts";
+} from "../../_shared/storage/index.ts";
 import type { Session } from "../session.ts";
 import type { AsyncToolModeMap, RunAsyncToolDispatch } from "../async-tools.ts";
 import filesystemTool from "./filesystem.tool.ts";

@@ -6,19 +6,17 @@
 import { ScanCommand } from "@aws-sdk/client-dynamodb";
 import { afterEach, describe, expect, it, mock } from "bun:test";
 import {
-  listAccounts,
+  getStorage,
   mergeAgentConfig,
   normalizeAgentConfig,
+  normalizeUpdateAccountInput,
   toPublicAccount,
-  toRuntimeAgentConfig,
-  updateAccount,
-  type AccountRecord,
-} from "../functions/_shared/accounts.ts";
-import {
   toPublicAgent,
+  toRuntimeAgentConfig,
+  type AccountRecord,
   type AgentRecord,
-} from "../functions/_shared/agents.ts";
-import { dynamo } from "../functions/_shared/dynamo.ts";
+} from "../functions/_shared/storage/index.ts";
+import { dynamo } from "../functions/_shared/storage/dynamo/client.ts";
 
 const ORIGINAL_ENV = { ...process.env };
 const originalSend = dynamo.send;
@@ -758,7 +756,7 @@ describe("agent config", () => {
   });
 
   it("rejects runtime config updates on account records", async () => {
-    await expect(updateAccount("acct_test", { config: { model: { provider: "google" } } } as never)).rejects.toThrow(
+    expect(() => normalizeUpdateAccountInput({ config: { model: { provider: "google" } } } as never)).toThrow(
       "Agent config must be updated through /accounts/me/agents/{agentId}",
     );
   });
@@ -858,7 +856,9 @@ describe("agent config", () => {
       throw new Error("unexpected command");
     });
 
-    await expect(listAccounts()).resolves.toEqual([]);
+    const { resetStorageForTests } = await import("../functions/_shared/storage/index.ts");
+    resetStorageForTests();
+    expect(getStorage().accounts.list()).resolves.toEqual([]);
 
     const scanCommand = sendMock.mock.calls[0]?.[0];
     expect(scanCommand).toBeInstanceOf(ScanCommand);

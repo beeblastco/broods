@@ -15,7 +15,7 @@ import {
   fromAttributeValue,
   isConditionalCheckFailed,
   toAttributeValue,
-} from "../_shared/dynamo.ts";
+} from "../_shared/storage/dynamo/client.ts";
 import { requireEnv } from "../_shared/env.ts";
 
 const ASYNC_TOOL_RESULT_TABLE_NAME = requireEnv("ASYNC_TOOL_RESULT_TABLE_NAME");

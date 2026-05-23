@@ -8,16 +8,9 @@ import type { ToolModelMessage, JSONValue, UserModelMessage } from "ai";
 import type { LambdaFunctionURLEvent } from "aws-lambda";
 import { formatChannelErrorText } from "../_shared/channels.ts";
 import { executeCommand } from "../_shared/commands.ts";
-import { toRuntimeAgentConfig } from "../_shared/accounts.ts";
-import {
-  getCronJob,
-  markCronJobCompleted,
-  markCronJobFailed,
-  markCronJobStarted,
-  type CronJobRecord,
-} from "../_shared/cron-jobs.ts";
+import { toRuntimeAgentConfig } from "../_shared/storage/index.ts";
+import { getStorage, type CronJobRecord } from "../_shared/storage/index.ts";
 import { booleanEnv, requireEnv } from "../_shared/env.ts";
-import { getAgent } from "../_shared/agents.ts";
 import { jsonResponse } from "../_shared/http.ts";
 import { logError, logInfo } from "../_shared/log.ts";
 import { LiveNatsPublisher, type NatsPublisher } from "../_shared/nats.ts";
@@ -131,7 +124,8 @@ export async function handler(
  * Handle scheduled cron jobs invoked by EventBridge Scheduler.
  */
 async function handleScheduledCronJob(event: CronJobInvocation): Promise<void> {
-  const job = await getCronJob(event.accountId, event.cronJobId);
+  const cronJobs = getStorage().cronJobs;
+  const job = await cronJobs.getById(event.accountId, event.cronJobId);
   if (!job) {
     logInfo("Cron job skipped because it no longer exists", {
       accountId: event.accountId,
@@ -147,7 +141,7 @@ async function handleScheduledCronJob(event: CronJobInvocation): Promise<void> {
     return;
   }
 
-  await markCronJobStarted(job.accountId, job.cronJobId);
+  await cronJobs.markStarted(job.accountId, job.cronJobId);
 
   try {
     const result = await startScheduledAgentRun(job);
@@ -158,7 +152,7 @@ async function handleScheduledCronJob(event: CronJobInvocation): Promise<void> {
       eventId: result.eventId,
       conversationKey: result.conversationKey,
     });
-    await markCronJobCompleted(job.accountId, job.cronJobId);
+    await cronJobs.markCompleted(job.accountId, job.cronJobId);
   } catch (err) {
     const error = err instanceof Error ? err.message : String(err);
     logError("Cron agent run failed", {
@@ -167,7 +161,7 @@ async function handleScheduledCronJob(event: CronJobInvocation): Promise<void> {
       agentId: job.agentId,
       error,
     });
-    await markCronJobFailed(job.accountId, job.cronJobId, error);
+    await cronJobs.markFailed(job.accountId, job.cronJobId, error);
     throw err;
   }
 }
@@ -198,7 +192,7 @@ async function handleAsyncToolCompletionRequest(event: AsyncToolCompletionInboun
   }
 
   // Check if agent is valid
-  const agent = await getAgent(event.accountId, agentId);
+  const agent = await getStorage().agents.getById(event.accountId, agentId);
   if (!agent || agent.status !== "active") {
     return jsonResponse(404, { error: "Agent not found" });
   }
@@ -722,7 +716,7 @@ async function startScheduledAgentRun(job: CronJobRecord): Promise<{ eventId: st
 }
 
 async function createCronDirectEvent(job: CronJobRecord): Promise<DirectInboundEvent> {
-  const agent = await getAgent(job.accountId, job.agentId);
+  const agent = await getStorage().agents.getById(job.accountId, job.agentId);
   if (!agent || agent.status !== "active") {
     throw new Error(`Agent not found: ${job.agentId}`);
   }

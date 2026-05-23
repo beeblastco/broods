@@ -14,7 +14,7 @@ import {
   type ToolApprovalRequestOutput,
   type ToolSet,
 } from "ai";
-import type { AgentConfig } from "../_shared/accounts.ts";
+import type { AgentConfig } from "../_shared/storage/index.ts";
 import { logError, logInfo } from "../_shared/log.ts";
 import {
   modelOutputFromModelConfig,

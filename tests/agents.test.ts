@@ -5,7 +5,7 @@
 
 import { afterEach, describe, expect, it, mock } from "bun:test";
 import { DeleteItemCommand, GetItemCommand, QueryCommand, type AttributeValue } from "@aws-sdk/client-dynamodb";
-import { dynamo, toAttributeValue } from "../functions/_shared/dynamo.ts";
+import { dynamo, toAttributeValue } from "../functions/_shared/storage/dynamo/client.ts";
 
 const ORIGINAL_ENV = { ...process.env };
 const originalSend = dynamo.send;
@@ -22,8 +22,8 @@ describe("agent persistence", () => {
     process.env.AGENT_CONFIGS_TABLE_NAME = "agent-configs";
     process.env.ACCOUNT_CONFIG_ENCRYPTION_SECRET = "test-secret";
     dynamo.send = sendMock as never;
-    const { validateAgentSubagentIds } = await import("../functions/_shared/agents.ts");
-    const { encryptAgentConfig } = await import("../functions/_shared/accounts.ts");
+    const { validateAgentSubagentIds } = await import("../functions/_shared/storage/index.ts");
+    const { encryptAgentConfig } = await import("../functions/_shared/storage/index.ts");
 
     sendMock.mockImplementation(async (command: unknown) => {
       if (command instanceof GetItemCommand) {
@@ -50,8 +50,8 @@ describe("agent persistence", () => {
     process.env.AGENT_CONFIGS_TABLE_NAME = "agent-configs";
     process.env.ACCOUNT_CONFIG_ENCRYPTION_SECRET = "test-secret";
     dynamo.send = sendMock as never;
-    const { AgentSubagentNotFoundError } = await import("../functions/_shared/agents.ts");
-    const { encryptAgentConfig } = await import("../functions/_shared/accounts.ts");
+    const { AgentSubagentNotFoundError } = await import("../functions/_shared/storage/index.ts");
+    const { encryptAgentConfig } = await import("../functions/_shared/storage/index.ts");
 
     sendMock.mockImplementation(async (command: unknown) => {
       if (command instanceof GetItemCommand) {
@@ -84,8 +84,9 @@ describe("agent persistence", () => {
     process.env.AGENT_CONFIGS_TABLE_NAME = "agent-configs";
     process.env.ACCOUNT_CONFIG_ENCRYPTION_SECRET = "test-secret";
     dynamo.send = sendMock as never;
-    const { deleteAccountAgents } = await import("../functions/_shared/agents.ts");
-    const { encryptAgentConfig } = await import("../functions/_shared/accounts.ts");
+    const { getStorage, resetStorageForTests } = await import("../functions/_shared/storage/index.ts");
+    resetStorageForTests();
+    const { encryptAgentConfig } = await import("../functions/_shared/storage/index.ts");
     const encryptedConfig = toAttributeValue(encryptAgentConfig({}));
     const pages = [
       {
@@ -125,7 +126,7 @@ describe("agent persistence", () => {
       throw new Error("unexpected command");
     });
 
-    await expect(deleteAccountAgents("acct_test")).resolves.toBe(3);
+    await expect(getStorage().agents.removeAllForAccount("acct_test")).resolves.toBe(3);
 
     const queryCommands = sendMock.mock.calls
       .map(([command]) => command)

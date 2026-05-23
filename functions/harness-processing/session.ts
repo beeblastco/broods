@@ -21,15 +21,15 @@ import {
   systemModelMessageSchema,
 } from "ai";
 import { DEFAULT_SYSTEM_PROMPT } from "../_shared/.generated/system-prompt.ts";
-import type { AgentConfig } from "../_shared/accounts.ts";
-import { getAgent } from "../_shared/agents.ts";
+import type { AgentConfig } from "../_shared/storage/index.ts";
+import { getStorage } from "../_shared/storage/index.ts";
 import { isMissingS3Error, readS3Text } from "../_shared/s3.ts";
 import {
   dynamo,
   fromAttributeValue,
   isConditionalCheckFailed,
   toAttributeValue,
-} from "../_shared/dynamo.ts";
+} from "../_shared/storage/dynamo/client.ts";
 import { requireEnv } from "../_shared/env.ts";
 import {
   conversationLeaseKey,
@@ -504,7 +504,7 @@ export class Session {
     if (!this.subagentMetadataPromise) {
       this.subagentMetadataPromise = Promise.all(
         (this.agentConfig.subagent.allowed ?? []).map(async (agentId) => {
-          const agent = await getAgent(this.accountId!, agentId);
+          const agent = await getStorage().agents.getById(this.accountId!, agentId);
           if (!agent || agent.status !== "active") {
             return null;
           }

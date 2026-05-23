@@ -5,7 +5,7 @@
 
 import { generateText, type ModelMessage, type SystemModelMessage } from "ai";
 import { DEFAULT_COMPACTION_PROMPT } from "../_shared/.generated/compaction-prompt.ts";
-import type { AgentConfig } from "../_shared/accounts.ts";
+import type { AgentConfig } from "../_shared/storage/index.ts";
 import { logInfo } from "../_shared/log.ts";
 import { modelSettingsFromModelConfig, resolveConfiguredModel } from "./provider.ts";
 import { hasPendingToolApprovalResponse, stripReasoningFromMessages } from "./pruning.ts";

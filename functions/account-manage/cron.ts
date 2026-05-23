@@ -10,7 +10,7 @@ import {
   SchedulerClient,
   UpdateScheduleCommand,
 } from "@aws-sdk/client-scheduler";
-import type { CronJobRecord } from "../_shared/cron-jobs.ts";
+import type { CronJobRecord } from "../_shared/storage/index.ts";
 import { optionalEnv, requireEnv } from "../_shared/env.ts";
 
 const scheduler = new SchedulerClient({ region: process.env.AWS_REGION });

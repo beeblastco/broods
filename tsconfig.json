@@ -30,5 +30,10 @@
     "tests/**/*.ts",
     "examples/**/*.ts",
     "sst-env.d.ts"
+  ],
+  "exclude": [
+    "functions/_shared/storage/convex/**",
+    "convex/**",
+    "node_modules"
   ]
 }
