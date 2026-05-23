@@ -1,3 +1,7 @@
+# CI for community / OSS builds (PRs + non-main pushes).
+# Skips the private convex-adapter submodule — DynamoDB path only.
+# SaaS validation runs in deploy.yaml on main.
+
 name: CI
 
 on:
@@ -28,8 +32,6 @@ jobs:
     env:
       AWS_REGION: ${{ vars.AWS_REGION }}
     steps:
-      # Community / non-main builds skip the private convex-adapter submodule.
-      # Only `main` (SaaS) needs it; the DDB build path runs cleanly without.
       - name: Checkout repository
         uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
         with:
