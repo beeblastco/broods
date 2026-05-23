@@ -190,6 +190,14 @@ export const remove = internalMutation({
             await ctx.db.delete(result._id);
         }
 
+        const cronJobs = await ctx.db
+            .query("cronJobs")
+            .withIndex("by_accountId", (q) => q.eq("accountId", accountId))
+            .collect();
+        for (const cronJob of cronJobs) {
+            await ctx.db.delete(cronJob._id);
+        }
+
         await ctx.db.delete(accountId);
 
         return null;

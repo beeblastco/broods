@@ -184,6 +184,38 @@ export const asyncResultsFields = {
     updatedAt: v.number(),
 };
 
+/**
+ * Per-account scheduled agent runs. Mirrors filthy-panty's CronJobRecord
+ * (functions/_shared/cron-jobs.ts) so the SaaS dashboard can manage them
+ * directly via Convex live queries. The schedulerName / schedulerGroupName
+ * are still the AWS EventBridge Scheduler identifiers — Convex stores them
+ * for visibility but filthy-panty Lambda is what actually invokes EBS.
+ */
+export const cronJobsFields = {
+    accountId: v.id("accounts"),
+    name: v.string(),
+    description: v.optional(v.string()),
+    agentId: v.id("agents"),
+    prompt: v.string(),
+    conversationKey: v.optional(v.string()),
+    scheduleExpression: v.string(),
+    timezone: v.optional(v.string()),
+    status: v.union(v.literal("active"), v.literal("paused")),
+    schedulerName: v.string(),
+    schedulerGroupName: v.string(),
+    lastInvokedAt: v.optional(v.number()),
+    lastStatus: v.optional(
+        v.union(
+            v.literal("started"),
+            v.literal("completed"),
+            v.literal("failed"),
+        ),
+    ),
+    lastError: v.optional(v.string()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+};
+
 export default defineSchema({
     users: defineTable(usersFields)
         .index("by_authId", ["authId"])
@@ -229,4 +261,8 @@ export default defineSchema({
     asyncResults: defineTable(asyncResultsFields)
         .index("by_accountId", ["accountId"])
         .index("by_eventId", ["eventId"]),
+    cronJobs: defineTable(cronJobsFields)
+        .index("by_accountId", ["accountId"])
+        .index("by_accountId_and_status", ["accountId", "status"])
+        .index("by_schedulerName", ["schedulerName"]),
 });
