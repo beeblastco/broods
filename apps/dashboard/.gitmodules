@@ -1,3 +1,3 @@
-[submodule "convex/backend"]
-	path = convex/backend
+[submodule "convex/convexFilthyCherry"]
+	path = convex/convexFilthyCherry
 	url = https://github.com/beeblastco/convex-filthy-cherry.git

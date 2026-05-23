@@ -37,7 +37,7 @@ export const provision = action({
         }
 
         const existing = await ctx.runQuery(
-            internal.backend.accounts.getByOrgId,
+            internal.convexFilthyCherry.accounts.getByOrgId,
             { orgId: orgId },
         );
         if (existing) {
@@ -48,7 +48,7 @@ export const provision = action({
 
         const { secret, secretHash } = generateAccountSecret();
         const accountId = await ctx.runMutation(
-            internal.backend.accounts.create,
+            internal.convexFilthyCherry.accounts.create,
             {
                 orgId: orgId,
                 username: org.slug,
@@ -77,7 +77,7 @@ export const rotateSecret = action({
         }
 
         const account = await ctx.runQuery(
-            internal.backend.accounts.getByOrgId,
+            internal.convexFilthyCherry.accounts.getByOrgId,
             { orgId: orgId },
         );
         if (!account) {
@@ -85,7 +85,7 @@ export const rotateSecret = action({
         }
 
         const { secret, secretHash } = generateAccountSecret();
-        await ctx.runMutation(internal.backend.accounts.update, {
+        await ctx.runMutation(internal.convexFilthyCherry.accounts.update, {
             accountId: account._id,
             secretHash: secretHash,
         });

@@ -1,6 +1,6 @@
 import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
-import { backendTables } from "./backend/schema";
+import { backendTables } from "./convexFilthyCherry/schema";
 
 /**
  * Field definitions for the users table.
