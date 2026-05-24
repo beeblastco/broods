@@ -43,6 +43,11 @@ const sidebars: SidebarsConfig = {
           label: 'External Tool',
         },
         {
+          type: 'doc',
+          id: 'skills',
+          label: 'Skills',
+        },
+        {
           type: 'category',
           label: 'Channels',
           collapsed: true,
