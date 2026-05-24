@@ -9,6 +9,11 @@ const ENABLE_DIRECT_API = parseBooleanEnv("ENABLE_DIRECT_API", false);
 const ENABLE_WEBSOCKET = parseBooleanEnv("ENABLE_WEBSOCKET", false);
 const SANDBOX_WORKSPACE_MOUNT_PATH = "/mnt/workspaces";
 const NATS_URL = process.env.NATS_URL?.trim();
+// Production runs the Convex storage provider. Other stages stay on
+// DynamoDB. CONVEX_URL + CONVEX_DEPLOY_KEY are set by the deploy workflow only
+// for the main branch.
+const CONVEX_URL = process.env.CONVEX_URL?.trim();
+const CONVEX_DEPLOY_KEY = process.env.CONVEX_DEPLOY_KEY?.trim();
 
 if (ENABLE_WEBSOCKET && !NATS_URL) {
   throw new Error("NATS_URL must be set when ENABLE_WEBSOCKET=true");
@@ -135,6 +140,22 @@ export default $config({
     const aws = await import("@pulumi/aws");
     const stage = $app.stage;
     const region = awsRegion();
+    // Production = SaaS = Convex storage. Other stages = DynamoDB (default).
+    // Async tools, dedupe, conversations still rely on DDB until those modules
+    // are lifted into the StorageProvider abstraction in a follow-up.
+    const isProduction = stage === "production";
+    if (isProduction && (!CONVEX_URL || !CONVEX_DEPLOY_KEY)) {
+      throw new Error(
+        "Production stage requires CONVEX_URL and CONVEX_DEPLOY_KEY env vars",
+      );
+    }
+    const storageEnv: Record<string, string> = isProduction
+      ? {
+          STORAGE_PROVIDER: "convex",
+          CONVEX_URL: CONVEX_URL!,
+          CONVEX_DEPLOY_KEY: CONVEX_DEPLOY_KEY!,
+        }
+      : { STORAGE_PROVIDER: "dynamodb" };
     const names = {
       conversations: resourceName("conversations", stage, region),
       processedEvents: resourceName("processed-events", stage, region),
@@ -543,6 +564,7 @@ export default $config({
       },
       logging: { format: "json", retention: "1 month" },
       environment: {
+        ...storageEnv,
         CONVERSATIONS_TABLE_NAME: conversationsTable.name,
         PROCESSED_EVENTS_TABLE_NAME: processedEventsTable.name,
         ASYNC_AGENT_RESULT_TABLE_NAME: asyncAgentResultTable.name,
@@ -689,6 +711,7 @@ export default $config({
       },
       logging: { format: "json", retention: "1 month" },
       environment: {
+        ...storageEnv,
         ACCOUNT_CONFIGS_TABLE_NAME: accountConfigsTable.name,
         AGENT_CONFIGS_TABLE_NAME: agentConfigsTable.name,
         ACCOUNT_SECRET_INDEX_NAME: "SecretHashIndex",
