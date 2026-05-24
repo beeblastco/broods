@@ -1,39 +1,34 @@
 /**
- * Pancake tag mutation tool.
- * Keep Pancake conversation tag changes here; webhook parsing stays in _shared.
+ * Human handoff tool.
+ * Keep provider-specific handoff actions here; webhook parsing stays in _shared.
  */
 
 import { jsonSchema, tool, type ToolSet } from "ai";
+import type { AgentChannelsConfig } from "../../_shared/storage/index.ts";
 import type { ToolContext } from "./index.ts";
 
-type PancakeTagAction = "add" | "remove";
+interface HandoffsToolContext extends ToolContext {
+  channels?: AgentChannelsConfig;
+}
 
-export default function pancakeToggleTagTool(context: ToolContext): ToolSet {
+export default function handoffsTool(context: HandoffsToolContext): ToolSet {
   return {
-    pancake_toggle_tag: tool({
-      description:
-        "Add or remove a Pancake conversation tag on the current Pancake conversation. Use action add with the default configured handoff tag when human staff should take over.",
+    handoffs: tool({
+      description: "Hand off the current customer conversation to human staff.",
       inputSchema: jsonSchema({
         type: "object",
         properties: {
-          action: {
+          reason: {
             type: "string",
-            enum: ["add", "remove"],
-            description: "Whether to add or remove the tag.",
-          },
-          tagId: {
-            type: "string",
-            description: "Optional Pancake tag ID. Defaults to channels.pancake.options.handoff.tagId.",
+            description: "Optional short reason for the handoff.",
           },
         },
-        required: ["action"],
         additionalProperties: false,
       }),
-      execute: async (input) => {
-        const action = normalizeAction(input);
+      execute: async () => {
         const conversation = parsePancakeConversationKey(context.conversationKey);
         const pageAccessToken = resolvePageAccessToken(context);
-        const tagId = resolveTagId(context, input);
+        const tagId = resolveHandoffTagId(context);
 
         const url = new URL(
           `https://pages.fm/api/public_api/v1/pages/${encodeURIComponent(conversation.pageId)}/conversations/${
@@ -46,7 +41,7 @@ export default function pancakeToggleTagTool(context: ToolContext): ToolSet {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            action,
+            action: "add",
             tag_id: tagId,
           }),
         });
@@ -54,40 +49,31 @@ export default function pancakeToggleTagTool(context: ToolContext): ToolSet {
         const body = parseJsonBody(bodyText);
 
         if (!response.ok || body?.success === false) {
-          throw new Error(`Pancake tag update failed (${response.status}): ${formatPancakeError(body, bodyText)}`);
+          throw new Error(`Pancake handoff failed (${response.status}): ${formatPancakeError(body, bodyText)}`);
         }
 
         return {
           type: "text",
-          value: `Pancake tag ${tagId} ${action === "add" ? "added to" : "removed from"} conversation ${conversation.conversationId}.`,
+          value: "Conversation handed off to human staff.",
         };
       },
     }),
   };
 }
 
-function normalizeAction(input: unknown): PancakeTagAction {
-  const action = (input as { action?: unknown })?.action;
-  if (action !== "add" && action !== "remove") {
-    throw new Error("action must be add or remove");
-  }
-  return action;
-}
-
-function resolvePageAccessToken(context: ToolContext): string {
+function resolvePageAccessToken(context: HandoffsToolContext): string {
   return firstNonEmptyString(
     context.channels?.pancake?.pageAccessToken,
   ) ?? missingConfig("config.channels.pancake.pageAccessToken");
 }
 
-function resolveTagId(context: ToolContext, input: unknown): string {
+function resolveHandoffTagId(context: HandoffsToolContext): string {
   return firstNonEmptyString(
-    (input as { tagId?: unknown })?.tagId,
     configuredHandoffTagId(context.channels),
-  ) ?? missingConfig("tagId or config.channels.pancake.options.handoff.tagId");
+  ) ?? missingConfig("config.channels.pancake.options.handoff.tagId");
 }
 
-function configuredHandoffTagId(channels: ToolContext["channels"]): unknown {
+function configuredHandoffTagId(channels: HandoffsToolContext["channels"]): unknown {
   const handoff = channels?.pancake?.options?.handoff;
   if (!handoff || typeof handoff !== "object" || Array.isArray(handoff)) {
     return undefined;
@@ -99,7 +85,7 @@ function parsePancakeConversationKey(conversationKey: string): { pageId: string;
   const marker = "pancake:";
   const markerIndex = conversationKey.indexOf(marker);
   if (markerIndex === -1) {
-    throw new Error("pancake_toggle_tag requires a Pancake conversation");
+    throw new Error("handoffs requires a Pancake conversation");
   }
 
   const value = conversationKey.slice(markerIndex + marker.length);

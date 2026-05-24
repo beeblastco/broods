@@ -680,7 +680,7 @@ function normalizeToolConfig(toolName: string, value: unknown): void {
     case "googleSearch":
       normalizeGoogleSearchToolConfig(config);
       return;
-    case "pancake_toggle_tag":
+    case "handoffs":
       return;
     case "test_async":
       return;
@@ -692,11 +692,11 @@ function normalizeToolConfig(toolName: string, value: unknown): void {
 
 function isSupportedConfigToolName(
   toolName: string,
-): toolName is "tavilySearch" | "tavilyExtract" | "googleSearch" | "pancake_toggle_tag" | "test_async" | "test_external_async" {
+): toolName is "tavilySearch" | "tavilyExtract" | "googleSearch" | "handoffs" | "test_async" | "test_external_async" {
   return toolName === "tavilySearch" ||
     toolName === "tavilyExtract" ||
     toolName === "googleSearch" ||
-    toolName === "pancake_toggle_tag" ||
+    toolName === "handoffs" ||
     toolName === "test_async" ||
     toolName === "test_external_async";
 }

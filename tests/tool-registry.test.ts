@@ -250,16 +250,16 @@ describe("createTools", () => {
     });
   });
 
-  it("registers the Pancake tag tool from config.tools", async () => {
+  it("registers the handoff tool from config.tools", async () => {
     const { createTools } = await import("../functions/harness-processing/tools/index.ts");
 
     const tools = createTools(createToolContext(), {
       tools: {
-        pancake_toggle_tag: { enabled: true },
+        handoffs: { enabled: true },
       },
     });
 
-    expect(Object.keys(tools)).toEqual(["pancake_toggle_tag"]);
+    expect(Object.keys(tools)).toEqual(["handoffs"]);
   });
 
   it("passes async-enabled external tools through the async coordinator", async () => {
