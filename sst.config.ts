@@ -9,7 +9,7 @@ const ENABLE_DIRECT_API = parseBooleanEnv("ENABLE_DIRECT_API", false);
 const ENABLE_WEBSOCKET = parseBooleanEnv("ENABLE_WEBSOCKET", false);
 const SANDBOX_WORKSPACE_MOUNT_PATH = "/mnt/workspaces";
 const NATS_URL = process.env.NATS_URL?.trim();
-// SaaS / production runs the Convex storage provider. Other stages stay on
+// Production runs the Convex storage provider. Other stages stay on
 // DynamoDB. CONVEX_URL + CONVEX_DEPLOY_KEY are set by the deploy workflow only
 // for the main branch.
 const CONVEX_URL = process.env.CONVEX_URL?.trim();

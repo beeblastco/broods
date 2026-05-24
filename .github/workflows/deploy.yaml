@@ -101,7 +101,7 @@ jobs:
       ENABLE_DIRECT_API: ${{ vars.ENABLE_DIRECT_API || 'false' }}
       ENABLE_WEBSOCKET: ${{ vars.ENABLE_WEBSOCKET || 'false' }}
       NATS_URL: ${{ secrets.NATS_URL }}
-      # Convex storage provider — required only on main (SaaS production).
+      # Convex storage provider — required only on main branch.
       CONVEX_URL: ${{ github.ref == 'refs/heads/main' && secrets.CONVEX_URL || '' }}
       CONVEX_DEPLOY_KEY: ${{ github.ref == 'refs/heads/main' && secrets.CONVEX_DEPLOY_KEY || '' }}
       # This is for testing purposes only.
