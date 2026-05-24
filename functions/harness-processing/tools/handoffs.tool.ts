@@ -11,6 +11,12 @@ interface HandoffsToolContext extends ToolContext {
   channels?: AgentChannelsConfig;
 }
 
+interface PancakeActionResponse {
+  success?: boolean;
+  message?: string;
+  data?: unknown;
+}
+
 export default function handoffsTool(context: HandoffsToolContext): ToolSet {
   return {
     handoffs: tool({
@@ -47,10 +53,11 @@ async function addHandoffTag(
   pageAccessToken: string,
   tagId: string,
 ): Promise<void> {
-  await postPancakeConversationAction(conversation, pageAccessToken, "tags", "Pancake handoff failed", {
+  const response = await postPancakeConversationAction(conversation, pageAccessToken, "tags", "Pancake handoff failed", {
     action: "add",
     tag_id: tagId,
   });
+  assertTagApplied(response, tagId);
 }
 
 async function markConversationUnread(
@@ -66,7 +73,7 @@ async function postPancakeConversationAction(
   actionPath: "tags" | "unread",
   errorPrefix: string,
   body?: Record<string, unknown>,
-): Promise<void> {
+): Promise<PancakeActionResponse | null> {
   const url = new URL(
     `https://pages.fm/api/public_api/v1/pages/${encodeURIComponent(conversation.pageId)}/conversations/${
       encodeURIComponent(conversation.conversationId)
@@ -89,6 +96,8 @@ async function postPancakeConversationAction(
   if (!response.ok || parsedBody?.success === false) {
     throw new Error(`${errorPrefix} (${response.status}): ${formatPancakeError(parsedBody, bodyText)}`);
   }
+
+  return parsedBody;
 }
 
 function resolvePageAccessToken(context: HandoffsToolContext): string {
@@ -147,14 +156,14 @@ function missingConfig(name: string): never {
   throw new Error(`${name} is required`);
 }
 
-function parseJsonBody(text: string): { success?: boolean; message?: string } | null {
+function parseJsonBody(text: string): PancakeActionResponse | null {
   if (!text) {
     return null;
   }
 
   try {
     const parsed = JSON.parse(text) as unknown;
-    return parsed && typeof parsed === "object" ? parsed as { success?: boolean; message?: string } : null;
+    return parsed && typeof parsed === "object" ? parsed as PancakeActionResponse : null;
   } catch {
     return null;
   }
@@ -162,4 +171,15 @@ function parseJsonBody(text: string): { success?: boolean; message?: string } | 
 
 function formatPancakeError(body: { message?: string } | null, bodyText: string): string {
   return body?.message ?? (bodyText || "unknown_error");
+}
+
+function assertTagApplied(body: PancakeActionResponse | null, tagId: string): void {
+  if (!Array.isArray(body?.data)) {
+    return;
+  }
+
+  const tagIds = body.data.map((entry) => String(entry));
+  if (!tagIds.includes(tagId)) {
+    throw new Error(`Pancake handoff failed: response did not include tag ${tagId}`);
+  }
 }
