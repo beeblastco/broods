@@ -85,7 +85,7 @@ The normalized `InboundMessage` contains:
 
 ## Add a Channel
 
-1. Add config types to [`functions/_shared/accounts.ts`](../../functions/_shared/accounts.ts).
+1. Add config types to [`functions/_shared/storage/agent-config.ts`](../../functions/_shared/storage/agent-config.ts).
 2. Validate the new `config.channels.<channel>` fields in `normalizeChannelsConfig()`.
 3. Create `functions/_shared/<channel>-channel.ts`.
 4. Implement `ChannelAdapter`.
