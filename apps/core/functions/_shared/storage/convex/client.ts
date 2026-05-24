@@ -3,9 +3,9 @@
  * and caches a singleton client per Lambda invocation. Only loaded when
  * STORAGE_PROVIDER=convex.
  *
- * Deploy-key auth: ConvexHttpClient's public `setAuth` is typed for JWTs,
- * but the underlying transport accepts a deploy key in the same header.
- * The cast keeps the call site honest.
+ * Deploy-key auth: use `setAdminAuth`, not `setAuth`. `setAuth` is for
+ * end-user JWTs; deploy keys (`prod:...|...` / `dev:...|...`) are admin
+ * credentials and Convex parses them via a separate header.
  *
  * TODO: the convex submodule currently exposes only internalQuery /
  * internalMutation; HTTP client typings reject internal function refs.
@@ -24,7 +24,7 @@ export function getConvexClient(): ConvexHttpClient {
   const url = requireEnv("CONVEX_URL");
   const deployKey = requireEnv("CONVEX_DEPLOY_KEY");
   const client = new ConvexHttpClient(url);
-  client.setAuth(deployKey);
+  client.setAdminAuth(deployKey);
   cached = client;
   return client;
 }
