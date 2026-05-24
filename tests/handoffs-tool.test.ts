@@ -16,7 +16,9 @@ describe("handoffs tool", () => {
     const fetchCalls: Array<{ url: string; init?: RequestInit }> = [];
     globalThis.fetch = mock(async (url: string | URL, init?: RequestInit) => {
       fetchCalls.push({ url: String(url), init });
-      return jsonResponse({ success: true });
+      return fetchCalls.length === 1
+        ? jsonResponse({ success: true, data: [6] })
+        : jsonResponse({ success: true });
     }) as never;
     const { default: handoffsTool } = await import("../functions/harness-processing/tools/handoffs.tool.ts");
 
@@ -59,6 +61,15 @@ describe("handoffs tool", () => {
 
     await expect(executeHandoffs(tools.handoffs, {}))
       .rejects.toThrow("Pancake unread failed (400): cannot mark unread");
+  });
+
+  it("fails when Pancake does not return the handoff tag after updating tags", async () => {
+    globalThis.fetch = mock(async () => jsonResponse({ success: true, data: [] })) as never;
+    const { default: handoffsTool } = await import("../functions/harness-processing/tools/handoffs.tool.ts");
+    const tools = handoffsTool(createToolContext());
+
+    await expect(executeHandoffs(tools.handoffs, {}))
+      .rejects.toThrow("Pancake handoff failed: response did not include tag 6");
   });
 
   it("rejects non-Pancake conversations", async () => {
