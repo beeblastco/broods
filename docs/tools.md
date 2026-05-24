@@ -164,7 +164,7 @@ The full config field reference lives in the [API Reference](/api-reference) und
 4. Keep the model-facing schema and external service call in that tool file.
 5. Import the factory in [`functions/harness-processing/tools/index.ts`](../functions/harness-processing/tools/index.ts).
 6. Add the factory to the static `toolFactories` map with the exact model-facing tool name.
-7. Add config validation in [`functions/_shared/accounts.ts`](../functions/_shared/accounts.ts) only for options the account can set.
+7. Add config validation in [`functions/_shared/storage/agent-config.ts`](../functions/_shared/storage/agent-config.ts) only for options the account can set.
 8. Optionally set `config.tools.<name>.async: true` for slow local `execute` tools. Use `execution: "same-invocation"` for SSE continuation or `execution: "external-dispatch"` only when `execute` starts external work and returns quickly.
 9. Update the [API Reference](/api-reference) `AgentConfig.tools` schema, [`examples/account.config.example.json`](../examples/account.config.example.json), and focused tests/examples when the public config shape changes.
 
