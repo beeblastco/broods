@@ -91,6 +91,7 @@ export {
   normalizeAgentConfig,
   normalizeAgentConfigPatch,
   redactAgentConfig,
+  toChannelRuntimeAgentConfig,
   toRuntimeAgentConfig,
   type AgentConfig,
   type AgentBehaviorConfig,

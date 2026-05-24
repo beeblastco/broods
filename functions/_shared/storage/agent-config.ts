@@ -264,6 +264,22 @@ export function toRuntimeAgentConfig(config: AgentConfig): AgentConfig {
   });
 }
 
+export function toChannelRuntimeAgentConfig(config: AgentConfig, channelName: string): AgentConfig {
+  const runtimeConfig = toRuntimeAgentConfig(config);
+  const channelConfig = config.channels?.[channelName];
+
+  if (!channelConfig) {
+    return runtimeConfig;
+  }
+
+  return {
+    ...runtimeConfig,
+    channels: {
+      [channelName]: channelConfig,
+    },
+  };
+}
+
 export function normalizeAgentConfig(value: unknown): AgentConfig {
   if (value == null) {
     return {};
