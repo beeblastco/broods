@@ -4,7 +4,9 @@
  */
 
 import { v } from "convex/values";
-import { internalMutation, internalQuery } from "./_generated/server";
+import { internalMutation, internalQuery, query } from "./_generated/server";
+import { authKit } from "./auth";
+import { getActiveOrgForUser } from "./model/ownership/org";
 import { agentsFields } from "./schema";
 
 const agentDoc = v.object({
@@ -26,6 +28,41 @@ export const getById = internalQuery({
         }
 
         return agent;
+    },
+});
+
+/**
+ * Public query: lists the caller's active-org agents. Used by the cron-jobs
+ * UI dropdown to pick which agent a scheduled run targets.
+ */
+export const listForActiveOrg = query({
+    args: {},
+    returns: v.array(agentDoc),
+    handler: async (ctx) => {
+        const authUser = await authKit.getAuthUser(ctx);
+        if (!authUser) {
+            throw new Error("User not found or not authenticated");
+        }
+
+        const user = await ctx.db
+            .query("users")
+            .withIndex("by_authId", (q) => q.eq("authId", authUser.id))
+            .unique();
+        if (!user) return [];
+
+        const org = await getActiveOrgForUser(ctx, user._id);
+        if (!org) return [];
+
+        const account = await ctx.db
+            .query("accounts")
+            .withIndex("by_orgId", (q) => q.eq("orgId", org._id))
+            .unique();
+        if (!account) return [];
+
+        return await ctx.db
+            .query("agents")
+            .withIndex("by_accountId", (q) => q.eq("accountId", account._id))
+            .collect();
     },
 });
 

@@ -8,7 +8,9 @@
 import type { GenericMutationCtx, GenericQueryCtx } from "convex/server";
 import { v } from "convex/values";
 import type { DataModel, Id } from "./_generated/dataModel";
-import { internalMutation, internalQuery } from "./_generated/server";
+import { internalMutation, internalQuery, query } from "./_generated/server";
+import { authKit } from "./auth";
+import { getActiveOrgForUser } from "./model/ownership/org";
 import { cronJobsFields } from "./schema";
 
 const cronJobDoc = v.object({
@@ -31,6 +33,41 @@ async function getOwned(ctx: Ctx, accountId: Id<"accounts">, cronJobId: Id<"cron
     const cronJob = await ctx.db.get(cronJobId);
     return cronJob && cronJob.accountId === accountId ? cronJob : null;
 }
+
+/**
+ * Public query: lists cron jobs for the caller's active org. Used by the
+ * cron-jobs dashboard page for live updates.
+ */
+export const listForActiveOrg = query({
+    args: {},
+    returns: v.array(cronJobDoc),
+    handler: async (ctx) => {
+        const authUser = await authKit.getAuthUser(ctx);
+        if (!authUser) {
+            throw new Error("User not found or not authenticated");
+        }
+
+        const user = await ctx.db
+            .query("users")
+            .withIndex("by_authId", (q) => q.eq("authId", authUser.id))
+            .unique();
+        if (!user) return [];
+
+        const org = await getActiveOrgForUser(ctx, user._id);
+        if (!org) return [];
+
+        const account = await ctx.db
+            .query("accounts")
+            .withIndex("by_orgId", (q) => q.eq("orgId", org._id))
+            .unique();
+        if (!account) return [];
+
+        return await ctx.db
+            .query("cronJobs")
+            .withIndex("by_accountId", (q) => q.eq("accountId", account._id))
+            .collect();
+    },
+});
 
 export const getById = internalQuery({
     args: {

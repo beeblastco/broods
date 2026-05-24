@@ -40,6 +40,44 @@ async function uniqueOrgSlug(
 }
 
 /**
+ * Returns the active org's filthy-panty account id + status for the caller, or
+ * null when the user has no active org or it has not been provisioned yet.
+ */
+export const getActiveAccount = query({
+    args: {},
+    returns: v.union(
+        v.object({
+            accountId: v.id("accounts"),
+            status: v.union(v.literal("active"), v.literal("disabled")),
+        }),
+        v.null(),
+    ),
+    handler: async (ctx) => {
+        const authUser = await authKit.getAuthUser(ctx);
+        if (!authUser) {
+            throw new Error("User not found or not authenticated");
+        }
+
+        const user = await ctx.db
+            .query("users")
+            .withIndex("by_authId", (q) => q.eq("authId", authUser.id))
+            .unique();
+        if (!user) return null;
+
+        const org = await getActiveOrgForUser(ctx, user._id);
+        if (!org) return null;
+
+        const account = await ctx.db
+            .query("accounts")
+            .withIndex("by_orgId", (q) => q.eq("orgId", org._id))
+            .unique();
+        if (!account) return null;
+
+        return { accountId: account._id, status: account.status };
+    },
+});
+
+/**
  * Returns the caller's active (most recently joined) org, or null when they
  * have not yet created or joined one.
  */
