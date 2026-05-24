@@ -264,6 +264,22 @@ export function toRuntimeAgentConfig(config: AgentConfig): AgentConfig {
   });
 }
 
+export function toChannelRuntimeAgentConfig(config: AgentConfig, channelName: string): AgentConfig {
+  const runtimeConfig = toRuntimeAgentConfig(config);
+  const channelConfig = config.channels?.[channelName];
+
+  if (!channelConfig) {
+    return runtimeConfig;
+  }
+
+  return {
+    ...runtimeConfig,
+    channels: {
+      [channelName]: channelConfig,
+    },
+  };
+}
+
 export function normalizeAgentConfig(value: unknown): AgentConfig {
   if (value == null) {
     return {};
@@ -680,6 +696,8 @@ function normalizeToolConfig(toolName: string, value: unknown): void {
     case "googleSearch":
       normalizeGoogleSearchToolConfig(config);
       return;
+    case "handoffs":
+      return;
     case "test_async":
       return;
     case "test_external_async":
@@ -690,10 +708,11 @@ function normalizeToolConfig(toolName: string, value: unknown): void {
 
 function isSupportedConfigToolName(
   toolName: string,
-): toolName is "tavilySearch" | "tavilyExtract" | "googleSearch" | "test_async" | "test_external_async" {
+): toolName is "tavilySearch" | "tavilyExtract" | "googleSearch" | "handoffs" | "test_async" | "test_external_async" {
   return toolName === "tavilySearch" ||
     toolName === "tavilyExtract" ||
     toolName === "googleSearch" ||
+    toolName === "handoffs" ||
     toolName === "test_async" ||
     toolName === "test_external_async";
 }

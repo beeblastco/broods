@@ -81,49 +81,26 @@ export interface CronJobStore {
 }
 
 /**
- * Conversation, message, async result, and skill stores are declared here for
- * forward compatibility with the SaaS Convex provider. The DynamoDB provider
- * does not implement these yet — those domains still live inside
- * functions/harness-processing/session.ts and S3-backed skills.ts. A future
- * commit will lift them into the storage layer; until then, the dynamo
- * provider exposes these as `undefined`.
+ * The remaining persistence concerns — conversations/messages, async agent
+ * results, async tool results, dedupe, and signup rate limits — are
+ * intentionally NOT part of StorageProvider yet. Two reasons:
+ *
+ * 1. Cherry-coke's Convex schema doesn't match filthy-panty's DDB schema
+ *    for these (conversations use a 1:N model in Convex but a flat
+ *    composite-key event table in DDB; asyncToolResult needs a GSI +
+ *    dispatch-group fan-in that the unified Convex asyncResults table
+ *    doesn't model).
+ * 2. Dedupe and rate-limits depend on DDB-specific semantics (TTL +
+ *    conditional writes) that Convex doesn't expose cleanly.
+ *
+ * They stay in their current modules under functions/harness-processing/
+ * and run against DynamoDB on every stage. When cherry-coke and filthy-panty
+ * agree on a shared schema, lift them into this file and add stores.
  */
-export interface ConversationStore {
-  getById(conversationId: string): Promise<unknown | null>;
-  list(accountId: string): Promise<unknown[]>;
-  listByAgent(accountId: string, agentId: string): Promise<unknown[]>;
-  create(input: Record<string, unknown>): Promise<{ conversationId: string }>;
-  update(conversationId: string, patch: Record<string, unknown>): Promise<void>;
-  remove(conversationId: string): Promise<boolean>;
-}
-
-export interface MessageStore {
-  list(conversationId: string): Promise<unknown[]>;
-  create(input: Record<string, unknown>): Promise<{ messageId: string }>;
-}
-
-export interface AsyncResultStore {
-  getByEventId(eventId: string): Promise<unknown | null>;
-  list(accountId: string): Promise<unknown[]>;
-  create(input: Record<string, unknown>): Promise<{ eventId: string }>;
-  update(eventId: string, patch: Record<string, unknown>): Promise<void>;
-}
-
-export interface SkillStore {
-  getById(accountId: string, skillName: string): Promise<unknown | null>;
-  list(accountId: string): Promise<unknown[]>;
-  create(input: Record<string, unknown>): Promise<{ skillName: string }>;
-  update(accountId: string, skillName: string, patch: Record<string, unknown>): Promise<void>;
-  remove(accountId: string, skillName: string): Promise<boolean>;
-}
 
 export interface StorageProvider {
   readonly kind: "dynamodb" | "convex";
   accounts: AccountStore;
   agents: AgentStore;
   cronJobs: CronJobStore;
-  conversations?: ConversationStore;
-  messages?: MessageStore;
-  asyncResults?: AsyncResultStore;
-  skills?: SkillStore;
 }

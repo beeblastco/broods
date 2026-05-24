@@ -179,22 +179,27 @@ export default $config({
     const adminAccountSecret = new sst.Secret("AdminAccountSecret");
     const accountConfigEncryptionSecret = new sst.Secret("AccountConfigEncryptionSecret");
 
-    const accountConfigsTable = new sst.aws.Dynamo("AccountConfig", {
-      fields: {
-        accountId: "string",
-        secretHash: "string",
-      },
-      primaryIndex: { hashKey: "accountId" },
-      globalIndexes: {
-        SecretHashIndex: { hashKey: "secretHash" },
-      },
-      deletionProtection: stage === "production",
-      transform: {
-        table: {
-          name: names.accountConfigs,
-        },
-      },
-    });
+    // accounts / agents / cron-jobs DDB tables are skipped on production —
+    // those domains live in Convex on SaaS. Tables stay for dev / community
+    // stages so the DynamoDB provider has somewhere to read/write.
+    const accountConfigsTable = isProduction
+      ? null
+      : new sst.aws.Dynamo("AccountConfig", {
+          fields: {
+            accountId: "string",
+            secretHash: "string",
+          },
+          primaryIndex: { hashKey: "accountId" },
+          globalIndexes: {
+            SecretHashIndex: { hashKey: "secretHash" },
+          },
+          deletionProtection: false,
+          transform: {
+            table: {
+              name: names.accountConfigs,
+            },
+          },
+        });
 
     const accountSignupRateLimitTable = new sst.aws.Dynamo("AccountSignupRateLimit", {
       fields: {
@@ -210,33 +215,37 @@ export default $config({
       },
     });
 
-    const agentConfigsTable = new sst.aws.Dynamo("AgentConfig", {
-      fields: {
-        accountId: "string",
-        agentId: "string",
-      },
-      primaryIndex: { hashKey: "accountId", rangeKey: "agentId" },
-      deletionProtection: stage === "production",
-      transform: {
-        table: {
-          name: names.agentConfigs,
-        },
-      },
-    });
+    const agentConfigsTable = isProduction
+      ? null
+      : new sst.aws.Dynamo("AgentConfig", {
+          fields: {
+            accountId: "string",
+            agentId: "string",
+          },
+          primaryIndex: { hashKey: "accountId", rangeKey: "agentId" },
+          deletionProtection: false,
+          transform: {
+            table: {
+              name: names.agentConfigs,
+            },
+          },
+        });
 
-    const cronJobsTable = new sst.aws.Dynamo("CronJob", {
-      fields: {
-        accountId: "string",
-        cronJobId: "string",
-      },
-      primaryIndex: { hashKey: "accountId", rangeKey: "cronJobId" },
-      deletionProtection: stage === "production",
-      transform: {
-        table: {
-          name: names.cronJobs,
-        },
-      },
-    });
+    const cronJobsTable = isProduction
+      ? null
+      : new sst.aws.Dynamo("CronJob", {
+          fields: {
+            accountId: "string",
+            cronJobId: "string",
+          },
+          primaryIndex: { hashKey: "accountId", rangeKey: "cronJobId" },
+          deletionProtection: false,
+          transform: {
+            table: {
+              name: names.cronJobs,
+            },
+          },
+        });
 
     const conversationsTable = new sst.aws.Dynamo("Conversations", {
       fields: {
@@ -569,8 +578,12 @@ export default $config({
         PROCESSED_EVENTS_TABLE_NAME: processedEventsTable.name,
         ASYNC_AGENT_RESULT_TABLE_NAME: asyncAgentResultTable.name,
         ASYNC_TOOL_RESULT_TABLE_NAME: asyncToolResultTable.name,
-        ACCOUNT_CONFIGS_TABLE_NAME: accountConfigsTable.name,
-        AGENT_CONFIGS_TABLE_NAME: agentConfigsTable.name,
+        ...(accountConfigsTable
+          ? { ACCOUNT_CONFIGS_TABLE_NAME: accountConfigsTable.name }
+          : {}),
+        ...(agentConfigsTable
+          ? { AGENT_CONFIGS_TABLE_NAME: agentConfigsTable.name }
+          : {}),
         ACCOUNT_SECRET_INDEX_NAME: "SecretHashIndex",
         ACCOUNT_CONFIG_ENCRYPTION_SECRET: accountConfigEncryptionSecret.value,
         FILESYSTEM_BUCKET_NAME: names.memory,
@@ -580,24 +593,30 @@ export default $config({
         MOCK_EXTERNAL_ASYNC_TOOL_URL: mockExternalAsyncTool.url,
         SANDBOX_NODE_FUNCTION_NAME: sandboxNode.name,
         SANDBOX_PYTHON_FUNCTION_NAME: sandboxPython.name,
-        CRON_JOBS_TABLE_NAME: cronJobsTable.name,
+        ...(cronJobsTable
+          ? { CRON_JOBS_TABLE_NAME: cronJobsTable.name }
+          : {}),
         ...(NATS_URL ? { NATS_URL } : {}),
       },
       permissions: [
-        {
-          actions: [
-            "dynamodb:GetItem",
-            "dynamodb:Query",
-          ],
-          resources: [accountConfigsTable.arn, $interpolate`${accountConfigsTable.arn}/index/SecretHashIndex`],
-        },
-        {
-          actions: [
-            "dynamodb:GetItem",
-            "dynamodb:Query",
-          ],
-          resources: [agentConfigsTable.arn],
-        },
+        ...(accountConfigsTable
+          ? [{
+              actions: [
+                "dynamodb:GetItem",
+                "dynamodb:Query",
+              ],
+              resources: [accountConfigsTable.arn, $interpolate`${accountConfigsTable.arn}/index/SecretHashIndex`],
+            }]
+          : []),
+        ...(agentConfigsTable
+          ? [{
+              actions: [
+                "dynamodb:GetItem",
+                "dynamodb:Query",
+              ],
+              resources: [agentConfigsTable.arn],
+            }]
+          : []),
         {
           actions: [
             "dynamodb:BatchWriteItem",
@@ -623,13 +642,15 @@ export default $config({
           ],
           resources: [asyncToolResultTable.arn],
         },
-        {
-          actions: [
-            "dynamodb:GetItem",
-            "dynamodb:UpdateItem",
-          ],
-          resources: [cronJobsTable.arn],
-        },
+        ...(cronJobsTable
+          ? [{
+              actions: [
+                "dynamodb:GetItem",
+                "dynamodb:UpdateItem",
+              ],
+              resources: [cronJobsTable.arn],
+            }]
+          : []),
         {
           actions: ["lambda:InvokeFunction"],
           resources: [`arn:aws:lambda:${region}:${AWS_ACCOUNT_ID}:function:${names.harnessProcessing}`],
@@ -712,8 +733,12 @@ export default $config({
       logging: { format: "json", retention: "1 month" },
       environment: {
         ...storageEnv,
-        ACCOUNT_CONFIGS_TABLE_NAME: accountConfigsTable.name,
-        AGENT_CONFIGS_TABLE_NAME: agentConfigsTable.name,
+        ...(accountConfigsTable
+          ? { ACCOUNT_CONFIGS_TABLE_NAME: accountConfigsTable.name }
+          : {}),
+        ...(agentConfigsTable
+          ? { AGENT_CONFIGS_TABLE_NAME: agentConfigsTable.name }
+          : {}),
         ACCOUNT_SECRET_INDEX_NAME: "SecretHashIndex",
         CONVERSATIONS_TABLE_NAME: conversationsTable.name,
         PROCESSED_EVENTS_TABLE_NAME: processedEventsTable.name,
@@ -725,43 +750,51 @@ export default $config({
         ACCOUNT_SIGNUP_RATE_LIMIT_PER_HOUR: "5",
         ADMIN_ACCOUNT_SECRET: adminAccountSecret.value,
         ACCOUNT_CONFIG_ENCRYPTION_SECRET: accountConfigEncryptionSecret.value,
-        CRON_JOBS_TABLE_NAME: cronJobsTable.name,
+        ...(cronJobsTable
+          ? { CRON_JOBS_TABLE_NAME: cronJobsTable.name }
+          : {}),
         CRON_SCHEDULER_TARGET_FUNCTION_ARN: harnessProcessing.arn,
         CRON_SCHEDULER_ROLE_ARN: cronSchedulerRole.arn,
         CRON_SCHEDULER_GROUP_NAME: cronScheduleGroup.name,
       },
       permissions: [
-        {
-          actions: [
-            "dynamodb:DeleteItem",
-            "dynamodb:GetItem",
-            "dynamodb:PutItem",
-            "dynamodb:Query",
-            "dynamodb:Scan",
-            "dynamodb:UpdateItem",
-          ],
-          resources: [accountConfigsTable.arn, $interpolate`${accountConfigsTable.arn}/index/SecretHashIndex`],
-        },
-        {
-          actions: [
-            "dynamodb:DeleteItem",
-            "dynamodb:GetItem",
-            "dynamodb:PutItem",
-            "dynamodb:Query",
-            "dynamodb:UpdateItem",
-          ],
-          resources: [agentConfigsTable.arn],
-        },
-        {
-          actions: [
-            "dynamodb:DeleteItem",
-            "dynamodb:GetItem",
-            "dynamodb:PutItem",
-            "dynamodb:Query",
-            "dynamodb:UpdateItem",
-          ],
-          resources: [cronJobsTable.arn],
-        },
+        ...(accountConfigsTable
+          ? [{
+              actions: [
+                "dynamodb:DeleteItem",
+                "dynamodb:GetItem",
+                "dynamodb:PutItem",
+                "dynamodb:Query",
+                "dynamodb:Scan",
+                "dynamodb:UpdateItem",
+              ],
+              resources: [accountConfigsTable.arn, $interpolate`${accountConfigsTable.arn}/index/SecretHashIndex`],
+            }]
+          : []),
+        ...(agentConfigsTable
+          ? [{
+              actions: [
+                "dynamodb:DeleteItem",
+                "dynamodb:GetItem",
+                "dynamodb:PutItem",
+                "dynamodb:Query",
+                "dynamodb:UpdateItem",
+              ],
+              resources: [agentConfigsTable.arn],
+            }]
+          : []),
+        ...(cronJobsTable
+          ? [{
+              actions: [
+                "dynamodb:DeleteItem",
+                "dynamodb:GetItem",
+                "dynamodb:PutItem",
+                "dynamodb:Query",
+                "dynamodb:UpdateItem",
+              ],
+              resources: [cronJobsTable.arn],
+            }]
+          : []),
         {
           actions: [
             "scheduler:CreateSchedule",
@@ -820,9 +853,9 @@ export default $config({
       mockWebhookSubscribeUrl: mockWebhookSubscribe.url,
       sandboxNodeFunctionName: sandboxNode.name,
       sandboxPythonFunctionName: sandboxPython.name,
-      accountConfigsTableName: accountConfigsTable.name,
-      agentConfigsTableName: agentConfigsTable.name,
-      cronJobsTableName: cronJobsTable.name,
+      accountConfigsTableName: accountConfigsTable?.name,
+      agentConfigsTableName: agentConfigsTable?.name,
+      cronJobsTableName: cronJobsTable?.name,
       accountSignupRateLimitTableName: accountSignupRateLimitTable.name,
       conversationsTableName: conversationsTable.name,
       processedEventsTableName: processedEventsTable.name,

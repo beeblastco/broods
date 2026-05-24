@@ -130,7 +130,15 @@ describe("account webhook ingress", () => {
     expect(handledEvents[0]).toMatchObject({
       accountId: "acct_test",
       agentId: "agent_test",
-      agentConfig: {},
+      agentConfig: {
+        channels: {
+          telegram: {
+            botToken: "bot-token",
+            webhookSecret: "telegram-secret",
+            allowedChatIds: [123],
+          },
+        },
+      },
       eventId: "acct:acct_test:agent:agent_test:tg:7",
       conversationKey: "acct:acct_test:agent:agent_test:tg:123",
       content: "hello",
@@ -159,7 +167,14 @@ describe("account webhook ingress", () => {
     expect(handledEvents[0]).toMatchObject({
       accountId: "acct_test",
       agentId: "agent_test",
-      agentConfig: {},
+      agentConfig: {
+        channels: {
+          pancake: {
+            pageId: "page-1",
+            pageAccessToken: "page-token",
+          },
+        },
+      },
       conversationKey: "acct:acct_test:agent:agent_test:pancake:page-1:conversation-1",
       content: [{ type: "text", text: "hello pancake" }],
       events: [{ role: "user", content: [{ type: "text", text: "hello pancake" }] }],
