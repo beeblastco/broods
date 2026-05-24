@@ -15,6 +15,7 @@ import { Input } from "@/app/components/ui/input";
 import { Separator } from "@/app/components/ui/separator";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/app/components/ui/tabs";
 import { useAgentHealth, type AgentHealthStatus } from "@/app/hooks/useAgentHealth";
+import { fromNestedAgentConfig, toNestedAgentConfig } from "@/app/lib/agentConfigCodec";
 import { useEnvironment } from "@/app/hooks/useEnvironment";
 import {
     forgetDeploymentCredential,
@@ -101,36 +102,13 @@ const PANEL_TITLES: Record<NodeType, string> = {
     workspace: "Workspace",
 };
 
-/** Config fields extracted from the agent config for JSON editing. */
-const CONFIG_KEYS = [
-    "provider",
-    "modelId",
-    "description",
-    "systemPrompt",
-    "maxTurns",
-    "allowedTools",
-    "permissionMode",
-    "outputFormat",
-    "providerOptions",
-    "temperature",
-    "maxTokens",
-    "publicAccessEnabled",
-    "webSocketEnabled",
-    "memoryToolEnabled",
-    "searchToolEnabled",
-    "searchToolConfig",
-] as const;
-
-/** Extracts editable config fields from the full agent config document. */
+/**
+ * Projects the flat `agentConfigs` row into the nested filthy-panty
+ * `AgentConfig` shape rendered by the Config tab. Inverse lives in
+ * {@link fromNestedAgentConfig} and is applied on save.
+ */
 function extractConfigJson(config: Record<string, unknown>): Record<string, unknown> {
-    const result: Record<string, unknown> = {};
-    for (const key of CONFIG_KEYS) {
-        if (config[key] !== undefined) {
-            result[key] = config[key];
-        }
-    }
-
-    return result;
+    return toNestedAgentConfig(config as Parameters<typeof toNestedAgentConfig>[0]);
 }
 
 function inferProviderFromModelId(modelId: string): AgentProvider {
@@ -428,23 +406,21 @@ export const NodeSidePanel = memo(function NodeSidePanel({
         setConfigError(null);
         setIsSavingConfig(true);
         try {
+            const flatPatch = fromNestedAgentConfig(parsed);
             await updateConfig({
                 configId: agentConfigId,
-                provider: parsed.provider as AgentProvider | undefined,
-                modelId: parsed.modelId as string | undefined,
-                description: parsed.description as string | undefined,
-                systemPrompt: parsed.systemPrompt as string | undefined,
-                temperature: parsed.temperature as number | undefined,
-                maxTokens: parsed.maxTokens as number | undefined,
-                maxTurns: parsed.maxTurns as number | undefined,
-                allowedTools: parsed.allowedTools as string[] | undefined,
-                outputFormat: parsed.outputFormat,
-                providerOptions: parsed.providerOptions,
-                publicAccessEnabled: parsed.publicAccessEnabled as boolean | undefined,
-                webSocketEnabled: parsed.webSocketEnabled as boolean | undefined,
-                memoryToolEnabled: parsed.memoryToolEnabled as boolean | undefined,
-                searchToolEnabled: parsed.searchToolEnabled as boolean | undefined,
-                searchToolConfig: parsed.searchToolConfig as { searchDepth?: string; topic?: string; maxResults?: number } | undefined,
+                provider: flatPatch.provider as AgentProvider | undefined,
+                modelId: flatPatch.modelId,
+                systemPrompt: flatPatch.systemPrompt,
+                temperature: flatPatch.temperature,
+                maxTokens: flatPatch.maxTokens,
+                maxTurns: flatPatch.maxTurns,
+                outputFormat: flatPatch.outputFormat,
+                providerOptions: flatPatch.providerOptions,
+                memoryToolEnabled: flatPatch.memoryToolEnabled,
+                searchToolEnabled: flatPatch.searchToolEnabled,
+                searchToolConfig: flatPatch.searchToolConfig,
+                extraConfig: flatPatch.extraConfig,
             });
             setConfigSaved(true);
             setTimeout(() => setConfigSaved(false), 2000);
@@ -491,33 +467,6 @@ export const NodeSidePanel = memo(function NodeSidePanel({
         }
         onClose();
     }
-
-    const handleToggleMemoryTool = useCallback(
-        (enabled: boolean) => {
-            if (agentConfigId) {
-                updateConfig({ configId: agentConfigId, memoryToolEnabled: enabled });
-            }
-        },
-        [agentConfigId, updateConfig],
-    );
-
-    const handleToggleSearchTool = useCallback(
-        (enabled: boolean) => {
-            if (agentConfigId) {
-                updateConfig({ configId: agentConfigId, searchToolEnabled: enabled });
-            }
-        },
-        [agentConfigId, updateConfig],
-    );
-
-    const handleUpdateSearchToolConfig = useCallback(
-        (config: { searchDepth?: string; topic?: string; maxResults?: number }) => {
-            if (agentConfigId) {
-                updateConfig({ configId: agentConfigId, searchToolConfig: config });
-            }
-        },
-        [agentConfigId, updateConfig],
-    );
 
     const handleUpdateOutputFormat = useCallback(
         (outputFormat: Record<string, unknown> | null) => {
@@ -676,9 +625,6 @@ export const NodeSidePanel = memo(function NodeSidePanel({
                                 onSaveName={handleSaveName}
                                 nameChanged={!!nameChanged}
                                 isSaving={isSaving}
-                                onToggleMemoryTool={handleToggleMemoryTool}
-                                onToggleSearchTool={handleToggleSearchTool}
-                                onUpdateSearchToolConfig={handleUpdateSearchToolConfig}
                                 onUpdateOutputFormat={handleUpdateOutputFormat}
                                 publicAccessEnabled={publicAccessEnabled}
                                 webSocketEnabled={webSocketEnabled}
@@ -722,6 +668,7 @@ export const NodeSidePanel = memo(function NodeSidePanel({
                                 runtimeVariables={runtimeVariables}
                                 isSaving={isSavingVariables}
                                 onSave={handleSaveVariables}
+                                provider={selectedProvider}
                             />
                         </TabsContent>
                     )}

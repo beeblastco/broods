@@ -11,13 +11,6 @@ import type { Doc } from "@/convex/_generated/dataModel";
 import { Check, Copy, Eye, EyeOff, Globe, Slash, Wifi } from "lucide-react";
 import { useRef, useState } from "react";
 
-/** Tavily search tool configuration. */
-export type SearchToolConfig = {
-    searchDepth?: string;
-    topic?: string;
-    maxResults?: number;
-};
-
 type OutputFormatConfig = {
     type?: string;
     schema?: unknown;
@@ -55,9 +48,6 @@ export function DetailsTab({
     onSaveName,
     nameChanged,
     isSaving,
-    onToggleMemoryTool,
-    onToggleSearchTool,
-    onUpdateSearchToolConfig,
     onUpdateOutputFormat,
     publicAccessEnabled,
     webSocketEnabled,
@@ -78,9 +68,6 @@ export function DetailsTab({
     onSaveName: () => void;
     nameChanged: boolean;
     isSaving: boolean;
-    onToggleMemoryTool?: (enabled: boolean) => void;
-    onToggleSearchTool?: (enabled: boolean) => void;
-    onUpdateSearchToolConfig?: (config: SearchToolConfig) => void;
     onUpdateOutputFormat?: (outputFormat: Record<string, unknown> | null) => void;
     publicAccessEnabled: boolean;
     webSocketEnabled: boolean;
@@ -110,7 +97,6 @@ export function DetailsTab({
     const endpointUrl = activeDeployment ? `${gatewayUrl}/v1${projectPrefix}/agents${envPrefix}/${activeDeployment.endpointId}` : "";
     const websocketUrl = activeDeployment ? `${websocketBaseUrl}/v1${projectPrefix}/agents${envPrefix}/${activeDeployment.endpointId}/ws` : "";
 
-    const searchConfig = agentConfig?.searchToolConfig as SearchToolConfig | undefined;
     const outputFormat = agentConfig?.outputFormat as OutputFormatConfig | undefined;
     const outputFormatEnabled = outputFormat !== undefined;
     const schemaFromConfigText = isRecord(outputFormat?.schema)
@@ -423,6 +409,26 @@ export function DetailsTab({
                             </div>
                         </div>
 
+                        {agentConfig?.agentId && (
+                            <div className="flex flex-col gap-1.5">
+                                <span className="text-[11px] uppercase tracking-wider text-muted-foreground/70">Agent ID</span>
+                                <div className="flex items-center gap-2 rounded-md border border-border bg-muted/50 px-2.5 py-1.5">
+                                    <code className="flex-1 text-xs text-foreground break-all">{agentConfig.agentId}</code>
+                                    <Button
+                                        variant="ghost"
+                                        size="icon-xs"
+                                        className="shrink-0 text-muted-foreground"
+                                        onClick={() => handleCopy(agentConfig.agentId as string, "agentid")}
+                                    >
+                                        {copiedField === "agentid" ? <Check className="size-3" /> : <Copy className="size-3" />}
+                                    </Button>
+                                </div>
+                                <span className="text-[11px] text-muted-foreground/60">
+                                    Pass this as <code>agentId</code> in the invoke payload.
+                                </span>
+                            </div>
+                        )}
+
                         {webSocketEnabled && (
                             <div className="flex flex-col gap-1.5">
                                 <span className="inline-flex items-center gap-1 text-[11px] uppercase tracking-wider text-muted-foreground/70">
@@ -480,97 +486,6 @@ export function DetailsTab({
                     </div>
                 )}
             </div>
-
-            {/* Built-in tool toggles */}
-            {agentConfig && (
-                <>
-                    <Separator />
-                    <div className="flex flex-col gap-3">
-                        <span className="text-[11px] uppercase tracking-wider text-muted-foreground/70">Built-in Tools</span>
-
-                        {/* Memory toggle */}
-                        <div className="flex items-center justify-between">
-                            <div className="flex flex-col gap-0.5">
-                                <span className="text-xs font-medium text-foreground">Memory</span>
-                                <span className="text-[11px] text-muted-foreground">Persistent memory across sessions</span>
-                            </div>
-                            <Switch
-                                checked={agentConfig.memoryToolEnabled !== false}
-                                onCheckedChange={(checked) => onToggleMemoryTool?.(checked)}
-                            />
-                        </div>
-
-                        {/* Web Search toggle */}
-                        <div className="flex items-center justify-between">
-                            <div className="flex flex-col gap-0.5">
-                                <span className="text-xs font-medium text-foreground">Web Search</span>
-                                <span className="text-[11px] text-muted-foreground">Search the web via Tavily</span>
-                            </div>
-                            <Switch
-                                checked={agentConfig.searchToolEnabled === true}
-                                onCheckedChange={(checked) => onToggleSearchTool?.(checked)}
-                            />
-                        </div>
-
-                        {/* Web Search config (only when enabled) */}
-                        {agentConfig.searchToolEnabled === true && (
-                            <div className="ml-1 flex flex-col gap-2.5 border-l-2 border-border pl-3">
-                                {/* Search Depth */}
-                                <div className="flex flex-col gap-1">
-                                    <span className="text-[11px] text-muted-foreground">Search Depth</span>
-                                    <Select
-                                        value={searchConfig?.searchDepth ?? "advanced"}
-                                        onValueChange={(val) => onUpdateSearchToolConfig?.({ ...searchConfig, searchDepth: val })}
-                                    >
-                                        <SelectTrigger size="sm" className="h-7 w-full text-xs">
-                                            <SelectValue />
-                                        </SelectTrigger>
-                                        <SelectContent>
-                                            <SelectItem value="basic">Basic</SelectItem>
-                                            <SelectItem value="advanced">Advanced</SelectItem>
-                                        </SelectContent>
-                                    </Select>
-                                </div>
-
-                                {/* Topic */}
-                                <div className="flex flex-col gap-1">
-                                    <span className="text-[11px] text-muted-foreground">Topic</span>
-                                    <Select
-                                        value={searchConfig?.topic ?? "general"}
-                                        onValueChange={(val) => onUpdateSearchToolConfig?.({ ...searchConfig, topic: val })}
-                                    >
-                                        <SelectTrigger size="sm" className="h-7 w-full text-xs">
-                                            <SelectValue />
-                                        </SelectTrigger>
-                                        <SelectContent>
-                                            <SelectItem value="general">General</SelectItem>
-                                            <SelectItem value="news">News</SelectItem>
-                                        </SelectContent>
-                                    </Select>
-                                </div>
-
-                                {/* Max Results */}
-                                <div className="flex flex-col gap-1">
-                                    <span className="text-[11px] text-muted-foreground">Max Results</span>
-                                    <Input
-                                        type="number"
-                                        min={1}
-                                        max={20}
-                                        value={searchConfig?.maxResults ?? 5}
-                                        onChange={(e) => {
-                                            const val = parseInt(e.target.value, 10);
-                                            if (!isNaN(val) && val >= 1 && val <= 20) {
-                                                onUpdateSearchToolConfig?.({ ...searchConfig, maxResults: val });
-                                            }
-                                        }}
-                                        className="h-7 text-xs"
-                                    />
-                                </div>
-                            </div>
-                        )}
-                    </div>
-                </>
-            )}
 
             {/* Output format schema */}
             {agentConfig && (
