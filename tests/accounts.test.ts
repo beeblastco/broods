@@ -404,7 +404,7 @@ describe("agent config", () => {
             endTime: "2026-05-02T00:00:00Z",
           },
         },
-        pancake_toggle_tag: {
+        handoffs: {
           enabled: true,
           async: true,
           execution: "same-invocation",
@@ -445,7 +445,7 @@ describe("agent config", () => {
             endTime: "2026-05-02T00:00:00Z",
           },
         },
-        pancake_toggle_tag: {
+        handoffs: {
           enabled: true,
           async: true,
           execution: "same-invocation",

@@ -136,11 +136,6 @@
         "webSearch": {}
       }
     },
-    "pancake_toggle_tag": {
-      "enabled": false,
-      "async": true,
-      "execution": "same-invocation"
-    },
     "test_async": {
       "enabled": true,
       "async": true,

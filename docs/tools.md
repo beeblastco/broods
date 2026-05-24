@@ -21,7 +21,6 @@ flowchart LR
 | `tavilySearch` | [`functions/harness-processing/tools/tavily.tool.ts`](../functions/harness-processing/tools/tavily.tool.ts) | Tavily AI SDK search | `config.tools.tavilySearch` |
 | `tavilyExtract` | [`functions/harness-processing/tools/tavily.tool.ts`](../functions/harness-processing/tools/tavily.tool.ts) | Tavily AI SDK extract | `config.tools.tavilyExtract` |
 | `googleSearch` | [`functions/harness-processing/tools/google-search.tool.ts`](../functions/harness-processing/tools/google-search.tool.ts) | Google provider-defined tool | `config.tools.googleSearch` |
-| `pancake_toggle_tag` | [`functions/harness-processing/tools/pancake-toggle-tag.tool.ts`](../functions/harness-processing/tools/pancake-toggle-tag.tool.ts) | Pancake conversation tag API | `config.tools.pancake_toggle_tag` |
 | `test_async` | [`functions/harness-processing/tools/test.async.tool.ts`](../functions/harness-processing/tools/test.async.tool.ts) | Local async example tool | `config.tools.test_async` |
 
 Workspace tools are configured separately under `config.workspace`. Skills use `config.skills`. Subagents use `config.subagent`.
@@ -144,11 +143,6 @@ Use `config.tools` for external tools:
     },
     "googleSearch": {
       "enabled": true
-    },
-    "pancake_toggle_tag": {
-      "enabled": true,
-      "async": true,
-      "execution": "same-invocation"
     }
   }
 }
