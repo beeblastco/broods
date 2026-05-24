@@ -404,6 +404,11 @@ describe("agent config", () => {
             endTime: "2026-05-02T00:00:00Z",
           },
         },
+        pancake_toggle_tag: {
+          enabled: true,
+          async: true,
+          execution: "same-invocation",
+        },
         test_async: {
           enabled: true,
           async: true,
@@ -439,6 +444,11 @@ describe("agent config", () => {
             startTime: "2026-05-01T00:00:00Z",
             endTime: "2026-05-02T00:00:00Z",
           },
+        },
+        pancake_toggle_tag: {
+          enabled: true,
+          async: true,
+          execution: "same-invocation",
         },
         test_async: {
           enabled: true,

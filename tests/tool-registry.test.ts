@@ -250,6 +250,18 @@ describe("createTools", () => {
     });
   });
 
+  it("registers the Pancake tag tool from config.tools", async () => {
+    const { createTools } = await import("../functions/harness-processing/tools/index.ts");
+
+    const tools = createTools(createToolContext(), {
+      tools: {
+        pancake_toggle_tag: { enabled: true },
+      },
+    });
+
+    expect(Object.keys(tools)).toEqual(["pancake_toggle_tag"]);
+  });
+
   it("passes async-enabled external tools through the async coordinator", async () => {
     const { createTools } = await import("../functions/harness-processing/tools/index.ts");
     const dispatch = mock((tools: Record<string, unknown>, asyncToolModes: Map<string, string>) => {

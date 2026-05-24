@@ -56,3 +56,5 @@ flowchart TD
 1. **No handoff tag**: The agent operates normally and automatically handles responses.
 2. **Handoff tag present**: The adapter ignores the event and returns `200 OK` to Pancake, bypassing the agent run entirely. This allows human operators to respond manually in the Pancake dashboard without interference from the agent.
 3. **Return to auto mode**: Remove the handoff tag in Pancake. The next customer message can run the agent again.
+
+To let the agent add or remove Pancake tags during a conversation, enable `config.tools.pancake_toggle_tag`. The tool defaults to the configured `options.handoff.tagId` when no tag ID is provided in the tool call.

@@ -6,6 +6,7 @@
 import type { ToolSet } from "ai";
 import {
   type AgentConfig,
+  type AgentChannelsConfig,
   type AccountModelProviderName,
   type AgentToolConfig,
 } from "../../_shared/storage/index.ts";
@@ -14,6 +15,7 @@ import type { AsyncToolModeMap, RunAsyncToolDispatch } from "../async-tools.ts";
 import filesystemTool from "./filesystem.tool.ts";
 import googleSearchTool from "./google-search.tool.ts";
 import loadSkillTool from "./load-skill.tool.ts";
+import pancakeToggleTagTool from "./pancake-toggle-tag.tool.ts";
 import runSubagentTool, {
   type RunSubagentDispatch,
 } from "./run-subagent.tool.ts";
@@ -27,6 +29,7 @@ import testExternalAsyncTool from "./test.external-async.tool.ts";
 export interface ToolContext {
   conversationKey: string;
   filesystemNamespace: string;
+  channels?: AgentChannelsConfig;
   config: AgentToolConfig;
   modelProviderName: AccountModelProviderName;
   modelProvider: unknown;
@@ -43,13 +46,15 @@ const toolFactories = {
   tavilySearch: tavilySearchTool,
   tavilyExtract: tavilyExtractTool,
   googleSearch: googleSearchTool,
+  pancake_toggle_tag: pancakeToggleTagTool,
   test_async: testAsyncTool,
   test_external_async: testExternalAsyncTool,
 } satisfies Record<string, ToolFactory>;
 
-export function createTools(context: Omit<ToolContext, "config">, agentConfig: AgentConfig): ToolSet {
+export function createTools(context: Omit<ToolContext, "channels" | "config">, agentConfig: AgentConfig): ToolSet {
   const tools: ToolSet = {};
   assertSupportedConfiguredTools(agentConfig.tools);
+  const baseContext = { ...context, channels: agentConfig.channels };
 
   if (agentConfig.workspace?.enabled === true) {
     const needsApproval = agentConfig.workspace.needsApproval === true;
@@ -57,15 +62,15 @@ export function createTools(context: Omit<ToolContext, "config">, agentConfig: A
       tools,
       ...(agentConfig.workspace.filesystem?.enabled === false ? [] : [
         // Passing the sandbox configure into the filesystem tool.
-        withToolApproval(filesystemTool({ 
-          ...context, 
-          config: agentConfig.workspace.sandbox ?? {} 
+        withToolApproval(filesystemTool({
+          ...baseContext,
+          config: agentConfig.workspace.sandbox ?? {},
         }), {
           filesystem: needsApproval,
         }),
       ]),
       ...(agentConfig.workspace.tasks?.enabled === false ? [] : [
-        withToolApproval(tasksTool({ ...context, config: {} }), {
+        withToolApproval(tasksTool({ ...baseContext, config: {} }), {
           tasks: needsApproval,
         }),
       ]),
@@ -96,7 +101,7 @@ export function createTools(context: Omit<ToolContext, "config">, agentConfig: A
     }
 
     Object.assign(tools, withToolApproval(toolFactory({
-      ...context,
+      ...baseContext,
       config: externalToolRuntimeConfig(toolConfig),
     }), {
       [toolName]: toolConfig.needsApproval === true,

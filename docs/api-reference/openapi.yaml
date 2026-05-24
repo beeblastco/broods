@@ -1832,6 +1832,8 @@ components:
           $ref: '#/components/schemas/TavilyExtractConfig'
         googleSearch:
           $ref: '#/components/schemas/GoogleSearchConfig'
+        pancake_toggle_tag:
+          $ref: '#/components/schemas/PancakeToggleTagConfig'
         test_async:
           $ref: '#/components/schemas/TestAsyncConfig'
         test_external_async:
@@ -1904,6 +1906,20 @@ components:
             endTime:
               type: string
               description: ISO date string
+
+    PancakeToggleTagConfig:
+      type: object
+      description: Adds or removes a Pancake tag on the current Pancake conversation.
+      properties:
+        enabled:
+          type: boolean
+        async:
+          type: boolean
+        execution:
+          type: string
+          enum: [same-invocation, external-dispatch]
+        needsApproval:
+          type: boolean
 
     TestAsyncConfig:
       type: object
