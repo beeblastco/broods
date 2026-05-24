@@ -94,6 +94,18 @@ function makeClient(): CloudWatchLogsClient {
     });
 }
 
+/**
+ * Returns the filthy-panty harness function's CloudWatch log group, if
+ * configured. Set FILTHY_PANTY_HARNESS_LOG_GROUP in Convex env to e.g.
+ * `/aws/lambda/filthy-panty-harness-processing-us-east-1-123456789012`
+ * (production) or `/aws/lambda/dev-filthy-panty-harness-processing-...` (dev).
+ */
+function getFilthyPantyLogGroup(): string | null {
+    const raw = process.env.FILTHY_PANTY_HARNESS_LOG_GROUP?.trim();
+    if (!raw) return null;
+    return raw.startsWith("/aws/lambda/") ? raw : `/aws/lambda/${raw}`;
+}
+
 async function fetchFromCloudWatch(opts: {
     functionName: string;
     startTimeMs: number;
@@ -232,18 +244,30 @@ export const fetchForProject = action({
                 authId: authUser.id,
                 projectId: args.projectId,
             });
-        if (deployments.length === 0) return [];
+
+        const sources: { logGroup: string; functionName: string }[] = deployments.map((d) => ({
+            logGroup: `/aws/lambda/${d.endpointId}`,
+            functionName: d.endpointId,
+        }));
+        const harnessLogGroup = getFilthyPantyLogGroup();
+        if (harnessLogGroup) {
+            sources.push({
+                logGroup: harnessLogGroup,
+                functionName: harnessLogGroup.replace(/^\/aws\/lambda\//, ""),
+            });
+        }
+        if (sources.length === 0) return [];
 
         const batches = await Promise.all(
-            deployments.map(async (d) => {
+            sources.map(async (s) => {
                 const entries = await fetchFromCloudWatch({
-                    functionName: d.endpointId,
+                    functionName: s.functionName,
                     startTimeMs: startTime,
                     endTimeMs: now,
                     limit: args.limit ?? 100,
                     errorOnly: args.errorOnly ?? false,
                 });
-                return entries.map((e) => ({ ...e, functionName: d.endpointId }));
+                return entries.map((e) => ({ ...e, functionName: s.functionName }));
             }),
         );
 
@@ -297,11 +321,14 @@ export const fetchUsageStats = action({
             projectId: projectId,
         });
 
-        if (deployments.length === 0) {
+        const logGroupNames = deployments.map((d: { endpointId: string }) => `/aws/lambda/${d.endpointId}`);
+        const harnessLogGroup = getFilthyPantyLogGroup();
+        if (harnessLogGroup) {
+            logGroupNames.push(harnessLogGroup);
+        }
+        if (logGroupNames.length === 0) {
             return empty;
         }
-
-        const logGroupNames = deployments.map((d: { endpointId: string }) => `/aws/lambda/${d.endpointId}`);
 
         // Single Insights query: bucket by time + (provider, model) and aggregate token usage.
         // Counts: `invocations` = model.invocation.finished (tasks),
