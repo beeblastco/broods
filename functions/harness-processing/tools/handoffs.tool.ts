@@ -30,27 +30,8 @@ export default function handoffsTool(context: HandoffsToolContext): ToolSet {
         const pageAccessToken = resolvePageAccessToken(context);
         const tagId = resolveHandoffTagId(context);
 
-        const url = new URL(
-          `https://pages.fm/api/public_api/v1/pages/${encodeURIComponent(conversation.pageId)}/conversations/${
-            encodeURIComponent(conversation.conversationId)
-          }/tags`,
-        );
-        url.searchParams.set("page_access_token", pageAccessToken);
-
-        const response = await fetch(url, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            action: "add",
-            tag_id: tagId,
-          }),
-        });
-        const bodyText = await response.text();
-        const body = parseJsonBody(bodyText);
-
-        if (!response.ok || body?.success === false) {
-          throw new Error(`Pancake handoff failed (${response.status}): ${formatPancakeError(body, bodyText)}`);
-        }
+        await addHandoffTag(conversation, pageAccessToken, tagId);
+        await markConversationUnread(conversation, pageAccessToken);
 
         return {
           type: "text",
@@ -59,6 +40,55 @@ export default function handoffsTool(context: HandoffsToolContext): ToolSet {
       },
     }),
   };
+}
+
+async function addHandoffTag(
+  conversation: { pageId: string; conversationId: string },
+  pageAccessToken: string,
+  tagId: string,
+): Promise<void> {
+  await postPancakeConversationAction(conversation, pageAccessToken, "tags", "Pancake handoff failed", {
+    action: "add",
+    tag_id: tagId,
+  });
+}
+
+async function markConversationUnread(
+  conversation: { pageId: string; conversationId: string },
+  pageAccessToken: string,
+): Promise<void> {
+  await postPancakeConversationAction(conversation, pageAccessToken, "unread", "Pancake unread failed");
+}
+
+async function postPancakeConversationAction(
+  conversation: { pageId: string; conversationId: string },
+  pageAccessToken: string,
+  actionPath: "tags" | "unread",
+  errorPrefix: string,
+  body?: Record<string, unknown>,
+): Promise<void> {
+  const url = new URL(
+    `https://pages.fm/api/public_api/v1/pages/${encodeURIComponent(conversation.pageId)}/conversations/${
+      encodeURIComponent(conversation.conversationId)
+    }/${actionPath}`,
+  );
+  url.searchParams.set("page_access_token", pageAccessToken);
+
+  const response = await fetch(url, {
+    method: "POST",
+    ...(body
+      ? {
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      }
+      : {}),
+  });
+  const bodyText = await response.text();
+  const parsedBody = parseJsonBody(bodyText);
+
+  if (!response.ok || parsedBody?.success === false) {
+    throw new Error(`${errorPrefix} (${response.status}): ${formatPancakeError(parsedBody, bodyText)}`);
+  }
 }
 
 function resolvePageAccessToken(context: HandoffsToolContext): string {

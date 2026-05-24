@@ -12,11 +12,11 @@ afterEach(() => {
 });
 
 describe("handoffs tool", () => {
-  it("adds the configured handoff tag to the current Pancake conversation", async () => {
+  it("adds the configured handoff tag and marks the current Pancake conversation unread", async () => {
     const fetchCalls: Array<{ url: string; init?: RequestInit }> = [];
     globalThis.fetch = mock(async (url: string | URL, init?: RequestInit) => {
       fetchCalls.push({ url: String(url), init });
-      return jsonResponse({ data: [6] });
+      return jsonResponse({ success: true });
     }) as never;
     const { default: handoffsTool } = await import("../functions/harness-processing/tools/handoffs.tool.ts");
 
@@ -28,15 +28,37 @@ describe("handoffs tool", () => {
       type: "text",
       value: "Conversation handed off to human staff.",
     });
-    expect(fetchCalls).toHaveLength(1);
-    const requestUrl = new URL(fetchCalls[0]!.url);
-    expect(requestUrl.pathname).toBe("/api/public_api/v1/pages/249596441579238/conversations/conversation-1/tags");
-    expect(requestUrl.searchParams.get("page_access_token")).toBe("page-token");
+    expect(fetchCalls).toHaveLength(2);
+    const tagUrl = new URL(fetchCalls[0]!.url);
+    expect(tagUrl.pathname).toBe("/api/public_api/v1/pages/249596441579238/conversations/conversation-1/tags");
+    expect(tagUrl.searchParams.get("page_access_token")).toBe("page-token");
     expect(fetchCalls[0]!.init?.method).toBe("POST");
+    expect(fetchCalls[0]!.init?.headers).toEqual({ "Content-Type": "application/json" });
     expect(JSON.parse(String(fetchCalls[0]!.init?.body))).toEqual({
       action: "add",
       tag_id: "6",
     });
+
+    const unreadUrl = new URL(fetchCalls[1]!.url);
+    expect(unreadUrl.pathname).toBe("/api/public_api/v1/pages/249596441579238/conversations/conversation-1/unread");
+    expect(unreadUrl.searchParams.get("page_access_token")).toBe("page-token");
+    expect(fetchCalls[1]!.init?.method).toBe("POST");
+    expect(fetchCalls[1]!.init?.body).toBeUndefined();
+  });
+
+  it("fails when marking the conversation unread fails", async () => {
+    let callCount = 0;
+    globalThis.fetch = mock(async () => {
+      callCount++;
+      return callCount === 1
+        ? jsonResponse({ success: true })
+        : jsonResponse({ success: false, message: "cannot mark unread" }, 400);
+    }) as never;
+    const { default: handoffsTool } = await import("../functions/harness-processing/tools/handoffs.tool.ts");
+    const tools = handoffsTool(createToolContext());
+
+    await expect(executeHandoffs(tools.handoffs, {}))
+      .rejects.toThrow("Pancake unread failed (400): cannot mark unread");
   });
 
   it("rejects non-Pancake conversations", async () => {
@@ -73,9 +95,9 @@ function executeHandoffs(toolEntry: unknown, input: unknown): Promise<unknown> {
   return (toolEntry as { execute(input: unknown): Promise<unknown> }).execute(input);
 }
 
-function jsonResponse(body: unknown): Response {
+function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
-    status: 200,
+    status,
     headers: { "Content-Type": "application/json" },
   });
 }
