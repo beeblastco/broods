@@ -1,0 +1,6 @@
+[submodule "convex"]
+	path = convex
+	url = https://github.com/beeblastco/convex-filthy-cherry.git
+[submodule "functions/_shared/storage/convex"]
+	path = functions/_shared/storage/convex
+	url = https://github.com/beeblastco/filthy-panty-convex-adapter.git

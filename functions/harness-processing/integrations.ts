@@ -1,26 +1,28 @@
 /**
- * Thin communication-channel integration layer for harness-processing.
- * Keep request normalization, webhook routing, and per-channel lifecycle handling here.
+ * HTTP ingress and channel routing for harness-processing.
+ * Keep request normalization, account/agent lookup, provider ACKs, and normalized channel events here.
  */
 
 import type {
   SystemModelMessage,
+  ToolModelMessage,
   UserContent,
   UserModelMessage,
 } from "ai";
 import {
   systemModelMessageSchema,
+  toolModelMessageSchema,
   userModelMessageSchema,
 } from "ai";
 import type { LambdaFunctionURLEvent } from "aws-lambda";
+import { resolveBearerAuth, type AuthContext } from "../_shared/auth.ts";
 import {
-  getAccount,
-  resolveBearerAuth,
-  toRuntimeAccountConfig,
-  type AccountConfig,
+  getStorage,
+  toRuntimeAgentConfig,
   type AccountRecord,
-  type AuthContext,
-} from "../_shared/accounts.ts";
+  type AgentConfig,
+  type AgentRecord,
+} from "../_shared/storage/index.ts";
 import type {
   ChannelActions,
   ChannelAdapter,
@@ -30,7 +32,6 @@ import type {
 import { extractText, formatChannelErrorText } from "../_shared/channels.ts";
 import { parseCommand } from "../_shared/commands.ts";
 import { createDiscordChannel } from "../_shared/discord-channel.ts";
-import { INTERNAL_EVENT_ID_PREFIX } from "../_shared/filesystem-namespace.ts";
 import { createGitHubChannel } from "../_shared/github-channel.ts";
 import {
   decodeBody,
@@ -39,48 +40,36 @@ import {
   normalizeHeaders,
 } from "../_shared/http.ts";
 import { logError } from "../_shared/log.ts";
+import { createPancakeChannel } from "../_shared/pancake-channel.ts";
 import type { LambdaResponse } from "../_shared/runtime.ts";
 import { createSlackChannel } from "../_shared/slack-channel.ts";
 import { createTelegramChannel } from "../_shared/telegram-channel.ts";
-import type { WebhookConfig } from "../_shared/webhook.ts";
+import {
+  assertValidPublicConversationKey,
+  assertValidPublicEventId,
+  accountAgentScopedKey,
+  normalizeDirectIdentifier,
+  scopedDirectConversationKey,
+  scopedDirectEventId,
+} from "../_shared/runtime-keys.ts";
 import type { ConversationIngressEvent } from "./session.ts";
-
-const DIRECT_API_EVENT_ID_PREFIX = "api:";
-const DIRECT_API_CONVERSATION_PREFIX = "api:";
-const ACCOUNT_NAMESPACE_PREFIX = "acct:";
-const RESERVED_EVENT_ID_PREFIXES = [
-  INTERNAL_EVENT_ID_PREFIX,
-  ACCOUNT_NAMESPACE_PREFIX,
-  DIRECT_API_EVENT_ID_PREFIX,
-  "gh:",
-  "slack:",
-  "slack-command:",
-  "discord:",
-  "tg-",
-] as const;
-const RESERVED_CONVERSATION_PREFIXES = [
-  INTERNAL_EVENT_ID_PREFIX,
-  ACCOUNT_NAMESPACE_PREFIX,
-  DIRECT_API_CONVERSATION_PREFIX,
-  "gh:",
-  "slack:",
-  "tg:",
-  "discord:",
-] as const;
 
 type DirectIngressEvent =
   | UserModelMessage
+  | ToolModelMessage
   | (SystemModelMessage & { persist: false });
 
 export interface DirectInboundEvent {
   accountId: string;
-  accountConfig: AccountConfig;
+  agentId: string;
+  agentConfig: AgentConfig;
   eventId: string;
+  asyncResultEventId?: string;
   publicEventId: string;
   conversationKey: string;
   publicConversationKey: string;
   events: DirectIngressEvent[];
-  webhookConfig?: WebhookConfig;
+  connectionId?: string;
 }
 
 export interface AsyncDirectInboundEvent extends DirectInboundEvent {
@@ -89,13 +78,23 @@ export interface AsyncDirectInboundEvent extends DirectInboundEvent {
 
 export interface StatusInboundEvent {
   accountId: string;
+  agentId: string;
   eventId: string;
   publicEventId: string;
 }
 
+export interface AsyncToolCompletionInboundEvent {
+  accountId: string;
+  resultId: string;
+  status: "completed" | "failed";
+  response?: unknown;
+  error?: string;
+}
+
 export interface ChannelInboundEvent {
   accountId?: string;
-  accountConfig?: AccountConfig;
+  agentId?: string;
+  agentConfig?: AgentConfig;
   eventId: string;
   conversationKey: string;
   content: UserContent;
@@ -110,6 +109,7 @@ interface IntegrationHandlers {
   handleDirectRequest(event: DirectInboundEvent): Promise<LambdaResponse>;
   handleAsyncRequest?(event: AsyncDirectInboundEvent): Promise<LambdaResponse>;
   handleStatusRequest?(event: StatusInboundEvent): Promise<LambdaResponse>;
+  handleAsyncToolCompletionRequest?(event: AsyncToolCompletionInboundEvent): Promise<LambdaResponse>;
   handleChannelRequest(event: ChannelInboundEvent): Promise<void>;
 }
 
@@ -120,18 +120,23 @@ export interface ChannelRegistry {
 export interface IntegrationRoutingOptions {
   authResolver?: (headers: Record<string, string>) => Promise<AuthContext | null>;
   accountLoader?: (accountId: string) => Promise<AccountRecord | null>;
+  agentLoader?: (accountId: string, agentId: string) => Promise<AgentRecord | null>;
+  directApiEnabled?: boolean;
 }
 
 export async function routeIncomingEvent(
   event: LambdaFunctionURLEvent,
   handlers: IntegrationHandlers,
+  options: IntegrationRoutingOptions = {},
 ): Promise<LambdaResponse> {
-  return createIncomingEventRouter()(event, handlers);
+  return createIncomingEventRouter(options)(event, handlers);
 }
 
 export function createIncomingEventRouter(options: IntegrationRoutingOptions = {}) {
   const authResolver = options.authResolver ?? resolveBearerAuth;
-  const accountLoader = options.accountLoader ?? getAccount;
+  const accountLoader = options.accountLoader ?? ((accountId: string) => getStorage().accounts.getById(accountId));
+  const agentLoader = options.agentLoader ?? ((accountId: string, agentId: string) => getStorage().agents.getById(accountId, agentId));
+  const directApiEnabled = options.directApiEnabled ?? true;
 
   return async (
     event: LambdaFunctionURLEvent,
@@ -139,12 +144,16 @@ export function createIncomingEventRouter(options: IntegrationRoutingOptions = {
   ): Promise<LambdaResponse> => handleLambdaUrlEvent(event, handlers, {
     authResolver,
     accountLoader,
+    agentLoader,
+    directApiEnabled,
   });
 }
 
 interface LambdaUrlRoutingContext {
   authResolver(headers: Record<string, string>): Promise<AuthContext | null>;
   accountLoader(accountId: string): Promise<AccountRecord | null>;
+  agentLoader(accountId: string, agentId: string): Promise<AgentRecord | null>;
+  directApiEnabled: boolean;
 }
 
 async function handleLambdaUrlEvent(
@@ -167,7 +176,7 @@ async function handleLambdaUrlEvent(
         return notFoundResponse();
       }
 
-      return handlers.handleStatusRequest(parseStatusPath(event.rawPath, account));
+      return handlers.handleStatusRequest(parseStatusPath(event.rawPath, event.rawQueryString, account));
     } catch (err) {
       return badRequestResponse(err);
     }
@@ -194,15 +203,47 @@ async function handleLambdaUrlEvent(
     body: decodeBody(event.body, event.isBase64Encoded),
   } satisfies ChannelRequest;
 
-  const accountWebhookMatch = event.rawPath.match(/^\/webhooks\/([^/]+)\/([^/]+)$/);
-  if (accountWebhookMatch?.[1] && accountWebhookMatch[2]) {
+  // Check for the tool async results return
+  const asyncToolCompletionMatch = event.rawPath.match(/^\/async-tools\/([^/]+)\/complete$/);
+  if (asyncToolCompletionMatch?.[1]) {
+    const auth = await context.authResolver(request.headers);
+    const account = auth?.kind === "account" ? auth.account : null;
+    if (!account) {
+      return unauthorizedResponse();
+    }
+    if (!handlers.handleAsyncToolCompletionRequest) {
+      return notFoundResponse();
+    }
+
+    try {
+      return handlers.handleAsyncToolCompletionRequest(parseAsyncToolCompletionPayload(
+        asyncToolCompletionMatch[1],
+        request.body,
+        account,
+      ));
+    } catch (err) {
+      return badRequestResponse(err);
+    }
+  }
+
+  // Check for the webhook channel integration
+  const accountWebhookMatch = event.rawPath.match(/^\/webhooks\/([^/]+)\/([^/]+)\/([^/]+)$/);
+  if (accountWebhookMatch?.[1] && accountWebhookMatch[2] && accountWebhookMatch[3]) {
     const account = await context.accountLoader(decodeURIComponent(accountWebhookMatch[1]));
     if (!account || account.status !== "active") {
       return notFoundResponse();
     }
+    const agentId = decodeURIComponent(accountWebhookMatch[2]);
+    const agent = await context.agentLoader(account.accountId, agentId);
+    if (!agent || agent.status !== "active") {
+      return notFoundResponse();
+    }
 
-    const accountChannelRegistry = createChannelRegistry(account.config);
-    const channelName = decodeURIComponent(accountWebhookMatch[2]);
+    const accountChannelRegistry = createChannelRegistry(agent.config, {
+      accountId: account.accountId,
+      agentId,
+    });
+    const channelName = decodeURIComponent(accountWebhookMatch[3]);
     const accountChannel = accountChannelRegistry.webhookChannels.find((channel) =>
       channel.name === channelName && channel.canHandle(request)
     );
@@ -211,7 +252,11 @@ async function handleLambdaUrlEvent(
       return integrationNotConfigured(isConfigured ? `Webhook ${channelName}` : channelName);
     }
 
-    return handleChannelWebhook(accountChannel, request, handlers, account);
+    return handleChannelWebhook(accountChannel, request, handlers, account, agent);
+  }
+
+  if (!context.directApiEnabled && (event.rawPath === "/" || isAsyncPath(event.rawPath))) {
+    return directApiDisabledResponse();
   }
 
   const auth = await context.authResolver(request.headers);
@@ -221,7 +266,7 @@ async function handleLambdaUrlEvent(
   }
 
   try {
-    const parsed = parseDirectPayload(request.body, request.headers, account);
+    const parsed = await parseDirectPayload(request.body, request.headers, account, context.agentLoader);
     if (isAsyncPath(event.rawPath)) {
       if (!handlers.handleAsyncRequest) {
         return notFoundResponse();
@@ -229,7 +274,7 @@ async function handleLambdaUrlEvent(
 
       return handlers.handleAsyncRequest({
         ...parsed,
-        statusUrl: buildStatusUrl(event, parsed.publicEventId),
+        statusUrl: buildStatusUrl(event, parsed.publicEventId, parsed.agentId),
       });
     }
 
@@ -239,27 +284,41 @@ async function handleLambdaUrlEvent(
   }
 }
 
+/**
+ * This is to handle the response to the external integration webhook
+ */
 async function handleChannelWebhook(
   adapter: ChannelAdapter,
   request: ChannelRequest,
   handlers: IntegrationHandlers,
-  account?: AccountRecord,
+  account: AccountRecord,
+  agent: AgentRecord,
 ): Promise<LambdaResponse> {
   try {
     if (!(await adapter.authenticate(request))) {
       return unauthorizedResponse();
     }
 
-    const parsed = adapter.parse(request);
+    // Parse event and check if it should be ignored
+    // This is based on the channel integration
+    const parsed = await adapter.parse(request);
 
+    // Global event check for webhook event.
+    // Provider needs a direct HTTP response, but no agent run. 
+    // Example: Slack URL verification or Discord interaction response.
     if (parsed.kind === "response") {
       return toLambdaResponse(parsed.response);
     }
 
+    // Webhook is valid enough to accept, but should not run the agent. 
+    // Example: unsupported Pancake event, wrong page ID, hidden/removed message, page-originated message,
+    // or a configured channel handoff gate.
     if (parsed.kind === "ignore") {
       return toLambdaResponse(parsed.response ?? { statusCode: 200 });
     }
 
+    // Else webhook contains a real user message.
+    // Send the webhook ACK immediately then use afterResponse to conitnue into normal channle processing
     const { message, ack } = parsed;
     const channel = adapter.actions(message);
     const response = ack ?? { statusCode: 200 };
@@ -270,19 +329,16 @@ async function handleChannelWebhook(
       body: response.body ?? "",
       afterResponse: processChannelMessage(
         {
-          eventId: account ? accountScopedKey(account.accountId, message.eventId) : message.eventId,
-          conversationKey: account ? accountScopedKey(account.accountId, message.conversationKey) : message.conversationKey,
+          eventId: accountAgentScopedKey(account.accountId, agent.agentId, message.eventId),
+          conversationKey: accountAgentScopedKey(account.accountId, agent.agentId, message.conversationKey),
           content: message.content,
           events: [{ role: "user", content: message.content }],
           channelName: message.channelName,
           source: message.source,
-          channel,
-          ...(account
-            ? {
-              accountId: account.accountId,
-              accountConfig: toRuntimeAccountConfig(account.config),
-            }
-            : {}),
+          channel: channel,
+          accountId: account.accountId,
+          agentId: agent.agentId,
+          agentConfig: toRuntimeAgentConfig(agent.config),
         },
         handlers,
       ),
@@ -354,11 +410,19 @@ function integrationNotConfigured(name: string): LambdaResponse {
   return errorResponse(503, `${name} integration is not configured`);
 }
 
-function createChannelRegistry(config: AccountConfig): ChannelRegistry {
+function directApiDisabledResponse(): LambdaResponse {
+  return errorResponse(404, "Direct API is disabled");
+}
+
+function createChannelRegistry(
+  config: AgentConfig,
+  scope: { accountId: string; agentId: string },
+): ChannelRegistry {
   const telegramChannel = createTelegramChannelFromConfig(config);
   const githubChannel = createGitHubChannelFromConfig(config);
   const slackChannel = createSlackChannelFromConfig(config);
   const discordChannel = createDiscordChannelFromConfig(config);
+  const pancakeChannel = createPancakeChannelFromConfig(config, scope);
 
   return {
     webhookChannels: [
@@ -366,15 +430,17 @@ function createChannelRegistry(config: AccountConfig): ChannelRegistry {
       githubChannel,
       slackChannel,
       discordChannel,
+      pancakeChannel,
     ].filter((channel): channel is ChannelAdapter => channel !== null),
   };
 }
 
-function parseDirectPayload(
+async function parseDirectPayload(
   bodyText: string,
   headers: Record<string, string>,
   account: AccountRecord,
-): DirectInboundEvent {
+  agentLoader: (accountId: string, agentId: string) => Promise<AgentRecord | null>,
+): Promise<DirectInboundEvent> {
   let parsed: unknown;
 
   try {
@@ -393,75 +459,90 @@ function parseDirectPayload(
   }
 
   const record = parsed as Record<string, unknown>;
-  const rawEventId = normalizeDirectIdentifier("eventId", record.eventId as string);
-  if (hasReservedEventIdPrefix(rawEventId)) {
-    throw new Error("eventId uses a reserved internal prefix");
+  if (typeof record.agentId !== "string" || record.agentId.trim().length === 0) {
+    throw new Error("Request body must include agentId");
+  }
+  const agentId = normalizeDirectIdentifier("agentId", record.agentId);
+  const agent = await agentLoader(account.accountId, agentId);
+  if (!agent || agent.status !== "active") {
+    throw new DirectNotFoundError("Agent not found");
   }
 
-  const rawConversationKey = normalizeDirectIdentifier("conversationKey", record.conversationKey as string);
-  if (hasReservedConversationPrefix(rawConversationKey)) {
-    throw new Error("conversationKey uses a reserved channel or internal prefix");
-  }
+  const rawEventId = assertValidPublicEventId(record.eventId as string);
+  const rawConversationKey = assertValidPublicConversationKey(record.conversationKey as string);
 
   const events = parseDirectIngressEvents(record);
   if (events.length === 0) {
     throw new Error("Request body must include a non-empty events array");
   }
-  const webhookConfig = parseWebhookConfig(record.webhookUrl, headers["x-webhook-secret"]);
+  if (record.webhookUrl !== undefined || headers["x-webhook-secret"] !== undefined) {
+    throw new Error("Per-request webhook callbacks are no longer supported; configure config.hooks.webhook on the agent");
+  }
 
   return {
     accountId: account.accountId,
-    accountConfig: toRuntimeAccountConfig(account.config),
-    eventId: accountScopedKey(account.accountId, `${DIRECT_API_EVENT_ID_PREFIX}${rawEventId}`),
+    agentId: agent.agentId,
+    agentConfig: toRuntimeAgentConfig(agent.config),
+    eventId: scopedDirectEventId(account.accountId, agent.agentId, rawEventId),
     publicEventId: rawEventId,
-    conversationKey: accountScopedKey(account.accountId, `${DIRECT_API_CONVERSATION_PREFIX}${rawConversationKey}`),
+    conversationKey: scopedDirectConversationKey(account.accountId, agent.agentId, rawConversationKey),
     publicConversationKey: rawConversationKey,
     events,
-    ...(webhookConfig ? { webhookConfig } : {}),
   };
 }
 
-function parseWebhookConfig(rawUrl: unknown, rawSecret: string | undefined): WebhookConfig | undefined {
-  if (rawUrl == null && rawSecret == null) {
-    return undefined;
-  }
-
-  if (typeof rawUrl !== "string" || rawUrl.trim().length === 0) {
-    throw new Error("webhookUrl must be a non-empty string when X-Webhook-Secret is provided");
-  }
-
-  if (!rawSecret || rawSecret.trim().length === 0) {
-    throw new Error("X-Webhook-Secret is required when webhookUrl is provided");
-  }
-
-  const url = rawUrl.trim();
-  try {
-    const parsed = new URL(url);
-    if (parsed.protocol !== "https:") {
-      throw new Error("webhookUrl must use https");
-    }
-  } catch (err) {
-    throw new Error(err instanceof Error ? err.message : "webhookUrl must be a valid URL");
-  }
-
-  return {
-    url,
-    secret: rawSecret,
-  };
-}
-
-function parseStatusPath(rawPath: string, account: AccountRecord): StatusInboundEvent {
+function parseStatusPath(rawPath: string, rawQueryString: string, account: AccountRecord): StatusInboundEvent {
   const match = rawPath.match(/^\/status\/([^/]+)$/);
   const rawEventId = match?.[1] ? decodeURIComponent(match[1]) : "";
-  const publicEventId = normalizeDirectIdentifier("eventId", rawEventId);
-  if (hasReservedEventIdPrefix(publicEventId)) {
-    throw new Error("eventId uses a reserved internal prefix");
+  const publicEventId = assertValidPublicEventId(rawEventId);
+
+  const params = new URLSearchParams(rawQueryString);
+  const rawAgentId = params.get("agentId");
+  if (!rawAgentId) {
+    throw new Error("agentId query parameter is required");
+  }
+  const agentId = normalizeDirectIdentifier("agentId", rawAgentId);
+
+  return {
+    accountId: account.accountId,
+    agentId,
+    eventId: scopedDirectEventId(account.accountId, agentId, publicEventId),
+    publicEventId,
+  };
+}
+
+function parseAsyncToolCompletionPayload(
+  rawResultId: string,
+  bodyText: string,
+  account: AccountRecord,
+): AsyncToolCompletionInboundEvent {
+  let parsed: unknown;
+
+  try {
+    parsed = JSON.parse(bodyText);
+  } catch (err) {
+    throw new Error(`Invalid request JSON: ${err instanceof Error ? err.message : String(err)}`);
+  }
+
+  if (!parsed || typeof parsed !== "object") {
+    throw new Error("Async tool completion body must be an object");
+  }
+
+  const record = parsed as Record<string, unknown>;
+  if (record.status !== "completed" && record.status !== "failed") {
+    throw new Error("Async tool completion status must be completed or failed");
+  }
+
+  if (record.status === "failed" && typeof record.error !== "string") {
+    throw new Error("Async tool completion error must be a string when status is failed");
   }
 
   return {
     accountId: account.accountId,
-    eventId: accountScopedKey(account.accountId, `${DIRECT_API_EVENT_ID_PREFIX}${publicEventId}`),
-    publicEventId,
+    resultId: decodeURIComponent(rawResultId),
+    status: record.status,
+    ...(record.response !== undefined ? { response: record.response } : {}),
+    ...(typeof record.error === "string" ? { error: record.error } : {}),
   };
 }
 
@@ -470,6 +551,9 @@ function unauthorizedResponse(): LambdaResponse {
 }
 
 function badRequestResponse(err: unknown): LambdaResponse {
+  if (err instanceof DirectNotFoundError) {
+    return errorResponse(404, err.message);
+  }
   return errorResponse(400, err instanceof Error ? err.message : "Invalid request");
 }
 
@@ -485,7 +569,7 @@ function isStatusPath(rawPath: string): boolean {
   return rawPath.startsWith("/status/");
 }
 
-function buildStatusUrl(event: LambdaFunctionURLEvent, publicEventId: string): string {
+function buildStatusUrl(event: LambdaFunctionURLEvent, publicEventId: string, agentId: string): string {
   const headers = normalizeHeaders(event.headers);
   const protocol = headers["x-forwarded-proto"] ?? "https";
   const host = headers.host;
@@ -493,7 +577,7 @@ function buildStatusUrl(event: LambdaFunctionURLEvent, publicEventId: string): s
     throw new Error("Request is missing Host header");
   }
 
-  return `${protocol}://${host}/status/${encodeURIComponent(publicEventId)}`;
+  return `${protocol}://${host}/status/${encodeURIComponent(publicEventId)}?agentId=${encodeURIComponent(agentId)}`;
 }
 
 function parseDirectIngressEvents(record: Record<string, unknown>): DirectIngressEvent[] {
@@ -534,8 +618,23 @@ function parseDirectIngressEvent(rawEvent: unknown): DirectIngressEvent {
     return parsedUser.data;
   }
 
+  if (candidate.role === "tool") {
+    const parsedTool = toolModelMessageSchema.safeParse(candidate);
+    if (!parsedTool.success) {
+      throw new Error(`Invalid direct event: ${parsedTool.error.issues[0]?.message ?? "must match ToolModelMessage"}`);
+    }
+    if (
+      parsedTool.data.content.length === 0 ||
+      !parsedTool.data.content.every((part) => part.type === "tool-approval-response")
+    ) {
+      throw new Error("Direct API tool events may include only tool-approval-response parts");
+    }
+
+    return parsedTool.data;
+  }
+
   if (candidate.role !== "system") {
-    throw new Error("Direct API accepts only user and ephemeral system events");
+    throw new Error("Direct API accepts only user, tool approval, and ephemeral system events");
   }
 
   if (persist === true) {
@@ -553,24 +652,9 @@ function parseDirectIngressEvent(rawEvent: unknown): DirectIngressEvent {
   };
 }
 
-function hasReservedConversationPrefix(value: string): boolean {
-  return RESERVED_CONVERSATION_PREFIXES.some((prefix) => value.startsWith(prefix));
-}
+class DirectNotFoundError extends Error { }
 
-function hasReservedEventIdPrefix(value: string): boolean {
-  return RESERVED_EVENT_ID_PREFIXES.some((prefix) => value.startsWith(prefix));
-}
-
-function normalizeDirectIdentifier(name: string, value: string): string {
-  const normalized = value.trim();
-  if (!normalized) {
-    throw new Error(`${name} must not be empty`);
-  }
-
-  return normalized;
-}
-
-function createTelegramChannelFromConfig(config: AccountConfig): ChannelAdapter | null {
+function createTelegramChannelFromConfig(config: AgentConfig): ChannelAdapter | null {
   const channel = config.channels?.telegram;
   if (!channel?.botToken || !channel.webhookSecret || !channel.allowedChatIds) {
     return null;
@@ -584,7 +668,7 @@ function createTelegramChannelFromConfig(config: AccountConfig): ChannelAdapter 
   );
 }
 
-function createGitHubChannelFromConfig(config: AccountConfig): ChannelAdapter | null {
+function createGitHubChannelFromConfig(config: AgentConfig): ChannelAdapter | null {
   const channel = config.channels?.github;
   if (!channel?.webhookSecret || !channel.appId || !channel.privateKey) {
     return null;
@@ -598,7 +682,7 @@ function createGitHubChannelFromConfig(config: AccountConfig): ChannelAdapter | 
   );
 }
 
-function createSlackChannelFromConfig(config: AccountConfig): ChannelAdapter | null {
+function createSlackChannelFromConfig(config: AgentConfig): ChannelAdapter | null {
   const channel = config.channels?.slack;
   if (!channel?.botToken || !channel.signingSecret) {
     return null;
@@ -611,7 +695,7 @@ function createSlackChannelFromConfig(config: AccountConfig): ChannelAdapter | n
   );
 }
 
-function createDiscordChannelFromConfig(config: AccountConfig): ChannelAdapter | null {
+function createDiscordChannelFromConfig(config: AgentConfig): ChannelAdapter | null {
   const channel = config.channels?.discord;
   if (!channel?.botToken || !channel.publicKey) {
     return null;
@@ -624,6 +708,23 @@ function createDiscordChannelFromConfig(config: AccountConfig): ChannelAdapter |
   );
 }
 
-function accountScopedKey(accountId: string, key: string): string {
-  return `${ACCOUNT_NAMESPACE_PREFIX}${accountId}:${key}`;
+function createPancakeChannelFromConfig(
+  config: AgentConfig,
+  scope: { accountId: string; agentId: string },
+): ChannelAdapter | null {
+  const channel = config.channels?.pancake;
+  if (!channel?.pageId || !channel.pageAccessToken) {
+    return null;
+  }
+
+  return createPancakeChannel(
+    channel.pageId,
+    channel.pageAccessToken,
+    channel.senderId,
+    {
+      accountId: scope.accountId,
+      agentId: scope.agentId,
+      configOptions: channel.options,
+    },
+  );
 }

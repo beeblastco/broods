@@ -4,6 +4,7 @@ import type { LambdaResponse } from "../functions/_shared/runtime.ts";
 import {
   createIncomingEventRouter,
   type AsyncDirectInboundEvent,
+  type AsyncToolCompletionInboundEvent,
   type ChannelInboundEvent,
   type DirectInboundEvent,
   type StatusInboundEvent,
@@ -16,8 +17,21 @@ const TEST_ACCOUNT = {
   secretHash: "hash",
   status: "active" as const,
   config: {
-    modelId: "gemini-test",
-    memoryNamespace: "support",
+    model: {
+      provider: "google" as const,
+      modelId: "gemini-test",
+    },
+    provider: {
+      google: {
+        apiKey: "google-key",
+      },
+    },
+    workspace: {
+      enabled: true,
+      memory: {
+        namespace: "support",
+      },
+    },
     channels: {
       slack: {
         botToken: "xoxb-secret",
@@ -25,6 +39,16 @@ const TEST_ACCOUNT = {
       },
     },
   },
+  createdAt: "2026-04-24T00:00:00.000Z",
+  updatedAt: "2026-04-24T00:00:00.000Z",
+};
+
+const TEST_AGENT = {
+  accountId: "acct_test",
+  agentId: "agent_test",
+  name: "Test agent",
+  status: "active" as const,
+  config: TEST_ACCOUNT.config,
   createdAt: "2026-04-24T00:00:00.000Z",
   updatedAt: "2026-04-24T00:00:00.000Z",
 };
@@ -65,6 +89,29 @@ describe("direct API ingress", () => {
       method: "PUT",
       allowedMethods: ["GET", "POST"],
     });
+  });
+
+  it("returns 404 for direct sync and async POST when direct API is disabled", async () => {
+    const body = {
+      eventId: "one",
+      conversationKey: "alpha",
+      events: [{
+        role: "user",
+        content: [{ type: "text", text: "hello" }],
+      }],
+    };
+
+    const syncResponse = await routeIncomingEvent(createEvent(body, {
+      authorization: "Bearer secret",
+    }), createHandlers(), { directApiEnabled: false });
+    const asyncResponse = await routeIncomingEvent(createEvent(body, {
+      authorization: "Bearer secret",
+    }, { rawPath: "/async" }), createHandlers(), { directApiEnabled: false });
+
+    expect(syncResponse.statusCode).toBe(404);
+    expect(responseJson(syncResponse)).toEqual({ error: "Direct API is disabled" });
+    expect(asyncResponse.statusCode).toBe(404);
+    expect(responseJson(asyncResponse)).toEqual({ error: "Direct API is disabled" });
   });
 
   it("returns 401 when the bearer token is missing", async () => {
@@ -137,6 +184,42 @@ describe("direct API ingress", () => {
 
     expect(response.statusCode).toBe(400);
     expect(responseJson(response)).toEqual({ error: "Request body must include eventId and conversationKey" });
+  });
+
+  it("requires an agentId for direct API requests", async () => {
+    const response = await routeIncomingEvent(createEvent({
+      agentId: undefined,
+      eventId: "one",
+      conversationKey: "alpha",
+      events: [{
+        role: "user",
+        content: [{ type: "text", text: "hello" }],
+      }],
+    }, {
+      authorization: "Bearer secret",
+    }, {
+      addDefaultAgentId: false,
+    }), createHandlers());
+
+    expect(response.statusCode).toBe(400);
+    expect(responseJson(response)).toEqual({ error: "Request body must include agentId" });
+  });
+
+  it("returns 404 when the requested agent does not exist", async () => {
+    const response = await routeIncomingEvent(createEvent({
+      agentId: "missing-agent",
+      eventId: "one",
+      conversationKey: "alpha",
+      events: [{
+        role: "user",
+        content: [{ type: "text", text: "hello" }],
+      }],
+    }, {
+      authorization: "Bearer secret",
+    }), createHandlers());
+
+    expect(response.statusCode).toBe(404);
+    expect(responseJson(response)).toEqual({ error: "Agent not found" });
   });
 
   it("rejects reserved direct event prefixes", async () => {
@@ -285,14 +368,28 @@ describe("direct API ingress", () => {
     if (directEvent == null) {
       throw new Error("Expected direct event to be handled");
     }
-    expect(directEvent.eventId).toBe("acct:acct_test:api:one");
+    expect(directEvent.eventId).toBe("acct:acct_test:agent:agent_test:api:one");
     expect(directEvent.accountId).toBe("acct_test");
-    expect(directEvent.accountConfig).toEqual({
-      modelId: "gemini-test",
-      memoryNamespace: "support",
+    expect(directEvent.agentId).toBe("agent_test");
+    expect(directEvent.agentConfig).toEqual({
+      model: {
+        provider: "google",
+        modelId: "gemini-test",
+      },
+      provider: {
+        google: {
+          apiKey: "google-key",
+        },
+      },
+      workspace: {
+        enabled: true,
+        memory: {
+          namespace: "support",
+        },
+      },
     });
     expect(directEvent.publicEventId).toBe("one");
-    expect(directEvent.conversationKey).toBe("acct:acct_test:api:alpha");
+    expect(directEvent.conversationKey).toBe("acct:acct_test:agent:agent_test:api:alpha");
     expect(directEvent.publicConversationKey).toBe("alpha");
     expect(directEvent.events).toEqual([
       {
@@ -305,6 +402,86 @@ describe("direct API ingress", () => {
         content: [{ type: "text", text: "hello" }],
       },
     ]);
+  });
+
+  it("accepts direct tool approval response events", async () => {
+    const handledEvents: DirectInboundEvent[] = [];
+    const response = await routeIncomingEvent(createEvent({
+      eventId: "approval-one",
+      conversationKey: "alpha",
+      events: [{
+        role: "tool",
+        content: [{
+          type: "tool-approval-response",
+          approvalId: "approval-1",
+          approved: true,
+          reason: "confirmed",
+        }],
+      }],
+    }, {
+      authorization: "Bearer secret",
+    }), createHandlers({
+      handleDirectRequest: async (event) => {
+        handledEvents.push(event);
+        return {
+          statusCode: 200,
+          headers: { "Content-Type": "text/plain; charset=utf-8" },
+          body: "ok",
+        };
+      },
+    }));
+
+    expect(response.statusCode).toBe(200);
+    expect(handledEvents[0]?.events).toEqual([{
+      role: "tool",
+      content: [{
+        type: "tool-approval-response",
+        approvalId: "approval-1",
+        approved: true,
+        reason: "confirmed",
+      }],
+    }]);
+  });
+
+  it("rejects direct tool events that are not approval responses", async () => {
+    const response = await routeIncomingEvent(createEvent({
+      eventId: "tool-result",
+      conversationKey: "alpha",
+      events: [{
+        role: "tool",
+        content: [{
+          type: "tool-result",
+          toolCallId: "tool-call-1",
+          toolName: "filesystem",
+          output: { type: "text", value: "done" },
+        }],
+      }],
+    }, {
+      authorization: "Bearer secret",
+    }), createHandlers());
+
+    expect(response.statusCode).toBe(400);
+    expect(responseJson(response)).toEqual({
+      error: "Direct API tool events may include only tool-approval-response parts",
+    });
+  });
+
+  it("rejects empty direct tool events", async () => {
+    const response = await routeIncomingEvent(createEvent({
+      eventId: "empty-tool",
+      conversationKey: "alpha",
+      events: [{
+        role: "tool",
+        content: [],
+      }],
+    }, {
+      authorization: "Bearer secret",
+    }), createHandlers());
+
+    expect(response.statusCode).toBe(400);
+    expect(responseJson(response)).toEqual({
+      error: "Direct API tool events may include only tool-approval-response parts",
+    });
   });
 
   it("routes async direct API requests with a status URL", async () => {
@@ -335,12 +512,11 @@ describe("direct API ingress", () => {
 
     expect(response.statusCode).toBe(202);
     expect(handledEvents).toHaveLength(1);
-    expect(handledEvents[0]?.eventId).toBe("acct:acct_test:api:one");
-    expect(handledEvents[0]?.statusUrl).toBe("https://example.lambda-url.aws/status/one");
+    expect(handledEvents[0]?.eventId).toBe("acct:acct_test:agent:agent_test:api:one");
+    expect(handledEvents[0]?.statusUrl).toBe("https://example.lambda-url.aws/status/one?agentId=agent_test");
   });
 
-  it("parses optional webhook config for direct API requests", async () => {
-    const handledEvents: DirectInboundEvent[] = [];
+  it("rejects per-request webhook callback config for direct API requests", async () => {
     const response = await routeIncomingEvent(createEvent({
       eventId: "one",
       conversationKey: "alpha",
@@ -352,39 +528,12 @@ describe("direct API ingress", () => {
     }, {
       authorization: "Bearer secret",
       "x-webhook-secret": "webhook-secret",
-    }), createHandlers({
-      handleDirectRequest: async (event) => {
-        handledEvents.push(event);
-        return {
-          statusCode: 200,
-          headers: { "Content-Type": "text/plain; charset=utf-8" },
-          body: "ok",
-        };
-      },
-    }));
-
-    expect(response.statusCode).toBe(200);
-    expect(handledEvents[0]?.webhookConfig).toEqual({
-      url: "https://callbacks.example/hook",
-      secret: "webhook-secret",
-    });
-  });
-
-  it("rejects webhook URLs without a webhook secret", async () => {
-    const response = await routeIncomingEvent(createEvent({
-      eventId: "one",
-      conversationKey: "alpha",
-      webhookUrl: "https://callbacks.example/hook",
-      events: [{
-        role: "user",
-        content: [{ type: "text", text: "hello" }],
-      }],
-    }, {
-      authorization: "Bearer secret",
     }), createHandlers());
 
     expect(response.statusCode).toBe(400);
-    expect(responseJson(response)).toEqual({ error: "X-Webhook-Secret is required when webhookUrl is provided" });
+    expect(responseJson(response)).toEqual({
+      error: "Per-request webhook callbacks are no longer supported; configure config.hooks.webhook on the agent",
+    });
   });
 
   it("routes status requests through direct API auth", async () => {
@@ -394,6 +543,7 @@ describe("direct API ingress", () => {
     }, {
       method: "GET",
       rawPath: "/status/one",
+      rawQueryString: "agentId=agent_test",
     }), createHandlers({
       handleStatusRequest: async (event) => {
         handledEvents.push(event);
@@ -406,7 +556,62 @@ describe("direct API ingress", () => {
     }));
 
     expect(response.statusCode).toBe(200);
-    expect(handledEvents).toEqual([{ accountId: "acct_test", eventId: "acct:acct_test:api:one", publicEventId: "one" }]);
+    expect(handledEvents).toEqual([{
+      accountId: "acct_test",
+      agentId: "agent_test",
+      eventId: "acct:acct_test:agent:agent_test:api:one",
+      publicEventId: "one",
+    }]);
+  });
+
+  it("routes async tool completion requests through account auth", async () => {
+    const handledEvents: AsyncToolCompletionInboundEvent[] = [];
+    const response = await routeIncomingEvent(createEvent({
+      status: "completed",
+      response: { answer: "done" },
+    }, {
+      authorization: "Bearer secret",
+    }, {
+      rawPath: "/async-tools/async_tool_1/complete",
+    }), createHandlers({
+      handleAsyncToolCompletionRequest: async (event) => {
+        handledEvents.push(event);
+        return {
+          statusCode: 202,
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ status: "accepted" }),
+        };
+      },
+    }));
+
+    expect(response.statusCode).toBe(202);
+    expect(handledEvents).toEqual([{
+      accountId: "acct_test",
+      resultId: "async_tool_1",
+      status: "completed",
+      response: { answer: "done" },
+    }]);
+  });
+
+  it("validates async tool failed completion errors", async () => {
+    const response = await routeIncomingEvent(createEvent({
+      status: "failed",
+    }, {
+      authorization: "Bearer secret",
+    }, {
+      rawPath: "/async-tools/async_tool_1/complete",
+    }), createHandlers({
+      handleAsyncToolCompletionRequest: async () => ({
+        statusCode: 202,
+        headers: { "Content-Type": "application/json" },
+        body: "{}",
+      }),
+    }));
+
+    expect(response.statusCode).toBe(400);
+    expect(responseJson(response)).toEqual({
+      error: "Async tool completion error must be a string when status is failed",
+    });
   });
 });
 
@@ -414,6 +619,7 @@ function createHandlers(overrides: Partial<{
   handleDirectRequest(event: DirectInboundEvent): Promise<ResponseShape>;
   handleAsyncRequest(event: AsyncDirectInboundEvent): Promise<ResponseShape>;
   handleStatusRequest(event: StatusInboundEvent): Promise<ResponseShape>;
+  handleAsyncToolCompletionRequest(event: AsyncToolCompletionInboundEvent): Promise<ResponseShape>;
   handleChannelRequest(event: ChannelInboundEvent): Promise<void>;
 }> = {}) {
   return {
@@ -424,6 +630,7 @@ function createHandlers(overrides: Partial<{
     })),
     handleAsyncRequest: overrides.handleAsyncRequest,
     handleStatusRequest: overrides.handleStatusRequest,
+    handleAsyncToolCompletionRequest: overrides.handleAsyncToolCompletionRequest,
     handleChannelRequest: overrides.handleChannelRequest ?? (async () => {}),
   };
 }
@@ -431,12 +638,15 @@ function createHandlers(overrides: Partial<{
 async function routeIncomingEvent(
   event: LambdaFunctionURLEvent,
   handlers: ReturnType<typeof createHandlers>,
+  options: { directApiEnabled?: boolean } = {},
 ): Promise<ResponseShape> {
   const router = createIncomingEventRouter({
     authResolver: async (headers) =>
       headers.authorization === "Bearer secret"
         ? { kind: "account", account: TEST_ACCOUNT }
         : null,
+    agentLoader: async (_accountId, agentId) => agentId === TEST_AGENT.agentId ? TEST_AGENT : null,
+    ...options,
   });
 
   const response = await router(event, handlers);
@@ -449,17 +659,26 @@ function createEvent(
   options: Partial<{
     method: string;
     rawPath: string;
+    rawQueryString: string;
     rawBody: string;
     isBase64Encoded: boolean;
+    addDefaultAgentId: boolean;
   }> = {},
 ): LambdaFunctionURLEvent {
   const rawPath = options.rawPath ?? "/";
+  const normalizedBody = options.addDefaultAgentId !== false &&
+    body &&
+    typeof body === "object" &&
+    !Array.isArray(body) &&
+    !("agentId" in body)
+    ? { agentId: "agent_test", ...body as Record<string, unknown> }
+    : body;
 
   return {
     version: "2.0",
     routeKey: "$default",
     rawPath,
-    rawQueryString: "",
+    rawQueryString: options.rawQueryString ?? "",
     headers,
     requestContext: {
       accountId: "123456789012",
@@ -479,7 +698,7 @@ function createEvent(
       time: "24/Apr/2026:00:00:00 +0000",
       timeEpoch: Date.now(),
     },
-    body: options.rawBody ?? JSON.stringify(body),
+    body: options.rawBody ?? JSON.stringify(normalizedBody),
     isBase64Encoded: options.isBase64Encoded ?? false,
   };
 }

@@ -1,15 +1,16 @@
 # Memory and Session
 
-This page explains where conversation history, `MEMORY.md`, and filesystem tool files live.
+This page explains where conversation history, `MEMORY.md`, task files, and filesystem tool files live.
 
 ## Mental Model
 
 ```mermaid
 flowchart TD
   Request["Direct API / Async API / Webhook"] --> Account["Account"]
-  Account --> Conversation["Conversation"]
+  Account --> Agent["Agent"]
+  Agent --> Conversation["Conversation"]
   Conversation --> History["DynamoDB conversation history"]
-  Account --> MemoryChoice["Memory namespace choice"]
+  Agent --> MemoryChoice["Memory namespace choice  (Workspace)"]
   MemoryChoice --> Memory["S3 MEMORY.md"]
   MemoryChoice --> Files["S3 filesystem + tasks"]
 ```
@@ -17,11 +18,11 @@ flowchart TD
 There are two separate things:
 
 - Conversation history: the chat messages for one conversation.
-- Memory/filesystem: `MEMORY.md`, task files, and files written by the filesystem tool.
+- Workspace state: `MEMORY.md`, task files, and files written by the filesystem tool. Workspace state exists only when the selected agent has `config.workspace.enabled` true.
 
 ## Default: One Memory Per Conversation
 
-If the account does not set `memoryNamespace`, every conversation gets its own memory and filesystem.
+If the selected agent has `config.workspace.enabled` true and does not set `workspace.memory.namespace`, every conversation gets its own memory, tasks, and filesystem.
 
 ```mermaid
 flowchart LR
@@ -34,12 +35,17 @@ Use this when each chat, issue, thread, or direct API conversation should rememb
 
 ## Shared: One Memory For Many Conversations
 
-Set `config.memoryNamespace` when multiple conversations should share the same memory and files.
+Set `config.workspace.memory.namespace` on the agent when multiple conversations should share the same memory, tasks, and files.
 
 ```json
 {
   "config": {
-    "memoryNamespace": "support"
+    "workspace": {
+      "enabled": true,
+      "memory": {
+        "namespace": "support"
+      }
+    }
   }
 }
 ```
@@ -55,58 +61,71 @@ Use this when one account should have a shared knowledge/workspace across channe
 
 ## Account Isolation
 
-The namespace is always scoped by account.
+The namespace is always scoped by account and agent.
 
 ```mermaid
 flowchart LR
-  A["Company A<br/>memoryNamespace=support"] --> AM["Company A support memory"]
-  B["Company B<br/>memoryNamespace=support"] --> BM["Company B support memory"]
+  A["Company A / Agent 1<br/>workspace.memory.namespace=support"] --> AM["Company A Agent 1 support memory"]
+  B["Company A / Agent 2<br/>workspace.memory.namespace=support"] --> BM["Company A Agent 2 support memory"]
 ```
 
 So two accounts can both use `"support"` without sharing data.
 
-## What Uses `memoryNamespace`
+## What Uses Workspace
 
 ```mermaid
 flowchart TD
-  Namespace["memoryNamespace"] --> Prompt["MEMORY.md<br/>loaded into prompt"]
-  Namespace --> Fs["filesystem tool"]
-  Namespace --> Tasks["tasks tool"]
+  Workspace["workspace.enabled=true"] --> Prompt["MEMORY.md<br/>loaded into prompt"]
+  Workspace --> Fs["filesystem tool"]
+  Workspace --> Tasks["tasks tool"]
+  Namespace["workspace.memory.namespace"] --> Prompt
+  Namespace --> Fs
+  Namespace --> Tasks
 ```
 
-It applies to every runtime path:
+The filesystem and tasks tools do not use top-level `tools` entries. They are available when `workspace.enabled` is true, unless disabled with `workspace.filesystem.enabled: false` or `workspace.tasks.enabled: false`. Set `workspace.needsApproval` to require approval for every enabled workspace tool.
 
-- Direct API: `POST /`
-- Async API: `POST /async`
-- Telegram webhooks
-- GitHub webhooks
-- Slack webhooks
-- Discord webhooks
+## Session Context Management
+
+Session history is managed before each model turn:
+
+- Pruning is enabled by default through `session.pruning.enabled`; it removes older reasoning/tool-call clutter from the model-visible context without changing persisted history.
+- Compaction is disabled by default through `session.compaction.enabled`; when enabled, it uses the selected agent's configured model to summarize older history once the serialized context character count exceeds `session.compaction.maxContextLength`.
+- Compaction persists a system summary, keeps the latest user message active, and includes prior compaction summaries when compacting again.
 
 ## Configure It
 
-Set or update it through `account-manage`.
+Set or update workspace/session config on the agent, not the account.
 
 ```bash
-curl -X PATCH "$ACCOUNT_MANAGE_URL/accounts/me" \
+curl -X PATCH "$ACCOUNT_SERVICE_URL/accounts/me/agents/$AGENT_ID" \
   -H "Authorization: Bearer $ACCOUNT_SECRET" \
   -H "Content-Type: application/json" \
   -d '{
     "config": {
-      "memoryNamespace": "support"
+      "workspace": {
+        "enabled": true,
+        "memory": {
+          "namespace": "support"
+        }
+      }
     }
   }'
 ```
 
-Set it to `null` when you want memory to go back to per-conversation behavior.
+Set the namespace to `null` when you want memory to go back to per-conversation behavior. Set `workspace.enabled` to `false` to disable memory, filesystem, and tasks.
 
 ```bash
-curl -X PATCH "$ACCOUNT_MANAGE_URL/accounts/me" \
+curl -X PATCH "$ACCOUNT_SERVICE_URL/accounts/me/agents/$AGENT_ID" \
   -H "Authorization: Bearer $ACCOUNT_SECRET" \
   -H "Content-Type: application/json" \
   -d '{
     "config": {
-      "memoryNamespace": null
+      "workspace": {
+        "memory": {
+          "namespace": null
+        }
+      }
     }
   }'
 ```
@@ -115,14 +134,8 @@ curl -X PATCH "$ACCOUNT_MANAGE_URL/accounts/me" \
 
 ```mermaid
 flowchart TD
-  Integrations["integrations.ts<br/>account-scoped conversation keys"] --> Session["session.ts<br/>chooses namespace"]
+  Integrations["integrations.ts<br/>normalizes request keys"] --> Keys["_shared/runtime-keys.ts<br/>account + agent scoped keys"]
+  Keys --> Session["session.ts<br/>chooses namespace"]
   Session --> Harness["harness.ts<br/>passes namespace to tools"]
   Harness --> Tools["filesystem.tool.ts<br/>tasks.tool.ts"]
 ```
-
-Key files:
-
-- [`integrations.ts`](../functions/harness-processing/integrations.ts): builds account-scoped conversation keys.
-- [`session.ts`](../functions/harness-processing/session.ts): chooses per-conversation or shared memory namespace.
-- [`filesystem.tool.ts`](../functions/harness-processing/tools/filesystem.tool.ts): stores files under that namespace.
-- [`tasks.tool.ts`](../functions/harness-processing/tools/tasks.tool.ts): stores task files under that namespace.

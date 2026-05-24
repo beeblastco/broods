@@ -3,21 +3,19 @@
  * Keep task titles and task status management here.
  */
 
+import { jsonSchema, tool, type JSONSchema7, type ToolSet } from "ai";
 import {
-  DeleteObjectCommand,
-  GetObjectCommand,
-  ListObjectsV2Command,
-  PutObjectCommand,
-  S3Client,
-} from "@aws-sdk/client-s3";
-import { jsonSchema, tool, type ToolSet } from "ai";
+  deleteS3Object,
+  listS3Prefix,
+  readS3Text,
+  writeS3Object,
+} from "../../_shared/s3.ts";
 import { requireEnv } from "../../_shared/env.ts";
 import type { ToolContext } from "./index.ts";
 
-const s3 = new S3Client({ region: process.env.AWS_REGION });
 const FILESYSTEM_BUCKET_NAME = requireEnv("FILESYSTEM_BUCKET_NAME");
 
-const taskInputSchema = {
+const taskInputSchema: JSONSchema7 = {
   type: "object",
   properties: {
     command: {
@@ -42,7 +40,7 @@ const taskInputSchema = {
   },
   required: ["command"],
   additionalProperties: false,
-} as const;
+};
 
 interface TaskInput {
   command: "create" | "list" | "update";
@@ -182,10 +180,7 @@ async function updateTaskList(namespace: string, title: string | undefined, done
   }));
 
   if (updatedTasks.every((task) => task.checked)) {
-    await s3.send(new DeleteObjectCommand({
-      Bucket: FILESYSTEM_BUCKET_NAME,
-      Key: document.key,
-    }));
+    await deleteS3Object(FILESYSTEM_BUCKET_NAME, document.key);
 
     return `All tasks in "${normalizedTitle}" are done. Removed the task list.`;
   }
@@ -200,14 +195,11 @@ async function updateTaskList(namespace: string, title: string | undefined, done
 }
 
 async function listTaskDocuments(namespace: string): Promise<TaskDocument[]> {
-  const response = await s3.send(new ListObjectsV2Command({
-    Bucket: FILESYSTEM_BUCKET_NAME,
-    Prefix: `${namespace}/tasks-`,
-  }));
+  const response = await listS3Prefix(FILESYSTEM_BUCKET_NAME, `${namespace}/tasks-`);
 
-  const keys = (response.Contents ?? [])
-    .map((item) => item.Key)
-    .filter((key): key is string => typeof key === "string" && isTaskKey(namespace, key))
+  const keys = response
+    .map((item) => item.key)
+    .filter((key) => isTaskKey(namespace, key))
     .sort((a, b) => a.localeCompare(b));
 
   const documents = await Promise.all(keys.map(async (key) => parseTaskDocument(key, await readObject(key))));
@@ -256,21 +248,11 @@ function serializeTaskDocument(title: string, tasks: TaskLine[]): string {
 }
 
 async function readObject(key: string): Promise<string> {
-  const response = await s3.send(new GetObjectCommand({
-    Bucket: FILESYSTEM_BUCKET_NAME,
-    Key: key,
-  }));
-
-  return await response.Body?.transformToString() ?? "";
+  return readS3Text(FILESYSTEM_BUCKET_NAME, key);
 }
 
 async function writeObject(key: string, body: string): Promise<void> {
-  await s3.send(new PutObjectCommand({
-    Bucket: FILESYSTEM_BUCKET_NAME,
-    Key: key,
-    Body: body,
-    ContentType: "text/markdown",
-  }));
+  await writeS3Object(FILESYSTEM_BUCKET_NAME, key, body, { contentType: "text/markdown" });
 }
 
 function isTaskKey(namespace: string, key: string): boolean {

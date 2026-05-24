@@ -11,6 +11,7 @@ import type {
 } from "./channels.ts";
 import { createGitHubActions } from "./github.ts";
 import { logWarn } from "./log.ts";
+import { GITHUB_INTEGRATION_PREFIX } from "./runtime-keys.ts";
 
 interface GitHubRepository {
   full_name?: string;
@@ -160,8 +161,8 @@ function parseIssuesEvent(
     kind: "message",
     ack: { statusCode: 200 },
     message: {
-      eventId: `gh:${deliveryId}`,
-      conversationKey: `gh:${repoFullName}:issue:${issueNumber}`,
+      eventId: `${GITHUB_INTEGRATION_PREFIX}${deliveryId}`,
+      conversationKey: `${GITHUB_INTEGRATION_PREFIX}${repoFullName}:issue:${issueNumber}`,
       channelName: "github",
       content: [{
         type: "text",
@@ -207,8 +208,8 @@ function parseIssueCommentEvent(
     kind: "message",
     ack: { statusCode: 200 },
     message: {
-      eventId: `gh:${deliveryId}`,
-      conversationKey: `gh:${repoFullName}:${resource}:${issueNumber}`,
+      eventId: `${GITHUB_INTEGRATION_PREFIX}${deliveryId}`,
+      conversationKey: `${GITHUB_INTEGRATION_PREFIX}${repoFullName}:${resource}:${issueNumber}`,
       channelName: "github",
       content: [{ type: "text", text: body }],
       source: {
@@ -244,8 +245,8 @@ function parsePullRequestEvent(
     kind: "message",
     ack: { statusCode: 200 },
     message: {
-      eventId: `gh:${deliveryId}`,
-      conversationKey: `gh:${repoFullName}:pr:${pullNumber}`,
+      eventId: `${GITHUB_INTEGRATION_PREFIX}${deliveryId}`,
+      conversationKey: `${GITHUB_INTEGRATION_PREFIX}${repoFullName}:pr:${pullNumber}`,
       channelName: "github",
       content: [{
         type: "text",
@@ -290,8 +291,8 @@ function parseReviewCommentEvent(
     kind: "message",
     ack: { statusCode: 200 },
     message: {
-      eventId: `gh:${deliveryId}`,
-      conversationKey: `gh:${repoFullName}:pr:${pullNumber}`,
+      eventId: `${GITHUB_INTEGRATION_PREFIX}${deliveryId}`,
+      conversationKey: `${GITHUB_INTEGRATION_PREFIX}${repoFullName}:pr:${pullNumber}`,
       channelName: "github",
       content: [{ type: "text", text: body }],
       source: {

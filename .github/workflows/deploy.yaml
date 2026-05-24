@@ -1,66 +1,53 @@
+# Deploy pipeline.
+# `main` = SaaS production: PR CI already validated, skip re-validation and
+#   deploy directly. Inits the private convex-adapter submodule (requires
+#   SUBMODULE_PAT secret).
+# `dev` = OSS / community staging: re-validates (typecheck + test + build)
+#   before deploying. DynamoDB only, no submodule.
+
 name: Deploy
 
 on:
   push:
     branches:
       - main
+      - dev
+    paths-ignore:
+      - 'docs/**'
+      - 'static/**'
+      - 'docusaurus.config.ts'
+      - 'sidebar.ts'
+      - '.github/workflows/deploy-docs.yaml'
+      - '**/*.md'
   workflow_dispatch:
     inputs:
       stage:
-        description: SST stage to deploy. Defaults to repository variable SST_STAGE or dev.
+        description: SST stage to deploy. Defaults to production for main and dev for dev.
         required: false
         type: string
 
 concurrency:
-  group: sst-deploy-${{ github.event.repository.name }}-${{ inputs.stage || vars.SST_STAGE || 'dev' }}
+  group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
-  deploy:
+  validate:
+    # main trusts PR CI; everything else (dev, manual dispatch) re-validates.
+    if: ${{ github.ref != 'refs/heads/main' }}
     runs-on: ubuntu-24.04
     permissions:
       contents: read
-      id-token: write
     env:
-      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
       AWS_REGION: ${{ vars.AWS_REGION }}
-      AWS_ROLE_ARN: ${{ vars.AWS_ROLE_ARN }}
-      INPUT_STAGE: ${{ inputs.stage }}
-      DEFAULT_STAGE: ${{ vars.SST_STAGE }}
       CI: "true"
     steps:
-      - name: Resolve deploy configuration
-        id: config
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          STAGE="${INPUT_STAGE:-${DEFAULT_STAGE:-dev}}"
-
-          if [[ -z "${AWS_REGION:-}" ]]; then
-            echo "Missing required repository variable: AWS_REGION" >&2
-            exit 1
-          fi
-
-          if [[ -z "${AWS_ROLE_ARN:-}" ]]; then
-            echo "Missing required repository variable: AWS_ROLE_ARN" >&2
-            exit 1
-          fi
-
-          echo "stage=$STAGE" >> "$GITHUB_OUTPUT"
-          echo "SST_STAGE=$STAGE" >> "$GITHUB_ENV"
-
       - name: Checkout repository
         uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+        with:
+          submodules: false
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
-
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@ec61189d14ec14c8efccab744f656cffd0e33f37
-        with:
-          aws-region: ${{ env.AWS_REGION }}
-          role-to-assume: ${{ env.AWS_ROLE_ARN }}
 
       - name: Install dependencies
         run: bun install --frozen-lockfile
@@ -74,12 +61,120 @@ jobs:
       - name: Build Lambda binaries
         run: bun run build
 
+  deploy:
+    needs: validate
+    # Run if validate succeeded OR validate was skipped (main branch).
+    if: ${{ always() && (needs.validate.result == 'success' || needs.validate.result == 'skipped') && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev'))) }}
+    runs-on: ubuntu-24.04
+    concurrency:
+      group: ${{ github.workflow }}-deploy-${{ github.event_name == 'workflow_dispatch' && inputs.stage || github.ref_name }}
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+      DEFAULT_AWS_REGION: ${{ vars.AWS_REGION }}
+      PRODUCTION_AWS_REGION: ${{ vars.PRODUCTION_AWS_REGION }}
+      AWS_ROLE_ARN: ${{ vars.AWS_ROLE_ARN }}
+      INPUT_STAGE: ${{ inputs.stage }}
+      # Switches behavior between local development and CI environments
+      CI: "true"
+      IS_SAAS_BRANCH: ${{ github.ref == 'refs/heads/main' }}
+      ACCOUNT_MODEL_PROVIDER: ${{ vars.ACCOUNT_MODEL_PROVIDER || 'google' }}
+      ACCOUNT_MODEL_ID: ${{ vars.ACCOUNT_MODEL_ID || 'gemma-4-31b-it' }}
+      ACCOUNT_MODEL_OPTIONS_JSON: ${{ vars.ACCOUNT_MODEL_OPTIONS_JSON }}
+      ACCOUNT_PROVIDER_CONFIG_JSON: ${{ secrets.ACCOUNT_PROVIDER_CONFIG_JSON }}
+      ACCOUNT_TOOLS_JSON: ${{ vars.ACCOUNT_TOOLS_JSON }}
+      ACCOUNT_GOOGLE_API_KEY: ${{ secrets.ACCOUNT_GOOGLE_API_KEY || secrets.SST_SECRET_GOOGLEAPIKEY }}
+      ACCOUNT_TAVILY_API_KEY: ${{ secrets.ACCOUNT_TAVILY_API_KEY || secrets.SST_SECRET_TAVILYAPIKEY }}
+      ACCOUNT_OPENAI_API_KEY: ${{ secrets.ACCOUNT_OPENAI_API_KEY }}
+      ACCOUNT_OPENAI_BASE_URL: ${{ vars.ACCOUNT_OPENAI_BASE_URL }}
+      ACCOUNT_OPENAI_ORGANIZATION: ${{ vars.ACCOUNT_OPENAI_ORGANIZATION }}
+      ACCOUNT_OPENAI_PROJECT: ${{ vars.ACCOUNT_OPENAI_PROJECT }}
+      ACCOUNT_BEDROCK_API_KEY: ${{ secrets.ACCOUNT_BEDROCK_API_KEY }}
+      ACCOUNT_BEDROCK_REGION: ${{ vars.ACCOUNT_BEDROCK_REGION || vars.AWS_REGION }}
+      ACCOUNT_BEDROCK_ACCESS_KEY_ID: ${{ secrets.ACCOUNT_BEDROCK_ACCESS_KEY_ID }}
+      ACCOUNT_BEDROCK_SECRET_ACCESS_KEY: ${{ secrets.ACCOUNT_BEDROCK_SECRET_ACCESS_KEY }}
+      ACCOUNT_BEDROCK_SESSION_TOKEN: ${{ secrets.ACCOUNT_BEDROCK_SESSION_TOKEN }}
+      ACCOUNT_GATEWAY_API_KEY: ${{ secrets.ACCOUNT_GATEWAY_API_KEY }}
+      ENABLE_DIRECT_API: ${{ vars.ENABLE_DIRECT_API || 'false' }}
+      ENABLE_WEBSOCKET: ${{ vars.ENABLE_WEBSOCKET || 'false' }}
+      NATS_URL: ${{ secrets.NATS_URL }}
+      # This is for testing purposes only.
+      MOCK_WEBHOOK_SECRET: ${{ secrets.MOCK_WEBHOOK_SECRET }}
+    steps:
+      - name: Resolve deploy configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ -n "${INPUT_STAGE:-}" ]]; then
+            STAGE="$INPUT_STAGE"
+          elif [[ "$GITHUB_REF" == "refs/heads/main" ]]; then
+            STAGE="production"
+          else
+            STAGE="dev"
+          fi
+
+          if [[ "$STAGE" == "production" ]]; then
+            AWS_REGION="${PRODUCTION_AWS_REGION:-}"
+          else
+            AWS_REGION="${DEFAULT_AWS_REGION:-}"
+          fi
+
+          if [[ -z "${AWS_REGION:-}" ]]; then
+            echo "Missing AWS region for stage: $STAGE" >&2
+            exit 1
+          fi
+
+          if [[ -z "${AWS_ROLE_ARN:-}" ]]; then
+            echo "Missing required repository variable: AWS_ROLE_ARN" >&2
+            exit 1
+          fi
+
+          if [[ "${ENABLE_WEBSOCKET:-false}" == "true" && -z "${NATS_URL:-}" ]]; then
+            echo "NATS_URL must be set when ENABLE_WEBSOCKET=true" >&2
+            exit 1
+          fi
+
+          echo "SST_STAGE=$STAGE" >> "$GITHUB_ENV"
+          echo "AWS_REGION=$AWS_REGION" >> "$GITHUB_ENV"
+
+      - name: Checkout repository
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+        with:
+          submodules: ${{ env.IS_SAAS_BRANCH == 'true' && 'recursive' || 'false' }}
+          token: ${{ env.IS_SAAS_BRANCH == 'true' && secrets.SUBMODULE_PAT || github.token }}
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@ec61189d14ec14c8efccab744f656cffd0e33f37
+        with:
+          aws-region: ${{ env.AWS_REGION }}
+          role-to-assume: ${{ env.AWS_ROLE_ARN }}
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile --ignore-scripts
+
+      - name: Build Lambda binaries
+        run: bun run build
+
+      - name: Clear stale SST deploy lock
+        shell: bash
+        run: |
+          set -euo pipefail
+          bunx sst unlock --stage "$SST_STAGE" || true
+
       - name: Deploy SST app
         env:
           SST_SECRET_GoogleApiKey: ${{ secrets.SST_SECRET_GOOGLEAPIKEY }}
           SST_SECRET_TavilyApiKey: ${{ secrets.SST_SECRET_TAVILYAPIKEY }}
           SST_SECRET_AdminAccountSecret: ${{ secrets.SST_SECRET_ADMINACCOUNTSECRET }}
           SST_SECRET_AccountConfigEncryptionSecret: ${{ secrets.SST_SECRET_ACCOUNTCONFIGENCRYPTIONSECRET }}
+          MOCK_WEBHOOK_SECRET: ${{ secrets.MOCK_WEBHOOK_SECRET }}
         shell: bash
         run: |
           set -euo pipefail
@@ -88,7 +183,8 @@ jobs:
             SST_SECRET_GoogleApiKey \
             SST_SECRET_TavilyApiKey \
             SST_SECRET_AdminAccountSecret \
-            SST_SECRET_AccountConfigEncryptionSecret
+            SST_SECRET_AccountConfigEncryptionSecret \
+            MOCK_WEBHOOK_SECRET
           do
             if [[ -z "${!name:-}" ]]; then
               echo "Missing required repository secret: $name" >&2
@@ -96,7 +192,16 @@ jobs:
             fi
           done
 
-          bunx sst deploy --stage "$SST_STAGE"
+          for attempt in 1 2 3; do
+            echo "Deploy attempt $attempt/3"
+            if bunx sst deploy --stage "$SST_STAGE" --print-logs; then
+              exit 0
+            fi
+            echo "Deploy failed, retrying in 15s..."
+            sleep 15
+          done
+          echo "All deploy attempts failed" >&2
+          exit 1
 
       - name: Configure Telegram account webhook
         env:
@@ -104,8 +209,8 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN || secrets.SST_SECRET_TELEGRAMBOTTOKEN }}
           TELEGRAM_WEBHOOK_SECRET: ${{ secrets.TELEGRAM_WEBHOOK_SECRET || secrets.SST_SECRET_TELEGRAMWEBHOOKSECRET }}
           ALLOWED_CHAT_IDS: ${{ secrets.TELEGRAM_ALLOWED_CHAT_IDS || secrets.SST_SECRET_ALLOWEDCHATIDS }}
-          TELEGRAM_ACCOUNT_USERNAME: telegram-default
-          TELEGRAM_ACCOUNT_DESCRIPTION: Default Telegram account managed by CI/CD.
+          INTEGRATIONS_ACCOUNT_USERNAME: ${{ vars.INTEGRATIONS_ACCOUNT_USERNAME || 'integrations-default' }}
+          ACCOUNT_MODEL_KNOWLEDGE_CUTOFF: ${{ vars.ACCOUNT_MODEL_KNOWLEDGE_CUTOFF || 'January 2025' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -123,3 +228,108 @@ jobs:
           done
 
           bun run scripts/configure-telegram-account.ts
+
+      - name: Configure Discord account
+        env:
+          ADMIN_ACCOUNT_SECRET: ${{ secrets.SST_SECRET_ADMINACCOUNTSECRET }}
+          DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN || secrets.SST_SECRET_DISCORDBOTTOKEN }}
+          DISCORD_PUBLIC_KEY: ${{ secrets.DISCORD_PUBLIC_KEY || secrets.SST_SECRET_DISCORDPUBLICKEY }}
+          DISCORD_ALLOWED_GUILD_IDS: ${{ secrets.DISCORD_ALLOWED_GUILD_IDS || secrets.SST_SECRET_DISCORDALLOWEDGUILDIDS || vars.DISCORD_SYNC_GUILD_ID }}
+          INTEGRATIONS_ACCOUNT_USERNAME: ${{ vars.INTEGRATIONS_ACCOUNT_USERNAME || 'integrations-default' }}
+          ACCOUNT_MODEL_KNOWLEDGE_CUTOFF: ${{ vars.ACCOUNT_MODEL_KNOWLEDGE_CUTOFF || 'January 2025' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          for name in \
+            ADMIN_ACCOUNT_SECRET \
+            DISCORD_BOT_TOKEN \
+            DISCORD_PUBLIC_KEY \
+            DISCORD_ALLOWED_GUILD_IDS
+          do
+            if [[ -z "${!name:-}" ]]; then
+              echo "Missing required Discord account configuration secret: $name" >&2
+              exit 1
+            fi
+          done
+
+          bun run scripts/configure-discord-account.ts
+
+      - name: Sync Discord commands
+        env:
+          DISCORD_APPLICATION_ID: ${{ vars.DISCORD_APPLICATION_ID }}
+          DISCORD_SYNC_GUILD_ID: ${{ vars.DISCORD_SYNC_GUILD_ID }}
+          DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN || secrets.SST_SECRET_DISCORDBOTTOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          for name in \
+            DISCORD_APPLICATION_ID \
+            DISCORD_BOT_TOKEN
+          do
+            if [[ -z "${!name:-}" ]]; then
+              echo "Missing required Discord command sync configuration: $name" >&2
+              exit 1
+            fi
+          done
+
+          bun run scripts/discord-sync.ts
+
+      - name: Configure GitHub account
+        env:
+          ADMIN_ACCOUNT_SECRET: ${{ secrets.SST_SECRET_ADMINACCOUNTSECRET }}
+          GITHUB_APP_ID: ${{ secrets.GITHUB_APP_ID || secrets.SST_SECRET_GITHUBAPPID }}
+          GITHUB_PRIVATE_KEY: ${{ secrets.GITHUB_PRIVATE_KEY || secrets.SST_SECRET_GITHUBPRIVATEKEY }}
+          GITHUB_WEBHOOK_SECRET: ${{ secrets.GITHUB_WEBHOOK_SECRET || secrets.SST_SECRET_GITHUBWEBHOOKSECRET }}
+          GITHUB_ALLOWED_REPOS: ${{ secrets.GITHUB_ALLOWED_REPOS || secrets.SST_SECRET_GITHUBALLOWEDREPOS || github.repository }}
+          INTEGRATIONS_ACCOUNT_USERNAME: ${{ vars.INTEGRATIONS_ACCOUNT_USERNAME || 'integrations-default' }}
+          ACCOUNT_MODEL_KNOWLEDGE_CUTOFF: ${{ vars.ACCOUNT_MODEL_KNOWLEDGE_CUTOFF || 'January 2025' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          for name in \
+            ADMIN_ACCOUNT_SECRET \
+            GITHUB_APP_ID \
+            GITHUB_PRIVATE_KEY \
+            GITHUB_WEBHOOK_SECRET \
+            GITHUB_ALLOWED_REPOS
+          do
+            if [[ -z "${!name:-}" ]]; then
+              echo "Missing required GitHub account configuration secret: $name" >&2
+              exit 1
+            fi
+          done
+
+          bun run scripts/configure-github-account.ts
+
+      - name: Configure Slack account
+        env:
+          ADMIN_ACCOUNT_SECRET: ${{ secrets.SST_SECRET_ADMINACCOUNTSECRET }}
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN || secrets.SST_SECRET_SLACKBOTTOKEN }}
+          SLACK_SIGNING_SECRET: ${{ secrets.SLACK_SIGNING_SECRET || secrets.SST_SECRET_SLACKSIGNINGSECRET }}
+          SLACK_ALLOWED_CHANNEL_IDS: ${{ secrets.SLACK_ALLOWED_CHANNEL_IDS || secrets.SST_SECRET_SLACKALLOWEDCHANNELIDS }}
+          INTEGRATIONS_ACCOUNT_USERNAME: ${{ vars.INTEGRATIONS_ACCOUNT_USERNAME || 'integrations-default' }}
+          ACCOUNT_MODEL_KNOWLEDGE_CUTOFF: ${{ vars.ACCOUNT_MODEL_KNOWLEDGE_CUTOFF || 'January 2025' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          for name in \
+            ADMIN_ACCOUNT_SECRET \
+            SLACK_BOT_TOKEN \
+            SLACK_SIGNING_SECRET
+          do
+            if [[ -z "${!name:-}" ]]; then
+              echo "Missing required Slack account configuration secret: $name" >&2
+              exit 1
+            fi
+          done
+
+          if [[ -z "${SLACK_ALLOWED_CHANNEL_IDS:-}" ]]; then
+            echo "Skipping Slack account configuration because SLACK_ALLOWED_CHANNEL_IDS is not configured."
+            exit 0
+          fi
+
+          bun run scripts/configure-slack-account.ts

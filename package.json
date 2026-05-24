@@ -3,35 +3,64 @@
   "description": "Agentic AI chatbot on AWS — Lambda + Google AI + multi-channel integrations, deployed with SST.",
   "type": "module",
   "private": true,
+  "overrides": {
+    "webpack": "5.105.0"
+  },
   "scripts": {
     "postinstall": "bun run scripts/system-prompt.ts && sst install",
     "dev": "bun run scripts/system-prompt.ts && sst dev",
     "build": "bun run scripts/build.ts",
     "check": "bun run scripts/system-prompt.ts && bunx tsc --noEmit",
-    "test": "bun test",
+    "test": "bun test --max-concurrency=1",
     "discord:sync": "bun run scripts/discord-sync.ts",
     "deploy": "bun run build && sst deploy",
-    "remove": "sst remove"
+    "remove": "sst remove",
+    "docs": "DOCUSAURUS_BROWSER=none NODE_OPTIONS=--openssl-legacy-provider docusaurus start",
+    "docs:build": "NODE_OPTIONS=--openssl-legacy-provider docusaurus build",
+    "docs:serve": "DOCUSAURUS_BROWSER=none docusaurus serve",
+    "docs:deploy": "NODE_OPTIONS=--openssl-legacy-provider docusaurus deploy",
+    "docs:clear": "docusaurus clear"
   },
   "devDependencies": {
     "@types/aws-lambda": "8.10.161",
-    "@types/bun": "^1.3.13"
+    "@types/bun": "^1.3.14",
+    "webpack": "5.105.0"
   },
   "peerDependencies": {
     "typescript": "^6.0.3"
   },
   "dependencies": {
-    "@ai-sdk/google": "^3.0.66",
+    "@ai-sdk/amazon-bedrock": "^4.0.108",
+    "@ai-sdk/gateway": "^3.0.120",
+    "@ai-sdk/google": "^3.0.79",
+    "@ai-sdk/openai": "^3.0.65",
+    "@aws-sdk/client-cloudwatch-logs": "^3.1053.0",
     "@aws-sdk/client-dynamodb": "3.1017.0",
     "@aws-sdk/client-lambda": "3.1017.0",
-    "@aws-sdk/client-s3": "^3.1040.0",
-    "@chat-adapter/telegram": "^4.27.0",
-    "@pulumi/aws": "7.23.0",
+    "@aws-sdk/client-s3": "3.1017.0",
+    "@aws-sdk/client-scheduler": "3.1017.0",
+    "@chat-adapter/telegram": "^4.29.0",
+    "@convex-dev/stripe": "^0.1.4",
+    "@convex-dev/workos-authkit": "^0.2.5",
+    "@daytona/sdk": "^0.175.0",
+    "@docusaurus/core": "^3.10.1",
+    "@docusaurus/preset-classic": "^3.10.1",
+    "@docusaurus/theme-mermaid": "3.10.1",
+    "@docusaurus/tsconfig": "^3.10.1",
+    "@mermaid-js/layout-elk": "^0.1.9",
+    "@pulumi/aws": "7.30.0",
     "@pulumi/pulumi": "3.228.0",
+    "@scalar/docusaurus": "^0.8.19",
     "@tavily/ai-sdk": "^0.4.1",
-    "@types/node": "^25.6.0",
-    "ai": "^6.0.172",
-    "chat": "^4.27.0",
-    "sst": "4.8.0"
+    "@types/node": "^25.9.1",
+    "ai": "^6.0.191",
+    "chat": "^4.29.0",
+    "convex": "^1.39.1",
+    "e2b": "^2.24.0",
+    "nats": "^2.29.3",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "sst": "4.8.0",
+    "vercel-minimax-ai-provider": "^0.0.2"
   }
 }

@@ -1,0 +1,189 @@
+{
+  "provider": {
+    "google": {
+      "apiKey": "..."
+    },
+    "openai": {
+      "apiKey": "..."
+    },
+    "bedrock": {
+      "region": "us-east-1",
+      "apiKey": "..."
+    },
+    "gateway": {
+      "apiKey": "..."
+    },
+    "minimax": {
+      "apiKey": "..."
+    }
+  },
+  "model": {
+    "provider": "google",
+    "modelId": "gemini-3-flash",
+    "temperature": 0.2,
+    "maxOutputTokens": 16000,
+    "output": {
+      "type": "object",
+      "name": "AgentAnswer",
+      "description": "A concise answer with optional follow-up actions.",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "answer": { "type": "string" },
+          "actions": {
+            "type": "array",
+            "items": { "type": "string" }
+          }
+        },
+        "required": ["answer"],
+        "additionalProperties": false
+      }
+    },
+    "options": {
+      "google": {
+        "thinkingConfig": {
+          "thinkingLevel": "high"
+        }
+      }
+    }
+  },
+  "agent": {
+    "maxTurn": 20,
+    "system": "Knowledge cutoff: January 2025.\n\nOptional agent-specific system prompt."
+  },
+  "subagent": {
+    "enabled": true,
+    "allowed": [],
+    "context": "new"
+  },
+  "skills": {
+    "enabled": true,
+    "allowed": [
+      "acct_abc123/support-flow",
+      "acct_abc123/knowledge-base"
+    ]
+  },
+  "workspace": {
+    "enabled": true,
+    "needsApproval": true,
+    "memory": {
+      "enabled": true,
+      "namespace": "support"
+    },
+    "filesystem": {
+      "enabled": true
+    },
+    "sandbox": {
+      "enabled": false,
+      "provider": "lambda",
+      "timeout": 30,
+      "outputLimitBytes": 65536,
+      "options": {
+        "nodeFunctionName": "my-node-sandbox",
+        "pythonFunctionName": "my-python-sandbox",
+        "workspaceRoot": "/mnt/workspaces"
+      }
+    },
+    "tasks": {
+      "enabled": true
+    }
+  },
+  "session": {
+    "pruning": {
+      "enabled": true
+    },
+    "compaction": {
+      "enabled": false,
+      "maxContextLength": 100000
+    }
+  },
+  "hooks": {
+    "webhook": {
+      "enabled": false,
+      "url": "https://example.com/agent-events",
+      "secret": "...",
+      "events": [
+        "agent.started",
+        "tool.call.started",
+        "tool.call.finished",
+        "tool.result",
+        "subagent.task.finished",
+        "agent.finished",
+        "agent.failed"
+      ]
+    }
+  },
+  "tools": {
+    "tavilySearch": {
+      "enabled": true,
+      "async": true,
+      "execution": "same-invocation",
+      "apiKey": "...",
+      "searchDepth": "advanced",
+      "includeAnswer": true,
+      "maxResults": 5,
+      "topic": "general"
+    },
+    "tavilyExtract": {
+      "enabled": true,
+      "apiKey": "...",
+      "extractDepth": "advanced",
+      "format": "markdown"
+    },
+    "googleSearch": {
+      "enabled": true,
+      "searchTypes": {
+        "webSearch": {}
+      }
+    },
+    "test_async": {
+      "enabled": true,
+      "async": true,
+      "execution": "same-invocation"
+    },
+    "test_external_async": {
+      "enabled": false,
+      "async": true,
+      "execution": "external-dispatch",
+      "completionBaseUrl": "${AGENT_SERVICE_URL}",
+      "completionBearerToken": "${ACCOUNT_SECRET}"
+    }
+  },
+  "channels": {
+    "telegram": {
+      "botToken": "...",
+      "webhookSecret": "...",
+      "allowedChatIds": [
+        123456789
+      ],
+      "reactionEmoji": "👀"
+    },
+    "github": {
+      "webhookSecret": "...",
+      "appId": "...",
+      "privateKey": "...",
+      "allowedRepos": [
+        "owner/repo"
+      ]
+    },
+    "slack": {
+      "botToken": "...",
+      "signingSecret": "...",
+      "allowedChannelIds": [
+        "C123"
+      ]
+    },
+    "discord": {
+      "botToken": "...",
+      "publicKey": "...",
+      "allowedGuildIds": [
+        "123"
+      ]
+    },
+    "pancake": {
+      "pageId": "page-id",
+      "pageAccessToken": "...",
+      "senderId": "optional-staff-user-id"
+    }
+  }
+}

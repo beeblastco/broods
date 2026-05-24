@@ -6,7 +6,7 @@
 import { UpdateItemCommand } from "@aws-sdk/client-dynamodb";
 import type { LambdaFunctionURLEvent } from "aws-lambda";
 import { createHash } from "node:crypto";
-import { dynamo, isConditionalCheckFailed } from "../_shared/dynamo.ts";
+import { dynamo, isConditionalCheckFailed } from "../_shared/storage/dynamo/client.ts";
 import { optionalEnv, requireEnv } from "../_shared/env.ts";
 
 const SIGNUP_WINDOW_SECONDS = 60 * 60;

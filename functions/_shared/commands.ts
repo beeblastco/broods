@@ -10,7 +10,7 @@ import {
   type WriteRequest,
 } from "@aws-sdk/client-dynamodb";
 import type { ChannelActions } from "./channels.ts";
-import { dynamo } from "./dynamo.ts";
+import { dynamo } from "./storage/dynamo/client.ts";
 import { logError } from "./log.ts";
 
 export interface CommandContext {

@@ -6,53 +6,11 @@
 
 declare module "sst" {
   export interface Resource {
-    "AccountConfig": {
-      "name": string
-      "type": "sst.aws.Dynamo"
-    }
     "AccountConfigEncryptionSecret": {
       "type": "sst.sst.Secret"
       "value": string
     }
-    "AccountManage": {
-      "name": string
-      "type": "sst.aws.Function"
-      "url": string
-    }
-    "AccountSignupRateLimit": {
-      "name": string
-      "type": "sst.aws.Dynamo"
-    }
     "AdminAccountSecret": {
-      "type": "sst.sst.Secret"
-      "value": string
-    }
-    "AsyncResults": {
-      "name": string
-      "type": "sst.aws.Dynamo"
-    }
-    "Conversations": {
-      "name": string
-      "type": "sst.aws.Dynamo"
-    }
-    "GoogleApiKey": {
-      "type": "sst.sst.Secret"
-      "value": string
-    }
-    "HarnessProcessing": {
-      "name": string
-      "type": "sst.aws.Function"
-      "url": string
-    }
-    "Memory": {
-      "name": string
-      "type": "sst.aws.Bucket"
-    }
-    "ProcessedEvents": {
-      "name": string
-      "type": "sst.aws.Dynamo"
-    }
-    "TavilyApiKey": {
       "type": "sst.sst.Secret"
       "value": string
     }

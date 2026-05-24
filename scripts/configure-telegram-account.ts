@@ -1,85 +1,74 @@
 /**
  * CI configuration helper for the default Telegram account.
- * Creates or updates account config, then registers the account-scoped webhook.
+ * Creates or updates account and agent config, then registers the agent-scoped webhook.
+ * Skips gracefully if TELEGRAM_BOT_TOKEN is not provided.
  */
 
-import {
-  isRecord,
-  outputOrEnv,
-  parseJson,
-  requireScriptEnv,
-  stripTrailingSlash,
-} from "./utils.ts";
+import { optionalEnv } from "../functions/_shared/env.ts";
+import { accountServiceUrl, agentServiceUrl, createScriptAgentConfig, upsertScriptAccount } from "./utils.ts";
 
-const DEFAULT_ACCOUNT_USERNAME = "telegram-default";
-const DEFAULT_ACCOUNT_DESCRIPTION = "Default Telegram account managed by CI/CD.";
-const DEFAULT_REACTION_EMOJI = "👀";
+const telegramBotToken = optionalEnv("TELEGRAM_BOT_TOKEN");
+const telegramWebhookSecret = optionalEnv("TELEGRAM_WEBHOOK_SECRET");
+const allowedChatIds = optionalEnv("ALLOWED_CHAT_IDS");
 
-const accountManageUrl = stripTrailingSlash(outputOrEnv("ACCOUNT_MANAGE_URL", "accountManageUrl"));
-const harnessProcessingUrl = stripTrailingSlash(outputOrEnv("HARNESS_PROCESSING_URL", "harnessProcessingUrl"));
-const adminSecret = requireScriptEnv("ADMIN_ACCOUNT_SECRET");
-const telegramBotToken = requireScriptEnv("TELEGRAM_BOT_TOKEN");
-const telegramWebhookSecret = requireScriptEnv("TELEGRAM_WEBHOOK_SECRET");
-const allowedChatIds = parseAllowedChatIds(requireScriptEnv("ALLOWED_CHAT_IDS"));
-const username = process.env.TELEGRAM_ACCOUNT_USERNAME?.trim() || DEFAULT_ACCOUNT_USERNAME;
-const description = process.env.TELEGRAM_ACCOUNT_DESCRIPTION?.trim() || DEFAULT_ACCOUNT_DESCRIPTION;
-
-const account = await upsertTelegramAccount();
-const webhookUrl = `${harnessProcessingUrl}/webhooks/${encodeURIComponent(account.accountId)}/telegram`;
-await setTelegramWebhook(webhookUrl);
-
-console.log(`Configured Telegram account ${account.accountId} and webhook ${webhookUrl}`);
-
-interface PublicAccount {
-  accountId: string;
-  username: string;
+if (!telegramBotToken) {
+  console.warn("Skipping Telegram account setup: TELEGRAM_BOT_TOKEN is not configured");
+  process.exit(0);
 }
 
-async function upsertTelegramAccount(): Promise<PublicAccount> {
-  const existing = await findExistingAccount();
+if (!telegramWebhookSecret) {
+  console.warn("Skipping Telegram account setup: TELEGRAM_WEBHOOK_SECRET is not configured");
+  process.exit(0);
+}
+
+if (!allowedChatIds) {
+  console.warn("Skipping Telegram account setup: ALLOWED_CHAT_IDS is not configured");
+  process.exit(0);
+}
+
+const accountServiceUrlValue = accountServiceUrl();
+const agentServiceUrlValue = agentServiceUrl();
+const adminSecret = process.env.ADMIN_ACCOUNT_SECRET!;
+const parsedChatIds = parseAllowedChatIds(allowedChatIds);
+const username = optionalEnv("INTEGRATIONS_ACCOUNT_USERNAME")?.trim() ?? "integrations-default";
+const description = optionalEnv("INTEGRATIONS_ACCOUNT_DESCRIPTION")?.trim();
+const agentName = optionalEnv("TELEGRAM_AGENT_NAME")?.trim() ?? "telegram-default";
+const agentDescription = optionalEnv("TELEGRAM_AGENT_DESCRIPTION")?.trim();
+
+const { account, agent } = await upsertTelegramAccount();
+const webhookUrl = `${agentServiceUrlValue}/webhooks/${encodeURIComponent(account.accountId)}/${encodeURIComponent(agent.agentId)}/telegram`;
+await setTelegramWebhook(webhookUrl);
+
+console.log(`Configured Telegram account ${account.accountId}, agent ${agent.agentId}, and webhook ${webhookUrl}`);
+
+async function upsertTelegramAccount() {
   const config = {
+    ...createScriptAgentConfig(),
     channels: {
       telegram: {
         botToken: telegramBotToken,
         webhookSecret: telegramWebhookSecret,
-        allowedChatIds,
-        reactionEmoji: DEFAULT_REACTION_EMOJI,
+        allowedChatIds: parsedChatIds,
+        reactionEmoji: "👀",
       },
     },
   };
 
-  if (existing) {
-    const updated = await accountApi("PATCH", `/accounts/${encodeURIComponent(existing.accountId)}`, {
-      username,
-      description,
-      config,
-    });
-    return parseAccountResponse(updated);
-  }
-
-  const created = await publicAccountApi("POST", "/accounts", {
+  return upsertScriptAccount({
+    accountServiceUrl: accountServiceUrlValue,
+    adminSecret,
     username,
     description,
+    agentName,
+    agentDescription,
     config,
   });
-  return parseAccountResponse(created);
-}
-
-async function findExistingAccount(): Promise<PublicAccount | null> {
-  const response = await accountApi("GET", "/accounts");
-  if (!isRecord(response) || !Array.isArray(response.accounts)) {
-    throw new Error("Account list response must include accounts array");
-  }
-
-  return response.accounts.find((entry): entry is PublicAccount =>
-    isPublicAccount(entry) && entry.username === username,
-  ) ?? null;
 }
 
 async function setTelegramWebhook(url: string): Promise<void> {
   const params = new URLSearchParams({
     url,
-    secret_token: telegramWebhookSecret,
+    secret_token: telegramWebhookSecret!,
     allowed_updates: JSON.stringify(["message", "edited_message"]),
   });
   const response = await fetch(`https://api.telegram.org/bot${telegramBotToken}/setWebhook`, {
@@ -90,49 +79,6 @@ async function setTelegramWebhook(url: string): Promise<void> {
   if (!response.ok) {
     throw new Error(`Telegram setWebhook failed: ${response.status} ${bodyText}`);
   }
-}
-
-async function accountApi(method: string, path: string, body?: unknown): Promise<unknown> {
-  return requestJson(`${accountManageUrl}${path}`, {
-    method,
-    headers: {
-      "Authorization": `Bearer ${adminSecret}`,
-      ...(body === undefined ? {} : { "Content-Type": "application/json" }),
-    },
-    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-  });
-}
-
-async function publicAccountApi(method: string, path: string, body: unknown): Promise<unknown> {
-  return requestJson(`${accountManageUrl}${path}`, {
-    method,
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-}
-
-async function requestJson(url: string, init: RequestInit): Promise<unknown> {
-  const response = await fetch(url, init);
-  const bodyText = await response.text();
-  if (!response.ok) {
-    throw new Error(`${init.method ?? "GET"} ${url} failed: ${response.status} ${bodyText}`);
-  }
-
-  return bodyText ? parseJson(bodyText) : {};
-}
-
-function parseAccountResponse(value: unknown): PublicAccount {
-  if (!isRecord(value) || !isPublicAccount(value.account)) {
-    throw new Error("Account response must include account.accountId and account.username");
-  }
-
-  return value.account;
-}
-
-function isPublicAccount(value: unknown): value is PublicAccount {
-  return isRecord(value) &&
-    typeof value.accountId === "string" &&
-    typeof value.username === "string";
 }
 
 function parseAllowedChatIds(raw: string): number[] {

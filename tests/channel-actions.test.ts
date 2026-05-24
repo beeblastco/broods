@@ -1,10 +1,11 @@
 /**
  * Channel action tests.
- * Cover outbound Discord and Slack reply branches here with mocked fetch calls.
+ * Cover outbound Discord, Slack, and Pancake reply branches here with mocked fetch calls.
  */
 
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { createDiscordChannel } from "../functions/_shared/discord-channel.ts";
+import { createPancakeChannel } from "../functions/_shared/pancake-channel.ts";
 import { createSlackChannel } from "../functions/_shared/slack-channel.ts";
 
 type FetchInput = string | URL | Request;
@@ -245,6 +246,88 @@ describe("slack channel actions", () => {
     await expect(apiActions.reactToMessage()).rejects.toThrow(
       "Slack reactions.add failed (403): missing_scope",
     );
+  });
+});
+
+describe("pancake channel actions", () => {
+  it("sends inbox replies through Pancake's page message API", async () => {
+    const fetchMock = installFetchMock();
+    fetchMock.responses.push(jsonResponse({ success: true, id: "reply-1" }));
+
+    const actions = createPancakeChannel("page-1", "page-token", "sender-1").actions(
+      createMessage({
+        pageId: "page-1",
+        conversationId: "conversation-1",
+        messageId: "message-1",
+        messageType: "INBOX",
+      }),
+    );
+
+    await actions.sendText("hello inbox");
+    await actions.sendTyping();
+    await actions.reactToMessage();
+
+    expect(fetchMock.calls).toHaveLength(1);
+    expect(toUrl(fetchMock.calls[0]!.input)).toBe(
+      "https://pages.fm/api/public_api/v1/pages/page-1/conversations/conversation-1/messages?page_access_token=page-token",
+    );
+    expect(fetchMock.calls[0]!.init?.method).toBe("POST");
+    expect(fetchMock.calls[0]!.init?.headers).toEqual({ "Content-Type": "application/json" });
+    expect(JSON.parse(String(fetchMock.calls[0]!.init?.body))).toEqual({
+      action: "reply_inbox",
+      message: "hello inbox",
+      sender_id: "sender-1",
+    });
+  });
+
+  it("sends comment replies with the source message id", async () => {
+    const fetchMock = installFetchMock();
+    fetchMock.responses.push(jsonResponse({ success: true, id: "reply-1" }));
+
+    const actions = createPancakeChannel("page-1", "page-token").actions(
+      createMessage({
+        pageId: "page-1",
+        conversationId: "conversation-1",
+        messageId: "comment-1",
+        messageType: "COMMENT",
+      }),
+    );
+
+    await actions.sendText("hello comment");
+
+    expect(fetchMock.calls).toHaveLength(1);
+    expect(JSON.parse(String(fetchMock.calls[0]!.init?.body))).toEqual({
+      action: "reply_comment",
+      message_id: "comment-1",
+      message: "hello comment",
+    });
+  });
+
+  it("throws on Pancake API failures and rejects invalid source payloads", async () => {
+    const fetchMock = installFetchMock();
+    const adapter = createPancakeChannel("page-1", "page-token");
+    const actions = adapter.actions(
+      createMessage({
+        pageId: "page-1",
+        conversationId: "conversation-1",
+        messageId: "message-1",
+        messageType: "INBOX",
+      }),
+    );
+
+    fetchMock.responses.push(jsonResponse({ success: false, message: "permission denied" }, 200));
+    await expect(actions.sendText("hello")).rejects.toThrow(
+      "Pancake send message failed (200): permission denied",
+    );
+
+    expect(() =>
+      adapter.actions(createMessage({
+        pageId: "page-1",
+        conversationId: "conversation-1",
+        messageId: "message-1",
+        messageType: "UNKNOWN",
+      })),
+    ).toThrow("Invalid Pancake source payload");
   });
 });
 

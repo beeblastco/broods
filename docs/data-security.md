@@ -8,8 +8,15 @@ This is an experiment product, so the security model is simple by design. It avo
 flowchart TD
   Account["Account record"] --> Meta["Plain metadata<br/>accountId, username, description, status"]
   Account --> Hash["Account secret hash<br/>secretHash"]
-  Account --> Config["Encrypted config blob<br/>model settings + provider credentials"]
+  Account --> Agent["Agent records"]
+  Agent --> Config["Encrypted agent config blob<br/>model, tool, subagent, and channel settings"]
+  Agent --> Workspace["Workspace S3 objects<br/>memory, files, tasks"]
+  Agent --> Skills["Skill S3 objects<br/>account-scoped bundles"]
 
+  Config --> Model["model provider/options"]
+  Config --> Tools["tool allowlist/options"]
+  Config --> Sandbox["sandbox provider/options"]
+  Config --> Subagents["subagent allowlist/context mode"]
   Config --> Telegram["Telegram token / webhook secret"]
   Config --> GitHub["GitHub app id / private key / webhook secret"]
   Config --> Slack["Slack bot token / signing secret"]
@@ -18,7 +25,9 @@ flowchart TD
 
 The account API secret is never stored directly. It is returned once on create or rotation, then only `secretHash` is stored.
 
-Provider credentials must be usable at runtime, so they cannot be hashed. They are stored inside the encrypted account config.
+Provider credentials and account-specific runtime options must be usable at runtime, so they cannot be hashed. They are stored inside encrypted account-owned agent config. Normal account and agent responses recursively redact secret-like field names such as `token`, `secret`, `privateKey`, and `apiKey`, including inside tool config.
+
+Workspace files, memory, tasks, and skill bundles are stored as account-scoped S3 objects. The buckets block public access and use a deny-by-default bucket policy that allows only the project runtime roles, sandbox runtime roles, the AWS S3 Files role, and deployment roles for the active stage.
 
 ## How Config Encryption Works
 
@@ -26,12 +35,12 @@ Provider credentials must be usable at runtime, so they cannot be hashed. They a
 sequenceDiagram
   participant API as account-manage
   participant Crypto as AES-256-GCM
-  participant DDB as DynamoDB AccountConfig
+  participant DDB as DynamoDB AgentConfig
   participant Harness as harness-processing
 
   API->>Crypto: encrypt config with ACCOUNT_CONFIG_ENCRYPTION_SECRET
   Crypto->>DDB: store ciphertext + iv + auth tag
-  Harness->>DDB: load account record
+  Harness->>DDB: load selected agent record
   Harness->>Crypto: decrypt config
   Harness->>Harness: verify webhooks / send replies
 ```
@@ -41,7 +50,7 @@ Current implementation:
 - AES-256-GCM encrypts the config before DynamoDB write.
 - `ACCOUNT_CONFIG_ENCRYPTION_SECRET` comes from SST secrets.
 - DynamoDB stores encrypted config, not readable provider credentials.
-- Lambdas decrypt config only when they need account runtime settings.
+- Lambdas decrypt config only when they need selected agent runtime settings.
 
 ## API Responses
 
@@ -59,7 +68,7 @@ This keeps the product easy to run and change:
 
 - No extra Secrets Manager objects per account.
 - No KMS decrypt call on every config read.
-- Account data stays in one DynamoDB item.
+- Account metadata and agent runtime config stay in DynamoDB without per-provider secret resources.
 - Good enough for an experiment product.
 
 ## Limits
@@ -68,3 +77,4 @@ This keeps the product easy to run and change:
 - Lambdas with the encryption secret and table access can decrypt config.
 - Key rotation needs a migration.
 - This protects against accidental table-read exposure, not compromised application code.
+- Third-party sandbox providers such as E2B and Daytona run outside the AWS Lambda sandbox boundary. Configure them with isolated mounts, minimal environment variables, provider-side egress controls, and no account/provider secrets unless a workload explicitly needs them.

@@ -1,5 +1,5 @@
 /**
- * Discord slash command sync.
+ * Discord slash command sync. Run when ENABLE_DISCORD_INTEGRATION=true in CI
  * Register shared command metadata with Discord through the application command HTTP API.
  */
 

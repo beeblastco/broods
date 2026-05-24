@@ -1,24 +1,113 @@
 /// <reference path="./.sst/platform/config.d.ts" />
 
 // SST infrastructure for the account-managed harness: one streaming runtime Lambda and one account-management Lambda.
-const AWS_REGION = "eu-central-1";
 const AWS_ACCOUNT_ID = "123456789012";
 const PROJECT_NAME = "filthy-panty";
 const PROJECT_OWNER_EMAIL = "owner@example.com";
-const GOOGLE_MODEL_ID = "gemma-4-31b-it";
-const SLIDING_CONTEXT_WINDOW = "20";
-const MAX_AGENT_ITERATIONS = "20";
 const AWS_PROFILE = process.env.CI ? undefined : (process.env.AWS_PROFILE ?? "default");
+const ENABLE_DIRECT_API = parseBooleanEnv("ENABLE_DIRECT_API", false);
+const ENABLE_WEBSOCKET = parseBooleanEnv("ENABLE_WEBSOCKET", false);
+const SANDBOX_WORKSPACE_MOUNT_PATH = "/mnt/workspaces";
+const NATS_URL = process.env.NATS_URL?.trim();
 
+if (ENABLE_WEBSOCKET && !NATS_URL) {
+  throw new Error("NATS_URL must be set when ENABLE_WEBSOCKET=true");
+}
 
-function resourceName(service: string, stage: string): string {
+function awsRegion(): string {
+  const region = process.env.AWS_REGION ?? process.env.AWS_DEFAULT_REGION;
+  if (region) {
+    return region;
+  }
+
+  if (process.env.CI) {
+    throw new Error("AWS_REGION must be set in CI");
+  }
+
+  return "eu-central-1";
+}
+
+function resourceName(service: string, stage: string, region: string): string {
   const stagePrefix = stage === "production" ? "" : `${stage}-`;
-  return `${stagePrefix}${PROJECT_NAME}-${service}-${AWS_REGION}-${AWS_ACCOUNT_ID}`;
+  return `${stagePrefix}${PROJECT_NAME}-${service}-${region}-${AWS_ACCOUNT_ID}`;
+}
+
+function parseBooleanEnv(name: string, defaultValue: boolean): boolean {
+  const value = process.env[name];
+  if (!value) {
+    return defaultValue;
+  }
+
+  const normalized = value.trim().toLowerCase();
+  if (["1", "true", "yes", "on"].includes(normalized)) {
+    return true;
+  }
+  if (["0", "false", "no", "off"].includes(normalized)) {
+    return false;
+  }
+
+  throw new Error(`${name} must be a boolean-like value`);
+}
+
+function sandboxRuntimePermissions(
+  filesystemBucketArn: string,
+  s3FilesFileSystemArn: $util.Input<string>,
+  s3FilesAccessPointArn: $util.Input<string>,
+) : {
+  actions: string[];
+  resources: $util.Input<string>[];
+}[] {
+  return [
+    {
+      actions: [
+        "s3files:ClientMount",
+        "s3files:ClientWrite",
+      ],
+      resources: [s3FilesFileSystemArn, s3FilesAccessPointArn],
+    },
+    {
+      actions: [
+        "s3:GetObject",
+        "s3:GetObjectVersion",
+        "s3:PutObject",
+        "s3:DeleteObject",
+      ],
+      resources: [`${filesystemBucketArn}/*`],
+    },
+    {
+      actions: ["s3:ListBucket"],
+      resources: [filesystemBucketArn],
+    },
+  ];
+}
+
+function denyUnlessProjectPrincipal(stage: string, region: string) {
+  return {
+    effect: "deny" as const,
+    principals: "*" as const,
+    actions: ["s3:*"],
+    conditions: [
+      {
+        test: "StringNotLikeIfExists",
+        variable: "aws:PrincipalArn",
+        values: [
+          `arn:aws:iam::${AWS_ACCOUNT_ID}:role/${PROJECT_NAME}-${stage}-AccountManageRole-*`,
+          `arn:aws:iam::${AWS_ACCOUNT_ID}:role/${PROJECT_NAME}-${stage}-HarnessProcessingRole-*`,
+          `arn:aws:iam::${AWS_ACCOUNT_ID}:role/${PROJECT_NAME}-${stage}-SandboxNodeRole-*`,
+          `arn:aws:iam::${AWS_ACCOUNT_ID}:role/${PROJECT_NAME}-${stage}-SandboxPythonRole-*`,
+          `arn:aws:iam::${AWS_ACCOUNT_ID}:role/${resourceName("sandbox-s3files", stage, region)}`,
+          `arn:aws:iam::${AWS_ACCOUNT_ID}:role/github-actions-aws-infra-deploy`,
+          `arn:aws:iam::${AWS_ACCOUNT_ID}:role/github-actions-aws-sst-infra-deploy`,
+        ],
+      },
+    ],
+  };
 }
 
 export default $config({
   app(input) {
     const stage = input?.stage ?? "dev";
+    const region = awsRegion();
 
     return {
       name: PROJECT_NAME,
@@ -27,8 +116,8 @@ export default $config({
       home: "aws",
       providers: {
         aws: {
-          region: AWS_REGION,
-          version: "7.20.0",
+          region,
+          version: "7.30.0",
           ...(AWS_PROFILE ? { profile: AWS_PROFILE } : {}),
           defaultTags: {
             tags: {
@@ -43,20 +132,29 @@ export default $config({
   },
 
   async run() {
+    const aws = await import("@pulumi/aws");
     const stage = $app.stage;
+    const region = awsRegion();
     const names = {
-      conversations: resourceName("conversations", stage),
-      processedEvents: resourceName("processed-events", stage),
-      asyncResults: resourceName("async-results", stage),
-      accountConfigs: resourceName("account-configs", stage),
-      accountSignupRateLimits: resourceName("account-signup-rate-limits", stage),
-      harnessProcessing: resourceName("harness-processing", stage),
-      accountManage: resourceName("account-manage", stage),
-      memory: resourceName("memory", stage),
+      conversations: resourceName("conversations", stage, region),
+      processedEvents: resourceName("processed-events", stage, region),
+      asyncAgentResult: resourceName("async-agent-result", stage, region),
+      asyncToolResult: resourceName("async-tool-result", stage, region),
+      externalAsyncToolMock: resourceName("async-tool-mock", stage, region),
+      webhookSubscribeMock: resourceName("webhook-sub-mock", stage, region),
+      sandboxNode: resourceName("sandbox-node", stage, region),
+      sandboxPython: resourceName("sandbox-python", stage, region),
+      accountConfigs: resourceName("account-configs", stage, region),
+      agentConfigs: resourceName("agent-configs", stage, region),
+      accountSignupRateLimits: resourceName("account-signup-rate-limits", stage, region),
+      cronJobs: resourceName("cron-jobs", stage, region),
+      cronSchedules: resourceName("cron-schedules", stage, region),
+      harnessProcessing: resourceName("harness-processing", stage, region),
+      accountManage: resourceName("account-manage", stage, region),
+      memory: resourceName("memory", stage, region),
+      skills: resourceName("skills", stage, region),
     };
 
-    const googleApiKey = new sst.Secret("GoogleApiKey");
-    const tavilyApiKey = new sst.Secret("TavilyApiKey");
     const adminAccountSecret = new sst.Secret("AdminAccountSecret");
     const accountConfigEncryptionSecret = new sst.Secret("AccountConfigEncryptionSecret");
 
@@ -91,6 +189,34 @@ export default $config({
       },
     });
 
+    const agentConfigsTable = new sst.aws.Dynamo("AgentConfig", {
+      fields: {
+        accountId: "string",
+        agentId: "string",
+      },
+      primaryIndex: { hashKey: "accountId", rangeKey: "agentId" },
+      deletionProtection: stage === "production",
+      transform: {
+        table: {
+          name: names.agentConfigs,
+        },
+      },
+    });
+
+    const cronJobsTable = new sst.aws.Dynamo("CronJob", {
+      fields: {
+        accountId: "string",
+        cronJobId: "string",
+      },
+      primaryIndex: { hashKey: "accountId", rangeKey: "cronJobId" },
+      deletionProtection: stage === "production",
+      transform: {
+        table: {
+          name: names.cronJobs,
+        },
+      },
+    });
+
     const conversationsTable = new sst.aws.Dynamo("Conversations", {
       fields: {
         conversationKey: "string",
@@ -119,7 +245,7 @@ export default $config({
       },
     });
 
-    const asyncResultsTable = new sst.aws.Dynamo("AsyncResults", {
+    const asyncAgentResultTable = new sst.aws.Dynamo("AsyncAgentResult", {
       fields: {
         eventId: "string",
       },
@@ -128,11 +254,279 @@ export default $config({
       deletionProtection: stage === "production",
       transform: {
         table: {
-          name: names.asyncResults,
+          name: names.asyncAgentResult,
+        },
+      },
+    });
+    const asyncToolResultTable = new sst.aws.Dynamo("AsyncToolResult", {
+      fields: {
+        resultId: "string",
+        parentEventId: "string",
+      },
+      primaryIndex: { hashKey: "resultId" },
+      globalIndexes: {
+        ParentEventIdIndex: { hashKey: "parentEventId" },
+      },
+      ttl: "expiresAt",
+      deletionProtection: stage === "production",
+      transform: {
+        table: {
+          name: names.asyncToolResult,
         },
       },
     });
     const filesystemBucketArn = `arn:aws:s3:::${names.memory}`;
+    const skillsBucketArn = `arn:aws:s3:::${names.skills}`;
+    const filesystemBucket = new sst.aws.Bucket("Memory", {
+      versioning: true,
+      policy: [denyUnlessProjectPrincipal(stage, region)],
+      transform: {
+        bucket: {
+          bucket: names.memory,
+        },
+        publicAccessBlock: {
+          blockPublicAcls: true,
+          ignorePublicAcls: true,
+          blockPublicPolicy: true,
+          restrictPublicBuckets: true,
+        },
+      },
+    });
+
+    const skillsBucket = new sst.aws.Bucket("Skills", {
+      versioning: true,
+      policy: [denyUnlessProjectPrincipal(stage, region)],
+      transform: {
+        bucket: {
+          bucket: names.skills,
+        },
+        publicAccessBlock: {
+          blockPublicAcls: true,
+          ignorePublicAcls: true,
+          blockPublicPolicy: true,
+          restrictPublicBuckets: true,
+        },
+      },
+    });
+
+    // Setup the VPC for the sandbox connection.
+    // It does not allow connect to outside internet, else we have to enable NAT Gateway which is
+    // expensive asf.
+    const sandboxNetwork = new sst.aws.Vpc("SandboxNetwork", {
+      az: 2, // 2 az same price of 1 az.
+    });
+
+    const s3FilesRole = new aws.iam.Role("SandboxS3FilesRole", {
+      name: resourceName("sandbox-s3files", stage, region),
+      assumeRolePolicy: JSON.stringify({
+        Version: "2012-10-17",
+        Statement: [{
+          Sid: "AllowS3FilesAssumeRole",
+          Effect: "Allow",
+          Principal: { Service: "elasticfilesystem.amazonaws.com" },
+          Action: "sts:AssumeRole",
+          Condition: {
+            StringEquals: {
+              "aws:SourceAccount": AWS_ACCOUNT_ID,
+            },
+            ArnLike: {
+              "aws:SourceArn": `arn:aws:s3files:${region}:${AWS_ACCOUNT_ID}:file-system/*`,
+            },
+          },
+        }],
+      }),
+    });
+
+    new aws.iam.RolePolicy("SandboxS3FilesRolePolicy", {
+      role: s3FilesRole.id,
+      policy: JSON.stringify({
+        Version: "2012-10-17",
+        Statement: [
+          {
+            Effect: "Allow",
+            Action: [
+              "s3:AbortMultipartUpload",
+              "s3:DeleteObject*",
+              "s3:GetObject*",
+              "s3:HeadObject",
+              "s3:List*",
+              "s3:PutObject*",
+            ],
+            Resource: [`${filesystemBucketArn}/*`],
+            Condition: {
+              StringEquals: {
+                "aws:ResourceAccount": AWS_ACCOUNT_ID,
+              },
+            },
+          },
+          {
+            Effect: "Allow",
+            Action: [
+              "s3:HeadBucket",
+              "s3:ListBucket",
+              "s3:ListBucketVersions",
+              "s3:ListBucketMultipartUploads",
+            ],
+            Resource: [filesystemBucketArn],
+            Condition: {
+              StringEquals: {
+                "aws:ResourceAccount": AWS_ACCOUNT_ID,
+              },
+            },
+          },
+          {
+            Effect: "Allow",
+            Action: [
+              "events:DeleteRule",
+              "events:DisableRule",
+              "events:EnableRule",
+              "events:PutRule",
+              "events:PutTargets",
+              "events:RemoveTargets",
+            ],
+            Resource: ["arn:aws:events:*:*:rule/DO-NOT-DELETE-S3-Files*"],
+            Condition: {
+              StringEquals: {
+                "events:ManagedBy": "elasticfilesystem.amazonaws.com",
+              },
+            },
+          },
+          {
+            Effect: "Allow",
+            Action: [
+              "events:DescribeRule",
+              "events:ListRuleNamesByTarget",
+              "events:ListRules",
+              "events:ListTargetsByRule",
+            ],
+            Resource: ["arn:aws:events:*:*:rule/*"],
+          },
+        ],
+      }),
+    });
+
+    const sandboxS3Files = new aws.s3.FilesFileSystem("SandboxS3Files", {
+      bucket: filesystemBucketArn,
+      roleArn: s3FilesRole.arn,
+      acceptBucketWarning: true,
+    }, {
+      dependsOn: [filesystemBucket],
+    });
+
+    const sandboxS3FilesAccessPoint = new aws.s3.FilesAccessPoint("SandboxS3FilesAccessPoint", {
+      fileSystemId: sandboxS3Files.id,
+      posixUsers: [{ uid: 1000, gid: 1000 }],
+      rootDirectories: [{
+        path: "/",
+        creationPermissions: [{
+          ownerUid: 1000,
+          ownerGid: 1000,
+          permissions: "755",
+        }],
+      }],
+    });
+
+    new aws.vpc.SecurityGroupIngressRule("SandboxS3FilesNfsIngress", {
+      securityGroupId: sandboxNetwork.securityGroups.apply((ids) => ids[0]!),
+      referencedSecurityGroupId: sandboxNetwork.securityGroups.apply((ids) => ids[0]!),
+      ipProtocol: "tcp",
+      fromPort: 2049,
+      toPort: 2049,
+    });
+
+    new aws.s3.FilesMountTarget("SandboxS3FilesMountTargetA", {
+      fileSystemId: sandboxS3Files.id,
+      subnetId: sandboxNetwork.privateSubnets.apply((ids) => ids[0]!),
+      securityGroups: sandboxNetwork.securityGroups,
+    });
+
+    new aws.s3.FilesMountTarget("SandboxS3FilesMountTargetB", {
+      fileSystemId: sandboxS3Files.id,
+      subnetId: sandboxNetwork.privateSubnets.apply((ids) => ids[1]!),
+      securityGroups: sandboxNetwork.securityGroups,
+    });
+
+    const mockExternalAsyncTool = new sst.aws.Function("MockExternalAsyncTool", {
+      name: names.externalAsyncToolMock,
+      runtime: "python3.12",
+      architecture: "arm64",
+      bundle: "functions/mock-external-async-tool",
+      handler: "handler.handler",
+      description: "Mock external async tool for testing external-dispatch mode.",
+      timeout: "30 seconds",
+      memory: "128 MB",
+      url: {
+        authorization: "none",
+      },
+      logging: { format: "json", retention: "1 month" },
+    });
+
+    const mockWebhookSubscribe = new sst.aws.Function("MockWebhookSubscribe", {
+      name: names.webhookSubscribeMock,
+      runtime: "python3.12",
+      architecture: "arm64",
+      bundle: "functions/mock-webhook-subscribe",
+      handler: "handler.handler",
+      description: "Mock webhook subscription endpoint for testing inbound webhooks.",
+      timeout: "30 seconds",
+      memory: "128 MB",
+      url: {
+        authorization: "none",
+      },
+      logging: { format: "json", retention: "1 month" },
+      environment: {
+        MOCK_WEBHOOK_SECRET: process.env.MOCK_WEBHOOK_SECRET ?? "",
+      },
+    });
+
+    const sandboxNode = new sst.aws.Function("SandboxNode", {
+      name: names.sandboxNode,
+      runtime: "nodejs22.x",
+      architecture: "arm64",
+      handler: "functions/sandbox-node/handler.handler",
+      description: "Executes workspace JavaScript files without public network egress.",
+      timeout: "2 minutes",
+      memory: "512 MB", // Minimal memory required from AWS for S3 mount to sandbox execution.
+      vpc: sandboxNetwork,
+      environment: {
+        SANDBOX_WORKSPACE_MOUNT_PATH,
+      },
+      permissions: sandboxRuntimePermissions(filesystemBucketArn, sandboxS3Files.arn, sandboxS3FilesAccessPoint.arn),
+      logging: { format: "json", retention: "1 month" },
+      transform: {
+        function: (args) => {
+          args.fileSystemConfig = {
+            arn: sandboxS3FilesAccessPoint.arn,
+            localMountPath: SANDBOX_WORKSPACE_MOUNT_PATH,
+          };
+        },
+      },
+    });
+
+    const sandboxPython = new sst.aws.Function("SandboxPython", {
+      name: names.sandboxPython,
+      runtime: "python3.12",
+      architecture: "arm64",
+      bundle: "functions/sandbox-python",
+      handler: "handler.handler",
+      description: "Executes workspace Python files without public network egress.",
+      timeout: "2 minutes",
+      memory: "512 MB", // Minimal memory required from AWS for S3 mount to sandbox execution.
+      vpc: sandboxNetwork,
+      environment: {
+        SANDBOX_WORKSPACE_MOUNT_PATH,
+      },
+      permissions: sandboxRuntimePermissions(filesystemBucketArn, sandboxS3Files.arn, sandboxS3FilesAccessPoint.arn),
+      logging: { format: "json", retention: "1 month" },
+      transform: {
+        function: (args) => {
+          args.fileSystemConfig = {
+            arn: sandboxS3FilesAccessPoint.arn,
+            localMountPath: SANDBOX_WORKSPACE_MOUNT_PATH,
+          };
+        },
+      },
+    });
 
     const harnessProcessing = new sst.aws.Function("HarnessProcessing", {
       name: names.harnessProcessing,
@@ -149,18 +543,23 @@ export default $config({
       },
       logging: { format: "json", retention: "1 month" },
       environment: {
-        GOOGLE_API_KEY: googleApiKey.value,
-        GOOGLE_MODEL_ID,
         CONVERSATIONS_TABLE_NAME: conversationsTable.name,
         PROCESSED_EVENTS_TABLE_NAME: processedEventsTable.name,
-        ASYNC_RESULTS_TABLE_NAME: asyncResultsTable.name,
+        ASYNC_AGENT_RESULT_TABLE_NAME: asyncAgentResultTable.name,
+        ASYNC_TOOL_RESULT_TABLE_NAME: asyncToolResultTable.name,
         ACCOUNT_CONFIGS_TABLE_NAME: accountConfigsTable.name,
+        AGENT_CONFIGS_TABLE_NAME: agentConfigsTable.name,
         ACCOUNT_SECRET_INDEX_NAME: "SecretHashIndex",
         ACCOUNT_CONFIG_ENCRYPTION_SECRET: accountConfigEncryptionSecret.value,
-        SLIDING_CONTEXT_WINDOW,
-        MAX_AGENT_ITERATIONS,
-        TAVILY_API_KEY: tavilyApiKey.value,
         FILESYSTEM_BUCKET_NAME: names.memory,
+        SKILLS_BUCKET_NAME: names.skills,
+        ENABLE_DIRECT_API: ENABLE_DIRECT_API ? "true" : "false",
+        ENABLE_WEBSOCKET: ENABLE_WEBSOCKET ? "true" : "false",
+        MOCK_EXTERNAL_ASYNC_TOOL_URL: mockExternalAsyncTool.url,
+        SANDBOX_NODE_FUNCTION_NAME: sandboxNode.name,
+        SANDBOX_PYTHON_FUNCTION_NAME: sandboxPython.name,
+        CRON_JOBS_TABLE_NAME: cronJobsTable.name,
+        ...(NATS_URL ? { NATS_URL } : {}),
       },
       permissions: [
         {
@@ -169,6 +568,13 @@ export default $config({
             "dynamodb:Query",
           ],
           resources: [accountConfigsTable.arn, $interpolate`${accountConfigsTable.arn}/index/SecretHashIndex`],
+        },
+        {
+          actions: [
+            "dynamodb:GetItem",
+            "dynamodb:Query",
+          ],
+          resources: [agentConfigsTable.arn],
         },
         {
           actions: [
@@ -185,15 +591,38 @@ export default $config({
             "dynamodb:PutItem",
             "dynamodb:UpdateItem",
           ],
-          resources: [asyncResultsTable.arn],
+          resources: [asyncAgentResultTable.arn],
+        },
+        {
+          actions: [
+            "dynamodb:GetItem",
+            "dynamodb:PutItem",
+            "dynamodb:UpdateItem",
+          ],
+          resources: [asyncToolResultTable.arn],
+        },
+        {
+          actions: [
+            "dynamodb:GetItem",
+            "dynamodb:UpdateItem",
+          ],
+          resources: [cronJobsTable.arn],
         },
         {
           actions: ["lambda:InvokeFunction"],
-          resources: [`arn:aws:lambda:${AWS_REGION}:${AWS_ACCOUNT_ID}:function:${names.harnessProcessing}`],
+          resources: [`arn:aws:lambda:${region}:${AWS_ACCOUNT_ID}:function:${names.harnessProcessing}`],
+        },
+        {
+          actions: ["lambda:InvokeFunction"],
+          resources: [
+            sandboxNode.arn,
+            sandboxPython.arn,
+          ],
         },
         {
           actions: [
             "s3:GetObject",
+            "s3:HeadObject",
             "s3:PutObject",
             "s3:DeleteObject",
           ],
@@ -203,7 +632,45 @@ export default $config({
           actions: ["s3:ListBucket"],
           resources: [filesystemBucketArn],
         },
+        {
+          actions: [
+            "s3:GetObject",
+          ],
+          resources: [`${skillsBucketArn}/*`],
+        },
+        {
+          actions: ["s3:ListBucket"],
+          resources: [skillsBucketArn],
+        },
       ],
+    });
+
+    const cronScheduleGroup = new aws.scheduler.ScheduleGroup("CronScheduleGroup", {
+      name: names.cronSchedules,
+    });
+
+    const cronSchedulerRole = new aws.iam.Role("CronSchedulerRole", {
+      name: resourceName("cron-scheduler", stage, region),
+      assumeRolePolicy: JSON.stringify({
+        Version: "2012-10-17",
+        Statement: [{
+          Effect: "Allow",
+          Principal: { Service: "scheduler.amazonaws.com" },
+          Action: "sts:AssumeRole",
+        }],
+      }),
+    });
+
+    new aws.iam.RolePolicy("CronSchedulerRolePolicy", {
+      role: cronSchedulerRole.id,
+      policy: harnessProcessing.arn.apply((arn) => JSON.stringify({
+        Version: "2012-10-17",
+        Statement: [{
+          Effect: "Allow",
+          Action: ["lambda:InvokeFunction"],
+          Resource: [arn],
+        }],
+      })),
     });
 
     const accountManage = new sst.aws.Function("AccountManage", {
@@ -223,15 +690,22 @@ export default $config({
       logging: { format: "json", retention: "1 month" },
       environment: {
         ACCOUNT_CONFIGS_TABLE_NAME: accountConfigsTable.name,
+        AGENT_CONFIGS_TABLE_NAME: agentConfigsTable.name,
         ACCOUNT_SECRET_INDEX_NAME: "SecretHashIndex",
         CONVERSATIONS_TABLE_NAME: conversationsTable.name,
         PROCESSED_EVENTS_TABLE_NAME: processedEventsTable.name,
-        ASYNC_RESULTS_TABLE_NAME: asyncResultsTable.name,
+        ASYNC_AGENT_RESULT_TABLE_NAME: asyncAgentResultTable.name,
+        ASYNC_TOOL_RESULT_TABLE_NAME: asyncToolResultTable.name,
         FILESYSTEM_BUCKET_NAME: names.memory,
+        SKILLS_BUCKET_NAME: names.skills,
         ACCOUNT_SIGNUP_RATE_LIMIT_TABLE_NAME: accountSignupRateLimitTable.name,
         ACCOUNT_SIGNUP_RATE_LIMIT_PER_HOUR: "5",
         ADMIN_ACCOUNT_SECRET: adminAccountSecret.value,
         ACCOUNT_CONFIG_ENCRYPTION_SECRET: accountConfigEncryptionSecret.value,
+        CRON_JOBS_TABLE_NAME: cronJobsTable.name,
+        CRON_SCHEDULER_TARGET_FUNCTION_ARN: harnessProcessing.arn,
+        CRON_SCHEDULER_ROLE_ARN: cronSchedulerRole.arn,
+        CRON_SCHEDULER_GROUP_NAME: cronScheduleGroup.name,
       },
       permissions: [
         {
@@ -247,11 +721,43 @@ export default $config({
         },
         {
           actions: [
+            "dynamodb:DeleteItem",
+            "dynamodb:GetItem",
+            "dynamodb:PutItem",
+            "dynamodb:Query",
+            "dynamodb:UpdateItem",
+          ],
+          resources: [agentConfigsTable.arn],
+        },
+        {
+          actions: [
+            "dynamodb:DeleteItem",
+            "dynamodb:GetItem",
+            "dynamodb:PutItem",
+            "dynamodb:Query",
+            "dynamodb:UpdateItem",
+          ],
+          resources: [cronJobsTable.arn],
+        },
+        {
+          actions: [
+            "scheduler:CreateSchedule",
+            "scheduler:DeleteSchedule",
+            "scheduler:UpdateSchedule",
+          ],
+          resources: [$interpolate`arn:aws:scheduler:${region}:${AWS_ACCOUNT_ID}:schedule/${cronScheduleGroup.name}/*`],
+        },
+        {
+          actions: ["iam:PassRole"],
+          resources: [cronSchedulerRole.arn],
+        },
+        {
+          actions: [
             "dynamodb:BatchWriteItem",
             "dynamodb:DeleteItem",
             "dynamodb:Scan",
           ],
-          resources: [conversationsTable.arn, processedEventsTable.arn, asyncResultsTable.arn],
+          resources: [conversationsTable.arn, processedEventsTable.arn, asyncAgentResultTable.arn, asyncToolResultTable.arn],
         },
         {
           actions: [
@@ -269,57 +775,39 @@ export default $config({
           actions: ["s3:ListBucket"],
           resources: [filesystemBucketArn],
         },
-      ],
-    });
-
-    const filesystemBucket = new sst.aws.Bucket("Memory", {
-      versioning: true,
-      policy: [
         {
-          effect: "deny",
-          principals: "*",
           actions: [
             "s3:GetObject",
             "s3:PutObject",
             "s3:DeleteObject",
-            "s3:ListBucket",
           ],
-          conditions: [
-            {
-              test: "StringNotLikeIfExists",
-              variable: "aws:PrincipalArn",
-              values: [
-                harnessProcessing.nodes.role.arn,
-                $interpolate`arn:aws:sts::${AWS_ACCOUNT_ID}:assumed-role/${harnessProcessing.nodes.role.name}/*`,
-                accountManage.nodes.role.arn,
-                $interpolate`arn:aws:sts::${AWS_ACCOUNT_ID}:assumed-role/${accountManage.nodes.role.name}/*`,
-              ],
-            },
-          ],
+          resources: [`${skillsBucketArn}/*`],
+        },
+        {
+          actions: ["s3:ListBucket"],
+          resources: [skillsBucketArn],
         },
       ],
-      transform: {
-        bucket: {
-          bucket: names.memory,
-        },
-        publicAccessBlock: {
-          blockPublicAcls: true,
-          ignorePublicAcls: true,
-          blockPublicPolicy: true,
-          restrictPublicBuckets: true,
-        },
-      },
     });
 
     return {
-      harnessProcessingUrl: harnessProcessing.url,
-      accountManageUrl: accountManage.url,
+      agentServiceUrl: harnessProcessing.url,
+      accountServiceUrl: accountManage.url,
+      mockExternalAsyncToolUrl: mockExternalAsyncTool.url,
+      mockWebhookSubscribeUrl: mockWebhookSubscribe.url,
+      sandboxNodeFunctionName: sandboxNode.name,
+      sandboxPythonFunctionName: sandboxPython.name,
       accountConfigsTableName: accountConfigsTable.name,
+      agentConfigsTableName: agentConfigsTable.name,
+      cronJobsTableName: cronJobsTable.name,
       accountSignupRateLimitTableName: accountSignupRateLimitTable.name,
       conversationsTableName: conversationsTable.name,
       processedEventsTableName: processedEventsTable.name,
-      asyncResultsTableName: asyncResultsTable.name,
+      asyncAgentResultTableName: asyncAgentResultTable.name,
+      asyncToolResultTableName: asyncToolResultTable.name,
+      cronScheduleGroupName: cronScheduleGroup.name,
       filesystemBucketName: filesystemBucket.name,
+      skillsBucketName: skillsBucket.name,
     };
   },
 });

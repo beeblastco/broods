@@ -5,24 +5,43 @@
 
 import { tavilyExtract, tavilySearch } from "@tavily/ai-sdk";
 import type { ToolSet } from "ai";
-import { requireEnv } from "../../_shared/env.ts";
+import { optionalEnv } from "../../_shared/env.ts";
 import type { ToolContext } from "./index.ts";
 
-const TAVILY_API_KEY = requireEnv("TAVILY_API_KEY");
+export function tavilySearchTool(context: ToolContext): ToolSet {
+  const { enabled: _enabled, apiKey, ...config } = context.config;
+  const tavilyApiKey = typeof apiKey === "string" ? apiKey : optionalEnv("TAVILY_API_KEY");
 
-export default function tavilyTool(_context: ToolContext): ToolSet {
+  if (!tavilyApiKey) {
+    throw new Error("config.tools.tavilySearch.apiKey or TAVILY_API_KEY is required.");
+  }
+
   return {
     tavilySearch: tavilySearch({
-      apiKey: TAVILY_API_KEY,
+      apiKey: tavilyApiKey,
       searchDepth: "advanced",
       includeAnswer: true,
       maxResults: 5,
       topic: "general",
+      ...config,
     }),
+  };
+}
+
+export function tavilyExtractTool(context: ToolContext): ToolSet {
+  const { enabled: _enabled, apiKey, ...config } = context.config;
+  const tavilyApiKey = typeof apiKey === "string" ? apiKey : optionalEnv("TAVILY_API_KEY");
+
+  if (!tavilyApiKey) {
+    throw new Error("config.tools.tavilyExtract.apiKey or TAVILY_API_KEY is required.");
+  }
+
+  return {
     tavilyExtract: tavilyExtract({
-      apiKey: TAVILY_API_KEY,
+      apiKey: tavilyApiKey,
       extractDepth: "advanced",
       format: "markdown",
+      ...config,
     }),
   };
 }

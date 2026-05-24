@@ -12,6 +12,7 @@ import { formatDiscordMessage } from "./channel-format.ts";
 import { resolveDiscordCommand } from "./commands.ts";
 import { verifyDiscordSignature } from "./discord-signature.ts";
 import { logWarn } from "./log.ts";
+import { DISCORD_INTEGRATION_PREFIX } from "./runtime-keys.ts";
 
 interface DiscordInteractionOption {
   name?: string;
@@ -148,8 +149,8 @@ export function createDiscordChannel(
           body: JSON.stringify({ type: 5 }),
         },
         message: {
-          eventId: `discord:${payload.id}`,
-          conversationKey: `discord:${payload.guild_id}:${payload.channel_id}`,
+          eventId: `${DISCORD_INTEGRATION_PREFIX}${payload.id}`,
+          conversationKey: `${DISCORD_INTEGRATION_PREFIX}${payload.guild_id}:${payload.channel_id}`,
           channelName: "discord",
           content: resolvedCommand.contentText
             ? [{ type: "text", text: resolvedCommand.contentText }]

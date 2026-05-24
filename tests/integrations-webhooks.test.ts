@@ -1,4 +1,4 @@
-import { describe, expect, it } from "bun:test";
+import { afterEach, describe, expect, it, mock } from "bun:test";
 import type { LambdaFunctionURLEvent } from "aws-lambda";
 import {
   createIncomingEventRouter,
@@ -25,7 +25,50 @@ const TEST_ACCOUNT = {
   updatedAt: "2026-04-24T00:00:00.000Z",
 };
 
+const TEST_AGENT = {
+  accountId: "acct_test",
+  agentId: "agent_test",
+  name: "Webhook agent",
+  status: "active" as const,
+  config: TEST_ACCOUNT.config,
+  createdAt: "2026-04-24T00:00:00.000Z",
+  updatedAt: "2026-04-24T00:00:00.000Z",
+};
+
+const PANCAKE_AGENT = {
+  ...TEST_AGENT,
+  config: {
+    channels: {
+      pancake: {
+        pageId: "page-1",
+        pageAccessToken: "page-token",
+      },
+    },
+  },
+};
+
+const PANCAKE_HANDOFF_AGENT = {
+  ...PANCAKE_AGENT,
+  config: {
+    channels: {
+      pancake: {
+        pageId: "page-1",
+        pageAccessToken: "page-token",
+        options: {
+          handoff: { tagId: "123" },
+        },
+      },
+    },
+  },
+};
+
+const ORIGINAL_FETCH = globalThis.fetch;
+
 describe("account webhook ingress", () => {
+  afterEach(() => {
+    globalThis.fetch = ORIGINAL_FETCH;
+  });
+
   it("returns 404 for unknown accounts", async () => {
     const routeIncomingEvent = createIncomingEventRouter({
       accountLoader: async () => null,
@@ -41,8 +84,8 @@ describe("account webhook ingress", () => {
     const routeIncomingEvent = createIncomingEventRouter({
       accountLoader: async () => ({
         ...TEST_ACCOUNT,
-        config: {},
       }),
+      agentLoader: async () => ({ ...TEST_AGENT, config: {} }),
     });
 
     const response = await routeIncomingEvent(createTelegramEvent(), createHandlers());
@@ -54,6 +97,7 @@ describe("account webhook ingress", () => {
   it("returns 401 when account channel authentication fails", async () => {
     const routeIncomingEvent = createIncomingEventRouter({
       accountLoader: async () => TEST_ACCOUNT,
+      agentLoader: async () => TEST_AGENT,
     });
 
     const response = await routeIncomingEvent(createTelegramEvent(undefined, {
@@ -68,6 +112,7 @@ describe("account webhook ingress", () => {
     const handledEvents: ChannelInboundEvent[] = [];
     const routeIncomingEvent = createIncomingEventRouter({
       accountLoader: async () => TEST_ACCOUNT,
+      agentLoader: async () => TEST_AGENT,
     });
 
     const response = await routeIncomingEvent(createTelegramEvent(), createHandlers({
@@ -84,18 +129,73 @@ describe("account webhook ingress", () => {
     expect(handledEvents).toHaveLength(1);
     expect(handledEvents[0]).toMatchObject({
       accountId: "acct_test",
-      accountConfig: {},
-      eventId: "acct:acct_test:tg-7",
-      conversationKey: "acct:acct_test:tg:123",
+      agentId: "agent_test",
+      agentConfig: {},
+      eventId: "acct:acct_test:agent:agent_test:tg:7",
+      conversationKey: "acct:acct_test:agent:agent_test:tg:123",
       content: "hello",
       events: [{ role: "user", content: "hello" }],
       channelName: "telegram",
     });
   });
 
+  it("normalizes Pancake webhook events through account webhook routing", async () => {
+    const handledEvents: ChannelInboundEvent[] = [];
+    const routeIncomingEvent = createIncomingEventRouter({
+      accountLoader: async () => TEST_ACCOUNT,
+      agentLoader: async () => PANCAKE_AGENT,
+    });
+
+    const response = await routeIncomingEvent(createPancakeEvent(), createHandlers({
+      handleChannelRequest: async (event) => {
+        handledEvents.push(event);
+      },
+    }));
+
+    expect(response.statusCode).toBe(200);
+    await response.afterResponse;
+
+    expect(handledEvents).toHaveLength(1);
+    expect(handledEvents[0]).toMatchObject({
+      accountId: "acct_test",
+      agentId: "agent_test",
+      agentConfig: {},
+      conversationKey: "acct:acct_test:agent:agent_test:pancake:page-1:conversation-1",
+      content: [{ type: "text", text: "hello pancake" }],
+      events: [{ role: "user", content: [{ type: "text", text: "hello pancake" }] }],
+      channelName: "pancake",
+    });
+    expect(handledEvents[0]!.eventId.startsWith("acct:acct_test:agent:agent_test:pancake:page-1:message-1:"))
+      .toBe(true);
+  });
+
+  it("lets Pancake handoff tag ignore human-owned conversations", async () => {
+    const handledEvents: ChannelInboundEvent[] = [];
+    globalThis.fetch = mock(async () => {
+      throw new Error("Pancake handoff tag check should not call fetch");
+    }) as never;
+    const routeIncomingEvent = createIncomingEventRouter({
+      accountLoader: async () => TEST_ACCOUNT,
+      agentLoader: async () => PANCAKE_HANDOFF_AGENT,
+    });
+
+    const response = await routeIncomingEvent(createPancakeEvent({
+      conversation: { tags: [123] },
+    }), createHandlers({
+      handleChannelRequest: async (event) => {
+        handledEvents.push(event);
+      },
+    }));
+
+    expect(response.statusCode).toBe(200);
+    expect(response.afterResponse).toBeUndefined();
+    expect(handledEvents).toHaveLength(0);
+  });
+
   it("uses account webhook routing only; root provider webhooks are not accepted", async () => {
     const routeIncomingEvent = createIncomingEventRouter({
       accountLoader: async () => TEST_ACCOUNT,
+      agentLoader: async () => TEST_AGENT,
       authResolver: async () => null,
     });
 
@@ -121,12 +221,42 @@ function createHandlers(overrides: Partial<{
   };
 }
 
+function createPancakeEvent(overrides: {
+  conversation?: Record<string, unknown>;
+  message?: Record<string, unknown>;
+} = {}): LambdaFunctionURLEvent {
+  return createTelegramEvent({
+    page_id: "page-1",
+    event_type: "messaging",
+    data: {
+      conversation: {
+        id: "conversation-1",
+        type: "INBOX",
+        tags: [],
+        from: { id: "customer-1", name: "Ada" },
+        ...overrides.conversation,
+      },
+      message: {
+        id: "message-1",
+        conversation_id: "conversation-1",
+        page_id: "page-1",
+        message: "hello pancake",
+        type: "INBOX",
+        from: { id: "customer-1", name: "Ada", page_customer_id: "page-customer-1" },
+        ...overrides.message,
+      },
+    },
+  }, {
+    "content-type": "application/json",
+  }, "/webhooks/acct_test/agent_test/pancake");
+}
+
 function createTelegramEvent(
   body: unknown = telegramUpdate(),
   headers: Record<string, string> = {
     "x-telegram-bot-api-secret-token": "telegram-secret",
   },
-  rawPath = "/webhooks/acct_test/telegram",
+  rawPath = "/webhooks/acct_test/agent_test/telegram",
 ): LambdaFunctionURLEvent {
   return {
     version: "2.0",

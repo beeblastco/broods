@@ -11,6 +11,10 @@ import type {
 } from "./channels.ts";
 import { formatSlackMessage } from "./channel-format.ts";
 import { logWarn } from "./log.ts";
+import {
+  SLACK_COMMAND_INTEGRATION_PREFIX,
+  SLACK_INTEGRATION_PREFIX,
+} from "./runtime-keys.ts";
 
 interface SlackEventEnvelope {
   type: string;
@@ -134,7 +138,7 @@ function parseEventCallback(
     kind: "message",
     ack: { statusCode: 200 },
     message: {
-      eventId: `slack:${payload.event_id}`,
+      eventId: `${SLACK_INTEGRATION_PREFIX}${payload.event_id}`,
       conversationKey: getSlackConversationKey(payload.team_id, channelId, payload.event, threadTs),
       channelName: "slack",
       content: [{ type: "text", text }],
@@ -168,10 +172,10 @@ function getSlackConversationKey(
   threadTs: string,
 ): string {
   if (event.type === "message" && (event.channel_type === "im" || event.channel_type === "app_home")) {
-    return `slack:${teamId}:${channelId}`;
+    return `${SLACK_INTEGRATION_PREFIX}${teamId}:${channelId}`;
   }
 
-  return `slack:${teamId}:${channelId}:${threadTs}`;
+  return `${SLACK_INTEGRATION_PREFIX}${teamId}:${channelId}:${threadTs}`;
 }
 
 function getSlackReplyThreadTs(
@@ -209,8 +213,8 @@ function parseSlashCommand(
     kind: "message",
     ack: { statusCode: 200 },
     message: {
-      eventId: `slack-command:${params.get("trigger_id") ?? `${teamId}:${channelId}:${command}:${text}`}`,
-      conversationKey: `slack:${teamId}:${channelId}`,
+      eventId: `${SLACK_COMMAND_INTEGRATION_PREFIX}${params.get("trigger_id") ?? `${teamId}:${channelId}:${command}:${text}`}`,
+      conversationKey: `${SLACK_INTEGRATION_PREFIX}${teamId}:${channelId}`,
       channelName: "slack",
       content: [{ type: "text", text }],
       source: {
