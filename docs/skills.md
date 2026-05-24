@@ -30,7 +30,11 @@ When skills are enabled, the model sees a compact skill panel in system context.
 
 The detailed `SKILL.md` content is not injected up front. The agent calls `load_skill` with an allowed path, and may request extra resource files from the same bundle only when `SKILL.md` references them.
 
-## Bundle Shape
+## Create Skills
+
+BeeBlast skill bundles follow the open [Agent Skills format](https://agentskills.io/home): a skill is a folder with a required `SKILL.md` file, metadata for discovery, and optional supporting resources. For authoring guidance, start with the external [Agent Skills quickstart](https://agentskills.io/skill-creation/quickstart) and check the [Agent Skills specification](https://agentskills.io/specification) before uploading a bundle.
+
+### Bundle Shape
 
 Every skill bundle must include a root `SKILL.md` file with YAML frontmatter:
 
@@ -51,7 +55,14 @@ Use this skill when a customer asks for help with a product issue.
 3. Recommend the next action.
 ```
 
-Skill names must be lowercase letters, numbers, and hyphens only. The stored path is generated as `<accountId>/<skill-name>`.
+Skill names must be lowercase letters, numbers, and hyphens only. The stored path is generated from the `SKILL.md` name as `<accountId>/<skill-name>`, not from the local folder name used during upload.
+
+Bundle limits:
+
+- Each file can be up to 5 MB.
+- The full bundle can be up to 30 MB.
+- Files must be supported text files: `.css`, `.csv`, `.html`, `.js`, `.json`, `.md`, `.mjs`, `.py`, `.sh`, `.sql`, `.svg`, `.toml`, `.ts`, `.tsx`, `.txt`, `.xml`, `.yaml`, or `.yml`.
+- Uploaded file paths must be relative to the skill root. Use `SKILL.md`, not `support-flow/SKILL.md`.
 
 Bundles can also include supporting text files. When the model needs one, it calls:
 
@@ -61,10 +72,6 @@ Bundles can also include supporting text files. When the model needs one, it cal
   "resources": ["examples/escalation-policy.md"]
 }
 ```
-
-## Create Skills
-
-BeeBlast skill bundles follow the open [Agent Skills format](https://agentskills.io/home): a skill is a folder with a required `SKILL.md` file, metadata for discovery, and optional supporting resources. For authoring guidance, start with the external [Agent Skills quickstart](https://agentskills.io/skill-creation/quickstart) and check the [Agent Skills specification](https://agentskills.io/specification) before uploading a bundle.
 
 The account API accepts three sources:
 
