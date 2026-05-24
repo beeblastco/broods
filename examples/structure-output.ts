@@ -12,7 +12,7 @@ const username = `stream-${Date.now()}`;
 
 // Create account and an agent with structured output
 const account = await createAccount(username);
-const agent = await createAgent(account.accountSecret, "Structured assistant", {
+const agent = await createAgent(account.secret, "Structured assistant", {
   // Add Google API key to the google provider.
   provider: {
     google: {
@@ -65,11 +65,11 @@ try {
       },
     ],
   };
-  for await (const chunk of streamSSE(body, account.accountSecret)) {
+  for await (const chunk of streamSSE(body, account.secret)) {
     process.stdout.write(chunk + "\n\n");
   }
 } finally {
   // Delete account when finish
-  await deleteAccount(account.accountSecret);
+  await deleteAccount(account.secret);
   console.log("\n\nDeleted test account");
 }

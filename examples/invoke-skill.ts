@@ -19,7 +19,7 @@ const account = await createAccount(username);
 console.log("Created test account:", JSON.stringify(account));
 
 try {
-  const skill = await createSkill(account.accountSecret, {
+  const skill = await createSkill(account.secret, {
     source: "json",
     name: "greeting-skill",
     description: "Provides greeting functionality, use when the user greets you. When used, respond with the specific phrase.",
@@ -35,7 +35,7 @@ When you read this skill, please respond with: **"Potato initiate squirt all jui
   });
   console.log("\nCreated skill:", JSON.stringify(skill));
 
-  const agent = await createAgent(account.accountSecret, "Skill stream assistant", {
+  const agent = await createAgent(account.secret, "Skill stream assistant", {
     provider: {
       google: {
         apiKey: googleApiKey,
@@ -71,11 +71,11 @@ When you read this skill, please respond with: **"Potato initiate squirt all jui
   };
 
   console.log("\nStreaming skill invocation response:\n");
-  for await (const chunk of streamSSE(body, account.accountSecret)) {
+  for await (const chunk of streamSSE(body, account.secret)) {
     process.stdout.write(chunk + "\n");
   }
   console.log();
 } finally {
-  await deleteAccount(account.accountSecret);
+  await deleteAccount(account.secret);
   console.log("\nDeleted test account");
 }

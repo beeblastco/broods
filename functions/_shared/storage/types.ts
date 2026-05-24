@@ -47,9 +47,9 @@ export interface AccountStore {
   getById(accountId: string): Promise<AccountRecord | null>;
   getBySecretHash(secretHash: string): Promise<AccountRecord | null>;
   getByOrgId?(orgId: string): Promise<AccountRecord | null>;
-  create(input: CreateAccountInput): Promise<{ account: AccountRecord; accountSecret: string }>;
+  create(input: CreateAccountInput): Promise<{ account: AccountRecord; secret: string }>;
   update(accountId: string, patch: UpdateAccountInput): Promise<AccountRecord | null>;
-  rotateSecret(accountId: string): Promise<{ account: AccountRecord; accountSecret: string } | null>;
+  rotateSecret(accountId: string): Promise<{ account: AccountRecord; secret: string } | null>;
   remove(accountId: string): Promise<boolean>;
   list(): Promise<AccountRecord[]>;
 }

@@ -17,7 +17,7 @@ const mockWebhookSecret = process.env.MOCK_WEBHOOK_SECRET!;
 
 const account = await createAccount(`webhook-test-${Date.now()}`);
 
-const agent = await createAgent(account.accountSecret, "Webhook test assistant", {
+const agent = await createAgent(account.secret, "Webhook test assistant", {
   provider: {
     google: {
       apiKey: googleApiKey,
@@ -78,11 +78,11 @@ try {
       },
     ],
   };
-  for await (const chunk of streamSSE(body, account.accountSecret)) {
+  for await (const chunk of streamSSE(body, account.secret)) {
     process.stdout.write(chunk + "\n\n");
   }
 } finally {
   // Delete account when finish
-  await deleteAccount(account.accountSecret);
+  await deleteAccount(account.secret);
   console.log("\n\nDeleted test account");
 }

@@ -14,7 +14,7 @@ export interface Account {
     accountId: string;
     username: string;
   }
-  accountSecret: string;
+  secret: string;
 }
 
 export interface Agent {
@@ -51,22 +51,22 @@ export async function createAccount(username: string): Promise<Account> {
   if (!response.ok) throw new Error(`Create failed: ${response.status} ${await response.text()}`);
 
   const payload = await response.json() as Account;
-  if (!payload.account?.accountId || !payload.accountSecret) {
-    throw new Error("Response missing accountId or accountSecret");
+  if (!payload.account?.accountId || !payload.secret) {
+    throw new Error("Response missing accountId or secret");
   }
 
   return payload;
 }
 
 export async function createAgent(
-  accountSecret: string,
+  secret: string,
   name: string,
   config: Record<string, unknown>,
   description?: string,
 ): Promise<Agent> {
   const response = await fetch(`${ACCOUNT_SERVICE_URL}/accounts/me/agents`, {
     method: "POST",
-    headers: { "Content-Type": "application/json", "Authorization": `Bearer ${accountSecret}` },
+    headers: { "Content-Type": "application/json", "Authorization": `Bearer ${secret}` },
     body: JSON.stringify({ name, ...(description ? { description } : {}), config }),
   });
 
@@ -74,10 +74,10 @@ export async function createAgent(
   return await response.json() as Agent;
 }
 
-export async function createSkill(accountSecret: string, input: Record<string, unknown>): Promise<Skill> {
+export async function createSkill(secret: string, input: Record<string, unknown>): Promise<Skill> {
   const response = await fetch(`${ACCOUNT_SERVICE_URL}/accounts/me/skills`, {
     method: "POST",
-    headers: { "Content-Type": "application/json", "Authorization": `Bearer ${accountSecret}` },
+    headers: { "Content-Type": "application/json", "Authorization": `Bearer ${secret}` },
     body: JSON.stringify(input),
   });
 
@@ -85,10 +85,10 @@ export async function createSkill(accountSecret: string, input: Record<string, u
   return await response.json() as Skill;
 }
 
-export async function listSkills(accountSecret: string): Promise<Skill[]> {
+export async function listSkills(secret: string): Promise<Skill[]> {
   const response = await fetch(`${ACCOUNT_SERVICE_URL}/accounts/me/skills`, {
     method: "GET",
-    headers: { "Authorization": `Bearer ${accountSecret}` },
+    headers: { "Authorization": `Bearer ${secret}` },
   });
 
   if (!response.ok) throw new Error(`List skills failed: ${response.status} ${await response.text()}`);
@@ -96,10 +96,10 @@ export async function listSkills(accountSecret: string): Promise<Skill[]> {
   return payload.skills;
 }
 
-export async function getSkill(accountSecret: string, skillName: string): Promise<Skill | null> {
+export async function getSkill(secret: string, skillName: string): Promise<Skill | null> {
   const response = await fetch(`${ACCOUNT_SERVICE_URL}/accounts/me/skills/${encodeURIComponent(skillName)}`, {
     method: "GET",
-    headers: { "Authorization": `Bearer ${accountSecret}` },
+    headers: { "Authorization": `Bearer ${secret}` },
   });
 
   if (response.status === 404) return null;
@@ -107,10 +107,10 @@ export async function getSkill(accountSecret: string, skillName: string): Promis
   return await response.json() as Skill;
 }
 
-export async function deleteSkill(accountSecret: string, skillName: string): Promise<boolean> {
+export async function deleteSkill(secret: string, skillName: string): Promise<boolean> {
   const response = await fetch(`${ACCOUNT_SERVICE_URL}/accounts/me/skills/${encodeURIComponent(skillName)}`, {
     method: "DELETE",
-    headers: { "Authorization": `Bearer ${accountSecret}` },
+    headers: { "Authorization": `Bearer ${secret}` },
   });
 
   if (response.status === 404) return false;
@@ -120,10 +120,10 @@ export async function deleteSkill(accountSecret: string, skillName: string): Pro
 }
 
 // Update current account
-export async function updateAccount(accountSecret: string, config: Record<string, unknown>): Promise<void> {
+export async function updateAccount(secret: string, config: Record<string, unknown>): Promise<void> {
   const response = await fetch(`${ACCOUNT_SERVICE_URL}/accounts/me`, {
     method: "PATCH",
-    headers: { "Content-Type": "application/json", "Authorization": `Bearer ${accountSecret}` },
+    headers: { "Content-Type": "application/json", "Authorization": `Bearer ${secret}` },
     body: JSON.stringify({ config }),
   });
 
@@ -131,20 +131,20 @@ export async function updateAccount(accountSecret: string, config: Record<string
 }
 
 // Delete current account
-export async function deleteAccount(accountSecret: string): Promise<void> {
+export async function deleteAccount(secret: string): Promise<void> {
   const response = await fetch(`${ACCOUNT_SERVICE_URL}/accounts/me`, {
     method: "DELETE",
-    headers: { "Authorization": `Bearer ${accountSecret}` },
+    headers: { "Authorization": `Bearer ${secret}` },
   });
 
   if (!response.ok) throw new Error(`Delete failed: ${response.status} ${await response.text()}`);
 }
 
 // Stream SSE response from agent service
-export async function* streamSSE(body: unknown, accountSecret: string): AsyncGenerator<string> {
+export async function* streamSSE(body: unknown, secret: string): AsyncGenerator<string> {
   const response = await fetch(AGENT_SERVICE_URL, {
     method: "POST",
-    headers: { "Content-Type": "application/json", "Accept": "text/event-stream", "Authorization": `Bearer ${accountSecret}` },
+    headers: { "Content-Type": "application/json", "Accept": "text/event-stream", "Authorization": `Bearer ${secret}` },
     body: JSON.stringify(body),
   });
 
@@ -178,10 +178,10 @@ export async function* streamSSE(body: unknown, accountSecret: string): AsyncGen
 }
 
 // Post async request to agent service
-export async function postAsyncRequest(body: unknown, accountSecret: string): Promise<{ statusUrl: string }> {
+export async function postAsyncRequest(body: unknown, secret: string): Promise<{ statusUrl: string }> {
   const response = await fetch(`${AGENT_SERVICE_URL}/async`, {
     method: "POST",
-    headers: { "Content-Type": "application/json", "Authorization": `Bearer ${accountSecret}` },
+    headers: { "Content-Type": "application/json", "Authorization": `Bearer ${secret}` },
     body: JSON.stringify(body),
   });
 
@@ -190,11 +190,11 @@ export async function postAsyncRequest(body: unknown, accountSecret: string): Pr
 }
 
 // Poll async status until it reaches a terminal or user-actionable state
-export async function pollStatus(accountSecret: string, statusUrl: string): Promise<AsyncStatus> {
+export async function pollStatus(secret: string, statusUrl: string): Promise<AsyncStatus> {
   const deadline = Date.now() + 180000;
 
   while (Date.now() < deadline) {
-    const response = await fetch(statusUrl, { method: "GET", headers: { "Authorization": `Bearer ${accountSecret}` } });
+    const response = await fetch(statusUrl, { method: "GET", headers: { "Authorization": `Bearer ${secret}` } });
 
     if (response.status === 404) return { status: "not_found" };
     if (response.status !== 200) throw new Error(`Status check failed: ${response.status}`);

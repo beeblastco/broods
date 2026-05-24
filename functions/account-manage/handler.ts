@@ -63,7 +63,7 @@ export async function handler(event: LambdaFunctionURLEvent): Promise<LambdaResp
             const created = await getStorage().accounts.create(normalizeCreateAccountInput(body));
             return jsonResponse(201, {
                 account: toCreateAccountResponse(created.account),
-                accountSecret: created.accountSecret,
+                secret: created.secret,
             });
         }
 
@@ -324,7 +324,7 @@ async function rotateSecretResponse(accountId: string): Promise<LambdaResponse> 
     return rotated
         ? jsonResponse(200, {
             account: toPublicAccount(rotated.account),
-            accountSecret: rotated.accountSecret,
+            secret: rotated.secret,
         })
         : errorResponse(404, "Account not found");
 }
