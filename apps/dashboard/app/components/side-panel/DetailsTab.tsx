@@ -390,6 +390,9 @@ export function DetailsTab({
 
                 {publicAccessEnabled && activeDeployment && (
                     <div className="flex flex-col gap-2.5">
+                        <div className="rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-200/90">
+                            Direct API + WebSocket access is not yet live on the cloud service. The URL and API key below are reserved for this agent; they will start working once the public gateway ships.
+                        </div>
                         <div className="flex flex-col gap-1.5">
                             <span className="text-[11px] uppercase tracking-wider text-muted-foreground/70">Endpoint URL</span>
                             <div className="flex items-center gap-2 rounded-md border border-border bg-muted/50 px-2.5 py-1.5">
