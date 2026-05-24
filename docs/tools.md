@@ -23,7 +23,7 @@ flowchart LR
 | `googleSearch` | [`functions/harness-processing/tools/google-search.tool.ts`](../functions/harness-processing/tools/google-search.tool.ts) | Google provider-defined tool | `config.tools.googleSearch` |
 | `test_async` | [`functions/harness-processing/tools/test.async.tool.ts`](../functions/harness-processing/tools/test.async.tool.ts) | Local async example tool | `config.tools.test_async` |
 
-Workspace tools are configured separately under `config.workspace`. Skills use `config.skills`. Subagents use `config.subagent`.
+Workspace tools are configured separately under `config.workspace`. Skills use `config.skills`; see [Skills](skills.md) for bundle management and the runtime skill panel. Subagents use `config.subagent`.
 
 ## Runtime Behavior
 

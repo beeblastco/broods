@@ -345,6 +345,8 @@ bun examples/stream.ts        # SSE with tools
 bun examples/async.ts         # Async with polling
 bun examples/tool-approval.ts # Tool approval flow
 bun examples/subagent.ts      # Subagent dispatch
+bun examples/skills.ts        # Skill CRUD
+bun examples/invoke-skill.ts  # Skill loading during a streamed turn
 ```
 
 Each script creates a temporary account, runs the test, and cleans up.
@@ -373,6 +375,7 @@ Key config sections:
 - [API Reference](/api-reference) — Interactive OpenAPI docs for all endpoints
 - [Architecture](architecture.md) — how the platform works under the hood
 - [External Tools](tools.md) — add custom tools for your agents
+- [Skills](skills.md) — add account-scoped instruction bundles and enable the skill panel
 - [Memory and Session](memory-and-session.md) — workspace-backed memory, filesystem, and tasks
 - [Sub Agents](sub-agents.md) — dispatch parallel subagent tasks
 - [Deployment](deployment.md) — SST secrets, deployment, account setup, and live probes

@@ -812,19 +812,37 @@ paths:
               type: object
               required:
                 - source
-                - name
-                - description
               properties:
                 source:
                   type: string
-                  enum: [json, base64, github]
+                  enum: [json, files, github]
                 name:
                   type: string
+                  description: Required for json source
                 description:
                   type: string
+                  description: Required for json source
                 content:
                   type: string
                   description: Skill content (for json source)
+                files:
+                  type: array
+                  description: Skill bundle files for files source. Must include root SKILL.md.
+                  items:
+                    type: object
+                    required:
+                      - path
+                      - contentBase64
+                    properties:
+                      path:
+                        type: string
+                      contentBase64:
+                        type: string
+                      contentType:
+                        type: string
+                url:
+                  type: string
+                  description: GitHub tree URL for github source
             examples:
               json:
                 value:
@@ -858,9 +876,12 @@ paths:
           content:
             application/json:
               schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/Skill'
+                type: object
+                properties:
+                  skills:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Skill'
 
   /accounts/me/skills/{skillName}:
     get:
@@ -901,11 +922,39 @@ paths:
           application/json:
             schema:
               type: object
+              required:
+                - source
               properties:
+                source:
+                  type: string
+                  enum: [json, files, github]
+                name:
+                  type: string
+                  description: Required for json source
                 description:
                   type: string
+                  description: Required for json source
                 content:
                   type: string
+                  description: Skill content for json source
+                files:
+                  type: array
+                  description: Replacement skill bundle files for files source. Must include root SKILL.md.
+                  items:
+                    type: object
+                    required:
+                      - path
+                      - contentBase64
+                    properties:
+                      path:
+                        type: string
+                      contentBase64:
+                        type: string
+                      contentType:
+                        type: string
+                url:
+                  type: string
+                  description: GitHub tree URL for github source
       responses:
         '200':
           description: Skill updated

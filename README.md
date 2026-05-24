@@ -52,6 +52,7 @@ flowchart LR
   - [Memory and Session](docs/memory-and-session.md)
   - [Lifecycle Webhook](docs/webhook.md)
   - [External Tool](docs/tools.md)
+  - [Skills](docs/skills.md)
   - [Channels](docs/channels.md)
   - [Sandbox](docs/sandbox.md)
   - [Subagent](docs/sub-agents.md)
