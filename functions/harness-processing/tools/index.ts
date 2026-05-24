@@ -13,6 +13,7 @@ import type { Session } from "../session.ts";
 import type { AsyncToolModeMap, RunAsyncToolDispatch } from "../async-tools.ts";
 import filesystemTool from "./filesystem.tool.ts";
 import googleSearchTool from "./google-search.tool.ts";
+import handoffsTool from "./handoffs.tool.ts";
 import loadSkillTool from "./load-skill.tool.ts";
 import runSubagentTool, {
   type RunSubagentDispatch,
@@ -57,9 +58,9 @@ export function createTools(context: Omit<ToolContext, "config">, agentConfig: A
       tools,
       ...(agentConfig.workspace.filesystem?.enabled === false ? [] : [
         // Passing the sandbox configure into the filesystem tool.
-        withToolApproval(filesystemTool({ 
-          ...context, 
-          config: agentConfig.workspace.sandbox ?? {} 
+        withToolApproval(filesystemTool({
+          ...context,
+          config: agentConfig.workspace.sandbox ?? {},
         }), {
           filesystem: needsApproval,
         }),
@@ -103,6 +104,17 @@ export function createTools(context: Omit<ToolContext, "config">, agentConfig: A
     }));
   }
 
+  const handoffsConfig = agentConfig.tools?.handoffs;
+  if (isToolEnabled(handoffsConfig)) {
+    Object.assign(tools, withToolApproval(handoffsTool({
+      ...context,
+      channels: agentConfig.channels,
+      config: externalToolRuntimeConfig(handoffsConfig),
+    }), {
+      handoffs: handoffsConfig.needsApproval === true,
+    }));
+  }
+
   return context.dispatchAsyncTools
     ? context.dispatchAsyncTools(tools, asyncConfiguredToolModes(agentConfig.tools))
     : tools;
@@ -119,7 +131,7 @@ function withToolApproval(tools: ToolSet, approvals: Record<string, boolean>): T
 
 function assertSupportedConfiguredTools(tools: AgentConfig["tools"]): void {
   for (const toolName of Object.keys(tools ?? {})) {
-    if (!(toolName in toolFactories)) {
+    if (!(toolName in toolFactories) && toolName !== "handoffs") {
       throw new Error(`config.tools.${toolName} is not a supported tool`);
     }
   }

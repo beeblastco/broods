@@ -206,7 +206,11 @@ jobs:
           echo "All deploy attempts failed" >&2
           exit 1
 
+      # Account configuration scripts only run on dev. Production (main)
+      # accounts are owned by cherry-coke / Convex; calling account-manage
+      # in convex mode would hit NOT_SUPPORTED_IN_CONVEX_MODE.
       - name: Configure Telegram account webhook
+        if: github.ref != 'refs/heads/main'
         env:
           ADMIN_ACCOUNT_SECRET: ${{ secrets.SST_SECRET_ADMINACCOUNTSECRET }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN || secrets.SST_SECRET_TELEGRAMBOTTOKEN }}
@@ -233,6 +237,7 @@ jobs:
           bun run scripts/configure-telegram-account.ts
 
       - name: Configure Discord account
+        if: github.ref != 'refs/heads/main'
         env:
           ADMIN_ACCOUNT_SECRET: ${{ secrets.SST_SECRET_ADMINACCOUNTSECRET }}
           DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN || secrets.SST_SECRET_DISCORDBOTTOKEN }}
@@ -280,6 +285,7 @@ jobs:
           bun run scripts/discord-sync.ts
 
       - name: Configure GitHub account
+        if: github.ref != 'refs/heads/main'
         env:
           ADMIN_ACCOUNT_SECRET: ${{ secrets.SST_SECRET_ADMINACCOUNTSECRET }}
           GITHUB_APP_ID: ${{ secrets.GITHUB_APP_ID || secrets.SST_SECRET_GITHUBAPPID }}
@@ -308,6 +314,7 @@ jobs:
           bun run scripts/configure-github-account.ts
 
       - name: Configure Slack account
+        if: github.ref != 'refs/heads/main'
         env:
           ADMIN_ACCOUNT_SECRET: ${{ secrets.SST_SECRET_ADMINACCOUNTSECRET }}
           SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN || secrets.SST_SECRET_SLACKBOTTOKEN }}
