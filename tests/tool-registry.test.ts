@@ -250,6 +250,18 @@ describe("createTools", () => {
     });
   });
 
+  it("registers the handoff tool from config.tools", async () => {
+    const { createTools } = await import("../functions/harness-processing/tools/index.ts");
+
+    const tools = createTools(createToolContext(), {
+      tools: {
+        handoffs: { enabled: true },
+      },
+    });
+
+    expect(Object.keys(tools)).toEqual(["handoffs"]);
+  });
+
   it("passes async-enabled external tools through the async coordinator", async () => {
     const { createTools } = await import("../functions/harness-processing/tools/index.ts");
     const dispatch = mock((tools: Record<string, unknown>, asyncToolModes: Map<string, string>) => {
