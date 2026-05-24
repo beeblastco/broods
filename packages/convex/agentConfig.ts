@@ -143,6 +143,7 @@ export const update = mutation({
         searchToolConfig: v.optional(v.any()),
         runtimeVariables: v.optional(v.array(v.object({ key: v.string(), value: v.string() }))),
         agentId: v.optional(v.string()),
+        extraConfig: v.optional(v.any()),
     },
     returns: v.id("agentConfigs"),
     handler: async (ctx, { configId, ...updates }) => {

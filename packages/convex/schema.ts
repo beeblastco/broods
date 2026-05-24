@@ -55,6 +55,14 @@ export const agentConfigsFields = {
     searchToolEnabled: v.optional(v.boolean()),
     searchToolConfig: v.optional(v.any()),
     runtimeVariables: v.optional(v.array(v.object({ key: v.string(), value: v.string() }))),
+    /**
+     * Filthy-panty AgentConfig branches that don't live as flat columns:
+     * `agent`, `workspace`, `session`, `hooks`, `channels`, `tools`, `skills`,
+     * `subagent`, and `provider` settings. Stored verbatim so the Config tab
+     * can edit the full nested shape. Secrets should be expressed as
+     * `${ENV_NAME}` placeholders resolved from `runtimeVariables`.
+     */
+    extraConfig: v.optional(v.any()),
     updatedAt: v.number(),
 };
 
