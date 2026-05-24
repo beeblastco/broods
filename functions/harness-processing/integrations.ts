@@ -18,6 +18,7 @@ import type { LambdaFunctionURLEvent } from "aws-lambda";
 import { resolveBearerAuth, type AuthContext } from "../_shared/auth.ts";
 import {
   getStorage,
+  toChannelRuntimeAgentConfig,
   toRuntimeAgentConfig,
   type AccountRecord,
   type AgentConfig,
@@ -338,7 +339,7 @@ async function handleChannelWebhook(
           channel: channel,
           accountId: account.accountId,
           agentId: agent.agentId,
-          agentConfig: toRuntimeAgentConfig(agent.config),
+          agentConfig: toChannelRuntimeAgentConfig(agent.config, message.channelName),
         },
         handlers,
       ),

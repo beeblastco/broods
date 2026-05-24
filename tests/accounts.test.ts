@@ -12,6 +12,7 @@ import {
   normalizeUpdateAccountInput,
   toPublicAccount,
   toPublicAgent,
+  toChannelRuntimeAgentConfig,
   toRuntimeAgentConfig,
   type AccountRecord,
   type AgentRecord,
@@ -761,6 +762,46 @@ describe("agent config", () => {
         enabled: true,
         allowed: ["agent_worker"],
         context: "new",
+      },
+    });
+  });
+
+  it("projects only the active channel config for channel runtime sessions", () => {
+    expect(toChannelRuntimeAgentConfig({
+      agent: {
+        system: "custom system",
+      },
+      tools: {
+        handoffs: { enabled: true },
+      },
+      channels: {
+        pancake: {
+          pageId: "page-1",
+          pageAccessToken: "page-token",
+          options: {
+            handoff: { tagId: "6" },
+          },
+        },
+        slack: {
+          botToken: "xoxb-secret",
+          signingSecret: "signing-secret",
+        },
+      },
+    }, "pancake")).toEqual({
+      agent: {
+        system: "custom system",
+      },
+      tools: {
+        handoffs: { enabled: true },
+      },
+      channels: {
+        pancake: {
+          pageId: "page-1",
+          pageAccessToken: "page-token",
+          options: {
+            handoff: { tagId: "6" },
+          },
+        },
       },
     });
   });
