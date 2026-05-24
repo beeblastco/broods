@@ -10,7 +10,7 @@ const tavilyApiKey = process.env.ACCOUNT_TAVILY_API_KEY!;
 
 // Create account and an agent with tools enabled
 const account = await createAccount(`async-${Date.now()}`);
-const agent = await createAgent(account.accountSecret, "Async search assistant", {
+const agent = await createAgent(account.secret, "Async search assistant", {
   // Add Google API key to the google provider.
   provider: {
     google: {
@@ -57,14 +57,14 @@ try {
       },
     ],
   }
-  const { statusUrl } = await postAsyncRequest(body, account.accountSecret);
+  const { statusUrl } = await postAsyncRequest(body, account.secret);
   console.log("Status URL:", statusUrl);
 
   // Poll for result
-  const result = await pollStatus(account.accountSecret, statusUrl);
+  const result = await pollStatus(account.secret, statusUrl);
   console.log(JSON.stringify(result, null, 2));
 } finally {
   // Delete when finish
-  await deleteAccount(account.accountSecret);
+  await deleteAccount(account.secret);
   console.log("\nDeleted test account");
 }

@@ -124,7 +124,7 @@ describe("StorageProvider", () => {
               updatedAt: new Date().toISOString(),
             };
             fakeAccounts.set(accountId, account);
-            return { account, accountSecret: "fp_acct_fake" };
+            return { account, secret: "fp_acct_fake" };
           },
           async update() { return null; },
           async rotateSecret() { return null; },
@@ -139,7 +139,7 @@ describe("StorageProvider", () => {
       try {
         const created = await getStorage().accounts.create({ username: "swap-test" });
         expect(created.account.accountId).toMatch(/^acct_fake_/);
-        expect(created.accountSecret).toBe("fp_acct_fake");
+        expect(created.secret).toBe("fp_acct_fake");
 
         const fetched = await getStorage().accounts.getById(created.account.accountId);
         expect(fetched?.username).toBe("swap-test");

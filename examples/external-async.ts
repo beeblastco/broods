@@ -43,12 +43,12 @@ const agentConfig: AgentConfig = {
       async: true,
       execution: "external-dispatch", // Using 'external-dispatch' mode
       completionBaseUrl: AGENT_SERVICE_URL,
-      completionBearerToken: account.accountSecret,
+      completionBearerToken: account.secret,
     },
   },
 }
 
-const agent = await createAgent(account.accountSecret, "External async tool test assistant", agentConfig);
+const agent = await createAgent(account.secret, "External async tool test assistant", agentConfig);
 
 const subject = streamResponseSubject(account.account.accountId, agent.agentId, connectionId);
 const subscription = natsClient.subscribe(subject);
@@ -90,6 +90,6 @@ try {
 } finally {
   subscription.unsubscribe();
   await natsClient.drain().catch(() => {});
-  await deleteAccount(account.accountSecret);
+  await deleteAccount(account.secret);
   console.log("\nDeleted test account");
 }

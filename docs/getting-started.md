@@ -26,7 +26,7 @@ curl -X POST "https://<managed-account-service-url>/accounts" \
   }'
 ```
 
-The response includes your `accountId` and a one-time `accountSecret`:
+The response includes your `accountId` and a one-time `secret`:
 
 ```json
 {
@@ -35,11 +35,11 @@ The response includes your `accountId` and a one-time `accountSecret`:
     "username": "my-first-account",
     "description": "My first account"
   },
-  "accountSecret": "fp_acct_..."
+  "secret": "fp_acct_..."
 }
 ```
 
-**Store `accountSecret` securely** — it is not recoverable. If lost, rotate it to get a new one.
+**Store `secret` securely** — it is not recoverable. If lost, rotate it to get a new one.
 
 ### 2. Start Building
 
@@ -104,7 +104,7 @@ curl -X POST "$ACCOUNT_SERVICE_URL/accounts" \
   }'
 ```
 
-Save the returned `accountSecret`:
+Save the returned `secret`:
 
 ```bash
 export ACCOUNT_SECRET=fp_acct_...

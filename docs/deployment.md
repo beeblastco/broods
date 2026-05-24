@@ -45,7 +45,7 @@ Deploy outputs include:
 
 ## Account Setup
 
-After deploy, create an account through the account-management Function URL and store the returned `accountSecret`.
+After deploy, create an account through the account-management Function URL and store the returned `secret`.
 
 ```bash
 curl -X POST "$ACCOUNT_SERVICE_URL/accounts" \

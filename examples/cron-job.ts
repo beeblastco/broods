@@ -9,7 +9,7 @@ const googleApiKey = process.env.ACCOUNT_GOOGLE_API_KEY!;
 const timezone = process.env.CRON_TIMEZONE ?? "Europe/Amsterdam";
 
 const account = await createAccount(`cron-${Date.now()}`);
-const agent = await createAgent(account.accountSecret, "Cron test assistant", {
+const agent = await createAgent(account.secret, "Cron test assistant", {
   provider: {
     google: {
       apiKey: googleApiKey,
@@ -29,7 +29,7 @@ const response = await fetch(`${ACCOUNT_SERVICE_URL}/accounts/me/cron-jobs`, {
   method: "POST",
   headers: {
     "Content-Type": "application/json",
-    "Authorization": `Bearer ${account.accountSecret}`,
+    "Authorization": `Bearer ${account.secret}`,
   },
   body: JSON.stringify({
     name: "One minute cron test",
@@ -47,7 +47,7 @@ if (!response.ok) {
 
 console.log(JSON.stringify({
   accountId: account.account.accountId,
-  accountSecret: account.accountSecret,
+  secret: account.secret,
   agentId: agent.agentId,
   scheduleExpression,
   timezone,

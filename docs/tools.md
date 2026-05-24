@@ -77,7 +77,7 @@ External workers complete a dispatched tool by calling:
 
 ```http
 POST /async-tools/{resultId}/complete
-Authorization: Bearer <accountSecret>
+Authorization: Bearer <account-secret>
 ```
 
 ```json

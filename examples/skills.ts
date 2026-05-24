@@ -27,7 +27,7 @@ const SKILL_NAME = "greeting-skill";
 
 try {
   // Create greeting skill - responds with "Potato initiate squirt all juice" when invoked
-  const skill = await createSkill(account.accountSecret, {
+  const skill = await createSkill(account.secret, {
     source: "json",
     name: SKILL_NAME,
     description: "Provides greeting functionality. When used, respond with the specific phrase.",
@@ -48,14 +48,14 @@ This skill demonstrates how to create a custom skill that outputs specific text 
   console.log(`Files: ${skill.files?.map((f) => f.path).join(", ") ?? "(not returned)"}`);
 
   // List all skills for the account
-  const skills = await listSkills(account.accountSecret);
+  const skills = await listSkills(account.secret);
   console.log(`\nAvailable skills (${skills.length}):`);
   for (const s of skills) {
     console.log(`  - ${s.path}: ${s.description}`);
   }
 
   // Get skill details
-  const loaded = await getSkill(account.accountSecret, SKILL_NAME);
+  const loaded = await getSkill(account.secret, SKILL_NAME);
   if (loaded) {
     console.log(`\nSkill details:`);
     console.log(`  Name: ${loaded.name}`);
@@ -63,10 +63,10 @@ This skill demonstrates how to create a custom skill that outputs specific text 
   }
 
   // Delete the skill
-  await deleteSkill(account.accountSecret, SKILL_NAME);
+  await deleteSkill(account.secret, SKILL_NAME);
   console.log(`\nDeleted skill: ${SKILL_NAME}`);
 } finally {
   // Clean up - delete the account
-  await deleteAccount(account.accountSecret);
+  await deleteAccount(account.secret);
   console.log("\nDeleted test account");
 }

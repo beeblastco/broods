@@ -183,7 +183,7 @@ export const dynamoAccountStore: AccountStore = {
       if (isConditionalCheckFailed(err)) return dynamoAccountStore.create(input);
       throw err;
     }
-    return { account, accountSecret };
+    return { account, secret: accountSecret };
   },
 
   async update(accountId, patch) {
@@ -249,7 +249,7 @@ export const dynamoAccountStore: AccountStore = {
         throw err;
       });
     const account = result?.Attributes ? itemToAccount(result.Attributes) : null;
-    return account ? { account, accountSecret } : null;
+    return account ? { account, secret: accountSecret } : null;
   },
 
   async remove(accountId) {

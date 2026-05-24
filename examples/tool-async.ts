@@ -7,7 +7,7 @@ import { createAccount, createAgent, deleteAccount, streamSSE } from "./utils.ts
 const googleApiKey = process.env.ACCOUNT_GOOGLE_API_KEY!;
 
 const account = await createAccount(`tool-async-${Date.now()}`);
-const agent = await createAgent(account.accountSecret, "Async tool test assistant", {
+const agent = await createAgent(account.secret, "Async tool test assistant", {
   provider: {
     google: {
       apiKey: googleApiKey,
@@ -43,10 +43,10 @@ try {
         text: "Call the test_async tool now and tell me the result after it finishes.",
       }],
     }],
-  }, account.accountSecret)) {
+  }, account.secret)) {
     process.stdout.write(chunk + "\n\n");
   }
 } finally {
-  await deleteAccount(account.accountSecret);
+  await deleteAccount(account.secret);
   console.log("\n\nDeleted test account");
 }

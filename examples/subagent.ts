@@ -9,7 +9,7 @@ const tavilyApiKey = process.env.ACCOUNT_TAVILY_API_KEY!;
 
 const account = await createAccount(`subagent-${Date.now()}`);
 
-const subagent = await createAgent(account.accountSecret, "Subagent assistant",
+const subagent = await createAgent(account.secret, "Subagent assistant",
     {
         provider: {
             google: {
@@ -37,7 +37,7 @@ const subagent = await createAgent(account.accountSecret, "Subagent assistant",
     "Specialized research agent"
 );
 
-const parent = await createAgent(account.accountSecret, "Parent assistant",
+const parent = await createAgent(account.secret, "Parent assistant",
     {
         provider: {
             google: {
@@ -86,10 +86,10 @@ try {
         ],
     };
 
-    for await (const chunk of streamSSE(body, account.accountSecret)) {
+    for await (const chunk of streamSSE(body, account.secret)) {
         process.stdout.write(chunk + "\n\n");
     }
 } finally {
-    await deleteAccount(account.accountSecret);
+    await deleteAccount(account.secret);
     console.log("\nDeleted test account");
 }

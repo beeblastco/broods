@@ -12,7 +12,7 @@ const username = `example-${Date.now()}`;
 
 // Create account, then create an agent with runtime configuration.
 const account = await createAccount(username);
-const agent = await createAgent(account.accountSecret, "Example assistant", {
+const agent = await createAgent(account.secret, "Example assistant", {
   // Add Google API key to the google provider.
   provider: {
     google: {
@@ -34,5 +34,5 @@ console.log("Created test account:", JSON.stringify(account));
 console.log("Created test agent:", JSON.stringify(agent));
 
 // Delete account
-await deleteAccount(account.accountSecret);
+await deleteAccount(account.secret);
 console.log("Deleted test account");

@@ -8,7 +8,7 @@ const googleApiKey = requireEnv("ACCOUNT_GOOGLE_API_KEY");
 const username = `sandbox-${Date.now()}`;
 
 const account = await createAccount(username);
-const agent = await createAgent(account.accountSecret, "Sandbox assistant", {
+const agent = await createAgent(account.secret, "Sandbox assistant", {
   provider: {
     google: {
       apiKey: googleApiKey,
@@ -79,11 +79,11 @@ try {
     ],
   };
 
-  for await (const chunk of streamSSE(body, account.accountSecret)) {
+  for await (const chunk of streamSSE(body, account.secret)) {
     process.stdout.write(`${chunk}\n\n`);
   }
 } finally {
-  await deleteAccount(account.accountSecret);
+  await deleteAccount(account.secret);
   console.log("\n\nDeleted test account");
 }
 

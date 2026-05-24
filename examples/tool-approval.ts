@@ -16,7 +16,7 @@ const googleApiKey = process.env.ACCOUNT_GOOGLE_API_KEY!;
 const tavilyApiKey = process.env.ACCOUNT_TAVILY_API_KEY!;
 
 const account = await createAccount(`approval-${Date.now()}`);
-const agent = await createAgent(account.accountSecret, "Approval search assistant", {
+const agent = await createAgent(account.secret, "Approval search assistant", {
   provider: {
     google: {
       apiKey: googleApiKey,
@@ -59,7 +59,7 @@ try {
         text: "Search the web for the latest OpenAI model release and summarize one result.",
       }],
     }],
-  }, account.accountSecret)) {
+  }, account.secret)) {
     process.stdout.write(chunk + "\n\n");
     const parsedChunk = parseToolApprovalRequestChunk(chunk);
     if (parsedChunk) {
@@ -86,11 +86,11 @@ try {
         reason: "Approved by example script",
       }],
     }],
-  }, account.accountSecret)) {
+  }, account.secret)) {
     process.stdout.write(chunk + "\n\n");
   }
 } finally {
-  // await deleteAccount(account.accountSecret);
+  // await deleteAccount(account.secret);
   // console.log("\n\nDeleted test account");
 }
 

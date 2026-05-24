@@ -85,7 +85,7 @@ Single-file example:
 
 ```http
 POST /accounts/me/skills
-Authorization: Bearer <accountSecret>
+Authorization: Bearer <account-secret>
 Content-Type: application/json
 ```
 

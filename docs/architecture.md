@@ -28,8 +28,8 @@ Runtime boundary:
 flowchart TD
   Owner["Account owner"] -->|"POST /accounts<br/>agents + skills APIs"| ManageUrl["account-manage<br/>Function URL"]
   Admin["Admin"] -->|"Bearer AdminAccountSecret"| ManageUrl
-  Direct["Direct API client"] -->|"Bearer accountSecret<br/>POST / or /async"| HarnessUrl["harness-processing<br/>Function URL"]
-  Status["Status poller"] -->|"Bearer accountSecret<br/>GET /status/\{eventId\}"| HarnessUrl
+  Direct["Direct API client"] -->|"Bearer account secret<br/>POST / or /async"| HarnessUrl["harness-processing<br/>Function URL"]
+  Status["Status poller"] -->|"Bearer account secret<br/>GET /status/\{eventId\}"| HarnessUrl
   Provider["Telegram / GitHub / Slack / Discord"] -->|"/webhooks/\{accountId\}/\{agentId\}/\{channel\}"| HarnessUrl
   WSClient["WebSocket client"] <-->|"wss://gateway"| WSGateway["WebSocket Gateway<br/>(separate service)"]
   WSGateway -->|"Lambda Event invocation"| HarnessUrl
@@ -78,7 +78,7 @@ The diagrams show the logical ownership of runtime config. In code, `integration
 
 ```mermaid
 flowchart TD
-  Direct["POST / or /async"] --> Bearer["Authorization: Bearer accountSecret"]
+  Direct["POST / or /async"] --> Bearer["Authorization: Bearer account secret"]
   Status["GET /status/\{eventId\}"] --> Bearer
   Bearer --> Hash["hash secret"]
   Hash --> Lookup["AccountConfig GSI<br/>SecretHashIndex"]
@@ -105,15 +105,15 @@ sequenceDiagram
   participant S as Skills S3 bucket
 
   U->>M: POST /accounts { username, description? }
-  M->>M: generate accountId + accountSecret
+  M->>M: generate accountId + secret
   M->>A: store secretHash + metadata
-  M-->>U: account + one-time accountSecret
+  M-->>U: account + one-time secret
 
-  U->>M: POST /accounts/me/agents (Bearer accountSecret)
+  U->>M: POST /accounts/me/agents (Bearer account secret)
   M->>A: store encrypted agent config
   M-->>U: agent + agentId
 
-  U->>M: POST /accounts/me/skills (Bearer accountSecret)
+  U->>M: POST /accounts/me/skills (Bearer account secret)
   M->>S: validate + store skill bundle
   M-->>U: path
 

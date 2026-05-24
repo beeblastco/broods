@@ -77,7 +77,7 @@ curl -X POST "$ACCOUNT_SERVICE_URL/accounts" \
   }'
 ```
 
-Store the returned `accountSecret`. Use it for:
+Store the returned `secret`. Use it for:
 
 - `account-manage` self-service calls.
 - `harness-processing` direct API calls.

@@ -50,7 +50,7 @@ const lambda = new LambdaClient({ region: "eu-central-1", profile: "default" });
 
 const account = await createAccount(`nats-stream-${Date.now()}`);
 const researchAgent = await createAgent(
-  account.accountSecret,
+  account.secret,
   "Research subagent",
   researchAgentConfig,
   "Specialized research agent",
@@ -75,7 +75,7 @@ const agentConfig: AgentConfig = {
     context: "new",
   },
 };
-const agent = await createAgent(account.accountSecret, "NATS stream test assistant", agentConfig);
+const agent = await createAgent(account.secret, "NATS stream test assistant", agentConfig);
 
 const subject = streamResponseSubject(account.account.accountId, agent.agentId, connectionId);
 const subscription = natsClient.subscribe(subject);
@@ -133,6 +133,6 @@ try {
 } finally {
   subscription.unsubscribe();
   await natsClient.drain().catch(() => {});
-  await deleteAccount(account.accountSecret);
+  await deleteAccount(account.secret);
   console.log("\nDeleted test account");
 }
