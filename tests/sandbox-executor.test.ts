@@ -29,6 +29,15 @@ const daytonaCreateMock = mock(async (_options: Record<string, unknown>) => ({
   },
   delete: daytonaDeleteMock,
 }));
+const lambdaSendMock = mock(async (_command: unknown) => ({
+  Payload: new TextEncoder().encode(JSON.stringify({
+    ok: true,
+    exitCode: 0,
+    stdout: "shell ok\n",
+    stderr: "",
+    durationMs: 5,
+  })),
+}));
 
 mock.module("e2b", () => ({
   Sandbox: {
@@ -41,6 +50,18 @@ mock.module("@daytona/sdk", () => ({
     constructor(_options: Record<string, unknown>) {}
 
     create = daytonaCreateMock;
+  },
+}));
+
+mock.module("@aws-sdk/client-lambda", () => ({
+  LambdaClient: class {
+    send = lambdaSendMock;
+  },
+  InvokeCommand: class {
+    input: unknown;
+    constructor(input: unknown) {
+      this.input = input;
+    }
   },
 }));
 
@@ -57,6 +78,8 @@ beforeEach(() => {
   daytonaExecuteCommandMock.mockClear();
   daytonaDeleteMock.mockClear();
   daytonaCreateMock.mockClear();
+  lambdaSendMock.mockClear();
+  process.env.SANDBOX_BASH_FUNCTION_NAME = "sandbox-bash";
 });
 
 describe("createWorkspaceSandboxExecutor", () => {
@@ -72,6 +95,33 @@ describe("createWorkspaceSandboxExecutor", () => {
       .toBe("E2BWorkspaceSandboxExecutor");
     expect(createWorkspaceSandboxExecutor({ provider: "daytona" }).constructor.name)
       .toBe("DaytonaWorkspaceSandboxExecutor");
+  });
+
+  it("runs Lambda shell commands through the configured bash sandbox", async () => {
+    const { createWorkspaceSandboxExecutor } = require("../functions/harness-processing/sandbox/index.ts");
+    const executor = createWorkspaceSandboxExecutor({
+      options: {
+        bashFunctionName: "custom-bash",
+        networkAccess: "public",
+      },
+    });
+
+    const result = await executor.runShell!({
+      namespace: "fs-0123456789abcdef0123456789abcdef01234567",
+      shell: "echo ok",
+      workspaceRoot: "/mnt/workspaces",
+      timeoutSeconds: 30,
+      outputLimitBytes: 4096,
+    });
+
+    expect(result).toMatchObject({ ok: true, provider: "lambda", stdout: "shell ok\n" });
+    const command = lambdaSendMock.mock.calls[0]![0] as { input: { FunctionName: string; Payload: Uint8Array } };
+    expect(command.input.FunctionName).toBe("custom-bash");
+    expect(JSON.parse(new TextDecoder().decode(command.input.Payload))).toMatchObject({
+      runtime: "shell",
+      shell: "echo ok",
+      networkAccess: "public",
+    });
   });
 
   it("runs E2B commands from the configured native mounted namespace path", async () => {

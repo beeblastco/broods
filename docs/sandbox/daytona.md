@@ -7,8 +7,10 @@ Uses a [Daytona](https://daytona.io/docs) volume or external storage mount at `o
 ```json
 {
   "workspace": {
+    "storage": {
+      "provider": "s3"
+    },
     "sandbox": {
-      "enabled": true,
       "provider": "daytona",
       "options": {
         "apiKey": "...",
@@ -37,7 +39,7 @@ bun run daytona:s3-snapshot
 
 ## Requirements
 
-Use an image or target with Node and Python installed, and mount the workspace at `options.workspaceRoot`.
+Use an image or target with Node and Python installed, and mount the S3 workspace bucket at `options.workspaceRoot`.
 
 ## Execution Notes
 
@@ -50,7 +52,7 @@ TypeScript (`.ts`) files are not transpiled — use compiled JavaScript instead.
 
 See Daytona's [Amazon S3 mount docs](https://www.daytona.io/docs/en/mount-external-storage/#mount-an-amazon-s3-bucket) for the underlying `mount-s3` setup.
 
-Set `options.mountAwsS3Buckets` to `true` to mount the current `FILESYSTEM_BUCKET_NAME` bucket at `options.workspaceRoot` and `SKILLS_BUCKET_NAME` at `/mnt/skills`.
+Set `options.mountAwsS3Buckets` to `true` to mount the current `FILESYSTEM_BUCKET_NAME` bucket at `options.workspaceRoot` and `SKILLS_BUCKET_NAME` at `/mnt/skills`. This is required for the Daytona provider to see the same files as the Lambda filesystem tool.
 The snapshot must include `mount-s3`; use `bun run daytona:s3-snapshot` to build it from `daytonaio/sandbox:0.8.0`.
 
 The executor passes `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, optional `AWS_SESSION_TOKEN`, and region into the Daytona sandbox from the harness runtime or `options.envVars`.

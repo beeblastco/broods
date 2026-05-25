@@ -98,7 +98,7 @@ export interface AgentWorkspaceConfig {
   enabled?: boolean;
   needsApproval?: boolean;
   memory?: AgentWorkspaceMemoryConfig;
-  filesystem?: AgentWorkspaceToolConfig;
+  storage?: AgentWorkspaceStorageConfig;
   tasks?: AgentWorkspaceToolConfig;
   sandbox?: AgentWorkspaceSandboxConfig;
   [key: string]: unknown;
@@ -115,16 +115,16 @@ export interface AgentWorkspaceToolConfig {
   [key: string]: unknown;
 }
 
+export interface AgentWorkspaceStorageConfig {
+  provider?: "s3";
+  [key: string]: unknown;
+}
+
 export interface AgentWorkspaceSandboxConfig {
-  enabled?: boolean;
   provider?: "lambda" | "e2b" | "daytona";
   timeout?: number;
   memoryLimit?: number;
   outputLimitBytes?: number;
-  filesystem?: {
-    mount?: "native";
-    [key: string]: unknown;
-  };
   options?: Record<string, unknown>;
   [key: string]: unknown;
 }
@@ -464,7 +464,7 @@ function normalizeWorkspaceConfig(value: unknown): void {
   assertOptionalBoolean(config.enabled, "config.workspace.enabled");
   assertOptionalBoolean(config.needsApproval, "config.workspace.needsApproval");
   normalizeWorkspaceMemoryConfig(config.memory);
-  normalizeWorkspaceToolConfig("filesystem", config.filesystem);
+  normalizeWorkspaceStorageConfig(config);
   normalizeWorkspaceToolConfig("tasks", config.tasks);
   normalizeWorkspaceSandboxConfig(config.sandbox);
 }
@@ -482,7 +482,7 @@ function normalizeWorkspaceMemoryConfig(value: unknown): void {
   assertOptionalNonEmptyString(config.namespace, "config.workspace.memory.namespace");
 }
 
-function normalizeWorkspaceToolConfig(toolName: "filesystem" | "tasks", value: unknown): void {
+function normalizeWorkspaceToolConfig(toolName: "tasks", value: unknown): void {
   if (value == null) {
     return;
   }
@@ -494,6 +494,22 @@ function normalizeWorkspaceToolConfig(toolName: "filesystem" | "tasks", value: u
   assertOptionalBoolean(config.enabled, `config.workspace.${toolName}.enabled`);
 }
 
+function normalizeWorkspaceStorageConfig(workspace: Record<string, unknown>): void {
+  if (workspace.storage == null) {
+    workspace.storage = { provider: "s3" };
+    return;
+  }
+  if (!isPlainObject(workspace.storage)) {
+    throw new Error("config.workspace.storage must be an object");
+  }
+
+  const config = workspace.storage as Record<string, unknown>;
+  assertOptionalEnum(config.provider, "config.workspace.storage.provider", ["s3"]);
+  if (config.provider === undefined) {
+    config.provider = "s3";
+  }
+}
+
 function normalizeWorkspaceSandboxConfig(value: unknown): void {
   if (value == null) {
     return;
@@ -503,7 +519,6 @@ function normalizeWorkspaceSandboxConfig(value: unknown): void {
   }
 
   const config = value as Record<string, unknown>;
-  assertOptionalBoolean(config.enabled, "config.workspace.sandbox.enabled");
   assertOptionalEnum(config.provider, "config.workspace.sandbox.provider", ["lambda", "e2b", "daytona"]);
   assertOptionalPositiveInteger(
     config.timeout,
@@ -520,18 +535,15 @@ function normalizeWorkspaceSandboxConfig(value: unknown): void {
     "config.workspace.sandbox.outputLimitBytes",
     workspaceSandboxLimits().maxOutputLimitBytes,
   );
-  if (config.filesystem !== undefined && !isPlainObject(config.filesystem)) {
-    throw new Error("config.workspace.sandbox.filesystem must be an object");
-  }
-  const filesystem = isPlainObject(config.filesystem) ? config.filesystem : {};
-  assertOptionalEnum(filesystem.mount, "config.workspace.sandbox.filesystem.mount", ["native"]);
   if (config.options !== undefined && !isPlainObject(config.options)) {
     throw new Error("config.workspace.sandbox.options must be an object");
   }
 
   const options = isPlainObject(config.options) ? config.options : {};
+  assertOptionalString(options.bashFunctionName, "config.workspace.sandbox.options.bashFunctionName");
   assertOptionalString(options.nodeFunctionName, "config.workspace.sandbox.options.nodeFunctionName");
   assertOptionalString(options.pythonFunctionName, "config.workspace.sandbox.options.pythonFunctionName");
+  assertOptionalEnum(options.networkAccess, "config.workspace.sandbox.options.networkAccess", ["disabled", "public"]);
   assertOptionalString(options.apiKey, "config.workspace.sandbox.options.apiKey");
   assertOptionalString(options.organizationId, "config.workspace.sandbox.options.organizationId");
   assertOptionalString(options.template, "config.workspace.sandbox.options.template");

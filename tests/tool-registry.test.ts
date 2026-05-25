@@ -51,20 +51,19 @@ describe("createTools", () => {
     expect(tavilyExtractMock).toHaveBeenCalledTimes(1);
   });
 
-  it("can disable individual workspace tools", async () => {
+  it("always exposes filesystem when workspace is enabled and can disable tasks", async () => {
     const { createTools } = await import("../functions/harness-processing/tools/index.ts");
 
     const tools = createTools(createToolContext(), {
       workspace: {
         enabled: true,
         needsApproval: true,
-        filesystem: { enabled: false },
-        tasks: { enabled: true },
+        tasks: { enabled: false },
       },
     });
 
-    expect(Object.keys(tools).sort()).toEqual(["tasks"]);
-    expect(tools.tasks?.needsApproval).toBe(true);
+    expect(Object.keys(tools).sort()).toEqual(["filesystem"]);
+    expect(tools.filesystem?.needsApproval).toBe(true);
   });
 
   it("does not expose workspace tools when workspace is disabled", async () => {

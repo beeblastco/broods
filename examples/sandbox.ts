@@ -32,17 +32,19 @@ const agent = await createAgent(account.secret, "Sandbox assistant", {
   workspace: {
     enabled: true,
     needsApproval: false,
+    storage: {
+      provider: "s3",
+    },
     memory: {
       enabled: false,
     },
-    filesystem: {
-      enabled: true,
-    },
     sandbox: {
-      enabled: true,
       provider: "lambda",
       timeout: 30,
       outputLimitBytes: 65536,
+      options: {
+        networkAccess: "public",
+      },
     },
     tasks: {
       enabled: false,

@@ -101,6 +101,7 @@ function denyUnlessProjectPrincipal(stage: string, region: string) {
         values: [
           `arn:aws:iam::${AWS_ACCOUNT_ID}:role/${PROJECT_NAME}-${stage}-AccountManageRole-*`,
           `arn:aws:iam::${AWS_ACCOUNT_ID}:role/${PROJECT_NAME}-${stage}-HarnessProcessingRole-*`,
+          `arn:aws:iam::${AWS_ACCOUNT_ID}:role/${PROJECT_NAME}-${stage}-SandboxBashRole-*`,
           `arn:aws:iam::${AWS_ACCOUNT_ID}:role/${PROJECT_NAME}-${stage}-SandboxNodeRole-*`,
           `arn:aws:iam::${AWS_ACCOUNT_ID}:role/${PROJECT_NAME}-${stage}-SandboxPythonRole-*`,
           `arn:aws:iam::${AWS_ACCOUNT_ID}:role/${resourceName("sandbox-s3files", stage, region)}`,
@@ -166,6 +167,7 @@ export default $config({
       asyncToolResult: resourceName("async-tool-result", stage, region),
       externalAsyncToolMock: resourceName("async-tool-mock", stage, region),
       webhookSubscribeMock: resourceName("webhook-sub-mock", stage, region),
+      sandboxBash: resourceName("sandbox-bash", stage, region),
       sandboxNode: resourceName("sandbox-node", stage, region),
       sandboxPython: resourceName("sandbox-python", stage, region),
       accountConfigs: resourceName("account-configs", stage, region),
@@ -563,6 +565,30 @@ export default $config({
       },
     });
 
+    const sandboxBash = new sst.aws.Function("SandboxBash", {
+      name: names.sandboxBash,
+      runtime: "nodejs22.x",
+      architecture: "arm64",
+      handler: "functions/sandbox-bash/handler.handler",
+      description: "Executes bash-like workspace shell commands with an S3 Files mount.",
+      timeout: "2 minutes",
+      memory: "512 MB", // Minimal memory required from AWS for S3 mount to sandbox execution.
+      vpc: sandboxNetwork,
+      environment: {
+        SANDBOX_WORKSPACE_MOUNT_PATH,
+      },
+      permissions: sandboxRuntimePermissions(filesystemBucketArn, sandboxS3Files.arn, sandboxS3FilesAccessPoint.arn),
+      logging: { format: "json", retention: "1 month" },
+      transform: {
+        function: (args) => {
+          args.fileSystemConfig = {
+            arn: sandboxS3FilesAccessPoint.arn,
+            localMountPath: SANDBOX_WORKSPACE_MOUNT_PATH,
+          };
+        },
+      },
+    });
+
     const harnessProcessing = new sst.aws.Function("HarnessProcessing", {
       name: names.harnessProcessing,
       runtime: "provided.al2023",
@@ -596,6 +622,7 @@ export default $config({
         ENABLE_DIRECT_API: ENABLE_DIRECT_API ? "true" : "false",
         ENABLE_WEBSOCKET: ENABLE_WEBSOCKET ? "true" : "false",
         MOCK_EXTERNAL_ASYNC_TOOL_URL: mockExternalAsyncTool.url,
+        SANDBOX_BASH_FUNCTION_NAME: sandboxBash.name,
         SANDBOX_NODE_FUNCTION_NAME: sandboxNode.name,
         SANDBOX_PYTHON_FUNCTION_NAME: sandboxPython.name,
         ...(cronJobsTable
@@ -667,6 +694,7 @@ export default $config({
         {
           actions: ["lambda:InvokeFunction"],
           resources: [
+            sandboxBash.arn,
             sandboxNode.arn,
             sandboxPython.arn,
           ],

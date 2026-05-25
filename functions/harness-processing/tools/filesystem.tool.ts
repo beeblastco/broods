@@ -8,32 +8,16 @@ import { workspaceSandboxLimits } from "../../_shared/sandbox.ts";
 import { createWorkspaceSandboxExecutor } from "../sandbox/index.ts";
 import type { WorkspaceSandboxConfig, WorkspaceSandboxRuntime } from "../sandbox/types.ts";
 import {
-  appendToFilesystemFile,
   assertExecutableExtension,
   assertSafeExecutionArgs,
   boundedInteger,
-  checkPathExists,
-  createFilesystemDirectory,
-  deleteFilesystemPath,
   formatSandboxResult,
-  getFilesystemBucketName,
-  getVisibleRoot,
-  listFilesystemEntries,
   parseExecutionCommand,
-  parseHeredocCommand,
-  parseLsPath,
-  readFilesystemRange,
-  readFilesystemRaw,
-  renameFilesystemPath,
-  stripQuotes,
   toScopedPath,
-  toVisiblePath,
-  touchFilesystemFile,
-  writeFilesystemFile,
   type FilesystemInput,
 } from "./filesystem-utils.ts";
 import type { ToolContext } from "./index.ts";
-import { logError, logInfo } from "../../_shared/log.ts";
+import { logInfo } from "../../_shared/log.ts";
 
 type FilesystemToolResult = Awaited<ReturnType<NonNullable<Tool<FilesystemInput, unknown>["toModelOutput"]>>>;
 
@@ -46,17 +30,11 @@ const filesystemInputSchema: JSONSchema7 = {
   properties: {
     shell: {
       type: "string",
-      description: `Terminal command to run against the virtual filesystem rooted at /.
+      description: `Terminal command to run against the virtual filesystem. You always need to run pwd to see your current filesystem.
 
 Prefer shell mode. Supported commands:
-- pwd
-- ls [path]
-- cat <path>
-- sed -n 'start,endp' <path>
-- mkdir -p <dir>
-- touch <file>
-- rm -r <path>
-- mv <old> <new>
+- bash-like shell scripts, pipes, redirects, globs, variables, and loops
+- common file/text commands such as pwd, ls, cat, sed, awk, grep, rg, find, jq, tar, gzip, cp, mv, rm, mkdir, touch
 - node <file.js|file.ts> --args
 - python3 <file.py> --args
 - cat <<'EOF' > <path> ... EOF
@@ -97,91 +75,50 @@ async function executeFilesystemShell(
 
   logInfo("filesystem tool command", { namespace, command });
 
-  if (command === "pwd") {
-    return text(getVisibleRoot(namespace));
-  }
-
-  const heredoc = parseHeredocCommand(command);
-  if (heredoc) {
-    logInfo("filesystem heredoc detected", { namespace, path: heredoc.path, append: heredoc.append, bodyLength: heredoc.body.length });
-    try {
-      const bucketName = getFilesystemBucketName();
-      logInfo("filesystem writing file", { namespace, path: heredoc.path, bucket: bucketName });
-      return text(await writeFilesystemFile({
-        name: heredoc.path,
-        fileText: heredoc.append
-          ? await appendToFilesystemFile(heredoc.path, heredoc.body, namespace)
-          : heredoc.body,
-        namespace,
-      }));
-    } catch (cause) {
-      logError("filesystem heredoc write failed", {
-        namespace,
-        path: heredoc.path,
-        error: cause instanceof Error ? cause.message : String(cause),
-        stack: cause instanceof Error ? cause.stack : undefined,
-      });
-      return errorText(cause instanceof Error ? cause.message : String(cause));
-    }
-  }
-
-  if (command.startsWith("ls")) {
-    return text(await listFilesystemEntries(parseLsPath(command), namespace));
-  }
-
-  const sedMatch = command.match(/^sed\s+-n\s+['"](\d+),(\d+)p['"]\s+(.+)$/s);
-  if (sedMatch) {
-    return text(await readFilesystemRange(stripQuotes(sedMatch[3]!), Number(sedMatch[1]), Number(sedMatch[2]), namespace));
-  }
-
-  const catMatch = command.match(/^cat\s+(.+)$/s);
-  if (catMatch) {
-    return text(await readFilesystemRaw(stripQuotes(catMatch[1]!), namespace));
-  }
-
-  const mkdirMatch = command.match(/^mkdir\s+-p\s+(.+)$/s);
-  if (mkdirMatch) {
-    return text(await createFilesystemDirectory(stripQuotes(mkdirMatch[1]!), namespace));
-  }
-
-  const touchMatch = command.match(/^touch\s+(.+)$/s);
-  if (touchMatch) {
-    return text(await touchFilesystemFile(stripQuotes(touchMatch[1]!), namespace));
-  }
-
-  const rmMatch = command.match(/^rm(?:\s+-[rf]+\s+|\s+-[fr]+\s+|\s+)(.+)$/s);
-  if (rmMatch) {
-    return text(await deleteFilesystemPath({ name: stripQuotes(rmMatch[1]!), namespace: namespace }));
-  }
-
-  const mvMatch = command.match(/^mv\s+(\S+)\s+(\S+)$/);
-  if (mvMatch) {
-    return text(await renameFilesystemPath({ oldName: stripQuotes(mvMatch[1]!), newName: stripQuotes(mvMatch[2]!), namespace: namespace }));
-  }
-
   try {
     const execution = parseExecutionCommand(command);
-    if (execution) {
+    if (execution?.runtime === "python") {
       return json(await executeWorkspaceFile(execution, namespace, sandboxConfig));
     }
   } catch (cause) {
     return errorText(cause instanceof Error ? cause.message : String(cause));
   }
 
-  return errorText(`Unsupported shell command.
-Supported commands:
-- pwd
-- ls [path]
-- cat <path>
-- sed -n 'start,endp' <path>
-- mkdir -p <dir>
-- touch <file>
-- rm -r <path>
-- mv <old> <new>
-- node <file.js|file.ts>
-- python3 <file.py>
-- cat <<'EOF' > <path> ... EOF
-- cat <<'EOF' >> <path> ... EOF`);
+  try {
+    return text(await executeWorkspaceShell(command, namespace, sandboxConfig));
+  } catch (cause) {
+    return errorText(cause instanceof Error ? cause.message : String(cause));
+  }
+}
+
+async function executeWorkspaceShell(
+  shell: string,
+  namespace: string,
+  sandboxConfig: WorkspaceSandboxConfig,
+): Promise<string> {
+  const executor = createWorkspaceSandboxExecutor(sandboxConfig);
+  if (!executor.runShell) {
+    throw new Error("Error: workspace shell execution is only supported by the lambda sandbox provider");
+  }
+
+  const limits = workspaceSandboxLimits();
+  const result = await executor.runShell({
+    namespace,
+    shell,
+    workspaceRoot: workspaceRootFor(sandboxConfig),
+    timeoutSeconds: boundedInteger(
+      sandboxConfig.timeout,
+      limits.defaultTimeoutSeconds,
+      limits.maxTimeoutSeconds,
+    ),
+    outputLimitBytes: boundedInteger(
+      sandboxConfig.outputLimitBytes,
+      limits.defaultOutputLimitBytes,
+      limits.maxOutputLimitBytes,
+    ),
+  });
+
+  return `${result.stdout}${result.stderr}`;
 }
 
 async function executeWorkspaceFile(
@@ -194,21 +131,9 @@ async function executeWorkspaceFile(
   namespace: string,
   sandboxConfig: WorkspaceSandboxConfig,
 ): Promise<ReturnType<typeof formatSandboxResult>> {
-  if (sandboxConfig.enabled !== true) {
-    throw new Error("Error: workspace sandbox execution is disabled");
-  }
-
   const normalizedPath = toScopedPath(execution.path, namespace);
   assertExecutableExtension(normalizedPath, execution.runtime);
   assertSafeExecutionArgs(execution.args);
-
-  const state = await checkPathExists(namespace, normalizedPath);
-  if (!state.exists) {
-    throw new Error(`${execution.executable}: ${toVisiblePath(normalizedPath, namespace)}: No such file or directory`);
-  }
-  if (state.isDirectory) {
-    throw new Error(`${execution.executable}: ${toVisiblePath(normalizedPath, namespace)}: Is a directory`);
-  }
 
   const executor = createWorkspaceSandboxExecutor(sandboxConfig);
   const limits = workspaceSandboxLimits();
