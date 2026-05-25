@@ -569,7 +569,7 @@ export const NodeSidePanel = memo(function NodeSidePanel({
 
     return (
         <div
-            className={`absolute right-0 top-0 z-10 flex h-full w-2/5 flex-col border-l border-border bg-card transition-transform duration-200 ease-out ${node ? "translate-x-0" : "translate-x-full"}`}
+            className="flex h-full w-full flex-col border-l border-border bg-card"
         >
             <div className="flex items-center justify-between px-4 py-3">
                 <div className="flex items-center gap-2">

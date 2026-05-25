@@ -42,7 +42,7 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "rea
 // Defer interaction-only components to reduce initial bundle size.
 const NodeSidePanel = dynamic(
     () => import("@/app/components/NodeSidePanel").then((mod) => mod.NodeSidePanel),
-    { loading: () => <div className="absolute right-0 top-0 z-10 h-full w-1/3" /> },
+    { loading: () => <div className="h-full w-full" /> },
 );
 const AgentSourcePickerDialog = dynamic(
     () => import("@/app/components/AgentSourcePickerDialog").then((mod) => mod.AgentSourcePickerDialog),
@@ -135,7 +135,7 @@ function CanvasInner({ projectId }: { projectId: Id<"projects"> }) {
     const [toolPickerOpen, setToolPickerOpen] = useState(false);
     const [configDialogOpen, setConfigDialogOpen] = useState(false);
     const [agentCreatePosition, setAgentCreatePosition] = useState<FlowPosition | null>(null);
-    const { screenToFlowPosition } = useReactFlow();
+    const { screenToFlowPosition, setCenter, getZoom } = useReactFlow();
     const nextId = useRef(1);
     const canvasContainerRef = useRef<HTMLDivElement | null>(null);
     const lastRightClick = useRef<FlowPosition | null>(null);
@@ -224,6 +224,28 @@ function CanvasInner({ projectId }: { projectId: Id<"projects"> }) {
 
         return () => window.removeEventListener("keydown", onKeyDown);
     }, [selectedNode]);
+
+    // Re-center the focused node after the side panel finishes its width transition,
+    // so it stays visually centered as the canvas shrinks or grows back.
+    const lastFocusedNode = useRef<Node | null>(null);
+    useEffect(() => {
+        const node = selectedNode ?? lastFocusedNode.current;
+        if (selectedNode) lastFocusedNode.current = selectedNode;
+        if (!node) return;
+
+        const id = window.setTimeout(() => {
+            const width = node.measured?.width ?? node.width ?? 0;
+            const height = node.measured?.height ?? node.height ?? 0;
+            setCenter(
+                node.position.x + width / 2,
+                node.position.y + height / 2,
+                { zoom: getZoom(), duration: 200 },
+            );
+            if (!selectedNode) lastFocusedNode.current = null;
+        }, 220);
+
+        return () => window.clearTimeout(id);
+    }, [selectedNode, setCenter, getZoom]);
 
     const onConnect: OnConnect = useCallback(
         (params) => {
@@ -397,60 +419,66 @@ function CanvasInner({ projectId }: { projectId: Id<"projects"> }) {
     );
 
     return (
-        <div ref={canvasContainerRef} className="relative size-full overflow-hidden">
-            {isEmpty ? (
-                <div className="size-full">
-                    {flow}
-                </div>
-            ) : (
-                <ContextMenu>
-                    <ContextMenuTrigger asChild>
-                        <div className="size-full" onContextMenu={onContextMenu}>
-                            {flow}
-                        </div>
-                    </ContextMenuTrigger>
-                    <ContextMenuContent
-                        className="w-48 rounded-lg border border-border bg-card/80 p-1 backdrop-blur-md"
-                    >
-                        <ContextMenuLabel
-                            className="text-xs tracking-wider text-muted-foreground pt-2!"
+        <div className="flex size-full overflow-hidden">
+            <div ref={canvasContainerRef} className="relative h-full min-w-0 flex-1 overflow-hidden">
+                {isEmpty ? (
+                    <div className="size-full">
+                        {flow}
+                    </div>
+                ) : (
+                    <ContextMenu>
+                        <ContextMenuTrigger asChild>
+                            <div className="size-full" onContextMenu={onContextMenu}>
+                                {flow}
+                            </div>
+                        </ContextMenuTrigger>
+                        <ContextMenuContent
+                            className="w-48 rounded-lg border border-border bg-card/80 p-1 backdrop-blur-md"
                         >
-                            Add service
-                        </ContextMenuLabel>
-                        {NODE_TEMPLATES.map(({ type, label, icon: Icon }, index) => (
-                            <Fragment key={type}>
-                                {index === NODE_TEMPLATES.length - 1 && <ContextMenuSeparator />}
-                                <ContextMenuItem
-                                    onClick={() =>
-                                        type === "agent"
-                                            ? onOpenSourcePicker()
-                                            : type === "tool"
-                                              ? setToolPickerOpen(true)
-                                              : addNode(type, label)
-                                    }
-                                >
-                                    <Icon />
-                                    {label}
-                                </ContextMenuItem>
-                            </Fragment>
-                        ))}
-                    </ContextMenuContent>
-                </ContextMenu>
-            )}
+                            <ContextMenuLabel
+                                className="text-xs tracking-wider text-muted-foreground pt-2!"
+                            >
+                                Add service
+                            </ContextMenuLabel>
+                            {NODE_TEMPLATES.map(({ type, label, icon: Icon }, index) => (
+                                <Fragment key={type}>
+                                    {index === NODE_TEMPLATES.length - 1 && <ContextMenuSeparator />}
+                                    <ContextMenuItem
+                                        onClick={() =>
+                                            type === "agent"
+                                                ? onOpenSourcePicker()
+                                                : type === "tool"
+                                                  ? setToolPickerOpen(true)
+                                                  : addNode(type, label)
+                                        }
+                                    >
+                                        <Icon />
+                                        {label}
+                                    </ContextMenuItem>
+                                </Fragment>
+                            ))}
+                        </ContextMenuContent>
+                    </ContextMenu>
+                )}
 
-            {isEmpty && (
-                <EmptyCanvasGuide
-                    onCreateConfig={() => onOpenCreateConfig()}
+                {isEmpty && (
+                    <EmptyCanvasGuide
+                        onCreateConfig={() => onOpenCreateConfig()}
+                    />
+                )}
+            </div>
+
+            <div
+                className={`h-full shrink-0 overflow-hidden transition-[width] duration-200 ease-out ${selectedNode ? "w-2/5" : "w-0"}`}
+            >
+                <NodeSidePanel
+                    node={selectedNode}
+                    deleteRequestToken={deleteRequestToken}
+                    onClose={onPaneClick}
+                    onRemoveNode={removeNode}
+                    onUpdateNodeLabel={updateNodeLabel}
                 />
-            )}
-
-            <NodeSidePanel
-                node={selectedNode}
-                deleteRequestToken={deleteRequestToken}
-                onClose={onPaneClick}
-                onRemoveNode={removeNode}
-                onUpdateNodeLabel={updateNodeLabel}
-            />
+            </div>
 
             <AgentSourcePickerDialog
                 open={sourcePickerOpen}
