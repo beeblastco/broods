@@ -33,6 +33,13 @@ const MAX_AGENT_ITERATIONS = 30;
 
 type ApprovalRequestOutput = ToolApprovalRequestOutput<ToolSet>;
 type ApprovalToolCall = ApprovalRequestOutput["toolCall"];
+type ToolCallSummary = {
+  toolCallId: string;
+  toolName: string;
+  stepNumber?: number;
+  durationMs?: number;
+  success?: boolean;
+};
 
 export type ToolApprovalSummary = Pick<ApprovalRequestOutput, "approvalId"> & {
   toolCallId: ApprovalToolCall["toolCallId"];
@@ -94,6 +101,7 @@ export async function runAgentLoop(
   // Log context
   const runStartedAt = Date.now();
   const stepStartedAt = new Map<number, number>();
+  const toolCallSummaries = new Map<string, ToolCallSummary>();
   const logContext = {
     accountId: session.accountId,
     agentId: session.agentId,
@@ -140,12 +148,14 @@ export async function runAgentLoop(
       if (stepNumber !== undefined && !stepStartedAt.has(stepNumber)) {
         stepStartedAt.set(stepNumber, Date.now());
       }
+      recordToolCallSummary(toolCallSummaries, toolCall, { stepNumber });
       await lifecycle.emit("tool.call.started", {
         stepNumber: stepNumber,
         toolCall: toLifecycleValue(toolCall),
       });
     },
     experimental_onToolCallFinish: async ({ stepNumber, toolCall, durationMs, success, error }) => {
+      recordToolCallSummary(toolCallSummaries, toolCall, { stepNumber, durationMs, success });
       await lifecycle.emit("tool.call.finished", {
         stepNumber: stepNumber,
         toolCall: toLifecycleValue(toolCall),
@@ -187,6 +197,9 @@ export async function runAgentLoop(
       const startedAt = stepStartedAt.get(stepNumber);
       const durationMs = startedAt === undefined ? undefined : Date.now() - startedAt;
       stepStartedAt.delete(stepNumber);
+      for (const toolCall of toolCalls) {
+        recordToolCallSummary(toolCallSummaries, toolCall, { stepNumber });
+      }
 
       await lifecycle.emit("agent.step.finished", {
         stepNumber: stepNumber,
@@ -222,17 +235,26 @@ export async function runAgentLoop(
     },
     onError: async ({ error }) => {
       const errorText = errorMessage(error);
+      const tools = summarizeToolsUsed(toolCallSummaries);
       didFail = true;
       failureText = errorText;
       logError("Agent loop failed", {
         eventType: "model.invocation.failed",
         ...logContext,
         durationMs: Date.now() - runStartedAt,
+        toolsUsed: tools.toolsUsed,
+        toolUsage: tools.toolUsage,
+        toolCalls: tools.toolCalls,
         error: errorText,
         errorDetails: serializeError(error),
       });
 
-      await lifecycle.emit("agent.failed", { error: errorText });
+      await lifecycle.emit("agent.failed", {
+        error: errorText,
+        toolsUsed: toLifecycleValue(tools.toolsUsed),
+        toolUsage: toLifecycleValue(tools.toolUsage),
+        toolCalls: toLifecycleValue(tools.toolCalls),
+      });
       await reply?.onErrorText(errorText).catch(() => { });
     },
     onFinish: async ({
@@ -245,11 +267,16 @@ export async function runAgentLoop(
       usage,
       totalUsage,
     }) => {
+      for (const toolCall of toolCalls) {
+        recordToolCallSummary(toolCallSummaries, toolCall, {});
+      }
+
       const finalText = text.trim();
       const stepCount = steps.length;
       const toolCallCount = toolCalls.length;
       const approvalRequests = extractApprovalRequests(steps);
       const approvals = approvalRequests.map(summarizeApprovalRequest);
+      const tools = summarizeToolsUsed(toolCallSummaries);
       const finishLog = {
         eventType: "model.invocation.finished",
         ...logContext,
@@ -258,6 +285,9 @@ export async function runAgentLoop(
         finishReason: finishReason,
         stepCount: stepCount,
         toolCallCount: toolCallCount,
+        toolsUsed: tools.toolsUsed,
+        toolUsage: tools.toolUsage,
+        toolCalls: tools.toolCalls,
         usage: totalUsage,
       };
 
@@ -273,6 +303,9 @@ export async function runAgentLoop(
           logInfo("Model invocation finished", finishLog);
           await lifecycle.emit("agent.approval.required", {
             approvals: toLifecycleValue(approvals),
+            toolsUsed: toLifecycleValue(tools.toolsUsed),
+            toolUsage: toLifecycleValue(tools.toolUsage),
+            toolCalls: toLifecycleValue(tools.toolCalls),
           });
           await reply?.onApprovalRequired?.(approvals);
           return;
@@ -286,6 +319,9 @@ export async function runAgentLoop(
             finishReason: finishReason,
             stepCount: stepCount,
             toolCallCount: toolCallCount,
+            toolsUsed: toLifecycleValue(tools.toolsUsed),
+            toolUsage: toLifecycleValue(tools.toolUsage),
+            toolCalls: toLifecycleValue(tools.toolCalls),
             response: toLifecycleValue(finalResponse),
           });
           return;
@@ -309,6 +345,9 @@ export async function runAgentLoop(
             finishReason: finishReason,
             stepCount: stepCount,
             toolCallCount: toolCallCount,
+            toolsUsed: tools.toolsUsed,
+            toolUsage: tools.toolUsage,
+            toolCalls: tools.toolCalls,
             usage: totalUsage ?? usage,
           });
           await lifecycle.emit("agent.failed", {
@@ -316,6 +355,9 @@ export async function runAgentLoop(
             finishReason: finishReason,
             stepCount: stepCount,
             toolCallCount: toolCallCount,
+            toolsUsed: toLifecycleValue(tools.toolsUsed),
+            toolUsage: toLifecycleValue(tools.toolUsage),
+            toolCalls: toLifecycleValue(tools.toolCalls),
           });
           await reply?.onErrorText(errorText).catch(() => { });
           return;
@@ -328,21 +370,33 @@ export async function runAgentLoop(
           finishReason: finishReason,
           stepCount: stepCount,
           toolCallCount: toolCallCount,
+          toolsUsed: toLifecycleValue(tools.toolsUsed),
+          toolUsage: toLifecycleValue(tools.toolUsage),
+          toolCalls: toLifecycleValue(tools.toolCalls),
           response: finalText,
         });
       } catch (err) {
         const errorText = errorMessage(err);
+        const tools = summarizeToolsUsed(toolCallSummaries);
         didFail = true;
         failureText = errorText;
         logError("Post-generation steps failed", {
           eventType: "model.invocation.failed",
           ...logContext,
           durationMs: Date.now() - runStartedAt,
+          toolsUsed: tools.toolsUsed,
+          toolUsage: tools.toolUsage,
+          toolCalls: tools.toolCalls,
           error: errorText,
           errorDetails: serializeError(err),
         });
 
-        await lifecycle.emit("agent.failed", { error: errorText });
+        await lifecycle.emit("agent.failed", {
+          error: errorText,
+          toolsUsed: toLifecycleValue(tools.toolsUsed),
+          toolUsage: toLifecycleValue(tools.toolUsage),
+          toolCalls: toLifecycleValue(tools.toolCalls),
+        });
         await reply?.onErrorText(errorText).catch(() => { });
       }
     },
@@ -379,6 +433,56 @@ function summarizeApprovalRequest(request: ApprovalRequestOutput): ToolApprovalS
     toolCallId: request.toolCall.toolCallId,
     toolName: request.toolCall.toolName,
     input: request.toolCall.input,
+  };
+}
+
+function recordToolCallSummary(
+  summaries: Map<string, ToolCallSummary>,
+  toolCall: unknown,
+  update: Partial<Omit<ToolCallSummary, "toolCallId" | "toolName">>,
+) {
+  const identity = toolCallIdentity(toolCall);
+  if (!identity) {
+    return;
+  }
+
+  const existing = summaries.get(identity.toolCallId);
+  summaries.set(identity.toolCallId, {
+    ...existing,
+    ...identity,
+    ...update,
+  });
+}
+
+function toolCallIdentity(toolCall: unknown): Pick<ToolCallSummary, "toolCallId" | "toolName"> | null {
+  if (!toolCall || typeof toolCall !== "object") {
+    return null;
+  }
+
+  const record = toolCall as Record<string, unknown>;
+  if (typeof record.toolCallId !== "string" || typeof record.toolName !== "string") {
+    return null;
+  }
+
+  return {
+    toolCallId: record.toolCallId,
+    toolName: record.toolName,
+  };
+}
+
+function summarizeToolsUsed(summaries: Map<string, ToolCallSummary>) {
+  const toolCalls = [...summaries.values()].sort((left, right) =>
+    (left.stepNumber ?? 0) - (right.stepNumber ?? 0) || left.toolCallId.localeCompare(right.toolCallId)
+  );
+  const toolUsage = toolCalls.reduce<Record<string, number>>((counts, toolCall) => {
+    counts[toolCall.toolName] = (counts[toolCall.toolName] ?? 0) + 1;
+    return counts;
+  }, {});
+
+  return {
+    toolsUsed: Object.keys(toolUsage).sort(),
+    toolUsage,
+    toolCalls,
   };
 }
 

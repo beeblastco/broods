@@ -17,6 +17,15 @@ interface PancakeActionResponse {
   data?: unknown;
 }
 
+interface HandoffToolResponse {
+  success: boolean;
+  message: string;
+  actions: {
+    tag: PancakeActionResponse | null;
+    unread: PancakeActionResponse | null;
+  };
+}
+
 export default function handoffsTool(context: HandoffsToolContext): ToolSet {
   return {
     handoffs: tool({
@@ -36,13 +45,10 @@ export default function handoffsTool(context: HandoffsToolContext): ToolSet {
         const pageAccessToken = resolvePageAccessToken(context);
         const tagId = resolveHandoffTagId(context);
 
-        await addHandoffTag(conversation, pageAccessToken, tagId);
-        await markConversationUnread(conversation, pageAccessToken);
+        const tag = await addHandoffTag(conversation, pageAccessToken, tagId);
+        const unread = await markConversationUnread(conversation, pageAccessToken);
 
-        return {
-          type: "text",
-          value: "Conversation handed off to human staff.",
-        };
+        return toHandoffToolResponse(tag, unread);
       },
     }),
   };
@@ -52,19 +58,20 @@ async function addHandoffTag(
   conversation: { pageId: string; conversationId: string },
   pageAccessToken: string,
   tagId: string,
-): Promise<void> {
+): Promise<PancakeActionResponse | null> {
   const response = await postPancakeConversationAction(conversation, pageAccessToken, "tags", "Pancake handoff failed", {
     action: "add",
     tag_id: tagId,
   });
   assertTagApplied(response, tagId);
+  return response;
 }
 
 async function markConversationUnread(
   conversation: { pageId: string; conversationId: string },
   pageAccessToken: string,
-): Promise<void> {
-  await postPancakeConversationAction(conversation, pageAccessToken, "unread", "Pancake unread failed");
+): Promise<PancakeActionResponse | null> {
+  return await postPancakeConversationAction(conversation, pageAccessToken, "unread", "Pancake unread failed");
 }
 
 async function postPancakeConversationAction(
@@ -171,6 +178,20 @@ function parseJsonBody(text: string): PancakeActionResponse | null {
 
 function formatPancakeError(body: { message?: string } | null, bodyText: string): string {
   return body?.message ?? (bodyText || "unknown_error");
+}
+
+function toHandoffToolResponse(
+  tag: PancakeActionResponse | null,
+  unread: PancakeActionResponse | null,
+): HandoffToolResponse {
+  return {
+    success: true,
+    message: firstNonEmptyString(unread?.message, tag?.message) ?? "Conversation handed off to human staff.",
+    actions: {
+      tag,
+      unread,
+    },
+  };
 }
 
 function assertTagApplied(body: PancakeActionResponse | null, tagId: string): void {

@@ -45,6 +45,12 @@ mock.module("@daytona/sdk", () => ({
 }));
 
 beforeEach(() => {
+  process.env.AWS_ACCESS_KEY_ID = "test-access-key";
+  process.env.AWS_SECRET_ACCESS_KEY = "test-secret-key";
+  process.env.AWS_SESSION_TOKEN = "test-session-token";
+  process.env.AWS_REGION = "eu-central-1";
+  process.env.FILESYSTEM_BUCKET_NAME = "workspace-bucket";
+  process.env.SKILLS_BUCKET_NAME = "skills-bucket";
   e2bRunMock.mockClear();
   e2bKillMock.mockClear();
   e2bCreateMock.mockClear();
@@ -107,8 +113,10 @@ describe("createWorkspaceSandboxExecutor", () => {
     const executor = createWorkspaceSandboxExecutor({
       provider: "daytona",
       options: {
+        organizationId: "org-id",
         workspaceRoot: "/mnt/workspaces",
-        image: "sandbox-image",
+        snapshot: "fuse-s3",
+        mountAwsS3Buckets: true,
       },
     });
 
@@ -124,9 +132,24 @@ describe("createWorkspaceSandboxExecutor", () => {
 
     expect(result).toMatchObject({ ok: true, provider: "daytona", stdout: "ok\n" });
     expect(daytonaCreateMock).toHaveBeenCalledWith(expect.objectContaining({
-      image: "sandbox-image",
+      snapshot: "fuse-s3",
       language: "python",
+      envVars: {
+        AWS_ACCESS_KEY_ID: "test-access-key",
+        AWS_SECRET_ACCESS_KEY: "test-secret-key",
+        AWS_SESSION_TOKEN: "test-session-token",
+        AWS_REGION: "eu-central-1",
+        AWS_DEFAULT_REGION: "eu-central-1",
+      },
     }));
+    expect(daytonaExecuteCommandMock).toHaveBeenCalledWith("mkdir -p '/mnt/workspaces'");
+    expect(daytonaExecuteCommandMock).toHaveBeenCalledWith(
+      "'mount-s3' '--allow-delete' '--allow-overwrite' '--region' 'eu-central-1' 'workspace-bucket' '/mnt/workspaces'",
+    );
+    expect(daytonaExecuteCommandMock).toHaveBeenCalledWith("mkdir -p '/mnt/skills'");
+    expect(daytonaExecuteCommandMock).toHaveBeenCalledWith(
+      "'mount-s3' '--allow-delete' '--allow-overwrite' '--region' 'eu-central-1' 'skills-bucket' '/mnt/skills'",
+    );
     expect(daytonaExecuteCommandMock).toHaveBeenCalledWith(
       "'python3' 'analysis.py' 'sample.wav'",
       "/mnt/workspaces/fs-0123456789abcdef0123456789abcdef01234567",

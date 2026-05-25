@@ -17,8 +17,8 @@ describe("handoffs tool", () => {
     globalThis.fetch = mock(async (url: string | URL, init?: RequestInit) => {
       fetchCalls.push({ url: String(url), init });
       return fetchCalls.length === 1
-        ? jsonResponse({ success: true, data: [6] })
-        : jsonResponse({ success: true });
+        ? jsonResponse({ success: true, message: "tag added", data: [6] })
+        : jsonResponse({ success: true, message: "marked unread" });
     }) as never;
     const { default: handoffsTool } = await import("../functions/harness-processing/tools/handoffs.tool.ts");
 
@@ -27,8 +27,12 @@ describe("handoffs tool", () => {
     const result = await executeHandoffs(tools.handoffs, { reason: "Customer asked for staff." });
 
     expect(result).toEqual({
-      type: "text",
-      value: "Conversation handed off to human staff.",
+      success: true,
+      message: "marked unread",
+      actions: {
+        tag: { success: true, message: "tag added", data: [6] },
+        unread: { success: true, message: "marked unread" },
+      },
     });
     expect(fetchCalls).toHaveLength(2);
     const tagUrl = new URL(fetchCalls[0]!.url);
@@ -46,6 +50,22 @@ describe("handoffs tool", () => {
     expect(unreadUrl.searchParams.get("page_access_token")).toBe("page-token");
     expect(fetchCalls[1]!.init?.method).toBe("POST");
     expect(fetchCalls[1]!.init?.body).toBeUndefined();
+  });
+
+  it("falls back to the default message when Pancake returns no message", async () => {
+    globalThis.fetch = mock(async () => jsonResponse({ success: true, data: [6] })) as never;
+    const { default: handoffsTool } = await import("../functions/harness-processing/tools/handoffs.tool.ts");
+
+    const tools = handoffsTool(createToolContext());
+
+    await expect(executeHandoffs(tools.handoffs, {})).resolves.toEqual({
+      success: true,
+      message: "Conversation handed off to human staff.",
+      actions: {
+        tag: { success: true, data: [6] },
+        unread: { success: true, data: [6] },
+      },
+    });
   });
 
   it("fails when marking the conversation unread fails", async () => {

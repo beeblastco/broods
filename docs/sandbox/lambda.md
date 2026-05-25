@@ -60,3 +60,4 @@ Bundle packages into the runtime artifact or attach a Lambda layer.
 
 - Lambda sandbox functions have no public Function URLs.
 - Sandbox runtime Lambdas do not need account-management permissions.
+- Sandbox runtime Lambdas run in the sandbox VPC without NAT, so they can reach the mounted workspace filesystem but cannot open arbitrary public internet connections.
