@@ -6,8 +6,7 @@ import { createAccount, createAgent, deleteAccount, streamSSE } from "./utils.ts
 
 const googleApiKey = requireEnv("ACCOUNT_GOOGLE_API_KEY");
 const daytonaApiKey = requireEnv("DAYTONA_API_KEY");
-const daytonaOrganizationId = process.env.DAYTONA_ORGANIZATION_ID ?? "fd4728c0-8220-47dd-b035-57f658facb8d";
-const daytonaSnapshot = process.env.DAYTONA_SNAPSHOT ?? "fuse-s3";
+const daytonaOrganizationId = process.env.DAYTONA_ORGANIZATION_ID!;
 const username = `sandbox-${Date.now()}`;
 
 const account = await createAccount(username);
@@ -49,7 +48,7 @@ const agent = await createAgent(account.secret, "Sandbox assistant", {
         apiKey: daytonaApiKey,
         organizationId: daytonaOrganizationId,
         apiUrl: "https://app.daytona.io/api",
-        target: "default",
+        target: "eu",
         snapshot: "fuse-s3",
         workspaceRoot: "/mnt/workspaces",
         mountAwsS3Buckets: true

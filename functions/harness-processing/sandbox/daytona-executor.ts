@@ -167,15 +167,20 @@ async function mountS3Bucket(
   mountPath: string,
   options: Record<string, unknown>,
 ): Promise<void> {
-  await executeDaytonaSetupCommand(sandbox, `mkdir -p ${shellQuote(mountPath)}`);
-  await executeDaytonaSetupCommand(sandbox, [
-    "mount-s3",
+  await executeDaytonaSetupCommand(sandbox, `sudo mkdir -p ${shellQuote(mountPath)}`);
+  await executeDaytonaSetupCommand(sandbox, `sudo chown "$(id -u)":"$(id -g)" ${shellQuote(mountPath)}`);
+  const mountArgs = [
     "--allow-delete",
     "--allow-overwrite",
+    "--allow-other",
     ...mountRegionArgs(options),
     bucketName,
     mountPath,
-  ].map(shellQuote).join(" "));
+  ].map(shellQuote).join(" ");
+  await executeDaytonaSetupCommand(
+    sandbox,
+    `sudo mount-s3 --uid "$(id -u)" --gid "$(id -g)" ${mountArgs}`,
+  );
 }
 
 function mountRegionArgs(options: Record<string, unknown>): string[] {
