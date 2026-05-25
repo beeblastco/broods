@@ -210,3 +210,11 @@ export async function pollStatus(secret: string, statusUrl: string): Promise<Asy
 
   throw new Error("Polling timeout");
 }
+
+export function requireEnv(name: string): string {
+  const value = process.env[name];
+  if (!value) {
+    throw new Error(`${name} is required`);
+  }
+  return value;
+}

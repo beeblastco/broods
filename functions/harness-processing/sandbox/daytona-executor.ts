@@ -179,7 +179,7 @@ async function mountS3Bucket(
   ].map(shellQuote).join(" ");
   await executeDaytonaSetupCommand(
     sandbox,
-    `sudo mount-s3 --uid "$(id -u)" --gid "$(id -g)" ${mountArgs}`,
+    `sudo -E mount-s3 --uid "$(id -u)" --gid "$(id -g)" ${mountArgs}`,
   );
 }
 
