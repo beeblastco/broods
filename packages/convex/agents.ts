@@ -7,6 +7,7 @@ import { v } from "convex/values";
 import { internalMutation, internalQuery, query } from "./_generated/server";
 import { authKit } from "./auth";
 import { encryptAgentConfigBlob, substituteEnvPlaceholders } from "./model/agentConfigCodec";
+import { backSyncCanvasFromAgentRow, mirrorAgentRowOntoConfig } from "./model/agentSync";
 import { getActiveOrgForUser } from "./model/ownership/org";
 import { agentsFields } from "./schema";
 
@@ -103,7 +104,7 @@ export const create = internalMutation({
         }
 
         const now = Date.now();
-        return await ctx.db.insert("agents", {
+        const agentRowId = await ctx.db.insert("agents", {
             accountId: args.accountId,
             name: args.name,
             description: args.description,
@@ -113,6 +114,13 @@ export const create = internalMutation({
             createdAt: now,
             updatedAt: now,
         });
+
+        // Back-sync to cherry-coke's canvas so API-created agents appear on
+        // the org owner's default project/environment. Safe no-op when the
+        // canvas surface isn't provisioned (no org owner / no projects).
+        await backSyncCanvasFromAgentRow(ctx, agentRowId);
+
+        return agentRowId;
     },
 });
 
@@ -147,6 +155,10 @@ export const update = internalMutation({
             updatedAt: Date.now(),
         });
 
+        // Mirror API-side changes onto the canvas-side agentConfigs row so
+        // the Details/Config/Variables tabs reflect what the API caller wrote.
+        await mirrorAgentRowOntoConfig(ctx, normalized);
+
         return null;
     },
 });
@@ -180,6 +192,7 @@ export const seedEncryptedConfigForTest = internalMutation({
             encryptionTag: encrypted.tag,
             updatedAt: Date.now(),
         });
+        await mirrorAgentRowOntoConfig(ctx, normalized);
         return null;
     },
 });
@@ -199,6 +212,31 @@ export const remove = internalMutation({
         if (!agent || agent.accountId !== args.accountId) {
             throw new Error("Agent does not belong to the supplied accountId");
         }
+
+        // Mirror cleanup onto cherry-coke's canvas: drop any agentConfigs row
+        // and matching canvas node that referenced this agent.
+        const linkedConfig = await ctx.db
+            .query("agentConfigs")
+            .filter((q) => q.eq(q.field("agentId"), normalized as unknown as string))
+            .first();
+        if (linkedConfig) {
+            const layout = await ctx.db
+                .query("canvasLayouts")
+                .withIndex("by_projectId_and_environmentId", (q) =>
+                    q.eq("projectId", linkedConfig.projectId).eq("environmentId", linkedConfig.environmentId),
+                )
+                .unique();
+            if (layout) {
+                const filtered = (layout.nodes as Array<{ data?: { agentConfigId?: string } }>).filter(
+                    (n) => n.data?.agentConfigId !== linkedConfig._id,
+                );
+                if (filtered.length !== layout.nodes.length) {
+                    await ctx.db.patch(layout._id, { nodes: filtered, updatedAt: Date.now() });
+                }
+            }
+            await ctx.db.delete(linkedConfig._id);
+        }
+
         await ctx.db.delete(normalized);
 
         return null;

@@ -18,7 +18,13 @@
 
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx } from "../_generated/server";
-import { encryptAgentConfigBlob, substituteEnvPlaceholders, toNestedAgentConfig } from "./agentConfigCodec";
+import {
+    decryptAgentConfigBlob,
+    encryptAgentConfigBlob,
+    fromNestedAgentConfig,
+    substituteEnvPlaceholders,
+    toNestedAgentConfig,
+} from "./agentConfigCodec";
 import { getActiveOrgForUser } from "./ownership/org";
 
 /**
@@ -138,6 +144,204 @@ export async function pushEncryptedConfigToAgentRow(
         encryptedConfig: encrypted.ciphertext,
         encryptionIv: encrypted.iv,
         encryptionTag: encrypted.tag,
+        updatedAt: Date.now(),
+    });
+}
+
+/**
+ * Reverse sync: when an `agents` row is inserted via the API path (not via
+ * the canvas), provision a matching `agentConfigs` row + canvas node on the
+ * org owner's default project/environment so the agent appears on the
+ * canvas immediately. Silently no-ops when:
+ *   - no org/owner can be found for the account
+ *   - the owner has no projects/environments yet
+ *   - an agentConfigs row already references this agent
+ *
+ * The created agentConfigs row is intentionally minimal (name + agentId
+ * pointer). The canvas user can edit the rest via the Config tab; that
+ * edit path already pushes the encrypted nested AgentConfig back onto
+ * this same `agents` row.
+ */
+export async function backSyncCanvasFromAgentRow(
+    ctx: MutationCtx,
+    agentRowId: Id<"agents">,
+): Promise<void> {
+    const agent = await ctx.db.get(agentRowId);
+    if (!agent) return;
+
+    const existingConfig = await ctx.db
+        .query("agentConfigs")
+        .filter((q) => q.eq(q.field("agentId"), agentRowId as unknown as string))
+        .first();
+    if (existingConfig) return;
+
+    const account = await ctx.db.get(agent.accountId);
+    if (!account) return;
+
+    const orgId = ctx.db.normalizeId("orgs", account.orgId);
+    if (!orgId) return;
+
+    const ownerMembership = await ctx.db
+        .query("orgMembers")
+        .withIndex("by_orgId", (q) => q.eq("orgId", orgId))
+        .filter((q) => q.eq(q.field("role"), "owner"))
+        .first();
+    const membership =
+        ownerMembership ??
+        (await ctx.db
+            .query("orgMembers")
+            .withIndex("by_orgId", (q) => q.eq("orgId", orgId))
+            .first());
+    if (!membership) return;
+
+    const user = await ctx.db.get(membership.userId);
+    if (!user) return;
+
+    const project = await ctx.db
+        .query("projects")
+        .withIndex("by_authId", (q) => q.eq("authId", user.authId))
+        .first();
+    if (!project) return;
+
+    const environment = await ctx.db
+        .query("environments")
+        .withIndex("by_authId_and_projectId", (q) =>
+            q.eq("authId", user.authId).eq("projectId", project._id),
+        )
+        .first();
+    if (!environment) return;
+
+    // Decrypt the API-supplied config blob (if any) so canvas fields mirror
+    // what the API caller actually configured (provider, modelId, system
+    // prompt, workspace, tools, …). Secrets in the blob are already resolved
+    // — they go into extraConfig.provider/tools verbatim, which the Config
+    // tab surfaces but Variables does not (we'd need the original ${KEY}
+    // placeholders + variables to populate runtimeVariables, and those are
+    // not transmitted on the API path).
+    const secret = process.env.ACCOUNT_CONFIG_ENCRYPTION_SECRET;
+    const decrypted =
+        secret && agent.encryptedConfig && agent.encryptionIv && agent.encryptionTag
+            ? await decryptAgentConfigBlob(
+                  { ciphertext: agent.encryptedConfig, iv: agent.encryptionIv, tag: agent.encryptionTag },
+                  secret,
+              )
+            : null;
+    const flat = decrypted ? fromNestedAgentConfig(decrypted) : null;
+
+    const now = Date.now();
+    const configId = await ctx.db.insert("agentConfigs", {
+        authId: user.authId,
+        name: agent.name,
+        description: agent.description,
+        agentId: agentRowId,
+        projectId: project._id,
+        environmentId: environment._id,
+        provider: flat?.provider,
+        modelId: flat?.modelId ?? "gpt-4.1-mini",
+        systemPrompt: flat?.systemPrompt,
+        maxTurns: flat?.maxTurns,
+        temperature: flat?.temperature,
+        maxTokens: flat?.maxTokens,
+        providerOptions: flat?.providerOptions,
+        outputFormat: flat?.outputFormat,
+        memoryToolEnabled: flat?.memoryToolEnabled ?? true,
+        searchToolEnabled: flat?.searchToolEnabled ?? false,
+        searchToolConfig: flat?.searchToolConfig,
+        extraConfig: flat?.extraConfig,
+        publicAccessEnabled: false,
+        webSocketEnabled: false,
+        updatedAt: now,
+    });
+
+    const layout = await ctx.db
+        .query("canvasLayouts")
+        .withIndex("by_projectId_and_environmentId", (q) =>
+            q.eq("projectId", project._id).eq("environmentId", environment._id),
+        )
+        .unique();
+
+    const nextNode = {
+        id: String(now),
+        type: "agent" as const,
+        position: { x: 120 + Math.random() * 200, y: 120 + Math.random() * 200 },
+        data: {
+            label: agent.name,
+            status: "idle" as const,
+            agentConfigId: configId,
+        },
+    };
+
+    if (layout) {
+        await ctx.db.patch(layout._id, {
+            nodes: [...layout.nodes, nextNode],
+            updatedAt: now,
+        });
+    } else {
+        await ctx.db.insert("canvasLayouts", {
+            authId: user.authId,
+            projectId: project._id,
+            environmentId: environment._id,
+            nodes: [nextNode],
+            edges: [],
+            updatedAt: now,
+        });
+    }
+}
+
+/**
+ * Reverse-update sync: when an `agents` row is updated via API (PATCH
+ * /accounts/me/agents/<id>), decrypt the new blob and refresh the linked
+ * `agentConfigs` flat fields + extraConfig so the canvas Details/Config tabs
+ * reflect what the API caller just changed. No-op if no linked config or no
+ * decryptable blob.
+ */
+export async function mirrorAgentRowOntoConfig(
+    ctx: MutationCtx,
+    agentRowId: Id<"agents">,
+): Promise<void> {
+    const agent = await ctx.db.get(agentRowId);
+    if (!agent) return;
+
+    const linkedConfig = await ctx.db
+        .query("agentConfigs")
+        .filter((q) => q.eq(q.field("agentId"), agentRowId as unknown as string))
+        .first();
+    if (!linkedConfig) return;
+
+    const secret = process.env.ACCOUNT_CONFIG_ENCRYPTION_SECRET;
+    const decrypted =
+        secret && agent.encryptedConfig && agent.encryptionIv && agent.encryptionTag
+            ? await decryptAgentConfigBlob(
+                  { ciphertext: agent.encryptedConfig, iv: agent.encryptionIv, tag: agent.encryptionTag },
+                  secret,
+              )
+            : null;
+    const flat = decrypted ? fromNestedAgentConfig(decrypted) : null;
+    if (!flat) {
+        // At minimum mirror name/description, even when we can't decrypt.
+        await ctx.db.patch(linkedConfig._id, {
+            name: agent.name,
+            description: agent.description,
+            updatedAt: Date.now(),
+        });
+        return;
+    }
+
+    await ctx.db.patch(linkedConfig._id, {
+        name: agent.name,
+        description: agent.description,
+        provider: flat.provider,
+        modelId: flat.modelId ?? linkedConfig.modelId,
+        systemPrompt: flat.systemPrompt,
+        maxTurns: flat.maxTurns,
+        temperature: flat.temperature,
+        maxTokens: flat.maxTokens,
+        providerOptions: flat.providerOptions,
+        outputFormat: flat.outputFormat,
+        memoryToolEnabled: flat.memoryToolEnabled ?? linkedConfig.memoryToolEnabled,
+        searchToolEnabled: flat.searchToolEnabled ?? linkedConfig.searchToolEnabled,
+        searchToolConfig: flat.searchToolConfig,
+        extraConfig: flat.extraConfig,
         updatedAt: Date.now(),
     });
 }

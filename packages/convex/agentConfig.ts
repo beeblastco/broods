@@ -15,6 +15,8 @@ const agentProviderValidator = v.union(
     v.literal("google"),
     v.literal("bedrock"),
     v.literal("anthropic"),
+    v.literal("minimax"),
+    v.literal("gateway"),
 );
 
 const agentConfigDoc = v.object({
