@@ -92,6 +92,8 @@ function daytonaCreateOptions(
     ...(configString(options.snapshot) ? { snapshot: configString(options.snapshot) } : {}),
     ...(configString(options.image) ? { image: configString(options.image) } : {}),
     ...(Object.keys(envVars).length > 0 ? { envVars } : {}),
+    ...(typeof options.networkBlockAll === "boolean" ? { networkBlockAll: options.networkBlockAll } : {}),
+    ...(configString(options.networkAllowList) ? { networkAllowList: configString(options.networkAllowList) } : {}),
   };
 }
 

@@ -50,7 +50,9 @@ const agent = await createAgent(account.secret, "Sandbox assistant", {
                 target: "eu",
                 snapshot: "fuse-s3",
                 workspaceRoot: "/mnt/workspaces",
-                mountAwsS3Buckets: true
+                mountAwsS3Buckets: true,
+                networkBlockAll: false,
+                networkAllowList: "0.0.0.0/0",
             },
         },
         tasks: {
@@ -72,17 +74,7 @@ try {
                 role: "user",
                 content: [{
                     type: "text",
-                    text: [
-                        "Run this exact native mounted sandbox smoke test.",
-                        "",
-                        "1. Write /numbers.json with {\"left\":21,\"right\":2}.",
-                        "2. Write /sandbox-demo.js with JavaScript that reads ./numbers.json using fs.readFileSync, then prints JSON.stringify({ language: 'javascript', answer: left * right }).",
-                        "3. Run node /sandbox-demo.js.",
-                        "4. Write /sandbox-demo.py with Python that reads numbers.json with pathlib.Path, writes result.json with {'language': 'python', 'answer': 6 * 7}, and prints the result JSON.",
-                        "5. Run python3 /sandbox-demo.py.",
-                        "6. Read /result.json with the filesystem tool.",
-                        "7. Return the stdout and status objects from both runs, plus the result.json content.",
-                    ].join("\n"),
+                    text: "Call outside API and check for me the weather in San Francisco, CA.",
                 }],
             },
         ],
