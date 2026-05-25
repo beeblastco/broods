@@ -272,11 +272,14 @@ async function requestJson(url: string, init: RequestInit): Promise<unknown> {
 }
 
 function parseAccountResponse(value: unknown): PublicAccount {
-  if (!isRecord(value) || !isPublicAccount(value.account)) {
-    throw new Error("Account response must include account.accountId and account.username");
+  if (isRecord(value) && isPublicAccount(value.account)) {
+    return value.account;
+  }
+  if (isPublicAccount(value)) {
+    return value;
   }
 
-  return value.account;
+  throw new Error("Account response must include accountId and username");
 }
 
 function isPublicAccount(value: unknown): value is PublicAccount {
@@ -286,11 +289,14 @@ function isPublicAccount(value: unknown): value is PublicAccount {
 }
 
 function parseAgentResponse(value: unknown): PublicAgent {
-  if (!isRecord(value) || !isPublicAgent(value.agent)) {
-    throw new Error("Agent response must include agent.accountId, agent.agentId, and agent.name");
+  if (isRecord(value) && isPublicAgent(value.agent)) {
+    return value.agent;
+  }
+  if (isPublicAgent(value)) {
+    return value;
   }
 
-  return value.agent;
+  throw new Error("Agent response must include accountId, agentId, and name");
 }
 
 function isPublicAgent(value: unknown): value is PublicAgent {
