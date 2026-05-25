@@ -15,6 +15,8 @@ const canvasNodeValidator = v.object({
         v.literal("database"),
         v.literal("workspace"),
         v.literal("tool"),
+        v.literal("sandbox"),
+        v.literal("skill"),
     ),
     position: v.object({ x: v.number(), y: v.number() }),
     data: v.any(),
