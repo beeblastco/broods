@@ -125,13 +125,37 @@ interface StackedBarChartProps {
     series: typeof TOKEN_SERIES;
 }
 
-/** Stacked-bar SVG chart for token usage over time. */
+/**
+ * Floating tooltip that hovers above a chart bar. Positioned in container-
+ * relative coordinates so it follows the bar regardless of chart width.
+ */
+function ChartTooltip({
+    xPct,
+    yPct,
+    children,
+}: {
+    xPct: number;
+    yPct: number;
+    children: React.ReactNode;
+}) {
+    return (
+        <div
+            className="pointer-events-none absolute z-10 -translate-x-1/2 -translate-y-full rounded-md border border-border bg-popover/95 px-2.5 py-1.5 text-[11px] shadow-lg backdrop-blur"
+            style={{ left: `${xPct}%`, top: `${yPct}%` }}
+        >
+            {children}
+        </div>
+    );
+}
+
+/** Stacked-bar SVG chart for token usage over time, with per-bar hover breakdown. */
 function StackedBarChart({ bins, binSeconds, series }: StackedBarChartProps) {
     const width = 640;
     const height = 200;
     const padding = { top: 12, right: 12, bottom: 28, left: 44 };
     const innerW = width - padding.left - padding.right;
     const innerH = height - padding.top - padding.bottom;
+    const [hoverIndex, setHoverIndex] = useState<number | null>(null);
 
     if (bins.length === 0) {
         return (
@@ -147,87 +171,134 @@ function StackedBarChart({ bins, binSeconds, series }: StackedBarChartProps) {
     );
     const barW = innerW / bins.length;
     const gap = Math.min(2, barW * 0.2);
+    const hovered = hoverIndex !== null ? bins[hoverIndex] : null;
+    const hoveredCenterPct = hoverIndex !== null
+        ? ((padding.left + barW * hoverIndex + barW / 2) / width) * 100
+        : 0;
+    const hoveredTopPct = hovered
+        ? ((padding.top + innerH - (series.reduce((s, sr) => s + (hovered[sr.key as keyof typeof hovered] as number), 0) / maxTotal) * innerH) / height) * 100
+        : 0;
 
     return (
-        <svg viewBox={`0 0 ${width} ${height}`} className="w-full h-auto">
-            {/* Y-axis ticks */}
-            {[0, 0.25, 0.5, 0.75, 1].map((t, i) => {
-                const y = padding.top + innerH * (1 - t);
-                const val = maxTotal * t;
+        <div className="relative">
+            <svg viewBox={`0 0 ${width} ${height}`} className="w-full h-auto" onMouseLeave={() => setHoverIndex(null)}>
+                {/* Y-axis ticks */}
+                {[0, 0.25, 0.5, 0.75, 1].map((t, i) => {
+                    const y = padding.top + innerH * (1 - t);
+                    const val = maxTotal * t;
 
-                return (
-                    <g key={i}>
-                        <line
-                            x1={padding.left}
-                            x2={padding.left + innerW}
-                            y1={y}
-                            y2={y}
-                            stroke="currentColor"
-                            className="text-border"
-                            strokeWidth={0.5}
-                        />
+                    return (
+                        <g key={i}>
+                            <line
+                                x1={padding.left}
+                                x2={padding.left + innerW}
+                                y1={y}
+                                y2={y}
+                                stroke="currentColor"
+                                className="text-border"
+                                strokeWidth={0.5}
+                            />
+                            <text
+                                x={padding.left - 6}
+                                y={y + 3}
+                                textAnchor="end"
+                                className="fill-muted-foreground text-[9px]"
+                            >
+                                {formatNumber(val)}
+                            </text>
+                        </g>
+                    );
+                })}
+
+                {/* Bars */}
+                {bins.map((b, i) => {
+                    const x = padding.left + barW * i + gap / 2;
+                    const w = Math.max(barW - gap, 1);
+                    let yCursor = padding.top + innerH;
+                    const isHover = hoverIndex === i;
+
+                    return (
+                        <g
+                            key={b.bucketStart}
+                            onMouseEnter={() => setHoverIndex(i)}
+                            style={{ cursor: "pointer" }}
+                        >
+                            {/* Full-height invisible hit target so empty space above the stack is also hoverable */}
+                            <rect
+                                x={padding.left + barW * i}
+                                y={padding.top}
+                                width={barW}
+                                height={innerH}
+                                fill="transparent"
+                            />
+                            {series.map((s) => {
+                                const value = b[s.key as keyof typeof b] as number;
+                                if (!value) return null;
+                                const h = (value / maxTotal) * innerH;
+                                yCursor -= h;
+
+                                return (
+                                    <rect
+                                        key={s.key as string}
+                                        x={x}
+                                        y={yCursor}
+                                        width={w}
+                                        height={h}
+                                        fill={s.color}
+                                        opacity={hoverIndex === null || isHover ? 1 : 0.5}
+                                    />
+                                );
+                            })}
+                        </g>
+                    );
+                })}
+
+                {/* X-axis labels — show ~6 evenly spaced */}
+                {bins.map((b, i) => {
+                    const stride = Math.max(1, Math.ceil(bins.length / 6));
+                    if (i % stride !== 0) return null;
+                    const x = padding.left + barW * i + barW / 2;
+
+                    return (
                         <text
-                            x={padding.left - 6}
-                            y={y + 3}
-                            textAnchor="end"
+                            key={b.bucketStart}
+                            x={x}
+                            y={height - 8}
+                            textAnchor="middle"
                             className="fill-muted-foreground text-[9px]"
                         >
-                            {formatNumber(val)}
+                            {formatBucketLabel(b.bucketStart, binSeconds)}
                         </text>
-                    </g>
-                );
-            })}
+                    );
+                })}
+            </svg>
 
-            {/* Bars */}
-            {bins.map((b, i) => {
-                const x = padding.left + barW * i + gap / 2;
-                const w = Math.max(barW - gap, 1);
-                let yCursor = padding.top + innerH;
-
-                return (
-                    <g key={b.bucketStart}>
+            {hovered && (
+                <ChartTooltip xPct={hoveredCenterPct} yPct={hoveredTopPct}>
+                    <div className="font-medium tabular-nums">
+                        {formatBucketLabel(hovered.bucketStart, binSeconds)}
+                    </div>
+                    <div className="mt-1 grid gap-0.5">
                         {series.map((s) => {
-                            const value = b[s.key as keyof typeof b] as number;
-                            if (!value) return null;
-                            const h = (value / maxTotal) * innerH;
-                            yCursor -= h;
-
+                            const value = hovered[s.key as keyof typeof hovered] as number;
                             return (
-                                <rect
-                                    key={s.key as string}
-                                    x={x}
-                                    y={yCursor}
-                                    width={w}
-                                    height={h}
-                                    fill={s.color}
-                                >
-                                    <title>{`${s.label}: ${value.toLocaleString()}`}</title>
-                                </rect>
+                                <div key={s.key as string} className="flex items-center justify-between gap-3">
+                                    <span className="flex items-center gap-1.5 text-muted-foreground">
+                                        <span className="size-2 rounded-sm" style={{ backgroundColor: s.color }} />
+                                        {s.label}
+                                    </span>
+                                    <span className="tabular-nums">{value.toLocaleString()}</span>
+                                </div>
                             );
                         })}
-                    </g>
-                );
-            })}
-
-            {/* X-axis labels — show ~6 evenly spaced */}
-            {bins.map((b, i) => {
-                const stride = Math.max(1, Math.ceil(bins.length / 6));
-                if (i % stride !== 0) return null;
-                const x = padding.left + barW * i + barW / 2;
-
-                return (
-                    <text
-                        key={b.bucketStart}
-                        x={x}
-                        y={height - 8}
-                        textAnchor="middle"
-                        className="fill-muted-foreground text-[9px]"
-                    >
-                        {formatBucketLabel(b.bucketStart, binSeconds)}
-                    </text>
-                );
-            })}
-        </svg>
+                        <div className="mt-0.5 flex items-center justify-between gap-3 border-t border-border/60 pt-0.5 font-medium">
+                            <span className="text-muted-foreground">Total</span>
+                            <span className="tabular-nums">{hovered.totalTokens.toLocaleString()}</span>
+                        </div>
+                    </div>
+                </ChartTooltip>
+            )}
+        </div>
     );
 }
 
@@ -243,6 +314,7 @@ function InvocationsChart({ bins, binSeconds }: InvocationsChartProps) {
     const padding = { top: 12, right: 12, bottom: 28, left: 44 };
     const innerW = width - padding.left - padding.right;
     const innerH = height - padding.top - padding.bottom;
+    const [hoverIndex, setHoverIndex] = useState<number | null>(null);
 
     if (bins.length === 0) {
         return (
@@ -255,87 +327,124 @@ function InvocationsChart({ bins, binSeconds }: InvocationsChartProps) {
     const maxVal = Math.max(...bins.map((b) => Math.max(b.invocations, b.modelCalls)), 1);
     const slot = innerW / bins.length;
     const barW = Math.max((slot - 4) / 2, 1);
+    const hovered = hoverIndex !== null ? bins[hoverIndex] : null;
+    const hoveredCenterPct = hoverIndex !== null
+        ? ((padding.left + slot * hoverIndex + slot / 2) / width) * 100
+        : 0;
+    const hoveredTopPct = hovered
+        ? ((padding.top + innerH - (Math.max(hovered.invocations, hovered.modelCalls) / maxVal) * innerH) / height) * 100
+        : 0;
 
     return (
-        <svg viewBox={`0 0 ${width} ${height}`} className="w-full h-auto">
-            {[0, 0.5, 1].map((t, i) => {
-                const y = padding.top + innerH * (1 - t);
+        <div className="relative">
+            <svg viewBox={`0 0 ${width} ${height}`} className="w-full h-auto" onMouseLeave={() => setHoverIndex(null)}>
+                {[0, 0.5, 1].map((t, i) => {
+                    const y = padding.top + innerH * (1 - t);
 
-                return (
-                    <g key={i}>
-                        <line
-                            x1={padding.left}
-                            x2={padding.left + innerW}
-                            y1={y}
-                            y2={y}
-                            stroke="currentColor"
-                            className="text-border"
-                            strokeWidth={0.5}
-                        />
+                    return (
+                        <g key={i}>
+                            <line
+                                x1={padding.left}
+                                x2={padding.left + innerW}
+                                y1={y}
+                                y2={y}
+                                stroke="currentColor"
+                                className="text-border"
+                                strokeWidth={0.5}
+                            />
+                            <text
+                                x={padding.left - 6}
+                                y={y + 3}
+                                textAnchor="end"
+                                className="fill-muted-foreground text-[9px]"
+                            >
+                                {formatNumber(maxVal * t)}
+                            </text>
+                        </g>
+                    );
+                })}
+
+                {bins.map((b, i) => {
+                    const x = padding.left + slot * i + 2;
+                    const hTasks = (b.invocations / maxVal) * innerH;
+                    const hCalls = (b.modelCalls / maxVal) * innerH;
+                    const isHover = hoverIndex === i;
+
+                    return (
+                        <g
+                            key={b.bucketStart}
+                            onMouseEnter={() => setHoverIndex(i)}
+                            style={{ cursor: "pointer" }}
+                        >
+                            <rect x={padding.left + slot * i} y={padding.top} width={slot} height={innerH} fill="transparent" />
+                            <rect
+                                x={x}
+                                y={padding.top + innerH - hTasks}
+                                width={barW}
+                                height={hTasks}
+                                fill="#22d3ee"
+                                opacity={hoverIndex === null || isHover ? 1 : 0.5}
+                            />
+                            <rect
+                                x={x + barW + 1}
+                                y={padding.top + innerH - hCalls}
+                                width={barW}
+                                height={hCalls}
+                                fill="#f472b6"
+                                opacity={hoverIndex === null || isHover ? 1 : 0.5}
+                            />
+                        </g>
+                    );
+                })}
+
+                {bins.map((b, i) => {
+                    const stride = Math.max(1, Math.ceil(bins.length / 6));
+                    if (i % stride !== 0) return null;
+                    const x = padding.left + slot * i + slot / 2;
+
+                    return (
                         <text
-                            x={padding.left - 6}
-                            y={y + 3}
-                            textAnchor="end"
+                            key={b.bucketStart}
+                            x={x}
+                            y={height - 8}
+                            textAnchor="middle"
                             className="fill-muted-foreground text-[9px]"
                         >
-                            {formatNumber(maxVal * t)}
+                            {formatBucketLabel(b.bucketStart, binSeconds)}
                         </text>
-                    </g>
-                );
-            })}
+                    );
+                })}
+            </svg>
 
-            {bins.map((b, i) => {
-                const x = padding.left + slot * i + 2;
-                const hTasks = (b.invocations / maxVal) * innerH;
-                const hCalls = (b.modelCalls / maxVal) * innerH;
-
-                return (
-                    <g key={b.bucketStart}>
-                        <rect
-                            x={x}
-                            y={padding.top + innerH - hTasks}
-                            width={barW}
-                            height={hTasks}
-                            fill="#22d3ee"
-                        >
-                            <title>{`Tasks: ${b.invocations}`}</title>
-                        </rect>
-                        <rect
-                            x={x + barW + 1}
-                            y={padding.top + innerH - hCalls}
-                            width={barW}
-                            height={hCalls}
-                            fill="#f472b6"
-                        >
-                            <title>{`Model calls: ${b.modelCalls}`}</title>
-                        </rect>
-                    </g>
-                );
-            })}
-
-            {bins.map((b, i) => {
-                const stride = Math.max(1, Math.ceil(bins.length / 6));
-                if (i % stride !== 0) return null;
-                const x = padding.left + slot * i + slot / 2;
-
-                return (
-                    <text
-                        key={b.bucketStart}
-                        x={x}
-                        y={height - 8}
-                        textAnchor="middle"
-                        className="fill-muted-foreground text-[9px]"
-                    >
-                        {formatBucketLabel(b.bucketStart, binSeconds)}
-                    </text>
-                );
-            })}
-        </svg>
+            {hovered && (
+                <ChartTooltip xPct={hoveredCenterPct} yPct={hoveredTopPct}>
+                    <div className="font-medium tabular-nums">
+                        {formatBucketLabel(hovered.bucketStart, binSeconds)}
+                    </div>
+                    <div className="mt-1 grid gap-0.5">
+                        <div className="flex items-center justify-between gap-3">
+                            <span className="flex items-center gap-1.5 text-muted-foreground">
+                                <span className="size-2 rounded-sm" style={{ backgroundColor: "#22d3ee" }} />
+                                Tasks
+                            </span>
+                            <span className="tabular-nums">{hovered.invocations.toLocaleString()}</span>
+                        </div>
+                        <div className="flex items-center justify-between gap-3">
+                            <span className="flex items-center gap-1.5 text-muted-foreground">
+                                <span className="size-2 rounded-sm" style={{ backgroundColor: "#f472b6" }} />
+                                Model calls
+                            </span>
+                            <span className="tabular-nums">{hovered.modelCalls.toLocaleString()}</span>
+                        </div>
+                    </div>
+                </ChartTooltip>
+            )}
+        </div>
     );
 }
 
 export function TokensUsagePanel({ projectId }: Props) {
-    const [range, setRange] = useState<Range>("1d");
+    const [range, setRange] = useState<Range>("1h");
     const [stats, setStats] = useState<UsageStats | null>(null);
     const [isFetching, setIsFetching] = useState(false);
     const [error, setError] = useState<string | null>(null);
@@ -438,33 +547,33 @@ export function TokensUsagePanel({ projectId }: Props) {
                         <p className="text-sm text-muted-foreground">No model activity in this window.</p>
                     </div>
                 ) : (
-                    <div className="rounded-lg border border-border bg-card overflow-hidden">
-                        <table className="w-full text-xs">
+                    <div className="rounded-lg border border-border bg-card overflow-x-auto">
+                        <table className="w-full min-w-[680px] text-xs">
                             <thead>
                                 <tr className="text-left text-muted-foreground border-b border-border">
-                                    <th className="px-3 py-2 font-medium">Provider</th>
-                                    <th className="px-3 py-2 font-medium">Model</th>
-                                    <th className="px-3 py-2 font-medium text-right">Input</th>
-                                    <th className="px-3 py-2 font-medium text-right">Output</th>
-                                    <th className="px-3 py-2 font-medium text-right">Reasoning</th>
-                                    <th className="px-3 py-2 font-medium text-right">Cached</th>
-                                    <th className="px-3 py-2 font-medium text-right">Total</th>
-                                    <th className="px-3 py-2 font-medium text-right">Tasks</th>
-                                    <th className="px-3 py-2 font-medium text-right">Calls</th>
+                                    <th className="px-3 py-2 font-medium whitespace-nowrap">Provider</th>
+                                    <th className="px-3 py-2 font-medium whitespace-nowrap">Model</th>
+                                    <th className="px-3 py-2 font-medium whitespace-nowrap text-right">Input</th>
+                                    <th className="px-3 py-2 font-medium whitespace-nowrap text-right">Output</th>
+                                    <th className="px-3 py-2 font-medium whitespace-nowrap text-right">Reasoning</th>
+                                    <th className="px-3 py-2 font-medium whitespace-nowrap text-right">Cached</th>
+                                    <th className="px-3 py-2 font-medium whitespace-nowrap text-right">Total</th>
+                                    <th className="px-3 py-2 font-medium whitespace-nowrap text-right">Tasks</th>
+                                    <th className="px-3 py-2 font-medium whitespace-nowrap text-right">Calls</th>
                                 </tr>
                             </thead>
                             <tbody className="divide-y divide-border font-mono">
                                 {byModel.map((m) => (
                                     <tr key={`${m.modelProvider}::${m.modelId}`}>
-                                        <td className="px-3 py-2">{m.modelProvider}</td>
-                                        <td className="px-3 py-2">{m.modelId}</td>
-                                        <td className="px-3 py-2 text-right">{formatNumber(m.inputTokens)}</td>
-                                        <td className="px-3 py-2 text-right">{formatNumber(m.outputTokens)}</td>
-                                        <td className="px-3 py-2 text-right">{formatNumber(m.reasoningTokens)}</td>
-                                        <td className="px-3 py-2 text-right">{formatNumber(m.cachedInputTokens)}</td>
-                                        <td className="px-3 py-2 text-right">{formatNumber(m.totalTokens)}</td>
-                                        <td className="px-3 py-2 text-right">{formatNumber(m.invocations)}</td>
-                                        <td className="px-3 py-2 text-right">{formatNumber(m.modelCalls)}</td>
+                                        <td className="px-3 py-2 whitespace-nowrap">{m.modelProvider}</td>
+                                        <td className="px-3 py-2 whitespace-nowrap">{m.modelId}</td>
+                                        <td className="px-3 py-2 whitespace-nowrap text-right">{formatNumber(m.inputTokens)}</td>
+                                        <td className="px-3 py-2 whitespace-nowrap text-right">{formatNumber(m.outputTokens)}</td>
+                                        <td className="px-3 py-2 whitespace-nowrap text-right">{formatNumber(m.reasoningTokens)}</td>
+                                        <td className="px-3 py-2 whitespace-nowrap text-right">{formatNumber(m.cachedInputTokens)}</td>
+                                        <td className="px-3 py-2 whitespace-nowrap text-right">{formatNumber(m.totalTokens)}</td>
+                                        <td className="px-3 py-2 whitespace-nowrap text-right">{formatNumber(m.invocations)}</td>
+                                        <td className="px-3 py-2 whitespace-nowrap text-right">{formatNumber(m.modelCalls)}</td>
                                     </tr>
                                 ))}
                             </tbody>

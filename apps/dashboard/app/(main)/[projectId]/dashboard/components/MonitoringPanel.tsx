@@ -95,21 +95,23 @@ export function MonitoringPanel({ projectId }: Props) {
                 )}
 
                 {logEntries !== null && logEntries.length > 0 && (
-                    <div className="rounded-lg border border-border bg-card divide-y divide-border font-mono text-xs overflow-hidden">
+                    <div className="rounded-lg border border-border bg-card divide-y divide-border font-mono text-xs max-h-[600px] overflow-y-auto">
                         {logEntries.map((entry, i) => (
-                            <div key={i} className="flex items-start gap-3 px-4 py-2.5">
-                                <span className="shrink-0 text-muted-foreground tabular-nums">
-                                    {formatTime(entry.timestamp)}
-                                </span>
-                                <Badge variant="destructive" className="shrink-0 text-[10px] px-1.5">
-                                    {entry.level}
-                                </Badge>
-                                <span className="shrink-0 text-muted-foreground/60">
-                                    {entry.functionName}
-                                </span>
-                                <span className="flex-1 break-all text-red-500">
+                            <div key={i} className="flex flex-col gap-1.5 px-4 py-3">
+                                <div className="flex flex-wrap items-center gap-2">
+                                    <span className="shrink-0 text-muted-foreground tabular-nums">
+                                        {formatTime(entry.timestamp)}
+                                    </span>
+                                    <Badge variant="destructive" className="shrink-0 text-[10px] px-1.5">
+                                        {entry.level}
+                                    </Badge>
+                                    <span className="truncate text-muted-foreground/60" title={entry.functionName}>
+                                        {entry.functionName}
+                                    </span>
+                                </div>
+                                <pre className="whitespace-pre-wrap break-words text-red-400 leading-relaxed">
                                     {entry.message}
-                                </span>
+                                </pre>
                             </div>
                         ))}
                     </div>
