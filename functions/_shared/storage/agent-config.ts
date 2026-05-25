@@ -524,12 +524,19 @@ function normalizeWorkspaceSandboxConfig(value: unknown): void {
   assertOptionalString(options.nodeFunctionName, "config.workspace.sandbox.options.nodeFunctionName");
   assertOptionalString(options.pythonFunctionName, "config.workspace.sandbox.options.pythonFunctionName");
   assertOptionalString(options.apiKey, "config.workspace.sandbox.options.apiKey");
+  assertOptionalString(options.organizationId, "config.workspace.sandbox.options.organizationId");
   assertOptionalString(options.template, "config.workspace.sandbox.options.template");
   assertOptionalString(options.templateId, "config.workspace.sandbox.options.templateId");
   assertOptionalString(options.apiUrl, "config.workspace.sandbox.options.apiUrl");
   assertOptionalString(options.target, "config.workspace.sandbox.options.target");
+  assertOptionalString(options.snapshot, "config.workspace.sandbox.options.snapshot");
   assertOptionalString(options.image, "config.workspace.sandbox.options.image");
   assertOptionalString(options.workspaceRoot, "config.workspace.sandbox.options.workspaceRoot");
+  assertOptionalBoolean(options.mountAwsS3Buckets, "config.workspace.sandbox.options.mountAwsS3Buckets");
+  assertOptionalString(options.workspaceBucketName, "config.workspace.sandbox.options.workspaceBucketName");
+  assertOptionalString(options.skillsBucketName, "config.workspace.sandbox.options.skillsBucketName");
+  assertOptionalString(options.skillsMountPath, "config.workspace.sandbox.options.skillsMountPath");
+  assertOptionalString(options.awsRegion, "config.workspace.sandbox.options.awsRegion");
   if (options.envVars !== undefined && !isStringRecord(options.envVars)) {
     throw new Error("config.workspace.sandbox.options.envVars must be an object with string values");
   }

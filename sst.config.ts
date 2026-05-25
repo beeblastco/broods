@@ -14,6 +14,9 @@ const NATS_URL = process.env.NATS_URL?.trim();
 // for the main branch.
 const CONVEX_URL = process.env.CONVEX_URL?.trim();
 const CONVEX_DEPLOY_KEY = process.env.CONVEX_DEPLOY_KEY?.trim();
+const DAYTONA_ORGANIZATION_ID = process.env.DAYTONA_ORGANIZATION_ID?.trim();
+const DAYTONA_API_URL = process.env.DAYTONA_API_URL?.trim();
+const DAYTONA_TARGET = process.env.DAYTONA_TARGET?.trim();
 
 if (ENABLE_WEBSOCKET && !NATS_URL) {
   throw new Error("NATS_URL must be set when ENABLE_WEBSOCKET=true");
@@ -178,6 +181,7 @@ export default $config({
 
     const adminAccountSecret = new sst.Secret("AdminAccountSecret");
     const accountConfigEncryptionSecret = new sst.Secret("AccountConfigEncryptionSecret");
+    const daytonaApiKey = new sst.Secret("DaytonaApiKey");
 
     // accounts / agents / cron-jobs DDB tables are skipped on production —
     // those domains live in Convex on SaaS. Tables stay for dev / community
@@ -339,9 +343,9 @@ export default $config({
       },
     });
 
-    // Setup the VPC for the sandbox connection.
-    // It does not allow connect to outside internet, else we have to enable NAT Gateway which is
-    // expensive asf.
+    // Setup the VPC for the sandbox connection. It intentionally has no NAT,
+    // so Lambda sandbox code can reach mounted workspace storage but cannot
+    // open arbitrary public internet connections.
     const sandboxNetwork = new sst.aws.Vpc("SandboxNetwork", {
       az: 2, // 2 az same price of 1 az.
     });
@@ -597,6 +601,10 @@ export default $config({
           ? { CRON_JOBS_TABLE_NAME: cronJobsTable.name }
           : {}),
         ...(NATS_URL ? { NATS_URL } : {}),
+        DAYTONA_API_KEY: daytonaApiKey.value,
+        ...(DAYTONA_ORGANIZATION_ID ? { DAYTONA_ORGANIZATION_ID } : {}),
+        ...(DAYTONA_API_URL ? { DAYTONA_API_URL } : {}),
+        ...(DAYTONA_TARGET ? { DAYTONA_TARGET } : {}),
       },
       permissions: [
         ...(accountConfigsTable

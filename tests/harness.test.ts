@@ -19,7 +19,7 @@ const gatewayModelMock = mock((modelId: string) => ({ provider: "gateway", model
 const createGatewayMock = mock((_options: unknown) => gatewayModelMock);
 const minimaxModelMock = mock((modelId: string) => ({ provider: "minimax", modelId }));
 const createMinimaxMock = mock((_options: unknown) => minimaxModelMock);
-let streamTextScenario: "empty" | "error-then-empty" | "approval-request" | "structured-output" = "empty";
+let streamTextScenario: "empty" | "error-then-empty" | "approval-request" | "structured-output" | "tool-run" = "empty";
 
 const streamTextMock = mock((options: {
   experimental_onStepStart?: (args: {
@@ -30,8 +30,17 @@ const streamTextMock = mock((options: {
     activeTools?: string[];
     metadata?: Record<string, unknown>;
   }) => Promise<void>;
-  experimental_onToolCallStart?: unknown;
-  experimental_onToolCallFinish?: unknown;
+  experimental_onToolCallStart?: (args: {
+    stepNumber?: number;
+    toolCall: { toolCallId: string; toolName: string; input?: unknown };
+  }) => Promise<void>;
+  experimental_onToolCallFinish?: (args: {
+    stepNumber?: number;
+    toolCall: { toolCallId: string; toolName: string; input?: unknown };
+    durationMs: number;
+    success: boolean;
+    error?: unknown;
+  }) => Promise<void>;
   onChunk?: unknown;
   onError(args: { error: unknown }): Promise<void>;
   onFinish(args: {
@@ -182,6 +191,73 @@ const streamTextMock = mock((options: {
           request: {},
           providerMetadata: { google: { safetyRatings: [] } },
           metadata: { run: "test" },
+        });
+        controller.enqueue({ type: "finish", finishReason: "stop" });
+        controller.close();
+        return;
+      }
+
+      if (streamTextScenario === "tool-run") {
+        const toolCall = {
+          type: "tool-call",
+          toolCallId: "tool-call-1",
+          toolName: "filesystem",
+          input: { shell: "ls" },
+        };
+        await options.experimental_onStepStart?.({
+          stepNumber: 0,
+          model: { provider: "google", modelId: "gemini-custom" },
+          messages: [{ role: "user", content: "hello" }],
+          tools: options.tools as Record<string, unknown> | undefined,
+          metadata: { run: "test" },
+        });
+        await options.experimental_onToolCallStart?.({
+          stepNumber: 0,
+          toolCall,
+        });
+        await options.experimental_onToolCallFinish?.({
+          stepNumber: 0,
+          toolCall,
+          durationMs: 12,
+          success: true,
+        });
+        await options.onStepFinish?.({
+          stepNumber: 0,
+          model: { provider: "google", modelId: "gemini-custom" },
+          finishReason: "stop",
+          rawFinishReason: "STOP",
+          usage: { inputTokens: 4, outputTokens: 6, totalTokens: 10 },
+          toolCalls: [toolCall],
+          toolResults: [{
+            type: "tool-result",
+            toolCallId: "tool-call-1",
+            toolName: "filesystem",
+            output: { type: "text", value: "file.txt" },
+          }],
+          warnings: [],
+          request: {},
+          response: {
+            messages: [{ role: "assistant", content: "done" }],
+            id: "response-1",
+            modelId: "gemini-custom",
+            timestamp: new Date("2024-01-02T03:04:05.000Z"),
+          },
+          metadata: { run: "test" },
+        });
+        await options.onFinish({
+          response: {
+            messages: [{ role: "assistant", content: "done" }],
+            id: "response-1",
+            modelId: "gemini-custom",
+            timestamp: new Date("2024-01-02T03:04:05.000Z"),
+          },
+          text: "done",
+          finishReason: "stop",
+          rawFinishReason: "STOP",
+          usage: { inputTokens: 4, outputTokens: 6, totalTokens: 10 },
+          totalUsage: { inputTokens: 4, outputTokens: 6, totalTokens: 10 },
+          steps: [],
+          toolCalls: [toolCall],
         });
         controller.enqueue({ type: "finish", finishReason: "stop" });
         controller.close();
@@ -686,6 +762,70 @@ describe("runAgentLoop", () => {
       usage: { inputTokens: 4, outputTokens: 6, totalTokens: 10 },
     });
     expect(logs.find((log) => log.eventType === "model.step.finished").responseMetadata).not.toHaveProperty("headers");
+  });
+
+  it("logs aggregate tool usage metadata for monitoring", async () => {
+    streamTextScenario = "tool-run";
+    installHarnessEnv();
+    const lines: string[] = [];
+    process.stdout.write = ((chunk: string | Uint8Array) => {
+      lines.push(typeof chunk === "string" ? chunk.trim() : Buffer.from(chunk).toString("utf8").trim());
+      return true;
+    }) as typeof process.stdout.write;
+    const { runAgentLoop } = await import("../functions/harness-processing/harness.ts");
+
+    const stream = await runAgentLoop({
+      accountId: "acct_test",
+      agentId: "agent_test",
+      conversationKey: "direct:conversation",
+      eventId: "direct-event",
+      filesystemNamespace: () => "fs-test",
+      persistModelMessages: async () => { },
+      loadRefreshedSystemPromptParts: async () => ({
+        systemContextSnapshot: { cursor: null, messages: [] },
+        system: [],
+      }),
+    } as never, {
+      messages: [{ role: "user", content: "hello" }],
+      system: [],
+      ephemeralSystem: [],
+      systemContextSnapshot: { cursor: null, messages: [] },
+    }, {
+      provider: {
+        google: {
+          apiKey: "google-key",
+        },
+      },
+      model: {
+        provider: "google",
+        modelId: "gemini-custom",
+      },
+    });
+
+    await stream.consumeStream();
+
+    const logs = lines.map((line) => JSON.parse(line));
+    expect(logs.find((log) => log.eventType === "tool.call.finished")).toMatchObject({
+      accountId: "acct_test",
+      agentId: "agent_test",
+      eventId: "direct-event",
+      toolName: "filesystem",
+      toolCallId: "tool-call-1",
+      durationMs: 12,
+    });
+    expect(logs.find((log) => log.eventType === "model.invocation.finished")).toMatchObject({
+      toolsUsed: ["filesystem"],
+      toolUsage: {
+        filesystem: 1,
+      },
+      toolCalls: [{
+        toolCallId: "tool-call-1",
+        toolName: "filesystem",
+        stepNumber: 0,
+        durationMs: 12,
+        success: true,
+      }],
+    });
   });
 
   it("uses agent maxTurn for the model loop limit", async () => {

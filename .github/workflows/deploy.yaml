@@ -101,6 +101,12 @@ jobs:
       ENABLE_DIRECT_API: ${{ vars.ENABLE_DIRECT_API || 'false' }}
       ENABLE_WEBSOCKET: ${{ vars.ENABLE_WEBSOCKET || 'false' }}
       NATS_URL: ${{ secrets.NATS_URL }}
+      DAYTONA_API_KEY: ${{ secrets.DAYTONA_API_KEY }}
+      DAYTONA_ORGANIZATION_ID: ${{ vars.DAYTONA_ORGANIZATION_ID }}
+      DAYTONA_API_URL: ${{ vars.DAYTONA_API_URL }}
+      DAYTONA_TARGET: ${{ vars.DAYTONA_TARGET }}
+      DAYTONA_S3_SNAPSHOT_NAME: ${{ vars.DAYTONA_S3_SNAPSHOT_NAME }}
+      DAYTONA_S3_SNAPSHOT_BASE_IMAGE: ${{ vars.DAYTONA_S3_SNAPSHOT_BASE_IMAGE }}
       # Convex storage provider — required only on main branch.
       CONVEX_URL: ${{ github.ref == 'refs/heads/main' && secrets.CONVEX_URL || '' }}
       CONVEX_DEPLOY_KEY: ${{ github.ref == 'refs/heads/main' && secrets.CONVEX_DEPLOY_KEY || '' }}
@@ -177,6 +183,7 @@ jobs:
           SST_SECRET_TavilyApiKey: ${{ secrets.SST_SECRET_TAVILYAPIKEY }}
           SST_SECRET_AdminAccountSecret: ${{ secrets.SST_SECRET_ADMINACCOUNTSECRET }}
           SST_SECRET_AccountConfigEncryptionSecret: ${{ secrets.SST_SECRET_ACCOUNTCONFIGENCRYPTIONSECRET }}
+          SST_SECRET_DaytonaApiKey: ${{ secrets.DAYTONA_API_KEY }}
           MOCK_WEBHOOK_SECRET: ${{ secrets.MOCK_WEBHOOK_SECRET }}
         shell: bash
         run: |
@@ -187,6 +194,7 @@ jobs:
             SST_SECRET_TavilyApiKey \
             SST_SECRET_AdminAccountSecret \
             SST_SECRET_AccountConfigEncryptionSecret \
+            SST_SECRET_DaytonaApiKey \
             MOCK_WEBHOOK_SECRET
           do
             if [[ -z "${!name:-}" ]]; then
