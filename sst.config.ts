@@ -343,13 +343,12 @@ export default $config({
       },
     });
 
-    // Setup the VPC for the sandbox connection. Uses fck-nat (nat: "ec2"),
-    // a t4g.nano-based NAT solution that is ~10x cheaper than a managed NAT
-    // Gateway, so sandbox Lambdas can both mount S3 Files and reach the
-    // public internet (e.g. external HTTP APIs).
+    // Setup the VPC for the sandbox connection. Uses fck-nat (nat: "ec2") on
+    // non-production stages — a t4g.nano-based NAT solution ~10x cheaper than
+    // a managed NAT Gateway. Production omits NAT entirely to avoid cost.
     const sandboxNetwork = new sst.aws.Vpc("SandboxNetwork", {
       az: 2, // 2 az same price of 1 az.
-      nat: "ec2",
+      ...(isProduction ? {} : { nat: "ec2" }),
     });
 
     const s3FilesRole = new aws.iam.Role("SandboxS3FilesRole", {

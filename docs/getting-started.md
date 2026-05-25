@@ -282,7 +282,7 @@ Available tools: `tavilySearch`, `tavilyExtract`, `googleSearch`.
 
 ### Set Up a Channel (Optional)
 
-Connect a messaging platform so users can interact with your agent through Telegram, Discord, Slack, GitHub, or Facebook Messenger (via Pancake).
+Connect a messaging platform so users can interact with your agent through Telegram, Discord, Slack, GitHub, Facebook Messenger (via Pancake), or Zalo.
 
 #### Example: Telegram
 
@@ -328,6 +328,7 @@ Users can now message your bot on Telegram and get responses from your agent.
 | Slack | `botToken`, `signingSecret` |
 | GitHub | `webhookSecret`, `appId`, `privateKey` |
 | Pancake | `pageId`, `pageAccessToken` |
+| Zalo | `botToken`, `webhookSecret`, `allowedUserIds` |
 
 See [Channels](channels/index.md) for full setup details.
 

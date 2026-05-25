@@ -45,6 +45,7 @@ import { createPancakeChannel } from "../_shared/pancake-channel.ts";
 import type { LambdaResponse } from "../_shared/runtime.ts";
 import { createSlackChannel } from "../_shared/slack-channel.ts";
 import { createTelegramChannel } from "../_shared/telegram-channel.ts";
+import { createZaloChannel } from "../_shared/zalo-channel.ts";
 import {
   assertValidPublicConversationKey,
   assertValidPublicEventId,
@@ -424,6 +425,7 @@ function createChannelRegistry(
   const slackChannel = createSlackChannelFromConfig(config);
   const discordChannel = createDiscordChannelFromConfig(config);
   const pancakeChannel = createPancakeChannelFromConfig(config, scope);
+  const zaloChannel = createZaloChannelFromConfig(config);
 
   return {
     webhookChannels: [
@@ -432,6 +434,7 @@ function createChannelRegistry(
       slackChannel,
       discordChannel,
       pancakeChannel,
+      zaloChannel,
     ].filter((channel): channel is ChannelAdapter => channel !== null),
   };
 }
@@ -727,5 +730,18 @@ function createPancakeChannelFromConfig(
       agentId: scope.agentId,
       configOptions: channel.options,
     },
+  );
+}
+
+function createZaloChannelFromConfig(config: AgentConfig): ChannelAdapter | null {
+  const channel = config.channels?.zalo;
+  if (!channel?.botToken || !channel.webhookSecret || !channel.allowedUserIds) {
+    return null;
+  }
+
+  return createZaloChannel(
+    channel.botToken,
+    channel.webhookSecret,
+    new Set(channel.allowedUserIds),
   );
 }

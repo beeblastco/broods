@@ -351,3 +351,33 @@ jobs:
           fi
 
           bun run scripts/configure-slack-account.ts
+
+      - name: Configure Zalo account webhook
+        if: github.ref != 'refs/heads/main'
+        env:
+          ADMIN_ACCOUNT_SECRET: ${{ secrets.SST_SECRET_ADMINACCOUNTSECRET }}
+          ZALO_BOT_TOKEN: ${{ secrets.ZALO_BOT_TOKEN || secrets.SST_SECRET_ZALOBOTTOKEN }}
+          ZALO_WEBHOOK_SECRET: ${{ secrets.ZALO_WEBHOOK_SECRET || secrets.SST_SECRET_ZALOWEBHOOKSECRET }}
+          ZALO_ALLOWED_USER_IDS: ${{ secrets.ZALO_ALLOWED_USER_IDS || secrets.SST_SECRET_ZALOALLOWEDUSERIDS }}
+          INTEGRATIONS_ACCOUNT_USERNAME: ${{ vars.INTEGRATIONS_ACCOUNT_USERNAME || 'integrations-default' }}
+          ACCOUNT_MODEL_KNOWLEDGE_CUTOFF: ${{ vars.ACCOUNT_MODEL_KNOWLEDGE_CUTOFF || 'January 2025' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ -z "${ZALO_BOT_TOKEN:-}" || -z "${ZALO_WEBHOOK_SECRET:-}" ]]; then
+            echo "Skipping Zalo account configuration because ZALO_BOT_TOKEN or ZALO_WEBHOOK_SECRET is not configured."
+            exit 0
+          fi
+
+          if [[ -z "${ZALO_ALLOWED_USER_IDS:-}" ]]; then
+            echo "Skipping Zalo account configuration because ZALO_ALLOWED_USER_IDS is not configured."
+            exit 0
+          fi
+
+          if [[ -z "${ADMIN_ACCOUNT_SECRET:-}" ]]; then
+            echo "Missing required Zalo account configuration secret: ADMIN_ACCOUNT_SECRET" >&2
+            exit 1
+          fi
+
+          bun run scripts/configure-zalo-account.ts

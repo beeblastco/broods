@@ -91,6 +91,7 @@ Create an agent with model, tool, channel, workspace, skills, and optional subag
 {AGENT_SERVICE_URL}/webhooks/{accountId}/{agentId}/slack
 {AGENT_SERVICE_URL}/webhooks/{accountId}/{agentId}/discord
 {AGENT_SERVICE_URL}/webhooks/{accountId}/{agentId}/pancake
+{AGENT_SERVICE_URL}/webhooks/{accountId}/{agentId}/zalo
 ```
 
 Provider credentials for each channel, plus model/tool settings, live on agent config. See the example config file at [`examples/account.config.example.json`](../examples/account.config.example.json) for the supported config shape.
@@ -114,6 +115,9 @@ bun run scripts/configure-github-account.ts
 
 # Optional: run only if PANCAKE_PAGE_ID and PANCAKE_PAGE_ACCESS_TOKEN are set
 bun run scripts/configure-pancake-account.ts
+
+# Optional: run only if ZALO_BOT_TOKEN and all ZALO_* token values are set
+bun run scripts/configure-zalo-account.ts
 ```
 
 Each script uses `ADMIN_ACCOUNT_SECRET` for auth. Account and agent descriptions are optional; set `INTEGRATIONS_ACCOUNT_DESCRIPTION` or channel-specific `*_AGENT_DESCRIPTION` only when you want those fields stored.
