@@ -537,6 +537,8 @@ function normalizeWorkspaceSandboxConfig(value: unknown): void {
   assertOptionalString(options.skillsBucketName, "config.workspace.sandbox.options.skillsBucketName");
   assertOptionalString(options.skillsMountPath, "config.workspace.sandbox.options.skillsMountPath");
   assertOptionalString(options.awsRegion, "config.workspace.sandbox.options.awsRegion");
+  assertOptionalBoolean(options.networkBlockAll, "config.workspace.sandbox.options.networkBlockAll");
+  assertOptionalString(options.networkAllowList, "config.workspace.sandbox.options.networkAllowList");
   if (options.envVars !== undefined && !isStringRecord(options.envVars)) {
     throw new Error("config.workspace.sandbox.options.envVars must be an object with string values");
   }
