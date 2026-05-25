@@ -7,6 +7,7 @@ import type { ToolApprovalRequestOutput, ToolSet } from "ai";
 import {
   createAccount,
   createAgent,
+  deleteAccount,
   streamSSE,
 } from "./utils.ts";
 
@@ -90,8 +91,8 @@ try {
     process.stdout.write(chunk + "\n\n");
   }
 } finally {
-  // await deleteAccount(account.secret);
-  // console.log("\n\nDeleted test account");
+  await deleteAccount(account.secret);
+  console.log("\n\nDeleted test account");
 }
 
 function parseToolApprovalRequestChunk(chunk: string): ToolApprovalRequestChunk | null {

@@ -3,56 +3,60 @@
  * Creates a test account, agent, and one-time schedule for one minute from now.
  */
 
-import { ACCOUNT_SERVICE_URL, createAccount, createAgent } from "./utils.ts";
+import { ACCOUNT_SERVICE_URL, createAccount, createAgent, deleteAccount } from "./utils.ts";
 
 const googleApiKey = process.env.ACCOUNT_GOOGLE_API_KEY!;
 const timezone = process.env.CRON_TIMEZONE ?? "Europe/Amsterdam";
 
 const account = await createAccount(`cron-${Date.now()}`);
-const agent = await createAgent(account.secret, "Cron test assistant", {
-  provider: {
-    google: {
-      apiKey: googleApiKey,
+try {
+  const agent = await createAgent(account.secret, "Cron test assistant", {
+    provider: {
+      google: {
+        apiKey: googleApiKey,
+      },
     },
-  },
-  model: {
-    provider: "google",
-    modelId: "gemma-4-31b-it",
-  },
-  agent: {
-    system: "You are a concise scheduled maintenance assistant.",
-  },
-});
+    model: {
+      provider: "google",
+      modelId: "gemma-4-31b-it",
+    },
+    agent: {
+      system: "You are a concise scheduled maintenance assistant.",
+    },
+  });
 
-const scheduleExpression = atExpressionOneMinuteFromNow(timezone);
-const response = await fetch(`${ACCOUNT_SERVICE_URL}/accounts/me/cron-jobs`, {
-  method: "POST",
-  headers: {
-    "Content-Type": "application/json",
-    "Authorization": `Bearer ${account.secret}`,
-  },
-  body: JSON.stringify({
-    name: "One minute cron test",
+  const scheduleExpression = atExpressionOneMinuteFromNow(timezone);
+  const response = await fetch(`${ACCOUNT_SERVICE_URL}/accounts/me/cron-jobs`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": `Bearer ${account.secret}`,
+    },
+    body: JSON.stringify({
+      name: "One minute cron test",
+      agentId: agent.agentId,
+      conversationKey: "cron:one-minute-test",
+      prompt: "Confirm this scheduled cron test ran successfully in one sentence.",
+      scheduleExpression,
+      timezone,
+    }),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Create cron job failed: ${response.status} ${await response.text()}`);
+  }
+
+  console.log(JSON.stringify({
+    accountId: account.account.accountId,
     agentId: agent.agentId,
-    conversationKey: "cron:one-minute-test",
-    prompt: "Confirm this scheduled cron test ran successfully in one sentence.",
     scheduleExpression,
     timezone,
-  }),
-});
-
-if (!response.ok) {
-  throw new Error(`Create cron job failed: ${response.status} ${await response.text()}`);
+    cronJob: await response.json(),
+  }, null, 2));
+} finally {
+  await deleteAccount(account.secret);
+  console.log("\nDeleted test account");
 }
-
-console.log(JSON.stringify({
-  accountId: account.account.accountId,
-  secret: account.secret,
-  agentId: agent.agentId,
-  scheduleExpression,
-  timezone,
-  cronJob: await response.json(),
-}, null, 2));
 
 function atExpressionOneMinuteFromNow(timeZone: string): string {
   const date = new Date(Date.now() + 60_000);

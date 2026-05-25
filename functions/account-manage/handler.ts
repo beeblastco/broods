@@ -330,8 +330,8 @@ async function rotateSecretResponse(accountId: string): Promise<LambdaResponse> 
 }
 
 async function deleteAccountResponse(account: Extract<AuthContext, { kind: "account" }>["account"]): Promise<LambdaResponse> {
-    const [cleanup, agentsDeleted, skillObjectsDeleted, cronJobsDeleted] = await Promise.all([
-        deleteAccountRuntimeData(account),
+    const cleanup = await deleteAccountRuntimeData(account);
+    const [agentsDeleted, skillObjectsDeleted, cronJobsDeleted] = await Promise.all([
         getStorage().agents.removeAllForAccount(account.accountId),
         deleteAccountSkills(account.accountId),
         deleteAccountCronJobs(account.accountId),
