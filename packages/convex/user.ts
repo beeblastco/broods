@@ -76,6 +76,50 @@ export const updateProfile = mutation({
     },
 });
 
+/**
+ * Backfills the caller's name and avatarUrl from values supplied by the
+ * WorkOS client session when the Convex doc is missing them. Used to recover
+ * from cases where the webhook payload did not include the profile picture.
+ */
+export const syncProfile = mutation({
+    args: {
+        name: v.optional(v.string()),
+        avatarUrl: v.optional(v.string()),
+    },
+    returns: v.null(),
+    handler: async (ctx, args) => {
+        const { name, avatarUrl } = args;
+
+        // Check authenticated user
+        const authUser = await authKit.getAuthUser(ctx);
+        if (!authUser) {
+            throw new Error("User not found or not authenticated");
+        }
+
+        const user = await ctx.db
+            .query("users")
+            .withIndex("by_authId", (q) => q.eq("authId", authUser.id))
+            .first();
+        if (!user) {
+            return null;
+        }
+
+        const patch: { name?: string; avatarUrl?: string } = {};
+        if (avatarUrl && avatarUrl !== user.avatarUrl) {
+            patch.avatarUrl = avatarUrl;
+        }
+        if (name && name.trim() && name.trim() !== user.name) {
+            patch.name = name.trim();
+        }
+
+        if (Object.keys(patch).length > 0) {
+            await ctx.db.patch(user._id, patch);
+        }
+
+        return null;
+    },
+});
+
 export const requestAccountDeletion = mutation({
     args: {},
     returns: v.object({ scheduledFor: v.number() }),

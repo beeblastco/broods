@@ -29,7 +29,8 @@ export async function getOrgMembership(
 }
 
 /**
- * Most recently created org for the user, or null when they belong to none.
+ * Returns the user's explicitly-chosen active org when set and still valid,
+ * otherwise the most recently joined membership. Null if the user belongs to none.
  */
 export async function getActiveOrgForUser(
     ctx: QueryCtx | MutationCtx,
@@ -40,6 +41,15 @@ export async function getActiveOrgForUser(
         .withIndex("by_userId", (q) => q.eq("userId", userId))
         .collect();
     if (memberships.length === 0) return null;
+
+    const user = await ctx.db.get(userId);
+    if (user?.activeOrgId) {
+        const stillMember = memberships.some((m) => m.orgId === user.activeOrgId);
+        if (stillMember) {
+            const org = await ctx.db.get(user.activeOrgId);
+            if (org) return org;
+        }
+    }
 
     const newest = memberships.sort((a, b) => b.createdAt - a.createdAt)[0];
     const org = await ctx.db.get(newest.orgId);

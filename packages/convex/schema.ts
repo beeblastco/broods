@@ -13,10 +13,14 @@ export const usersFields = {
     accountHandle: v.optional(v.string()),
     plan: v.union(v.literal("free"), v.literal("pro"), v.literal("enterprise")),
     deletionScheduledFor: v.optional(v.number()),
+    /** Org the user last switched to. Falls back to most recent membership when unset. */
+    activeOrgId: v.optional(v.id("orgs")),
 };
 
 export const projectsFields = {
     authId: v.string(),
+    /** Org that owns this project. Optional only for legacy rows created before org scoping. */
+    orgId: v.optional(v.id("orgs")),
     name: v.string(),
     description: v.optional(v.string()),
     slug: v.string(),
@@ -230,7 +234,8 @@ export default defineSchema({
         .index("by_accountHandle", ["accountHandle"]),
     projects: defineTable(projectsFields)
         .index("by_authId", ["authId"])
-        .index("by_authId_and_slug", ["authId", "slug"]),
+        .index("by_authId_and_slug", ["authId", "slug"])
+        .index("by_orgId", ["orgId"]),
     environments: defineTable(environmentsFields)
         .index("by_projectId", ["projectId"])
         .index("by_authId_and_projectId", ["authId", "projectId"]),

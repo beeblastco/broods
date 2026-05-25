@@ -6,6 +6,7 @@
 import { v } from "convex/values";
 import { internalMutation, internalQuery, query } from "./_generated/server";
 import { authKit } from "./auth";
+import { encryptAgentConfigBlob, substituteEnvPlaceholders } from "./model/agentConfigCodec";
 import { getActiveOrgForUser } from "./model/ownership/org";
 import { agentsFields } from "./schema";
 
@@ -146,6 +147,39 @@ export const update = internalMutation({
             updatedAt: Date.now(),
         });
 
+        return null;
+    },
+});
+
+/**
+ * Test utility: encrypts a raw `AgentConfig` against the deployment's
+ * `ACCOUNT_CONFIG_ENCRYPTION_SECRET` and writes it onto the given agent.
+ * Used by the CLI smoke-test to seed a working config without touching
+ * the canvas / agentConfigs flow. Production sync should go through
+ * `model/agentSync.pushEncryptedConfigToAgentRow` instead.
+ */
+export const seedEncryptedConfigForTest = internalMutation({
+    args: {
+        agentId: v.string(),
+        config: v.any(),
+        variables: v.optional(v.array(v.object({ key: v.string(), value: v.string() }))),
+    },
+    returns: v.null(),
+    handler: async (ctx, args) => {
+        const secret = process.env.ACCOUNT_CONFIG_ENCRYPTION_SECRET;
+        if (!secret) throw new Error("ACCOUNT_CONFIG_ENCRYPTION_SECRET not set");
+        const normalized = ctx.db.normalizeId("agents", args.agentId);
+        if (!normalized) throw new Error("Unknown agentId");
+        const variables: Record<string, string> = {};
+        for (const entry of args.variables ?? []) variables[entry.key] = entry.value;
+        const resolved = substituteEnvPlaceholders(args.config as Record<string, unknown>, variables);
+        const encrypted = await encryptAgentConfigBlob(resolved, secret);
+        await ctx.db.patch(normalized, {
+            encryptedConfig: encrypted.ciphertext,
+            encryptionIv: encrypted.iv,
+            encryptionTag: encrypted.tag,
+            updatedAt: Date.now(),
+        });
         return null;
     },
 });

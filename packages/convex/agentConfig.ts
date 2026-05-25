@@ -4,7 +4,7 @@
 
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
-import { ensureAgentsRowForConfig, syncAgentRowFields } from "./model/agentSync";
+import { ensureAgentsRowForConfig, pushEncryptedConfigToAgentRow, syncAgentRowFields } from "./model/agentSync";
 import { authKit } from "./auth";
 import { getOwnedEnvironment } from "./model/ownership/environment";
 import { getOwnedProject } from "./model/ownership/project";
@@ -122,6 +122,7 @@ export const create = mutation({
         // this config by its public agentId. No-ops if the org isn't yet
         // provisioned with a filthy-panty account.
         await ensureAgentsRowForConfig(ctx, configId, authUser.id);
+        await pushEncryptedConfigToAgentRow(ctx, configId);
 
         return configId;
     },
@@ -175,6 +176,7 @@ export const update = mutation({
             name: updates.name,
             description: updates.description,
         });
+        await pushEncryptedConfigToAgentRow(ctx, configId);
 
         return configId;
     },

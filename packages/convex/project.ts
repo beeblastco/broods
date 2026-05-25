@@ -8,6 +8,7 @@ import type { DataModel } from "./_generated/dataModel";
 import { mutation, query } from "./_generated/server";
 import { authKit } from "./auth";
 import { uniqueProjectSlug } from "./lib/slug";
+import { getActiveOrgForUser } from "./model/ownership/org";
 import { getOwnedProject } from "./model/ownership/project";
 import { projectsFields } from "./schema";
 
@@ -25,12 +26,47 @@ async function requireAuth(ctx: Ctx) {
     return authUser;
 }
 
+/**
+ * Resolve the caller's active org id, used to scope new and listed projects.
+ * Returns null when the user has no membership yet (legacy / first-load flow).
+ */
+async function getCallerActiveOrgId(ctx: Ctx, authId: string) {
+    const user = await ctx.db
+        .query("users")
+        .withIndex("by_authId", (q) => q.eq("authId", authId))
+        .unique();
+    if (!user) return null;
+
+    const org = await getActiveOrgForUser(ctx, user._id);
+
+    return org?._id ?? null;
+}
+
+/**
+ * Lists every project visible to the caller in their active org. Legacy
+ * projects without an orgId fall back to authId ownership for backwards compat.
+ */
 async function listProjects(ctx: Ctx, authId: string) {
-    const projects = await ctx.db
+    const orgId = await getCallerActiveOrgId(ctx, authId);
+    const ownedByAuth = await ctx.db
         .query("projects")
         .withIndex("by_authId", (q) => q.eq("authId", authId))
         .collect();
-    return projects.sort((a, b) => b.updatedAt - a.updatedAt);
+
+    const orgProjects = orgId
+        ? await ctx.db
+            .query("projects")
+            .withIndex("by_orgId", (q) => q.eq("orgId", orgId))
+            .collect()
+        : [];
+
+    const merged = new Map<string, (typeof ownedByAuth)[number]>();
+    for (const p of orgProjects) merged.set(p._id, p);
+    for (const p of ownedByAuth) {
+        if (!p.orgId) merged.set(p._id, p);
+    }
+
+    return [...merged.values()].sort((a, b) => b.updatedAt - a.updatedAt);
 }
 
 export const getOrCreateDefault = mutation({
@@ -43,8 +79,10 @@ export const getOrCreateDefault = mutation({
         if (existing) return existing._id;
 
         const now = Date.now();
+        const orgId = await getCallerActiveOrgId(ctx, authUser.id);
         const projectId = await ctx.db.insert("projects", {
             authId: authUser.id,
+            orgId: orgId ?? undefined,
             name: "Workspace",
             description: undefined,
             slug: await uniqueProjectSlug(ctx, authUser.id, "Workspace"),
@@ -114,8 +152,10 @@ export const create = mutation({
         if (!trimmedName) throw new Error("Project name is required.");
 
         const now = Date.now();
+        const orgId = await getCallerActiveOrgId(ctx, authUser.id);
         const projectId = await ctx.db.insert("projects", {
             authId: authUser.id,
+            orgId: orgId ?? undefined,
             name: trimmedName,
             description: description?.trim() || undefined,
             slug: await uniqueProjectSlug(ctx, authUser.id, trimmedName),

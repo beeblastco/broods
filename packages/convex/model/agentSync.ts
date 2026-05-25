@@ -18,6 +18,7 @@
 
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx } from "../_generated/server";
+import { encryptAgentConfigBlob, substituteEnvPlaceholders, toNestedAgentConfig } from "./agentConfigCodec";
 import { getActiveOrgForUser } from "./ownership/org";
 
 /**
@@ -81,6 +82,64 @@ export async function ensureAgentsRowForConfig(
     await ctx.db.patch(configId, { agentId: agentId, updatedAt: now });
 
     return agentId;
+}
+
+/**
+ * Builds the nested filthy-panty `AgentConfig` from the flat row, substitutes
+ * `${ENV}` placeholders from `runtimeVariables`, encrypts with the shared
+ * AES-256-GCM secret, and writes the result onto the linked `agents` row.
+ *
+ * Silently no-ops in two cases that are not error conditions:
+ *   1. `ACCOUNT_CONFIG_ENCRYPTION_SECRET` is not set in the Convex env
+ *      (encryption layer not yet provisioned for this deployment).
+ *   2. The `agentConfigs` row has no linked `agentId`
+ *      (`ensureAgentsRowForConfig` hasn't run yet, e.g. because the org is
+ *      not provisioned with a filthy-panty account).
+ */
+export async function pushEncryptedConfigToAgentRow(
+    ctx: MutationCtx,
+    configId: Id<"agentConfigs">,
+): Promise<void> {
+    const secret = process.env.ACCOUNT_CONFIG_ENCRYPTION_SECRET;
+    if (!secret) return;
+
+    const config = await ctx.db.get(configId);
+    if (!config?.agentId) return;
+    const normalized = ctx.db.normalizeId("agents", config.agentId);
+    if (!normalized) return;
+    const agent = await ctx.db.get(normalized);
+    if (!agent) return;
+
+    const variables: Record<string, string> = {};
+    for (const entry of config.runtimeVariables ?? []) {
+        variables[entry.key] = entry.value;
+    }
+
+    const nested = toNestedAgentConfig({
+        name: config.name,
+        description: config.description,
+        provider: config.provider,
+        modelId: config.modelId,
+        systemPrompt: config.systemPrompt,
+        maxTurns: config.maxTurns,
+        outputFormat: config.outputFormat as Record<string, unknown> | undefined,
+        providerOptions: config.providerOptions as Record<string, unknown> | undefined,
+        temperature: config.temperature,
+        maxTokens: config.maxTokens,
+        memoryToolEnabled: config.memoryToolEnabled,
+        searchToolEnabled: config.searchToolEnabled,
+        searchToolConfig: config.searchToolConfig as Record<string, unknown> | undefined,
+        extraConfig: config.extraConfig as Record<string, unknown> | undefined,
+    });
+    const resolved = substituteEnvPlaceholders(nested, variables);
+    const encrypted = await encryptAgentConfigBlob(resolved, secret);
+
+    await ctx.db.patch(normalized, {
+        encryptedConfig: encrypted.ciphertext,
+        encryptionIv: encrypted.iv,
+        encryptionTag: encrypted.tag,
+        updatedAt: Date.now(),
+    });
 }
 
 /**
