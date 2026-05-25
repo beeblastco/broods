@@ -12,27 +12,29 @@ const username = `example-${Date.now()}`;
 
 // Create account, then create an agent with runtime configuration.
 const account = await createAccount(username);
-const agent = await createAgent(account.secret, "Example assistant", {
-  // Add Google API key to the google provider.
-  provider: {
-    google: {
-      apiKey: googleApiKey
-    }
-  },
-  // Specific the model and provider will use.
-  model: {
-    provider: "google",
-    modelId: "gemma-4-31b-it"
-  },
-  // Specify the agent behavior.
-  agent: {
-    system: "You are a helpful assistant.",
-  },
-  // Workspace defaults to disabled, so memory/filesystem/tasks are off here.
-});
-console.log("Created test account:", JSON.stringify(account));
-console.log("Created test agent:", JSON.stringify(agent));
-
-// Delete account
-await deleteAccount(account.secret);
-console.log("Deleted test account");
+try {
+  const agent = await createAgent(account.secret, "Example assistant", {
+    // Add Google API key to the google provider.
+    provider: {
+      google: {
+        apiKey: googleApiKey,
+      },
+    },
+    // Specific the model and provider will use.
+    model: {
+      provider: "google",
+      modelId: "gemma-4-31b-it",
+    },
+    // Specify the agent behavior.
+    agent: {
+      system: "You are a helpful assistant.",
+    },
+    // Workspace defaults to disabled, so memory/filesystem/tasks are off here.
+  });
+  console.log("Created test account:", JSON.stringify(account));
+  console.log("Created test agent:", JSON.stringify(agent));
+} finally {
+  // Delete account and account-scoped resources.
+  await deleteAccount(account.secret);
+  console.log("Deleted test account");
+}
