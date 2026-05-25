@@ -61,6 +61,7 @@ export function BaseNode({
     const zoom = useStore(zoomSelector);
     const scale = Math.min(Math.max(1 / Math.sqrt(zoom), 0.9), 1.2);
 
+    const requiredPeerType = nodeType === "sandbox" ? "workspace" : "agent";
     const isConnectedToAgent = useStore(
         useCallback(
             (state: Record<string, unknown>) => {
@@ -69,17 +70,16 @@ export function BaseNode({
                 const nodeLookup = state.nodeLookup as Map<string, { type?: string }>;
                 if (!edges || !nodeLookup) return false;
 
-                // Only check edges that involve this node
                 for (const e of edges) {
                     if (e.source !== id && e.target !== id) continue;
                     const otherNodeId = e.source === id ? e.target : e.source;
                     const otherNode = nodeLookup.get(otherNodeId);
-                    if (otherNode?.type === "agent") return true;
+                    if (otherNode?.type === requiredPeerType) return true;
                 }
 
                 return false;
             },
-            [id, nodeType],
+            [id, nodeType, requiredPeerType],
         ),
     );
 

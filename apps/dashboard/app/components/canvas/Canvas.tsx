@@ -6,6 +6,8 @@ import { DeletableEdge } from "@/app/components/canvas/DeletableEdge";
 import { EmptyCanvasGuide } from "@/app/components/canvas/EmptyCanvasGuide";
 import { AgentNode } from "@/app/components/node/Agent";
 import { DatabaseNode } from "@/app/components/node/Database";
+import { SandboxNode } from "@/app/components/node/Sandbox";
+import { SkillNode } from "@/app/components/node/Skill";
 import { ToolNode } from "@/app/components/node/Tool";
 import { WorkspaceNode } from "@/app/components/node/Workspace";
 import type { Id } from "@/convex/_generated/dataModel";
@@ -34,7 +36,7 @@ import {
     type OnConnect,
 } from "@xyflow/react";
 import { useMutation, useQuery } from "convex/react";
-import { Bot, Database, FolderOpen, Wrench } from "lucide-react";
+import { Bot, Box, Database, FolderOpen, Sparkles, Wrench } from "lucide-react";
 import { useTheme } from "next-themes";
 import dynamic from "next/dynamic";
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -59,6 +61,8 @@ const nodeTypes = {
     database: DatabaseNode,
     workspace: WorkspaceNode,
     tool: ToolNode,
+    sandbox: SandboxNode,
+    skill: SkillNode,
 };
 
 const edgeTypes = {
@@ -69,6 +73,8 @@ const NODE_TEMPLATES = [
     { type: "agent", label: "Agent", icon: Bot },
     { type: "database", label: "Database", icon: Database },
     { type: "workspace", label: "Workspace", icon: FolderOpen },
+    { type: "sandbox", label: "Sandbox", icon: Box },
+    { type: "skill", label: "Skill", icon: Sparkles },
     { type: "tool", label: "Tool", icon: Wrench },
 ] as const;
 
@@ -161,7 +167,7 @@ function CanvasInner({ projectId }: { projectId: Id<"projects"> }) {
                 environmentId: environmentId,
                 nodes: nodesRef.current.map((n) => ({
                     id: n.id,
-                    type: n.type as "agent" | "database" | "workspace" | "tool",
+                    type: n.type as "agent" | "database" | "workspace" | "tool" | "sandbox" | "skill",
                     position: n.position,
                     data: n.data as {
                         label: string;

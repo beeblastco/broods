@@ -3,7 +3,10 @@
 /** Side panel displaying node details, configuration, and settings for the selected canvas node. */
 import type { BaseNodeData } from "@/app/components/node/BaseNode";
 import { agentStatusConfig } from "@/app/components/node/BaseNode";
-import { ConfigTab } from "@/app/components/side-panel/ConfigTab";
+import { ConfigTab, buildBranchPatch } from "@/app/components/side-panel/ConfigTab";
+import { WorkspaceConfigTab } from "@/app/components/side-panel/WorkspaceConfigTab";
+import { SandboxConfigTab } from "@/app/components/side-panel/SandboxConfigTab";
+import { SkillConfigTab } from "@/app/components/side-panel/SkillConfigTab";
 import { DetailsTab, type AgentProvider } from "@/app/components/side-panel/DetailsTab";
 import { SettingsTab } from "@/app/components/side-panel/SettingsTab";
 import { ToolConfigTab } from "@/app/components/side-panel/ToolConfigTab";
@@ -15,7 +18,6 @@ import { Input } from "@/app/components/ui/input";
 import { Separator } from "@/app/components/ui/separator";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/app/components/ui/tabs";
 import { useAgentHealth, type AgentHealthStatus } from "@/app/hooks/useAgentHealth";
-import { fromNestedAgentConfig, toNestedAgentConfig } from "@/app/lib/agentConfigCodec";
 import { useEnvironment } from "@/app/hooks/useEnvironment";
 import {
     forgetDeploymentCredential,
@@ -85,7 +87,7 @@ const ToolTestTab = dynamic(
     },
 );
 
-type NodeType = "agent" | "database" | "tool" | "workspace";
+type NodeType = "agent" | "database" | "tool" | "workspace" | "sandbox" | "skill";
 type RuntimeVariable = { key: string; value: string };
 type HeaderStatusBadge = {
     text: string;
@@ -99,16 +101,9 @@ const PANEL_TITLES: Record<NodeType, string> = {
     database: "Database",
     tool: "Tool",
     workspace: "Workspace",
+    sandbox: "Sandbox",
+    skill: "Skill",
 };
-
-/**
- * Projects the flat `agentConfigs` row into the nested filthy-panty
- * `AgentConfig` shape rendered by the Config tab. Inverse lives in
- * {@link fromNestedAgentConfig} and is applied on save.
- */
-function extractConfigJson(config: Record<string, unknown>): Record<string, unknown> {
-    return toNestedAgentConfig(config as Parameters<typeof toNestedAgentConfig>[0]);
-}
 
 function inferProviderFromModelId(modelId: string): AgentProvider {
     const normalized = modelId.trim().toLowerCase();
@@ -233,11 +228,6 @@ export const NodeSidePanel = memo(function NodeSidePanel({
     const [editName, setEditName] = useState("");
     const [isSaving, setIsSaving] = useState(false);
 
-    // Config JSON editor (agent only)
-    const [configJson, setConfigJson] = useState("");
-    const [configError, setConfigError] = useState<string | null>(null);
-    const [isSavingConfig, setIsSavingConfig] = useState(false);
-    const [configSaved, setConfigSaved] = useState(false);
     const [isSavingModelSettings, setIsSavingModelSettings] = useState(false);
     const [isSavingVariables, setIsSavingVariables] = useState(false);
     const [isSavingPublicAccess, setIsSavingPublicAccess] = useState(false);
@@ -245,13 +235,10 @@ export const NodeSidePanel = memo(function NodeSidePanel({
     const [deploymentApiKey, setDeploymentApiKey] = useState<string | undefined>(undefined);
     const [activeTab, setActiveTab] = useState("details");
 
-    // Sync name and config when config loads or node changes
+    // Sync name when config loads or node changes
     useEffect(() => {
         if (isAgent && agentConfig) {
             setEditName(agentConfig.name);
-            setConfigJson(JSON.stringify(extractConfigJson(agentConfig), null, 2));
-            setConfigError(null);
-            setConfigSaved(false);
         } else if (!isAgent && nodeData) {
             setEditName(nodeData.label);
         }
@@ -279,14 +266,6 @@ export const NodeSidePanel = memo(function NodeSidePanel({
         ? agentConfig && editName.trim() !== agentConfig.name
         : nodeData && editName.trim() !== nodeData.label;
 
-    /** Memoised server-side config JSON to avoid JSON.stringify on every render. */
-    const serverConfigJson = useMemo(
-        () => agentConfig ? JSON.stringify(extractConfigJson(agentConfig), null, 2) : "",
-        [agentConfig],
-    );
-
-    /** Whether the config JSON has been modified from the server value. */
-    const configChanged = agentConfig && configJson !== serverConfigJson;
     const selectedProvider = useMemo<AgentProvider>(() => {
         if (!agentConfig) return "openai";
 
@@ -390,43 +369,29 @@ export const NodeSidePanel = memo(function NodeSidePanel({
         }
     }
 
-    async function handleSaveConfig() {
-        if (!agentConfigId || !configChanged) return;
+    const handleSaveBranch = useCallback(
+        async (branch: "agent" | "model" | "provider", value: unknown) => {
+            if (!agentConfigId || !agentConfig) return;
 
-        let parsed: Record<string, unknown>;
-        try {
-            parsed = JSON.parse(configJson);
-        } catch {
-            setConfigError("Invalid JSON");
-
-            return;
-        }
-
-        setConfigError(null);
-        setIsSavingConfig(true);
-        try {
-            const flatPatch = fromNestedAgentConfig(parsed);
+            const patch = buildBranchPatch(agentConfig, branch, value);
             await updateConfig({
                 configId: agentConfigId,
-                provider: flatPatch.provider as AgentProvider | undefined,
-                modelId: flatPatch.modelId,
-                systemPrompt: flatPatch.systemPrompt,
-                temperature: flatPatch.temperature,
-                maxTokens: flatPatch.maxTokens,
-                maxTurns: flatPatch.maxTurns,
-                outputFormat: flatPatch.outputFormat,
-                providerOptions: flatPatch.providerOptions,
-                memoryToolEnabled: flatPatch.memoryToolEnabled,
-                searchToolEnabled: flatPatch.searchToolEnabled,
-                searchToolConfig: flatPatch.searchToolConfig,
-                extraConfig: flatPatch.extraConfig,
+                provider: patch.provider as AgentProvider | undefined,
+                modelId: patch.modelId,
+                systemPrompt: patch.systemPrompt,
+                temperature: patch.temperature,
+                maxTokens: patch.maxTokens,
+                maxTurns: patch.maxTurns,
+                outputFormat: patch.outputFormat,
+                providerOptions: patch.providerOptions,
+                memoryToolEnabled: patch.memoryToolEnabled,
+                searchToolEnabled: patch.searchToolEnabled,
+                searchToolConfig: patch.searchToolConfig,
+                extraConfig: patch.extraConfig,
             });
-            setConfigSaved(true);
-            setTimeout(() => setConfigSaved(false), 2000);
-        } finally {
-            setIsSavingConfig(false);
-        }
-    }
+        },
+        [agentConfigId, agentConfig, updateConfig],
+    );
 
     async function handleSaveModelSettings(next: { provider: AgentProvider; modelId: string }) {
         if (!agentConfigId) return;
@@ -597,7 +562,9 @@ export const NodeSidePanel = memo(function NodeSidePanel({
                     <TabsList variant="line" className="w-full shrink-0 px-4 pt-2">
                         <TabsTrigger value="details">Details</TabsTrigger>
                         {isAgent && <TabsTrigger value="variables">Variables</TabsTrigger>}
-                        {(isAgent || isTool) && <TabsTrigger value="config">Config</TabsTrigger>}
+                        {(isAgent || isTool || nodeType === "workspace" || nodeType === "sandbox" || nodeType === "skill") && (
+                            <TabsTrigger value="config">Config</TabsTrigger>
+                        )}
                         {(isAgent || nodeType === "tool") && (
                             <TabsTrigger
                                 value="test"
@@ -676,16 +643,24 @@ export const NodeSidePanel = memo(function NodeSidePanel({
                     {isAgent && (
                         <TabsContent value="config" className="flex flex-col overflow-hidden">
                             <ConfigTab
-                                configJson={configJson}
-                                setConfigJson={setConfigJson}
-                                configError={configError}
-                                setConfigError={setConfigError}
-                                configChanged={!!configChanged}
-                                isSavingConfig={isSavingConfig}
-                                configSaved={configSaved}
-                                setConfigSaved={setConfigSaved}
-                                onSaveConfig={handleSaveConfig}
+                                agentConfig={agentConfig}
+                                onSaveBranch={handleSaveBranch}
                             />
+                        </TabsContent>
+                    )}
+                    {nodeType === "workspace" && node && (
+                        <TabsContent value="config" className="flex flex-col overflow-hidden">
+                            <WorkspaceConfigTab nodeId={node.id} />
+                        </TabsContent>
+                    )}
+                    {nodeType === "sandbox" && node && (
+                        <TabsContent value="config" className="flex flex-col overflow-hidden">
+                            <SandboxConfigTab nodeId={node.id} />
+                        </TabsContent>
+                    )}
+                    {nodeType === "skill" && node && (
+                        <TabsContent value="config" className="flex flex-col overflow-hidden">
+                            <SkillConfigTab nodeId={node.id} nodeLabel={editName || nodeData.label} />
                         </TabsContent>
                     )}
                     {isTool && node && (
