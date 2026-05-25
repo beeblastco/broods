@@ -147,14 +147,14 @@ describe("createWorkspaceSandboxExecutor", () => {
       "sudo chown \"$(id -u)\":\"$(id -g)\" '/mnt/workspaces'",
     );
     expect(daytonaExecuteCommandMock).toHaveBeenCalledWith(
-      "sudo mount-s3 --uid \"$(id -u)\" --gid \"$(id -g)\" '--allow-delete' '--allow-overwrite' '--allow-other' '--region' 'eu-central-1' 'workspace-bucket' '/mnt/workspaces'",
+      "sudo -E mount-s3 --uid \"$(id -u)\" --gid \"$(id -g)\" '--allow-delete' '--allow-overwrite' '--allow-other' '--region' 'eu-central-1' 'workspace-bucket' '/mnt/workspaces'",
     );
     expect(daytonaExecuteCommandMock).toHaveBeenCalledWith("sudo mkdir -p '/mnt/skills'");
     expect(daytonaExecuteCommandMock).toHaveBeenCalledWith(
       "sudo chown \"$(id -u)\":\"$(id -g)\" '/mnt/skills'",
     );
     expect(daytonaExecuteCommandMock).toHaveBeenCalledWith(
-      "sudo mount-s3 --uid \"$(id -u)\" --gid \"$(id -g)\" '--allow-delete' '--allow-overwrite' '--allow-other' '--region' 'eu-central-1' 'skills-bucket' '/mnt/skills'",
+      "sudo -E mount-s3 --uid \"$(id -u)\" --gid \"$(id -g)\" '--allow-delete' '--allow-overwrite' '--allow-other' '--region' 'eu-central-1' 'skills-bucket' '/mnt/skills'",
     );
     expect(daytonaExecuteCommandMock).toHaveBeenCalledWith(
       "'python3' 'analysis.py' 'sample.wav'",

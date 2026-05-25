@@ -2,7 +2,7 @@
  * Example workspace sandbox execution.
  */
 
-import { createAccount, createAgent, deleteAccount, streamSSE } from "./utils.ts";
+import { createAccount, createAgent, deleteAccount, streamSSE, requireEnv } from "./utils.ts";
 
 const googleApiKey = requireEnv("ACCOUNT_GOOGLE_API_KEY");
 const username = `sandbox-${Date.now()}`;
@@ -85,12 +85,4 @@ try {
 } finally {
   await deleteAccount(account.secret);
   console.log("\n\nDeleted test account");
-}
-
-function requireEnv(name: string): string {
-  const value = process.env[name];
-  if (!value) {
-    throw new Error(`${name} is required`);
-  }
-  return value;
 }
