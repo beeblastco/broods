@@ -16,7 +16,8 @@ ENV NEXT_PUBLIC_CONVEX_URL=$NEXT_PUBLIC_CONVEX_URL
 ENV NEXT_PUBLIC_WORKOS_REDIRECT_URI=$NEXT_PUBLIC_WORKOS_REDIRECT_URI
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
-RUN bun run build
+RUN --mount=type=secret,id=CONVEX_DEPLOY_KEY,env=CONVEX_DEPLOY_KEY \
+    bunx convex deploy --cmd 'bun run build'
 
 FROM oven/bun:1.3.4-alpine AS runner
 WORKDIR /app
