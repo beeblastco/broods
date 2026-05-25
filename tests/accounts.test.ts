@@ -63,6 +63,9 @@ describe("agent config", () => {
       workspace: {
         enabled: true,
         memory: {},
+        storage: {
+          provider: "s3",
+        },
       },
       channels: {
         telegram: {
@@ -95,42 +98,59 @@ describe("agent config", () => {
     expect(() => normalizeAgentConfig({ workspace: { tasks: { enabled: "yes" } } })).toThrow(
       "config.workspace.tasks.enabled must be a boolean",
     );
-    expect(() => normalizeAgentConfig({ workspace: { filesystem: { enabled: "yes" } } })).toThrow(
-      "config.workspace.filesystem.enabled must be a boolean",
+    expect(() => normalizeAgentConfig({ workspace: { storage: { provider: "r2" } } })).toThrow(
+      "config.workspace.storage.provider must be one of: s3",
     );
+    expect(normalizeAgentConfig({ workspace: { enabled: true } })).toEqual({
+      workspace: {
+        enabled: true,
+        storage: {
+          provider: "s3",
+        },
+      },
+    });
+    expect(normalizeAgentConfig({ workspace: { storage: {} } })).toEqual({
+      workspace: {
+        storage: {
+          provider: "s3",
+        },
+      },
+    });
     expect(normalizeAgentConfig({
       workspace: {
+        storage: {
+          provider: "s3",
+        },
         sandbox: {
-          enabled: true,
           provider: "lambda",
           timeout: 30,
           memoryLimit: 512,
           outputLimitBytes: 65536,
-          filesystem: {
-            mount: "native",
-          },
           options: {
+            bashFunctionName: "sandbox-bash",
             nodeFunctionName: "sandbox-node",
             pythonFunctionName: "sandbox-python",
             workspaceRoot: "/mnt/workspaces",
+            networkAccess: "public",
           },
         },
       },
     })).toEqual({
       workspace: {
+        storage: {
+          provider: "s3",
+        },
         sandbox: {
-          enabled: true,
           provider: "lambda",
           timeout: 30,
           memoryLimit: 512,
           outputLimitBytes: 65536,
-          filesystem: {
-            mount: "native",
-          },
           options: {
+            bashFunctionName: "sandbox-bash",
             nodeFunctionName: "sandbox-node",
             pythonFunctionName: "sandbox-python",
             workspaceRoot: "/mnt/workspaces",
+            networkAccess: "public",
           },
         },
       },
@@ -141,8 +161,8 @@ describe("agent config", () => {
     expect(() => normalizeAgentConfig({ workspace: { sandbox: { provider: "docker" } } })).toThrow(
       "config.workspace.sandbox.provider must be one of: lambda, e2b, daytona",
     );
-    expect(() => normalizeAgentConfig({ workspace: { sandbox: { filesystem: { mount: "sync" } } } })).toThrow(
-      "config.workspace.sandbox.filesystem.mount must be one of: native",
+    expect(() => normalizeAgentConfig({ workspace: { sandbox: { options: { networkAccess: "private" } } } })).toThrow(
+      "config.workspace.sandbox.options.networkAccess must be one of: disabled, public",
     );
     expect(() => normalizeAgentConfig({ workspace: { sandbox: { timeout: 121 } } })).toThrow(
       "config.workspace.sandbox.timeout must be an integer from 1 to 120",
@@ -721,6 +741,9 @@ describe("agent config", () => {
         tasks: {
           enabled: true,
         },
+        storage: {
+          provider: "s3",
+        },
       },
       session: {
         pruning: {
@@ -783,6 +806,9 @@ describe("agent config", () => {
         },
         tasks: {
           enabled: true,
+        },
+        storage: {
+          provider: "s3",
         },
       },
       session: {

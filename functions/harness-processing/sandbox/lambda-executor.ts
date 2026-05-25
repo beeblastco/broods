@@ -12,6 +12,8 @@ import type {
   WorkspaceSandboxArtifact,
   WorkspaceSandboxRunRequest,
   WorkspaceSandboxRunResult,
+  WorkspaceSandboxShellRequest,
+  WorkspaceSandboxShellResult,
 } from "./types.ts";
 
 const textEncoder = new TextEncoder();
@@ -38,10 +40,32 @@ export class LambdaWorkspaceSandboxExecutor implements WorkspaceSandboxExecutor 
       throw new Error(`Sandbox Lambda failed: ${payloadText || response.FunctionError}`);
     }
 
-    const result = parseSandboxResponse(payloadText);
+    const result = parseSandboxResponse<WorkspaceSandboxRunResult>(payloadText);
     await persistGeneratedFiles(request.namespace, result.artifacts);
     return {
       ...result,
+      provider: "lambda",
+    };
+  }
+
+  async runShell(request: WorkspaceSandboxShellRequest): Promise<WorkspaceSandboxShellResult> {
+    const response = await this.#lambda.send(new InvokeCommand({
+      FunctionName: this.shellFunctionName(),
+      InvocationType: "RequestResponse",
+      Payload: textEncoder.encode(JSON.stringify({
+        ...request,
+        runtime: "shell",
+        networkAccess: networkAccessFor(this.#config),
+      })),
+    }));
+
+    const payloadText = response.Payload ? textDecoder.decode(response.Payload) : "";
+    if (response.FunctionError) {
+      throw new Error(`Sandbox Bash Lambda failed: ${payloadText || response.FunctionError}`);
+    }
+
+    return {
+      ...parseSandboxResponse<WorkspaceSandboxShellResult>(payloadText),
       provider: "lambda",
     };
   }
@@ -57,6 +81,13 @@ export class LambdaWorkspaceSandboxExecutor implements WorkspaceSandboxExecutor 
     return configString(options.nodeFunctionName) ??
       optionalEnv("SANDBOX_NODE_FUNCTION_NAME") ??
       missingFunctionName("node");
+  }
+
+  private shellFunctionName(): string {
+    const options = isRecordObject(this.#config.options) ? this.#config.options : {};
+    return configString(options.bashFunctionName) ??
+      optionalEnv("SANDBOX_BASH_FUNCTION_NAME") ??
+      missingFunctionName("bash");
   }
 }
 
@@ -92,7 +123,7 @@ function toStorageKey(namespace: string, artifactPath: string): string {
   return `${namespace}/${normalizedPath}`;
 }
 
-function parseSandboxResponse(payloadText: string): Omit<WorkspaceSandboxRunResult, "provider"> {
+function parseSandboxResponse<T>(payloadText: string): Omit<T, "provider"> {
   if (!payloadText) {
     throw new Error("Sandbox Lambda returned an empty response");
   }
@@ -102,7 +133,7 @@ function parseSandboxResponse(payloadText: string): Omit<WorkspaceSandboxRunResu
     if (!parsed || typeof parsed !== "object") {
       throw new Error("Sandbox Lambda response must be an object");
     }
-    return parsed as Omit<WorkspaceSandboxRunResult, "provider">;
+    return parsed as Omit<T, "provider">;
   } catch (err) {
     throw new Error(`Sandbox Lambda returned invalid JSON: ${err instanceof Error ? err.message : String(err)}`);
   }
@@ -116,7 +147,12 @@ function isRecordObject(value: unknown): value is Record<string, unknown> {
   return Boolean(value && typeof value === "object" && !Array.isArray(value));
 }
 
-function missingFunctionName(runtime: "node" | "python"): never {
+function networkAccessFor(config: WorkspaceSandboxConfig): "disabled" | "public" {
+  const options = isRecordObject(config.options) ? config.options : {};
+  return options.networkAccess === "public" ? "public" : "disabled";
+}
+
+function missingFunctionName(runtime: "node" | "python" | "bash"): never {
   throw new Error(
     `Workspace sandbox ${runtime} Lambda is not configured. Set config.workspace.sandbox.options.${runtime}FunctionName or SANDBOX_${runtime.toUpperCase()}_FUNCTION_NAME.`,
   );
