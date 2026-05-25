@@ -21,6 +21,7 @@ bun run scripts/configure-discord-account.ts
 bun run scripts/configure-slack-account.ts
 bun run scripts/configure-github-account.ts
 bun run scripts/configure-pancake-account.ts
+bun run scripts/configure-zalo-account.ts
 ```
 
 Each script uses `ADMIN_ACCOUNT_SECRET` for auth. Account and agent descriptions are optional; set `INTEGRATIONS_ACCOUNT_DESCRIPTION` or channel-specific `*_AGENT_DESCRIPTION` only when those fields should be stored.
@@ -32,5 +33,6 @@ Optional agent-name overrides are available when stable names are needed:
 - `SLACK_AGENT_NAME`
 - `GITHUB_AGENT_NAME`
 - `PANCAKE_AGENT_NAME`
+- `ZALO_AGENT_NAME`
 
 The integration scripts include `Knowledge cutoff: January 2025.` in `config.agent.system` by default. Override it with `ACCOUNT_MODEL_KNOWLEDGE_CUTOFF` when changing `ACCOUNT_MODEL_ID` to a model with a different cutoff.

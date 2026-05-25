@@ -2050,3 +2050,19 @@ components:
                       items:
                         type: string
                       description: Optional staff IDs used by handoff tooling.
+        zalo:
+          type: object
+          description: Official Zalo Bot API webhook channel for direct text messages.
+          properties:
+            botToken:
+              type: string
+            webhookSecret:
+              type: string
+              minLength: 8
+              maxLength: 256
+              description: Zalo webhook secret token, sent as `X-Bot-Api-Secret-Token`.
+            allowedUserIds:
+              type: array
+              items:
+                type: string
+              description: Zalo user IDs allowed to trigger the agent.

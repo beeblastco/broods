@@ -62,6 +62,19 @@ const PANCAKE_HANDOFF_AGENT = {
   },
 };
 
+const ZALO_AGENT = {
+  ...TEST_AGENT,
+  config: {
+    channels: {
+      zalo: {
+        botToken: "zalo-token",
+        webhookSecret: "zalo-secret",
+        allowedUserIds: ["user-1"],
+      },
+    },
+  },
+};
+
 const ORIGINAL_FETCH = globalThis.fetch;
 
 describe("account webhook ingress", () => {
@@ -106,6 +119,23 @@ describe("account webhook ingress", () => {
 
     expect(response.statusCode).toBe(401);
     expect(responseJson(response)).toEqual({ error: "Unauthorized" });
+  });
+
+  it("returns 401 when Zalo webhook authentication is missing or wrong", async () => {
+    const routeIncomingEvent = createIncomingEventRouter({
+      accountLoader: async () => TEST_ACCOUNT,
+      agentLoader: async () => ZALO_AGENT,
+    });
+
+    const missing = await routeIncomingEvent(createZaloEvent(undefined, {}), createHandlers());
+    expect(missing.statusCode).toBe(401);
+    expect(responseJson(missing)).toEqual({ error: "Unauthorized" });
+
+    const wrong = await routeIncomingEvent(createZaloEvent(undefined, {
+      "x-bot-api-secret-token": "wrong-secret",
+    }), createHandlers());
+    expect(wrong.statusCode).toBe(401);
+    expect(responseJson(wrong)).toEqual({ error: "Unauthorized" });
   });
 
   it("normalizes account webhook events and schedules channel processing", async () => {
@@ -182,6 +212,55 @@ describe("account webhook ingress", () => {
     });
     expect(handledEvents[0]!.eventId.startsWith("acct:acct_test:agent:agent_test:pancake:page-1:message-1:"))
       .toBe(true);
+  });
+
+  it("normalizes Zalo webhook events through account webhook routing", async () => {
+    const handledEvents: ChannelInboundEvent[] = [];
+    const routeIncomingEvent = createIncomingEventRouter({
+      accountLoader: async () => TEST_ACCOUNT,
+      agentLoader: async () => ZALO_AGENT,
+    });
+
+    const response = await routeIncomingEvent(createZaloEvent(), createHandlers({
+      handleChannelRequest: async (event) => {
+        handledEvents.push(event);
+      },
+    }));
+
+    expect(response.statusCode).toBe(200);
+    await response.afterResponse;
+
+    expect(handledEvents).toHaveLength(1);
+    expect(handledEvents[0]).toMatchObject({
+      accountId: "acct_test",
+      agentId: "agent_test",
+      agentConfig: {
+        channels: {
+          zalo: {
+            botToken: "zalo-token",
+            webhookSecret: "zalo-secret",
+            allowedUserIds: ["user-1"],
+          },
+        },
+      },
+      eventId: "acct:acct_test:agent:agent_test:zalo:message.text.received:chat-1:user-1:message-1",
+      conversationKey: "acct:acct_test:agent:agent_test:zalo:chat-1",
+      content: "hello zalo",
+      events: [{ role: "user", content: "hello zalo" }],
+      channelName: "zalo",
+    });
+  });
+
+  it("returns 503 when Zalo is not configured", async () => {
+    const routeIncomingEvent = createIncomingEventRouter({
+      accountLoader: async () => TEST_ACCOUNT,
+      agentLoader: async () => TEST_AGENT,
+    });
+
+    const response = await routeIncomingEvent(createZaloEvent(), createHandlers());
+
+    expect(response.statusCode).toBe(503);
+    expect(responseJson(response)).toEqual({ error: "zalo integration is not configured" });
   });
 
   it("lets Pancake handoff tag ignore human-owned conversations", async () => {
@@ -266,6 +345,15 @@ function createPancakeEvent(overrides: {
   }, "/webhooks/acct_test/agent_test/pancake");
 }
 
+function createZaloEvent(
+  body: unknown = zaloUpdate(),
+  headers: Record<string, string> = {
+    "x-bot-api-secret-token": "zalo-secret",
+  },
+): LambdaFunctionURLEvent {
+  return createTelegramEvent(body, headers, "/webhooks/acct_test/agent_test/zalo");
+}
+
 function createTelegramEvent(
   body: unknown = telegramUpdate(),
   headers: Record<string, string> = {
@@ -311,6 +399,19 @@ function telegramUpdate() {
       text: "hello",
       chat: { id: 123, type: "private" },
       from: { id: 456, is_bot: false, username: "alice" },
+    },
+  };
+}
+
+function zaloUpdate() {
+  return {
+    event_name: "message.text.received",
+    message: {
+      message_id: "message-1",
+      date: 1713916800,
+      text: "hello zalo",
+      chat: { id: "chat-1", chat_type: "PRIVATE" },
+      from: { id: "user-1", name: "Ada", is_bot: false },
     },
   };
 }

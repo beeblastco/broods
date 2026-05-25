@@ -1,6 +1,6 @@
 # Channels Reference
 
-Channels are communication integrations such as Telegram, GitHub, Slack, Discord, and Pancake. They translate provider webhooks into the shared agent input shape, then send replies through a channel-specific `ChannelActions` implementation.
+Channels are communication integrations such as Telegram, GitHub, Slack, Discord, Pancake, and Zalo. They translate provider webhooks into the shared agent input shape, then send replies through a channel-specific `ChannelActions` implementation.
 
 Customers interact with the provider bot, app, or webhook. They do not receive account secrets. The webhook URL always includes the account, agent, and channel:
 
@@ -48,6 +48,7 @@ Webhook handling is split deliberately:
 | `slack` | [`functions/_shared/slack-channel.ts`](../../functions/_shared/slack-channel.ts) | `botToken`, `signingSecret` | [Slack Details](slack.md) |
 | `discord` | [`functions/_shared/discord-channel.ts`](../../functions/_shared/discord-channel.ts) | `botToken`, `publicKey` | [Discord Details](discord.md) |
 | `pancake` | [`functions/_shared/pancake-channel.ts`](../../functions/_shared/pancake-channel.ts) | `pageId`, `pageAccessToken` | [Pancake Details](pancake.md) |
+| `zalo` | [`functions/_shared/zalo-channel.ts`](../../functions/_shared/zalo-channel.ts) | `botToken`, `webhookSecret`, `allowedUserIds` | [Zalo Details](zalo.md) |
 
 ---
 

@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { createDiscordChannel } from "../functions/_shared/discord-channel.ts";
 import { createPancakeChannel } from "../functions/_shared/pancake-channel.ts";
 import { createSlackChannel } from "../functions/_shared/slack-channel.ts";
+import { createZaloChannel } from "../functions/_shared/zalo-channel.ts";
 
 type FetchInput = string | URL | Request;
 
@@ -328,6 +329,82 @@ describe("pancake channel actions", () => {
         messageType: "UNKNOWN",
       })),
     ).toThrow("Invalid Pancake source payload");
+  });
+});
+
+describe("zalo channel actions", () => {
+  it("sends text chunks and typing through the Zalo Bot API", async () => {
+    const fetchMock = installFetchMock();
+    fetchMock.responses.push(
+      jsonResponse({ ok: true, result: { message_id: "reply-1" } }),
+      jsonResponse({ ok: true, result: { message_id: "reply-2" } }),
+      jsonResponse({ ok: true, result: true }),
+    );
+
+    const actions = createZaloChannel("bot-token", "zalo-secret", new Set(["user-1"])).actions(
+      createMessage({
+        chatId: "chat-1",
+        chatType: "PRIVATE",
+        messageId: "message-1",
+        senderId: "user-1",
+        eventName: "message.text.received",
+      }),
+    );
+
+    await actions.sendText(`${"a".repeat(2000)}b`);
+    await actions.sendTyping();
+    await actions.reactToMessage();
+
+    expect(fetchMock.calls).toHaveLength(3);
+    expect(toUrl(fetchMock.calls[0]!.input)).toBe(
+      "https://bot-api.zaloplatforms.com/botbot-token/sendMessage",
+    );
+    expect(fetchMock.calls[0]!.init?.method).toBe("POST");
+    expect(fetchMock.calls[0]!.init?.headers).toEqual({ "Content-Type": "application/json" });
+    expect(JSON.parse(String(fetchMock.calls[0]!.init?.body))).toEqual({
+      chat_id: "chat-1",
+      text: "a".repeat(2000),
+    });
+    expect(JSON.parse(String(fetchMock.calls[1]!.init?.body))).toEqual({
+      chat_id: "chat-1",
+      text: "b",
+    });
+    expect(toUrl(fetchMock.calls[2]!.input)).toBe(
+      "https://bot-api.zaloplatforms.com/botbot-token/sendChatAction",
+    );
+    expect(JSON.parse(String(fetchMock.calls[2]!.init?.body))).toEqual({
+      chat_id: "chat-1",
+      action: "typing",
+    });
+  });
+
+  it("throws on Zalo API failures and rejects invalid source payloads", async () => {
+    const fetchMock = installFetchMock();
+    const adapter = createZaloChannel("bot-token", "zalo-secret", new Set(["user-1"]));
+    const actions = adapter.actions(
+      createMessage({
+        chatId: "chat-1",
+        chatType: "PRIVATE",
+        messageId: "message-1",
+        senderId: "user-1",
+        eventName: "message.text.received",
+      }),
+    );
+
+    fetchMock.responses.push(jsonResponse({ ok: false, description: "permission denied" }, 200));
+    await expect(actions.sendText("hello")).rejects.toThrow(
+      "Zalo sendMessage failed (200): permission denied",
+    );
+
+    expect(() =>
+      adapter.actions(createMessage({
+        chatId: "chat-1",
+        chatType: "GROUP",
+        messageId: "message-1",
+        senderId: "user-1",
+        eventName: "message.text.received",
+      })),
+    ).toThrow("Invalid Zalo source payload");
   });
 });
 
