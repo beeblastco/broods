@@ -1,14 +1,16 @@
 # E2B
 
-Uses an [E2B](https://e2b.dev/docs) template or volume with the workspace mounted at `options.workspaceRoot`.
+Uses an [E2B](https://e2b.dev/docs) template with the S3 workspace bucket mounted at `options.workspaceRoot`.
 
 ## Configuration
 
 ```json
 {
   "workspace": {
+    "storage": {
+      "provider": "s3"
+    },
     "sandbox": {
-      "enabled": true,
       "provider": "e2b",
       "options": {
         "apiKey": "...",
@@ -24,7 +26,7 @@ Uses an [E2B](https://e2b.dev/docs) template or volume with the workspace mounte
 
 ## Requirements
 
-Use a template with Node and Python installed, and mount the workspace at `options.workspaceRoot`.
+Use a template with Node and Python installed, and mount the S3 workspace bucket at `options.workspaceRoot`. The E2B executor does not sync files itself; the template must expose the same bucket namespace that Lambda uses.
 
 ## Execution Notes
 
@@ -35,7 +37,7 @@ TypeScript (`.ts`) files are not transpiled — use compiled JavaScript instead.
 
 ## Workspace Mount
 
-E2B volume or S3/FUSE template mounted at `options.workspaceRoot`.
+Use an S3/FUSE template mounted at `options.workspaceRoot`. The mount must contain the account filesystem namespace directly under that root, for example `/workspace/fs-...`.
 
 ## Dependencies
 

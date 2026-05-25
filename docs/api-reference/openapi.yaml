@@ -684,6 +684,8 @@ paths:
                       system: You are a research assistant. Always cite sources.
                     workspace:
                       enabled: true
+                      storage:
+                        provider: s3
                       memory:
                         enabled: true
                         namespace: research
@@ -1798,7 +1800,7 @@ components:
 
     WorkspaceConfig:
       type: object
-      description: Enables workspace-backed features including `MEMORY.md`, filesystem, sandbox execution, and tasks.
+      description: Enables workspace-backed features including `MEMORY.md`, the sandboxed filesystem tool, and tasks.
       properties:
         enabled:
           type: boolean
@@ -1813,12 +1815,18 @@ components:
             namespace:
               type: string
               description: Session namespace key; `null` means per-conversation state
+        storage:
+          type: object
+          description: Workspace storage backend. Only S3 is supported today.
+          properties:
+            provider:
+              type: string
+              enum: [s3]
+              description: Workspace storage provider; defaults to `s3`
         sandbox:
           type: object
-          description: File-only `node` and `python` execution from the filesystem tool
+          description: Filesystem sandbox provider and execution limits. The sandbox is available whenever workspace is enabled.
           properties:
-            enabled:
-              type: boolean
             provider:
               type: string
               enum: [lambda, e2b, daytona]
@@ -1828,6 +1836,25 @@ components:
             outputLimitBytes:
               type: integer
               description: "Captured stdout/stderr limit (1–262144, default: 65536)"
+            options:
+              type: object
+              properties:
+                bashFunctionName:
+                  type: string
+                  description: Optional Lambda function name override for shell execution
+                nodeFunctionName:
+                  type: string
+                  description: Legacy Lambda function name override for Node file execution
+                pythonFunctionName:
+                  type: string
+                  description: Lambda function name override for Python file execution
+                workspaceRoot:
+                  type: string
+                  description: Mounted workspace root path; defaults to `/mnt/workspaces`
+                networkAccess:
+                  type: string
+                  enum: [disabled, public]
+                  description: Enables `curl` in the bash sandbox when set to `public`
         tasks:
           type: object
           properties:

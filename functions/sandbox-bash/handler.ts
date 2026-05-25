@@ -1,0 +1,318 @@
+/**
+ * Bash sandbox Lambda for mounted workspace shell execution.
+ * Keep shell interpretation and native Node bridging here.
+ */
+
+import { createHash } from "node:crypto";
+import { spawn } from "node:child_process";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { basename, dirname, relative, resolve } from "node:path";
+import process from "node:process";
+import ts from "typescript";
+import {
+  Bash,
+  ReadWriteFs,
+  type Command,
+  type CommandContext,
+  type ExecResult,
+  type NetworkConfig,
+} from "just-bash";
+
+interface SandboxBashRequest {
+  runtime: "shell";
+  namespace: string;
+  shell: string;
+  workspaceRoot?: string;
+  timeoutSeconds: number;
+  outputLimitBytes: number;
+  networkAccess?: "disabled" | "public";
+}
+
+interface SandboxBashResponse {
+  ok: boolean;
+  exitCode: number | null;
+  stdout: string;
+  stderr: string;
+  durationMs: number;
+  timedOut?: boolean;
+  truncated?: boolean;
+}
+
+interface NativeNodeOptions {
+  workspaceRoot: string;
+  timeoutSeconds: number;
+  outputLimitBytes: number;
+}
+
+const textDecoder = new TextDecoder();
+
+export async function handler(event: SandboxBashRequest): Promise<SandboxBashResponse> {
+  const startedAt = Date.now();
+
+  try {
+    if (event.runtime !== "shell") {
+      throw new Error("sandbox-bash only supports shell requests");
+    }
+
+    const workspaceRoot = resolveWorkspaceRoot(event.workspaceRoot, event.namespace);
+    await mkdir(workspaceRoot, { recursive: true });
+
+    const abortController = new AbortController();
+    let timedOut = false;
+    const timeout = setTimeout(() => {
+      timedOut = true;
+      abortController.abort();
+    }, boundedTimeoutSeconds(event.timeoutSeconds) * 1000);
+
+    try {
+      const bash = new Bash({
+        cwd: "/",
+        fs: new ReadWriteFs({
+          root: workspaceRoot,
+          allowSymlinks: false,
+          maxFileReadSize: 10 * 1024 * 1024,
+        }),
+        env: {
+          HOME: "/",
+          USER: "agent",
+          SHELL: "/bin/bash",
+          PATH: "/usr/bin:/bin",
+        },
+        network: networkConfig(event.networkAccess),
+        javascript: false,
+        python: false,
+        defenseInDepth: true,
+        executionLimits: {
+          maxCommandCount: 10000,
+          maxLoopIterations: 10000,
+          maxCallDepth: 1000,
+        },
+      });
+      bash.registerCommand(nativeNodeCommand({
+        workspaceRoot,
+        timeoutSeconds: boundedTimeoutSeconds(event.timeoutSeconds),
+        outputLimitBytes: boundedOutputLimit(event.outputLimitBytes),
+      }));
+
+      const result = await bash.exec(event.shell, {
+        cwd: "/",
+        signal: abortController.signal,
+        replaceEnv: true,
+        env: {
+          HOME: "/",
+          USER: "agent",
+          SHELL: "/bin/bash",
+          PATH: "/usr/bin:/bin",
+        },
+      });
+      const stdout = truncateOutput(Buffer.from(result.stdout), boundedOutputLimit(event.outputLimitBytes));
+      const stderr = truncateOutput(Buffer.from(result.stderr), boundedOutputLimit(event.outputLimitBytes));
+      return {
+        ok: result.exitCode === 0 && !timedOut,
+        exitCode: result.exitCode,
+        stdout: stdout.value,
+        stderr: timedOut ? appendTimeout(stderr.value, event.timeoutSeconds) : stderr.value,
+        durationMs: Date.now() - startedAt,
+        timedOut,
+        truncated: stdout.truncated || stderr.truncated,
+      };
+    } finally {
+      clearTimeout(timeout);
+    }
+  } catch (err) {
+    return {
+      ok: false,
+      exitCode: null,
+      stdout: "",
+      stderr: err instanceof Error ? err.message : String(err),
+      durationMs: Date.now() - startedAt,
+    };
+  }
+}
+
+function nativeNodeCommand(options: NativeNodeOptions): Command {
+  return {
+    name: "node",
+    trusted: true,
+    async execute(args: string[], ctx: CommandContext): Promise<ExecResult> {
+      const entryPath = args[0];
+      if (!entryPath || entryPath.startsWith("-")) {
+        return {
+          stdout: "",
+          stderr: "node execution must reference one workspace .js or .ts file and cannot use inline flags\n",
+          exitCode: 2,
+        };
+      }
+
+      const virtualEntry = ctx.fs.resolvePath(ctx.cwd, entryPath);
+      if (!virtualEntry.endsWith(".js") && !virtualEntry.endsWith(".ts")) {
+        return {
+          stdout: "",
+          stderr: "node execution only supports .js and .ts files\n",
+          exitCode: 2,
+        };
+      }
+
+      try {
+        const filePath = resolveWorkspacePath(options.workspaceRoot, virtualEntry);
+        const executablePath = virtualEntry.endsWith(".ts")
+          ? await prepareTypescriptEntry(filePath, options.workspaceRoot)
+          : filePath;
+        return await runNodeFile(executablePath, options.workspaceRoot, args.slice(1), ctx, options);
+      } catch (err) {
+        return {
+          stdout: "",
+          stderr: `${err instanceof Error ? err.message : String(err)}\n`,
+          exitCode: 1,
+        };
+      }
+    },
+  };
+}
+
+async function prepareTypescriptEntry(filePath: string, workspaceRoot: string): Promise<string> {
+  const source = await readFile(filePath, "utf8");
+  const transpiled = ts.transpileModule(source, {
+    compilerOptions: {
+      module: ts.ModuleKind.ESNext,
+      target: ts.ScriptTarget.ES2022,
+      esModuleInterop: true,
+      sourceMap: false,
+    },
+    fileName: filePath,
+  }).outputText;
+  const generatedPath = resolveTypescriptOutputPath(filePath, workspaceRoot, source);
+  await writeFile(generatedPath, transpiled, "utf8");
+  return generatedPath;
+}
+
+async function runNodeFile(
+  filePath: string,
+  cwd: string,
+  args: string[],
+  ctx: CommandContext,
+  options: NativeNodeOptions,
+): Promise<ExecResult> {
+  const child = spawn(process.execPath, [filePath, ...args], {
+    cwd,
+    env: {
+      PATH: "/usr/local/bin:/usr/bin:/bin",
+      HOME: "/tmp",
+      TMPDIR: "/tmp",
+      NODE_OPTIONS: "--no-deprecation",
+    },
+    stdio: ["pipe", "pipe", "pipe"],
+  });
+
+  if (ctx.stdin) {
+    child.stdin?.end(Buffer.from(ctx.stdin as unknown as string, "latin1"));
+  } else {
+    child.stdin?.end();
+  }
+
+  const result = await collectChildResult(child, options.timeoutSeconds, options.outputLimitBytes);
+  return {
+    stdout: result.stdout,
+    stderr: result.stderr,
+    exitCode: result.exitCode ?? 1,
+  };
+}
+
+function resolveWorkspaceRoot(root: string | undefined, namespace: string): string {
+  assertSafeNamespace(namespace);
+  return resolve(root || process.env.SANDBOX_WORKSPACE_MOUNT_PATH || "/mnt/workspaces", namespace);
+}
+
+function resolveWorkspacePath(workspaceRoot: string, entryPath: string): string {
+  const normalizedEntry = entryPath.startsWith("/") ? entryPath.slice(1) : entryPath;
+  const resolved = resolve(workspaceRoot, normalizedEntry);
+  const relation = relative(workspaceRoot, resolved);
+  if (relation.startsWith("..") || relation === ".." || relation === "" || relation.startsWith("/")) {
+    throw new Error("Invalid entry path: resolved outside workspace root");
+  }
+  return resolved;
+}
+
+function resolveTypescriptOutputPath(filePath: string, workspaceRoot: string, source: string): string {
+  const fileName = basename(filePath).replace(/\.ts$/, "");
+  const hash = createHash("sha256").update(filePath).update("\0").update(source).digest("hex").slice(0, 16);
+  const generated = resolve(dirname(filePath), `.${fileName}-${hash}.js`);
+  const relation = relative(workspaceRoot, generated);
+  if (relation.startsWith("..") || relation === ".." || relation === "" || relation.startsWith("/")) {
+    throw new Error("Invalid generated entry path: resolved outside workspace root");
+  }
+  return generated;
+}
+
+function networkConfig(access: SandboxBashRequest["networkAccess"]): NetworkConfig | undefined {
+  if (access !== "public") {
+    return undefined;
+  }
+
+  return {
+    dangerouslyAllowFullInternetAccess: true,
+    denyPrivateRanges: true,
+    maxRedirects: 10,
+    timeoutMs: 30000,
+    maxResponseSize: 10 * 1024 * 1024,
+  };
+}
+
+function assertSafeNamespace(namespace: string): void {
+  if (!/^fs-[a-f0-9]{40}$/.test(namespace)) {
+    throw new Error("Invalid workspace namespace");
+  }
+}
+
+function boundedTimeoutSeconds(value: number): number {
+  return Number.isSafeInteger(value) && value > 0 ? Math.min(value, 120) : 30;
+}
+
+function boundedOutputLimit(value: number): number {
+  return Number.isSafeInteger(value) && value > 0 ? Math.min(value, 262144) : 65536;
+}
+
+async function collectChildResult(
+  child: ReturnType<typeof spawn>,
+  timeoutSeconds: number,
+  outputLimitBytes: number,
+): Promise<{ exitCode: number | null; stdout: string; stderr: string }> {
+  const stdoutChunks: Buffer[] = [];
+  const stderrChunks: Buffer[] = [];
+  child.stdout?.on("data", (chunk: Buffer) => stdoutChunks.push(chunk));
+  child.stderr?.on("data", (chunk: Buffer) => stderrChunks.push(chunk));
+
+  let timedOut = false;
+  const timeout = setTimeout(() => {
+    timedOut = true;
+    child.kill("SIGKILL");
+  }, timeoutSeconds * 1000);
+
+  const exitCode = await new Promise<number | null>((resolve) => {
+    child.on("close", (code) => resolve(code));
+  });
+  clearTimeout(timeout);
+
+  const stdout = truncateOutput(Buffer.concat(stdoutChunks), outputLimitBytes);
+  const stderr = truncateOutput(Buffer.concat(stderrChunks), outputLimitBytes);
+  return {
+    exitCode,
+    stdout: stdout.value,
+    stderr: timedOut ? appendTimeout(stderr.value, timeoutSeconds) : stderr.value,
+  };
+}
+
+function truncateOutput(value: Buffer, limit: number): { value: string; truncated: boolean } {
+  if (value.byteLength <= limit) {
+    return { value: textDecoder.decode(value), truncated: false };
+  }
+
+  return {
+    value: `${textDecoder.decode(value.subarray(0, limit))}\n[output truncated]`,
+    truncated: true,
+  };
+}
+
+function appendTimeout(stderr: string, timeoutSeconds: number): string {
+  return [stderr, `Timed out after ${timeoutSeconds}s`].filter(Boolean).join("\n");
+}

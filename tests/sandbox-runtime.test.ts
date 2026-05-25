@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "bun:test";
 
+import { handler as bashSandboxHandler } from "../functions/sandbox-bash/handler.ts";
 import { handler as nodeSandboxHandler } from "../functions/sandbox-node/handler.ts";
 
 describe("sandbox runtime lambdas", () => {
@@ -189,5 +190,93 @@ describe("sandbox runtime lambdas", () => {
       }
       await rm(root, { recursive: true, force: true });
     }
+  });
+
+  it("runs bash-like filesystem commands against a mounted workspace", async () => {
+    const root = await mkdtemp(join(tmpdir(), "sandbox-bash-"));
+    await mkdir(join(root, namespace), { recursive: true });
+
+    const result = await bashSandboxHandler({
+      runtime: "shell",
+      namespace,
+      workspaceRoot: root,
+      shell: [
+        "mkdir -p notes",
+        "cat <<'EOF' > notes/a.txt",
+        "hello mounted workspace",
+        "EOF",
+        "cat notes/a.txt | sed -n '1,1p'",
+      ].join("\n"),
+      timeoutSeconds: 5,
+      outputLimitBytes: 4096,
+    });
+
+    expect(result).toMatchObject({
+      ok: true,
+      exitCode: 0,
+      stdout: "hello mounted workspace\n",
+      stderr: "",
+    });
+    await expect(readFile(join(root, namespace, "notes", "a.txt"), "utf8"))
+      .resolves.toBe("hello mounted workspace\n");
+
+    await rm(root, { recursive: true, force: true });
+  });
+
+  it("executes native Node from the bash sandbox", async () => {
+    const root = await mkdtemp(join(tmpdir(), "sandbox-bash-"));
+    await mkdir(join(root, namespace), { recursive: true });
+    await writeFile(
+      join(root, namespace, "main.ts"),
+      [
+        "import { writeFileSync } from 'node:fs';",
+        "const answer: number = 21 * 2;",
+        "writeFileSync('answer.txt', String(answer));",
+        "console.log(JSON.stringify({ answer, args: process.argv.slice(2) }));",
+      ].join("\n"),
+      "utf8",
+    );
+
+    const result = await bashSandboxHandler({
+      runtime: "shell",
+      namespace,
+      workspaceRoot: root,
+      shell: "node main.ts --mode fast",
+      timeoutSeconds: 5,
+      outputLimitBytes: 4096,
+    });
+
+    expect(result).toMatchObject({
+      ok: true,
+      exitCode: 0,
+      stdout: "{\"answer\":42,\"args\":[\"--mode\",\"fast\"]}\n",
+      stderr: "",
+    });
+    await expect(readFile(join(root, namespace, "answer.txt"), "utf8"))
+      .resolves.toBe("42");
+
+    await rm(root, { recursive: true, force: true });
+  });
+
+  it("rejects invalid bash sandbox namespaces", async () => {
+    const root = await mkdtemp(join(tmpdir(), "sandbox-bash-"));
+
+    const result = await bashSandboxHandler({
+      runtime: "shell",
+      namespace: "../outside",
+      workspaceRoot: root,
+      shell: "pwd",
+      timeoutSeconds: 5,
+      outputLimitBytes: 4096,
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      exitCode: null,
+      stdout: "",
+      stderr: "Invalid workspace namespace",
+    });
+
+    await rm(root, { recursive: true, force: true });
   });
 });
