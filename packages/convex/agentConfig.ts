@@ -4,6 +4,7 @@
 
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
+import { ensureAgentsRowForConfig, syncAgentRowFields } from "./model/agentSync";
 import { authKit } from "./auth";
 import { getOwnedEnvironment } from "./model/ownership/environment";
 import { getOwnedProject } from "./model/ownership/project";
@@ -117,6 +118,11 @@ export const create = mutation({
             }
         }
 
+        // Provision the filthy-panty agents row so the harness can resolve
+        // this config by its public agentId. No-ops if the org isn't yet
+        // provisioned with a filthy-panty account.
+        await ensureAgentsRowForConfig(ctx, configId, authUser.id);
+
         return configId;
     },
 });
@@ -160,6 +166,16 @@ export const update = mutation({
         );
 
         await ctx.db.patch(configId, { ...patch, updatedAt: Date.now() });
+
+        // Keep the filthy-panty `agents` row aligned. ensureAgentsRowForConfig
+        // also covers the legacy case where the row was never provisioned
+        // (e.g. agentConfigs created before this sync was wired).
+        await ensureAgentsRowForConfig(ctx, configId, authUser.id);
+        await syncAgentRowFields(ctx, configId, {
+            name: updates.name,
+            description: updates.description,
+        });
+
         return configId;
     },
 });
@@ -182,6 +198,17 @@ export const remove = mutation({
             .collect();
 
         for (const d of deployments) await ctx.db.delete(d._id);
+
+        // Clean up the linked filthy-panty `agents` row if present so the
+        // harness side stays consistent with cherry-coke's canvas.
+        if (existing.agentId) {
+            const normalized = ctx.db.normalizeId("agents", existing.agentId);
+            if (normalized) {
+                const agent = await ctx.db.get(normalized);
+                if (agent) await ctx.db.delete(normalized);
+            }
+        }
+
         await ctx.db.delete(configId);
 
         return configId;
