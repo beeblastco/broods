@@ -45,6 +45,9 @@ export default function DashboardPage() {
     }
 
     const activeLabel = TABS.find((t) => t.id === activeTab)?.label ?? "";
+    // Billing matches the narrow Settings page width; the analytics tabs need
+    // more horizontal room for charts, tables, and dense log rows.
+    const contentMaxWidth = activeTab === "billing" ? "max-w-2xl" : "max-w-6xl";
 
     const renderPanel = () => {
         switch (activeTab) {
@@ -91,10 +94,10 @@ export default function DashboardPage() {
             {/* Content area */}
             <div className="flex flex-1 flex-col overflow-auto">
                 {/* Page title — aligned with sidebar header height */}
-                <div className="px-8 pt-9.25 pb-5 mx-auto w-full max-w-2xl shrink-0">
+                <div className={cn("px-8 pt-9.25 pb-5 mx-auto w-full shrink-0", contentMaxWidth)}>
                     <h2 className="text-xl font-semibold text-foreground">{activeLabel}</h2>
                 </div>
-                <div className="mx-auto w-full max-w-2xl px-8 pb-12">
+                <div className={cn("mx-auto w-full px-8 pb-12", contentMaxWidth)}>
                     {renderPanel()}
                 </div>
             </div>

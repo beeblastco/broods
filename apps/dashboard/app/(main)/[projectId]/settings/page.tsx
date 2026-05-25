@@ -6,17 +6,15 @@ import { cn } from "@/app/lib/utils";
 import type { Id } from "@/convex/_generated/dataModel";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { AccountPanel } from "./components/AccountPanel";
-import { ApiKeysPanel } from "./components/ApiKeysPanel";
 import { DangerPanel } from "./components/DangerPanel";
 import { EnvironmentsPanel } from "./components/EnvironmentsPanel";
 import { WebhooksPanel } from "./components/WebhooksPanel";
 
-type SettingsTab = "account" | "environments" | "api-keys" | "webhooks" | "danger";
+type SettingsTab = "account" | "environments" | "webhooks" | "danger";
 
 const TABS: Array<{ id: SettingsTab; label: string; danger?: boolean }> = [
     { id: "account", label: "Account" },
     { id: "environments", label: "Environments" },
-    { id: "api-keys", label: "API Keys" },
     { id: "webhooks", label: "Webhooks" },
     { id: "danger", label: "Danger Zone", danger: true },
 ];
@@ -36,8 +34,6 @@ export default function SettingsPage() {
                 return <AccountPanel projectId={projectId} />;
             case "environments":
                 return <EnvironmentsPanel projectId={projectId} />;
-            case "api-keys":
-                return <ApiKeysPanel projectId={projectId} />;
             case "webhooks":
                 return <WebhooksPanel projectId={projectId} />;
             case "danger":

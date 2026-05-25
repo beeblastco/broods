@@ -18,7 +18,7 @@ type OutputFormatConfig = {
     description?: string;
 };
 
-type AgentProvider = "openai" | "google" | "bedrock" | "anthropic";
+type AgentProvider = "openai" | "google" | "bedrock" | "anthropic" | "minimax" | "gateway";
 type RuntimeVariable = { key: string; value: string };
 
 const providerOptions: Array<{ value: AgentProvider; label: string }> = [
@@ -26,6 +26,8 @@ const providerOptions: Array<{ value: AgentProvider; label: string }> = [
     { value: "google", label: "Google" },
     { value: "bedrock", label: "Bedrock" },
     { value: "anthropic", label: "Anthropic" },
+    { value: "minimax", label: "MiniMax" },
+    { value: "gateway", label: "Gateway" },
 ];
 
 function isRecord(value: unknown): value is Record<string, unknown> {

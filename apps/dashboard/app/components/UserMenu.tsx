@@ -5,17 +5,15 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/app/components/ui/avatar"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/app/components/ui/dropdown-menu";
 import { useAuth } from "@workos-inc/authkit-nextjs/components";
 import { useConvexAuth } from "convex/react";
-import { FileText, HelpCircle, LogOut, Moon, ScrollText, Settings, Shield, Sun } from "lucide-react";
+import { Building2, FileText, HelpCircle, LogOut, Moon, ScrollText, Shield, Sun } from "lucide-react";
 import { useTheme } from "next-themes";
-import { useParams, useRouter } from "next/navigation";
+import { useRouter } from "next/navigation";
 
 export function UserMenu() {
     const { isLoading, isAuthenticated } = useConvexAuth();
     const { user, signOut } = useAuth();
     const { theme, setTheme } = useTheme();
     const router = useRouter();
-    const params = useParams<{ projectId?: string }>();
-    const projectId = params.projectId;
 
     if (!isLoading && !isAuthenticated) { return null; }
     if (isLoading) {
@@ -55,11 +53,9 @@ export function UserMenu() {
                 <DropdownMenuItem onSelect={(e) => e.preventDefault()} onClick={() => setTheme(isDark ? "light" : "dark")}>
                     {isDark ? <Sun /> : <Moon />}{isDark ? "Light mode" : "Dark mode"}
                 </DropdownMenuItem>
-                {projectId && (
-                    <DropdownMenuItem onClick={() => router.push(`/${projectId}/settings`)}>
-                        <Settings />Settings
-                    </DropdownMenuItem>
-                )}
+                <DropdownMenuItem onClick={() => router.push("/settings/org")}>
+                    <Building2 />Organization
+                </DropdownMenuItem>
                 <DropdownMenuSeparator />
                 <DropdownMenuItem className="cursor-pointer" asChild>
                     <a href="https://docs.beeblast.co/" target="_blank" rel="noopener noreferrer">

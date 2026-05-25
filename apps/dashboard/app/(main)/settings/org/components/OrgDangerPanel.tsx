@@ -1,12 +1,11 @@
 "use client";
 
 /**
- * Org details panel: edit org name, view plan, and delete the org. Delete is
- * a typed-confirm action that cascades to backend accounts + filthy-panty data.
+ * Org danger panel: typed-confirm delete that cascades to backend accounts
+ * and all filthy-panty data owned by this org.
  */
 
 import { Section } from "@/app/components/Section";
-import { Badge } from "@/app/components/ui/badge";
 import { Button } from "@/app/components/ui/button";
 import {
     Dialog,
@@ -17,7 +16,6 @@ import {
     DialogTitle,
 } from "@/app/components/ui/dialog";
 import { Input } from "@/app/components/ui/input";
-import { Label } from "@/app/components/ui/label";
 import { api } from "@/convex/_generated/api";
 import type { Doc } from "@/convex/_generated/dataModel";
 import { useMutation } from "convex/react";
@@ -25,41 +23,18 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 
 interface Props {
-    /** The org being edited. */
+    /** The org being deleted. */
     org: Doc<"orgs">;
 }
 
-export function OrgDetailsPanel({ org }: Props) {
+export function OrgDangerPanel({ org }: Props) {
     const router = useRouter();
-    const updateOrg = useMutation(api.org.update);
     const removeOrg = useMutation(api.org.remove);
-
-    const [name, setName] = useState(org.name);
-    const [saving, setSaving] = useState(false);
-    const [saveError, setSaveError] = useState<string | null>(null);
-    const [saveNotice, setSaveNotice] = useState<string | null>(null);
 
     const [deleteOpen, setDeleteOpen] = useState(false);
     const [confirmText, setConfirmText] = useState("");
     const [deleting, setDeleting] = useState(false);
     const [deleteError, setDeleteError] = useState<string | null>(null);
-
-    const dirty = name.trim() !== org.name && name.trim().length > 0;
-
-    async function handleSave() {
-        if (!dirty) return;
-        setSaving(true);
-        setSaveError(null);
-        setSaveNotice(null);
-        try {
-            await updateOrg({ orgId: org._id, name: name.trim() });
-            setSaveNotice("Saved.");
-        } catch (err) {
-            setSaveError(err instanceof Error ? err.message : "Save failed");
-        } finally {
-            setSaving(false);
-        }
-    }
 
     async function handleDelete() {
         if (confirmText !== org.slug) return;
@@ -77,44 +52,6 @@ export function OrgDetailsPanel({ org }: Props) {
 
     return (
         <>
-            <Section title="Organization details" description="Rename or delete this organization.">
-                <div className="grid gap-4">
-                    <div className="grid gap-1">
-                        <Label htmlFor="org-name" className="text-xs text-muted-foreground">Name</Label>
-                        <div className="flex items-center gap-2">
-                            <Input
-                                id="org-name"
-                                value={name}
-                                onChange={(e) => setName(e.target.value)}
-                                className="flex-1"
-                            />
-                            <Button
-                                size="sm"
-                                className="cursor-pointer disabled:cursor-not-allowed"
-                                disabled={!dirty || saving}
-                                onClick={handleSave}
-                            >
-                                {saving ? "Saving..." : "Save"}
-                            </Button>
-                        </div>
-                        <p className="text-xs text-muted-foreground">
-                            Slug: <code className="font-mono">{org.slug}</code>
-                        </p>
-                        {saveError && <p className="text-xs text-destructive">{saveError}</p>}
-                        {saveNotice && <p className="text-xs text-muted-foreground">{saveNotice}</p>}
-                    </div>
-
-                    <div className="grid gap-1">
-                        <Label className="text-xs text-muted-foreground">Plan</Label>
-                        <div>
-                            <Badge variant="secondary" className="text-xs uppercase">
-                                {org.plan}
-                            </Badge>
-                        </div>
-                    </div>
-                </div>
-            </Section>
-
             <Section
                 title="Delete organization"
                 description="Permanently removes this org, its members, and all backend data."

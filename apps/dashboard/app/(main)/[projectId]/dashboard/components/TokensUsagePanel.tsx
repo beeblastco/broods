@@ -16,6 +16,15 @@ type Range = "1h" | "3h" | "1d" | "7d" | "30d" | "1y";
 type UsageStats = FunctionReturnType<typeof api.logs.fetchUsageStats>;
 type Bucket = UsageStats["buckets"][number];
 
+const RANGE_SECONDS: Record<Range, number> = {
+    "1h": 60 * 60,
+    "3h": 3 * 60 * 60,
+    "1d": 24 * 60 * 60,
+    "7d": 7 * 24 * 60 * 60,
+    "30d": 30 * 24 * 60 * 60,
+    "1y": 365 * 24 * 60 * 60,
+};
+
 interface Props {
     projectId: Id<"projects">;
 }
@@ -95,6 +104,42 @@ function mergeByBucket(buckets: Bucket[]): Array<{
     }
 
     return Array.from(map.values()).sort((a, b) => a.bucketStart - b.bucketStart);
+}
+
+/**
+ * Fill the selected time window with zero-valued bins so the X-axis spans
+ * the full range (1h shows the whole hour, 1d shows the whole day, etc.),
+ * matching the CloudWatch / Lambda monitoring style. Existing populated
+ * bins are merged in at their aligned timestamps.
+ */
+function fillBucketsAcrossRange(
+    merged: ReturnType<typeof mergeByBucket>,
+    binSeconds: number,
+    rangeSeconds: number,
+    now: number = Date.now(),
+): ReturnType<typeof mergeByBucket> {
+    if (!binSeconds) return merged;
+    const binMs = binSeconds * 1000;
+    const endMs = Math.ceil(now / binMs) * binMs;
+    const startMs = endMs - rangeSeconds * 1000;
+    const indexed = new Map(merged.map((b) => [Math.floor(b.bucketStart / binMs) * binMs, b]));
+    const out: ReturnType<typeof mergeByBucket> = [];
+    for (let t = startMs; t < endMs; t += binMs) {
+        const existing = indexed.get(t);
+        out.push(
+            existing ?? {
+                bucketStart: t,
+                inputTokens: 0,
+                outputTokens: 0,
+                reasoningTokens: 0,
+                cachedInputTokens: 0,
+                totalTokens: 0,
+                invocations: 0,
+                modelCalls: 0,
+            },
+        );
+    }
+    return out;
 }
 
 /** Aggregate per-bucket rows into per-(provider, modelId) totals for the breakdown table. */
@@ -468,7 +513,11 @@ export function TokensUsagePanel({ projectId }: Props) {
         refresh();
     }, [refresh]);
 
-    const bins = useMemo(() => (stats ? mergeByBucket(stats.buckets) : []), [stats]);
+    const bins = useMemo(() => {
+        if (!stats) return [];
+        const merged = mergeByBucket(stats.buckets);
+        return fillBucketsAcrossRange(merged, stats.binSeconds, RANGE_SECONDS[range]);
+    }, [stats, range]);
     const byModel = useMemo(() => (stats ? aggregateByModel(stats.buckets) : []), [stats]);
 
     return (
