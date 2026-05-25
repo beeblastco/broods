@@ -2,9 +2,11 @@
 
 /** Protected layout that redirects unauthenticated users to /login. */
 import { Header } from "@/app/components/Header";
-import { useConvexAuth } from "convex/react";
+import { api } from "@/convex/_generated/api";
+import { useAuth } from "@workos-inc/authkit-nextjs/components";
+import { useConvexAuth, useMutation } from "convex/react";
 import { useRouter } from "next/navigation";
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 
 export default function MainLayout({
     children,
@@ -12,13 +14,27 @@ export default function MainLayout({
     children: React.ReactNode;
 }>) {
     const { isLoading, isAuthenticated } = useConvexAuth();
+    const { user } = useAuth();
     const router = useRouter();
+    const syncProfile = useMutation(api.user.syncProfile);
+    const profileSynced = useRef(false);
 
     useEffect(() => {
         if (!isLoading && !isAuthenticated) {
             router.replace("/auth/sign-in?returnTo=/");
         }
     }, [isLoading, isAuthenticated, router]);
+
+    useEffect(() => {
+        if (profileSynced.current || !isAuthenticated || !user) return;
+        const name = [user.firstName, user.lastName].filter(Boolean).join(" ").trim();
+        const avatarUrl = user.profilePictureUrl ?? undefined;
+        if (!name && !avatarUrl) return;
+        profileSynced.current = true;
+        syncProfile({ name: name || undefined, avatarUrl: avatarUrl }).catch(() => {
+            profileSynced.current = false;
+        });
+    }, [isAuthenticated, user, syncProfile]);
 
     if (isLoading) {
         return (

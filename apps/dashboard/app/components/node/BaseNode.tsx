@@ -120,7 +120,7 @@ export function BaseNode({
         : "border-border hover:border-foreground/25";
 
     return (
-        <div className={`relative min-w-45 min-h-24 flex flex-col rounded-md border bg-card transition-[border-color,box-shadow] duration-200 hover:shadow-md ${borderClass}`}>
+        <div className={`relative w-44 min-h-24 flex flex-col rounded-md border bg-card transition-[border-color,box-shadow] duration-200 hover:shadow-md ${borderClass}`}>
             <Handle
                 type="target"
                 position={Position.Top}
@@ -150,16 +150,21 @@ export function BaseNode({
                 className="px-3 pt-2.5 origin-top-left"
                 style={{ transform: `scale(${scale})` }}
             >
-                <div className="flex items-center gap-1.5">
+                <div className="flex items-center gap-1.5 pr-7 min-w-0">
                     {data.properties?.color ? (
                         <span
                             className="inline-block size-3 rounded-full shrink-0"
                             style={{ backgroundColor: data.properties.color }}
                         />
                     ) : (
-                        <span className="text-muted-foreground">{icon}</span>
+                        <span className="text-muted-foreground shrink-0">{icon}</span>
                     )}
-                    <span className="text-xs font-medium text-foreground whitespace-nowrap">{data.label}</span>
+                    <span
+                        className="text-xs font-medium text-foreground truncate min-w-0"
+                        title={data.label}
+                    >
+                        {data.label}
+                    </span>
                 </div>
             </div>
 

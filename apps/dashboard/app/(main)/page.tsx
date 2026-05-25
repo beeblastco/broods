@@ -9,6 +9,7 @@ import { useEffect, useRef } from "react";
 /** Home route that ensures a default workspace exists and opens the canvas. */
 export default function HomePage() {
     const router = useRouter();
+    const getOrCreateOrg = useMutation(api.org.getOrCreate);
     const getOrCreateDefault = useMutation(api.project.getOrCreateDefault);
     const hasStarted = useRef(false);
 
@@ -19,7 +20,8 @@ export default function HomePage() {
 
         hasStarted.current = true;
 
-        getOrCreateDefault({})
+        getOrCreateOrg({})
+            .then(() => getOrCreateDefault({}))
             .then((projectId) => {
                 router.replace(`/${projectId}`);
             })
@@ -27,7 +29,7 @@ export default function HomePage() {
                 console.error("Failed to open workspace canvas:", error);
                 hasStarted.current = false;
             });
-    }, [getOrCreateDefault, router]);
+    }, [getOrCreateOrg, getOrCreateDefault, router]);
 
     return (
         <div className="flex h-full items-center justify-center">

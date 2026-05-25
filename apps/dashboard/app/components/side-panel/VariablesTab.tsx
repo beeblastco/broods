@@ -24,15 +24,25 @@ function keysFromVariables(entries: RuntimeVariable[]): string[] {
     return entries.map((entry) => entry.key.trim()).filter((key) => key.length > 0);
 }
 
+const PROVIDER_API_KEY_HINTS: Record<string, { envVar: string; label: string }> = {
+    openai: { envVar: "OPENAI_API_KEY", label: "OpenAI" },
+    google: { envVar: "GOOGLE_GENERATIVE_AI_API_KEY", label: "Google" },
+    anthropic: { envVar: "ANTHROPIC_API_KEY", label: "Anthropic" },
+    bedrock: { envVar: "AWS_BEDROCK_API_KEY", label: "Bedrock" },
+};
+
 export function VariablesTab({
     runtimeVariables,
     isSaving,
     onSave,
+    provider,
 }: {
     runtimeVariables: RuntimeVariable[];
     isSaving: boolean;
     onSave: (next: RuntimeVariable[]) => Promise<void>;
+    provider?: string;
 }) {
+    const providerHint = provider ? PROVIDER_API_KEY_HINTS[provider] : undefined;
     const [variables, setVariables] = useState<RuntimeVariable[]>(runtimeVariables);
     const [saveError, setSaveError] = useState<string | null>(null);
     const [saved, setSaved] = useState(false);
@@ -102,8 +112,13 @@ export function VariablesTab({
     return (
         <div className="flex flex-1 flex-col gap-4 overflow-hidden p-4">
             <p className="text-xs text-muted-foreground">
-                Add runtime environment variables for this agent. For OpenAI provider, set
-                <code className="ml-1">OPENAI_API_KEY</code>.
+                Add runtime environment variables for this agent.
+                {providerHint && (
+                    <>
+                        {" "}For {providerHint.label}, set{" "}
+                        <code className="ml-0">{providerHint.envVar}</code>.
+                    </>
+                )}
             </p>
 
             <div className="flex min-h-0 flex-1 flex-col gap-2">

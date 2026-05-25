@@ -1,45 +1,50 @@
 "use client";
 
-/** Settings page with sidebar navigation and panel-based content layout. */
+/**
+ * Organization settings page with sidebar navigation matching the project
+ * settings + dashboard layout. Tabs: General, API Access, Members, Danger Zone.
+ */
+
 import { Button } from "@/app/components/ui/button";
 import { cn } from "@/app/lib/utils";
-import type { Id } from "@/convex/_generated/dataModel";
-import { useParams, useRouter, useSearchParams } from "next/navigation";
-import { AccountPanel } from "./components/AccountPanel";
-import { DangerPanel } from "./components/DangerPanel";
-import { EnvironmentsPanel } from "./components/EnvironmentsPanel";
-import { WebhooksPanel } from "./components/WebhooksPanel";
+import { api } from "@/convex/_generated/api";
+import { useQuery } from "convex/react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { ApiAccessPanel } from "./components/ApiAccessPanel";
+import { MembersPanel } from "./components/MembersPanel";
+import { OrgDangerPanel } from "./components/OrgDangerPanel";
+import { OrgGeneralPanel } from "./components/OrgGeneralPanel";
 
-type SettingsTab = "account" | "environments" | "webhooks" | "danger";
+type OrgTab = "general" | "api-access" | "members" | "danger";
 
-const TABS: Array<{ id: SettingsTab; label: string; danger?: boolean }> = [
-    { id: "account", label: "Account" },
-    { id: "environments", label: "Environments" },
-    { id: "webhooks", label: "Webhooks" },
+const TABS: Array<{ id: OrgTab; label: string; danger?: boolean }> = [
+    { id: "general", label: "General" },
+    { id: "api-access", label: "API Access" },
+    { id: "members", label: "Members" },
     { id: "danger", label: "Danger Zone", danger: true },
 ];
 
-export default function SettingsPage() {
-    const params = useParams<{ projectId: string }>();
+export default function OrgSettingsPage() {
+    const org = useQuery(api.org.getActive, {});
     const searchParams = useSearchParams();
-    const projectId = params.projectId as Id<"projects">;
     const router = useRouter();
 
-    const activeTab = (searchParams.get("tab") as SettingsTab) || "account";
-    const activeLabel = TABS.find((t) => t.id === activeTab)?.label ?? "Settings";
+    const activeTab = (searchParams.get("tab") as OrgTab) || "general";
+    const activeLabel = TABS.find((t) => t.id === activeTab)?.label ?? "Organization";
 
     const renderPanel = () => {
+        if (!org) return null;
         switch (activeTab) {
-            case "account":
-                return <AccountPanel projectId={projectId} />;
-            case "environments":
-                return <EnvironmentsPanel projectId={projectId} />;
-            case "webhooks":
-                return <WebhooksPanel projectId={projectId} />;
+            case "general":
+                return <OrgGeneralPanel org={org} />;
+            case "api-access":
+                return <ApiAccessPanel org={org} />;
+            case "members":
+                return <MembersPanel org={org} />;
             case "danger":
-                return <DangerPanel projectId={projectId} />;
+                return <OrgDangerPanel org={org} />;
             default:
-                return <AccountPanel projectId={projectId} />;
+                return <OrgGeneralPanel org={org} />;
         }
     };
 
@@ -48,7 +53,7 @@ export default function SettingsPage() {
             {/* Sidebar */}
             <aside className="flex w-48 shrink-0 flex-col bg-transparent">
                 <div className="px-6 pt-9.25 pb-3">
-                    <h2 className="text-xl font-semibold text-foreground">Settings</h2>
+                    <h2 className="text-xl font-semibold text-foreground">Organization</h2>
                 </div>
                 <nav className="flex flex-col gap-0.5 px-3">
                     {TABS.map((tab) => (
@@ -69,7 +74,7 @@ export default function SettingsPage() {
                             onClick={() => {
                                 const p = new URLSearchParams(searchParams.toString());
                                 p.set("tab", tab.id);
-                                router.push(`/${projectId}/settings?${p.toString()}`);
+                                router.push(`/settings/org?${p.toString()}`);
                             }}
                         >
                             {tab.label}
@@ -80,12 +85,21 @@ export default function SettingsPage() {
 
             {/* Content area */}
             <div className="flex flex-1 flex-col overflow-auto">
-                {/* Page title — aligned with sidebar header height */}
                 <div className="px-8 pt-9.25 pb-6 mx-auto w-full max-w-2xl shrink-0">
                     <h2 className="text-xl font-semibold text-foreground">{activeLabel}</h2>
                 </div>
                 <div className="mx-auto w-full max-w-2xl px-8 pb-12">
-                    {renderPanel()}
+                    {org === undefined ? (
+                        <p className="text-sm text-muted-foreground">Loading...</p>
+                    ) : org === null ? (
+                        <div className="rounded-lg border border-border bg-card px-4 py-8 text-center">
+                            <p className="text-sm text-muted-foreground">
+                                You do not have an organization yet.
+                            </p>
+                        </div>
+                    ) : (
+                        renderPanel()
+                    )}
                 </div>
             </div>
         </div>

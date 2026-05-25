@@ -1,6 +1,7 @@
 "use client";
 
 /** Displays the top header bar with logo, project selector, environment selector, navigation links, and user menu. */
+import { OrgSwitcher } from "@/app/components/header/OrgSwitcher";
 import { UserMenu } from "@/app/components/UserMenu";
 import { useTheme } from "next-themes";
 import dynamic from "next/dynamic";
@@ -23,8 +24,8 @@ export function Header() {
     const { resolvedTheme } = useTheme();
 
     return (
-        <header className={`flex h-12 shrink-0 items-center border-b ${isProjectPage ? "border-border" : "border-transparent"}`}>
-            <div className={`flex w-full items-center gap-3 ${isProjectPage ? "px-5" : "mx-auto max-w-5xl"}`}>
+        <header className="flex h-12 shrink-0 items-center border-b border-border">
+            <div className="flex w-full items-center gap-3 px-5">
                 <Link
                     href={isProjectPage ? `/${params.projectId}` : "/"}
                     className="hover:opacity-80 transition-opacity cursor-pointer"
@@ -35,6 +36,9 @@ export function Header() {
                         <img src="/assets/logo/light-full.svg" alt="Logo" className="h-7 w-auto" />
                     )}
                 </Link>
+
+                <div className="h-4 w-px bg-border" />
+                <OrgSwitcher />
 
                 {isProjectPage && <ProjectHeaderLeft />}
 

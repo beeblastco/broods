@@ -24,13 +24,15 @@ import type { Id } from "@/convex/_generated/dataModel";
 import { useMutation } from "convex/react";
 import { useState } from "react";
 
-type AgentProvider = "openai" | "google" | "bedrock" | "anthropic";
+type AgentProvider = "openai" | "google" | "bedrock" | "anthropic" | "minimax" | "gateway";
 
 const providerOptions: Array<{ value: AgentProvider; label: string; modelPlaceholder: string }> = [
     { value: "openai", label: "OpenAI", modelPlaceholder: "gpt-4.1-mini" },
     { value: "google", label: "Google", modelPlaceholder: "gemini-2.5-flash" },
     { value: "bedrock", label: "Bedrock", modelPlaceholder: "anthropic.claude-sonnet-4-5-20250929-v1:0" },
     { value: "anthropic", label: "Anthropic", modelPlaceholder: "claude-sonnet-4-5-20250929" },
+    { value: "minimax", label: "MiniMax", modelPlaceholder: "MiniMax-M2.7" },
+    { value: "gateway", label: "Gateway", modelPlaceholder: "openai/gpt-4.1-mini" },
 ];
 
 export function CreateAgentConfigDialog({
