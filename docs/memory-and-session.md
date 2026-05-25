@@ -83,7 +83,7 @@ flowchart TD
   Namespace --> Tasks
 ```
 
-The filesystem and tasks tools do not use top-level `tools` entries. They are available when `workspace.enabled` is true, unless disabled with `workspace.filesystem.enabled: false` or `workspace.tasks.enabled: false`. Set `workspace.needsApproval` to require approval for every enabled workspace tool.
+The filesystem and tasks tools do not use top-level `tools` entries. The filesystem tool is the workspace sandbox and is available whenever `workspace.enabled` is true. Tasks can be disabled with `workspace.tasks.enabled: false`. Set `workspace.needsApproval` to require approval for every enabled workspace tool.
 
 ## Session Context Management
 

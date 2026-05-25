@@ -70,18 +70,19 @@
       "enabled": true,
       "namespace": "support"
     },
-    "filesystem": {
-      "enabled": true
+    "storage": {
+      "provider": "s3"
     },
     "sandbox": {
-      "enabled": false,
       "provider": "lambda",
       "timeout": 30,
       "outputLimitBytes": 65536,
       "options": {
+        "bashFunctionName": "my-bash-sandbox",
         "nodeFunctionName": "my-node-sandbox",
         "pythonFunctionName": "my-python-sandbox",
-        "workspaceRoot": "/mnt/workspaces"
+        "workspaceRoot": "/mnt/workspaces",
+        "networkAccess": "disabled"
       }
     },
     "tasks": {

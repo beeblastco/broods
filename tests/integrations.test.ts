@@ -383,6 +383,9 @@ describe("direct API ingress", () => {
       },
       workspace: {
         enabled: true,
+        storage: {
+          provider: "s3",
+        },
         memory: {
           namespace: "support",
         },
