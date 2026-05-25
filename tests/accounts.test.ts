@@ -642,6 +642,53 @@ describe("agent config", () => {
     })).toThrow("config.channels.pancake.options.handoff requires tagId");
   });
 
+  it("validates Zalo channel config", () => {
+    expect(normalizeAgentConfig({
+      channels: {
+        zalo: {
+          botToken: "zalo-token",
+          webhookSecret: "zalo-secret",
+          allowedUserIds: ["user-1"],
+        },
+      },
+    })).toEqual({
+      channels: {
+        zalo: {
+          botToken: "zalo-token",
+          webhookSecret: "zalo-secret",
+          allowedUserIds: ["user-1"],
+        },
+      },
+    });
+
+    expect(() => normalizeAgentConfig({
+      channels: {
+        zalo: {
+          botToken: 123,
+        },
+      },
+    })).toThrow("config.channels.zalo.botToken must be a string");
+
+    expect(() => normalizeAgentConfig({
+      channels: {
+        zalo: {
+          botToken: "zalo-token",
+          webhookSecret: "short",
+        },
+      },
+    })).toThrow("config.channels.zalo.webhookSecret must be 8 to 256 characters");
+
+    expect(() => normalizeAgentConfig({
+      channels: {
+        zalo: {
+          botToken: "zalo-token",
+          webhookSecret: "zalo-secret",
+          allowedUserIds: [123],
+        },
+      },
+    })).toThrow("config.channels.zalo.allowedUserIds must be an array of strings");
+  });
+
   it("projects only runtime settings for agent sessions", () => {
     expect(toRuntimeAgentConfig({
       model: {
@@ -786,6 +833,11 @@ describe("agent config", () => {
           botToken: "xoxb-secret",
           signingSecret: "signing-secret",
         },
+        zalo: {
+          botToken: "zalo-token",
+          webhookSecret: "zalo-secret",
+          allowedUserIds: ["user-1"],
+        },
       },
     }, "pancake")).toEqual({
       agent: {
@@ -801,6 +853,28 @@ describe("agent config", () => {
           options: {
             handoff: { tagId: "6" },
           },
+        },
+      },
+    });
+
+    expect(toChannelRuntimeAgentConfig({
+      channels: {
+        pancake: {
+          pageId: "page-1",
+          pageAccessToken: "page-token",
+        },
+        zalo: {
+          botToken: "zalo-token",
+          webhookSecret: "zalo-secret",
+          allowedUserIds: ["user-1"],
+        },
+      },
+    }, "zalo")).toEqual({
+      channels: {
+        zalo: {
+          botToken: "zalo-token",
+          webhookSecret: "zalo-secret",
+          allowedUserIds: ["user-1"],
         },
       },
     });
@@ -820,12 +894,17 @@ describe("agent config", () => {
       status: "active",
       config: {
         channels: {
-          github: {
-            privateKey: "private",
-            webhookSecret: "secret",
-            allowedRepos: ["owner/repo"],
-          },
+        github: {
+          privateKey: "private",
+          webhookSecret: "secret",
+          allowedRepos: ["owner/repo"],
         },
+        zalo: {
+          botToken: "zalo-token",
+          webhookSecret: "zalo-secret",
+          allowedUserIds: ["user-1"],
+        },
+      },
         tools: {
           tavilySearch: {
             apiKey: "tool-api-key",
@@ -851,6 +930,11 @@ describe("agent config", () => {
           privateKey: "********",
           webhookSecret: "********",
           allowedRepos: ["owner/repo"],
+        },
+        zalo: {
+          botToken: "********",
+          webhookSecret: "********",
+          allowedUserIds: ["user-1"],
         },
       },
       tools: {

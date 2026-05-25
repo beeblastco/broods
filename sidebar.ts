@@ -81,6 +81,11 @@ const sidebars: SidebarsConfig = {
               id: 'channels/pancake',
               label: 'Pancake',
             },
+            {
+              type: 'doc',
+              id: 'channels/zalo',
+              label: 'Zalo',
+            },
           ],
         },
         {
