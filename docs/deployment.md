@@ -66,6 +66,7 @@ Provider webhooks use the deployed harness-processing URL:
 {AGENT_SERVICE_URL}/webhooks/{accountId}/{agentId}/slack
 {AGENT_SERVICE_URL}/webhooks/{accountId}/{agentId}/discord
 {AGENT_SERVICE_URL}/webhooks/{accountId}/{agentId}/pancake
+{AGENT_SERVICE_URL}/webhooks/{accountId}/{agentId}/zalo
 ```
 
 See [`examples/account.config.example.json`](../examples/account.config.example.json) for a complete agent config shape.

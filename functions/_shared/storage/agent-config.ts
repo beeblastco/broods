@@ -187,6 +187,7 @@ export interface AgentChannelsConfig {
   slack?: AgentSlackChannelConfig;
   discord?: AgentDiscordChannelConfig;
   pancake?: AgentPancakeChannelConfig;
+  zalo?: AgentZaloChannelConfig;
   [key: string]: unknown;
 }
 
@@ -225,6 +226,13 @@ export interface AgentPancakeChannelConfig {
   pageAccessToken?: string;
   senderId?: string;
   options?: Record<string, unknown>;
+  [key: string]: unknown;
+}
+
+export interface AgentZaloChannelConfig {
+  botToken?: string;
+  webhookSecret?: string;
+  allowedUserIds?: string[];
   [key: string]: unknown;
 }
 
@@ -327,6 +335,7 @@ function normalizeChannelsConfig(value: unknown): void {
   normalizeSlackConfig(channels.slack);
   normalizeDiscordConfig(channels.discord);
   normalizePancakeConfig(channels.pancake);
+  normalizeZaloConfig(channels.zalo);
 }
 
 function normalizeAgentBehaviorConfig(value: unknown): void {
@@ -860,6 +869,21 @@ function normalizePancakeConfig(value: unknown): void {
     assertOptionalStringArray(options.handoff.assigneeIds, "config.channels.pancake.options.handoff.assigneeIds");
     if (!options.handoff.tagId) {
       throw new Error("config.channels.pancake.options.handoff requires tagId");
+    }
+  }
+}
+
+function normalizeZaloConfig(value: unknown): void {
+  if (value == null) return;
+  if (!isPlainObject(value)) throw new Error("config.channels.zalo must be an object");
+  const config = value as Record<string, unknown>;
+  assertOptionalString(config.botToken, "config.channels.zalo.botToken");
+  assertOptionalString(config.webhookSecret, "config.channels.zalo.webhookSecret");
+  assertOptionalStringArray(config.allowedUserIds, "config.channels.zalo.allowedUserIds");
+  if (typeof config.webhookSecret === "string") {
+    const length = config.webhookSecret.length;
+    if (length < 8 || length > 256) {
+      throw new Error("config.channels.zalo.webhookSecret must be 8 to 256 characters");
     }
   }
 }
