@@ -46,6 +46,7 @@ import {
     schedulerGroupName,
     updateCronSchedule,
 } from "./cron.ts";
+import { logError, logInfo, logWarn } from "../_shared/log.ts";
 
 export async function handler(event: LambdaFunctionURLEvent): Promise<LambdaResponse> {
     const method = event.requestContext.http.method;
@@ -53,6 +54,11 @@ export async function handler(event: LambdaFunctionURLEvent): Promise<LambdaResp
     const headers = normalizeHeaders(event.headers);
 
     try {
+        logInfo("Account manage request received", {
+            method,
+            rawPath,
+        });
+
         if (method === "GET" && rawPath === "/") {
             return jsonResponse(200, { status: "ok" });
         }
@@ -69,6 +75,10 @@ export async function handler(event: LambdaFunctionURLEvent): Promise<LambdaResp
 
         const auth = await resolveBearerAuth(headers);
         if (!auth) {
+            logWarn("Account manage request unauthorized", {
+                method,
+                rawPath,
+            });
             return errorResponse(401, "Unauthorized");
         }
 
@@ -167,6 +177,13 @@ export async function handler(event: LambdaFunctionURLEvent): Promise<LambdaResp
 
         return errorResponse(404, "Not found");
     } catch (err) {
+        logError("Account manage request failed", {
+            method,
+            rawPath,
+            error: err instanceof Error ? err.message : String(err),
+            errorName: err instanceof Error ? err.name : undefined,
+            stack: err instanceof Error ? err.stack : undefined,
+        });
         if (err instanceof RateLimitExceededError) {
             return errorResponse(429, "Rate limit exceeded", {}, {
                 "Retry-After": String(err.retryAfterSeconds),
@@ -242,30 +259,94 @@ async function handleAgentRoute(
     event: LambdaFunctionURLEvent,
 ): Promise<LambdaResponse> {
     const agentId = rawAgentId ? decodeURIComponent(rawAgentId) : undefined;
+    logInfo("Account agent route received", {
+        method,
+        accountId,
+        agentId,
+        hasAgentId: Boolean(agentId),
+    });
 
     const agents = getStorage().agents;
     if (!agentId) {
         if (method === "GET") {
             const records = await agents.list(accountId);
+            logInfo("Account agents listed", {
+                accountId,
+                count: records.length,
+            });
             return jsonResponse(200, { agents: records.map(toPublicAgent) });
         }
         if (method === "POST") {
+            logInfo("Account agent create started", {
+                accountId,
+            });
             const agent = await agents.create(accountId, parseJsonBody(event) as never);
+            logInfo("Account agent create completed", {
+                accountId,
+                agentId: agent.agentId,
+                name: agent.name,
+            });
             return jsonResponse(201, toCreateAgentResponse(agent));
         }
         return errorResponse(405, "Method not allowed", { method, allowedMethods: ["GET", "POST"] });
     }
 
     if (method === "GET") {
+        logInfo("Account agent get started", {
+            accountId,
+            agentId,
+        });
         const agent = await agents.getById(accountId, agentId);
+        logInfo("Account agent get completed", {
+            accountId,
+            agentId,
+            found: Boolean(agent),
+            name: agent?.name,
+            hasModelProvider: Boolean(agent?.config.model?.provider),
+            toolNames: Object.keys(agent?.config.tools ?? {}),
+            channelNames: Object.keys(agent?.config.channels ?? {}),
+        });
         return agent ? jsonResponse(200, toPublicAgent(agent)) : errorResponse(404, "Agent not found");
     }
     if (method === "PATCH") {
-        const agent = await agents.update(accountId, agentId, parseJsonBody(event) as never);
+        const patch = parseJsonBody(event) as Record<string, unknown>;
+        const patchConfig = patch.config && typeof patch.config === "object" && !Array.isArray(patch.config)
+            ? patch.config as Record<string, unknown>
+            : undefined;
+        logInfo("Account agent patch started", {
+            accountId,
+            agentId,
+            patchKeys: Object.keys(patch),
+            configKeys: Object.keys(patchConfig ?? {}),
+            hasModelProviderPatch: Boolean((patchConfig?.model as Record<string, unknown> | undefined)?.provider),
+            hasHandoffsPatch: Boolean((patchConfig?.tools as Record<string, unknown> | undefined)?.handoffs),
+            channelNamesPatch: Object.keys((patchConfig?.channels as Record<string, unknown> | undefined) ?? {}),
+        });
+        const agent = await agents.update(accountId, agentId, patch as never);
+        logInfo("Account agent patch completed", {
+            accountId,
+            agentId,
+            found: Boolean(agent),
+            name: agent?.name,
+            hasModelProvider: Boolean(agent?.config.model?.provider),
+            toolNames: Object.keys(agent?.config.tools ?? {}),
+            channelNames: Object.keys(agent?.config.channels ?? {}),
+            handoffsHasPancake: Boolean(agent?.config.tools?.handoffs?.pancake),
+            handoffsHasZalo: Boolean(agent?.config.tools?.handoffs?.zalo),
+        });
         return agent ? jsonResponse(200, toPublicAgent(agent)) : errorResponse(404, "Agent not found");
     }
     if (method === "DELETE") {
+        logInfo("Account agent delete started", {
+            accountId,
+            agentId,
+        });
         const deleted = await agents.remove(accountId, agentId);
+        logInfo("Account agent delete completed", {
+            accountId,
+            agentId,
+            deleted,
+        });
         return deleted ? jsonResponse(200, { deleted: true }) : errorResponse(404, "Agent not found");
     }
 

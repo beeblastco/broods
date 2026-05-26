@@ -1071,7 +1071,12 @@ function decryptAgentConfig(config: EncryptedAgentConfig): AgentConfig {
         decipher.final(),
     ]).toString("utf-8");
 
-    return normalizeAgentConfig(JSON.parse(plaintext));
+    const parsed = JSON.parse(plaintext) as unknown;
+    if (!isPlainObject(parsed)) {
+        throw new Error("Stored agent config must be an object");
+    }
+
+    return parsed as AgentConfig;
 }
 
 function agentConfigEncryptionKey(): Buffer {
