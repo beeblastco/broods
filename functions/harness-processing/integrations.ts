@@ -40,7 +40,7 @@ import {
   jsonResponse,
   normalizeHeaders,
 } from "../_shared/http.ts";
-import { logError } from "../_shared/log.ts";
+import { logError, logInfo } from "../_shared/log.ts";
 import { createPancakeChannel } from "../_shared/pancake-channel.ts";
 import type { LambdaResponse } from "../_shared/runtime.ts";
 import { createSlackChannel } from "../_shared/slack-channel.ts";
@@ -249,6 +249,17 @@ async function handleLambdaUrlEvent(
     const accountChannel = accountChannelRegistry.webhookChannels.find((channel) =>
       channel.name === channelName && channel.canHandle(request)
     );
+
+    logInfo("Webhook received", {
+      accountId: account.accountId,
+      agentId,
+      channel: channelName,
+      method: request.method,
+      rawPath: event.rawPath,
+      channelConfigured: accountChannelRegistry.webhookChannels.some((channel) => channel.name === channelName),
+      channelMatched: !!accountChannel,
+    });
+
     if (!accountChannel) {
       const isConfigured = accountChannelRegistry.webhookChannels.some((channel) => channel.name === channelName);
       return integrationNotConfigured(isConfigured ? `Webhook ${channelName}` : channelName);
