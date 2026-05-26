@@ -29,7 +29,7 @@ interface HandoffToolResponse {
 export default function handoffsTool(context: HandoffsToolContext): ToolSet {
   return {
     handoffs: tool({
-      description: "Hand off the current customer conversation to human staff. You will stop the current conversation and delegate the interaction to human to answer the questions. When finish the tool, you must say, 'Do you have any other request or questions?'",
+      description: "Hand off the current customer conversation to human staff when user want to place the order for the customer or based onthe scripts, you cannot answer the questions. You will stop the current conversation and delegate the interaction to human to answer the questions. When finish the tool, you must say, 'Do you have any other request or questions?' as a follow up things to keep the conversation going.",
       inputSchema: jsonSchema({
         type: "object",
         properties: {
@@ -37,9 +37,17 @@ export default function handoffsTool(context: HandoffsToolContext): ToolSet {
             type: "string",
             description: "Short reason for the handoff, should be questions or requests from the customer that need actions from the sale team.",
           },
+          phonenumber: {
+            type: "string",
+            description: "Phone number of the customer. It is required to have when the user want to place the order. If the user does not provide the phone number, you must ask for it."
+          },
+          tag: {
+            type: "string",
+            description: "Tag for the conversation actions required further action from the sale team. Its will be either 'order' or 'pending'. Order is when the user want to place the order and pending is when the user want to ask for more information or have questions that require delegate interaction to the staff."
+          }
         },
         additionalProperties: false,
-        required: ["reason"],
+        required: ["reason", "tag"],
       }),
       execute: async () => {
         const conversation = parsePancakeConversationKey(context.conversationKey);
