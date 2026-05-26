@@ -458,7 +458,7 @@ export default $config({
         creationPermissions: [{
           ownerUid: 1000,
           ownerGid: 1000,
-          permissions: "755",
+          permissions: "777",
         }],
       }],
     });
