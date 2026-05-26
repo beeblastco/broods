@@ -6,6 +6,7 @@
  */
 
 import { jsonSchema, tool, type ToolSet } from "ai";
+import { logInfo, logWarn } from "../../_shared/log.ts";
 import type { AgentChannelsConfig } from "../../_shared/storage/index.ts";
 import type { ToolContext } from "./index.ts";
 
@@ -99,9 +100,28 @@ export default function handoffsTool(context: HandoffsToolContext): ToolSet {
         const config = resolveHandoffsConfig(context);
         const scenarioTagId = config.pancake.scenarioTagIds[handoff.scenario];
 
+        logInfo("Handoff tool started", {
+          conversationKey: context.conversationKey,
+          pageId: conversation.pageId,
+          conversationId: conversation.conversationId,
+          scenario: handoff.scenario,
+          hasPhoneNumber: Boolean(handoff.phoneNumber),
+          scenarioTagId,
+          zaloNotifyUserCount: config.zalo.notifyUserIds.length,
+        });
+
         const scenarioTag = await addHandoffTag(conversation, pageAccessToken, scenarioTagId);
         const unread = await markConversationUnread(conversation, pageAccessToken);
         const zalo = await pingZaloSaleStaff(config, conversation, handoff);
+
+        logInfo("Handoff tool completed", {
+          conversationKey: context.conversationKey,
+          pageId: conversation.pageId,
+          conversationId: conversation.conversationId,
+          scenario: handoff.scenario,
+          scenarioTagId,
+          zaloNotifyUserCount: zalo.length,
+        });
 
         return toHandoffToolResponse(scenarioTag, unread, zalo);
       },
@@ -114,11 +134,22 @@ async function addHandoffTag(
   pageAccessToken: string,
   tagId: string,
 ): Promise<PancakeActionResponse | null> {
+  logInfo("Pancake handoff tag request", {
+    pageId: conversation.pageId,
+    conversationId: conversation.conversationId,
+    tagId,
+  });
   const response = await postPancakeConversationAction(conversation, pageAccessToken, "tags", "Pancake handoff failed", {
     action: "add",
     tag_id: tagId,
   });
   assertTagApplied(response, tagId);
+  logInfo("Pancake handoff tag applied", {
+    pageId: conversation.pageId,
+    conversationId: conversation.conversationId,
+    tagId,
+    responseMessage: response?.message,
+  });
   return response;
 }
 
@@ -126,7 +157,17 @@ async function markConversationUnread(
   conversation: { pageId: string; conversationId: string },
   pageAccessToken: string,
 ): Promise<PancakeActionResponse | null> {
-  return await postPancakeConversationAction(conversation, pageAccessToken, "unread", "Pancake unread failed");
+  logInfo("Pancake mark unread request", {
+    pageId: conversation.pageId,
+    conversationId: conversation.conversationId,
+  });
+  const response = await postPancakeConversationAction(conversation, pageAccessToken, "unread", "Pancake unread failed");
+  logInfo("Pancake mark unread succeeded", {
+    pageId: conversation.pageId,
+    conversationId: conversation.conversationId,
+    responseMessage: response?.message,
+  });
+  return response;
 }
 
 async function postPancakeConversationAction(
@@ -156,6 +197,13 @@ async function postPancakeConversationAction(
   const parsedBody = parseJsonBody(bodyText) as PancakeActionResponse;
 
   if (!response.ok || parsedBody?.success === false) {
+    logWarn("Pancake conversation action failed", {
+      pageId: conversation.pageId,
+      conversationId: conversation.conversationId,
+      actionPath,
+      status: response.status,
+      error: formatPancakeError(parsedBody, bodyText),
+    });
     throw new Error(`${errorPrefix} (${response.status}): ${formatPancakeError(parsedBody, bodyText)}`);
   }
 
@@ -244,9 +292,21 @@ async function pingZaloSaleStaff(
 ): Promise<ZaloPingResponse[]> {
   const results: ZaloPingResponse[] = [];
   for (const userId of config.zalo.notifyUserIds) {
+    logInfo("Zalo handoff ping request", {
+      pageId: conversation.pageId,
+      conversationId: conversation.conversationId,
+      scenario: handoff.scenario,
+      userId,
+    });
     await callZaloApi(config.zalo.botToken, "sendMessage", {
       chat_id: userId,
       text: formatZaloHandoffMessage(conversation, handoff),
+    });
+    logInfo("Zalo handoff ping sent", {
+      pageId: conversation.pageId,
+      conversationId: conversation.conversationId,
+      scenario: handoff.scenario,
+      userId,
     });
     results.push({ userId, ok: true });
   }
@@ -268,6 +328,11 @@ async function callZaloApi(
   const parsed = parseJsonBody(bodyText) as ZaloApiResponse;
 
   if (!response.ok || parsed?.ok === false) {
+    logWarn("Zalo API request failed", {
+      method,
+      status: response.status,
+      error: formatZaloError(parsed, bodyText),
+    });
     throw new Error(`Zalo ${method} failed (${response.status}): ${formatZaloError(parsed, bodyText)}`);
   }
 
