@@ -120,12 +120,12 @@ describe("pancake channel adapter", () => {
     })))).toEqual({ kind: "ignore" });
   });
 
-  it("uses the configured handoff tag to ignore human-owned conversations", async () => {
+  it("uses configured scenario handoff tags to ignore human-owned conversations", async () => {
     const adapter = createPancakeChannel("page-1", "page-token", undefined, {
       accountId: "acct_test",
       agentId: "agent_test",
       configOptions: {
-        handoff: { tagId: "123" },
+        ignoreTagIds: ["order-tag", "pending-tag"],
       },
     });
 
@@ -134,13 +134,35 @@ describe("pancake channel adapter", () => {
     }) as never;
 
     const parsed = await adapter.parse(createPancakeRequest(validPayload({
-      conversation: { tags: [123] },
+      conversation: { tags: ["order-tag"] },
     })));
 
     expect(parsed).toEqual({
       kind: "ignore",
       response: { statusCode: 200 },
     });
+
+    const pendingParsed = await adapter.parse(createPancakeRequest(validPayload({
+      conversation: { tags: ["pending-tag"] },
+    })));
+    expect(pendingParsed).toEqual({
+      kind: "ignore",
+      response: { statusCode: 200 },
+    });
+  });
+
+  it("continues normally when scenario handoff tags are absent", async () => {
+    const adapter = createPancakeChannel("page-1", "page-token", undefined, {
+      configOptions: {
+        ignoreTagIds: ["order-tag", "pending-tag"],
+      },
+    });
+
+    const parsed = await adapter.parse(createPancakeRequest(validPayload({
+      conversation: { tags: ["other-tag"] },
+    })));
+
+    expect(parsed.kind).toBe("message");
   });
 });
 

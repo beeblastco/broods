@@ -42,6 +42,9 @@ const PANCAKE_AGENT = {
       pancake: {
         pageId: "page-1",
         pageAccessToken: "page-token",
+        options: {
+          ignoreTagIds: ["order-tag", "pending-tag"],
+        },
       },
     },
   },
@@ -55,7 +58,22 @@ const PANCAKE_HANDOFF_AGENT = {
         pageId: "page-1",
         pageAccessToken: "page-token",
         options: {
-          handoff: { tagId: "123" },
+          ignoreTagIds: ["order-tag", "pending-tag"],
+        },
+      },
+    },
+    tools: {
+      handoffs: {
+        enabled: true,
+        pancake: {
+          scenarioTagIds: {
+            order: "order-tag",
+            pending: "pending-tag",
+          },
+        },
+        zalo: {
+          botToken: "zalo-token",
+          notifyUserIds: ["sale-1"],
         },
       },
     },
@@ -263,7 +281,7 @@ describe("account webhook ingress", () => {
     expect(responseJson(response)).toEqual({ error: "zalo integration is not configured" });
   });
 
-  it("lets Pancake handoff tag ignore human-owned conversations", async () => {
+  it("lets Pancake scenario handoff tags ignore human-owned conversations", async () => {
     const handledEvents: ChannelInboundEvent[] = [];
     globalThis.fetch = mock(async () => {
       throw new Error("Pancake handoff tag check should not call fetch");
@@ -274,7 +292,7 @@ describe("account webhook ingress", () => {
     });
 
     const response = await routeIncomingEvent(createPancakeEvent({
-      conversation: { tags: [123] },
+      conversation: { tags: ["pending-tag"] },
     }), createHandlers({
       handleChannelRequest: async (event) => {
         handledEvents.push(event);

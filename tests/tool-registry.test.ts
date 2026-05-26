@@ -254,7 +254,19 @@ describe("createTools", () => {
 
     const tools = createTools(createToolContext(), {
       tools: {
-        handoffs: { enabled: true },
+        handoffs: {
+          enabled: true,
+          pancake: {
+            scenarioTagIds: {
+              order: "order-tag",
+              pending: "pending-tag",
+            },
+          },
+          zalo: {
+            botToken: "zalo-token",
+            notifyUserIds: ["sale-1"],
+          },
+        },
       },
     });
 

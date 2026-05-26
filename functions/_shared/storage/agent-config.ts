@@ -727,6 +727,7 @@ function normalizeToolConfig(toolName: string, value: unknown): void {
       normalizeGoogleSearchToolConfig(config);
       return;
     case "handoffs":
+      normalizeHandoffsToolConfig(config);
       return;
     case "test_async":
       return;
@@ -734,6 +735,44 @@ function normalizeToolConfig(toolName: string, value: unknown): void {
       normalizeTestExternalAsyncToolConfig(config);
       return;
   }
+}
+
+function normalizeHandoffsToolConfig(config: Record<string, unknown>): void {
+  if (config.enabled === false) {
+    return;
+  }
+
+  if (!isPlainObject(config.pancake)) {
+    throw new Error("config.tools.handoffs.pancake is required");
+  }
+  const pancake = config.pancake;
+  if (!isPlainObject(pancake.scenarioTagIds)) {
+    throw new Error("config.tools.handoffs.pancake.scenarioTagIds is required");
+  }
+  assertOptionalNonEmptyString(
+    pancake.scenarioTagIds.order,
+    "config.tools.handoffs.pancake.scenarioTagIds.order",
+  );
+  assertOptionalNonEmptyString(
+    pancake.scenarioTagIds.pending,
+    "config.tools.handoffs.pancake.scenarioTagIds.pending",
+  );
+  if (!pancake.scenarioTagIds.order) {
+    throw new Error("config.tools.handoffs.pancake.scenarioTagIds.order is required");
+  }
+  if (!pancake.scenarioTagIds.pending) {
+    throw new Error("config.tools.handoffs.pancake.scenarioTagIds.pending is required");
+  }
+
+  if (!isPlainObject(config.zalo)) {
+    throw new Error("config.tools.handoffs.zalo is required");
+  }
+  const zalo = config.zalo;
+  assertOptionalNonEmptyString(zalo.botToken, "config.tools.handoffs.zalo.botToken");
+  if (!zalo.botToken) {
+    throw new Error("config.tools.handoffs.zalo.botToken is required");
+  }
+  assertRequiredNonEmptyStringArray(zalo.notifyUserIds, "config.tools.handoffs.zalo.notifyUserIds");
 }
 
 function isSupportedConfigToolName(
@@ -873,16 +912,7 @@ function normalizePancakeConfig(value: unknown): void {
     throw new Error("config.channels.pancake.options must be an object");
   }
   const options = isPlainObject(config.options) ? config.options : {};
-  if (options.handoff !== undefined) {
-    if (!isPlainObject(options.handoff)) {
-      throw new Error("config.channels.pancake.options.handoff must be an object");
-    }
-    assertOptionalNonEmptyString(options.handoff.tagId, "config.channels.pancake.options.handoff.tagId");
-    assertOptionalStringArray(options.handoff.assigneeIds, "config.channels.pancake.options.handoff.assigneeIds");
-    if (!options.handoff.tagId) {
-      throw new Error("config.channels.pancake.options.handoff requires tagId");
-    }
-  }
+  assertOptionalStringArray(options.ignoreTagIds, "config.channels.pancake.options.ignoreTagIds");
 }
 
 function normalizeZaloConfig(value: unknown): void {
@@ -983,6 +1013,16 @@ function assertOptionalStringArray(value: unknown, name: string): void {
   if (value === undefined) return;
   if (!Array.isArray(value) || !value.every((entry) => typeof entry === "string")) {
     throw new Error(`${name} must be an array of strings`);
+  }
+}
+
+function assertRequiredNonEmptyStringArray(value: unknown, name: string): void {
+  if (!Array.isArray(value) || !value.every((entry) => typeof entry === "string")) {
+    throw new Error(`${name} must be an array of strings`);
+  }
+
+  if (value.length === 0 || value.some((entry) => entry.trim().length === 0)) {
+    throw new Error(`${name} must contain at least one non-empty string`);
   }
 }
 

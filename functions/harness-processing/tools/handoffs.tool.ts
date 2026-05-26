@@ -1,14 +1,36 @@
 /**
  * Human handoff tool.
  * Keep provider-specific handoff actions here; webhook parsing stays in _shared.
+ * 
+ * We don't want to reference too much from the zalo channel as this tool will be migrate away from the current code base, so its much better if we define all in here.
  */
 
 import { jsonSchema, tool, type ToolSet } from "ai";
 import type { AgentChannelsConfig } from "../../_shared/storage/index.ts";
 import type { ToolContext } from "./index.ts";
 
+const ZALO_API_BASE = "https://bot-api.zaloplatforms.com";
+
+type HandoffScenario = "order" | "pending";
+
 interface HandoffsToolContext extends ToolContext {
   channels?: AgentChannelsConfig;
+}
+
+interface HandoffToolInput {
+  scenario: HandoffScenario;
+  reason: string;
+  phoneNumber?: string;
+}
+
+interface HandoffsRuntimeConfig {
+  pancake: {
+    scenarioTagIds: Record<HandoffScenario, string>;
+  };
+  zalo: {
+    botToken: string;
+    notifyUserIds: string[];
+  };
 }
 
 interface PancakeActionResponse {
@@ -17,48 +39,71 @@ interface PancakeActionResponse {
   data?: unknown;
 }
 
+interface ZaloPingResponse {
+  userId: string;
+  ok: true;
+}
+
 interface HandoffToolResponse {
   success: boolean;
   message: string;
   actions: {
-    tag: PancakeActionResponse | null;
+    scenarioTag: PancakeActionResponse | null;
     unread: PancakeActionResponse | null;
+    zalo: ZaloPingResponse[];
   };
+}
+
+// Intentionally duplicate interface.
+interface ZaloApiResponse<T = unknown> {
+  ok?: boolean;
+  result?: T;
+  error_code?: number;
+  description?: string;
 }
 
 export default function handoffsTool(context: HandoffsToolContext): ToolSet {
   return {
     handoffs: tool({
-      description: "Hand off the current customer conversation to human staff when user want to place the order for the customer or based onthe scripts, you cannot answer the questions. You will stop the current conversation and delegate the interaction to human to answer the questions. When finish the tool, you must say, 'Do you have any other request or questions?' as a follow up things to keep the conversation going.",
+      description:
+        "Hand off the current customer conversation to sale staff when the customer wants to order or when the conversation requires staff follow-up. For order handoffs, collect the phone number before calling this tool.",
       inputSchema: jsonSchema({
         type: "object",
         properties: {
-          reason: {
-            type: "string",
-            description: "Short reason for the handoff, should be questions or requests from the customer that need actions from the sale team.",
-          },
-          phonenumber: {
-            type: "string",
-            description: "Phone number of the customer. It is required to have when the user want to place the order. If the user does not provide the phone number, you must ask for it."
-          },
-          tag: {
+          scenario: {
             type: "string",
             enum: ["order", "pending"],
-            description: "Tag for the conversation actions required further action from the sale team. 'order' is when the user want to place the order and 'pending' is when the user want to ask for more information or have questions that require delegate interaction to the staff."
-          }
+            description:
+              "Use order when the customer wants to place an order. Use pending when sale staff need to follow up.",
+          },
+          reason: {
+            type: "string",
+            description: "Short reason for the handoff to include in the sale-team ping.",
+          },
+          phoneNumber: {
+            type: "string",
+            description: "Customer phone number. Required when scenario is order.",
+          },
         },
         additionalProperties: false,
-        required: ["reason", "tag"],
+        required: ["scenario", "reason"],
       }),
-      execute: async () => {
+      execute: async (input) => {
+        const handoff = normalizeHandoffInput(input);
+        if (handoff.scenario === "order" && !handoff.phoneNumber) {
+          throw new Error("phoneNumber is required for order handoffs");
+        }
+
         const conversation = parsePancakeConversationKey(context.conversationKey);
         const pageAccessToken = resolvePageAccessToken(context);
-        const tagId = resolveHandoffTagId(context);
+        const config = resolveHandoffsConfig(context);
+        const scenarioTagId = config.pancake.scenarioTagIds[handoff.scenario];
 
-        const tag = await addHandoffTag(conversation, pageAccessToken, tagId);
+        const scenarioTag = await addHandoffTag(conversation, pageAccessToken, scenarioTagId);
         const unread = await markConversationUnread(conversation, pageAccessToken);
+        const zalo = await pingZaloSaleStaff(config, conversation, handoff);
 
-        return toHandoffToolResponse(tag, unread);
+        return toHandoffToolResponse(scenarioTag, unread, zalo);
       },
     }),
   };
@@ -108,7 +153,7 @@ async function postPancakeConversationAction(
       : {}),
   });
   const bodyText = await response.text();
-  const parsedBody = parseJsonBody(bodyText);
+  const parsedBody = parseJsonBody(bodyText) as PancakeActionResponse;
 
   if (!response.ok || parsedBody?.success === false) {
     throw new Error(`${errorPrefix} (${response.status}): ${formatPancakeError(parsedBody, bodyText)}`);
@@ -121,20 +166,6 @@ function resolvePageAccessToken(context: HandoffsToolContext): string {
   return firstNonEmptyString(
     context.channels?.pancake?.pageAccessToken,
   ) ?? missingConfig("config.channels.pancake.pageAccessToken");
-}
-
-function resolveHandoffTagId(context: HandoffsToolContext): string {
-  return firstNonEmptyString(
-    configuredHandoffTagId(context.channels),
-  ) ?? missingConfig("config.channels.pancake.options.handoff.tagId");
-}
-
-function configuredHandoffTagId(channels: HandoffsToolContext["channels"]): unknown {
-  const handoff = channels?.pancake?.options?.handoff;
-  if (!handoff || typeof handoff !== "object" || Array.isArray(handoff)) {
-    return undefined;
-  }
-  return (handoff as Record<string, unknown>).tagId;
 }
 
 function parsePancakeConversationKey(conversationKey: string): { pageId: string; conversationId: string } {
@@ -156,6 +187,111 @@ function parsePancakeConversationKey(conversationKey: string): { pageId: string;
   };
 }
 
+function normalizeHandoffInput(input: unknown): HandoffToolInput {
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    throw new Error("handoffs input must be an object");
+  }
+
+  const record = input as Record<string, unknown>;
+  const scenario = record.scenario;
+  if (scenario !== "order" && scenario !== "pending") {
+    throw new Error("scenario must be one of: order, pending");
+  }
+
+  return {
+    scenario,
+    reason: firstNonEmptyString(record.reason) ?? missingConfig("reason"),
+    ...(firstNonEmptyString(record.phoneNumber) ? { phoneNumber: firstNonEmptyString(record.phoneNumber) } : {}),
+  };
+}
+
+function resolveHandoffsConfig(context: HandoffsToolContext): HandoffsRuntimeConfig {
+  const toolConfig = context.config as Record<string, unknown>;
+  const pancake = requirePlainObject(toolConfig.pancake, "config.tools.handoffs.pancake");
+  const scenarioTagIds = requirePlainObject(
+    pancake.scenarioTagIds,
+    "config.tools.handoffs.pancake.scenarioTagIds",
+  );
+  const zalo = requirePlainObject(toolConfig.zalo, "config.tools.handoffs.zalo");
+
+  return {
+    pancake: {
+      scenarioTagIds: {
+        order: requireNonEmptyString(
+          scenarioTagIds.order,
+          "config.tools.handoffs.pancake.scenarioTagIds.order",
+        ),
+        pending: requireNonEmptyString(
+          scenarioTagIds.pending,
+          "config.tools.handoffs.pancake.scenarioTagIds.pending",
+        ),
+      },
+    },
+    zalo: {
+      botToken: requireNonEmptyString(zalo.botToken, "config.tools.handoffs.zalo.botToken"),
+      notifyUserIds: requireNonEmptyStringArray(
+        zalo.notifyUserIds,
+        "config.tools.handoffs.zalo.notifyUserIds",
+      ),
+    },
+  };
+}
+
+async function pingZaloSaleStaff(
+  config: HandoffsRuntimeConfig,
+  conversation: { pageId: string; conversationId: string },
+  handoff: HandoffToolInput,
+): Promise<ZaloPingResponse[]> {
+  const results: ZaloPingResponse[] = [];
+  for (const userId of config.zalo.notifyUserIds) {
+    await callZaloApi(config.zalo.botToken, "sendMessage", {
+      chat_id: userId,
+      text: formatZaloHandoffMessage(conversation, handoff),
+    });
+    results.push({ userId, ok: true });
+  }
+  return results;
+}
+
+// Define duplicate because this tool will be migrate away later, we want to centralize all here so that it can be moved easier.
+async function callZaloApi(
+  botToken: string,
+  method: "sendMessage" | "sendChatAction",
+  body: Record<string, unknown>,
+): Promise<ZaloApiResponse> {
+  const response = await fetch(`${ZALO_API_BASE}/bot${botToken}/${method}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const bodyText = await response.text();
+  const parsed = parseJsonBody(bodyText) as ZaloApiResponse;
+
+  if (!response.ok || parsed?.ok === false) {
+    throw new Error(`Zalo ${method} failed (${response.status}): ${formatZaloError(parsed, bodyText)}`);
+  }
+
+  return parsed ?? { ok: true };
+}
+
+function formatZaloError(body: ZaloApiResponse | null, bodyText: string): string {
+  return body?.description ?? body?.error_code?.toString() ?? (bodyText || "unknown_error");
+}
+
+function formatZaloHandoffMessage(
+  conversation: { pageId: string; conversationId: string },
+  handoff: HandoffToolInput,
+): string {
+  return [
+    "[Pancake handoff]",
+    `Scenario: ${handoff.scenario}`,
+    `Reason: ${handoff.reason}`,
+    ...(handoff.phoneNumber ? [`Phone: ${handoff.phoneNumber}`] : []),
+    `Page ID: ${conversation.pageId}`,
+    `Conversation ID: ${conversation.conversationId}`,
+  ].join("\n");
+}
+
 function firstNonEmptyString(...values: unknown[]): string | undefined {
   for (const value of values) {
     if (typeof value !== "string") {
@@ -173,7 +309,30 @@ function missingConfig(name: string): never {
   throw new Error(`${name} is required`);
 }
 
-function parseJsonBody(text: string): PancakeActionResponse | null {
+function requirePlainObject(value: unknown, name: string): Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error(`${name} is required`);
+  }
+  return value as Record<string, unknown>;
+}
+
+function requireNonEmptyString(value: unknown, name: string): string {
+  return firstNonEmptyString(value) ?? missingConfig(name);
+}
+
+function requireNonEmptyStringArray(value: unknown, name: string): string[] {
+  if (!Array.isArray(value)) {
+    throw new Error(`${name} is required`);
+  }
+
+  const strings = value.map((entry) => requireNonEmptyString(entry, name));
+  if (strings.length === 0) {
+    throw new Error(`${name} must contain at least one user id`);
+  }
+  return strings;
+}
+
+function parseJsonBody(text: string): PancakeActionResponse | ZaloApiResponse | null {
   if (!text) {
     return null;
   }
@@ -191,15 +350,17 @@ function formatPancakeError(body: { message?: string } | null, bodyText: string)
 }
 
 function toHandoffToolResponse(
-  tag: PancakeActionResponse | null,
+  scenarioTag: PancakeActionResponse | null,
   unread: PancakeActionResponse | null,
+  zalo: ZaloPingResponse[],
 ): HandoffToolResponse {
   return {
     success: true,
-    message: firstNonEmptyString(unread?.message, tag?.message) ?? "Conversation handed off to human staff.",
+    message: firstNonEmptyString(unread?.message, scenarioTag?.message) ?? "Conversation handed off to human staff.",
     actions: {
-      tag,
+      scenarioTag,
       unread,
+      zalo,
     },
   };
 }

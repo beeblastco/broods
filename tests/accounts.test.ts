@@ -429,6 +429,16 @@ describe("agent config", () => {
           enabled: true,
           async: true,
           execution: "same-invocation",
+          pancake: {
+            scenarioTagIds: {
+              order: "order-tag",
+              pending: "pending-tag",
+            },
+          },
+          zalo: {
+            botToken: "zalo-token",
+            notifyUserIds: ["sale-1"],
+          },
         },
         test_async: {
           enabled: true,
@@ -470,6 +480,16 @@ describe("agent config", () => {
           enabled: true,
           async: true,
           execution: "same-invocation",
+          pancake: {
+            scenarioTagIds: {
+              order: "order-tag",
+              pending: "pending-tag",
+            },
+          },
+          zalo: {
+            botToken: "zalo-token",
+            notifyUserIds: ["sale-1"],
+          },
         },
         test_async: {
           enabled: true,
@@ -490,6 +510,30 @@ describe("agent config", () => {
         unknownTool: { enabled: "yes" },
       },
     })).toThrow("config.tools.unknownTool is not a supported tool");
+
+    expect(() => normalizeAgentConfig({
+      tools: {
+        handoffs: { enabled: true },
+      },
+    })).toThrow("config.tools.handoffs.pancake is required");
+
+    expect(() => normalizeAgentConfig({
+      tools: {
+        handoffs: {
+          enabled: true,
+          pancake: {
+            scenarioTagIds: {
+              order: "order-tag",
+              pending: "pending-tag",
+            },
+          },
+          zalo: {
+            botToken: "zalo-token",
+            notifyUserIds: [],
+          },
+        },
+      },
+    })).toThrow("config.tools.handoffs.zalo.notifyUserIds must contain at least one non-empty string");
 
     expect(() => normalizeAgentConfig({
       tools: {
@@ -608,10 +652,8 @@ describe("agent config", () => {
           pageAccessToken: "page-token",
           senderId: "sender-1",
           options: {
-            handoff: {
-              tagId: "123",
-              assigneeIds: ["staff-1"],
-            },
+            mode: "retail",
+            ignoreTagIds: ["order-tag", "pending-tag"],
           },
         },
       },
@@ -622,10 +664,8 @@ describe("agent config", () => {
           pageAccessToken: "page-token",
           senderId: "sender-1",
           options: {
-            handoff: {
-              tagId: "123",
-              assigneeIds: ["staff-1"],
-            },
+            mode: "retail",
+            ignoreTagIds: ["order-tag", "pending-tag"],
           },
         },
       },
@@ -655,11 +695,33 @@ describe("agent config", () => {
           pageId: "page-1",
           pageAccessToken: "page-token",
           options: {
-            handoff: {},
+            ignoreTagIds: [123],
           },
         },
       },
-    })).toThrow("config.channels.pancake.options.handoff requires tagId");
+    })).toThrow("config.channels.pancake.options.ignoreTagIds must be an array of strings");
+
+    expect(normalizeAgentConfig({
+      channels: {
+        pancake: {
+          pageId: "page-1",
+          pageAccessToken: "page-token",
+          options: {
+            customerSpecific: true,
+          },
+        },
+      },
+    })).toEqual({
+      channels: {
+        pancake: {
+          pageId: "page-1",
+          pageAccessToken: "page-token",
+          options: {
+            customerSpecific: true,
+          },
+        },
+      },
+    });
   });
 
   it("validates Zalo channel config", () => {
@@ -845,15 +907,24 @@ describe("agent config", () => {
         system: "custom system",
       },
       tools: {
-        handoffs: { enabled: true },
+        handoffs: {
+          enabled: true,
+          pancake: {
+            scenarioTagIds: {
+              order: "order-tag",
+              pending: "pending-tag",
+            },
+          },
+          zalo: {
+            botToken: "zalo-token",
+            notifyUserIds: ["sale-1"],
+          },
+        },
       },
       channels: {
         pancake: {
           pageId: "page-1",
           pageAccessToken: "page-token",
-          options: {
-            handoff: { tagId: "6" },
-          },
         },
         slack: {
           botToken: "xoxb-secret",
@@ -870,15 +941,24 @@ describe("agent config", () => {
         system: "custom system",
       },
       tools: {
-        handoffs: { enabled: true },
+        handoffs: {
+          enabled: true,
+          pancake: {
+            scenarioTagIds: {
+              order: "order-tag",
+              pending: "pending-tag",
+            },
+          },
+          zalo: {
+            botToken: "zalo-token",
+            notifyUserIds: ["sale-1"],
+          },
+        },
       },
       channels: {
         pancake: {
           pageId: "page-1",
           pageAccessToken: "page-token",
-          options: {
-            handoff: { tagId: "6" },
-          },
         },
       },
     });

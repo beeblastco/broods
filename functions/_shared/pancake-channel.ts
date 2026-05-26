@@ -1,6 +1,9 @@
 /**
  * Pancake channel adapter.
  * Keep Pancake webhook normalization and outbound message API calls here.
+ * 
+ * Pancake channle have options:
+ * - handoff tags id which will skip processing based on specific tags `PancakeHandoffOptions`
  */
 
 import { createHash } from "node:crypto";
@@ -68,7 +71,7 @@ export interface PancakeSource {
 }
 
 export interface PancakeHandoffOptions {
-  tagId: string;
+  tagIds: string[];
 }
 
 export interface PancakeChannelOptions {
@@ -112,22 +115,11 @@ export function createPancakeChannel(
 }
 
 function resolvePancakeHandoffOptions(configOptions: Record<string, unknown> | undefined): PancakeHandoffOptions | null {
-  const handoff = configOptions?.handoff;
-  if (!handoff || typeof handoff !== "object" || Array.isArray(handoff)) {
+  const tagIds = normalizePancakeTagIds(configOptions?.ignoreTagIds);
+  if (tagIds.length === 0) {
     return null;
   }
-
-  const record = handoff as Record<string, unknown>;
-  if (typeof record.tagId !== "string") {
-    return null;
-  }
-
-  const tagId = record.tagId.trim();
-  if (!tagId) {
-    return null;
-  }
-
-  return { tagId };
+  return { tagIds };
 }
 
 function parsePancakeWebhook(req: ChannelRequest, pageId: string): ChannelParseResult {
@@ -181,13 +173,14 @@ function applyPancakeHandoffTag(
   parsed: ParsedChannelMessage,
 ): ChannelParseResult {
   const tagIds = normalizePancakeTagIds(parsed.message.source.tagIds);
-  if (!tagIds.includes(config.tagId)) {
+  const matchedTagId = config.tagIds.find((tagId) => tagIds.includes(tagId));
+  if (!matchedTagId) {
     return parsed;
   }
 
   logInfo("Pancake handoff tag skipped agent reply", {
     conversationKey: parsed.message.conversationKey,
-    tagId: config.tagId,
+    tagId: matchedTagId,
   });
 
   return {
