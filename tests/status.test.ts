@@ -28,7 +28,7 @@ describe("async agent result persistence", () => {
       approvals: [{
         approvalId: "approval-1",
         toolCallId: "tool-call-1",
-        toolName: "filesystem",
+        toolName: "bash",
         input: { shell: "rm file.txt" },
       }],
     });
@@ -46,7 +46,7 @@ describe("async agent result persistence", () => {
         M: {
           approvalId: { S: "approval-1" },
           toolCallId: { S: "tool-call-1" },
-          toolName: { S: "filesystem" },
+          toolName: { S: "bash" },
           input: {
             M: {
               shell: { S: "rm file.txt" },
@@ -73,7 +73,7 @@ describe("async agent result persistence", () => {
             approvals: toAttributeValue([{
               approvalId: "approval-1",
               toolCallId: "tool-call-1",
-              toolName: "filesystem",
+              toolName: "bash",
               input: { shell: "rm file.txt" },
             }]),
           },
@@ -95,7 +95,7 @@ describe("async agent result persistence", () => {
       approvals: [{
         approvalId: "approval-1",
         toolCallId: "tool-call-1",
-        toolName: "filesystem",
+        toolName: "bash",
         input: { shell: "rm file.txt" },
       }],
     });

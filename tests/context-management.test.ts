@@ -139,7 +139,7 @@ describe("session pruning", () => {
           {
             type: "tool-call",
             toolCallId: "tool-call-1",
-            toolName: "filesystem",
+            toolName: "bash",
             input: { shell: "rm file.txt" },
           },
           {
@@ -278,7 +278,7 @@ describe("session compaction", () => {
         {
           type: "tool-call",
           toolCallId: "tool-call-1",
-          toolName: "filesystem",
+          toolName: "bash",
           input: { shell: "rm file.txt" },
         },
         {

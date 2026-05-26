@@ -121,10 +121,10 @@ paths:
                     data: {"type":"text","text":"Hello"}
 
                     event: 0
-                    data: {"type":"tool-call","toolCallId":"tc_1","toolName":"filesystem","input":{"shell":"ls"}}
+                    data: {"type":"tool-call","toolCallId":"tc_1","toolName":"bash","input":{"shell":"ls"}}
 
                     event: 0
-                    data: {"type":"tool-result","toolCallId":"tc_1","toolName":"filesystem","output":"file.txt"}
+                    data: {"type":"tool-result","toolCallId":"tc_1","toolName":"bash","output":"file.txt"}
 
                     event: 0
                     data: {"type":"step-finish","finishReason":"stop","usage":{"promptTokens":100,"completionTokens":50}}
@@ -240,7 +240,7 @@ paths:
                     approvals:
                       - approvalId: approval-123
                         toolCallId: tool-call-456
-                        toolName: filesystem
+                        toolName: bash
                         input:
                           shell: rm file.txt
                 completed:
@@ -1800,7 +1800,7 @@ components:
 
     WorkspaceConfig:
       type: object
-      description: Enables workspace-backed features including `MEMORY.md`, the sandboxed filesystem tool, and tasks.
+      description: Enables workspace-backed features including `MEMORY.md`, the sandboxed `bash` tool, and tasks.
       properties:
         enabled:
           type: boolean

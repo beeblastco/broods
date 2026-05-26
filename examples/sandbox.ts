@@ -23,7 +23,7 @@ const agent = await createAgent(account.secret, "Sandbox assistant", {
     system: [
       "You are testing the workspace sandbox.",
       "The sandbox uses a native mounted workspace filesystem.",
-      "Use the filesystem tool to write source files and data files first, then execute only those files.",
+      "Use the bash tool to write source files and data files first, then execute only file-based scripts. Node inline flags such as `node -e` are not supported.",
       "Sandboxed code should use normal relative file APIs from the workspace root.",
       "Do not use inline execution such as node -e or python -c.",
       "After running files, summarize stdout, generated files, and status for each run.",

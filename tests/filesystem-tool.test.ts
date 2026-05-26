@@ -69,8 +69,8 @@ function createToolContext(namespace = "fs-0123456789abcdef0123456789abcdef01234
 async function executeShell(shell: string, config: Record<string, unknown> = {}) {
   const { default: filesystemTool } = await import("../functions/harness-processing/tools/filesystem.tool.ts");
   const tools = filesystemTool(createToolContext(undefined, config));
-  const filesystem = tools.filesystem!;
-  return (filesystem as unknown as { execute(input: { shell: string }): Promise<{ type: string; value: any }> }).execute({ shell });
+  const bash = tools.bash!;
+  return (bash as unknown as { execute(input: { shell: string }): Promise<{ type: string; value: any }> }).execute({ shell });
 }
 
 function lastLambdaInput() {
@@ -81,7 +81,7 @@ function lastLambdaInput() {
   };
 }
 
-describe("filesystem tool", () => {
+describe("bash workspace tool", () => {
   it("delegates shell commands to the bash sandbox Lambda", async () => {
     const result = await executeShell("mkdir -p notes && echo hello > notes/a.txt && cat notes/a.txt");
 

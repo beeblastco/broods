@@ -1,5 +1,5 @@
 /**
- * S3-backed persistent filesystem tool for the harness agent.
+ * S3-backed bash workspace tool for the harness agent.
  * Keep model-facing command orchestration here.
  */
 
@@ -30,7 +30,7 @@ const filesystemInputSchema: JSONSchema7 = {
   properties: {
     shell: {
       type: "string",
-      description: `Terminal command to run against the virtual filesystem. You always need to run pwd to see your current filesystem.
+      description: `Bash command to run against the persistent workspace filesystem. You always need to run pwd to see your current filesystem.
 
 Prefer shell mode. Supported commands:
 - bash-like shell scripts, pipes, redirects, globs, variables, and loops
@@ -41,6 +41,7 @@ Prefer shell mode. Supported commands:
 - cat <<'EOF' >> <path> ... EOF
 
 Note:
+- Node inline flags such as node -e are not supported. Write a .js or .ts file first, then run node <file.js|file.ts>.
 - You cannot set the environment as each execution is stateless. User should already configured the environment variables in the sandbox config, ask user if they haven't already did that or if executed code return errors. The sandbox will auto injected pre-configured environment variables into the runtime`,
     },
   },
@@ -53,8 +54,8 @@ export default function filesystemTool(context: ToolContext): ToolSet {
   const sandboxConfig = context.config as WorkspaceSandboxConfig;
 
   return {
-    filesystem: tool({
-      description: "Terminal-style filesystem rooted at /. Use shell commands to read and write persistent files.",
+    bash: tool({
+      description: "Bash-style workspace shell rooted at /. Use it to read/write persistent files and run scripts. Node must be run from a workspace .js or .ts file; inline node -e commands are not supported.",
       inputSchema: jsonSchema(filesystemInputSchema),
       execute(input) {
         return executeFilesystemShell((input as FilesystemInput).shell, namespace, sandboxConfig);
@@ -73,7 +74,7 @@ async function executeFilesystemShell(
     return errorText("Error: shell command is required");
   }
 
-  logInfo("filesystem tool command", { namespace, command });
+  logInfo("bash tool command", { namespace, command });
 
   try {
     const execution = parseExecutionCommand(command);

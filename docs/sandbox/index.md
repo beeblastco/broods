@@ -1,10 +1,10 @@
 # Sandbox Reference
 
-The workspace sandbox lets an agent execute code that it has already written into the workspace filesystem. It extends the existing `filesystem` tool; there is no separate model-facing sandbox tool.
+The workspace sandbox lets an agent execute code that it has already written into the workspace filesystem. It extends the existing `bash` tool; there is no separate model-facing sandbox tool.
 
 ```mermaid
 flowchart LR
-  A[Agent] --> B[filesystem tool]
+  A[Agent] --> B[bash tool]
   B --> C[SandboxBash Lambda]
   C --> D[AWS S3 Files mount]
   D --> E[S3 workspace bucket]
@@ -46,7 +46,7 @@ Sandbox execution is available only when workspace and sandbox are enabled for t
 
 ## How Agents Use It
 
-The filesystem tool accepts bash-like shell scripts. For the Lambda provider, shell commands run in `SandboxBash` with the account workspace mounted as the current directory.
+The bash tool accepts bash-like shell scripts. For the Lambda provider, shell commands run in `SandboxBash` with the account workspace mounted as the current directory.
 
 ```bash
 mkdir -p notes
@@ -100,7 +100,7 @@ Inline execution is intentionally rejected across all providers. Commands such a
 
 ## Result Shape
 
-Python runs return structured JSON through the filesystem tool:
+Python runs return structured JSON through the bash tool:
 
 ```json
 {
@@ -159,4 +159,4 @@ The sandbox path is designed around mounted, file-based runs:
 - child processes run without AWS credentials in their environment
 - `curl` is disabled unless `options.networkAccess` is `"public"` and still blocks private/loopback/internal ranges
 
-Workspace write/read commands still use the normal `filesystem` tool. Use `workspace.needsApproval` if file writes and code runs should require human approval.
+Workspace write/read commands still use the normal `bash` tool. Use `workspace.needsApproval` if file writes and code runs should require human approval.

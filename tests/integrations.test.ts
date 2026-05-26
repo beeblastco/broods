@@ -455,7 +455,7 @@ describe("direct API ingress", () => {
         content: [{
           type: "tool-result",
           toolCallId: "tool-call-1",
-          toolName: "filesystem",
+          toolName: "bash",
           output: { type: "text", value: "done" },
         }],
       }],
