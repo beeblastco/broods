@@ -4,7 +4,7 @@
  */
 
 import { afterEach, describe, expect, it, mock } from "bun:test";
-import { DeleteItemCommand, GetItemCommand, QueryCommand, type AttributeValue } from "@aws-sdk/client-dynamodb";
+import { DeleteItemCommand, GetItemCommand, QueryCommand, UpdateItemCommand, type AttributeValue } from "@aws-sdk/client-dynamodb";
 import { dynamo, toAttributeValue } from "../functions/_shared/storage/dynamo/client.ts";
 
 const ORIGINAL_ENV = { ...process.env };
@@ -146,6 +146,69 @@ describe("agent persistence", () => {
       { S: "agent_two" },
       { S: "agent_three" },
     ]);
+  });
+
+  it("can patch-repair stored configs that no longer pass current validation", async () => {
+    process.env.AGENT_CONFIGS_TABLE_NAME = "agent-configs";
+    process.env.ACCOUNT_CONFIG_ENCRYPTION_SECRET = "test-secret";
+    dynamo.send = sendMock as never;
+    const { getStorage, resetStorageForTests } = await import("../functions/_shared/storage/index.ts");
+    resetStorageForTests();
+    const { encryptAgentConfig } = await import("../functions/_shared/storage/index.ts");
+    const staleConfig = encryptAgentConfig({
+      model: {
+        provider: "minimax",
+        modelId: "MiniMax-M2.7",
+      },
+      provider: {
+        minimax: {
+          apiKey: "old-key",
+        },
+      },
+      tools: {
+        handoffs: {
+          enabled: true,
+        },
+      },
+    } as never);
+    let updateCommand: UpdateItemCommand | null = null;
+
+    sendMock.mockImplementation(async (command: unknown) => {
+      if (command instanceof GetItemCommand) {
+        return {
+          Item: agentItem("acct_test", "agent_sale", toAttributeValue(staleConfig)),
+        };
+      }
+      if (command instanceof UpdateItemCommand) {
+        updateCommand = command;
+        return {
+          Attributes: agentItem("acct_test", "agent_sale", command.input.ExpressionAttributeValues?.[":config"]!),
+        };
+      }
+      throw new Error("unexpected command");
+    });
+
+    await expect(getStorage().agents.update("acct_test", "agent_sale", {
+      config: {
+        tools: {
+          handoffs: {
+            enabled: true,
+            pancake: {
+              scenarioTagIds: {
+                order: "order-tag",
+                pending: "pending-tag",
+              },
+            },
+            zalo: {
+              botToken: "zalo-token",
+              notifyUserIds: ["sale-1"],
+            },
+          },
+        },
+      },
+    })).resolves.toBeObject();
+
+    expect(updateCommand).toBeInstanceOf(UpdateItemCommand);
   });
 });
 
