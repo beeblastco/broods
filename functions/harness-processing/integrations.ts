@@ -231,13 +231,55 @@ async function handleLambdaUrlEvent(
   // Check for the webhook channel integration
   const accountWebhookMatch = event.rawPath.match(/^\/webhooks\/([^/]+)\/([^/]+)\/([^/]+)$/);
   if (accountWebhookMatch?.[1] && accountWebhookMatch[2] && accountWebhookMatch[3]) {
-    const account = await context.accountLoader(decodeURIComponent(accountWebhookMatch[1]));
+    const accountId = decodeURIComponent(accountWebhookMatch[1]);
+    const agentId = decodeURIComponent(accountWebhookMatch[2]);
+    const channelName = decodeURIComponent(accountWebhookMatch[3]);
+    logInfo("Webhook request matched account route", {
+      accountId,
+      agentId,
+      channel: channelName,
+      method: request.method,
+      rawPath: event.rawPath,
+    });
+
+    let account: AccountRecord | null;
+    try {
+      account = await context.accountLoader(accountId);
+    } catch (err) {
+      logError("Webhook account load failed", {
+        accountId,
+        agentId,
+        channel: channelName,
+        error: err instanceof Error ? err.message : String(err),
+      });
+      throw err;
+    }
     if (!account || account.status !== "active") {
+      logWarn("Webhook account not found or inactive", {
+        accountId,
+        agentId,
+        channel: channelName,
+      });
       return notFoundResponse();
     }
-    const agentId = decodeURIComponent(accountWebhookMatch[2]);
-    const agent = await context.agentLoader(account.accountId, agentId);
+    let agent: AgentRecord | null;
+    try {
+      agent = await context.agentLoader(account.accountId, agentId);
+    } catch (err) {
+      logError("Webhook agent load failed", {
+        accountId: account.accountId,
+        agentId,
+        channel: channelName,
+        error: err instanceof Error ? err.message : String(err),
+      });
+      throw err;
+    }
     if (!agent || agent.status !== "active") {
+      logWarn("Webhook agent not found or inactive", {
+        accountId: account.accountId,
+        agentId,
+        channel: channelName,
+      });
       return notFoundResponse();
     }
 
@@ -245,7 +287,6 @@ async function handleLambdaUrlEvent(
       accountId: account.accountId,
       agentId,
     });
-    const channelName = decodeURIComponent(accountWebhookMatch[3]);
     const accountChannel = accountChannelRegistry.webhookChannels.find((channel) =>
       channel.name === channelName && channel.canHandle(request)
     );
