@@ -6,16 +6,18 @@ Uses an [E2B](https://e2b.dev/docs) template with the S3 workspace bucket mounte
 
 ```json
 {
-  "workspace": {
-    "storage": {
-      "provider": "s3"
-    },
-    "sandbox": {
-      "provider": "e2b",
-      "options": {
-        "apiKey": "...",
-        "template": "mounted-template",
-        "workspaceRoot": "/workspace"
+  "config": {
+    "workspace": {
+      "storage": {
+        "provider": "s3"
+      },
+      "sandbox": {
+        "provider": "e2b",
+        "options": {
+          "apiKey": "...",
+          "template": "mounted-template",
+          "workspaceRoot": "/workspace"
+        }
       }
     }
   }
@@ -32,8 +34,7 @@ Use a template with Node and Python installed, and mount the S3 workspace bucket
 
 See [E2B runtime documentation](https://e2b.dev/docs) for supported runtimes and environment setup.
 
-TypeScript (`.ts`) files are not transpiled — use compiled JavaScript instead.
-`python <file>` is rewritten to `python3` at runtime.
+TypeScript (`.ts`) files are not transpiled; use compiled JavaScript instead. `python <file>` is rewritten to `python3` at runtime.
 
 ## Workspace Mount
 
@@ -41,4 +42,4 @@ Use an S3/FUSE template mounted at `options.workspaceRoot`. The mount must conta
 
 ## Dependencies
 
-Use the mounted template/volume image with packages installed during template build.
+Use the mounted template or volume image with packages installed during template build.

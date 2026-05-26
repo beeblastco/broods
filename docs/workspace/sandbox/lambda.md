@@ -14,27 +14,29 @@ Each runtime Lambda executes files with its own interpreter binary (`process.exe
 
 ## How it Works
 
-The main `harness-processing` Lambda invokes those functions with:
+The main `harness-processing` Lambda invokes sandbox functions with:
 
+- `SANDBOX_BASH_FUNCTION_NAME`
 - `SANDBOX_NODE_FUNCTION_NAME`
 - `SANDBOX_PYTHON_FUNCTION_NAME`
-- `SANDBOX_BASH_FUNCTION_NAME`
 
 You can override those names per agent:
 
 ```json
 {
-  "workspace": {
-    "storage": {
-      "provider": "s3"
-    },
-    "sandbox": {
-      "options": {
-        "bashFunctionName": "my-bash-sandbox",
-        "nodeFunctionName": "my-node-sandbox",
-        "pythonFunctionName": "my-python-sandbox",
-        "workspaceRoot": "/mnt/workspaces",
-        "networkAccess": "disabled"
+  "config": {
+    "workspace": {
+      "storage": {
+        "provider": "s3"
+      },
+      "sandbox": {
+        "options": {
+          "bashFunctionName": "my-bash-sandbox",
+          "nodeFunctionName": "my-node-sandbox",
+          "pythonFunctionName": "my-python-sandbox",
+          "workspaceRoot": "/mnt/workspaces",
+          "networkAccess": "disabled"
+        }
       }
     }
   }

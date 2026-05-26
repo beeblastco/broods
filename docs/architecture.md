@@ -254,9 +254,11 @@ Notes:
 
 This path currently uses core NATS. If JetStream is introduced later, replace best-effort publish/drain with explicit publish acknowledgement, durable consumer replay, duplicate, and backpressure handling.
 
-## Memory and Filesystem Boundaries
+## Workspace Boundaries
 
-Workspace state is account/agent-scoped and disabled unless the selected agent has `config.workspace.enabled` true. The workspace storage backend is currently `workspace.storage.provider: "s3"`, backed by the configured filesystem bucket. When workspace is enabled, the model-facing `bash` tool is the sandbox: Lambda shell commands run in `SandboxBash` against the AWS S3 Files mount, while `python <file.py>` and `python3 <file.py>` continue through `SandboxPython`. E2B and Daytona providers must mount the same S3 workspace bucket at `options.workspaceRoot` so every provider sees the same namespace. `workspace.memory.enabled` and `workspace.tasks.enabled` can disable memory and tasks individually. `workspace.needsApproval` requires approval for every enabled workspace tool. By default workspace state is per conversation; setting `config.workspace.memory.namespace` lets multiple conversations for the same agent share `MEMORY.md`, filesystem files, and task files.
+Workspace state is account/agent-scoped and disabled unless the selected agent has `config.workspace.enabled` true. The workspace storage backend is currently `workspace.storage.provider: "s3"`, backed by the configured filesystem bucket. Workspace has four child concerns: memory, tasks, storage, and sandbox execution.
+
+When workspace is enabled, the model-facing `bash` tool is the sandbox: Lambda shell commands run in `SandboxBash` against the AWS S3 Files mount, while `python <file.py>` and `python3 <file.py>` continue through `SandboxPython`. E2B and Daytona providers must mount the same S3 workspace bucket at `options.workspaceRoot` so every provider sees the same namespace. `workspace.memory.enabled` and `workspace.tasks.enabled` can disable memory and tasks individually. `workspace.needsApproval` requires approval for every enabled workspace tool. By default workspace state is per conversation; setting `config.workspace.memory.namespace` lets multiple conversations for the same agent share `MEMORY.md`, filesystem files, and task files.
 
 ```mermaid
 flowchart LR
@@ -264,7 +266,7 @@ flowchart LR
   Namespace["workspace.memory.namespace=support"] --> Shared["Shared account memory"]
 ```
 
-See [Memory and Session](memory-and-session.md) for the full model.
+See [Workspace](workspace/index.md) for the full model.
 
 ## Model and Tool Configuration
 

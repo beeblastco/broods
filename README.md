@@ -49,12 +49,15 @@ flowchart LR
   - [Architecture and Workflow](docs/architecture.md)
   - [Data Security](docs/data-security.md)
 - Features
-  - [Memory and Session](docs/memory-and-session.md)
+  - [Workspace](docs/workspace/index.md)
+  - [Memory and Session](docs/workspace/memory-and-session.md)
+  - [Tasks](docs/workspace/tasks.md)
+  - [Storage](docs/workspace/storage.md)
+  - [Sandbox](docs/workspace/sandbox/index.md)
   - [Lifecycle Webhook](docs/webhook.md)
   - [External Tool](docs/tools.md)
   - [Skills](docs/skills.md)
   - [Channels](docs/channels.md)
-  - [Sandbox](docs/sandbox.md)
   - [Subagent](docs/sub-agents.md)
 - Development
   - [Extending](docs/extending.md)

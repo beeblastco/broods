@@ -28,9 +28,56 @@ const sidebars: SidebarsConfig = {
       collapsed: false,
       items: [
         {
-          type: 'doc',
-          id: 'memory-and-session',
-          label: 'Memory and Session',
+          type: 'category',
+          label: 'Workspace',
+          collapsed: false,
+          link: {
+            type: 'doc',
+            id: 'workspace/index',
+          },
+          items: [
+            {
+              type: 'doc',
+              id: 'workspace/memory-and-session',
+              label: 'Memory and Session',
+            },
+            {
+              type: 'doc',
+              id: 'workspace/tasks',
+              label: 'Tasks',
+            },
+            {
+              type: 'doc',
+              id: 'workspace/storage',
+              label: 'Storage',
+            },
+            {
+              type: 'category',
+              label: 'Sandbox',
+              collapsed: true,
+              link: {
+                type: 'doc',
+                id: 'workspace/sandbox/index',
+              },
+              items: [
+                {
+                  type: 'doc',
+                  id: 'workspace/sandbox/daytona',
+                  label: 'Daytona',
+                },
+                {
+                  type: 'doc',
+                  id: 'workspace/sandbox/e2b',
+                  label: 'E2B',
+                },
+                {
+                  type: 'doc',
+                  id: 'workspace/sandbox/lambda',
+                  label: 'Lambda',
+                },
+              ],
+            },
+          ],
         },
         {
           type: 'doc',
@@ -85,32 +132,6 @@ const sidebars: SidebarsConfig = {
               type: 'doc',
               id: 'channels/zalo',
               label: 'Zalo',
-            },
-          ],
-        },
-        {
-          type: 'category',
-          label: 'Sandbox',
-          collapsed: true,
-          link: {
-            type: 'doc',
-            id: 'sandbox/index',
-          },
-          items: [
-            {
-              type: 'doc',
-              id: 'sandbox/daytona',
-              label: 'Daytona',
-            },
-            {
-              type: 'doc',
-              id: 'sandbox/e2b',
-              label: 'E2B',
-            },
-            {
-              type: 'doc',
-              id: 'sandbox/lambda',
-              label: 'Lambda',
             },
           ],
         },

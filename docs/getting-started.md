@@ -377,7 +377,7 @@ Key config sections:
 - [Architecture](architecture.md) — how the platform works under the hood
 - [External Tools](tools.md) — add custom tools for your agents
 - [Skills](skills.md) — add account-scoped instruction bundles and enable the skill panel
-- [Memory and Session](memory-and-session.md) — workspace-backed memory, filesystem, and tasks
+- [Workspace](workspace/index.md) — workspace-backed memory, tasks, storage, and sandbox execution
 - [Sub Agents](sub-agents.md) — dispatch parallel subagent tasks
 - [Deployment](deployment.md) — SST secrets, deployment, account setup, and live probes
 - [CI/CD](ci-cd.md) — GitHub Actions deployment and integration account setup
