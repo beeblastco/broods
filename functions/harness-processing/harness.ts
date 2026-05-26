@@ -117,6 +117,13 @@ export async function runAgentLoop(
     messageCount: turnContext.messages.length,
   });
 
+  logInfo("Agent loop started", {
+    eventType: "model.invocation.started",
+    ...logContext,
+    messageCount: turnContext.messages.length,
+    enabledTools: Object.keys(tools),
+  });
+
   const stream = streamText({
     maxOutputTokens: 16000,
     ...modelSettings,

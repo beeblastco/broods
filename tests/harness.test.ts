@@ -735,9 +735,20 @@ describe("runAgentLoop", () => {
 
     const logs = lines.map((line) => JSON.parse(line));
     expect(logs.map((log) => log.eventType).filter(Boolean)).toEqual([
+      "model.invocation.started",
       "model.step.finished",
       "model.invocation.finished",
     ]);
+    expect(logs.find((log) => log.eventType === "model.invocation.started")).toMatchObject({
+      accountId: "acct_test",
+      agentId: "agent_test",
+      conversationKey: "direct:conversation",
+      eventId: "direct-event",
+      modelProvider: "google",
+      modelId: "gemini-custom",
+      messageCount: 1,
+      enabledTools: [],
+    });
     expect(logs.find((log) => log.eventType === "model.step.finished")).toMatchObject({
       accountId: "acct_test",
       agentId: "agent_test",

@@ -485,11 +485,34 @@ async function handleNatsWorkerRequest(event: DirectInboundEvent, context?: Lamb
  */
 async function handleChannelRequest(event: ChannelInboundEvent, context?: LambdaInvocation): Promise<void> {
   const session = new Session(event.eventId, event.conversationKey, event.accountId, event.agentId, event.agentConfig ?? {});
+  logInfo("Channel session received", {
+    channel: event.channelName,
+    accountId: event.accountId,
+    agentId: event.agentId,
+    eventId: session.eventId,
+    conversationKey: session.conversationKey,
+  });
+
   if (!(await claimSession(session))) {
+    logInfo("Channel session already claimed", {
+      channel: event.channelName,
+      accountId: event.accountId,
+      agentId: event.agentId,
+      eventId: session.eventId,
+      conversationKey: session.conversationKey,
+    });
     return;
   }
 
   if (event.commandToken) {
+    logInfo("Channel command executing", {
+      channel: event.channelName,
+      accountId: event.accountId,
+      agentId: event.agentId,
+      eventId: session.eventId,
+      conversationKey: session.conversationKey,
+      commandToken: event.commandToken,
+    });
     await executeCommand(event.commandToken, {
       conversationKey: event.conversationKey,
       conversationsTableName: CONVERSATIONS_TABLE_NAME,
@@ -500,6 +523,14 @@ async function handleChannelRequest(event: ChannelInboundEvent, context?: Lambda
 
   try {
     await session.appendIngressEvents(event.events);
+    logInfo("Channel ingress events persisted", {
+      channel: event.channelName,
+      accountId: event.accountId,
+      agentId: event.agentId,
+      eventId: session.eventId,
+      conversationKey: session.conversationKey,
+      eventCount: event.events.length,
+    });
   } catch (err) {
     logError("Channel request pre-processing failed", {
       eventId: session.eventId,
@@ -527,18 +558,77 @@ async function handleChannelRequest(event: ChannelInboundEvent, context?: Lambda
 
       const result = await runAgentLoopUntilSubagentsIdle(session, turnContext, event.agentConfig ?? {}, context, {
         // Sending prettify JSON if json, else string
-        onFinalText: (response) => event.channel.sendText(typeof response === "string" ? response : JSON.stringify(response, null, 2)),
-        onErrorText: (error) => event.channel.sendText(formatChannelErrorText(error)),
+        onFinalText: async (response) => {
+          const text = typeof response === "string" ? response : JSON.stringify(response, null, 2);
+          logInfo("Channel reply sending", {
+            channel: event.channelName,
+            accountId: event.accountId,
+            agentId: event.agentId,
+            eventId: session.eventId,
+            conversationKey: session.conversationKey,
+            textLength: text.length,
+          });
+          await event.channel.sendText(text);
+          logInfo("Channel reply sent", {
+            channel: event.channelName,
+            accountId: event.accountId,
+            agentId: event.agentId,
+            eventId: session.eventId,
+            conversationKey: session.conversationKey,
+          });
+        },
+        onErrorText: async (error) => {
+          const text = formatChannelErrorText(error);
+          logInfo("Channel error reply sending", {
+            channel: event.channelName,
+            accountId: event.accountId,
+            agentId: event.agentId,
+            eventId: session.eventId,
+            conversationKey: session.conversationKey,
+            textLength: text.length,
+          });
+          await event.channel.sendText(text);
+          logInfo("Channel error reply sent", {
+            channel: event.channelName,
+            accountId: event.accountId,
+            agentId: event.agentId,
+            eventId: session.eventId,
+            conversationKey: session.conversationKey,
+          });
+        },
         onApprovalRequired: async (approvals) => {
+          logInfo("Channel tool approval denied", {
+            channel: event.channelName,
+            accountId: event.accountId,
+            agentId: event.agentId,
+            eventId: session.eventId,
+            conversationKey: session.conversationKey,
+            approvalCount: approvals.length,
+          });
           await session.persistModelMessages([createChannelApprovalDenial(approvals)]);
         },
       });
 
       if (result.didFail) {
+        logError("Channel agent loop failed", {
+          channel: event.channelName,
+          accountId: event.accountId,
+          agentId: event.agentId,
+          eventId: session.eventId,
+          conversationKey: session.conversationKey,
+          error: result.failureText ?? AGENT_PROCESSING_FAILED,
+        });
         return;
       }
     }
   } finally {
+    logInfo("Channel conversation lease releasing", {
+      channel: event.channelName,
+      accountId: event.accountId,
+      agentId: event.agentId,
+      eventId: session.eventId,
+      conversationKey: session.conversationKey,
+    });
     await session.releaseConversationLease().catch(() => { });
   }
 }

@@ -40,7 +40,7 @@ import {
   jsonResponse,
   normalizeHeaders,
 } from "../_shared/http.ts";
-import { logError, logInfo } from "../_shared/log.ts";
+import { logError, logInfo, logWarn } from "../_shared/log.ts";
 import { createPancakeChannel } from "../_shared/pancake-channel.ts";
 import type { LambdaResponse } from "../_shared/runtime.ts";
 import { createSlackChannel } from "../_shared/slack-channel.ts";
@@ -308,18 +308,49 @@ async function handleChannelWebhook(
   agent: AgentRecord,
 ): Promise<LambdaResponse> {
   try {
+    logInfo("Channel webhook received", {
+      channel: adapter.name,
+      accountId: account.accountId,
+      agentId: agent.agentId,
+      method: request.method,
+    });
+
     if (!(await adapter.authenticate(request))) {
+      logWarn("Channel webhook authentication failed", {
+        channel: adapter.name,
+        accountId: account.accountId,
+        agentId: agent.agentId,
+      });
       return unauthorizedResponse();
     }
 
     // Parse event and check if it should be ignored
     // This is based on the channel integration
     const parsed = await adapter.parse(request);
+    logInfo("Channel webhook parsed", {
+      channel: adapter.name,
+      accountId: account.accountId,
+      agentId: agent.agentId,
+      kind: parsed.kind,
+      ...(parsed.kind === "message"
+        ? {
+          eventId: parsed.message.eventId,
+          conversationKey: parsed.message.conversationKey,
+          source: parsed.message.source,
+        }
+        : {}),
+    });
 
     // Global event check for webhook event.
     // Provider needs a direct HTTP response, but no agent run. 
     // Example: Slack URL verification or Discord interaction response.
     if (parsed.kind === "response") {
+      logInfo("Channel webhook responded without agent run", {
+        channel: adapter.name,
+        accountId: account.accountId,
+        agentId: agent.agentId,
+        statusCode: parsed.response.statusCode,
+      });
       return toLambdaResponse(parsed.response);
     }
 
@@ -327,6 +358,12 @@ async function handleChannelWebhook(
     // Example: unsupported Pancake event, wrong page ID, hidden/removed message, page-originated message,
     // or a configured channel handoff gate.
     if (parsed.kind === "ignore") {
+      logInfo("Channel webhook ignored", {
+        channel: adapter.name,
+        accountId: account.accountId,
+        agentId: agent.agentId,
+        statusCode: parsed.response?.statusCode ?? 200,
+      });
       return toLambdaResponse(parsed.response ?? { statusCode: 200 });
     }
 
@@ -335,6 +372,14 @@ async function handleChannelWebhook(
     const { message, ack } = parsed;
     const channel = adapter.actions(message);
     const response = ack ?? { statusCode: 200 };
+    logInfo("Channel webhook accepted for async processing", {
+      channel: adapter.name,
+      accountId: account.accountId,
+      agentId: agent.agentId,
+      eventId: message.eventId,
+      conversationKey: message.conversationKey,
+      statusCode: response.statusCode,
+    });
 
     return {
       statusCode: response.statusCode,
@@ -371,12 +416,28 @@ async function processChannelMessage(
   handlers: IntegrationHandlers,
 ): Promise<void> {
   try {
+    logInfo("Channel message processing started", {
+      channel: event.channelName,
+      accountId: event.accountId,
+      agentId: event.agentId,
+      eventId: event.eventId,
+      conversationKey: event.conversationKey,
+      source: event.source,
+    });
+
     event.channel.sendTyping().catch(() => { });
     event.channel.reactToMessage().catch(() => { });
 
     await handlers.handleChannelRequest({
       ...event,
       commandToken: resolveCommandToken(event.content, event.source) ?? undefined,
+    });
+    logInfo("Channel message processing completed", {
+      channel: event.channelName,
+      accountId: event.accountId,
+      agentId: event.agentId,
+      eventId: event.eventId,
+      conversationKey: event.conversationKey,
     });
   } catch (err) {
     const error = err instanceof Error ? err.message : String(err);

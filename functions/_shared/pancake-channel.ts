@@ -124,8 +124,25 @@ function resolvePancakeHandoffOptions(configOptions: Record<string, unknown> | u
 
 function parsePancakeWebhook(req: ChannelRequest, pageId: string): ChannelParseResult {
   const payload = JSON.parse(req.body) as PancakeWebhookPayload;
+  logInfo("Pancake webhook received", {
+    configuredPageId: pageId,
+    payloadPageId: payload.page_id,
+    eventType: payload.event_type,
+    conversationId: payload.data?.conversation?.id,
+    messageId: payload.data?.message?.id,
+    messageType: payload.data?.message?.type,
+    fromId: payload.data?.message?.from?.id ?? payload.data?.conversation?.from?.id,
+    fromName: payload.data?.message?.from?.name ?? payload.data?.conversation?.from?.name,
+    pageCustomerId: payload.data?.message?.from?.page_customer_id,
+    tagIds: normalizePancakeTagIds(payload.data?.conversation?.tags),
+  });
 
   if (payload.event_type !== "messaging") {
+    logInfo("Pancake webhook ignored", {
+      reason: "unsupported_event_type",
+      eventType: payload.event_type,
+      pageId: payload.page_id,
+    });
     return { kind: "ignore" };
   }
 
@@ -138,12 +155,43 @@ function parsePancakeWebhook(req: ChannelRequest, pageId: string): ChannelParseR
   const message = payload.data?.message;
   const text = message?.message?.trim();
   if (!conversation?.id || !message?.id || !text || !isPancakeMessageType(message.type)) {
+    logInfo("Pancake webhook ignored", {
+      reason: "missing_or_unsupported_message",
+      pageId: payload.page_id,
+      conversationId: conversation?.id,
+      messageId: message?.id,
+      hasText: Boolean(text),
+      messageType: message?.type,
+    });
     return { kind: "ignore" };
   }
 
   if (message.is_hidden || message.is_removed || message.from?.id === pageId || !message.from?.page_customer_id) {
+    logInfo("Pancake webhook ignored", {
+      reason: message.is_hidden
+        ? "hidden_message"
+        : message.is_removed
+          ? "removed_message"
+          : message.from?.id === pageId
+            ? "page_originated_message"
+            : "missing_page_customer_id",
+      pageId: payload.page_id,
+      conversationId: conversation.id,
+      messageId: message.id,
+      fromId: message.from?.id,
+      pageCustomerId: message.from?.page_customer_id,
+    });
     return { kind: "ignore" };
   }
+
+  logInfo("Pancake webhook accepted", {
+    pageId,
+    conversationId: conversation.id,
+    messageId: message.id,
+    messageType: message.type,
+    textLength: text.length,
+    tagIds: normalizePancakeTagIds(conversation.tags),
+  });
 
   return {
     kind: "message",
@@ -231,6 +279,15 @@ async function sendPancakeMessage(
       ...(senderId ? { sender_id: senderId } : {}),
     };
 
+  logInfo("Pancake send message request", {
+    pageId: source.pageId,
+    conversationId: source.conversationId,
+    messageType: source.messageType,
+    replyToMessageId: source.messageId,
+    hasSenderId: Boolean(senderId),
+    textLength: text.length,
+  });
+
   const response = await fetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -240,10 +297,23 @@ async function sendPancakeMessage(
   const body = parseJsonBody(bodyText);
 
   if (!response.ok || body?.success === false) {
+    logWarn("Pancake send message failed", {
+      pageId: source.pageId,
+      conversationId: source.conversationId,
+      status: response.status,
+      error: formatPancakeError(body, bodyText),
+    });
     throw new Error(
       `Pancake send message failed (${response.status}): ${formatPancakeError(body, bodyText)}`,
     );
   }
+
+  logInfo("Pancake send message succeeded", {
+    pageId: source.pageId,
+    conversationId: source.conversationId,
+    status: response.status,
+    responseMessage: body?.message,
+  });
 }
 
 function toPancakeSource(source: Record<string, unknown>): PancakeSource {
