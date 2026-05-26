@@ -454,7 +454,7 @@ export default $config({
       fileSystemId: sandboxS3Files.id,
       posixUsers: [{ uid: 1000, gid: 1000 }],
       rootDirectories: [{
-        path: "/",
+        path: "/sandbox-workspaces",
         creationPermissions: [{
           ownerUid: 1000,
           ownerGid: 1000,
