@@ -43,7 +43,8 @@ export default function handoffsTool(context: HandoffsToolContext): ToolSet {
           },
           tag: {
             type: "string",
-            description: "Tag for the conversation actions required further action from the sale team. Its will be either 'order' or 'pending'. Order is when the user want to place the order and pending is when the user want to ask for more information or have questions that require delegate interaction to the staff."
+            enum: ["order", "pending"],
+            description: "Tag for the conversation actions required further action from the sale team. 'order' is when the user want to place the order and 'pending' is when the user want to ask for more information or have questions that require delegate interaction to the staff."
           }
         },
         additionalProperties: false,
