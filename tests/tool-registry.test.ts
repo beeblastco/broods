@@ -43,15 +43,15 @@ describe("createTools", () => {
       },
     });
 
-    expect(Object.keys(tools).sort()).toEqual(["filesystem", "tasks", "tavilyExtract"]);
-    expect(tools.filesystem?.needsApproval).toBe(true);
+    expect(Object.keys(tools).sort()).toEqual(["bash", "tasks", "tavilyExtract"]);
+    expect(tools.bash?.needsApproval).toBe(true);
     expect(tools.tasks?.needsApproval).toBe(true);
     expect(tools.tavilyExtract?.needsApproval).toBe(true);
     expect(tavilySearchMock).not.toHaveBeenCalled();
     expect(tavilyExtractMock).toHaveBeenCalledTimes(1);
   });
 
-  it("always exposes filesystem when workspace is enabled and can disable tasks", async () => {
+  it("always exposes bash when workspace is enabled and can disable tasks", async () => {
     const { createTools } = await import("../functions/harness-processing/tools/index.ts");
 
     const tools = createTools(createToolContext(), {
@@ -62,8 +62,8 @@ describe("createTools", () => {
       },
     });
 
-    expect(Object.keys(tools).sort()).toEqual(["filesystem"]);
-    expect(tools.filesystem?.needsApproval).toBe(true);
+    expect(Object.keys(tools).sort()).toEqual(["bash"]);
+    expect(tools.bash?.needsApproval).toBe(true);
   });
 
   it("does not expose workspace tools when workspace is disabled", async () => {
@@ -317,9 +317,9 @@ describe("createTools", () => {
 
     expect(() => createTools(createToolContext(), {
       tools: {
-        filesystem: { enabled: true },
+        bash: { enabled: true },
       },
-    })).toThrow("config.tools.filesystem is not a supported tool");
+    })).toThrow("config.tools.bash is not a supported tool");
   });
 });
 

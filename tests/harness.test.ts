@@ -108,7 +108,7 @@ const streamTextMock = mock((options: {
           toolCall: {
             type: "tool-call",
             toolCallId: "tool-call-1",
-            toolName: "filesystem",
+            toolName: "bash",
             input: { shell: "rm file.txt" },
           },
         };
@@ -201,7 +201,7 @@ const streamTextMock = mock((options: {
         const toolCall = {
           type: "tool-call",
           toolCallId: "tool-call-1",
-          toolName: "filesystem",
+          toolName: "bash",
           input: { shell: "ls" },
         };
         await options.experimental_onStepStart?.({
@@ -231,7 +231,7 @@ const streamTextMock = mock((options: {
           toolResults: [{
             type: "tool-result",
             toolCallId: "tool-call-1",
-            toolName: "filesystem",
+            toolName: "bash",
             output: { type: "text", value: "file.txt" },
           }],
           warnings: [],
@@ -550,7 +550,7 @@ describe("runAgentLoop", () => {
     expect(stream.approvalSummaries()).toEqual([{
       approvalId: "approval-1",
       toolCallId: "tool-call-1",
-      toolName: "filesystem",
+      toolName: "bash",
       input: { shell: "rm file.txt" },
     }]);
     expect(onErrorText).not.toHaveBeenCalled();
@@ -561,7 +561,7 @@ describe("runAgentLoop", () => {
         {
           type: "tool-call",
           toolCallId: "tool-call-1",
-          toolName: "filesystem",
+          toolName: "bash",
           input: { shell: "rm file.txt" },
         },
         {
@@ -572,7 +572,7 @@ describe("runAgentLoop", () => {
       ],
     }]);
     expect(streamTextMock.mock.calls[0]?.[0].tools).toMatchObject({
-      filesystem: {
+      bash: {
         needsApproval: true,
       },
     });
@@ -809,18 +809,18 @@ describe("runAgentLoop", () => {
       accountId: "acct_test",
       agentId: "agent_test",
       eventId: "direct-event",
-      toolName: "filesystem",
+      toolName: "bash",
       toolCallId: "tool-call-1",
       durationMs: 12,
     });
     expect(logs.find((log) => log.eventType === "model.invocation.finished")).toMatchObject({
-      toolsUsed: ["filesystem"],
+      toolsUsed: ["bash"],
       toolUsage: {
-        filesystem: 1,
+        bash: 1,
       },
       toolCalls: [{
         toolCallId: "tool-call-1",
-        toolName: "filesystem",
+        toolName: "bash",
         stepNumber: 0,
         durationMs: 12,
         success: true,

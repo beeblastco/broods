@@ -1,6 +1,6 @@
 # Memory and Session
 
-This page explains where conversation history, `MEMORY.md`, task files, and filesystem tool files live.
+This page explains where conversation history, `MEMORY.md`, task files, and bash workspace files live.
 
 ## Mental Model
 
@@ -18,7 +18,7 @@ flowchart TD
 There are two separate things:
 
 - Conversation history: the chat messages for one conversation.
-- Workspace state: `MEMORY.md`, task files, and files written by the filesystem tool. Workspace state exists only when the selected agent has `config.workspace.enabled` true.
+- Workspace state: `MEMORY.md`, task files, and files written by the bash tool. Workspace state exists only when the selected agent has `config.workspace.enabled` true.
 
 ## Default: One Memory Per Conversation
 
@@ -76,14 +76,14 @@ So two accounts can both use `"support"` without sharing data.
 ```mermaid
 flowchart TD
   Workspace["workspace.enabled=true"] --> Prompt["MEMORY.md<br/>loaded into prompt"]
-  Workspace --> Fs["filesystem tool"]
+  Workspace --> Fs["bash tool"]
   Workspace --> Tasks["tasks tool"]
   Namespace["workspace.memory.namespace"] --> Prompt
   Namespace --> Fs
   Namespace --> Tasks
 ```
 
-The filesystem and tasks tools do not use top-level `tools` entries. The filesystem tool is the workspace sandbox and is available whenever `workspace.enabled` is true. Tasks can be disabled with `workspace.tasks.enabled: false`. Set `workspace.needsApproval` to require approval for every enabled workspace tool.
+The bash and tasks tools do not use top-level `tools` entries. The bash tool is the workspace sandbox and is available whenever `workspace.enabled` is true. Tasks can be disabled with `workspace.tasks.enabled: false`. Set `workspace.needsApproval` to require approval for every enabled workspace tool.
 
 ## Session Context Management
 
