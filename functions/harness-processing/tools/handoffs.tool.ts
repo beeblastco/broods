@@ -29,16 +29,17 @@ interface HandoffToolResponse {
 export default function handoffsTool(context: HandoffsToolContext): ToolSet {
   return {
     handoffs: tool({
-      description: "Hand off the current customer conversation to human staff.",
+      description: "Hand off the current customer conversation to human staff. You will stop the current conversation and delegate the interaction to human to answer the questions. When finish the tool, you must say, 'Do you have any other request or questions?'",
       inputSchema: jsonSchema({
         type: "object",
         properties: {
           reason: {
             type: "string",
-            description: "Optional short reason for the handoff.",
+            description: "Short reason for the handoff, should be questions or requests from the customer that need actions from the sale team.",
           },
         },
         additionalProperties: false,
+        required: ["reason"],
       }),
       execute: async () => {
         const conversation = parsePancakeConversationKey(context.conversationKey);
