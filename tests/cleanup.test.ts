@@ -239,7 +239,7 @@ describe("deleteAccountRuntimeData", () => {
     expect(summary.filesystemObjectsDeleted).toBe(2);
     expect(mockDeleteS3PrefixCalls).toContainEqual([
       "test-bucket",
-      `${normalizeFilesystemNamespace(`acct_test:virtual_subagent_subagent_1:${childConversationKey}`)}/`,
+      `sandbox/${normalizeFilesystemNamespace(`acct_test:virtual_subagent_subagent_1:${childConversationKey}`)}/`,
     ]);
   });
 

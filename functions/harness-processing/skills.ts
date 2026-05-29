@@ -5,6 +5,7 @@
 
 import type { SystemModelMessage } from "ai";
 import { optionalEnv } from "../_shared/env.ts";
+import { workspaceNamespacePrefix } from "../_shared/sandbox.ts";
 import {
   copyS3Object,
   deleteS3Object,
@@ -35,8 +36,18 @@ import {
 
 const SKILL_STAGE_MANIFEST_FILE = ".stage.json";
 
+// Skills are staged like a git checkout: the account skill bucket is the source of
+// truth ("origin"), each workspace clones a working copy, edits it, and publishes
+// (pushes) back. The canonical working copy lives under `.claude/skills/<name>` and
+// is what publish reads from. Mirror copies are also written to the directories in
+// SKILL_MIRROR_DIRS so tools that look in other industry-standard locations still
+// find the skill; they are read/exec conveniences, not the publish source.
+const SKILL_CANONICAL_DIR = ".claude/skills";
+const SKILL_MIRROR_DIRS = [".agents/skills"];
+
 interface SkillBundleSandboxStage {
   stagedPath: string;
+  mirrorPaths: string[];
   files: string[];
   copiedFiles: string[];
   deletedFiles: string[];
@@ -133,7 +144,7 @@ export async function publishStagedSkillBundle(
     throw new Error(`Invalid skill path: ${skillPath}`);
   }
 
-  const destinationPrefix = stageDestinationPrefix(workspaceNamespace, parsed.skillName);
+  const destinationPrefix = canonicalStagePrefix(workspaceNamespace, parsed.skillName);
   const manifest = await loadStageManifest(workspaceBucket, destinationPrefix);
   if (!manifest || manifest.skillPath !== skillPath) {
     throw new Error(`No staged skill checkout found for ${skillPath}. Load the skill with Workspace enabled before publishing changes.`);
@@ -234,14 +245,16 @@ async function stageSkillBundleForSandbox(
     throw new Error(`Invalid skill path: ${skillPath}`);
   }
 
-  const destinationPrefix = stageDestinationPrefix(workspaceNamespace, parsed.skillName);
+  const destinationPrefix = canonicalStagePrefix(workspaceNamespace, parsed.skillName);
+  const mirrorPrefixes = mirrorStagePrefixes(workspaceNamespace, parsed.skillName);
   const sourceFiles = await listSkillSourceFiles(skillPath);
   const manifest = await loadStageManifest(workspaceBucket, destinationPrefix);
   const files = sourceFiles.map((file) => file.path).sort(compareSkillBundlePath);
 
   if (options.preserveStagedEdits && manifest && isStageCurrent(sourceFiles, manifest)) {
     return {
-      stagedPath: `/.skills/${parsed.skillName}`,
+      stagedPath: canonicalStagedPath(parsed.skillName),
+      mirrorPaths: mirrorStagedPaths(parsed.skillName),
       files,
       copiedFiles: [],
       deletedFiles: [],
@@ -270,6 +283,12 @@ async function stageSkillBundleForSandbox(
     copiedFiles.push(file.path);
   }));
 
+  // Mirror the account bundle into the other standard skill directories so
+  // discovery tools find it there too. Mirrors always track the source bundle;
+  // the canonical `.claude/skills` copy above is the editable, publishable one.
+  await Promise.all(mirrorPrefixes.map((mirrorPrefix) =>
+    syncMirrorSkillFiles(workspaceBucket, mirrorPrefix, sourceFiles, sourcePathSet)));
+
   copiedFiles.sort(compareSkillBundlePath);
   await writeStageManifest(workspaceBucket, destinationPrefix, {
     version: 1,
@@ -284,12 +303,31 @@ async function stageSkillBundleForSandbox(
   });
 
   return {
-    stagedPath: `/.skills/${parsed.skillName}`,
+    stagedPath: canonicalStagedPath(parsed.skillName),
+    mirrorPaths: mirrorStagedPaths(parsed.skillName),
     files,
     copiedFiles,
     deletedFiles,
     cacheHit: false,
   };
+}
+
+async function syncMirrorSkillFiles(
+  workspaceBucket: string,
+  mirrorPrefix: string,
+  sourceFiles: SkillSourceFile[],
+  sourcePathSet: Set<string>,
+): Promise<void> {
+  await ensureS3DirectoryMarkers(workspaceBucket, mirrorPrefix);
+  await deleteStaleStagedSkillFiles(workspaceBucket, mirrorPrefix, sourcePathSet);
+  await Promise.all(sourceFiles.map(async (file) => {
+    const destinationKey = `${mirrorPrefix}${file.path}`;
+    await ensureS3DirectoryMarkers(workspaceBucket, destinationKey);
+    await copyS3Object(skillsBucketName(), file.key, workspaceBucket, destinationKey, {
+      contentType: contentTypeForSkillPath(file.path),
+      executable: isExecutableSkillPath(file.path),
+    });
+  }));
 }
 
 async function listSkillSourceFiles(skillPath: string): Promise<SkillSourceFile[]> {
@@ -398,8 +436,20 @@ function requireWorkspaceBucket(): string {
   return workspaceBucket;
 }
 
-function stageDestinationPrefix(workspaceNamespace: string, skillName: string): string {
-  return `${workspaceNamespace}/.skills/${skillName}/`;
+function canonicalStagePrefix(workspaceNamespace: string, skillName: string): string {
+  return `${workspaceNamespacePrefix(workspaceNamespace)}/${SKILL_CANONICAL_DIR}/${skillName}/`;
+}
+
+function mirrorStagePrefixes(workspaceNamespace: string, skillName: string): string[] {
+  return SKILL_MIRROR_DIRS.map((dir) => `${workspaceNamespacePrefix(workspaceNamespace)}/${dir}/${skillName}/`);
+}
+
+function canonicalStagedPath(skillName: string): string {
+  return `/${SKILL_CANONICAL_DIR}/${skillName}`;
+}
+
+function mirrorStagedPaths(skillName: string): string[] {
+  return SKILL_MIRROR_DIRS.map((dir) => `/${dir}/${skillName}`);
 }
 
 function isStageCurrent(sourceFiles: SkillSourceFile[], manifest: SkillStageManifest): boolean {
@@ -449,8 +499,11 @@ function formatLoadedSkillPrompt(
   staged?: SkillBundleSandboxStage | null,
 ): string {
   const parts = loaded.parts.map((part) => `## ${part.path}\n\n${part.text.trim()}`).join("\n\n");
+  const mirrorText = staged && staged.mirrorPaths.length > 0
+    ? ` It is also mirrored read-only at ${staged.mirrorPaths.map((path) => `\`${path}\``).join(", ")} for tools that expect those locations.`
+    : "";
   const sandboxText = staged
-    ? `\n\n## Sandbox files\n\nThis skill bundle is available in the workspace sandbox at \`${staged.stagedPath}\`. Run scripts from that path, for example \`bash ${staged.stagedPath}/script.sh\`, \`python3 ${staged.stagedPath}/script.py\`, or direct executable paths when the file has a shebang.`
+    ? `\n\n## Sandbox files\n\nThis skill is checked out as an editable working copy in the workspace sandbox at \`${staged.stagedPath}\`. Edit files there and call publish_skill_changes to push them back to the account skill. Run scripts from that path, for example \`bash ${staged.stagedPath}/script.sh\`, \`python3 ${staged.stagedPath}/script.py\`, or direct executable paths when the file has a shebang.${mirrorText}`
     : "\n\n## Sandbox files\n\nNo workspace sandbox path is available for this skill. Use the loaded instructions as read-only context; do not try to edit or execute bundled skill files.";
   // See https://github.com/microsoft/agent-framework/discussions/4239: loaded skills stay in
   // refreshed system instructions instead of polluting chat history.

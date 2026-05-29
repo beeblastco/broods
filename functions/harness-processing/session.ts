@@ -24,6 +24,7 @@ import { DEFAULT_SYSTEM_PROMPT } from "../_shared/.generated/system-prompt.ts";
 import type { AgentConfig } from "../_shared/storage/index.ts";
 import { getStorage } from "../_shared/storage/index.ts";
 import { isMissingS3Error, readS3Text } from "../_shared/s3.ts";
+import { workspaceNamespacePrefix } from "../_shared/sandbox.ts";
 import {
   dynamo,
   fromAttributeValue,
@@ -477,7 +478,7 @@ export class Session {
       return null;
     }
 
-    const key = `${this.filesystemNamespace()}/MEMORY.md`;
+    const key = `${workspaceNamespacePrefix(this.filesystemNamespace())}/MEMORY.md`;
 
     try {
       return await readS3Text(FILESYSTEM_BUCKET_NAME, key);

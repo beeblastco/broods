@@ -12,6 +12,7 @@ import {
 import type { AccountRecord } from "../_shared/storage/index.ts";
 import { getStorage, type AgentRecord } from "../_shared/storage/index.ts";
 import { deleteS3Prefix as deleteBunS3Prefix } from "../_shared/s3.ts";
+import { workspaceNamespacePrefix } from "../_shared/sandbox.ts";
 import { dynamo } from "../_shared/storage/dynamo/client.ts";
 import { optionalEnv } from "../_shared/env.ts";
 import {
@@ -283,7 +284,7 @@ async function deleteFilesystemNamespaces(namespaces: string[]): Promise<number>
 
   let deleted = 0;
   for (const namespace of namespaces) {
-    deleted += await deleteS3Prefix(bucketName, `${namespace}/`);
+    deleted += await deleteS3Prefix(bucketName, `${workspaceNamespacePrefix(namespace)}/`);
   }
 
   return deleted;

@@ -197,7 +197,7 @@ describe("createWorkspaceSandboxExecutor", () => {
       "sudo chown \"$(id -u)\":\"$(id -g)\" '/mnt/workspaces'",
     );
     expect(daytonaExecuteCommandMock).toHaveBeenCalledWith(
-      "sudo -E mount-s3 --uid \"$(id -u)\" --gid \"$(id -g)\" '--allow-delete' '--allow-overwrite' '--allow-other' '--region' 'eu-central-1' 'workspace-bucket' '/mnt/workspaces'",
+      "sudo -E mount-s3 --uid \"$(id -u)\" --gid \"$(id -g)\" '--allow-delete' '--allow-overwrite' '--allow-other' '--prefix' 'sandbox/' '--region' 'eu-central-1' 'workspace-bucket' '/mnt/workspaces'",
     );
     expect(daytonaExecuteCommandMock).toHaveBeenCalledWith("sudo mkdir -p '/mnt/skills'");
     expect(daytonaExecuteCommandMock).toHaveBeenCalledWith(
@@ -213,5 +213,13 @@ describe("createWorkspaceSandboxExecutor", () => {
       45,
     );
     expect(daytonaDeleteMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("workspaceNamespacePrefix", () => {
+  it("prefixes namespaces with the sandbox mount root so harness and mount agree", async () => {
+    const { workspaceNamespacePrefix } = await import("../functions/_shared/sandbox.ts");
+    // Must match SandboxS3FilesAccessPoint.rootDirectories[].path in sst.config.ts.
+    expect(workspaceNamespacePrefix("fs-abc")).toBe("sandbox/fs-abc");
   });
 });

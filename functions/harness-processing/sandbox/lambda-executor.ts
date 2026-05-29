@@ -6,6 +6,7 @@
 import { InvokeCommand, LambdaClient } from "@aws-sdk/client-lambda";
 import { optionalEnv } from "../../_shared/env.ts";
 import { ensureS3DirectoryMarkers, writeS3Object } from "../../_shared/s3.ts";
+import { workspaceNamespacePrefix } from "../../_shared/sandbox.ts";
 import type {
   WorkspaceSandboxConfig,
   WorkspaceSandboxExecutor,
@@ -120,7 +121,7 @@ function toStorageKey(namespace: string, artifactPath: string): string {
     throw new Error(`Sandbox Lambda returned invalid artifact path: ${artifactPath}`);
   }
 
-  return `${namespace}/${normalizedPath}`;
+  return `${workspaceNamespacePrefix(namespace)}/${normalizedPath}`;
 }
 
 function parseSandboxResponse<T>(payloadText: string): Omit<T, "provider"> {

@@ -4,6 +4,7 @@
  */
 
 import { optionalEnv } from "../../_shared/env.ts";
+import { WORKSPACE_MOUNT_PREFIX } from "../../_shared/sandbox.ts";
 import { Daytona, type Sandbox } from "@daytona/sdk";
 import type {
   WorkspaceSandboxArtifact,
@@ -148,7 +149,9 @@ async function mountAwsS3Buckets(
   }
 
   const workspaceRoot = request.workspaceRoot.replace(/\/+$/, "");
-  await mountS3Bucket(sandbox, workspaceBucketName, workspaceRoot, options);
+  // Mount only the workspace key prefix so paths line up with the harness and the
+  // Lambda provider's S3 Files access point (see workspaceNamespacePrefix).
+  await mountS3Bucket(sandbox, workspaceBucketName, workspaceRoot, options, `${WORKSPACE_MOUNT_PREFIX}/`);
 
   const skillsBucketName = configString(options.skillsBucketName) ?? optionalEnv("SKILLS_BUCKET_NAME");
   if (!skillsBucketName) {
@@ -168,6 +171,7 @@ async function mountS3Bucket(
   bucketName: string,
   mountPath: string,
   options: Record<string, unknown>,
+  keyPrefix?: string,
 ): Promise<void> {
   await executeDaytonaSetupCommand(sandbox, `sudo mkdir -p ${shellQuote(mountPath)}`);
   await executeDaytonaSetupCommand(sandbox, `sudo chown "$(id -u)":"$(id -g)" ${shellQuote(mountPath)}`);
@@ -175,6 +179,7 @@ async function mountS3Bucket(
     "--allow-delete",
     "--allow-overwrite",
     "--allow-other",
+    ...(keyPrefix ? ["--prefix", keyPrefix] : []),
     ...mountRegionArgs(options),
     bucketName,
     mountPath,

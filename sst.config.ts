@@ -453,8 +453,22 @@ export default $config({
     const sandboxS3FilesAccessPoint = new aws.s3.FilesAccessPoint("SandboxS3FilesAccessPoint", {
       fileSystemId: sandboxS3Files.id,
       posixUsers: [{ uid: 1000, gid: 1000 }],
+      // WARNING — this root path is load-bearing and must stay in sync with
+      // WORKSPACE_MOUNT_PREFIX in functions/_shared/sandbox.ts.
+      //
+      // It MUST be a non-root sub-path. The bucket root ("/") already exists, so the
+      // access point's creationPermissions are NOT applied to it and the mount root is
+      // not writable by the squashed uid (see git commit 2bdb34f "Use writable sandbox
+      // workspace root"). A non-existent sub-path like "/sandbox" gets created with the
+      // 777 creationPermissions below, which is what makes the mount writable.
+      //
+      // Because the access point is rooted here, the mount stores every file under the
+      // "sandbox/" key prefix. All harness-side S3 reads/writes of workspace files apply
+      // the same prefix via workspaceNamespacePrefix(). If you change this path, change
+      // WORKSPACE_MOUNT_PREFIX to match or the harness and sandbox stop seeing each
+      // other's files (publish loses bash-written files; loads show an empty mount).
       rootDirectories: [{
-        path: "/sandbox-workspaces",
+        path: "/sandbox",
         creationPermissions: [{
           ownerUid: 1000,
           ownerGid: 1000,

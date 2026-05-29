@@ -321,7 +321,7 @@ describe("loadConfiguredSkillPrompt", () => {
           { key: "acct_test/script-skill/scripts/analyze.py", size: scriptBytes.byteLength, etag: "script-etag" },
         ];
       }
-      if (prefix === "fs-0123456789abcdef0123456789abcdef01234567/.skills/script-skill/") {
+      if (prefix === "sandbox/fs-0123456789abcdef0123456789abcdef01234567/.claude/skills/script-skill/") {
         return [];
       }
       return [];
@@ -340,17 +340,30 @@ describe("loadConfiguredSkillPrompt", () => {
       "fs-0123456789abcdef0123456789abcdef01234567",
     );
 
-    expect(result.stagedPath).toBe("/.skills/script-skill");
+    expect(result.stagedPath).toBe("/.claude/skills/script-skill");
     expect(result.stagedFiles).toEqual(["SKILL.md", "scripts/analyze.py"]);
-    expect(result.prompt.content).toContain("workspace sandbox at `/.skills/script-skill`");
+    expect(result.prompt.content).toContain("workspace sandbox at `/.claude/skills/script-skill`");
     expect(s3Copies).toContainEqual({
       sourceBucket: "test-skills-bucket",
       sourceKey: "acct_test/script-skill/scripts/analyze.py",
       destinationBucket: "workspace-bucket",
-      destinationKey: "fs-0123456789abcdef0123456789abcdef01234567/.skills/script-skill/scripts/analyze.py",
+      destinationKey: "sandbox/fs-0123456789abcdef0123456789abcdef01234567/.claude/skills/script-skill/scripts/analyze.py",
       options: { contentType: "text/plain; charset=utf-8", executable: true },
     });
     expect(s3Writes.find((write) => write.key.endsWith(".stage.json"))).toBeDefined();
+    // Mirrored into the .agents/skills location for tools that expect it.
+    expect(result.prompt.content).toContain("/.agents/skills/script-skill");
+    expect(s3Copies).toContainEqual({
+      sourceBucket: "test-skills-bucket",
+      sourceKey: "acct_test/script-skill/scripts/analyze.py",
+      destinationBucket: "workspace-bucket",
+      destinationKey: "sandbox/fs-0123456789abcdef0123456789abcdef01234567/.agents/skills/script-skill/scripts/analyze.py",
+      options: { contentType: "text/plain; charset=utf-8", executable: true },
+    });
+    // The mirror is not the publish source: only the canonical copy gets a manifest.
+    expect(s3Writes.filter((write) => write.key.endsWith(".stage.json"))).toHaveLength(1);
+    expect(s3Writes.find((write) => write.key.endsWith(".stage.json"))?.key)
+      .toBe("sandbox/fs-0123456789abcdef0123456789abcdef01234567/.claude/skills/script-skill/.stage.json");
   });
 
   it("skips skill staging copies when the workspace manifest is current", async () => {
@@ -388,7 +401,7 @@ describe("loadConfiguredSkillPrompt", () => {
       "fs-0123456789abcdef0123456789abcdef01234567",
     );
 
-    expect(result.stagedPath).toBe("/.skills/cached-skill");
+    expect(result.stagedPath).toBe("/.claude/skills/cached-skill");
     expect(result.stagedFiles).toEqual(["SKILL.md"]);
     expect(copyS3ObjectMock).not.toHaveBeenCalled();
     expect(writeS3ObjectMock).not.toHaveBeenCalled();
@@ -420,7 +433,7 @@ describe("loadConfiguredSkillPrompt", () => {
       if (prefix === "acct_test/refresh-skill/") {
         return [{ key: "acct_test/refresh-skill/SKILL.md", size: skillContent.length, etag: "skill-etag" }];
       }
-      if (prefix === "fs-0123456789abcdef0123456789abcdef01234567/.skills/refresh-skill/") {
+      if (prefix === "sandbox/fs-0123456789abcdef0123456789abcdef01234567/.claude/skills/refresh-skill/") {
         return [
           { key: `${prefix}.stage.json`, size: JSON.stringify(manifest).length },
           { key: `${prefix}SKILL.md`, size: skillContent.length, etag: "edited-etag" },
@@ -443,7 +456,7 @@ describe("loadConfiguredSkillPrompt", () => {
       sourceBucket: "test-skills-bucket",
       sourceKey: "acct_test/refresh-skill/SKILL.md",
       destinationBucket: "workspace-bucket",
-      destinationKey: "fs-0123456789abcdef0123456789abcdef01234567/.skills/refresh-skill/SKILL.md",
+      destinationKey: "sandbox/fs-0123456789abcdef0123456789abcdef01234567/.claude/skills/refresh-skill/SKILL.md",
       options: { contentType: "text/plain; charset=utf-8", executable: false },
     });
   });
@@ -485,7 +498,7 @@ describe("loadConfiguredSkillPrompt", () => {
           { key: "acct_test/publish-skill/old.md", size: oldBytes.byteLength, etag: "old-etag" },
         ];
       }
-      if (bucket === "workspace-bucket" && prefix === "fs-0123456789abcdef0123456789abcdef01234567/.skills/publish-skill/") {
+      if (bucket === "workspace-bucket" && prefix === "sandbox/fs-0123456789abcdef0123456789abcdef01234567/.claude/skills/publish-skill/") {
         return [
           { key: `${prefix}.stage.json`, size: JSON.stringify(manifest).length },
           { key: `${prefix}SKILL.md`, size: editedSkill.length },
@@ -551,7 +564,7 @@ describe("loadConfiguredSkillPrompt", () => {
           { key: "acct_test/publish-skill/old.md", size: oldBytes.byteLength, etag: "old-etag" },
         ];
       }
-      if (bucket === "workspace-bucket" && prefix === "fs-ns/.skills/publish-skill/") {
+      if (bucket === "workspace-bucket" && prefix === "sandbox/fs-ns/.claude/skills/publish-skill/") {
         return [
           { key: `${prefix}.stage.json`, size: JSON.stringify(manifest).length },
           { key: `${prefix}SKILL.md`, size: editedSkill.length },
@@ -647,7 +660,7 @@ describe("loadConfiguredSkillPrompt", () => {
       if (bucket === "test-skills-bucket" && prefix === "acct_test/publish-skill/") {
         return [{ key: "acct_test/publish-skill/SKILL.md", size: editedSkill.length, etag: "fresh-etag" }];
       }
-      if (bucket === "workspace-bucket" && prefix === "fs-ns/.skills/publish-skill/") {
+      if (bucket === "workspace-bucket" && prefix === "sandbox/fs-ns/.claude/skills/publish-skill/") {
         return [
           { key: `${prefix}.stage.json`, size: JSON.stringify(manifest).length },
           { key: `${prefix}SKILL.md`, size: editedSkill.length },
@@ -693,7 +706,7 @@ describe("loadConfiguredSkillPrompt", () => {
       if (bucket === "test-skills-bucket" && prefix === "acct_test/publish-skill/") {
         return [{ key: "acct_test/publish-skill/SKILL.md", size: skillContent.length, etag: "skill-etag" }];
       }
-      if (bucket === "workspace-bucket" && prefix === "fs-ns/.skills/publish-skill/") {
+      if (bucket === "workspace-bucket" && prefix === "sandbox/fs-ns/.claude/skills/publish-skill/") {
         return [
           { key: `${prefix}.stage.json`, size: JSON.stringify(manifest).length },
           { key: `${prefix}SKILL.md`, size: renamedSkill.length },
