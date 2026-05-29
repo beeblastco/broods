@@ -364,6 +364,22 @@ export class Session {
     return loaded;
   }
 
+  /**
+   * Push a workspace's staged skill edits back to the account skill bucket (the git-style
+   * "push" half; {@link loadSkillPrompt} is the "clone/pull" half).
+   *
+   * This lives on Session — rather than as a free function — only to bind the three
+   * per-conversation things publishing needs and that Session already owns: the filesystem
+   * namespace ({@link filesystemNamespace}), the sandbox config (`agentConfig.workspace.sandbox`),
+   * and the workspace/publish gating. The actual publish logic (manifest diff, conflict check,
+   * validation, write to origin) is in `publishStagedSkillBundle`; this method is just the
+   * binding adapter that supplies namespace + executor + a mount reader and delegates.
+   *
+   * The working copy is read straight from the sandbox mount, not S3: agent edits take ~1-2 min
+   * to sync into listable S3 objects (AWS S3 Files writes back asynchronously), so an S3 read
+   * would miss them. See docs/workspace/storage.md "Reading workspace files: S3 API vs the
+   * sandbox mount".
+   */
   async publishSkillFromWorkspace(
     allowedSkillPaths: string[],
     skillPath: string,
@@ -606,7 +622,7 @@ function workspaceRootFromConfig(sandboxConfig: WorkspaceSandboxConfig): string 
 }
 
 function formatWorkspaceHarnessSystemPrompt(namespace: string): string {
-  return `<workspace_harness>
+  return `<workspace>
 Workspace is enabled. Use bash to work with the mounted filesystem rooted at /.
 
 Workspace namespace:
@@ -618,7 +634,7 @@ Guidance:
 3. Use TASKS.md or focused task markdown files for plans and progress tracking when that helps the work stay aligned.
 4. Treat MEMORY.md and task files as normal workspace files: inspect them with bash before relying on them, update them when useful, and keep them concise.
 5. Run code from workspace files instead of inline execution flags.
-</workspace_harness>`;
+</workspace>`;
 }
 
 function formatSkillsSystemPrompt(skills: SkillMetadata[]): string {
@@ -651,7 +667,7 @@ function formatSubagentSystemPrompt(subagents: SubagentMetadata[]): string {
       .join("\n")
     : "- No predefined subagents are configured. Omit agentId to run a virtual one-shot subagent.";
 
-  return `<subagent_system>
+  return `<subagent>
 Use run_subagent to dispatch independent work that can continue while you keep working. The tool returns task ids immediately; results are injected into this conversation when the child work finishes.
 
 Available predefined subagents:
@@ -661,7 +677,7 @@ Tool guidance:
 1. Use the exact agentId from the predefined list when a listed subagent is suitable for the task.
 2. Omit agentId only when no predefined subagent is suitable or the user explicitly asks for a virtual one-shot subagent.
 3. A virtual one-shot subagent uses this agent's model and tool configuration.
-</subagent_system>`;
+</subagent>`;
 }
 
 // DynamoDB row decoding.
