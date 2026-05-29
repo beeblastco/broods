@@ -34,9 +34,7 @@ describe("agent config", () => {
     const merged = mergeAgentConfig({
       workspace: {
         enabled: true,
-        memory: {
-          namespace: "support",
-        },
+        namespace: "support",
       },
       channels: {
         telegram: {
@@ -47,9 +45,7 @@ describe("agent config", () => {
       },
     }, {
       workspace: {
-        memory: {
-          namespace: null,
-        },
+        namespace: null,
       },
       channels: {
         telegram: {
@@ -62,7 +58,6 @@ describe("agent config", () => {
     expect(merged).toEqual({
       workspace: {
         enabled: true,
-        memory: {},
         storage: {
           provider: "s3",
         },
@@ -83,9 +78,26 @@ describe("agent config", () => {
     expect(() => normalizeAgentConfig({ session: { compaction: { maxContextLength: 1.5 } } })).toThrow(
       "config.session.compaction.maxContextLength must be an integer from 1 to 500000",
     );
-    expect(() => normalizeAgentConfig({ workspace: { memory: { namespace: "" } } })).toThrow(
-      "config.workspace.memory.namespace must be a non-empty string",
+    expect(() => normalizeAgentConfig({ workspace: { namespace: "" } })).toThrow(
+      "config.workspace.namespace must be a non-empty string",
     );
+    expect(() => normalizeAgentConfig({ workspace: { workspaces: {} } })).toThrow(
+      "config.workspace.workspaces must include at least one workspace",
+    );
+    expect(() => normalizeAgentConfig({ workspace: { defaultWorkspace: "team" } })).toThrow(
+      "config.workspace.defaultWorkspace requires config.workspace.workspaces",
+    );
+    expect(() => normalizeAgentConfig({ workspace: { workspaces: { "team/shared": {} } } })).toThrow(
+      "config.workspace.workspaces.team/shared must use only letters, numbers, dots, underscores, or hyphens",
+    );
+    expect(() => normalizeAgentConfig({
+      workspace: {
+        defaultWorkspace: "team",
+        workspaces: {
+          personal: {},
+        },
+      },
+    })).toThrow("config.workspace.defaultWorkspace must reference a configured workspace");
     expect(() => normalizeAgentConfig({ workspace: { enabled: "yes" } })).toThrow(
       "config.workspace.enabled must be a boolean",
     );
@@ -817,9 +829,17 @@ describe("agent config", () => {
       workspace: {
         enabled: true,
         needsApproval: true,
-        memory: {
-          namespace: "support",
+        namespace: "support",
+        workspaces: {
+          personal: {
+            description: "Per-conversation workspace",
+          },
+          team: {
+            namespace: "support-team",
+            description: "Shared team workspace",
+          },
         },
+        defaultWorkspace: "personal",
         storage: {
           provider: "s3",
         },
@@ -879,9 +899,17 @@ describe("agent config", () => {
       workspace: {
         enabled: true,
         needsApproval: true,
-        memory: {
-          namespace: "support",
+        namespace: "support",
+        workspaces: {
+          personal: {
+            description: "Per-conversation workspace",
+          },
+          team: {
+            namespace: "support-team",
+            description: "Shared team workspace",
+          },
         },
+        defaultWorkspace: "personal",
         storage: {
           provider: "s3",
         },

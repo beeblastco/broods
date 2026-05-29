@@ -76,6 +76,9 @@ export async function runAgentLoop(
     ...createTools({
       conversationKey: session.conversationKey,
       filesystemNamespace: session.filesystemNamespace(),
+      workspaceBindings: typeof session.workspaceBindings === "function"
+        ? session.workspaceBindings()
+        : [{ id: "default", namespace: session.filesystemNamespace(), isDefault: true }],
       modelProviderName: configuredModel.providerName,
       modelProvider: configuredModel.provider,
       session: session,

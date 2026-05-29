@@ -11,6 +11,7 @@ import type {
 
 export interface FilesystemInput {
   shell: string;
+  workspace?: string;
 }
 
 export function parseExecutionCommand(command: string): {

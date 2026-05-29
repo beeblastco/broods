@@ -34,9 +34,13 @@ import {
 import { requireEnv } from "../_shared/env.ts";
 import {
   conversationLeaseKey,
-  normalizeFilesystemNamespace,
 } from "../_shared/runtime-keys.ts";
 import { logError, logInfo } from "../_shared/log.ts";
+import {
+  resolveDefaultWorkspaceBinding,
+  resolveWorkspaceBindings,
+  type WorkspaceBinding,
+} from "../_shared/workspaces.ts";
 import {
   loadConfiguredSkillPrompt,
   listConfiguredSkillMetadata,
@@ -132,6 +136,7 @@ export class Session {
   private hasLoggedMissingMemoryFile = false;
   private loadedSkillPrompts: SystemModelMessage[] = [];
   private subagentMetadataPromise: Promise<SubagentMetadata[]> | undefined;
+  private workspaceBindingsCache: WorkspaceBinding[] | undefined;
 
   constructor(
     public readonly eventId: string,
@@ -423,21 +428,21 @@ export class Session {
     promptMessages: SystemModelMessage[],
     ephemeralSystem: SystemModelMessage[] = [],
   ): Promise<SystemModelMessage[]> {
-    const [memoryContent, skillMetadata, subagentMetadata] = await Promise.all([
-      this.loadMemoryFile(),
+    const [memoryFiles, skillMetadata, subagentMetadata] = await Promise.all([
+      this.loadMemoryFiles(),
       this.loadSkillMetadata(),
       this.loadSubagentMetadata(),
     ]);
-    const memorySystem: SystemModelMessage[] = memoryContent == null
+    const memorySystem: SystemModelMessage[] = memoryFiles.length === 0
       ? []
       : [{
         role: "system",
-        content: formatMemorySystemPrompt(memoryContent),
+        content: formatMemorySystemPrompt(memoryFiles),
       }];
     const workspaceHarnessSystem: SystemModelMessage[] = this.isWorkspaceHarnessEnabled()
       ? [{
         role: "system",
-        content: formatWorkspaceHarnessSystemPrompt(this.filesystemNamespace()),
+        content: formatWorkspaceHarnessSystemPrompt(this.workspaceBindings()),
       }]
       : [];
     const skillsSystem: SystemModelMessage[] = skillMetadata.length > 0
@@ -513,11 +518,22 @@ export class Session {
     return `${new Date().toISOString()}#${this.eventId}#${sequence}`;
   }
 
-  private async loadMemoryFile(): Promise<string | null> {
+  private async loadMemoryFiles(): Promise<Array<{ workspace: WorkspaceBinding; content: string }>> {
     if (!this.isWorkspaceEnabled()) {
-      return null;
+      return [];
     }
 
+    const memoryFiles: Array<{ workspace: WorkspaceBinding; content: string }> = [];
+    for (const workspace of this.workspaceBindings()) {
+      const content = await this.loadMemoryFile(workspace);
+      if (content != null) {
+        memoryFiles.push({ workspace, content });
+      }
+    }
+    return memoryFiles;
+  }
+
+  private async loadMemoryFile(workspace: WorkspaceBinding): Promise<string | null> {
     // Reads MEMORY.md via the S3 API (not the sandbox mount). If the agent edited
     // MEMORY.md through the mount less than ~1-2 min ago, S3 Files may not have synced
     // it yet, so this can be briefly stale. Accepted: memory converges across turns and
@@ -525,7 +541,7 @@ export class Session {
     // "Reading workspace files: S3 API vs the sandbox mount". Route through readDirectory
     // (like publish) if prompt-time freshness becomes required.
 
-    const key = `${workspaceNamespacePrefix(this.filesystemNamespace())}/MEMORY.md`;
+    const key = `${workspaceNamespacePrefix(workspace.namespace)}/MEMORY.md`;
 
     try {
       return await readS3Text(FILESYSTEM_BUCKET_NAME, key);
@@ -533,6 +549,7 @@ export class Session {
       if (!isMissingS3Error(error)) {
         logError("Failed to load MEMORY.md for session prompt", {
           conversationKey: this.conversationKey,
+          workspace: workspace.id,
           key,
           error: error instanceof Error ? error.message : String(error),
         });
@@ -543,6 +560,7 @@ export class Session {
     if (!this.hasLoggedMissingMemoryFile) {
       logInfo("No MEMORY.md found for session prompt", {
         conversationKey: this.conversationKey,
+        workspace: workspace.id,
         key,
       });
       this.hasLoggedMissingMemoryFile = true;
@@ -556,13 +574,20 @@ export class Session {
   }
 
   filesystemNamespace(): string {
-    const logicalNamespace = this.agentConfig.workspace?.memory?.namespace ?? this.conversationKey;
-    const accountScope = this.accountId && this.agentId ? `${this.accountId}:${this.agentId}` : this.accountId;
-    const scopedNamespace = accountScope
-      ? `${accountScope}:${logicalNamespace}`
-      : logicalNamespace;
+    return resolveDefaultWorkspaceBinding(this.agentConfig, this.workspaceResolutionContext()).namespace;
+  }
 
-    return normalizeFilesystemNamespace(scopedNamespace);
+  workspaceBindings(): WorkspaceBinding[] {
+    this.workspaceBindingsCache ??= resolveWorkspaceBindings(this.agentConfig, this.workspaceResolutionContext());
+    return this.workspaceBindingsCache;
+  }
+
+  private workspaceResolutionContext() {
+    return {
+      accountId: this.accountId,
+      agentId: this.agentId,
+      conversationKey: this.conversationKey,
+    };
   }
 
   private isWorkspaceEnabled(): boolean {
@@ -606,11 +631,20 @@ export class Session {
   }
 }
 
-function formatMemorySystemPrompt(memoryContent: string): string {
-  const normalizedContent = memoryContent.trimEnd();
-  return normalizedContent.length > 0
-    ? `Current MEMORY.md content for this conversation:\n\n${normalizedContent}`
-    : "Current MEMORY.md content for this conversation:\n\n(MEMORY.md exists but is empty)";
+function formatMemorySystemPrompt(memoryFiles: Array<{ workspace: WorkspaceBinding; content: string }>): string {
+  if (memoryFiles.length === 1 && memoryFiles[0]?.workspace.id === "default") {
+    const normalizedContent = memoryFiles[0].content.trimEnd();
+    return normalizedContent.length > 0
+      ? `Current MEMORY.md content for this conversation:\n\n${normalizedContent}`
+      : "Current MEMORY.md content for this conversation:\n\n(MEMORY.md exists but is empty)";
+  }
+
+  const sections = memoryFiles.map(({ workspace, content }) => {
+    const normalizedContent = content.trimEnd();
+    return `## ${workspace.id}\n\n${normalizedContent.length > 0 ? normalizedContent : "(MEMORY.md exists but is empty)"}`;
+  }).join("\n\n");
+
+  return `Current workspace MEMORY.md content:\n\n${sections}`;
 }
 
 function workspaceRootFromConfig(sandboxConfig: WorkspaceSandboxConfig): string {
@@ -621,19 +655,24 @@ function workspaceRootFromConfig(sandboxConfig: WorkspaceSandboxConfig): string 
   return typeof root === "string" && root.trim() ? root.trim() : "/mnt/workspaces";
 }
 
-function formatWorkspaceHarnessSystemPrompt(namespace: string): string {
+function formatWorkspaceHarnessSystemPrompt(workspaces: WorkspaceBinding[]): string {
+  const workspaceList = workspaces
+    .map((workspace) => `- ${workspace.id}${workspace.isDefault ? " (default)" : ""}: ${workspace.namespace}${workspace.description ? ` - ${workspace.description}` : ""}`)
+    .join("\n");
+
   return `<workspace>
 Workspace is enabled. Use bash to work with the mounted filesystem rooted at /.
 
-Workspace namespace:
-${namespace}
+Configured workspaces:
+${workspaceList}
 
 Guidance:
 1. Create, read, edit, move, and delete ordinary workspace files with bash commands.
-2. Use MEMORY.md for durable project facts, decisions, conventions, and context that should survive long-running work.
-3. Use TASKS.md or focused task markdown files for plans and progress tracking when that helps the work stay aligned.
-4. Treat MEMORY.md and task files as normal workspace files: inspect them with bash before relying on them, update them when useful, and keep them concise.
-5. Run code from workspace files instead of inline execution flags.
+2. Use the bash workspace field to select a named workspace when more than one is configured; omitted means the default workspace.
+3. Use MEMORY.md for durable project facts, decisions, conventions, and context that should survive long-running work.
+4. Use TASKS.md or focused task markdown files for plans and progress tracking when that helps the work stay aligned.
+5. Treat MEMORY.md and task files as normal workspace files: inspect them with bash before relying on them, update them when useful, and keep them concise.
+6. Run code from workspace files instead of inline execution flags.
 </workspace>`;
 }
 

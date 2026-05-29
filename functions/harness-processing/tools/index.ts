@@ -10,6 +10,7 @@ import {
   type AgentToolConfig,
 } from "../../_shared/storage/index.ts";
 import type { Session } from "../session.ts";
+import type { WorkspaceBinding } from "../../_shared/workspaces.ts";
 import type { AsyncToolModeMap, RunAsyncToolDispatch } from "../async-tools.ts";
 import filesystemTool from "./filesystem.tool.ts";
 import googleSearchTool from "./google-search.tool.ts";
@@ -27,6 +28,7 @@ import testExternalAsyncTool from "./test.external-async.tool.ts";
 export interface ToolContext {
   conversationKey: string;
   filesystemNamespace: string;
+  workspaceBindings?: WorkspaceBinding[];
   config: AgentToolConfig;
   modelProviderName: AccountModelProviderName;
   modelProvider: unknown;
