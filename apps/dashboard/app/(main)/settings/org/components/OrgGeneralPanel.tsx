@@ -21,7 +21,12 @@ interface Props {
 }
 
 export function OrgGeneralPanel({ org }: Props) {
-    const updateOrg = useMutation(api.org.update);
+    const updateOrg = useMutation(api.org.update).withOptimisticUpdate((localStore, args) => {
+        const active = localStore.getQuery(api.org.getActive, {});
+        if (active && active._id === args.orgId && args.name !== undefined) {
+            localStore.setQuery(api.org.getActive, {}, { ...active, name: args.name });
+        }
+    });
 
     const [name, setName] = useState(org.name);
     const [saving, setSaving] = useState(false);

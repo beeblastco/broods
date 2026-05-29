@@ -14,7 +14,7 @@ import {
     DialogTitle,
 } from "@/app/components/ui/dialog";
 
-type NodeType = "agent" | "database" | "tool" | "workspace";
+type NodeType = "agent" | "database" | "tool" | "workspace" | "skill";
 
 /** Delete warning copy per node type. */
 const DELETE_DESCRIPTIONS: Record<NodeType, { summary: string; detail: string }> = {
@@ -34,6 +34,10 @@ const DELETE_DESCRIPTIONS: Record<NodeType, { summary: string; detail: string }>
         summary: "Delete the workspace and all its contents.",
         detail: "All workspace data, files, and folders will be deleted permanently.",
     },
+    skill: {
+        summary: "Remove this skill from the canvas.",
+        detail: "The skill is removed from the connected agent's allowed list. The underlying skill definition is not deleted.",
+    },
 };
 
 /** Capitalised label for each node type. */
@@ -42,6 +46,7 @@ const NODE_TYPE_LABELS: Record<NodeType, string> = {
     database: "database",
     tool: "tool",
     workspace: "workspace",
+    skill: "skill",
 };
 
 export function SettingsTab({

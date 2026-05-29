@@ -9,10 +9,11 @@ import { BranchEditor } from "@/app/components/side-panel/BranchEditor";
 import { Button } from "@/app/components/ui/button";
 import { Textarea } from "@/app/components/ui/textarea";
 import { useConnectedAgentConfig } from "@/app/hooks/useConnectedAgentConfig";
-import { toNestedAgentConfig, type FlatAgentConfig } from "@/app/lib/agentConfigCodec";
+import { readAgentBranch, toNestedAgentConfig, type FlatAgentConfig } from "@/app/lib/agentConfigCodec";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
 import { toErrorMessage } from "@/app/lib/errors";
+import { applyToolServiceUpsert } from "@/app/lib/toolServiceOptimistic";
 import { useMutation, useQuery } from "convex/react";
 import { Check } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
@@ -85,15 +86,14 @@ export function ToolConfigTab({
             }
             : "skip",
     );
-    const upsertToolService = useMutation(api.toolService.upsertForNode);
+    const upsertToolService = useMutation(api.toolService.upsertForNode).withOptimisticUpdate(applyToolServiceUpsert);
     const { agentConfig, updateBranch } = useConnectedAgentConfig(nodeId);
     const toolKey = nodeLabel.trim() || nodeId;
     const toolOptions = useMemo(() => {
         if (!agentConfig) return undefined;
-        const nested = toNestedAgentConfig(agentConfig as FlatAgentConfig) as Record<string, unknown>;
-        const tools = nested.tools as Record<string, unknown> | undefined;
+        const tools = readAgentBranch<Record<string, unknown>>(agentConfig as FlatAgentConfig, "tools");
 
-        return tools?.[toolKey] ?? {};
+        return tools[toolKey] ?? {};
     }, [agentConfig, toolKey]);
 
     const [sourceCode, setSourceCode] = useState(DEFAULT_SOURCE);

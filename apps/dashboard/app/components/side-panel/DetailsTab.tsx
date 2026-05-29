@@ -7,6 +7,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Separator } from "@/app/components/ui/separator";
 import { Switch } from "@/app/components/ui/switch";
 import { Textarea } from "@/app/components/ui/textarea";
+import { isRecord } from "@/app/lib/utils";
 import type { Doc } from "@/convex/_generated/dataModel";
 import { Check, Copy, Eye, EyeOff, Globe, Slash, Wifi } from "lucide-react";
 import { useRef, useState } from "react";
@@ -30,10 +31,6 @@ const providerOptions: Array<{ value: AgentProvider; label: string }> = [
     { value: "gateway", label: "Gateway" },
 ];
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-    return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
 function toWebSocketBaseUrl(gatewayUrl: string): string {
     const url = new URL(gatewayUrl);
     url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
@@ -48,8 +45,6 @@ export function DetailsTab({
     editName,
     setEditName,
     onSaveName,
-    nameChanged,
-    isSaving,
     onUpdateOutputFormat,
     publicAccessEnabled,
     webSocketEnabled,
@@ -60,7 +55,6 @@ export function DetailsTab({
     selectedProvider,
     runtimeVariables,
     onSaveModelSettings,
-    isSavingModelSettings,
 }: {
     agentConfig: Doc<"agentConfigs"> | null | undefined;
     activeDeployment: Doc<"agentDeployments"> | undefined;
@@ -89,7 +83,6 @@ export function DetailsTab({
     const [outputSchemaError, setOutputSchemaError] = useState<string | null>(null);
     const [editProvider, setEditProvider] = useState<AgentProvider>(selectedProvider);
     const [editModelId, setEditModelId] = useState(agentConfig?.modelId ?? "");
-    const [modelSettingsSaved, setModelSettingsSaved] = useState(false);
     const schemaFileInputRef = useRef<HTMLInputElement | null>(null);
 
     const gatewayUrl = process.env.NEXT_PUBLIC_AGENT_GATEWAY_URL ?? "http://localhost:8080";
@@ -113,10 +106,6 @@ export function DetailsTab({
         return normalized === "OPENAI_API_KEY" || normalized === "API_KEY";
     });
     const openAiVariableRequired = editProvider === "openai" && !hasOpenAiApiKeyVariable;
-    const modelSettingsChanged = !!agentConfig && (
-        editProvider !== selectedProvider ||
-        editModelId.trim() !== agentConfig.modelId
-    );
 
     function buildOutputFormatPayload(schema: Record<string, unknown>): Record<string, unknown> {
         const next: Record<string, unknown> = {
@@ -214,43 +203,30 @@ export function DetailsTab({
         setTimeout(() => setCopiedField(null), 2000);
     }
 
-    async function handleSaveModelSettings() {
-        if (!agentConfig) return;
-        const trimmedModelId = editModelId.trim();
-        if (!trimmedModelId) {
+    /** Auto-saves the provider/model pair; no-ops while the model id is empty. */
+    function saveModel(provider: AgentProvider, modelId: string) {
+        const trimmed = modelId.trim();
+        if (!trimmed) {
             return;
         }
-        await onSaveModelSettings?.({ provider: editProvider, modelId: trimmedModelId });
-        setModelSettingsSaved(true);
-        setTimeout(() => setModelSettingsSaved(false), 2000);
+
+        void onSaveModelSettings?.({ provider: provider, modelId: trimmed });
     }
 
     return (
         <div className="flex flex-1 flex-col gap-5 p-4">
-            {/* Editable name */}
+            {/* Editable name — auto-saves on blur / Enter */}
             <div className="flex flex-col gap-1.5">
                 <span className="text-[11px] uppercase tracking-wider text-muted-foreground/70">Name</span>
-                <div className="flex items-center gap-2">
-                    <Input
-                        value={editName}
-                        onChange={(e) => setEditName(e.target.value)}
-                        className="h-8 text-sm"
-                        onKeyDown={(e) => {
-                            if (e.key === "Enter") onSaveName();
-                        }}
-                    />
-                    {nameChanged && (
-                        <Button
-                            size="sm"
-                            variant="outline"
-                            className="h-8 shrink-0 text-xs"
-                            disabled={!editName.trim() || isSaving}
-                            onClick={onSaveName}
-                        >
-                            {isSaving ? "…" : "Save"}
-                        </Button>
-                    )}
-                </div>
+                <Input
+                    value={editName}
+                    onChange={(e) => setEditName(e.target.value)}
+                    className="h-8 text-sm"
+                    onBlur={onSaveName}
+                    onKeyDown={(e) => {
+                        if (e.key === "Enter") onSaveName();
+                    }}
+                />
             </div>
 
             {/* Agent info */}
@@ -267,11 +243,12 @@ export function DetailsTab({
                         <Select
                             value={editProvider}
                             onValueChange={(value) => {
-                                setEditProvider(value as AgentProvider);
-                                setModelSettingsSaved(false);
+                                const nextProvider = value as AgentProvider;
+                                setEditProvider(nextProvider);
+                                saveModel(nextProvider, editModelId);
                             }}
                         >
-                            <SelectTrigger className="h-8 w-full text-xs">
+                            <SelectTrigger className="h-8 w-full cursor-pointer text-xs">
                                 <SelectValue />
                             </SelectTrigger>
                             <SelectContent>
@@ -284,34 +261,14 @@ export function DetailsTab({
                         </Select>
                         <Input
                             value={editModelId}
-                            onChange={(event) => {
-                                setEditModelId(event.target.value);
-                                setModelSettingsSaved(false);
-                            }}
+                            onChange={(event) => setEditModelId(event.target.value)}
                             className="h-8 text-xs"
                             placeholder="Model ID"
+                            onBlur={() => saveModel(editProvider, editModelId)}
                             onKeyDown={(event) => {
-                                if (event.key === "Enter") {
-                                    void handleSaveModelSettings();
-                                }
+                                if (event.key === "Enter") saveModel(editProvider, editModelId);
                             }}
                         />
-                        <div className="flex items-center gap-2">
-                            <Button
-                                size="sm"
-                                variant="outline"
-                                className="h-8 text-xs"
-                                disabled={!modelSettingsChanged || !editModelId.trim() || isSavingModelSettings}
-                                onClick={() => void handleSaveModelSettings()}
-                            >
-                                {isSavingModelSettings ? "Saving…" : "Save Model"}
-                            </Button>
-                            {modelSettingsSaved && (
-                                <span className="flex items-center gap-1 text-xs text-emerald-500">
-                                    <Check className="size-3" /> Saved
-                                </span>
-                            )}
-                        </div>
                         {openAiVariableRequired && (
                             <p className="text-xs text-destructive">
                                 Add <code>OPENAI_API_KEY</code> in the Variables tab before running the agent.

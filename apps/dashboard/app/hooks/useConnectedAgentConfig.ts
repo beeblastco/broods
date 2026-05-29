@@ -7,6 +7,8 @@
  */
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
+import type { AgentProvider } from "@/app/components/side-panel/DetailsTab";
+import { applyAgentConfigUpdate } from "@/app/lib/agentConfigOptimistic";
 import {
     fromNestedAgentConfig,
     toNestedAgentConfig,
@@ -14,7 +16,7 @@ import {
 } from "@/app/lib/agentConfigCodec";
 import { useStore } from "@xyflow/react";
 import { useMutation, useQuery } from "convex/react";
-import { useCallback } from "react";
+import { useCallback, useEffect, useRef } from "react";
 
 type ReactFlowState = {
     edges: Array<{ source: string; target: string }>;
@@ -86,52 +88,66 @@ export function useConnectedAgentConfig(
         api.agentConfig.getById,
         agentConfigId ? { configId: agentConfigId } : "skip",
     );
-    const updateConfig = useMutation(api.agentConfig.update);
+    const updateConfig = useMutation(api.agentConfig.update).withOptimisticUpdate(applyAgentConfigUpdate);
+
+    // Keep the freshest config and serialize writes so chained edits never build
+    // on a stale reactive snapshot (each branch edit re-projects the whole config).
+    const latestConfig = useRef<FlatAgentConfig | null | undefined>(agentConfig as FlatAgentConfig | undefined);
+    useEffect(() => {
+        latestConfig.current = agentConfig as FlatAgentConfig | undefined;
+    }, [agentConfig]);
+    const writeChain = useRef<Promise<void>>(Promise.resolve());
 
     /**
-     * Writes a JSON value at the given branch path of the nested AgentConfig
-     * and persists the projected flat patch to Convex.
+     * Writes a JSON value at the given branch path of the nested AgentConfig and
+     * persists the projected flat patch to Convex. Writes are queued so a burst of
+     * edits applies sequentially against the latest config rather than clobbering.
      */
     const updateBranch = useCallback(
-        async (path: ReadonlyArray<string>, value: unknown) => {
-            if (!agentConfigId || !agentConfig) return;
-            if (path.length === 0) return;
+        (path: ReadonlyArray<string>, value: unknown) => {
+            if (!agentConfigId || path.length === 0) {
+                return writeChain.current;
+            }
 
-            const nested = toNestedAgentConfig(agentConfig as FlatAgentConfig);
-            let cursor: Record<string, unknown> = nested as Record<string, unknown>;
-            for (let i = 0; i < path.length - 1; i += 1) {
-                const key = path[i];
-                const next = cursor[key];
-                if (typeof next !== "object" || next === null || Array.isArray(next)) {
-                    cursor[key] = {};
+            const run = async () => {
+                const base = latestConfig.current;
+                if (!base) {
+                    return;
                 }
-                cursor = cursor[key] as Record<string, unknown>;
-            }
-            const leaf = path[path.length - 1];
-            if (value === undefined) {
-                delete cursor[leaf];
-            } else {
-                cursor[leaf] = value;
-            }
 
-            const patch = fromNestedAgentConfig(nested);
-            await updateConfig({
-                configId: agentConfigId,
-                provider: patch.provider,
-                modelId: patch.modelId,
-                systemPrompt: patch.systemPrompt,
-                temperature: patch.temperature,
-                maxTokens: patch.maxTokens,
-                maxTurns: patch.maxTurns,
-                outputFormat: patch.outputFormat,
-                providerOptions: patch.providerOptions,
-                memoryToolEnabled: patch.memoryToolEnabled,
-                searchToolEnabled: patch.searchToolEnabled,
-                searchToolConfig: patch.searchToolConfig,
-                extraConfig: patch.extraConfig,
-            });
+                const nested = toNestedAgentConfig(base);
+                let cursor: Record<string, unknown> = nested as Record<string, unknown>;
+                for (let i = 0; i < path.length - 1; i += 1) {
+                    const key = path[i];
+                    const next = cursor[key];
+                    if (typeof next !== "object" || next === null || Array.isArray(next)) {
+                        cursor[key] = {};
+                    }
+                    cursor = cursor[key] as Record<string, unknown>;
+                }
+                const leaf = path[path.length - 1];
+                if (value === undefined) {
+                    delete cursor[leaf];
+                } else {
+                    cursor[leaf] = value;
+                }
+
+                const patch = fromNestedAgentConfig(nested);
+                // Advance the local snapshot so the next queued write sees this change.
+                latestConfig.current = { ...base, ...patch };
+                const { provider, ...rest } = patch;
+                await updateConfig({
+                    configId: agentConfigId,
+                    ...rest,
+                    provider: provider as AgentProvider | undefined,
+                });
+            };
+
+            writeChain.current = writeChain.current.then(run, run);
+
+            return writeChain.current;
         },
-        [agentConfigId, agentConfig, updateConfig],
+        [agentConfigId, updateConfig],
     );
 
     return {

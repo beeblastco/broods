@@ -7,6 +7,7 @@ import { Switch } from "@/app/components/ui/switch";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
 import { toErrorMessage } from "@/app/lib/errors";
+import { applyToolServiceUpsert } from "@/app/lib/toolServiceOptimistic";
 import { useMutation, useQuery } from "convex/react";
 import { useState } from "react";
 
@@ -42,7 +43,7 @@ export function ToolDetailsTab({
             }
             : "skip",
     );
-    const upsertToolService = useMutation(api.toolService.upsertForNode);
+    const upsertToolService = useMutation(api.toolService.upsertForNode).withOptimisticUpdate(applyToolServiceUpsert);
 
     const [isSavingStatus, setIsSavingStatus] = useState(false);
     const [statusError, setStatusError] = useState<string | null>(null);

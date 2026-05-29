@@ -5,8 +5,9 @@ import type { BaseNodeData } from "@/app/components/node/BaseNode";
 import { agentStatusConfig } from "@/app/components/node/BaseNode";
 import { ConfigTab, buildBranchPatch } from "@/app/components/side-panel/ConfigTab";
 import { WorkspaceConfigTab } from "@/app/components/side-panel/WorkspaceConfigTab";
-import { SandboxConfigTab } from "@/app/components/side-panel/SandboxConfigTab";
-import { SkillConfigTab } from "@/app/components/side-panel/SkillConfigTab";
+import { WorkspaceDetailsTab } from "@/app/components/side-panel/WorkspaceDetailsTab";
+import { WorkspaceVariablesTab } from "@/app/components/side-panel/WorkspaceVariablesTab";
+import { SkillDetailsTab } from "@/app/components/side-panel/SkillDetailsTab";
 import { DetailsTab, type AgentProvider } from "@/app/components/side-panel/DetailsTab";
 import { SettingsTab } from "@/app/components/side-panel/SettingsTab";
 import { ToolConfigTab } from "@/app/components/side-panel/ToolConfigTab";
@@ -19,6 +20,8 @@ import { Separator } from "@/app/components/ui/separator";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/app/components/ui/tabs";
 import { useAgentHealth, type AgentHealthStatus } from "@/app/hooks/useAgentHealth";
 import { useEnvironment } from "@/app/hooks/useEnvironment";
+import { applyAgentConfigUpdate } from "@/app/lib/agentConfigOptimistic";
+import { isRuntimeVariable, type RuntimeVariable } from "@/app/lib/runtimeVariables";
 import {
     forgetDeploymentCredential,
     getRememberedDeploymentApiKey,
@@ -87,8 +90,7 @@ const ToolTestTab = dynamic(
     },
 );
 
-type NodeType = "agent" | "database" | "tool" | "workspace" | "sandbox" | "skill";
-type RuntimeVariable = { key: string; value: string };
+type NodeType = "agent" | "database" | "tool" | "workspace" | "skill";
 type HeaderStatusBadge = {
     text: string;
     color: string;
@@ -101,7 +103,6 @@ const PANEL_TITLES: Record<NodeType, string> = {
     database: "Database",
     tool: "Tool",
     workspace: "Workspace",
-    sandbox: "Sandbox",
     skill: "Skill",
 };
 
@@ -129,17 +130,6 @@ function inferProviderFromModelId(modelId: string): AgentProvider {
     return "openai";
 }
 
-function isRuntimeVariable(value: unknown): value is RuntimeVariable {
-    return (
-        typeof value === "object" &&
-        value !== null &&
-        "key" in value &&
-        typeof (value as { key: unknown }).key === "string" &&
-        "value" in value &&
-        typeof (value as { value: unknown }).value === "string"
-    );
-}
-
 export const NodeSidePanel = memo(function NodeSidePanel({
     node,
     deleteRequestToken,
@@ -157,6 +147,7 @@ export const NodeSidePanel = memo(function NodeSidePanel({
     const nodeType = (node?.type ?? "agent") as NodeType;
     const isAgent = nodeType === "agent";
     const isTool = nodeType === "tool";
+    const isWorkspace = nodeType === "workspace";
     const { environmentId } = useEnvironment();
     const params = useParams<{ projectId: string }>();
     const projectId = params.projectId as Id<"projects"> | undefined;
@@ -197,7 +188,7 @@ export const NodeSidePanel = memo(function NodeSidePanel({
         api.agentConfig.getById,
         isAgent && agentConfigId ? { configId: agentConfigId } : "skip",
     );
-    const updateConfig = useMutation(api.agentConfig.update);
+    const updateConfig = useMutation(api.agentConfig.update).withOptimisticUpdate(applyAgentConfigUpdate);
     const removeConfig = useMutation(api.agentConfig.remove);
     const createDeployment = useMutation(api.agentDeployments.create);
     const revokeDeployment = useMutation(api.agentDeployments.revoke);
@@ -561,10 +552,8 @@ export const NodeSidePanel = memo(function NodeSidePanel({
                 >
                     <TabsList variant="line" className="w-full shrink-0 px-4 pt-2">
                         <TabsTrigger value="details">Details</TabsTrigger>
-                        {isAgent && <TabsTrigger value="variables">Variables</TabsTrigger>}
-                        {(isAgent || isTool || nodeType === "workspace" || nodeType === "sandbox" || nodeType === "skill") && (
-                            <TabsTrigger value="config">Config</TabsTrigger>
-                        )}
+                        {(isAgent || isWorkspace) && <TabsTrigger value="variables">Variables</TabsTrigger>}
+                        {(isAgent || isTool || isWorkspace) && <TabsTrigger value="config">Config</TabsTrigger>}
                         {(isAgent || nodeType === "tool") && (
                             <TabsTrigger
                                 value="test"
@@ -615,6 +604,22 @@ export const NodeSidePanel = memo(function NodeSidePanel({
                                 nameChanged={!!nameChanged}
                                 isSavingName={isSaving}
                             />
+                        ) : nodeType === "workspace" && node ? (
+                            <WorkspaceDetailsTab
+                                nodeId={node.id}
+                                editName={editName}
+                                setEditName={setEditName}
+                                onSaveName={handleSaveName}
+                            />
+                        ) : nodeType === "skill" && node ? (
+                            <SkillDetailsTab
+                                nodeId={node.id}
+                                editName={editName}
+                                setEditName={setEditName}
+                                onSaveName={handleSaveName}
+                                nameChanged={!!nameChanged}
+                                isSavingName={isSaving}
+                            />
                         ) : (
                             <ServiceDetailsTab
                                 editName={editName}
@@ -626,7 +631,7 @@ export const NodeSidePanel = memo(function NodeSidePanel({
                         )}
                     </TabsContent>
 
-                    {/* Variables tab — agent only */}
+                    {/* Variables tab — agent and workspace */}
                     {isAgent && (
                         <TabsContent value="variables" className="flex flex-col overflow-hidden">
                             <VariablesTab
@@ -636,6 +641,11 @@ export const NodeSidePanel = memo(function NodeSidePanel({
                                 onSave={handleSaveVariables}
                                 provider={selectedProvider}
                             />
+                        </TabsContent>
+                    )}
+                    {isWorkspace && node && (
+                        <TabsContent value="variables" className="flex flex-col overflow-hidden">
+                            <WorkspaceVariablesTab nodeId={node.id} />
                         </TabsContent>
                     )}
 
@@ -648,21 +658,6 @@ export const NodeSidePanel = memo(function NodeSidePanel({
                             />
                         </TabsContent>
                     )}
-                    {nodeType === "workspace" && node && (
-                        <TabsContent value="config" className="flex flex-col overflow-hidden">
-                            <WorkspaceConfigTab nodeId={node.id} />
-                        </TabsContent>
-                    )}
-                    {nodeType === "sandbox" && node && (
-                        <TabsContent value="config" className="flex flex-col overflow-hidden">
-                            <SandboxConfigTab nodeId={node.id} />
-                        </TabsContent>
-                    )}
-                    {nodeType === "skill" && node && (
-                        <TabsContent value="config" className="flex flex-col overflow-hidden">
-                            <SkillConfigTab nodeId={node.id} nodeLabel={editName || nodeData.label} />
-                        </TabsContent>
-                    )}
                     {isTool && node && (
                         <TabsContent value="config" className="flex flex-col overflow-hidden">
                             <ToolConfigTab
@@ -671,6 +666,11 @@ export const NodeSidePanel = memo(function NodeSidePanel({
                                 nodeId={node.id}
                                 nodeLabel={editName || nodeData.label}
                             />
+                        </TabsContent>
+                    )}
+                    {isWorkspace && node && (
+                        <TabsContent value="config" className="flex flex-col overflow-hidden">
+                            <WorkspaceConfigTab nodeId={node.id} />
                         </TabsContent>
                     )}
 
