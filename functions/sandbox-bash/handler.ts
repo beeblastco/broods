@@ -26,6 +26,7 @@ interface SandboxBashRequest {
   timeoutSeconds: number;
   outputLimitBytes: number;
   networkAccess?: "disabled" | "public";
+  envVars?: Record<string, string>;
 }
 
 interface SandboxReadDirRequest {
@@ -59,6 +60,7 @@ interface NativeNodeOptions {
   workspaceRoot: string;
   timeoutSeconds: number;
   outputLimitBytes: number;
+  envVars: Record<string, string>;
 }
 
 const textDecoder = new TextDecoder();
@@ -87,6 +89,17 @@ export async function handler(
       abortController.abort();
     }, boundedTimeoutSeconds(event.timeoutSeconds) * 1000);
 
+    // Account-configured env vars are merged in first so the required shell vars
+    // below always win; process.env is never inherited (no AWS-credential leak).
+    const configuredEnvVars = event.envVars ?? {};
+    const shellEnv = {
+      ...configuredEnvVars,
+      HOME: "/",
+      USER: "agent",
+      SHELL: "/bin/bash",
+      PATH: "/usr/bin:/bin",
+    };
+
     try {
       const bash = new Bash({
         cwd: "/",
@@ -95,13 +108,14 @@ export async function handler(
           allowSymlinks: false,
           maxFileReadSize: 10 * 1024 * 1024,
         }),
-        env: {
-          HOME: "/",
-          USER: "agent",
-          SHELL: "/bin/bash",
-          PATH: "/usr/bin:/bin",
-        },
+        env: shellEnv,
         network: networkConfig(event.networkAccess),
+        // just-bash's own JS/TS runtime (`js-exec`) is QuickJS WASM with only a
+        // curated subset of Node built-ins. We disable it and register a `node`
+        // command below that spawns the real Node binary instead, so node files
+        // run on full Node 22. Limitations are operational, not runtime-fidelity:
+        // file-only (no -e/REPL), .js/.ts only, and no package manager on PATH
+        // (no npm/npx). Account-configured env vars are injected; nothing else.
         javascript: false,
         python: false,
         defenseInDepth: true,
@@ -115,18 +129,14 @@ export async function handler(
         workspaceRoot,
         timeoutSeconds: boundedTimeoutSeconds(event.timeoutSeconds),
         outputLimitBytes: boundedOutputLimit(event.outputLimitBytes),
+        envVars: configuredEnvVars,
       }));
 
       const result = await bash.exec(event.shell, {
         cwd: "/",
         signal: abortController.signal,
         replaceEnv: true,
-        env: {
-          HOME: "/",
-          USER: "agent",
-          SHELL: "/bin/bash",
-          PATH: "/usr/bin:/bin",
-        },
+        env: shellEnv,
       });
       const stdout = truncateOutput(Buffer.from(result.stdout), boundedOutputLimit(event.outputLimitBytes));
       const stderr = truncateOutput(Buffer.from(result.stderr), boundedOutputLimit(event.outputLimitBytes));
@@ -241,9 +251,14 @@ function nativeNodeCommand(options: NativeNodeOptions): Command {
 
 async function prepareTypescriptEntry(filePath: string, workspaceRoot: string): Promise<string> {
   const source = await readFile(filePath, "utf8");
+  // Emit CommonJS, not ESM. The transpiled file is written with a `.js` extension,
+  // which Node treats as CommonJS unless a `package.json` with `"type":"module"` is
+  // present — ESM output would throw "Cannot use import statement outside a module".
+  // CommonJS keeps `import`/`export` working out of the box. Trade-off: top-level
+  // `await` is unavailable in CommonJS; wrap it in an async function if needed.
   const transpiled = ts.transpileModule(source, {
     compilerOptions: {
-      module: ts.ModuleKind.ESNext,
+      module: ts.ModuleKind.CommonJS,
       target: ts.ScriptTarget.ES2022,
       esModuleInterop: true,
       sourceMap: false,
@@ -265,6 +280,8 @@ async function runNodeFile(
   const child = spawn(process.execPath, [filePath, ...args], {
     cwd,
     env: {
+      // Account-configured vars first; required runtime vars below always win.
+      ...options.envVars,
       PATH: "/usr/local/bin:/usr/bin:/bin",
       HOME: "/tmp",
       TMPDIR: "/tmp",

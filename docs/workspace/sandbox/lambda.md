@@ -7,20 +7,18 @@ The default sandbox provider. SST deploys private runtime Lambdas and one AWS S3
 | Function | Runtime | Executes |
 | --- | --- | --- |
 | `SandboxBash` | `nodejs22.x` | Bash-like shell scripts through [`just bash`](https://github.com/vercel-labs/just-bash), plus native `.js` and `.ts` files |
-| `SandboxNode` | `nodejs22.x` | Legacy mounted `.js` and `.ts` file execution |
 | `SandboxPython` | `python3.12` | `.py` files |
 
-Each runtime Lambda executes files with its own interpreter binary (`process.execPath` for Node and `sys.executable` for Python), so execution does not depend on `node` or `python3` being present on the sanitized `PATH`. The Lambda functions are configured with at least 512 MB memory because AWS S3 Files direct reads require that for Lambda.
+`SandboxBash` runs files with `process.execPath` (real Node) and `SandboxPython` with `sys.executable`, so execution does not depend on `node` or `python3` being present on the sanitized `PATH`. Node files run inside `SandboxBash` — there is no separate Node Lambda. The Lambda functions are configured with at least 512 MB memory because AWS S3 Files direct reads require that for Lambda.
 
 ## How it Works
 
 The main `harness-processing` Lambda invokes sandbox functions with:
 
 - `SANDBOX_BASH_FUNCTION_NAME`
-- `SANDBOX_NODE_FUNCTION_NAME`
 - `SANDBOX_PYTHON_FUNCTION_NAME`
 
-You can override those names per agent:
+You can override those names per agent, and inject environment variables into every sandbox runtime:
 
 ```json
 {
@@ -30,9 +28,11 @@ You can override those names per agent:
         "provider": "s3"
       },
       "sandbox": {
+        "envVars": {
+          "MY_API_BASE": "https://api.example.com"
+        },
         "options": {
           "bashFunctionName": "my-bash-sandbox",
-          "nodeFunctionName": "my-node-sandbox",
           "pythonFunctionName": "my-python-sandbox",
           "workspaceRoot": "/mnt/workspaces",
           "networkAccess": "disabled"
@@ -45,6 +45,39 @@ You can override those names per agent:
 
 The default Lambda provider is deployed by SST. Do not configure public Lambda Function URLs for sandbox functions; `harness-processing` invokes them by function ARN.
 
+## Environment Variables
+
+Add `config.workspace.sandbox.envVars` as a flat object of string key/value pairs. Each entry is injected into every sandbox runtime — shell, Node, and Python:
+
+```json
+{
+  "config": {
+    "workspace": {
+      "sandbox": {
+        "envVars": {
+          "MY_API_BASE": "https://api.example.com",
+          "FEATURE_FLAG": "on"
+        }
+      }
+    }
+  }
+}
+```
+
+The agent reads them like normal environment variables:
+
+| Runtime | How the value is read |
+| --- | --- |
+| Shell | `echo $MY_API_BASE` |
+| Node | `process.env.MY_API_BASE` |
+| Python | `os.environ["MY_API_BASE"]` |
+
+Rules:
+
+- **Reserved runtime vars always win.** `PATH`, `HOME`, `TMPDIR`, `NODE_OPTIONS` (and Python's `PYTHONPATH`) cannot be overridden, even if you list them in `env`.
+- **The host Lambda's `process.env` is never inherited.** Only the keys you declare reach the sandbox — AWS credentials and other harness env vars stay out.
+- Values must be strings. Add secrets through `env` rather than hardcoding them in scripts.
+
 ## Supported Runtimes
 
 | Runtime | Command | File extension |
@@ -53,6 +86,15 @@ The default Lambda provider is deployed by SST. Do not configure public Lambda F
 | Node | `node <file>` | `.js` |
 | TypeScript | `node <file>` | `.ts` — transpiled inside `SandboxBash` before execution |
 | Python | `python <file>` or `python3 <file>` | `.py` |
+
+### Node execution fidelity
+
+`node <file>` inside `SandboxBash` is **not** run on just-bash's built-in `js-exec` (QuickJS WASM, which only ships a curated subset of Node built-ins). just-bash's JS runtime is disabled (`javascript: false`); a registered `node` command spawns the real `process.execPath`, so files run on full Node 22. The remaining limits are operational, not language-fidelity:
+
+- File-only: no `node -e` / REPL / stdin scripts; `.js` and `.ts` only.
+- No package manager on the sanitized `PATH` (no `npm`/`npx`/`yarn`): only Node built-in modules plus any `node_modules` already present in the workspace.
+- Minimal env: only `sandbox.envVars` plus the reserved runtime vars (`PATH`, `HOME=/tmp`, `TMPDIR`, `NODE_OPTIONS`) reach the process; the host Lambda's `process.env` is not inherited.
+- TypeScript is single-file transpile-only (transpiled to CommonJS, no type-check, no cross-file imports). `import`/`export` work out of the box; top-level `await` does not (wrap it in an async function).
 
 ## Workspace Mount
 

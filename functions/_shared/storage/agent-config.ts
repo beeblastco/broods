@@ -108,7 +108,6 @@ export interface AgentWorkspaceConfig {
   defaultWorkspace?: string;
   workspaces?: Record<string, AgentWorkspaceDefinitionConfig>;
   harness?: AgentWorkspaceHarnessConfig;
-  memory?: AgentWorkspaceMemoryConfig;
   storage?: AgentWorkspaceStorageConfig;
   sandbox?: AgentWorkspaceSandboxConfig;
   [key: string]: unknown;
@@ -125,11 +124,6 @@ export interface AgentWorkspaceHarnessConfig {
   [key: string]: unknown;
 }
 
-export interface AgentWorkspaceMemoryConfig {
-  namespace?: string;
-  [key: string]: unknown;
-}
-
 export interface AgentWorkspaceStorageConfig {
   provider?: "s3";
   [key: string]: unknown;
@@ -140,6 +134,8 @@ export interface AgentWorkspaceSandboxConfig {
   timeout?: number;
   memoryLimit?: number;
   outputLimitBytes?: number;
+  // Env vars injected into every sandbox runtime (shell, Node, Python).
+  envVars?: Record<string, string>;
   options?: Record<string, unknown>;
   [key: string]: unknown;
 }
@@ -482,7 +478,6 @@ function normalizeWorkspaceConfig(value: unknown): void {
   assertOptionalNonEmptyString(config.defaultWorkspace, "config.workspace.defaultWorkspace");
   normalizeWorkspaceDefinitionsConfig(config.workspaces, config.defaultWorkspace);
   normalizeWorkspaceHarnessConfig(config.harness);
-  normalizeWorkspaceMemoryConfig(config.memory);
   normalizeWorkspaceStorageConfig(config);
   normalizeWorkspaceSandboxConfig(config.sandbox);
 }
@@ -531,18 +526,6 @@ function normalizeWorkspaceHarnessConfig(value: unknown): void {
   assertOptionalBoolean(config.enabled, "config.workspace.harness.enabled");
 }
 
-function normalizeWorkspaceMemoryConfig(value: unknown): void {
-  if (value == null) {
-    return;
-  }
-  if (!isPlainObject(value)) {
-    throw new Error("config.workspace.memory must be an object");
-  }
-
-  const config = value as Record<string, unknown>;
-  assertOptionalNonEmptyString(config.namespace, "config.workspace.memory.namespace");
-}
-
 function normalizeWorkspaceStorageConfig(workspace: Record<string, unknown>): void {
   if (workspace.storage == null) {
     workspace.storage = { provider: "s3" };
@@ -584,13 +567,18 @@ function normalizeWorkspaceSandboxConfig(value: unknown): void {
     "config.workspace.sandbox.outputLimitBytes",
     workspaceSandboxLimits().maxOutputLimitBytes,
   );
+  // Env vars injected into every sandbox runtime (shell, Node, Python). Reserved
+  // runtime vars (PATH/HOME/TMPDIR/...) always win and the host process.env is never
+  // inherited — see the sandbox handlers and docs/workspace/sandbox/lambda.md.
+  if (config.envVars !== undefined && !isStringRecord(config.envVars)) {
+    throw new Error("config.workspace.sandbox.envVars must be an object with string values");
+  }
   if (config.options !== undefined && !isPlainObject(config.options)) {
     throw new Error("config.workspace.sandbox.options must be an object");
   }
 
   const options = isPlainObject(config.options) ? config.options : {};
   assertOptionalString(options.bashFunctionName, "config.workspace.sandbox.options.bashFunctionName");
-  assertOptionalString(options.nodeFunctionName, "config.workspace.sandbox.options.nodeFunctionName");
   assertOptionalString(options.pythonFunctionName, "config.workspace.sandbox.options.pythonFunctionName");
   assertOptionalEnum(options.networkAccess, "config.workspace.sandbox.options.networkAccess", ["disabled", "public"]);
   assertOptionalString(options.apiKey, "config.workspace.sandbox.options.apiKey");
@@ -609,9 +597,6 @@ function normalizeWorkspaceSandboxConfig(value: unknown): void {
   assertOptionalString(options.awsRegion, "config.workspace.sandbox.options.awsRegion");
   assertOptionalBoolean(options.networkBlockAll, "config.workspace.sandbox.options.networkBlockAll");
   assertOptionalString(options.networkAllowList, "config.workspace.sandbox.options.networkAllowList");
-  if (options.envVars !== undefined && !isStringRecord(options.envVars)) {
-    throw new Error("config.workspace.sandbox.options.envVars must be an object with string values");
-  }
 }
 
 function normalizeSessionConfig(value: unknown): void {

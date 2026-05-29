@@ -36,6 +36,8 @@ See [E2B runtime documentation](https://e2b.dev/docs) for supported runtimes and
 
 TypeScript (`.ts`) files are not transpiled; use compiled JavaScript instead. `python <file>` is rewritten to `python3` at runtime.
 
+`sandbox.envVars` is forwarded as the command's `envs`, so configured variables are visible to executed files.
+
 ## Workspace Mount
 
 Use an S3/FUSE template mounted at `options.workspaceRoot`. The mount must contain the account filesystem namespace directly under that root, for example `/workspace/fs-...`.

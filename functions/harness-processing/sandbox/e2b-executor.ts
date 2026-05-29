@@ -27,6 +27,9 @@ export class E2BWorkspaceSandboxExecutor implements WorkspaceSandboxExecutor {
       const result = await sandbox.commands.run(commandForFile(request), {
         cwd: workspacePath(request),
         timeoutMs: request.timeoutSeconds * 1000,
+        // Account-configured env vars (config.workspace.sandbox.envVars) injected
+        // into the command. E2B already isolates from the harness host env.
+        envs: e2bEnvVars(this.#config),
       });
       return formatResult({
         runtime: request.runtime,
@@ -84,6 +87,19 @@ function e2bCreateOptions(config: WorkspaceSandboxConfig): Record<string, unknow
     ...(configString(options.template) ? { template: configString(options.template) } : {}),
     ...(configString(options.templateId) ? { template: configString(options.templateId) } : {}),
   };
+}
+
+function e2bEnvVars(config: WorkspaceSandboxConfig): Record<string, string> {
+  if (!isRecordObject(config.envVars)) {
+    return {};
+  }
+  const result: Record<string, string> = {};
+  for (const [key, value] of Object.entries(config.envVars)) {
+    if (typeof value === "string") {
+      result[key] = value;
+    }
+  }
+  return result;
 }
 
 function configString(value: unknown): string | undefined {

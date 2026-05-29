@@ -119,7 +119,6 @@ export {
   type AgentWorkspaceConfig,
   type AgentWorkspaceDefinitionConfig,
   type AgentWorkspaceHarnessConfig,
-  type AgentWorkspaceMemoryConfig,
   type AgentWorkspaceSandboxConfig,
   type AccountModelProviderName,
 } from "./agent-config.ts";

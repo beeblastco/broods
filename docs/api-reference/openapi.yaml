@@ -1838,14 +1838,6 @@ components:
           properties:
             enabled:
               type: boolean
-        memory:
-          type: object
-          deprecated: true
-          description: Compatibility fallback for older configs. Use `workspace.namespace` for new agents.
-          properties:
-            namespace:
-              type: string
-              description: Legacy shared workspace namespace key
         storage:
           type: object
           description: Workspace storage backend. Only S3 is supported today.
@@ -1867,15 +1859,17 @@ components:
             outputLimitBytes:
               type: integer
               description: "Captured stdout/stderr limit (1–262144, default: 65536)"
+            envVars:
+              type: object
+              additionalProperties:
+                type: string
+              description: Environment variables injected into the sandbox runtime (shell, Node, and Python). Reserved runtime vars (`PATH`, `HOME`, `TMPDIR`, ...) always take precedence and cannot be overridden.
             options:
               type: object
               properties:
                 bashFunctionName:
                   type: string
                   description: Optional Lambda function name override for shell execution
-                nodeFunctionName:
-                  type: string
-                  description: Legacy Lambda function name override for Node file execution
                 pythonFunctionName:
                   type: string
                   description: Lambda function name override for Python file execution

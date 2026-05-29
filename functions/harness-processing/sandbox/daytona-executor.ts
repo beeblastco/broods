@@ -87,7 +87,7 @@ function daytonaCreateOptions(
   config: WorkspaceSandboxConfig,
 ): Record<string, unknown> {
   const options = isRecordObject(config.options) ? config.options : {};
-  const envVars = daytonaEnvVars(options);
+  const envVars = daytonaEnvVars(isStringRecord(config.envVars) ? config.envVars : {}, options);
   return {
     language: request.runtime === "python" ? "python" : "typescript",
     ...(configString(options.snapshot) ? { snapshot: configString(options.snapshot) } : {}),
@@ -98,8 +98,8 @@ function daytonaCreateOptions(
   };
 }
 
-function daytonaEnvVars(options: Record<string, unknown>): Record<string, string> {
-  const envVars = isStringRecord(options.envVars) ? { ...options.envVars } : {};
+function daytonaEnvVars(userEnv: Record<string, string>, options: Record<string, unknown>): Record<string, string> {
+  const envVars = { ...userEnv };
   if (options.mountAwsS3Buckets !== true) {
     return envVars;
   }
@@ -118,7 +118,7 @@ function awsCredentialEnvVars(envVars: Record<string, string>): Record<string, s
   const secretAccessKey = envVars.AWS_SECRET_ACCESS_KEY ?? optionalEnv("AWS_SECRET_ACCESS_KEY");
   if (!accessKeyId || !secretAccessKey) {
     throw new Error(
-      "Daytona AWS S3 mounts require AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY in the harness runtime or config.workspace.sandbox.options.envVars.",
+      "Daytona AWS S3 mounts require AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY in the harness runtime or config.workspace.sandbox.envVars.",
     );
   }
 
