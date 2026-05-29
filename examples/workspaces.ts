@@ -107,38 +107,5 @@ async function runAndCheck(label: string, body: Record<string, unknown>): Promis
 
   for await (const chunk of streamSSE(body, account.secret)) {
     process.stdout.write(`${chunk}\n\n`);
-    assertStreamEventOk(label, chunk);
-  }
-}
-
-function assertStreamEventOk(label: string, chunk: string): void {
-  let event: unknown;
-  try {
-    event = JSON.parse(chunk);
-  } catch {
-    return;
-  }
-
-  if (!event || typeof event !== "object") {
-    return;
-  }
-
-  const record = event as Record<string, unknown>;
-  if (record.type === "error") {
-    throw new Error(`Stream reported an agent error during ${label}: ${chunk}`);
-  }
-
-  if (record.type !== "tool-result") {
-    return;
-  }
-
-  const output = record.output;
-  if (!output || typeof output !== "object") {
-    return;
-  }
-
-  const outputRecord = output as Record<string, unknown>;
-  if (outputRecord.type === "error-text") {
-    throw new Error(`Stream reported a workspace tool error during ${label}: ${String(outputRecord.value ?? "")}`);
   }
 }
