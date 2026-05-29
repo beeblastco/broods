@@ -43,11 +43,6 @@ const sidebars: SidebarsConfig = {
             },
             {
               type: 'doc',
-              id: 'workspace/tasks',
-              label: 'Tasks',
-            },
-            {
-              type: 'doc',
               id: 'workspace/storage',
               label: 'Storage',
             },

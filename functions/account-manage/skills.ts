@@ -8,6 +8,7 @@ import { mkdir, readdir, readFile, rm } from "node:fs/promises";
 import path from "node:path";
 import { deleteS3Prefix, listS3Prefix, s3ObjectExists, writeS3Object } from "../_shared/s3.ts";
 import {
+  contentTypeForSkillPath,
   formatSkillPath,
   normalizeBundlePath,
   parseGitHubSkillUrl,
@@ -15,27 +16,16 @@ import {
   readSkillMarkdown,
   skillsBucketName,
   SKILL_FILE,
+  validateSkillBundle,
   validateSkillDescription,
   validateSkillName,
+  type SkillBundleFile,
   type SkillMetadata,
 } from "../_shared/skills.ts";
-
-const MAX_SKILL_BUNDLE_BYTES = 30 * 1024 * 1024;
-const MAX_SKILL_FILE_BYTES = 5 * 1024 * 1024;
-const TEXT_EXTENSIONS = new Set([
-  ".css", ".csv", ".html", ".js", ".json", ".md", ".mjs", ".py", ".sh", ".sql", ".svg",
-  ".toml", ".ts", ".tsx", ".txt", ".xml", ".yaml", ".yml",
-]);
 
 export interface SkillManifestFile {
   path: string;
   size?: number;
-}
-
-export interface SkillBundleFile {
-  path: string;
-  bytes: Uint8Array;
-  contentType?: string;
 }
 
 export type CreateSkillInput =
@@ -50,8 +40,7 @@ export interface StoredSkill extends SkillMetadata {
 export type { SkillMetadata } from "../_shared/skills.ts";
 
 export async function createOrReplaceSkill(accountId: string, input: unknown): Promise<StoredSkill> {
-  const files = await resolveSkillBundleFiles(input);
-  const metadata = validateSkillBundle(files);
+  const { metadata, files } = validateSkillBundle(await resolveSkillBundleFiles(input));
   const skillPath = formatSkillPath(accountId, metadata.name);
 
   await deleteS3Prefix(skillsBucketName(), `${skillPath}/`);
@@ -59,7 +48,7 @@ export async function createOrReplaceSkill(accountId: string, input: unknown): P
     skillsBucketName(),
     `${skillPath}/${file.path}`,
     file.bytes,
-    { contentType: file.contentType ?? contentTypeForPath(file.path) },
+    { contentType: file.contentType ?? contentTypeForSkillPath(file.path) },
   )));
 
   return {
@@ -230,52 +219,11 @@ async function readLocalBundleFiles(root: string): Promise<SkillBundleFile[]> {
         files.push({
           path: relative,
           bytes: await readFile(absolute),
-          contentType: contentTypeForPath(relative),
+          contentType: contentTypeForSkillPath(relative),
         });
       }
     }
   }
   await walk(root);
   return files;
-}
-
-function validateSkillBundle(files: SkillBundleFile[]): Omit<SkillMetadata, "path"> {
-  const normalized = new Set<string>();
-  let totalBytes = 0;
-  for (const file of files) {
-    file.path = normalizeBundlePath(file.path);
-    if (normalized.has(file.path)) {
-      throw new Error(`Duplicate skill file path: ${file.path}`);
-    }
-    normalized.add(file.path);
-    totalBytes += file.bytes.byteLength;
-    if (file.bytes.byteLength > MAX_SKILL_FILE_BYTES) {
-      throw new Error(`Skill file is too large: ${file.path}`);
-    }
-    if (!isSupportedTextFile(file.path, file.bytes)) {
-      throw new Error(`Skill file must be a supported text file: ${file.path}`);
-    }
-  }
-  if (totalBytes > MAX_SKILL_BUNDLE_BYTES) {
-    throw new Error("Skill bundle exceeds 30 MB");
-  }
-
-  const skillFile = files.find((file) => file.path === SKILL_FILE);
-  if (!skillFile) {
-    throw new Error("Skill bundle must include SKILL.md at the root");
-  }
-  return parseSkillMarkdown(new TextDecoder().decode(skillFile.bytes));
-}
-
-function isSupportedTextFile(filePath: string, bytes: Uint8Array): boolean {
-  if (!TEXT_EXTENSIONS.has(path.extname(filePath).toLowerCase())) {
-    return false;
-  }
-  return !bytes.includes(0);
-}
-
-function contentTypeForPath(filePath: string): string {
-  return path.extname(filePath).toLowerCase() === ".json"
-    ? "application/json"
-    : "text/plain; charset=utf-8";
 }

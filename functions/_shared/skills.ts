@@ -5,15 +5,29 @@
 
 import { readS3Text, s3ObjectExists } from "./s3.ts";
 import { requireEnv } from "./env.ts";
+import path from "node:path";
 
 export const SKILL_FILE = "SKILL.md";
 const MAX_SKILL_NAME_LENGTH = 64;
 const MAX_SKILL_DESCRIPTION_LENGTH = 1024;
+const MAX_SKILL_BUNDLE_BYTES = 30 * 1024 * 1024;
+const MAX_SKILL_FILE_BYTES = 5 * 1024 * 1024;
+const TEXT_EXTENSIONS = new Set([
+  ".css", ".csv", ".html", ".js", ".json", ".md", ".mjs", ".py", ".sh", ".sql", ".svg",
+  ".toml", ".ts", ".tsx", ".txt", ".xml", ".yaml", ".yml",
+]);
+const EXECUTABLE_EXTENSIONS = new Set([".sh", ".bash", ".zsh", ".py", ".js", ".mjs", ".ts"]);
 
 export interface SkillMetadata {
   name: string;
   description: string;
   path: string;
+}
+
+export interface SkillBundleFile {
+  path: string;
+  bytes: Uint8Array;
+  contentType?: string;
 }
 
 export async function readSkillMarkdown(accountId: string, skillName: string): Promise<string | null> {
@@ -54,6 +68,49 @@ export function parseSkillMarkdown(markdown: string): Omit<SkillMetadata, "path"
 
 export function skillInstructionsFromMarkdown(markdown: string): string {
   return markdown.replace(/^---\r?\n[\s\S]*?\r?\n---(?:\r?\n|$)/, "").trim();
+}
+
+export interface ValidatedSkillBundle {
+  metadata: Omit<SkillMetadata, "path">;
+  files: SkillBundleFile[];
+}
+
+export function validateSkillBundle(input: SkillBundleFile[]): ValidatedSkillBundle {
+  const files = input.map((file) => ({ ...file, path: normalizeBundlePath(file.path) }));
+  const seen = new Set<string>();
+  let totalBytes = 0;
+  for (const file of files) {
+    if (seen.has(file.path)) {
+      throw new Error(`Duplicate skill file path: ${file.path}`);
+    }
+    seen.add(file.path);
+    totalBytes += file.bytes.byteLength;
+    if (file.bytes.byteLength > MAX_SKILL_FILE_BYTES) {
+      throw new Error(`Skill file is too large: ${file.path}`);
+    }
+    if (!isSupportedTextFile(file.path, file.bytes)) {
+      throw new Error(`Skill file must be a supported text file: ${file.path}`);
+    }
+  }
+  if (totalBytes > MAX_SKILL_BUNDLE_BYTES) {
+    throw new Error("Skill bundle exceeds 30 MB");
+  }
+
+  const skillFile = files.find((file) => file.path === SKILL_FILE);
+  if (!skillFile) {
+    throw new Error("Skill bundle must include SKILL.md at the root");
+  }
+  return { metadata: parseSkillMarkdown(new TextDecoder().decode(skillFile.bytes)), files };
+}
+
+export function contentTypeForSkillPath(filePath: string): string {
+  return path.extname(filePath).toLowerCase() === ".json"
+    ? "application/json"
+    : "text/plain; charset=utf-8";
+}
+
+export function isExecutableSkillPath(filePath: string): boolean {
+  return EXECUTABLE_EXTENSIONS.has(path.extname(filePath).toLowerCase());
 }
 
 export function parseGitHubSkillUrl(value: unknown): {
@@ -166,6 +223,13 @@ export function validateSkillDescription(value: unknown): asserts value is strin
   ) {
     throw new Error("Skill description must be non-empty, max 1024 chars, and cannot contain XML tags");
   }
+}
+
+function isSupportedTextFile(filePath: string, bytes: Uint8Array): boolean {
+  if (!TEXT_EXTENSIONS.has(path.extname(filePath).toLowerCase())) {
+    return false;
+  }
+  return !bytes.includes(0);
 }
 
 function parseSimpleYamlFrontmatter(frontmatter: string): Record<string, string> {

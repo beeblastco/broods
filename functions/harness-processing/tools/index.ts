@@ -18,7 +18,6 @@ import loadSkillTool from "./load-skill.tool.ts";
 import runSubagentTool, {
   type RunSubagentDispatch,
 } from "./run-subagent.tool.ts";
-import tasksTool from "./tasks.tool.ts";
 import { tavilyExtractTool, tavilySearchTool } from "./tavily.tool.ts";
 import testAsyncTool from "./test.async.tool.ts";
 import testExternalAsyncTool from "./test.external-async.tool.ts";
@@ -63,11 +62,6 @@ export function createTools(context: Omit<ToolContext, "config">, agentConfig: A
       }), {
         bash: needsApproval,
       }),
-      ...(agentConfig.workspace.tasks?.enabled === false ? [] : [
-        withToolApproval(tasksTool({ ...context, config: {} }), {
-          tasks: needsApproval,
-        }),
-      ]),
     );
   }
 
@@ -82,9 +76,17 @@ export function createTools(context: Omit<ToolContext, "config">, agentConfig: A
 
   const allowedSkillPaths = agentConfig.skills?.allowed ?? [];
   if (agentConfig.skills?.enabled === true && allowedSkillPaths.length > 0 && context.session) {
+    // Publishing edits back to the source bundle requires a staged workspace
+    // checkout, so only expose the tool when Workspace is also enabled.
+    const publishEnabled = agentConfig.skills.publish?.enabled === true
+      && agentConfig.workspace?.enabled === true;
     Object.assign(tools, loadSkillTool(
       context.session,
       (skillPath, resourcePaths) => context.session!.loadSkillPrompt(allowedSkillPaths, skillPath, resourcePaths),
+      publishEnabled
+        ? (skillPath, options) => context.session!.publishSkillFromWorkspace(allowedSkillPaths, skillPath, options)
+        : undefined,
+      { publishNeedsApproval: agentConfig.skills.publish?.needApproval !== false },
     ));
   }
 

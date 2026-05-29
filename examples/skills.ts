@@ -2,11 +2,6 @@
  * Example Skills Management through the deployed account API.
  * Skill storage stays behind account-management; this script never talks to S3 directly.
  *
- * Run with: bun examples/skills.ts
- *
- * Prerequisites:
- * - ACCOUNT_SERVICE_URL environment variable
- *
  * This demonstrates how to:
  * 1. Create a greeting skill that outputs "Potato initiate squirt all juice" when used
  * 2. List skills for an account

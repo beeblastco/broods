@@ -36,29 +36,26 @@ describe("createTools", () => {
       workspace: {
         enabled: true,
         needsApproval: true,
-        tasks: { enabled: true },
       },
       tools: {
         tavilyExtract: { needsApproval: true },
       },
     });
 
-    expect(Object.keys(tools).sort()).toEqual(["bash", "tasks", "tavilyExtract"]);
+    expect(Object.keys(tools).sort()).toEqual(["bash", "tavilyExtract"]);
     expect(tools.bash?.needsApproval).toBe(true);
-    expect(tools.tasks?.needsApproval).toBe(true);
     expect(tools.tavilyExtract?.needsApproval).toBe(true);
     expect(tavilySearchMock).not.toHaveBeenCalled();
     expect(tavilyExtractMock).toHaveBeenCalledTimes(1);
   });
 
-  it("always exposes bash when workspace is enabled and can disable tasks", async () => {
+  it("always exposes only bash when workspace is enabled", async () => {
     const { createTools } = await import("../functions/harness-processing/tools/index.ts");
 
     const tools = createTools(createToolContext(), {
       workspace: {
         enabled: true,
         needsApproval: true,
-        tasks: { enabled: false },
       },
     });
 

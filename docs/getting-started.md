@@ -347,7 +347,8 @@ bun examples/async.ts         # Async with polling
 bun examples/tool-approval.ts # Tool approval flow
 bun examples/subagent.ts      # Subagent dispatch
 bun examples/skills.ts        # Skill CRUD
-bun examples/invoke-skill.ts  # Skill loading during a streamed turn
+bun examples/skill-loads.ts   # Skill loading during a streamed turn
+bun examples/skill-edit.ts    # Edit + publish a skill, then run it from a fresh agent
 ```
 
 Each script creates a temporary account, runs the test, and cleans up.
@@ -362,7 +363,7 @@ Key config sections:
 - `model` — `streamText` parameters: model ID, temperature, structured output, provider options
 - `agent` — max turns and system prompt
 - `tools` — external tools like Tavily and Google Search
-- `workspace` — memory, filesystem, and tasks
+- `workspace` — workspace files, default workspace prompt, and sandboxed `bash`
 - `skills` — account-scoped skill bundles
 - `subagent` — parallel subagent dispatch
 - `channels` — Telegram, Discord, Slack, GitHub, Pancake
@@ -377,7 +378,7 @@ Key config sections:
 - [Architecture](architecture.md) — how the platform works under the hood
 - [External Tools](tools.md) — add custom tools for your agents
 - [Skills](skills.md) — add account-scoped instruction bundles and enable the skill panel
-- [Workspace](workspace/index.md) — workspace-backed memory, tasks, storage, and sandbox execution
+- [Workspace](workspace/index.md) — workspace files, storage, and sandbox execution
 - [Sub Agents](sub-agents.md) — dispatch parallel subagent tasks
 - [Deployment](deployment.md) — SST secrets, deployment, account setup, and live probes
 - [CI/CD](ci-cd.md) — GitHub Actions deployment and integration account setup

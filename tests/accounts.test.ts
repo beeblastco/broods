@@ -92,11 +92,8 @@ describe("agent config", () => {
     expect(() => normalizeAgentConfig({ workspace: { needsApproval: "yes" } })).toThrow(
       "config.workspace.needsApproval must be a boolean",
     );
-    expect(() => normalizeAgentConfig({ workspace: { memory: { enabled: "yes" } } })).toThrow(
-      "config.workspace.memory.enabled must be a boolean",
-    );
-    expect(() => normalizeAgentConfig({ workspace: { tasks: { enabled: "yes" } } })).toThrow(
-      "config.workspace.tasks.enabled must be a boolean",
+    expect(() => normalizeAgentConfig({ workspace: { harness: { enabled: "yes" } } })).toThrow(
+      "config.workspace.harness.enabled must be a boolean",
     );
     expect(() => normalizeAgentConfig({ workspace: { storage: { provider: "r2" } } })).toThrow(
       "config.workspace.storage.provider must be one of: s3",
@@ -565,11 +562,19 @@ describe("agent config", () => {
       skills: {
         enabled: true,
         allowed: ["acct_test/support-flow"],
+        publish: {
+          enabled: true,
+          needApproval: false,
+        },
       },
     })).toEqual({
       skills: {
         enabled: true,
         allowed: ["acct_test/support-flow"],
+        publish: {
+          enabled: true,
+          needApproval: false,
+        },
       },
     });
 
@@ -584,6 +589,22 @@ describe("agent config", () => {
         allowed: "acct_test/support-flow",
       },
     })).toThrow("config.skills.allowed must be an array of strings");
+
+    expect(() => normalizeAgentConfig({
+      skills: {
+        publish: {
+          enabled: "yes",
+        },
+      },
+    })).toThrow("config.skills.publish.enabled must be a boolean");
+
+    expect(() => normalizeAgentConfig({
+      skills: {
+        publish: {
+          needApproval: "yes",
+        },
+      },
+    })).toThrow("config.skills.publish.needApproval must be a boolean");
   });
 
   it("validates agent subagent config", () => {
@@ -797,11 +818,7 @@ describe("agent config", () => {
         enabled: true,
         needsApproval: true,
         memory: {
-          enabled: true,
           namespace: "support",
-        },
-        tasks: {
-          enabled: true,
         },
         storage: {
           provider: "s3",
@@ -863,11 +880,7 @@ describe("agent config", () => {
         enabled: true,
         needsApproval: true,
         memory: {
-          enabled: true,
           namespace: "support",
-        },
-        tasks: {
-          enabled: true,
         },
         storage: {
           provider: "s3",
