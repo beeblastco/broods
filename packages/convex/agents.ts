@@ -217,7 +217,7 @@ export const remove = internalMutation({
         // and matching canvas node that referenced this agent.
         const linkedConfig = await ctx.db
             .query("agentConfigs")
-            .filter((q) => q.eq(q.field("agentId"), normalized as unknown as string))
+            .withIndex("by_agentId", (q) => q.eq("agentId", normalized as unknown as string))
             .first();
         if (linkedConfig) {
             const layout = await ctx.db

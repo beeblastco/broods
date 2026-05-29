@@ -241,7 +241,8 @@ export default defineSchema({
         .index("by_authId_and_projectId", ["authId", "projectId"]),
     agentConfigs: defineTable(agentConfigsFields)
         .index("by_authId", ["authId"])
-        .index("by_projectId_and_environmentId", ["projectId", "environmentId"]),
+        .index("by_projectId_and_environmentId", ["projectId", "environmentId"])
+        .index("by_agentId", ["agentId"]),
     canvasLayouts: defineTable(canvasLayoutsFields)
         .index("by_projectId_and_environmentId", ["projectId", "environmentId"]),
     agentDeployments: defineTable(agentDeploymentsFields)
