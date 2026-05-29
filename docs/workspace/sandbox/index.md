@@ -13,6 +13,8 @@ flowchart LR
   Lambda --> Python["SandboxPython<br/>Python files"]
   Bash --> Mount["AWS S3 Files mount<br/>/mnt/workspaces/<namespace>"]
   Python --> Mount
+  Skill["load_skill"] --> Stage["Stage skill bundle<br/>.skills/skill-name"]
+  Stage --> Mount
   E2B --> ExternalMount["Mounted workspaceRoot/<namespace>"]
   Daytona --> ExternalMount
   Mount --> Bucket["S3 workspace bucket"]
@@ -150,6 +152,14 @@ When the limit is exceeded, output is sliced at the cap and `[output truncated]`
 - `curl` is disabled unless `options.networkAccess` is `"public"` and still blocks private, loopback, and internal ranges
 
 Workspace write/read commands still use the normal `bash` tool. Use `workspace.needsApproval` if file writes and code runs should require human approval.
+
+## Skill Files
+
+Skills still load through the skills S3 bucket even when Workspace is disabled. Without Workspace, loaded skills are read-only model context and bundled scripts are not executable by the agent. When both Skills and Workspace are enabled, `load_skill` also stages the loaded skill bundle into the workspace namespace at `/.skills/<skill-name>`.
+
+The staged copy is a normal workspace directory. The agent can inspect, edit, and execute files there with `bash`; changes affect the staged workspace copy first. Staging writes a `.stage.json` manifest so later loads can skip unchanged files and copy only changed source objects when skill publishing is enabled. When skill publishing is disabled, later loads refresh the staged copy from the account-level skill so sandbox edits do not shadow the source skill across turns.
+
+Persisting edits back to the account-owned skill bundle requires `skills.publish.enabled=true` and goes through `publish_skill_changes`. That tool validates the staged bundle, checks for source changes since checkout unless `force` is explicitly used, and writes the validated bundle back to the skills bucket. `skills.publish.needApproval` controls whether publish requires approval; omitted means approval is required.
 
 ## Related Code
 

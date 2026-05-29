@@ -29,7 +29,7 @@ try {
     agent: {
       system: "You are a helpful assistant.",
     },
-    // Workspace defaults to disabled, so memory/filesystem/tasks are off here.
+    // Workspace defaults to disabled, so workspace files and bash are off here.
   });
   console.log("Created test account:", JSON.stringify(account));
   console.log("Created test agent:", JSON.stringify(agent));

@@ -16,6 +16,10 @@ flowchart LR
   Model -->|"load_skill(path)"| Loader["load-skill.tool.ts"]
   Loader -->|"SKILL.md + resources"| SkillStore
   Loader --> Loaded["loaded skill system context"]
+  Loader -->|"stage changed files when workspace enabled"| Workspace["S3 workspace bucket<br/>.skills/&lt;skill-name&gt;"]
+  Workspace --> Sandbox["sandbox runtime"]
+  Sandbox -->|"edit staged copy"| Workspace
+  Workspace -->|"publish_skill_changes<br/>validate + conflict check"| SkillStore
 ```
 
 ## Skill Panel
@@ -28,7 +32,13 @@ When skills are enabled, the model sees a compact skill panel in system context.
 | `name` | `SKILL.md` frontmatter | Human-readable skill identifier |
 | `description` | `SKILL.md` frontmatter | Routing hint for when to load the skill |
 
-The detailed `SKILL.md` content is not injected up front. The agent calls `load_skill` with an allowed path, and may request extra resource files from the same bundle only when `SKILL.md` references them.
+The detailed `SKILL.md` content is not injected up front. The agent calls `load_skill` with an allowed path, and may request extra resource files from the same bundle only when `SKILL.md` references them. This S3 API path works even when Workspace is disabled; in that mode skills are read-only model context and bundled scripts cannot be executed by the agent.
+
+When Workspace is enabled, `load_skill` also stages the skill bundle into the current workspace namespace at `/.skills/<skill-name>`. Staging writes a `.stage.json` manifest with source object metadata. When skill publishing is enabled, later loads compare that manifest with the skills bucket and skip unchanged files so staged edits can continue across turns before publishing. When publishing is disabled, later loads refresh from the account-level skill. Changed files are copied with S3 server-side copy instead of streaming every byte through `harness-processing`.
+
+This makes `.sh`, `.py`, `.js`, `.ts`, and other uploaded text resources available to the sandbox without mounting the skills bucket into the Lambda sandbox. Script files (`.sh`, `.bash`, `.zsh`, `.py`, `.js`, `.mjs`, `.ts`) are staged with executable POSIX metadata so scripts with shebangs can run directly; other text resources are staged as regular, non-executable files. Agents can also invoke scripts explicitly with `bash`, `python3`, or `node`.
+
+Edits apply first to the staged workspace copy. By default those edits are temporary workspace changes: the next load refreshes the staged copy from the account-level skill bundle. To let the agent promote edits back to the account-owned skill bundle, enable `skills.publish.enabled` (Workspace must also be enabled, since publishing reads from the staged checkout). That exposes `publish_skill_changes`, which validates the staged bundle with the same rules as account-management uploads, checks that the source skill did not change since checkout, then writes the validated files back to the skills bucket and removes any source files dropped from the bundle. The new bundle is written before stale files are deleted, so a failed publish never leaves the source skill empty. `skills.publish.needApproval` controls whether that publish action requires tool approval; when omitted, publish approval is required.
 
 ## Create Skills
 
@@ -70,6 +80,23 @@ Bundles can also include supporting text files. When the model needs one, it cal
 {
   "path": "acct_abc123/support-flow",
   "resources": ["examples/escalation-policy.md"]
+}
+```
+
+For executable helpers, keep scripts inside the bundle and reference them from `SKILL.md`, for example `scripts/analyze.py` or `scripts/run.sh`. After `load_skill`, those files are staged under `/.skills/<skill-name>/scripts/` in the workspace sandbox. The staged files are normal workspace files, so the agent can edit them before running. Publishing those edits back to the source bundle requires `publish_skill_changes`.
+
+Enable publishing only for agents that should update account-level skills:
+
+```json
+{
+  "skills": {
+    "enabled": true,
+    "allowed": ["acct_abc123/support-flow"],
+    "publish": {
+      "enabled": true,
+      "needApproval": true
+    }
+  }
 }
 ```
 
@@ -132,7 +159,7 @@ Runtime behavior:
 4. `load_skill` is registered only for skill-enabled agents with a request session.
 5. The loader rejects paths that are not in `config.skills.allowed`.
 
-Use [`examples/invoke-skill.ts`](../examples/invoke-skill.ts) for an end-to-end streaming request that creates a temporary skill, attaches it to an agent, and asks the agent to load it.
+Use [`examples/skill-loads.ts`](../examples/skill-loads.ts) for an end-to-end streaming request that creates a temporary skill, attaches it to an agent, and asks the agent to load it. See [`examples/skill-edit.ts`](../examples/skill-edit.ts) for the staged-edit workflow: one agent builds a script inside the staged bundle and publishes it with `publish_skill_changes`, then a second agent loads the published skill and runs the script from the sandbox.
 
 ## Design Rules
 

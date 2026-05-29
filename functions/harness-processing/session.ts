@@ -39,6 +39,8 @@ import { logError, logInfo } from "../_shared/log.ts";
 import {
   loadConfiguredSkillPrompt,
   listConfiguredSkillMetadata,
+  publishStagedSkillBundle,
+  type PublishedSkillFromWorkspace,
   type SkillMetadata,
 } from "./skills.ts";
 import { compactSessionContext, isCompactionSummaryMessage } from "./compaction.ts";
@@ -347,10 +349,33 @@ export class Session {
     allowedSkillPaths: string[],
     skillPath: string,
     resourcePaths?: string[],
-  ): Promise<{ path: string; loadedPaths: string[]; bytes: number }> {
-    const loaded = await loadConfiguredSkillPrompt(allowedSkillPaths, skillPath, resourcePaths);
+  ): Promise<{ path: string; loadedPaths: string[]; stagedPath?: string; stagedFiles: string[]; bytes: number }> {
+    const loaded = await loadConfiguredSkillPrompt(
+      allowedSkillPaths,
+      skillPath,
+      resourcePaths,
+      this.isWorkspaceEnabled() ? this.filesystemNamespace() : undefined,
+      { preserveStagedEdits: this.isSkillPublishEnabled() },
+    );
     this.loadedSkillPrompts.push(loaded.prompt);
     return loaded;
+  }
+
+  async publishSkillFromWorkspace(
+    allowedSkillPaths: string[],
+    skillPath: string,
+    options: { force?: boolean } = {},
+  ): Promise<PublishedSkillFromWorkspace> {
+    if (!this.isWorkspaceEnabled()) {
+      throw new Error("Workspace must be enabled to publish staged skill changes");
+    }
+
+    return publishStagedSkillBundle(
+      allowedSkillPaths,
+      skillPath,
+      this.filesystemNamespace(),
+      options,
+    );
   }
 
   private async buildSystemPromptParts(
@@ -362,10 +387,16 @@ export class Session {
       this.loadSkillMetadata(),
       this.loadSubagentMetadata(),
     ]);
-    const memorySystem: SystemModelMessage[] = this.isMemoryEnabled()
-      ? [{
+    const memorySystem: SystemModelMessage[] = memoryContent == null
+      ? []
+      : [{
         role: "system",
         content: formatMemorySystemPrompt(memoryContent),
+      }];
+    const workspaceHarnessSystem: SystemModelMessage[] = this.isWorkspaceHarnessEnabled()
+      ? [{
+        role: "system",
+        content: formatWorkspaceHarnessSystemPrompt(this.filesystemNamespace()),
       }]
       : [];
     const skillsSystem: SystemModelMessage[] = skillMetadata.length > 0
@@ -391,6 +422,7 @@ export class Session {
         content: this.agentConfig.agent?.system ?? DEFAULT_SYSTEM_PROMPT,
       },
       ...memorySystem,
+      ...workspaceHarnessSystem,
       ...skillsSystem,
       ...subagentSystem,
       ...this.loadedSkillPrompts,
@@ -441,7 +473,7 @@ export class Session {
   }
 
   private async loadMemoryFile(): Promise<string | null> {
-    if (!this.isMemoryEnabled()) {
+    if (!this.isWorkspaceEnabled()) {
       return null;
     }
 
@@ -489,8 +521,12 @@ export class Session {
     return this.agentConfig.workspace?.enabled === true;
   }
 
-  private isMemoryEnabled(): boolean {
-    return this.isWorkspaceEnabled() && this.agentConfig.workspace?.memory?.enabled !== false;
+  private isWorkspaceHarnessEnabled(): boolean {
+    return this.isWorkspaceEnabled() && this.agentConfig.workspace?.harness?.enabled !== false;
+  }
+
+  private isSkillPublishEnabled(): boolean {
+    return this.agentConfig.skills?.publish?.enabled === true;
   }
 
   private async loadSkillMetadata(): Promise<SkillMetadata[]> {
@@ -522,15 +558,27 @@ export class Session {
   }
 }
 
-function formatMemorySystemPrompt(memoryContent: string | null): string {
-  if (memoryContent == null) {
-    return "Current MEMORY.md content for this conversation:\n\n(no MEMORY.md file exists yet)";
-  }
-
+function formatMemorySystemPrompt(memoryContent: string): string {
   const normalizedContent = memoryContent.trimEnd();
   return normalizedContent.length > 0
     ? `Current MEMORY.md content for this conversation:\n\n${normalizedContent}`
     : "Current MEMORY.md content for this conversation:\n\n(MEMORY.md exists but is empty)";
+}
+
+function formatWorkspaceHarnessSystemPrompt(namespace: string): string {
+  return `<workspace_harness>
+Workspace is enabled. Use bash to work with the mounted filesystem rooted at /.
+
+Workspace namespace:
+${namespace}
+
+Guidance:
+1. Create, read, edit, move, and delete ordinary workspace files with bash commands.
+2. Use MEMORY.md for durable project facts, decisions, conventions, and context that should survive long-running work.
+3. Use TASKS.md or focused task markdown files for plans and progress tracking when that helps the work stay aligned.
+4. Treat MEMORY.md and task files as normal workspace files: inspect them with bash before relying on them, update them when useful, and keep them concise.
+5. Run code from workspace files instead of inline execution flags.
+</workspace_harness>`;
 }
 
 function formatSkillsSystemPrompt(skills: SkillMetadata[]): string {
@@ -538,7 +586,7 @@ function formatSkillsSystemPrompt(skills: SkillMetadata[]): string {
     .map((skill) => `- ${skill.path} (${skill.name}): ${skill.description}`)
     .join("\n");
 
-  return `<skill_system>
+  return `<skills>
 Select appropriate skills to assist with the user's request. A skill must be loaded with the load_skill tool before using its detailed instructions.
 
 Available skills:
@@ -547,7 +595,9 @@ ${skillList}
 Workflow:
 1. Check whether the user's task matches any skill description.
 2. Use load_skill with the exact skill path before applying that skill.
-3. Request resource paths only when the loaded SKILL.md references them and they are needed.</skill_system>`;
+3. Request resource paths only when the loaded SKILL.md references them and they are needed.
+4. If load_skill does not return a sandbox path, use the skill as read-only context; skill files can be edited or executed only when sandbox is enabled and the bundle is staged.
+</skills>`;
 }
 
 function formatSubagentSystemPrompt(subagents: SubagentMetadata[]): string {
@@ -570,7 +620,8 @@ ${predefined}
 Tool guidance:
 1. Use the exact agentId from the predefined list when a listed subagent is suitable for the task.
 2. Omit agentId only when no predefined subagent is suitable or the user explicitly asks for a virtual one-shot subagent.
-3. A virtual one-shot subagent uses this agent's model and tool configuration.</subagent_system>`;
+3. A virtual one-shot subagent uses this agent's model and tool configuration.
+</subagent_system>`;
 }
 
 // DynamoDB row decoding.

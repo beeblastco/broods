@@ -74,6 +74,15 @@ export async function createAgent(
   return await response.json() as Agent;
 }
 
+export async function deleteAgent(secret: string, agentId: string): Promise<void> {
+  const response = await fetch(`${ACCOUNT_SERVICE_URL}/accounts/me/agents/${encodeURIComponent(agentId)}`, {
+    method: "DELETE",
+    headers: { "Authorization": `Bearer ${secret}` },
+  });
+
+  if (!response.ok) throw new Error(`Delete agent failed: ${response.status} ${await response.text()}`);
+}
+
 export async function createSkill(secret: string, input: Record<string, unknown>): Promise<Skill> {
   const response = await fetch(`${ACCOUNT_SERVICE_URL}/accounts/me/skills`, {
     method: "POST",

@@ -58,6 +58,8 @@ The default Lambda provider is deployed by SST. Do not configure public Lambda F
 
 AWS S3 Files are mounted into the private runtime Lambdas at `/mnt/workspaces`. The S3 Files mount target allows NFS only from the sandbox VPC security group. `SandboxBash` roots `just-bash` at `/mnt/workspaces/<namespace>`, so shell redirects and file commands write through the mounted filesystem.
 
+Lambda exposes a single `fileSystemConfig` per function, so the deployed sandbox mounts only the workspace S3 Files filesystem. Skill scripts are still available: when `load_skill` runs for a workspace-enabled agent, `harness-processing` stages that skill bundle from the skills bucket into the workspace namespace at `/.skills/<skill-name>`. A stage manifest lets publishing-enabled agents preserve staged edits across repeated loads; publishing-disabled agents refresh from the source skill on later loads. Changed files use S3 server-side copy. This avoids a second Lambda mount and keeps sandbox execution on the existing workspace bucket.
+
 ## File Artifacts
 
 For `SandboxBash`, file changes are written directly to the S3 Files mount. For Python runs, changed files created by the sandbox runtime are returned as file artifacts and persisted back into the workspace S3 bucket.

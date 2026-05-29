@@ -10,6 +10,12 @@ const ORIGINAL_ENV = { ...process.env };
 const googleModelMock = mock((modelId: string) => ({ provider: "google", modelId }));
 const createGoogleMock = mock((_options: unknown) => googleModelMock);
 const generateTextMock = mock(async (_options: unknown) => ({ text: "Earlier context summary." }));
+const readS3TextMock = mock(async (_bucket: string, _key: string): Promise<string> => {
+  const error = new Error("not found") as Error & { name: string; $metadata: { httpStatusCode: number } };
+  error.name = "NoSuchKey";
+  error.$metadata = { httpStatusCode: 404 };
+  throw error;
+});
 const getAgentMock = mock(async (_accountId: string, agentId: string) => ({
   accountId: "acct",
   agentId,
@@ -30,6 +36,23 @@ mock.module("ai", () => ({
   generateText: generateTextMock,
 }));
 
+mock.module("../functions/_shared/s3.ts", () => ({
+  isMissingS3Error: (error: unknown) =>
+    typeof error === "object" &&
+    error !== null &&
+    "$metadata" in error &&
+    (error as { $metadata?: { httpStatusCode?: number } }).$metadata?.httpStatusCode === 404,
+  readS3Text: readS3TextMock,
+  readS3Bytes: mock(async () => new Uint8Array()),
+  writeS3Object: mock(async () => 0),
+  s3ObjectExists: mock(async () => false),
+  listS3Prefix: mock(async () => []),
+  deleteS3Object: mock(async () => {}),
+  deleteS3Prefix: mock(async () => 0),
+  copyS3Object: mock(async () => {}),
+  ensureS3DirectoryMarkers: mock(async () => {}),
+}));
+
 const { setStorageForTests } = await import("../functions/_shared/storage/index.ts");
 setStorageForTests({ kind: "dynamodb", agents: { getById: getAgentMock } } as never);
 
@@ -38,6 +61,13 @@ afterEach(() => {
   generateTextMock.mockClear();
   googleModelMock.mockClear();
   createGoogleMock.mockClear();
+  readS3TextMock.mockImplementation(async () => {
+    const error = new Error("not found") as Error & { name: string; $metadata: { httpStatusCode: number } };
+    error.name = "NoSuchKey";
+    error.$metadata = { httpStatusCode: 404 };
+    throw error;
+  });
+  readS3TextMock.mockClear();
   getAgentMock.mockClear();
   setStorageForTests({ kind: "dynamodb", agents: { getById: getAgentMock } } as never);
 });
@@ -88,6 +118,49 @@ describe("session environment context", () => {
     expect(subagentPrompt).toContain("- agent_research (Research assistant): Specialized research agent");
     expect(subagentPrompt).toContain("Use the exact agentId from the predefined list when a listed subagent is suitable");
     expect(subagentPrompt).toContain("Omit agentId only when no predefined subagent is suitable");
+  });
+
+  it("loads existing workspace memory separately from optional harness guidance", async () => {
+    process.env.CONVERSATIONS_TABLE_NAME = "conversations";
+    process.env.PROCESSED_EVENTS_TABLE_NAME = "processed-events";
+    process.env.FILESYSTEM_BUCKET_NAME = "filesystem";
+    readS3TextMock.mockResolvedValue("Remember stable project facts.");
+    const { Session } = await import("../functions/harness-processing/session.ts");
+
+    const enabledSession = new Session("event", "conversation", "acct", "agent", {
+      workspace: {
+        enabled: true,
+      },
+    });
+    const enabledContext = await enabledSession.createEphemeralTurnContext([{ role: "user", content: "hello" }]);
+    const memoryPrompt = enabledContext.system.find((message) => message.content.includes("Current MEMORY.md content"))
+      ?.content;
+    const workspacePrompt = enabledContext.system.find((message) => message.content.includes("<workspace_harness>"))
+      ?.content;
+    expect(memoryPrompt).toContain("Remember stable project facts.");
+    expect(workspacePrompt).toContain("Use bash to work with the mounted filesystem");
+    expect(workspacePrompt).toContain("MEMORY.md");
+    expect(workspacePrompt).toContain("TASKS.md");
+    expect(readS3TextMock).toHaveBeenCalledWith("filesystem", expect.stringContaining("/MEMORY.md"));
+  });
+
+  it("allows disabling workspace harness guidance without disabling MEMORY.md loading", async () => {
+    process.env.CONVERSATIONS_TABLE_NAME = "conversations";
+    process.env.PROCESSED_EVENTS_TABLE_NAME = "processed-events";
+    process.env.FILESYSTEM_BUCKET_NAME = "filesystem";
+    readS3TextMock.mockResolvedValue("Keep this in context.");
+    const { Session } = await import("../functions/harness-processing/session.ts");
+    const disabledSession = new Session("event", "conversation", "acct", "agent", {
+      workspace: {
+        enabled: true,
+        harness: {
+          enabled: false,
+        },
+      },
+    });
+    const disabledContext = await disabledSession.createEphemeralTurnContext([{ role: "user", content: "hello" }]);
+    expect(disabledContext.system.some((message) => message.content.includes("<workspace_harness>"))).toBe(false);
+    expect(disabledContext.system.some((message) => message.content.includes("Keep this in context."))).toBe(true);
   });
 
 });

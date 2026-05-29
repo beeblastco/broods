@@ -17,7 +17,7 @@ BeeBlast is a serverless AI agent platform that lets you build, deploy, and mana
 
 ## Feature Panels
 
-- [Workspace](workspace/index.md) — Memory, tasks, storage, and sandbox execution
+- [Workspace](workspace/index.md) — Workspace files, storage, and sandbox execution
 - [Skills](skills.md) — Account-scoped instruction bundles and the runtime skill panel
 - [External Tools](tools.md) — Agent-configured service tools such as Tavily and Google Search
 - [Sub Agents](sub-agents.md) — Parallel child agents with parent continuation

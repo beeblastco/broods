@@ -12,7 +12,7 @@ The deployed architecture uses two public Lambda Function URLs:
 - `account-manage`: creates accounts, rotates account API secrets, manages account-owned agents and skills, and deletes account-scoped runtime data when an account is deleted.
 - `harness-processing`: handles account-authenticated direct API traffic, async work, status polling, and account-scoped Telegram, GitHub, Slack, and Discord webhooks.
 
-The design goal is simple infrastructure for low-volume multi-tenant usage: Bun on Lambda, SST for infra, DynamoDB for account/agent/conversation/status state, S3 for workspace-backed memory/files/tasks and skill bundles, and the Vercel AI SDK for the agent loop. Agents can optionally dispatch subagents that run parallel one-shot tasks and inject results back into the parent conversation.
+The design goal is simple infrastructure for low-volume multi-tenant usage: Bun on Lambda, SST for infra, DynamoDB for account/agent/conversation/status state, S3 for workspace files and skill bundles, and the Vercel AI SDK for the agent loop. Agents can optionally dispatch subagents that run parallel one-shot tasks and inject results back into the parent conversation.
 
 ## Overview
 
@@ -38,7 +38,7 @@ flowchart LR
   Harness --> Agents
   Harness --> Skills["S3<br/>Skills"]
   Harness --> Conversations["DynamoDB<br/>Conversations / ProcessedEvents / AsyncAgentResult / AsyncToolResult"]
-  Harness --> Memory["S3<br/>account-scoped MEMORY.md + filesystem + tasks"]
+  Harness --> Workspace["S3<br/>workspace files"]
   Harness --> Model["Configured model<br/>Vercel AI SDK"]
 ```
 
@@ -51,7 +51,6 @@ flowchart LR
 - Features
   - [Workspace](docs/workspace/index.md)
   - [Memory and Session](docs/workspace/memory-and-session.md)
-  - [Tasks](docs/workspace/tasks.md)
   - [Storage](docs/workspace/storage.md)
   - [Sandbox](docs/workspace/sandbox/index.md)
   - [Lifecycle Webhook](docs/webhook.md)
