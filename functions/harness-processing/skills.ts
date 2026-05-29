@@ -159,6 +159,8 @@ export async function publishStagedSkillBundle(
     throw new Error(`Source skill changed after checkout: ${skillPath}. Reload the skill before publishing, or publish with force.`);
   }
 
+  // Stage the edits files to the canonical skill directory 
+  // rather than from S3, since S3 took longer time to sync.
   const stagedFiles = (await readMountDir(`${SKILL_CANONICAL_DIR}/${parsed.skillName}`))
     .map((file) => ({ ...file, path: normalizeBundlePath(file.path) }))
     .filter((file) => file.path !== SKILL_STAGE_MANIFEST_FILE)
