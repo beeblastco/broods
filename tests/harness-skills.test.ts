@@ -90,6 +90,16 @@ function createSkillMarkdown(name: string, description: string, content = "# Ins
   return `---\nname: ${name}\ndescription: ${description}\n---\n\n${content}\n`;
 }
 
+// Stand-in for the sandbox mount read publish uses instead of an S3 read.
+function readMount(files: Array<{ path: string; body: string | Uint8Array }>) {
+  return async (_relativeDir: string) => files.map((file) => ({
+    path: file.path,
+    base64: Buffer.from(typeof file.body === "string" ? new TextEncoder().encode(file.body) : file.body).toString("base64"),
+  }));
+}
+
+const emptyMount = async (_relativeDir: string): Promise<Array<{ path: string; base64: string }>> => [];
+
 describe("listConfiguredSkillMetadata", () => {
   it("returns empty array when skills are not enabled", async () => {
     const { listConfiguredSkillMetadata } = await import("../functions/harness-processing/skills.ts");
@@ -519,6 +529,11 @@ describe("loadConfiguredSkillPrompt", () => {
       ["acct_test/publish-skill"],
       "acct_test/publish-skill",
       "fs-0123456789abcdef0123456789abcdef01234567",
+      readMount([
+        { path: ".stage.json", body: JSON.stringify(manifest) },
+        { path: "SKILL.md", body: editedSkill },
+        { path: "scripts/helper.sh", body: helperBytes },
+      ]),
     );
 
     expect(result.files.map((file) => file.path)).toEqual(["SKILL.md", "scripts/helper.sh"]);
@@ -575,7 +590,12 @@ describe("loadConfiguredSkillPrompt", () => {
     readS3BytesMock.mockImplementation(async () => new TextEncoder().encode(editedSkill));
 
     const { publishStagedSkillBundle } = await import("../functions/harness-processing/skills.ts");
-    await publishStagedSkillBundle(["acct_test/publish-skill"], "acct_test/publish-skill", "fs-ns");
+    await publishStagedSkillBundle(
+      ["acct_test/publish-skill"],
+      "acct_test/publish-skill",
+      "fs-ns",
+      readMount([{ path: "SKILL.md", body: editedSkill }]),
+    );
 
     // old.md (dropped from the staged bundle) is deleted only after every write completes.
     expect(s3Ops).toContain("delete");
@@ -587,7 +607,7 @@ describe("loadConfiguredSkillPrompt", () => {
     process.env.FILESYSTEM_BUCKET_NAME = "workspace-bucket";
     const { publishStagedSkillBundle } = await import("../functions/harness-processing/skills.ts");
 
-    await expect(publishStagedSkillBundle([], "acct_test/publish-skill", "fs-ns"))
+    await expect(publishStagedSkillBundle([], "acct_test/publish-skill", "fs-ns", emptyMount))
       .rejects.toThrow("Skill is not configured for this agent: acct_test/publish-skill");
   });
 
@@ -598,7 +618,7 @@ describe("loadConfiguredSkillPrompt", () => {
     });
     const { publishStagedSkillBundle } = await import("../functions/harness-processing/skills.ts");
 
-    await expect(publishStagedSkillBundle(["acct_test/publish-skill"], "acct_test/publish-skill", "fs-ns"))
+    await expect(publishStagedSkillBundle(["acct_test/publish-skill"], "acct_test/publish-skill", "fs-ns", emptyMount))
       .rejects.toThrow("No staged skill checkout found for acct_test/publish-skill");
   });
 
@@ -612,7 +632,7 @@ describe("loadConfiguredSkillPrompt", () => {
     });
     const { publishStagedSkillBundle } = await import("../functions/harness-processing/skills.ts");
 
-    await expect(publishStagedSkillBundle(["acct_test/publish-skill"], "acct_test/publish-skill", "fs-ns"))
+    await expect(publishStagedSkillBundle(["acct_test/publish-skill"], "acct_test/publish-skill", "fs-ns", emptyMount))
       .rejects.toThrow("No staged skill checkout found for acct_test/publish-skill");
   });
 
@@ -638,7 +658,7 @@ describe("loadConfiguredSkillPrompt", () => {
     });
     const { publishStagedSkillBundle } = await import("../functions/harness-processing/skills.ts");
 
-    await expect(publishStagedSkillBundle(["acct_test/publish-skill"], "acct_test/publish-skill", "fs-ns"))
+    await expect(publishStagedSkillBundle(["acct_test/publish-skill"], "acct_test/publish-skill", "fs-ns", emptyMount))
       .rejects.toThrow("Source skill changed after checkout: acct_test/publish-skill");
   });
 
@@ -675,6 +695,7 @@ describe("loadConfiguredSkillPrompt", () => {
       ["acct_test/publish-skill"],
       "acct_test/publish-skill",
       "fs-ns",
+      readMount([{ path: "SKILL.md", body: editedSkill }]),
       { force: true },
     );
 
@@ -718,7 +739,12 @@ describe("loadConfiguredSkillPrompt", () => {
 
     const { publishStagedSkillBundle } = await import("../functions/harness-processing/skills.ts");
 
-    await expect(publishStagedSkillBundle(["acct_test/publish-skill"], "acct_test/publish-skill", "fs-ns"))
+    await expect(publishStagedSkillBundle(
+      ["acct_test/publish-skill"],
+      "acct_test/publish-skill",
+      "fs-ns",
+      readMount([{ path: "SKILL.md", body: renamedSkill }]),
+    ))
       .rejects.toThrow("Published SKILL.md name must remain publish-skill");
     // Nothing is written back when validation rejects the rename.
     expect(s3Writes.some((write) => write.bucket === "test-skills-bucket")).toBe(false);

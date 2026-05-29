@@ -11,6 +11,8 @@ import type {
   WorkspaceSandboxConfig,
   WorkspaceSandboxExecutor,
   WorkspaceSandboxArtifact,
+  WorkspaceSandboxReadDirRequest,
+  WorkspaceSandboxReadDirResult,
   WorkspaceSandboxRunRequest,
   WorkspaceSandboxRunResult,
   WorkspaceSandboxShellRequest,
@@ -67,6 +69,24 @@ export class LambdaWorkspaceSandboxExecutor implements WorkspaceSandboxExecutor 
 
     return {
       ...parseSandboxResponse<WorkspaceSandboxShellResult>(payloadText),
+      provider: "lambda",
+    };
+  }
+
+  async readDirectory(request: WorkspaceSandboxReadDirRequest): Promise<WorkspaceSandboxReadDirResult> {
+    const response = await this.#lambda.send(new InvokeCommand({
+      FunctionName: this.shellFunctionName(),
+      InvocationType: "RequestResponse",
+      Payload: textEncoder.encode(JSON.stringify({ ...request, runtime: "read-dir" })),
+    }));
+
+    const payloadText = response.Payload ? textDecoder.decode(response.Payload) : "";
+    if (response.FunctionError) {
+      throw new Error(`Sandbox Bash Lambda failed: ${payloadText || response.FunctionError}`);
+    }
+
+    return {
+      ...parseSandboxResponse<WorkspaceSandboxReadDirResult>(payloadText),
       provider: "lambda",
     };
   }

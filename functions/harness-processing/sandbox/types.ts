@@ -41,6 +41,28 @@ export interface WorkspaceSandboxShellRequest {
   outputLimitBytes: number;
 }
 
+export interface WorkspaceSandboxReadDirRequest {
+  namespace: string;
+  // Path relative to the namespace mount root, e.g. ".claude/skills/<name>".
+  path: string;
+  workspaceRoot: string;
+  maxBytes?: number;
+}
+
+export interface WorkspaceSandboxReadDirFile {
+  // Path relative to the requested directory, e.g. "SKILL.md" or "scripts/run.py".
+  path: string;
+  base64: string;
+}
+
+export interface WorkspaceSandboxReadDirResult {
+  ok: boolean;
+  files: WorkspaceSandboxReadDirFile[];
+  truncated?: boolean;
+  error?: string;
+  provider: WorkspaceSandboxProvider;
+}
+
 export interface WorkspaceSandboxRunResult {
   ok: boolean;
   runtime: WorkspaceSandboxRuntime;
@@ -68,4 +90,8 @@ export interface WorkspaceSandboxShellResult {
 export interface WorkspaceSandboxExecutor {
   runFile(request: WorkspaceSandboxRunRequest): Promise<WorkspaceSandboxRunResult>;
   runShell?(request: WorkspaceSandboxShellRequest): Promise<WorkspaceSandboxShellResult>;
+  // Reads a directory's files straight from the mount. Required for publishing skill
+  // edits: files the agent wrote through the mount are not visible to a direct S3 read
+  // for ~1-2 min (S3 Files syncs asynchronously), so publish must read the mount.
+  readDirectory?(request: WorkspaceSandboxReadDirRequest): Promise<WorkspaceSandboxReadDirResult>;
 }

@@ -46,6 +46,8 @@ import {
 } from "./skills.ts";
 import { compactSessionContext, isCompactionSummaryMessage } from "./compaction.ts";
 import { pruneSessionMessages } from "./pruning.ts";
+import { createWorkspaceSandboxExecutor } from "./sandbox/index.ts";
+import type { WorkspaceSandboxConfig } from "./sandbox/types.ts";
 
 const CONVERSATIONS_TABLE_NAME = requireEnv("CONVERSATIONS_TABLE_NAME");
 const PROCESSED_EVENTS_TABLE_NAME = requireEnv("PROCESSED_EVENTS_TABLE_NAME");
@@ -371,10 +373,32 @@ export class Session {
       throw new Error("Workspace must be enabled to publish staged skill changes");
     }
 
+    const sandboxConfig = (this.agentConfig.workspace?.sandbox ?? {}) as WorkspaceSandboxConfig;
+    const executor = createWorkspaceSandboxExecutor(sandboxConfig);
+    if (!executor.readDirectory) {
+      throw new Error("Publishing staged skill changes requires a sandbox provider that can read the mount");
+    }
+
+    const namespace = this.filesystemNamespace();
+    const workspaceRoot = workspaceRootFromConfig(sandboxConfig);
+    // Read the working copy straight from the mount (not S3): the agent's edits take
+    // ~1-2 min to sync into listable S3 objects, so an S3 read would miss them.
+    const readMountDir = async (relativeDir: string): Promise<Array<{ path: string; base64: string }>> => {
+      const result = await executor.readDirectory!({ namespace, path: relativeDir, workspaceRoot });
+      if (!result.ok) {
+        throw new Error(`Failed to read staged skill from the sandbox mount: ${result.error ?? "unknown error"}`);
+      }
+      if (result.truncated) {
+        throw new Error("Staged skill bundle is too large to publish from the sandbox mount");
+      }
+      return result.files;
+    };
+
     return publishStagedSkillBundle(
       allowedSkillPaths,
       skillPath,
-      this.filesystemNamespace(),
+      namespace,
+      readMountDir,
       options,
     );
   }
@@ -564,6 +588,14 @@ function formatMemorySystemPrompt(memoryContent: string): string {
   return normalizedContent.length > 0
     ? `Current MEMORY.md content for this conversation:\n\n${normalizedContent}`
     : "Current MEMORY.md content for this conversation:\n\n(MEMORY.md exists but is empty)";
+}
+
+function workspaceRootFromConfig(sandboxConfig: WorkspaceSandboxConfig): string {
+  const options = sandboxConfig.options && typeof sandboxConfig.options === "object" && !Array.isArray(sandboxConfig.options)
+    ? sandboxConfig.options
+    : {};
+  const root = options.workspaceRoot;
+  return typeof root === "string" && root.trim() ? root.trim() : "/mnt/workspaces";
 }
 
 function formatWorkspaceHarnessSystemPrompt(namespace: string): string {

@@ -5,8 +5,8 @@
 
 import { createHash } from "node:crypto";
 import { spawn } from "node:child_process";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { basename, dirname, relative, resolve } from "node:path";
+import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
+import { basename, dirname, join, relative, resolve } from "node:path";
 import process from "node:process";
 import ts from "typescript";
 import {
@@ -28,6 +28,14 @@ interface SandboxBashRequest {
   networkAccess?: "disabled" | "public";
 }
 
+interface SandboxReadDirRequest {
+  runtime: "read-dir";
+  namespace: string;
+  path: string;
+  workspaceRoot?: string;
+  maxBytes?: number;
+}
+
 interface SandboxBashResponse {
   ok: boolean;
   exitCode: number | null;
@@ -38,6 +46,15 @@ interface SandboxBashResponse {
   truncated?: boolean;
 }
 
+interface SandboxReadDirResponse {
+  ok: boolean;
+  files: Array<{ path: string; base64: string }>;
+  truncated?: boolean;
+  error?: string;
+}
+
+const READ_DIR_DEFAULT_MAX_BYTES = 16 * 1024 * 1024;
+
 interface NativeNodeOptions {
   workspaceRoot: string;
   timeoutSeconds: number;
@@ -46,12 +63,18 @@ interface NativeNodeOptions {
 
 const textDecoder = new TextDecoder();
 
-export async function handler(event: SandboxBashRequest): Promise<SandboxBashResponse> {
+export async function handler(
+  event: SandboxBashRequest | SandboxReadDirRequest,
+): Promise<SandboxBashResponse | SandboxReadDirResponse> {
+  if (event.runtime === "read-dir") {
+    return readWorkspaceDirectory(event);
+  }
+
   const startedAt = Date.now();
 
   try {
     if (event.runtime !== "shell") {
-      throw new Error("sandbox-bash only supports shell requests");
+      throw new Error("sandbox-bash only supports shell and read-dir requests");
     }
 
     const workspaceRoot = resolveWorkspaceRoot(event.workspaceRoot, event.namespace);
@@ -127,6 +150,52 @@ export async function handler(event: SandboxBashRequest): Promise<SandboxBashRes
       stderr: err instanceof Error ? err.message : String(err),
       durationMs: Date.now() - startedAt,
     };
+  }
+}
+
+async function readWorkspaceDirectory(event: SandboxReadDirRequest): Promise<SandboxReadDirResponse> {
+  try {
+    const workspaceRoot = resolveWorkspaceRoot(event.workspaceRoot, event.namespace);
+    const targetDir = resolveWorkspacePath(workspaceRoot, event.path);
+    const maxBytes = event.maxBytes && event.maxBytes > 0 ? event.maxBytes : READ_DIR_DEFAULT_MAX_BYTES;
+
+    const files: Array<{ path: string; base64: string }> = [];
+    let total = 0;
+    let truncated = false;
+
+    const walk = async (dir: string): Promise<void> => {
+      const entries = await readdir(dir, { withFileTypes: true });
+      for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
+        if (truncated) return;
+        const absolute = join(dir, entry.name);
+        if (entry.isDirectory()) {
+          await walk(absolute);
+          continue;
+        }
+        if (!entry.isFile()) continue;
+
+        const bytes = await readFile(absolute);
+        if (total + bytes.byteLength > maxBytes) {
+          truncated = true;
+          return;
+        }
+        total += bytes.byteLength;
+        files.push({
+          path: relative(targetDir, absolute),
+          base64: bytes.toString("base64"),
+        });
+      }
+    };
+
+    await walk(targetDir);
+    return { ok: true, files, ...(truncated ? { truncated: true } : {}) };
+  } catch (err) {
+    const error = err instanceof Error ? err.message : String(err);
+    // A missing directory is an empty checkout, not a failure.
+    if (/ENOENT/.test(error)) {
+      return { ok: true, files: [] };
+    }
+    return { ok: false, files: [], error };
   }
 }
 

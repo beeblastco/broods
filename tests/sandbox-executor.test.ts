@@ -124,6 +124,33 @@ describe("createWorkspaceSandboxExecutor", () => {
     });
   });
 
+  it("reads a directory straight from the mount through the bash sandbox", async () => {
+    const { createWorkspaceSandboxExecutor } = require("../functions/harness-processing/sandbox/index.ts");
+    const executor = createWorkspaceSandboxExecutor({ options: { bashFunctionName: "custom-bash" } });
+
+    lambdaSendMock.mockResolvedValueOnce({
+      Payload: new TextEncoder().encode(JSON.stringify({
+        ok: true,
+        files: [{ path: "SKILL.md", base64: "U0tJTEw=" }],
+      })),
+    });
+
+    const result = await executor.readDirectory!({
+      namespace: "fs-0123456789abcdef0123456789abcdef01234567",
+      path: ".claude/skills/demo",
+      workspaceRoot: "/mnt/workspaces",
+    });
+
+    expect(result).toMatchObject({ ok: true, provider: "lambda", files: [{ path: "SKILL.md", base64: "U0tJTEw=" }] });
+    const command = lambdaSendMock.mock.calls[0]![0] as { input: { FunctionName: string; Payload: Uint8Array } };
+    expect(command.input.FunctionName).toBe("custom-bash");
+    expect(JSON.parse(new TextDecoder().decode(command.input.Payload))).toMatchObject({
+      runtime: "read-dir",
+      path: ".claude/skills/demo",
+      namespace: "fs-0123456789abcdef0123456789abcdef01234567",
+    });
+  });
+
   it("runs E2B commands from the configured native mounted namespace path", async () => {
     const { createWorkspaceSandboxExecutor } = require("../functions/harness-processing/sandbox/index.ts");
     const executor = createWorkspaceSandboxExecutor({

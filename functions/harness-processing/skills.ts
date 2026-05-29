@@ -12,7 +12,6 @@ import {
   ensureS3DirectoryMarkers,
   isMissingS3Error,
   listS3Prefix,
-  readS3Bytes,
   readS3Text,
   writeS3Object,
 } from "../_shared/s3.ts";
@@ -132,6 +131,11 @@ export async function publishStagedSkillBundle(
   allowedSkillPaths: string[],
   skillPath: string,
   workspaceNamespace: string,
+  // Reads a directory (relative to the workspace namespace mount root) straight from
+  // the sandbox mount. Publish must not read the working copy from S3: files the agent
+  // wrote through the mount take ~1-2 min to sync into listable S3 objects (S3 Files is
+  // eventually consistent), so an S3 read here would miss the agent's edits.
+  readMountDir: (relativeDir: string) => Promise<Array<{ path: string; base64: string }>>,
   options: { force?: boolean } = {},
 ): Promise<PublishedSkillFromWorkspace> {
   if (!allowedSkillPaths.includes(skillPath)) {
@@ -155,7 +159,15 @@ export async function publishStagedSkillBundle(
     throw new Error(`Source skill changed after checkout: ${skillPath}. Reload the skill before publishing, or publish with force.`);
   }
 
-  const { metadata, files } = validateSkillBundle(await readStagedSkillFiles(workspaceBucket, destinationPrefix));
+  const stagedFiles = (await readMountDir(`${SKILL_CANONICAL_DIR}/${parsed.skillName}`))
+    .map((file) => ({ ...file, path: normalizeBundlePath(file.path) }))
+    .filter((file) => file.path !== SKILL_STAGE_MANIFEST_FILE)
+    .map((file): SkillBundleFile => ({
+      path: file.path,
+      bytes: Uint8Array.from(Buffer.from(file.base64, "base64")),
+      contentType: contentTypeForSkillPath(file.path),
+    }));
+  const { metadata, files } = validateSkillBundle(stagedFiles);
   if (metadata.name !== parsed.skillName) {
     throw new Error(`Published SKILL.md name must remain ${parsed.skillName}`);
   }
@@ -399,33 +411,6 @@ async function deleteStaleStagedSkillFiles(
   }));
 
   return deleted.sort(compareSkillBundlePath);
-}
-
-async function readStagedSkillFiles(
-  workspaceBucket: string,
-  destinationPrefix: string,
-): Promise<SkillBundleFile[]> {
-  const objects = await listS3Prefix(workspaceBucket, destinationPrefix);
-  const files = await Promise.all(objects.map(async (object): Promise<SkillBundleFile | null> => {
-    if (object.key.endsWith("/")) {
-      return null;
-    }
-
-    const relativePath = normalizeBundlePath(object.key.slice(destinationPrefix.length));
-    if (relativePath === SKILL_STAGE_MANIFEST_FILE) {
-      return null;
-    }
-
-    return {
-      path: relativePath,
-      bytes: await readS3Bytes(workspaceBucket, object.key),
-      contentType: contentTypeForSkillPath(relativePath),
-    };
-  }));
-
-  return files
-    .filter((file): file is SkillBundleFile => file !== null)
-    .sort((a, b) => compareSkillBundlePath(a.path, b.path));
 }
 
 function requireWorkspaceBucket(): string {
