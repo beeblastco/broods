@@ -686,11 +686,10 @@ paths:
                       enabled: true
                       storage:
                         provider: s3
+                      prompt:
+                        enabled: true
                       memory:
-                        enabled: true
                         namespace: research
-                      tasks:
-                        enabled: true
                     tools:
                       tavilySearch:
                         enabled: true
@@ -1768,7 +1767,7 @@ components:
 
     SkillsConfig:
       type: object
-      description: When enabled, the runtime includes allowed skill metadata in the system prompt and exposes the `load_skill` tool.
+      description: When enabled, the runtime includes allowed skill metadata in the system prompt and exposes `load_skill`. Optional publishing exposes `publish_skill_changes` for staged workspace edits.
       properties:
         enabled:
           type: boolean
@@ -1777,6 +1776,15 @@ components:
           items:
             type: string
           description: Account-scoped skill paths (e.g., `acct_.../support-flow`)
+        publish:
+          type: object
+          description: Allows agents to publish validated staged skill edits back to the account-level skill bundle. `publish_skill_changes` is exposed only when Workspace is also enabled, since it publishes from the staged checkout.
+          properties:
+            enabled:
+              type: boolean
+            needApproval:
+              type: boolean
+              description: Requires tool approval before publishing; defaults to true when publishing is enabled.
 
     SubagentConfig:
       type: object
@@ -1800,21 +1808,25 @@ components:
 
     WorkspaceConfig:
       type: object
-      description: Enables workspace-backed features including `MEMORY.md`, the sandboxed `bash` tool, and tasks.
+      description: Enables workspace-backed files, automatic `MEMORY.md` loading when present, optional MEMORY/TASKS harness instructions, and the sandboxed `bash` tool.
       properties:
         enabled:
           type: boolean
         needsApproval:
           type: boolean
-          description: Requires AI SDK approval before every workspace tool execution
-        memory:
+          description: Requires AI SDK approval before every `bash` workspace tool execution
+        harness:
           type: object
+          description: Controls the default MEMORY/TASKS harness instructions. Existing `MEMORY.md` files are still loaded when this is disabled.
           properties:
             enabled:
               type: boolean
+        memory:
+          type: object
+          properties:
             namespace:
               type: string
-              description: Session namespace key; `null` means per-conversation state
+              description: Workspace namespace key; `null` means per-conversation state
         storage:
           type: object
           description: Workspace storage backend. Only S3 is supported today.
@@ -1855,12 +1867,6 @@ components:
                   type: string
                   enum: [disabled, public]
                   description: Enables `curl` in the bash sandbox when set to `public`
-        tasks:
-          type: object
-          properties:
-            enabled:
-              type: boolean
-
     SessionConfig:
       type: object
       description: Controls model-visible history management.

@@ -10,7 +10,7 @@ flowchart TD
   Account --> Hash["Account secret hash<br/>secretHash"]
   Account --> Agent["Agent records"]
   Agent --> Config["Encrypted agent config blob<br/>model, tool, subagent, and channel settings"]
-  Agent --> Workspace["Workspace S3 objects<br/>memory, files, tasks"]
+  Agent --> Workspace["Workspace S3 objects<br/>files and staged skills"]
   Agent --> Skills["Skill S3 objects<br/>account-scoped bundles"]
 
   Config --> Model["model provider/options"]
@@ -27,7 +27,7 @@ The account API secret is never stored directly. It is returned once on create o
 
 Provider credentials and account-specific runtime options must be usable at runtime, so they cannot be hashed. They are stored inside encrypted account-owned agent config. Normal account and agent responses recursively redact secret-like field names such as `token`, `secret`, `privateKey`, and `apiKey`, including inside tool config.
 
-Workspace files, memory, tasks, and skill bundles are stored as account-scoped S3 objects. The buckets block public access and use a deny-by-default bucket policy that allows only the project runtime roles, sandbox runtime roles, the AWS S3 Files role, and deployment roles for the active stage.
+Workspace files and skill bundles are stored as account-scoped S3 objects. The buckets block public access and use a deny-by-default bucket policy that allows only the project runtime roles, sandbox runtime roles, the AWS S3 Files role, and deployment roles for the active stage.
 
 ## How Config Encryption Works
 

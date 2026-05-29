@@ -109,6 +109,7 @@ export {
   type AgentSessionCompactionConfig,
   type AgentSessionPruningConfig,
   type AgentSkillsConfig,
+  type AgentSkillsPublishConfig,
   type AgentSlackChannelConfig,
   type AgentSubagentConfig,
   type AgentTelegramChannelConfig,
@@ -116,8 +117,8 @@ export {
   type AgentToolsConfig,
   type AgentWebhookHookConfig,
   type AgentWorkspaceConfig,
+  type AgentWorkspaceHarnessConfig,
   type AgentWorkspaceMemoryConfig,
   type AgentWorkspaceSandboxConfig,
-  type AgentWorkspaceToolConfig,
   type AccountModelProviderName,
 } from "./agent-config.ts";

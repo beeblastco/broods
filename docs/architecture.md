@@ -45,7 +45,7 @@ flowchart TD
   AgentStore -->|agentId config lookup| HarnessUrl
   HarnessUrl --> Handler["handler.ts"]
   Handler --> Integrations["integrations.ts<br/>account auth + routing"]
-  Integrations --> Session["session.ts<br/>conversation state + memory"]
+  Integrations --> Session["session.ts<br/>conversation state + prompt assembly"]
   Session --> Harness["harness.ts<br/>model/tool loop"]
   Harness --> Model["Configured AI SDK provider<br/>Google / OpenAI / Bedrock / Gateway"]
   Harness --> Tools["workspace + account-enabled tools"]
@@ -61,10 +61,10 @@ flowchart TD
   AsyncTools --> AsyncToolResult["DynamoDB: AsyncToolResult"]
   Scheduler -->|"cron-job event"| HarnessUrl
   HarnessUrl --> CronJobs["DynamoDB: CronJobs"]
-  Session --> Memory["S3: account-scoped MEMORY.md"]
+  Session --> Workspace["S3: account-scoped workspace files"]
   SkillStore -->|"Load skills metadata"| Session
   Harness -->|"Access skills"| SkillStore 
-  Tools --> Filesystem["S3: account-scoped filesystem/tasks"]
+  Tools --> Filesystem["S3: account-scoped workspace files"]
   Subagents --> AsyncAgentResult
   Subagents --> Session
   AsyncTools --> Session
@@ -256,21 +256,21 @@ This path currently uses core NATS. If JetStream is introduced later, replace be
 
 ## Workspace Boundaries
 
-Workspace state is account/agent-scoped and disabled unless the selected agent has `config.workspace.enabled` true. The workspace storage backend is currently `workspace.storage.provider: "s3"`, backed by the configured filesystem bucket. Workspace has four child concerns: memory, tasks, storage, and sandbox execution.
+Workspace state is account/agent-scoped and disabled unless the selected agent has `config.workspace.enabled` true. The workspace storage backend is currently `workspace.storage.provider: "s3"`, backed by the configured filesystem bucket. Workspace provides a guidance prompt, storage, and sandbox execution through the model-facing `bash` tool.
 
-When workspace is enabled, the model-facing `bash` tool is the sandbox: Lambda shell commands run in `SandboxBash` against the AWS S3 Files mount, while `python <file.py>` and `python3 <file.py>` continue through `SandboxPython`. E2B and Daytona providers must mount the same S3 workspace bucket at `options.workspaceRoot` so every provider sees the same namespace. `workspace.memory.enabled` and `workspace.tasks.enabled` can disable memory and tasks individually. `workspace.needsApproval` requires approval for every enabled workspace tool. By default workspace state is per conversation; setting `config.workspace.memory.namespace` lets multiple conversations for the same agent share `MEMORY.md`, filesystem files, and task files.
+When workspace is enabled, Lambda shell commands run in `SandboxBash` against the AWS S3 Files mount, while `python <file.py>` and `python3 <file.py>` continue through `SandboxPython`. E2B and Daytona providers must mount the same S3 workspace bucket at `options.workspaceRoot` so every provider sees the same namespace. Existing `MEMORY.md` files are loaded into the system prompt. `workspace.harness.enabled=false` disables only the default MEMORY/TASKS harness instructions. `workspace.needsApproval` requires approval for `bash` calls. By default workspace state is per conversation; setting `config.workspace.memory.namespace` lets multiple conversations for the same agent share workspace files such as `MEMORY.md`, `TASKS.md`, scripts, data, and staged skills.
 
 ```mermaid
 flowchart LR
-  Conversation["No workspace.memory.namespace"] --> PerConversation["Per-conversation memory"]
-  Namespace["workspace.memory.namespace=support"] --> Shared["Shared account memory"]
+  Conversation["No workspace.memory.namespace"] --> PerConversation["Per-conversation workspace"]
+  Namespace["workspace.memory.namespace=support"] --> Shared["Shared account workspace"]
 ```
 
 See [Workspace](workspace/index.md) for the full model.
 
 ## Model and Tool Configuration
 
-Agents control model selection, channel credentials, optional skills, subagents, and tool access through encrypted agent config. `harness.ts` resolves `config.model`; `tools/index.ts` creates workspace tools from `config.workspace`, subagent dispatch from `config.subagent`, search/research tools from `config.tools`, and `load_skill` when `config.skills.enabled` is true and `config.skills.allowed` has paths. See the [API Reference](/api-reference) for the complete `AgentConfig` schema.
+Agents control model selection, channel credentials, optional skills, subagents, and tool access through encrypted agent config. `harness.ts` resolves `config.model`; `tools/index.ts` creates the workspace `bash` tool from `config.workspace`, subagent dispatch from `config.subagent`, search/research tools from `config.tools`, and `load_skill` when `config.skills.enabled` is true and `config.skills.allowed` has paths. See the [API Reference](/api-reference) for the complete `AgentConfig` schema.
 
 ## Storage Boundaries
 
@@ -280,7 +280,7 @@ Agents control model selection, channel credentials, optional skills, subagents,
 - `ProcessedEvents`: dedup markers and short-lived conversation lease records.
 - `AsyncAgentResult`: async direct API and subagent state for `/status/{eventId}` polling.
 - `AsyncToolResult`: async external tool call state, same-table dispatch-group rows for external fan-in, delivery metadata for non-SSE continuations, and structured outputs for parent result injection.
-- S3 memory bucket: account/agent-scoped `MEMORY.md`, filesystem, and task state.
+- S3 workspace bucket: account/agent-scoped workspace files and staged skill bundles.
 - S3 skills bucket: account-scoped skill bundles under `<accountId>/<skill-name>`.
 
 Tool execution is inline unless an agent-configured local `execute` tool sets `async: true`. `execution` chooses `same-invocation` or `external-dispatch`; SSE supports only `same-invocation`, while `/async`, channels, and NATS support both. Subagents are in-process child agent loops; they do not require child Lambda workers.

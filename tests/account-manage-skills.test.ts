@@ -20,10 +20,16 @@ const deleteS3PrefixMock = mock(async (_bucket: string, _prefix: string) => 0);
 
 mock.module("../functions/_shared/s3.ts", () => ({
   s3ObjectExists: s3ObjectExistsMock,
+  isMissingS3Error: (error: unknown) =>
+    error instanceof Error && error.message === "NoSuchKey",
   listS3Prefix: listS3PrefixMock,
   readS3Text: readS3TextMock,
   writeS3Object: writeS3ObjectMock,
   deleteS3Prefix: deleteS3PrefixMock,
+  readS3Bytes: mock(async () => new Uint8Array()),
+  copyS3Object: mock(async () => {}),
+  deleteS3Object: mock(async () => {}),
+  ensureS3DirectoryMarkers: mock(async () => {}),
 }));
 
 beforeEach(() => {

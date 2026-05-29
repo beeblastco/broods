@@ -4,6 +4,7 @@
  */
 
 import {
+  CopyObjectCommand,
   DeleteObjectCommand,
   GetObjectCommand,
   HeadObjectCommand,
@@ -17,6 +18,7 @@ export interface S3ObjectInfo {
   key: string;
   size?: number;
   lastModified?: string;
+  etag?: string;
 }
 
 const SANDBOX_UID = "993";
@@ -42,14 +44,14 @@ export async function writeS3Object(
   bucket: string,
   key: string,
   body: string | Uint8Array,
-  options: { contentType?: string } = {},
+  options: { contentType?: string; executable?: boolean } = {},
 ): Promise<number> {
   const size = typeof body === "string" ? body.length : body.byteLength;
   logInfo("s3.write start", { bucket, key, contentType: options.contentType, size });
   try {
     await putS3Object(bucket, key, body, {
       contentType: options.contentType,
-      metadata: posixMetadata(key.endsWith("/") ? "directory" : "file"),
+      metadata: posixMetadata(key.endsWith("/") ? "directory" : "file", options.executable === true),
     });
     logInfo("s3.write success", { bucket, key, result: size });
     return size;
@@ -57,6 +59,39 @@ export async function writeS3Object(
     logError("s3.write failed", {
       bucket,
       key,
+      error: err instanceof Error ? err.message : String(err),
+      errorName: err instanceof Error ? err.name : typeof err,
+      errorStack: err instanceof Error ? err.stack : undefined,
+      errorCause: err instanceof Error && err.cause ? String(err.cause) : undefined,
+    });
+    throw err;
+  }
+}
+
+export async function copyS3Object(
+  sourceBucket: string,
+  sourceKey: string,
+  destinationBucket: string,
+  destinationKey: string,
+  options: { contentType?: string; executable?: boolean } = {},
+): Promise<void> {
+  logInfo("s3.copy start", { sourceBucket, sourceKey, destinationBucket, destinationKey });
+  try {
+    await awsClient().send(new CopyObjectCommand({
+      Bucket: destinationBucket,
+      Key: destinationKey,
+      CopySource: `${sourceBucket}/${encodeURIComponent(sourceKey).replace(/%2F/g, "/")}`,
+      MetadataDirective: "REPLACE",
+      Metadata: posixMetadata(destinationKey.endsWith("/") ? "directory" : "file", options.executable === true),
+      ...(options.contentType ? { ContentType: options.contentType } : {}),
+    }));
+    logInfo("s3.copy success", { sourceBucket, sourceKey, destinationBucket, destinationKey });
+  } catch (err) {
+    logError("s3.copy failed", {
+      sourceBucket,
+      sourceKey,
+      destinationBucket,
+      destinationKey,
       error: err instanceof Error ? err.message : String(err),
       errorName: err instanceof Error ? err.name : typeof err,
       errorStack: err instanceof Error ? err.stack : undefined,
@@ -138,6 +173,7 @@ export async function listS3Prefix(bucket: string, prefix: string): Promise<S3Ob
           key: item.Key,
           ...(item.Size !== undefined ? { size: item.Size } : {}),
           ...(item.LastModified !== undefined ? { lastModified: item.LastModified.toISOString() } : {}),
+          ...(item.ETag !== undefined ? { etag: item.ETag.replace(/^"|"$/g, "") } : {}),
         });
       }
 
@@ -201,12 +237,12 @@ async function putS3Object(
   }));
 }
 
-function posixMetadata(kind: "file" | "directory"): Record<string, string> {
+function posixMetadata(kind: "file" | "directory", executable = false): Record<string, string> {
   const now = `${Date.now()}000000ns`;
   return {
     "file-owner": SANDBOX_UID,
     "file-group": SANDBOX_GID,
-    "file-permissions": kind === "directory" ? "0040777" : "0100666",
+    "file-permissions": kind === "directory" ? "0040777" : executable ? "0100777" : "0100666",
     "file-atime": now,
     "file-mtime": now,
   };

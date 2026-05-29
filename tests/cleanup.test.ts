@@ -29,6 +29,7 @@ mock.module("../functions/_shared/s3.ts", () => ({
   s3ObjectExists: mock(async () => false),
   listS3Prefix: mock(async () => []),
   deleteS3Object: mock(async () => {}),
+  copyS3Object: mock(async () => {}),
   ensureS3DirectoryMarkers: mock(async () => {}),
   isMissingS3Error: mock(() => false),
 }));

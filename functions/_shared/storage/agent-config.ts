@@ -56,6 +56,13 @@ export interface AgentBehaviorConfig {
 export interface AgentSkillsConfig {
   enabled?: boolean;
   allowed?: string[];
+  publish?: AgentSkillsPublishConfig;
+  [key: string]: unknown;
+}
+
+export interface AgentSkillsPublishConfig {
+  enabled?: boolean;
+  needApproval?: boolean;
   [key: string]: unknown;
 }
 
@@ -97,21 +104,20 @@ export interface AgentProviderSettings {
 export interface AgentWorkspaceConfig {
   enabled?: boolean;
   needsApproval?: boolean;
+  harness?: AgentWorkspaceHarnessConfig;
   memory?: AgentWorkspaceMemoryConfig;
   storage?: AgentWorkspaceStorageConfig;
-  tasks?: AgentWorkspaceToolConfig;
   sandbox?: AgentWorkspaceSandboxConfig;
   [key: string]: unknown;
 }
 
-export interface AgentWorkspaceMemoryConfig {
+export interface AgentWorkspaceHarnessConfig {
   enabled?: boolean;
-  namespace?: string;
   [key: string]: unknown;
 }
 
-export interface AgentWorkspaceToolConfig {
-  enabled?: boolean;
+export interface AgentWorkspaceMemoryConfig {
+  namespace?: string;
   [key: string]: unknown;
 }
 
@@ -463,10 +469,22 @@ function normalizeWorkspaceConfig(value: unknown): void {
   const config = value as Record<string, unknown>;
   assertOptionalBoolean(config.enabled, "config.workspace.enabled");
   assertOptionalBoolean(config.needsApproval, "config.workspace.needsApproval");
+  normalizeWorkspaceHarnessConfig(config.harness);
   normalizeWorkspaceMemoryConfig(config.memory);
   normalizeWorkspaceStorageConfig(config);
-  normalizeWorkspaceToolConfig("tasks", config.tasks);
   normalizeWorkspaceSandboxConfig(config.sandbox);
+}
+
+function normalizeWorkspaceHarnessConfig(value: unknown): void {
+  if (value == null) {
+    return;
+  }
+  if (!isPlainObject(value)) {
+    throw new Error("config.workspace.harness must be an object");
+  }
+
+  const config = value as Record<string, unknown>;
+  assertOptionalBoolean(config.enabled, "config.workspace.harness.enabled");
 }
 
 function normalizeWorkspaceMemoryConfig(value: unknown): void {
@@ -478,20 +496,7 @@ function normalizeWorkspaceMemoryConfig(value: unknown): void {
   }
 
   const config = value as Record<string, unknown>;
-  assertOptionalBoolean(config.enabled, "config.workspace.memory.enabled");
   assertOptionalNonEmptyString(config.namespace, "config.workspace.memory.namespace");
-}
-
-function normalizeWorkspaceToolConfig(toolName: "tasks", value: unknown): void {
-  if (value == null) {
-    return;
-  }
-  if (!isPlainObject(value)) {
-    throw new Error(`config.workspace.${toolName} must be an object`);
-  }
-
-  const config = value as Record<string, unknown>;
-  assertOptionalBoolean(config.enabled, `config.workspace.${toolName}.enabled`);
 }
 
 function normalizeWorkspaceStorageConfig(workspace: Record<string, unknown>): void {
@@ -684,6 +689,20 @@ function normalizeSkillsConfig(value: unknown): void {
   const config = value as Record<string, unknown>;
   assertOptionalBoolean(config.enabled, "config.skills.enabled");
   assertOptionalStringArray(config.allowed, "config.skills.allowed");
+  normalizeSkillsPublishConfig(config.publish);
+}
+
+function normalizeSkillsPublishConfig(value: unknown): void {
+  if (value == null) {
+    return;
+  }
+  if (!isPlainObject(value)) {
+    throw new Error("config.skills.publish must be an object");
+  }
+
+  const config = value as Record<string, unknown>;
+  assertOptionalBoolean(config.enabled, "config.skills.publish.enabled");
+  assertOptionalBoolean(config.needApproval, "config.skills.publish.needApproval");
 }
 
 function normalizeSubagentConfig(value: unknown): void {

@@ -36,9 +36,6 @@ const agent = await createAgent(account.secret, "Sandbox assistant", {
         storage: {
             provider: "s3",
         },
-        memory: {
-            enabled: false,
-        },
         sandbox: {
             provider: "daytona",
             outputLimitBytes: 65536,
@@ -53,9 +50,6 @@ const agent = await createAgent(account.secret, "Sandbox assistant", {
                 networkBlockAll: false,
                 networkAllowList: "0.0.0.0/0",
             },
-        },
-        tasks: {
-            enabled: false,
         },
     },
 });

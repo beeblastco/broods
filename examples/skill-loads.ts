@@ -1,13 +1,7 @@
 /**
- * Example streaming direct API skill invocation.
+ * Example streaming direct API skill using.
  * Creates a temporary skill through account-management, attaches it to an agent,
  * and streams a harness request that asks the agent to load and use the skill.
- *
- * Run with: bun examples/skill-stream.ts
- *
- * Prerequisites:
- * - ACCOUNT_SERVICE_URL and AGENT_SERVICE_URL environment variables
- * - ACCOUNT_GOOGLE_API_KEY environment variable
  */
 
 import { createAccount, createAgent, createSkill, deleteAccount, streamSSE } from "./utils.ts";
