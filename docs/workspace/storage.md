@@ -47,6 +47,27 @@ The Lambda sandbox provider uses AWS S3 Files at `/mnt/workspaces`, backed by th
 
 Skills are checked out git-style: the account skill bucket is the source of truth, `load_skill` clones a working copy into `<namespace>/.claude/skills/<name>` (and mirrors it to `<namespace>/.agents/skills/<name>` for tool discovery), the agent edits the `.claude/skills` copy, and `publish_skill_changes` pushes it back. See [`skills.md`](../skills.md).
 
+## Reading workspace files: S3 API vs the sandbox mount
+
+There are two ways to reach the same workspace bytes, and they are **not** interchangeable because the mount syncs to the bucket asymmetrically:
+
+- **bucket → mount** (a file the harness wrote with S3 `PutObject`/`CopyObject`): visible through the mount **immediately**.
+- **mount → bucket** (a file the agent wrote through `bash`/NFS): visible through the mount immediately, but the S3 API does **not** list/return it for **~1–2 minutes** (AWS S3 Files writes back to the bucket asynchronously — measured: not visible at +0s/+45s, visible at +120s).
+
+So pick the door by **who last wrote the file**, not by how much time has passed. There is no timer or "switch to the mount after writing" — each read site is wired to the correct door:
+
+| Reading… | Last writer | Read via | Rationale |
+| --- | --- | --- | --- |
+| Agent-written workspace files (skill edits, agent-created files, agent-edited `MEMORY.md`) | sandbox, through the mount | **Sandbox mount** — `WorkspaceSandboxExecutor.readDirectory` (`read-dir`) / `bash` | the S3 API is stale for up to ~2 min, so it would miss the agent's edits |
+| Harness-written workspace files (`.stage.json` manifest, the staged copy `load_skill` wrote, sandbox artifact write-back) | harness, via S3 | **S3 API** (`functions/_shared/s3.ts`) | already in the bucket and instantly correct through both doors; no sandbox round-trip needed |
+| Account skill bucket (the skill "origin") | harness, via S3 | **S3 API** | a separate bucket, never mounted |
+
+The agent always reads through the mount (its `bash` tool *is* the mount), so it always sees its own writes instantly regardless of elapsed time. The S3-API-vs-mount decision only applies to **harness-side reads**.
+
+Concretely, `publishStagedSkillBundle` reads the working copy under `.claude/skills/<name>` through the mount (`read-dir`), but reads its `.stage.json` manifest and the source skill through the S3 API — because the harness wrote those.
+
+> **Known exception:** `Session.loadMemoryFile` reads `MEMORY.md` through the **S3 API** at the start of each turn. If the agent edited `MEMORY.md` less than ~2 min earlier in the same session, that read can be stale. This is accepted today (memory converges across turns and a sandbox round-trip on every turn is costly); route it through the mount (`read-dir`) if prompt-time freshness ever becomes a hard requirement.
+
 ## Configuration
 
 ```json

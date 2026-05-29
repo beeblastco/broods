@@ -502,6 +502,13 @@ export class Session {
       return null;
     }
 
+    // Reads MEMORY.md via the S3 API (not the sandbox mount). If the agent edited
+    // MEMORY.md through the mount less than ~1-2 min ago, S3 Files may not have synced
+    // it yet, so this can be briefly stale. Accepted: memory converges across turns and
+    // a per-turn sandbox round-trip is costly. See docs/workspace/storage.md
+    // "Reading workspace files: S3 API vs the sandbox mount". Route through readDirectory
+    // (like publish) if prompt-time freshness becomes required.
+
     const key = `${workspaceNamespacePrefix(this.filesystemNamespace())}/MEMORY.md`;
 
     try {
