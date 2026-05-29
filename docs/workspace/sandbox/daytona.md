@@ -36,7 +36,7 @@ Use `snapshot` for Daytona snapshots. Use `image` only when creating the sandbox
 bun run daytona:s3-snapshot
 ```
 
-`options.envVars` can pass additional environment variables into the sandbox container. This is Daytona-only; Lambda and E2B ignore `envVars`.
+`sandbox.envVars` passes additional environment variables into the sandbox container. All providers honor it (Lambda, E2B, and Daytona).
 
 ## Requirements
 
@@ -56,7 +56,7 @@ Set `options.mountAwsS3Buckets` to `true` to mount the current `FILESYSTEM_BUCKE
 
 The snapshot must include `mount-s3`; use `bun run daytona:s3-snapshot` to build it from `daytonaio/sandbox:0.8.0`.
 
-The executor passes `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, optional `AWS_SESSION_TOKEN`, and region into the Daytona sandbox from the harness runtime or `options.envVars`.
+The executor passes `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, optional `AWS_SESSION_TOKEN`, and region into the Daytona sandbox from the harness runtime or `sandbox.envVars`.
 
 Override defaults with:
 

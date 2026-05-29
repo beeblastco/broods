@@ -43,7 +43,7 @@ export function resolveWorkspaceBindings(
         id,
         {
           ...config,
-          namespace: config.namespace ?? (id === defaultWorkspaceId ? legacyWorkspaceNamespace(agentConfig) : undefined),
+          namespace: config.namespace ?? (id === defaultWorkspaceId ? defaultWorkspaceNamespace(agentConfig) : undefined),
         },
         context,
         id === defaultWorkspaceId,
@@ -54,7 +54,7 @@ export function resolveWorkspaceBindings(
 
   return [toWorkspaceBinding(
     DEFAULT_WORKSPACE_ID,
-    { namespace: legacyWorkspaceNamespace(agentConfig) },
+    { namespace: defaultWorkspaceNamespace(agentConfig) },
     context,
     true,
     true,
@@ -84,13 +84,13 @@ export function resolveConfiguredWorkspaceNamespaces(
         : Object.keys(configuredWorkspaces)[0]);
 
     for (const [id, config] of Object.entries(configuredWorkspaces)) {
-      const namespace = config.namespace ?? (id === defaultWorkspaceId ? legacyWorkspaceNamespace(agentConfig) : undefined);
+      const namespace = config.namespace ?? (id === defaultWorkspaceId ? defaultWorkspaceNamespace(agentConfig) : undefined);
       if (namespace) {
         logicalNamespaces.add(namespace);
       }
     }
   } else {
-    const namespace = legacyWorkspaceNamespace(agentConfig);
+    const namespace = defaultWorkspaceNamespace(agentConfig);
     if (namespace) {
       logicalNamespaces.add(namespace);
     }
@@ -105,10 +105,10 @@ function toWorkspaceBinding(
   config: AgentWorkspaceDefinitionConfig,
   context: WorkspaceResolutionContext,
   isDefault: boolean,
-  preserveLegacyConversationNamespace: boolean,
+  preserveConversationNamespace: boolean,
 ): WorkspaceBinding {
   const logicalNamespace = config.namespace
-    ?? (preserveLegacyConversationNamespace ? context.conversationKey : `workspace:${id}:${context.conversationKey}`);
+    ?? (preserveConversationNamespace ? context.conversationKey : `workspace:${id}:${context.conversationKey}`);
   const accountScope = context.accountId && context.agentId
     ? `${context.accountId}:${context.agentId}`
     : context.accountId;
@@ -122,6 +122,6 @@ function toWorkspaceBinding(
   };
 }
 
-function legacyWorkspaceNamespace(agentConfig: AgentConfig): string | undefined {
-  return agentConfig.workspace?.namespace ?? agentConfig.workspace?.memory?.namespace;
+function defaultWorkspaceNamespace(agentConfig: AgentConfig): string | undefined {
+  return agentConfig.workspace?.namespace;
 }

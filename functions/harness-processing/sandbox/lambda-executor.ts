@@ -35,7 +35,10 @@ export class LambdaWorkspaceSandboxExecutor implements WorkspaceSandboxExecutor 
     const response = await this.#lambda.send(new InvokeCommand({
       FunctionName: this.functionNameFor(request.runtime),
       InvocationType: "RequestResponse",
-      Payload: textEncoder.encode(JSON.stringify(request)),
+      Payload: textEncoder.encode(JSON.stringify({
+        ...request,
+        envVars: this.sandboxEnvVars(),
+      })),
     }));
 
     const payloadText = response.Payload ? textDecoder.decode(response.Payload) : "";
@@ -59,6 +62,7 @@ export class LambdaWorkspaceSandboxExecutor implements WorkspaceSandboxExecutor 
         ...request,
         runtime: "shell",
         networkAccess: networkAccessFor(this.#config),
+        envVars: this.sandboxEnvVars(),
       })),
     }));
 
@@ -92,16 +96,32 @@ export class LambdaWorkspaceSandboxExecutor implements WorkspaceSandboxExecutor 
   }
 
   private functionNameFor(runtime: WorkspaceSandboxRunRequest["runtime"]): string {
-    const options = isRecordObject(this.#config.options) ? this.#config.options : {};
-    if (runtime === "python") {
-      return configString(options.pythonFunctionName) ??
-        optionalEnv("SANDBOX_PYTHON_FUNCTION_NAME") ??
-        missingFunctionName("python");
+    // Node files execute through the bash sandbox (`node <file>` is a registered
+    // command there), so only python has a dedicated runtime Lambda.
+    if (runtime !== "python") {
+      throw new Error(`Lambda sandbox runs ${runtime} files through the bash sandbox, not a dedicated runtime function`);
     }
+    const options = isRecordObject(this.#config.options) ? this.#config.options : {};
+    return configString(options.pythonFunctionName) ??
+      optionalEnv("SANDBOX_PYTHON_FUNCTION_NAME") ??
+      missingFunctionName("python");
+  }
 
-    return configString(options.nodeFunctionName) ??
-      optionalEnv("SANDBOX_NODE_FUNCTION_NAME") ??
-      missingFunctionName("node");
+  // Account-configured env vars (config.workspace.sandbox.envVars) forwarded to the
+  // runtime Lambdas. The handlers merge them in, then let reserved runtime vars
+  // override, so only string values are worth sending.
+  private sandboxEnvVars(): Record<string, string> {
+    const envVars = this.#config.envVars;
+    if (!isRecordObject(envVars)) {
+      return {};
+    }
+    const result: Record<string, string> = {};
+    for (const [key, value] of Object.entries(envVars)) {
+      if (typeof value === "string") {
+        result[key] = value;
+      }
+    }
+    return result;
   }
 
   private shellFunctionName(): string {

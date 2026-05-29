@@ -34,6 +34,7 @@ def handler(event, context):
             event.get("args") or [],
             int(event.get("timeoutSeconds", 30)),
             int(event.get("outputLimitBytes", 64 * 1024)),
+            event.get("envVars") or {},
         )
         result.update({
             "runtime": "python",
@@ -70,17 +71,21 @@ def await_file(file_path: str) -> None:
         raise FileNotFoundError(file_path)
 
 
-def run_python_file(file_path, cwd, args, timeout_seconds, output_limit_bytes):
+def run_python_file(file_path, cwd, args, timeout_seconds, output_limit_bytes, env_vars=None):
     try:
+        # Account-configured vars first; required runtime vars below always win.
+        # process.environ is never inherited (no AWS-credential leak).
+        env = {key: str(value) for key, value in (env_vars or {}).items() if isinstance(value, str)}
+        env.update({
+            "PATH": "/usr/local/bin:/usr/bin:/bin",
+            "HOME": "/tmp",
+            "TMPDIR": "/tmp",
+            "PYTHONPATH": "",
+        })
         completed = subprocess.run(
             [sys.executable, "-I", "-S", file_path, *args],
             cwd=cwd,
-            env={
-                "PATH": "/usr/local/bin:/usr/bin:/bin",
-                "HOME": "/tmp",
-                "TMPDIR": "/tmp",
-                "PYTHONPATH": "",
-            },
+            env=env,
             capture_output=True,
             timeout=timeout_seconds,
             check=False,

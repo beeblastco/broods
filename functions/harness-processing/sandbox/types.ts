@@ -11,6 +11,8 @@ export interface WorkspaceSandboxConfig {
   timeout?: number;
   memoryLimit?: number;
   outputLimitBytes?: number;
+  // Account-configured env vars injected into the sandbox runtime.
+  envVars?: Record<string, string>;
   options?: Record<string, unknown>;
 }
 
@@ -31,6 +33,9 @@ export interface WorkspaceSandboxRunRequest {
   workspaceRoot: string;
   timeoutSeconds: number;
   outputLimitBytes: number;
+  // Account-configured env vars (config.workspace.sandbox.envVars) injected into the
+  // spawned runtime. Required runtime vars (PATH/HOME/...) always win.
+  envVars?: Record<string, string>;
 }
 
 export interface WorkspaceSandboxShellRequest {
@@ -39,6 +44,8 @@ export interface WorkspaceSandboxShellRequest {
   workspaceRoot: string;
   timeoutSeconds: number;
   outputLimitBytes: number;
+  // See WorkspaceSandboxRunRequest.envVars.
+  envVars?: Record<string, string>;
 }
 
 export interface WorkspaceSandboxReadDirRequest {

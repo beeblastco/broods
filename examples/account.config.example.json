@@ -91,9 +91,11 @@
       "provider": "lambda",
       "timeout": 30,
       "outputLimitBytes": 65536,
+      "envVars": {
+        "MY_API_BASE": "https://api.example.com"
+      },
       "options": {
         "bashFunctionName": "my-bash-sandbox",
-        "nodeFunctionName": "my-node-sandbox",
         "pythonFunctionName": "my-python-sandbox",
         "workspaceRoot": "/mnt/workspaces",
         "networkAccess": "disabled"

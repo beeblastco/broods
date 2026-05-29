@@ -27,14 +27,11 @@ describe("workspace namespace resolution", () => {
     }]);
   });
 
-  it("uses workspace namespace before legacy memory namespace", () => {
+  it("shares the default workspace across conversations when namespace is set", () => {
     const bindings = resolveWorkspaceBindings({
       workspace: {
         enabled: true,
         namespace: "support",
-        memory: {
-          namespace: "legacy-support",
-        },
       },
     }, context);
 

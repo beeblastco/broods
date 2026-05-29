@@ -155,6 +155,9 @@ describe("createWorkspaceSandboxExecutor", () => {
     const { createWorkspaceSandboxExecutor } = require("../functions/harness-processing/sandbox/index.ts");
     const executor = createWorkspaceSandboxExecutor({
       provider: "e2b",
+      envVars: {
+        MY_API_BASE: "https://api.example.com",
+      },
       options: {
         workspaceRoot: "/workspace",
         template: "mounted-template",
@@ -180,6 +183,7 @@ describe("createWorkspaceSandboxExecutor", () => {
       {
         cwd: "/workspace/fs-0123456789abcdef0123456789abcdef01234567",
         timeoutMs: 30000,
+        envs: { MY_API_BASE: "https://api.example.com" },
       },
     );
     expect(e2bKillMock).toHaveBeenCalledTimes(1);
@@ -189,6 +193,9 @@ describe("createWorkspaceSandboxExecutor", () => {
     const { createWorkspaceSandboxExecutor } = require("../functions/harness-processing/sandbox/index.ts");
     const executor = createWorkspaceSandboxExecutor({
       provider: "daytona",
+      envVars: {
+        MY_API_BASE: "https://api.example.com",
+      },
       options: {
         organizationId: "org-id",
         workspaceRoot: "/mnt/workspaces",
@@ -212,6 +219,7 @@ describe("createWorkspaceSandboxExecutor", () => {
       snapshot: "fuse-s3",
       language: "python",
       envVars: {
+        MY_API_BASE: "https://api.example.com",
         AWS_ACCESS_KEY_ID: "test-access-key",
         AWS_SECRET_ACCESS_KEY: "test-secret-key",
         AWS_SESSION_TOKEN: "test-session-token",

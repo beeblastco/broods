@@ -135,9 +135,11 @@ describe("agent config", () => {
           timeout: 30,
           memoryLimit: 512,
           outputLimitBytes: 65536,
+          envVars: {
+            MY_API_BASE: "https://api.example.com",
+          },
           options: {
             bashFunctionName: "sandbox-bash",
-            nodeFunctionName: "sandbox-node",
             pythonFunctionName: "sandbox-python",
             workspaceRoot: "/mnt/workspaces",
             networkAccess: "public",
@@ -154,9 +156,11 @@ describe("agent config", () => {
           timeout: 30,
           memoryLimit: 512,
           outputLimitBytes: 65536,
+          envVars: {
+            MY_API_BASE: "https://api.example.com",
+          },
           options: {
             bashFunctionName: "sandbox-bash",
-            nodeFunctionName: "sandbox-node",
             pythonFunctionName: "sandbox-python",
             workspaceRoot: "/mnt/workspaces",
             networkAccess: "public",

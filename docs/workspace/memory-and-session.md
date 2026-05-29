@@ -65,6 +65,8 @@ flowchart LR
 
 The namespace is still account- and agent-scoped before it is hashed into the filesystem prefix, so two accounts can both use `"support"` without sharing files.
 
+> **Note:** There are two equivalent ways to set the shared namespace for the default workspace — use either `workspace.namespace`, or `workspace.workspaces.<name>.namespace` on the workspace marked `defaultWorkspace`. Both resolve to the same hashed filesystem namespace, so set only one. Use `workspace.namespace` for the single-workspace case; reach for `workspace.workspaces` only when you actually want more than one workspace.
+
 Agents can also expose multiple named workspaces. Omitted workspace namespaces stay conversation-scoped, while explicit namespaces are shared across conversations for the same account agent:
 
 ```json
@@ -150,7 +152,7 @@ Share workspace files across conversations for one account agent:
 }
 ```
 
-Set `workspace.namespace` to `null` in a patch when you want workspace files to return to per-conversation behavior. Existing `workspace.memory.namespace` configs still work as a compatibility fallback, but new configs should use the workspace-level namespace. Set `workspace.enabled` to false to disable the mounted workspace, automatic `MEMORY.md` loading, harness instructions, and `bash` tool together.
+Set `workspace.namespace` to `null` in a patch when you want workspace files to return to per-conversation behavior. Set `workspace.enabled` to false to disable the mounted workspace, automatic `MEMORY.md` loading, harness instructions, and `bash` tool together.
 
 ## Session Context Management
 
