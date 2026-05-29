@@ -70,11 +70,19 @@
   "workspace": {
     "enabled": true,
     "needsApproval": true,
+    "namespace": "support",
+    "defaultWorkspace": "personal",
+    "workspaces": {
+      "personal": {
+        "description": "Private per-conversation workspace"
+      },
+      "team": {
+        "namespace": "support-team",
+        "description": "Shared team workspace"
+      }
+    },
     "harness": {
       "enabled": true
-    },
-    "memory": {
-      "namespace": "support"
     },
     "storage": {
       "provider": "s3"

@@ -7,6 +7,7 @@ import { jsonSchema, tool, type JSONSchema7, type Tool, type ToolSet } from "ai"
 import { workspaceSandboxLimits } from "../../_shared/sandbox.ts";
 import { createWorkspaceSandboxExecutor } from "../sandbox/index.ts";
 import type { WorkspaceSandboxConfig, WorkspaceSandboxRuntime } from "../sandbox/types.ts";
+import type { WorkspaceBinding } from "../../_shared/workspaces.ts";
 import {
   assertExecutableExtension,
   assertSafeExecutionArgs,
@@ -25,9 +26,8 @@ const errorText = (value: string): FilesystemToolResult => ({ type: "error-text"
 const text = (value: string): FilesystemToolResult => ({ type: "text", value });
 const json = (value: ReturnType<typeof formatSandboxResult>): FilesystemToolResult => ({ type: "json", value });
 
-const filesystemInputSchema: JSONSchema7 = {
-  type: "object",
-  properties: {
+function filesystemInputSchema(workspaces: WorkspaceBinding[]): JSONSchema7 {
+  const properties: Record<string, JSONSchema7> = {
     shell: {
       type: "string",
       description: `Bash command to run against the persistent workspace filesystem. You always need to run pwd to see your current filesystem.
@@ -44,24 +44,67 @@ Note:
 - Node inline flags such as node -e are not supported. Write a .js or .ts file first, then run node <file.js|file.ts>.
 - You cannot set the environment as each execution is stateless. User should already configured the environment variables in the sandbox config, ask user if they haven't already did that or if executed code return errors. The sandbox will auto injected pre-configured environment variables into the runtime`,
     },
-  },
-  required: ["shell"],
-  additionalProperties: false,
-};
+  };
+
+  if (workspaces.length > 1) {
+    properties.workspace = {
+      type: "string",
+      enum: workspaces.map((workspace) => workspace.id),
+      description: "Named workspace to run the command in. Omit to use the default workspace.",
+    };
+  }
+
+  return {
+    type: "object",
+    properties,
+    required: ["shell"],
+    additionalProperties: false,
+  };
+}
 
 export default function filesystemTool(context: ToolContext): ToolSet {
-  const namespace = context.filesystemNamespace;
+  const workspaces = context.workspaceBindings?.length
+    ? context.workspaceBindings
+    : [{ id: "default", namespace: context.filesystemNamespace, isDefault: true }];
   const sandboxConfig = context.config as WorkspaceSandboxConfig;
 
   return {
     bash: tool({
-      description: "Bash-style workspace shell rooted at /. Use it to read/write persistent files and run scripts. Node must be run from a workspace .js or .ts file; inline node -e commands are not supported.",
-      inputSchema: jsonSchema(filesystemInputSchema),
+      description: workspaceToolDescription(workspaces),
+      inputSchema: jsonSchema(filesystemInputSchema(workspaces)),
       execute(input) {
-        return executeFilesystemShell((input as FilesystemInput).shell, namespace, sandboxConfig);
+        const workspace = selectWorkspace(workspaces, (input as FilesystemInput).workspace);
+        if (!workspace) {
+          return errorText(`Error: unknown workspace ${(input as FilesystemInput).workspace}`);
+        }
+        return executeFilesystemShell((input as FilesystemInput).shell, workspace.namespace, sandboxConfig);
       },
     }),
   };
+}
+
+function workspaceToolDescription(workspaces: WorkspaceBinding[]): string {
+  const base = "Bash-style workspace shell rooted at /. Use it to read/write persistent files and run scripts. Node must be run from a workspace .js or .ts file; inline node -e commands are not supported.";
+  if (workspaces.length === 1) {
+    return base;
+  }
+
+  const workspaceList = workspaces
+    .map((workspace) => `${workspace.id}${workspace.isDefault ? " (default)" : ""}`)
+    .join(", ");
+  return `${base} Available workspaces: ${workspaceList}.`;
+}
+
+function selectWorkspace(workspaces: WorkspaceBinding[], requestedWorkspace: string | undefined): WorkspaceBinding | null {
+  if (!requestedWorkspace) {
+    return workspaces.find((workspace) => workspace.isDefault) ?? workspaces[0]!;
+  }
+
+  const workspace = workspaces.find((entry) => entry.id === requestedWorkspace);
+  if (!workspace) {
+    return null;
+  }
+  return workspace;
 }
 
 async function executeFilesystemShell(

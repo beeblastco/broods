@@ -684,12 +684,11 @@ paths:
                       system: You are a research assistant. Always cite sources.
                     workspace:
                       enabled: true
+                      namespace: research
                       storage:
                         provider: s3
-                      prompt:
+                      harness:
                         enabled: true
-                      memory:
-                        namespace: research
                     tools:
                       tavilySearch:
                         enabled: true
@@ -1815,6 +1814,24 @@ components:
         needsApproval:
           type: boolean
           description: Requires AI SDK approval before every `bash` workspace tool execution
+        namespace:
+          type: string
+          description: Shared default workspace namespace key; omitted means per-conversation state
+        defaultWorkspace:
+          type: string
+          description: Default named workspace used when `workspaces` is configured and a tool call omits `workspace`
+        workspaces:
+          type: object
+          description: Named workspaces. Entries without `namespace` are per-conversation; entries with `namespace` are shared for the account agent.
+          additionalProperties:
+            type: object
+            properties:
+              namespace:
+                type: string
+                description: Shared namespace key for this named workspace
+              description:
+                type: string
+                description: Model-facing workspace purpose
         harness:
           type: object
           description: Controls the default MEMORY/TASKS harness instructions. Existing `MEMORY.md` files are still loaded when this is disabled.
@@ -1823,10 +1840,12 @@ components:
               type: boolean
         memory:
           type: object
+          deprecated: true
+          description: Compatibility fallback for older configs. Use `workspace.namespace` for new agents.
           properties:
             namespace:
               type: string
-              description: Workspace namespace key; `null` means per-conversation state
+              description: Legacy shared workspace namespace key
         storage:
           type: object
           description: Workspace storage backend. Only S3 is supported today.

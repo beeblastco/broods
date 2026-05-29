@@ -113,7 +113,7 @@ describe("session environment context", () => {
     });
 
     const turnContext = await session.createEphemeralTurnContext([{ role: "user", content: "research" }]);
-    const subagentPrompt = turnContext.system.find((message) => message.content.includes("<subagent_system>"))?.content;
+    const subagentPrompt = turnContext.system.find((message) => message.content.includes("<subagent>"))?.content;
 
     expect(subagentPrompt).toContain("- agent_research (Research assistant): Specialized research agent");
     expect(subagentPrompt).toContain("Use the exact agentId from the predefined list when a listed subagent is suitable");
@@ -135,7 +135,7 @@ describe("session environment context", () => {
     const enabledContext = await enabledSession.createEphemeralTurnContext([{ role: "user", content: "hello" }]);
     const memoryPrompt = enabledContext.system.find((message) => message.content.includes("Current MEMORY.md content"))
       ?.content;
-    const workspacePrompt = enabledContext.system.find((message) => message.content.includes("<workspace_harness>"))
+    const workspacePrompt = enabledContext.system.find((message) => message.content.includes("<workspace>"))
       ?.content;
     expect(memoryPrompt).toContain("Remember stable project facts.");
     expect(workspacePrompt).toContain("Use bash to work with the mounted filesystem");
@@ -159,7 +159,7 @@ describe("session environment context", () => {
       },
     });
     const disabledContext = await disabledSession.createEphemeralTurnContext([{ role: "user", content: "hello" }]);
-    expect(disabledContext.system.some((message) => message.content.includes("<workspace_harness>"))).toBe(false);
+    expect(disabledContext.system.some((message) => message.content.includes("<workspace>"))).toBe(false);
     expect(disabledContext.system.some((message) => message.content.includes("Keep this in context."))).toBe(true);
   });
 
