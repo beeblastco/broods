@@ -16,7 +16,7 @@ const agent = await createAgent(account.secret, "Multi-workspace assistant", {
   },
   model: {
     provider: "google",
-    modelId: "gemini-3-flash",
+    modelId: "gemma-4-31b-it",
     temperature: 0,
   },
   agent: {
@@ -104,15 +104,41 @@ try {
 
 async function runAndCheck(label: string, body: Record<string, unknown>): Promise<void> {
   console.log(`\n[${label}]\n`);
-  const chunks: string[] = [];
 
   for await (const chunk of streamSSE(body, account.secret)) {
-    chunks.push(chunk);
     process.stdout.write(`${chunk}\n\n`);
+    assertStreamEventOk(label, chunk);
+  }
+}
+
+function assertStreamEventOk(label: string, chunk: string): void {
+  let event: unknown;
+  try {
+    event = JSON.parse(chunk);
+  } catch {
+    return;
   }
 
-  const streamText = chunks.join("\n");
-  if (/error-text|tool error|Unknown workspace|Error:/i.test(streamText)) {
-    throw new Error(`Stream reported a workspace/tool error during ${label}`);
+  if (!event || typeof event !== "object") {
+    return;
+  }
+
+  const record = event as Record<string, unknown>;
+  if (record.type === "error") {
+    throw new Error(`Stream reported an agent error during ${label}: ${chunk}`);
+  }
+
+  if (record.type !== "tool-result") {
+    return;
+  }
+
+  const output = record.output;
+  if (!output || typeof output !== "object") {
+    return;
+  }
+
+  const outputRecord = output as Record<string, unknown>;
+  if (outputRecord.type === "error-text") {
+    throw new Error(`Stream reported a workspace tool error during ${label}: ${String(outputRecord.value ?? "")}`);
   }
 }
