@@ -104,10 +104,19 @@ export interface AgentProviderSettings {
 export interface AgentWorkspaceConfig {
   enabled?: boolean;
   needsApproval?: boolean;
+  namespace?: string;
+  defaultWorkspace?: string;
+  workspaces?: Record<string, AgentWorkspaceDefinitionConfig>;
   harness?: AgentWorkspaceHarnessConfig;
   memory?: AgentWorkspaceMemoryConfig;
   storage?: AgentWorkspaceStorageConfig;
   sandbox?: AgentWorkspaceSandboxConfig;
+  [key: string]: unknown;
+}
+
+export interface AgentWorkspaceDefinitionConfig {
+  namespace?: string;
+  description?: string;
   [key: string]: unknown;
 }
 
@@ -469,10 +478,45 @@ function normalizeWorkspaceConfig(value: unknown): void {
   const config = value as Record<string, unknown>;
   assertOptionalBoolean(config.enabled, "config.workspace.enabled");
   assertOptionalBoolean(config.needsApproval, "config.workspace.needsApproval");
+  assertOptionalNonEmptyString(config.namespace, "config.workspace.namespace");
+  assertOptionalNonEmptyString(config.defaultWorkspace, "config.workspace.defaultWorkspace");
+  normalizeWorkspaceDefinitionsConfig(config.workspaces, config.defaultWorkspace);
   normalizeWorkspaceHarnessConfig(config.harness);
   normalizeWorkspaceMemoryConfig(config.memory);
   normalizeWorkspaceStorageConfig(config);
   normalizeWorkspaceSandboxConfig(config.sandbox);
+}
+
+function normalizeWorkspaceDefinitionsConfig(value: unknown, defaultWorkspace: unknown): void {
+  if (value == null) {
+    if (defaultWorkspace !== undefined) {
+      throw new Error("config.workspace.defaultWorkspace requires config.workspace.workspaces");
+    }
+    return;
+  }
+  if (!isPlainObject(value)) {
+    throw new Error("config.workspace.workspaces must be an object");
+  }
+
+  const workspaces = value as Record<string, unknown>;
+  const workspaceIds = Object.keys(workspaces);
+  if (workspaceIds.length === 0) {
+    throw new Error("config.workspace.workspaces must include at least one workspace");
+  }
+
+  for (const [workspaceId, workspaceConfig] of Object.entries(workspaces)) {
+    assertWorkspaceId(workspaceId, `config.workspace.workspaces.${workspaceId}`);
+    if (!isPlainObject(workspaceConfig)) {
+      throw new Error(`config.workspace.workspaces.${workspaceId} must be an object`);
+    }
+    const config = workspaceConfig as Record<string, unknown>;
+    assertOptionalNonEmptyString(config.namespace, `config.workspace.workspaces.${workspaceId}.namespace`);
+    assertOptionalString(config.description, `config.workspace.workspaces.${workspaceId}.description`);
+  }
+
+  if (typeof defaultWorkspace === "string" && !Object.prototype.hasOwnProperty.call(workspaces, defaultWorkspace)) {
+    throw new Error("config.workspace.defaultWorkspace must reference a configured workspace");
+  }
 }
 
 function normalizeWorkspaceHarnessConfig(value: unknown): void {
@@ -1010,6 +1054,12 @@ function assertOptionalNonEmptyString(value: unknown, name: string): void {
   assertOptionalString(value, name);
   if (typeof value === "string" && value.trim().length === 0) {
     throw new Error(`${name} must be a non-empty string`);
+  }
+}
+
+function assertWorkspaceId(value: string, name: string): void {
+  if (!/^[A-Za-z0-9._-]+$/.test(value)) {
+    throw new Error(`${name} must use only letters, numbers, dots, underscores, or hyphens`);
   }
 }
 

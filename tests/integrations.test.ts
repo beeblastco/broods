@@ -28,9 +28,7 @@ const TEST_ACCOUNT = {
     },
     workspace: {
       enabled: true,
-      memory: {
-        namespace: "support",
-      },
+      namespace: "support",
     },
     channels: {
       slack: {
@@ -383,11 +381,9 @@ describe("direct API ingress", () => {
       },
       workspace: {
         enabled: true,
+        namespace: "support",
         storage: {
           provider: "s3",
-        },
-        memory: {
-          namespace: "support",
         },
       },
     });

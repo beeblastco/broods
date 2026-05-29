@@ -117,6 +117,7 @@ export {
   type AgentToolsConfig,
   type AgentWebhookHookConfig,
   type AgentWorkspaceConfig,
+  type AgentWorkspaceDefinitionConfig,
   type AgentWorkspaceHarnessConfig,
   type AgentWorkspaceMemoryConfig,
   type AgentWorkspaceSandboxConfig,

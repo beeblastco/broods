@@ -20,8 +20,16 @@ When Workspace is enabled, the runtime:
       "harness": {
         "enabled": true
       },
-      "memory": {
-        "namespace": "support"
+      "namespace": "support",
+      "defaultWorkspace": "personal",
+      "workspaces": {
+        "personal": {
+          "description": "Per-conversation workspace"
+        },
+        "team": {
+          "namespace": "support-team",
+          "description": "Shared team workspace"
+        }
       },
       "storage": {
         "provider": "s3"
@@ -52,7 +60,7 @@ flowchart TD
   Integrations --> Handler["handler.ts<br/>claim event + create Session"]
   Handler --> Session["session.ts<br/>conversation history + prompt assembly"]
   Session --> History["DynamoDB Conversations<br/>model messages + persisted system rows"]
-  Session --> Namespace["filesystemNamespace()<br/>account + agent + conversation or memory namespace"]
+  Session --> Namespace["workspaceBindings()<br/>account + agent + conversation or workspace namespace"]
   Namespace --> Storage["Workspace storage<br/>S3 provider today"]
   Storage --> Files["workspace files<br/>MEMORY.md / TASKS.md / scripts / data"]
   Storage --> StagedSkills[".skills/&lt;skill-name&gt;<br/>staged skill bundles"]
@@ -71,7 +79,7 @@ flowchart TD
 
 `harness.ts` passes `session.filesystemNamespace()` into `createTools()`. When `workspace.enabled` is true, `tools/index.ts` adds the `bash` tool. The agent uses that tool to create, read, edit, delete, and execute workspace files.
 
-The namespace defaults to the conversation key, so every chat, issue, thread, or direct API conversation gets separate workspace files. Setting `workspace.memory.namespace` makes the workspace namespace shared across conversations for the same account and agent.
+The namespace defaults to the conversation key, so every chat, issue, thread, or direct API conversation gets separate workspace files. Setting `workspace.namespace` makes the default workspace shared across conversations for the same account and agent. For mixed personal and team workflows, define named `workspace.workspaces`; the `bash` tool can target a configured workspace by passing its `workspace` field, and omitted means the default workspace.
 
 ## Design Intent
 

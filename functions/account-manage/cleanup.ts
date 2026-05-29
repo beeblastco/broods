@@ -19,6 +19,7 @@ import {
   accountScopedPrefix,
   normalizeFilesystemNamespace,
 } from "../_shared/runtime-keys.ts";
+import { resolveConfiguredWorkspaceNamespaces } from "../_shared/workspaces.ts";
 
 const DYNAMO_BATCH_WRITE_LIMIT = 25;
 
@@ -250,10 +251,14 @@ function resolveFilesystemNamespaces(
 ): string[] {
   const logicalNamespaces = new Set<string>();
   const accountPrefix = accountScopedPrefix(account.accountId);
+  const configuredNamespaces = new Set<string>();
 
   for (const agent of agents) {
-    if (agent.config.workspace?.memory?.namespace) {
-      logicalNamespaces.add(`${agent.agentId}:${agent.config.workspace.memory.namespace}`);
+    for (const namespace of resolveConfiguredWorkspaceNamespaces(agent.config, {
+      accountId: account.accountId,
+      agentId: agent.agentId,
+    })) {
+      configuredNamespaces.add(namespace);
     }
   }
 
@@ -268,12 +273,14 @@ function resolveFilesystemNamespaces(
     logicalNamespaces.add(agentMatch?.[1] ? `${agentMatch[1]}:${conversationKey}` : conversationKey);
   }
 
-  return [...logicalNamespaces].map((logicalNamespace) => {
+  const conversationNamespaces = [...logicalNamespaces].map((logicalNamespace) => {
     const [maybeAgentId, ...rest] = logicalNamespace.split(":");
     return rest.length > 0
       ? normalizeFilesystemNamespace(`${account.accountId}:${maybeAgentId}:${rest.join(":")}`)
       : normalizeFilesystemNamespace(`${account.accountId}:${logicalNamespace}`);
   });
+
+  return [...new Set([...configuredNamespaces, ...conversationNamespaces])];
 }
 
 async function deleteFilesystemNamespaces(namespaces: string[]): Promise<number> {

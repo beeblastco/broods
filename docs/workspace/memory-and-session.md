@@ -43,16 +43,14 @@ flowchart LR
   D1["Direct API conversation alpha"] --> M3["workspace namespace C<br/>files + MEMORY.md + TASKS.md"]
 ```
 
-Set `config.workspace.memory.namespace` when multiple conversations should share the same workspace state:
+Set `config.workspace.namespace` when multiple conversations should share the same workspace state:
 
 ```json
 {
   "config": {
     "workspace": {
       "enabled": true,
-      "memory": {
-        "namespace": "support"
-      }
+      "namespace": "support"
     }
   }
 }
@@ -67,6 +65,36 @@ flowchart LR
 
 The namespace is still account- and agent-scoped before it is hashed into the filesystem prefix, so two accounts can both use `"support"` without sharing files.
 
+Agents can also expose multiple named workspaces. Omitted workspace namespaces stay conversation-scoped, while explicit namespaces are shared across conversations for the same account agent:
+
+```json
+{
+  "config": {
+    "workspace": {
+      "enabled": true,
+      "defaultWorkspace": "personal",
+      "workspaces": {
+        "personal": {
+          "description": "Per-conversation notes and scratch files"
+        },
+        "team": {
+          "namespace": "support-team",
+          "description": "Shared team files, MEMORY.md, and TASKS.md"
+        }
+      }
+    }
+  }
+}
+```
+
+```mermaid
+flowchart LR
+  C1["Conversation alpha"] --> P1["personal namespace alpha<br/>private files + memory"]
+  C2["Conversation beta"] --> P2["personal namespace beta<br/>private files + memory"]
+  C1 --> Team["team namespace<br/>shared files + memory"]
+  C2 --> Team
+```
+
 ## Runtime Behavior
 
 [`Session`](https://github.com/beeblastco/filthy-panty/blob/main/functions/harness-processing/session.ts) owns the runtime path:
@@ -75,7 +103,8 @@ The namespace is still account- and agent-scoped before it is hashed into the fi
 - `acquireConversationLease()` serializes work per conversation.
 - `appendIngressEvents()` persists incoming user, assistant, tool, and persisted system messages.
 - `createTurnContext()` loads conversation entries, builds system prompt parts, runs compaction when configured, and prunes model-visible messages.
-- `filesystemNamespace()` chooses either `workspace.memory.namespace` or the conversation key, scopes it by account and agent, then hashes it with `normalizeFilesystemNamespace()`.
+- `workspaceBindings()` resolves `workspace.namespace`, named `workspace.workspaces`, or the conversation key, scopes each workspace by account and agent, then hashes it with `normalizeFilesystemNamespace()`.
+- `filesystemNamespace()` returns the default workspace namespace for existing single-workspace callers.
 
 The namespace helper is in [`functions/_shared/runtime-keys.ts`](https://github.com/beeblastco/filthy-panty/blob/main/functions/_shared/runtime-keys.ts). The config interface and validation live in [`functions/_shared/storage/agent-config.ts`](https://github.com/beeblastco/filthy-panty/blob/main/functions/_shared/storage/agent-config.ts).
 
@@ -115,15 +144,13 @@ Share workspace files across conversations for one account agent:
   "config": {
     "workspace": {
       "enabled": true,
-      "memory": {
-        "namespace": "support"
-      }
+      "namespace": "support"
     }
   }
 }
 ```
 
-Set `workspace.memory.namespace` to `null` in a patch when you want workspace files to return to per-conversation behavior. Set `workspace.enabled` to false to disable the mounted workspace, automatic `MEMORY.md` loading, harness instructions, and `bash` tool together.
+Set `workspace.namespace` to `null` in a patch when you want workspace files to return to per-conversation behavior. Existing `workspace.memory.namespace` configs still work as a compatibility fallback, but new configs should use the workspace-level namespace. Set `workspace.enabled` to false to disable the mounted workspace, automatic `MEMORY.md` loading, harness instructions, and `bash` tool together.
 
 ## Session Context Management
 

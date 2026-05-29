@@ -73,6 +73,22 @@ async function executeShell(shell: string, config: Record<string, unknown> = {})
   return (bash as unknown as { execute(input: { shell: string }): Promise<{ type: string; value: any }> }).execute({ shell });
 }
 
+async function executeShellInWorkspace(shell: string, workspace: string) {
+  const { default: filesystemTool } = await import("../functions/harness-processing/tools/filesystem.tool.ts");
+  const context = createToolContext() as Record<string, unknown>;
+  const tools = filesystemTool({
+    ...context,
+    workspaceBindings: [
+      { id: "personal", namespace: "fs-personal", isDefault: true },
+      { id: "team", namespace: "fs-team", isDefault: false },
+    ],
+  } as never);
+  const bash = tools.bash!;
+  return (bash as unknown as {
+    execute(input: { shell: string; workspace?: string }): Promise<{ type: string; value: any }>;
+  }).execute({ shell, workspace });
+}
+
 function lastLambdaInput() {
   const command = lambdaSendMock.mock.calls.at(-1)?.[0] as { input: { FunctionName: string; Payload: Uint8Array } };
   return {
@@ -124,6 +140,27 @@ describe("bash workspace tool", () => {
         networkAccess: "public",
       },
     });
+  });
+
+  it("routes commands to the requested named workspace namespace", async () => {
+    await executeShellInWorkspace("pwd", "team");
+
+    expect(lastLambdaInput()).toMatchObject({
+      payload: {
+        namespace: "fs-team",
+        shell: "pwd",
+      },
+    });
+  });
+
+  it("returns an error for unknown named workspaces", async () => {
+    const result = await executeShellInWorkspace("pwd", "unknown");
+
+    expect(result).toEqual({
+      type: "error-text",
+      value: "Error: unknown workspace unknown",
+    });
+    expect(lambdaSendMock).not.toHaveBeenCalled();
   });
 
   it("returns bash sandbox stderr with stdout for shell commands", async () => {

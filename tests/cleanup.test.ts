@@ -446,9 +446,14 @@ describe("deleteAccountRuntimeData", () => {
 
     const encryptedConfig = toAttributeValue(encryptAgentConfig({
       workspace: {
-        memory: {
-          namespace: "support-memory",
+        namespace: "support-memory",
+        workspaces: {
+          personal: {},
+          team: {
+            namespace: "team-memory",
+          },
         },
+        defaultWorkspace: "personal",
       },
     }));
 

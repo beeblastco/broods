@@ -258,12 +258,13 @@ This path currently uses core NATS. If JetStream is introduced later, replace be
 
 Workspace state is account/agent-scoped and disabled unless the selected agent has `config.workspace.enabled` true. The workspace storage backend is currently `workspace.storage.provider: "s3"`, backed by the configured filesystem bucket. Workspace provides a guidance prompt, storage, and sandbox execution through the model-facing `bash` tool.
 
-When workspace is enabled, Lambda shell commands run in `SandboxBash` against the AWS S3 Files mount, while `python <file.py>` and `python3 <file.py>` continue through `SandboxPython`. E2B and Daytona providers must mount the same S3 workspace bucket at `options.workspaceRoot` so every provider sees the same namespace. Existing `MEMORY.md` files are loaded into the system prompt. `workspace.harness.enabled=false` disables only the default MEMORY/TASKS harness instructions. `workspace.needsApproval` requires approval for `bash` calls. By default workspace state is per conversation; setting `config.workspace.memory.namespace` lets multiple conversations for the same agent share workspace files such as `MEMORY.md`, `TASKS.md`, scripts, data, and staged skills.
+When workspace is enabled, Lambda shell commands run in `SandboxBash` against the AWS S3 Files mount, while `python <file.py>` and `python3 <file.py>` continue through `SandboxPython`. E2B and Daytona providers must mount the same S3 workspace bucket at `options.workspaceRoot` so every provider sees the same namespace. Existing `MEMORY.md` files are loaded into the system prompt. `workspace.harness.enabled=false` disables only the default MEMORY/TASKS harness instructions. `workspace.needsApproval` requires approval for `bash` calls. By default workspace state is per conversation; setting `config.workspace.namespace` lets multiple conversations for the same agent share workspace files such as `MEMORY.md`, `TASKS.md`, scripts, data, and staged skills. `workspace.workspaces` can define named personal and team workspaces, and the `bash` tool selects one with its optional `workspace` input.
 
 ```mermaid
 flowchart LR
-  Conversation["No workspace.memory.namespace"] --> PerConversation["Per-conversation workspace"]
-  Namespace["workspace.memory.namespace=support"] --> Shared["Shared account workspace"]
+  Conversation["No workspace.namespace"] --> PerConversation["Per-conversation workspace"]
+  Namespace["workspace.namespace=support"] --> Shared["Shared account workspace"]
+  Named["workspace.workspaces.team"] --> Shared
 ```
 
 See [Workspace](workspace/index.md) for the full model.
