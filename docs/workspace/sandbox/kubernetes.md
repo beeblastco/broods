@@ -78,6 +78,11 @@ with the cluster's IAM role and the cluster's pod-identity webhook injects a web
 - For the S3 mount: `mountAwsS3Buckets: true`, the workspace bucket granted to the cluster IAM role
   (infra `workspace_bucket_names`), and the runtime image present in GHCR with a pull secret in the
   namespace. Without the mount, runs still work but files do **not** persist across calls.
+- **TLS on the deployed harness.** The harness Lambda is a bun-compiled binary whose `fetch` ignores
+  the kubeconfig CA / `insecure-skip-tls-verify`, and k3s serves a self-signed cert. So `sst.config.ts`
+  sets `NODE_TLS_REJECT_UNAUTHORIZED=0` on the harness for **non-production** stages only; production
+  keeps full verification and needs a trusted API cert before using this provider. See the infra
+  `docs/agent-sandbox.md`.
 
 ## Execution Notes
 
