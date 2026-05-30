@@ -109,7 +109,7 @@ Files you write to the workspace persist across calls, but shell state does not:
 This sandbox has a few extra limits:
 - The shell is an emulated bash. Common tools are available (pwd, ls, cat, sed, awk, grep, rg, find, jq, tar, gzip, cp, mv, rm, mkdir, touch); some system binaries are not.
 - node: run a file only — \`node <file.js|file.ts>\`; inline flags like \`node -e\` are not supported.
-- python: prefer running it as a standalone command — \`python3 <name>.py\` or \`python <name>.py\` — so it uses the dedicated native CPython runtime (best performance and full stdlib). Python invoked inside a larger shell command runs on a slower, limited in-process Python and may fail on complex scripts.`;
+- python: prefer running it as a standalone command — \`python3 <name>.py\` or \`python <name>.py\` — with no other commands in the same call, so it executes on the dedicated native CPython runtime (full stdlib). Python is not available inside a larger shell command (e.g. after a heredoc); write the file in one call, then run it on its own in the next.`;
 }
 
 function selectWorkspace(workspaces: WorkspaceBinding[], requestedWorkspace: string | undefined): WorkspaceBinding | null {

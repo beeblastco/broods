@@ -117,23 +117,25 @@ export async function handler(
         // file-only (no -e/REPL), .js/.ts only, and no package manager on PATH
         // (no npm/npx). Account-configured env vars are injected; nothing else.
         javascript: false,
-        // Enable just-bash's built-in `python`/`python3` so Python still runs
-        // when embedded in a larger shell script (e.g. a heredoc file write and
-        // the run in the same call). This is CPython-compiled-to-WASM in an
-        // in-process worker — best-effort and slower than native CPython, and it
-        // can misbehave on complex scripts or native deps. The bash tool routes a
-        // *standalone* `python <file>.py` to the dedicated SandboxPython Lambda
-        // instead (see filesystem.tool.ts) for full-fidelity, best performance.
-        python: true,
-        // defenseInDepth must stay OFF here. It proxies host globals
-        // (WebAssembly, Atomics, SharedArrayBuffer, timers, process.env/stdout)
-        // for the duration of exec — the exact primitives the in-process
-        // CPython-WASM worker above needs, so enabling it both wedges Python
-        // (the worker promise never settles -> Lambda "NodeJsExit") and, on the
-        // interrupted run, leaks its process.env Proxy into the warm container so
-        // the next invocation's AWS X-Ray setup throws. The isolation boundary is
-        // the Lambda itself: jailed ReadWriteFs, replaced env (no host vars,
-        // no AWS creds), and javascript:false (no QuickJS host bridge).
+        // just-bash's built-in `python`/`python3` is CPython-compiled-to-WASM
+        // run in a worker spawned from a sibling `worker.js` asset. esbuild does
+        // not emit that `import.meta.url`-relative worker (or its WASM payload)
+        // next to this bundled Lambda, so the worker never starts and its promise
+        // never settles -> the Lambda dies with "NodeJsExit". We disable it and
+        // register a `python`/`python3` stub below that fails cleanly instead of
+        // crashing the whole shell call. Real Python runs on the dedicated
+        // SandboxPython (python3.12) Lambda: the bash tool routes a *standalone*
+        // `python <file>.py` there (see filesystem.tool.ts) for full CPython.
+        python: false,
+        // defenseInDepth must stay OFF here. It wraps host globals
+        // (process.env/stdout, timers, WebAssembly, Atomics) in blocking Proxies
+        // for the duration of exec and restores them afterwards — but if exec is
+        // interrupted (e.g. the Lambda freezes mid-run) the restore never runs and
+        // the process.env Proxy leaks into the warm container, so the next
+        // invocation's AWS X-Ray setup (`process.env._X_AMZN_TRACE_ID = ...`)
+        // throws. The isolation boundary is the Lambda itself: jailed
+        // ReadWriteFs, replaced env (no host vars, no AWS creds), and
+        // javascript:false (no QuickJS host bridge).
         defenseInDepth: false,
         executionLimits: {
           maxCommandCount: 10000,
@@ -147,6 +149,10 @@ export async function handler(
         outputLimitBytes: boundedOutputLimit(event.outputLimitBytes),
         envVars: configuredEnvVars,
       }));
+      // No Python runtime lives in this Node Lambda; redirect callers to the
+      // standalone path the bash tool routes to SandboxPython.
+      bash.registerCommand(pythonRedirectCommand("python"));
+      bash.registerCommand(pythonRedirectCommand("python3"));
 
       const result = await bash.exec(event.shell, {
         cwd: "/",
@@ -223,6 +229,23 @@ async function readWorkspaceDirectory(event: SandboxReadDirRequest): Promise<San
     }
     return { ok: false, files: [], error };
   }
+}
+
+function pythonRedirectCommand(name: "python" | "python3"): Command {
+  return {
+    name,
+    trusted: true,
+    async execute(): Promise<ExecResult> {
+      return {
+        stdout: "",
+        stderr:
+          `${name} is not available inside a combined shell command. Run it as a ` +
+          `standalone command — e.g. \`${name} <file>.py\` with no other commands in ` +
+          `the same call — so it executes on the dedicated CPython sandbox.\n`,
+        exitCode: 127,
+      };
+    },
+  };
 }
 
 function nativeNodeCommand(options: NativeNodeOptions): Command {
