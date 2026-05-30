@@ -9,6 +9,7 @@ flowchart LR
   Provider --> Lambda["lambda"]
   Provider --> E2B["e2b"]
   Provider --> Daytona["daytona"]
+  Provider --> Kubernetes["kubernetes"]
   Lambda --> Bash["SandboxBash<br/>shell, Node, TypeScript"]
   Lambda --> Python["SandboxPython<br/>Python files"]
   Bash --> Mount["AWS S3 Files mount<br/>/mnt/workspaces/<namespace>"]
@@ -52,6 +53,7 @@ Sandbox execution is available only when Workspace is enabled. The `bash` tool i
 | `lambda` | [Lambda Details](lambda.md) |
 | `e2b` | [E2B Details](e2b.md) |
 | `daytona` | [Daytona Details](daytona.md) |
+| `kubernetes` | [Kubernetes Details](kubernetes.md) |
 
 ## How Agents Use It
 

@@ -107,6 +107,11 @@ jobs:
       DAYTONA_TARGET: ${{ vars.DAYTONA_TARGET }}
       DAYTONA_S3_SNAPSHOT_NAME: ${{ vars.DAYTONA_S3_SNAPSHOT_NAME }}
       DAYTONA_S3_SNAPSHOT_BASE_IMAGE: ${{ vars.DAYTONA_S3_SNAPSHOT_BASE_IMAGE }}
+      # kubernetes sandbox provider (non-secret knobs; kubeconfig is an SST secret).
+      KUBERNETES_SANDBOX_NAMESPACE: ${{ vars.KUBERNETES_SANDBOX_NAMESPACE }}
+      KUBERNETES_SANDBOX_IMAGE: ${{ vars.KUBERNETES_SANDBOX_IMAGE }}
+      KUBERNETES_SANDBOX_SERVICE_ACCOUNT: ${{ vars.KUBERNETES_SANDBOX_SERVICE_ACCOUNT }}
+      KUBERNETES_SANDBOX_IMAGE_PULL_SECRETS: ${{ vars.KUBERNETES_SANDBOX_IMAGE_PULL_SECRETS }}
       # Convex storage provider — required only on main branch.
       CONVEX_URL: ${{ github.ref == 'refs/heads/main' && secrets.CONVEX_URL || '' }}
       CONVEX_DEPLOY_KEY: ${{ github.ref == 'refs/heads/main' && secrets.CONVEX_DEPLOY_KEY || '' }}
@@ -184,6 +189,9 @@ jobs:
           SST_SECRET_AdminAccountSecret: ${{ secrets.SST_SECRET_ADMINACCOUNTSECRET }}
           SST_SECRET_AccountConfigEncryptionSecret: ${{ secrets.SST_SECRET_ACCOUNTCONFIGENCRYPTIONSECRET }}
           SST_SECRET_DaytonaApiKey: ${{ secrets.DAYTONA_API_KEY }}
+          # Optional: base64 kubeconfig for the kubernetes sandbox provider. Not in the
+          # required-secrets loop below, so stages that don't use it still deploy.
+          SST_SECRET_KubernetesSandboxKubeconfig: ${{ secrets.KUBERNETES_SANDBOX_KUBECONFIG }}
           MOCK_WEBHOOK_SECRET: ${{ secrets.MOCK_WEBHOOK_SECRET }}
         shell: bash
         run: |

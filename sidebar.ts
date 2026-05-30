@@ -70,6 +70,11 @@ const sidebars: SidebarsConfig = {
                   id: 'workspace/sandbox/lambda',
                   label: 'Lambda',
                 },
+                {
+                  type: 'doc',
+                  id: 'workspace/sandbox/kubernetes',
+                  label: 'Kubernetes',
+                },
               ],
             },
           ],

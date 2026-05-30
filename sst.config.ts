@@ -17,6 +17,12 @@ const CONVEX_DEPLOY_KEY = process.env.CONVEX_DEPLOY_KEY?.trim();
 const DAYTONA_ORGANIZATION_ID = process.env.DAYTONA_ORGANIZATION_ID?.trim();
 const DAYTONA_API_URL = process.env.DAYTONA_API_URL?.trim();
 const DAYTONA_TARGET = process.env.DAYTONA_TARGET?.trim();
+// kubernetes sandbox provider (agent-sandbox on the Beeblast k3s cluster). Non-secret
+// knobs; the kubeconfig is an sst.Secret. See docs/workspace/sandbox/kubernetes.md.
+const KUBERNETES_SANDBOX_NAMESPACE = process.env.KUBERNETES_SANDBOX_NAMESPACE?.trim();
+const KUBERNETES_SANDBOX_IMAGE = process.env.KUBERNETES_SANDBOX_IMAGE?.trim();
+const KUBERNETES_SANDBOX_SERVICE_ACCOUNT = process.env.KUBERNETES_SANDBOX_SERVICE_ACCOUNT?.trim();
+const KUBERNETES_SANDBOX_IMAGE_PULL_SECRETS = process.env.KUBERNETES_SANDBOX_IMAGE_PULL_SECRETS?.trim();
 
 if (ENABLE_WEBSOCKET && !NATS_URL) {
   throw new Error("NATS_URL must be set when ENABLE_WEBSOCKET=true");
@@ -182,6 +188,9 @@ export default $config({
     const adminAccountSecret = new sst.Secret("AdminAccountSecret");
     const accountConfigEncryptionSecret = new sst.Secret("AccountConfigEncryptionSecret");
     const daytonaApiKey = new sst.Secret("DaytonaApiKey");
+    // Base64 kubeconfig (SA bearer token) for the kubernetes sandbox provider. Optional:
+    // the placeholder keeps deploys working for stages that don't use this provider.
+    const kubernetesSandboxKubeconfig = new sst.Secret("KubernetesSandboxKubeconfig", "");
 
     // accounts / agents / cron-jobs DDB tables are skipped on production —
     // those domains live in Convex on SaaS. Tables stay for dev / community
@@ -625,6 +634,11 @@ export default $config({
         ...(DAYTONA_ORGANIZATION_ID ? { DAYTONA_ORGANIZATION_ID } : {}),
         ...(DAYTONA_API_URL ? { DAYTONA_API_URL } : {}),
         ...(DAYTONA_TARGET ? { DAYTONA_TARGET } : {}),
+        KUBERNETES_SANDBOX_KUBECONFIG: kubernetesSandboxKubeconfig.value,
+        ...(KUBERNETES_SANDBOX_NAMESPACE ? { KUBERNETES_SANDBOX_NAMESPACE } : {}),
+        ...(KUBERNETES_SANDBOX_IMAGE ? { KUBERNETES_SANDBOX_IMAGE } : {}),
+        ...(KUBERNETES_SANDBOX_SERVICE_ACCOUNT ? { KUBERNETES_SANDBOX_SERVICE_ACCOUNT } : {}),
+        ...(KUBERNETES_SANDBOX_IMAGE_PULL_SECRETS ? { KUBERNETES_SANDBOX_IMAGE_PULL_SECRETS } : {}),
       },
       permissions: [
         ...(accountConfigsTable
