@@ -10,6 +10,8 @@ import type {
   WorkspaceSandboxExecutor,
   WorkspaceSandboxRunRequest,
   WorkspaceSandboxRunResult,
+  WorkspaceSandboxShellRequest,
+  WorkspaceSandboxShellResult,
 } from "./types.ts";
 
 export class E2BWorkspaceSandboxExecutor implements WorkspaceSandboxExecutor {
@@ -40,6 +42,34 @@ export class E2BWorkspaceSandboxExecutor implements WorkspaceSandboxExecutor {
         stderr: [result.stderr, result.error].filter(Boolean).join("\n"),
         outputLimitBytes: request.outputLimitBytes,
       });
+    } finally {
+      await sandbox.kill();
+    }
+  }
+
+  // A real VM: run the command as-is in the workspace directory. No emulation and
+  // no per-runtime routing — bash, node, python, etc. are all on the PATH.
+  async runShell(request: WorkspaceSandboxShellRequest): Promise<WorkspaceSandboxShellResult> {
+    const startedAt = Date.now();
+    const sandbox = await Sandbox.create(e2bCreateOptions(this.#config));
+
+    try {
+      const result = await sandbox.commands.run(request.shell, {
+        cwd: workspacePath(request),
+        timeoutMs: request.timeoutSeconds * 1000,
+        envs: e2bEnvVars(this.#config),
+      });
+      const stdout = truncateText(result.stdout ?? "", request.outputLimitBytes);
+      const stderr = truncateText([result.stderr, result.error].filter(Boolean).join("\n"), request.outputLimitBytes);
+      return {
+        ok: (result.exitCode ?? null) === 0,
+        exitCode: result.exitCode ?? null,
+        stdout: stdout.value,
+        stderr: stderr.value,
+        durationMs: Date.now() - startedAt,
+        truncated: stdout.truncated || stderr.truncated,
+        provider: "e2b",
+      };
     } finally {
       await sandbox.kill();
     }
@@ -110,7 +140,7 @@ function isRecordObject(value: unknown): value is Record<string, unknown> {
   return Boolean(value && typeof value === "object" && !Array.isArray(value));
 }
 
-function workspacePath(request: WorkspaceSandboxRunRequest): string {
+function workspacePath(request: { workspaceRoot: string; namespace: string }): string {
   return `${request.workspaceRoot.replace(/\/+$/, "")}/${request.namespace}`;
 }
 

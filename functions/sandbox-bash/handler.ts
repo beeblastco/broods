@@ -117,7 +117,14 @@ export async function handler(
         // file-only (no -e/REPL), .js/.ts only, and no package manager on PATH
         // (no npm/npx). Account-configured env vars are injected; nothing else.
         javascript: false,
-        python: false,
+        // Enable just-bash's built-in `python`/`python3` so Python still runs
+        // when embedded in a larger shell script (e.g. a heredoc file write and
+        // the run in the same call). This is CPython-compiled-to-WASM in an
+        // in-process worker — best-effort and slower than native CPython, and it
+        // can misbehave on complex scripts or native deps. The bash tool routes a
+        // *standalone* `python <file>.py` to the dedicated SandboxPython Lambda
+        // instead (see filesystem.tool.ts) for full-fidelity, best performance.
+        python: true,
         defenseInDepth: true,
         executionLimits: {
           maxCommandCount: 10000,

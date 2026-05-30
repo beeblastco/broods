@@ -6,7 +6,7 @@
 import { jsonSchema, tool, type JSONSchema7, type Tool, type ToolSet } from "ai";
 import { workspaceSandboxLimits } from "../../_shared/sandbox.ts";
 import { createWorkspaceSandboxExecutor } from "../sandbox/index.ts";
-import type { WorkspaceSandboxConfig, WorkspaceSandboxRuntime } from "../sandbox/types.ts";
+import type { WorkspaceSandboxConfig, WorkspaceSandboxProvider, WorkspaceSandboxRuntime } from "../sandbox/types.ts";
 import type { WorkspaceBinding } from "../../_shared/workspaces.ts";
 import {
   assertExecutableExtension,
@@ -26,23 +26,11 @@ const errorText = (value: string): FilesystemToolResult => ({ type: "error-text"
 const text = (value: string): FilesystemToolResult => ({ type: "text", value });
 const json = (value: ReturnType<typeof formatSandboxResult>): FilesystemToolResult => ({ type: "json", value });
 
-function filesystemInputSchema(workspaces: WorkspaceBinding[]): JSONSchema7 {
+function filesystemInputSchema(workspaces: WorkspaceBinding[], provider: WorkspaceSandboxProvider): JSONSchema7 {
   const properties: Record<string, JSONSchema7> = {
     shell: {
       type: "string",
-      description: `Bash command to run against the persistent workspace filesystem. You always need to run pwd to see your current filesystem.
-
-Prefer shell mode. Supported commands:
-- bash-like shell scripts, pipes, redirects, globs, variables, and loops
-- common file/text commands such as pwd, ls, cat, sed, awk, grep, rg, find, jq, tar, gzip, cp, mv, rm, mkdir, touch
-- node <file.js|file.ts> --args
-- python3 <file.py> --args
-- cat <<'EOF' > <path> ... EOF
-- cat <<'EOF' >> <path> ... EOF
-
-Note:
-- Node inline flags such as node -e are not supported. Write a .js or .ts file first, then run node <file.js|file.ts>.
-- You cannot set the environment as each execution is stateless. User should already configured the environment variables in the sandbox config, ask user if they haven't already did that or if executed code return errors. The sandbox will auto injected pre-configured environment variables into the runtime`,
+      description: shellInputDescription(provider),
     },
   };
 
@@ -67,11 +55,12 @@ export default function filesystemTool(context: ToolContext): ToolSet {
     ? context.workspaceBindings
     : [{ id: "default", namespace: context.filesystemNamespace, isDefault: true }];
   const sandboxConfig = context.config as WorkspaceSandboxConfig;
+  const provider = sandboxConfig.provider ?? "lambda";
 
   return {
     bash: tool({
       description: workspaceToolDescription(workspaces),
-      inputSchema: jsonSchema(filesystemInputSchema(workspaces)),
+      inputSchema: jsonSchema(filesystemInputSchema(workspaces, provider)),
       execute(input) {
         const workspace = selectWorkspace(workspaces, (input as FilesystemInput).workspace);
         if (!workspace) {
@@ -84,7 +73,7 @@ export default function filesystemTool(context: ToolContext): ToolSet {
 }
 
 function workspaceToolDescription(workspaces: WorkspaceBinding[]): string {
-  const base = "Bash-style workspace shell rooted at /. Use it to read/write persistent files and run scripts. Node must be run from a workspace .js or .ts file; inline node -e commands are not supported.";
+  const base = "Bash shell on a Linux sandbox rooted at /. Use it to read/write persistent files and run scripts and programs.";
   if (workspaces.length === 1) {
     return base;
   }
@@ -93,6 +82,34 @@ function workspaceToolDescription(workspaces: WorkspaceBinding[]): string {
     .map((workspace) => `${workspace.id}${workspace.isDefault ? " (default)" : ""}`)
     .join(", ");
   return `${base} Available workspaces: ${workspaceList}.`;
+}
+
+// The model performs best when the sandbox looks like an ordinary Linux machine,
+// so the description stays generic and short — strong models already know bash,
+// and every niche caveat measurably degrades them (matches Anthropic/OpenAI tool
+// guidance: state only what is genuinely non-obvious about this environment).
+// The one non-obvious fact true for every provider is that each call is a fresh
+// shell (files persist, shell state does not), so it lives in the generic text.
+// Lambda is the only restricted runtime (emulated shell + split Python runtime),
+// so its extra limits are appended only for that provider; e2b/daytona run a real
+// VM and get the clean prompt unchanged.
+function shellInputDescription(provider: WorkspaceSandboxProvider): string {
+  const generic = `Bash command to run in a Linux sandbox rooted at the workspace. Run \`pwd\` first to see the working directory.
+
+Use normal bash: pipes, redirects, globs, variables, loops, and the usual file/text tools. Run programs directly, e.g. \`python3 script.py\` or \`node app.js\`. Heredocs work: \`cat <<'EOF' > file ... EOF\`. stdout and stderr are returned together, and very large output is truncated.
+
+Files you write to the workspace persist across calls, but shell state does not: the working directory, environment variables, and background processes reset every call, so keep the steps of a task in one command. Pre-configured environment variables are injected automatically.`;
+
+  if (provider !== "lambda") {
+    return generic;
+  }
+
+  return `${generic}
+
+This sandbox has a few extra limits:
+- The shell is an emulated bash. Common tools are available (pwd, ls, cat, sed, awk, grep, rg, find, jq, tar, gzip, cp, mv, rm, mkdir, touch); some system binaries are not.
+- node: run a file only — \`node <file.js|file.ts>\`; inline flags like \`node -e\` are not supported.
+- python: prefer running it as a standalone command — \`python3 <name>.py\` or \`python <name>.py\` — so it uses the dedicated native CPython runtime (best performance and full stdlib). Python invoked inside a larger shell command runs on a slower, limited in-process Python and may fail on complex scripts.`;
 }
 
 function selectWorkspace(workspaces: WorkspaceBinding[], requestedWorkspace: string | undefined): WorkspaceBinding | null {
@@ -119,13 +136,19 @@ async function executeFilesystemShell(
 
   logInfo("bash tool command", { namespace, command });
 
-  try {
-    const execution = parseExecutionCommand(command);
-    if (execution?.runtime === "python") {
-      return json(await executeWorkspaceFile(execution, namespace, sandboxConfig));
+  // On Lambda the shell is emulated (just-bash) and Python files run best on the
+  // dedicated SandboxPython runtime, so a standalone `python <file>` is routed
+  // there. Other providers are real machines with native runtimes on PATH, so the
+  // whole command goes straight to their shell.
+  if ((sandboxConfig.provider ?? "lambda") === "lambda") {
+    try {
+      const execution = parseExecutionCommand(command);
+      if (execution?.runtime === "python") {
+        return json(await executeWorkspaceFile(execution, namespace, sandboxConfig));
+      }
+    } catch (cause) {
+      return errorText(cause instanceof Error ? cause.message : String(cause));
     }
-  } catch (cause) {
-    return errorText(cause instanceof Error ? cause.message : String(cause));
   }
 
   try {
