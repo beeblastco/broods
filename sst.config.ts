@@ -559,6 +559,11 @@ export default $config({
       architecture: "arm64",
       handler: "functions/sandbox-bash/handler.handler",
       description: "Executes bash-like workspace shell commands with an S3 Files mount.",
+      // just-bash ships a CPython-WASM runtime (vendor/cpython-emscripten + a
+      // worker.js) that it loads by paths relative to its own files. Install it
+      // as a node_module rather than letting esbuild inline it, so that layout
+      // survives and in-process `python`/`python3` works. See sandbox-bash handler.
+      nodejs: { install: ["just-bash"] },
       timeout: "2 minutes",
       memory: "512 MB", // Minimal memory required from AWS for S3 mount to sandbox execution.
       vpc: sandboxNetwork,

@@ -100,7 +100,9 @@ Rules:
 
 Run Python as a **standalone** command — `python3 <file>.py` or `python <file>.py`. The bash tool routes those to `SandboxPython` (native CPython 3.12, full stdlib, file artifacts persisted back to the workspace). This is the best-performance, full-fidelity path.
 
-When `python`/`python3` is invoked **inside a larger shell command** (e.g. a heredoc file-write and the run in the same call), it can't be routed out — and there is no Python runtime inside `SandboxBash`. just-bash's in-process WASM Python (`python: false`) is disabled: it runs in a sibling `worker.js` asset that esbuild doesn't emit next to the bundled Lambda, so the worker never starts and the run crashes the whole shell call (`Runtime.NodeJsExit`). Instead, `SandboxBash` registers `python`/`python3` stub commands that fail cleanly with exit code `127` and a message telling the caller to run Python on its own line. **Write the `.py` file in one call, then run it standalone in the next** so it routes to `SandboxPython`.
+When `python`/`python3` is invoked **inside a larger shell command** (e.g. a heredoc file-write and the run in the same call), it can't be routed out, so it falls to `SandboxBash`'s in-process `just-bash` Python — CPython-compiled-to-WASM (`python: true`). That keeps such scripts working instead of failing, but it is slower and more limited and may misbehave on complex scripts or native dependencies.
+
+That WASM runtime loads `vendor/cpython-emscripten/{python.wasm,python313.zip}` and a `worker.js` by paths relative to just-bash's own files, so it only resolves if the package layout is intact. `SandboxBash` therefore ships just-bash via `nodejs.install` (see `sst.config.ts`) rather than letting esbuild inline it — inlining drops the worker + WASM assets and crashes the whole shell call (`Runtime.NodeJsExit`). Prefer writing the `.py` file first, then running it on its own line so it routes to native `SandboxPython`.
 
 ## Workspace Mount
 
