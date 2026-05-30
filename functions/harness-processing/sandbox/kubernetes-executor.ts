@@ -283,10 +283,14 @@ export class KubernetesWorkspaceSandboxExecutor implements WorkspaceSandboxExecu
         bucket,
         request.workspaceRoot,
       ].map(shellQuote).join(" ");
+      // Present mounted files as uid/gid 1000 (the workspace access point's owner),
+      // not the mounting process's uid: the pod runs as root for FUSE, and mount-s3
+      // rejects --uid 0. Root still reads/writes the files (and --allow-other covers
+      // any non-root access).
       await this.#execOrThrow(pod, [
         "bash",
         "-lc",
-        `mount-s3 --uid "$(id -u)" --gid "$(id -g)" ${mountArgs}`,
+        `mount-s3 --uid 1000 --gid 1000 ${mountArgs}`,
       ]);
     }
     await this.#execOrThrow(pod, ["bash", "-lc", `mkdir -p ${shellQuote(dir)}`]);
