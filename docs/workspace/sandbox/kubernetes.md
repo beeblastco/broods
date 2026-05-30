@@ -66,8 +66,13 @@ Per bash/file run the executor (`functions/harness-processing/sandbox/kubernetes
 > secret `KUBERNETES_SANDBOX_KUBECONFIG` (base64 kubeconfig) and deploy — no env-size juggling.
 
 Cluster auth uses the `agent-sandbox-workspace` ServiceAccount bearer token in the kubeconfig.
-The pod's AWS credentials for `mount-s3` come from **IRSA** (no static keys): the SA is annotated
-with the cluster's IAM role and the cluster's pod-identity webhook injects a web-identity token.
+The pod's AWS credentials for `mount-s3` are passed through from the harness runtime
+(`AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY`/`AWS_SESSION_TOKEN`) — in Lambda the execution role's
+temporary creds, no static keys. This mirrors the Daytona provider. The pod runs privileged +
+`runAsUser: 0` (FUSE needs the device + root) and mounts with `--uid 1000 --gid 1000`.
+
+> **Mountpoint-for-S3 has no append/in-place edit** (`>>` or editing a file in place fails) — only
+> whole-file create/overwrite. The agent should rewrite files, not append. (Same as Daytona's mount.)
 
 ## Requirements
 
@@ -75,9 +80,10 @@ with the cluster's IAM role and the cluster's pod-identity webhook injects a web
   the infra doc for how to generate it from the SA token).
 - The harness runtime must be able to reach the cluster API (`https://<api>:6443`) and open exec
   websockets. The `HarnessProcessing` Lambda is not VPC-attached, so it has public egress by default.
-- For the S3 mount: `mountAwsS3Buckets: true`, the workspace bucket granted to the cluster IAM role
-  (infra `workspace_bucket_names`), and the runtime image present in GHCR with a pull secret in the
-  namespace. Without the mount, runs still work but files do **not** persist across calls.
+- For the S3 mount: `mountAwsS3Buckets: true`; the harness runtime must have AWS creds with S3 RW on
+  the workspace bucket (it already does — same role the lambda provider uses), and the runtime image
+  must be in GHCR with a pull secret in the namespace. Without the mount, runs still work but files do
+  **not** persist across calls.
 - **TLS on the deployed harness.** The harness Lambda is a bun-compiled binary whose `fetch` ignores
   the kubeconfig CA / `insecure-skip-tls-verify`, and k3s serves a self-signed cert. So `sst.config.ts`
   sets `NODE_TLS_REJECT_UNAUTHORIZED=0` on the harness for **non-production** stages only; production
