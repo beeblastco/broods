@@ -37,7 +37,7 @@ Every `options.*` value has an env/default fallback, so a minimal config is just
 
 | Option | Env fallback | Default |
 | --- | --- | --- |
-| `kubeconfig` (base64) | `KUBERNETES_SANDBOX_KUBECONFIG` (SST secret) | ambient kubeconfig (local only) |
+| `kubeconfig` (base64) | `KUBERNETES_SANDBOX_KUBECONFIG`, then `KUBERNETES_SANDBOX_KUBECONFIG_SSM` (SSM param name) | ambient kubeconfig (local only) |
 | `namespace` | `KUBERNETES_SANDBOX_NAMESPACE` | `agent-sandboxes` |
 | `image` | `KUBERNETES_SANDBOX_IMAGE` | `ghcr.io/beeblastco/agent-sandbox-runtime:latest` |
 | `serviceAccountName` | `KUBERNETES_SANDBOX_SERVICE_ACCOUNT` | pod default SA |
@@ -58,6 +58,12 @@ Per bash/file run the executor (`functions/harness-processing/sandbox/kubernetes
    the pod (the container runs `privileged` so FUSE works).
 4. Execs the command via the kube exec API, **streaming** stdout/stderr.
 5. Deletes the `Sandbox` (ephemeral-per-run, like Daytona/E2B).
+
+> The kubeconfig (CA + token) is ~2.7 KB — over Lambda's 4 KB env-var limit. So `sst.config.ts`
+> stores it in an SSM SecureString parameter (`/filthy-panty/<stage>/kubernetes-sandbox-kubeconfig`,
+> value from the `KubernetesSandboxKubeconfig` secret) and passes only the parameter **name** as
+> `KUBERNETES_SANDBOX_KUBECONFIG_SSM`; the executor fetches + caches it at runtime. Set the GitHub
+> secret `KUBERNETES_SANDBOX_KUBECONFIG` (base64 kubeconfig) and deploy — no env-size juggling.
 
 Cluster auth uses the `agent-sandbox-workspace` ServiceAccount bearer token in the kubeconfig.
 The pod's AWS credentials for `mount-s3` come from **IRSA** (no static keys): the SA is annotated

@@ -40,6 +40,7 @@
     "@aws-sdk/client-lambda": "3.1017.0",
     "@aws-sdk/client-s3": "3.1017.0",
     "@aws-sdk/client-scheduler": "3.1017.0",
+    "@aws-sdk/client-ssm": "^3.1057.0",
     "@chat-adapter/telegram": "^4.29.0",
     "@convex-dev/stripe": "^0.1.4",
     "@convex-dev/workos-authkit": "^0.2.5",

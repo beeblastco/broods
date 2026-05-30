@@ -191,6 +191,15 @@ export default $config({
     // Base64 kubeconfig (SA bearer token) for the kubernetes sandbox provider. Optional:
     // the placeholder keeps deploys working for stages that don't use this provider.
     const kubernetesSandboxKubeconfig = new sst.Secret("KubernetesSandboxKubeconfig", "");
+    // The kubeconfig (CA + token) is ~2.7KB — too big for a Lambda env var alongside
+    // everything else (4KB hard limit). Store it in SSM and let the harness fetch it at
+    // runtime; only the parameter name goes in the env. SecureString can't be empty, so
+    // unset stages get a "unset" placeholder.
+    const kubernetesSandboxKubeconfigParam = new aws.ssm.Parameter("KubernetesSandboxKubeconfigParam", {
+      name: `/filthy-panty/${stage}/kubernetes-sandbox-kubeconfig`,
+      type: "SecureString",
+      value: kubernetesSandboxKubeconfig.value.apply((v) => (v && v.length > 0 ? v : "unset")),
+    });
 
     // accounts / agents / cron-jobs DDB tables are skipped on production —
     // those domains live in Convex on SaaS. Tables stay for dev / community
@@ -634,13 +643,22 @@ export default $config({
         ...(DAYTONA_ORGANIZATION_ID ? { DAYTONA_ORGANIZATION_ID } : {}),
         ...(DAYTONA_API_URL ? { DAYTONA_API_URL } : {}),
         ...(DAYTONA_TARGET ? { DAYTONA_TARGET } : {}),
-        KUBERNETES_SANDBOX_KUBECONFIG: kubernetesSandboxKubeconfig.value,
+        KUBERNETES_SANDBOX_KUBECONFIG_SSM: kubernetesSandboxKubeconfigParam.name,
         ...(KUBERNETES_SANDBOX_NAMESPACE ? { KUBERNETES_SANDBOX_NAMESPACE } : {}),
         ...(KUBERNETES_SANDBOX_IMAGE ? { KUBERNETES_SANDBOX_IMAGE } : {}),
         ...(KUBERNETES_SANDBOX_SERVICE_ACCOUNT ? { KUBERNETES_SANDBOX_SERVICE_ACCOUNT } : {}),
         ...(KUBERNETES_SANDBOX_IMAGE_PULL_SECRETS ? { KUBERNETES_SANDBOX_IMAGE_PULL_SECRETS } : {}),
       },
       permissions: [
+        // Read the kubernetes sandbox kubeconfig from SSM (SecureString → needs KMS decrypt).
+        {
+          actions: ["ssm:GetParameter"],
+          resources: [kubernetesSandboxKubeconfigParam.arn],
+        },
+        {
+          actions: ["kms:Decrypt"],
+          resources: ["*"],
+        },
         ...(accountConfigsTable
           ? [{
               actions: [

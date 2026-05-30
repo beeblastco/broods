@@ -26,6 +26,7 @@ import {
   type V1Pod,
   type V1Status,
 } from "@kubernetes/client-node";
+import { GetParameterCommand, SSMClient } from "@aws-sdk/client-ssm";
 import { optionalEnv } from "../../_shared/env.ts";
 import { WORKSPACE_MOUNT_PREFIX } from "../../_shared/sandbox.ts";
 import type {
@@ -56,17 +57,27 @@ interface ExecResult {
 
 export class KubernetesWorkspaceSandboxExecutor implements WorkspaceSandboxExecutor {
   readonly #config: WorkspaceSandboxConfig;
-  readonly #kc: KubeConfig;
-  readonly #core: CoreV1Api;
-  readonly #custom: CustomObjectsApi;
-  readonly #exec: Exec;
+  // Clients are initialized lazily: the kubeconfig may have to be fetched from SSM
+  // (it is too large for a Lambda env var), which is async.
+  #core!: CoreV1Api;
+  #custom!: CustomObjectsApi;
+  #exec!: Exec;
+  #clientsReady?: Promise<void>;
 
   constructor(config: WorkspaceSandboxConfig) {
     this.#config = config;
-    this.#kc = loadKubeConfig(options(config));
-    this.#core = this.#kc.makeApiClient(CoreV1Api);
-    this.#custom = this.#kc.makeApiClient(CustomObjectsApi);
-    this.#exec = new Exec(this.#kc);
+  }
+
+  #ensureClients(): Promise<void> {
+    if (!this.#clientsReady) {
+      this.#clientsReady = (async () => {
+        const kc = await resolveKubeConfig(options(this.#config));
+        this.#core = kc.makeApiClient(CoreV1Api);
+        this.#custom = kc.makeApiClient(CustomObjectsApi);
+        this.#exec = new Exec(kc);
+      })();
+    }
+    return this.#clientsReady;
   }
 
   async runShell(request: WorkspaceSandboxShellRequest): Promise<WorkspaceSandboxShellResult> {
@@ -150,6 +161,7 @@ export class KubernetesWorkspaceSandboxExecutor implements WorkspaceSandboxExecu
     request: { namespace: string; workspaceRoot: string },
     run: (pod: V1Pod) => Promise<T>,
   ): Promise<T> {
+    await this.#ensureClients();
     const opts = options(this.#config);
     const namespace = kubeNamespace(opts);
     const name = sandboxName(request.namespace);
@@ -360,15 +372,39 @@ function options(config: WorkspaceSandboxConfig): Record<string, unknown> {
   return isRecordObject(config.options) ? config.options : {};
 }
 
-function loadKubeConfig(opts: Record<string, unknown>): KubeConfig {
+async function resolveKubeConfig(opts: Record<string, unknown>): Promise<KubeConfig> {
   const kc = new KubeConfig();
-  const raw = configString(opts.kubeconfig) ?? optionalEnv("KUBERNETES_SANDBOX_KUBECONFIG");
+  // 1) inline base64 (config option or small deployments) 2) SSM parameter (the
+  // kubeconfig is too big for a Lambda env var, so prod passes its SSM name)
+  // 3) ambient kubeconfig (local dev / dry-run).
+  let raw = configString(opts.kubeconfig) ?? optionalEnv("KUBERNETES_SANDBOX_KUBECONFIG");
+  if (!raw) {
+    const param = configString(opts.kubeconfigSsmParam) ?? optionalEnv("KUBERNETES_SANDBOX_KUBECONFIG_SSM");
+    if (param) {
+      raw = await fetchSsmParameter(param);
+    }
+  }
   if (raw) {
     kc.loadFromString(Buffer.from(raw, "base64").toString("utf8"));
-  } else {
-    kc.loadFromDefault();
+    return kc;
   }
+  if (optionalEnv("AWS_LAMBDA_FUNCTION_NAME")) {
+    throw new Error(
+      "kubernetes sandbox: no kubeconfig available. Set KUBERNETES_SANDBOX_KUBECONFIG (base64) or KUBERNETES_SANDBOX_KUBECONFIG_SSM (SSM parameter name).",
+    );
+  }
+  kc.loadFromDefault();
   return kc;
+}
+
+async function fetchSsmParameter(name: string): Promise<string> {
+  const client = new SSMClient({});
+  const res = await client.send(new GetParameterCommand({ Name: name, WithDecryption: true }));
+  const value = res.Parameter?.Value?.trim();
+  if (!value) {
+    throw new Error(`kubernetes sandbox: SSM parameter ${name} is empty or missing.`);
+  }
+  return value;
 }
 
 function kubeNamespace(opts: Record<string, unknown>): string {
