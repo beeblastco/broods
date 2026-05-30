@@ -3,7 +3,7 @@
  * Keep provider-neutral file execution shapes here.
  */
 
-export type WorkspaceSandboxProvider = "lambda" | "e2b" | "daytona";
+export type WorkspaceSandboxProvider = "lambda" | "e2b" | "daytona" | "kubernetes";
 export type WorkspaceSandboxRuntime = "node" | "python";
 
 export interface WorkspaceSandboxConfig {

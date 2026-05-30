@@ -48,6 +48,7 @@
     "@docusaurus/preset-classic": "^3.10.1",
     "@docusaurus/theme-mermaid": "3.10.1",
     "@docusaurus/tsconfig": "^3.10.1",
+    "@kubernetes/client-node": "^1.4.0",
     "@mermaid-js/layout-elk": "^0.1.9",
     "@pulumi/aws": "7.30.0",
     "@pulumi/pulumi": "3.228.0",

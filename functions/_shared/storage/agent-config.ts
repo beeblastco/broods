@@ -130,7 +130,7 @@ export interface AgentWorkspaceStorageConfig {
 }
 
 export interface AgentWorkspaceSandboxConfig {
-  provider?: "lambda" | "e2b" | "daytona";
+  provider?: "lambda" | "e2b" | "daytona" | "kubernetes";
   timeout?: number;
   memoryLimit?: number;
   outputLimitBytes?: number;
@@ -551,7 +551,7 @@ function normalizeWorkspaceSandboxConfig(value: unknown): void {
   }
 
   const config = value as Record<string, unknown>;
-  assertOptionalEnum(config.provider, "config.workspace.sandbox.provider", ["lambda", "e2b", "daytona"]);
+  assertOptionalEnum(config.provider, "config.workspace.sandbox.provider", ["lambda", "e2b", "daytona", "kubernetes"]);
   assertOptionalPositiveInteger(
     config.timeout,
     "config.workspace.sandbox.timeout",
