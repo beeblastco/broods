@@ -644,6 +644,13 @@ export default $config({
         ...(DAYTONA_API_URL ? { DAYTONA_API_URL } : {}),
         ...(DAYTONA_TARGET ? { DAYTONA_TARGET } : {}),
         KUBERNETES_SANDBOX_KUBECONFIG_SSM: kubernetesSandboxKubeconfigParam.name,
+        // k3s serves a self-signed API cert, and the bun-compiled Lambda runtime's fetch
+        // ignores the kubeconfig CA / insecure-skip-tls-verify (only this env is honored).
+        // Scope the TLS-verification opt-out to non-production stages, where the kubernetes
+        // sandbox provider is exercised. Production must front the API with a trusted cert
+        // (or bundle the CA via NODE_EXTRA_CA_CERTS) before enabling this provider — we do
+        // NOT weaken TLS on the production harness, which handles account secrets.
+        ...(isProduction ? {} : { NODE_TLS_REJECT_UNAUTHORIZED: "0" }),
         ...(KUBERNETES_SANDBOX_NAMESPACE ? { KUBERNETES_SANDBOX_NAMESPACE } : {}),
         ...(KUBERNETES_SANDBOX_IMAGE ? { KUBERNETES_SANDBOX_IMAGE } : {}),
         ...(KUBERNETES_SANDBOX_SERVICE_ACCOUNT ? { KUBERNETES_SANDBOX_SERVICE_ACCOUNT } : {}),
