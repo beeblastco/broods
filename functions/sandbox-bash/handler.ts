@@ -125,7 +125,16 @@ export async function handler(
         // *standalone* `python <file>.py` to the dedicated SandboxPython Lambda
         // instead (see filesystem.tool.ts) for full-fidelity, best performance.
         python: true,
-        defenseInDepth: true,
+        // defenseInDepth must stay OFF here. It proxies host globals
+        // (WebAssembly, Atomics, SharedArrayBuffer, timers, process.env/stdout)
+        // for the duration of exec — the exact primitives the in-process
+        // CPython-WASM worker above needs, so enabling it both wedges Python
+        // (the worker promise never settles -> Lambda "NodeJsExit") and, on the
+        // interrupted run, leaks its process.env Proxy into the warm container so
+        // the next invocation's AWS X-Ray setup throws. The isolation boundary is
+        // the Lambda itself: jailed ReadWriteFs, replaced env (no host vars,
+        // no AWS creds), and javascript:false (no QuickJS host bridge).
+        defenseInDepth: false,
         executionLimits: {
           maxCommandCount: 10000,
           maxLoopIterations: 10000,
