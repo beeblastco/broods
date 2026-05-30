@@ -12,6 +12,9 @@ import type {
   WorkspaceSandboxExecutor,
   WorkspaceSandboxRunRequest,
   WorkspaceSandboxRunResult,
+  WorkspaceSandboxRuntime,
+  WorkspaceSandboxShellRequest,
+  WorkspaceSandboxShellResult,
 } from "./types.ts";
 
 export class DaytonaWorkspaceSandboxExecutor implements WorkspaceSandboxExecutor {
@@ -24,7 +27,7 @@ export class DaytonaWorkspaceSandboxExecutor implements WorkspaceSandboxExecutor
   async runFile(request: WorkspaceSandboxRunRequest): Promise<WorkspaceSandboxRunResult> {
     const startedAt = Date.now();
     const client = new Daytona(daytonaClientOptions(this.#config));
-    const sandbox = await client.create(daytonaCreateOptions(request, this.#config));
+    const sandbox = await client.create(daytonaCreateOptions(this.#config, request.runtime));
 
     try {
       await mountAwsS3Buckets(sandbox, request, this.#config);
@@ -47,6 +50,36 @@ export class DaytonaWorkspaceSandboxExecutor implements WorkspaceSandboxExecutor
         artifacts: normalizeArtifacts(response.artifacts),
         durationMs: Date.now() - startedAt,
         truncated: truncatedStdout.truncated || truncatedStderr.truncated,
+        provider: "daytona",
+      };
+    } finally {
+      await sandbox.delete();
+    }
+  }
+
+  // A real VM: mount the workspace, then run the command as-is. No emulation and
+  // no per-runtime routing — bash, node, python, etc. are all on the PATH.
+  async runShell(request: WorkspaceSandboxShellRequest): Promise<WorkspaceSandboxShellResult> {
+    const startedAt = Date.now();
+    const client = new Daytona(daytonaClientOptions(this.#config));
+    const sandbox = await client.create(daytonaCreateOptions(this.#config));
+
+    try {
+      await mountAwsS3Buckets(sandbox, request, this.#config);
+      const response = await sandbox.process.executeCommand(
+        request.shell,
+        workspacePath(request),
+        undefined,
+        request.timeoutSeconds,
+      );
+      const stdout = truncateText(response.result ?? artifactStdout(response.artifacts), request.outputLimitBytes);
+      return {
+        ok: (response.exitCode ?? 0) === 0,
+        exitCode: response.exitCode ?? null,
+        stdout: stdout.value,
+        stderr: "",
+        durationMs: Date.now() - startedAt,
+        truncated: stdout.truncated,
         provider: "daytona",
       };
     } finally {
@@ -83,13 +116,13 @@ function daytonaClientOptions(config: WorkspaceSandboxConfig): Record<string, un
 }
 
 function daytonaCreateOptions(
-  request: WorkspaceSandboxRunRequest,
   config: WorkspaceSandboxConfig,
+  runtime?: WorkspaceSandboxRuntime,
 ): Record<string, unknown> {
   const options = isRecordObject(config.options) ? config.options : {};
   const envVars = daytonaEnvVars(isStringRecord(config.envVars) ? config.envVars : {}, options);
   return {
-    language: request.runtime === "python" ? "python" : "typescript",
+    language: runtime === "python" ? "python" : "typescript",
     ...(configString(options.snapshot) ? { snapshot: configString(options.snapshot) } : {}),
     ...(configString(options.image) ? { image: configString(options.image) } : {}),
     ...(Object.keys(envVars).length > 0 ? { envVars } : {}),
@@ -133,7 +166,7 @@ function awsCredentialEnvVars(envVars: Record<string, string>): Record<string, s
 
 async function mountAwsS3Buckets(
   sandbox: Sandbox,
-  request: WorkspaceSandboxRunRequest,
+  request: { workspaceRoot: string },
   config: WorkspaceSandboxConfig,
 ): Promise<void> {
   const options = isRecordObject(config.options) ? config.options : {};
@@ -215,7 +248,7 @@ function isStringRecord(value: unknown): value is Record<string, string> {
     Object.values(value).every((entry) => typeof entry === "string");
 }
 
-function workspacePath(request: WorkspaceSandboxRunRequest): string {
+function workspacePath(request: { workspaceRoot: string; namespace: string }): string {
   return `${request.workspaceRoot.replace(/\/+$/, "")}/${request.namespace}`;
 }
 

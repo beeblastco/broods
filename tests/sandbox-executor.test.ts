@@ -249,6 +249,59 @@ describe("createWorkspaceSandboxExecutor", () => {
     );
     expect(daytonaDeleteMock).toHaveBeenCalledTimes(1);
   });
+
+  it("runs E2B shell commands as-is in the workspace directory", async () => {
+    const { createWorkspaceSandboxExecutor } = require("../functions/harness-processing/sandbox/index.ts");
+    const executor = createWorkspaceSandboxExecutor({
+      provider: "e2b",
+      envVars: { MY_API_BASE: "https://api.example.com" },
+      options: { workspaceRoot: "/workspace", template: "mounted-template" },
+    });
+
+    const result = await executor.runShell!({
+      namespace: "fs-0123456789abcdef0123456789abcdef01234567",
+      shell: "mkdir -p notes && echo hi > notes/a.txt && cat notes/a.txt",
+      workspaceRoot: "/workspace",
+      timeoutSeconds: 30,
+      outputLimitBytes: 4096,
+    });
+
+    expect(result).toMatchObject({ ok: true, provider: "e2b", stdout: "ok\n" });
+    expect(e2bRunMock).toHaveBeenCalledWith(
+      "mkdir -p notes && echo hi > notes/a.txt && cat notes/a.txt",
+      {
+        cwd: "/workspace/fs-0123456789abcdef0123456789abcdef01234567",
+        timeoutMs: 30000,
+        envs: { MY_API_BASE: "https://api.example.com" },
+      },
+    );
+    expect(e2bKillMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("runs Daytona shell commands as-is in the workspace directory", async () => {
+    const { createWorkspaceSandboxExecutor } = require("../functions/harness-processing/sandbox/index.ts");
+    const executor = createWorkspaceSandboxExecutor({
+      provider: "daytona",
+      options: { workspaceRoot: "/mnt/workspaces" },
+    });
+
+    const result = await executor.runShell!({
+      namespace: "fs-0123456789abcdef0123456789abcdef01234567",
+      shell: "echo hi && ls",
+      workspaceRoot: "/mnt/workspaces",
+      timeoutSeconds: 30,
+      outputLimitBytes: 4096,
+    });
+
+    expect(result).toMatchObject({ ok: true, provider: "daytona", stdout: "ok\n" });
+    expect(daytonaExecuteCommandMock).toHaveBeenCalledWith(
+      "echo hi && ls",
+      "/mnt/workspaces/fs-0123456789abcdef0123456789abcdef01234567",
+      undefined,
+      30,
+    );
+    expect(daytonaDeleteMock).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe("workspaceNamespacePrefix", () => {

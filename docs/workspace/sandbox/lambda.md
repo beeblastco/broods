@@ -85,7 +85,7 @@ Rules:
 | Shell | bash-like scripts | `just-bash` [command set](https://github.com/vercel-labs/just-bash) |
 | Node | `node <file>` | `.js` |
 | TypeScript | `node <file>` | `.ts` — transpiled inside `SandboxBash` before execution |
-| Python | `python <file>` or `python3 <file>` | `.py` |
+| Python | `python <file>` or `python3 <file>` (run standalone for native CPython) | `.py` |
 
 ### Node execution fidelity
 
@@ -95,6 +95,12 @@ Rules:
 - No package manager on the sanitized `PATH` (no `npm`/`npx`/`yarn`): only Node built-in modules plus any `node_modules` already present in the workspace.
 - Minimal env: only `sandbox.envVars` plus the reserved runtime vars (`PATH`, `HOME=/tmp`, `TMPDIR`, `NODE_OPTIONS`) reach the process; the host Lambda's `process.env` is not inherited.
 - TypeScript is single-file transpile-only (transpiled to CommonJS, no type-check, no cross-file imports). `import`/`export` work out of the box; top-level `await` does not (wrap it in an async function).
+
+### Python execution fidelity
+
+Run Python as a **standalone** command — `python3 <file>.py` or `python <file>.py`. The bash tool routes those to `SandboxPython` (native CPython 3.12, full stdlib, file artifacts persisted back to the workspace). This is the best-performance, full-fidelity path.
+
+When `python`/`python3` is invoked **inside a larger shell command** (e.g. a heredoc file-write and the run in the same call), it can't be routed out, so it falls to `SandboxBash`'s in-process `just-bash` Python — CPython-compiled-to-WASM, enabled with `python: true`. That keeps such scripts working instead of failing, but it is slower and more limited and may misbehave on complex scripts or native dependencies. Prefer writing the `.py` file first, then running it on its own line.
 
 ## Workspace Mount
 
