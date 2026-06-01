@@ -345,6 +345,9 @@ describe("runAgentLoop", () => {
       conversationKey: "tg:7495331456",
       eventId: "tg:900151472",
       filesystemNamespace: () => "fs-test",
+      resolvedWorkspaces: () => [],
+      statelessSandbox: () => undefined,
+      statelessPermissionMode: () => "ask",
       persistModelMessages,
       loadRefreshedSystemPromptParts: async () => ({
         systemContextSnapshot: { cursor: null, messages: [] },
@@ -398,6 +401,9 @@ describe("runAgentLoop", () => {
       conversationKey: "direct:conversation",
       eventId: "direct-event",
       filesystemNamespace: () => "fs-test",
+      resolvedWorkspaces: () => [],
+      statelessSandbox: () => undefined,
+      statelessPermissionMode: () => "ask",
       persistModelMessages: async () => [],
       loadRefreshedSystemPromptParts: async () => ({
         systemContextSnapshot: { cursor: null, messages: [] },
@@ -461,6 +467,9 @@ describe("runAgentLoop", () => {
       conversationKey: "direct:conversation",
       eventId: "direct-event",
       filesystemNamespace: () => "fs-test",
+      resolvedWorkspaces: () => [],
+      statelessSandbox: () => undefined,
+      statelessPermissionMode: () => "ask",
       persistModelMessages: async () => [],
       loadRefreshedSystemPromptParts: async () => ({
         systemContextSnapshot: { cursor: null, messages: [] },
@@ -508,6 +517,9 @@ describe("runAgentLoop", () => {
       conversationKey: "direct:conversation",
       eventId: "direct-event",
       filesystemNamespace: () => "fs-test",
+      resolvedWorkspaces: () => [],
+      statelessSandbox: () => ({ provider: "lambda" }),
+      statelessPermissionMode: () => "ask",
       persistModelMessages,
       loadRefreshedSystemPromptParts: async () => ({
         systemContextSnapshot: { cursor: null, messages: [] },
@@ -519,10 +531,6 @@ describe("runAgentLoop", () => {
       ephemeralSystem: [],
       systemContextSnapshot: { cursor: null, messages: [] },
     }, {
-      workspace: {
-        enabled: true,
-        needsApproval: true,
-      },
       provider: {
         google: {
           apiKey: "google-key",
@@ -568,11 +576,13 @@ describe("runAgentLoop", () => {
         },
       ],
     }]);
-    expect(streamTextMock.mock.calls[0]?.[0].tools).toMatchObject({
-      bash: {
-        needsApproval: true,
-      },
-    });
+    // bash now sets a per-call needsApproval function (resolves the selected
+    // workspace's mode); stateless "ask" => approval required.
+    const bashNeedsApproval = (streamTextMock.mock.calls[0]?.[0].tools as {
+      bash: { needsApproval: (input: unknown, options: unknown) => boolean | Promise<boolean> };
+    }).bash.needsApproval;
+    expect(typeof bashNeedsApproval).toBe("function");
+    expect(await bashNeedsApproval({}, { toolCallId: "t", messages: [] })).toBe(true);
     expect(streamTextMock.mock.calls[0]?.[0].system).toEqual([]);
   });
 
@@ -584,6 +594,9 @@ describe("runAgentLoop", () => {
       conversationKey: "direct:conversation",
       eventId: "direct-event",
       filesystemNamespace: () => "fs-test",
+      resolvedWorkspaces: () => [],
+      statelessSandbox: () => undefined,
+      statelessPermissionMode: () => "ask",
       persistModelMessages: async () => { },
       loadRefreshedSystemPromptParts: async () => ({
         systemContextSnapshot: { cursor: null, messages: [] },
@@ -643,6 +656,9 @@ describe("runAgentLoop", () => {
       conversationKey: "direct:conversation",
       eventId: "direct-event",
       filesystemNamespace: () => "fs-test",
+      resolvedWorkspaces: () => [],
+      statelessSandbox: () => undefined,
+      statelessPermissionMode: () => "ask",
       persistModelMessages: async () => { },
       loadRefreshedSystemPromptParts: async () => ({
         systemContextSnapshot: { cursor: null, messages: [] },
@@ -706,6 +722,9 @@ describe("runAgentLoop", () => {
       conversationKey: "direct:conversation",
       eventId: "direct-event",
       filesystemNamespace: () => "fs-test",
+      resolvedWorkspaces: () => [],
+      statelessSandbox: () => undefined,
+      statelessPermissionMode: () => "ask",
       persistModelMessages: async () => { },
       loadRefreshedSystemPromptParts: async () => ({
         systemContextSnapshot: { cursor: null, messages: [] },
@@ -788,6 +807,9 @@ describe("runAgentLoop", () => {
       conversationKey: "direct:conversation",
       eventId: "direct-event",
       filesystemNamespace: () => "fs-test",
+      resolvedWorkspaces: () => [],
+      statelessSandbox: () => undefined,
+      statelessPermissionMode: () => "ask",
       persistModelMessages: async () => { },
       loadRefreshedSystemPromptParts: async () => ({
         systemContextSnapshot: { cursor: null, messages: [] },
@@ -844,6 +866,9 @@ describe("runAgentLoop", () => {
       conversationKey: "direct:conversation",
       eventId: "direct-event",
       filesystemNamespace: () => "fs-test",
+      resolvedWorkspaces: () => [],
+      statelessSandbox: () => undefined,
+      statelessPermissionMode: () => "ask",
       persistModelMessages: async () => [],
       loadRefreshedSystemPromptParts: async () => ({
         systemContextSnapshot: { cursor: null, messages: [] },
@@ -889,6 +914,9 @@ describe("runAgentLoop", () => {
       conversationKey: "direct:conversation",
       eventId: "direct-event",
       filesystemNamespace: () => "fs-test",
+      resolvedWorkspaces: () => [],
+      statelessSandbox: () => undefined,
+      statelessPermissionMode: () => "ask",
       persistModelMessages: async () => [],
       loadSkillPrompt,
       loadRefreshedSystemPromptParts: async () => ({
@@ -908,10 +936,6 @@ describe("runAgentLoop", () => {
           enabled: true,
         },
       },
-      // Publishing staged edits requires a workspace checkout to publish from.
-      workspace: {
-        enabled: true,
-      },
       provider: {
         google: {
           apiKey: "google-key",
@@ -930,8 +954,8 @@ describe("runAgentLoop", () => {
       needsApproval?: boolean;
     }>;
     expect(tools.load_skill).toBeDefined();
-    expect(tools.publish_skill_changes).toBeDefined();
-    expect(tools.publish_skill_changes).toMatchObject({ needsApproval: true });
+    // Skill publishing is disabled; publish_skill_changes is never exposed.
+    expect(tools.publish_skill_changes).toBeUndefined();
     const loadSkillTool = tools.load_skill!;
     await expect(loadSkillTool.execute({
       path: "acct_test/support-flow",
@@ -958,6 +982,9 @@ describe("runAgentLoop", () => {
       conversationKey: "direct:conversation",
       eventId: "direct-event",
       filesystemNamespace: () => "fs-test",
+      resolvedWorkspaces: () => [],
+      statelessSandbox: () => undefined,
+      statelessPermissionMode: () => "ask",
       persistModelMessages: async () => [],
       loadSkillPrompt,
       loadRefreshedSystemPromptParts: async () => ({
@@ -1007,6 +1034,9 @@ describe("runAgentLoop", () => {
       conversationKey: "direct:conversation",
       eventId: "direct-event",
       filesystemNamespace: () => "fs-test",
+      resolvedWorkspaces: () => [],
+      statelessSandbox: () => undefined,
+      statelessPermissionMode: () => "ask",
       persistModelMessages: async () => [],
       loadSkillPrompt,
       loadRefreshedSystemPromptParts: async () => ({
@@ -1054,6 +1084,9 @@ describe("runAgentLoop", () => {
       conversationKey: "direct:conversation",
       eventId: "direct-event",
       filesystemNamespace: () => "fs-test",
+      resolvedWorkspaces: () => [],
+      statelessSandbox: () => undefined,
+      statelessPermissionMode: () => "ask",
       persistModelMessages: async () => [],
       loadRefreshedSystemPromptParts: async () => ({
         systemContextSnapshot: { cursor: null, messages: [] },
@@ -1103,6 +1136,9 @@ describe("runAgentLoop", () => {
       conversationKey: "direct:conversation",
       eventId: "direct-event",
       filesystemNamespace: () => "fs-test",
+      resolvedWorkspaces: () => [],
+      statelessSandbox: () => undefined,
+      statelessPermissionMode: () => "ask",
       persistModelMessages: async () => [],
       loadRefreshedSystemPromptParts: async () => ({
         systemContextSnapshot: { cursor: null, messages: [] },
@@ -1169,6 +1205,9 @@ describe("runAgentLoop", () => {
       conversationKey: "direct:conversation",
       eventId: "direct-event",
       filesystemNamespace: () => "fs-test",
+      resolvedWorkspaces: () => [],
+      statelessSandbox: () => undefined,
+      statelessPermissionMode: () => "ask",
       persistModelMessages: async () => { },
       loadRefreshedSystemPromptParts: async () => ({
         systemContextSnapshot: { cursor: null, messages: [] },
@@ -1213,6 +1252,9 @@ describe("runAgentLoop", () => {
       conversationKey: "direct:conversation",
       eventId: "direct-event",
       filesystemNamespace: () => "fs-test",
+      resolvedWorkspaces: () => [],
+      statelessSandbox: () => undefined,
+      statelessPermissionMode: () => "ask",
       persistModelMessages: async () => { },
       loadRefreshedSystemPromptParts: async () => ({
         systemContextSnapshot: { cursor: null, messages: [] },
@@ -1257,6 +1299,9 @@ describe("runAgentLoop", () => {
       conversationKey: "direct:conversation",
       eventId: "direct-event",
       filesystemNamespace: () => "fs-test",
+      resolvedWorkspaces: () => [],
+      statelessSandbox: () => undefined,
+      statelessPermissionMode: () => "ask",
       persistModelMessages: async () => { },
       loadRefreshedSystemPromptParts: async () => ({
         systemContextSnapshot: { cursor: null, messages: [] },
@@ -1296,6 +1341,9 @@ describe("runAgentLoop", () => {
       conversationKey: "direct:conversation",
       eventId: "direct-event",
       filesystemNamespace: () => "fs-test",
+      resolvedWorkspaces: () => [],
+      statelessSandbox: () => undefined,
+      statelessPermissionMode: () => "ask",
       persistModelMessages: async () => { },
       loadRefreshedSystemPromptParts: async () => ({
         systemContextSnapshot: { cursor: null, messages: [] },

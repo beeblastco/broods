@@ -1,34 +1,34 @@
 /**
- * Workspace sandbox provider selection.
+ * Sandbox provider selection.
  * Keep executor construction here; provider implementations live beside it.
  */
 
-import { LambdaWorkspaceSandboxExecutor } from "./lambda-executor.ts";
-import { E2BWorkspaceSandboxExecutor } from "./e2b-executor.ts";
-import { DaytonaWorkspaceSandboxExecutor } from "./daytona-executor.ts";
-import { KubernetesWorkspaceSandboxExecutor } from "./kubernetes-executor.ts";
+import { LambdaSandboxExecutor } from "./lambda-executor.ts";
+import { E2BSandboxExecutor } from "./e2b-executor.ts";
+import { DaytonaSandboxExecutor } from "./daytona-executor.ts";
+import { KubernetesSandboxExecutor } from "./kubernetes-executor.ts";
 import type {
-  WorkspaceSandboxConfig,
-  WorkspaceSandboxExecutor,
-  WorkspaceSandboxProvider,
+  SandboxExecutor,
+  SandboxExecutorConfig,
+  SandboxProvider,
 } from "./types.ts";
 
-export const WORKSPACE_SANDBOX_PROVIDERS = ["lambda", "e2b", "daytona", "kubernetes"] as const satisfies readonly WorkspaceSandboxProvider[];
+export const SANDBOX_PROVIDERS = ["lambda", "e2b", "daytona", "kubernetes"] as const satisfies readonly SandboxProvider[];
 
-export function createWorkspaceSandboxExecutor(config: WorkspaceSandboxConfig): WorkspaceSandboxExecutor {
+export function createSandboxExecutor(config: SandboxExecutorConfig): SandboxExecutor {
   const provider = config.provider ?? "lambda";
   if (provider === "lambda") {
-    return new LambdaWorkspaceSandboxExecutor(config);
+    return new LambdaSandboxExecutor(config);
   }
   if (provider === "e2b") {
-    return new E2BWorkspaceSandboxExecutor(config);
+    return new E2BSandboxExecutor(config);
   }
   if (provider === "daytona") {
-    return new DaytonaWorkspaceSandboxExecutor(config);
+    return new DaytonaSandboxExecutor(config);
   }
   if (provider === "kubernetes") {
-    return new KubernetesWorkspaceSandboxExecutor(config);
+    return new KubernetesSandboxExecutor(config);
   }
 
-  throw new Error(`config.workspace.sandbox.provider ${provider} is not supported`);
+  throw new Error(`sandbox provider ${provider} is not supported`);
 }

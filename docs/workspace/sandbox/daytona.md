@@ -1,34 +1,32 @@
 # Daytona
 
-Uses a [Daytona](https://daytona.io/docs) volume or external storage mount at `options.workspaceRoot`.
+Uses a [Daytona](https://daytona.io/docs) sandbox with an S3 workspace mount at
+`options.workspaceRoot/<namespace>`.
 
 ## Configuration
 
 ```json
 {
+  "name": "daytona",
   "config": {
-    "workspace": {
-      "storage": {
-        "provider": "s3"
-      },
-      "sandbox": {
-        "provider": "daytona",
-        "options": {
-          "apiKey": "...",
-          "organizationId": "...",
-          "apiUrl": "https://app.daytona.io/api",
-          "target": "default",
-          "snapshot": "fuse-s3",
-          "workspaceRoot": "/mnt/workspaces",
-          "mountAwsS3Buckets": true
-        }
-      }
+    "provider": "daytona",
+    "permissionMode": "ask",
+    "options": {
+      "apiKey": "...",
+      "organizationId": "...",
+      "apiUrl": "https://app.daytona.io/api",
+      "target": "default",
+      "snapshot": "fuse-s3",
+      "workspaceRoot": "/mnt/workspaces",
+      "mountAwsS3Buckets": true
     }
   }
 }
 ```
 
-`apiKey`, `organizationId`, `apiUrl`, and `target` can be omitted when `DAYTONA_API_KEY`, `DAYTONA_ORGANIZATION_ID`, `DAYTONA_API_URL`, and `DAYTONA_TARGET` are set.
+Reference the resulting `sandboxId` from `config.sandbox` or `config.workspaces[].sandbox`.
+`apiKey`, `organizationId`, `apiUrl`, and `target` can be omitted when
+`DAYTONA_API_KEY`, `DAYTONA_ORGANIZATION_ID`, `DAYTONA_API_URL`, and `DAYTONA_TARGET` are set.
 
 Use `snapshot` for Daytona snapshots. Use `image` only when creating the sandbox from a Docker/OCI image. For the current AWS-backed workspace, build the reusable `mount-s3` snapshot first:
 
@@ -40,7 +38,9 @@ bun run daytona:s3-snapshot
 
 ## Requirements
 
-Use an image or target with Node and Python installed, and mount the S3 workspace bucket at `options.workspaceRoot`.
+Use an image or target with Node and Python installed. For persistent workspace tools,
+set `options.mountAwsS3Buckets: true`; the executor mounts the selected
+`sandbox/<namespace>/` prefix at `options.workspaceRoot/<namespace>`.
 
 ## Execution Notes
 
@@ -52,19 +52,20 @@ TypeScript (`.ts`) files are not transpiled; use compiled JavaScript instead. `p
 
 See Daytona's [Amazon S3 mount docs](https://www.daytona.io/docs/en/mount-external-storage/#mount-an-amazon-s3-bucket) for the underlying `mount-s3` setup.
 
-Set `options.mountAwsS3Buckets` to `true` to mount the current `FILESYSTEM_BUCKET_NAME` bucket at `options.workspaceRoot` and `SKILLS_BUCKET_NAME` at `/mnt/skills`. This is required for the Daytona provider to see the same files as the Lambda bash tool.
+Set `options.mountAwsS3Buckets` to `true` to mount the current `FILESYSTEM_BUCKET_NAME`
+bucket at `options.workspaceRoot/<namespace>`. This is required for the Daytona provider
+to see the same files as the Lambda bash tool.
 
 The snapshot must include `mount-s3`; use `bun run daytona:s3-snapshot` to build it from `daytonaio/sandbox:0.8.0`.
 
-The executor passes `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, optional `AWS_SESSION_TOKEN`, and region into the Daytona sandbox from the harness runtime or `sandbox.envVars`.
+The executor passes AWS credentials and region into the Daytona sandbox for `mount-s3`.
+Treat Daytona sandboxes as trusted account-controlled compute when this option is enabled.
 
 Override defaults with:
 
 ```json
 {
   "workspaceBucketName": "my-workspace-bucket",
-  "skillsBucketName": "my-skills-bucket",
-  "skillsMountPath": "/mnt/skills",
   "awsRegion": "eu-central-1"
 }
 ```

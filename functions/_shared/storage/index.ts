@@ -86,11 +86,15 @@ export {
 } from "./accounts.ts";
 export {
   decodeStoredAgentConfig,
+  decodeStoredConfigObject,
   encryptAgentConfig,
+  encryptConfigObject,
   mergeAgentConfig,
+  mergeConfigObjects,
   normalizeAgentConfig,
   normalizeAgentConfigPatch,
   redactAgentConfig,
+  redactConfigSecrets,
   toChannelRuntimeAgentConfig,
   toRuntimeAgentConfig,
   type AgentConfig,
@@ -116,9 +120,27 @@ export {
   type AgentToolConfig,
   type AgentToolsConfig,
   type AgentWebhookHookConfig,
-  type AgentWorkspaceConfig,
-  type AgentWorkspaceDefinitionConfig,
-  type AgentWorkspaceHarnessConfig,
-  type AgentWorkspaceSandboxConfig,
+  type AgentWorkspaceRef,
   type AccountModelProviderName,
 } from "./agent-config.ts";
+export {
+  normalizeCreateSandboxConfigInput,
+  normalizeUpdateSandboxConfigInput,
+  toPublicSandboxConfig,
+  type SandboxConfig,
+  type SandboxConfigRecord,
+  type SandboxPermissionMode,
+  type SandboxProvider,
+  type SandboxRuntimeName,
+  type CreateSandboxConfigInput,
+  type UpdateSandboxConfigInput,
+} from "./sandbox-config.ts";
+export {
+  normalizeCreateWorkspaceConfigInput,
+  normalizeUpdateWorkspaceConfigInput,
+  toPublicWorkspaceConfig,
+  type WorkspaceConfig,
+  type WorkspaceConfigRecord,
+  type CreateWorkspaceConfigInput,
+  type UpdateWorkspaceConfigInput,
+} from "./workspace-config.ts";

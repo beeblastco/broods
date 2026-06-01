@@ -1,13 +1,38 @@
 /**
- * Example multi-workspace streaming invocation.
+ * Example: one agent with two named S3-backed workspaces.
  */
 
-import { createAccount, createAgent, deleteAccount, requireEnv, streamSSE } from "./utils.ts";
+import {
+  createAccount,
+  createAgent,
+  createSandbox,
+  createWorkspace,
+  deleteAccount,
+  requireEnv,
+  streamSSE,
+} from "./utils.ts";
 
 const googleApiKey = requireEnv("ACCOUNT_GOOGLE_API_KEY");
 const username = `workspaces-${Date.now()}`;
 
 const account = await createAccount(username);
+
+const sandbox = await createSandbox(account.secret, "lambda-sandbox", {
+  provider: "lambda",
+  permissionMode: "bypass",
+  timeout: 30,
+  outputLimitBytes: 65536,
+  internet: false,
+});
+
+const personal = await createWorkspace(account.secret, "personal", {
+  storage: { provider: "s3" },
+}, "Agent notes workspace");
+
+const team = await createWorkspace(account.secret, "team", {
+  storage: { provider: "s3" },
+}, "Shared team workspace");
+
 const agent = await createAgent(account.secret, "Multi-workspace assistant", {
   provider: {
     google: {
@@ -23,46 +48,29 @@ const agent = await createAgent(account.secret, "Multi-workspace assistant", {
     system: [
       "You are testing named workspaces.",
       "Use the bash tool for every filesystem check.",
-      "Use the default personal workspace for private per-conversation files.",
+      "Use the default personal workspace for notes.",
       "Use the team workspace when the user asks for shared team files.",
       "Report any bash tool error exactly.",
     ].join("\n"),
   },
-  workspace: {
-    enabled: true,
-    needsApproval: false,
-    defaultWorkspace: "personal",
-    workspaces: {
-      personal: {
-        description: "Private per-conversation files and MEMORY.md",
-      },
-      team: {
-        namespace: "shared-demo-team",
-        description: "Shared team files and MEMORY.md across conversations",
-      },
-    },
-    storage: {
-      provider: "s3",
-    },
-    sandbox: {
-      provider: "lambda",
-      timeout: 30,
-      outputLimitBytes: 65536,
-      options: {
-        networkAccess: "disabled",
-      },
-    },
-  },
+  sandbox: sandbox.sandboxId,
+  workspaces: [
+    { name: "personal", workspaceId: personal.workspaceId },
+    { name: "team", workspaceId: team.workspaceId },
+  ],
 });
 
 console.log("Created test account:", JSON.stringify(account));
+console.log("Created sandbox:", JSON.stringify(sandbox));
+console.log("Created personal workspace:", JSON.stringify(personal));
+console.log("Created team workspace:", JSON.stringify(team));
 console.log("Created test agent:", JSON.stringify(agent));
 
 try {
   const firstConversation = `workspace-personal-${Date.now()}`;
   const secondConversation = `workspace-team-${Date.now()}`;
 
-  await runAndCheck("create personal and team files", {
+  await runAndCheck("create files in two named workspaces", {
     agentId: agent.agentId,
     eventId: `workspaces-create-${Date.now()}`,
     conversationKey: firstConversation,
@@ -80,7 +88,7 @@ try {
     }],
   });
 
-  await runAndCheck("verify isolation and shared team state", {
+  await runAndCheck("verify both workspaces persist by workspaceId", {
     agentId: agent.agentId,
     eventId: `workspaces-verify-${Date.now()}`,
     conversationKey: secondConversation,
@@ -90,9 +98,9 @@ try {
         type: "text",
         text: [
           "Run these exact workspace checks from this new conversation.",
-          "1. In the default personal workspace, test whether personal.txt exists.",
+          "1. In the default personal workspace, read personal.txt.",
           "2. In the team workspace, read team.txt.",
-          "3. Report that personal.txt is absent in this conversation and team.txt contains team-shared.",
+          "3. Report that personal.txt contains personal-alpha and team.txt contains team-shared.",
         ].join("\n"),
       }],
     }],

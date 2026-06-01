@@ -105,6 +105,9 @@ export function createScriptAgentConfig(): AgentConfig {
   const modelId = optionalScriptEnv("ACCOUNT_MODEL_ID") ?? DEFAULT_ACCOUNT_MODEL_ID;
   const knowledgeCutoff = optionalScriptEnv("ACCOUNT_MODEL_KNOWLEDGE_CUTOFF") ?? DEFAULT_ACCOUNT_KNOWLEDGE_CUTOFF;
   const modelOptions = optionalJsonRecord("ACCOUNT_MODEL_OPTIONS_JSON");
+  const sandboxId = optionalScriptEnv("ACCOUNT_SANDBOX_ID");
+  const workspaceId = optionalScriptEnv("ACCOUNT_WORKSPACE_ID");
+  const workspaceName = optionalScriptEnv("ACCOUNT_WORKSPACE_NAME") ?? "default";
 
   return {
     model: {
@@ -118,9 +121,8 @@ export function createScriptAgentConfig(): AgentConfig {
     provider: {
       [provider]: accountProviderConfig(provider),
     },
-    workspace: {
-      enabled: true,
-    },
+    ...(sandboxId ? { sandbox: sandboxId } : {}),
+    ...(workspaceId ? { workspaces: [{ name: workspaceName, workspaceId }] } : {}),
     tools: accountToolsConfig(provider),
   };
 }

@@ -348,7 +348,12 @@ bun examples/tool-approval.ts # Tool approval flow
 bun examples/subagent.ts      # Subagent dispatch
 bun examples/skills.ts        # Skill CRUD
 bun examples/skill-loads.ts   # Skill loading during a streamed turn
-bun examples/skill-edit.ts    # Edit + publish a skill, then run it from a fresh agent
+bun examples/sandbox-workspace-lambda.ts      # Lambda sandbox + workspace smoke test
+bun examples/multiple-workspace.ts            # One agent, two named workspaces
+bun examples/readonly-workspace.ts            # Shared workspace with read-only (no-sandbox) agent
+bun examples/sandbox-stateless.ts             # Sandbox with no workspace (bash-only, stateless)
+bun examples/workspace-sandbox-override.ts    # Per-workspace sandbox override (inherit / pin / read-only)
+bun examples/sandbox-e2b.ts                   # E2B provider (stateless bash)
 ```
 
 Each script creates a temporary account, runs the test, and cleans up.
@@ -363,7 +368,7 @@ Key config sections:
 - `model` — `streamText` parameters: model ID, temperature, structured output, provider options
 - `agent` — max turns and system prompt
 - `tools` — external tools like Tavily and Google Search
-- `workspace` — workspace files, default workspace prompt, and sandboxed `bash`
+- `sandbox` / `workspaces` — references to account-scoped sandbox and workspace records
 - `skills` — account-scoped skill bundles
 - `subagent` — parallel subagent dispatch
 - `channels` — Telegram, Discord, Slack, GitHub, Pancake

@@ -29,48 +29,108 @@ describe("createTools", () => {
     expect(tavilyExtractMock).not.toHaveBeenCalled();
   });
 
-  it("includes only enabled configured tools", async () => {
+  it("includes the sandbox bash tool plus enabled configured tools", async () => {
     const { createTools } = await import("../functions/harness-processing/tools/index.ts");
 
-    const tools = createTools(createToolContext(), {
-      workspace: {
-        enabled: true,
-        needsApproval: true,
-      },
+    const tools = createTools(sandboxContext(), {
       tools: {
         tavilyExtract: { needsApproval: true },
       },
     });
 
     expect(Object.keys(tools).sort()).toEqual(["bash", "tavilyExtract"]);
-    expect(tools.bash?.needsApproval).toBe(true);
+    expect(await needsApproval(tools.bash)).toBe(true); // bash asks in `ask` mode
     expect(tools.tavilyExtract?.needsApproval).toBe(true);
     expect(tavilySearchMock).not.toHaveBeenCalled();
     expect(tavilyExtractMock).toHaveBeenCalledTimes(1);
   });
 
-  it("always exposes only bash when workspace is enabled", async () => {
+  it("exposes only bash when a sandbox has no workspace (stateless)", async () => {
     const { createTools } = await import("../functions/harness-processing/tools/index.ts");
 
-    const tools = createTools(createToolContext(), {
-      workspace: {
-        enabled: true,
-        needsApproval: true,
-      },
-    });
+    const tools = createTools(sandboxContext(), {});
 
     expect(Object.keys(tools).sort()).toEqual(["bash"]);
-    expect(tools.bash?.needsApproval).toBe(true);
+    expect(await needsApproval(tools.bash)).toBe(true);
   });
 
-  it("does not expose workspace tools when workspace is disabled", async () => {
+  it("exposes the full file tool set when a workspace is attached", async () => {
     const { createTools } = await import("../functions/harness-processing/tools/index.ts");
 
-    expect(createTools(createToolContext(), {
-      workspace: {
-        enabled: false,
-      },
-    })).toEqual({});
+    const tools = createTools(sandboxContext([
+      { name: "notes", workspaceId: "ws_a", namespace: "fs-a" },
+    ], "bypass"), {});
+
+    expect(Object.keys(tools).sort()).toEqual(["bash", "edit", "glob", "grep", "read", "write"]);
+    // bypass mode auto-approves everything.
+    for (const name of Object.keys(tools)) {
+      expect(await needsApproval(tools[name])).toBe(false);
+    }
+  });
+
+  it("asks before write/edit/bash in `ask` mode but never for read/glob/grep", async () => {
+    const { createTools } = await import("../functions/harness-processing/tools/index.ts");
+
+    const tools = createTools(sandboxContext([
+      { name: "notes", workspaceId: "ws_a", namespace: "fs-a" },
+    ], "ask"), {});
+
+    expect(await needsApproval(tools.write)).toBe(true);
+    expect(await needsApproval(tools.edit)).toBe(true);
+    expect(await needsApproval(tools.bash)).toBe(true);
+    expect(await needsApproval(tools.read)).toBe(false);
+    expect(await needsApproval(tools.glob)).toBe(false);
+    expect(await needsApproval(tools.grep)).toBe(false);
+  });
+
+  it("exposes only read/glob for a read-only workspace (no sandbox)", async () => {
+    const { createTools } = await import("../functions/harness-processing/tools/index.ts");
+
+    const tools = createTools({
+      conversationKey: "conversation",
+      workspaces: [
+        { name: "ro", workspaceId: "ws_ro", namespace: "fs-ro", config: { storage: { provider: "s3" } } },
+      ],
+      modelProviderName: "google",
+      modelProvider: { tools: {} },
+    } as never, {});
+
+    expect(Object.keys(tools).sort()).toEqual(["glob", "read"]);
+    expect(await needsApproval(tools.read)).toBe(false);
+    expect(await needsApproval(tools.glob)).toBe(false);
+  });
+
+  it("mixes a read-only and a sandbox-backed workspace", async () => {
+    const { createTools } = await import("../functions/harness-processing/tools/index.ts");
+
+    const tools = createTools({
+      conversationKey: "conversation",
+      workspaces: [
+        { name: "ro", workspaceId: "ws_ro", namespace: "fs-ro", config: { storage: { provider: "s3" } } },
+        { name: "rw", workspaceId: "ws_rw", namespace: "fs-rw", config: { storage: { provider: "s3" } }, sandbox: { provider: "lambda", permissionMode: "bypass" } },
+      ],
+      modelProviderName: "google",
+      modelProvider: { tools: {} },
+    } as never, {});
+
+    // bash/write/edit/grep exist for the sandbox-backed workspace; read/glob span both.
+    expect(Object.keys(tools).sort()).toEqual(["bash", "edit", "glob", "grep", "read", "write"]);
+    // write preserves the real default workspace; because it is read-only, omitting
+    // workspace asks first and execution returns a read-only error instead of
+    // silently selecting the later writable workspace.
+    expect(await needsApproval(tools.write)).toBe(true);
+    expect(await (tools.write as unknown as { execute(i: unknown): Promise<unknown> }).execute({
+      file_path: "a.txt",
+      content: "x",
+      workspace: "ro",
+    })).toEqual({ type: "error-text", value: "Error: workspace is read-only" });
+    expect(await needsApproval(tools.write, { workspace: "rw" })).toBe(false);
+  });
+
+  it("exposes no sandbox tools when no sandbox is referenced", async () => {
+    const { createTools } = await import("../functions/harness-processing/tools/index.ts");
+
+    expect(createTools(createToolContext(), {})).toEqual({});
   });
 
   it("exposes run_subagent only when subagents are enabled with a dispatcher", async () => {
@@ -340,7 +400,7 @@ function createToolContext(
 ) {
   return {
     conversationKey: "conversation",
-    filesystemNamespace: "filesystem",
+    permissionMode: "ask",
     modelProviderName,
     modelProvider: {
       tools: {
@@ -350,4 +410,33 @@ function createToolContext(
     ...(dispatchSubagents ? { dispatchSubagents } : {}),
     ...(dispatchAsyncTools ? { dispatchAsyncTools } : {}),
   } as never;
+}
+
+function sandboxContext(
+  workspaces: Array<{ name: string; workspaceId: string; namespace: string }> = [],
+  permissionMode = "ask",
+) {
+  return {
+    conversationKey: "conversation",
+    statelessSandbox: { provider: "lambda" },
+    statelessPermissionMode: permissionMode,
+    // Each workspace carries its own effective sandbox (its permissionMode lives on it).
+    workspaces: workspaces.map((workspace) => ({
+      ...workspace,
+      config: { storage: { provider: "s3" } },
+      sandbox: { provider: "lambda", permissionMode },
+    })),
+    modelProviderName: "google",
+    modelProvider: { tools: {} },
+  } as never;
+}
+
+// Sandbox tools set per-call function-form needsApproval; configured tools set a
+// boolean. Normalize both to a boolean for assertions.
+async function needsApproval(entry: unknown, input: Record<string, unknown> = {}): Promise<boolean> {
+  const value = (entry as { needsApproval?: unknown }).needsApproval;
+  if (typeof value === "function") {
+    return Boolean(await value(input, { toolCallId: "t", messages: [] }));
+  }
+  return value === true;
 }

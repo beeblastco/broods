@@ -12,7 +12,6 @@ import {
   isAccountModelProviderName,
   type AccountModelProviderName,
 } from "../providers.ts";
-import { workspaceSandboxLimits } from "../sandbox.ts";
 export type { AccountModelProviderName } from "../providers.ts";
 
 const CONFIG_ENCRYPTION_ALGORITHM = "aes-256-gcm";
@@ -37,7 +36,11 @@ export interface AgentConfig {
   agent?: AgentBehaviorConfig;
   model?: AgentModelConfig;
   provider?: AgentProviderConfig;
-  workspace?: AgentWorkspaceConfig;
+  // References to standalone, account-scoped sandbox / workspace records. The
+  // concrete configs live in their own tables (see sandbox-config.ts /
+  // workspace-config.ts) and are resolved by the handler before the agent loop.
+  sandbox?: string;
+  workspaces?: AgentWorkspaceRef[];
   session?: AgentSessionConfig;
   hooks?: AgentHooksConfig;
   channels?: AgentChannelsConfig;
@@ -101,43 +104,18 @@ export interface AgentProviderSettings {
   [key: string]: unknown;
 }
 
-export interface AgentWorkspaceConfig {
-  enabled?: boolean;
-  needsApproval?: boolean;
-  namespace?: string;
-  defaultWorkspace?: string;
-  workspaces?: Record<string, AgentWorkspaceDefinitionConfig>;
-  harness?: AgentWorkspaceHarnessConfig;
-  storage?: AgentWorkspaceStorageConfig;
-  sandbox?: AgentWorkspaceSandboxConfig;
-  [key: string]: unknown;
-}
-
-export interface AgentWorkspaceDefinitionConfig {
-  namespace?: string;
-  description?: string;
-  [key: string]: unknown;
-}
-
-export interface AgentWorkspaceHarnessConfig {
-  enabled?: boolean;
-  [key: string]: unknown;
-}
-
-export interface AgentWorkspaceStorageConfig {
-  provider?: "s3";
-  [key: string]: unknown;
-}
-
-export interface AgentWorkspaceSandboxConfig {
-  provider?: "lambda" | "e2b" | "daytona" | "kubernetes";
-  timeout?: number;
-  memoryLimit?: number;
-  outputLimitBytes?: number;
-  // Env vars injected into every sandbox runtime (shell, Node, Python).
-  envVars?: Record<string, string>;
-  options?: Record<string, unknown>;
-  [key: string]: unknown;
+export interface AgentWorkspaceRef {
+  // Agent-facing mount label — the `workspace` argument the model selects. Unique per agent.
+  name: string;
+  // Account-scoped workspaceConfig record id. Agents that reference the same
+  // workspaceId read and write the SAME files (shared workspace).
+  workspaceId: string;
+  // Optional per-workspace sandbox. A sandbox id overrides the agent-level
+  // `sandbox` for this workspace (and inherits its permissionMode). `null` forces
+  // this workspace read-only even when an agent-level default exists. Omitted =>
+  // inherit the agent-level `sandbox`; if there is none, the workspace is
+  // read-only (served directly from S3: read/glob only).
+  sandbox?: string | null;
 }
 
 export interface AgentSessionConfig {
@@ -262,7 +240,8 @@ export function toRuntimeAgentConfig(config: AgentConfig): AgentConfig {
     agent,
     model,
     provider,
-    workspace,
+    sandbox,
+    workspaces,
     session,
     hooks,
     tools,
@@ -274,7 +253,8 @@ export function toRuntimeAgentConfig(config: AgentConfig): AgentConfig {
     ...(agent !== undefined ? { agent } : {}),
     ...(model !== undefined ? { model } : {}),
     ...(provider !== undefined ? { provider } : {}),
-    ...(workspace !== undefined ? { workspace } : {}),
+    ...(sandbox !== undefined ? { sandbox } : {}),
+    ...(workspaces !== undefined ? { workspaces } : {}),
     ...(session !== undefined ? { session } : {}),
     ...(hooks !== undefined ? { hooks } : {}),
     ...(tools !== undefined ? { tools } : {}),
@@ -312,7 +292,8 @@ export function normalizeAgentConfig(value: unknown): AgentConfig {
   normalizeAgentBehaviorConfig(config.agent);
   normalizeModelConfig(config.model);
   normalizeProviderConfig(config.provider);
-  normalizeWorkspaceConfig(config.workspace);
+  normalizeSandboxRef(config.sandbox);
+  normalizeWorkspaceRefs(config.workspaces);
   normalizeSessionConfig(config.session);
   normalizeHooksConfig(config.hooks);
   normalizeChannelsConfig(config.channels);
@@ -463,140 +444,47 @@ function normalizeProviderSettings(providerName: AccountModelProviderName, value
   }
 }
 
-function normalizeWorkspaceConfig(value: unknown): void {
+// The concrete sandbox/workspace configs live in their own account-scoped tables;
+// the agent config only carries references. Validation of the referenced records
+// themselves lives in sandbox-config.ts / workspace-config.ts.
+function normalizeSandboxRef(value: unknown): void {
+  assertOptionalNonEmptyString(value, "config.sandbox");
+}
+
+function normalizeWorkspaceRefs(value: unknown): void {
   if (value == null) {
     return;
   }
-  if (!isPlainObject(value)) {
-    throw new Error("config.workspace must be an object");
+  if (!Array.isArray(value)) {
+    throw new Error("config.workspaces must be an array");
   }
 
-  const config = value as Record<string, unknown>;
-  assertOptionalBoolean(config.enabled, "config.workspace.enabled");
-  assertOptionalBoolean(config.needsApproval, "config.workspace.needsApproval");
-  assertOptionalNonEmptyString(config.namespace, "config.workspace.namespace");
-  assertOptionalNonEmptyString(config.defaultWorkspace, "config.workspace.defaultWorkspace");
-  normalizeWorkspaceDefinitionsConfig(config.workspaces, config.defaultWorkspace);
-  normalizeWorkspaceHarnessConfig(config.harness);
-  normalizeWorkspaceStorageConfig(config);
-  normalizeWorkspaceSandboxConfig(config.sandbox);
-}
-
-function normalizeWorkspaceDefinitionsConfig(value: unknown, defaultWorkspace: unknown): void {
-  if (value == null) {
-    if (defaultWorkspace !== undefined) {
-      throw new Error("config.workspace.defaultWorkspace requires config.workspace.workspaces");
+  const seenNames = new Set<string>();
+  value.forEach((entry, index) => {
+    if (!isPlainObject(entry)) {
+      throw new Error(`config.workspaces[${index}] must be an object`);
     }
-    return;
-  }
-  if (!isPlainObject(value)) {
-    throw new Error("config.workspace.workspaces must be an object");
-  }
-
-  const workspaces = value as Record<string, unknown>;
-  const workspaceIds = Object.keys(workspaces);
-  if (workspaceIds.length === 0) {
-    throw new Error("config.workspace.workspaces must include at least one workspace");
-  }
-
-  for (const [workspaceId, workspaceConfig] of Object.entries(workspaces)) {
-    assertWorkspaceId(workspaceId, `config.workspace.workspaces.${workspaceId}`);
-    if (!isPlainObject(workspaceConfig)) {
-      throw new Error(`config.workspace.workspaces.${workspaceId} must be an object`);
+    const ref = entry as Record<string, unknown>;
+    const name = ref.name;
+    if (typeof name !== "string" || name.trim().length === 0) {
+      throw new Error(`config.workspaces[${index}].name must be a non-empty string`);
     }
-    const config = workspaceConfig as Record<string, unknown>;
-    assertOptionalNonEmptyString(config.namespace, `config.workspace.workspaces.${workspaceId}.namespace`);
-    assertOptionalString(config.description, `config.workspace.workspaces.${workspaceId}.description`);
-  }
-
-  if (typeof defaultWorkspace === "string" && !Object.prototype.hasOwnProperty.call(workspaces, defaultWorkspace)) {
-    throw new Error("config.workspace.defaultWorkspace must reference a configured workspace");
-  }
-}
-
-function normalizeWorkspaceHarnessConfig(value: unknown): void {
-  if (value == null) {
-    return;
-  }
-  if (!isPlainObject(value)) {
-    throw new Error("config.workspace.harness must be an object");
-  }
-
-  const config = value as Record<string, unknown>;
-  assertOptionalBoolean(config.enabled, "config.workspace.harness.enabled");
-}
-
-function normalizeWorkspaceStorageConfig(workspace: Record<string, unknown>): void {
-  if (workspace.storage == null) {
-    workspace.storage = { provider: "s3" };
-    return;
-  }
-  if (!isPlainObject(workspace.storage)) {
-    throw new Error("config.workspace.storage must be an object");
-  }
-
-  const config = workspace.storage as Record<string, unknown>;
-  assertOptionalEnum(config.provider, "config.workspace.storage.provider", ["s3"]);
-  if (config.provider === undefined) {
-    config.provider = "s3";
-  }
-}
-
-function normalizeWorkspaceSandboxConfig(value: unknown): void {
-  if (value == null) {
-    return;
-  }
-  if (!isPlainObject(value)) {
-    throw new Error("config.workspace.sandbox must be an object");
-  }
-
-  const config = value as Record<string, unknown>;
-  assertOptionalEnum(config.provider, "config.workspace.sandbox.provider", ["lambda", "e2b", "daytona", "kubernetes"]);
-  assertOptionalPositiveInteger(
-    config.timeout,
-    "config.workspace.sandbox.timeout",
-    workspaceSandboxLimits().maxTimeoutSeconds,
-  );
-  assertOptionalPositiveInteger(
-    config.memoryLimit,
-    "config.workspace.sandbox.memoryLimit",
-    workspaceSandboxLimits().maxMemoryLimitMb,
-  );
-  assertOptionalPositiveInteger(
-    config.outputLimitBytes,
-    "config.workspace.sandbox.outputLimitBytes",
-    workspaceSandboxLimits().maxOutputLimitBytes,
-  );
-  // Env vars injected into every sandbox runtime (shell, Node, Python). Reserved
-  // runtime vars (PATH/HOME/TMPDIR/...) always win and the host process.env is never
-  // inherited — see the sandbox handlers and docs/workspace/sandbox/lambda.md.
-  if (config.envVars !== undefined && !isStringRecord(config.envVars)) {
-    throw new Error("config.workspace.sandbox.envVars must be an object with string values");
-  }
-  if (config.options !== undefined && !isPlainObject(config.options)) {
-    throw new Error("config.workspace.sandbox.options must be an object");
-  }
-
-  const options = isPlainObject(config.options) ? config.options : {};
-  assertOptionalString(options.bashFunctionName, "config.workspace.sandbox.options.bashFunctionName");
-  assertOptionalString(options.pythonFunctionName, "config.workspace.sandbox.options.pythonFunctionName");
-  assertOptionalEnum(options.networkAccess, "config.workspace.sandbox.options.networkAccess", ["disabled", "public"]);
-  assertOptionalString(options.apiKey, "config.workspace.sandbox.options.apiKey");
-  assertOptionalString(options.organizationId, "config.workspace.sandbox.options.organizationId");
-  assertOptionalString(options.template, "config.workspace.sandbox.options.template");
-  assertOptionalString(options.templateId, "config.workspace.sandbox.options.templateId");
-  assertOptionalString(options.apiUrl, "config.workspace.sandbox.options.apiUrl");
-  assertOptionalString(options.target, "config.workspace.sandbox.options.target");
-  assertOptionalString(options.snapshot, "config.workspace.sandbox.options.snapshot");
-  assertOptionalString(options.image, "config.workspace.sandbox.options.image");
-  assertOptionalString(options.workspaceRoot, "config.workspace.sandbox.options.workspaceRoot");
-  assertOptionalBoolean(options.mountAwsS3Buckets, "config.workspace.sandbox.options.mountAwsS3Buckets");
-  assertOptionalString(options.workspaceBucketName, "config.workspace.sandbox.options.workspaceBucketName");
-  assertOptionalString(options.skillsBucketName, "config.workspace.sandbox.options.skillsBucketName");
-  assertOptionalString(options.skillsMountPath, "config.workspace.sandbox.options.skillsMountPath");
-  assertOptionalString(options.awsRegion, "config.workspace.sandbox.options.awsRegion");
-  assertOptionalBoolean(options.networkBlockAll, "config.workspace.sandbox.options.networkBlockAll");
-  assertOptionalString(options.networkAllowList, "config.workspace.sandbox.options.networkAllowList");
+    assertWorkspaceId(name, `config.workspaces[${index}].name`);
+    assertOptionalNonEmptyString(ref.workspaceId, `config.workspaces[${index}].workspaceId`);
+    if (typeof ref.workspaceId !== "string" || ref.workspaceId.trim().length === 0) {
+      throw new Error(`config.workspaces[${index}].workspaceId must be a non-empty string`);
+    }
+    // `null` is allowed: it forces this workspace read-only even when config.sandbox is set.
+    if (ref.sandbox !== null && ref.sandbox !== undefined) {
+      if (typeof ref.sandbox !== "string" || ref.sandbox.trim().length === 0) {
+        throw new Error(`config.workspaces[${index}].sandbox must be a non-empty string or null`);
+      }
+    }
+    if (seenNames.has(name)) {
+      throw new Error(`config.workspaces[${index}].name "${name}" is used more than once`);
+    }
+    seenNames.add(name);
+  });
 }
 
 function normalizeSessionConfig(value: unknown): void {
@@ -1088,14 +976,17 @@ function assertOptionalNumberArray(value: unknown, name: string): void {
 }
 
 export function decodeStoredAgentConfig(value: unknown): AgentConfig {
-    if (isEncryptedAgentConfig(value)) {
-        return decryptAgentConfig(value);
-    }
-
-    throw new Error("Stored agent config must be encrypted");
+    return decodeStoredConfigObject(value) as AgentConfig;
 }
 
 export function encryptAgentConfig(config: AgentConfig): EncryptedAgentConfig {
+    return encryptConfigObject(config);
+}
+
+// Generic config encryption (aes-256-gcm) reused by the sandbox-config store so
+// account-scoped sandbox configs (which carry envVars secrets) are also encrypted
+// at rest. Workspace configs hold no secrets and are stored in plaintext.
+export function encryptConfigObject(config: object): EncryptedAgentConfig {
     const iv = randomBytes(12);
     const cipher = createCipheriv(CONFIG_ENCRYPTION_ALGORITHM, agentConfigEncryptionKey(), iv);
     const plaintext = JSON.stringify(config);
@@ -1113,7 +1004,15 @@ export function encryptAgentConfig(config: AgentConfig): EncryptedAgentConfig {
     };
 }
 
-function decryptAgentConfig(config: EncryptedAgentConfig): AgentConfig {
+export function decodeStoredConfigObject(value: unknown): Record<string, unknown> {
+    if (isEncryptedAgentConfig(value)) {
+        return decryptConfigObject(value);
+    }
+
+    throw new Error("Stored config must be encrypted");
+}
+
+function decryptConfigObject(config: EncryptedAgentConfig): Record<string, unknown> {
     const decipher = createDecipheriv(
         CONFIG_ENCRYPTION_ALGORITHM,
         agentConfigEncryptionKey(),
@@ -1127,10 +1026,10 @@ function decryptAgentConfig(config: EncryptedAgentConfig): AgentConfig {
 
     const parsed = JSON.parse(plaintext) as unknown;
     if (!isPlainObject(parsed)) {
-        throw new Error("Stored agent config must be an object");
+        throw new Error("Stored config must be an object");
     }
 
-    return parsed as AgentConfig;
+    return parsed;
 }
 
 function agentConfigEncryptionKey(): Buffer {
@@ -1190,6 +1089,18 @@ export function redactAgentConfig(config: AgentConfig): AgentConfig {
   return redactSecrets(config) as AgentConfig;
 }
 
+// Generic deep-merge + secret redaction reused by the sandbox/workspace config
+// stores so they share the agent config's patch semantics (null deletes a key,
+// the REDACTED sentinel preserves the existing secret).
+export function mergeConfigObjects(existing: object, patch: object): Record<string, unknown> {
+  const merged = mergeConfigValue(existing, patch);
+  return isPlainObject(merged) ? merged : {};
+}
+
+export function redactConfigSecrets<T>(value: T): T {
+  return redactSecrets(value) as T;
+}
+
 function redactSecrets(value: unknown): unknown {
   if (Array.isArray(value)) {
     return value.map(redactSecrets);
@@ -1212,6 +1123,12 @@ function isSecretConfigKey(key: string): boolean {
   return normalized.includes("secret") ||
     normalized.includes("token") ||
     normalized.includes("privatekey") ||
+    normalized.includes("private_key") ||
+    normalized.includes("credential") ||
+    normalized.includes("kubeconfig") ||
+    normalized.includes("certificate") ||
+    normalized.includes("accesskey") ||
+    normalized.includes("access_key") ||
     normalized === "apikey" ||
     normalized === "api_key";
 }

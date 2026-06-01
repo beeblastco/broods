@@ -1,70 +1,68 @@
 # Lambda
 
-The default sandbox provider. SST deploys private runtime Lambdas and one AWS S3 Files filesystem backed by the workspace S3 bucket.
+The default sandbox provider. It runs a **single uniform container image** with real
+`bash`, native `python3`, Node 22, and `uv` all on PATH — there is no emulated shell, no
+WASM Python, and no separate Python function. SST deploys the image as four Lambda
+functions plus one AWS S3 Files filesystem backed by the workspace S3 bucket.
 
-## Runtime Functions
+## 4-function topology
 
-| Function | Runtime | Executes |
+The same image is deployed across two axes; the harness auto-selects one per run:
+
+| | internet **on** | internet **off** |
 | --- | --- | --- |
-| `SandboxBash` | `nodejs22.x` | Bash-like shell scripts through [`just bash`](https://github.com/vercel-labs/just-bash), plus native `.js` and `.ts` files |
-| `SandboxPython` | `python3.12` | `.py` files |
+| **workspace mounted** | `SandboxMountNet` (VPC + NAT + S3 mount) | `SandboxMountNoNet` (VPC, S3 mount) |
+| **no workspace** | `SandboxNoMountNet` (no VPC, fastest) | `SandboxNoMountNoNet` (VPC, no mount) |
 
-`SandboxBash` runs files with `process.execPath` (real Node) and `SandboxPython` with `sys.executable`, so execution does not depend on `node` or `python3` being present on the sanitized `PATH`. Node files run inside `SandboxBash` — there is no separate Node Lambda. The Lambda functions are configured with at least 512 MB memory because AWS S3 Files direct reads require that for Lambda.
+- The **mount axis** comes from whether the run has a workspace namespace.
+- The **internet axis** comes from `sandbox.internet`.
+- All four are ARM64, 512 MB (minimum for the S3 mount), 5-minute timeout, pulled from the
+  `latest-arm64` ECR image tag.
 
-## How it Works
+`harness-processing` invokes them by function name via four env vars
+(`SANDBOX_FN_{MOUNT,NOMOUNT}_{NET,NONET}`) and never via a public Function URL.
 
-The main `harness-processing` Lambda invokes sandbox functions with:
+## Image & ECR
 
-- `SANDBOX_BASH_FUNCTION_NAME`
-- `SANDBOX_PYTHON_FUNCTION_NAME`
+Lambda can only pull a **private** ECR image **in the function's own region** — public
+ECR and cross-region are rejected. So the repo is region-scoped and **owned by this app**
+(`sst.config.ts` creates `aws.ecr.Repository` `beeblast-lambda-sandbox-<account>-<region>`),
+not the infra repo. The `latest-arm64` image is built and pushed by the
+[`lambda-sandbox custom image`](https://github.com/beeblastco/lambda-sanbdox) CI.
 
-You can override those names per agent, and inject environment variables into every sandbox runtime:
+```text
+sst deploy ──creates──▶ ECR repo (per region)  ◀──pushes── lambda-sandbox CI
+                              │
+                         imageUri ▼
+                    4 sandbox Lambda functions
+```
 
-```json
+- **Multi-region:** every region you deploy to needs its own repo + pushed image. The CI
+  mirrors the image to each region in `ECR_REGIONS` and **skips (with a warning) any region
+  whose repo doesn't exist yet**.
+- **Bootstrap a region (two passes):** `sst deploy` creates the empty repo (sandbox
+  functions fail — no image yet) → CI pushes the image → re-deploy and the functions create.
+
+## Config
+
+```jsonc
+// POST /accounts/me/sandboxes
 {
+  "name": "default",
   "config": {
-    "workspace": {
-      "storage": {
-        "provider": "s3"
-      },
-      "sandbox": {
-        "envVars": {
-          "MY_API_BASE": "https://api.example.com"
-        },
-        "options": {
-          "bashFunctionName": "my-bash-sandbox",
-          "pythonFunctionName": "my-python-sandbox",
-          "workspaceRoot": "/mnt/workspaces",
-          "networkAccess": "disabled"
-        }
-      }
-    }
+    "provider": "lambda",
+    "internet": true,
+    "permissionMode": "ask",
+    "envVars": { "MY_API_BASE": "https://api.example.com" }
   }
 }
 ```
 
-The default Lambda provider is deployed by SST. Do not configure public Lambda Function URLs for sandbox functions; `harness-processing` invokes them by function ARN.
+Function names are service-managed. Account sandbox config cannot override them.
 
-## Environment Variables
+## Environment variables
 
-Add `config.workspace.sandbox.envVars` as a flat object of string key/value pairs. Each entry is injected into every sandbox runtime — shell, Node, and Python:
-
-```json
-{
-  "config": {
-    "workspace": {
-      "sandbox": {
-        "envVars": {
-          "MY_API_BASE": "https://api.example.com",
-          "FEATURE_FLAG": "on"
-        }
-      }
-    }
-  }
-}
-```
-
-The agent reads them like normal environment variables:
+`config.envVars` is a flat object of string key/value pairs injected into every run:
 
 | Runtime | How the value is read |
 | --- | --- |
@@ -74,52 +72,48 @@ The agent reads them like normal environment variables:
 
 Rules:
 
-- **Reserved runtime vars always win.** `PATH`, `HOME`, `TMPDIR`, `NODE_OPTIONS` (and Python's `PYTHONPATH`) cannot be overridden, even if you list them in `env`.
-- **The host Lambda's `process.env` is never inherited.** Only the keys you declare reach the sandbox — AWS credentials and other harness env vars stay out.
-- Values must be strings. Add secrets through `env` rather than hardcoding them in scripts.
+- **The child env is `env_clear()`ed first** — the host Lambda's `process.env` (including
+  AWS credentials) is never inherited. Only the keys you declare reach the run.
+- Reserved runtime vars (`PATH`, `HOME`, `TMPDIR`, ...) are set by the image and win.
+- Values must be strings. Sandbox config (and therefore `envVars`) is encrypted at rest.
 
-## Supported Runtimes
+## Runtimes
 
-| Runtime | Command | File extension |
-| --- | --- | --- |
-| Shell | bash-like scripts | `just-bash` [command set](https://github.com/vercel-labs/just-bash) |
-| Node | `node <file>` | `.js` |
-| TypeScript | `node <file>` | `.ts` — transpiled inside `SandboxBash` before execution |
-| Python | `python <file>` or `python3 <file>` (run standalone for native CPython) | `.py` |
+`bash`, `python3`, and `node` are all real binaries on PATH. The harness tools all compile
+to bash, so you can run programs directly:
 
-### Node execution fidelity
+```bash
+python3 script.py        # native CPython, full stdlib
+node app.js              # Node 22
+uv run tool.py           # uv is available
+```
 
-`node <file>` inside `SandboxBash` is **not** run on just-bash's built-in `js-exec` (QuickJS WASM, which only ships a curated subset of Node built-ins). just-bash's JS runtime is disabled (`javascript: false`); a registered `node` command spawns the real `process.execPath`, so files run on full Node 22. The remaining limits are operational, not language-fidelity:
+`config.runtimes` is a **best-effort** allow-list. The bash tool rejects obvious
+disallowed runtime invocations and surfaces the allowed list in its description; a
+general shell VM cannot make this a hard isolation boundary.
 
-- File-only: no `node -e` / REPL / stdin scripts; `.js` and `.ts` only.
-- No package manager on the sanitized `PATH` (no `npm`/`npx`/`yarn`): only Node built-in modules plus any `node_modules` already present in the workspace.
-- Minimal env: only `sandbox.envVars` plus the reserved runtime vars (`PATH`, `HOME=/tmp`, `TMPDIR`, `NODE_OPTIONS`) reach the process; the host Lambda's `process.env` is not inherited.
-- TypeScript is single-file transpile-only (transpiled to CommonJS, no type-check, no cross-file imports). `import`/`export` work out of the box; top-level `await` does not (wrap it in an async function).
+## Workspace mount
 
-### Python execution fidelity
+AWS S3 Files is mounted into the mounted functions at `/mnt/workspaces`, rooted at the
+`sandbox/` access-point prefix (load-bearing — keep in sync with `WORKSPACE_MOUNT_PREFIX`).
+A workspace run is rooted at `/mnt/workspaces/<namespace>`, where the namespace is derived
+from `accountId:workspaceId`. The no-mount functions run statelessly in `/tmp`.
 
-Run Python as a **standalone** command — `python3 <file>.py` or `python <file>.py`. The bash tool routes those to `SandboxPython` (native CPython 3.12, full stdlib, file artifacts persisted back to the workspace). This is the best-performance, full-fidelity path.
+Skill bundles are still staged into the workspace namespace at `/.claude/skills/<name>` by
+`load_skill` (S3 server-side copy), so the agent can read and run skill scripts without a
+second mount.
 
-When `python`/`python3` is invoked **inside a larger shell command** (e.g. a heredoc file-write and the run in the same call), it can't be routed out, so it falls to `SandboxBash`'s in-process `just-bash` Python — CPython-compiled-to-WASM (`python: true`). That keeps such scripts working instead of failing, but it is slower and more limited and may misbehave on complex scripts or native dependencies.
-
-That WASM runtime loads `vendor/cpython-emscripten/{python.wasm,python313.zip}` and a `worker.js` by paths relative to just-bash's own files, so it only resolves if the package layout is intact. `SandboxBash` therefore ships just-bash via `nodejs.install` (see `sst.config.ts`) rather than letting esbuild inline it — inlining drops the worker + WASM assets and crashes the whole shell call (`Runtime.NodeJsExit`). Prefer writing the `.py` file first, then running it on its own line so it routes to native `SandboxPython`.
-
-## Workspace Mount
-
-AWS S3 Files are mounted into the private runtime Lambdas at `/mnt/workspaces`. The S3 Files mount target allows NFS only from the sandbox VPC security group. `SandboxBash` roots `just-bash` at `/mnt/workspaces/<namespace>`, so shell redirects and file commands write through the mounted filesystem.
-
-Lambda exposes a single `fileSystemConfig` per function, so the deployed sandbox mounts only the workspace S3 Files filesystem. Skill scripts are still available: when `load_skill` runs for a workspace-enabled agent, `harness-processing` stages that skill bundle from the skills bucket into the workspace namespace at `/.skills/<skill-name>`. A stage manifest lets publishing-enabled agents preserve staged edits across repeated loads; publishing-disabled agents refresh from the source skill on later loads. Changed files use S3 server-side copy. This avoids a second Lambda mount and keeps sandbox execution on the existing workspace bucket.
-
-## File Artifacts
-
-For `SandboxBash`, file changes are written directly to the S3 Files mount. For Python runs, changed files created by the sandbox runtime are returned as file artifacts and persisted back into the workspace S3 bucket.
-
-## Dependencies
-
-Bundle packages into the runtime artifact or attach a Lambda layer.
+A workspace with **no** effective sandbox is never mounted at all: `read`/`glob` read the
+same `sandbox/<namespace>/` keys directly via the S3 API, skipping the VPC/mount/Lambda
+cold start entirely (cheaper and faster for read-only access).
 
 ## Security
 
-- Lambda sandbox functions have no public Function URLs.
-- Sandbox runtime Lambdas do not need account-management permissions.
-- `curl` is disabled by default. When `options.networkAccess` is `"public"`, `SandboxBash` enables `just-bash` network access with private and loopback ranges denied.
+- functions have no public Function URLs and need no account-management permissions
+- child processes run with no AWS credentials (`env_clear()`)
+- only the mounted functions can reach the workspace bucket (bucket policy principals)
+- internet access is gated by `sandbox.internet` selecting the on/off function
+- the Lambda mount is rooted at the shared `sandbox/` access-point prefix, so arbitrary
+  `bash` should be treated as privileged workspace compute rather than a hard
+  cross-workspace filesystem isolation boundary; dedicated file tools still reject path
+  traversal, but full isolation requires an image/infra-level chroot or per-namespace mount

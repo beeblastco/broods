@@ -1,52 +1,54 @@
 # Sandbox
 
-The Workspace sandbox lets an agent execute code that it has already written into the workspace filesystem. It extends the model-facing `bash` tool; there is no separate sandbox tool.
+The sandbox is a uniform Linux compute backend (real `bash` + `python3` + `node` on
+PATH). It backs the Claude-Code-style tool set (`bash`, `read`, `write`, `edit`, `glob`,
+`grep`). Every tool compiles down to a single `run` against the selected provider — there
+is no per-runtime routing anymore.
 
 ```mermaid
 flowchart LR
-  Agent["Agent loop"] --> Tool["bash tool<br/>filesystem.tool.ts"]
-  Tool --> Provider{"workspace.sandbox.provider"}
-  Provider --> Lambda["lambda"]
+  Agent["Agent loop"] --> Tools["bash / read / write / edit / glob / grep"]
+  Tools --> Run["executor.run(code)"]
+  Run --> Provider{"sandbox.provider"}
+  Provider --> Lambda["lambda (4 functions)"]
   Provider --> E2B["e2b"]
   Provider --> Daytona["daytona"]
   Provider --> Kubernetes["kubernetes"]
-  Lambda --> Bash["SandboxBash<br/>shell, Node, TypeScript"]
-  Lambda --> Python["SandboxPython<br/>Python files"]
-  Bash --> Mount["AWS S3 Files mount<br/>/mnt/workspaces/<namespace>"]
-  Python --> Mount
-  Skill["load_skill"] --> Stage["Stage skill bundle<br/>.skills/skill-name"]
-  Stage --> Mount
-  E2B --> ExternalMount["Mounted workspaceRoot/<namespace>"]
+  Lambda --> Mount["S3 Files mount<br/>/mnt/workspaces/&lt;namespace&gt;"]
+  E2B --> ExternalMount["workspaceRoot/&lt;namespace&gt;"]
   Daytona --> ExternalMount
+  Kubernetes --> ExternalMount
   Mount --> Bucket["S3 workspace bucket"]
   ExternalMount --> Bucket
 ```
 
-## Enable It
+## Config
 
-Sandbox execution is available only when Workspace is enabled. The `bash` tool is registered whenever `config.workspace.enabled` is true and receives `config.workspace.sandbox` as its runtime config.
+A sandbox is a standalone, account-scoped record referenced from agent config by id
+(see [Workspace & Sandbox](../index.md)).
 
-```json
+```jsonc
+// POST /accounts/me/sandboxes
 {
+  "name": "default",
   "config": {
-    "workspace": {
-      "enabled": true,
-      "needsApproval": false,
-      "storage": {
-        "provider": "s3"
-      },
-      "sandbox": {
-        "provider": "lambda",
-        "timeout": 30,
-        "outputLimitBytes": 65536,
-        "options": {
-          "networkAccess": "disabled"
-        }
-      }
-    }
+    "provider": "lambda",          // lambda | e2b | daytona | kubernetes
+    "internet": true,              // selects the internet-on/off lambda function
+    "permissionMode": "ask",       // edit | ask | bypass
+    "runtimes": ["bash", "python", "node"], // advisory allow-list (best-effort)
+    "timeout": 120,                // per-call seconds (max: lambda 300, others 600)
+    "memoryLimit": 512,            // MB; bounded for lambda only, operator-sized otherwise
+    "outputLimitBytes": 65536,
+    "envVars": { "FOO": "bar" }    // injected into every run (encrypted at rest)
   }
 }
 ```
+
+> **Per-call limits are provider-aware.** `lambda` runs are hard-bounded by the deployed
+> function (timeout ≤ 300 s, memory ≤ 1024 MB). Persistent providers (`e2b`/`daytona`/
+> `kubernetes`) are long-lived and operator-sized, so a single blocking call is only capped
+> at the harness request budget (600 s) and memory is left to the operator. Output is always
+> truncated harness-side regardless of provider.
 
 | Provider | Documentation |
 | --- | --- |
@@ -55,119 +57,73 @@ Sandbox execution is available only when Workspace is enabled. The `bash` tool i
 | `daytona` | [Daytona Details](daytona.md) |
 | `kubernetes` | [Kubernetes Details](kubernetes.md) |
 
-## How Agents Use It
+## Lambda: 4-function topology
 
-The bash tool accepts bash-like shell scripts:
+The lambda provider deploys the **same image** as four functions across two axes, and the
+harness auto-selects one per run. The mount axis comes from whether the run has a workspace
+namespace; the internet axis comes from `sandbox.internet`.
 
-```bash
-mkdir -p notes
-cat <<'EOF' > notes/a.txt
-hello
-EOF
-find notes -maxdepth 2 -type f
-```
-
-Node and TypeScript execute from workspace files:
-
-```bash
-cat <<'EOF' > main.js
-console.log(JSON.stringify({ ok: true, runtime: "node" }));
-EOF
-
-node main.js
-```
-
-Python also executes from workspace files:
-
-```bash
-cat <<'EOF' > main.py
-print({"ok": True, "runtime": "python"})
-EOF
-
-python3 main.py
-```
-
-Inline execution is intentionally rejected across providers. Commands such as `node -e "..."` and `python -c "..."` are not allowed.
-
-## Supported Execution
-
-| Runtime | Command | File extension |
+| | internet **on** | internet **off** |
 | --- | --- | --- |
-| Shell | bash-like scripts | interpreted by `just-bash` in `SandboxBash` |
-| Node | `node <file>` | `.js` |
-| TypeScript | `node <file>` | `.ts` — transpiled before execution in `SandboxBash` |
-| Python | `python <file>` or `python3 <file>` | `.py` — routed to `SandboxPython` for Lambda |
+| **workspace mounted** | VPC + NAT + S3 mount | VPC, no NAT, S3 mount |
+| **no workspace** | plain Lambda (fastest) | VPC, no NAT, no mount |
 
-## Result Shape
+Function names are wired by SST into four env vars
+(`SANDBOX_FN_{MOUNT,NOMOUNT}_{NET,NONET}`). Cost note: the topology uses fck-nat on
+non-prod (≈10× cheaper than a NAT Gateway) and runs the no-mount + internet-on function
+with no VPC for free managed egress.
 
-File execution can return structured JSON through the bash tool:
+## How agents use it
 
-```json
-{
-  "output": {
-    "stdout": "hello\n",
-    "stderr": "",
-    "artifacts": []
-  },
-  "status": {
-    "ok": true,
-    "runtime": "node",
-    "provider": "lambda",
-    "exitCode": 0,
-    "durationMs": 42,
-    "timedOut": false,
-    "truncated": false
-  }
-}
+With a workspace attached, the file tools operate on the mount:
+
+```text
+write  notes/a.txt          # base64-piped, creates parent dirs
+read   notes/a.txt          # numbered lines
+edit   notes/a.txt          # exact unique string replacement
+glob   **/*.py              # mtime-sorted matches
+grep   TODO                 # ripgrep
+bash   python3 notes/run.py # run programs directly
 ```
 
-## Mounted Workspace
+With no workspace, only `bash` is available and each call is a fresh container, so
+write-and-run in one command:
 
-The Lambda provider uses AWS S3 Files mounted at `/mnt/workspaces`. Shell and Node writes happen directly inside the mounted namespace, so S3 Files syncs those changes to the workspace bucket. Third-party providers must make that same namespace visible under `options.workspaceRoot`; otherwise the command can start but the file the agent just wrote will not exist inside the provider sandbox.
-
-## Output Truncation
-
-Sandbox stdout and stderr are truncated at `outputLimitBytes` (default 65536). This prevents runaway output from blowing the Lambda invocation payload or flooding the model context.
-
-```json
-{
-  "config": {
-    "workspace": {
-      "sandbox": {
-        "outputLimitBytes": 65536
-      }
-    }
-  }
-}
+```bash
+cat <<'EOF' > /tmp/run.py
+print("ok")
+EOF
+python3 /tmp/run.py
 ```
 
-When the limit is exceeded, output is sliced at the cap and `[output truncated]` is appended.
+## Result shape
 
-## Security Boundaries
+`bash` returns combined stdout+stderr as text. The lambda response carries
+`{ ok, runtime, exit_code, timed_out, duration_ms, stdout, stderr }`; stdout/stderr are
+truncated at 256 KB by the image and again at `outputLimitBytes` harness-side.
 
-- only allowlisted runtimes are exposed
-- Python execution requires an existing workspace file
-- inline code flags are rejected
-- stdout and stderr output is capped
+## Security boundaries
+
+- child processes run with `env_clear()` first — no AWS credentials leak into runs
 - workspace and skills buckets block public access
-- child processes run without AWS credentials in their environment
-- `curl` is disabled unless `options.networkAccess` is `"public"` and still blocks private, loopback, and internal ranges
+- the workspace mount is rooted at the `sandbox/` access-point prefix (load-bearing; keep
+  in sync with `WORKSPACE_MOUNT_PREFIX`)
+- `runtimes` is a **best-effort** allow-list on a general VM: the bash tool rejects
+  obvious disallowed runtime invocations and surfaces the allowed list in its description
+- approvals are governed by the sandbox `permissionMode` (see [Workspace & Sandbox](../index.md))
 
-Workspace write/read commands still use the normal `bash` tool. Use `workspace.needsApproval` if file writes and code runs should require human approval.
+## Skill files
 
-## Skill Files
+Skills load from the skills S3 bucket. With a workspace attached, `load_skill` stages the
+bundle into the workspace namespace at `/.claude/skills/<name>` so the agent can read and
+run it with `bash`. **Skill publishing is temporarily removed** and will return as a
+skills-as-workspace model — see [Skills](../../skills.md).
 
-Skills still load through the skills S3 bucket even when Workspace is disabled. Without Workspace, loaded skills are read-only model context and bundled scripts are not executable by the agent. When both Skills and Workspace are enabled, `load_skill` also stages the loaded skill bundle into the workspace namespace at `/.skills/<skill-name>`.
-
-The staged copy is a normal workspace directory. The agent can inspect, edit, and execute files there with `bash`; changes affect the staged workspace copy first. Staging writes a `.stage.json` manifest so later loads can skip unchanged files and copy only changed source objects when skill publishing is enabled. When skill publishing is disabled, later loads refresh the staged copy from the account-level skill so sandbox edits do not shadow the source skill across turns.
-
-Persisting edits back to the account-owned skill bundle requires `skills.publish.enabled=true` and goes through `publish_skill_changes`. That tool validates the staged bundle, checks for source changes since checkout unless `force` is explicitly used, and writes the validated bundle back to the skills bucket. `skills.publish.needApproval` controls whether publish requires approval; omitted means approval is required.
-
-## Related Code
+## Related code
 
 | Concern | Code |
 | --- | --- |
-| Tool registration | [`functions/harness-processing/tools/index.ts`](https://github.com/beeblastco/filthy-panty/blob/main/functions/harness-processing/tools/index.ts) |
-| Model-facing bash tool | [`functions/harness-processing/tools/filesystem.tool.ts`](https://github.com/beeblastco/filthy-panty/blob/main/functions/harness-processing/tools/filesystem.tool.ts) |
-| Sandbox provider selection | [`functions/harness-processing/sandbox/index.ts`](https://github.com/beeblastco/filthy-panty/blob/main/functions/harness-processing/sandbox/index.ts) |
-| Sandbox config contracts | [`functions/harness-processing/sandbox/types.ts`](https://github.com/beeblastco/filthy-panty/blob/main/functions/harness-processing/sandbox/types.ts) |
+| Tool registration + permissionMode | `functions/harness-processing/tools/index.ts` |
+| Tool set | `functions/harness-processing/tools/{bash,read,write,edit,glob,grep}.tool.ts` |
+| Provider selection | `functions/harness-processing/sandbox/index.ts` |
+| Run contract | `functions/harness-processing/sandbox/types.ts` |

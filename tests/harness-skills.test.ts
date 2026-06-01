@@ -360,7 +360,6 @@ describe("loadConfiguredSkillPrompt", () => {
       destinationKey: "sandbox/fs-0123456789abcdef0123456789abcdef01234567/.claude/skills/script-skill/scripts/analyze.py",
       options: { contentType: "text/plain; charset=utf-8", executable: true },
     });
-    expect(s3Writes.find((write) => write.key.endsWith(".stage.json"))).toBeDefined();
     // Mirrored into the .agents/skills location for tools that expect it.
     expect(result.prompt.content).toContain("/.agents/skills/script-skill");
     expect(s3Copies).toContainEqual({
@@ -370,384 +369,52 @@ describe("loadConfiguredSkillPrompt", () => {
       destinationKey: "sandbox/fs-0123456789abcdef0123456789abcdef01234567/.agents/skills/script-skill/scripts/analyze.py",
       options: { contentType: "text/plain; charset=utf-8", executable: true },
     });
-    // The mirror is not the publish source: only the canonical copy gets a manifest.
-    expect(s3Writes.filter((write) => write.key.endsWith(".stage.json"))).toHaveLength(1);
-    expect(s3Writes.find((write) => write.key.endsWith(".stage.json"))?.key)
-      .toBe("sandbox/fs-0123456789abcdef0123456789abcdef01234567/.claude/skills/script-skill/.stage.json");
+    // Staging no longer writes a manifest — every load re-stages from source.
+    expect(s3Writes.filter((write) => write.key.endsWith(".stage.json"))).toHaveLength(0);
   });
 
-  it("skips skill staging copies when the workspace manifest is current", async () => {
-    const skillContent = createSkillMarkdown("cached-skill", "Cached skill");
-    const manifest = {
-      version: 1,
-      skillPath: "acct_test/cached-skill",
-      stagedAt: "2026-01-01T00:00:00.000Z",
-      files: [
-        {
-          path: "SKILL.md",
-          sourceKey: "acct_test/cached-skill/SKILL.md",
-          etag: "skill-etag",
-          size: skillContent.length,
-        },
-      ],
-    };
-
-    process.env.FILESYSTEM_BUCKET_NAME = "workspace-bucket";
-    readS3TextMock.mockImplementation(async (_bucket: string, key: string) => {
-      if (key.endsWith("SKILL.md")) return skillContent;
-      if (key.endsWith(".stage.json")) return JSON.stringify(manifest);
-      throw new Error("NoSuchKey");
-    });
-    listS3PrefixMock.mockResolvedValue([
-      { key: "acct_test/cached-skill/SKILL.md", size: skillContent.length, etag: "skill-etag" },
-    ]);
-
-    const { loadConfiguredSkillPrompt } = await import("../functions/harness-processing/skills.ts");
-
-    const result = await loadConfiguredSkillPrompt(
-      ["acct_test/cached-skill"],
-      "acct_test/cached-skill",
-      [],
-      "fs-0123456789abcdef0123456789abcdef01234567",
-    );
-
-    expect(result.stagedPath).toBe("/.claude/skills/cached-skill");
-    expect(result.stagedFiles).toEqual(["SKILL.md"]);
-    expect(copyS3ObjectMock).not.toHaveBeenCalled();
-    expect(writeS3ObjectMock).not.toHaveBeenCalled();
-  });
-
-  it("refreshes staged skill files when preserving staged edits is disabled", async () => {
+  it("re-stages from source on every load, replacing stale staged files", async () => {
     const skillContent = createSkillMarkdown("refresh-skill", "Refresh skill");
-    const manifest = {
-      version: 1,
-      skillPath: "acct_test/refresh-skill",
-      stagedAt: "2026-01-01T00:00:00.000Z",
-      files: [
-        {
-          path: "SKILL.md",
-          sourceKey: "acct_test/refresh-skill/SKILL.md",
-          etag: "skill-etag",
-          size: skillContent.length,
-        },
-      ],
-    };
+    const canonicalPrefix =
+      "sandbox/fs-0123456789abcdef0123456789abcdef01234567/.claude/skills/refresh-skill/";
 
     process.env.FILESYSTEM_BUCKET_NAME = "workspace-bucket";
     readS3TextMock.mockImplementation(async (_bucket: string, key: string) => {
       if (key.endsWith("SKILL.md")) return skillContent;
-      if (key.endsWith(".stage.json")) return JSON.stringify(manifest);
       throw new Error("NoSuchKey");
     });
     listS3PrefixMock.mockImplementation(async (_bucket: string, prefix: string) => {
       if (prefix === "acct_test/refresh-skill/") {
         return [{ key: "acct_test/refresh-skill/SKILL.md", size: skillContent.length, etag: "skill-etag" }];
       }
-      if (prefix === "sandbox/fs-0123456789abcdef0123456789abcdef01234567/.claude/skills/refresh-skill/") {
-        return [
-          { key: `${prefix}.stage.json`, size: JSON.stringify(manifest).length },
-          { key: `${prefix}SKILL.md`, size: skillContent.length, etag: "edited-etag" },
-        ];
+      if (prefix === canonicalPrefix) {
+        // A stale file from a prior load that is no longer in the source bundle.
+        return [{ key: `${prefix}old.py`, size: 10, etag: "stale-etag" }];
       }
       return [];
     });
 
     const { loadConfiguredSkillPrompt } = await import("../functions/harness-processing/skills.ts");
 
-    await loadConfiguredSkillPrompt(
+    const result = await loadConfiguredSkillPrompt(
       ["acct_test/refresh-skill"],
       "acct_test/refresh-skill",
       [],
       "fs-0123456789abcdef0123456789abcdef01234567",
-      { preserveStagedEdits: false },
     );
 
+    expect(result.stagedFiles).toEqual(["SKILL.md"]);
+    // Source is always re-copied; no manifest is written or read.
     expect(s3Copies).toContainEqual({
       sourceBucket: "test-skills-bucket",
       sourceKey: "acct_test/refresh-skill/SKILL.md",
       destinationBucket: "workspace-bucket",
-      destinationKey: "sandbox/fs-0123456789abcdef0123456789abcdef01234567/.claude/skills/refresh-skill/SKILL.md",
+      destinationKey: `${canonicalPrefix}SKILL.md`,
       options: { contentType: "text/plain; charset=utf-8", executable: false },
     });
-  });
-
-  it("publishes validated staged skill edits back to the account skill bundle", async () => {
-    const originalSkill = createSkillMarkdown("publish-skill", "Publish skill", "# Original");
-    const editedSkill = createSkillMarkdown("publish-skill", "Publish skill", "# Edited");
-    const oldBytes = new TextEncoder().encode("# old\n");
-    const helperBytes = new TextEncoder().encode("echo edited\n");
-    const manifest = {
-      version: 1,
-      skillPath: "acct_test/publish-skill",
-      stagedAt: "2026-01-01T00:00:00.000Z",
-      files: [
-        {
-          path: "SKILL.md",
-          sourceKey: "acct_test/publish-skill/SKILL.md",
-          etag: "source-skill-etag",
-          size: originalSkill.length,
-        },
-        {
-          path: "old.md",
-          sourceKey: "acct_test/publish-skill/old.md",
-          etag: "old-etag",
-          size: oldBytes.byteLength,
-        },
-      ],
-    };
-
-    process.env.FILESYSTEM_BUCKET_NAME = "workspace-bucket";
-    readS3TextMock.mockImplementation(async (bucket: string, key: string) => {
-      if (bucket === "workspace-bucket" && key.endsWith(".stage.json")) return JSON.stringify(manifest);
-      throw new Error("NoSuchKey");
-    });
-    listS3PrefixMock.mockImplementation(async (bucket: string, prefix: string) => {
-      if (bucket === "test-skills-bucket" && prefix === "acct_test/publish-skill/") {
-        return [
-          { key: "acct_test/publish-skill/SKILL.md", size: originalSkill.length, etag: "source-skill-etag" },
-          { key: "acct_test/publish-skill/old.md", size: oldBytes.byteLength, etag: "old-etag" },
-        ];
-      }
-      if (bucket === "workspace-bucket" && prefix === "sandbox/fs-0123456789abcdef0123456789abcdef01234567/.claude/skills/publish-skill/") {
-        return [
-          { key: `${prefix}.stage.json`, size: JSON.stringify(manifest).length },
-          { key: `${prefix}SKILL.md`, size: editedSkill.length },
-          { key: `${prefix}scripts/helper.sh`, size: helperBytes.byteLength },
-        ];
-      }
-      return [];
-    });
-    readS3BytesMock.mockImplementation(async (_bucket: string, key: string) => {
-      if (key.endsWith("SKILL.md")) return new TextEncoder().encode(editedSkill);
-      if (key.endsWith("scripts/helper.sh")) return helperBytes;
-      throw new Error("NoSuchKey");
-    });
-
-    const { publishStagedSkillBundle } = await import("../functions/harness-processing/skills.ts");
-
-    const result = await publishStagedSkillBundle(
-      ["acct_test/publish-skill"],
-      "acct_test/publish-skill",
-      "fs-0123456789abcdef0123456789abcdef01234567",
-      readMount([
-        { path: ".stage.json", body: JSON.stringify(manifest) },
-        { path: "SKILL.md", body: editedSkill },
-        { path: "scripts/helper.sh", body: helperBytes },
-      ]),
-    );
-
-    expect(result.files.map((file) => file.path)).toEqual(["SKILL.md", "scripts/helper.sh"]);
-    // New bundle is written first; only source files dropped from the bundle (old.md) are deleted.
-    expect(s3Writes).toContainEqual({
-      bucket: "test-skills-bucket",
-      key: "acct_test/publish-skill/SKILL.md",
-      body: new TextEncoder().encode(editedSkill),
-      options: { contentType: "text/plain; charset=utf-8" },
-    });
-    expect(s3Deletes).toEqual([{
-      bucket: "test-skills-bucket",
-      key: "acct_test/publish-skill/old.md",
-    }]);
-    expect(s3Deletes).not.toContainEqual({
-      bucket: "test-skills-bucket",
-      key: "acct_test/publish-skill/SKILL.md",
-    });
-  });
-
-  it("writes the replacement bundle before deleting removed source files", async () => {
-    const editedSkill = createSkillMarkdown("publish-skill", "Publish skill", "# Edited");
-    const oldBytes = new TextEncoder().encode("# old\n");
-    const manifest = {
-      version: 1,
-      skillPath: "acct_test/publish-skill",
-      stagedAt: "2026-01-01T00:00:00.000Z",
-      files: [
-        { path: "SKILL.md", sourceKey: "acct_test/publish-skill/SKILL.md", etag: "skill-etag", size: editedSkill.length },
-        { path: "old.md", sourceKey: "acct_test/publish-skill/old.md", etag: "old-etag", size: oldBytes.byteLength },
-      ],
-    };
-
-    process.env.FILESYSTEM_BUCKET_NAME = "workspace-bucket";
-    readS3TextMock.mockImplementation(async (bucket: string, key: string) => {
-      if (bucket === "workspace-bucket" && key.endsWith(".stage.json")) return JSON.stringify(manifest);
-      throw new Error("NoSuchKey");
-    });
-    listS3PrefixMock.mockImplementation(async (bucket: string, prefix: string) => {
-      if (bucket === "test-skills-bucket" && prefix === "acct_test/publish-skill/") {
-        return [
-          { key: "acct_test/publish-skill/SKILL.md", size: editedSkill.length, etag: "skill-etag" },
-          { key: "acct_test/publish-skill/old.md", size: oldBytes.byteLength, etag: "old-etag" },
-        ];
-      }
-      if (bucket === "workspace-bucket" && prefix === "sandbox/fs-ns/.claude/skills/publish-skill/") {
-        return [
-          { key: `${prefix}.stage.json`, size: JSON.stringify(manifest).length },
-          { key: `${prefix}SKILL.md`, size: editedSkill.length },
-        ];
-      }
-      return [];
-    });
-    readS3BytesMock.mockImplementation(async () => new TextEncoder().encode(editedSkill));
-
-    const { publishStagedSkillBundle } = await import("../functions/harness-processing/skills.ts");
-    await publishStagedSkillBundle(
-      ["acct_test/publish-skill"],
-      "acct_test/publish-skill",
-      "fs-ns",
-      readMount([{ path: "SKILL.md", body: editedSkill }]),
-    );
-
-    // old.md (dropped from the staged bundle) is deleted only after every write completes.
-    expect(s3Ops).toContain("delete");
-    expect(s3Ops.lastIndexOf("write")).toBeLessThan(s3Ops.indexOf("delete"));
-    expect(s3Deletes).toEqual([{ bucket: "test-skills-bucket", key: "acct_test/publish-skill/old.md" }]);
-  });
-
-  it("throws when the skill is not configured for the agent", async () => {
-    process.env.FILESYSTEM_BUCKET_NAME = "workspace-bucket";
-    const { publishStagedSkillBundle } = await import("../functions/harness-processing/skills.ts");
-
-    await expect(publishStagedSkillBundle([], "acct_test/publish-skill", "fs-ns", emptyMount))
-      .rejects.toThrow("Skill is not configured for this agent: acct_test/publish-skill");
-  });
-
-  it("throws when no staged checkout manifest exists", async () => {
-    process.env.FILESYSTEM_BUCKET_NAME = "workspace-bucket";
-    readS3TextMock.mockImplementation(async () => {
-      throw new Error("NoSuchKey");
-    });
-    const { publishStagedSkillBundle } = await import("../functions/harness-processing/skills.ts");
-
-    await expect(publishStagedSkillBundle(["acct_test/publish-skill"], "acct_test/publish-skill", "fs-ns", emptyMount))
-      .rejects.toThrow("No staged skill checkout found for acct_test/publish-skill");
-  });
-
-  it("throws when the staged manifest belongs to a different skill", async () => {
-    process.env.FILESYSTEM_BUCKET_NAME = "workspace-bucket";
-    readS3TextMock.mockImplementation(async (_bucket: string, key: string) => {
-      if (key.endsWith(".stage.json")) {
-        return JSON.stringify({ version: 1, skillPath: "acct_test/other-skill", stagedAt: "t", files: [] });
-      }
-      throw new Error("NoSuchKey");
-    });
-    const { publishStagedSkillBundle } = await import("../functions/harness-processing/skills.ts");
-
-    await expect(publishStagedSkillBundle(["acct_test/publish-skill"], "acct_test/publish-skill", "fs-ns", emptyMount))
-      .rejects.toThrow("No staged skill checkout found for acct_test/publish-skill");
-  });
-
-  it("throws when the source skill changed after checkout without force", async () => {
-    const skillContent = createSkillMarkdown("publish-skill", "Publish skill");
-    const manifest = {
-      version: 1,
-      skillPath: "acct_test/publish-skill",
-      stagedAt: "2026-01-01T00:00:00.000Z",
-      files: [{ path: "SKILL.md", sourceKey: "acct_test/publish-skill/SKILL.md", etag: "stale-etag", size: skillContent.length }],
-    };
-
-    process.env.FILESYSTEM_BUCKET_NAME = "workspace-bucket";
-    readS3TextMock.mockImplementation(async (_bucket: string, key: string) => {
-      if (key.endsWith(".stage.json")) return JSON.stringify(manifest);
-      throw new Error("NoSuchKey");
-    });
-    listS3PrefixMock.mockImplementation(async (bucket: string, prefix: string) => {
-      if (bucket === "test-skills-bucket" && prefix === "acct_test/publish-skill/") {
-        return [{ key: "acct_test/publish-skill/SKILL.md", size: skillContent.length, etag: "fresh-etag" }];
-      }
-      return [];
-    });
-    const { publishStagedSkillBundle } = await import("../functions/harness-processing/skills.ts");
-
-    await expect(publishStagedSkillBundle(["acct_test/publish-skill"], "acct_test/publish-skill", "fs-ns", emptyMount))
-      .rejects.toThrow("Source skill changed after checkout: acct_test/publish-skill");
-  });
-
-  it("publishes with force even when the source skill changed after checkout", async () => {
-    const editedSkill = createSkillMarkdown("publish-skill", "Publish skill", "# Forced");
-    const manifest = {
-      version: 1,
-      skillPath: "acct_test/publish-skill",
-      stagedAt: "2026-01-01T00:00:00.000Z",
-      files: [{ path: "SKILL.md", sourceKey: "acct_test/publish-skill/SKILL.md", etag: "stale-etag", size: editedSkill.length }],
-    };
-
-    process.env.FILESYSTEM_BUCKET_NAME = "workspace-bucket";
-    readS3TextMock.mockImplementation(async (bucket: string, key: string) => {
-      if (bucket === "workspace-bucket" && key.endsWith(".stage.json")) return JSON.stringify(manifest);
-      throw new Error("NoSuchKey");
-    });
-    listS3PrefixMock.mockImplementation(async (bucket: string, prefix: string) => {
-      if (bucket === "test-skills-bucket" && prefix === "acct_test/publish-skill/") {
-        return [{ key: "acct_test/publish-skill/SKILL.md", size: editedSkill.length, etag: "fresh-etag" }];
-      }
-      if (bucket === "workspace-bucket" && prefix === "sandbox/fs-ns/.claude/skills/publish-skill/") {
-        return [
-          { key: `${prefix}.stage.json`, size: JSON.stringify(manifest).length },
-          { key: `${prefix}SKILL.md`, size: editedSkill.length },
-        ];
-      }
-      return [];
-    });
-    readS3BytesMock.mockImplementation(async () => new TextEncoder().encode(editedSkill));
-
-    const { publishStagedSkillBundle } = await import("../functions/harness-processing/skills.ts");
-    const result = await publishStagedSkillBundle(
-      ["acct_test/publish-skill"],
-      "acct_test/publish-skill",
-      "fs-ns",
-      readMount([{ path: "SKILL.md", body: editedSkill }]),
-      { force: true },
-    );
-
-    expect(result.files.map((file) => file.path)).toEqual(["SKILL.md"]);
-    expect(s3Writes).toContainEqual({
-      bucket: "test-skills-bucket",
-      key: "acct_test/publish-skill/SKILL.md",
-      body: new TextEncoder().encode(editedSkill),
-      options: { contentType: "text/plain; charset=utf-8" },
-    });
-  });
-
-  it("throws when the published SKILL.md renames the skill", async () => {
-    const skillContent = createSkillMarkdown("publish-skill", "Publish skill");
-    const renamedSkill = createSkillMarkdown("renamed-skill", "Renamed skill");
-    const manifest = {
-      version: 1,
-      skillPath: "acct_test/publish-skill",
-      stagedAt: "2026-01-01T00:00:00.000Z",
-      files: [{ path: "SKILL.md", sourceKey: "acct_test/publish-skill/SKILL.md", etag: "skill-etag", size: skillContent.length }],
-    };
-
-    process.env.FILESYSTEM_BUCKET_NAME = "workspace-bucket";
-    readS3TextMock.mockImplementation(async (bucket: string, key: string) => {
-      if (bucket === "workspace-bucket" && key.endsWith(".stage.json")) return JSON.stringify(manifest);
-      throw new Error("NoSuchKey");
-    });
-    listS3PrefixMock.mockImplementation(async (bucket: string, prefix: string) => {
-      if (bucket === "test-skills-bucket" && prefix === "acct_test/publish-skill/") {
-        return [{ key: "acct_test/publish-skill/SKILL.md", size: skillContent.length, etag: "skill-etag" }];
-      }
-      if (bucket === "workspace-bucket" && prefix === "sandbox/fs-ns/.claude/skills/publish-skill/") {
-        return [
-          { key: `${prefix}.stage.json`, size: JSON.stringify(manifest).length },
-          { key: `${prefix}SKILL.md`, size: renamedSkill.length },
-        ];
-      }
-      return [];
-    });
-    readS3BytesMock.mockImplementation(async () => new TextEncoder().encode(renamedSkill));
-
-    const { publishStagedSkillBundle } = await import("../functions/harness-processing/skills.ts");
-
-    await expect(publishStagedSkillBundle(
-      ["acct_test/publish-skill"],
-      "acct_test/publish-skill",
-      "fs-ns",
-      readMount([{ path: "SKILL.md", body: renamedSkill }]),
-    ))
-      .rejects.toThrow("Published SKILL.md name must remain publish-skill");
-    // Nothing is written back when validation rejects the rename.
-    expect(s3Writes.some((write) => write.bucket === "test-skills-bucket")).toBe(false);
+    expect(s3Writes.filter((write) => write.key.endsWith(".stage.json"))).toHaveLength(0);
+    // The stale file no longer in source is removed.
+    expect(s3Deletes).toContainEqual({ bucket: "workspace-bucket", key: `${canonicalPrefix}old.py` });
   });
 
   it("throws when skill path is invalid", async () => {

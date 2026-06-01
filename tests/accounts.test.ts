@@ -32,10 +32,7 @@ afterEach(() => {
 describe("agent config", () => {
   it("deletes config keys with null patch values and preserves redacted secrets", () => {
     const merged = mergeAgentConfig({
-      workspace: {
-        enabled: true,
-        namespace: "support",
-      },
+      sandbox: "sb_old",
       channels: {
         telegram: {
           botToken: "real-token",
@@ -44,9 +41,7 @@ describe("agent config", () => {
         },
       },
     }, {
-      workspace: {
-        namespace: null,
-      },
+      sandbox: null,
       channels: {
         telegram: {
           botToken: "********",
@@ -56,12 +51,6 @@ describe("agent config", () => {
     });
 
     expect(merged).toEqual({
-      workspace: {
-        enabled: true,
-        storage: {
-          provider: "s3",
-        },
-      },
       channels: {
         telegram: {
           botToken: "real-token",
@@ -78,108 +67,44 @@ describe("agent config", () => {
     expect(() => normalizeAgentConfig({ session: { compaction: { maxContextLength: 1.5 } } })).toThrow(
       "config.session.compaction.maxContextLength must be an integer from 1 to 500000",
     );
-    expect(() => normalizeAgentConfig({ workspace: { namespace: "" } })).toThrow(
-      "config.workspace.namespace must be a non-empty string",
+    // sandbox + workspaces are now references to standalone records.
+    expect(() => normalizeAgentConfig({ sandbox: "" })).toThrow(
+      "config.sandbox must be a non-empty string",
     );
-    expect(() => normalizeAgentConfig({ workspace: { workspaces: {} } })).toThrow(
-      "config.workspace.workspaces must include at least one workspace",
+    expect(() => normalizeAgentConfig({ workspaces: "x" })).toThrow(
+      "config.workspaces must be an array",
     );
-    expect(() => normalizeAgentConfig({ workspace: { defaultWorkspace: "team" } })).toThrow(
-      "config.workspace.defaultWorkspace requires config.workspace.workspaces",
+    expect(() => normalizeAgentConfig({ workspaces: [{ workspaceId: "ws_a" }] })).toThrow(
+      "config.workspaces[0].name must be a non-empty string",
     );
-    expect(() => normalizeAgentConfig({ workspace: { workspaces: { "team/shared": {} } } })).toThrow(
-      "config.workspace.workspaces.team/shared must use only letters, numbers, dots, underscores, or hyphens",
+    expect(() => normalizeAgentConfig({ workspaces: [{ name: "notes" }] })).toThrow(
+      "config.workspaces[0].workspaceId must be a non-empty string",
+    );
+    expect(() => normalizeAgentConfig({ workspaces: [{ name: "team/shared", workspaceId: "ws_a" }] })).toThrow(
+      "config.workspaces[0].name must use only letters, numbers, dots, underscores, or hyphens",
     );
     expect(() => normalizeAgentConfig({
-      workspace: {
-        defaultWorkspace: "team",
-        workspaces: {
-          personal: {},
-        },
-      },
-    })).toThrow("config.workspace.defaultWorkspace must reference a configured workspace");
-    expect(() => normalizeAgentConfig({ workspace: { enabled: "yes" } })).toThrow(
-      "config.workspace.enabled must be a boolean",
-    );
-    expect(() => normalizeAgentConfig({ workspace: { needsApproval: "yes" } })).toThrow(
-      "config.workspace.needsApproval must be a boolean",
-    );
-    expect(() => normalizeAgentConfig({ workspace: { harness: { enabled: "yes" } } })).toThrow(
-      "config.workspace.harness.enabled must be a boolean",
-    );
-    expect(() => normalizeAgentConfig({ workspace: { storage: { provider: "r2" } } })).toThrow(
-      "config.workspace.storage.provider must be one of: s3",
-    );
-    expect(normalizeAgentConfig({ workspace: { enabled: true } })).toEqual({
-      workspace: {
-        enabled: true,
-        storage: {
-          provider: "s3",
-        },
-      },
-    });
-    expect(normalizeAgentConfig({ workspace: { storage: {} } })).toEqual({
-      workspace: {
-        storage: {
-          provider: "s3",
-        },
-      },
-    });
+      workspaces: [{ name: "dup", workspaceId: "ws_a" }, { name: "dup", workspaceId: "ws_b" }],
+    })).toThrow('config.workspaces[1].name "dup" is used more than once');
+    expect(() => normalizeAgentConfig({
+      workspaces: [{ name: "notes", workspaceId: "ws_a", sandbox: "" }],
+    })).toThrow("config.workspaces[0].sandbox must be a non-empty string or null");
+    // A per-workspace sandbox id, and `null` to force read-only, are both accepted.
     expect(normalizeAgentConfig({
-      workspace: {
-        storage: {
-          provider: "s3",
-        },
-        sandbox: {
-          provider: "lambda",
-          timeout: 30,
-          memoryLimit: 512,
-          outputLimitBytes: 65536,
-          envVars: {
-            MY_API_BASE: "https://api.example.com",
-          },
-          options: {
-            bashFunctionName: "sandbox-bash",
-            pythonFunctionName: "sandbox-python",
-            workspaceRoot: "/mnt/workspaces",
-            networkAccess: "public",
-          },
-        },
-      },
+      sandbox: "sb_1",
+      workspaces: [
+        { name: "notes", workspaceId: "ws_a" },
+        { name: "team", workspaceId: "ws_b", sandbox: "sb_2" },
+        { name: "docs", workspaceId: "ws_c", sandbox: null },
+      ],
     })).toEqual({
-      workspace: {
-        storage: {
-          provider: "s3",
-        },
-        sandbox: {
-          provider: "lambda",
-          timeout: 30,
-          memoryLimit: 512,
-          outputLimitBytes: 65536,
-          envVars: {
-            MY_API_BASE: "https://api.example.com",
-          },
-          options: {
-            bashFunctionName: "sandbox-bash",
-            pythonFunctionName: "sandbox-python",
-            workspaceRoot: "/mnt/workspaces",
-            networkAccess: "public",
-          },
-        },
-      },
+      sandbox: "sb_1",
+      workspaces: [
+        { name: "notes", workspaceId: "ws_a" },
+        { name: "team", workspaceId: "ws_b", sandbox: "sb_2" },
+        { name: "docs", workspaceId: "ws_c", sandbox: null },
+      ],
     });
-    expect(() => normalizeAgentConfig({ workspace: { sandbox: "yes" } })).toThrow(
-      "config.workspace.sandbox must be an object",
-    );
-    expect(() => normalizeAgentConfig({ workspace: { sandbox: { provider: "docker" } } })).toThrow(
-      "config.workspace.sandbox.provider must be one of: lambda, e2b, daytona",
-    );
-    expect(() => normalizeAgentConfig({ workspace: { sandbox: { options: { networkAccess: "private" } } } })).toThrow(
-      "config.workspace.sandbox.options.networkAccess must be one of: disabled, public",
-    );
-    expect(() => normalizeAgentConfig({ workspace: { sandbox: { timeout: 121 } } })).toThrow(
-      "config.workspace.sandbox.timeout must be an integer from 1 to 120",
-    );
   });
 
   it("validates lifecycle webhook hook config", () => {
@@ -830,24 +755,11 @@ describe("agent config", () => {
         maxTurn: 3,
         system: "custom system",
       },
-      workspace: {
-        enabled: true,
-        needsApproval: true,
-        namespace: "support",
-        workspaces: {
-          personal: {
-            description: "Per-conversation workspace",
-          },
-          team: {
-            namespace: "support-team",
-            description: "Shared team workspace",
-          },
-        },
-        defaultWorkspace: "personal",
-        storage: {
-          provider: "s3",
-        },
-      },
+      sandbox: "sb_1",
+      workspaces: [
+        { name: "personal", workspaceId: "ws_personal" },
+        { name: "team", workspaceId: "ws_team" },
+      ],
       session: {
         pruning: {
           enabled: false,
@@ -900,24 +812,11 @@ describe("agent config", () => {
         maxTurn: 3,
         system: "custom system",
       },
-      workspace: {
-        enabled: true,
-        needsApproval: true,
-        namespace: "support",
-        workspaces: {
-          personal: {
-            description: "Per-conversation workspace",
-          },
-          team: {
-            namespace: "support-team",
-            description: "Shared team workspace",
-          },
-        },
-        defaultWorkspace: "personal",
-        storage: {
-          provider: "s3",
-        },
-      },
+      sandbox: "sb_1",
+      workspaces: [
+        { name: "personal", workspaceId: "ws_personal" },
+        { name: "team", workspaceId: "ws_team" },
+      ],
       session: {
         pruning: {
           enabled: false,

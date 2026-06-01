@@ -15,6 +15,8 @@ import {
     normalizeUpdateAccountInput,
     toPublicAccount,
     toPublicAgent,
+    toPublicSandboxConfig,
+    toPublicWorkspaceConfig,
     type AccountRecord,
     type AgentRecord,
     type CronJobRecord,
@@ -106,14 +108,14 @@ export async function handler(event: LambdaFunctionURLEvent): Promise<LambdaResp
         const selfAgentMatch = rawPath.match(/^\/accounts\/me\/agents\/([^/]+)$/);
         if (selfAgentCollection || selfAgentMatch?.[1]) {
             const account = requireAccountAuth(auth);
-            return handleAgentRoute(method, account.accountId, selfAgentMatch?.[1], event);
+            return await handleAgentRoute(method, account.accountId, selfAgentMatch?.[1], event);
         }
 
         const selfSkillCollection = rawPath === "/accounts/me/skills";
         const selfSkillMatch = rawPath.match(/^\/accounts\/me\/skills\/([^/]+)$/);
         if (selfSkillCollection || selfSkillMatch?.[1]) {
             const account = requireAccountAuth(auth);
-            return handleSkillRoute(method, account.accountId, selfSkillMatch?.[1], event);
+            return await handleSkillRoute(method, account.accountId, selfSkillMatch?.[1], event);
         }
 
         const selfCronCollection = rawPath === "/accounts/me/cron-jobs";
@@ -121,6 +123,20 @@ export async function handler(event: LambdaFunctionURLEvent): Promise<LambdaResp
         if (selfCronCollection || selfCronMatch?.[1]) {
             const account = requireAccountAuth(auth);
             return await handleCronJobRoute(method, account.accountId, selfCronMatch?.[1], event);
+        }
+
+        const selfSandboxCollection = rawPath === "/accounts/me/sandboxes";
+        const selfSandboxMatch = rawPath.match(/^\/accounts\/me\/sandboxes\/([^/]+)$/);
+        if (selfSandboxCollection || selfSandboxMatch?.[1]) {
+            const account = requireAccountAuth(auth);
+            return await handleSandboxRoute(method, account.accountId, selfSandboxMatch?.[1], event);
+        }
+
+        const selfWorkspaceCollection = rawPath === "/accounts/me/workspaces";
+        const selfWorkspaceMatch = rawPath.match(/^\/accounts\/me\/workspaces\/([^/]+)$/);
+        if (selfWorkspaceCollection || selfWorkspaceMatch?.[1]) {
+            const account = requireAccountAuth(auth);
+            return await handleWorkspaceRoute(method, account.accountId, selfWorkspaceMatch?.[1], event);
         }
 
         if (auth.kind !== "admin") {
@@ -162,17 +178,27 @@ export async function handler(event: LambdaFunctionURLEvent): Promise<LambdaResp
 
         const adminAgentMatch = rawPath.match(/^\/accounts\/([^/]+)\/agents(?:\/([^/]+))?$/);
         if (adminAgentMatch?.[1]) {
-            return handleAgentRoute(method, decodeURIComponent(adminAgentMatch[1]), adminAgentMatch[2], event);
+            return await handleAgentRoute(method, decodeURIComponent(adminAgentMatch[1]), adminAgentMatch[2], event);
         }
 
         const adminSkillMatch = rawPath.match(/^\/accounts\/([^/]+)\/skills(?:\/([^/]+))?$/);
         if (adminSkillMatch?.[1]) {
-            return handleSkillRoute(method, decodeURIComponent(adminSkillMatch[1]), adminSkillMatch[2], event);
+            return await handleSkillRoute(method, decodeURIComponent(adminSkillMatch[1]), adminSkillMatch[2], event);
         }
 
         const adminCronMatch = rawPath.match(/^\/accounts\/([^/]+)\/cron-jobs(?:\/([^/]+))?$/);
         if (adminCronMatch?.[1]) {
             return await handleCronJobRoute(method, decodeURIComponent(adminCronMatch[1]), adminCronMatch[2], event);
+        }
+
+        const adminSandboxMatch = rawPath.match(/^\/accounts\/([^/]+)\/sandboxes(?:\/([^/]+))?$/);
+        if (adminSandboxMatch?.[1]) {
+            return await handleSandboxRoute(method, decodeURIComponent(adminSandboxMatch[1]), adminSandboxMatch[2], event);
+        }
+
+        const adminWorkspaceMatch = rawPath.match(/^\/accounts\/([^/]+)\/workspaces(?:\/([^/]+))?$/);
+        if (adminWorkspaceMatch?.[1]) {
+            return await handleWorkspaceRoute(method, decodeURIComponent(adminWorkspaceMatch[1]), adminWorkspaceMatch[2], event);
         }
 
         return errorResponse(404, "Not found");
@@ -348,6 +374,80 @@ async function handleAgentRoute(
             deleted,
         });
         return deleted ? jsonResponse(200, { deleted: true }) : errorResponse(404, "Agent not found");
+    }
+
+    return errorResponse(405, "Method not allowed", { method, allowedMethods: ["GET", "PATCH", "DELETE"] });
+}
+
+async function handleSandboxRoute(
+    method: string,
+    accountId: string,
+    rawSandboxId: string | undefined,
+    event: LambdaFunctionURLEvent,
+): Promise<LambdaResponse> {
+    const sandboxId = rawSandboxId ? decodeURIComponent(rawSandboxId) : undefined;
+    const sandboxConfigs = getStorage().sandboxConfigs;
+
+    if (!sandboxId) {
+        if (method === "GET") {
+            const records = await sandboxConfigs.list(accountId);
+            return jsonResponse(200, { sandboxes: records.map((record) => toPublicSandboxConfig(record)) });
+        }
+        if (method === "POST") {
+            const record = await sandboxConfigs.create(accountId, parseJsonBody(event) as never);
+            return jsonResponse(201, toPublicSandboxConfig(record));
+        }
+        return errorResponse(405, "Method not allowed", { method, allowedMethods: ["GET", "POST"] });
+    }
+
+    if (method === "GET") {
+        const record = await sandboxConfigs.getById(accountId, sandboxId);
+        return record ? jsonResponse(200, toPublicSandboxConfig(record)) : errorResponse(404, "Sandbox not found");
+    }
+    if (method === "PATCH") {
+        const record = await sandboxConfigs.update(accountId, sandboxId, parseJsonBody(event) as never);
+        return record ? jsonResponse(200, toPublicSandboxConfig(record)) : errorResponse(404, "Sandbox not found");
+    }
+    if (method === "DELETE") {
+        const deleted = await sandboxConfigs.remove(accountId, sandboxId);
+        return deleted ? jsonResponse(200, { deleted: true }) : errorResponse(404, "Sandbox not found");
+    }
+
+    return errorResponse(405, "Method not allowed", { method, allowedMethods: ["GET", "PATCH", "DELETE"] });
+}
+
+async function handleWorkspaceRoute(
+    method: string,
+    accountId: string,
+    rawWorkspaceId: string | undefined,
+    event: LambdaFunctionURLEvent,
+): Promise<LambdaResponse> {
+    const workspaceId = rawWorkspaceId ? decodeURIComponent(rawWorkspaceId) : undefined;
+    const workspaceConfigs = getStorage().workspaceConfigs;
+
+    if (!workspaceId) {
+        if (method === "GET") {
+            const records = await workspaceConfigs.list(accountId);
+            return jsonResponse(200, { workspaces: records.map((record) => toPublicWorkspaceConfig(record)) });
+        }
+        if (method === "POST") {
+            const record = await workspaceConfigs.create(accountId, parseJsonBody(event) as never);
+            return jsonResponse(201, toPublicWorkspaceConfig(record));
+        }
+        return errorResponse(405, "Method not allowed", { method, allowedMethods: ["GET", "POST"] });
+    }
+
+    if (method === "GET") {
+        const record = await workspaceConfigs.getById(accountId, workspaceId);
+        return record ? jsonResponse(200, toPublicWorkspaceConfig(record)) : errorResponse(404, "Workspace not found");
+    }
+    if (method === "PATCH") {
+        const record = await workspaceConfigs.update(accountId, workspaceId, parseJsonBody(event) as never);
+        return record ? jsonResponse(200, toPublicWorkspaceConfig(record)) : errorResponse(404, "Workspace not found");
+    }
+    if (method === "DELETE") {
+        const deleted = await workspaceConfigs.remove(accountId, workspaceId);
+        return deleted ? jsonResponse(200, { deleted: true }) : errorResponse(404, "Workspace not found");
     }
 
     return errorResponse(405, "Method not allowed", { method, allowedMethods: ["GET", "PATCH", "DELETE"] });

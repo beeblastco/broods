@@ -26,10 +26,8 @@ const TEST_ACCOUNT = {
         apiKey: "google-key",
       },
     },
-    workspace: {
-      enabled: true,
-      namespace: "support",
-    },
+    sandbox: "sb_1",
+    workspaces: [{ name: "notes", workspaceId: "ws_a" }],
     channels: {
       slack: {
         botToken: "xoxb-secret",
@@ -379,13 +377,8 @@ describe("direct API ingress", () => {
           apiKey: "google-key",
         },
       },
-      workspace: {
-        enabled: true,
-        namespace: "support",
-        storage: {
-          provider: "s3",
-        },
-      },
+      sandbox: "sb_1",
+      workspaces: [{ name: "notes", workspaceId: "ws_a" }],
     });
     expect(directEvent.publicEventId).toBe("one");
     expect(directEvent.conversationKey).toBe("acct:acct_test:agent:agent_test:api:alpha");
