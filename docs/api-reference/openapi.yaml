@@ -668,7 +668,7 @@ paths:
                     agent:
                       system: You are a helpful support assistant.
               withWorkspace:
-                summary: Agent with workspace and tools
+                summary: Agent referencing a sandbox + workspace and tools
                 value:
                   name: research-agent
                   description: Research assistant with web search
@@ -682,13 +682,10 @@ paths:
                       temperature: 0.2
                     agent:
                       system: You are a research assistant. Always cite sources.
-                    workspace:
-                      enabled: true
-                      namespace: research
-                      storage:
-                        provider: s3
-                      harness:
-                        enabled: true
+                    sandbox: sb_xxx
+                    workspaces:
+                      - name: notes
+                        workspaceId: ws_aaa
                     tools:
                       tavilySearch:
                         enabled: true
@@ -795,6 +792,151 @@ paths:
       responses:
         '200':
           description: Agent deleted
+
+  /accounts/me/sandboxes:
+    post:
+      tags:
+        - Sandboxes
+      summary: Create sandbox
+      description: Create a standalone, account-scoped sandbox config. Reference its `sandboxId` from an agent config via `sandbox`. Config is encrypted at rest (it may carry `envVars`).
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string }
+                description: { type: string }
+                config:
+                  type: object
+                  properties:
+                    provider: { type: string, enum: [lambda, e2b, daytona, kubernetes] }
+                    internet: { type: boolean }
+                    permissionMode: { type: string, enum: [edit, ask, bypass] }
+                    runtimes:
+                      type: array
+                      items: { type: string, enum: [bash, python, node] }
+                    timeout: { type: integer, description: "per-call seconds (max: lambda 300, other providers 600)" }
+                    memoryLimit: { type: integer, description: "MB; bounded for lambda (max 1024), operator-sized for other providers" }
+                    outputLimitBytes: { type: integer }
+                    envVars: { type: object, additionalProperties: { type: string } }
+                    options: { type: object }
+            examples:
+              lambda:
+                value:
+                  name: default
+                  config: { provider: lambda, internet: true, permissionMode: ask }
+      responses:
+        '201': { description: Sandbox created }
+    get:
+      tags: [Sandboxes]
+      summary: List sandboxes
+      security:
+        - BearerAuth: []
+      responses:
+        '200': { description: List of sandboxes }
+
+  /accounts/me/sandboxes/{sandboxId}:
+    get:
+      tags: [Sandboxes]
+      summary: Get sandbox
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - { name: sandboxId, in: path, required: true, schema: { type: string } }
+      responses:
+        '200': { description: Sandbox }
+        '404': { description: Not found }
+    patch:
+      tags: [Sandboxes]
+      summary: Update sandbox
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - { name: sandboxId, in: path, required: true, schema: { type: string } }
+      responses:
+        '200': { description: Updated }
+    delete:
+      tags: [Sandboxes]
+      summary: Delete sandbox
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - { name: sandboxId, in: path, required: true, schema: { type: string } }
+      responses:
+        '200': { description: Deleted }
+
+  /accounts/me/workspaces:
+    post:
+      tags:
+        - Workspaces
+      summary: Create workspace
+      description: Create a standalone, account-scoped workspace config (persistent S3 filesystem). Reference its `workspaceId` from an agent config via `workspaces[].workspaceId`. Agents sharing a `workspaceId` share files.
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string }
+                description: { type: string }
+                config:
+                  type: object
+                  properties:
+                    storage:
+                      type: object
+                      properties:
+                        provider: { type: string, enum: [s3] }
+                    harness:
+                      type: object
+                      properties:
+                        enabled: { type: boolean }
+            examples:
+              notes:
+                value:
+                  name: notes
+                  config: { storage: { provider: s3 }, harness: { enabled: true } }
+      responses:
+        '201': { description: Workspace created }
+    get:
+      tags: [Workspaces]
+      summary: List workspaces
+      security:
+        - BearerAuth: []
+      responses:
+        '200': { description: List of workspaces }
+
+  /accounts/me/workspaces/{workspaceId}:
+    get:
+      tags: [Workspaces]
+      summary: Get workspace
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - { name: workspaceId, in: path, required: true, schema: { type: string } }
+      responses:
+        '200': { description: Workspace }
+        '404': { description: Not found }
+    patch:
+      tags: [Workspaces]
+      summary: Update workspace
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - { name: workspaceId, in: path, required: true, schema: { type: string } }
+      responses:
+        '200': { description: Updated }
+    delete:
+      tags: [Workspaces]
+      summary: Delete workspace
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - { name: workspaceId, in: path, required: true, schema: { type: string } }
+      responses:
+        '200': { description: Deleted }
 
   /accounts/me/skills:
     post:
@@ -1604,8 +1746,24 @@ components:
           $ref: '#/components/schemas/SkillsConfig'
         subagent:
           $ref: '#/components/schemas/SubagentConfig'
-        workspace:
-          $ref: '#/components/schemas/WorkspaceConfig'
+        sandbox:
+          type: string
+          description: Id of the agent-level sandbox config (POST /accounts/me/sandboxes). Powers stateless bash and is the default sandbox for workspaces that don't set their own.
+        workspaces:
+          type: array
+          description: References to account-scoped workspace configs. Agents sharing a workspaceId share files.
+          items:
+            type: object
+            required: [name, workspaceId]
+            properties:
+              name:
+                type: string
+                description: Agent-facing mount label (the `workspace` arg the model selects). Unique per agent.
+              workspaceId:
+                type: string
+              sandbox:
+                type: [string, "null"]
+                description: Optional per-workspace sandbox. A sandbox id overrides the agent-level `sandbox` for this workspace (and its permissionMode). `null` forces this workspace read-only even when an agent-level default exists. Omitted => inherit the agent-level `sandbox`; with no effective sandbox the workspace is read-only (read/glob served directly from S3).
         session:
           $ref: '#/components/schemas/SessionConfig'
         tools:
@@ -1766,7 +1924,7 @@ components:
 
     SkillsConfig:
       type: object
-      description: When enabled, the runtime includes allowed skill metadata in the system prompt and exposes `load_skill`. Optional publishing exposes `publish_skill_changes` for staged workspace edits.
+      description: When enabled, the runtime includes allowed skill metadata in the system prompt and exposes `load_skill`. Skill publishing is currently disabled.
       properties:
         enabled:
           type: boolean
@@ -1777,7 +1935,7 @@ components:
           description: Account-scoped skill paths (e.g., `acct_.../support-flow`)
         publish:
           type: object
-          description: Allows agents to publish validated staged skill edits back to the account-level skill bundle. `publish_skill_changes` is exposed only when Workspace is also enabled, since it publishes from the staged checkout.
+          description: Reserved for future skill publishing. Currently ignored by the runtime.
           properties:
             enabled:
               type: boolean
@@ -1805,81 +1963,6 @@ components:
           enum: [ephemeral, persistent]
           description: Child conversation persistence mode; omitted means `ephemeral`
 
-    WorkspaceConfig:
-      type: object
-      description: Enables workspace-backed files, automatic `MEMORY.md` loading when present, optional MEMORY/TASKS harness instructions, and the sandboxed `bash` tool.
-      properties:
-        enabled:
-          type: boolean
-        needsApproval:
-          type: boolean
-          description: Requires AI SDK approval before every `bash` workspace tool execution
-        namespace:
-          type: string
-          description: Shared default workspace namespace key; omitted means per-conversation state
-        defaultWorkspace:
-          type: string
-          description: Default named workspace used when `workspaces` is configured and a tool call omits `workspace`
-        workspaces:
-          type: object
-          description: Named workspaces. Entries without `namespace` are per-conversation; entries with `namespace` are shared for the account agent.
-          additionalProperties:
-            type: object
-            properties:
-              namespace:
-                type: string
-                description: Shared namespace key for this named workspace
-              description:
-                type: string
-                description: Model-facing workspace purpose
-        harness:
-          type: object
-          description: Controls the default MEMORY/TASKS harness instructions. Existing `MEMORY.md` files are still loaded when this is disabled.
-          properties:
-            enabled:
-              type: boolean
-        storage:
-          type: object
-          description: Workspace storage backend. Only S3 is supported today.
-          properties:
-            provider:
-              type: string
-              enum: [s3]
-              description: Workspace storage provider; defaults to `s3`
-        sandbox:
-          type: object
-          description: Filesystem sandbox provider and execution limits. The sandbox is available whenever workspace is enabled.
-          properties:
-            provider:
-              type: string
-              enum: [lambda, e2b, daytona]
-            timeout:
-              type: integer
-              description: "Per-run timeout in seconds (1–120, default: 30)"
-            outputLimitBytes:
-              type: integer
-              description: "Captured stdout/stderr limit (1–262144, default: 65536)"
-            envVars:
-              type: object
-              additionalProperties:
-                type: string
-              description: Environment variables injected into the sandbox runtime (shell, Node, and Python). Reserved runtime vars (`PATH`, `HOME`, `TMPDIR`, ...) always take precedence and cannot be overridden.
-            options:
-              type: object
-              properties:
-                bashFunctionName:
-                  type: string
-                  description: Optional Lambda function name override for shell execution
-                pythonFunctionName:
-                  type: string
-                  description: Lambda function name override for Python file execution
-                workspaceRoot:
-                  type: string
-                  description: Mounted workspace root path; defaults to `/mnt/workspaces`
-                networkAccess:
-                  type: string
-                  enum: [disabled, public]
-                  description: Enables `curl` in the bash sandbox when set to `public`
     SessionConfig:
       type: object
       description: Controls model-visible history management.

@@ -1,22 +1,46 @@
 /**
  * Example: workspace sandbox execution on the Beeblast k3s cluster via the
  * `kubernetes` provider (agent-sandbox runtime pods).
- *
- * Mirrors examples/sandbox.ts but selects provider: "kubernetes". Requires the
- * harness to be deployed with the kubernetes sandbox provider and reachable at
- * ACCOUNT_SERVICE_URL / AGENT_SERVICE_URL, with the cluster kubeconfig provided
- * to the harness runtime (KUBERNETES_SANDBOX_KUBECONFIG) — see
- * functions/harness-processing/sandbox/kubernetes-executor.ts.
- *
- * Run: bun run examples/sandbox-kubernetes.ts
  */
 
-import { createAccount, createAgent, deleteAccount, streamSSE, requireEnv } from "./utils.ts";
+import {
+  createAccount,
+  createAgent,
+  createSandbox,
+  createWorkspace,
+  deleteAccount,
+  streamSSE,
+  requireEnv,
+} from "./utils.ts";
 
 const googleApiKey = requireEnv("ACCOUNT_GOOGLE_API_KEY");
 const username = `sandbox-k8s-${Date.now()}`;
 
 const account = await createAccount(username);
+
+const sandbox = await createSandbox(account.secret, "k8s-sandbox", {
+  provider: "kubernetes",
+  permissionMode: "bypass",
+  timeout: 60,
+  outputLimitBytes: 65536,
+  envVars: {
+    SANDBOX_SMOKE_VAR: "sandbox-env-ok",
+  },
+  options: {
+    // namespace/image/serviceAccountName/imagePullSecrets default from harness env.
+    // mountAwsS3Buckets mounts the shared workspace S3 bucket so files persist across
+    // the ephemeral per-run pods (parity with lambda/daytona). Creds + bucket come from
+    // the harness env (FILESYSTEM_BUCKET_NAME, AWS_*).
+    mountAwsS3Buckets: true,
+    workspaceRoot: "/mnt/workspaces",
+  },
+});
+
+const workspace = await createWorkspace(account.secret, "notes", {
+  storage: { provider: "s3" },
+  harness: { enabled: true },
+});
+
 const agent = await createAgent(account.secret, "Kubernetes sandbox assistant", {
   provider: {
     google: {
@@ -29,40 +53,15 @@ const agent = await createAgent(account.secret, "Kubernetes sandbox assistant", 
     temperature: 0,
   },
   agent: {
-    system: [
-      "You are testing the kubernetes workspace sandbox.",
-      "The sandbox is a real VM-like pod: bash, node, and python3 are on PATH.",
-      "Use the bash tool to write source files first, then execute file-based scripts.",
-      "Do not use inline execution such as node -e or python -c.",
-      "After running files, summarize stdout, generated files, and status for each run.",
-    ].join("\n"),
+    system: "You are testing the workspace sandbox.",
   },
-  workspace: {
-    enabled: true,
-    needsApproval: false,
-    storage: {
-      provider: "s3",
-    },
-    sandbox: {
-      provider: "kubernetes",
-      timeout: 60,
-      outputLimitBytes: 65536,
-      envVars: {
-        SANDBOX_SMOKE_VAR: "sandbox-env-ok",
-      },
-      options: {
-        // namespace/image/serviceAccountName/imagePullSecrets default from harness env.
-        // mountAwsS3Buckets mounts the shared workspace S3 bucket so files persist across
-        // the ephemeral per-run pods (parity with lambda/daytona). Creds + bucket come from
-        // the harness env (FILESYSTEM_BUCKET_NAME, AWS_*).
-        mountAwsS3Buckets: true,
-        workspaceRoot: "/mnt/workspaces",
-      },
-    },
-  },
+  sandbox: sandbox.sandboxId,
+  workspaces: [{ name: "notes", workspaceId: workspace.workspaceId }],
 });
 
 console.log("Created test account:", JSON.stringify(account));
+console.log("Created sandbox:", JSON.stringify(sandbox));
+console.log("Created workspace:", JSON.stringify(workspace));
 console.log("Created test agent:", JSON.stringify(agent));
 
 try {

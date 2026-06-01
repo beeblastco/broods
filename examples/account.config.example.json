@@ -61,47 +61,14 @@
     "allowed": [
       "acct_abc123/support-flow",
       "acct_abc123/knowledge-base"
-    ],
-    "publish": {
-      "enabled": false,
-      "needApproval": true
-    }
+    ]
   },
-  "workspace": {
-    "enabled": true,
-    "needsApproval": true,
-    "namespace": "support",
-    "defaultWorkspace": "personal",
-    "workspaces": {
-      "personal": {
-        "description": "Private per-conversation workspace"
-      },
-      "team": {
-        "namespace": "support-team",
-        "description": "Shared team workspace"
-      }
-    },
-    "harness": {
-      "enabled": true
-    },
-    "storage": {
-      "provider": "s3"
-    },
-    "sandbox": {
-      "provider": "lambda",
-      "timeout": 30,
-      "outputLimitBytes": 65536,
-      "envVars": {
-        "MY_API_BASE": "https://api.example.com"
-      },
-      "options": {
-        "bashFunctionName": "my-bash-sandbox",
-        "pythonFunctionName": "my-python-sandbox",
-        "workspaceRoot": "/mnt/workspaces",
-        "networkAccess": "disabled"
-      }
-    }
-  },
+  "sandbox": "sb_abc123",
+  "workspaces": [
+    { "name": "personal", "workspaceId": "ws_personal123" },
+    { "name": "team", "workspaceId": "ws_team123", "sandbox": "sb_team456" },
+    { "name": "docs", "workspaceId": "ws_docs123", "sandbox": null }
+  ],
   "session": {
     "pruning": {
       "enabled": true

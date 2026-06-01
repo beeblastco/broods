@@ -434,7 +434,9 @@ function createEphemeralChildSession(childSession: Session, system: SystemModelM
     conversationKey: childSession.conversationKey,
     eventId: childSession.eventId,
     filesystemNamespace: () => childSession.filesystemNamespace(),
-    workspaceBindings: () => childSession.workspaceBindings(),
+    resolvedWorkspaces: () => childSession.resolvedWorkspaces(),
+    statelessSandbox: () => childSession.statelessSandbox(),
+    statelessPermissionMode: () => childSession.statelessPermissionMode(),
     persistModelMessages: async () => [],
     loadSkillPrompt: (allowedSkillPaths: string[], skillPath: string, resourcePaths?: string[]) =>
       childSession.loadSkillPrompt(allowedSkillPaths, skillPath, resourcePaths),

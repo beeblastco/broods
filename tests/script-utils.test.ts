@@ -61,9 +61,6 @@ describe("script agent runtime config", () => {
           apiKey: "google-key",
         },
       },
-      workspace: {
-        enabled: true,
-      },
       tools: {
         tavilySearch: { enabled: true, apiKey: "tavily-key" },
         tavilyExtract: { enabled: true, apiKey: "tavily-key" },
@@ -97,9 +94,6 @@ describe("script agent runtime config", () => {
           baseURL: "https://example.test/v1",
         },
       },
-      workspace: {
-        enabled: true,
-      },
       tools: {
         tavilySearch: { enabled: true },
       },
@@ -127,10 +121,20 @@ describe("script agent runtime config", () => {
           baseURL: "https://api.minimax.io/anthropic/v1",
         },
       },
-      workspace: {
-        enabled: true,
-      },
       tools: {},
+    });
+  });
+
+  it("adds workspace and sandbox references when ids are provided", () => {
+    process.env = {};
+    process.env.ACCOUNT_GOOGLE_API_KEY = "google-key";
+    process.env.ACCOUNT_SANDBOX_ID = "sb_default";
+    process.env.ACCOUNT_WORKSPACE_ID = "ws_notes";
+    process.env.ACCOUNT_WORKSPACE_NAME = "notes";
+
+    expect(createScriptAgentConfig()).toMatchObject({
+      sandbox: "sb_default",
+      workspaces: [{ name: "notes", workspaceId: "ws_notes" }],
     });
   });
 

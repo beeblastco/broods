@@ -1,6 +1,7 @@
 /**
- * Workspace sandbox executor tests.
- * Cover provider selection without invoking real third-party services.
+ * Sandbox executor tests.
+ * Cover provider selection + the single run() contract without invoking real
+ * third-party services.
  */
 
 import { beforeEach, describe, expect, it, mock } from "bun:test";
@@ -18,7 +19,7 @@ const e2bCreateMock = mock(async (_options: Record<string, unknown>) => ({
   kill: e2bKillMock,
 }));
 
-const daytonaExecuteCommandMock = mock(async (_command: string, _cwd: string, _env?: unknown, _timeout?: number) => ({
+const daytonaExecuteCommandMock = mock(async (_command: string, _cwd?: string, _env?: unknown, _timeout?: number) => ({
   exitCode: 0,
   result: "ok\n",
 }));
@@ -29,14 +30,17 @@ const daytonaCreateMock = mock(async (_options: Record<string, unknown>) => ({
   },
   delete: daytonaDeleteMock,
 }));
+let lambdaPayload = {
+  ok: true,
+  runtime: "bash",
+  exit_code: 0,
+  timed_out: false,
+  duration_ms: 5,
+  stdout: "shell ok\n",
+  stderr: "",
+};
 const lambdaSendMock = mock(async (_command: unknown) => ({
-  Payload: new TextEncoder().encode(JSON.stringify({
-    ok: true,
-    exitCode: 0,
-    stdout: "shell ok\n",
-    stderr: "",
-    durationMs: 5,
-  })),
+  Payload: new TextEncoder().encode(JSON.stringify(lambdaPayload)),
 }));
 
 mock.module("e2b", () => ({
@@ -72,6 +76,10 @@ beforeEach(() => {
   process.env.AWS_REGION = "eu-central-1";
   process.env.FILESYSTEM_BUCKET_NAME = "workspace-bucket";
   process.env.SKILLS_BUCKET_NAME = "skills-bucket";
+  process.env.SANDBOX_FN_MOUNT_NET = "sandbox-mount-net";
+  process.env.SANDBOX_FN_MOUNT_NONET = "sandbox-mount-nonet";
+  process.env.SANDBOX_FN_NOMOUNT_NET = "sandbox-nomount-net";
+  process.env.SANDBOX_FN_NOMOUNT_NONET = "sandbox-nomount-nonet";
   e2bRunMock.mockClear();
   e2bKillMock.mockClear();
   e2bCreateMock.mockClear();
@@ -79,36 +87,39 @@ beforeEach(() => {
   daytonaDeleteMock.mockClear();
   daytonaCreateMock.mockClear();
   lambdaSendMock.mockClear();
-  process.env.SANDBOX_BASH_FUNCTION_NAME = "sandbox-bash";
+  lambdaPayload = {
+    ok: true,
+    runtime: "bash",
+    exit_code: 0,
+    timed_out: false,
+    duration_ms: 5,
+    stdout: "shell ok\n",
+    stderr: "",
+  };
 });
 
-describe("createWorkspaceSandboxExecutor", () => {
+const NS = "fs-0123456789abcdef0123456789abcdef01234567";
+
+describe("createSandboxExecutor", () => {
   it("creates the built-in Lambda executor by default", () => {
-    const { createWorkspaceSandboxExecutor } = require("../functions/harness-processing/sandbox/index.ts");
-    const executor = createWorkspaceSandboxExecutor({});
-    expect(executor.constructor.name).toBe("LambdaWorkspaceSandboxExecutor");
+    const { createSandboxExecutor } = require("../functions/harness-processing/sandbox/index.ts");
+    expect(createSandboxExecutor({}).constructor.name).toBe("LambdaSandboxExecutor");
   });
 
-  it("creates E2B and Daytona executor adapters", () => {
-    const { createWorkspaceSandboxExecutor } = require("../functions/harness-processing/sandbox/index.ts");
-    expect(createWorkspaceSandboxExecutor({ provider: "e2b" }).constructor.name)
-      .toBe("E2BWorkspaceSandboxExecutor");
-    expect(createWorkspaceSandboxExecutor({ provider: "daytona" }).constructor.name)
-      .toBe("DaytonaWorkspaceSandboxExecutor");
+  it("creates E2B, Daytona, and Kubernetes executor adapters", () => {
+    const { createSandboxExecutor } = require("../functions/harness-processing/sandbox/index.ts");
+    expect(createSandboxExecutor({ provider: "e2b" }).constructor.name).toBe("E2BSandboxExecutor");
+    expect(createSandboxExecutor({ provider: "daytona" }).constructor.name).toBe("DaytonaSandboxExecutor");
+    expect(createSandboxExecutor({ provider: "kubernetes" }).constructor.name).toBe("KubernetesSandboxExecutor");
   });
 
-  it("runs Lambda shell commands through the configured bash sandbox", async () => {
-    const { createWorkspaceSandboxExecutor } = require("../functions/harness-processing/sandbox/index.ts");
-    const executor = createWorkspaceSandboxExecutor({
-      options: {
-        bashFunctionName: "custom-bash",
-        networkAccess: "public",
-      },
-    });
+  it("selects the mounted (no-internet) lambda when a namespace is present", async () => {
+    const { createSandboxExecutor } = require("../functions/harness-processing/sandbox/index.ts");
+    const executor = createSandboxExecutor({ provider: "lambda" });
 
-    const result = await executor.runShell!({
-      namespace: "fs-0123456789abcdef0123456789abcdef01234567",
-      shell: "echo ok",
+    const result = await executor.run({
+      code: "echo ok",
+      namespace: NS,
       workspaceRoot: "/mnt/workspaces",
       timeoutSeconds: 30,
       outputLimitBytes: 4096,
@@ -116,72 +127,64 @@ describe("createWorkspaceSandboxExecutor", () => {
 
     expect(result).toMatchObject({ ok: true, provider: "lambda", stdout: "shell ok\n" });
     const command = lambdaSendMock.mock.calls[0]![0] as { input: { FunctionName: string; Payload: Uint8Array } };
-    expect(command.input.FunctionName).toBe("custom-bash");
+    expect(command.input.FunctionName).toBe("sandbox-mount-nonet");
     expect(JSON.parse(new TextDecoder().decode(command.input.Payload))).toMatchObject({
-      runtime: "shell",
-      shell: "echo ok",
-      networkAccess: "public",
+      runtime: "bash",
+      code: "echo ok",
+      namespace: NS,
+      workspace_root: "/mnt/workspaces",
+      timeout_ms: 30000,
     });
   });
 
-  it("reads a directory straight from the mount through the bash sandbox", async () => {
-    const { createWorkspaceSandboxExecutor } = require("../functions/harness-processing/sandbox/index.ts");
-    const executor = createWorkspaceSandboxExecutor({ options: { bashFunctionName: "custom-bash" } });
+  it("selects the no-mount internet lambda when stateless + internet on", async () => {
+    const { createSandboxExecutor } = require("../functions/harness-processing/sandbox/index.ts");
+    const executor = createSandboxExecutor({ provider: "lambda", internet: true });
 
-    lambdaSendMock.mockResolvedValueOnce({
-      Payload: new TextEncoder().encode(JSON.stringify({
-        ok: true,
-        files: [{ path: "SKILL.md", base64: "U0tJTEw=" }],
-      })),
-    });
-
-    const result = await executor.readDirectory!({
-      namespace: "fs-0123456789abcdef0123456789abcdef01234567",
-      path: ".claude/skills/demo",
-      workspaceRoot: "/mnt/workspaces",
-    });
-
-    expect(result).toMatchObject({ ok: true, provider: "lambda", files: [{ path: "SKILL.md", base64: "U0tJTEw=" }] });
+    await executor.run({ code: "echo ok", timeoutSeconds: 30, outputLimitBytes: 4096 });
     const command = lambdaSendMock.mock.calls[0]![0] as { input: { FunctionName: string; Payload: Uint8Array } };
-    expect(command.input.FunctionName).toBe("custom-bash");
-    expect(JSON.parse(new TextDecoder().decode(command.input.Payload))).toMatchObject({
-      runtime: "read-dir",
-      path: ".claude/skills/demo",
-      namespace: "fs-0123456789abcdef0123456789abcdef01234567",
-    });
+    expect(command.input.FunctionName).toBe("sandbox-nomount-net");
+    expect(JSON.parse(new TextDecoder().decode(command.input.Payload)).namespace).toBeUndefined();
   });
 
-  it("runs E2B commands from the configured native mounted namespace path", async () => {
-    const { createWorkspaceSandboxExecutor } = require("../functions/harness-processing/sandbox/index.ts");
-    const executor = createWorkspaceSandboxExecutor({
+  it("applies the harness output limit to lambda responses", async () => {
+    const { createSandboxExecutor } = require("../functions/harness-processing/sandbox/index.ts");
+    lambdaPayload = {
+      ...lambdaPayload,
+      stdout: "abcdef",
+      stderr: "uvwxyz",
+    };
+    const executor = createSandboxExecutor({ provider: "lambda" });
+
+    const result = await executor.run({ code: "echo ok", timeoutSeconds: 30, outputLimitBytes: 3 });
+
+    expect(result.stdout).toBe("abc\n[output truncated]");
+    expect(result.stderr).toBe("uvw\n[output truncated]");
+    expect(result.truncated).toBe(true);
+  });
+
+  it("runs E2B commands as-is in the workspace directory", async () => {
+    const { createSandboxExecutor } = require("../functions/harness-processing/sandbox/index.ts");
+    const executor = createSandboxExecutor({
       provider: "e2b",
-      envVars: {
-        MY_API_BASE: "https://api.example.com",
-      },
-      options: {
-        workspaceRoot: "/workspace",
-        template: "mounted-template",
-      },
+      envVars: { MY_API_BASE: "https://api.example.com" },
+      options: { workspaceRoot: "/workspace", template: "mounted-template" },
     });
 
-    const result = await executor.runFile({
-      runtime: "node",
-      namespace: "fs-0123456789abcdef0123456789abcdef01234567",
-      entryPath: "/scripts/main.js",
-      args: ["--mode", "fast value"],
+    const result = await executor.run({
+      code: "mkdir -p notes && echo hi > notes/a.txt && cat notes/a.txt",
+      namespace: NS,
       workspaceRoot: "/workspace",
       timeoutSeconds: 30,
       outputLimitBytes: 4096,
     });
 
     expect(result).toMatchObject({ ok: true, provider: "e2b", stdout: "ok\n" });
-    expect(e2bCreateMock).toHaveBeenCalledWith(expect.objectContaining({
-      template: "mounted-template",
-    }));
+    expect(e2bCreateMock).toHaveBeenCalledWith(expect.objectContaining({ template: "mounted-template" }));
     expect(e2bRunMock).toHaveBeenCalledWith(
-      "'node' 'scripts/main.js' '--mode' 'fast value'",
+      "mkdir -p notes && echo hi > notes/a.txt && cat notes/a.txt",
       {
-        cwd: "/workspace/fs-0123456789abcdef0123456789abcdef01234567",
+        cwd: `/workspace/${NS}`,
         timeoutMs: 30000,
         envs: { MY_API_BASE: "https://api.example.com" },
       },
@@ -189,13 +192,11 @@ describe("createWorkspaceSandboxExecutor", () => {
     expect(e2bKillMock).toHaveBeenCalledTimes(1);
   });
 
-  it("runs Daytona commands from the configured native mounted namespace path", async () => {
-    const { createWorkspaceSandboxExecutor } = require("../functions/harness-processing/sandbox/index.ts");
-    const executor = createWorkspaceSandboxExecutor({
+  it("runs Daytona commands as-is and mounts the workspace bucket", async () => {
+    const { createSandboxExecutor } = require("../functions/harness-processing/sandbox/index.ts");
+    const executor = createSandboxExecutor({
       provider: "daytona",
-      envVars: {
-        MY_API_BASE: "https://api.example.com",
-      },
+      envVars: { MY_API_BASE: "https://api.example.com" },
       options: {
         organizationId: "org-id",
         workspaceRoot: "/mnt/workspaces",
@@ -204,11 +205,9 @@ describe("createWorkspaceSandboxExecutor", () => {
       },
     });
 
-    const result = await executor.runFile({
-      runtime: "python",
-      namespace: "fs-0123456789abcdef0123456789abcdef01234567",
-      entryPath: "/analysis.py",
-      args: ["sample.wav"],
+    const result = await executor.run({
+      code: "echo hi && ls",
+      namespace: NS,
       workspaceRoot: "/mnt/workspaces",
       timeoutSeconds: 45,
       outputLimitBytes: 4096,
@@ -217,7 +216,7 @@ describe("createWorkspaceSandboxExecutor", () => {
     expect(result).toMatchObject({ ok: true, provider: "daytona", stdout: "ok\n" });
     expect(daytonaCreateMock).toHaveBeenCalledWith(expect.objectContaining({
       snapshot: "fuse-s3",
-      language: "python",
+      language: "typescript",
       envVars: {
         MY_API_BASE: "https://api.example.com",
         AWS_ACCESS_KEY_ID: "test-access-key",
@@ -227,78 +226,14 @@ describe("createWorkspaceSandboxExecutor", () => {
         AWS_DEFAULT_REGION: "eu-central-1",
       },
     }));
-    expect(daytonaExecuteCommandMock).toHaveBeenCalledWith("sudo mkdir -p '/mnt/workspaces'");
     expect(daytonaExecuteCommandMock).toHaveBeenCalledWith(
-      "sudo chown \"$(id -u)\":\"$(id -g)\" '/mnt/workspaces'",
+      `sudo -E mount-s3 --uid "$(id -u)" --gid "$(id -g)" '--allow-delete' '--allow-overwrite' '--allow-other' '--prefix' 'sandbox/${NS}/' '--region' 'eu-central-1' 'workspace-bucket' '/mnt/workspaces/${NS}'`,
     );
-    expect(daytonaExecuteCommandMock).toHaveBeenCalledWith(
-      "sudo -E mount-s3 --uid \"$(id -u)\" --gid \"$(id -g)\" '--allow-delete' '--allow-overwrite' '--allow-other' '--prefix' 'sandbox/' '--region' 'eu-central-1' 'workspace-bucket' '/mnt/workspaces'",
-    );
-    expect(daytonaExecuteCommandMock).toHaveBeenCalledWith("sudo mkdir -p '/mnt/skills'");
-    expect(daytonaExecuteCommandMock).toHaveBeenCalledWith(
-      "sudo chown \"$(id -u)\":\"$(id -g)\" '/mnt/skills'",
-    );
-    expect(daytonaExecuteCommandMock).toHaveBeenCalledWith(
-      "sudo -E mount-s3 --uid \"$(id -u)\" --gid \"$(id -g)\" '--allow-delete' '--allow-overwrite' '--allow-other' '--region' 'eu-central-1' 'skills-bucket' '/mnt/skills'",
-    );
-    expect(daytonaExecuteCommandMock).toHaveBeenCalledWith(
-      "'python3' 'analysis.py' 'sample.wav'",
-      "/mnt/workspaces/fs-0123456789abcdef0123456789abcdef01234567",
-      undefined,
-      45,
-    );
-    expect(daytonaDeleteMock).toHaveBeenCalledTimes(1);
-  });
-
-  it("runs E2B shell commands as-is in the workspace directory", async () => {
-    const { createWorkspaceSandboxExecutor } = require("../functions/harness-processing/sandbox/index.ts");
-    const executor = createWorkspaceSandboxExecutor({
-      provider: "e2b",
-      envVars: { MY_API_BASE: "https://api.example.com" },
-      options: { workspaceRoot: "/workspace", template: "mounted-template" },
-    });
-
-    const result = await executor.runShell!({
-      namespace: "fs-0123456789abcdef0123456789abcdef01234567",
-      shell: "mkdir -p notes && echo hi > notes/a.txt && cat notes/a.txt",
-      workspaceRoot: "/workspace",
-      timeoutSeconds: 30,
-      outputLimitBytes: 4096,
-    });
-
-    expect(result).toMatchObject({ ok: true, provider: "e2b", stdout: "ok\n" });
-    expect(e2bRunMock).toHaveBeenCalledWith(
-      "mkdir -p notes && echo hi > notes/a.txt && cat notes/a.txt",
-      {
-        cwd: "/workspace/fs-0123456789abcdef0123456789abcdef01234567",
-        timeoutMs: 30000,
-        envs: { MY_API_BASE: "https://api.example.com" },
-      },
-    );
-    expect(e2bKillMock).toHaveBeenCalledTimes(1);
-  });
-
-  it("runs Daytona shell commands as-is in the workspace directory", async () => {
-    const { createWorkspaceSandboxExecutor } = require("../functions/harness-processing/sandbox/index.ts");
-    const executor = createWorkspaceSandboxExecutor({
-      provider: "daytona",
-      options: { workspaceRoot: "/mnt/workspaces" },
-    });
-
-    const result = await executor.runShell!({
-      namespace: "fs-0123456789abcdef0123456789abcdef01234567",
-      shell: "echo hi && ls",
-      workspaceRoot: "/mnt/workspaces",
-      timeoutSeconds: 30,
-      outputLimitBytes: 4096,
-    });
-
-    expect(result).toMatchObject({ ok: true, provider: "daytona", stdout: "ok\n" });
     expect(daytonaExecuteCommandMock).toHaveBeenCalledWith(
       "echo hi && ls",
-      "/mnt/workspaces/fs-0123456789abcdef0123456789abcdef01234567",
+      `/mnt/workspaces/${NS}`,
       undefined,
-      30,
+      45,
     );
     expect(daytonaDeleteMock).toHaveBeenCalledTimes(1);
   });

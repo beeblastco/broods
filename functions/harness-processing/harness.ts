@@ -75,10 +75,9 @@ export async function runAgentLoop(
   const tools = {
     ...createTools({
       conversationKey: session.conversationKey,
-      filesystemNamespace: session.filesystemNamespace(),
-      workspaceBindings: typeof session.workspaceBindings === "function"
-        ? session.workspaceBindings()
-        : [{ id: "default", namespace: session.filesystemNamespace(), isDefault: true }],
+      workspaces: session.resolvedWorkspaces(),
+      statelessSandbox: session.statelessSandbox(),
+      statelessPermissionMode: session.statelessPermissionMode(),
       modelProviderName: configuredModel.providerName,
       modelProvider: configuredModel.provider,
       session: session,

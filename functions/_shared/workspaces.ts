@@ -1,127 +1,125 @@
 /**
- * Workspace namespace resolution shared by runtime sessions and cleanup.
- * Keep config-to-filesystem binding rules here.
+ * Workspace + sandbox runtime resolution shared by harness sessions and cleanup.
+ *
+ * Agents reference standalone, account-scoped sandbox / workspace records by id.
+ * This module resolves those references into concrete runtime configs and derives
+ * the filesystem namespace for each workspace. The namespace is scoped by
+ * `accountId:workspaceId` (NOT agent/conversation), so agents that share a
+ * workspaceId read and write the SAME files.
  */
 
 import { normalizeFilesystemNamespace } from "./runtime-keys.ts";
-import type { AgentConfig, AgentWorkspaceDefinitionConfig } from "./storage/index.ts";
+import { getStorage } from "./storage/index.ts";
+import type {
+  AgentConfig,
+  AgentWorkspaceRef,
+  SandboxConfig,
+  WorkspaceConfig,
+} from "./storage/index.ts";
 
-export interface WorkspaceBinding {
-  id: string;
+// A workspace resolved for a turn: the storage record plus its effective sandbox.
+// This is the single shape the session, tools, and prompts all consume. Conventions:
+//   - `name` is the agent-facing mount label (the `workspace` arg the model selects).
+//   - the FIRST workspace in the list is the default (used when the model omits `workspace`).
+//   - `sandbox` undefined => the workspace is read-only (served directly from S3, no mount);
+//     its tool `permissionMode` is then `sandbox.permissionMode` (default "ask").
+export interface ResolvedWorkspace {
+  name: string;
+  workspaceId: string;
   namespace: string;
   description?: string;
-  isDefault: boolean;
+  config: WorkspaceConfig;
+  sandbox?: SandboxConfig;
 }
 
-interface WorkspaceResolutionContext {
-  accountId?: string;
-  agentId?: string;
-  conversationKey: string;
+export interface ResolvedAgentRuntime {
+  // Agent-level default sandbox. Powers stateless bash (no workspace) and is the
+  // fallback sandbox for workspaces that don't declare their own.
+  sandbox?: SandboxConfig;
+  workspaces: ResolvedWorkspace[];
 }
 
-interface ConfiguredWorkspaceNamespaceContext {
-  accountId: string;
-  agentId: string;
+/** Derive the shared filesystem namespace for a workspace record. */
+export function workspaceNamespace(accountId: string | undefined, workspaceId: string): string {
+  const scope = accountId ? `${accountId}:${workspaceId}` : workspaceId;
+  return normalizeFilesystemNamespace(scope);
 }
 
-const DEFAULT_WORKSPACE_ID = "default";
-
-export function resolveWorkspaceBindings(
+/**
+ * Resolve an agent's `sandbox` + `workspaces` references into concrete records.
+ * Throws a clear error when a referenced record is missing (misconfigured agent).
+ */
+export async function resolveAgentRuntime(
   agentConfig: AgentConfig,
-  context: WorkspaceResolutionContext,
-): WorkspaceBinding[] {
-  const workspace = agentConfig.workspace ?? {};
-  const configuredWorkspaces = workspace.workspaces;
-  if (configuredWorkspaces && Object.keys(configuredWorkspaces).length > 0) {
-    const workspaceIds = Object.keys(configuredWorkspaces);
-    const defaultWorkspaceId = workspace.defaultWorkspace
-      ?? (workspaceIds.includes(DEFAULT_WORKSPACE_ID) ? DEFAULT_WORKSPACE_ID : workspaceIds[0]!);
+  accountId: string | undefined,
+): Promise<ResolvedAgentRuntime> {
+  const storage = getStorage();
+  const sandboxCache = new Map<string, SandboxConfig>();
 
-    return workspaceIds.map((id) => {
-      const config = configuredWorkspaces[id] ?? {};
-      return toWorkspaceBinding(
-        id,
-        {
-          ...config,
-          namespace: config.namespace ?? (id === defaultWorkspaceId ? defaultWorkspaceNamespace(agentConfig) : undefined),
-        },
-        context,
-        id === defaultWorkspaceId,
-        false,
-      );
+  // Load (and memoize) a sandbox record so a sandbox shared across workspaces is
+  // only fetched once.
+  async function loadSandbox(sandboxId: string): Promise<SandboxConfig> {
+    if (!accountId) {
+      throw new Error("Cannot resolve sandbox reference without an account");
+    }
+    const cached = sandboxCache.get(sandboxId);
+    if (cached) {
+      return cached;
+    }
+    const record = await storage.sandboxConfigs.getById(accountId, sandboxId);
+    if (!record) {
+      throw new Error(`Referenced sandbox not found: ${sandboxId}`);
+    }
+    sandboxCache.set(sandboxId, record.config);
+    return record.config;
+  }
+
+  const sandbox = typeof agentConfig.sandbox === "string" && agentConfig.sandbox.length > 0
+    ? await loadSandbox(agentConfig.sandbox)
+    : undefined;
+
+  const workspaces: ResolvedWorkspace[] = [];
+  for (const ref of agentConfig.workspaces ?? []) {
+    if (!accountId) {
+      throw new Error("Cannot resolve workspace reference without an account");
+    }
+    const record = await storage.workspaceConfigs.getById(accountId, ref.workspaceId);
+    if (!record) {
+      throw new Error(`Referenced workspace not found: ${ref.workspaceId} (as "${ref.name}")`);
+    }
+    // Effective sandbox cascade:
+    //   null            => read-only opt-out (even when an agent default exists)
+    //   "sb_…" (string) => per-workspace override
+    //   undefined       => inherit the agent-level default (read-only if none)
+    let effectiveSandbox: SandboxConfig | undefined;
+    if (ref.sandbox === null) {
+      effectiveSandbox = undefined;
+    } else if (typeof ref.sandbox === "string" && ref.sandbox.length > 0) {
+      effectiveSandbox = await loadSandbox(ref.sandbox);
+    } else {
+      effectiveSandbox = sandbox;
+    }
+    workspaces.push({
+      name: ref.name,
+      workspaceId: ref.workspaceId,
+      namespace: workspaceNamespace(accountId, ref.workspaceId),
+      ...(record.description ? { description: record.description } : {}),
+      config: record.config,
+      ...(effectiveSandbox ? { sandbox: effectiveSandbox } : {}),
     });
   }
 
-  return [toWorkspaceBinding(
-    DEFAULT_WORKSPACE_ID,
-    { namespace: defaultWorkspaceNamespace(agentConfig) },
-    context,
-    true,
-    true,
-  )];
+  return { ...(sandbox ? { sandbox } : {}), workspaces };
 }
 
-export function resolveDefaultWorkspaceBinding(
-  agentConfig: AgentConfig,
-  context: WorkspaceResolutionContext,
-): WorkspaceBinding {
-  const bindings = resolveWorkspaceBindings(agentConfig, context);
-  return bindings.find((binding) => binding.isDefault) ?? bindings[0]!;
+/**
+ * Namespaces for an account's workspace records, used by cleanup to purge the
+ * S3 data for shared workspaces. Pass the account's workspace ids.
+ */
+export function workspaceNamespacesForAccount(accountId: string, workspaceIds: string[]): string[] {
+  return workspaceIds.map((workspaceId) => workspaceNamespace(accountId, workspaceId));
 }
 
-export function resolveConfiguredWorkspaceNamespaces(
-  agentConfig: AgentConfig,
-  context: ConfiguredWorkspaceNamespaceContext,
-): string[] {
-  const workspace = agentConfig.workspace ?? {};
-  const configuredWorkspaces = workspace.workspaces;
-  const logicalNamespaces = new Set<string>();
-
-  if (configuredWorkspaces && Object.keys(configuredWorkspaces).length > 0) {
-    const defaultWorkspaceId = workspace.defaultWorkspace
-      ?? (Object.prototype.hasOwnProperty.call(configuredWorkspaces, DEFAULT_WORKSPACE_ID)
-        ? DEFAULT_WORKSPACE_ID
-        : Object.keys(configuredWorkspaces)[0]);
-
-    for (const [id, config] of Object.entries(configuredWorkspaces)) {
-      const namespace = config.namespace ?? (id === defaultWorkspaceId ? defaultWorkspaceNamespace(agentConfig) : undefined);
-      if (namespace) {
-        logicalNamespaces.add(namespace);
-      }
-    }
-  } else {
-    const namespace = defaultWorkspaceNamespace(agentConfig);
-    if (namespace) {
-      logicalNamespaces.add(namespace);
-    }
-  }
-
-  return [...logicalNamespaces].map((logicalNamespace) =>
-    normalizeFilesystemNamespace(`${context.accountId}:${context.agentId}:${logicalNamespace}`));
-}
-
-function toWorkspaceBinding(
-  id: string,
-  config: AgentWorkspaceDefinitionConfig,
-  context: WorkspaceResolutionContext,
-  isDefault: boolean,
-  preserveConversationNamespace: boolean,
-): WorkspaceBinding {
-  const logicalNamespace = config.namespace
-    ?? (preserveConversationNamespace ? context.conversationKey : `workspace:${id}:${context.conversationKey}`);
-  const accountScope = context.accountId && context.agentId
-    ? `${context.accountId}:${context.agentId}`
-    : context.accountId;
-  const scopedNamespace = accountScope ? `${accountScope}:${logicalNamespace}` : logicalNamespace;
-
-  return {
-    id,
-    namespace: normalizeFilesystemNamespace(scopedNamespace),
-    ...(config.description ? { description: config.description } : {}),
-    isDefault,
-  };
-}
-
-function defaultWorkspaceNamespace(agentConfig: AgentConfig): string | undefined {
-  return agentConfig.workspace?.namespace;
+export function resolveWorkspaceRefs(agentConfig: AgentConfig): AgentWorkspaceRef[] {
+  return agentConfig.workspaces ?? [];
 }

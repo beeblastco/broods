@@ -185,62 +185,63 @@ describe("deleteAccountRuntimeData", () => {
     expect(summary.asyncAgentResultDeleted).toBe(1);
   });
 
-  it("cascades persistent subagent conversations, status rows, and filesystem namespaces", async () => {
+  it("deletes filesystem namespaces derived from the account's workspace configs", async () => {
     process.env.CONVERSATIONS_TABLE_NAME = "conversations";
     process.env.ASYNC_AGENT_RESULT_TABLE_NAME = "async-agent-results";
     process.env.FILESYSTEM_BUCKET_NAME = "test-bucket";
-    process.env.AGENT_CONFIGS_TABLE_NAME = "agent-configs";
+    process.env.WORKSPACE_CONFIGS_TABLE_NAME = "workspace-configs";
+    process.env.SANDBOX_CONFIGS_TABLE_NAME = "sandbox-configs";
     mockDeleteS3PrefixResult = 1;
     dynamo.send = sendMock as never;
+    const { resetStorageForTests } = await import("../functions/_shared/storage/index.ts");
+    resetStorageForTests();
     const { deleteAccountRuntimeData } = await import("../functions/account-manage/cleanup.ts");
 
-    const parentConversationKey = "acct:acct_test:agent:agent_parent:api:parent";
-    const childConversationKey = "acct:acct_test:agent:virtual_subagent_subagent_1:api:subagent-persistent-1";
+    let workspaceListed = false;
     sendMock.mockImplementation(async (command: unknown) => {
       if (command instanceof ScanCommand) {
-        if (command.input.TableName === "conversations" && command.input.ProjectionExpression === "conversationKey") {
-          return {
-            Items: [
-              { conversationKey: { S: parentConversationKey } },
-              { conversationKey: { S: childConversationKey } },
-            ],
-          };
-        }
         if (command.input.TableName === "conversations" && command.input.ProjectionExpression === "conversationKey, createdAt") {
           return {
             Items: [
-              conversationItem(parentConversationKey, "2026-05-01T00:00:00.000Z"),
-              conversationItem(childConversationKey, "2026-05-01T00:00:01.000Z"),
-            ],
-          };
-        }
-        if (command.input.TableName === "async-agent-results") {
-          return {
-            Items: [
-              { eventId: { S: "acct:acct_test:agent:virtual_subagent_subagent_1:api:subagent_1" }, conversationKey: { S: childConversationKey } },
+              conversationItem("acct:acct_test:agent:agent_parent:api:parent", "2026-05-01T00:00:00.000Z"),
             ],
           };
         }
         return { Items: [] };
       }
       if (command instanceof QueryCommand) {
+        // First workspace-configs Query returns one record; subsequent removeAll
+        // Queries return empty so we don't loop.
+        if (command.input.TableName === "workspace-configs" && !workspaceListed) {
+          workspaceListed = true;
+          return {
+            Items: [{
+              accountId: { S: "acct_test" },
+              workspaceId: { S: "ws_shared" },
+              name: { S: "shared" },
+              config: toAttributeValue({ storage: { provider: "s3" } }),
+              createdAt: { S: "2026-05-01T00:00:00.000Z" },
+              updatedAt: { S: "2026-05-01T00:00:00.000Z" },
+            }],
+          };
+        }
         return { Items: [] };
       }
       if (command instanceof BatchWriteItemCommand) {
         return {};
       }
-      throw new Error(`unexpected command: ${command}`);
+      return {};
     });
 
     const summary = await deleteAccountRuntimeData(testAccount);
 
-    expect(summary.conversationsDeleted).toBe(2);
-    expect(summary.asyncAgentResultDeleted).toBe(1);
-    expect(summary.filesystemObjectsDeleted).toBe(2);
+    expect(summary.conversationsDeleted).toBe(1);
+    expect(summary.filesystemObjectsDeleted).toBe(1);
     expect(mockDeleteS3PrefixCalls).toContainEqual([
       "test-bucket",
-      `sandbox/${normalizeFilesystemNamespace(`acct_test:virtual_subagent_subagent_1:${childConversationKey}`)}/`,
+      `sandbox/${normalizeFilesystemNamespace("acct_test:ws_shared")}/`,
     ]);
+    resetStorageForTests();
   });
 
   it("deletes async tool results with parent-event and conversation filters", async () => {
@@ -435,46 +436,45 @@ describe("deleteAccountRuntimeData", () => {
     expect(summary.filesystemObjectsDeleted).toBe(0);
   });
 
-  it("resolves filesystem namespaces from agent workspace config", async () => {
+  it("resolves filesystem namespaces from account workspace configs", async () => {
     process.env.CONVERSATIONS_TABLE_NAME = "conversations";
-    process.env.AGENT_CONFIGS_TABLE_NAME = "agent-configs";
-    process.env.ACCOUNT_CONFIG_ENCRYPTION_SECRET = "test-secret-32-bytes-long!!";
+    process.env.WORKSPACE_CONFIGS_TABLE_NAME = "workspace-configs";
+    process.env.FILESYSTEM_BUCKET_NAME = "test-bucket";
     dynamo.send = sendMock as never;
+    mockDeleteS3PrefixResult = 2;
 
-    const { encryptAgentConfig } = await import("../functions/_shared/storage/index.ts");
     const { deleteAccountRuntimeData } = await import("../functions/account-manage/cleanup.ts");
-
-    const encryptedConfig = toAttributeValue(encryptAgentConfig({
-      workspace: {
-        namespace: "support-memory",
-        workspaces: {
-          personal: {},
-          team: {
-            namespace: "team-memory",
-          },
-        },
-        defaultWorkspace: "personal",
-      },
-    }));
+    const { workspaceNamespace } = await import("../functions/_shared/workspaces.ts");
+    const { workspaceNamespacePrefix } = await import("../functions/_shared/sandbox.ts");
 
     sendMock.mockImplementation(async (command: unknown) => {
       if (command instanceof ScanCommand) {
         return { Items: [] };
       }
       if (command instanceof QueryCommand) {
-        return {
-          Items: [
-            {
-              accountId: { S: "acct_test" },
-              agentId: { S: "agent_abc123" },
-              name: { S: "test-agent" },
-              status: { S: "active" },
-              config: encryptedConfig,
-              createdAt: { S: "2026-05-01T00:00:00.000Z" },
-              updatedAt: { S: "2026-05-01T00:00:00.000Z" },
-            },
-          ],
-        };
+        if (command.input.TableName === "workspace-configs") {
+          return {
+            Items: [
+              {
+                accountId: { S: "acct_test" },
+                workspaceId: { S: "ws_personal" },
+                name: { S: "personal" },
+                config: toAttributeValue({ storage: { provider: "s3" } }),
+                createdAt: { S: "2026-05-01T00:00:00.000Z" },
+                updatedAt: { S: "2026-05-01T00:00:00.000Z" },
+              },
+              {
+                accountId: { S: "acct_test" },
+                workspaceId: { S: "ws_team" },
+                name: { S: "team" },
+                config: toAttributeValue({ storage: { provider: "s3" } }),
+                createdAt: { S: "2026-05-01T00:00:00.000Z" },
+                updatedAt: { S: "2026-05-01T00:00:00.000Z" },
+              },
+            ],
+          };
+        }
+        return { Items: [] };
       }
       if (command instanceof BatchWriteItemCommand) {
         return {};
@@ -484,7 +484,11 @@ describe("deleteAccountRuntimeData", () => {
 
     const summary = await deleteAccountRuntimeData(testAccount);
 
-    expect(summary.filesystemObjectsDeleted).toBe(0);
+    expect(summary.filesystemObjectsDeleted).toBe(4);
+    expect(mockDeleteS3PrefixCalls).toEqual([
+      ["test-bucket", `${workspaceNamespacePrefix(workspaceNamespace("acct_test", "ws_personal"))}/`],
+      ["test-bucket", `${workspaceNamespacePrefix(workspaceNamespace("acct_test", "ws_team"))}/`],
+    ]);
   });
 
   it("handles listAgents failure gracefully by defaulting to empty array", async () => {
@@ -634,35 +638,6 @@ describe("deleteAccountRuntimeData", () => {
 
     expect(deleteScanCalls.length).toBe(1);
     expect(deleteScanCalls[0]?.input.FilterExpression).toBe("begins_with(conversationKey, :accountPrefix)");
-  });
-
-  it("uses correct projection for conversation reference scan", async () => {
-    process.env.CONVERSATIONS_TABLE_NAME = "conversations";
-    dynamo.send = sendMock as never;
-    const { deleteAccountRuntimeData } = await import("../functions/account-manage/cleanup.ts");
-
-    sendMock.mockImplementation(async (command: unknown) => {
-      if (command instanceof ScanCommand) {
-        return { Items: [] };
-      }
-      if (command instanceof BatchWriteItemCommand) {
-        return {};
-      }
-      throw new Error(`unexpected command: ${command}`);
-    });
-
-    await deleteAccountRuntimeData(testAccount);
-
-    const refScanCalls = sendMock.mock.calls
-      .map(([cmd]) => cmd)
-      .filter((cmd): cmd is ScanCommand =>
-        cmd instanceof ScanCommand &&
-        cmd.input.TableName === "conversations" &&
-        cmd.input.ProjectionExpression === "conversationKey",
-      );
-
-    expect(refScanCalls.length).toBe(1);
-    expect(refScanCalls[0]?.input.FilterExpression).toBe("begins_with(conversationKey, :accountPrefix)");
   });
 
   it("uses correct filter expression for processed events table", async () => {

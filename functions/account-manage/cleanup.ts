@@ -10,16 +10,13 @@ import {
   type WriteRequest,
 } from "@aws-sdk/client-dynamodb";
 import type { AccountRecord } from "../_shared/storage/index.ts";
-import { getStorage, type AgentRecord } from "../_shared/storage/index.ts";
+import { getStorage } from "../_shared/storage/index.ts";
 import { deleteS3Prefix as deleteBunS3Prefix } from "../_shared/s3.ts";
 import { workspaceNamespacePrefix } from "../_shared/sandbox.ts";
 import { dynamo } from "../_shared/storage/dynamo/client.ts";
 import { optionalEnv } from "../_shared/env.ts";
-import {
-  accountScopedPrefix,
-  normalizeFilesystemNamespace,
-} from "../_shared/runtime-keys.ts";
-import { resolveConfiguredWorkspaceNamespaces } from "../_shared/workspaces.ts";
+import { accountScopedPrefix } from "../_shared/runtime-keys.ts";
+import { workspaceNamespace } from "../_shared/workspaces.ts";
 
 const DYNAMO_BATCH_WRITE_LIMIT = 25;
 
@@ -31,17 +28,13 @@ export interface AccountCleanupSummary {
   filesystemObjectsDeleted: number;
 }
 
-interface ConversationReference {
-  conversationKey: string;
-}
-
 export async function deleteAccountRuntimeData(account: AccountRecord): Promise<AccountCleanupSummary> {
   const accountPrefix = accountScopedPrefix(account.accountId);
-  const [conversations, agents] = await Promise.all([
-    scanConversationReferences(accountPrefix),
-    getStorage().agents.list(account.accountId).catch(() => []),
-  ]);
-  const filesystemNamespaces = resolveFilesystemNamespaces(account, agents, conversations);
+  // Workspaces are now standalone, account-scoped records. Their filesystem
+  // namespace is derived from accountId:workspaceId (shared across agents).
+  const workspaceConfigs = await getStorage().workspaceConfigs.list(account.accountId).catch(() => []);
+  const filesystemNamespaces = workspaceConfigs.map((workspace) =>
+    workspaceNamespace(account.accountId, workspace.workspaceId));
 
   const [
     conversationsDeleted,
@@ -57,6 +50,12 @@ export async function deleteAccountRuntimeData(account: AccountRecord): Promise<
     deleteFilesystemNamespaces(filesystemNamespaces),
   ]);
 
+  // Remove the account's sandbox + workspace config records.
+  await Promise.all([
+    getStorage().sandboxConfigs.removeAllForAccount(account.accountId).catch(() => 0),
+    getStorage().workspaceConfigs.removeAllForAccount(account.accountId).catch(() => 0),
+  ]);
+
   return {
     conversationsDeleted,
     processedEventsDeleted,
@@ -64,39 +63,6 @@ export async function deleteAccountRuntimeData(account: AccountRecord): Promise<
     asyncToolResultDeleted,
     filesystemObjectsDeleted,
   };
-}
-
-async function scanConversationReferences(accountPrefix: string): Promise<ConversationReference[]> {
-  const tableName = conversationsTableName();
-  if (!tableName) {
-    return [];
-  }
-
-  const references: ConversationReference[] = [];
-  let exclusiveStartKey: Record<string, AttributeValue> | undefined;
-
-  do {
-    const result = await dynamo.send(new ScanCommand({
-      TableName: tableName,
-      ProjectionExpression: "conversationKey",
-      FilterExpression: "begins_with(conversationKey, :accountPrefix)",
-      ExpressionAttributeValues: {
-        ":accountPrefix": { S: accountPrefix },
-      },
-      ExclusiveStartKey: exclusiveStartKey,
-    }));
-
-    for (const item of result.Items ?? []) {
-      const conversationKey = item.conversationKey?.S;
-      if (conversationKey) {
-        references.push({ conversationKey });
-      }
-    }
-
-    exclusiveStartKey = result.LastEvaluatedKey;
-  } while (exclusiveStartKey);
-
-  return references;
 }
 
 async function deleteConversations(accountPrefix: string): Promise<number> {
@@ -242,45 +208,6 @@ function projectKey(
   }
 
   return key;
-}
-
-function resolveFilesystemNamespaces(
-  account: AccountRecord,
-  agents: AgentRecord[],
-  conversations: ConversationReference[],
-): string[] {
-  const logicalNamespaces = new Set<string>();
-  const accountPrefix = accountScopedPrefix(account.accountId);
-  const configuredNamespaces = new Set<string>();
-
-  for (const agent of agents) {
-    for (const namespace of resolveConfiguredWorkspaceNamespaces(agent.config, {
-      accountId: account.accountId,
-      agentId: agent.agentId,
-    })) {
-      configuredNamespaces.add(namespace);
-    }
-  }
-
-  for (const { conversationKey } of conversations) {
-    if (!conversationKey.startsWith(accountPrefix)) {
-      continue;
-    }
-
-    // Persistent subagents use the same account/agent-scoped conversation
-    // shape as direct requests, including virtual_subagent_* agent ids.
-    const agentMatch = conversationKey.match(/^acct:[^:]+:agent:([^:]+):/);
-    logicalNamespaces.add(agentMatch?.[1] ? `${agentMatch[1]}:${conversationKey}` : conversationKey);
-  }
-
-  const conversationNamespaces = [...logicalNamespaces].map((logicalNamespace) => {
-    const [maybeAgentId, ...rest] = logicalNamespace.split(":");
-    return rest.length > 0
-      ? normalizeFilesystemNamespace(`${account.accountId}:${maybeAgentId}:${rest.join(":")}`)
-      : normalizeFilesystemNamespace(`${account.accountId}:${logicalNamespace}`);
-  });
-
-  return [...new Set([...configuredNamespaces, ...conversationNamespaces])];
 }
 
 async function deleteFilesystemNamespaces(namespaces: string[]): Promise<number> {

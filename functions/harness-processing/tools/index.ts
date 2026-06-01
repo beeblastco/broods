@@ -1,6 +1,10 @@
 /**
- * Harness tool registry, check for tool mode.
+ * Harness tool registry.
  * Keep static tool imports and agent-configured tool selection here.
+ *
+ * Sandbox tools (bash/read/write/edit/glob/grep) are enabled by the presence of
+ * a referenced sandbox + workspaces, gated by the sandbox's permissionMode.
+ * config.tools-driven tools (search/research/handoffs) remain opt-in.
  */
 
 import type { ToolSet } from "ai";
@@ -8,11 +12,18 @@ import {
   type AgentConfig,
   type AccountModelProviderName,
   type AgentToolConfig,
+  type SandboxPermissionMode,
 } from "../../_shared/storage/index.ts";
 import type { Session } from "../session.ts";
-import type { WorkspaceBinding } from "../../_shared/workspaces.ts";
+import type { ResolvedWorkspace } from "../../_shared/workspaces.ts";
+import type { SandboxExecutorConfig } from "../sandbox/types.ts";
 import type { AsyncToolModeMap, RunAsyncToolDispatch } from "../async-tools.ts";
-import filesystemTool from "./filesystem.tool.ts";
+import bashTool from "./bash.tool.ts";
+import readTool from "./read.tool.ts";
+import writeTool from "./write.tool.ts";
+import editTool from "./edit.tool.ts";
+import globTool from "./glob.tool.ts";
+import grepTool from "./grep.tool.ts";
 import googleSearchTool from "./google-search.tool.ts";
 import handoffsTool from "./handoffs.tool.ts";
 import loadSkillTool from "./load-skill.tool.ts";
@@ -27,8 +38,13 @@ import testExternalAsyncTool from "./test.external-async.tool.ts";
 // stay inside each individual tool file.
 export interface ToolContext {
   conversationKey: string;
-  filesystemNamespace: string;
-  workspaceBindings?: WorkspaceBinding[];
+  // Each workspace carries its own effective sandbox + permissionMode (or no
+  // sandbox => read-only). See resolveAgentRuntime.
+  workspaces?: ResolvedWorkspace[];
+  // Agent-level sandbox for stateless bash (no workspace). Undefined => no
+  // stateless bash. Workspace-backed runs use the workspace's own sandbox instead.
+  statelessSandbox?: SandboxExecutorConfig;
+  statelessPermissionMode?: SandboxPermissionMode;
   config: AgentToolConfig;
   modelProviderName: AccountModelProviderName;
   modelProvider: unknown;
@@ -39,7 +55,7 @@ export interface ToolContext {
 
 type ToolFactory = (context: ToolContext) => ToolSet;
 
-// Agent-configured tools. Workspace and subagent tools are registered below
+// config.tools-driven tools. Sandbox and subagent tools are registered below
 // because their enablement is controlled outside config.tools.
 const toolFactories = {
   tavilySearch: tavilySearchTool,
@@ -53,19 +69,52 @@ export function createTools(context: Omit<ToolContext, "config">, agentConfig: A
   const tools: ToolSet = {};
   assertSupportedConfiguredTools(agentConfig.tools);
 
-  if (agentConfig.workspace?.enabled === true) {
-    const needsApproval = agentConfig.workspace.needsApproval === true;
+  // Sandbox tool surface. Tool availability is derived per workspace:
+  //  - bash: stateless (no workspace) on the agent-level sandbox, or in any
+  //    sandbox-backed workspace.
+  //  - read/glob: every workspace (sandbox-backed via the mount, read-only
+  //    workspaces straight from S3).
+  //  - write/edit/grep: sandbox-backed workspaces only.
+  // Each tool sets its own per-call `needsApproval` from the selected
+  // workspace's permissionMode, so workspaces can differ in approval policy.
+  const workspaces = context.workspaces ?? [];
+  const sandboxWorkspaces = workspaces.filter((workspace) => workspace.sandbox);
+  const statelessSandbox = workspaces.length === 0 ? context.statelessSandbox : undefined;
+  const sandboxTools: ToolSet = {};
+
+  // bash: stateless (no workspace) on the agent sandbox, or in any sandbox-backed workspace.
+  // Pass the full workspace list so omitting `workspace` preserves the configured
+  // default; if that default is read-only, the tool returns a clear error instead
+  // of silently selecting the first writable workspace.
+  if (statelessSandbox || sandboxWorkspaces.length > 0) {
+    Object.assign(sandboxTools,
+      bashTool({
+        workspaces,
+        ...(statelessSandbox
+          ? { statelessSandbox, statelessPermissionMode: context.statelessPermissionMode ?? "ask" }
+          : {}),
+      }
+    ));
+  }
+  // read/glob: every workspace (sandbox-backed via the mount, read-only via S3).
+  if (workspaces.length > 0) {
     Object.assign(
-      tools,
-      // Passing the sandbox config into the model-facing bash workspace tool.
-      withToolApproval(filesystemTool({
-        ...context,
-        config: agentConfig.workspace.sandbox ?? {},
-      }), {
-        bash: needsApproval,
-      }),
+      sandboxTools,
+      readTool({ workspaces }),
+      globTool({ workspaces })
     );
   }
+  // write/edit/grep: require a sandbox at execution time. Pass the full workspace
+  // list to preserve default-workspace semantics; read-only selections fail clearly.
+  if (sandboxWorkspaces.length > 0) {
+    Object.assign(
+      sandboxTools,
+      writeTool({ workspaces }),
+      editTool({ workspaces }),
+      grepTool({ workspaces }),
+    );
+  }
+  Object.assign(tools, sandboxTools);
 
   // Subagent execution is orchestrated by the handler/coordinator. The registry
   // exposes only the model-facing tool when config and runtime dispatcher agree.
@@ -78,17 +127,11 @@ export function createTools(context: Omit<ToolContext, "config">, agentConfig: A
 
   const allowedSkillPaths = agentConfig.skills?.allowed ?? [];
   if (agentConfig.skills?.enabled === true && allowedSkillPaths.length > 0 && context.session) {
-    // Publishing edits back to the source bundle requires a staged workspace
-    // checkout, so only expose the tool when Workspace is also enabled.
-    const publishEnabled = agentConfig.skills.publish?.enabled === true
-      && agentConfig.workspace?.enabled === true;
+    // Read-only skill loading. Skill publishing is temporarily disabled and will
+    // be reworked as a skills-as-workspace model.
     Object.assign(tools, loadSkillTool(
       context.session,
       (skillPath, resourcePaths) => context.session!.loadSkillPrompt(allowedSkillPaths, skillPath, resourcePaths),
-      publishEnabled
-        ? (skillPath, options) => context.session!.publishSkillFromWorkspace(allowedSkillPaths, skillPath, options)
-        : undefined,
-      { publishNeedsApproval: agentConfig.skills.publish?.needApproval !== false },
     ));
   }
 
