@@ -100,6 +100,10 @@ jobs:
       ACCOUNT_GATEWAY_API_KEY: ${{ secrets.ACCOUNT_GATEWAY_API_KEY }}
       ENABLE_DIRECT_API: ${{ vars.ENABLE_DIRECT_API || 'false' }}
       ENABLE_WEBSOCKET: ${{ vars.ENABLE_WEBSOCKET || 'false' }}
+      # Create the image-based sandbox Lambdas only after the arm64 image is in this region's
+      # ECR repo. Leave unset for a region's first deploy, then set the repo variable to 'true'
+      # once lambda-sanbdox CI has mirrored the image. See docs/workspace/sandbox/lambda.md.
+      SANDBOX_IMAGE_READY: ${{ vars.SANDBOX_IMAGE_READY || 'false' }}
       NATS_URL: ${{ secrets.NATS_URL }}
       DAYTONA_API_KEY: ${{ secrets.DAYTONA_API_KEY }}
       DAYTONA_ORGANIZATION_ID: ${{ vars.DAYTONA_ORGANIZATION_ID }}
