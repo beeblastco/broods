@@ -40,8 +40,12 @@ sst deploy ──creates──▶ ECR repo (per region)  ◀──pushes── l
 - **Multi-region:** every region you deploy to needs its own repo + pushed image. The CI
   mirrors the image to each region in `ECR_REGIONS` and **skips (with a warning) any region
   whose repo doesn't exist yet**.
-- **Bootstrap a region (two passes):** `sst deploy` creates the empty repo (sandbox
-  functions fail — no image yet) → CI pushes the image → re-deploy and the functions create.
+- **Bootstrap a region (two passes), gated by `SANDBOX_IMAGE_READY`:** the 4 functions are
+  created only when this flag is `true`. Without it the first `sst deploy` creates the empty
+  repo and **succeeds** (functions skipped, deploy not blocked) → lambda-sanbdox CI mirrors the
+  image into the now-existing repo → re-deploy with `SANDBOX_IMAGE_READY=true` (repo variable
+  in `deploy.yaml`) and the functions create. Harness env/IAM always carry the deterministic
+  function names/ARNs, so flipping the flag is the only change needed on the second pass.
 
 ## Config
 

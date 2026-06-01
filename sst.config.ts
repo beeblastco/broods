@@ -7,6 +7,12 @@ const PROJECT_OWNER_EMAIL = "owner@example.com";
 const AWS_PROFILE = process.env.CI ? undefined : (process.env.AWS_PROFILE ?? "default");
 const ENABLE_DIRECT_API = parseBooleanEnv("ENABLE_DIRECT_API", false);
 const ENABLE_WEBSOCKET = parseBooleanEnv("ENABLE_WEBSOCKET", false);
+// Gate the 4 image-based sandbox Lambdas. They pull `:latest-arm64` from a region-scoped
+// ECR repo that this app creates, but the lambda-sanbdox CI only mirrors the image into a
+// repo that already exists — a bootstrap deadlock. Keep this off for a region's first
+// deploy (creates the repo, skips the functions), let the lambda-sanbdox CI push the image,
+// then re-deploy with SANDBOX_IMAGE_READY=true. See docs/workspace/sandbox/lambda.md.
+const SANDBOX_IMAGE_READY = parseBooleanEnv("SANDBOX_IMAGE_READY", false);
 const SANDBOX_WORKSPACE_MOUNT_PATH = "/mnt/workspaces";
 const NATS_URL = process.env.NATS_URL?.trim();
 // Production runs the Convex storage provider. Other stages stay on
@@ -720,33 +726,41 @@ export default $config({
       }, { dependsOn: [logGroup] });
     };
 
-    const sandboxMountNet = sandboxImageFunction("SandboxMountNet", {
-      name: names.sandboxMountNet,
-      description: "Uniform sandbox — workspace mount + internet.",
-      mount: true,
-      vpc: true,
-    });
+    // Harness wiring (env, IAM, outputs) always uses the deterministic function names/ARNs,
+    // so it is correct whether or not the functions exist yet. The function *resources* are
+    // created only once the arm64 image is in ECR (SANDBOX_IMAGE_READY=true) — see the flag.
+    const sandboxFunctionArn = (name: string) =>
+      `arn:aws:lambda:${region}:${AWS_ACCOUNT_ID}:function:${name}`;
 
-    const sandboxMountNoNet = sandboxImageFunction("SandboxMountNoNet", {
-      name: names.sandboxMountNonet,
-      description: "Uniform sandbox — workspace mount, no internet.",
-      mount: true,
-      vpc: true,
-    });
+    if (SANDBOX_IMAGE_READY) {
+      sandboxImageFunction("SandboxMountNet", {
+        name: names.sandboxMountNet,
+        description: "Uniform sandbox — workspace mount + internet.",
+        mount: true,
+        vpc: true,
+      });
 
-    const sandboxNoMountNet = sandboxImageFunction("SandboxNoMountNet", {
-      name: names.sandboxNomountNet,
-      description: "Uniform sandbox — stateless + internet (no VPC, fastest cold start).",
-      mount: false,
-      vpc: false,
-    });
+      sandboxImageFunction("SandboxMountNoNet", {
+        name: names.sandboxMountNonet,
+        description: "Uniform sandbox — workspace mount, no internet.",
+        mount: true,
+        vpc: true,
+      });
 
-    const sandboxNoMountNoNet = sandboxImageFunction("SandboxNoMountNoNet", {
-      name: names.sandboxNomountNonet,
-      description: "Uniform sandbox — stateless, no internet.",
-      mount: false,
-      vpc: true,
-    });
+      sandboxImageFunction("SandboxNoMountNet", {
+        name: names.sandboxNomountNet,
+        description: "Uniform sandbox — stateless + internet (no VPC, fastest cold start).",
+        mount: false,
+        vpc: false,
+      });
+
+      sandboxImageFunction("SandboxNoMountNoNet", {
+        name: names.sandboxNomountNonet,
+        description: "Uniform sandbox — stateless, no internet.",
+        mount: false,
+        vpc: true,
+      });
+    }
 
     const harnessProcessing = new sst.aws.Function("HarnessProcessing", {
       name: names.harnessProcessing,
@@ -787,10 +801,10 @@ export default $config({
         ENABLE_DIRECT_API: ENABLE_DIRECT_API ? "true" : "false",
         ENABLE_WEBSOCKET: ENABLE_WEBSOCKET ? "true" : "false",
         MOCK_EXTERNAL_ASYNC_TOOL_URL: mockExternalAsyncTool.url,
-        SANDBOX_FN_MOUNT_NET: sandboxMountNet.name,
-        SANDBOX_FN_MOUNT_NONET: sandboxMountNoNet.name,
-        SANDBOX_FN_NOMOUNT_NET: sandboxNoMountNet.name,
-        SANDBOX_FN_NOMOUNT_NONET: sandboxNoMountNoNet.name,
+        SANDBOX_FN_MOUNT_NET: names.sandboxMountNet,
+        SANDBOX_FN_MOUNT_NONET: names.sandboxMountNonet,
+        SANDBOX_FN_NOMOUNT_NET: names.sandboxNomountNet,
+        SANDBOX_FN_NOMOUNT_NONET: names.sandboxNomountNonet,
         ...(cronJobsTable
           ? { CRON_JOBS_TABLE_NAME: cronJobsTable.name }
           : {}),
@@ -899,10 +913,10 @@ export default $config({
         {
           actions: ["lambda:InvokeFunction"],
           resources: [
-            sandboxMountNet.arn,
-            sandboxMountNoNet.arn,
-            sandboxNoMountNet.arn,
-            sandboxNoMountNoNet.arn,
+            sandboxFunctionArn(names.sandboxMountNet),
+            sandboxFunctionArn(names.sandboxMountNonet),
+            sandboxFunctionArn(names.sandboxNomountNet),
+            sandboxFunctionArn(names.sandboxNomountNonet),
           ],
         },
         {
@@ -1127,10 +1141,10 @@ export default $config({
       accountServiceUrl: accountManage.url,
       mockExternalAsyncToolUrl: mockExternalAsyncTool.url,
       mockWebhookSubscribeUrl: mockWebhookSubscribe.url,
-      sandboxMountNetFunctionName: sandboxMountNet.name,
-      sandboxMountNoNetFunctionName: sandboxMountNoNet.name,
-      sandboxNoMountNetFunctionName: sandboxNoMountNet.name,
-      sandboxNoMountNoNetFunctionName: sandboxNoMountNoNet.name,
+      sandboxMountNetFunctionName: names.sandboxMountNet,
+      sandboxMountNoNetFunctionName: names.sandboxMountNonet,
+      sandboxNoMountNetFunctionName: names.sandboxNomountNet,
+      sandboxNoMountNoNetFunctionName: names.sandboxNomountNonet,
       accountConfigsTableName: accountConfigsTable?.name,
       agentConfigsTableName: agentConfigsTable?.name,
       sandboxConfigsTableName: sandboxConfigsTable?.name,
