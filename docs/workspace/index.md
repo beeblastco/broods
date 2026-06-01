@@ -110,9 +110,9 @@ flowchart TD
   Session --> Harness["harness.ts (streamText loop)"]
   Harness --> Tools["tools/index.ts<br/>per-workspace sandbox + permissionMode"]
   Tools --> Sandbox["sandbox executor (run)<br/>lambda / e2b / daytona / kubernetes"]
-  Tools -. read/glob on read-only workspace .-> Files
+  Tools -->|read/glob on read-only workspace| Files
   Sandbox --> Files["workspace files on S3<br/>namespace = hash(accountId:workspaceId)"]
-  Session -. MEMORY.md via S3 API .-> Files
+  Session -->|MEMORY.md via S3 API| Files
 ```
 
 The workspace **namespace** is derived from `accountId:workspaceId` (not the
