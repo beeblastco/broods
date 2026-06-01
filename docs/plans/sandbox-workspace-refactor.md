@@ -261,7 +261,7 @@ namespace = persistent workspace; no-mount fn + no namespace = ephemeral scratch
 
 - `config.workspace.{enabled,needsApproval,sandbox,storage,harness,namespace,defaultWorkspace,workspaces}`
   (the old nested shape) is **removed**.
-- **Namespace derivation:** `normalizeFilesystemNamespace(`${accountId}:${workspaceId}`)`
+- **Namespace derivation:** ``normalizeFilesystemNamespace(`${accountId}:${workspaceId}`)``
   (`functions/_shared/runtime-keys.ts:48`). Scoped by **workspaceId, not agentId/conversation**,
   so the same workspace is shared across agents/conversations (shared-workspace decision,
   §2 Workspace model). Drop the user-typed `namespace` field entirely.

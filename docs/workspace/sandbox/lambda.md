@@ -43,9 +43,15 @@ sst deploy ──creates──▶ ECR repo (per region)  ◀──pushes── l
 - **Bootstrap a region (two passes), gated by `SANDBOX_IMAGE_READY`:** the 4 functions are
   created only when this flag is `true`. Without it the first `sst deploy` creates the empty
   repo and **succeeds** (functions skipped, deploy not blocked) → lambda-sanbdox CI mirrors the
-  image into the now-existing repo → re-deploy with `SANDBOX_IMAGE_READY=true` (repo variable
-  in `deploy.yaml`) and the functions create. Harness env/IAM always carry the deterministic
-  function names/ARNs, so flipping the flag is the only change needed on the second pass.
+  image into the now-existing repo → re-deploy with the flag `true` and the functions create.
+  Harness env/IAM always carry the deterministic function names/ARNs, so flipping the flag is
+  the only change needed on the second pass.
+- **The flag is per-stage in `deploy.yaml`**, because `dev` and `production` deploy to
+  different regions that bootstrap independently. The resolve step picks
+  `SANDBOX_IMAGE_READY_DEV` (falls back to the legacy repo-wide `SANDBOX_IMAGE_READY`) for
+  `dev` and `SANDBOX_IMAGE_READY_PRODUCTION` (default `false`) for `production`. So a region
+  whose image isn't mirrored yet can keep its flag `false` while the other stays `true` —
+  setting one global flag `true` would otherwise break the unbootstrapped region's deploy.
 
 ## Config
 

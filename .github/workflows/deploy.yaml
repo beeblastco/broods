@@ -100,10 +100,15 @@ jobs:
       ACCOUNT_GATEWAY_API_KEY: ${{ secrets.ACCOUNT_GATEWAY_API_KEY }}
       ENABLE_DIRECT_API: ${{ vars.ENABLE_DIRECT_API || 'false' }}
       ENABLE_WEBSOCKET: ${{ vars.ENABLE_WEBSOCKET || 'false' }}
-      # Create the image-based sandbox Lambdas only after the arm64 image is in this region's
-      # ECR repo. Leave unset for a region's first deploy, then set the repo variable to 'true'
-      # once lambda-sanbdox CI has mirrored the image. See docs/workspace/sandbox/lambda.md.
-      SANDBOX_IMAGE_READY: ${{ vars.SANDBOX_IMAGE_READY || 'false' }}
+      # Create the image-based sandbox Lambdas only after the arm64 image is in THIS stage's
+      # region ECR repo. The flag is per-stage because dev and production deploy to different
+      # regions that bootstrap independently: leave a stage's flag unset for its region's first
+      # deploy (creates the empty repo, functions skipped), then set it to 'true' once
+      # lambda-sanbdox CI has mirrored the image. Resolved per-stage in the step below.
+      # dev falls back to the legacy repo-wide SANDBOX_IMAGE_READY for backward compatibility.
+      # See docs/workspace/sandbox/lambda.md.
+      SANDBOX_IMAGE_READY_DEV: ${{ vars.SANDBOX_IMAGE_READY_DEV || vars.SANDBOX_IMAGE_READY || 'false' }}
+      SANDBOX_IMAGE_READY_PRODUCTION: ${{ vars.SANDBOX_IMAGE_READY_PRODUCTION || 'false' }}
       NATS_URL: ${{ secrets.NATS_URL }}
       DAYTONA_API_KEY: ${{ secrets.DAYTONA_API_KEY }}
       DAYTONA_ORGANIZATION_ID: ${{ vars.DAYTONA_ORGANIZATION_ID }}
@@ -137,8 +142,10 @@ jobs:
 
           if [[ "$STAGE" == "production" ]]; then
             AWS_REGION="${PRODUCTION_AWS_REGION:-}"
+            SANDBOX_IMAGE_READY="${SANDBOX_IMAGE_READY_PRODUCTION:-false}"
           else
             AWS_REGION="${DEFAULT_AWS_REGION:-}"
+            SANDBOX_IMAGE_READY="${SANDBOX_IMAGE_READY_DEV:-false}"
           fi
 
           if [[ -z "${AWS_REGION:-}" ]]; then
@@ -158,6 +165,7 @@ jobs:
 
           echo "SST_STAGE=$STAGE" >> "$GITHUB_ENV"
           echo "AWS_REGION=$AWS_REGION" >> "$GITHUB_ENV"
+          echo "SANDBOX_IMAGE_READY=$SANDBOX_IMAGE_READY" >> "$GITHUB_ENV"
 
       - name: Checkout repository
         uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
