@@ -21,8 +21,9 @@ import type {
 // This is the single shape the session, tools, and prompts all consume. Conventions:
 //   - `name` is the agent-facing mount label (the `workspace` arg the model selects).
 //   - the FIRST workspace in the list is the default (used when the model omits `workspace`).
-//   - `sandbox` undefined => the workspace is read-only (served directly from S3, no mount);
-//     its tool `permissionMode` is then `sandbox.permissionMode` (default "ask").
+//   - `sandbox` undefined => the workspace is read-only (write/edit/grep/bash are not
+//     exposed). read/glob then run through `readMount` (a service-managed read-only
+//     Lambda mount) by default, or straight from S3 when the ref opts out with `sandbox: null`.
 export interface ResolvedWorkspace {
   name: string;
   workspaceId: string;
@@ -30,6 +31,11 @@ export interface ResolvedWorkspace {
   description?: string;
   config: WorkspaceConfig;
   sandbox?: SandboxConfig;
+  // Read-only read runner. Set when the workspace has no effective sandbox AND the
+  // ref did not explicitly opt out with `sandbox: null`. read/glob use it to read
+  // through the mount so they see committed writes immediately; undefined => read S3
+  // directly (the `sandbox: null` opt-out — no Lambda/VPC, but lags mount writes).
+  readMount?: SandboxConfig;
 }
 
 export interface ResolvedAgentRuntime {
@@ -99,6 +105,14 @@ export async function resolveAgentRuntime(
     } else {
       effectiveSandbox = sandbox;
     }
+    // Read-only workspace (no effective sandbox): default to reading through a
+    // service-managed read-only Lambda mount (internet off, cheapest mount slot) so
+    // reads reflect committed writes immediately. The existing `sandbox: null` opt-out
+    // ("no sandbox, no compute") also skips the mount: read straight from S3 instead.
+    const readMount: SandboxConfig | undefined =
+      !effectiveSandbox && ref.sandbox !== null
+        ? { provider: "lambda", internet: false }
+        : undefined;
     workspaces.push({
       name: ref.name,
       workspaceId: ref.workspaceId,
@@ -106,6 +120,7 @@ export async function resolveAgentRuntime(
       ...(record.description ? { description: record.description } : {}),
       config: record.config,
       ...(effectiveSandbox ? { sandbox: effectiveSandbox } : {}),
+      ...(readMount ? { readMount } : {}),
     });
   }
 

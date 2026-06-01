@@ -11,16 +11,18 @@ A sandbox can be attached **agent-wide** (`config.sandbox`) or **per workspace**
 (`workspaces[].sandbox`). A workspace's **effective sandbox** follows a simple cascade:
 
 ```text
-workspaces[].sandbox === null   → read-only (opt out, even if a default exists)
+workspaces[].sandbox === null   → read-only, S3-direct reads (opt out of compute entirely)
 workspaces[].sandbox === "sb_…" → that sandbox (override)
-workspaces[].sandbox omitted    → inherit config.sandbox (read-only if there is none)
+workspaces[].sandbox omitted    → inherit config.sandbox (read-only via mount if there is none)
 ```
 
 This is what lets one agent give different workspaces different sandboxes and
 `permissionMode`s, lets two agents that share a workspace access it through their own
-sandboxes, and lets a single workspace be **read-only** — served directly from the S3 API
-(no mount, no Lambda cold start). `config.sandbox` also powers stateless `bash` when there
-is no workspace at all.
+sandboxes, and lets a single workspace be **read-only**. A read-only workspace reads through
+a service-managed read-only mount by default (so it sees committed writes immediately);
+`sandbox: null` opts out of that mount and reads straight from S3 (no Lambda, cheapest, but
+reads lag mount writes — see [Lambda](sandbox/lambda.md)). `config.sandbox` also powers
+stateless `bash` when there is no workspace at all.
 
 ```mermaid
 flowchart LR
@@ -59,7 +61,7 @@ Create the records via the account API, then reference them from the agent:
   "workspaces": [                                      // optional; name = mount label
     { "name": "notes", "workspaceId": "ws_aaa" },                     // inherits the agent-level sandbox
     { "name": "team",  "workspaceId": "ws_bbb", "sandbox": "sb_yyy" }, // per-workspace override
-    { "name": "docs",  "workspaceId": "ws_ccc", "sandbox": null }      // forced read-only (S3 direct)
+    { "name": "docs",  "workspaceId": "ws_ccc", "sandbox": null }      // read-only, S3-direct (opt out of the mount)
   ]
 }
 ```
@@ -73,7 +75,8 @@ union across its workspaces:
 | Workspace's effective sandbox | Tools for that workspace |
 | --- | --- |
 | present (mounted) | `read`, `write`, `edit`, `glob`, `grep`, `bash` (+ MEMORY/TASKS harness) |
-| **none** (read-only) | `read`, `glob` — served straight from S3 (no mount, no cold start) |
+| **none** (read-only, default) | `read`, `glob` — via a read-only mount (fresh reads) |
+| **none**, `sandbox: null` | `read`, `glob` — straight from S3 (no mount/cold start, lagged) |
 
 Plus the agent-level cases:
 

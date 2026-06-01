@@ -62,8 +62,12 @@ Usage notes:
           }
           const q = shellQuote(rel);
           const b64 = toBase64(content ?? "");
+          // `sync ${q}` fsyncs the file so the write commits to the S3 Files server
+          // before the Lambda freezes; without it a cold container loses the write
+          // (close alone does not force an NFS COMMIT). See docs/workspace/sandbox/lambda.md.
           const code =
             `mkdir -p "$(dirname -- ${q})" && printf '%s' ${shellQuote(b64)} | base64 -d > ${q} && ` +
+            `sync ${q} && ` +
             `printf 'Wrote %s (%s bytes)\\n' ${q} "$(wc -c < ${q})"`;
           const result = await runSandbox(ws.sandbox, ws.namespace, code);
           if (!result.ok) {

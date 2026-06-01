@@ -2,7 +2,7 @@
  * Sandbox tool tests.
  * Cover the Claude-Code-style tool set (bash/read/write/edit/glob/grep): the
  * sandbox-backed path compiling to bash on the uniform lambda sandbox (4-function
- * selection), and the read-only S3-direct path for sandbox-less workspaces.
+ * selection), the read-only mount default, and the S3-direct opt-out path.
  */
 
 import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
@@ -97,10 +97,24 @@ function statelessCtx(sandboxOverrides: Record<string, unknown> = {}) {
   } as never;
 }
 
-// Read-only workspace context (no sandbox => served directly from S3).
+// Read-only workspace, `sandbox: null` opt-out (no readMount => served directly from S3).
 function readonlyCtx() {
   return {
     workspaces: [{ name: "ro", workspaceId: "ws_ro", namespace: NS, config: { storage: { provider: "s3" } } }],
+  } as never;
+}
+
+// Read-only workspace, default behavior: read/glob run through a service-managed
+// read-only mount (readMount) so they see committed writes immediately.
+function readonlyMountCtx() {
+  return {
+    workspaces: [{
+      name: "ro",
+      workspaceId: "ws_ro",
+      namespace: NS,
+      config: { storage: { provider: "s3" } },
+      readMount: { provider: "lambda", internet: false },
+    }],
   } as never;
 }
 
@@ -149,13 +163,15 @@ describe("sandbox tool set", () => {
     expect(lambdaSendMock).not.toHaveBeenCalled();
   });
 
-  it("write base64-pipes content and creates parent dirs", async () => {
+  it("write base64-pipes content, creates parent dirs, and fsyncs for durability", async () => {
     const write = await tool("write", workspaceCtx());
     await write.execute({ file_path: "notes/a.txt", content: "hello" });
     const { payload } = lastLambdaInput();
     expect(payload.namespace).toBe(NS);
     expect(payload.code).toContain("base64 -d");
     expect(payload.code).toContain("mkdir -p");
+    // 1A: flush the file so it commits to the S3 Files server before the Lambda freezes.
+    expect(payload.code).toContain("sync ");
   });
 
   it("read builds a numbered-line read", async () => {
@@ -164,12 +180,14 @@ describe("sandbox tool set", () => {
     expect(lastLambdaInput().payload.code).toContain("nl -ba");
   });
 
-  it("edit builds a node heredoc replacement", async () => {
+  it("edit builds a node heredoc replacement that fsyncs the rewrite", async () => {
     const edit = await tool("edit", workspaceCtx());
     await edit.execute({ file_path: "a.txt", old_string: "x", new_string: "y" });
     const { payload } = lastLambdaInput();
     expect(payload.code).toContain("node <<'NODEEOF'");
     expect(payload.code).toContain("const replaceAll = false");
+    // 1A: open/write/fsync/close so the rewrite commits before the Lambda freezes.
+    expect(payload.code).toContain("fs.fsyncSync");
   });
 
   it("glob uses node to match files recursively", async () => {
@@ -238,6 +256,34 @@ describe("read-only S3-direct workspace", () => {
 
   it("does not expose write/edit on a read-only workspace (errors if forced)", async () => {
     const write = await tool("write", readonlyCtx());
+    const result = await write.execute({ file_path: "a.txt", content: "x" });
+    expect(result).toEqual({ type: "error-text", value: "Error: workspace is read-only" });
+    expect(lambdaSendMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("read-only mount workspace (default)", () => {
+  it("read routes through the no-internet mounted function, not S3", async () => {
+    const read = await tool("read", readonlyMountCtx());
+    await read.execute({ file_path: "notes/a.txt" });
+    expect(lastLambdaInput()).toMatchObject({
+      functionName: "sandbox-mount-nonet",
+      payload: { namespace: NS, workspace_root: "/mnt/workspaces" },
+    });
+    expect(lastLambdaInput().payload.code).toContain("nl -ba");
+    expect(readS3TextMock).not.toHaveBeenCalled();
+  });
+
+  it("glob routes through the no-internet mounted function, not S3", async () => {
+    const glob = await tool("glob", readonlyMountCtx());
+    await glob.execute({ pattern: "**/*.ts" });
+    expect(lastLambdaInput().functionName).toBe("sandbox-mount-nonet");
+    expect(lastLambdaInput().payload.code).toContain("function matches");
+    expect(listS3PrefixMock).not.toHaveBeenCalled();
+  });
+
+  it("still does not expose write/edit (the mount is read-only)", async () => {
+    const write = await tool("write", readonlyMountCtx());
     const result = await write.execute({ file_path: "a.txt", content: "x" });
     expect(result).toEqual({ type: "error-text", value: "Error: workspace is read-only" });
     expect(lambdaSendMock).not.toHaveBeenCalled();

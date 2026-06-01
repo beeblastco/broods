@@ -111,10 +111,12 @@ export interface AgentWorkspaceRef {
   // workspaceId read and write the SAME files (shared workspace).
   workspaceId: string;
   // Optional per-workspace sandbox. A sandbox id overrides the agent-level
-  // `sandbox` for this workspace (and inherits its permissionMode). `null` forces
-  // this workspace read-only even when an agent-level default exists. Omitted =>
-  // inherit the agent-level `sandbox`; if there is none, the workspace is
-  // read-only (served directly from S3: read/glob only).
+  // `sandbox` for this workspace (and inherits its permissionMode). Omitted =>
+  // inherit the agent-level `sandbox`; if there is none, the workspace is read-only
+  // and read/glob run through a service-managed read-only mount (so they see
+  // committed writes immediately). `null` forces this workspace read-only AND opts
+  // out of that mount: read/glob then read straight from S3 (no compute, but reads
+  // lag mount writes by the S3 export delay). See docs/workspace/sandbox/lambda.md.
   sandbox?: string | null;
 }
 

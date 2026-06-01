@@ -65,7 +65,7 @@ So pick the door by **who last wrote the file**, not by how much time has passed
 
 The agent always reads through the mount (its `bash` tool *is* the mount), so it always sees its own writes instantly regardless of elapsed time. The S3-API-vs-mount decision only applies to **harness-side reads**.
 
-Concretely, the model-facing workspace tools read sandbox-backed workspaces through the mounted sandbox path, while read-only workspaces use direct S3 reads under the same `sandbox/<namespace>/` prefix.
+Concretely, the model-facing workspace tools read sandbox-backed workspaces through the mounted sandbox path. Read-only workspaces read through a service-managed read-only mount by default (same fresh-read semantics); the `sandbox: null` opt-out instead reads directly from S3 under the same `sandbox/<namespace>/` prefix (cheaper, but lagged — see [Lambda](sandbox/lambda.md)).
 
 > **Known exception:** `Session.loadMemoryFile` reads `MEMORY.md` through the **S3 API** at the start of each turn. If the agent edited `MEMORY.md` less than ~2 min earlier in the same session, that read can be stale. This is accepted today because memory converges across turns and a sandbox round-trip on every turn is costly; route prompt-time memory reads through a sandbox-backed `read` call if freshness ever becomes a hard requirement.
 
