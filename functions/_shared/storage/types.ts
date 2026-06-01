@@ -26,6 +26,16 @@ import type {
   CreateCronJobInput,
   UpdateCronJobInput,
 } from "./cron-jobs.ts";
+import type {
+  SandboxConfigRecord,
+  CreateSandboxConfigInput,
+  UpdateSandboxConfigInput,
+} from "./sandbox-config.ts";
+import type {
+  WorkspaceConfigRecord,
+  CreateWorkspaceConfigInput,
+  UpdateWorkspaceConfigInput,
+} from "./workspace-config.ts";
 
 export type {
   AccountRecord,
@@ -40,6 +50,12 @@ export type {
   CronJobStatus,
   CreateCronJobInput,
   UpdateCronJobInput,
+  SandboxConfigRecord,
+  CreateSandboxConfigInput,
+  UpdateSandboxConfigInput,
+  WorkspaceConfigRecord,
+  CreateWorkspaceConfigInput,
+  UpdateWorkspaceConfigInput,
 };
 
 /** Account CRUD + secret-hash lookup. */
@@ -98,9 +114,31 @@ export interface CronJobStore {
  * agree on a shared schema, lift them into this file and add stores.
  */
 
+/** Account-scoped, reusable sandbox config records (encrypted at rest). */
+export interface SandboxConfigStore {
+  getById(accountId: string, sandboxId: string): Promise<SandboxConfigRecord | null>;
+  list(accountId: string): Promise<SandboxConfigRecord[]>;
+  create(accountId: string, input: CreateSandboxConfigInput): Promise<SandboxConfigRecord>;
+  update(accountId: string, sandboxId: string, patch: UpdateSandboxConfigInput): Promise<SandboxConfigRecord | null>;
+  remove(accountId: string, sandboxId: string): Promise<boolean>;
+  removeAllForAccount(accountId: string): Promise<number>;
+}
+
+/** Account-scoped, reusable workspace config records (plaintext, no secrets). */
+export interface WorkspaceConfigStore {
+  getById(accountId: string, workspaceId: string): Promise<WorkspaceConfigRecord | null>;
+  list(accountId: string): Promise<WorkspaceConfigRecord[]>;
+  create(accountId: string, input: CreateWorkspaceConfigInput): Promise<WorkspaceConfigRecord>;
+  update(accountId: string, workspaceId: string, patch: UpdateWorkspaceConfigInput): Promise<WorkspaceConfigRecord | null>;
+  remove(accountId: string, workspaceId: string): Promise<boolean>;
+  removeAllForAccount(accountId: string): Promise<number>;
+}
+
 export interface StorageProvider {
   readonly kind: "dynamodb" | "convex";
   accounts: AccountStore;
   agents: AgentStore;
   cronJobs: CronJobStore;
+  sandboxConfigs: SandboxConfigStore;
+  workspaceConfigs: WorkspaceConfigStore;
 }

@@ -1,34 +1,35 @@
 # E2B
 
-Uses an [E2B](https://e2b.dev/docs) template with the S3 workspace bucket mounted at `options.workspaceRoot`.
+Uses an [E2B](https://e2b.dev/docs) template for stateless sandbox runs. Persistent
+workspace-backed filesystem tools are currently disabled for E2B unless an equivalent S3
+mount integration is added.
 
 ## Configuration
 
 ```json
 {
+  "name": "e2b",
   "config": {
-    "workspace": {
-      "storage": {
-        "provider": "s3"
-      },
-      "sandbox": {
-        "provider": "e2b",
-        "options": {
-          "apiKey": "...",
-          "template": "mounted-template",
-          "workspaceRoot": "/workspace"
-        }
-      }
+    "provider": "e2b",
+    "permissionMode": "ask",
+    "options": {
+      "apiKey": "...",
+      "template": "runtime-template",
+      "workspaceRoot": "/workspace"
     }
   }
 }
 ```
 
-`apiKey` can be omitted when `E2B_API_KEY` is set on the harness runtime. `templateId` is an alias for `template`.
+Reference the resulting `sandboxId` from `config.sandbox` for stateless `bash`, or from a
+workspace only after the provider has a persistent mount strategy. `apiKey` can be omitted
+when `E2B_API_KEY` is set on the harness runtime. `templateId` is an alias for `template`.
 
 ## Requirements
 
-Use a template with Node and Python installed, and mount the S3 workspace bucket at `options.workspaceRoot`. The E2B executor does not sync files itself; the template must expose the same bucket namespace that Lambda uses.
+Use a template with Node and Python installed. The E2B executor does not sync workspace
+files itself, so workspace-backed `read`/`write`/`edit`/`glob`/`grep`/`bash` fail fast
+unless this provider grows a durable mount equivalent to Lambda/Daytona/Kubernetes.
 
 ## Execution Notes
 
@@ -38,10 +39,6 @@ TypeScript (`.ts`) files are not transpiled; use compiled JavaScript instead. `p
 
 `sandbox.envVars` is forwarded as the command's `envs`, so configured variables are visible to executed files.
 
-## Workspace Mount
-
-Use an S3/FUSE template mounted at `options.workspaceRoot`. The mount must contain the account filesystem namespace directly under that root, for example `/workspace/fs-...`.
-
 ## Dependencies
 
-Use the mounted template or volume image with packages installed during template build.
+Use a template image with packages installed during template build.

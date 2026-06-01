@@ -95,6 +95,27 @@ function sandboxRuntimePermissions(
   ];
 }
 
+const LAMBDA_ASSUME_ROLE = JSON.stringify({
+  Version: "2012-10-17",
+  Statement: [{
+    Effect: "Allow",
+    Principal: { Service: "lambda.amazonaws.com" },
+    Action: "sts:AssumeRole",
+  }],
+});
+
+// SST's `permissions` shorthand -> a raw IAM policy doc. Used by the sandbox
+// functions, which run from a pre-built ECR image and so can't use sst.aws.Function
+// (it has no `image` arg and always builds a zip). $jsonStringify resolves Outputs.
+function permissionsPolicy(
+  perms: { actions: string[]; resources: $util.Input<string>[] }[],
+) {
+  return $jsonStringify({
+    Version: "2012-10-17",
+    Statement: perms.map((p) => ({ Effect: "Allow", Action: p.actions, Resource: p.resources })),
+  });
+}
+
 function denyUnlessProjectPrincipal(stage: string, region: string) {
   return {
     effect: "deny" as const,
@@ -107,8 +128,9 @@ function denyUnlessProjectPrincipal(stage: string, region: string) {
         values: [
           `arn:aws:iam::${AWS_ACCOUNT_ID}:role/${PROJECT_NAME}-${stage}-AccountManageRole-*`,
           `arn:aws:iam::${AWS_ACCOUNT_ID}:role/${PROJECT_NAME}-${stage}-HarnessProcessingRole-*`,
-          `arn:aws:iam::${AWS_ACCOUNT_ID}:role/${PROJECT_NAME}-${stage}-SandboxBashRole-*`,
-          `arn:aws:iam::${AWS_ACCOUNT_ID}:role/${PROJECT_NAME}-${stage}-SandboxPythonRole-*`,
+          // Only the workspace-mounted sandbox functions touch the bucket directly.
+          `arn:aws:iam::${AWS_ACCOUNT_ID}:role/${PROJECT_NAME}-${stage}-SandboxMountNetRole-*`,
+          `arn:aws:iam::${AWS_ACCOUNT_ID}:role/${PROJECT_NAME}-${stage}-SandboxMountNoNetRole-*`,
           `arn:aws:iam::${AWS_ACCOUNT_ID}:role/${resourceName("sandbox-s3files", stage, region)}`,
           `arn:aws:iam::${AWS_ACCOUNT_ID}:role/github-actions-aws-infra-deploy`,
           `arn:aws:iam::${AWS_ACCOUNT_ID}:role/github-actions-aws-sst-infra-deploy`,
@@ -172,10 +194,15 @@ export default $config({
       asyncToolResult: resourceName("async-tool-result", stage, region),
       externalAsyncToolMock: resourceName("async-tool-mock", stage, region),
       webhookSubscribeMock: resourceName("webhook-sub-mock", stage, region),
-      sandboxBash: resourceName("sandbox-bash", stage, region),
-      sandboxPython: resourceName("sandbox-python", stage, region),
+      // Uniform sandbox image deployed across two axes (workspace mount, internet).
+      sandboxMountNet: resourceName("sandbox-mount-net", stage, region),
+      sandboxMountNonet: resourceName("sandbox-mount-nonet", stage, region),
+      sandboxNomountNet: resourceName("sandbox-nomount-net", stage, region),
+      sandboxNomountNonet: resourceName("sandbox-nomount-nonet", stage, region),
       accountConfigs: resourceName("account-configs", stage, region),
       agentConfigs: resourceName("agent-configs", stage, region),
+      sandboxConfigs: resourceName("sandbox-configs", stage, region),
+      workspaceConfigs: resourceName("workspace-configs", stage, region),
       accountSignupRateLimits: resourceName("account-signup-rate-limits", stage, region),
       cronJobs: resourceName("cron-jobs", stage, region),
       cronSchedules: resourceName("cron-schedules", stage, region),
@@ -249,6 +276,40 @@ export default $config({
           transform: {
             table: {
               name: names.agentConfigs,
+            },
+          },
+        });
+
+    // Account-scoped, reusable sandbox / workspace config records. Like agents,
+    // these live in Convex on production and DynamoDB elsewhere.
+    const sandboxConfigsTable = isProduction
+      ? null
+      : new sst.aws.Dynamo("SandboxConfig", {
+          fields: {
+            accountId: "string",
+            sandboxId: "string",
+          },
+          primaryIndex: { hashKey: "accountId", rangeKey: "sandboxId" },
+          deletionProtection: false,
+          transform: {
+            table: {
+              name: names.sandboxConfigs,
+            },
+          },
+        });
+
+    const workspaceConfigsTable = isProduction
+      ? null
+      : new sst.aws.Dynamo("WorkspaceConfig", {
+          fields: {
+            accountId: "string",
+            workspaceId: "string",
+          },
+          primaryIndex: { hashKey: "accountId", rangeKey: "workspaceId" },
+          deletionProtection: false,
+          transform: {
+            table: {
+              name: names.workspaceConfigs,
             },
           },
         });
@@ -546,58 +607,145 @@ export default $config({
       },
     });
 
-    const sandboxPython = new sst.aws.Function("SandboxPython", {
-      name: names.sandboxPython,
-      runtime: "python3.12",
-      architecture: "arm64",
-      bundle: "functions/sandbox-python",
-      handler: "handler.handler",
-      description: "Executes workspace Python files without public network egress.",
-      timeout: "2 minutes",
-      memory: "512 MB", // Minimal memory required from AWS for S3 mount to sandbox execution.
-      vpc: sandboxNetwork,
-      environment: {
-        SANDBOX_WORKSPACE_MOUNT_PATH,
-      },
-      permissions: sandboxRuntimePermissions(filesystemBucketArn, sandboxS3Files.arn, sandboxS3FilesAccessPoint.arn),
-      logging: { format: "json", retention: "1 month" },
-      transform: {
-        function: (args) => {
-          args.fileSystemConfig = {
-            arn: sandboxS3FilesAccessPoint.arn,
-            localMountPath: SANDBOX_WORKSPACE_MOUNT_PATH,
-          };
-        },
-      },
+    // This app owns the sandbox image ECR repo (moved out of the infra Terraform repo) so
+    // the repo lifecycle stays in sync with the functions that consume it — no cross-repo
+    // coordination. Lambda pulls only from PRIVATE ECR in its own region (public.ecr.aws is
+    // rejected), so the repo is region-scoped: each deploy region gets its own. The arm64
+    // image is pushed by the lambda-just-bash-rust CI; for a brand-new region that push must
+    // land before the sandbox functions can be created (the first deploy creates the empty
+    // repo, then re-deploy once the image exists). See docs/workspace/sandbox/lambda.md.
+    const sandboxImageRepoName = `beeblast-lambda-sandbox-${AWS_ACCOUNT_ID}-${region}`;
+    const sandboxEcr = new aws.ecr.Repository("SandboxImage", {
+      name: sandboxImageRepoName,
+      imageTagMutability: "MUTABLE",
+      imageScanningConfiguration: { scanOnPush: true },
+      forceDelete: !isProduction,
+    }, {
+      retainOnDelete: isProduction,
     });
 
-    const sandboxBash = new sst.aws.Function("SandboxBash", {
-      name: names.sandboxBash,
-      runtime: "nodejs22.x",
-      architecture: "arm64",
-      handler: "functions/sandbox-bash/handler.handler",
-      description: "Executes bash-like workspace shell commands with an S3 Files mount.",
-      // just-bash ships a CPython-WASM runtime (vendor/cpython-emscripten + a
-      // worker.js) that it loads by paths relative to its own files. Install it
-      // as a node_module rather than letting esbuild inline it, so that layout
-      // survives and in-process `python`/`python3` works. See sandbox-bash handler.
-      nodejs: { install: ["just-bash"] },
-      timeout: "2 minutes",
-      memory: "512 MB", // Minimal memory required from AWS for S3 mount to sandbox execution.
-      vpc: sandboxNetwork,
-      environment: {
-        SANDBOX_WORKSPACE_MOUNT_PATH,
-      },
-      permissions: sandboxRuntimePermissions(filesystemBucketArn, sandboxS3Files.arn, sandboxS3FilesAccessPoint.arn),
-      logging: { format: "json", retention: "1 month" },
-      transform: {
-        function: (args) => {
-          args.fileSystemConfig = {
-            arn: sandboxS3FilesAccessPoint.arn,
-            localMountPath: SANDBOX_WORKSPACE_MOUNT_PATH,
-          };
-        },
-      },
+    // Wide pull mirrors the prior infra policy. Same-account Lambda pulls work without it;
+    // cross-account consumers (kubernetes / daytona sandbox providers) rely on it.
+    new aws.ecr.RepositoryPolicy("SandboxImagePolicy", {
+      repository: sandboxEcr.name,
+      policy: JSON.stringify({
+        Version: "2012-10-17",
+        Statement: [{
+          Sid: "AllowCrossAccountPull",
+          Effect: "Allow",
+          Principal: "*",
+          Action: [
+            "ecr:GetDownloadUrlForLayer",
+            "ecr:BatchGetImage",
+            "ecr:BatchCheckLayerAvailability",
+          ],
+        }],
+      }),
+    });
+
+    // ARM64-only image; there is no multi-arch `latest` manifest, so pin the arch tag.
+    const sandboxImageUri = $interpolate`${sandboxEcr.repositoryUrl}:latest-arm64`;
+
+    // The uniform sandbox image is deployed across two axes — workspace mount (VPC +
+    // S3 Files mount) vs none, and internet on vs off. The harness auto-selects the
+    // function per run from (namespace present?) and the sandbox `internet` flag.
+    //
+    // Cost (R2): no managed NAT Gateway. Mounted functions need the VPC for the S3
+    // Files mount; on non-prod the VPC uses fck-nat (~10x cheaper than NAT Gateway).
+    // The no-mount + internet-on function runs WITHOUT a VPC for free managed egress
+    // and the fastest cold start. Tightening internet-off to a NAT-less isolated
+    // subnet (+ a free S3 Gateway VPC Endpoint) is a deploy-time hardening follow-up.
+    const sandboxMountPermissions = sandboxRuntimePermissions(filesystemBucketArn, sandboxS3Files.arn, sandboxS3FilesAccessPoint.arn);
+
+    // sst.aws.Function can't consume a pre-built ECR image (no `image` arg; it always
+    // builds a zip), so the sandbox functions drop to the raw Lambda resource with
+    // packageType "Image". This helper recreates the role / VPC / EFS mount / log-group
+    // wiring SST would otherwise manage. Axes: workspace mount (VPC + S3 Files) and VPC.
+    const sandboxImageFunction = (
+      logical: string,
+      cfg: { name: string; description: string; mount: boolean; vpc: boolean },
+    ) => {
+      const role = new aws.iam.Role(`${logical}Role`, { assumeRolePolicy: LAMBDA_ASSUME_ROLE });
+
+      new aws.iam.RolePolicyAttachment(`${logical}LogsPolicy`, {
+        role: role.name,
+        policyArn: "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole",
+      });
+      if (cfg.vpc) {
+        new aws.iam.RolePolicyAttachment(`${logical}VpcPolicy`, {
+          role: role.name,
+          policyArn: "arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole",
+        });
+      }
+      if (cfg.mount) {
+        new aws.iam.RolePolicy(`${logical}MountPolicy`, {
+          role: role.id,
+          policy: permissionsPolicy(sandboxMountPermissions),
+        });
+      }
+
+      // Explicit log group preserves the "1 month" retention sst.aws.Function gave us.
+      const logGroup = new aws.cloudwatch.LogGroup(`${logical}LogGroup`, {
+        name: `/aws/lambda/${cfg.name}`,
+        retentionInDays: 30,
+      });
+
+      return new aws.lambda.Function(logical, {
+        name: cfg.name,
+        packageType: "Image",
+        imageUri: sandboxImageUri,
+        architectures: ["arm64"],
+        role: role.arn,
+        description: cfg.description,
+        timeout: 300,
+        memorySize: 512, // Minimum AWS requires for the S3 mount + sandbox execution.
+        environment: { variables: { SANDBOX_WORKSPACE_MOUNT_PATH } },
+        loggingConfig: { logFormat: "JSON", logGroup: logGroup.name },
+        ...(cfg.vpc
+          ? {
+              vpcConfig: {
+                subnetIds: sandboxNetwork.privateSubnets,
+                securityGroupIds: sandboxNetwork.securityGroups,
+              },
+            }
+          : {}),
+        ...(cfg.mount
+          ? {
+              fileSystemConfig: {
+                arn: sandboxS3FilesAccessPoint.arn,
+                localMountPath: SANDBOX_WORKSPACE_MOUNT_PATH,
+              },
+            }
+          : {}),
+      }, { dependsOn: [logGroup] });
+    };
+
+    const sandboxMountNet = sandboxImageFunction("SandboxMountNet", {
+      name: names.sandboxMountNet,
+      description: "Uniform sandbox — workspace mount + internet.",
+      mount: true,
+      vpc: true,
+    });
+
+    const sandboxMountNoNet = sandboxImageFunction("SandboxMountNoNet", {
+      name: names.sandboxMountNonet,
+      description: "Uniform sandbox — workspace mount, no internet.",
+      mount: true,
+      vpc: true,
+    });
+
+    const sandboxNoMountNet = sandboxImageFunction("SandboxNoMountNet", {
+      name: names.sandboxNomountNet,
+      description: "Uniform sandbox — stateless + internet (no VPC, fastest cold start).",
+      mount: false,
+      vpc: false,
+    });
+
+    const sandboxNoMountNoNet = sandboxImageFunction("SandboxNoMountNoNet", {
+      name: names.sandboxNomountNonet,
+      description: "Uniform sandbox — stateless, no internet.",
+      mount: false,
+      vpc: true,
     });
 
     const harnessProcessing = new sst.aws.Function("HarnessProcessing", {
@@ -626,6 +774,12 @@ export default $config({
         ...(agentConfigsTable
           ? { AGENT_CONFIGS_TABLE_NAME: agentConfigsTable.name }
           : {}),
+        ...(sandboxConfigsTable
+          ? { SANDBOX_CONFIGS_TABLE_NAME: sandboxConfigsTable.name }
+          : {}),
+        ...(workspaceConfigsTable
+          ? { WORKSPACE_CONFIGS_TABLE_NAME: workspaceConfigsTable.name }
+          : {}),
         ACCOUNT_SECRET_INDEX_NAME: "SecretHashIndex",
         ACCOUNT_CONFIG_ENCRYPTION_SECRET: accountConfigEncryptionSecret.value,
         FILESYSTEM_BUCKET_NAME: names.memory,
@@ -633,8 +787,10 @@ export default $config({
         ENABLE_DIRECT_API: ENABLE_DIRECT_API ? "true" : "false",
         ENABLE_WEBSOCKET: ENABLE_WEBSOCKET ? "true" : "false",
         MOCK_EXTERNAL_ASYNC_TOOL_URL: mockExternalAsyncTool.url,
-        SANDBOX_BASH_FUNCTION_NAME: sandboxBash.name,
-        SANDBOX_PYTHON_FUNCTION_NAME: sandboxPython.name,
+        SANDBOX_FN_MOUNT_NET: sandboxMountNet.name,
+        SANDBOX_FN_MOUNT_NONET: sandboxMountNoNet.name,
+        SANDBOX_FN_NOMOUNT_NET: sandboxNoMountNet.name,
+        SANDBOX_FN_NOMOUNT_NONET: sandboxNoMountNoNet.name,
         ...(cronJobsTable
           ? { CRON_JOBS_TABLE_NAME: cronJobsTable.name }
           : {}),
@@ -684,6 +840,24 @@ export default $config({
               resources: [agentConfigsTable.arn],
             }]
           : []),
+        ...(sandboxConfigsTable
+          ? [{
+              actions: [
+                "dynamodb:GetItem",
+                "dynamodb:Query",
+              ],
+              resources: [sandboxConfigsTable.arn],
+            }]
+          : []),
+        ...(workspaceConfigsTable
+          ? [{
+              actions: [
+                "dynamodb:GetItem",
+                "dynamodb:Query",
+              ],
+              resources: [workspaceConfigsTable.arn],
+            }]
+          : []),
         {
           actions: [
             "dynamodb:BatchWriteItem",
@@ -725,8 +899,10 @@ export default $config({
         {
           actions: ["lambda:InvokeFunction"],
           resources: [
-            sandboxBash.arn,
-            sandboxPython.arn,
+            sandboxMountNet.arn,
+            sandboxMountNoNet.arn,
+            sandboxNoMountNet.arn,
+            sandboxNoMountNoNet.arn,
           ],
         },
         {
@@ -809,6 +985,12 @@ export default $config({
         ...(agentConfigsTable
           ? { AGENT_CONFIGS_TABLE_NAME: agentConfigsTable.name }
           : {}),
+        ...(sandboxConfigsTable
+          ? { SANDBOX_CONFIGS_TABLE_NAME: sandboxConfigsTable.name }
+          : {}),
+        ...(workspaceConfigsTable
+          ? { WORKSPACE_CONFIGS_TABLE_NAME: workspaceConfigsTable.name }
+          : {}),
         ACCOUNT_SECRET_INDEX_NAME: "SecretHashIndex",
         CONVERSATIONS_TABLE_NAME: conversationsTable.name,
         PROCESSED_EVENTS_TABLE_NAME: processedEventsTable.name,
@@ -851,6 +1033,30 @@ export default $config({
                 "dynamodb:UpdateItem",
               ],
               resources: [agentConfigsTable.arn],
+            }]
+          : []),
+        ...(sandboxConfigsTable
+          ? [{
+              actions: [
+                "dynamodb:DeleteItem",
+                "dynamodb:GetItem",
+                "dynamodb:PutItem",
+                "dynamodb:Query",
+                "dynamodb:UpdateItem",
+              ],
+              resources: [sandboxConfigsTable.arn],
+            }]
+          : []),
+        ...(workspaceConfigsTable
+          ? [{
+              actions: [
+                "dynamodb:DeleteItem",
+                "dynamodb:GetItem",
+                "dynamodb:PutItem",
+                "dynamodb:Query",
+                "dynamodb:UpdateItem",
+              ],
+              resources: [workspaceConfigsTable.arn],
             }]
           : []),
         ...(cronJobsTable
@@ -921,9 +1127,14 @@ export default $config({
       accountServiceUrl: accountManage.url,
       mockExternalAsyncToolUrl: mockExternalAsyncTool.url,
       mockWebhookSubscribeUrl: mockWebhookSubscribe.url,
-      sandboxPythonFunctionName: sandboxPython.name,
+      sandboxMountNetFunctionName: sandboxMountNet.name,
+      sandboxMountNoNetFunctionName: sandboxMountNoNet.name,
+      sandboxNoMountNetFunctionName: sandboxNoMountNet.name,
+      sandboxNoMountNoNetFunctionName: sandboxNoMountNoNet.name,
       accountConfigsTableName: accountConfigsTable?.name,
       agentConfigsTableName: agentConfigsTable?.name,
+      sandboxConfigsTableName: sandboxConfigsTable?.name,
+      workspaceConfigsTableName: workspaceConfigsTable?.name,
       cronJobsTableName: cronJobsTable?.name,
       accountSignupRateLimitTableName: accountSignupRateLimitTable.name,
       conversationsTableName: conversationsTable.name,

@@ -37,21 +37,19 @@ import {
 } from "../_shared/runtime-keys.ts";
 import { logError, logInfo } from "../_shared/log.ts";
 import {
-  resolveDefaultWorkspaceBinding,
-  resolveWorkspaceBindings,
-  type WorkspaceBinding,
+  resolveAgentRuntime,
+  type ResolvedAgentRuntime,
+  type ResolvedWorkspace,
 } from "../_shared/workspaces.ts";
 import {
   loadConfiguredSkillPrompt,
   listConfiguredSkillMetadata,
-  publishStagedSkillBundle,
-  type PublishedSkillFromWorkspace,
   type SkillMetadata,
 } from "./skills.ts";
 import { compactSessionContext, isCompactionSummaryMessage } from "./compaction.ts";
 import { pruneSessionMessages } from "./pruning.ts";
-import { createWorkspaceSandboxExecutor } from "./sandbox/index.ts";
-import type { WorkspaceSandboxConfig } from "./sandbox/types.ts";
+import type { SandboxExecutorConfig } from "./sandbox/types.ts";
+import type { SandboxPermissionMode } from "../_shared/storage/index.ts";
 
 const CONVERSATIONS_TABLE_NAME = requireEnv("CONVERSATIONS_TABLE_NAME");
 const PROCESSED_EVENTS_TABLE_NAME = requireEnv("PROCESSED_EVENTS_TABLE_NAME");
@@ -136,7 +134,11 @@ export class Session {
   private hasLoggedMissingMemoryFile = false;
   private loadedSkillPrompts: SystemModelMessage[] = [];
   private subagentMetadataPromise: Promise<SubagentMetadata[]> | undefined;
-  private workspaceBindingsCache: WorkspaceBinding[] | undefined;
+  // Resolved sandbox + workspace records (from the agent's `sandbox`/`workspaces`
+  // refs). Resolved once per session at turn-context construction; the sync
+  // getters below read the cached value.
+  private resolvedRuntime: ResolvedAgentRuntime | undefined;
+  private resolvedRuntimePromise: Promise<ResolvedAgentRuntime> | undefined;
 
   constructor(
     public readonly eventId: string,
@@ -265,6 +267,7 @@ export class Session {
   }
 
   async createTurnContext(ephemeralSystem: SystemModelMessage[] = []): Promise<TurnContextSnapshot> {
+    await this.ensureResolvedRuntime();
     const entries = await this.loadConversationEntries();
     const activeEntries = projectActiveConversationEntries(entries);
     // Snapshot persisted system context separately from chat messages. The
@@ -315,6 +318,7 @@ export class Session {
     messages: ModelMessage[],
     ephemeralSystem: SystemModelMessage[] = [],
   ): Promise<TurnContextSnapshot> {
+    await this.ensureResolvedRuntime();
     // Ephemeral child turns are in-memory only, but they still need the same
     // source `ephemeralSystem` list so system prompt refreshes preserve it.
     return {
@@ -362,66 +366,22 @@ export class Session {
       allowedSkillPaths,
       skillPath,
       resourcePaths,
-      this.isWorkspaceEnabled() ? this.filesystemNamespace() : undefined,
-      { preserveStagedEdits: this.isSkillPublishEnabled() },
+      this.defaultWorkspaceHasSandbox() ? this.filesystemNamespace() : undefined,
     );
     this.loadedSkillPrompts.push(loaded.prompt);
     return loaded;
   }
 
   /**
-   * Push a workspace's staged skill edits back to the account skill bucket (the git-style
-   * "push" half; {@link loadSkillPrompt} is the "clone/pull" half).
-   *
-   * This lives on Session — rather than as a free function — only to bind the three
-   * per-conversation things publishing needs and that Session already owns: the filesystem
-   * namespace ({@link filesystemNamespace}), the sandbox config (`agentConfig.workspace.sandbox`),
-   * and the workspace/publish gating. The actual publish logic (manifest diff, conflict check,
-   * validation, write to origin) is in `publishStagedSkillBundle`; this method is just the
-   * binding adapter that supplies namespace + executor + a mount reader and delegates.
-   *
-   * The working copy is read straight from the sandbox mount, not S3: agent edits take ~1-2 min
-   * to sync into listable S3 objects (AWS S3 Files writes back asynchronously), so an S3 read
-   * would miss them. See docs/workspace/storage.md "Reading workspace files: S3 API vs the
-   * sandbox mount".
+   * Lazily fetches and caches the resolved runtime (sandbox + workspaces hydrated
+   * from their storage IDs). Promise-memoized so concurrent callers share one fetch.
    */
-  async publishSkillFromWorkspace(
-    allowedSkillPaths: string[],
-    skillPath: string,
-    options: { force?: boolean } = {},
-  ): Promise<PublishedSkillFromWorkspace> {
-    if (!this.isWorkspaceEnabled()) {
-      throw new Error("Workspace must be enabled to publish staged skill changes");
-    }
-
-    const sandboxConfig = (this.agentConfig.workspace?.sandbox ?? {}) as WorkspaceSandboxConfig;
-    const executor = createWorkspaceSandboxExecutor(sandboxConfig);
-    if (!executor.readDirectory) {
-      throw new Error("Publishing staged skill changes requires a sandbox provider that can read the mount");
-    }
-
-    const namespace = this.filesystemNamespace();
-    const workspaceRoot = workspaceRootFromConfig(sandboxConfig);
-    // Read the working copy straight from the mount (not S3): the agent's edits take
-    // ~1-2 min to sync into listable S3 objects, so an S3 read would miss them.
-    const readMountDir = async (relativeDir: string): Promise<Array<{ path: string; base64: string }>> => {
-      const result = await executor.readDirectory!({ namespace, path: relativeDir, workspaceRoot });
-      if (!result.ok) {
-        throw new Error(`Failed to read staged skill from the sandbox mount: ${result.error ?? "unknown error"}`);
-      }
-      if (result.truncated) {
-        throw new Error("Staged skill bundle is too large to publish from the sandbox mount");
-      }
-      return result.files;
-    };
-
-    return publishStagedSkillBundle(
-      allowedSkillPaths,
-      skillPath,
-      namespace,
-      readMountDir,
-      options,
-    );
+  private async ensureResolvedRuntime(): Promise<ResolvedAgentRuntime> {
+    this.resolvedRuntimePromise ??= resolveAgentRuntime(this.agentConfig, this.accountId).then((resolved) => {
+      this.resolvedRuntime = resolved;
+      return resolved;
+    });
+    return this.resolvedRuntimePromise;
   }
 
   private async buildSystemPromptParts(
@@ -442,7 +402,7 @@ export class Session {
     const workspaceHarnessSystem: SystemModelMessage[] = this.isWorkspaceHarnessEnabled()
       ? [{
         role: "system",
-        content: formatWorkspaceHarnessSystemPrompt(this.workspaceBindings()),
+        content: formatWorkspaceHarnessSystemPrompt(this.resolvedWorkspaces()),
       }]
       : [];
     const skillsSystem: SystemModelMessage[] = skillMetadata.length > 0
@@ -518,13 +478,13 @@ export class Session {
     return `${new Date().toISOString()}#${this.eventId}#${sequence}`;
   }
 
-  private async loadMemoryFiles(): Promise<Array<{ workspace: WorkspaceBinding; content: string }>> {
+  private async loadMemoryFiles(): Promise<Array<{ workspace: ResolvedWorkspace; content: string }>> {
     if (!this.isWorkspaceEnabled()) {
       return [];
     }
 
-    const memoryFiles: Array<{ workspace: WorkspaceBinding; content: string }> = [];
-    for (const workspace of this.workspaceBindings()) {
+    const memoryFiles: Array<{ workspace: ResolvedWorkspace; content: string }> = [];
+    for (const workspace of this.resolvedWorkspaces()) {
       const content = await this.loadMemoryFile(workspace);
       if (content != null) {
         memoryFiles.push({ workspace, content });
@@ -533,13 +493,12 @@ export class Session {
     return memoryFiles;
   }
 
-  private async loadMemoryFile(workspace: WorkspaceBinding): Promise<string | null> {
+  private async loadMemoryFile(workspace: ResolvedWorkspace): Promise<string | null> {
     // Reads MEMORY.md via the S3 API (not the sandbox mount). If the agent edited
     // MEMORY.md through the mount less than ~1-2 min ago, S3 Files may not have synced
     // it yet, so this can be briefly stale. Accepted: memory converges across turns and
-    // a per-turn sandbox round-trip is costly. See docs/workspace/storage.md
-    // "Reading workspace files: S3 API vs the sandbox mount". Route through readDirectory
-    // (like publish) if prompt-time freshness becomes required.
+    // a per-turn sandbox round-trip is costly. Reading via S3 also lets a workspace
+    // serve memory without any sandbox attached. See docs/workspace/storage.md.
 
     const key = `${workspaceNamespacePrefix(workspace.namespace)}/MEMORY.md`;
 
@@ -549,7 +508,7 @@ export class Session {
       if (!isMissingS3Error(error)) {
         logError("Failed to load MEMORY.md for session prompt", {
           conversationKey: this.conversationKey,
-          workspace: workspace.id,
+          workspace: workspace.name,
           key,
           error: error instanceof Error ? error.message : String(error),
         });
@@ -560,7 +519,7 @@ export class Session {
     if (!this.hasLoggedMissingMemoryFile) {
       logInfo("No MEMORY.md found for session prompt", {
         conversationKey: this.conversationKey,
-        workspace: workspace.id,
+        workspace: workspace.name,
         key,
       });
       this.hasLoggedMissingMemoryFile = true;
@@ -573,33 +532,40 @@ export class Session {
     return conversationLeaseKey(this.conversationKey);
   }
 
+  // Namespace of the default (first) workspace, used for memory/skill staging
+  // S3 reads. Empty string when no workspace is attached.
   filesystemNamespace(): string {
-    return resolveDefaultWorkspaceBinding(this.agentConfig, this.workspaceResolutionContext()).namespace;
+    return this.resolvedWorkspaces()[0]?.namespace ?? "";
   }
 
-  workspaceBindings(): WorkspaceBinding[] {
-    this.workspaceBindingsCache ??= resolveWorkspaceBindings(this.agentConfig, this.workspaceResolutionContext());
-    return this.workspaceBindingsCache;
+  /** Resolved workspaces for this turn (first is the default). Empty when none. */
+  resolvedWorkspaces(): ResolvedWorkspace[] {
+    return this.resolvedRuntime?.workspaces ?? [];
   }
 
-  private workspaceResolutionContext() {
-    return {
-      accountId: this.accountId,
-      agentId: this.agentId,
-      conversationKey: this.conversationKey,
-    };
+  /**
+   * Agent-level sandbox for stateless bash (no workspace attached). Workspace-backed
+   * tools use each workspace's own effective sandbox (see resolvedWorkspaces). Undefined
+   * when no agent-level sandbox is referenced.
+   */
+  statelessSandbox(): SandboxExecutorConfig | undefined {
+    return this.resolvedRuntime?.sandbox;
+  }
+
+  statelessPermissionMode(): SandboxPermissionMode {
+    return this.resolvedRuntime?.sandbox?.permissionMode ?? "ask";
   }
 
   private isWorkspaceEnabled(): boolean {
-    return this.agentConfig.workspace?.enabled === true;
+    return (this.resolvedRuntime?.workspaces.length ?? 0) > 0;
+  }
+
+  private defaultWorkspaceHasSandbox(): boolean {
+    return Boolean(this.resolvedWorkspaces()[0]?.sandbox);
   }
 
   private isWorkspaceHarnessEnabled(): boolean {
-    return this.isWorkspaceEnabled() && this.agentConfig.workspace?.harness?.enabled !== false;
-  }
-
-  private isSkillPublishEnabled(): boolean {
-    return this.agentConfig.skills?.publish?.enabled === true;
+    return (this.resolvedRuntime?.workspaces ?? []).some((workspace) => workspace.config.harness?.enabled !== false);
   }
 
   private async loadSkillMetadata(): Promise<SkillMetadata[]> {
@@ -631,8 +597,8 @@ export class Session {
   }
 }
 
-function formatMemorySystemPrompt(memoryFiles: Array<{ workspace: WorkspaceBinding; content: string }>): string {
-  if (memoryFiles.length === 1 && memoryFiles[0]?.workspace.id === "default") {
+function formatMemorySystemPrompt(memoryFiles: Array<{ workspace: ResolvedWorkspace; content: string }>): string {
+  if (memoryFiles.length === 1 && memoryFiles[0]?.workspace.name === "default") {
     const normalizedContent = memoryFiles[0].content.trimEnd();
     return normalizedContent.length > 0
       ? `Current MEMORY.md content for this conversation:\n\n${normalizedContent}`
@@ -641,38 +607,29 @@ function formatMemorySystemPrompt(memoryFiles: Array<{ workspace: WorkspaceBindi
 
   const sections = memoryFiles.map(({ workspace, content }) => {
     const normalizedContent = content.trimEnd();
-    return `## ${workspace.id}\n\n${normalizedContent.length > 0 ? normalizedContent : "(MEMORY.md exists but is empty)"}`;
+    return `## ${workspace.name}\n\n${normalizedContent.length > 0 ? normalizedContent : "(MEMORY.md exists but is empty)"}`;
   }).join("\n\n");
 
   return `Current workspace MEMORY.md content:\n\n${sections}`;
 }
 
-function workspaceRootFromConfig(sandboxConfig: WorkspaceSandboxConfig): string {
-  const options = sandboxConfig.options && typeof sandboxConfig.options === "object" && !Array.isArray(sandboxConfig.options)
-    ? sandboxConfig.options
-    : {};
-  const root = options.workspaceRoot;
-  return typeof root === "string" && root.trim() ? root.trim() : "/mnt/workspaces";
-}
-
-function formatWorkspaceHarnessSystemPrompt(workspaces: WorkspaceBinding[]): string {
+function formatWorkspaceHarnessSystemPrompt(workspaces: ResolvedWorkspace[]): string {
   const workspaceList = workspaces
-    .map((workspace) => `- ${workspace.id}${workspace.isDefault ? " (default)" : ""}: ${workspace.namespace}${workspace.description ? ` - ${workspace.description}` : ""}`)
+    .map((workspace, index) => `- ${workspace.name}${index === 0 ? " (default)" : ""}: ${workspace.namespace}${workspace.description ? ` - ${workspace.description}` : ""}`)
     .join("\n");
 
   return `<workspace>
-Workspace is enabled. Use bash to work with the mounted filesystem rooted at /.
+A persistent workspace is attached. Use the file tools (read, write, edit, glob, grep) and bash to work with the mounted filesystem rooted at the workspace root.
 
 Configured workspaces:
 ${workspaceList}
 
 Guidance:
-1. Create, read, edit, move, and delete ordinary workspace files with bash commands.
-2. Use the bash workspace field to select a named workspace when more than one is configured; omitted means the default workspace.
+1. Use read/write/edit to inspect and change files, glob/grep to find files and content, and bash to run commands and programs (python3, node, and the usual tools are on PATH).
+2. When more than one workspace is configured, pass the workspace field to select one; omitted means the default workspace.
 3. Use MEMORY.md for durable project facts, decisions, conventions, and context that should survive long-running work.
 4. Use TASKS.md or focused task markdown files for plans and progress tracking when that helps the work stay aligned.
-5. Treat MEMORY.md and task files as normal workspace files: inspect them with bash before relying on them, update them when useful, and keep them concise.
-6. Run code from workspace files instead of inline execution flags.
+5. Treat MEMORY.md and task files as normal workspace files: read them before relying on them, update them when useful, and keep them concise.
 </workspace>`;
 }
 

@@ -53,8 +53,25 @@ mock.module("../functions/_shared/s3.ts", () => ({
   ensureS3DirectoryMarkers: mock(async () => {}),
 }));
 
+let workspaceHarnessEnabled = true;
+const testStorage = () => ({
+  kind: "dynamodb",
+  agents: { getById: getAgentMock },
+  sandboxConfigs: { getById: async () => null },
+  workspaceConfigs: {
+    getById: async (_accountId: string, workspaceId: string) => ({
+      accountId: "acct",
+      workspaceId,
+      name: "default",
+      config: { storage: { provider: "s3" }, harness: { enabled: workspaceHarnessEnabled } },
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    }),
+  },
+}) as never;
+
 const { setStorageForTests } = await import("../functions/_shared/storage/index.ts");
-setStorageForTests({ kind: "dynamodb", agents: { getById: getAgentMock } } as never);
+setStorageForTests(testStorage());
 
 afterEach(() => {
   process.env = { ...ORIGINAL_ENV };
@@ -69,7 +86,8 @@ afterEach(() => {
   });
   readS3TextMock.mockClear();
   getAgentMock.mockClear();
-  setStorageForTests({ kind: "dynamodb", agents: { getById: getAgentMock } } as never);
+  workspaceHarnessEnabled = true;
+  setStorageForTests(testStorage());
 });
 
 afterAll(() => {
@@ -128,9 +146,7 @@ describe("session environment context", () => {
     const { Session } = await import("../functions/harness-processing/session.ts");
 
     const enabledSession = new Session("event", "conversation", "acct", "agent", {
-      workspace: {
-        enabled: true,
-      },
+      workspaces: [{ name: "default", workspaceId: "ws_a" }],
     });
     const enabledContext = await enabledSession.createEphemeralTurnContext([{ role: "user", content: "hello" }]);
     const memoryPrompt = enabledContext.system.find((message) => message.content.includes("Current MEMORY.md content"))
@@ -138,7 +154,7 @@ describe("session environment context", () => {
     const workspacePrompt = enabledContext.system.find((message) => message.content.includes("<workspace>"))
       ?.content;
     expect(memoryPrompt).toContain("Remember stable project facts.");
-    expect(workspacePrompt).toContain("Use bash to work with the mounted filesystem");
+    expect(workspacePrompt).toContain("read, write, edit, glob, grep");
     expect(workspacePrompt).toContain("MEMORY.md");
     expect(workspacePrompt).toContain("TASKS.md");
     expect(readS3TextMock).toHaveBeenCalledWith("filesystem", expect.stringContaining("/MEMORY.md"));
@@ -149,14 +165,10 @@ describe("session environment context", () => {
     process.env.PROCESSED_EVENTS_TABLE_NAME = "processed-events";
     process.env.FILESYSTEM_BUCKET_NAME = "filesystem";
     readS3TextMock.mockResolvedValue("Keep this in context.");
+    workspaceHarnessEnabled = false;
     const { Session } = await import("../functions/harness-processing/session.ts");
     const disabledSession = new Session("event", "conversation", "acct", "agent", {
-      workspace: {
-        enabled: true,
-        harness: {
-          enabled: false,
-        },
-      },
+      workspaces: [{ name: "default", workspaceId: "ws_a" }],
     });
     const disabledContext = await disabledSession.createEphemeralTurnContext([{ role: "user", content: "hello" }]);
     expect(disabledContext.system.some((message) => message.content.includes("<workspace>"))).toBe(false);

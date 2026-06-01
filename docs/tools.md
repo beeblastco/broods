@@ -1,6 +1,6 @@
 # External Tools
 
-This guide covers agent-configured external tools: tools that let the agent call outside services such as Tavily or provider-native Google Search. It does not cover internal runtime tools like `bash`, `load_skill`, `publish_skill_changes`, or `run_subagent`.
+This guide covers agent-configured external tools: tools that let the agent call outside services such as Tavily or provider-native Google Search. It does not cover the sandbox tools (`bash`, `read`, `write`, `edit`, `glob`, `grep` — see [Workspace & Sandbox](workspace/index.md)), `load_skill`, or `run_subagent`.
 
 External tools are enabled per agent through `config.tools`. The harness creates them for each model run and passes them to the Vercel AI SDK `streamText()` call. By default they execute inline inside `harness-processing`; local `execute` tools can opt into async wrapping with `async: true`.
 
@@ -23,7 +23,7 @@ flowchart LR
 | `googleSearch` | [`functions/harness-processing/tools/google-search.tool.ts`](../functions/harness-processing/tools/google-search.tool.ts) | Google provider-defined tool | `config.tools.googleSearch` |
 | `test_async` | [`functions/harness-processing/tools/test.async.tool.ts`](../functions/harness-processing/tools/test.async.tool.ts) | Local async example tool | `config.tools.test_async` |
 
-Workspace is configured separately under `config.workspace`. Skills use `config.skills`; see [Skills](skills.md) for bundle management and the runtime skill panel. Subagents use `config.subagent`.
+Sandbox tools come from a referenced `sandbox` (+ `workspaces`) — see [Workspace & Sandbox](workspace/index.md). Skills use `config.skills`; see [Skills](skills.md). Subagents use `config.subagent`.
 
 ## Runtime Behavior
 
@@ -32,9 +32,9 @@ Workspace is configured separately under `config.workspace`. Skills use `config.
 Tool registry path:
 
 1. `createTools()` rejects unknown `config.tools` names.
-2. The workspace `bash` tool comes only from `config.workspace`.
+2. The sandbox tools come from a referenced `sandbox`: `bash` (stateless) when there is no workspace; per workspace, the full `read`/`write`/`edit`/`glob`/`grep`/`bash` set when it has an effective sandbox, or read-only `read`/`glob` (served from S3) when it has none. Approvals follow that workspace's `permissionMode`.
 3. `run_subagent` comes only from `config.subagent`.
-4. `load_skill` comes from `config.skills`; `publish_skill_changes` is also exposed when both `config.skills.publish.enabled` and `config.workspace.enabled` are true.
+4. `load_skill` comes from `config.skills` (skill publishing is temporarily disabled).
 5. External tools come only from the static `toolFactories` map.
 6. `needsApproval` is applied before tools are passed to `streamText()`.
 7. Local `execute` tools with `async: true` are wrapped by `AsyncToolCoordinator`.

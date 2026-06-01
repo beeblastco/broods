@@ -23,6 +23,16 @@ export interface Agent {
   name: string;
 }
 
+export interface Sandbox {
+  sandboxId: string;
+  name: string;
+}
+
+export interface Workspace {
+  workspaceId: string;
+  name: string;
+}
+
 export interface AsyncStatus {
   status: "processing" | "awaiting_approval" | "completed" | "failed" | "not_found";
   response?: string;
@@ -74,16 +84,44 @@ export async function createAgent(
   return await response.json() as Agent;
 }
 
-export async function deleteAgent(secret: string, agentId: string): Promise<void> {
-  const response = await fetch(`${ACCOUNT_SERVICE_URL}/accounts/me/agents/${encodeURIComponent(agentId)}`, {
-    method: "DELETE",
-    headers: { "Authorization": `Bearer ${secret}` },
+// Create an account-scoped sandbox config (referenced from agent config by id).
+export async function createSandbox(
+  secret: string,
+  name: string,
+  config: Record<string, unknown>,
+  description?: string,
+): Promise<Sandbox> {
+  const response = await fetch(`${ACCOUNT_SERVICE_URL}/accounts/me/sandboxes`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "Authorization": `Bearer ${secret}` },
+    body: JSON.stringify({ name, ...(description ? { description } : {}), config }),
   });
 
-  if (!response.ok) throw new Error(`Delete agent failed: ${response.status} ${await response.text()}`);
+  if (!response.ok) throw new Error(`Create sandbox failed: ${response.status} ${await response.text()}`);
+  return await response.json() as Sandbox;
 }
 
-export async function createSkill(secret: string, input: Record<string, unknown>): Promise<Skill> {
+// Create an account-scoped workspace config (referenced from agent config by id).
+export async function createWorkspace(
+  secret: string,
+  name: string,
+  config: Record<string, unknown>,
+  description?: string,
+): Promise<Workspace> {
+  const response = await fetch(`${ACCOUNT_SERVICE_URL}/accounts/me/workspaces`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "Authorization": `Bearer ${secret}` },
+    body: JSON.stringify({ name, ...(description ? { description } : {}), config }),
+  });
+
+  if (!response.ok) throw new Error(`Create workspace failed: ${response.status} ${await response.text()}`);
+  return await response.json() as Workspace;
+}
+
+export async function createSkill(
+  secret: string, 
+  input: Record<string, unknown>
+): Promise<Skill> {
   const response = await fetch(`${ACCOUNT_SERVICE_URL}/accounts/me/skills`, {
     method: "POST",
     headers: { "Content-Type": "application/json", "Authorization": `Bearer ${secret}` },
@@ -114,6 +152,15 @@ export async function getSkill(secret: string, skillName: string): Promise<Skill
   if (response.status === 404) return null;
   if (!response.ok) throw new Error(`Get skill failed: ${response.status} ${await response.text()}`);
   return await response.json() as Skill;
+}
+
+export async function deleteAgent(secret: string, agentId: string): Promise<void> {
+  const response = await fetch(`${ACCOUNT_SERVICE_URL}/accounts/me/agents/${encodeURIComponent(agentId)}`, {
+    method: "DELETE",
+    headers: { "Authorization": `Bearer ${secret}` },
+  });
+
+  if (!response.ok) throw new Error(`Delete agent failed: ${response.status} ${await response.text()}`);
 }
 
 export async function deleteSkill(secret: string, skillName: string): Promise<boolean> {

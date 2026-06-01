@@ -1,104 +1,59 @@
 /**
- * Workspace sandbox execution contracts.
- * Keep provider-neutral file execution shapes here.
+ * Sandbox execution contracts.
+ *
+ * The sandbox is a single uniform Linux compute backend (real bash + python3 +
+ * node on PATH). All providers expose ONE `run` method that executes a piece of
+ * code in a (optionally namespaced/persistent) workspace. The harness tools
+ * (bash/read/write/edit/glob/grep) all compile down to a bash `code` string —
+ * per-runtime routing no longer exists.
  */
 
-export type WorkspaceSandboxProvider = "lambda" | "e2b" | "daytona" | "kubernetes";
-export type WorkspaceSandboxRuntime = "node" | "python";
+export type SandboxProvider = "lambda" | "e2b" | "daytona" | "kubernetes";
+export type SandboxRuntime = "bash" | "python" | "node";
 
-export interface WorkspaceSandboxConfig {
-  provider?: WorkspaceSandboxProvider;
+// Runtime subset of the persisted sandbox config (see storage/sandbox-config.ts)
+// that an executor needs. `internet` selects the lambda internet-on/off function.
+export interface SandboxExecutorConfig {
+  provider?: SandboxProvider;
+  runtimes?: SandboxRuntime[];
+  internet?: boolean;
   timeout?: number;
   memoryLimit?: number;
   outputLimitBytes?: number;
-  // Account-configured env vars injected into the sandbox runtime.
+  // Account-configured env vars injected into every run.
   envVars?: Record<string, string>;
+  // Provider-specific knobs (function names, templates, kubeconfig, ...).
   options?: Record<string, unknown>;
 }
 
-export interface WorkspaceSandboxArtifact {
-  kind: "file" | "image" | "chart" | "unknown";
-  path?: string;
-  mediaType?: string;
-  title?: string;
-  dataBase64?: string;
-  metadata?: Record<string, unknown>;
-}
-
-export interface WorkspaceSandboxRunRequest {
-  runtime: WorkspaceSandboxRuntime;
-  namespace: string;
-  entryPath: string;
-  args: string[];
-  workspaceRoot: string;
+export interface SandboxRunRequest {
+  // Defaults to "bash". The harness only ever sends "bash"; python/node exist for
+  // the lambda API's typed-runtime fidelity.
+  runtime?: SandboxRuntime;
+  code: string;
+  // Persistent workspace namespace. Omit for an ephemeral (no-mount) run.
+  namespace?: string;
+  workspaceRoot?: string;
   timeoutSeconds: number;
   outputLimitBytes: number;
-  // Account-configured env vars (config.workspace.sandbox.envVars) injected into the
-  // spawned runtime. Required runtime vars (PATH/HOME/...) always win.
+  args?: string[];
+  // Per-call env vars merged over the account-configured envVars. Reserved runtime
+  // vars always win and the host process.env is never inherited.
   envVars?: Record<string, string>;
 }
 
-export interface WorkspaceSandboxShellRequest {
-  namespace: string;
-  shell: string;
-  workspaceRoot: string;
-  timeoutSeconds: number;
-  outputLimitBytes: number;
-  // See WorkspaceSandboxRunRequest.envVars.
-  envVars?: Record<string, string>;
-}
-
-export interface WorkspaceSandboxReadDirRequest {
-  namespace: string;
-  // Path relative to the namespace mount root, e.g. ".claude/skills/<name>".
-  path: string;
-  workspaceRoot: string;
-  maxBytes?: number;
-}
-
-export interface WorkspaceSandboxReadDirFile {
-  // Path relative to the requested directory, e.g. "SKILL.md" or "scripts/run.py".
-  path: string;
-  base64: string;
-}
-
-export interface WorkspaceSandboxReadDirResult {
+export interface SandboxRunResult {
   ok: boolean;
-  files: WorkspaceSandboxReadDirFile[];
-  truncated?: boolean;
-  error?: string;
-  provider: WorkspaceSandboxProvider;
-}
-
-export interface WorkspaceSandboxRunResult {
-  ok: boolean;
-  runtime: WorkspaceSandboxRuntime;
-  exitCode: number | null;
-  stdout: string;
-  stderr: string;
-  artifacts?: WorkspaceSandboxArtifact[];
-  durationMs: number;
-  timedOut?: boolean;
-  truncated?: boolean;
-  provider: WorkspaceSandboxProvider;
-}
-
-export interface WorkspaceSandboxShellResult {
-  ok: boolean;
+  runtime: SandboxRuntime;
   exitCode: number | null;
   stdout: string;
   stderr: string;
   durationMs: number;
   timedOut?: boolean;
   truncated?: boolean;
-  provider: WorkspaceSandboxProvider;
+  provider: SandboxProvider;
 }
 
-export interface WorkspaceSandboxExecutor {
-  runFile(request: WorkspaceSandboxRunRequest): Promise<WorkspaceSandboxRunResult>;
-  runShell?(request: WorkspaceSandboxShellRequest): Promise<WorkspaceSandboxShellResult>;
-  // Reads a directory's files straight from the mount. Required for publishing skill
-  // edits: files the agent wrote through the mount are not visible to a direct S3 read
-  // for ~1-2 min (S3 Files syncs asynchronously), so publish must read the mount.
-  readDirectory?(request: WorkspaceSandboxReadDirRequest): Promise<WorkspaceSandboxReadDirResult>;
+export interface SandboxExecutor {
+  run(request: SandboxRunRequest): Promise<SandboxRunResult>;
 }

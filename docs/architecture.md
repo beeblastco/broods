@@ -254,24 +254,39 @@ Notes:
 
 This path currently uses core NATS. If JetStream is introduced later, replace best-effort publish/drain with explicit publish acknowledgement, durable consumer replay, duplicate, and backpressure handling.
 
-## Workspace Boundaries
+## Sandbox & Workspace Boundaries
 
-Workspace state is account/agent-scoped and disabled unless the selected agent has `config.workspace.enabled` true. The workspace storage backend is currently `workspace.storage.provider: "s3"`, backed by the configured filesystem bucket. Workspace provides a guidance prompt, storage, and sandbox execution through the model-facing `bash` tool.
+**Sandbox** (compute) and **workspace** (persistent S3 files) are independent,
+account-scoped records, referenced from agent config by id (`sandbox`, `workspaces`). The
+handler resolves those references (`resolveAgentRuntime`) before the agent loop. A
+sandbox can be attached agent-wide (`config.sandbox`) or per workspace
+(`workspaces[].sandbox`, overriding the agent-level one). Each workspace's *effective*
+sandbox decides its tools: `read`/`write`/`edit`/`glob`/`grep`/`bash` when present, or
+read-only `read`/`glob` (served directly from S3) when absent; `bash` is also exposed
+stateless when there is no workspace. Each tool's `permissionMode` (`edit`/`ask`/`bypass`)
+is resolved per call from the selected workspace.
 
-When workspace is enabled, Lambda shell commands run in `SandboxBash` against the AWS S3 Files mount, while `python <file.py>` and `python3 <file.py>` continue through `SandboxPython`. E2B and Daytona providers must mount the same S3 workspace bucket at `options.workspaceRoot` so every provider sees the same namespace. Existing `MEMORY.md` files are loaded into the system prompt. `workspace.harness.enabled=false` disables only the default MEMORY/TASKS harness instructions. `workspace.needsApproval` requires approval for `bash` calls. By default workspace state is per conversation; setting `config.workspace.namespace` lets multiple conversations for the same agent share workspace files such as `MEMORY.md`, `TASKS.md`, scripts, data, and staged skills. `workspace.workspaces` can define named personal and team workspaces, and the `bash` tool selects one with its optional `workspace` input.
+Every sandbox-backed tool compiles to a single `run` against the provider (`lambda`/`e2b`/
+`daytona`/`kubernetes`). The lambda provider deploys the same image as four functions
+(workspace mount × internet) and auto-selects one per run. A workspace's namespace is
+derived from `accountId:workspaceId`, so agents that reference the same `workspaceId` share
+files — including across the sandbox-backed and read-only S3 paths. A workspace with no
+sandbox still serves `MEMORY.md` via the S3 API. `workspace.harness.enabled=false`
+suppresses only the MEMORY/TASKS guidance.
 
 ```mermaid
 flowchart LR
-  Conversation["No workspace.namespace"] --> PerConversation["Per-conversation workspace"]
-  Namespace["workspace.namespace=support"] --> Shared["Shared account workspace"]
-  Named["workspace.workspaces.team"] --> Shared
+  Agents["Agent A / Agent B<br/>sandbox + workspaces refs"] --> Resolve["resolveAgentRuntime"]
+  Resolve --> SB["sandboxConfig record"]
+  Resolve --> WS["workspaceConfig record"]
+  WS --> NS["namespace = hash(accountId:workspaceId)<br/>shared across agents"]
 ```
 
-See [Workspace](workspace/index.md) for the full model.
+See [Workspace & Sandbox](workspace/index.md) for the full model.
 
 ## Model and Tool Configuration
 
-Agents control model selection, channel credentials, optional skills, subagents, and tool access through encrypted agent config. `harness.ts` resolves `config.model`; `tools/index.ts` creates the workspace `bash` tool from `config.workspace`, subagent dispatch from `config.subagent`, search/research tools from `config.tools`, and `load_skill` when `config.skills.enabled` is true and `config.skills.allowed` has paths. See the [API Reference](/api-reference) for the complete `AgentConfig` schema.
+Agents control model selection, channel credentials, optional skills, subagents, and tool access through encrypted agent config. `harness.ts` resolves `config.model`; `tools/index.ts` exposes the sandbox tools from a referenced `sandbox` (+ `workspaces`), subagent dispatch from `config.subagent`, search/research tools from `config.tools`, and `load_skill` when `config.skills.enabled` is true and `config.skills.allowed` has paths. See the [API Reference](/api-reference) for the complete `AgentConfig` schema.
 
 ## Storage Boundaries
 

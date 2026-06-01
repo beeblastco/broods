@@ -5,15 +5,12 @@
  * (agents.x-k8s.io/v1alpha1) pod on the Beeblast k3s cluster — a "VM-like"
  * environment with node, python, bash, curl on PATH. Mirrors the Daytona
  * executor's ephemeral lifecycle: create Sandbox -> wait Ready -> (optionally
- * mount the workspace S3 bucket with mount-s3 at the `sandbox/` prefix) ->
- * exec -> delete.
+ * mount the selected workspace S3 prefix with mount-s3) -> exec -> delete.
  *
- * Cluster connectivity comes from a kubeconfig (config.options.kubeconfig or
- * KUBERNETES_SANDBOX_KUBECONFIG, both base64; falls back to the ambient
- * kubeconfig for local/dry-run). S3 credentials inside the pod come from IRSA
- * (the pod's ServiceAccount annotated with the beeblast_k3s_role ARN + the
- * cluster's aws-pod-identity-webhook) — no static keys. See
- * infra: kubernetes/agent-sandbox/runtime/README.md.
+ * Cluster connectivity comes from service-managed env/SSM kubeconfig settings,
+ * with ambient kubeconfig only for local direct executor tests. S3 credentials
+ * inside the pod come from IRSA / pod identity — no harness AWS credentials are
+ * injected into the sandbox.
  */
 
 import { Buffer } from "node:buffer";
@@ -30,15 +27,18 @@ import { GetParameterCommand, SSMClient } from "@aws-sdk/client-ssm";
 import { optionalEnv } from "../../_shared/env.ts";
 import { WORKSPACE_MOUNT_PREFIX } from "../../_shared/sandbox.ts";
 import type {
-  WorkspaceSandboxConfig,
-  WorkspaceSandboxExecutor,
-  WorkspaceSandboxReadDirRequest,
-  WorkspaceSandboxReadDirResult,
-  WorkspaceSandboxRunRequest,
-  WorkspaceSandboxRunResult,
-  WorkspaceSandboxShellRequest,
-  WorkspaceSandboxShellResult,
+  SandboxExecutor,
+  SandboxExecutorConfig,
+  SandboxRunRequest,
+  SandboxRunResult,
 } from "./types.ts";
+import {
+  configString,
+  isRecordObject,
+  requiredWorkspacePath,
+  shellQuote,
+  truncateText,
+} from "./utils.ts";
 
 const SANDBOX_GROUP = "agents.x-k8s.io";
 const SANDBOX_VERSION = "v1alpha1";
@@ -53,10 +53,11 @@ interface ExecResult {
   stdout: string;
   stderr: string;
   exitCode: number | null;
+  timedOut?: boolean;
 }
 
-export class KubernetesWorkspaceSandboxExecutor implements WorkspaceSandboxExecutor {
-  readonly #config: WorkspaceSandboxConfig;
+export class KubernetesSandboxExecutor implements SandboxExecutor {
+  readonly #config: SandboxExecutorConfig;
   // Clients are initialized lazily: the kubeconfig may have to be fetched from SSM
   // (it is too large for a Lambda env var), which is async.
   #core!: CoreV1Api;
@@ -64,7 +65,7 @@ export class KubernetesWorkspaceSandboxExecutor implements WorkspaceSandboxExecu
   #exec!: Exec;
   #clientsReady?: Promise<void>;
 
-  constructor(config: WorkspaceSandboxConfig) {
+  constructor(config: SandboxExecutorConfig) {
     this.#config = config;
   }
 
@@ -80,92 +81,37 @@ export class KubernetesWorkspaceSandboxExecutor implements WorkspaceSandboxExecu
     return this.#clientsReady;
   }
 
-  async runShell(request: WorkspaceSandboxShellRequest): Promise<WorkspaceSandboxShellResult> {
+  async run(request: SandboxRunRequest): Promise<SandboxRunResult> {
     const startedAt = Date.now();
     return this.#withSandbox(request, async (pod) => {
-      const result = await this.#execInPod(pod, this.#wrapShell(request, request.shell), request.timeoutSeconds);
+      const result = await this.#execInPod(pod, this.#wrapShell(request, request.code), request.timeoutSeconds);
       const stdout = truncateText(result.stdout, request.outputLimitBytes);
       const stderr = truncateText(result.stderr, request.outputLimitBytes);
       return {
-        ok: (result.exitCode ?? 0) === 0,
+        ok: result.exitCode === 0,
+        runtime: request.runtime ?? "bash",
         exitCode: result.exitCode,
         stdout: stdout.value,
         stderr: stderr.value,
         durationMs: Date.now() - startedAt,
+        timedOut: result.timedOut === true,
         truncated: stdout.truncated || stderr.truncated,
         provider: "kubernetes",
       };
     });
-  }
-
-  async runFile(request: WorkspaceSandboxRunRequest): Promise<WorkspaceSandboxRunResult> {
-    const startedAt = Date.now();
-    return this.#withSandbox(request, async (pod) => {
-      const result = await this.#execInPod(pod, this.#wrapShell(request, commandForFile(request)), request.timeoutSeconds);
-      const stdout = truncateText(result.stdout, request.outputLimitBytes);
-      const stderr = truncateText(result.stderr, request.outputLimitBytes);
-      return {
-        ok: (result.exitCode ?? 0) === 0,
-        runtime: request.runtime,
-        exitCode: result.exitCode,
-        stdout: stdout.value,
-        stderr: stderr.value,
-        artifacts: [],
-        durationMs: Date.now() - startedAt,
-        truncated: stdout.truncated || stderr.truncated,
-        provider: "kubernetes",
-      };
-    });
-  }
-
-  async readDirectory(request: WorkspaceSandboxReadDirRequest): Promise<WorkspaceSandboxReadDirResult> {
-    const dir = `${workspacePath(request)}/${request.path.replace(/^\/+/, "")}`.replace(/\/+$/, "");
-    // Emit each file as a "<relpath>\t<base64>" line so the client can split it back
-    // apart. find + base64 keeps it to a single exec round-trip.
-    const script =
-      `cd ${shellQuote(dir)} 2>/dev/null || exit 0; ` +
-      `find . -type f -printf '%P\\n' | while IFS= read -r f; do ` +
-      `printf '%s\\t' "$f"; base64 -w0 "$f"; printf '\\n'; done`;
-    try {
-      return await this.#withSandbox(request, async (pod) => {
-        const result = await this.#execInPod(pod, ["bash", "-lc", script], 60);
-        const maxBytes = request.maxBytes ?? Number.POSITIVE_INFINITY;
-        const files: WorkspaceSandboxReadDirResult["files"] = [];
-        let total = 0;
-        let truncated = false;
-        for (const line of result.stdout.split("\n")) {
-          if (!line) continue;
-          const tab = line.indexOf("\t");
-          if (tab < 0) continue;
-          const path = line.slice(0, tab);
-          const base64 = line.slice(tab + 1);
-          total += base64.length;
-          if (total > maxBytes) { truncated = true; break; }
-          files.push({ path, base64 });
-        }
-        return { ok: true, files, truncated, provider: "kubernetes" as const };
-      });
-    } catch (cause) {
-      return {
-        ok: false,
-        files: [],
-        error: cause instanceof Error ? cause.message : String(cause),
-        provider: "kubernetes",
-      };
-    }
   }
 
   // --- internals -----------------------------------------------------------
 
   async #withSandbox<T>(
-    request: { namespace: string; workspaceRoot: string },
+    request: { namespace?: string; workspaceRoot?: string },
     run: (pod: V1Pod) => Promise<T>,
   ): Promise<T> {
     await this.#ensureClients();
     const opts = options(this.#config);
     const namespace = kubeNamespace(opts);
     const name = sandboxName(request.namespace);
-    await this.#createSandbox(namespace, name, request);
+    await this.#createSandbox(namespace, name);
     try {
       const pod = await this.#waitForPodReady(namespace, name);
       await this.#prepareWorkspace(pod, request);
@@ -178,7 +124,6 @@ export class KubernetesWorkspaceSandboxExecutor implements WorkspaceSandboxExecu
   async #createSandbox(
     namespace: string,
     name: string,
-    request: { namespace: string; workspaceRoot: string },
   ): Promise<void> {
     const opts = options(this.#config);
     const mounting = opts.mountAwsS3Buckets === true;
@@ -189,10 +134,6 @@ export class KubernetesWorkspaceSandboxExecutor implements WorkspaceSandboxExecu
       env: envList({
         ...(this.#config.envVars ?? {}),
         ...sandboxRegionEnv(opts),
-        // mount-s3 reads AWS creds from the environment. Pass the harness runtime's
-        // credentials in (mirrors the Daytona provider); in Lambda these are the
-        // execution role's temporary creds — no static keys. See README/docs.
-        ...(mounting ? awsCredentialEnv(this.#config) : {}),
       }),
     };
     if (mounting) {
@@ -260,16 +201,21 @@ export class KubernetesWorkspaceSandboxExecutor implements WorkspaceSandboxExecu
 
   async #prepareWorkspace(
     pod: V1Pod,
-    request: { namespace: string; workspaceRoot: string },
+    request: { namespace?: string; workspaceRoot?: string },
   ): Promise<void> {
     const opts = options(this.#config);
-    const dir = workspacePath(request);
-    await this.#execOrThrow(pod, ["bash", "-lc", `mkdir -p ${shellQuote(request.workspaceRoot)}`]);
+    const dir = requiredWorkspacePath(request, "/mnt/workspaces");
+    const workspaceRoot = (request.workspaceRoot ?? "/mnt/workspaces").replace(/\/+$/, "");
+    await this.#execOrThrow(pod, ["bash", "-lc", `mkdir -p ${shellQuote(workspaceRoot)}`]);
+    await this.#execOrThrow(pod, ["bash", "-lc", `mkdir -p ${shellQuote(dir)}`]);
     if (opts.mountAwsS3Buckets === true) {
+      if (!request.namespace) {
+        throw new Error("kubernetes S3 workspace mount requires a workspace namespace.");
+      }
       const bucket = configString(opts.workspaceBucketName) ?? optionalEnv("FILESYSTEM_BUCKET_NAME");
       if (!bucket) {
         throw new Error(
-          "kubernetes S3 workspace mount requires config.workspace.sandbox.options.workspaceBucketName or FILESYSTEM_BUCKET_NAME.",
+          "kubernetes S3 workspace mount requires sandbox options.workspaceBucketName or FILESYSTEM_BUCKET_NAME.",
         );
       }
       const region = configString(opts.awsRegion) ?? optionalEnv("AWS_REGION") ?? optionalEnv("AWS_DEFAULT_REGION");
@@ -278,10 +224,10 @@ export class KubernetesWorkspaceSandboxExecutor implements WorkspaceSandboxExecu
         "--allow-overwrite",
         "--allow-other",
         "--prefix",
-        `${WORKSPACE_MOUNT_PREFIX}/`,
+        `${WORKSPACE_MOUNT_PREFIX}/${request.namespace}/`,
         ...(region ? ["--region", region] : []),
         bucket,
-        request.workspaceRoot,
+        dir,
       ].map(shellQuote).join(" ");
       // Present mounted files as uid/gid 1000 (the workspace access point's owner),
       // not the mounting process's uid: the pod runs as root for FUSE, and mount-s3
@@ -293,11 +239,10 @@ export class KubernetesWorkspaceSandboxExecutor implements WorkspaceSandboxExecu
         `mount-s3 --uid 1000 --gid 1000 ${mountArgs}`,
       ]);
     }
-    await this.#execOrThrow(pod, ["bash", "-lc", `mkdir -p ${shellQuote(dir)}`]);
   }
 
-  #wrapShell(request: { workspaceRoot: string; namespace: string }, shell: string): string[] {
-    return ["bash", "-lc", `cd ${shellQuote(workspacePath(request))}; ${shell}`];
+  #wrapShell(request: { workspaceRoot?: string; namespace?: string }, shell: string): string[] {
+    return ["bash", "-lc", `cd ${shellQuote(requiredWorkspacePath(request, "/mnt/workspaces"))}; ${shell}`];
   }
 
   async #execOrThrow(pod: V1Pod, command: string[]): Promise<void> {
@@ -342,7 +287,12 @@ export class KubernetesWorkspaceSandboxExecutor implements WorkspaceSandboxExecu
       const timer = setTimeout(() => {
         if (settled) return;
         settled = true;
-        resolve({ stdout, stderr: `${stderr}\n[sandbox exec timed out after ${timeoutSeconds}s]`, exitCode: null });
+        resolve({
+          stdout,
+          stderr: `${stderr}\n[sandbox exec timed out after ${timeoutSeconds}s]`,
+          exitCode: null,
+          timedOut: true,
+        });
       }, timeoutSeconds * 1000);
 
       this.#exec
@@ -380,7 +330,7 @@ export class KubernetesWorkspaceSandboxExecutor implements WorkspaceSandboxExecu
 
 // --- helpers ---------------------------------------------------------------
 
-function options(config: WorkspaceSandboxConfig): Record<string, unknown> {
+function options(config: SandboxExecutorConfig): Record<string, unknown> {
   return isRecordObject(config.options) ? config.options : {};
 }
 
@@ -388,7 +338,7 @@ async function resolveKubeConfig(opts: Record<string, unknown>): Promise<KubeCon
   const kc = new KubeConfig();
   // 1) inline base64 (config option or small deployments) 2) SSM parameter (the
   // kubeconfig is too big for a Lambda env var, so prod passes its SSM name)
-  // 3) ambient kubeconfig (local dev / dry-run).
+  // 3) ambient kubeconfig (local direct executor tests).
   let raw = configString(opts.kubeconfig) ?? optionalEnv("KUBERNETES_SANDBOX_KUBECONFIG");
   if (!raw) {
     const param = configString(opts.kubeconfigSsmParam) ?? optionalEnv("KUBERNETES_SANDBOX_KUBECONFIG_SSM");
@@ -428,42 +378,14 @@ function sandboxRegionEnv(opts: Record<string, unknown>): Record<string, string>
   return region ? { AWS_REGION: region, AWS_DEFAULT_REGION: region } : {};
 }
 
-// AWS credentials for mount-s3 inside the pod, taken from config.envVars or the harness
-// runtime env (in Lambda: the execution role's temporary creds). Mirrors the Daytona
-// provider's awsCredentialEnvVars.
-function awsCredentialEnv(config: WorkspaceSandboxConfig): Record<string, string> {
-  const envVars = config.envVars ?? {};
-  const get = (key: string): string | undefined => configString(envVars[key]) ?? optionalEnv(key);
-  const accessKeyId = get("AWS_ACCESS_KEY_ID");
-  const secretAccessKey = get("AWS_SECRET_ACCESS_KEY");
-  if (!accessKeyId || !secretAccessKey) {
-    throw new Error(
-      "kubernetes S3 workspace mount requires AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY in the harness runtime or config.workspace.sandbox.envVars.",
-    );
-  }
-  const out: Record<string, string> = { AWS_ACCESS_KEY_ID: accessKeyId, AWS_SECRET_ACCESS_KEY: secretAccessKey };
-  const sessionToken = get("AWS_SESSION_TOKEN");
-  if (sessionToken) out.AWS_SESSION_TOKEN = sessionToken;
-  return out;
-}
-
 function envList(vars: Record<string, string>): Array<{ name: string; value: string }> {
   return Object.entries(vars).map(([name, value]) => ({ name, value }));
 }
 
-function commandForFile(request: WorkspaceSandboxRunRequest): string {
-  const executable = request.runtime === "node" ? "node" : "python3";
-  return [executable, request.entryPath.replace(/^\/+/, ""), ...request.args].map(shellQuote).join(" ");
-}
-
-function sandboxName(namespace: string): string {
-  const slug = namespace.toLowerCase().replace(/[^a-z0-9-]/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "").slice(0, 40) || "ws";
+function sandboxName(namespace: string | undefined): string {
+  const slug = (namespace ?? "").toLowerCase().replace(/[^a-z0-9-]/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "").slice(0, 40) || "ws";
   const suffix = Math.random().toString(36).slice(2, 8);
   return `fp-${slug}-${suffix}`;
-}
-
-function workspacePath(request: { workspaceRoot: string; namespace: string }): string {
-  return `${request.workspaceRoot.replace(/\/+$/, "")}/${request.namespace}`;
 }
 
 function exitCodeFromStatus(status: V1Status): number | null {
@@ -478,14 +400,6 @@ function exitCodeFromStatus(status: V1Status): number | null {
   return status?.status === "Failure" ? 1 : null;
 }
 
-function shellQuote(value: string): string {
-  return `'${value.replaceAll("'", "'\\''")}'`;
-}
-
-function configString(value: unknown): string | undefined {
-  return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
-}
-
 function stringList(value: unknown): string[] | undefined {
   if (Array.isArray(value)) {
     const list = value.filter((v): v is string => typeof v === "string" && v.trim().length > 0).map((v) => v.trim());
@@ -495,21 +409,6 @@ function stringList(value: unknown): string[] | undefined {
     return value.split(",").map((v) => v.trim()).filter(Boolean);
   }
   return undefined;
-}
-
-function isRecordObject(value: unknown): value is Record<string, unknown> {
-  return Boolean(value && typeof value === "object" && !Array.isArray(value));
-}
-
-function truncateText(value: string, limit: number): { value: string; truncated: boolean } {
-  const bytes = new TextEncoder().encode(value);
-  if (bytes.byteLength <= limit) {
-    return { value, truncated: false };
-  }
-  return {
-    value: `${new TextDecoder().decode(bytes.slice(0, limit))}\n[output truncated]`,
-    truncated: true,
-  };
 }
 
 function sleep(ms: number): Promise<void> {

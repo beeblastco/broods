@@ -1,68 +1,44 @@
 /**
- * E2B-backed workspace sandbox executor.
- * Keep E2B SDK adaptation here.
+ * E2B-backed sandbox executor.
+ * Keep E2B SDK adaptation here. A real VM: run the bash `code` as-is in the
+ * workspace directory — no emulation and no per-runtime routing.
  */
 
 import { optionalEnv } from "../../_shared/env.ts";
 import { Sandbox } from "e2b";
 import type {
-  WorkspaceSandboxConfig,
-  WorkspaceSandboxExecutor,
-  WorkspaceSandboxRunRequest,
-  WorkspaceSandboxRunResult,
-  WorkspaceSandboxShellRequest,
-  WorkspaceSandboxShellResult,
+  SandboxExecutor,
+  SandboxExecutorConfig,
+  SandboxRunRequest,
+  SandboxRunResult,
 } from "./types.ts";
+import { configString, isRecordObject, stringRecord, truncateText, workspacePath } from "./utils.ts";
 
-export class E2BWorkspaceSandboxExecutor implements WorkspaceSandboxExecutor {
-  readonly #config: WorkspaceSandboxConfig;
+export class E2BSandboxExecutor implements SandboxExecutor {
+  readonly #config: SandboxExecutorConfig;
 
-  constructor(config: WorkspaceSandboxConfig) {
+  constructor(config: SandboxExecutorConfig) {
     this.#config = config;
   }
 
-  async runFile(request: WorkspaceSandboxRunRequest): Promise<WorkspaceSandboxRunResult> {
+  async run(request: SandboxRunRequest): Promise<SandboxRunResult> {
     const startedAt = Date.now();
     const sandbox = await Sandbox.create(e2bCreateOptions(this.#config));
+    const cwd = workspacePath(request);
 
     try {
-      const result = await sandbox.commands.run(commandForFile(request), {
-        cwd: workspacePath(request),
+      const result = await sandbox.commands.run(request.code, {
+        ...(cwd ? { cwd } : {}),
         timeoutMs: request.timeoutSeconds * 1000,
-        // Account-configured env vars (config.workspace.sandbox.envVars) injected
-        // into the command. E2B already isolates from the harness host env.
-        envs: e2bEnvVars(this.#config),
-      });
-      return formatResult({
-        runtime: request.runtime,
-        provider: "e2b",
-        startedAt,
-        exitCode: result.exitCode ?? null,
-        stdout: result.stdout ?? "",
-        stderr: [result.stderr, result.error].filter(Boolean).join("\n"),
-        outputLimitBytes: request.outputLimitBytes,
-      });
-    } finally {
-      await sandbox.kill();
-    }
-  }
-
-  // A real VM: run the command as-is in the workspace directory. No emulation and
-  // no per-runtime routing — bash, node, python, etc. are all on the PATH.
-  async runShell(request: WorkspaceSandboxShellRequest): Promise<WorkspaceSandboxShellResult> {
-    const startedAt = Date.now();
-    const sandbox = await Sandbox.create(e2bCreateOptions(this.#config));
-
-    try {
-      const result = await sandbox.commands.run(request.shell, {
-        cwd: workspacePath(request),
-        timeoutMs: request.timeoutSeconds * 1000,
-        envs: e2bEnvVars(this.#config),
+        // Account-configured env vars merged with per-call vars. E2B already
+        // isolates from the harness host env.
+        envs: { ...stringRecord(this.#config.envVars), ...(request.envVars ?? {}) },
       });
       const stdout = truncateText(result.stdout ?? "", request.outputLimitBytes);
       const stderr = truncateText([result.stderr, result.error].filter(Boolean).join("\n"), request.outputLimitBytes);
       return {
         ok: (result.exitCode ?? null) === 0,
+        runtime: request.runtime ?? "bash",
         exitCode: result.exitCode ?? null,
         stdout: stdout.value,
         stderr: stderr.value,
@@ -76,39 +52,7 @@ export class E2BWorkspaceSandboxExecutor implements WorkspaceSandboxExecutor {
   }
 }
 
-function commandForFile(request: WorkspaceSandboxRunRequest): string {
-  const executable = request.runtime === "node" ? "node" : "python3";
-  return [executable, entryRelativePath(request.entryPath), ...request.args].map(shellQuote).join(" ");
-}
-
-function shellQuote(value: string): string {
-  return `'${value.replaceAll("'", "'\\''")}'`;
-}
-
-function formatResult(params: {
-  runtime: WorkspaceSandboxRunRequest["runtime"];
-  provider: "e2b";
-  startedAt: number;
-  exitCode: number | null;
-  stdout: string;
-  stderr: string;
-  outputLimitBytes: number;
-}): WorkspaceSandboxRunResult {
-  const truncatedStdout = truncateText(params.stdout, params.outputLimitBytes);
-  const truncatedStderr = truncateText(params.stderr, params.outputLimitBytes);
-  return {
-    ok: params.exitCode === 0,
-    runtime: params.runtime,
-    exitCode: params.exitCode,
-    stdout: truncatedStdout.value,
-    stderr: truncatedStderr.value,
-    durationMs: Date.now() - params.startedAt,
-    truncated: truncatedStdout.truncated || truncatedStderr.truncated,
-    provider: params.provider,
-  };
-}
-
-function e2bCreateOptions(config: WorkspaceSandboxConfig): Record<string, unknown> {
+function e2bCreateOptions(config: SandboxExecutorConfig): Record<string, unknown> {
   const options = isRecordObject(config.options) ? config.options : {};
   return {
     ...(configString(options.apiKey) ?? optionalEnv("E2B_API_KEY")
@@ -116,46 +60,5 @@ function e2bCreateOptions(config: WorkspaceSandboxConfig): Record<string, unknow
       : {}),
     ...(configString(options.template) ? { template: configString(options.template) } : {}),
     ...(configString(options.templateId) ? { template: configString(options.templateId) } : {}),
-  };
-}
-
-function e2bEnvVars(config: WorkspaceSandboxConfig): Record<string, string> {
-  if (!isRecordObject(config.envVars)) {
-    return {};
-  }
-  const result: Record<string, string> = {};
-  for (const [key, value] of Object.entries(config.envVars)) {
-    if (typeof value === "string") {
-      result[key] = value;
-    }
-  }
-  return result;
-}
-
-function configString(value: unknown): string | undefined {
-  return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
-}
-
-function isRecordObject(value: unknown): value is Record<string, unknown> {
-  return Boolean(value && typeof value === "object" && !Array.isArray(value));
-}
-
-function workspacePath(request: { workspaceRoot: string; namespace: string }): string {
-  return `${request.workspaceRoot.replace(/\/+$/, "")}/${request.namespace}`;
-}
-
-function entryRelativePath(path: string): string {
-  return path.replace(/^\/+/, "");
-}
-
-function truncateText(value: string, limit: number): { value: string; truncated: boolean } {
-  const bytes = new TextEncoder().encode(value);
-  if (bytes.byteLength <= limit) {
-    return { value, truncated: false };
-  }
-
-  return {
-    value: `${new TextDecoder().decode(bytes.slice(0, limit))}\n[output truncated]`,
-    truncated: true,
   };
 }
