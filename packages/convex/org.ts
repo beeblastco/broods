@@ -381,6 +381,8 @@ export const remove = mutation({
             // Cascade-delete using the same logic as backend/accounts:remove.
             for (const table of [
                 "agents",
+                "sandboxConfigs",
+                "workspaceConfigs",
                 "conversations",
                 "messages",
                 "skills",

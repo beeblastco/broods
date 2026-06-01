@@ -145,6 +145,37 @@ export const agentsFields = {
     updatedAt: v.number(),
 };
 
+/**
+ * Account-scoped sandbox config (compute backend + permission mode), referenced
+ * by agents via the encrypted agent config. Stored encrypted at rest like agents
+ * because `envVars`/`options` may carry provider secrets — filthy-panty encrypts
+ * before writing, so cherry-coke only ever sees the opaque blob.
+ */
+export const sandboxConfigsFields = {
+    accountId: v.id("accounts"),
+    name: v.string(),
+    description: v.optional(v.string()),
+    encryptedConfig: v.optional(v.string()),
+    encryptionIv: v.optional(v.string()),
+    encryptionTag: v.optional(v.string()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+};
+
+/**
+ * Account-scoped workspace config (persistent S3-backed filesystem), referenced
+ * by agents via the encrypted agent config. Holds no secrets, so the config
+ * object is stored in plaintext.
+ */
+export const workspaceConfigsFields = {
+    accountId: v.id("accounts"),
+    name: v.string(),
+    description: v.optional(v.string()),
+    config: v.any(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+};
+
 /** Conversation thread between an account's caller and one of its agents. */
 export const conversationsFields = {
     accountId: v.id("accounts"),
@@ -264,6 +295,8 @@ export default defineSchema({
         .index("by_orgId", ["orgId"])
         .index("by_secretHash", ["secretHash"]),
     agents: defineTable(agentsFields).index("by_accountId", ["accountId"]),
+    sandboxConfigs: defineTable(sandboxConfigsFields).index("by_accountId", ["accountId"]),
+    workspaceConfigs: defineTable(workspaceConfigsFields).index("by_accountId", ["accountId"]),
     conversations: defineTable(conversationsFields)
         .index("by_accountId", ["accountId"])
         .index("by_accountId_and_agentId", ["accountId", "agentId"]),
