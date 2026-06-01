@@ -103,6 +103,10 @@ describe("resolveAgentRuntime", () => {
 
     expect(resolved.workspaces[0]?.sandbox).toMatchObject({ permissionMode: "ask" });
     expect(resolved.workspaces[1]?.sandbox).toBeUndefined();
+    // rw inherits a sandbox (mounts directly); the `sandbox: null` opt-out reads S3
+    // directly, so neither carries a read-only mount runner.
+    expect(resolved.workspaces[0]?.readMount).toBeUndefined();
+    expect(resolved.workspaces[1]?.readMount).toBeUndefined();
   });
 
   it("resolves a read-only workspace (no agent sandbox, no override) without a sandbox", async () => {
@@ -121,6 +125,27 @@ describe("resolveAgentRuntime", () => {
 
     expect(resolved.sandbox).toBeUndefined();
     expect(resolved.workspaces[0]?.sandbox).toBeUndefined();
+    // Implicit read-only defaults to reading through the service-managed read-only mount.
+    expect(resolved.workspaces[0]?.readMount).toEqual({ provider: "lambda", internet: false });
+  });
+
+  it("reads a read-only workspace directly from S3 when the ref opts out with sandbox: null", async () => {
+    setStorageForTests({
+      sandboxConfigs: { getById: async () => null },
+      workspaceConfigs: {
+        getById: async (_accountId: string, id: string) =>
+          id === "ws_a" ? { config: { storage: { provider: "s3" } } } : null,
+      },
+    } as never);
+
+    const resolved = await resolveAgentRuntime(
+      { workspaces: [{ name: "notes", workspaceId: "ws_a", sandbox: null }] },
+      "acct_1",
+    );
+
+    expect(resolved.workspaces[0]?.sandbox).toBeUndefined();
+    // `sandbox: null` => no compute => read straight from S3 (no mount runner).
+    expect(resolved.workspaces[0]?.readMount).toBeUndefined();
   });
 
   it("throws a clear error when a referenced sandbox is missing", async () => {

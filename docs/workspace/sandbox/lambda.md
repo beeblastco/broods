@@ -107,9 +107,77 @@ Skill bundles are still staged into the workspace namespace at `/.claude/skills/
 `load_skill` (S3 server-side copy), so the agent can read and run skill scripts without a
 second mount.
 
-A workspace with **no** effective sandbox is never mounted at all: `read`/`glob` read the
-same `sandbox/<namespace>/` keys directly via the S3 API, skipping the VPC/mount/Lambda
-cold start entirely (cheaper and faster for read-only access).
+### Read-only workspaces: mount (default) vs S3-direct
+
+A workspace with **no** effective sandbox is **read-only** — `write`/`edit`/`grep`/`bash`
+are not exposed; only `read`/`glob`. How those reads are served depends on the existing
+per-workspace `sandbox` reference value (no new config — it reuses the `null` opt-out):
+
+| Workspace ref | Read path | Sees committed writes | Cost |
+| --- | --- | --- | --- |
+| sandbox omitted / inherited, no effective sandbox (**default**) | service-managed **read-only mount** (`SandboxMountNoNet`) | **immediately** (hop 1) | a mounted Lambda invocation |
+| `sandbox: null` (**explicit opt-out**) | **S3-direct** — reads `sandbox/<namespace>/` keys via the S3 API | only after the S3 export (hop 2, ≥60s) | no VPC/mount/Lambda cold start (cheapest) |
+
+```jsonc
+// agent config — reader on a shared workspace
+"workspaces": [
+  { "name": "shared", "workspaceId": "ws_…" },               // default: read-only mount (fresh reads)
+  { "name": "shared", "workspaceId": "ws_…", "sandbox": null } // opt out: read straight from S3 (cheaper, lagged)
+]
+```
+
+The default mount path reads the same filesystem a writer mounts, so a reader sees a
+writer's committed file right away (subject only to NFS close-to-open consistency, seconds).
+The `null` opt-out trades that freshness for skipping the mount entirely — use it for reads
+that tolerate the S3-export lag and want the lowest cost.
+
+## Write durability & S3 sync
+
+The mount is **AWS S3 Files** (NFS over S3), which has two distinct flush boundaries. Getting
+a write to a plain S3 object is a two-hop journey, and each hop is asynchronous by default:
+
+```text
+  tool write ──fsync──▶ S3 Files server ──async export (~60s idle)──▶ plain S3 object
+              (hop 1: durability)            (hop 2: S3 visibility)
+```
+
+- **Hop 1 — durability across cold containers.** Closing a file does **not** force an NFS
+  COMMIT; the data sits in the container's page cache. A Lambda is frozen the instant the
+  handler returns, so a write that was never committed is **silently lost** on the next cold
+  container. The `write` and `edit` tools therefore `fsync` the file (`sync <file>` /
+  `fs.fsyncSync`) before returning — their writes are durable across cold mounts.
+- **Hop 2 — visibility to the S3-direct opt-out path.** S3 Files exports committed data to
+  plain S3 objects only **asynchronously**, roughly after 60s of write inactivity, and only
+  if **S3 Versioning is enabled** on the bucket. This only matters for the `sandbox: null`
+  opt-out (which reads S3 objects directly): it sees a freshly written file only **after**
+  that export. The **default** read-only path reads through the mount (hop 1), so it — like
+  any mounted sandbox — sees committed writes immediately and never waits on hop 2.
+
+### ⚠️ The `bash` tool is not auto-synced
+
+Only the dedicated `write`/`edit` tools fsync. Files created by raw `bash` redirection
+(`echo > f`, `cmd > out`, `>>`, in-script writes) live only in the page cache and can be
+**lost on the next cold container**. If an agent needs a `bash`-written file to persist,
+it must flush explicitly:
+
+```bash
+echo "data" > report.txt && sync report.txt   # fsync this file
+# or, after a batch of writes:
+sync                                           # flush everything
+```
+
+Prefer the `write` tool over `bash` redirection when durability matters — it does this for you.
+
+### Known limitations
+
+- **S3-direct opt-out visibility lag.** Because of hop 2, a write is not immediately visible
+  to a reader using the `sandbox: null` opt-out. Expect a delay (≥60s) and verify the bucket
+  has versioning on. The default read-only mount and any mounted sandbox are unaffected.
+- **Unflushed `bash` writes can vanish.** See the warning above — this is a correctness
+  footgun for agents that script their own file writes instead of using the `write` tool.
+  Tracked in [#46](https://github.com/beeblastco/filthy-panty/issues/46) for a future fix.
+- **No mount-level `sync` option.** Lambda's managed `fileSystemConfig` mount does not expose
+  NFS mount options, so durability is enforced per-write in the tools rather than globally.
 
 ## Security
 

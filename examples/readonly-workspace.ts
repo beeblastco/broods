@@ -1,10 +1,15 @@
 /**
- * Example: one shared workspace, two agents — writer (sandbox) + read-only reader (no sandbox).
+ * Example: one shared workspace, three agents — a writer (sandbox) plus two read-only
+ * readers that differ only in HOW they read.
  *
- * Both agents reference the SAME workspaceId, so they see the SAME files. The writer
- * references a sandbox and gets the full file tool set; the reader references the workspace
- * with NO sandbox, so it is read-only and serves read/glob straight from S3 (no mount, no
- * sandbox cold start).
+ * All three reference the SAME workspaceId, so they see the SAME files. The two readers
+ * have no sandbox, so they are read-only (read/glob only). They demonstrate the two 2A
+ * read paths:
+ *   - reader-mount: workspace ref omits `sandbox` => reads through a service-managed
+ *     read-only mount (the default) and sees the writer's committed file IMMEDIATELY.
+ *   - reader-s3: workspace ref sets `sandbox: null` => opts out of the mount and reads
+ *     straight from S3 (no Lambda/VPC, cheapest, but reads can lag the writer by the
+ *     S3 export delay — see docs/workspace/sandbox/lambda.md).
  */
 
 import {
@@ -30,7 +35,7 @@ const sandbox = await createSandbox(account.secret, "writer-sandbox", {
 // One shared workspace (same workspaceId => same files for every agent).
 const workspace = await createWorkspace(account.secret, "shared", {
   storage: { provider: "s3" },
-}, "Shared workspace read by a sandbox-less agent");
+}, "Shared workspace read by sandbox-less agents");
 
 const provider = { google: { apiKey: googleApiKey } };
 const model = { provider: "google", modelId: "gemma-4-31b-it", temperature: 0 } as const;
@@ -43,18 +48,28 @@ const writer = await createAgent(account.secret, "Writer", {
   workspaces: [{ name: "shared", workspaceId: workspace.workspaceId }],
 });
 
-// Reader: SAME workspace, NO sandbox => read-only (read/glob via S3 only, no compute).
-const reader = await createAgent(account.secret, "Reader", {
+// Reader (default): SAME workspace, NO sandbox => read-only via the read-only MOUNT.
+// Sees the writer's committed file immediately.
+const readerMount = await createAgent(account.secret, "ReaderMount", {
   provider,
   model,
   workspaces: [{ name: "shared", workspaceId: workspace.workspaceId }],
+});
+
+// Reader (opt-out): SAME workspace, `sandbox: null` => read-only via S3 DIRECT.
+// No compute; reads can lag the writer until the S3 export catches up.
+const readerS3 = await createAgent(account.secret, "ReaderS3", {
+  provider,
+  model,
+  workspaces: [{ name: "shared", workspaceId: workspace.workspaceId, sandbox: null }],
 });
 
 console.log("Created test account:", JSON.stringify(account));
 console.log("Created sandbox:", JSON.stringify(sandbox));
 console.log("Created workspace:", JSON.stringify(workspace));
 console.log("Created writer agent:", JSON.stringify(writer));
-console.log("Created reader agent:", JSON.stringify(reader));
+console.log("Created reader-mount agent:", JSON.stringify(readerMount));
+console.log("Created reader-s3 agent:", JSON.stringify(readerS3));
 
 try {
   await run("writer seeds a file", {
@@ -67,10 +82,22 @@ try {
     }],
   });
 
-  await run("reader reads it back read-only (S3 direct)", {
-    agentId: reader.agentId,
-    eventId: `reader-${Date.now()}`,
-    conversationKey: `reader-${Date.now()}`,
+  // 2A run #1 — default read-only mount: should read the file back immediately.
+  await run("reader-mount reads it back (read-only MOUNT, fresh)", {
+    agentId: readerMount.agentId,
+    eventId: `reader-mount-${Date.now()}`,
+    conversationKey: `reader-mount-${Date.now()}`,
+    events: [{
+      role: "user",
+      content: [{ type: "text", text: "Use glob to list **/*.md, then read report.md and return its contents." }],
+    }],
+  });
+
+  // 2A run #2 — S3-direct opt-out (sandbox: null): same read, no mount/compute.
+  await run("reader-s3 reads it back (S3 DIRECT opt-out)", {
+    agentId: readerS3.agentId,
+    eventId: `reader-s3-${Date.now()}`,
+    conversationKey: `reader-s3-${Date.now()}`,
     events: [{
       role: "user",
       content: [{ type: "text", text: "Use glob to list **/*.md, then read report.md and return its contents." }],

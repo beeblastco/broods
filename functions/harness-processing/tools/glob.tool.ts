@@ -1,8 +1,9 @@
 /**
  * Glob tool — fast file pattern matching in the workspace (supports `**`),
  * returning paths sorted by modification time (newest first), Claude-Code-style.
- * Sandbox-backed workspaces match through the mount; a read-only workspace (no
- * sandbox) lists directly from S3.
+ * Sandbox-backed workspaces match through the mount; a read-only workspace lists
+ * through a service-managed read-only mount by default (readMount), or directly
+ * from S3 when the ref opts out with `sandbox: null`.
  */
 
 import { jsonSchema, tool, type JSONSchema7, type ToolSet } from "ai";
@@ -108,13 +109,15 @@ Usage notes:
           if (!ws) {
             return toolError("Error: no workspace attached");
           }
-          // Fall back to use S3 API if the sandbox not configured.
-          if (!ws.sandbox) {
+          // List through the mount when one is available (sandbox-backed, or a
+          // read-only mount); otherwise list S3 objects directly (sandbox: null opt-out).
+          const runner = ws.sandbox ?? ws.readMount;
+          if (!runner) {
             return await s3Glob(ws.namespace, pattern, path);
           }
           const root = path ? toWorkspaceRelative(path) : ".";
           const code = globScript(toBase64(pattern), toBase64(root));
-          const result = await runSandbox(ws.sandbox, ws.namespace, code);
+          const result = await runSandbox(runner, ws.namespace, code);
           if (!result.ok) {
             return toolError(`${result.stderr}${result.stdout}`.trim() || "Error: glob failed");
           }

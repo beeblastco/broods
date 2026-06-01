@@ -1,7 +1,8 @@
 /**
  * Read tool — reads a file from the workspace, returning numbered lines
  * (Claude-Code-style). Sandbox-backed workspaces read through the mount; a
- * read-only workspace (no sandbox) reads directly from S3.
+ * read-only workspace reads through a service-managed read-only mount by default
+ * (readMount), or directly from S3 when the ref opts out with `sandbox: null`.
  */
 
 import { jsonSchema, tool, type JSONSchema7, type ToolSet } from "ai";
@@ -60,8 +61,10 @@ Usage notes:
             return toolError("Error: no workspace attached");
           }
           const rel = toWorkspaceRelative(file_path);
-          // Fall back to use S3 API if the sandbox not configured.
-          if (!ws.sandbox) {
+          // Read through the mount when one is available (sandbox-backed, or a
+          // read-only mount); otherwise read S3 objects directly (sandbox: null opt-out).
+          const runner = ws.sandbox ?? ws.readMount;
+          if (!runner) {
             return await s3ReadNumbered(ws.namespace, rel, offset, limit);
           }
           const q = shellQuote(rel);
@@ -70,7 +73,7 @@ Usage notes:
           const code =
             `if [ ! -f ${q} ]; then printf 'Error: file not found: %s\\n' ${q} >&2; exit 1; fi; ` +
             `sed -n '${start},${end}p' -- ${q} | nl -ba -v ${start}`;
-          const result = await runSandbox(ws.sandbox, ws.namespace, code);
+          const result = await runSandbox(runner, ws.namespace, code);
           if (!result.ok) {
             return toolError(`${result.stderr}${result.stdout}`.trim() || "Error: read failed");
           }

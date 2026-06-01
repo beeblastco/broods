@@ -262,8 +262,8 @@ handler resolves those references (`resolveAgentRuntime`) before the agent loop.
 sandbox can be attached agent-wide (`config.sandbox`) or per workspace
 (`workspaces[].sandbox`, overriding the agent-level one). Each workspace's *effective*
 sandbox decides its tools: `read`/`write`/`edit`/`glob`/`grep`/`bash` when present, or
-read-only `read`/`glob` (served directly from S3) when absent; `bash` is also exposed
-stateless when there is no workspace. Each tool's `permissionMode` (`edit`/`ask`/`bypass`)
+read-only `read`/`glob` when absent (via a read-only mount by default, or direct S3 with the
+`sandbox: null` opt-out); `bash` is also exposed stateless when there is no workspace. Each tool's `permissionMode` (`edit`/`ask`/`bypass`)
 is resolved per call from the selected workspace.
 
 Every sandbox-backed tool compiles to a single `run` against the provider (`lambda`/`e2b`/
