@@ -20,7 +20,6 @@ import {
   modelMessageSchema,
   systemModelMessageSchema,
 } from "ai";
-import { DEFAULT_SYSTEM_PROMPT } from "../_shared/.generated/system-prompt.ts";
 import type { AgentConfig } from "../_shared/storage/index.ts";
 import { getStorage } from "../_shared/storage/index.ts";
 import { isMissingS3Error, readS3Text } from "../_shared/s3.ts";
@@ -423,10 +422,7 @@ export class Session {
         role: "system",
         content: loadEnvironmentContextPrompt(),
       },
-      {
-        role: "system",
-        content: this.agentConfig.agent?.system ?? DEFAULT_SYSTEM_PROMPT,
-      },
+      ...(this.agentConfig.agent?.system ? [{ role: "system" as const, content: this.agentConfig.agent.system }] : []),
       ...memorySystem,
       ...workspaceHarnessSystem,
       ...skillsSystem,
