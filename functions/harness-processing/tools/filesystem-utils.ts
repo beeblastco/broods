@@ -116,7 +116,14 @@ function assertWorkspacePersistenceSupported(config: SandboxExecutorConfig, name
 
 export function editNeedsApproval(workspaces: ResolvedWorkspace[], requested?: string): boolean {
   try {
-    return permissionModeFor(resolveWorkspace(workspaces, requested)) === "ask";
+    const workspace = resolveWorkspace(workspaces, requested);
+    // Read-only workspace (no sandbox): nothing to approve. Skip the gate so the
+    // call falls through to the tool's clean "workspace is read-only" rejection
+    // instead of prompting for an approval it can never satisfy.
+    if (workspace && !workspace.sandbox) {
+      return false;
+    }
+    return permissionModeFor(workspace) === "ask";
   } catch {
     return true;
   }
@@ -124,10 +131,16 @@ export function editNeedsApproval(workspaces: ResolvedWorkspace[], requested?: s
 
 export function bashNeedsApproval(context: SandboxToolContext, requested?: string): boolean {
   try {
-    const mode = context.workspaces.length > 0
-      ? permissionModeFor(resolveWorkspace(context.workspaces, requested))
-      : context.statelessPermissionMode ?? "ask";
-    return mode !== "bypass";
+    if (context.workspaces.length > 0) {
+      const workspace = resolveWorkspace(context.workspaces, requested);
+      // Read-only workspace (no sandbox): nothing to approve. Skip the gate so the
+      // call falls through to the tool's clean "no sandbox available" rejection.
+      if (workspace && !workspace.sandbox) {
+        return false;
+      }
+      return permissionModeFor(workspace) !== "bypass";
+    }
+    return (context.statelessPermissionMode ?? "ask") !== "bypass";
   } catch {
     return true;
   }
