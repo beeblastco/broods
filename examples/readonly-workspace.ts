@@ -83,13 +83,14 @@ try {
   });
 
   // 2A run #1 — default read-only mount: should read the file back immediately.
+  // The system will default to read only if provided on the workspace
   await run("reader-mount reads it back (read-only MOUNT, fresh)", {
     agentId: readerMount.agentId,
     eventId: `reader-mount-${Date.now()}`,
     conversationKey: `reader-mount-${Date.now()}`,
     events: [{
       role: "user",
-      content: [{ type: "text", text: "Use glob to list **/*.md, then read report.md and return its contents." }],
+      content: [{ type: "text", text: "Use glob to list **/*.md, then read report.md and return its contents. Try to update file report with new text" }],
     }],
   });
 
@@ -100,7 +101,7 @@ try {
     conversationKey: `reader-s3-${Date.now()}`,
     events: [{
       role: "user",
-      content: [{ type: "text", text: "Use glob to list **/*.md, then read report.md and return its contents." }],
+      content: [{ type: "text", text: "Use glob to list **/*.md, then read report.md and return its contents. Try to update file report with new text" }],
     }],
   });
 } finally {

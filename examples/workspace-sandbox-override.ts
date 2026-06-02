@@ -106,7 +106,7 @@ try {
             "1. In the `scratch` workspace, write python script connect to internet and output the file 'output.txt', execute it and then read it back.",
             "2. In the `secure` workspace, write python script connect to internet and output the file 'output.txt', try execute it and then read it back.",
             "3. In the `reference` workspace, try to write c.txt — report the read-only error verbatim — then glob **/* there.",
-            "4. Summarize which workspaces accepted writes and which rejected them.",
+            "4. Summarize which workspaces accepted writes and which rejected them. Dont use urlopen, if have problem, should timeout, or else it will hang indeffinetely",
           ].join("\n"),
         }],
       },

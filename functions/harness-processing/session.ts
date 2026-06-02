@@ -614,22 +614,39 @@ function formatMemorySystemPrompt(memoryFiles: Array<{ workspace: ResolvedWorksp
 }
 
 function formatWorkspaceHarnessSystemPrompt(workspaces: ResolvedWorkspace[]): string {
+  const hasWritable = workspaces.some((ws) => ws.sandbox != null);
+  const hasReadOnly = workspaces.some((ws) => ws.sandbox == null);
+
   const workspaceList = workspaces
-    .map((workspace, index) => `- ${workspace.name}${index === 0 ? " (default)" : ""}: ${workspace.namespace}${workspace.description ? ` - ${workspace.description}` : ""}`)
+    .map((workspace, index) => {
+      const readOnlyTag = workspace.sandbox == null ? " [read-only: read, glob]" : "";
+      return `- ${workspace.name}${index === 0 ? " (default)" : ""}${readOnlyTag}: ${workspace.namespace}${workspace.description ? ` - ${workspace.description}` : ""}`;
+    })
     .join("\n");
 
+  const toolsLine = hasWritable && hasReadOnly
+    ? "Use the file tools (read, glob) on all workspaces; write, edit, grep, and bash are available only on writable workspaces."
+    : hasWritable
+      ? "Use the file tools (read, write, edit, glob, grep) and bash to work with the mounted filesystem rooted at the workspace root."
+      : "Use the file tools (read, glob) to read the mounted filesystem. These workspaces are read-only, attempt to modify will get error.";
+
+  const guidance = hasWritable
+    ? `1. Use read/write/edit to inspect and change files, glob/grep to find files and content, and bash to run commands and programs (python3, node, and the usual tools are on PATH).
+2. When more than one workspace is configured, pass the workspace field to select one; omitted means the default workspace.
+3. Use MEMORY.md for durable project facts, decisions, conventions, and context that should survive long-running work.
+4. Use TASKS.md or focused task markdown files for plans and progress tracking when that helps the work stay aligned.
+5. Treat MEMORY.md and task files as normal workspace files: read them before relying on them, update them when useful, and keep them concise.`
+    : `1. Use read to inspect files and glob to find files by pattern.
+2. When more than one workspace is configured, pass the workspace field to select one; omitted means the default workspace.`;
+
   return `<workspace>
-A persistent workspace is attached. Use the file tools (read, write, edit, glob, grep) and bash to work with the mounted filesystem rooted at the workspace root.
+A persistent workspace is attached. ${toolsLine}
 
 Configured workspaces:
 ${workspaceList}
 
 Guidance:
-1. Use read/write/edit to inspect and change files, glob/grep to find files and content, and bash to run commands and programs (python3, node, and the usual tools are on PATH).
-2. When more than one workspace is configured, pass the workspace field to select one; omitted means the default workspace.
-3. Use MEMORY.md for durable project facts, decisions, conventions, and context that should survive long-running work.
-4. Use TASKS.md or focused task markdown files for plans and progress tracking when that helps the work stay aligned.
-5. Treat MEMORY.md and task files as normal workspace files: read them before relying on them, update them when useful, and keep them concise.
+${guidance}
 </workspace>`;
 }
 
