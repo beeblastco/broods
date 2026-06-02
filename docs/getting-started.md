@@ -307,7 +307,7 @@ curl -X PATCH "$ACCOUNT_SERVICE_URL/accounts/me/agents/$AGENT_ID" \
   }'
 ```
 
-4. Set the webhook URL in Telegram:
+1. Set the webhook URL in Telegram:
 
 ```bash
 curl "https://api.telegram.org/bot<YOUR_BOT_TOKEN>/setWebhook" \
