@@ -115,10 +115,11 @@ describe("createTools", () => {
 
     // bash/write/edit/grep exist for the sandbox-backed workspace; read/glob span both.
     expect(Object.keys(tools).sort()).toEqual(["bash", "edit", "glob", "grep", "read", "write"]);
-    // write preserves the real default workspace; because it is read-only, omitting
-    // workspace asks first and execution returns a read-only error instead of
-    // silently selecting the later writable workspace.
-    expect(await needsApproval(tools.write)).toBe(true);
+    // write preserves the real default workspace (ro) instead of silently selecting the
+    // later writable one. Because ro is read-only there is no sandbox to approve against,
+    // so omitting workspace does NOT prompt — it falls straight through to a clean
+    // read-only error.
+    expect(await needsApproval(tools.write)).toBe(false);
     expect(await (tools.write as unknown as { execute(i: unknown): Promise<unknown> }).execute({
       file_path: "a.txt",
       content: "x",

@@ -289,3 +289,27 @@ describe("read-only mount workspace (default)", () => {
     expect(lambdaSendMock).not.toHaveBeenCalled();
   });
 });
+
+describe("write/edit approval policy", () => {
+  // Returns the raw tool entry so the per-call `needsApproval` predicate is visible.
+  async function approval(name: "write" | "edit" | "bash", ctx: never) {
+    const mod = await import(`../functions/harness-processing/tools/${name}.tool.ts`);
+    return mod.default(ctx)[name] as { needsApproval(input: Record<string, unknown>): boolean };
+  }
+
+  it("a read-only workspace never prompts — it falls through to the clean error", async () => {
+    // No sandbox => nothing to approve. Without this, permissionMode defaults to
+    // "ask" and the write would prompt for an approval it can never satisfy.
+    const write = await approval("write", readonlyCtx());
+    expect(write.needsApproval({ file_path: "a.txt", content: "x" })).toBe(false);
+    const bash = await approval("bash", readonlyCtx());
+    expect(bash.needsApproval({ command: "ls" })).toBe(false);
+  });
+
+  it("a sandbox-backed workspace follows its permissionMode", async () => {
+    const ask = await approval("edit", workspaceCtx({ permissionMode: "ask" }));
+    expect(ask.needsApproval({ file_path: "a.txt" })).toBe(true);
+    const bypass = await approval("edit", workspaceCtx({ permissionMode: "bypass" }));
+    expect(bypass.needsApproval({ file_path: "a.txt" })).toBe(false);
+  });
+});
