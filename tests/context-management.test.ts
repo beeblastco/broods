@@ -154,9 +154,12 @@ describe("session environment context", () => {
     const workspacePrompt = enabledContext.system.find((message) => message.content.includes("<workspace>"))
       ?.content;
     expect(memoryPrompt).toContain("Remember stable project facts.");
-    expect(workspacePrompt).toContain("read, write, edit, glob, grep");
-    expect(workspacePrompt).toContain("MEMORY.md");
-    expect(workspacePrompt).toContain("TASKS.md");
+    // No sandbox in this test mock => read-only workspace: only read/glob are advertised.
+    expect(workspacePrompt).toContain("read, glob");
+    expect(workspacePrompt).toContain("[read-only");
+    expect(workspacePrompt).not.toContain("write");
+    // MEMORY.md is loaded as a separate system message, not wired into the workspace guidance.
+    expect(workspacePrompt).not.toContain("MEMORY.md");
     expect(readS3TextMock).toHaveBeenCalledWith("filesystem", expect.stringContaining("/MEMORY.md"));
   });
 
