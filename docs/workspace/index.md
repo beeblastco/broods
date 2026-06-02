@@ -87,8 +87,10 @@ Plus the agent-level cases:
 
 > When workspaces have different sandboxes, the model picks one with the `workspace`
 > argument; each call routes to that workspace's sandbox and inherits its `permissionMode`.
-> `write`/`edit`/`grep`/`bash` only list the sandbox-backed workspaces; `read`/`glob` list
-> all of them.
+> Every file tool lists **all** workspaces (so an omitted `workspace` always resolves to
+> the configured default, never a silent substitute). Selecting a read-only workspace for
+> `write`/`edit`/`grep`/`bash` returns a clean "workspace is read-only" error with **no
+> approval prompt** — a workspace with no sandbox has no `permissionMode` to ask against.
 
 ## permissionMode
 
