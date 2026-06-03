@@ -46,6 +46,7 @@ const SANDBOX_PLURAL = "sandboxes";
 const CONTAINER_NAME = "main";
 const DEFAULT_NAMESPACE = "agent-sandboxes";
 const DEFAULT_IMAGE = "ghcr.io/beeblastco/agent-sandbox-runtime:latest";
+const DEFAULT_WORKSPACE_SERVICE_ACCOUNT = "agent-sandbox-workspace";
 const POD_READY_TIMEOUT_MS = 120_000;
 const POD_POLL_INTERVAL_MS = 1_500;
 
@@ -143,7 +144,8 @@ export class KubernetesSandboxExecutor implements SandboxExecutor {
     }
 
     const podSpec: Record<string, unknown> = { containers: [container] };
-    const sa = configString(opts.serviceAccountName) ?? optionalEnv("KUBERNETES_SANDBOX_SERVICE_ACCOUNT");
+    const sa = configString(opts.serviceAccountName) ?? optionalEnv("KUBERNETES_SANDBOX_SERVICE_ACCOUNT") ??
+      (mounting ? DEFAULT_WORKSPACE_SERVICE_ACCOUNT : undefined);
     if (sa) podSpec.serviceAccountName = sa;
     const pullSecrets = stringList(opts.imagePullSecrets) ?? stringList(optionalEnv("KUBERNETES_SANDBOX_IMAGE_PULL_SECRETS"));
     if (pullSecrets?.length) podSpec.imagePullSecrets = pullSecrets.map((n) => ({ name: n }));

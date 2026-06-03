@@ -137,6 +137,7 @@ function denyUnlessProjectPrincipal(stage: string, region: string) {
           // Only the workspace-mounted sandbox functions touch the bucket directly.
           `arn:aws:iam::${AWS_ACCOUNT_ID}:role/${PROJECT_NAME}-${stage}-SandboxMountNetRole-*`,
           `arn:aws:iam::${AWS_ACCOUNT_ID}:role/${PROJECT_NAME}-${stage}-SandboxMountNoNetRole-*`,
+          `arn:aws:iam::${AWS_ACCOUNT_ID}:role/beeblast_k3s_role`,
           `arn:aws:iam::${AWS_ACCOUNT_ID}:role/${resourceName("sandbox-s3files", stage, region)}`,
           `arn:aws:iam::${AWS_ACCOUNT_ID}:role/github-actions-aws-infra-deploy`,
           `arn:aws:iam::${AWS_ACCOUNT_ID}:role/github-actions-aws-sst-infra-deploy`,

@@ -13,7 +13,7 @@ import {
   requireEnv,
 } from "./utils.ts";
 
-const googleApiKey = requireEnv("ACCOUNT_GOOGLE_API_KEY");
+const minimaxApiKey = requireEnv("ACCOUNT_MINIMAX_API_KEY");
 const username = `sandbox-k8s-${Date.now()}`;
 
 const account = await createAccount(username);
@@ -29,8 +29,8 @@ const sandbox = await createSandbox(account.secret, "k8s-sandbox", {
   options: {
     // namespace/image/serviceAccountName/imagePullSecrets default from harness env.
     // mountAwsS3Buckets mounts the shared workspace S3 bucket so files persist across
-    // the ephemeral per-run pods (parity with lambda/daytona). Creds + bucket come from
-    // the harness env (FILESYSTEM_BUCKET_NAME, AWS_*).
+    // ephemeral per-run pods (parity with lambda/daytona). Bucket comes from harness
+    // env; S3 credentials come from the pod's Kubernetes service account / IRSA.
     mountAwsS3Buckets: true,
     workspaceRoot: "/mnt/workspaces",
   },
@@ -43,17 +43,11 @@ const workspace = await createWorkspace(account.secret, "notes", {
 
 const agent = await createAgent(account.secret, "Kubernetes sandbox assistant", {
   provider: {
-    google: {
-      apiKey: googleApiKey,
-    },
+    minimax: { apiKey: minimaxApiKey },
   },
   model: {
-    provider: "google",
-    modelId: "gemma-4-31b-it",
-    temperature: 0,
-  },
-  agent: {
-    system: "You are testing the workspace sandbox.",
+    provider: "minimax",
+    modelId: "MiniMax-M2.7",
   },
   sandbox: sandbox.sandboxId,
   workspaces: [{ name: "notes", workspaceId: workspace.workspaceId }],
@@ -79,8 +73,8 @@ try {
             "so we verify files persist across runs (each run is a fresh pod sharing the S3 workspace).",
             "1. echo \"shell:$SANDBOX_SMOKE_VAR\" (expect sandbox-env-ok), then create notes.txt with the",
             "   single line 'line1' and run: ls -1.",
-            "2. Append 'line2' to notes.txt, then cat notes.txt (expect line1 and line2 — proves the file",
-            "   written in step 1 persisted into this new run).",
+            "2. Read notes.txt first (expect line1 — proves the file written in step 1 persisted),",
+            "   then rewrite notes.txt with the two lines 'line1' and 'line2', and cat notes.txt.",
             "3. Write count.py that opens notes.txt and prints 'lines:' followed by the line count, then",
             "   run python3 count.py (expect lines:2).",
             "4. Edit count.py to also print the file's contents in uppercase, then run it again.",

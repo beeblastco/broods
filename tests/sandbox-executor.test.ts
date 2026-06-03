@@ -42,6 +42,30 @@ let lambdaPayload = {
 const lambdaSendMock = mock(async (_command: unknown) => ({
   Payload: new TextEncoder().encode(JSON.stringify(lambdaPayload)),
 }));
+const k8sCreateNamespacedCustomObjectMock = mock(async (_input: unknown) => ({}));
+const k8sDeleteNamespacedCustomObjectMock = mock(async (_input: unknown) => ({}));
+const k8sReadNamespacedPodMock = mock(async (input: { name: string; namespace: string }) => ({
+  metadata: { name: input.name, namespace: input.namespace },
+  status: { conditions: [{ type: "Ready", status: "True" }] },
+}));
+const k8sExecMock = mock(async (
+  _namespace: string,
+  _podName: string,
+  _container: string,
+  _command: string[],
+  _stdout: unknown,
+  _stderr: unknown,
+  _stdin: unknown,
+  _tty: boolean,
+  statusCallback: (status: { status: string }) => void,
+) => {
+  statusCallback({ status: "Success" });
+  return {
+    on(event: string, callback: () => void) {
+      if (event === "close") queueMicrotask(callback);
+    },
+  };
+});
 
 mock.module("e2b", () => ({
   Sandbox: {
@@ -69,6 +93,27 @@ mock.module("@aws-sdk/client-lambda", () => ({
   },
 }));
 
+mock.module("@kubernetes/client-node", () => ({
+  KubeConfig: class {
+    loadFromDefault() {}
+    loadFromString(_raw: string) {}
+    makeApiClient(api: new () => unknown) {
+      return new api();
+    }
+  },
+  CoreV1Api: class {
+    readNamespacedPod = k8sReadNamespacedPodMock;
+  },
+  CustomObjectsApi: class {
+    createNamespacedCustomObject = k8sCreateNamespacedCustomObjectMock;
+    deleteNamespacedCustomObject = k8sDeleteNamespacedCustomObjectMock;
+  },
+  Exec: class {
+    constructor(_kc: unknown) {}
+    exec = k8sExecMock;
+  },
+}));
+
 beforeEach(() => {
   process.env.AWS_ACCESS_KEY_ID = "test-access-key";
   process.env.AWS_SECRET_ACCESS_KEY = "test-secret-key";
@@ -80,6 +125,7 @@ beforeEach(() => {
   process.env.SANDBOX_FN_MOUNT_NONET = "sandbox-mount-nonet";
   process.env.SANDBOX_FN_NOMOUNT_NET = "sandbox-nomount-net";
   process.env.SANDBOX_FN_NOMOUNT_NONET = "sandbox-nomount-nonet";
+  delete process.env.KUBERNETES_SANDBOX_SERVICE_ACCOUNT;
   e2bRunMock.mockClear();
   e2bKillMock.mockClear();
   e2bCreateMock.mockClear();
@@ -87,6 +133,10 @@ beforeEach(() => {
   daytonaDeleteMock.mockClear();
   daytonaCreateMock.mockClear();
   lambdaSendMock.mockClear();
+  k8sCreateNamespacedCustomObjectMock.mockClear();
+  k8sDeleteNamespacedCustomObjectMock.mockClear();
+  k8sReadNamespacedPodMock.mockClear();
+  k8sExecMock.mockClear();
   lambdaPayload = {
     ok: true,
     runtime: "bash",
@@ -236,6 +286,38 @@ describe("createSandboxExecutor", () => {
       45,
     );
     expect(daytonaDeleteMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("uses the workspace service account for Kubernetes S3 mounts by default", async () => {
+    const { KubernetesSandboxExecutor } = await import("../functions/harness-processing/sandbox/kubernetes-executor.ts");
+    const executor = new KubernetesSandboxExecutor({
+      provider: "kubernetes",
+      options: {
+        mountAwsS3Buckets: true,
+        workspaceRoot: "/mnt/workspaces",
+      },
+    });
+
+    const result = await executor.run({
+      code: "echo hi",
+      namespace: NS,
+      workspaceRoot: "/mnt/workspaces",
+      timeoutSeconds: 45,
+      outputLimitBytes: 4096,
+    });
+
+    expect(result).toMatchObject({ ok: true, provider: "kubernetes" });
+    const createInput = k8sCreateNamespacedCustomObjectMock.mock.calls[0]![0] as {
+      body: { spec: { podTemplate: { spec: { serviceAccountName?: string; containers: Array<{ securityContext?: unknown }> } } } };
+    };
+    const podSpec = createInput.body.spec.podTemplate.spec;
+    expect(podSpec.serviceAccountName).toBe("agent-sandbox-workspace");
+    expect(podSpec.containers[0]?.securityContext).toEqual({ privileged: true, runAsUser: 0 });
+    expect(k8sExecMock.mock.calls.map((call) => call[3])).toContainEqual([
+      "bash",
+      "-lc",
+      expect.stringContaining("mount-s3 --uid 1000 --gid 1000"),
+    ]);
   });
 });
 

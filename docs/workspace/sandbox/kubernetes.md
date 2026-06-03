@@ -34,7 +34,7 @@ They come from deployment env/defaults:
 | kubeconfig | `KUBERNETES_SANDBOX_KUBECONFIG`, then `KUBERNETES_SANDBOX_KUBECONFIG_SSM` (SSM param name) | ambient kubeconfig (local only) |
 | `namespace` | `KUBERNETES_SANDBOX_NAMESPACE` | `agent-sandboxes` |
 | `image` | `KUBERNETES_SANDBOX_IMAGE` | `ghcr.io/beeblastco/agent-sandbox-runtime:latest` |
-| `serviceAccountName` | `KUBERNETES_SANDBOX_SERVICE_ACCOUNT` | pod default SA |
+| `serviceAccountName` | `KUBERNETES_SANDBOX_SERVICE_ACCOUNT` | `agent-sandbox-workspace` when S3 mount is enabled, otherwise pod default SA |
 | `imagePullSecrets` | `KUBERNETES_SANDBOX_IMAGE_PULL_SECRETS` (comma-sep) | none |
 | `workspaceBucketName` | `FILESYSTEM_BUCKET_NAME` | — |
 | `awsRegion` | `AWS_REGION` / `AWS_DEFAULT_REGION` | — |
@@ -60,10 +60,12 @@ Per bash/file run the executor (`functions/harness-processing/sandbox/kubernetes
 > `KUBERNETES_SANDBOX_KUBECONFIG_SSM`; the executor fetches + caches it at runtime. Set the GitHub
 > secret `KUBERNETES_SANDBOX_KUBECONFIG` (base64 kubeconfig) and deploy — no env-size juggling.
 
-Cluster auth uses the service-managed kubeconfig. For `mount-s3`, the pod must get S3
-permissions from its Kubernetes service account / cluster identity; the harness no longer
-passes AWS credentials into the pod. The pod runs privileged + `runAsUser: 0` (FUSE needs
-the device + root) and mounts with `--uid 1000 --gid 1000`.
+Cluster auth uses the service-managed kubeconfig. For `mount-s3`, the pod gets S3
+permissions from its Kubernetes service account / cluster identity; the harness does not
+pass AWS credentials into the pod. When `mountAwsS3Buckets` is enabled and no deployment
+override is set, the executor uses the `agent-sandbox-workspace` ServiceAccount. The pod
+runs privileged + `runAsUser: 0` (FUSE needs the device + root) and mounts with
+`--uid 1000 --gid 1000`.
 
 > **Mountpoint-for-S3 has no append/in-place edit** (`>>` or editing a file in place fails) — only
 > whole-file create/overwrite. The agent should rewrite files, not append. (Same as Daytona's mount.)
