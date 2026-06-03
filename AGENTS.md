@@ -2,6 +2,11 @@
 
 This repository is an agentic AI chatbot on AWS — Lambda + Vercel AI SDK + Telegram/GitHub/Slack/Discord integrations, deployed with SST. It uses account-configured Google, OpenAI, Bedrock, and Gateway providers, with SSE streaming via Lambda Function URLs.
 
+Related repo:
+
+- ../infra: Infrastucture repo for the kubernetes cluster and VM provision.
+- ../cherry-code: Application code for the dashboard and SaS platform.
+
 Key rules:
 
 - Keep the constants, naming pattern, and tag conventions in `sst.config.ts` aligned with the infra repo.

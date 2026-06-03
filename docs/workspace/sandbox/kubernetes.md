@@ -51,7 +51,8 @@ Per bash/file run the executor (`functions/harness-processing/sandbox/kubernetes
 3. If `mountAwsS3Buckets` is set, runs
    `mount-s3 --prefix sandbox/<namespace>/ <bucket> <workspaceRoot>/<namespace>` inside
    the pod (the container runs `privileged` so FUSE works).
-4. Execs the command via the kube exec API, **streaming** stdout/stderr.
+4. Execs the command via the kube exec API after `cd <workspaceRoot>/<namespace>`,
+   **streaming** stdout/stderr.
 5. Deletes the `Sandbox` (ephemeral-per-run, like Daytona/E2B).
 
 > The kubeconfig (CA + token) is ~2.7 KB — over Lambda's 4 KB env-var limit. So `sst.config.ts`
@@ -91,6 +92,20 @@ runs privileged + `runAsUser: 0` (FUSE needs the device + root) and mounts with
 - It's a real shell: `bash`, `node <file>`, `python3 <file>` all run natively. `python <file>` is
   rewritten to `python3`.
 - Files persist across calls **only** with the S3 mount enabled (each call gets a fresh pod).
+
+## What the model sees
+
+For workspace-backed runs, the model should see a normal project directory. The executor
+starts each bash command in the selected workspace directory:
+
+```bash
+pwd                 # current workspace directory
+ls                  # files in this workspace
+python3 script.py
+```
+
+Use relative paths in prompts and examples. If a command prints an absolute path under the
+configured `workspaceRoot`, that is expected and is only useful for debugging.
 
 ## Direct executor test
 

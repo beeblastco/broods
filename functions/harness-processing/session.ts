@@ -623,7 +623,7 @@ function formatWorkspaceHarnessSystemPrompt(workspaces: ResolvedWorkspace[]): st
   const toolsLine = hasWritable && hasReadOnly
     ? "Use the file tools (read, glob) on all workspaces; write, edit, grep, and bash are available only on writable workspaces."
     : hasWritable
-      ? "Use the file tools (read, write, edit, glob, grep) and bash to work with the mounted filesystem rooted at the workspace root."
+      ? "Use the file tools (read, write, edit, glob, grep) and bash to work with the mounted filesystem; bash starts in the current workspace directory."
       : "Use the file tools (read, glob) to read the mounted filesystem. These workspaces are read-only, attempt to modify will get error.";
 
   const guidance = hasWritable

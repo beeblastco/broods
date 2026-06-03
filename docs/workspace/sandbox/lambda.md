@@ -109,6 +109,19 @@ AWS S3 Files is mounted into the mounted functions at `/mnt/workspaces`, rooted 
 A workspace run is rooted at `/mnt/workspaces/<namespace>`, where the namespace is derived
 from `accountId:workspaceId`. The no-mount functions run statelessly in `/tmp`.
 
+### What the model sees
+
+For workspace-backed runs, the model should see a normal project directory. The sandbox
+image starts `bash` in the selected workspace directory, so relative paths are enough:
+
+```bash
+pwd                 # current workspace directory
+ls                  # files in this workspace
+python3 script.py
+```
+
+Provider mount paths are implementation details for debugging.
+
 Skill bundles are still staged into the workspace namespace at `/.claude/skills/<name>` by
 `load_skill` (S3 server-side copy), so the agent can read and run skill scripts without a
 second mount.

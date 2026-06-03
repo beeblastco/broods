@@ -27,7 +27,7 @@ workspace config `{ "storage": { "provider": "s3" } }` only.
 > key trees and silently stop seeing each other's files — a freshly loaded skill can show
 > an empty mount even though the harness copied the files.
 
-Sandbox paths map to S3 keys through that prefix: the bucket holds `sandbox/<namespace>/...` and the mount exposes it at `/mnt/workspaces/<namespace>/...`.
+Sandbox paths map to S3 keys through that prefix: the bucket holds `sandbox/<namespace>/...` and the mount exposes it at `/mnt/workspaces/<namespace>/...` by default.
 
 ```mermaid
 flowchart TD
@@ -45,6 +45,10 @@ flowchart TD
 ```
 
 The Lambda sandbox provider uses AWS S3 Files at `/mnt/workspaces`, backed by the same workspace bucket through an access point rooted at `/sandbox`. The uniform Lambda sandbox image writes directly through that mount. Daytona and Kubernetes mount only the selected `sandbox/<namespace>/` prefix at the workspace directory for the run. E2B must provide an equivalent template-managed mount; otherwise workspace-backed tools fail fast instead of silently losing files.
+
+Model-facing tools hide the provider path: `bash` starts in the selected workspace
+directory, and file tools use workspace-relative paths. Prefer prompts like
+`python3 script.py` or `read analysis.json`, not provider mount paths.
 
 Skills are checked out git-style: the account skill bucket is the source of truth, and `load_skill` clones a working copy into `<namespace>/.claude/skills/<name>` (mirrored to `<namespace>/.agents/skills/<name>` for discovery). Skill publishing is currently disabled. See [`skills.md`](../skills.md).
 

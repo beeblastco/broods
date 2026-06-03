@@ -15,7 +15,7 @@ mount integration is added.
     "options": {
       "apiKey": "...",
       "template": "runtime-template",
-      "workspaceRoot": "/workspace"
+      "workspaceRoot": "/mnt/workspaces"
     }
   }
 }
@@ -38,6 +38,16 @@ See [E2B runtime documentation](https://e2b.dev/docs) for supported runtimes and
 TypeScript (`.ts`) files are not transpiled; use compiled JavaScript instead. `python <file>` is rewritten to `python3` at runtime.
 
 `sandbox.envVars` is forwarded as the command's `envs`, so configured variables are visible to executed files.
+
+## What the model sees
+
+Today E2B is stateless in this harness: there is no mounted workspace, so only `bash` is
+available and files do not persist across calls. Treat it like a temporary Linux shell and
+write/run dependent files in one command, usually under `/tmp`.
+
+When E2B gets workspace-backed tools, it should follow the same model-facing contract as
+the other providers: `bash` starts in the workspace root, examples use relative paths, and
+the default underlying mount root is `/mnt/workspaces/<namespace>`.
 
 ## Dependencies
 

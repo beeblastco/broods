@@ -163,6 +163,32 @@ describe("sandbox tool set", () => {
     expect(lambdaSendMock).not.toHaveBeenCalled();
   });
 
+  it("bash rejects obvious attempts to leave the workspace", async () => {
+    const bash = await tool("bash", workspaceCtx());
+    await expect(bash.execute({ command: "cd .. && ls" }))
+      .resolves.toEqual({ type: "error-text", value: "Error: bash commands must stay in the workspace directory" });
+    await expect(bash.execute({ command: "cat /etc/passwd" }))
+      .resolves.toEqual({ type: "error-text", value: "Error: absolute paths are not allowed in workspace bash commands: /etc/passwd" });
+    await expect(bash.execute({ command: "find / -maxdepth 1" }))
+      .resolves.toEqual({ type: "error-text", value: "Error: bash commands must stay in the workspace directory" });
+    expect(lambdaSendMock).not.toHaveBeenCalled();
+  });
+
+  it("bash allows relative workspace commands and heredoc bodies", async () => {
+    const bash = await tool("bash", workspaceCtx());
+    const result = await bash.execute({
+      command: [
+        "cat > script.py <<'PY'",
+        "#!/usr/bin/env python3",
+        "print('ok')",
+        "PY",
+        "python3 script.py 2>/dev/null",
+      ].join("\n"),
+    });
+    expect(result.type).toBe("text");
+    expect(lastLambdaInput().payload.code).toContain("python3 script.py");
+  });
+
   it("write base64-pipes content, creates parent dirs, and fsyncs for durability", async () => {
     const write = await tool("write", workspaceCtx());
     await write.execute({ file_path: "notes/a.txt", content: "hello" });

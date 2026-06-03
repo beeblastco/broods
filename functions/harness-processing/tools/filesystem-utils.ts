@@ -256,6 +256,28 @@ export function disallowedRuntimeCommand(config: SandboxExecutorConfig, command:
   return undefined;
 }
 
+export function outsideWorkspaceCommand(command: string): string | undefined {
+  const scanned = stripHereDocBodies(command);
+  if (/(^|[\s;&|()])cd\s+(?:--\s+)?(?:\.\.(?:[\/\s;&|)]|$)|\/(?!dev\/null(?:\s|$)))/.test(scanned)) {
+    return "Error: bash commands must stay in the workspace directory";
+  }
+  if (/(^|[\s;&|()])(?:pushd|popd)\b/.test(scanned)) {
+    return "Error: bash commands must stay in the workspace directory";
+  }
+  if (/(^|[\s;&|()])(?:find|du|tree)\s+\/(?:\s|$)/.test(scanned)) {
+    return "Error: bash commands must stay in the workspace directory";
+  }
+  if (/(^|[\s"'=:{([<>,])\.\.(?:[\/\s;&|)]|$)/.test(scanned)) {
+    return "Error: parent directory traversal is not allowed";
+  }
+
+  const absolutePath = scanned.match(/(^|[\s"'=:{([<>,])\/(?!dev\/null(?:\s|$)|[>\s]|$)[^\s"'`;&|)]*/);
+  if (absolutePath) {
+    return `Error: absolute paths are not allowed in workspace bash commands: ${absolutePath[0].trim()}`;
+  }
+  return undefined;
+}
+
 /**
  * Normalize a model-supplied path to a workspace-relative path. The sandbox run
  * is rooted at the workspace directory, so a leading `/` means "workspace root",
@@ -298,4 +320,24 @@ function isRecordObject(value: unknown): value is Record<string, unknown> {
 function invokesCommand(command: string, names: string[]): boolean {
   const escaped = names.map((name) => name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|");
   return new RegExp(`(^|[\\s;&|()])(${escaped})(\\s|$)`).test(command);
+}
+
+function stripHereDocBodies(command: string): string {
+  const lines = command.split("\n");
+  const kept: string[] = [];
+  let marker: string | undefined;
+  for (const line of lines) {
+    if (marker) {
+      if (line.trim() === marker) {
+        marker = undefined;
+      }
+      continue;
+    }
+    kept.push(line);
+    const match = line.match(/<<-?\s*["']?([A-Za-z_][A-Za-z0-9_-]*)["']?/);
+    if (match) {
+      marker = match[1];
+    }
+  }
+  return kept.join("\n");
 }

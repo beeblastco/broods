@@ -85,6 +85,11 @@ Plus the agent-level cases:
 | sandbox, **no** workspace | `bash` only — **stateless** (each call is a fresh container; nothing persists) |
 | neither sandbox nor workspace | none |
 
+For mounted workspaces, every provider should expose the same model-facing filesystem:
+`bash` starts in the selected workspace directory and the file tools take paths relative to
+that directory. Ordinary prompts should use relative paths; provider mount paths are
+implementation details for logs and debugging.
+
 > When workspaces have different sandboxes, the model picks one with the `workspace`
 > argument; each call routes to that workspace's sandbox and inherits its `permissionMode`.
 > Every file tool lists **all** workspaces (so an omitted `workspace` always resolves to

@@ -15,9 +15,10 @@ flowchart LR
   Provider --> Daytona["daytona"]
   Provider --> Kubernetes["kubernetes"]
   Lambda --> Mount["S3 Files mount<br/>/mnt/workspaces/&lt;namespace&gt;"]
-  E2B --> ExternalMount["workspaceRoot/&lt;namespace&gt;"]
+  E2B --> Stateless["stateless only<br/>(workspace tools disabled)"]
   Daytona --> ExternalMount
   Kubernetes --> ExternalMount
+  ExternalMount["mount-s3<br/>/mnt/workspaces/&lt;namespace&gt;"]
   Mount --> Bucket["S3 workspace bucket"]
   ExternalMount --> Bucket
 ```
@@ -56,6 +57,33 @@ A sandbox is a standalone, account-scoped record referenced from agent config by
 | `e2b` | [E2B Details](e2b.md) |
 | `daytona` | [Daytona Details](daytona.md) |
 | `kubernetes` | [Kubernetes Details](kubernetes.md) |
+
+## Model-facing workspace contract
+
+All workspace-backed sandbox providers should feel like a normal Linux project checkout:
+
+```bash
+pwd                 # current workspace directory
+ls                  # files in this workspace
+python3 script.py   # run files directly
+node app.js
+```
+
+The model should not need provider-specific paths. For `bash`, the harness starts each
+command in the selected workspace directory, so examples should use relative paths
+(`analysis.json`, `src/index.ts`). The dedicated file tools also take workspace-relative paths.
+
+Provider implementation paths are still useful for debugging:
+
+| Provider | Workspace-backed bash cwd | Underlying mount path |
+| --- | --- | --- |
+| `lambda` | `/mnt/workspaces/<namespace>` | AWS S3 Files at `/mnt/workspaces/<namespace>` |
+| `daytona` | `/mnt/workspaces/<namespace>` by default | `mount-s3` at `options.workspaceRoot/<namespace>` |
+| `kubernetes` | `/mnt/workspaces/<namespace>` by default | `mount-s3` at `options.workspaceRoot/<namespace>` |
+| `e2b` | n/a | workspace tools disabled until a durable mount is added |
+
+Keep prompt text small: tell the model "use relative paths." Put provider-specific mount
+paths in docs and logs, not ordinary task prompts.
 
 ## Lambda: 4-function topology
 
@@ -108,6 +136,9 @@ truncated at 256 KB by the image and again at `outputLimitBytes` harness-side.
 - workspace and skills buckets block public access
 - the workspace mount is rooted at the `sandbox/` access-point prefix (load-bearing; keep
   in sync with `WORKSPACE_MOUNT_PREFIX`)
+- file tools normalize paths to the workspace and reject directory traversal
+- workspace-backed `bash` rejects obvious attempts to use absolute paths, parent traversal,
+  or whole-filesystem scans before the command reaches a provider
 - `runtimes` is a **best-effort** allow-list on a general VM: the bash tool rejects
   obvious disallowed runtime invocations and surfaces the allowed list in its description
 - approvals are governed by the sandbox `permissionMode` (see [Workspace & Sandbox](../index.md))
