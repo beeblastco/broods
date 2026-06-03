@@ -10,6 +10,7 @@ import {
   bashNeedsApproval,
   disallowedRuntimeCommand,
   formatRunText,
+  outsideWorkspaceCommand,
   resolveWorkspace,
   runtimeDescription,
   runSandbox,
@@ -60,6 +61,7 @@ Usage notes:
 - Use proper quoting for paths or arguments containing spaces (e.g. cd "path with spaces").
 - IMPORTANT: prefer the dedicated \`read\`, \`write\`, \`edit\`, \`glob\`, and \`grep\` tools over their bash equivalents (cat/sed/find/grep) — they are faster, safer, and return structured results.
 - Run programs directly, e.g. \`python3 script.py\` or \`node app.js\`. stdout and stderr are returned together; very large output is truncated.
+- Each command starts in the current workspace directory; use relative paths.
 - Files you write to the workspace persist across calls, but shell state does not: the working directory, environment variables, and background processes reset every call — chain dependent steps with && in a single command.`;
 }
 
@@ -82,6 +84,10 @@ export default function bashTool(context: SandboxToolContext): ToolSet {
           const sandbox = ws?.sandbox ?? context.statelessSandbox;
           if (!sandbox) {
             return toolError("Error: no sandbox available for this command");
+          }
+          const outsideWorkspace = ws ? outsideWorkspaceCommand(trimmed) : undefined;
+          if (outsideWorkspace) {
+            return toolError(outsideWorkspace);
           }
           const disallowed = disallowedRuntimeCommand(sandbox, trimmed);
           if (disallowed) {

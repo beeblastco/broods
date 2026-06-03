@@ -34,7 +34,7 @@ const sandbox = await createSandbox(account.secret, "e2b-sandbox", {
   options: {
     apiKey: e2bApiKey,
     template: e2bTemplate,
-    workspaceRoot: "/workspace",
+    workspaceRoot: "/mnt/workspaces",
   },
 });
 

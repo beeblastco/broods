@@ -1,7 +1,8 @@
 # Daytona
 
 Uses a [Daytona](https://daytona.io/docs) sandbox with an S3 workspace mount at
-`options.workspaceRoot/<namespace>`.
+`options.workspaceRoot/<namespace>`. The default `workspaceRoot` is `/mnt/workspaces`
+so Daytona matches Lambda and Kubernetes.
 
 ## Configuration
 
@@ -41,6 +42,20 @@ bun run daytona:s3-snapshot
 Use an image or target with Node and Python installed. For persistent workspace tools,
 set `options.mountAwsS3Buckets: true`; the executor mounts the selected
 `sandbox/<namespace>/` prefix at `options.workspaceRoot/<namespace>`.
+
+## What the model sees
+
+For workspace-backed runs, the model should see a normal project directory. `bash` starts
+in the selected workspace directory:
+
+```bash
+pwd                 # current workspace directory
+ls                  # files in this workspace
+python3 script.py
+```
+
+Use relative paths in prompts and examples. `options.workspaceRoot` is an implementation
+setting for the mount location, not a path the model needs for normal file work.
 
 ## Execution Notes
 
