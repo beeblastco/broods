@@ -125,9 +125,13 @@ async_status  { resultId, action: "stop" }  → terminate the job
 
 ```mermaid
 flowchart LR
-  Launch["bash background:true<br/>(mint resultId + per-job token)"] --> Row["AsyncToolResult row<br/>(processing, sealed group)"]
+  Launch["bash background:true<br/>(mint resultId + per-job token<br/>+ record origin delivery)"] --> Row["AsyncToolResult row<br/>(processing, sealed group)"]
   Launch --> Job["detached job in sandbox"]
   Job -- "on exit, POST /sandbox-jobs/&lt;id&gt;/complete<br/>(x-job-token)" --> Settle["settle row → resume conversation"]
+  Settle --> Deliver{"origin delivery"}
+  Deliver -- "chat channel" --> Chan["rebuild adapter → sendText<br/>(Telegram / Slack / …)"]
+  Deliver -- "websocket" --> WS["publish to durable stream"]
+  Deliver -- "direct/async API" --> Poll2["status poll / hooks.webhook"]
   Row -. "model may poll" .-> Poll["async_status"]
   Poll -. "settles inline" .-> Row
 ```
@@ -136,7 +140,17 @@ flowchart LR
 `/sandbox-jobs/<resultId>/complete` endpoint, authenticated by a per-job token (not the
 account key — no account secret ever enters the sandbox). The harness settles the row and
 **resumes the conversation** with the result injected, so the model does not have to poll.
+The follow-up is then delivered back to wherever the turn came from:
+
+| Origin | Delivery |
+| --- | --- |
+| Chat channel (Telegram/Slack/Discord/Zalo/Pancake/GitHub) | pushed into the chat via the channel's `sendText` (rebuilt from the stored routing) |
+| WebSocket | republished to the durable conversation stream (replays on reconnect) |
+| Direct/async API | settled for `/status` polling; `config.hooks.webhook` also fires `agent.finished` |
+
 Polling with `async_status` is still available to check progress or fetch a result sooner.
+Discord delivers a delayed reply with the bot token (its interaction token expires ~15 min);
+the bot must have **Send Messages** permission in the channel.
 
 `async_status` is auto-registered whenever the agent has a persistent sandbox or any
 `config.tools` entry marked `async: true`, and only resolves a `resultId` for its own
@@ -151,6 +165,10 @@ never pauses a sandbox while a job is still running.
 > Function URL. Daytona/E2B sandboxes have outbound internet by default; for the kubernetes
 > provider the cluster must allow pods egress to the Function URL. Without egress the job still
 > runs and `async_status` polling still works — only the automatic push-back is skipped.
+>
+> **WebSocket delivery** additionally requires the cluster's NATS to expose a WebSocket
+> listener/gateway (infra repo, applied via CI/CD); the durable stream persists regardless, so
+> a client replays on reconnect. See [Architecture → WebSocket Gateway](../../architecture.md).
 
 ## Model-facing workspace contract
 

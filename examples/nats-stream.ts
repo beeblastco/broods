@@ -1,12 +1,17 @@
 /**
- * Example NATS WebSocket stream invocation with subagents and tools.
- * Ctr+C to exit when you want to close the connection and exit.
+ * Example WebSocket stream over durable JetStream, with subagents and tools.
+ *
+ * Demonstrates the platform contract: responses persist on a conversation-scoped
+ * stream, so a client that drops and reconnects can REPLAY from where it left
+ * off. This script consumes the live stream, then re-opens a fresh reader from
+ * sequence 1 to prove the stream is still replayable after the run finished —
+ * the same mechanism a reconnecting browser/gateway would use. Ctrl+C to exit.
  */
 
 import { InvokeCommand, LambdaClient } from "@aws-sdk/client-lambda";
-import { connect, StringCodec } from "nats";
+import { connect } from "nats";
 import { toRuntimeAgentConfig, type AgentConfig } from "../functions/_shared/storage/index.ts";
-import { streamResponseSubject, type NatsStreamEvent } from "../functions/_shared/nats.ts";
+import { readConversationStream, type NatsStreamEvent } from "../functions/_shared/nats.ts";
 import { scopedDirectConversationKey, scopedDirectEventId } from "../functions/_shared/runtime-keys.ts";
 import type { DirectInboundEvent } from "../functions/harness-processing/integrations.ts";
 import { createAccount, createAgent, deleteAccount } from "./utils.ts";
@@ -18,7 +23,7 @@ const natsUrl = process.env.NATS_URL!;
 const connectionId = `ws-test-${Date.now()}`;
 const publicEventId = `nats-${Date.now()}`;
 const publicConversationKey = `nats-${Date.now()}`;
-const codec = StringCodec();
+const decoder = new TextDecoder();
 
 const researchAgentConfig: AgentConfig = {
   provider: {
@@ -77,13 +82,10 @@ const agentConfig: AgentConfig = {
 };
 const agent = await createAgent(account.secret, "NATS stream test assistant", agentConfig);
 
-const subject = streamResponseSubject(account.account.accountId, agent.agentId, connectionId);
-const subscription = natsClient.subscribe(subject);
-
 console.log("Created test account:", JSON.stringify(account.account));
 console.log("Created research subagent:", JSON.stringify(researchAgent));
 console.log("Created test agent:", JSON.stringify(agent));
-console.log("Subscribed to:", subject);
+console.log("Streaming conversation:", publicConversationKey);
 
 try {
   const inboundEvent: DirectInboundEvent = {
@@ -122,16 +124,46 @@ try {
     })),
   }));
 
-  for await (const message of subscription) {
-    const event = JSON.parse(codec.decode(message.data)) as NatsStreamEvent;
-    process.stdout.write(`\n[${event.sequence}] ${JSON.stringify(event.data)}\n`);
+  // Phase 1: consume the live stream, tracking the JetStream sequence cursor a
+  // reconnecting client would persist to resume.
+  let lastSeq = 0;
+  const live = await readConversationStream({
+    connection: natsClient,
+    accountId: account.account.accountId,
+    agentId: agent.agentId,
+    conversationKey: publicConversationKey,
+  });
+  for await (const message of live) {
+    lastSeq = message.seq;
+    const event = JSON.parse(decoder.decode(message.data)) as NatsStreamEvent;
+    process.stdout.write(`\n[seq ${message.seq}] ${JSON.stringify(event.data)}\n`);
     if (event.data.type === "done" || event.data.type === "error") {
       console.log(`\n[Stream completed with: ${event.data.type}]`);
       break;
     }
   }
+  await live.close();
+
+  // Phase 2: prove durability — a fresh reader (a "reconnect") replays the whole
+  // finished stream from the start. Pass startSequence: lastSeq + 1 instead to
+  // resume only what a client missed after a drop.
+  console.log(`\n[Reconnect] replaying ${lastSeq} persisted events from sequence 1...`);
+  const replay = await readConversationStream({
+    connection: natsClient,
+    accountId: account.account.accountId,
+    agentId: agent.agentId,
+    conversationKey: publicConversationKey,
+    startSequence: 1,
+  });
+  for await (const message of replay) {
+    const event = JSON.parse(decoder.decode(message.data)) as NatsStreamEvent;
+    process.stdout.write(`  replay [seq ${message.seq}] ${String(event.data.type)}\n`);
+    if (message.seq >= lastSeq) {
+      break;
+    }
+  }
+  await replay.close();
 } finally {
-  subscription.unsubscribe();
   await natsClient.drain().catch(() => {});
   await deleteAccount(account.secret);
   console.log("\nDeleted test account");

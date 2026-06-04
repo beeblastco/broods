@@ -24,6 +24,7 @@ import {
 import { runAgentLoop, type ToolApprovalSummary } from "./harness.ts";
 import {
   routeIncomingEvent,
+  sendChannelReply,
   type AsyncDirectInboundEvent,
   type AsyncToolCompletionInboundEvent,
   type ChannelInboundEvent,
@@ -48,6 +49,7 @@ import {
   listAsyncToolResultsByParentEvent,
   sealExternalAsyncToolDispatchGroup,
   settleExternalAsyncToolResult,
+  type AsyncToolDelivery,
   type AsyncToolResultRecord,
 } from "./async-tool-result.ts";
 
@@ -283,6 +285,9 @@ async function continueAfterAsyncToolSettlement(settled: AsyncToolResultRecord):
     agentConfig: toRuntimeAgentConfig(agent.config),
     eventId: asyncToolContinuationEventId(settled.parentEventId),
     ...(settled.delivery?.kind === "async" ? { asyncResultEventId: settled.parentEventId } : {}),
+    ...(settled.delivery?.kind === "channel"
+      ? { replyTarget: { channelName: settled.delivery.channelName, source: settled.delivery.source } }
+      : {}),
     publicEventId: `async-tools-${settled.resultId}`,
     conversationKey: settled.conversationKey,
     publicConversationKey: eventPublicConversationKey(settled.conversationKey, scope.accountId, scope.agentId),
@@ -421,10 +426,12 @@ async function handleAsyncWorkerRequest(event: DirectInboundEvent, context?: Lam
             response: response,
           })
         ));
+        await pushReplyToChannel(event, typeof response === "string" ? response : JSON.stringify(response, null, 2));
       },
       onErrorText: async (error) => {
         didSettle = true;
         await settleAsyncFailure(event, error);
+        await pushReplyToChannel(event, formatChannelErrorText(error));
       },
       onApprovalRequired: async (approvals) => {
         await Promise.all(asyncResultEventIds(event).map((eventId) =>
@@ -554,7 +561,16 @@ async function handleNatsWorkerRequest(event: DirectInboundEvent, context?: Lamb
  * Publish the final result back to the channel integration sendText() function.
  */
 async function handleChannelRequest(event: ChannelInboundEvent, context?: LambdaInvocation): Promise<void> {
-  const session = new Session(event.eventId, event.conversationKey, event.accountId, event.agentId, event.agentConfig ?? {});
+  const session = new Session(
+    event.eventId,
+    event.conversationKey,
+    event.accountId,
+    event.agentId,
+    event.agentConfig ?? {},
+    // A background job launched from this turn delivers its result back to the
+    // same chat (rebuilt from {channelName, source} when it settles later).
+    { kind: "channel", channelName: event.channelName, source: event.source },
+  );
   logInfo("Channel session received", {
     channel: event.channelName,
     accountId: event.accountId,
@@ -726,7 +742,18 @@ async function handleStatusRequest(event: StatusInboundEvent): Promise<LambdaRes
 }
 
 async function prepareDirectTurn(event: DirectInboundEvent): Promise<DirectTurn | null> {
-  const session = new Session(event.eventId, event.conversationKey, event.accountId, event.agentId, event.agentConfig);
+  // A WebSocket-origin turn carries a connectionId; a background job it launches
+  // republishes to the durable conversation stream so a reconnecting client
+  // replays it. Plain direct/async API turns have no delivery target (poll only).
+  const delivery: AsyncToolDelivery | undefined = event.connectionId
+    ? {
+      kind: "nats",
+      connectionId: event.connectionId,
+      publicEventId: event.publicEventId,
+      publicConversationKey: event.publicConversationKey,
+    }
+    : undefined;
+  const session = new Session(event.eventId, event.conversationKey, event.accountId, event.agentId, event.agentConfig, delivery);
   if (!(await claimSession(session))) {
     return null;
   }
@@ -757,6 +784,33 @@ async function settleAsyncFailure(event: DirectInboundEvent, error: string): Pro
       error,
     })
   ));
+}
+
+/**
+ * Push a continuation's final text back to the chat channel it came from (a
+ * background job launched from Telegram/Slack/etc.). Best-effort: the row is
+ * already settled, so a delivery failure is logged, not thrown.
+ */
+async function pushReplyToChannel(event: DirectInboundEvent, text: string): Promise<void> {
+  if (!event.replyTarget) {
+    return;
+  }
+  try {
+    await sendChannelReply({
+      config: event.agentConfig,
+      accountId: event.accountId,
+      agentId: event.agentId,
+      channelName: event.replyTarget.channelName,
+      source: event.replyTarget.source,
+      text,
+    });
+  } catch (err) {
+    logError("Background job channel reply failed", {
+      eventId: event.eventId,
+      channelName: event.replyTarget.channelName,
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
 }
 
 /**

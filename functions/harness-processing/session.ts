@@ -22,6 +22,7 @@ import {
 } from "ai";
 import type { AgentConfig } from "../_shared/storage/index.ts";
 import { getStorage } from "../_shared/storage/index.ts";
+import type { AsyncToolDelivery } from "./async-tool-result.ts";
 import { isMissingS3Error, readS3Text } from "../_shared/s3.ts";
 import { workspaceNamespacePrefix } from "../_shared/sandbox.ts";
 import {
@@ -145,6 +146,11 @@ export class Session {
     public readonly accountId: string | undefined,
     public readonly agentId: string | undefined,
     private readonly agentConfig: AgentConfig = {},
+    // Where a deferred result spawned in this turn (a detached background job)
+    // should be delivered when it settles in a later invocation. Carries the
+    // originating chat channel or WebSocket connection; absent for plain
+    // direct/async API turns, which fall back to status polling.
+    public readonly delivery?: AsyncToolDelivery,
   ) { }
 
   async claim(): Promise<boolean> {

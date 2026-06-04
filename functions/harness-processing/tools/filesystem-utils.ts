@@ -18,6 +18,7 @@ import { createSandboxExecutor } from "../sandbox/index.ts";
 import type { SandboxExecutorConfig, SandboxJobCallback, SandboxJobHandle, SandboxRunResult, SandboxRuntime } from "../sandbox/types.ts";
 import type { ResolvedWorkspace } from "../../_shared/workspaces.ts";
 import type { SandboxPermissionMode } from "../../_shared/storage/index.ts";
+import type { AsyncToolDelivery } from "../async-tool-result.ts";
 
 export const DEFAULT_WORKSPACE_ROOT = "/mnt/workspaces";
 
@@ -36,8 +37,10 @@ export interface SandboxToolContext {
   statelessPermissionMode?: SandboxPermissionMode;
   // Set when the parent session can track background jobs: bash exposes a
   // `background` flag for persistent workspaces and records each job as an
-  // AsyncToolResult keyed by these ids so `async_status` can find it.
-  background?: { eventId: string; conversationKey: string };
+  // AsyncToolResult keyed by these ids so `async_status` can find it. `delivery`
+  // carries the originating channel/WebSocket so a finished job is pushed back
+  // there; absent => the result is only retrievable by polling.
+  background?: { eventId: string; conversationKey: string; delivery?: AsyncToolDelivery };
 }
 
 export function workspaceRootFor(config: SandboxExecutorConfig): string {

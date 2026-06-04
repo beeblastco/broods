@@ -184,25 +184,19 @@ function createDiscordActions(
     async sendText(text) {
       const chunks = splitDiscordMessage(formatDiscordMessage(text));
 
-      for (const [index, chunk] of chunks.entries()) {
-        const response = await fetch(
-          index === 0
-            ? `https://discord.com/api/v10/webhooks/${source.applicationId}/${source.interactionToken}/messages/@original`
-            : `https://discord.com/api/v10/webhooks/${source.applicationId}/${source.interactionToken}`,
-          {
-            method: index === 0 ? "PATCH" : "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              content: chunk,
-              allowed_mentions: { parse: [] },
-            }),
-          },
-        );
-
-        if (!response.ok) {
-          const body = await response.text();
-          throw new Error(`Discord reply failed (${response.status}): ${body}`);
+      try {
+        await sendInteractionReply(source, chunks);
+      } catch (err) {
+        // The interaction token expires ~15 min after the slash command, so a
+        // delayed reply (e.g. a background job that finishes later) cannot use
+        // it. When nothing was sent yet and we know the channel, post with the
+        // bot token instead. A mid-send failure (first chunk already delivered)
+        // is rethrown so the live path never double-posts.
+        if (err instanceof DiscordInteractionUnavailable && source.channelId) {
+          await sendBotChannelMessages(botToken, source.channelId, chunks);
+          return;
         }
+        throw err;
       }
     },
 
@@ -231,6 +225,69 @@ function createDiscordActions(
       return;
     },
   };
+}
+
+// Raised when the first interaction request fails, signalling that nothing was
+// delivered yet so the caller may safely fall back to a bot-token channel post.
+class DiscordInteractionUnavailable extends Error {}
+
+/**
+ * Reply to a slash command through its interaction webhook: the first chunk
+ * edits the deferred "thinking" message, the rest post as follow-ups. A failure
+ * on the first chunk throws DiscordInteractionUnavailable (token likely expired,
+ * nothing sent); a later failure throws a plain error (partial delivery).
+ */
+async function sendInteractionReply(source: DiscordSource, chunks: string[]): Promise<void> {
+  for (const [index, chunk] of chunks.entries()) {
+    const response = await fetch(
+      index === 0
+        ? `https://discord.com/api/v10/webhooks/${source.applicationId}/${source.interactionToken}/messages/@original`
+        : `https://discord.com/api/v10/webhooks/${source.applicationId}/${source.interactionToken}`,
+      {
+        method: index === 0 ? "PATCH" : "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          content: chunk,
+          allowed_mentions: { parse: [] },
+        }),
+      },
+    );
+
+    if (!response.ok) {
+      const body = await response.text();
+      const message = `Discord reply failed (${response.status}): ${body}`;
+      throw index === 0 ? new DiscordInteractionUnavailable(message) : new Error(message);
+    }
+  }
+}
+
+/**
+ * Post a message directly to a channel with the bot token. Used for delayed
+ * replies once the interaction token has expired; requires the bot to have
+ * Send Messages permission in the channel.
+ */
+async function sendBotChannelMessages(botToken: string, channelId: string, chunks: string[]): Promise<void> {
+  for (const chunk of chunks) {
+    const response = await fetch(
+      `https://discord.com/api/v10/channels/${channelId}/messages`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bot ${botToken}`,
+        },
+        body: JSON.stringify({
+          content: chunk,
+          allowed_mentions: { parse: [] },
+        }),
+      },
+    );
+
+    if (!response.ok) {
+      const body = await response.text();
+      throw new Error(`Discord channel message failed (${response.status}): ${body}`);
+    }
+  }
 }
 
 function unsupportedInteractionResponse(): ChannelParseResult {

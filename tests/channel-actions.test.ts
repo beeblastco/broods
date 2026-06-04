@@ -70,7 +70,73 @@ describe("discord channel actions", () => {
     });
   });
 
-  it("throws when a Discord reply or typing request fails", async () => {
+  it("rethrows an interaction failure when no channel id is available to fall back to", async () => {
+    const fetchMock = installFetchMock();
+    const actions = createDiscordChannel("bot-token", "public-key", null).actions(
+      createMessage({
+        applicationId: "app-1",
+        interactionToken: "interaction-token",
+        interactionId: "interaction-1",
+      }),
+    );
+
+    fetchMock.responses.push(new Response("boom", { status: 500 }));
+    await expect(actions.sendText("hello")).rejects.toThrow(
+      "Discord reply failed (500): boom",
+    );
+    expect(fetchMock.calls).toHaveLength(1);
+  });
+
+  it("falls back to a bot-token channel post when the interaction token has expired", async () => {
+    const fetchMock = installFetchMock();
+    const actions = createDiscordChannel("bot-token", "public-key", null).actions(
+      createMessage({
+        applicationId: "app-1",
+        interactionToken: "expired-token",
+        interactionId: "interaction-1",
+        channelId: "channel-1",
+      }),
+    );
+
+    // Interaction @original edit fails (token expired), bot-token channel post succeeds.
+    fetchMock.responses.push(new Response("Unknown Webhook", { status: 404 }));
+    fetchMock.responses.push(new Response("", { status: 200 }));
+
+    await actions.sendText("job done");
+
+    expect(fetchMock.calls).toHaveLength(2);
+    expect(toUrl(fetchMock.calls[1]!.input)).toBe(
+      "https://discord.com/api/v10/channels/channel-1/messages",
+    );
+    expect(fetchMock.calls[1]!.init?.method).toBe("POST");
+    expect(fetchMock.calls[1]!.init?.headers).toMatchObject({
+      Authorization: "Bot bot-token",
+    });
+    expect(JSON.parse(String(fetchMock.calls[1]!.init?.body))).toMatchObject({
+      content: "job done",
+      allowed_mentions: { parse: [] },
+    });
+  });
+
+  it("surfaces a bot-token channel post failure", async () => {
+    const fetchMock = installFetchMock();
+    const actions = createDiscordChannel("bot-token", "public-key", null).actions(
+      createMessage({
+        applicationId: "app-1",
+        interactionToken: "expired-token",
+        interactionId: "interaction-1",
+        channelId: "channel-1",
+      }),
+    );
+
+    fetchMock.responses.push(new Response("Unknown Webhook", { status: 404 }));
+    fetchMock.responses.push(new Response("missing access", { status: 403 }));
+    await expect(actions.sendText("hello")).rejects.toThrow(
+      "Discord channel message failed (403): missing access",
+    );
+  });
+
+  it("throws when a Discord typing request fails", async () => {
     const fetchMock = installFetchMock();
     const actions = createDiscordChannel("bot-token", "public-key", null).actions(
       createMessage({
@@ -79,11 +145,6 @@ describe("discord channel actions", () => {
         interactionId: "interaction-1",
         channelId: "channel-1",
       }),
-    );
-
-    fetchMock.responses.push(new Response("boom", { status: 500 }));
-    await expect(actions.sendText("hello")).rejects.toThrow(
-      "Discord reply failed (500): boom",
     );
 
     fetchMock.responses.push(new Response("nope", { status: 403 }));

@@ -50,7 +50,9 @@ const agentConfig: AgentConfig = {
 
 const agent = await createAgent(account.secret, "External async tool test assistant", agentConfig);
 
-const subject = streamResponseSubject(account.account.accountId, agent.agentId, connectionId);
+// Subjects are conversation-scoped (durable JetStream); a live core subscription
+// still sees publishes in real time. connectionId is now only a routing label.
+const subject = streamResponseSubject(account.account.accountId, agent.agentId, publicConversationKey);
 const subscription = natsClient.subscribe(subject);
 
 console.log("Created test account:", JSON.stringify(account.account));

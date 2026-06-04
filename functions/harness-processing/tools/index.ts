@@ -97,10 +97,15 @@ export function createTools(context: Omit<ToolContext, "config">, agentConfig: A
   const hasPersistentWorkspace = workspaces.some((workspace) => workspace.sandbox?.persistent === true);
   // eventId identifies the turn that spawned the job (stored as parentEventId on the
   // async-tool-result record); conversationKey identifies which conversation to resume
-  // when the job completes in a future Lambda invocation.
+  // when the job completes in a future Lambda invocation. delivery carries the
+  // originating channel/WebSocket so the result is pushed back there, not just polled.
   const backgroundContext = hasPersistentWorkspace && context.session
-    ? { eventId: context.session.eventId, conversationKey: context.conversationKey }
-    : undefined; // background job will be injected into the context when finish (same behaviour as AsyncToolResult)
+    ? {
+      eventId: context.session.eventId,
+      conversationKey: context.conversationKey,
+      ...(context.session.delivery ? { delivery: context.session.delivery } : {}),
+    }
+    : undefined;
 
   // bash: stateless (no workspace) on the agent sandbox, or in any sandbox-backed workspace.
   // Pass the full workspace list so omitting `workspace` preserves the configured

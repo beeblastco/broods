@@ -130,7 +130,9 @@ async function dispatchBackground(
     toolName: "bash",
     toolCallId,
     input: { kind: "sandbox_job", namespace: ws.namespace, jobId, command },
-    delivery: { kind: "async" },
+    // Push the result back to the originating channel/WebSocket when known;
+    // otherwise it settles for status polling only.
+    delivery: context.background.delivery ?? { kind: "async" },
     completionToken,
   });
   await sealExternalAsyncToolDispatchGroup(parentEventId);

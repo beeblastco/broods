@@ -31,10 +31,10 @@ flowchart TD
   Direct["Direct API client"] -->|"Bearer account secret<br/>POST / or /async"| HarnessUrl["harness-processing<br/>Function URL"]
   Status["Status poller"] -->|"Bearer account secret<br/>GET /status/\{eventId\}"| HarnessUrl
   Provider["Telegram / GitHub / Slack / Discord"] -->|"/webhooks/\{accountId\}/\{agentId\}/\{channel\}"| HarnessUrl
-  WSClient["WebSocket client"] <-->|"wss://gateway"| WSGateway["WebSocket Gateway<br/>(separate service)"]
+  WSClient["WebSocket client"] <-->|"wss://gateway"| WSGateway["WebSocket Gateway<br/>(caller's service)"]
   WSGateway -->|"Lambda Event invocation"| HarnessUrl
-  HarnessUrl -->|"publish stream events"| NATS["NATS Server"]
-  NATS -->|"connection-scoped responses"| WSGateway
+  HarnessUrl -->|"js.publish (persisted)"| NATS["NATS JetStream"]
+  NATS -->|"conversation-scoped<br/>replay on reconnect"| WSGateway
 
   ManageUrl --> AccountStore["DynamoDB: AccountConfig<br/>account metadata + secretHash"]
   ManageUrl --> AgentStore["DynamoDB: AgentConfig<br/>encrypted agent configs"]
@@ -222,37 +222,65 @@ flowchart TD
 
 Customers talk to the provider bot/app owned by the account. They never receive an account secret.
 
-## WebSocket Gateway (NATS)
+## WebSocket Gateway (durable NATS JetStream)
+
+Streaming responses are published to a **durable, conversation-scoped JetStream
+stream**. The platform owns the durable stream and a documented replay contract;
+the gateway that relays to a browser is the **caller's application** (this is a
+PaaS — we provide the connection, not the client). Because the stream is keyed by
+conversation (not connection), a client that drops can reconnect with a fresh
+socket and **replay** events it missed — including a background job's result that
+landed after the original connection closed.
 
 ```mermaid
 flowchart TD
-  Client["WebSocket Client"] <-->|"wss://gateway"| GW["WebSocket Gateway<br/>(separate service)"]
+  Client["WebSocket Client"] <-->|"wss://gateway"| GW["WebSocket Gateway<br/>(caller's service)"]
   GW -->|"validate account secret"| Auth["Account auth"]
-  Auth -->|"subscribe v1.\{accountId\}.\{agentId\}.ws.response.\{connectionId\}"| NATS["NATS Server"]
+  Auth -->|"JetStream consumer<br/>replay from last seq on reconnect"| NATS["NATS JetStream<br/>(WS_RESPONSES stream)"]
   Auth -->|"Lambda Event invocation<br/>\{ kind: 'nats-worker', event: \{..., connectionId\} \}"| Harness["harness-processing Lambda"]
-  Harness -->|"publish AI SDK stream chunks"| NATS
-  NATS -->|"subscribe v1.\{accountId\}.\{agentId\}.ws.response.\{connectionId\}"| GW
-  GW -->|"forward events"| Client
+  Harness -->|"js.publish (persisted + ack)"| NATS
+  NATS -->|"consume v1.\{acct\}.\{agent\}.ws.response.\{convToken\}"| GW
+  GW -->|"forward / replay events"| Client
 ```
 
-The WebSocket gateway owns client authentication, response-subject subscription, and Lambda Event invocation. Lambda publishes to a connection-scoped NATS subject; the gateway forwards those events to the client.
+The gateway owns client auth, consuming the conversation subject, and the
+`nats-worker` Lambda invocation. Lambda persists each AI SDK stream chunk to the
+stream; the gateway consumes (and can replay) them.
 
 NATS subject patterns:
 
 | Subject | Direction | Purpose |
 | --------- | ----------- | --------- |
-| `v1.{accountId}.{agentId}.ws.response.{connectionId}` | Lambda → Gateway | Vercel AI SDK stream events (`step-start`, `text`, `tool-call`, `finish`, `error`, etc.) |
+| `v1.{accountId}.{agentId}.ws.response.{convToken}` | Lambda → Gateway | Vercel AI SDK stream events (`step-start`, `text`, `tool-call`, `finish`, `error`, …) |
+
+`convToken = base64url(publicConversationKey)` — a single NATS-safe token. The
+durable replay cursor is the JetStream message sequence (`JsMsg.seq`), not the
+per-invocation envelope `sequence` (which is only an in-turn ordinal).
 
 Notes:
 
-- Lambda can run multiple `nats-worker` invocations at the same time. Each invocation creates its own NATS connection and publisher, so draining one completed request does not close another request's publisher.
-- Response subjects are connection-scoped. If one WebSocket connection allows overlapping turns, the gateway/client should use `headers.eventId` and `sequence` to group events per turn.
-- External async tool completions publish back to the same response subject only while the gateway/client remains subscribed; core NATS does not replay missed WebSocket stream chunks.
-- Future JetStream support can replay missed WebSocket stream chunks from persisted stream/consumer state.
-- If strict conversation ordering is required, the gateway should serialize turns per `conversationKey`.
-- `ENABLE_WEBSOCKET=true` and `NATS_URL` are required for `nats-worker` invocations. When WebSocket is disabled, the normal direct API remains SSE-only and NATS configuration is ignored.
+- The `WS_RESPONSES` stream is created on demand (idempotent), file-backed, with
+  per-subject retention (`max_age` ~24h, `max_msgs_per_subject`) so finished
+  conversations stay replayable for a bounded window. See `functions/_shared/nats.ts`.
+- **Reconnect/replay** is a consumer concern: open a JetStream consumer filtered
+  to the conversation subject with `deliver_policy: by_start_sequence` +
+  `opt_start_seq` (the last `seq` the client persisted). `readConversationStream`
+  in `nats.ts` is the reference reader; `examples/nats-stream.ts` demonstrates it.
+- `connectionId` is now only a routing/label field on event headers — it no
+  longer scopes the subject, so overlapping turns on one conversation share a
+  stream (group per turn with `headers.eventId`).
+- Background jobs launched over a WebSocket turn republish their result to the
+  same conversation stream, so they survive the socket and replay on reconnect.
+- `ENABLE_WEBSOCKET=true` and `NATS_URL` are required for `nats-worker`
+  invocations. When WebSocket is disabled, the direct API stays SSE-only and NATS
+  config is ignored.
 
-This path currently uses core NATS. If JetStream is introduced later, replace best-effort publish/drain with explicit publish acknowledgement, durable consumer replay, duplicate, and backpressure handling.
+> **Infra requirement (applied via CI/CD, not from this repo):** JetStream is
+> already enabled on the cluster NATS, but exposing it to browser clients needs a
+> NATS **WebSocket listener + ingress** (or a relay gateway) and, for production
+> durability, JetStream **clustering** (`replicas: 3`). These live in the infra
+> repo. Without them the durable stream still works server-side; only browser
+> delivery is unavailable.
 
 ## Sandbox & Workspace Boundaries
 

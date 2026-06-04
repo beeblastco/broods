@@ -34,6 +34,15 @@ export type AsyncToolDelivery =
     connectionId: string;
     publicEventId: string;
     publicConversationKey: string;
+  }
+  | {
+    // Deferred result should be pushed back to the chat channel the turn came
+    // from. `source` is the channel's own routing payload (chat/thread id),
+    // replayed verbatim into `adapter.actions()` to rebuild a sender — see
+    // sendChannelReply in integrations.ts.
+    kind: "channel";
+    channelName: string;
+    source: Record<string, unknown>;
   };
 
 export interface AsyncToolResultRecord {
@@ -393,6 +402,19 @@ function optionalDelivery(value: AttributeValue | undefined): AsyncToolDelivery 
       connectionId: candidate.connectionId,
       publicEventId: candidate.publicEventId,
       publicConversationKey: candidate.publicConversationKey,
+    };
+  }
+
+  if (
+    candidate.kind === "channel" &&
+    typeof candidate.channelName === "string" &&
+    candidate.source !== null &&
+    typeof candidate.source === "object"
+  ) {
+    return {
+      kind: "channel",
+      channelName: candidate.channelName,
+      source: candidate.source as Record<string, unknown>,
     };
   }
 

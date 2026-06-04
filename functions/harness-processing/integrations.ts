@@ -29,6 +29,7 @@ import type {
   ChannelAdapter,
   ChannelRequest,
   ChannelResponse,
+  InboundMessage,
 } from "../_shared/channels.ts";
 import { extractText, formatChannelErrorText } from "../_shared/channels.ts";
 import { parseCommand } from "../_shared/commands.ts";
@@ -72,6 +73,10 @@ export interface DirectInboundEvent {
   publicConversationKey: string;
   events: DirectIngressEvent[];
   connectionId?: string;
+  // Set on a continuation that should also push its final text to a chat
+  // channel (a background job launched from Telegram/Slack/etc.). The worker
+  // rebuilds the sender from the agent config via sendChannelReply.
+  replyTarget?: { channelName: string; source: Record<string, unknown> };
 }
 
 export interface AsyncDirectInboundEvent extends DirectInboundEvent {
@@ -580,6 +585,41 @@ function createChannelRegistry(
       zaloChannel,
     ].filter((channel): channel is ChannelAdapter => channel !== null),
   };
+}
+
+/**
+ * Push a single message into a chat channel outside the inbound webhook — used
+ * to deliver a background job's result back to the conversation it came from.
+ * Rebuilds the channel sender from the agent's encrypted config + the stored
+ * routing `source`, reusing the same adapter the webhook path uses. Each channel
+ * decides how to deliver a delayed message inside its own module (e.g. Discord
+ * falls back to a bot-token channel post once its interaction token expires).
+ */
+export async function sendChannelReply(options: {
+  config: AgentConfig;
+  accountId: string;
+  agentId: string;
+  channelName: string;
+  source: Record<string, unknown>;
+  text: string;
+}): Promise<void> {
+  const registry = createChannelRegistry(options.config, {
+    accountId: options.accountId,
+    agentId: options.agentId,
+  });
+  const adapter = registry.webhookChannels.find((channel) => channel.name === options.channelName);
+  if (!adapter) {
+    throw new Error(`Channel ${options.channelName} is not configured for this agent`);
+  }
+
+  const message: InboundMessage = {
+    eventId: "",
+    conversationKey: "",
+    channelName: options.channelName,
+    content: options.text,
+    source: options.source,
+  };
+  await adapter.actions(message).sendText(options.text);
 }
 
 async function parseDirectPayload(
