@@ -60,3 +60,20 @@ export function truncateText(value: string, limit: number): { value: string; tru
 export function shellQuote(value: string): string {
   return `'${value.replaceAll("'", "'\\''")}'`;
 }
+
+/**
+ * True when a provider error means the sandbox is already gone (safe to forget),
+ * as opposed to wrong credentials or a transient fault (which must propagate so a
+ * caller can try another config rather than silently drop the instance record).
+ */
+export function isSandboxGoneError(error: unknown): boolean {
+  if (!isRecordObject(error)) {
+    return typeof error === "string" && /not ?found|does not exist|no such/i.test(error);
+  }
+  const status = error.statusCode ?? error.status ?? error.code;
+  if (status === 404 || status === 410) {
+    return true;
+  }
+  const message = typeof error.message === "string" ? error.message : "";
+  return /not ?found|does not exist|no such|already (deleted|destroyed)/i.test(message);
+}

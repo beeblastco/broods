@@ -28,6 +28,24 @@ const LAMBDA_MAX_TIMEOUT_SECONDS = 300;
 const LAMBDA_MAX_MEMORY_LIMIT_MB = 1024;
 const PERSISTENT_MAX_TIMEOUT_SECONDS = 600;
 
+// Reserved (long-lived) sandbox lifecycle defaults. A reserved sandbox stays
+// running while in use and scales to 0 / stops after an idle cooldown, resuming
+// on the next call (Fargate-style). These bound the account-configurable
+// `lifecycle` block and the kubernetes home PVC.
+export const DEFAULT_IDLE_TIMEOUT_SECONDS = 15 * 60;
+export const MAX_IDLE_TIMEOUT_SECONDS = 7 * 24 * 60 * 60;
+export const MAX_LIFETIME_SECONDS = 30 * 24 * 60 * 60;
+// Default hard-expiry backstop for a reserved sandbox when no maxLifetimeSeconds
+// is set: an abandoned sandbox self-deletes after this long without use (the
+// harness refreshes the expiry on every call). Prevents leaked compute/disk.
+export const DEFAULT_RELEASE_GRACE_SECONDS = 7 * 24 * 60 * 60;
+export const DEFAULT_PERSISTENT_HOME = "/home/node";
+export const DEFAULT_PERSISTENT_DISK_GB = 10;
+export const MAX_PERSISTENT_DISK_GB = 200;
+// Cap concurrent detached background jobs per reserved sandbox so a runaway agent
+// cannot pin a sandbox busy (and defeat scale-to-0) with unbounded jobs.
+export const MAX_CONCURRENT_BACKGROUND_JOBS = 10;
+
 /**
  * Build the workspace-bucket key prefix for a namespace, matching the path the
  * sandbox mount uses. Pass the namespace identifier the sandbox receives (do not
@@ -35,6 +53,27 @@ const PERSISTENT_MAX_TIMEOUT_SECONDS = 600;
  */
 export function workspaceNamespacePrefix(namespace: string): string {
   return `${WORKSPACE_MOUNT_PREFIX}/${namespace}`;
+}
+
+export interface ResolvedSandboxLifecycle {
+  idleTimeoutSeconds: number;
+  maxLifetimeSeconds?: number;
+}
+
+/**
+ * Resolve a persistent sandbox's effective idle/expiry policy from its
+ * account-configured `lifecycle` block, applying defaults. Used by the executors
+ * (k8s shutdownTime / reaper cooldown, daytona autoStopInterval, e2b timeout).
+ */
+export function resolveSandboxLifecycle(
+  lifecycle?: { idleTimeoutSeconds?: number; maxLifetimeSeconds?: number },
+): ResolvedSandboxLifecycle {
+  return {
+    idleTimeoutSeconds: lifecycle?.idleTimeoutSeconds ?? DEFAULT_IDLE_TIMEOUT_SECONDS,
+    ...(lifecycle?.maxLifetimeSeconds !== undefined
+      ? { maxLifetimeSeconds: lifecycle.maxLifetimeSeconds }
+      : {}),
+  };
 }
 
 export interface WorkspaceSandboxLimits {

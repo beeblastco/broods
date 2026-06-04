@@ -817,6 +817,13 @@ paths:
                     provider: { type: string, enum: [lambda, e2b, daytona, kubernetes] }
                     internet: { type: boolean }
                     permissionMode: { type: string, enum: [edit, ask, bypass] }
+                    persistent: { type: boolean, description: "Reserve one long-lived sandbox per workspace (reconnect across calls, background jobs, packages persist). Not valid for lambda." }
+                    lifecycle:
+                      type: object
+                      description: "Idle/expiry policy when persistent. Requires persistent: true."
+                      properties:
+                        idleTimeoutSeconds: { type: integer, description: "scale down / stop after this idle (default 900)" }
+                        maxLifetimeSeconds: { type: integer, description: "hard-expiry backstop from creation (default 7 days)" }
                     runtimes:
                       type: array
                       items: { type: string, enum: [bash, python, node] }
@@ -824,12 +831,21 @@ paths:
                     memoryLimit: { type: integer, description: "MB; bounded for lambda (max 1024), operator-sized for other providers" }
                     outputLimitBytes: { type: integer }
                     envVars: { type: object, additionalProperties: { type: string } }
-                    options: { type: object }
+                    options: { type: object, description: "Provider knobs. Persistent kubernetes also accepts persistentDiskGb, persistentHome, storageClass for the home PVC." }
             examples:
               lambda:
                 value:
                   name: default
                   config: { provider: lambda, internet: true, permissionMode: ask }
+              persistentKubernetes:
+                value:
+                  name: reserved
+                  config:
+                    provider: kubernetes
+                    persistent: true
+                    permissionMode: bypass
+                    lifecycle: { idleTimeoutSeconds: 1800 }
+                    options: { mountAwsS3Buckets: true, persistentDiskGb: 20, persistentHome: /home/node }
       responses:
         '201': { description: Sandbox created }
     get:

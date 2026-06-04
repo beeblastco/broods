@@ -2,10 +2,11 @@
  * Kubernetes-backed workspace sandbox executor.
  *
  * Runs the agent's bash/node/python inside an agent-sandbox `Sandbox`
- * (agents.x-k8s.io/v1alpha1) pod on the Beeblast k3s cluster — a "VM-like"
- * environment with node, python, bash, curl on PATH. Mirrors the Daytona
- * executor's ephemeral lifecycle: create Sandbox -> wait Ready -> (optionally
- * mount the selected workspace S3 prefix with mount-s3) -> exec -> delete.
+ * (agents.x-k8s.io/v1alpha1) pod on the Beeblast k3s cluster. Ephemeral by
+ * default (create -> wait Ready -> mount-s3 -> exec -> delete); persistent mode
+ * reserves one Sandbox per workspace (deterministic name, home PVC, resume by
+ * scaling replicas 0->1) and is reclaimed cluster-side by the infra reaper +
+ * shutdownTime backstop — see docs/agent-sandbox.md.
  *
  * Cluster connectivity comes from service-managed env/SSM kubeconfig settings,
  * with ambient kubeconfig only for local direct executor tests. S3 credentials
@@ -25,10 +26,22 @@ import {
 } from "@kubernetes/client-node";
 import { GetParameterCommand, SSMClient } from "@aws-sdk/client-ssm";
 import { optionalEnv } from "../../_shared/env.ts";
-import { WORKSPACE_MOUNT_PREFIX } from "../../_shared/sandbox.ts";
+import { logWarn } from "../../_shared/log.ts";
+import {
+  DEFAULT_PERSISTENT_DISK_GB,
+  DEFAULT_PERSISTENT_HOME,
+  DEFAULT_RELEASE_GRACE_SECONDS,
+  MAX_CONCURRENT_BACKGROUND_JOBS,
+  WORKSPACE_MOUNT_PREFIX,
+  resolveSandboxLifecycle,
+} from "../../_shared/sandbox.ts";
 import type {
   SandboxExecutor,
   SandboxExecutorConfig,
+  SandboxJobHandle,
+  SandboxJobLogs,
+  SandboxJobRequest,
+  SandboxJobStatus,
   SandboxRunRequest,
   SandboxRunResult,
 } from "./types.ts";
@@ -39,6 +52,14 @@ import {
   shellQuote,
   truncateText,
 } from "./utils.ts";
+import {
+  generateJobId,
+  launchScript,
+  logsScript,
+  parseJobStatus,
+  statusScript,
+  stopScript,
+} from "./jobs.ts";
 
 const SANDBOX_GROUP = "agents.x-k8s.io";
 const SANDBOX_VERSION = "v1alpha1";
@@ -49,6 +70,11 @@ const DEFAULT_IMAGE = "ghcr.io/beeblastco/agent-sandbox-runtime:latest";
 const DEFAULT_WORKSPACE_SERVICE_ACCOUNT = "agent-sandbox-workspace";
 const POD_READY_TIMEOUT_MS = 120_000;
 const POD_POLL_INTERVAL_MS = 1_500;
+// Reserved-sandbox home volume + the labels/annotations the infra reaper reads.
+const HOME_VOLUME_NAME = "home";
+const LAST_ACTIVITY_ANNOTATION = "beeblast.co/last-activity-at";
+const IDLE_TIMEOUT_ANNOTATION = "beeblast.co/idle-timeout-seconds";
+const MANAGED_LABEL = "beeblast.co/persistent";
 
 interface ExecResult {
   stdout: string;
@@ -102,17 +128,89 @@ export class KubernetesSandboxExecutor implements SandboxExecutor {
     });
   }
 
-  // --- internals -----------------------------------------------------------
+  async runBackground(request: SandboxRunRequest): Promise<SandboxJobHandle> {
+    if (!this.#isPersistent(request)) {
+      throw new Error("background jobs require a persistent kubernetes sandbox with a workspace");
+    }
+    const pod = await this.#resumeForJob({ namespace: request.namespace });
+    await this.#prepareWorkspace(pod, request);
+    const jobId = request.jobId ?? generateJobId();
+    const workDir = requiredWorkspacePath(request, "/mnt/workspaces");
+    // Detached session: the work outlives this exec and survives the request.
+    const script = launchScript(this.#jobsDir(), jobId, workDir, request.code, {
+      maxConcurrentJobs: MAX_CONCURRENT_BACKGROUND_JOBS,
+      ...(request.callback ? { callback: request.callback } : {}),
+    });
+    await this.#execOrThrow(pod, ["bash", "-lc", script]);
+    return { jobId };
+  }
+
+  async jobStatus(request: SandboxJobRequest): Promise<SandboxJobStatus> {
+    const pod = await this.#resumeForJob(request);
+    const result = await this.#execInPod(pod, ["bash", "-lc", statusScript(this.#jobsDir(), request.jobId)], 30);
+    return parseJobStatus(request.jobId, result.stdout);
+  }
+
+  async jobLogs(request: SandboxJobRequest): Promise<SandboxJobLogs> {
+    const pod = await this.#resumeForJob(request);
+    const bytes = request.outputLimitBytes ?? 64 * 1024;
+    const result = await this.#execInPod(pod, ["bash", "-lc", logsScript(this.#jobsDir(), request.jobId, bytes)], 30);
+    const logs = truncateText(result.stdout, bytes);
+    return { jobId: request.jobId, logs: logs.value, truncated: logs.truncated };
+  }
+
+  async stopJob(request: SandboxJobRequest): Promise<SandboxJobStatus> {
+    const pod = await this.#resumeForJob(request);
+    await this.#execInPod(pod, ["bash", "-lc", stopScript(this.#jobsDir(), request.jobId)], 30);
+    // Report the real terminal state: a job that had already finished keeps its
+    // own exit code instead of being recorded as killed.
+    const status = await this.#execInPod(pod, ["bash", "-lc", statusScript(this.#jobsDir(), request.jobId)], 30);
+    return parseJobStatus(request.jobId, status.stdout);
+  }
+
+  #jobsDir(): string {
+    return `${persistentHome(options(this.#config))}/.jobs`;
+  }
+
+  async #resumeForJob(request: { namespace?: string }): Promise<V1Pod> {
+    if (!request.namespace) {
+      throw new Error("job operations require a persistent workspace namespace");
+    }
+    await this.#ensureClients();
+    const namespace = kubeNamespace(options(this.#config));
+    const name = persistentSandboxName(request.namespace);
+    const pod = await this.#ensurePersistentSandbox(namespace, name);
+    // Refresh activity up front so the reaper does not scale this sandbox to 0
+    // mid-launch / mid-poll (the launch marker alone races the reaper window).
+    await this.#touchActivity(namespace, name);
+    return pod;
+  }
+
+  #isPersistent(request: { namespace?: string }): boolean {
+    return this.#config.persistent === true && typeof request.namespace === "string" && request.namespace.length > 0;
+  }
 
   async #withSandbox<T>(
     request: { namespace?: string; workspaceRoot?: string },
     run: (pod: V1Pod) => Promise<T>,
   ): Promise<T> {
     await this.#ensureClients();
-    const opts = options(this.#config);
-    const namespace = kubeNamespace(opts);
+    const namespace = kubeNamespace(options(this.#config));
+
+    // Reserved sandbox: reconnect to (or create) the long-lived Sandbox for this
+    // workspace, resuming it if the reaper scaled it to 0. Never deleted here —
+    // the infra reaper scales it down on idle; release tears it down.
+    if (this.#isPersistent(request)) {
+      const name = persistentSandboxName(request.namespace!);
+      const pod = await this.#ensurePersistentSandbox(namespace, name);
+      await this.#prepareWorkspace(pod, request);
+      await this.#touchActivity(namespace, name);
+      return await run(pod);
+    }
+
+    // Ephemeral: one Sandbox per call, torn down afterward.
     const name = sandboxName(request.namespace);
-    await this.#createSandbox(namespace, name);
+    await this.#createSandbox(namespace, name, false);
     try {
       const pod = await this.#waitForPodReady(namespace, name);
       await this.#prepareWorkspace(pod, request);
@@ -122,12 +220,95 @@ export class KubernetesSandboxExecutor implements SandboxExecutor {
     }
   }
 
+  async #ensurePersistentSandbox(namespace: string, name: string): Promise<V1Pod> {
+    const existing = await this.#getSandbox(namespace, name);
+    if (!existing) {
+      try {
+        await this.#createSandbox(namespace, name, true);
+      } catch (cause) {
+        // A concurrent first-touch for the same workspace may have created it
+        // first (deterministic name). Treat that as success and wait for its pod.
+        if (!isAlreadyExists(cause)) throw cause;
+      }
+    } else if (sandboxReplicas(existing) === 0) {
+      // Resume on demand: the reaper idled this sandbox; scale it back up.
+      await this.#scaleSandbox(namespace, name, 1);
+    }
+    return this.#waitForPodReady(namespace, name);
+  }
+
+  async #getSandbox(namespace: string, name: string): Promise<Record<string, unknown> | undefined> {
+    try {
+      return (await this.#custom.getNamespacedCustomObject({
+        group: SANDBOX_GROUP,
+        version: SANDBOX_VERSION,
+        namespace,
+        plural: SANDBOX_PLURAL,
+        name,
+      })) as Record<string, unknown>;
+    } catch (cause) {
+      if (isNotFound(cause)) return undefined;
+      throw cause;
+    }
+  }
+
+  async #scaleSandbox(namespace: string, name: string, replicas: number): Promise<void> {
+    // JSON Patch (RFC 6902) — matches the client's default json-patch+json type.
+    await this.#custom.patchNamespacedCustomObject({
+      group: SANDBOX_GROUP,
+      version: SANDBOX_VERSION,
+      namespace,
+      plural: SANDBOX_PLURAL,
+      name,
+      body: [{ op: "replace", path: "/spec/replicas", value: replicas }],
+    });
+  }
+
+  async #touchActivity(namespace: string, name: string): Promise<void> {
+    // Best-effort: the reaper tolerates a stale/missing annotation, and a missing
+    // patch RBAC grant must not fail the user's command. Refresh both the
+    // last-activity annotation (idle reaper) and the hard-expiry shutdownTime
+    // (leak backstop) so an actively-used sandbox never self-deletes.
+    try {
+      await this.#custom.patchNamespacedCustomObject({
+        group: SANDBOX_GROUP,
+        version: SANDBOX_VERSION,
+        namespace,
+        plural: SANDBOX_PLURAL,
+        name,
+        body: [
+          {
+            op: "add",
+            path: `/metadata/annotations/${escapeJsonPointer(LAST_ACTIVITY_ANNOTATION)}`,
+            value: isoSeconds(),
+          },
+          { op: "add", path: "/spec/shutdownTime", value: this.#shutdownTimeFromNow() },
+        ],
+      });
+    } catch (err) {
+      // Best-effort, but log it: a persistent patch failure (missing RBAC) means
+      // shutdownTime never refreshes, so an in-use sandbox could self-delete.
+      logWarn("kubernetes sandbox activity refresh failed", {
+        name,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
+  #shutdownTimeFromNow(): string {
+    const lifecycle = resolveSandboxLifecycle(this.#config.lifecycle);
+    const graceSeconds = lifecycle.maxLifetimeSeconds ?? DEFAULT_RELEASE_GRACE_SECONDS;
+    return new Date(Date.now() + graceSeconds * 1000).toISOString();
+  }
+
   async #createSandbox(
     namespace: string,
     name: string,
+    persistent: boolean,
   ): Promise<void> {
     const opts = options(this.#config);
     const mounting = opts.mountAwsS3Buckets === true;
+    const home = persistent ? persistentHome(opts) : undefined;
     const container: Record<string, unknown> = {
       name: CONTAINER_NAME,
       image: configString(opts.image) ?? optionalEnv("KUBERNETES_SANDBOX_IMAGE") ?? DEFAULT_IMAGE,
@@ -135,12 +316,18 @@ export class KubernetesSandboxExecutor implements SandboxExecutor {
       env: envList({
         ...(this.#config.envVars ?? {}),
         ...sandboxRegionEnv(opts),
+        // Point HOME + package-manager caches at the persistent home PVC so
+        // pip/npm/uv state survives a scale-to-0.
+        ...(home ? persistentHomeEnv(home) : {}),
       }),
     };
     if (mounting) {
       // mount-s3 needs FUSE + root: privileged grants the FUSE device, runAsUser 0 lets
       // mount-s3 perform the mount (the image otherwise runs as uid 1000).
       container.securityContext = { privileged: true, runAsUser: 0 };
+    }
+    if (home) {
+      container.volumeMounts = [{ name: HOME_VOLUME_NAME, mountPath: home }];
     }
 
     const podSpec: Record<string, unknown> = { containers: [container] };
@@ -150,6 +337,25 @@ export class KubernetesSandboxExecutor implements SandboxExecutor {
     const pullSecrets = stringList(opts.imagePullSecrets) ?? stringList(optionalEnv("KUBERNETES_SANDBOX_IMAGE_PULL_SECRETS"));
     if (pullSecrets?.length) podSpec.imagePullSecrets = pullSecrets.map((n) => ({ name: n }));
 
+    const metadata: Record<string, unknown> = { name };
+    const spec: Record<string, unknown> = { podTemplate: { spec: podSpec } };
+    if (persistent) {
+      const lifecycle = resolveSandboxLifecycle(this.#config.lifecycle);
+      metadata.labels = { [MANAGED_LABEL]: "true" };
+      // Seed the annotations map so later single-key JSON Patch `add` ops work,
+      // and publish the reaper's idle budget alongside last-activity.
+      metadata.annotations = {
+        [LAST_ACTIVITY_ANNOTATION]: isoSeconds(),
+        [IDLE_TIMEOUT_ANNOTATION]: String(lifecycle.idleTimeoutSeconds),
+      };
+      spec.replicas = 1;
+      // Hard-expiry backstop (refreshed on every use): an abandoned sandbox
+      // self-deletes, so reserved sandboxes never leak.
+      spec.shutdownPolicy = "Delete";
+      spec.shutdownTime = this.#shutdownTimeFromNow();
+      spec.volumeClaimTemplates = [homePvcTemplate(opts)];
+    }
+
     await this.#custom.createNamespacedCustomObject({
       group: SANDBOX_GROUP,
       version: SANDBOX_VERSION,
@@ -158,8 +364,8 @@ export class KubernetesSandboxExecutor implements SandboxExecutor {
       body: {
         apiVersion: `${SANDBOX_GROUP}/${SANDBOX_VERSION}`,
         kind: "Sandbox",
-        metadata: { name },
-        spec: { podTemplate: { spec: podSpec } },
+        metadata,
+        spec,
       },
     });
   }
@@ -234,11 +440,12 @@ export class KubernetesSandboxExecutor implements SandboxExecutor {
       // Present mounted files as uid/gid 1000 (the workspace access point's owner),
       // not the mounting process's uid: the pod runs as root for FUSE, and mount-s3
       // rejects --uid 0. Root still reads/writes the files (and --allow-other covers
-      // any non-root access).
+      // any non-root access). Idempotent: a reused persistent pod may already have
+      // the mount, so skip when the directory is already a mountpoint.
       await this.#execOrThrow(pod, [
         "bash",
         "-lc",
-        `mount-s3 --uid 1000 --gid 1000 ${mountArgs}`,
+        `mountpoint -q ${shellQuote(dir)} || mount-s3 --uid 1000 --gid 1000 ${mountArgs}`,
       ]);
     }
   }
@@ -330,8 +537,6 @@ export class KubernetesSandboxExecutor implements SandboxExecutor {
   }
 }
 
-// --- helpers ---------------------------------------------------------------
-
 function options(config: SandboxExecutorConfig): Record<string, unknown> {
   return isRecordObject(config.options) ? config.options : {};
 }
@@ -385,9 +590,90 @@ function envList(vars: Record<string, string>): Array<{ name: string; value: str
 }
 
 function sandboxName(namespace: string | undefined): string {
-  const slug = (namespace ?? "").toLowerCase().replace(/[^a-z0-9-]/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "").slice(0, 40) || "ws";
   const suffix = Math.random().toString(36).slice(2, 8);
-  return `fp-${slug}-${suffix}`;
+  return `fp-${slugFor(namespace)}-${suffix}`;
+}
+
+// Deterministic name for a reserved sandbox: the same workspace namespace always
+// maps to the same Sandbox, so any later request reconnects to it. The hash keeps
+// names unique after the slug is truncated.
+function persistentSandboxName(namespace: string): string {
+  return `fp-p-${slugFor(namespace)}-${shortHash(namespace)}`;
+}
+
+function slugFor(namespace: string | undefined): string {
+  return (namespace ?? "").toLowerCase().replace(/[^a-z0-9-]/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "").slice(0, 40) || "ws";
+}
+
+function shortHash(value: string): string {
+  let hash = 5381;
+  for (let i = 0; i < value.length; i++) {
+    hash = ((hash << 5) + hash + value.charCodeAt(i)) >>> 0;
+  }
+  return hash.toString(36).slice(0, 6);
+}
+
+function persistentHome(opts: Record<string, unknown>): string {
+  return (configString(opts.persistentHome) ?? DEFAULT_PERSISTENT_HOME).replace(/\/+$/, "") || DEFAULT_PERSISTENT_HOME;
+}
+
+function persistentHomeEnv(home: string): Record<string, string> {
+  return {
+    HOME: home,
+    XDG_CACHE_HOME: `${home}/.cache`,
+    XDG_DATA_HOME: `${home}/.local/share`,
+    XDG_CONFIG_HOME: `${home}/.config`,
+    NPM_CONFIG_CACHE: `${home}/.npm`,
+    PIP_CACHE_DIR: `${home}/.cache/pip`,
+    UV_CACHE_DIR: `${home}/.cache/uv`,
+    UV_PYTHON_INSTALL_DIR: `${home}/.local/uv/python`,
+  };
+}
+
+function homePvcTemplate(opts: Record<string, unknown>): Record<string, unknown> {
+  const diskGb = positiveInteger(opts.persistentDiskGb) ?? DEFAULT_PERSISTENT_DISK_GB;
+  const storageClass = configString(opts.storageClass);
+  return {
+    // Labeled so the reaper can sweep this PVC if its Sandbox is later deleted.
+    metadata: { name: HOME_VOLUME_NAME, labels: { [MANAGED_LABEL]: "true" } },
+    spec: {
+      accessModes: ["ReadWriteOnce"],
+      resources: { requests: { storage: `${diskGb}Gi` } },
+      ...(storageClass ? { storageClassName: storageClass } : {}),
+    },
+  };
+}
+
+function positiveInteger(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isSafeInteger(value) && value > 0 ? value : undefined;
+}
+
+function sandboxReplicas(sandbox: Record<string, unknown>): number {
+  const spec = isRecordObject(sandbox.spec) ? sandbox.spec : {};
+  return typeof spec.replicas === "number" ? spec.replicas : 1;
+}
+
+// JSON Pointer (RFC 6901) escaping for annotation keys that contain `/`.
+function escapeJsonPointer(token: string): string {
+  return token.replace(/~/g, "~0").replace(/\//g, "~1");
+}
+
+// ISO-8601 without milliseconds — the reaper parses this with jq fromdateiso8601,
+// which rejects fractional seconds.
+function isoSeconds(date = new Date()): string {
+  return date.toISOString().replace(/\.\d{3}Z$/, "Z");
+}
+
+function isNotFound(cause: unknown): boolean {
+  if (!isRecordObject(cause)) return false;
+  if (cause.code === 404 || cause.statusCode === 404) return true;
+  return isRecordObject(cause.body) && cause.body.reason === "NotFound";
+}
+
+function isAlreadyExists(cause: unknown): boolean {
+  if (!isRecordObject(cause)) return false;
+  if (cause.code === 409 || cause.statusCode === 409) return true;
+  return isRecordObject(cause.body) && cause.body.reason === "AlreadyExists";
 }
 
 function exitCodeFromStatus(status: V1Status): number | null {

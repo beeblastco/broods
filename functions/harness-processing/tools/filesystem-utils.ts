@@ -15,7 +15,7 @@ import { requireEnv } from "../../_shared/env.ts";
 import { workspaceNamespacePrefix, workspaceSandboxLimits } from "../../_shared/sandbox.ts";
 import { isMissingS3Error, listS3Prefix, readS3Text } from "../../_shared/s3.ts";
 import { createSandboxExecutor } from "../sandbox/index.ts";
-import type { SandboxExecutorConfig, SandboxRunResult, SandboxRuntime } from "../sandbox/types.ts";
+import type { SandboxExecutorConfig, SandboxJobCallback, SandboxJobHandle, SandboxRunResult, SandboxRuntime } from "../sandbox/types.ts";
 import type { ResolvedWorkspace } from "../../_shared/workspaces.ts";
 import type { SandboxPermissionMode } from "../../_shared/storage/index.ts";
 
@@ -34,6 +34,10 @@ export interface SandboxToolContext {
   workspaces: ResolvedWorkspace[];
   statelessSandbox?: SandboxExecutorConfig;
   statelessPermissionMode?: SandboxPermissionMode;
+  // Set when the parent session can track background jobs: bash exposes a
+  // `background` flag for persistent workspaces and records each job as an
+  // AsyncToolResult keyed by these ids so `async_status` can find it.
+  background?: { eventId: string; conversationKey: string };
 }
 
 export function workspaceRootFor(config: SandboxExecutorConfig): string {
@@ -91,12 +95,46 @@ export async function runSandbox(
   });
 }
 
+/**
+ * Launch a detached background job in a persistent sandbox and return its handle.
+ * The work runs inside the sandbox (not the harness), so it survives the request.
+ * The caller supplies the jobId (so the tracking row exists before the job can
+ * finish) and an optional completion callback the job POSTs when it exits.
+ */
+export async function runSandboxBackground(
+  config: SandboxExecutorConfig,
+  namespace: string,
+  code: string,
+  options: { jobId: string; callback?: SandboxJobCallback },
+): Promise<SandboxJobHandle> {
+  const executor = createSandboxExecutor(config);
+  if (!executor.runBackground) {
+    throw new Error("this sandbox provider does not support background jobs");
+  }
+  const limits = workspaceSandboxLimits(config.provider);
+  return executor.runBackground({
+    code,
+    namespace,
+    jobId: options.jobId,
+    ...(options.callback ? { callback: options.callback } : {}),
+    workspaceRoot: workspaceRootFor(config),
+    timeoutSeconds: boundedInteger(config.timeout, limits.defaultTimeoutSeconds, limits.maxTimeoutSeconds),
+    outputLimitBytes: boundedInteger(config.outputLimitBytes, limits.defaultOutputLimitBytes, limits.maxOutputLimitBytes),
+  });
+}
+
 function assertWorkspacePersistenceSupported(config: SandboxExecutorConfig, namespace: string | undefined): void {
   if (!namespace) {
     return;
   }
   const provider = config.provider ?? "lambda";
   if (provider === "lambda") {
+    return;
+  }
+  // A reserved (persistent) sandbox carries its own durable storage — the k8s home
+  // PVC + S3 mount, e2b pause snapshot, or daytona stop-persistent disk — so
+  // workspace files persist even without (or in addition to) the S3 mount.
+  if (config.persistent === true) {
     return;
   }
   const options = isRecordObject(config.options) ? config.options : {};
@@ -108,12 +146,11 @@ function assertWorkspacePersistenceSupported(config: SandboxExecutorConfig, name
   );
 }
 
-// --- Approval policy evaluated per call so workspaces
-// with different sandboxes/permissionModes resolve independently.
+// Approval policy is evaluated per call so workspaces with different
+// sandboxes/permissionModes resolve independently:
 //   - read/glob/grep: always auto (handled by omitting needsApproval).
 //   - write/edit: auto in edit/bypass, ASK in ask.
 //   - bash: ASK in ask + edit, auto only in bypass.
-
 export function editNeedsApproval(workspaces: ResolvedWorkspace[], requested?: string): boolean {
   try {
     const workspace = resolveWorkspace(workspaces, requested);
@@ -150,10 +187,9 @@ function permissionModeFor(workspace: ResolvedWorkspace | undefined): SandboxPer
   return workspace?.sandbox?.permissionMode ?? "ask";
 }
 
-// --- S3-direct read-only path (workspaces with no sandbox). Reads/lists straight
+// S3-direct read-only path (workspaces with no sandbox). Reads/lists straight
 // from the workspace bucket under the same `sandbox/<namespace>/` prefix the mount
 // uses, so it sees exactly what a sandbox-backed run would.
-
 const READ_DEFAULT_LIMIT = 2000;
 
 export async function s3ReadNumbered(

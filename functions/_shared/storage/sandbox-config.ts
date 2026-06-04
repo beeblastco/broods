@@ -7,7 +7,12 @@
  * Stored encrypted at rest because `envVars`/`options` may hold secrets.
  */
 
-import { workspaceSandboxLimits } from "../sandbox.ts";
+import {
+  MAX_IDLE_TIMEOUT_SECONDS,
+  MAX_LIFETIME_SECONDS,
+  MAX_PERSISTENT_DISK_GB,
+  workspaceSandboxLimits,
+} from "../sandbox.ts";
 import { mergeConfigObjects, redactConfigSecrets } from "./agent-config.ts";
 
 export type SandboxProvider = "lambda" | "e2b" | "daytona" | "kubernetes";
@@ -19,6 +24,13 @@ const SANDBOX_RUNTIMES: readonly SandboxRuntimeName[] = ["bash", "python", "node
 const SANDBOX_PERMISSION_MODES: readonly SandboxPermissionMode[] = ["edit", "ask", "bypass"];
 const REDACTED_SECRET_VALUE = "********";
 
+export interface SandboxLifecycleConfig {
+  // Scale to 0 / stop after this many idle seconds with no running job.
+  idleTimeoutSeconds?: number;
+  // Hard expiry from creation, regardless of activity. Omit for no expiry.
+  maxLifetimeSeconds?: number;
+}
+
 export interface SandboxConfig {
   provider: SandboxProvider;
   // Advisory runtime allow-list (best-effort harness-side; see docs).
@@ -27,6 +39,11 @@ export interface SandboxConfig {
   internet?: boolean;
   // Tool approval policy: edit|ask|bypass (replaces the old needsApproval boolean).
   permissionMode?: SandboxPermissionMode;
+  // Reserve a long-lived sandbox per workspace namespace (reconnect across calls,
+  // run background jobs, persist installed packages). Not valid for `lambda`.
+  persistent?: boolean;
+  // Idle/expiry policy when `persistent` is true.
+  lifecycle?: SandboxLifecycleConfig;
   timeout?: number;
   memoryLimit?: number;
   outputLimitBytes?: number;
@@ -71,6 +88,16 @@ export function normalizeSandboxConfig(value: unknown): SandboxConfig {
   assertOptionalEnum(config.provider, "config.provider", SANDBOX_PROVIDERS);
   assertOptionalEnum(config.permissionMode, "config.permissionMode", SANDBOX_PERMISSION_MODES);
   assertOptionalBoolean(config.internet, "config.internet");
+  assertOptionalBoolean(config.persistent, "config.persistent");
+
+  const provider = (config.provider as SandboxProvider | undefined) ?? "lambda";
+  if (config.persistent === true && provider === "lambda") {
+    throw new Error("config.persistent is not supported by the lambda provider (lambda is always ephemeral)");
+  }
+  const lifecycle = config.lifecycle !== undefined ? normalizeLifecycle(config.lifecycle) : undefined;
+  if (lifecycle && config.persistent !== true) {
+    throw new Error("config.lifecycle requires config.persistent to be true");
+  }
 
   if (config.runtimes !== undefined) {
     if (
@@ -84,7 +111,7 @@ export function normalizeSandboxConfig(value: unknown): SandboxConfig {
 
   // Provider-aware ceilings: lambda is bounded by its function; persistent
   // providers (e2b/daytona/kubernetes) are operator-sized (no memory max here).
-  const limits = workspaceSandboxLimits((config.provider as SandboxProvider | undefined) ?? "lambda");
+  const limits = workspaceSandboxLimits(provider);
   assertOptionalPositiveInteger(config.timeout, "config.timeout", limits.maxTimeoutSeconds);
   assertOptionalPositiveInteger(config.memoryLimit, "config.memoryLimit", limits.maxMemoryLimitMb);
   assertOptionalPositiveInteger(config.outputLimitBytes, "config.outputLimitBytes", limits.maxOutputLimitBytes);
@@ -96,13 +123,15 @@ export function normalizeSandboxConfig(value: unknown): SandboxConfig {
     throw new Error("config.options must be an object");
   }
   if (config.options !== undefined) {
-    validateProviderOptions((config.provider as SandboxProvider | undefined) ?? "lambda", config.options);
+    validateProviderOptions(provider, config.options, config.persistent === true);
   }
 
   return {
-    provider: (config.provider as SandboxProvider | undefined) ?? "lambda",
+    provider,
     permissionMode: (config.permissionMode as SandboxPermissionMode | undefined) ?? "ask",
     ...(config.internet !== undefined ? { internet: config.internet as boolean } : {}),
+    ...(config.persistent !== undefined ? { persistent: config.persistent as boolean } : {}),
+    ...(lifecycle ? { lifecycle } : {}),
     ...(config.runtimes !== undefined ? { runtimes: [...(config.runtimes as SandboxRuntimeName[])] } : {}),
     ...(config.timeout !== undefined ? { timeout: config.timeout as number } : {}),
     ...(config.memoryLimit !== undefined ? { memoryLimit: config.memoryLimit as number } : {}),
@@ -206,13 +235,44 @@ function optionalString(value: unknown, name: string): string | undefined {
   return trimmed.length > 0 ? trimmed : undefined;
 }
 
-function validateProviderOptions(provider: SandboxProvider, options: unknown): void {
+// Persistent home PVC knobs (kubernetes-only). They live under `options` so the
+// free-form provider knobs stay one bag, but are validated here.
+const PVC_OPTION_KEYS = ["persistentDiskGb", "persistentHome", "storageClass"] as const;
+
+function normalizeLifecycle(value: unknown): SandboxLifecycleConfig {
+  if (!isPlainObject(value)) {
+    throw new Error("config.lifecycle must be an object");
+  }
+  assertOptionalPositiveInteger(value.idleTimeoutSeconds, "config.lifecycle.idleTimeoutSeconds", MAX_IDLE_TIMEOUT_SECONDS);
+  assertOptionalPositiveInteger(value.maxLifetimeSeconds, "config.lifecycle.maxLifetimeSeconds", MAX_LIFETIME_SECONDS);
+  return {
+    ...(value.idleTimeoutSeconds !== undefined ? { idleTimeoutSeconds: value.idleTimeoutSeconds as number } : {}),
+    ...(value.maxLifetimeSeconds !== undefined ? { maxLifetimeSeconds: value.maxLifetimeSeconds as number } : {}),
+  };
+}
+
+function validateProviderOptions(provider: SandboxProvider, options: unknown, persistent: boolean): void {
   if (!isPlainObject(options)) {
     return;
   }
   if (provider === "lambda" && "functionNames" in options) {
     throw new Error("config.options.functionNames is not supported in account sandbox config");
   }
+
+  const pvcKeys = PVC_OPTION_KEYS.filter((key) => key in options);
+  if (pvcKeys.length > 0 && (provider !== "kubernetes" || !persistent)) {
+    throw new Error(`config.options.${pvcKeys[0]} requires a persistent kubernetes sandbox`);
+  }
+  if ("persistentDiskGb" in options) {
+    assertOptionalPositiveInteger(options.persistentDiskGb, "config.options.persistentDiskGb", MAX_PERSISTENT_DISK_GB);
+  }
+  if ("persistentHome" in options && typeof options.persistentHome !== "string") {
+    throw new Error("config.options.persistentHome must be a string");
+  }
+  if ("storageClass" in options && typeof options.storageClass !== "string") {
+    throw new Error("config.options.storageClass must be a string");
+  }
+
   if (provider !== "kubernetes") {
     return;
   }

@@ -44,6 +44,15 @@ const lambdaSendMock = mock(async (_command: unknown) => ({
 }));
 const k8sCreateNamespacedCustomObjectMock = mock(async (_input: unknown) => ({}));
 const k8sDeleteNamespacedCustomObjectMock = mock(async (_input: unknown) => ({}));
+// Persistent path: default to "not found" so the executor creates the Sandbox.
+let k8sGetSandboxResult: unknown = undefined;
+const k8sGetNamespacedCustomObjectMock = mock(async (_input: unknown) => {
+  if (k8sGetSandboxResult === undefined) {
+    throw { code: 404, body: { reason: "NotFound" } };
+  }
+  return k8sGetSandboxResult;
+});
+const k8sPatchNamespacedCustomObjectMock = mock(async (_input: unknown) => ({}));
 const k8sReadNamespacedPodMock = mock(async (input: { name: string; namespace: string }) => ({
   metadata: { name: input.name, namespace: input.namespace },
   status: { conditions: [{ type: "Ready", status: "True" }] },
@@ -91,6 +100,12 @@ mock.module("@aws-sdk/client-lambda", () => ({
       this.input = input;
     }
   },
+  GetFunctionUrlConfigCommand: class {
+    input: unknown;
+    constructor(input: unknown) {
+      this.input = input;
+    }
+  },
 }));
 
 mock.module("@kubernetes/client-node", () => ({
@@ -107,6 +122,8 @@ mock.module("@kubernetes/client-node", () => ({
   CustomObjectsApi: class {
     createNamespacedCustomObject = k8sCreateNamespacedCustomObjectMock;
     deleteNamespacedCustomObject = k8sDeleteNamespacedCustomObjectMock;
+    getNamespacedCustomObject = k8sGetNamespacedCustomObjectMock;
+    patchNamespacedCustomObject = k8sPatchNamespacedCustomObjectMock;
   },
   Exec: class {
     constructor(_kc: unknown) {}
@@ -121,6 +138,7 @@ beforeEach(() => {
   process.env.AWS_REGION = "eu-central-1";
   process.env.FILESYSTEM_BUCKET_NAME = "workspace-bucket";
   process.env.SKILLS_BUCKET_NAME = "skills-bucket";
+  process.env.PERSISTENT_SANDBOX_INSTANCE_TABLE_NAME = "persistent-sandbox-instance";
   process.env.SANDBOX_FN_MOUNT_NET = "sandbox-mount-net";
   process.env.SANDBOX_FN_MOUNT_NONET = "sandbox-mount-nonet";
   process.env.SANDBOX_FN_NOMOUNT_NET = "sandbox-nomount-net";
@@ -135,6 +153,9 @@ beforeEach(() => {
   lambdaSendMock.mockClear();
   k8sCreateNamespacedCustomObjectMock.mockClear();
   k8sDeleteNamespacedCustomObjectMock.mockClear();
+  k8sGetNamespacedCustomObjectMock.mockClear();
+  k8sPatchNamespacedCustomObjectMock.mockClear();
+  k8sGetSandboxResult = undefined;
   k8sReadNamespacedPodMock.mockClear();
   k8sExecMock.mockClear();
   lambdaPayload = {
@@ -277,7 +298,7 @@ describe("createSandboxExecutor", () => {
       },
     }));
     expect(daytonaExecuteCommandMock).toHaveBeenCalledWith(
-      `sudo -E mount-s3 --uid "$(id -u)" --gid "$(id -g)" '--allow-delete' '--allow-overwrite' '--allow-other' '--prefix' 'sandbox/${NS}/' '--region' 'eu-central-1' 'workspace-bucket' '/mnt/workspaces/${NS}'`,
+      `mountpoint -q '/mnt/workspaces/${NS}' || sudo -E mount-s3 --uid "$(id -u)" --gid "$(id -g)" '--allow-delete' '--allow-overwrite' '--allow-other' '--prefix' 'sandbox/${NS}/' '--region' 'eu-central-1' 'workspace-bucket' '/mnt/workspaces/${NS}'`,
     );
     expect(daytonaExecuteCommandMock).toHaveBeenCalledWith(
       "echo hi && ls",
@@ -318,6 +339,130 @@ describe("createSandboxExecutor", () => {
       "-lc",
       expect.stringContaining("mount-s3 --uid 1000 --gid 1000"),
     ]);
+  });
+
+  it("reserves a persistent Kubernetes sandbox with a home PVC and never deletes it", async () => {
+    const { KubernetesSandboxExecutor } = await import("../functions/harness-processing/sandbox/kubernetes-executor.ts");
+    const executor = new KubernetesSandboxExecutor({
+      provider: "kubernetes",
+      persistent: true,
+      lifecycle: { idleTimeoutSeconds: 1800 },
+      options: { mountAwsS3Buckets: true, workspaceRoot: "/mnt/workspaces", persistentDiskGb: 20 },
+    });
+
+    const result = await executor.run({
+      code: "echo hi",
+      namespace: NS,
+      workspaceRoot: "/mnt/workspaces",
+      timeoutSeconds: 30,
+      outputLimitBytes: 4096,
+    });
+
+    expect(result).toMatchObject({ ok: true, provider: "kubernetes" });
+    expect(k8sCreateNamespacedCustomObjectMock).toHaveBeenCalledTimes(1);
+    expect(k8sDeleteNamespacedCustomObjectMock).not.toHaveBeenCalled();
+    const body = (k8sCreateNamespacedCustomObjectMock.mock.calls[0]![0] as { body: Record<string, any> }).body;
+    expect(body.metadata.name).toMatch(/^fp-p-/);
+    expect(body.metadata.labels).toEqual({ "beeblast.co/persistent": "true" });
+    expect(body.metadata.annotations["beeblast.co/idle-timeout-seconds"]).toBe("1800");
+    expect(body.spec.replicas).toBe(1);
+    expect(body.spec.shutdownPolicy).toBe("Delete");
+    expect(typeof body.spec.shutdownTime).toBe("string");
+    expect(body.spec.volumeClaimTemplates[0].metadata.name).toBe("home");
+    expect(body.spec.volumeClaimTemplates[0].spec.resources.requests.storage).toBe("20Gi");
+    const container = body.spec.podTemplate.spec.containers[0];
+    expect(container.volumeMounts).toEqual([{ name: "home", mountPath: "/home/node" }]);
+    expect(container.env).toEqual(expect.arrayContaining([{ name: "HOME", value: "/home/node" }]));
+    expect(k8sPatchNamespacedCustomObjectMock).toHaveBeenCalled();
+  });
+
+  it("resumes an idled persistent sandbox by scaling replicas 0 -> 1", async () => {
+    const { KubernetesSandboxExecutor } = await import("../functions/harness-processing/sandbox/kubernetes-executor.ts");
+    k8sGetSandboxResult = { spec: { replicas: 0 } };
+    const executor = new KubernetesSandboxExecutor({
+      provider: "kubernetes",
+      persistent: true,
+      options: { mountAwsS3Buckets: true, workspaceRoot: "/mnt/workspaces" },
+    });
+
+    await executor.run({
+      code: "echo hi",
+      namespace: NS,
+      workspaceRoot: "/mnt/workspaces",
+      timeoutSeconds: 30,
+      outputLimitBytes: 4096,
+    });
+
+    expect(k8sCreateNamespacedCustomObjectMock).not.toHaveBeenCalled();
+    const scalePatch = k8sPatchNamespacedCustomObjectMock.mock.calls.find(
+      (call) => Array.isArray((call[0] as { body?: unknown }).body) &&
+        ((call[0] as { body: Array<{ path?: string }> }).body)[0]?.path === "/spec/replicas",
+    );
+    expect(scalePatch).toBeTruthy();
+    const scaleBody = (scalePatch![0] as { body: Array<{ value: number }> }).body;
+    expect(scaleBody[0]?.value).toBe(1);
+  });
+});
+
+describe("background job scripts", () => {
+  it("builds a detached launch script with markers, a job cap, and parses status output", async () => {
+    const { launchScript, statusScript, parseJobStatus } = await import("../functions/harness-processing/sandbox/jobs.ts");
+    const launch = launchScript("/home/node/.jobs", "job_x", "/mnt/workspaces/ns", "echo hi", { maxConcurrentJobs: 10 });
+    // The running marker records the boot id so a recreated sandbox is detectable.
+    expect(launch).toContain("/proc/sys/kernel/random/boot_id");
+    expect(launch).toContain("'/home/node/.jobs/job_x.running'");
+    expect(launch).toContain("background job limit reached (10 concurrent)");
+    expect(launch).toContain("setsid bash -c");
+    // No callback => no completion POST baked into the wrapper.
+    expect(launch).not.toContain("x-job-token");
+    expect(statusScript("/home/node/.jobs", "job_x")).toContain("job_x.exit");
+    expect(parseJobStatus("job_x", "done 0")).toEqual({ jobId: "job_x", state: "completed", exitCode: 0 });
+    expect(parseJobStatus("job_x", "done 137")).toEqual({ jobId: "job_x", state: "failed", exitCode: 137 });
+    expect(parseJobStatus("job_x", "running")).toEqual({ jobId: "job_x", state: "running" });
+    expect(parseJobStatus("job_x", "unknown")).toEqual({ jobId: "job_x", state: "unknown" });
+  });
+
+  it("bakes a token-gated completion callback into the launch wrapper", async () => {
+    const { launchScript } = await import("../functions/harness-processing/sandbox/jobs.ts");
+    const launch = launchScript("/home/node/.jobs", "job_y", "/mnt/workspaces/ns", "echo hi", {
+      maxConcurrentJobs: 10,
+      callback: { url: "https://fn.example/sandbox-jobs/async_tool_1/complete", token: "tok-123" },
+    });
+    // The wrapper (and its callback) is base64-encoded so user code passes the
+    // shell untouched — decode it to assert the callback is wired in.
+    const encoded = launch.match(/printf %s '([A-Za-z0-9+/=]+)'/)?.[1];
+    expect(encoded).toBeTruthy();
+    const wrapper = Buffer.from(encoded!, "base64").toString("utf8");
+    expect(wrapper).toContain("x-job-token");
+    expect(wrapper).toContain("tok-123");
+    expect(wrapper).toContain("https://fn.example/sandbox-jobs/async_tool_1/complete");
+  });
+
+  it("reports a job killed by sandbox recreation as failed, not running forever", async () => {
+    const { statusScript } = await import("../functions/harness-processing/sandbox/jobs.ts");
+    const status = statusScript("/home/node/.jobs", "job_x");
+    // Boot-id mismatch or a dead pid (no exit recorded) both resolve to a failure code.
+    expect(status).toContain("boot_id");
+    expect(status).toContain('done 137');
+    expect(status).toContain('kill -0');
+  });
+});
+
+describe("isSandboxGoneError", () => {
+  it("treats not-found / gone errors as terminal (drop the instance row)", async () => {
+    const { isSandboxGoneError } = await import("../functions/harness-processing/sandbox/utils.ts");
+    expect(isSandboxGoneError({ statusCode: 404 })).toBe(true);
+    expect(isSandboxGoneError({ status: 410 })).toBe(true);
+    expect(isSandboxGoneError(new Error("Sandbox not found"))).toBe(true);
+    expect(isSandboxGoneError(new Error("sandbox already deleted"))).toBe(true);
+  });
+
+  it("treats auth / transient errors as non-terminal (keep the row, try next config)", async () => {
+    const { isSandboxGoneError } = await import("../functions/harness-processing/sandbox/utils.ts");
+    expect(isSandboxGoneError({ statusCode: 401 })).toBe(false);
+    expect(isSandboxGoneError({ statusCode: 403 })).toBe(false);
+    expect(isSandboxGoneError(new Error("connection reset"))).toBe(false);
+    expect(isSandboxGoneError(undefined)).toBe(false);
   });
 });
 
