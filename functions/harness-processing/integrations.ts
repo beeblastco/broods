@@ -93,6 +93,17 @@ export interface AsyncToolCompletionInboundEvent {
   error?: string;
 }
 
+// Background-job completion posted by the detached job itself. Authenticated by
+// the per-job token (matched against the stored row), so no account secret rides
+// inside the sandbox.
+export interface SandboxJobCompletionInboundEvent {
+  resultId: string;
+  token: string;
+  status: "completed" | "failed";
+  response?: unknown;
+  error?: string;
+}
+
 export interface ChannelInboundEvent {
   accountId?: string;
   agentId?: string;
@@ -112,6 +123,7 @@ interface IntegrationHandlers {
   handleAsyncRequest?(event: AsyncDirectInboundEvent): Promise<LambdaResponse>;
   handleStatusRequest?(event: StatusInboundEvent): Promise<LambdaResponse>;
   handleAsyncToolCompletionRequest?(event: AsyncToolCompletionInboundEvent): Promise<LambdaResponse>;
+  handleSandboxJobCompletionRequest?(event: SandboxJobCompletionInboundEvent): Promise<LambdaResponse>;
   handleChannelRequest(event: ChannelInboundEvent): Promise<void>;
 }
 
@@ -222,6 +234,24 @@ async function handleLambdaUrlEvent(
         asyncToolCompletionMatch[1],
         request.body,
         account,
+      ));
+    } catch (err) {
+      return badRequestResponse(err);
+    }
+  }
+
+  // Background-job completion: authenticated by the per-job token, not an account
+  // secret, so the sandbox never needs to hold account credentials.
+  const sandboxJobCompletionMatch = event.rawPath.match(/^\/sandbox-jobs\/([^/]+)\/complete$/);
+  if (sandboxJobCompletionMatch?.[1]) {
+    if (!handlers.handleSandboxJobCompletionRequest) {
+      return notFoundResponse();
+    }
+    try {
+      return handlers.handleSandboxJobCompletionRequest(parseSandboxJobCompletionPayload(
+        sandboxJobCompletionMatch[1],
+        request.headers,
+        request.body,
       ));
     } catch (err) {
       return badRequestResponse(err);
@@ -657,6 +687,41 @@ function parseAsyncToolCompletionPayload(
   return {
     accountId: account.accountId,
     resultId: decodeURIComponent(rawResultId),
+    status: record.status,
+    ...(record.response !== undefined ? { response: record.response } : {}),
+    ...(typeof record.error === "string" ? { error: record.error } : {}),
+  };
+}
+
+function parseSandboxJobCompletionPayload(
+  rawResultId: string,
+  headers: Record<string, string>,
+  bodyText: string,
+): SandboxJobCompletionInboundEvent {
+  const token = headers["x-job-token"]?.trim();
+  if (!token) {
+    throw new Error("Background job completion requires the x-job-token header");
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(bodyText);
+  } catch (err) {
+    throw new Error(`Invalid request JSON: ${err instanceof Error ? err.message : String(err)}`);
+  }
+
+  if (!parsed || typeof parsed !== "object") {
+    throw new Error("Background job completion body must be an object");
+  }
+
+  const record = parsed as Record<string, unknown>;
+  if (record.status !== "completed" && record.status !== "failed") {
+    throw new Error("Background job completion status must be completed or failed");
+  }
+
+  return {
+    resultId: decodeURIComponent(rawResultId),
+    token,
     status: record.status,
     ...(record.response !== undefined ? { response: record.response } : {}),
     ...(typeof record.error === "string" ? { error: record.error } : {}),

@@ -199,6 +199,7 @@ export default $config({
       processedEvents: resourceName("processed-events", stage, region),
       asyncAgentResult: resourceName("async-agent-result", stage, region),
       asyncToolResult: resourceName("async-tool-result", stage, region),
+      persistentSandboxInstance: resourceName("persistent-sandbox-instance", stage, region),
       externalAsyncToolMock: resourceName("async-tool-mock", stage, region),
       webhookSubscribeMock: resourceName("webhook-sub-mock", stage, region),
       // Uniform sandbox image deployed across two axes (workspace mount, internet).
@@ -392,6 +393,21 @@ export default $config({
       transform: {
         table: {
           name: names.asyncToolResult,
+        },
+      },
+    });
+    // Maps a workspace namespace -> the long-lived (reserved) provider sandbox
+    // reserved for it, so a later request reconnects instead of recreating.
+    const persistentSandboxInstanceTable = new sst.aws.Dynamo("PersistentSandboxInstance", {
+      fields: {
+        instanceKey: "string",
+      },
+      primaryIndex: { hashKey: "instanceKey" },
+      ttl: "expiresAt",
+      deletionProtection: stage === "production",
+      transform: {
+        table: {
+          name: names.persistentSandboxInstance,
         },
       },
     });
@@ -810,6 +826,7 @@ export default $config({
         PROCESSED_EVENTS_TABLE_NAME: processedEventsTable.name,
         ASYNC_AGENT_RESULT_TABLE_NAME: asyncAgentResultTable.name,
         ASYNC_TOOL_RESULT_TABLE_NAME: asyncToolResultTable.name,
+        PERSISTENT_SANDBOX_INSTANCE_TABLE_NAME: persistentSandboxInstanceTable.name,
         ...(accountConfigsTable
           ? { ACCOUNT_CONFIGS_TABLE_NAME: accountConfigsTable.name }
           : {}),
@@ -925,6 +942,15 @@ export default $config({
           ],
           resources: [asyncToolResultTable.arn],
         },
+        {
+          actions: [
+            "dynamodb:GetItem",
+            "dynamodb:PutItem",
+            "dynamodb:UpdateItem",
+            "dynamodb:DeleteItem",
+          ],
+          resources: [persistentSandboxInstanceTable.arn],
+        },
         ...(cronJobsTable
           ? [{
               actions: [
@@ -935,7 +961,9 @@ export default $config({
             }]
           : []),
         {
-          actions: ["lambda:InvokeFunction"],
+          // Self-invoke (async worker) + read its own Function URL so background
+          // jobs know where to POST their completion callback.
+          actions: ["lambda:InvokeFunction", "lambda:GetFunctionUrlConfig"],
           resources: [`arn:aws:lambda:${region}:${AWS_ACCOUNT_ID}:function:${names.harnessProcessing}`],
         },
         {
@@ -1038,6 +1066,7 @@ export default $config({
         PROCESSED_EVENTS_TABLE_NAME: processedEventsTable.name,
         ASYNC_AGENT_RESULT_TABLE_NAME: asyncAgentResultTable.name,
         ASYNC_TOOL_RESULT_TABLE_NAME: asyncToolResultTable.name,
+        PERSISTENT_SANDBOX_INSTANCE_TABLE_NAME: persistentSandboxInstanceTable.name,
         FILESYSTEM_BUCKET_NAME: names.memory,
         SKILLS_BUCKET_NAME: names.skills,
         ACCOUNT_SIGNUP_RATE_LIMIT_TABLE_NAME: accountSignupRateLimitTable.name,
@@ -1113,6 +1142,11 @@ export default $config({
               resources: [cronJobsTable.arn],
             }]
           : []),
+        {
+          // Read + drop reserved-sandbox instance rows when releasing on delete.
+          actions: ["dynamodb:GetItem", "dynamodb:DeleteItem"],
+          resources: [persistentSandboxInstanceTable.arn],
+        },
         {
           actions: [
             "scheduler:CreateSchedule",

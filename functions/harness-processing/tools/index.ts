@@ -14,6 +14,7 @@ import {
   type AgentToolConfig,
   type SandboxPermissionMode,
 } from "../../_shared/storage/index.ts";
+import { logWarn } from "../../_shared/log.ts";
 import type { Session } from "../session.ts";
 import type { ResolvedWorkspace } from "../../_shared/workspaces.ts";
 import type { SandboxExecutorConfig } from "../sandbox/types.ts";
@@ -31,6 +32,7 @@ import runSubagentTool, {
   type RunSubagentDispatch,
 } from "./run-subagent.tool.ts";
 import { tavilyExtractTool, tavilySearchTool } from "./tavily.tool.ts";
+import asyncStatusTool from "./async-status.tool.ts";
 import testAsyncTool from "./test.async.tool.ts";
 import testExternalAsyncTool from "./test.external-async.tool.ts";
 
@@ -80,7 +82,25 @@ export function createTools(context: Omit<ToolContext, "config">, agentConfig: A
   const workspaces = context.workspaces ?? [];
   const sandboxWorkspaces = workspaces.filter((workspace) => workspace.sandbox);
   const statelessSandbox = workspaces.length === 0 ? context.statelessSandbox : undefined;
+  if (statelessSandbox?.persistent === true) {
+    // Persistence is keyed by workspace namespace; a stateless (no-workspace)
+    // sandbox cannot reconnect, run background jobs, or keep packages — warn so a
+    // misconfiguration is visible rather than silently behaving ephemerally.
+    logWarn("persistent sandbox attached without a workspace; it runs ephemerally", {
+      conversationKey: context.conversationKey,
+    });
+  }
   const sandboxTools: ToolSet = {};
+  
+  // Reserved (persistent) workspaces can run detached background jobs; bash then
+  // exposes a `background` flag and records each job under the parent session.
+  const hasPersistentWorkspace = workspaces.some((workspace) => workspace.sandbox?.persistent === true);
+  // eventId identifies the turn that spawned the job (stored as parentEventId on the
+  // async-tool-result record); conversationKey identifies which conversation to resume
+  // when the job completes in a future Lambda invocation.
+  const backgroundContext = hasPersistentWorkspace && context.session
+    ? { eventId: context.session.eventId, conversationKey: context.conversationKey }
+    : undefined; // background job will be injected into the context when finish (same behaviour as AsyncToolResult)
 
   // bash: stateless (no workspace) on the agent sandbox, or in any sandbox-backed workspace.
   // Pass the full workspace list so omitting `workspace` preserves the configured
@@ -93,6 +113,7 @@ export function createTools(context: Omit<ToolContext, "config">, agentConfig: A
         ...(statelessSandbox
           ? { statelessSandbox, statelessPermissionMode: context.statelessPermissionMode ?? "ask" }
           : {}),
+        ...(backgroundContext ? { background: backgroundContext } : {}),
       }
     ));
   }
@@ -160,8 +181,18 @@ export function createTools(context: Omit<ToolContext, "config">, agentConfig: A
     }));
   }
 
+  // Auto-add the background-job status tool when the agent has any async tool or
+  // a reserved sandbox that can launch background jobs.
+  const asyncModes = asyncConfiguredToolModes(agentConfig.tools);
+  if (asyncModes.size > 0 || hasPersistentWorkspace) {
+    Object.assign(tools, asyncStatusTool({
+      conversationKey: context.conversationKey,
+      workspaces,
+    }));
+  }
+
   return context.dispatchAsyncTools
-    ? context.dispatchAsyncTools(tools, asyncConfiguredToolModes(agentConfig.tools))
+    ? context.dispatchAsyncTools(tools, asyncModes)
     : tools;
 }
 

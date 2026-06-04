@@ -66,6 +66,9 @@ export async function createPendingAsyncToolResult(options: {
   toolCallId: string;
   input: unknown;
   delivery?: AsyncToolDelivery;
+  // Per-job secret that authorizes settling this one row from outside the request
+  // (sandbox background-job callback). Stored, never returned to the model.
+  completionToken?: string;
 }): Promise<boolean> {
   const now = new Date().toISOString();
 
@@ -80,6 +83,7 @@ export async function createPendingAsyncToolResult(options: {
         toolCallId: { S: options.toolCallId },
         input: toAttributeValue(options.input),
         ...(options.delivery ? { delivery: toAttributeValue(options.delivery) } : {}),
+        ...(options.completionToken ? { completionToken: { S: options.completionToken } } : {}),
         status: { S: "processing" },
         createdAt: { S: now },
         updatedAt: { S: now },
@@ -97,6 +101,20 @@ export async function createPendingAsyncToolResult(options: {
     }
     throw err;
   }
+}
+
+/**
+ * The per-job completion token for a background-job row, or null. Read in
+ * isolation so the secret never rides along on the general result record.
+ */
+export async function getAsyncToolCompletionToken(resultId: string): Promise<string | null> {
+  const result = await dynamo.send(new GetItemCommand({
+    TableName: ASYNC_TOOL_RESULT_TABLE_NAME,
+    Key: { resultId: { S: resultId } },
+    ProjectionExpression: "completionToken",
+    ConsistentRead: true,
+  }));
+  return result.Item?.completionToken?.S ?? null;
 }
 
 export async function getExternalAsyncToolDispatchGroup(parentEventId: string): Promise<ExternalAsyncToolDispatchGroup | null> {

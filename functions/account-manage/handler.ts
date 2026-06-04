@@ -29,7 +29,8 @@ import {
     parseJsonBody,
 } from "../_shared/http.ts";
 import type { LambdaResponse } from "../_shared/runtime.ts";
-import { deleteAccountRuntimeData } from "./cleanup.ts";
+import { deleteAccountRuntimeData, releaseReservedSandboxes, releaseSandboxConfigInstances } from "./cleanup.ts";
+import { workspaceNamespace } from "../_shared/workspaces.ts";
 import {
     createOrReplaceSkill,
     deleteAccountSkills,
@@ -409,7 +410,13 @@ async function handleSandboxRoute(
         return record ? jsonResponse(200, toPublicSandboxConfig(record)) : errorResponse(404, "Sandbox not found");
     }
     if (method === "DELETE") {
+        // Capture the config before deleting: releasing reserved daytona/e2b
+        // sandboxes needs its credentials, which vanish with the record.
+        const record = await sandboxConfigs.getById(accountId, sandboxId);
         const deleted = await sandboxConfigs.remove(accountId, sandboxId);
+        if (deleted && record) {
+            await releaseSandboxConfigInstances(accountId, record.config).catch(() => {});
+        }
         return deleted ? jsonResponse(200, { deleted: true }) : errorResponse(404, "Sandbox not found");
     }
 
@@ -447,6 +454,10 @@ async function handleWorkspaceRoute(
     }
     if (method === "DELETE") {
         const deleted = await workspaceConfigs.remove(accountId, workspaceId);
+        if (deleted) {
+            // Tear down any reserved sandbox bound to this workspace's namespace.
+            await releaseReservedSandboxes(accountId, [workspaceNamespace(accountId, workspaceId)]).catch(() => {});
+        }
         return deleted ? jsonResponse(200, { deleted: true }) : errorResponse(404, "Workspace not found");
     }
 
