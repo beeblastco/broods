@@ -6,7 +6,7 @@ import { agentStatusConfig } from "@/app/components/node/BaseNode";
 import { ConfigTab, buildBranchPatch } from "@/app/components/side-panel/ConfigTab";
 import { WorkspaceConfigTab } from "@/app/components/side-panel/WorkspaceConfigTab";
 import { WorkspaceDetailsTab } from "@/app/components/side-panel/WorkspaceDetailsTab";
-import { WorkspaceVariablesTab } from "@/app/components/side-panel/WorkspaceVariablesTab";
+import { SkillConfigTab } from "@/app/components/side-panel/SkillConfigTab";
 import { SkillDetailsTab } from "@/app/components/side-panel/SkillDetailsTab";
 import { DetailsTab, type AgentProvider } from "@/app/components/side-panel/DetailsTab";
 import { SettingsTab } from "@/app/components/side-panel/SettingsTab";
@@ -19,7 +19,9 @@ import { Input } from "@/app/components/ui/input";
 import { Separator } from "@/app/components/ui/separator";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/app/components/ui/tabs";
 import { useAgentHealth, type AgentHealthStatus } from "@/app/hooks/useAgentHealth";
+import { useConnectedAgentConfig } from "@/app/hooks/useConnectedAgentConfig";
 import { useEnvironment } from "@/app/hooks/useEnvironment";
+import { readAgentBranch, type FlatAgentConfig } from "@/app/lib/agentConfigCodec";
 import { applyAgentConfigUpdate } from "@/app/lib/agentConfigOptimistic";
 import { isRuntimeVariable, type RuntimeVariable } from "@/app/lib/runtimeVariables";
 import {
@@ -148,6 +150,7 @@ export const NodeSidePanel = memo(function NodeSidePanel({
     const isAgent = nodeType === "agent";
     const isTool = nodeType === "tool";
     const isWorkspace = nodeType === "workspace";
+    const isSkill = nodeType === "skill";
     const { environmentId } = useEnvironment();
     const params = useParams<{ projectId: string }>();
     const projectId = params.projectId as Id<"projects"> | undefined;
@@ -157,6 +160,12 @@ export const NodeSidePanel = memo(function NodeSidePanel({
 
     // Agent health status (agent nodes only)
     const healthStatus = useAgentHealth(isAgent ? agentConfigId : undefined);
+
+    // Connected agent config for workspace/skill nodes, so the header status badge
+    // mirrors the same Enabled/Disabled state shown on the node card.
+    const { agentConfig: connectedAgentConfig } = useConnectedAgentConfig(
+        isWorkspace || isSkill ? nodeId : undefined,
+    );
 
     const isConnectedToAgent = useStore(
         useCallback(
@@ -336,6 +345,35 @@ export const NodeSidePanel = memo(function NodeSidePanel({
             };
         }
 
+        if (isWorkspace) {
+            const workspace = readAgentBranch<{ enabled?: boolean }>(
+                connectedAgentConfig as FlatAgentConfig | undefined,
+                "workspace",
+            );
+            const enabled = workspace.enabled !== false;
+
+            return {
+                text: enabled ? "Enabled" : "Disabled",
+                color: enabled ? "bg-emerald-500" : "bg-red-400",
+                variant: enabled ? "success" : "secondary",
+            };
+        }
+
+        if (isSkill) {
+            const skills = readAgentBranch<{ enabled?: boolean; allowed?: string[] }>(
+                connectedAgentConfig as FlatAgentConfig | undefined,
+                "skills",
+            );
+            const path = (nodeData?.label ?? "").trim();
+            const enabled = skills.enabled === true && (skills.allowed ?? []).includes(path);
+
+            return {
+                text: enabled ? "Enabled" : "Disabled",
+                color: enabled ? "bg-emerald-500" : "bg-red-400",
+                variant: enabled ? "success" : "secondary",
+            };
+        }
+
         const nodeStatus = nodeData?.status ?? "idle";
 
         return {
@@ -343,7 +381,7 @@ export const NodeSidePanel = memo(function NodeSidePanel({
             color: nodeStatusBadgeColor[nodeStatus],
             variant: nodeStatusBadgeVariant[nodeStatus],
         };
-    }, [isAgent, healthStatus, isTool, canQueryToolStatus, toolService, nodeType, isConnectedToAgent, nodeData?.status]);
+    }, [isAgent, healthStatus, isTool, canQueryToolStatus, toolService, nodeType, isConnectedToAgent, isWorkspace, isSkill, connectedAgentConfig, nodeData?.status, nodeData?.label]);
 
     async function handleSaveName() {
         if (!editName.trim() || !nameChanged) return;
@@ -552,8 +590,8 @@ export const NodeSidePanel = memo(function NodeSidePanel({
                 >
                     <TabsList variant="line" className="w-full shrink-0 px-4 pt-2">
                         <TabsTrigger value="details">Details</TabsTrigger>
-                        {(isAgent || isWorkspace) && <TabsTrigger value="variables">Variables</TabsTrigger>}
-                        {(isAgent || isTool || isWorkspace) && <TabsTrigger value="config">Config</TabsTrigger>}
+                        {isAgent && <TabsTrigger value="variables">Variables</TabsTrigger>}
+                        {(isAgent || isTool || isWorkspace || isSkill) && <TabsTrigger value="config">Config</TabsTrigger>}
                         {(isAgent || nodeType === "tool") && (
                             <TabsTrigger
                                 value="test"
@@ -617,8 +655,6 @@ export const NodeSidePanel = memo(function NodeSidePanel({
                                 editName={editName}
                                 setEditName={setEditName}
                                 onSaveName={handleSaveName}
-                                nameChanged={!!nameChanged}
-                                isSavingName={isSaving}
                             />
                         ) : (
                             <ServiceDetailsTab
@@ -641,11 +677,6 @@ export const NodeSidePanel = memo(function NodeSidePanel({
                                 onSave={handleSaveVariables}
                                 provider={selectedProvider}
                             />
-                        </TabsContent>
-                    )}
-                    {isWorkspace && node && (
-                        <TabsContent value="variables" className="flex flex-col overflow-hidden">
-                            <WorkspaceVariablesTab nodeId={node.id} />
                         </TabsContent>
                     )}
 
@@ -671,6 +702,11 @@ export const NodeSidePanel = memo(function NodeSidePanel({
                     {isWorkspace && node && (
                         <TabsContent value="config" className="flex flex-col overflow-hidden">
                             <WorkspaceConfigTab nodeId={node.id} />
+                        </TabsContent>
+                    )}
+                    {isSkill && node && (
+                        <TabsContent value="config" className="flex flex-col overflow-hidden">
+                            <SkillConfigTab nodeId={node.id} />
                         </TabsContent>
                     )}
 

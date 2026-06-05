@@ -18,6 +18,8 @@ const NESTED_BRANCHES = [
     "agent",
     "model",
     "provider",
+    "sandbox",
+    "workspaces",
     "workspace",
     "session",
     "hooks",
@@ -29,6 +31,14 @@ const NESTED_BRANCHES = [
 
 /** Cherry-coke columns that round-trip through `model` / `agent` branches. */
 const MODEL_OPTION_KEYS = ["temperature", "maxTokens"] as const;
+
+/**
+ * Workspace sub-keys removed from filthy-panty's `AgentWorkspaceConfig`. They are
+ * stripped on projection so the Config tab and synced runtime config drop the
+ * legacy shape, and a subsequent save persists the cleaned branch.
+ */
+const LEGACY_WORKSPACE_KEYS = ["memory", "tasks", "filesystem"] as const;
+const LEGACY_SANDBOX_KEYS = ["filesystem"] as const;
 
 /** Cherry-coke flat `agentConfigs` document shape (only fields we touch). */
 export interface FlatAgentConfig {
@@ -107,14 +117,19 @@ export function toNestedAgentConfig(flat: FlatAgentConfig): NestedAgentConfig {
     }
 
     const workspace: Record<string, unknown> = { ...((extra.workspace as Record<string, unknown> | undefined) ?? {}) };
-    if (flat.memoryToolEnabled !== undefined && workspace.memory === undefined) {
-        workspace.memory = { enabled: flat.memoryToolEnabled };
+    for (const legacyKey of LEGACY_WORKSPACE_KEYS) delete workspace[legacyKey];
+    if (isPlainObject(workspace.sandbox)) {
+        const sandbox = { ...workspace.sandbox };
+        for (const legacyKey of LEGACY_SANDBOX_KEYS) delete sandbox[legacyKey];
+        workspace.sandbox = sandbox;
     }
 
     const nested: Record<string, unknown> = {
         ...(pruneEmpty(agent) ? { agent: pruneEmpty(agent) } : {}),
         ...(pruneEmpty(model) ? { model: pruneEmpty(model) } : {}),
         ...(provider ? { provider } : {}),
+        ...(extra.sandbox ? { sandbox: extra.sandbox } : {}),
+        ...(extra.workspaces ? { workspaces: extra.workspaces } : {}),
         ...(pruneEmpty(workspace) ? { workspace: pruneEmpty(workspace) } : {}),
         ...(extra.session ? { session: extra.session } : {}),
         ...(extra.hooks ? { hooks: extra.hooks } : {}),
@@ -215,13 +230,6 @@ export function fromNestedAgentConfig(nested: NestedAgentConfig): FlatPatch {
         }
     }
 
-    if (workspace?.memory && isPlainObject(workspace.memory)) {
-        const memory = { ...workspace.memory } as Record<string, unknown>;
-        if (typeof memory.enabled === "boolean") {
-            patch.memoryToolEnabled = memory.enabled;
-        }
-    }
-
     if (tools?.googleSearch && isPlainObject(tools.googleSearch)) {
         const search = { ...tools.googleSearch } as Record<string, unknown>;
         if (typeof search.enabled === "boolean") {
@@ -236,10 +244,21 @@ export function fromNestedAgentConfig(nested: NestedAgentConfig): FlatPatch {
     const extra: Record<string, unknown> = {};
     if (agent && Object.keys(agent).length > 0) extra.agent = agent;
     if (model && Object.keys(model).length > 0) extra.model = model;
+    if (nested.sandbox !== undefined) extra.sandbox = nested.sandbox;
+    if (nested.workspaces !== undefined) extra.workspaces = nested.workspaces;
     if (workspace && Object.keys(workspace).length > 0) extra.workspace = workspace;
     if (tools && Object.keys(tools).length > 0) extra.tools = tools;
     for (const branch of NESTED_BRANCHES) {
-        if (branch in ({ agent: 1, model: 1, workspace: 1, tools: 1 } as Record<string, number>)) continue;
+        if (
+            branch in ({
+                agent: 1,
+                model: 1,
+                sandbox: 1,
+                workspaces: 1,
+                workspace: 1,
+                tools: 1,
+            } as Record<string, number>)
+        ) continue;
         if (nested[branch] !== undefined) extra[branch] = nested[branch];
     }
     patch.extraConfig = extra;

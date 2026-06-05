@@ -1,124 +1,130 @@
 "use client";
 
 /**
- * Skill card Details tab — each card is one entry in the connected agent's
- * `skills.allowed[]`. The status toggle adds/removes the card's label from
- * that array; the `skills.enabled` master switch lives on the agent card.
+ * Skill card Details tab — the card label is one entry in the connected agent's
+ * `skills.allowed[]`. Exposes the agent-wide skills master switch and publish
+ * settings alongside this skill's allowed-list membership; every control
+ * auto-saves through the connected agent's `skills` branch.
  */
+import { ExpandBlock, ToggleRow } from "@/app/components/side-panel/ConfigControls";
 import { SectionHeader } from "@/app/components/side-panel/SectionHeader";
-import { Button } from "@/app/components/ui/button";
 import { Input } from "@/app/components/ui/input";
 import { Separator } from "@/app/components/ui/separator";
-import { Switch } from "@/app/components/ui/switch";
 import { useConnectedAgentConfig } from "@/app/hooks/useConnectedAgentConfig";
 import { readAgentBranch, type FlatAgentConfig } from "@/app/lib/agentConfigCodec";
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
 
-type SkillsSlice = { enabled?: boolean; allowed?: string[] };
+/** Slice of the nested agent config edited by this tab. */
+type SkillsSlice = {
+    enabled?: boolean;
+    allowed?: string[];
+    publish?: { enabled?: boolean; needApproval?: boolean };
+};
 
+/** Skill card Details tab — auto-saving editor for the connected agent's skills config. */
 export function SkillDetailsTab({
     nodeId,
     editName,
     setEditName,
     onSaveName,
-    nameChanged,
-    isSavingName,
 }: {
     nodeId: string;
     editName: string;
     setEditName: (name: string) => void;
     onSaveName: () => void;
-    nameChanged: boolean;
-    isSavingName: boolean;
 }) {
     const { agentConfig, updateBranch } = useConnectedAgentConfig(nodeId);
     const skills = useMemo(
         () => readAgentBranch<SkillsSlice>(agentConfig as FlatAgentConfig | undefined, "skills"),
         [agentConfig],
     );
+    const disabled = !agentConfig;
     const skillsEnabled = skills.enabled === true;
     const path = editName.trim();
     const inAllowed = path.length > 0 && (skills.allowed ?? []).includes(path);
-    const [isToggling, setIsToggling] = useState(false);
+    const publishEnabled = skills.publish?.enabled === true;
 
-    async function setIncluded(next: boolean) {
-        setIsToggling(true);
-        try {
-            const current = new Set(skills.allowed ?? []);
-            if (next) {
-                if (path) current.add(path);
-            } else {
-                current.delete(path);
-            }
-            const allowed = Array.from(current);
-            const skillsNext: SkillsSlice = {
-                enabled: skills.enabled,
-                ...(allowed.length > 0 ? { allowed: allowed } : {}),
-            };
-            await updateBranch(["skills"], Object.keys(skillsNext).length > 0 ? skillsNext : undefined);
-        } finally {
-            setIsToggling(false);
+    /** Adds or removes this card's path from the agent's `skills.allowed` list. */
+    function setIncluded(next: boolean) {
+        const current = new Set(skills.allowed ?? []);
+        if (next && path) {
+            current.add(path);
+        } else {
+            current.delete(path);
         }
+        const allowed = Array.from(current);
+
+        void updateBranch(["skills", "allowed"], allowed.length > 0 ? allowed : undefined);
     }
 
     return (
         <div className="flex flex-1 flex-col gap-5 overflow-y-auto p-4">
+            {/* Editable skill path — the value used as the allowed-list entry */}
             <div className="flex flex-col gap-1.5">
                 <SectionHeader>Skill path</SectionHeader>
                 <p className="text-[11px] text-muted-foreground">
                     Format: <code className="rounded bg-muted px-1">accountId/skill-name</code>
                 </p>
-                <div className="flex items-center gap-2">
-                    <Input
-                        value={editName}
-                        onChange={(e) => setEditName(e.target.value)}
-                        className="h-8 font-mono text-xs"
-                        placeholder="acct_abc/support-flow"
-                        onKeyDown={(e) => {
-                            if (e.key === "Enter") onSaveName();
-                        }}
-                    />
-                    {nameChanged && (
-                        <Button
-                            size="sm"
-                            variant="outline"
-                            className="h-8 shrink-0 cursor-pointer text-xs"
-                            disabled={!editName.trim() || isSavingName}
-                            onClick={onSaveName}
-                        >
-                            Save
-                        </Button>
-                    )}
-                </div>
+                <Input
+                    value={editName}
+                    onChange={(e) => setEditName(e.target.value)}
+                    className="h-8 font-mono text-xs"
+                    placeholder="acct_abc/support-flow"
+                    onBlur={onSaveName}
+                    onKeyDown={(e) => {
+                        if (e.key === "Enter") onSaveName();
+                    }}
+                />
             </div>
 
             <Separator />
 
-            <div className="flex flex-col gap-2">
-                <SectionHeader>Status</SectionHeader>
-                {!agentConfig && (
-                    <p className="text-xs text-muted-foreground">Wire this skill to an agent to enable it.</p>
+            {disabled && (
+                <p className="text-xs text-muted-foreground">Wire this skill to an agent to configure it.</p>
+            )}
+
+            {/* Agent-wide skills controls */}
+            <div className="flex flex-col gap-3">
+                <SectionHeader>Skills</SectionHeader>
+                <ToggleRow
+                    label="Enabled"
+                    description="Master switch for the agent's skills."
+                    checked={skillsEnabled}
+                    disabled={disabled}
+                    onCheckedChange={(next) => updateBranch(["skills", "enabled"], next)}
+                />
+                <ToggleRow
+                    label="This skill allowed"
+                    description="Include this skill in the agent's allowed list."
+                    checked={inAllowed}
+                    disabled={disabled || !skillsEnabled || !path}
+                    onCheckedChange={setIncluded}
+                />
+            </div>
+
+            <Separator />
+
+            {/* Publish settings — skills.publish */}
+            <div className="flex flex-col gap-3">
+                <SectionHeader>Publish</SectionHeader>
+                <ToggleRow
+                    label="Allow publishing"
+                    description="Let the agent publish skill changes back to storage."
+                    checked={publishEnabled}
+                    disabled={disabled || !skillsEnabled}
+                    onCheckedChange={(next) => updateBranch(["skills", "publish", "enabled"], next)}
+                />
+                {publishEnabled && (
+                    <ExpandBlock>
+                        <ToggleRow
+                            label="Require approval"
+                            description="Pause each publish until the user approves."
+                            checked={skills.publish?.needApproval === true}
+                            disabled={disabled}
+                            onCheckedChange={(next) => updateBranch(["skills", "publish", "needApproval"], next)}
+                        />
+                    </ExpandBlock>
                 )}
-                {agentConfig && !skillsEnabled && (
-                    <p className="text-xs text-amber-500">
-                        Skills are disabled on the connected agent. Enable <code className="rounded bg-muted px-1">skills.enabled</code> on the Agent card first.
-                    </p>
-                )}
-                <div className="flex items-center justify-between gap-3 rounded-lg border border-border/70 bg-muted/20 p-3">
-                    <div className="flex flex-col">
-                        <span className="text-xs font-medium text-foreground">Included in allowed list</span>
-                        <span className="text-[11px] text-muted-foreground">
-                            Adds <code className="rounded bg-muted px-1">{path || "—"}</code> to{" "}
-                            <code className="rounded bg-muted px-1">skills.allowed</code>.
-                        </span>
-                    </div>
-                    <Switch
-                        checked={inAllowed}
-                        onCheckedChange={setIncluded}
-                        disabled={!agentConfig || !path || isToggling}
-                        className="cursor-pointer"
-                    />
-                </div>
             </div>
         </div>
     );

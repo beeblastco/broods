@@ -33,6 +33,7 @@ import {
     type Node,
     type NodeMouseHandler,
     type OnConnect,
+    type OnNodeDrag,
 } from "@xyflow/react";
 import { useMutation, useQuery } from "convex/react";
 import { Bot, Database, FolderOpen, Sparkles, Wrench } from "lucide-react";
@@ -327,7 +328,7 @@ function CanvasInner({ projectId }: { projectId: Id<"projects"> }) {
     );
 
     /** Save after a node drag completes. */
-    const onNodeDragStop: NodeMouseHandler = useCallback(() => {
+    const onNodeDragStop: OnNodeDrag = useCallback(() => {
         scheduleSave();
     }, [scheduleSave]);
 

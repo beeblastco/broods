@@ -217,7 +217,7 @@ export function BaseNode({
             </div>
 
             {showStatus && (
-                <div className="mt-auto px-3 pb-2.5 flex items-center gap-1.5">
+                <div className="mt-auto px-3 pt-2 pb-2.5 flex items-center gap-1.5">
                     <div className={`h-1.5 w-1.5 rounded-full ${statusColor}`} />
                     <span className="text-[11px] text-muted-foreground">{statusText}</span>
                 </div>
