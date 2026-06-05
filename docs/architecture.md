@@ -261,11 +261,12 @@ copy, so this is not duplicated storage. The platform exposes both read paths an
 lets the application choose how to switch:
 
 - **Connected →** `subscribeConversationLive` (core `subscribe`) — lowest latency.
-- **Reconnecting / late join →** `readConversationStream` (JetStream consumer)
-  from `startSequence` (last `JsMsg.seq`) or `startTime`, then resume live.
-- **Simplest →** use the JetStream consumer for *everything*; an ordered consumer
-  is exactly-once/in-order, so there's no seam to dedupe (it just costs a few ms
-  over raw core).
+- **Dropped mid-stream → reconnect & resume:** `readConversationStream`
+  (JetStream consumer) from `startSequence` (last `JsMsg.seq`) or `startTime`,
+  catch up the missed events, then continue live. This is JetStream's **only**
+  job — resuming a turn that is *still streaming*.
+- **Reconnect after the turn finished →** there is nothing to resume: the buffer
+  was purged at persist time, so read the completed turn from the conversation DB.
 
 Switching policy is the consuming app's call — the platform only guarantees a
 monotonic cursor (`JsMsg.seq` for stream readers; the envelope `sequence`/`eventId`
@@ -286,14 +287,16 @@ Notes:
 - **No duplicates:** a single read path never sees a message twice; each publish
   also carries a `Nats-Msg-Id` (`eventId:sequence`) so the stream's
   `duplicate_window` (~2 min) collapses any publish retry.
-- **Storage (kept minimal):** the stream is a **transient replay buffer**, not
+- **Storage (kept minimal):** the stream is an **in-flight resume buffer**, not
   the source of truth — the conversation history DB is. So it holds as little as
   possible:
-  - **Purge on replay:** once a client finishes replaying a conversation (it got
-    the terminal `done`), `purgeConversationStream` deletes that conversation's
-    messages from the stream — no reason to keep a copy that's already in the DB.
-  - **Short backstop `max_age` (~10 min):** for the common live-only path where
-    nothing ever replays, messages just expire quickly instead of piling up.
+  - **Purge on persist:** when a turn finishes and is saved to the DB, the server
+    (`LiveNatsPublisher.purge`, right after the terminal `done`) deletes that
+    conversation from the stream — a later reconnect reads the saved turn from the
+    DB, so keeping the buffer would be pointless. The external-async continuation
+    re-enters the same path, so it purges when *it* finishes.
+  - **Short backstop `max_age` (~10 min):** only for turns that never persist
+    cleanly (e.g. an error/crash before the purge); they expire instead of piling up.
   - Other knobs in `nats.ts`: `RESPONSE_STREAM_STORAGE` (`File` default; `Memory`
     is faster/cheaper but lost on restart) and `max_msgs_per_subject`. The
     retention knobs are mutable, so `ensureResponseStream` syncs them onto the

@@ -5,8 +5,8 @@
  * conversation-scoped subject via core NATS; the durable `WS_RESPONSES`
  * JetStream stream is bound to that subject and captures the same message. So:
  *   - a connected client reads live via core `subscribe` (lowest latency), and
- *   - a reconnecting / late client replays from the stream via a JetStream
- *     consumer, then resumes live.
+ *   - a client that dropped mid-stream reconnects and RESUMES the still-streaming
+ *     turn from the JetStream consumer, then continues live.
  * Core publish stores nothing itself — the stream is the only copy — so this is
  * NOT double storage. Switching read paths is the consuming app's choice; the
  * platform just provides both. See examples/nats-stream.ts.
@@ -17,11 +17,14 @@
  * sequence (`JsMsg.seq`) for stream readers, or the envelope `sequence`/`eventId`
  * for core subscribers; dedup a core→stream switch by either.
  *
- * The stream is a TRANSIENT replay buffer, not the source of truth — the final
- * result is persisted in the conversation history DB. So it holds as little as
- * possible: a conversation's messages are purged as soon as a client finishes
- * replaying them ({@link purgeConversationStream}), and a short `max_age` is just
- * the backstop for the common live-only path where nothing ever replays.
+ * The stream is a RESUME buffer for an in-flight turn, not the source of truth —
+ * the conversation history DB is. JetStream exists only so a client that drops
+ * mid-stream can reconnect and resume a still-streaming turn. So it holds as
+ * little as possible: as soon as a turn finishes and is persisted to the DB, the
+ * server purges that conversation from the stream ({@link LiveNatsPublisher.purge}) —
+ * a later reconnect reads the finished turn from the DB, so replay would be
+ * pointless. A short `max_age` only backstops turns that never persist cleanly
+ * (e.g. an error/crash before the server purges).
  *
  * Transport is selected by the `NATS_URL` scheme via {@link connectNats}:
  *   - `wss://` / `ws://` -> WebSocket (`nats.ws`), for out-of-cluster callers
@@ -69,11 +72,10 @@ export interface NatsStreamEvent {
 }
 
 // One stream covers every conversation; per-subject retention bounds growth.
-// These are the storage knobs. The stream is ONLY a transient streaming buffer —
-// the conversation history DB is the source of truth — so retention is kept
-// short and a conversation's messages are purged as soon as a client has
-// replayed them (see purgeConversationStream). max_age is just the backstop for
-// messages that are never replayed (the common live-only path); they expire
+// These are the storage knobs. The stream is ONLY an in-flight resume buffer —
+// the conversation history DB is the source of truth — so the server purges a
+// conversation as soon as its turn is persisted (see LiveNatsPublisher.purge).
+// max_age is just the backstop for turns that never persist cleanly; they expire
 // quickly instead of piling up, since the final result is already in the DB.
 const RESPONSE_STREAM_NAME = "WS_RESPONSES";
 const RESPONSE_SUBJECT_WILDCARD = "v1.*.*.ws.response.*";
@@ -159,6 +161,22 @@ export class LiveNatsPublisher implements NatsPublisher {
       connection.publish(this.subject, ENCODER.encode(JSON.stringify(event)), { headers: hdrs });
     } catch {
       // Publishing is best-effort per event; close() drains queued writes.
+    }
+  }
+
+  /**
+   * Drop this conversation's buffered messages from the stream. Call this once
+   * the turn is finished and persisted to the conversation DB: the stream is only
+   * an in-flight resume buffer, so a finished+saved turn has no reason to stay —
+   * a later reconnect reads it from the DB. Best-effort; max_age backstops it.
+   */
+  async purge(): Promise<void> {
+    try {
+      const connection = await this.getConnection();
+      const jsm = await connection.jetstreamManager();
+      await jsm.streams.purge(RESPONSE_STREAM_NAME, { filter: this.subject });
+    } catch {
+      // Best-effort: a failed purge just leaves the buffer to expire via max_age.
     }
   }
 
@@ -265,23 +283,23 @@ export async function readConversationStream(options: {
 }
 
 /**
- * Delete a conversation's buffered messages from the stream. Call this once a
- * client has finished replaying (it received the terminal `done` event) — the
- * stream is only a transient buffer and the full result is in the conversation
- * history DB, so there's no reason to keep the replayed copy. Best-effort.
+ * How many messages are currently buffered for a conversation. 0 means the
+ * server has purged it (the turn finished and was persisted) — a reconnecting
+ * client should then read the finished turn from the conversation DB, not resume.
  */
-export async function purgeConversationStream(options: {
+export async function conversationBufferedCount(options: {
   connection: NatsConnection;
   accountId: string;
   agentId: string;
   conversationKey: string;
-}): Promise<void> {
+}): Promise<number> {
   try {
     const jsm = await options.connection.jetstreamManager();
     const subject = streamResponseSubject(options.accountId, options.agentId, options.conversationKey);
-    await jsm.streams.purge(RESPONSE_STREAM_NAME, { filter: subject });
+    const info = await jsm.streams.info(RESPONSE_STREAM_NAME, { subjects_filter: subject });
+    return (info.state.subjects as Record<string, number> | undefined)?.[subject] ?? 0;
   } catch {
-    // Best-effort: max_age expires the buffer anyway if the purge can't run.
+    return 0;
   }
 }
 

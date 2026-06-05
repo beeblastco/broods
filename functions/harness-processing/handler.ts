@@ -548,6 +548,10 @@ async function handleNatsWorkerRequest(event: DirectInboundEvent, context?: Lamb
         });
       } else {
         await publisher.publish({ type: "done" });
+        // Turn is finished and persisted to the conversation DB, so the JetStream
+        // resume buffer is no longer needed — a later reconnect reads the saved
+        // turn from the DB. Purge it to free space (best-effort).
+        await publisher.purge();
       }
     } finally {
       await publisher.close();

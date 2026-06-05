@@ -10,7 +10,7 @@
 
 import { InvokeCommand, LambdaClient } from "@aws-sdk/client-lambda";
 import { toRuntimeAgentConfig, type AgentConfig } from "../functions/_shared/storage/index.ts";
-import { connectNats, purgeConversationStream, readConversationStream, subscribeConversationLive, type NatsStreamEvent } from "../functions/_shared/nats.ts";
+import { conversationBufferedCount, connectNats, readConversationStream, subscribeConversationLive, type NatsStreamEvent } from "../functions/_shared/nats.ts";
 import { scopedDirectConversationKey, scopedDirectEventId } from "../functions/_shared/runtime-keys.ts";
 import type { DirectInboundEvent } from "../functions/harness-processing/integrations.ts";
 import { createAccount, createAgent, deleteAccount } from "./utils.ts";
@@ -124,9 +124,10 @@ try {
     })),
   }));
 
-  // Phase 1 — LIVE via core subscribe (lowest latency). A connected client reads
-  // here; core Msgs carry the envelope but not the JetStream seq, so track the
-  // envelope `sequence` as the cursor.
+  // Phase 1 — LIVE via core subscribe, then simulate a mid-stream DISCONNECT.
+  // The user is watching tokens arrive; after a few we "drop" (close the socket)
+  // while the agent keeps streaming server-side. Track the last envelope sequence
+  // so we can resume past it.
   let lastEnvelopeSeq = 0;
   const live = subscribeConversationLive({
     connection: natsClient,
@@ -137,46 +138,52 @@ try {
   for await (const message of live) {
     const event = JSON.parse(decoder.decode(message.data)) as NatsStreamEvent;
     lastEnvelopeSeq = event.sequence;
-    process.stdout.write(`\n[live ${event.sequence}] ${JSON.stringify(event.data)}\n`);
+    process.stdout.write(`\n[live ${event.sequence}] ${String(event.data.type)}\n`);
+    if (event.sequence >= 5) {
+      console.log(`\n[Disconnect] dropping the socket after ${lastEnvelopeSeq} events (agent keeps streaming)`);
+      break;
+    }
+  }
+  live.unsubscribe();
+  await natsClient.close();
+
+  // Phase 2 — RECONNECT mid-stream and RESUME from JetStream. A reconnecting
+  // client opens a NEW connection. We resume past what we already saw and read
+  // through to `done`. (Production clients pass startSequence/startTime; here we
+  // read from the start and skip the already-seen prefix for simplicity.)
+  console.log(`\n[Reconnect] resuming from event ${lastEnvelopeSeq + 1}...`);
+  const reconnectClient = await connectNats({ servers: natsUrl, token: natsToken });
+  const resume = await readConversationStream({
+    connection: reconnectClient,
+    accountId: account.account.accountId,
+    agentId: agent.agentId,
+    conversationKey: publicConversationKey,
+  });
+  for await (const message of resume) {
+    const event = JSON.parse(decoder.decode(message.data)) as NatsStreamEvent;
+    if (event.sequence <= lastEnvelopeSeq) continue; // skip what we saw before the drop
+    process.stdout.write(`  resume [${event.sequence}] ${String(event.data.type)}\n`);
     if (event.data.type === "done" || event.data.type === "error") {
       console.log(`\n[Stream completed with: ${event.data.type}]`);
       break;
     }
   }
-  live.unsubscribe();
+  await resume.close();
 
-  // Phase 2 — REPLAY via JetStream (a real "reconnect"). A reconnecting client
-  // opens a NEW connection, so open a fresh one here to mirror that. Proves the
-  // stream persisted everything even though Phase 1 read it live. A real client
-  // resuming after a drop would pass startSequence (last JsMsg.seq) or startTime
-  // instead of replaying from the start, and dedupe by the envelope sequence at
-  // the seam.
-  console.log(`\n[Reconnect] replaying ${lastEnvelopeSeq} persisted events...`);
-  const reconnectClient = await connectNats({ servers: natsUrl, token: natsToken });
-  const replay = await readConversationStream({
-    connection: reconnectClient,
-    accountId: account.account.accountId,
-    agentId: agent.agentId,
-    conversationKey: publicConversationKey,
-  });
-  for await (const message of replay) {
-    const event = JSON.parse(decoder.decode(message.data)) as NatsStreamEvent;
-    process.stdout.write(`  replay [seq ${message.seq}] ${String(event.data.type)}\n`);
-    if (event.sequence >= lastEnvelopeSeq) {
-      break;
-    }
+  // Phase 3 — once the turn is persisted, the SERVER purges the conversation from
+  // JetStream (the result lives in the conversation DB now). Confirm the buffer
+  // drains to 0; a later reconnect would read the finished turn from the DB.
+  let buffered = -1;
+  for (let i = 0; i < 10 && buffered !== 0; i++) {
+    buffered = await conversationBufferedCount({
+      connection: reconnectClient,
+      accountId: account.account.accountId,
+      agentId: agent.agentId,
+      conversationKey: publicConversationKey,
+    });
+    if (buffered !== 0) await new Promise((r) => setTimeout(r, 1000));
   }
-  await replay.close();
-
-  // Done replaying: free the buffer. The stream is transient and the full result
-  // lives in the conversation history DB, so there's no reason to keep this copy.
-  await purgeConversationStream({
-    connection: reconnectClient,
-    accountId: account.account.accountId,
-    agentId: agent.agentId,
-    conversationKey: publicConversationKey,
-  });
-  console.log("[Purged] replayed buffer removed from the stream");
+  console.log(`[Server purged] buffered messages now: ${buffered} (0 = purged after persist)`);
   await reconnectClient.drain();
 } finally {
   await natsClient.drain().catch(() => {});
