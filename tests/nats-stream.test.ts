@@ -51,8 +51,8 @@ describe("consumerStartPolicy (resume cursor)", () => {
     });
   });
 
-  it("replays from the start when no cursor is given", () => {
-    expect(consumerStartPolicy()).toEqual({ deliver_policy: DeliverPolicy.All });
+  it("returns no policy when no cursor is given (ordered consumer defaults to all-from-start; explicit DeliverPolicy.All stalls it)", () => {
+    expect(consumerStartPolicy()).toEqual({});
   });
 
   it("prefers the sequence cursor over time when both are given", () => {
