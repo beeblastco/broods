@@ -15,7 +15,7 @@ import { scopedDirectConversationKey, scopedDirectEventId } from "../functions/_
 import type { DirectInboundEvent } from "../functions/harness-processing/integrations.ts";
 import { createAccount, createAgent, deleteAccount } from "./utils.ts";
 
-const googleApiKey = process.env.ACCOUNT_GOOGLE_API_KEY!;
+const minimaxApiKey = process.env.ACCOUNT_MINIMAX_API_KEY!;
 const tavilyApiKey = process.env.ACCOUNT_TAVILY_API_KEY!;
 const lambdaFunctionName = process.env.HARNESS_FUNCTION_ARN!;
 const natsUrl = process.env.NATS_URL!;
@@ -27,13 +27,13 @@ const decoder = new TextDecoder();
 
 const researchAgentConfig: AgentConfig = {
   provider: {
-    google: {
-      apiKey: googleApiKey,
+    minimax: {
+      apiKey: minimaxApiKey,
     },
   },
   model: {
-    provider: "google",
-    modelId: "gemma-4-31b-it",
+    provider: "minimax",
+    modelId: "MiniMax-M2.7",
   },
   agent: {
       system: `Knowledge cutoff: Janurary 2025.\n\nYou are a helpful personal assistant that can use tools to get information and perform tasks for the user.\n\nYou also have access to web search and web fetch tools. Always use these tools to research and get up-to-date information or when you are asked for. Your knowledge was limited by cutoff training data date so do not rely on it for up-to-date information or fact checks. Only research and answer the question, don't put additional information.`,
@@ -63,13 +63,13 @@ const researchAgent = await createAgent(
 
 const agentConfig: AgentConfig = {
   provider: {
-    google: {
-      apiKey: googleApiKey,
+    minimax: {
+      apiKey: minimaxApiKey,
     },
   },
   model: {
-    provider: "google",
-    modelId: "gemma-4-31b-it",
+    provider: "minimax",
+    modelId: "MiniMax-M2.7",
   },
   agent: {
       system: "You are a helpful assistant.",
