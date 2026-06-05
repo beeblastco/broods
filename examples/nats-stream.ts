@@ -145,13 +145,16 @@ try {
   }
   live.unsubscribe();
 
-  // Phase 2 — REPLAY via JetStream (a "reconnect"). Proves the stream persisted
-  // everything even though Phase 1 read it live. A real client resuming after a
-  // drop would pass startSequence (last JsMsg.seq) or startTime instead of
-  // replaying from the start, and dedupe by the envelope sequence at the seam.
+  // Phase 2 — REPLAY via JetStream (a real "reconnect"). A reconnecting client
+  // opens a NEW connection, so open a fresh one here to mirror that. Proves the
+  // stream persisted everything even though Phase 1 read it live. A real client
+  // resuming after a drop would pass startSequence (last JsMsg.seq) or startTime
+  // instead of replaying from the start, and dedupe by the envelope sequence at
+  // the seam.
   console.log(`\n[Reconnect] replaying ${lastEnvelopeSeq} persisted events...`);
+  const reconnectClient = await connectNats({ servers: natsUrl, token: natsToken });
   const replay = await readConversationStream({
-    connection: natsClient,
+    connection: reconnectClient,
     accountId: account.account.accountId,
     agentId: agent.agentId,
     conversationKey: publicConversationKey,
@@ -164,6 +167,7 @@ try {
     }
   }
   await replay.close();
+  await reconnectClient.drain();
 } finally {
   await natsClient.drain().catch(() => {});
   await deleteAccount(account.secret);

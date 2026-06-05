@@ -253,6 +253,9 @@ export async function readConversationStream(options: {
 
 // Map a resume cursor to a JetStream consumer start policy: by sequence (last
 // JsMsg.seq seen), by time (when a core subscriber dropped), or from the start.
+// From-start returns no policy on purpose: an ordered consumer already defaults
+// to all-from-start, and passing an explicit `deliver_policy: All` stalls it
+// (delivers nothing) — only the explicit start cursors are safe to set.
 export function consumerStartPolicy(startSequence?: number, startTime?: string) {
   if (typeof startSequence === "number") {
     return { deliver_policy: DeliverPolicy.StartSequence, opt_start_seq: startSequence };
@@ -260,7 +263,7 @@ export function consumerStartPolicy(startSequence?: number, startTime?: string) 
   if (startTime) {
     return { deliver_policy: DeliverPolicy.StartTime, opt_start_time: startTime };
   }
-  return { deliver_policy: DeliverPolicy.All };
+  return {};
 }
 
 export function streamResponseSubject(accountId: string, agentId: string, conversationKey: string): string {
