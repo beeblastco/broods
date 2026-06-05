@@ -1,9 +1,13 @@
 /// <reference path="./.sst/platform/config.d.ts" />
 
 // SST infrastructure for the account-managed harness: one streaming runtime Lambda and one account-management Lambda.
-const AWS_ACCOUNT_ID = "123456789012";
-const PROJECT_NAME = "filthy-panty";
-const PROJECT_OWNER_EMAIL = "owner@example.com";
+// AWS account + project identity for resource names, IAM role ARNs, and tags.
+// No in-source defaults — provided via repo vars / local env (see .env.example).
+// CI injects them into the validate + deploy jobs; forks must set them to run
+// `sst install` / deploy.
+const AWS_ACCOUNT_ID = process.env.AWS_ACCOUNT_ID!;
+const PROJECT_NAME = process.env.PROJECT_NAME!;
+const PROJECT_OWNER_EMAIL = process.env.PROJECT_OWNER_EMAIL!;
 const AWS_PROFILE = process.env.CI ? undefined : (process.env.AWS_PROFILE ?? "default");
 const ENABLE_DIRECT_API = parseBooleanEnv("ENABLE_DIRECT_API", false);
 const ENABLE_WEBSOCKET = parseBooleanEnv("ENABLE_WEBSOCKET", false);
@@ -75,7 +79,7 @@ function sandboxRuntimePermissions(
   filesystemBucketArn: string,
   s3FilesFileSystemArn: $util.Input<string>,
   s3FilesAccessPointArn: $util.Input<string>,
-) : {
+): {
   actions: string[];
   resources: $util.Input<string>[];
 }[] {
@@ -191,10 +195,10 @@ export default $config({
     }
     const storageEnv: Record<string, string> = isProduction
       ? {
-          STORAGE_PROVIDER: "convex",
-          CONVEX_URL: CONVEX_URL!,
-          CONVEX_DEPLOY_KEY: CONVEX_DEPLOY_KEY!,
-        }
+        STORAGE_PROVIDER: "convex",
+        CONVEX_URL: CONVEX_URL!,
+        CONVEX_DEPLOY_KEY: CONVEX_DEPLOY_KEY!,
+      }
       : { STORAGE_PROVIDER: "dynamodb" };
     const names = {
       conversations: resourceName("conversations", stage, region),
@@ -244,21 +248,21 @@ export default $config({
     const accountConfigsTable = isProduction
       ? null
       : new sst.aws.Dynamo("AccountConfig", {
-          fields: {
-            accountId: "string",
-            secretHash: "string",
+        fields: {
+          accountId: "string",
+          secretHash: "string",
+        },
+        primaryIndex: { hashKey: "accountId" },
+        globalIndexes: {
+          SecretHashIndex: { hashKey: "secretHash" },
+        },
+        deletionProtection: false,
+        transform: {
+          table: {
+            name: names.accountConfigs,
           },
-          primaryIndex: { hashKey: "accountId" },
-          globalIndexes: {
-            SecretHashIndex: { hashKey: "secretHash" },
-          },
-          deletionProtection: false,
-          transform: {
-            table: {
-              name: names.accountConfigs,
-            },
-          },
-        });
+        },
+      });
 
     const accountSignupRateLimitTable = new sst.aws.Dynamo("AccountSignupRateLimit", {
       fields: {
@@ -277,68 +281,68 @@ export default $config({
     const agentConfigsTable = isProduction
       ? null
       : new sst.aws.Dynamo("AgentConfig", {
-          fields: {
-            accountId: "string",
-            agentId: "string",
+        fields: {
+          accountId: "string",
+          agentId: "string",
+        },
+        primaryIndex: { hashKey: "accountId", rangeKey: "agentId" },
+        deletionProtection: false,
+        transform: {
+          table: {
+            name: names.agentConfigs,
           },
-          primaryIndex: { hashKey: "accountId", rangeKey: "agentId" },
-          deletionProtection: false,
-          transform: {
-            table: {
-              name: names.agentConfigs,
-            },
-          },
-        });
+        },
+      });
 
     // Account-scoped, reusable sandbox / workspace config records. Like agents,
     // these live in Convex on production and DynamoDB elsewhere.
     const sandboxConfigsTable = isProduction
       ? null
       : new sst.aws.Dynamo("SandboxConfig", {
-          fields: {
-            accountId: "string",
-            sandboxId: "string",
+        fields: {
+          accountId: "string",
+          sandboxId: "string",
+        },
+        primaryIndex: { hashKey: "accountId", rangeKey: "sandboxId" },
+        deletionProtection: false,
+        transform: {
+          table: {
+            name: names.sandboxConfigs,
           },
-          primaryIndex: { hashKey: "accountId", rangeKey: "sandboxId" },
-          deletionProtection: false,
-          transform: {
-            table: {
-              name: names.sandboxConfigs,
-            },
-          },
-        });
+        },
+      });
 
     const workspaceConfigsTable = isProduction
       ? null
       : new sst.aws.Dynamo("WorkspaceConfig", {
-          fields: {
-            accountId: "string",
-            workspaceId: "string",
+        fields: {
+          accountId: "string",
+          workspaceId: "string",
+        },
+        primaryIndex: { hashKey: "accountId", rangeKey: "workspaceId" },
+        deletionProtection: false,
+        transform: {
+          table: {
+            name: names.workspaceConfigs,
           },
-          primaryIndex: { hashKey: "accountId", rangeKey: "workspaceId" },
-          deletionProtection: false,
-          transform: {
-            table: {
-              name: names.workspaceConfigs,
-            },
-          },
-        });
+        },
+      });
 
     const cronJobsTable = isProduction
       ? null
       : new sst.aws.Dynamo("CronJob", {
-          fields: {
-            accountId: "string",
-            cronJobId: "string",
+        fields: {
+          accountId: "string",
+          cronJobId: "string",
+        },
+        primaryIndex: { hashKey: "accountId", rangeKey: "cronJobId" },
+        deletionProtection: false,
+        transform: {
+          table: {
+            name: names.cronJobs,
           },
-          primaryIndex: { hashKey: "accountId", rangeKey: "cronJobId" },
-          deletionProtection: false,
-          transform: {
-            table: {
-              name: names.cronJobs,
-            },
-          },
-        });
+        },
+      });
 
     const conversationsTable = new sst.aws.Dynamo("Conversations", {
       fields: {
@@ -753,19 +757,19 @@ export default $config({
         loggingConfig: { logFormat: "JSON", logGroup: logGroup.name },
         ...(cfg.vpc
           ? {
-              vpcConfig: {
-                subnetIds: sandboxNetwork.privateSubnets,
-                securityGroupIds: cfg.securityGroupIds ?? sandboxNetwork.securityGroups,
-              },
-            }
+            vpcConfig: {
+              subnetIds: sandboxNetwork.privateSubnets,
+              securityGroupIds: cfg.securityGroupIds ?? sandboxNetwork.securityGroups,
+            },
+          }
           : {}),
         ...(cfg.mount
           ? {
-              fileSystemConfig: {
-                arn: sandboxS3FilesAccessPoint.arn,
-                localMountPath: SANDBOX_WORKSPACE_MOUNT_PATH,
-              },
-            }
+            fileSystemConfig: {
+              arn: sandboxS3FilesAccessPoint.arn,
+              localMountPath: SANDBOX_WORKSPACE_MOUNT_PATH,
+            },
+          }
           : {}),
       }, { dependsOn: [logGroup] });
     };
@@ -886,39 +890,39 @@ export default $config({
         },
         ...(accountConfigsTable
           ? [{
-              actions: [
-                "dynamodb:GetItem",
-                "dynamodb:Query",
-              ],
-              resources: [accountConfigsTable.arn, $interpolate`${accountConfigsTable.arn}/index/SecretHashIndex`],
-            }]
+            actions: [
+              "dynamodb:GetItem",
+              "dynamodb:Query",
+            ],
+            resources: [accountConfigsTable.arn, $interpolate`${accountConfigsTable.arn}/index/SecretHashIndex`],
+          }]
           : []),
         ...(agentConfigsTable
           ? [{
-              actions: [
-                "dynamodb:GetItem",
-                "dynamodb:Query",
-              ],
-              resources: [agentConfigsTable.arn],
-            }]
+            actions: [
+              "dynamodb:GetItem",
+              "dynamodb:Query",
+            ],
+            resources: [agentConfigsTable.arn],
+          }]
           : []),
         ...(sandboxConfigsTable
           ? [{
-              actions: [
-                "dynamodb:GetItem",
-                "dynamodb:Query",
-              ],
-              resources: [sandboxConfigsTable.arn],
-            }]
+            actions: [
+              "dynamodb:GetItem",
+              "dynamodb:Query",
+            ],
+            resources: [sandboxConfigsTable.arn],
+          }]
           : []),
         ...(workspaceConfigsTable
           ? [{
-              actions: [
-                "dynamodb:GetItem",
-                "dynamodb:Query",
-              ],
-              resources: [workspaceConfigsTable.arn],
-            }]
+            actions: [
+              "dynamodb:GetItem",
+              "dynamodb:Query",
+            ],
+            resources: [workspaceConfigsTable.arn],
+          }]
           : []),
         {
           actions: [
@@ -956,12 +960,12 @@ export default $config({
         },
         ...(cronJobsTable
           ? [{
-              actions: [
-                "dynamodb:GetItem",
-                "dynamodb:UpdateItem",
-              ],
-              resources: [cronJobsTable.arn],
-            }]
+            actions: [
+              "dynamodb:GetItem",
+              "dynamodb:UpdateItem",
+            ],
+            resources: [cronJobsTable.arn],
+          }]
           : []),
         {
           // Self-invoke (async worker) + read its own Function URL so background
@@ -1086,64 +1090,64 @@ export default $config({
       permissions: [
         ...(accountConfigsTable
           ? [{
-              actions: [
-                "dynamodb:DeleteItem",
-                "dynamodb:GetItem",
-                "dynamodb:PutItem",
-                "dynamodb:Query",
-                "dynamodb:Scan",
-                "dynamodb:UpdateItem",
-              ],
-              resources: [accountConfigsTable.arn, $interpolate`${accountConfigsTable.arn}/index/SecretHashIndex`],
-            }]
+            actions: [
+              "dynamodb:DeleteItem",
+              "dynamodb:GetItem",
+              "dynamodb:PutItem",
+              "dynamodb:Query",
+              "dynamodb:Scan",
+              "dynamodb:UpdateItem",
+            ],
+            resources: [accountConfigsTable.arn, $interpolate`${accountConfigsTable.arn}/index/SecretHashIndex`],
+          }]
           : []),
         ...(agentConfigsTable
           ? [{
-              actions: [
-                "dynamodb:DeleteItem",
-                "dynamodb:GetItem",
-                "dynamodb:PutItem",
-                "dynamodb:Query",
-                "dynamodb:UpdateItem",
-              ],
-              resources: [agentConfigsTable.arn],
-            }]
+            actions: [
+              "dynamodb:DeleteItem",
+              "dynamodb:GetItem",
+              "dynamodb:PutItem",
+              "dynamodb:Query",
+              "dynamodb:UpdateItem",
+            ],
+            resources: [agentConfigsTable.arn],
+          }]
           : []),
         ...(sandboxConfigsTable
           ? [{
-              actions: [
-                "dynamodb:DeleteItem",
-                "dynamodb:GetItem",
-                "dynamodb:PutItem",
-                "dynamodb:Query",
-                "dynamodb:UpdateItem",
-              ],
-              resources: [sandboxConfigsTable.arn],
-            }]
+            actions: [
+              "dynamodb:DeleteItem",
+              "dynamodb:GetItem",
+              "dynamodb:PutItem",
+              "dynamodb:Query",
+              "dynamodb:UpdateItem",
+            ],
+            resources: [sandboxConfigsTable.arn],
+          }]
           : []),
         ...(workspaceConfigsTable
           ? [{
-              actions: [
-                "dynamodb:DeleteItem",
-                "dynamodb:GetItem",
-                "dynamodb:PutItem",
-                "dynamodb:Query",
-                "dynamodb:UpdateItem",
-              ],
-              resources: [workspaceConfigsTable.arn],
-            }]
+            actions: [
+              "dynamodb:DeleteItem",
+              "dynamodb:GetItem",
+              "dynamodb:PutItem",
+              "dynamodb:Query",
+              "dynamodb:UpdateItem",
+            ],
+            resources: [workspaceConfigsTable.arn],
+          }]
           : []),
         ...(cronJobsTable
           ? [{
-              actions: [
-                "dynamodb:DeleteItem",
-                "dynamodb:GetItem",
-                "dynamodb:PutItem",
-                "dynamodb:Query",
-                "dynamodb:UpdateItem",
-              ],
-              resources: [cronJobsTable.arn],
-            }]
+            actions: [
+              "dynamodb:DeleteItem",
+              "dynamodb:GetItem",
+              "dynamodb:PutItem",
+              "dynamodb:Query",
+              "dynamodb:UpdateItem",
+            ],
+            resources: [cronJobsTable.arn],
+          }]
           : []),
         {
           // Read + drop reserved-sandbox instance rows when releasing on delete.

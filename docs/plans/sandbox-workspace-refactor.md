@@ -43,7 +43,7 @@ integrations, deployed with SST). Two new sibling repos now exist:
   in **one** container image. It acts as a VM-like computer for the agent.
 - **`~/Workspace/projects/infra`** — company infra (k3s cluster + Terraform). It owns
   the **ECR repo** `beeblast-lambda-sandbox-${ACCOUNT_ID}-${REGION}` (currently in
-  `eu-central-1`, account `123456789012`) that hosts the sandbox image, defined in
+  `eu-central-1`, account `<AWS_ACCOUNT_ID>`) that hosts the sandbox image, defined in
   `terraform/aws/main.tf:361` (`aws_ecr_repository.lambda_sandbox`) with a public-read
   policy block at `main.tf:370` so the image can be pulled once `filthy-panty` is
   open-sourced.
@@ -68,10 +68,8 @@ anything intrinsic to a sandbox:
   `filesystem.tool.ts:107-112` ("python inside bash runs on slower WASM", "`node -e` not
   supported", etc.).
 - **`readDirectory`** (`lambda-executor.ts:82`) — not a runtime concern at all. It is a
-  workaround for **S3 Files eventual consistency**: agent edits through the mount take
-  ~1–2 min to become listable via the S3 API, so `publishSkillFromWorkspace`
-  (`session.ts:388-425`) reads the working copy straight off the mount via a Python
-  `os.walk` that base64-emits files. Only the skill-publish path uses it.
+  legacy workaround for **S3 Files eventual consistency**. The current skill loader copies
+  account-owned bundles directly through the S3 API and no longer needs a mount walk.
 
 With the new uniform image (real bash + native python3 + node all on PATH), the split is
 gone. In fact `SandboxBash` and `SandboxPython` in `sst.config.ts:551,574` **already point
@@ -156,12 +154,10 @@ These were settled during the design interview and are authoritative.
       client → heavier cold start; file ops go to S3 over the network. A no-mount, no-VPC
       function is meaningfully faster for the stateless case.
 
-### Skill-publish
+### Skill staging
 
-1. **Disable skill-publish for now.** Remove `publishSkillFromWorkspace`, the publish
-    branch in `load-skill.tool.ts`, and all `readDirectory` code. **Keep** read-only skill
-    loading. Skill-publish will be **reworked later**, likely by making **skills a
-    workspace** so the agent edits them directly without `readDirectory` / staleness.
+1. Keep `load_skill` as the runtime path for skill instructions and sandbox-readable helper
+    files. Skill authoring/editing should use normal workspace flows.
 
 ### Misc
 
@@ -434,7 +430,7 @@ types and any helpers (mirror the `agents.ts` / `agent-config.ts` export blocks 
   - apply `permissionMode` → per-tool `needsApproval` via `withToolApproval` (`:125-132`),
     using the permissionMode matrix in §2 (Tools) (replace the `needsApproval` boolean at `:57,65`).
   - memory/tasks enablement keyed on workspace presence (not sandbox).
-- Remove the `publishEnabled` skill-publish wiring (`:83-92`) per §G.
+- Keep skill loading gated only by `config.skills.enabled`, allowed paths, and session context.
 
 ### E. Runtime resolution & session
 
@@ -470,7 +466,7 @@ types and any helpers (mirror the `agents.ts` / `agent-config.ts` export blocks 
 ### F. SST infra — `sst.config.ts`
 
 > **ECR image tags (confirmed 2026-05-31).** The repo
-> `beeblast-lambda-sandbox-123456789012-eu-central-1` publishes per-arch tags:
+> `beeblast-lambda-sandbox-<AWS_ACCOUNT_ID>-eu-central-1` publishes per-arch tags:
 > **`latest-arm64`** (~175 MB, digest `sha256:d262…`) and `latest-amd64` (~178 MB),
 > plus commit-pinned `<short-sha>-arm64` / `<short-sha>-amd64` (e.g. `c6cef6f-arm64`).
 > The Lambda runs **ARM64**, so `sandboxImageUri` must reference the **`latest-arm64`**
@@ -510,19 +506,15 @@ types and any helpers (mirror the `agents.ts` / `agent-config.ts` export blocks 
 - Keep `SANDBOX_WORKSPACE_MOUNT_PATH = "/mnt/workspaces"` (`:10`) and the access-point root
   `/sandbox` ↔ `WORKSPACE_MOUNT_PREFIX` invariant (`:472-493`, `_shared/sandbox.ts:14`).
 
-### G. Skill-publish removal
+### G. Skill staging
 
-- `functions/harness-processing/session.ts`: delete `publishSkillFromWorkspace`
-  (`:388-425`) and `isSkillPublishEnabled` (`:601-603`) usage tied to publish; keep skill
-  **loading** (`loadSkillPrompt`, `loadSkillMetadata` `:605`).
-- `functions/harness-processing/tools/load-skill.tool.ts`: remove the publish callback /
-  `publishNeedsApproval` (`:96`) path; keep load.
-- `functions/harness-processing/tools/index.ts`: drop the publish branch (`:83-92`).
-- `functions/_shared/storage/agent-config.ts`: keep `skills` config but drop `publish`
-  validation (`:734`) if removing the field; or leave the field inert. Decide and document.
-- Remove the now-unused `publishStagedSkillBundle` helper + any `readDirectory` plumbing.
-- Update `docs/skills.md` to note publish is temporarily removed and will return as a
-  skills-as-workspace model.
+- `functions/harness-processing/session.ts`: keep skill **loading** (`loadSkillPrompt`,
+  `loadSkillMetadata`).
+- `functions/harness-processing/tools/load-skill.tool.ts`: keep the model-facing load path.
+- `functions/harness-processing/tools/index.ts`: expose `load_skill` when skills are enabled
+  and the session can load them.
+- `functions/_shared/storage/agent-config.ts`: keep `skills.enabled` and `skills.allowed`.
+- Remove any now-unused mount directory walk plumbing.
 
 ### H. account-manage endpoints
 
@@ -621,7 +613,7 @@ types and any helpers (mirror the `agents.ts` / `agent-config.ts` export blocks 
 5. **Tool surface (D):** bash + read/write/edit/glob/grep; permissionMode matrix; tool
    enablement by sandbox/workspace presence.
 6. **Runtime resolution (E):** handler resolves refs; session/workspaces reworked.
-7. **Skill-publish removal (G).**
+7. **Skill staging (G).**
 8. **Examples, tests, docs (I).**
 9. `bun run build`, fix types, run tests, monitor CI. Deploy only when asked (dev stage).
 
@@ -833,9 +825,7 @@ written); removed the `.stage.json` assertions from the main staging test.
 
 **Docs** — [`docs/skills.md`](../../docs/skills.md): the staging paragraph now says "stages a
 fresh read/run copy … every load re-stages from the account-level skill — stale files are
-dropped and the bundle re-copied," with no mention of a manifest. The "publishing temporarily
-removed → returns as skills-as-workspace" note is unchanged.
+dropped and the bundle re-copied," with no mention of a manifest.
 
-**Still open (future, unchanged from §G):** publishing returns as a **skills-as-workspace**
-model — i.e. treat a skill as a workspace the agent edits directly, instead of the staged
-working-copy + push-back design. `config.skills.publish.*` remains validated but inert.
+**Still open (future, unchanged from §G):** skill authoring/editing should use normal
+workspace flows instead of runtime staging.

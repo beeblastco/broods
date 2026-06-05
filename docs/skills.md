@@ -4,13 +4,6 @@ Skills are account-owned instruction bundles that an agent can load only when a 
 
 Skills are stored by `account-manage` in the S3 skills bucket under `<accountId>/<skill-name>`. Runtime traffic goes through `harness-processing`: `session.ts` lists the configured skill metadata, `tools/index.ts` exposes `load_skill`, and `functions/harness-processing/skills.ts` loads the selected bundle into refreshed system context.
 
-:::note Skill publishing is temporarily removed
-The `publish_skill_changes` tool and the staged-edit "push" workflow are disabled in this
-release. `load_skill` still checks a skill out into the workspace as a read/run working
-copy, but edits no longer publish back to the account skill bundle. Publishing will return
-as a **skills-as-workspace** model. The `config.skills.publish.*` settings are inert.
-:::
-
 ```mermaid
 flowchart LR
   Owner["Account owner"] -->|"POST /accounts/me/skills"| Manage["account-manage"]
@@ -37,13 +30,27 @@ When skills are enabled, the model sees a compact skill panel in system context.
 | `name` | `SKILL.md` frontmatter | Human-readable skill identifier |
 | `description` | `SKILL.md` frontmatter | Routing hint for when to load the skill |
 
-The detailed `SKILL.md` content is not injected up front. The agent calls `load_skill` with an allowed path, and may request extra resource files from the same bundle only when `SKILL.md` references them. This S3 API path works even when Workspace is disabled; in that mode skills are read-only model context and bundled scripts cannot be executed by the agent.
+The detailed `SKILL.md` content is not injected up front. The agent calls `load_skill` with an allowed path, and may request extra resource files from the same bundle only when `SKILL.md` references them. This S3 API path works even when Workspace or Sandbox is disabled: the skill instructions still load. Bundled helper files are executable only when the turn has a sandbox staging path.
 
-When a workspace is attached, `load_skill` stages a fresh read/run copy into the current workspace namespace at `/.claude/skills/<skill-name>` and mirrors the same bundle to `/.agents/skills/<skill-name>` so tools that expect that industry-standard location find it too. Every load re-stages from the account-level skill — stale files are dropped and the bundle re-copied — so sandbox edits never shadow the source across turns. Files are copied with S3 server-side copy instead of streaming every byte through `harness-processing`.
+When a workspace is attached, `load_skill` stages a fresh read/run copy into the current workspace namespace at `/.claude/skills/<skill-name>` and mirrors the same bundle to `/.agents/skills/<skill-name>` so tools that expect that industry-standard location find it too. Every load re-stages from the account-level skill: stale staged files are dropped and the bundle is re-copied. Files are copied with S3 server-side copy instead of streaming every byte through `harness-processing`.
 
 This makes `.sh`, `.py`, `.js`, `.ts`, and other uploaded text resources available to the sandbox without mounting the skills bucket into the Lambda sandbox. Script files (`.sh`, `.bash`, `.zsh`, `.py`, `.js`, `.mjs`, `.ts`) are staged with executable POSIX metadata so scripts with shebangs can run directly; other text resources are staged as regular, non-executable files. Agents can also invoke scripts explicitly with `bash`, `python3`, or `node`.
 
-Edits apply to the staged copy under `.claude/skills/<skill-name>` and are temporary: the next load refreshes the staged copy from the account-level skill bundle. Promoting (pushing) edits back to the account-owned skill bundle is **temporarily disabled** (see the note above) and will return as a skills-as-workspace model.
+## Editing Skill Bundles
+
+Skill editing is handled through the normal workspace feature, not through `load_skill`. If a user wants the agent to modify a skill bundle, attach the skill bundle as a workspace that the agent is allowed to edit. The agent then uses the regular workspace tools (`read`, `write`, `edit`, `glob`, `grep`, and `bash`) against that workspace.
+
+If no workspace containing the skill bundle is attached, the agent can still load the skill instructions with `load_skill`, but it cannot modify the account-owned skill bundle. Runtime staging is separate from editing: when a sandbox staging path is available, `load_skill` copies helper files into that path for read/run use; when no sandbox staging path is available, the instructions still load but bundled scripts cannot be executed in that turn.
+
+```mermaid
+flowchart LR
+  User["User asks to edit a skill"] --> Workspace{"Skill bundle attached<br/>as editable workspace?"}
+  Workspace -->|"yes"| Tools["Use normal workspace tools"]
+  Tools --> SkillFiles["Modify SKILL.md and resources"]
+  Workspace -->|"no"| LoadOnly["load_skill cannot edit the source bundle"]
+```
+
+Workspace-backed skill edits have the same S3 Files consistency caveat as other sandbox writes. Files written through the sandbox mount are visible immediately inside that sandbox, but harness-side S3 API reads, S3 listing, or another sandbox may not see the changes for about 1-2 minutes. See [Workspace storage](workspace/storage.md#reading-workspace-files-s3-api-vs-the-sandbox-mount) for the read/write path details.
 
 ## Create Skills
 
@@ -88,7 +95,7 @@ Bundles can also include supporting text files. When the model needs one, it cal
 }
 ```
 
-For executable helpers, keep scripts inside the bundle and reference them from `SKILL.md`, for example `scripts/analyze.py` or `scripts/run.sh`. After `load_skill`, those files are staged under `/.claude/skills/<skill-name>/scripts/` (and mirrored under `/.agents/skills/<skill-name>/scripts/`) in the workspace sandbox. The staged files are normal workspace files, so the agent can read and run them. (Publishing edits back to the source bundle is temporarily disabled.)
+For executable helpers, keep scripts inside the bundle and reference them from `SKILL.md`, for example `scripts/analyze.py` or `scripts/run.sh`. After `load_skill`, those files are staged under `/.claude/skills/<skill-name>/scripts/` (and mirrored under `/.agents/skills/<skill-name>/scripts/`) inside the current sandbox. The staged files are normal files in that run path, so the agent can read and run them.
 
 Enable skills for an agent with `config.skills`:
 
@@ -160,7 +167,7 @@ Runtime behavior:
 4. `load_skill` is registered only for skill-enabled agents with a request session.
 5. The loader rejects paths that are not in `config.skills.allowed`.
 
-Use [`examples/skill-loads.ts`](../examples/skill-loads.ts) for an end-to-end streaming request that creates a temporary skill, attaches it to an agent, and asks the agent to load it. (The staged-edit publish example is on hold while skill publishing is disabled.)
+Use [`examples/skill-loads.ts`](../examples/skill-loads.ts) for an end-to-end streaming request that creates a temporary skill, attaches it to an agent, and asks the agent to load it.
 
 ## Design Rules
 

@@ -503,19 +503,11 @@ describe("agent config", () => {
       skills: {
         enabled: true,
         allowed: ["acct_test/support-flow"],
-        publish: {
-          enabled: true,
-          needApproval: false,
-        },
       },
     })).toEqual({
       skills: {
         enabled: true,
         allowed: ["acct_test/support-flow"],
-        publish: {
-          enabled: true,
-          needApproval: false,
-        },
       },
     });
 
@@ -530,22 +522,6 @@ describe("agent config", () => {
         allowed: "acct_test/support-flow",
       },
     })).toThrow("config.skills.allowed must be an array of strings");
-
-    expect(() => normalizeAgentConfig({
-      skills: {
-        publish: {
-          enabled: "yes",
-        },
-      },
-    })).toThrow("config.skills.publish.enabled must be a boolean");
-
-    expect(() => normalizeAgentConfig({
-      skills: {
-        publish: {
-          needApproval: "yes",
-        },
-      },
-    })).toThrow("config.skills.publish.needApproval must be a boolean");
   });
 
   it("validates agent subagent config", () => {

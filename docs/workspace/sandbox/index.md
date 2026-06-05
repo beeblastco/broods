@@ -259,8 +259,7 @@ truncated at 256 KB by the image and again at `outputLimitBytes` harness-side.
 
 Skills load from the skills S3 bucket. With a workspace attached, `load_skill` stages the
 bundle into the workspace namespace at `/.claude/skills/<name>` so the agent can read and
-run it with `bash`. **Skill publishing is temporarily removed** and will return as a
-skills-as-workspace model — see [Skills](../../skills.md).
+run it with `bash`. See [Skills](../../skills.md).
 
 ## Related code
 

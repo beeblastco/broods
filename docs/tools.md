@@ -34,7 +34,7 @@ Tool registry path:
 1. `createTools()` rejects unknown `config.tools` names.
 2. The sandbox tools come from a referenced `sandbox`: `bash` (stateless) when there is no workspace; per workspace, the full `read`/`write`/`edit`/`glob`/`grep`/`bash` set when it has an effective sandbox, or read-only `read`/`glob` when it has none (via a read-only mount by default, or direct S3 with the `sandbox: null` opt-out). Approvals follow that workspace's `permissionMode`.
 3. `run_subagent` comes only from `config.subagent`.
-4. `load_skill` comes from `config.skills` (skill publishing is temporarily disabled).
+4. `load_skill` comes from `config.skills`.
 5. External tools come only from the static `toolFactories` map.
 6. `needsApproval` is applied before tools are passed to `streamText()`.
 7. Local `execute` tools with `async: true` are wrapped by `AsyncToolCoordinator`.

@@ -57,7 +57,7 @@ export default function loadSkillTool(
           });
           const staged = result.stagedPath
             ? `. Skill files are staged for sandbox execution at ${result.stagedPath}.`
-            : ". No workspace sandbox path is available; use this skill as read-only context.";
+            : ". No sandbox staging path is available for bundled helper files in this turn.";
           return {
             type: "text",
             value: `Loaded skill ${result.path}: ${result.loadedPaths.join(", ")}${staged}`,

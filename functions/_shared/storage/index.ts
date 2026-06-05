@@ -113,7 +113,6 @@ export {
   type AgentSessionCompactionConfig,
   type AgentSessionPruningConfig,
   type AgentSkillsConfig,
-  type AgentSkillsPublishConfig,
   type AgentSlackChannelConfig,
   type AgentSubagentConfig,
   type AgentTelegramChannelConfig,

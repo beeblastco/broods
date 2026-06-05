@@ -40,6 +40,11 @@ jobs:
     env:
       AWS_REGION: ${{ vars.AWS_REGION }}
       CI: "true"
+      # sst.config.ts reads these at runtime (no in-source defaults); postinstall
+      # `sst install` fails without them.
+      AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+      PROJECT_NAME: ${{ vars.PROJECT_NAME }}
+      PROJECT_OWNER_EMAIL: ${{ vars.PROJECT_OWNER_EMAIL }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
@@ -77,6 +82,12 @@ jobs:
       DEFAULT_AWS_REGION: ${{ vars.AWS_REGION }}
       PRODUCTION_AWS_REGION: ${{ vars.PRODUCTION_AWS_REGION }}
       AWS_ROLE_ARN: ${{ vars.AWS_ROLE_ARN }}
+      # Account/project identity for resource names, IAM ARNs, and tags. sst.config.ts
+      # falls back to placeholders when unset, so set these repo vars for deploys to
+      # target the real AWS account.
+      AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+      PROJECT_NAME: ${{ vars.PROJECT_NAME }}
+      PROJECT_OWNER_EMAIL: ${{ vars.PROJECT_OWNER_EMAIL }}
       INPUT_STAGE: ${{ inputs.stage }}
       # Switches behavior between local development and CI environments
       CI: "true"

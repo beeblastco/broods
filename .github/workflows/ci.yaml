@@ -31,6 +31,11 @@ jobs:
       contents: read
     env:
       AWS_REGION: ${{ vars.AWS_REGION }}
+      # sst.config.ts reads these at runtime (no in-source defaults). The postinstall
+      # `sst install` needs them set, or it fails with "Project name is required".
+      AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+      PROJECT_NAME: ${{ vars.PROJECT_NAME }}
+      PROJECT_OWNER_EMAIL: ${{ vars.PROJECT_OWNER_EMAIL }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd

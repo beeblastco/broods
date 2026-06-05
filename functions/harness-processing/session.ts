@@ -667,7 +667,6 @@ Workflow:
 1. Check whether the user's task matches any skill description.
 2. Use load_skill with the exact skill path before applying that skill.
 3. Request resource paths only when the loaded SKILL.md references them and they are needed.
-4. If load_skill does not return a sandbox path, use the skill as read-only context; skill files can be edited or executed only when sandbox is enabled and the bundle is staged.
 </skills>`;
 }
 

@@ -59,13 +59,6 @@ export interface AgentBehaviorConfig {
 export interface AgentSkillsConfig {
   enabled?: boolean;
   allowed?: string[];
-  publish?: AgentSkillsPublishConfig;
-  [key: string]: unknown;
-}
-
-export interface AgentSkillsPublishConfig {
-  enabled?: boolean;
-  needApproval?: boolean;
   [key: string]: unknown;
 }
 
@@ -608,20 +601,6 @@ function normalizeSkillsConfig(value: unknown): void {
   const config = value as Record<string, unknown>;
   assertOptionalBoolean(config.enabled, "config.skills.enabled");
   assertOptionalStringArray(config.allowed, "config.skills.allowed");
-  normalizeSkillsPublishConfig(config.publish);
-}
-
-function normalizeSkillsPublishConfig(value: unknown): void {
-  if (value == null) {
-    return;
-  }
-  if (!isPlainObject(value)) {
-    throw new Error("config.skills.publish must be an object");
-  }
-
-  const config = value as Record<string, unknown>;
-  assertOptionalBoolean(config.enabled, "config.skills.publish.enabled");
-  assertOptionalBoolean(config.needApproval, "config.skills.publish.needApproval");
 }
 
 function normalizeSubagentConfig(value: unknown): void {

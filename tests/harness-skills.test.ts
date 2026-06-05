@@ -16,9 +16,6 @@ const s3Copies: Array<{
   options?: Record<string, unknown>;
 }> = [];
 const s3Deletes: Array<{ bucket: string; key: string }> = [];
-// Records the relative order of write/delete operations to assert publish never
-// deletes the source bundle before the replacement has been written.
-const s3Ops: Array<"write" | "delete"> = [];
 
 const s3ObjectExistsMock = mock(async (_bucket: string, _key: string) => false);
 const readS3TextMock = mock(async (_bucket: string, _key: string): Promise<string> => {
@@ -33,7 +30,6 @@ const writeS3ObjectMock = mock(async (
   options?: Record<string, unknown>,
 ) => {
   s3Writes.push({ bucket, key, body, options });
-  s3Ops.push("write");
   return typeof body === "string" ? body.length : body.byteLength;
 }
 );
@@ -49,7 +45,6 @@ const copyS3ObjectMock = mock(async (
 });
 const deleteS3ObjectMock = mock(async (bucket: string, key: string) => {
   s3Deletes.push({ bucket, key });
-  s3Ops.push("delete");
 });
 
 mock.module("../functions/_shared/s3.ts", () => ({
@@ -71,7 +66,6 @@ beforeEach(() => {
   s3Writes.length = 0;
   s3Copies.length = 0;
   s3Deletes.length = 0;
-  s3Ops.length = 0;
   s3ObjectExistsMock.mockClear();
   readS3TextMock.mockClear();
   readS3BytesMock.mockClear();
@@ -89,16 +83,6 @@ afterEach(() => {
 function createSkillMarkdown(name: string, description: string, content = "# Instructions\nUse this skill."): string {
   return `---\nname: ${name}\ndescription: ${description}\n---\n\n${content}\n`;
 }
-
-// Stand-in for the sandbox mount read publish uses instead of an S3 read.
-function readMount(files: Array<{ path: string; body: string | Uint8Array }>) {
-  return async (_relativeDir: string) => files.map((file) => ({
-    path: file.path,
-    base64: Buffer.from(typeof file.body === "string" ? new TextEncoder().encode(file.body) : file.body).toString("base64"),
-  }));
-}
-
-const emptyMount = async (_relativeDir: string): Promise<Array<{ path: string; base64: string }>> => [];
 
 describe("listConfiguredSkillMetadata", () => {
   it("returns empty array when skills are not enabled", async () => {
@@ -352,7 +336,7 @@ describe("loadConfiguredSkillPrompt", () => {
 
     expect(result.stagedPath).toBe("/.claude/skills/script-skill");
     expect(result.stagedFiles).toEqual(["SKILL.md", "scripts/analyze.py"]);
-    expect(result.prompt.content).toContain("workspace sandbox at `/.claude/skills/script-skill`");
+    expect(result.prompt.content).toContain("staged inside the current sandbox at `/.claude/skills/script-skill`");
     expect(s3Copies).toContainEqual({
       sourceBucket: "test-skills-bucket",
       sourceKey: "acct_test/script-skill/scripts/analyze.py",

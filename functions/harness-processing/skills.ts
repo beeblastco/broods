@@ -29,11 +29,11 @@ import {
 } from "../_shared/skills.ts";
 
 // Skills are re-staged fresh on every `load_skill`: the account skill bucket is the
-// source of truth, and each load copies a clean read/run checkout into the workspace so
+// source of truth, and each load copies a clean read/run checkout into the run path so
 // the agent can execute bundled scripts in the sandbox. The canonical copy lives under
 // `.claude/skills/<name>`; the same bundle is mirrored into SKILL_MIRROR_DIRS for tools
-// that expect those industry-standard locations. Nothing is published back — staged
-// edits are transient and overwritten by the next load.
+// that expect those industry-standard locations. Staged files are refreshed by the next
+// load from the account-owned bundle.
 const SKILL_CANONICAL_DIR = ".claude/skills";
 const SKILL_MIRROR_DIRS = [".agents/skills"];
 
@@ -253,11 +253,11 @@ function formatLoadedSkillPrompt(
 ): string {
   const parts = loaded.parts.map((part) => `## ${part.path}\n\n${part.text.trim()}`).join("\n\n");
   const mirrorText = staged && staged.mirrorPaths.length > 0
-    ? ` It is also mirrored read-only at ${staged.mirrorPaths.map((path) => `\`${path}\``).join(", ")} for tools that expect those locations.`
+    ? ` It is also mirrored at ${staged.mirrorPaths.map((path) => `\`${path}\``).join(", ")} for tools that expect those locations.`
     : "";
   const sandboxText = staged
-    ? `\n\n## Sandbox files\n\nThis skill is checked out as a working copy in the workspace sandbox at \`${staged.stagedPath}\`. Run scripts from that path, for example \`bash ${staged.stagedPath}/script.sh\`, \`python3 ${staged.stagedPath}/script.py\`, or direct executable paths when the file has a shebang.${mirrorText}`
-    : "\n\n## Sandbox files\n\nNo workspace sandbox path is available for this skill. Use the loaded instructions as read-only context; do not try to edit or execute bundled skill files.";
+    ? `\n\n## Sandbox files\n\nThis skill's helper files are staged inside the current sandbox at \`${staged.stagedPath}\`. Run scripts from that path, for example \`bash ${staged.stagedPath}/script.sh\`, \`python3 ${staged.stagedPath}/script.py\`, or direct executable paths when the file has a shebang.${mirrorText}`
+    : "\n\n## Sandbox files\n\nThe skill instructions are loaded. No sandbox staging path is available for bundled helper files in this turn, so bundled scripts are not available to execute.";
   // See https://github.com/microsoft/agent-framework/discussions/4239: loaded skills stay in
   // refreshed system instructions instead of polluting chat history.
   return `<loaded-skill path="${loaded.path}" name="${loaded.skill.name}">

@@ -1,6 +1,6 @@
 {
   "name": "filthy-panty",
-  "description": "Agentic AI chatbot on AWS — Lambda + Google AI + multi-channel integrations, deployed with SST.",
+  "description": "Serverless multi-account AI agent harness on AWS Lambda — Vercel AI SDK with Google, OpenAI, Bedrock, and Gateway providers + multi-channel integrations (Telegram, Discord, Slack, GitHub, Pancake, Zalo), deployed with SST.",
   "type": "module",
   "private": true,
   "overrides": {

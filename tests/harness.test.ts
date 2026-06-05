@@ -932,9 +932,6 @@ describe("runAgentLoop", () => {
       skills: {
         enabled: true,
         allowed: ["acct_test/support-flow"],
-        publish: {
-          enabled: true,
-        },
       },
       provider: {
         google: {
@@ -954,126 +951,15 @@ describe("runAgentLoop", () => {
       needsApproval?: boolean;
     }>;
     expect(tools.load_skill).toBeDefined();
-    // Skill publishing is disabled; publish_skill_changes is never exposed.
-    expect(tools.publish_skill_changes).toBeUndefined();
     const loadSkillTool = tools.load_skill!;
     await expect(loadSkillTool.execute({
       path: "acct_test/support-flow",
       resources: [],
     })).resolves.toEqual({
       type: "text",
-      value: "Loaded skill acct_test/support-flow: SKILL.md. No workspace sandbox path is available; use this skill as read-only context.",
+      value: "Loaded skill acct_test/support-flow: SKILL.md. No sandbox staging path is available for bundled helper files in this turn.",
     });
     expect(loadSkillPrompt).toHaveBeenCalledWith(["acct_test/support-flow"], "acct_test/support-flow", []);
-  });
-
-  it("does not expose publish_skill_changes when skill publishing is disabled", async () => {
-    installHarnessEnv();
-    const { runAgentLoop } = await import("../functions/harness-processing/harness.ts");
-    const loadSkillPrompt = mock(async () => ({
-      path: "acct_test/support-flow",
-      loadedPaths: ["SKILL.md"],
-      bytes: 120,
-    }));
-
-    const stream = await runAgentLoop({
-      accountId: "acct_test",
-      agentId: "agent_test",
-      conversationKey: "direct:conversation",
-      eventId: "direct-event",
-      filesystemNamespace: () => "fs-test",
-      resolvedWorkspaces: () => [],
-      statelessSandbox: () => undefined,
-      statelessPermissionMode: () => "ask",
-      persistModelMessages: async () => [],
-      loadSkillPrompt,
-      loadRefreshedSystemPromptParts: async () => ({
-        systemContextSnapshot: { cursor: null, messages: [] },
-        system: [],
-      }),
-    } as never, {
-      messages: [{ role: "user", content: "hello" }],
-      system: [],
-      ephemeralSystem: [],
-      systemContextSnapshot: { cursor: null, messages: [] },
-    }, {
-      skills: {
-        enabled: true,
-        allowed: ["acct_test/support-flow"],
-      },
-      provider: {
-        google: {
-          apiKey: "google-key",
-        },
-      },
-      model: {
-        provider: "google",
-        modelId: "gemini-test",
-      },
-    });
-
-    await stream.consumeStream();
-
-    const tools = streamTextMock.mock.calls[0]?.[0].tools as Record<string, unknown>;
-    expect(tools.load_skill).toBeDefined();
-    expect(tools.publish_skill_changes).toBeUndefined();
-  });
-
-  it("does not expose publish_skill_changes when the workspace is disabled", async () => {
-    installHarnessEnv();
-    const { runAgentLoop } = await import("../functions/harness-processing/harness.ts");
-    const loadSkillPrompt = mock(async () => ({
-      path: "acct_test/support-flow",
-      loadedPaths: ["SKILL.md"],
-      bytes: 120,
-    }));
-
-    const stream = await runAgentLoop({
-      accountId: "acct_test",
-      agentId: "agent_test",
-      conversationKey: "direct:conversation",
-      eventId: "direct-event",
-      filesystemNamespace: () => "fs-test",
-      resolvedWorkspaces: () => [],
-      statelessSandbox: () => undefined,
-      statelessPermissionMode: () => "ask",
-      persistModelMessages: async () => [],
-      loadSkillPrompt,
-      loadRefreshedSystemPromptParts: async () => ({
-        systemContextSnapshot: { cursor: null, messages: [] },
-        system: [],
-      }),
-    } as never, {
-      messages: [{ role: "user", content: "hello" }],
-      system: [],
-      ephemeralSystem: [],
-      systemContextSnapshot: { cursor: null, messages: [] },
-    }, {
-      skills: {
-        enabled: true,
-        allowed: ["acct_test/support-flow"],
-        // Publishing is enabled, but without a workspace there is no staged
-        // checkout to publish from, so the tool must stay hidden.
-        publish: {
-          enabled: true,
-        },
-      },
-      provider: {
-        google: {
-          apiKey: "google-key",
-        },
-      },
-      model: {
-        provider: "google",
-        modelId: "gemini-test",
-      },
-    });
-
-    await stream.consumeStream();
-
-    const tools = streamTextMock.mock.calls[0]?.[0].tools as Record<string, unknown>;
-    expect(tools.load_skill).toBeDefined();
-    expect(tools.publish_skill_changes).toBeUndefined();
   });
 
   it("does not expose load_skill when no skills are configured", async () => {

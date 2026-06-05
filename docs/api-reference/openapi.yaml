@@ -1940,7 +1940,7 @@ components:
 
     SkillsConfig:
       type: object
-      description: When enabled, the runtime includes allowed skill metadata in the system prompt and exposes `load_skill`. Skill publishing is currently disabled.
+      description: When enabled, the runtime includes allowed skill metadata in the system prompt and exposes `load_skill`.
       properties:
         enabled:
           type: boolean
@@ -1949,15 +1949,6 @@ components:
           items:
             type: string
           description: Account-scoped skill paths (e.g., `acct_.../support-flow`)
-        publish:
-          type: object
-          description: Reserved for future skill publishing. Currently ignored by the runtime.
-          properties:
-            enabled:
-              type: boolean
-            needApproval:
-              type: boolean
-              description: Requires tool approval before publishing; defaults to true when publishing is enabled.
 
     SubagentConfig:
       type: object

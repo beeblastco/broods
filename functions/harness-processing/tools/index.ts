@@ -153,8 +153,6 @@ export function createTools(context: Omit<ToolContext, "config">, agentConfig: A
 
   const allowedSkillPaths = agentConfig.skills?.allowed ?? [];
   if (agentConfig.skills?.enabled === true && allowedSkillPaths.length > 0 && context.session) {
-    // Read-only skill loading. Skill publishing is temporarily disabled and will
-    // be reworked as a skills-as-workspace model.
     Object.assign(tools, loadSkillTool(
       context.session,
       (skillPath, resourcePaths) => context.session!.loadSkillPrompt(allowedSkillPaths, skillPath, resourcePaths),

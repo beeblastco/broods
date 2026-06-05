@@ -50,7 +50,7 @@ Model-facing tools hide the provider path: `bash` starts in the selected workspa
 directory, and file tools use workspace-relative paths. Prefer prompts like
 `python3 script.py` or `read analysis.json`, not provider mount paths.
 
-Skills are checked out git-style: the account skill bucket is the source of truth, and `load_skill` clones a working copy into `<namespace>/.claude/skills/<name>` (mirrored to `<namespace>/.agents/skills/<name>` for discovery). Skill publishing is currently disabled. See [`skills.md`](../skills.md).
+Skills are staged from the account skill bucket into `<namespace>/.claude/skills/<name>` (mirrored to `<namespace>/.agents/skills/<name>` for discovery) when `load_skill` runs. See [`skills.md`](../skills.md).
 
 ## Reading workspace files: S3 API vs the sandbox mount
 
