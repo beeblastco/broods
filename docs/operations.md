@@ -10,7 +10,8 @@ Use `.env` for local SST inputs only:
 - `SST_STAGE`
 - `ENABLE_DIRECT_API` - Defaults to `true`; set to `false` to disable direct sync and async POST access to `harness-processing`.
 - `ENABLE_WEBSOCKET` - Set to `true` to enable WebSocket gateway worker invocations.
-- `NATS_URL` - Required when `ENABLE_WEBSOCKET=true`; ignored by the deployed Lambda when WebSocket is disabled.
+- `NATS_URL` - Required when `ENABLE_WEBSOCKET=true`; ignored by the deployed Lambda when WebSocket is disabled. The transport is chosen by scheme: `wss://`/`ws://` (WebSocket, e.g. `wss://nats.beeblast.co` from the out-of-cluster Lambda) or `nats://`/`tls://` (core TCP, for future in-cluster callers).
+- `NATS_TOKEN` - Token-auth credential for the NATS server; optional (omit for an unauthenticated server).
 
 Runtime secrets are SST secrets. Generate your own secret and set
 

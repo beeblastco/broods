@@ -15,6 +15,8 @@ const ENABLE_WEBSOCKET = parseBooleanEnv("ENABLE_WEBSOCKET", false);
 const SANDBOX_IMAGE_READY = parseBooleanEnv("SANDBOX_IMAGE_READY", false);
 const SANDBOX_WORKSPACE_MOUNT_PATH = "/mnt/workspaces";
 const NATS_URL = process.env.NATS_URL?.trim();
+// Token-auth credential for the NATS server; omit for an unauthenticated server.
+const NATS_TOKEN = process.env.NATS_TOKEN?.trim();
 // Production runs the Convex storage provider. Other stages stay on
 // DynamoDB. CONVEX_URL + CONVEX_DEPLOY_KEY are set by the deploy workflow only
 // for the main branch.
@@ -854,6 +856,7 @@ export default $config({
           ? { CRON_JOBS_TABLE_NAME: cronJobsTable.name }
           : {}),
         ...(NATS_URL ? { NATS_URL } : {}),
+        ...(NATS_TOKEN ? { NATS_TOKEN } : {}),
         DAYTONA_API_KEY: daytonaApiKey.value,
         ...(DAYTONA_ORGANIZATION_ID ? { DAYTONA_ORGANIZATION_ID } : {}),
         ...(DAYTONA_API_URL ? { DAYTONA_API_URL } : {}),

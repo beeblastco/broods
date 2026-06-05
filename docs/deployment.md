@@ -15,7 +15,8 @@ Keep `.env` for local SST inputs only:
 - `SST_STAGE`
 - `ENABLE_DIRECT_API`
 - `ENABLE_WEBSOCKET`
-- `NATS_URL`
+- `NATS_URL` (transport by scheme: `wss://` WebSocket / `nats://` core TCP)
+- `NATS_TOKEN` (optional; token-auth credential for the NATS server)
 
 Runtime secrets are SST secrets:
 

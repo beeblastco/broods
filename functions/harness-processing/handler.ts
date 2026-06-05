@@ -479,14 +479,19 @@ async function handleNatsWorkerRequest(event: DirectInboundEvent, context?: Lamb
   if (!natsUrl) {
     throw new Error("NATS worker requires NATS_URL");
   }
+  const natsToken = process.env.NATS_TOKEN?.trim() || undefined;
 
-  const publisher = new LiveNatsPublisher(natsUrl, {
-    accountId: event.accountId,
-    agentId: event.agentId,
-    conversationKey: event.publicConversationKey,
-    eventId: event.publicEventId,
-    connectionId,
-  });
+  const publisher = new LiveNatsPublisher(
+    natsUrl,
+    {
+      accountId: event.accountId,
+      agentId: event.agentId,
+      conversationKey: event.publicConversationKey,
+      eventId: event.publicEventId,
+      connectionId,
+    },
+    natsToken,
+  );
 
   try {
     const turn = await prepareDirectTurn(event);
