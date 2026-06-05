@@ -81,9 +81,9 @@ const RESPONSE_STREAM_NAME = "WS_RESPONSES";
 const RESPONSE_SUBJECT_WILDCARD = "v1.*.*.ws.response.*";
 const RESPONSE_STREAM_STORAGE = StorageType.File; // Memory = faster/cheaper, lost on restart
 const NANOS_PER_MS = 1_000_000;
-// Backstop reconnect window: long enough to replay an in-flight turn after a
-// drop, short enough that the buffer never holds much (the DB has the result).
-const RESPONSE_STREAM_MAX_AGE_MS = 10 * 60 * 1000;
+// Backstop window only: purge-on-persist clears finished turns, so this just
+// caps the buffer for turns that never persist cleanly. Kept very short (3 min).
+const RESPONSE_STREAM_MAX_AGE_MS = 3 * 60 * 1000;
 const RESPONSE_STREAM_MAX_MSGS_PER_SUBJECT = 2_000;
 // Dedup window for Nats-Msg-Id-tagged publishes (retries within it collapse).
 const RESPONSE_STREAM_DUPLICATE_WINDOW_MS = 2 * 60 * 1000;

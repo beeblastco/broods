@@ -295,7 +295,7 @@ Notes:
     conversation from the stream — a later reconnect reads the saved turn from the
     DB, so keeping the buffer would be pointless. The external-async continuation
     re-enters the same path, so it purges when *it* finishes.
-  - **Short backstop `max_age` (~10 min):** only for turns that never persist
+  - **Short backstop `max_age` (~3 min):** only for turns that never persist
     cleanly (e.g. an error/crash before the purge); they expire instead of piling up.
   - Other knobs in `nats.ts`: `RESPONSE_STREAM_STORAGE` (`File` default; `Memory`
     is faster/cheaper but lost on restart) and `max_msgs_per_subject`. The

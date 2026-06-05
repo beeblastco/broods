@@ -25,6 +25,20 @@ const publicEventId = `nats-${Date.now()}`;
 const publicConversationKey = `nats-${Date.now()}`;
 const decoder = new TextDecoder();
 
+// Render a stream event as the actual content forming — print delta text inline
+// (so reasoning/answer read like real streaming) with light markers for the
+// structural events, instead of just echoing the event type.
+function renderEvent(event: NatsStreamEvent): void {
+  const data = event.data as { type?: string; text?: string };
+  if ((data.type === "text-delta" || data.type === "reasoning-delta") && typeof data.text === "string") {
+    process.stdout.write(data.text);
+    return;
+  }
+  if (data.type === "reasoning-start") return void process.stdout.write("\n  [reasoning] ");
+  if (data.type === "text-start") return void process.stdout.write("\n  [answer] ");
+  if (data.type !== "done" && data.type !== "error") process.stdout.write(`\n  · ${String(data.type)}`);
+}
+
 const researchAgentConfig: AgentConfig = {
   provider: {
     minimax: {
@@ -138,9 +152,9 @@ try {
   for await (const message of live) {
     const event = JSON.parse(decoder.decode(message.data)) as NatsStreamEvent;
     lastEnvelopeSeq = event.sequence;
-    process.stdout.write(`\n[live ${event.sequence}] ${String(event.data.type)}\n`);
+    renderEvent(event);
     if (event.sequence >= 5) {
-      console.log(`\n[Disconnect] dropping the socket after ${lastEnvelopeSeq} events (agent keeps streaming)`);
+      console.log(`\n\n[Disconnect] dropping the socket after ${lastEnvelopeSeq} events (agent keeps streaming)`);
       break;
     }
   }
@@ -162,9 +176,9 @@ try {
   for await (const message of resume) {
     const event = JSON.parse(decoder.decode(message.data)) as NatsStreamEvent;
     if (event.sequence <= lastEnvelopeSeq) continue; // skip what we saw before the drop
-    process.stdout.write(`  resume [${event.sequence}] ${String(event.data.type)}\n`);
+    renderEvent(event);
     if (event.data.type === "done" || event.data.type === "error") {
-      console.log(`\n[Stream completed with: ${event.data.type}]`);
+      console.log(`\n\n[Stream completed with: ${event.data.type}]`);
       break;
     }
   }
