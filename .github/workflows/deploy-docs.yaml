@@ -41,7 +41,9 @@ jobs:
           role-to-assume: ${{ env.AWS_ROLE_ARN }}
 
       - name: Install dependencies
-        run: bun install --frozen-lockfile
+        # Skip the postinstall (`sst install`): building the docs needs neither the
+        # SST providers nor project env vars. Same pattern as the deploy job.
+        run: bun install --frozen-lockfile --ignore-scripts
 
       - name: Build Docusaurus
         run: bun run docs:build
