@@ -10,7 +10,12 @@
  * the harness can persist normally.
  */
 
-import { encryptAgentConfig, decodeStoredAgentConfig } from "../agent-config.ts";
+import {
+  encryptAgentConfig,
+  decodeStoredAgentConfig,
+  encryptConfigObject,
+  decodeStoredConfigObject,
+} from "../agent-config.ts";
 import {
   normalizeCreateAgentInput,
   normalizeUpdateAgentInput,
@@ -20,6 +25,16 @@ import {
   normalizeSchedulerGroupName,
   normalizeUpdateCronJobInput,
 } from "../cron-jobs.ts";
+import {
+  normalizeCreateSandboxConfigInput,
+  normalizeUpdateSandboxConfigInput,
+  type SandboxConfig,
+} from "../sandbox-config.ts";
+import {
+  normalizeCreateWorkspaceConfigInput,
+  normalizeUpdateWorkspaceConfigInput,
+  type WorkspaceConfig,
+} from "../workspace-config.ts";
 
 // The convex/ submodule is only present in SaaS deployments. We load the
 // generated API namespace lazily via require() so the open-source typecheck
@@ -46,7 +61,11 @@ import type {
   AgentStore,
   CronJobRecord,
   CronJobStore,
+  SandboxConfigRecord,
+  SandboxConfigStore,
   StorageProvider,
+  WorkspaceConfigRecord,
+  WorkspaceConfigStore,
 } from "../types.ts";
 import { getConvexClient } from "./client.ts";
 
@@ -338,9 +357,186 @@ function cryptoRandomId(): string {
   return Math.random().toString(36).slice(2, 14);
 }
 
+interface ConvexSandboxConfigDoc {
+  _id: string;
+  accountId: string;
+  name: string;
+  description?: string;
+  encryptedConfig?: string;
+  encryptionIv?: string;
+  encryptionTag?: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+function sandboxConfigFromConvex(doc: ConvexSandboxConfigDoc | null): SandboxConfigRecord | null {
+  if (!doc) return null;
+  const config = doc.encryptedConfig && doc.encryptionIv && doc.encryptionTag
+    ? (decodeStoredConfigObject({
+        encrypted: true as const,
+        algorithm: "aes-256-gcm",
+        ciphertext: doc.encryptedConfig,
+        iv: doc.encryptionIv,
+        tag: doc.encryptionTag,
+      }) as unknown as SandboxConfig)
+    : ({ provider: "lambda", permissionMode: "ask" } as SandboxConfig);
+  return {
+    accountId: doc.accountId,
+    sandboxId: doc._id,
+    name: doc.name,
+    ...(doc.description ? { description: doc.description } : {}),
+    config,
+    createdAt: new Date(doc.createdAt).toISOString(),
+    updatedAt: new Date(doc.updatedAt).toISOString(),
+  };
+}
+
+interface ConvexWorkspaceConfigDoc {
+  _id: string;
+  accountId: string;
+  name: string;
+  description?: string;
+  config: WorkspaceConfig;
+  createdAt: number;
+  updatedAt: number;
+}
+
+function workspaceConfigFromConvex(doc: ConvexWorkspaceConfigDoc | null): WorkspaceConfigRecord | null {
+  if (!doc) return null;
+  return {
+    accountId: doc.accountId,
+    workspaceId: doc._id,
+    name: doc.name,
+    ...(doc.description ? { description: doc.description } : {}),
+    config: doc.config ?? { storage: { provider: "s3" } },
+    createdAt: new Date(doc.createdAt).toISOString(),
+    updatedAt: new Date(doc.updatedAt).toISOString(),
+  };
+}
+
+const sandboxConfigs: SandboxConfigStore = {
+  async getById(accountId, sandboxId) {
+    const doc = await getConvexClient().query(internal.sandboxConfigs.getById, {
+      accountId: accountId as any,
+      sandboxId: sandboxId as any,
+    });
+    return sandboxConfigFromConvex(doc as ConvexSandboxConfigDoc | null);
+  },
+  async list(accountId) {
+    const docs = (await getConvexClient().query(internal.sandboxConfigs.list, {
+      accountId: accountId as any,
+    })) as ConvexSandboxConfigDoc[];
+    return docs.map((d) => sandboxConfigFromConvex(d)!).filter(Boolean);
+  },
+  async create(accountId, input) {
+    const normalized = normalizeCreateSandboxConfigInput(input);
+    const encrypted = encryptConfigObject(normalized.config);
+    const id = (await getConvexClient().mutation(internal.sandboxConfigs.create, {
+      accountId: accountId as any,
+      name: normalized.name,
+      description: normalized.description,
+      encryptedConfig: encrypted.ciphertext,
+      encryptionIv: encrypted.iv,
+      encryptionTag: encrypted.tag,
+    })) as string;
+    const created = await this.getById(accountId, id);
+    if (!created) throw new Error("Failed to fetch created sandbox config");
+    return created;
+  },
+  async update(accountId, sandboxId, rawPatch) {
+    const existing = await this.getById(accountId, sandboxId);
+    if (!existing) return null;
+    const patch = normalizeUpdateSandboxConfigInput(existing.config, rawPatch);
+    const encrypted = encryptConfigObject(patch.config);
+    const args: Record<string, unknown> = {
+      accountId: accountId as any,
+      sandboxId: sandboxId as any,
+      encryptedConfig: encrypted.ciphertext,
+      encryptionIv: encrypted.iv,
+      encryptionTag: encrypted.tag,
+    };
+    if (patch.name !== undefined) args.name = patch.name;
+    if (patch.description !== undefined) args.description = patch.description ?? undefined;
+    await getConvexClient().mutation(internal.sandboxConfigs.update, args as any);
+    return this.getById(accountId, sandboxId);
+  },
+  async remove(accountId, sandboxId) {
+    await getConvexClient().mutation(internal.sandboxConfigs.remove, {
+      accountId: accountId as any,
+      sandboxId: sandboxId as any,
+    });
+    return true;
+  },
+  async removeAllForAccount(accountId) {
+    const list = await this.list(accountId);
+    for (const r of list) {
+      await this.remove(accountId, r.sandboxId);
+    }
+    return list.length;
+  },
+};
+
+const workspaceConfigs: WorkspaceConfigStore = {
+  async getById(accountId, workspaceId) {
+    const doc = await getConvexClient().query(internal.workspaceConfigs.getById, {
+      accountId: accountId as any,
+      workspaceId: workspaceId as any,
+    });
+    return workspaceConfigFromConvex(doc as ConvexWorkspaceConfigDoc | null);
+  },
+  async list(accountId) {
+    const docs = (await getConvexClient().query(internal.workspaceConfigs.list, {
+      accountId: accountId as any,
+    })) as ConvexWorkspaceConfigDoc[];
+    return docs.map((d) => workspaceConfigFromConvex(d)!).filter(Boolean);
+  },
+  async create(accountId, input) {
+    const normalized = normalizeCreateWorkspaceConfigInput(input);
+    const id = (await getConvexClient().mutation(internal.workspaceConfigs.create, {
+      accountId: accountId as any,
+      name: normalized.name,
+      description: normalized.description,
+      config: normalized.config as any,
+    })) as string;
+    const created = await this.getById(accountId, id);
+    if (!created) throw new Error("Failed to fetch created workspace config");
+    return created;
+  },
+  async update(accountId, workspaceId, rawPatch) {
+    const existing = await this.getById(accountId, workspaceId);
+    if (!existing) return null;
+    const patch = normalizeUpdateWorkspaceConfigInput(existing.config, rawPatch);
+    const args: Record<string, unknown> = {
+      accountId: accountId as any,
+      workspaceId: workspaceId as any,
+      config: patch.config,
+    };
+    if (patch.name !== undefined) args.name = patch.name;
+    if (patch.description !== undefined) args.description = patch.description ?? undefined;
+    await getConvexClient().mutation(internal.workspaceConfigs.update, args as any);
+    return this.getById(accountId, workspaceId);
+  },
+  async remove(accountId, workspaceId) {
+    await getConvexClient().mutation(internal.workspaceConfigs.remove, {
+      accountId: accountId as any,
+      workspaceId: workspaceId as any,
+    });
+    return true;
+  },
+  async removeAllForAccount(accountId) {
+    const list = await this.list(accountId);
+    for (const r of list) {
+      await this.remove(accountId, r.workspaceId);
+    }
+    return list.length;
+  },
+};
+
 export const convexStorageProvider: StorageProvider = {
   kind: "convex",
   accounts,
   agents,
   cronJobs,
+  sandboxConfigs,
+  workspaceConfigs,
 };
