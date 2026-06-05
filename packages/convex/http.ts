@@ -6,6 +6,7 @@ import { registerRoutes } from "@convex-dev/stripe";
 import { httpRouter } from "convex/server";
 import { components, internal } from "./_generated/api";
 import { authKit } from "./auth";
+import { handle as cliHttp } from "./cliHttp";
 
 const http = httpRouter();
 
@@ -34,6 +35,24 @@ registerRoutes(http, components.stripe, {
             }
         },
     },
+});
+
+http.route({
+    pathPrefix: "/api/cli/projects/",
+    method: "GET",
+    handler: cliHttp,
+});
+
+http.route({
+    pathPrefix: "/api/cli/projects/",
+    method: "PUT",
+    handler: cliHttp,
+});
+
+http.route({
+    pathPrefix: "/api/cli/projects/",
+    method: "DELETE",
+    handler: cliHttp,
 });
 
 export default http;

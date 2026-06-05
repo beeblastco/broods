@@ -148,8 +148,9 @@ export const agentsFields = {
 /**
  * Account-scoped sandbox config (compute backend + permission mode), referenced
  * by agents via the encrypted agent config. Stored encrypted at rest like agents
- * because `envVars`/`options` may carry provider secrets — filthy-panty encrypts
- * before writing, so cherry-coke only ever sees the opaque blob.
+ * because `envVars`/`options` may carry provider secrets — filthy-panty (the
+ * source of truth for this shared SaaS table) encrypts before writing, so
+ * cherry-coke only ever persists the opaque blob.
  */
 export const sandboxConfigsFields = {
     accountId: v.id("accounts"),
@@ -173,6 +174,15 @@ export const workspaceConfigsFields = {
     description: v.optional(v.string()),
     config: v.any(),
     createdAt: v.number(),
+    updatedAt: v.number(),
+};
+
+/** CLI-managed runtime variables scoped to a project environment. */
+export const environmentVariablesFields = {
+    projectId: v.id("projects"),
+    environmentId: v.id("environments"),
+    name: v.string(),
+    value: v.string(),
     updatedAt: v.number(),
 };
 
@@ -296,8 +306,15 @@ export default defineSchema({
         .index("by_orgId", ["orgId"])
         .index("by_secretHash", ["secretHash"]),
     agents: defineTable(agentsFields).index("by_accountId", ["accountId"]),
-    sandboxConfigs: defineTable(sandboxConfigsFields).index("by_accountId", ["accountId"]),
-    workspaceConfigs: defineTable(workspaceConfigsFields).index("by_accountId", ["accountId"]),
+    sandboxConfigs: defineTable(sandboxConfigsFields)
+        .index("by_accountId", ["accountId"])
+        .index("by_accountId_and_name", ["accountId", "name"]),
+    workspaceConfigs: defineTable(workspaceConfigsFields)
+        .index("by_accountId", ["accountId"])
+        .index("by_accountId_and_name", ["accountId", "name"]),
+    environmentVariables: defineTable(environmentVariablesFields)
+        .index("by_projectId_and_environmentId", ["projectId", "environmentId"])
+        .index("by_environmentId_and_name", ["environmentId", "name"]),
     conversations: defineTable(conversationsFields)
         .index("by_accountId", ["accountId"])
         .index("by_accountId_and_agentId", ["accountId", "agentId"]),

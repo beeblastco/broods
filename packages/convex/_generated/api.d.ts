@@ -15,6 +15,8 @@ import type * as agents from "../agents.js";
 import type * as asyncResults from "../asyncResults.js";
 import type * as auth from "../auth.js";
 import type * as canvas from "../canvas.js";
+import type * as cliHttp from "../cliHttp.js";
+import type * as cliSync from "../cliSync.js";
 import type * as conversations from "../conversations.js";
 import type * as cronJobs from "../cronJobs.js";
 import type * as cronJobsPublic from "../cronJobsPublic.js";
@@ -54,6 +56,8 @@ declare const fullApi: ApiFromModules<{
   asyncResults: typeof asyncResults;
   auth: typeof auth;
   canvas: typeof canvas;
+  cliHttp: typeof cliHttp;
+  cliSync: typeof cliSync;
   conversations: typeof conversations;
   cronJobs: typeof cronJobs;
   cronJobsPublic: typeof cronJobsPublic;

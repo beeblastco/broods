@@ -13,7 +13,7 @@ import {
 import { v } from "convex/values";
 import { internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
-import { action } from "./_generated/server";
+import { action, internalAction } from "./_generated/server";
 import { authKit } from "./auth";
 
 const logEntry = v.object({
@@ -30,6 +30,21 @@ const logEntry = v.object({
     functionName: v.string(),
     requestId: v.optional(v.string()),
 });
+
+type LogEntry = {
+    timestamp: number;
+    message: string;
+    level: "INFO" | "WARN" | "ERROR" | "DEBUG";
+    logGroup: string;
+    logStream?: string;
+    functionName: string;
+    requestId?: string;
+};
+
+type LogSource = {
+    logGroup: string;
+    functionName: string;
+};
 
 const usageRange = v.union(
     v.literal("1h"),
@@ -232,7 +247,7 @@ export const fetchForProject = action({
         errorOnly: v.optional(v.boolean()),
     },
     returns: v.array(logEntry),
-    handler: async (ctx, args) => {
+    handler: async (ctx, args): Promise<LogEntry[]> => {
         const authUser = await authKit.getAuthUser(ctx);
         if (!authUser) return [];
 
@@ -272,6 +287,54 @@ export const fetchForProject = action({
         );
 
         return batches.flat().sort((a, b) => b.timestamp - a.timestamp);
+    },
+});
+
+export const fetchForCli = internalAction({
+    args: {
+        secretHash: v.string(),
+        project: v.string(),
+        environment: v.string(),
+        lookbackMs: v.optional(v.number()),
+        limit: v.optional(v.number()),
+        errorOnly: v.optional(v.boolean()),
+    },
+    returns: v.array(logEntry),
+    handler: async (ctx, args) => {
+        const now = Date.now();
+        const startTime = now - boundedNumber(args.lookbackMs, 60 * 60 * 1000, 60_000, 30 * 24 * 60 * 60 * 1000);
+        const limit = boundedNumber(args.limit, 100, 1, 1000);
+        const sources: LogSource[] | null = await ctx.runQuery(internal.logsHelpers.getCliLogSourcesBySecretHash, {
+            secretHash: args.secretHash,
+            project: args.project,
+            environment: args.environment,
+        });
+        if (!sources) throw new Error("Project/environment not found");
+
+        const allSources: LogSource[] = [...sources];
+        const harnessLogGroup = getFilthyPantyLogGroup();
+        if (harnessLogGroup) {
+            allSources.push({
+                logGroup: harnessLogGroup,
+                functionName: harnessLogGroup.replace(/^\/aws\/lambda\//, ""),
+            });
+        }
+        if (allSources.length === 0) return [];
+
+        const batches: LogEntry[][] = await Promise.all(
+            allSources.map(async (source: LogSource): Promise<LogEntry[]> => {
+                const entries = await fetchFromCloudWatch({
+                    functionName: source.functionName,
+                    startTimeMs: startTime,
+                    endTimeMs: now,
+                    limit: limit,
+                    errorOnly: args.errorOnly ?? false,
+                });
+                return entries.map((entry): LogEntry => ({ ...entry, functionName: source.functionName }));
+            }),
+        );
+
+        return batches.flat().sort((a: LogEntry, b: LogEntry) => b.timestamp - a.timestamp).slice(0, limit);
     },
 });
 
@@ -418,6 +481,12 @@ function toNum(value: string | undefined): number {
     const n = Number(value);
 
     return Number.isFinite(n) ? n : 0;
+}
+
+function boundedNumber(value: number | undefined, fallback: number, min: number, max: number): number {
+    if (typeof value !== "number" || !Number.isFinite(value)) return fallback;
+
+    return Math.min(max, Math.max(min, Math.floor(value)));
 }
 
 /**
