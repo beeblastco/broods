@@ -12,7 +12,7 @@ import { scopedDirectConversationKey, scopedDirectEventId } from "../functions/_
 import type { DirectInboundEvent } from "../functions/harness-processing/integrations.ts";
 import { AGENT_SERVICE_URL, createAccount, createAgent, deleteAccount } from "./utils.ts";
 
-const googleApiKey = process.env.ACCOUNT_GOOGLE_API_KEY!;
+const minimaxApiKey = process.env.ACCOUNT_MINIMAX_API_KEY!;
 const lambdaFunctionName = process.env.HARNESS_FUNCTION_ARN!;
 const natsUrl = process.env.NATS_URL!;
 const natsToken = process.env.NATS_TOKEN || undefined;
@@ -27,13 +27,13 @@ const account = await createAccount(`external-async-${Date.now()}`);
 
 const agentConfig: AgentConfig = {
   provider: {
-    google: {
-      apiKey: googleApiKey,
+    minimax: {
+      apiKey: minimaxApiKey,
     },
   },
   model: {
-    provider: "google",
-    modelId: "gemma-4-31b-it",
+    provider: "minimax",
+    modelId: "MiniMax-M2.7",
   },
   agent: {
     system: "You are a helpful assistant. When asked, call the test_external_async tool with the user's message and report the result after it completes.",
