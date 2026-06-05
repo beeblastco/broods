@@ -9,9 +9,8 @@
  */
 
 import { InvokeCommand, LambdaClient } from "@aws-sdk/client-lambda";
-import { connect } from "nats";
 import { toRuntimeAgentConfig, type AgentConfig } from "../functions/_shared/storage/index.ts";
-import { readConversationStream, type NatsStreamEvent } from "../functions/_shared/nats.ts";
+import { connectNats, readConversationStream, subscribeConversationLive, type NatsStreamEvent } from "../functions/_shared/nats.ts";
 import { scopedDirectConversationKey, scopedDirectEventId } from "../functions/_shared/runtime-keys.ts";
 import type { DirectInboundEvent } from "../functions/harness-processing/integrations.ts";
 import { createAccount, createAgent, deleteAccount } from "./utils.ts";
@@ -20,6 +19,7 @@ const googleApiKey = process.env.ACCOUNT_GOOGLE_API_KEY!;
 const tavilyApiKey = process.env.ACCOUNT_TAVILY_API_KEY!;
 const lambdaFunctionName = process.env.HARNESS_FUNCTION_ARN!;
 const natsUrl = process.env.NATS_URL!;
+const natsToken = process.env.NATS_TOKEN || undefined;
 const connectionId = `ws-test-${Date.now()}`;
 const publicEventId = `nats-${Date.now()}`;
 const publicConversationKey = `nats-${Date.now()}`;
@@ -50,7 +50,7 @@ const researchAgentConfig: AgentConfig = {
   },
 };
 
-const natsClient = await connect({ servers: natsUrl, timeout: 5000 });
+const natsClient = await connectNats({ servers: natsUrl, token: natsToken });
 const lambda = new LambdaClient({ region: "eu-central-1", profile: "default" });
 
 const account = await createAccount(`nats-stream-${Date.now()}`);
@@ -124,41 +124,42 @@ try {
     })),
   }));
 
-  // Phase 1: consume the live stream, tracking the JetStream sequence cursor a
-  // reconnecting client would persist to resume.
-  let lastSeq = 0;
-  const live = await readConversationStream({
+  // Phase 1 — LIVE via core subscribe (lowest latency). A connected client reads
+  // here; core Msgs carry the envelope but not the JetStream seq, so track the
+  // envelope `sequence` as the cursor.
+  let lastEnvelopeSeq = 0;
+  const live = subscribeConversationLive({
     connection: natsClient,
     accountId: account.account.accountId,
     agentId: agent.agentId,
     conversationKey: publicConversationKey,
   });
   for await (const message of live) {
-    lastSeq = message.seq;
     const event = JSON.parse(decoder.decode(message.data)) as NatsStreamEvent;
-    process.stdout.write(`\n[seq ${message.seq}] ${JSON.stringify(event.data)}\n`);
+    lastEnvelopeSeq = event.sequence;
+    process.stdout.write(`\n[live ${event.sequence}] ${JSON.stringify(event.data)}\n`);
     if (event.data.type === "done" || event.data.type === "error") {
       console.log(`\n[Stream completed with: ${event.data.type}]`);
       break;
     }
   }
-  await live.close();
+  live.unsubscribe();
 
-  // Phase 2: prove durability — a fresh reader (a "reconnect") replays the whole
-  // finished stream from the start. Pass startSequence: lastSeq + 1 instead to
-  // resume only what a client missed after a drop.
-  console.log(`\n[Reconnect] replaying ${lastSeq} persisted events from sequence 1...`);
+  // Phase 2 — REPLAY via JetStream (a "reconnect"). Proves the stream persisted
+  // everything even though Phase 1 read it live. A real client resuming after a
+  // drop would pass startSequence (last JsMsg.seq) or startTime instead of
+  // replaying from the start, and dedupe by the envelope sequence at the seam.
+  console.log(`\n[Reconnect] replaying ${lastEnvelopeSeq} persisted events...`);
   const replay = await readConversationStream({
     connection: natsClient,
     accountId: account.account.accountId,
     agentId: agent.agentId,
     conversationKey: publicConversationKey,
-    startSequence: 1,
   });
   for await (const message of replay) {
     const event = JSON.parse(decoder.decode(message.data)) as NatsStreamEvent;
     process.stdout.write(`  replay [seq ${message.seq}] ${String(event.data.type)}\n`);
-    if (message.seq >= lastSeq) {
+    if (event.sequence >= lastEnvelopeSeq) {
       break;
     }
   }

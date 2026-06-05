@@ -5,9 +5,9 @@
  */
 
 import { InvokeCommand, LambdaClient } from "@aws-sdk/client-lambda";
-import { connect, StringCodec } from "nats";
+import { StringCodec } from "nats.ws";
 import { toRuntimeAgentConfig, type AgentConfig } from "../functions/_shared/storage/index.ts";
-import { streamResponseSubject, type NatsStreamEvent } from "../functions/_shared/nats.ts";
+import { connectNats, streamResponseSubject, type NatsStreamEvent } from "../functions/_shared/nats.ts";
 import { scopedDirectConversationKey, scopedDirectEventId } from "../functions/_shared/runtime-keys.ts";
 import type { DirectInboundEvent } from "../functions/harness-processing/integrations.ts";
 import { AGENT_SERVICE_URL, createAccount, createAgent, deleteAccount } from "./utils.ts";
@@ -15,12 +15,13 @@ import { AGENT_SERVICE_URL, createAccount, createAgent, deleteAccount } from "./
 const googleApiKey = process.env.ACCOUNT_GOOGLE_API_KEY!;
 const lambdaFunctionName = process.env.HARNESS_FUNCTION_ARN!;
 const natsUrl = process.env.NATS_URL!;
+const natsToken = process.env.NATS_TOKEN || undefined;
 const connectionId = `ws-external-async-${Date.now()}`;
 const publicEventId = `external-async-${Date.now()}`;
 const publicConversationKey = `external-async-${Date.now()}`;
 const codec = StringCodec();
 
-const natsClient = await connect({ servers: natsUrl, timeout: 5000 });
+const natsClient = await connectNats({ servers: natsUrl, token: natsToken });
 const lambda = new LambdaClient({ region: "eu-central-1", profile: "default" });
 const account = await createAccount(`external-async-${Date.now()}`);
 

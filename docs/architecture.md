@@ -33,7 +33,7 @@ flowchart TD
   Provider["Telegram / GitHub / Slack / Discord"] -->|"/webhooks/\{accountId\}/\{agentId\}/\{channel\}"| HarnessUrl
   WSClient["WebSocket client"] <-->|"wss://gateway"| WSGateway["WebSocket Gateway<br/>(caller's service)"]
   WSGateway -->|"Lambda Event invocation"| HarnessUrl
-  HarnessUrl -->|"js.publish (persisted)"| NATS["NATS JetStream"]
+  HarnessUrl -->|"core publish (captured by stream)"| NATS["NATS JetStream"]
   NATS -->|"conversation-scoped<br/>replay on reconnect"| WSGateway
 
   ManageUrl --> AccountStore["DynamoDB: AccountConfig<br/>account metadata + secretHash"]
@@ -234,18 +234,17 @@ landed after the original connection closed.
 
 ```mermaid
 flowchart TD
-  Client["WebSocket Client"] <-->|"wss://gateway"| GW["WebSocket Gateway<br/>(caller's service)"]
-  GW -->|"validate account secret"| Auth["Account auth"]
-  Auth -->|"JetStream consumer<br/>replay from last seq on reconnect"| NATS["NATS JetStream<br/>(WS_RESPONSES stream)"]
-  Auth -->|"Lambda Event invocation<br/>\{ kind: 'nats-worker', event: \{..., connectionId\} \}"| Harness["harness-processing Lambda"]
-  Harness -->|"js.publish (persisted + ack)"| NATS
-  NATS -->|"consume v1.\{acct\}.\{agent\}.ws.response.\{convToken\}"| GW
-  GW -->|"forward / replay events"| Client
+  Harness["harness-processing Lambda"] -->|"nc.publish (one publish)"| Subj["subject<br/>v1.acct.agent.ws.response.convToken"]
+  Subj -->|"live fan-out"| GWlive["core subscribe<br/>(connected client)"]
+  Subj -->|"captured (stored once)"| NATS["WS_RESPONSES stream<br/>(durable buffer)"]
+  NATS -->|"JetStream consumer<br/>replay from seq / time"| GWreplay["reconnecting / late client"]
+  GWlive -->|"forward tokens"| Client["WebSocket Client"]
+  GWreplay -->|"replay missed, then resume live"| Client
 ```
 
-The gateway owns client auth, consuming the conversation subject, and the
-`nats-worker` Lambda invocation. Lambda persists each AI SDK stream chunk to the
-stream; the gateway consumes (and can replay) them.
+The gateway (the **caller's** service) owns client auth, the subscription, and
+the `nats-worker` Lambda invocation. Lambda does **one core publish** per chunk;
+the bound `WS_RESPONSES` stream captures that same message for replay.
 
 NATS subject patterns:
 
@@ -253,34 +252,100 @@ NATS subject patterns:
 | --------- | ----------- | --------- |
 | `v1.{accountId}.{agentId}.ws.response.{convToken}` | Lambda → Gateway | Vercel AI SDK stream events (`step-start`, `text`, `tool-call`, `finish`, `error`, …) |
 
-`convToken = base64url(publicConversationKey)` — a single NATS-safe token. The
-durable replay cursor is the JetStream message sequence (`JsMsg.seq`), not the
-per-invocation envelope `sequence` (which is only an in-turn ordinal).
+`convToken = base64url(publicConversationKey)` — a single NATS-safe token.
+
+**One publish, two read paths — and not double storage.** A core publish is
+fanned out live to any core subscriber on the subject *and* captured once by the
+stream. **Core publish stores nothing itself** — the stream is the only stored
+copy, so this is not duplicated storage. The platform exposes both read paths and
+lets the application choose how to switch:
+
+- **Connected →** `subscribeConversationLive` (core `subscribe`) — lowest latency.
+- **Reconnecting / late join →** `readConversationStream` (JetStream consumer)
+  from `startSequence` (last `JsMsg.seq`) or `startTime`, then resume live.
+- **Simplest →** use the JetStream consumer for *everything*; an ordered consumer
+  is exactly-once/in-order, so there's no seam to dedupe (it just costs a few ms
+  over raw core).
+
+Switching policy is the consuming app's call — the platform only guarantees a
+monotonic cursor (`JsMsg.seq` for stream readers; the envelope `sequence`/`eventId`
+for core subscribers) so a core→stream switch dedupes with a trivial `seq` check.
 
 Notes:
 
-- The `WS_RESPONSES` stream is created on demand (idempotent), file-backed, with
-  per-subject retention (`max_age` ~24h, `max_msgs_per_subject`) so finished
-  conversations stay replayable for a bounded window. See `functions/_shared/nats.ts`.
-- **Reconnect/replay** is a consumer concern: open a JetStream consumer filtered
-  to the conversation subject with `deliver_policy: by_start_sequence` +
-  `opt_start_seq` (the last `seq` the client persisted). `readConversationStream`
-  in `nats.ts` is the reference reader; `examples/nats-stream.ts` demonstrates it.
+- **Speed:** core publish is fire-and-forget (no per-token PubAck round-trip), a
+  shared `TextEncoder`, and the subject precomputed once per publisher — so token
+  publishing stays on the fast path.
+- **Transport (by URL scheme):** `connectNats` in `nats.ts` selects the client
+  from `NATS_URL`: `wss://`/`ws://` → WebSocket (`nats.ws`) for out-of-cluster
+  callers like Lambda (the cluster exposes only a `wss://` ingress externally);
+  `nats://`/`tls://` → core TCP (`nats`) for in-cluster callers on the internal
+  network (lower latency; core `4222` is not exposed externally). Moving a service
+  in-cluster is then a `NATS_URL` change, not a code change. `NATS_TOKEN` carries
+  the token-auth credential (omit for an unauthenticated server).
+- **No duplicates:** a single read path never sees a message twice; each publish
+  also carries a `Nats-Msg-Id` (`eventId:sequence`) so the stream's
+  `duplicate_window` (~2 min) collapses any publish retry.
+- **Storage:** the stream is a **transient replay buffer**, not the source of
+  truth (the final result lives in the conversation history). It's created on
+  demand (idempotent) and bounded by retention knobs in `nats.ts` —
+  `RESPONSE_STREAM_STORAGE` (`File` default; `Memory` is faster/cheaper but lost
+  on restart), `max_age` (~24h), and `max_msgs_per_subject`. Tune these down to
+  treat it as a short reconnect window; HA `replicas: 3` multiplies storage by 3.
 - `connectionId` is now only a routing/label field on event headers — it no
   longer scopes the subject, so overlapping turns on one conversation share a
   stream (group per turn with `headers.eventId`).
-- Background jobs launched over a WebSocket turn republish their result to the
-  same conversation stream, so they survive the socket and replay on reconnect.
+- Background jobs launched over a WebSocket turn publish their result to the same
+  conversation stream, so they survive the socket and replay on reconnect.
 - `ENABLE_WEBSOCKET=true` and `NATS_URL` are required for `nats-worker`
-  invocations. When WebSocket is disabled, the direct API stays SSE-only and NATS
-  config is ignored.
+  invocations (plus `NATS_TOKEN` for a token-auth server). When WebSocket is
+  disabled, the direct API stays SSE-only and NATS config is ignored.
 
-> **Infra requirement (applied via CI/CD, not from this repo):** JetStream is
-> already enabled on the cluster NATS, but exposing it to browser clients needs a
-> NATS **WebSocket listener + ingress** (or a relay gateway) and, for production
-> durability, JetStream **clustering** (`replicas: 3`). These live in the infra
-> repo. Without them the durable stream still works server-side; only browser
-> delivery is unavailable.
+> **Infra (lives in the infra repo, applied via CI/CD):** the cluster NATS runs
+> JetStream with a **WebSocket listener + Traefik ingress** at `wss://nats.beeblast.co`
+> (token auth via the `nats-auth` secret) and a file-backed JetStream PVC — so the
+> Lambda connects over `wss://` today. For production durability, enable JetStream
+> **clustering** (`replicas: 3`, which multiplies storage by 3). Core `4222` stays
+> cluster-internal for future in-cluster callers (see the Transport note above).
+
+## Deferred delivery & resume (background jobs)
+
+A detached sandbox job outlives the Lambda that launched it, so its result has to
+be delivered in a *later* invocation and routed back to wherever the turn came
+from. The mechanism is a small **delivery descriptor carried on the Session and
+persisted with the job**, so no live connection state needs to survive — only an
+identifier the next invocation can rebuild from.
+
+```mermaid
+flowchart TD
+  Turn["turn runs (Session.delivery)<br/>channel { name, source } /<br/>nats { connectionId, convKey } /<br/>async (poll)"] -->|"bash background:true"| Row["DynamoDB: AsyncToolResult<br/>{ delivery, completionToken,<br/>conversationKey, parentEventId }"]
+  Turn --> Job["detached job in sandbox"]
+  Job -->|"on exit: POST /sandbox-jobs/&lt;id&gt;/complete<br/>(x-job-token)"| Settle["settle row"]
+  Settle -->|"reinvoke worker<br/>(inject result, continue conversation)"| Resume["agent resumes where it left off"]
+  Resume --> Deliver{"delivery.kind"}
+  Deliver -->|"channel"| Chan["rebuild adapter from config + source → sendText"]
+  Deliver -->|"nats"| Pub["core publish to conversation stream"]
+  Deliver -->|"async"| Poll["settle status row / fire hooks.webhook"]
+```
+
+- **What's saved, and why it's safe.** `Session.delivery` (an `AsyncToolDelivery`)
+  describes the origin: a chat channel (`{channelName, source}` — the routing
+  payload only, *never* credentials), a WebSocket conversation, or plain async.
+  `bash background:true` copies it onto the `AsyncToolResult` row in DynamoDB
+  alongside the per-job `completionToken`. No account secret is stored or enters
+  the sandbox; channel credentials are re-fetched (decrypted) from the agent
+  config at delivery time.
+- **Reinvoke & continue.** When the job POSTs its completion (authenticated by the
+  per-job token), the harness settles the row and reuses the existing async-tool
+  continuation path: it rebuilds the turn from `parentEventId`/`conversationKey`,
+  injects the job result, and runs the agent loop so it **continues where it left
+  off**. This is the same settle→continue pipeline used by `external-dispatch`
+  async tools — background jobs add only the `delivery` routing on top.
+- **Deliver to origin.** After the loop, the follow-up is pushed to the recorded
+  origin: a channel `sendText`, a durable JetStream publish (replayed on
+  reconnect), or a status-row settle. See `bash.tool.ts`, `handler.ts`
+  (`continueAfterAsyncToolSettlement`, `pushReplyToChannel`), and `integrations.ts`
+  (`sendChannelReply`).
 
 ## Sandbox & Workspace Boundaries
 
