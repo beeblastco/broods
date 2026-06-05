@@ -31,7 +31,18 @@ export function AccountPanel({ projectId: _projectId }: Props) {
     const { user: authUser } = useAuth();
 
     const currentUser = useQuery(api.user.getCurrent);
-    const updateProfile = useMutation(api.user.updateProfile);
+    const updateProfile = useMutation(api.user.updateProfile).withOptimisticUpdate((localStore, args) => {
+        const existing = localStore.getQuery(api.user.getCurrent, {});
+        if (!existing) {
+            return;
+        }
+
+        localStore.setQuery(api.user.getCurrent, {}, {
+            ...existing,
+            name: args.name,
+            accountHandle: args.accountHandle,
+        });
+    });
 
     const authFirstName = authUser?.firstName ?? "";
     const authLastName = authUser?.lastName ?? "";

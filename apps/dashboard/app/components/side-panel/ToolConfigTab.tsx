@@ -1,14 +1,34 @@
 "use client";
 
-/** Tool configuration tab for editing source code only. */
+/**
+ * Tool configuration tab: edits the tool's executor source code AND the
+ * `tools.<nodeLabel>` slice of the connected agent (enabled, needsApproval,
+ * async, execution, env, tool-specific options) per filthy-panty AgentToolConfig.
+ */
+import { BranchEditor } from "@/app/components/side-panel/BranchEditor";
 import { Button } from "@/app/components/ui/button";
 import { Textarea } from "@/app/components/ui/textarea";
+import { useConnectedAgentConfig } from "@/app/hooks/useConnectedAgentConfig";
+import { readAgentBranch, toNestedAgentConfig, type FlatAgentConfig } from "@/app/lib/agentConfigCodec";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
 import { toErrorMessage } from "@/app/lib/errors";
+import { applyToolServiceUpsert } from "@/app/lib/toolServiceOptimistic";
 import { useMutation, useQuery } from "convex/react";
 import { Check } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+
+const TOOL_OPTIONS_PLACEHOLDER = JSON.stringify(
+    {
+        enabled: true,
+        needsApproval: false,
+        async: false,
+        execution: "same-invocation",
+        env: {},
+    },
+    null,
+    2,
+);
 
 const DEFAULT_SOURCE = [
     "export async function handler(input) {",
@@ -66,7 +86,15 @@ export function ToolConfigTab({
             }
             : "skip",
     );
-    const upsertToolService = useMutation(api.toolService.upsertForNode);
+    const upsertToolService = useMutation(api.toolService.upsertForNode).withOptimisticUpdate(applyToolServiceUpsert);
+    const { agentConfig, updateBranch } = useConnectedAgentConfig(nodeId);
+    const toolKey = nodeLabel.trim() || nodeId;
+    const toolOptions = useMemo(() => {
+        if (!agentConfig) return undefined;
+        const tools = readAgentBranch<Record<string, unknown>>(agentConfig as FlatAgentConfig, "tools");
+
+        return tools[toolKey] ?? {};
+    }, [agentConfig, toolKey]);
 
     const [sourceCode, setSourceCode] = useState(DEFAULT_SOURCE);
     const [isSaving, setIsSaving] = useState(false);
@@ -144,7 +172,32 @@ export function ToolConfigTab({
     }
 
     return (
-        <div className="flex flex-1 flex-col gap-3 overflow-hidden p-4">
+        <div className="flex flex-1 flex-col gap-5 overflow-y-auto p-4">
+            {agentConfig ? (
+                <BranchEditor
+                    title="Tool Options"
+                    description="env · execution · per-tool options"
+                    value={toolOptions}
+                    placeholder={TOOL_OPTIONS_PLACEHOLDER}
+                    onSave={async (value) => {
+                        const nested = toNestedAgentConfig(agentConfig as FlatAgentConfig) as Record<string, unknown>;
+                        const tools: Record<string, unknown> = {
+                            ...((nested.tools as Record<string, unknown> | undefined) ?? {}),
+                        };
+                        if (value === undefined) {
+                            delete tools[toolKey];
+                        } else {
+                            tools[toolKey] = value;
+                        }
+                        await updateBranch(["tools"], Object.keys(tools).length > 0 ? tools : undefined);
+                    }}
+                />
+            ) : (
+                <p className="text-[11px] text-muted-foreground/70">
+                    Wire this tool to an agent to edit its options.
+                </p>
+            )}
+
             <span className="text-[11px] uppercase tracking-wider text-muted-foreground/70">
                 Source Code
             </span>
@@ -174,7 +227,8 @@ export function ToolConfigTab({
                 value={sourceCode}
                 onChange={(e) => setSourceCode(e.target.value)}
                 spellCheck={false}
-                className="min-h-0 flex-1 resize-none bg-muted/50 font-mono text-xs"
+                rows={18}
+                className="min-h-64 resize-y bg-muted/50 font-mono text-xs"
             />
 
             {saveError && (

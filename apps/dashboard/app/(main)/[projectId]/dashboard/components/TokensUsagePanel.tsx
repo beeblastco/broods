@@ -10,7 +10,7 @@ import type { Id } from "@/convex/_generated/dataModel";
 import { useAction } from "convex/react";
 import type { FunctionReturnType } from "convex/server";
 import { RefreshCw } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 type Range = "1h" | "3h" | "1d" | "7d" | "30d" | "1y";
 type UsageStats = FunctionReturnType<typeof api.logs.fetchUsageStats>;
@@ -52,16 +52,38 @@ function formatNumber(n: number): string {
     return n.toLocaleString();
 }
 
+/**
+ * Keeps SVG axis text at a fixed on-screen size. The chart's viewBox upscales to
+ * the container width, which would otherwise blow the labels up on wide screens;
+ * this counters that scale so labels stay aligned with the surrounding UI text. Uses
+ * a callback ref so the observer attaches when the chart mounts (after data loads).
+ */
+function useChartFontSize(viewBoxWidth: number, targetPx: number) {
+    const [fontSize, setFontSize] = useState(targetPx);
+    const observerRef = useRef<ResizeObserver | null>(null);
+
+    const ref = useCallback(
+        (el: HTMLDivElement | null) => {
+            observerRef.current?.disconnect();
+            if (!el) return;
+
+            const observer = new ResizeObserver(() => {
+                const rendered = el.clientWidth || viewBoxWidth;
+                setFontSize((targetPx * viewBoxWidth) / rendered);
+            });
+            observer.observe(el);
+            observerRef.current = observer;
+        },
+        [viewBoxWidth, targetPx],
+    );
+
+    return { ref: ref, fontSize: fontSize };
+}
+
 function formatBucketLabel(ms: number, binSeconds: number): string {
     const d = new Date(ms);
-    if (binSeconds < 60 * 60) {
-        return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-    }
     if (binSeconds < 24 * 60 * 60) {
-        return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-    }
-    if (binSeconds < 7 * 24 * 60 * 60) {
-        return d.toLocaleDateString([], { month: "short", day: "numeric" });
+        return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false });
     }
 
     return d.toLocaleDateString([], { month: "short", day: "numeric" });
@@ -201,6 +223,7 @@ function StackedBarChart({ bins, binSeconds, series }: StackedBarChartProps) {
     const innerW = width - padding.left - padding.right;
     const innerH = height - padding.top - padding.bottom;
     const [hoverIndex, setHoverIndex] = useState<number | null>(null);
+    const { ref: containerRef, fontSize } = useChartFontSize(width, 9);
 
     if (bins.length === 0) {
         return (
@@ -225,7 +248,7 @@ function StackedBarChart({ bins, binSeconds, series }: StackedBarChartProps) {
         : 0;
 
     return (
-        <div className="relative">
+        <div className="relative" ref={containerRef}>
             <svg viewBox={`0 0 ${width} ${height}`} className="w-full h-auto" onMouseLeave={() => setHoverIndex(null)}>
                 {/* Y-axis ticks */}
                 {[0, 0.25, 0.5, 0.75, 1].map((t, i) => {
@@ -247,7 +270,8 @@ function StackedBarChart({ bins, binSeconds, series }: StackedBarChartProps) {
                                 x={padding.left - 6}
                                 y={y + 3}
                                 textAnchor="end"
-                                className="fill-muted-foreground text-[9px]"
+                                className="fill-muted-foreground"
+                                style={{ fontSize: fontSize }}
                             >
                                 {formatNumber(val)}
                             </text>
@@ -300,7 +324,7 @@ function StackedBarChart({ bins, binSeconds, series }: StackedBarChartProps) {
 
                 {/* X-axis labels — show ~6 evenly spaced */}
                 {bins.map((b, i) => {
-                    const stride = Math.max(1, Math.ceil(bins.length / 6));
+                    const stride = Math.max(1, Math.ceil(bins.length / 12));
                     if (i % stride !== 0) return null;
                     const x = padding.left + barW * i + barW / 2;
 
@@ -310,7 +334,8 @@ function StackedBarChart({ bins, binSeconds, series }: StackedBarChartProps) {
                             x={x}
                             y={height - 8}
                             textAnchor="middle"
-                            className="fill-muted-foreground text-[9px]"
+                            className="fill-muted-foreground"
+                            style={{ fontSize: fontSize }}
                         >
                             {formatBucketLabel(b.bucketStart, binSeconds)}
                         </text>
@@ -360,6 +385,7 @@ function InvocationsChart({ bins, binSeconds }: InvocationsChartProps) {
     const innerW = width - padding.left - padding.right;
     const innerH = height - padding.top - padding.bottom;
     const [hoverIndex, setHoverIndex] = useState<number | null>(null);
+    const { ref: containerRef, fontSize } = useChartFontSize(width, 9);
 
     if (bins.length === 0) {
         return (
@@ -381,7 +407,7 @@ function InvocationsChart({ bins, binSeconds }: InvocationsChartProps) {
         : 0;
 
     return (
-        <div className="relative">
+        <div className="relative" ref={containerRef}>
             <svg viewBox={`0 0 ${width} ${height}`} className="w-full h-auto" onMouseLeave={() => setHoverIndex(null)}>
                 {[0, 0.5, 1].map((t, i) => {
                     const y = padding.top + innerH * (1 - t);
@@ -401,7 +427,8 @@ function InvocationsChart({ bins, binSeconds }: InvocationsChartProps) {
                                 x={padding.left - 6}
                                 y={y + 3}
                                 textAnchor="end"
-                                className="fill-muted-foreground text-[9px]"
+                                className="fill-muted-foreground"
+                                style={{ fontSize: fontSize }}
                             >
                                 {formatNumber(maxVal * t)}
                             </text>
@@ -443,7 +470,7 @@ function InvocationsChart({ bins, binSeconds }: InvocationsChartProps) {
                 })}
 
                 {bins.map((b, i) => {
-                    const stride = Math.max(1, Math.ceil(bins.length / 6));
+                    const stride = Math.max(1, Math.ceil(bins.length / 12));
                     if (i % stride !== 0) return null;
                     const x = padding.left + slot * i + slot / 2;
 
@@ -453,7 +480,8 @@ function InvocationsChart({ bins, binSeconds }: InvocationsChartProps) {
                             x={x}
                             y={height - 8}
                             textAnchor="middle"
-                            className="fill-muted-foreground text-[9px]"
+                            className="fill-muted-foreground"
+                            style={{ fontSize: fontSize }}
                         >
                             {formatBucketLabel(b.bucketStart, binSeconds)}
                         </text>

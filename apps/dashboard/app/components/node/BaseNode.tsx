@@ -5,7 +5,7 @@ import { Python } from "@/app/components/icons/Python";
 import type { AgentHealthStatus } from "@/app/hooks/useAgentHealth";
 import { Handle, Position, useStore } from "@xyflow/react";
 import { Globe, Slash } from "lucide-react";
-import { useCallback } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 export type BaseNodeData = {
     label: string;
@@ -49,6 +49,9 @@ export function BaseNode({
     agentStatus,
     agentConnectivity,
     toolMeta,
+    cardStatus,
+    subtitle,
+    featureRows,
 }: {
     id: string;
     nodeType: string;
@@ -57,9 +60,30 @@ export function BaseNode({
     agentStatus?: AgentHealthStatus;
     agentConnectivity?: AgentConnectivityMeta;
     toolMeta?: ToolMeta;
+    /** Binary enabled/disabled display for cards whose state mirrors a config `enabled` flag. */
+    cardStatus?: { enabled: boolean };
+    /** Optional secondary row rendered under the label (e.g. sandbox provider badge). */
+    subtitle?: React.ReactNode;
+    /** Optional list of `+ feature` rows rendered between label and status pill. */
+    featureRows?: { key: string; icon?: React.ReactNode; label: string }[];
 }) {
     const zoom = useStore(zoomSelector);
     const scale = Math.min(Math.max(1 / Math.sqrt(zoom), 0.9), 1.2);
+
+    // The header content is counter-scaled to stay legible when zoomed out, but CSS
+    // transforms don't reserve layout space — so we measure its unscaled height and
+    // reserve `height * scale` on a wrapper, keeping it clear of the status pill.
+    const contentRef = useRef<HTMLDivElement>(null);
+    const [contentHeight, setContentHeight] = useState<number | null>(null);
+    useEffect(() => {
+        const el = contentRef.current;
+        if (!el) return;
+
+        const observer = new ResizeObserver(() => setContentHeight(el.offsetHeight));
+        observer.observe(el);
+
+        return () => observer.disconnect();
+    }, []);
 
     const isConnectedToAgent = useStore(
         useCallback(
@@ -69,7 +93,6 @@ export function BaseNode({
                 const nodeLookup = state.nodeLookup as Map<string, { type?: string }>;
                 if (!edges || !nodeLookup) return false;
 
-                // Only check edges that involve this node
                 for (const e of edges) {
                     if (e.source !== id && e.target !== id) continue;
                     const otherNodeId = e.source === id ? e.target : e.source;
@@ -109,6 +132,9 @@ export function BaseNode({
     } else if (!isConnectedToAgent) {
         statusColor = "bg-red-400";
         statusText = "Unconnected";
+    } else if (cardStatus) {
+        statusColor = cardStatus.enabled ? "bg-emerald-500" : "bg-red-400";
+        statusText = cardStatus.enabled ? "Enabled" : "Disabled";
     } else {
         const config = statusConfig[data.status ?? "idle"];
         statusColor = config.color;
@@ -146,11 +172,13 @@ export function BaseNode({
                 </span>
             )}
 
-            <div
-                className="px-3 pt-2.5 origin-top-left"
-                style={{ transform: `scale(${scale})` }}
-            >
-                <div className="flex items-center gap-1.5 pr-7 min-w-0">
+            <div style={{ height: contentHeight != null ? contentHeight * scale : undefined }}>
+                <div
+                    ref={contentRef}
+                    className="px-3 pt-2.5 origin-top-left"
+                    style={{ transform: `scale(${scale})` }}
+                >
+                    <div className="flex items-center gap-1.5 pr-7 min-w-0">
                     {data.properties?.color ? (
                         <span
                             className="inline-block size-3 rounded-full shrink-0"
@@ -165,6 +193,26 @@ export function BaseNode({
                     >
                         {data.label}
                     </span>
+                </div>
+                {subtitle && (
+                    <div className="mt-1 flex items-center gap-1.5 text-[11px] text-muted-foreground">
+                        {subtitle}
+                    </div>
+                )}
+                    {featureRows && featureRows.length > 0 && (
+                        <div className="mt-1.5 flex flex-col gap-0.5">
+                            {featureRows.map((row) => (
+                                <div
+                                    key={row.key}
+                                    className="flex items-center gap-1.5 text-[11px] text-muted-foreground"
+                                >
+                                    <span className="text-muted-foreground/60">+</span>
+                                    {row.icon}
+                                    <span>{row.label}</span>
+                                </div>
+                            ))}
+                        </div>
+                    )}
                 </div>
             </div>
 

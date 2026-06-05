@@ -40,8 +40,30 @@ const ROLE_LABEL: Record<Role, string> = {
 export function MembersPanel({ org }: Props) {
     const members = useQuery(api.orgMembers.list, { orgId: org._id });
     const add = useMutation(api.orgMembers.add);
-    const updateRole = useMutation(api.orgMembers.updateRole);
-    const remove = useMutation(api.orgMembers.remove);
+    const updateRole = useMutation(api.orgMembers.updateRole).withOptimisticUpdate((localStore, args) => {
+        const list = localStore.getQuery(api.orgMembers.list, { orgId: org._id });
+        if (!list) {
+            return;
+        }
+
+        localStore.setQuery(
+            api.orgMembers.list,
+            { orgId: org._id },
+            list.map((m) => (m.membershipId === args.membershipId ? { ...m, role: args.role ?? m.role } : m)),
+        );
+    });
+    const remove = useMutation(api.orgMembers.remove).withOptimisticUpdate((localStore, args) => {
+        const list = localStore.getQuery(api.orgMembers.list, { orgId: org._id });
+        if (!list) {
+            return;
+        }
+
+        localStore.setQuery(
+            api.orgMembers.list,
+            { orgId: org._id },
+            list.filter((m) => m.membershipId !== args.membershipId),
+        );
+    });
 
     const [inviteEmail, setInviteEmail] = useState("");
     const [inviteRole, setInviteRole] = useState<Exclude<Role, "owner">>("member");

@@ -6,6 +6,7 @@ import { DeletableEdge } from "@/app/components/canvas/DeletableEdge";
 import { EmptyCanvasGuide } from "@/app/components/canvas/EmptyCanvasGuide";
 import { AgentNode } from "@/app/components/node/Agent";
 import { DatabaseNode } from "@/app/components/node/Database";
+import { SkillNode } from "@/app/components/node/Skill";
 import { ToolNode } from "@/app/components/node/Tool";
 import { WorkspaceNode } from "@/app/components/node/Workspace";
 import type { Id } from "@/convex/_generated/dataModel";
@@ -34,7 +35,7 @@ import {
     type OnConnect,
 } from "@xyflow/react";
 import { useMutation, useQuery } from "convex/react";
-import { Bot, Database, FolderOpen, Wrench } from "lucide-react";
+import { Bot, Database, FolderOpen, Sparkles, Wrench } from "lucide-react";
 import { useTheme } from "next-themes";
 import dynamic from "next/dynamic";
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -59,6 +60,7 @@ const nodeTypes = {
     database: DatabaseNode,
     workspace: WorkspaceNode,
     tool: ToolNode,
+    skill: SkillNode,
 };
 
 const edgeTypes = {
@@ -69,6 +71,7 @@ const NODE_TEMPLATES = [
     { type: "agent", label: "Agent", icon: Bot },
     { type: "database", label: "Database", icon: Database },
     { type: "workspace", label: "Workspace", icon: FolderOpen },
+    { type: "skill", label: "Skill", icon: Sparkles },
     { type: "tool", label: "Tool", icon: Wrench },
 ] as const;
 
@@ -146,7 +149,17 @@ function CanvasInner({ projectId }: { projectId: Id<"projects"> }) {
         nodesRef.current = nodes;
         edgesRef.current = edges;
     }, [nodes, edges]);
-    const saveLayoutMutation = useMutation(api.canvas.saveLayout);
+    const saveLayoutMutation = useMutation(api.canvas.saveLayout).withOptimisticUpdate(
+        (localStore, args) => {
+            // Keep the cached layout in sync with the pending write so the post-save
+            // snapshot matches what's on screen (local React state is already optimistic).
+            localStore.setQuery(
+                api.canvas.getByProject,
+                { projectId: args.projectId, environmentId: args.environmentId },
+                { nodes: args.nodes, edges: args.edges },
+            );
+        },
+    );
     const debounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
     const hasLocalChanges = useRef(false);
 
@@ -161,7 +174,7 @@ function CanvasInner({ projectId }: { projectId: Id<"projects"> }) {
                 environmentId: environmentId,
                 nodes: nodesRef.current.map((n) => ({
                     id: n.id,
-                    type: n.type as "agent" | "database" | "workspace" | "tool",
+                    type: n.type as "agent" | "database" | "workspace" | "tool" | "skill",
                     position: n.position,
                     data: n.data as {
                         label: string;

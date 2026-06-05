@@ -143,6 +143,24 @@ export interface FlatPatch {
     extraConfig?: Record<string, unknown>;
 }
 
+/**
+ * Reads a single top-level branch (e.g. `workspace`, `skills`) from a flat agent
+ * config as an object, returning `{}` when the config or branch is absent. Lets
+ * node side-panels project just their slice without repeating the codec call.
+ */
+export function readAgentBranch<T extends Record<string, unknown>>(
+    agentConfig: FlatAgentConfig | null | undefined,
+    branch: string,
+): T {
+    if (!agentConfig) {
+        return {} as T;
+    }
+
+    const nested = toNestedAgentConfig(agentConfig) as Record<string, unknown>;
+
+    return (nested[branch] as T | undefined) ?? ({} as T);
+}
+
 /** Inverse of {@link toNestedAgentConfig}: pull known columns back out. */
 export function fromNestedAgentConfig(nested: NestedAgentConfig): FlatPatch {
     if (!isPlainObject(nested)) {

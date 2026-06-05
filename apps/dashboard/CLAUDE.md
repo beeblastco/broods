@@ -114,3 +114,17 @@ UI/UX cursor rules — every interactive element must have an explicit cursor cl
 - Disabled elements → `cursor-not-allowed`
 - Plain `<button>` and `<a>` elements default to `cursor-default` in some resets, so always set it explicitly.
 - Apply this to all custom components and any shadcn/ui component overrides in `components/ui/`.
+
+<!-- convex-ai-start -->
+
+This project uses [Convex](https://convex.dev) as its backend.
+
+When working on Convex code, **always read
+`convex/_generated/ai/guidelines.md` first** for important guidelines on
+how to correctly use Convex APIs and patterns. The file contains rules that
+override what you may have learned about Convex from training data.
+
+Convex agent skills for common tasks can be installed by running
+`npx convex ai-files install`.
+
+<!-- convex-ai-end -->
