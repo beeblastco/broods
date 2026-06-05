@@ -113,8 +113,9 @@ export const update = internalMutation({
 });
 
 /**
- * Removes an account and cascade-deletes its agents, conversations, messages,
- * skills, async results, and cron jobs. S3 cleanup is the caller's responsibility.
+ * Removes an account and cascade-deletes its agents, sandbox/workspace configs,
+ * conversations, messages, skills, async results, and cron jobs. S3 cleanup is
+ * the caller's responsibility.
  */
 export const remove = internalMutation({
     args: { accountId: v.id("accounts") },
@@ -128,6 +129,8 @@ export const remove = internalMutation({
 
         const tables = [
             "agents",
+            "sandboxConfigs",
+            "workspaceConfigs",
             "conversations",
             "messages",
             "skills",
