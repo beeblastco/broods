@@ -14,16 +14,33 @@ import {
   resolveWorkspace,
   runtimeDescription,
   runSandbox,
+  runSandboxBackground,
   toolError,
   toolText,
   workspaceParamSchema,
   type SandboxToolContext,
 } from "./filesystem-utils.ts";
+import {
+  createPendingAsyncToolResult,
+  markAsyncToolResultFailed,
+  sealExternalAsyncToolDispatchGroup,
+} from "../async-tool-result.ts";
+import { generateJobId } from "../sandbox/jobs.ts";
+import { getHarnessPublicUrl } from "../self-url.ts";
+import type { ResolvedWorkspace } from "../../_shared/workspaces.ts";
+import type { SandboxExecutorConfig, SandboxJobCallback } from "../sandbox/types.ts";
 import { logInfo } from "../../_shared/log.ts";
 
 interface BashInput {
   command: string;
   workspace?: string;
+  background?: boolean;
+}
+
+// Background jobs need a persistent workspace sandbox (to outlive the request)
+// and a parent session to track the job as an AsyncToolResult.
+function backgroundAvailable(context: SandboxToolContext): boolean {
+  return Boolean(context.background) && context.workspaces.some((workspace) => workspace.sandbox?.persistent === true);
 }
 
 function inputSchema(context: SandboxToolContext): JSONSchema7 {
@@ -36,6 +53,15 @@ function inputSchema(context: SandboxToolContext): JSONSchema7 {
         description: "The bash command to run.",
       },
       ...(workspaceProp ? { workspace: workspaceProp as JSONSchema7 } : {}),
+      ...(backgroundAvailable(context)
+        ? {
+            background: {
+              type: "boolean",
+              description:
+                "Run the command as a detached background job in the reserved sandbox and return immediately with a resultId. Use for long-running tasks (builds, installs, training). The result is delivered back into the conversation automatically when the job finishes; you can also check progress meanwhile with async_status.",
+            } as JSONSchema7,
+          }
+        : {}),
     },
     required: ["command"],
     additionalProperties: false,
@@ -62,7 +88,72 @@ Usage notes:
 - IMPORTANT: prefer the dedicated \`read\`, \`write\`, \`edit\`, \`glob\`, and \`grep\` tools over their bash equivalents (cat/sed/find/grep) — they are faster, safer, and return structured results.
 - Run programs directly, e.g. \`python3 script.py\` or \`node app.js\`. stdout and stderr are returned together; very large output is truncated.
 - Each command starts in the current workspace directory; use relative paths.
-- Files you write to the workspace persist across calls, but shell state does not: the working directory, environment variables, and background processes reset every call — chain dependent steps with && in a single command.`;
+- Files you write to the workspace persist across calls, but shell state does not: the working directory, environment variables, and background processes reset every call — chain dependent steps with && in a single command.${
+    backgroundAvailable(context)
+      ? `
+- This workspace is reserved (persistent): packages installed under $HOME (e.g. a uv/venv or npm prefix) and files survive across calls. Set background:true for long-running commands; the result is delivered back automatically when it finishes, and you can check on it with async_status.`
+      : ""
+  }`;
+}
+
+async function dispatchBackground(
+  context: SandboxToolContext,
+  ws: ResolvedWorkspace | undefined,
+  _sandbox: SandboxExecutorConfig,
+  command: string,
+  toolCallId: string,
+) {
+  if (!ws || ws.sandbox?.persistent !== true) {
+    return toolError("Error: background jobs require a persistent workspace sandbox");
+  }
+  if (!context.background) {
+    return toolError("Error: background jobs are not available in this context");
+  }
+
+  const resultId = `async_tool_${crypto.randomUUID()}`;
+  const completionToken = crypto.randomUUID();
+  const jobId = generateJobId();
+  // Per-job dispatch group keyed off the turn event so the job's completion
+  // resumes the conversation on its own, independent of the turn's other tools.
+  const parentEventId = `${context.background.eventId}:async-bg:${resultId}`;
+  const baseUrl = await getHarnessPublicUrl();
+  const callback: SandboxJobCallback | undefined = baseUrl
+    ? { url: `${baseUrl}/sandbox-jobs/${encodeURIComponent(resultId)}/complete`, token: completionToken }
+    : undefined;
+
+  // Create + seal the tracking row BEFORE launching so a fast job's callback can
+  // never arrive before the row exists.
+  await createPendingAsyncToolResult({
+    resultId,
+    parentEventId,
+    conversationKey: context.background.conversationKey,
+    toolName: "bash",
+    toolCallId,
+    input: { kind: "sandbox_job", namespace: ws.namespace, jobId, command },
+    delivery: { kind: "async" },
+    completionToken,
+  });
+  await sealExternalAsyncToolDispatchGroup(parentEventId);
+
+  try {
+    await runSandboxBackground(ws.sandbox, ws.namespace, command, {
+      jobId,
+      ...(callback ? { callback } : {}),
+    });
+  } catch (cause) {
+    const error = cause instanceof Error ? cause.message : String(cause);
+    await markAsyncToolResultFailed({ resultId, error }).catch(() => {});
+    return toolError(`Error: failed to start background job: ${error}`);
+  }
+
+  logInfo("bash background job started", { namespace: ws.namespace, jobId, resultId, delivers: Boolean(callback) });
+  const delivery = callback
+    ? "Its result will be delivered back into this conversation when it finishes."
+    : "Poll async_status with this resultId to retrieve the result (automatic delivery is unavailable in this environment).";
+  return toolText(
+    `Started background job ${jobId} (resultId: ${resultId}). ${delivery} ` +
+      `You can also use async_status to check status, tail logs (action "logs"), or stop it (action "stop").`,
+  );
 }
 
 export default function bashTool(context: SandboxToolContext): ToolSet {
@@ -71,8 +162,8 @@ export default function bashTool(context: SandboxToolContext): ToolSet {
       description: description(context),
       inputSchema: jsonSchema(inputSchema(context)),
       needsApproval: (input) => bashNeedsApproval(context, (input as BashInput).workspace),
-      async execute(input) {
-        const { command, workspace } = input as BashInput;
+      async execute(input, options) {
+        const { command, workspace, background } = input as BashInput;
         const trimmed = (command ?? "").trim();
         if (!trimmed) {
           return toolError("Error: command is required");
@@ -92,6 +183,9 @@ export default function bashTool(context: SandboxToolContext): ToolSet {
           const disallowed = disallowedRuntimeCommand(sandbox, trimmed);
           if (disallowed) {
             return toolError(disallowed);
+          }
+          if (background === true) {
+            return await dispatchBackground(context, ws, sandbox, trimmed, options.toolCallId);
           }
           logInfo("bash tool command", { namespace: ws?.namespace, commandLength: trimmed.length });
           return toolText(formatRunText(await runSandbox(sandbox, ws?.namespace, trimmed)));

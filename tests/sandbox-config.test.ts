@@ -119,6 +119,48 @@ describe("sandbox config provider-aware limits", () => {
   });
 });
 
+describe("sandbox config persistent / lifecycle / PVC", () => {
+  it("rejects persistent on the lambda provider", () => {
+    expect(() => normalizeSandboxConfig({ provider: "lambda", persistent: true }))
+      .toThrow("config.persistent is not supported by the lambda provider");
+  });
+
+  it("accepts persistent on kubernetes/daytona/e2b", () => {
+    expect(normalizeSandboxConfig({ provider: "kubernetes", persistent: true }).persistent).toBe(true);
+    expect(normalizeSandboxConfig({ provider: "daytona", persistent: true }).persistent).toBe(true);
+    expect(normalizeSandboxConfig({ provider: "e2b", persistent: true }).persistent).toBe(true);
+  });
+
+  it("requires persistent when lifecycle is set, and bounds its intervals", () => {
+    expect(() => normalizeSandboxConfig({ provider: "kubernetes", lifecycle: { idleTimeoutSeconds: 600 } }))
+      .toThrow("config.lifecycle requires config.persistent");
+    expect(normalizeSandboxConfig({
+      provider: "kubernetes",
+      persistent: true,
+      lifecycle: { idleTimeoutSeconds: 1800, maxLifetimeSeconds: 3600 },
+    }).lifecycle).toEqual({ idleTimeoutSeconds: 1800, maxLifetimeSeconds: 3600 });
+    expect(() => normalizeSandboxConfig({
+      provider: "kubernetes",
+      persistent: true,
+      lifecycle: { idleTimeoutSeconds: 0 },
+    })).toThrow("config.lifecycle.idleTimeoutSeconds must be a positive integer");
+  });
+
+  it("only allows PVC options on a persistent kubernetes sandbox", () => {
+    expect(() => normalizeSandboxConfig({ provider: "kubernetes", options: { persistentDiskGb: 10 } }))
+      .toThrow("config.options.persistentDiskGb requires a persistent kubernetes sandbox");
+    expect(() => normalizeSandboxConfig({ provider: "daytona", persistent: true, options: { persistentHome: "/home/x" } }))
+      .toThrow("config.options.persistentHome requires a persistent kubernetes sandbox");
+    expect(() => normalizeSandboxConfig({ provider: "kubernetes", persistent: true, options: { persistentDiskGb: 1000 } }))
+      .toThrow("config.options.persistentDiskGb must be an integer from 1 to 200");
+    expect(normalizeSandboxConfig({
+      provider: "kubernetes",
+      persistent: true,
+      options: { persistentDiskGb: 20, persistentHome: "/home/node", storageClass: "local-path" },
+    }).options).toEqual({ persistentDiskGb: 20, persistentHome: "/home/node", storageClass: "local-path" });
+  });
+});
+
 describe("sandbox config update merge", () => {
   const existing: SandboxConfig = { provider: "lambda", permissionMode: "ask", envVars: { A: "1" } };
 

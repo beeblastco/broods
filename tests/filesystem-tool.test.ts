@@ -35,6 +35,12 @@ mock.module("@aws-sdk/client-lambda", () => ({
       this.input = input;
     }
   },
+  GetFunctionUrlConfigCommand: class {
+    input: unknown;
+    constructor(input: unknown) {
+      this.input = input;
+    }
+  },
 }));
 
 // Read-only (S3-direct) path stubs for sandbox-less workspaces.

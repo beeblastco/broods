@@ -20,10 +20,25 @@ export interface SandboxExecutorConfig {
   timeout?: number;
   memoryLimit?: number;
   outputLimitBytes?: number;
+  // Reserve a long-lived sandbox keyed by the workspace namespace instead of
+  // create-and-destroy per call. Only meaningful for kubernetes/daytona/e2b.
+  persistent?: boolean;
+  // Idle/expiry policy for a persistent sandbox (Fargate-style scale-to-0).
+  lifecycle?: SandboxLifecycle;
   // Account-configured env vars injected into every run.
   envVars?: Record<string, string>;
   // Provider-specific knobs (function names, templates, kubeconfig, ...).
   options?: Record<string, unknown>;
+}
+
+export interface SandboxLifecycle {
+  // Scale the sandbox down after this many seconds with no activity and no
+  // running background job. Maps to the k8s reaper cooldown, daytona
+  // autoStopInterval, and e2b onTimeout pause.
+  idleTimeoutSeconds?: number;
+  // Hard expiry: delete/stop the sandbox this many seconds after creation
+  // regardless of activity (k8s shutdownTime). Undefined => no hard expiry.
+  maxLifetimeSeconds?: number;
 }
 
 export interface SandboxRunRequest {
@@ -40,6 +55,19 @@ export interface SandboxRunRequest {
   // Per-call env vars merged over the account-configured envVars. Reserved runtime
   // vars always win and the host process.env is never inherited.
   envVars?: Record<string, string>;
+  // Background-only: the caller supplies the jobId (so the tracking row exists
+  // before the job can finish) and an optional completion callback the detached
+  // job POSTs when it exits.
+  jobId?: string;
+  callback?: SandboxJobCallback;
+}
+
+// Where a finished background job reports its result. The detached process POSTs
+// this URL with the per-job token; the harness settles the tracking row and
+// resumes the conversation. See tools/async-status + the /sandbox-jobs route.
+export interface SandboxJobCallback {
+  url: string;
+  token: string;
 }
 
 export interface SandboxRunResult {
@@ -54,6 +82,46 @@ export interface SandboxRunResult {
   provider: SandboxProvider;
 }
 
+// A detached, long-running job started inside a persistent sandbox. The work
+// outlives the harness request: it runs in the sandbox (k8s pod / daytona
+// session / e2b background command), not in the Lambda. Identified by `jobId`.
+export type SandboxJobState = "running" | "completed" | "failed" | "unknown";
+
+export interface SandboxJobHandle {
+  jobId: string;
+}
+
+export interface SandboxJobStatus {
+  jobId: string;
+  state: SandboxJobState;
+  exitCode?: number | null;
+}
+
+export interface SandboxJobLogs {
+  jobId: string;
+  logs: string;
+  truncated?: boolean;
+}
+
+// Job operations address a job by id within a persistent workspace namespace.
+export interface SandboxJobRequest {
+  jobId: string;
+  namespace?: string;
+  workspaceRoot?: string;
+  outputLimitBytes?: number;
+}
+
 export interface SandboxExecutor {
   run(request: SandboxRunRequest): Promise<SandboxRunResult>;
+  // Persistent-only background capabilities. Implemented by kubernetes/daytona/
+  // e2b when config.persistent is true; absent otherwise (callers feature-detect).
+  runBackground?(request: SandboxRunRequest): Promise<SandboxJobHandle>;
+  jobStatus?(request: SandboxJobRequest): Promise<SandboxJobStatus>;
+  jobLogs?(request: SandboxJobRequest): Promise<SandboxJobLogs>;
+  stopJob?(request: SandboxJobRequest): Promise<SandboxJobStatus>;
+  // Tear down the reserved sandbox for a workspace namespace and its durable
+  // storage (k8s Sandbox + PVC, daytona/e2b sandbox) plus its instance record.
+  // Best-effort + idempotent: a missing sandbox is a no-op. Called on
+  // account/workspace deletion to prevent leaked compute/disk.
+  release?(request: { namespace: string }): Promise<void>;
 }
