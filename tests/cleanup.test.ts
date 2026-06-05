@@ -72,6 +72,7 @@ describe("deleteAccountRuntimeData", () => {
       asyncAgentResultDeleted: 0,
       asyncToolResultDeleted: 0,
       filesystemObjectsDeleted: 0,
+      reservedSandboxesReleased: 0,
     });
   });
 
@@ -608,6 +609,7 @@ describe("deleteAccountRuntimeData", () => {
       asyncAgentResultDeleted: 0,
       asyncToolResultDeleted: 0,
       filesystemObjectsDeleted: 0,
+      reservedSandboxesReleased: 0,
     });
   });
 

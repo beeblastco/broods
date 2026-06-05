@@ -3,6 +3,7 @@
  * Keep request orchestration, session setup, and response shaping here.
  */
 
+import { timingSafeEqual } from "node:crypto";
 import { InvokeCommand, LambdaClient } from "@aws-sdk/client-lambda";
 import type { ToolModelMessage, JSONValue, UserModelMessage } from "ai";
 import type { LambdaFunctionURLEvent } from "aws-lambda";
@@ -27,6 +28,7 @@ import {
   type AsyncToolCompletionInboundEvent,
   type ChannelInboundEvent,
   type DirectInboundEvent,
+  type SandboxJobCompletionInboundEvent,
   type StatusInboundEvent,
 } from "./integrations.ts";
 import { Session } from "./session.ts";
@@ -40,6 +42,7 @@ import {
 import { SubagentCoordinator } from "./subagents.ts";
 import { AsyncToolCoordinator, completionToParentMessage, type AsyncToolExecutionMode } from "./async-tools.ts";
 import {
+  getAsyncToolCompletionToken,
   getExternalAsyncToolDispatchGroup,
   getAsyncToolResult,
   listAsyncToolResultsByParentEvent,
@@ -114,6 +117,7 @@ export async function handler(
     handleAsyncRequest,
     handleStatusRequest,
     handleAsyncToolCompletionRequest,
+    handleSandboxJobCompletionRequest,
     handleChannelRequest: (channelEvent) => handleChannelRequest(channelEvent, context),
   }, {
     directApiEnabled: ENABLE_DIRECT_API,
@@ -208,27 +212,80 @@ async function handleAsyncToolCompletionRequest(event: AsyncToolCompletionInboun
     return jsonResponse(409, { error: "Async tool result settled got error" });
   }
 
+  return continuationResponse(settled, await continueAfterAsyncToolSettlement(settled));
+}
+
+/**
+ * Handle a background-job completion posted by the detached job itself.
+ * Authenticated by the per-job token (matched against the stored row), so the
+ * sandbox never needs an account secret. Reuses the same settle → continuation
+ * path as the external async-tool completion endpoint.
+ */
+async function handleSandboxJobCompletionRequest(event: SandboxJobCompletionInboundEvent): Promise<LambdaResponse> {
+  const existing = await getAsyncToolResult(event.resultId);
+  if (!existing) {
+    return jsonResponse(404, { error: "Background job result not found" });
+  }
+  if (existing.status !== "processing") {
+    return jsonResponse(409, { error: "Background job result is already settled", status: existing.status });
+  }
+
+  const token = await getAsyncToolCompletionToken(event.resultId);
+  // Missing/mismatched token reads as not-found so the endpoint is not a token oracle.
+  if (!token || !timingSafeStringEqual(event.token, token)) {
+    return jsonResponse(404, { error: "Background job result not found" });
+  }
+
+  const settled = await settleExternalAsyncToolResult({
+    resultId: event.resultId,
+    status: event.status,
+    ...(event.response !== undefined ? { response: event.response } : {}),
+    ...(event.error ? { error: event.error } : {}),
+  });
+  if (!settled) {
+    return jsonResponse(409, { error: "Background job result is already settled" });
+  }
+
+  return continuationResponse(settled, await continueAfterAsyncToolSettlement(settled));
+}
+
+type ContinuationOutcome =
+  | { kind: "pending"; pendingCount: number }
+  | { kind: "ready"; invoked: boolean; publicEventId: string }
+  | { kind: "skip" };
+
+/**
+ * After a tool row settles, resume the conversation once every result in its
+ * dispatch group is in. Derives the account/agent from the (scoped) parentEventId
+ * so it serves both the account-authed and token-authed completion paths.
+ */
+async function continueAfterAsyncToolSettlement(settled: AsyncToolResultRecord): Promise<ContinuationOutcome> {
   const toolResults = await listCurrentParentToolResults(settled);
   const dispatchGroup = await getExternalAsyncToolDispatchGroup(settled.parentEventId);
   const missingCount = Math.max((dispatchGroup?.resultIds.length ?? 0) - toolResults.length, 0);
   const pendingCount = toolResults.filter((result) => result.status === "processing").length + missingCount;
   if (!dispatchGroup?.sealed || pendingCount > 0) {
-    return jsonResponse(202, {
-      status: "waiting_for_async_tools",
-      resultId: settled.resultId,
-      pendingCount: dispatchGroup?.sealed ? pendingCount : Math.max(pendingCount, 1),
-    });
+    return { kind: "pending", pendingCount: dispatchGroup?.sealed ? pendingCount : Math.max(pendingCount, 1) };
+  }
+
+  const scope = parseAccountAgentFromScopedKey(settled.parentEventId);
+  if (!scope) {
+    return { kind: "skip" };
+  }
+  const agent = await getStorage().agents.getById(scope.accountId, scope.agentId);
+  if (!agent || agent.status !== "active") {
+    return { kind: "skip" };
   }
 
   const continuationEvent = {
-    accountId: event.accountId,
-    agentId: agentId,
+    accountId: scope.accountId,
+    agentId: scope.agentId,
     agentConfig: toRuntimeAgentConfig(agent.config),
     eventId: asyncToolContinuationEventId(settled.parentEventId),
     ...(settled.delivery?.kind === "async" ? { asyncResultEventId: settled.parentEventId } : {}),
     publicEventId: `async-tools-${settled.resultId}`,
     conversationKey: settled.conversationKey,
-    publicConversationKey: eventPublicConversationKey(settled.conversationKey, event.accountId, agentId),
+    publicConversationKey: eventPublicConversationKey(settled.conversationKey, scope.accountId, scope.agentId),
     events: settledToolResultsToParentMessages(toolResults),
   } satisfies DirectInboundEvent;
 
@@ -239,12 +296,25 @@ async function handleAsyncToolCompletionRequest(event: AsyncToolCompletionInboun
   if (created) {
     await invokeAsyncToolContinuationWorker(continuationEvent, settled);
   }
+  return { kind: "ready", invoked: created, publicEventId: continuationEvent.publicEventId };
+}
 
+function continuationResponse(settled: AsyncToolResultRecord, outcome: ContinuationOutcome): LambdaResponse {
+  if (outcome.kind === "pending") {
+    return jsonResponse(202, {
+      status: "waiting_for_async_tools",
+      resultId: settled.resultId,
+      pendingCount: outcome.pendingCount,
+    });
+  }
+  if (outcome.kind === "skip") {
+    return jsonResponse(202, { status: "accepted", resultId: settled.resultId, invoked: false });
+  }
   return jsonResponse(202, {
     status: "accepted",
     resultId: settled.resultId,
-    eventId: continuationEvent.publicEventId,
-    invoked: created,
+    eventId: outcome.publicEventId,
+    invoked: outcome.invoked,
   });
 }
 
@@ -1206,6 +1276,17 @@ function agentIdFromScopedKey(value: string, accountId: string): string | null {
 
 function isAccountScopedKey(value: string, accountId: string, agentId: string): boolean {
   return value.startsWith(`acct:${accountId}:agent:${agentId}:`);
+}
+
+function parseAccountAgentFromScopedKey(value: string): { accountId: string; agentId: string } | null {
+  const match = value.match(/^acct:([^:]+):agent:([^:]+):/);
+  return match ? { accountId: match[1]!, agentId: match[2]! } : null;
+}
+
+function timingSafeStringEqual(actual: string, expected: string): boolean {
+  const actualBytes = Buffer.from(actual);
+  const expectedBytes = Buffer.from(expected);
+  return actualBytes.length === expectedBytes.length && timingSafeEqual(actualBytes, expectedBytes);
 }
 
 function isAsyncWorkerInvocation(event: unknown): event is AsyncWorkerInvocation {

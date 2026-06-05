@@ -9,7 +9,7 @@ import {
   type AttributeValue,
   type WriteRequest,
 } from "@aws-sdk/client-dynamodb";
-import type { AccountRecord } from "../_shared/storage/index.ts";
+import type { AccountRecord, SandboxConfig } from "../_shared/storage/index.ts";
 import { getStorage } from "../_shared/storage/index.ts";
 import { deleteS3Prefix as deleteBunS3Prefix } from "../_shared/s3.ts";
 import { workspaceNamespacePrefix } from "../_shared/sandbox.ts";
@@ -17,6 +17,10 @@ import { dynamo } from "../_shared/storage/dynamo/client.ts";
 import { optionalEnv } from "../_shared/env.ts";
 import { accountScopedPrefix } from "../_shared/runtime-keys.ts";
 import { workspaceNamespace } from "../_shared/workspaces.ts";
+import { DaytonaSandboxExecutor } from "../harness-processing/sandbox/daytona-executor.ts";
+import { E2BSandboxExecutor } from "../harness-processing/sandbox/e2b-executor.ts";
+import { deleteSandboxInstance } from "../harness-processing/sandbox/instance-store.ts";
+import { logWarn } from "../_shared/log.ts";
 
 const DYNAMO_BATCH_WRITE_LIMIT = 25;
 
@@ -26,6 +30,7 @@ export interface AccountCleanupSummary {
   asyncAgentResultDeleted: number;
   asyncToolResultDeleted: number;
   filesystemObjectsDeleted: number;
+  reservedSandboxesReleased: number;
 }
 
 export async function deleteAccountRuntimeData(account: AccountRecord): Promise<AccountCleanupSummary> {
@@ -35,6 +40,10 @@ export async function deleteAccountRuntimeData(account: AccountRecord): Promise<
   const workspaceConfigs = await getStorage().workspaceConfigs.list(account.accountId).catch(() => []);
   const filesystemNamespaces = workspaceConfigs.map((workspace) =>
     workspaceNamespace(account.accountId, workspace.workspaceId));
+
+  // Tear down reserved (persistent) sandboxes BEFORE removing the sandbox config
+  // records — release reads the configs (for provider credentials).
+  const reservedSandboxesReleased = await releaseReservedSandboxes(account.accountId, filesystemNamespaces);
 
   const [
     conversationsDeleted,
@@ -62,7 +71,82 @@ export async function deleteAccountRuntimeData(account: AccountRecord): Promise<
     asyncAgentResultDeleted,
     asyncToolResultDeleted,
     filesystemObjectsDeleted,
+    reservedSandboxesReleased,
   };
+}
+
+/**
+ * Clean delete of reserved sandboxes for the given workspace namespaces.
+ * Daytona/E2B are torn down explicitly via their API key (read from the decrypted
+ * sandbox config); Kubernetes is reclaimed cluster-side by the shutdownTime
+ * backstop + reaper, so it is not driven from here (account-manage has no cluster
+ * access). Idempotent: a namespace with no reserved sandbox is a cheap no-op.
+ *
+ * An account may hold several persistent configs of the same provider (different
+ * keys), and the instance record does not say which one created a sandbox, so we
+ * try every same-provider config until one succeeds; release() only drops the
+ * instance row when the sandbox is actually gone, so a wrong-credential attempt
+ * doesn't lose the chance for the right one.
+ */
+export async function releaseReservedSandboxes(accountId: string, namespaces: string[]): Promise<number> {
+  if (namespaces.length === 0) {
+    return 0;
+  }
+  const configs = await getStorage().sandboxConfigs.list(accountId).catch(() => []);
+  const persistent = configs.map((record) => record.config).filter((config) => config.persistent === true);
+  const daytona = persistent.filter((config) => config.provider === "daytona");
+  const e2b = persistent.filter((config) => config.provider === "e2b");
+
+  let released = 0;
+  for (const namespace of namespaces) {
+    if (await releaseFromConfigs("daytona", daytona, namespace)) released++;
+    if (await releaseFromConfigs("e2b", e2b, namespace)) released++;
+    // Drop any orphaned instance rows (e.g. all configs deleted, or none owned it).
+    await deleteSandboxInstance("daytona", namespace).catch(() => {});
+    await deleteSandboxInstance("e2b", namespace).catch(() => {});
+  }
+  return released;
+}
+
+/**
+ * Release reserved daytona/e2b sandboxes created from a single config, across all
+ * of the account's workspace namespaces. Called when that sandbox config is
+ * deleted, while its credentials are still readable. Kubernetes is cluster-side.
+ */
+export async function releaseSandboxConfigInstances(accountId: string, config: SandboxConfig): Promise<number> {
+  if (config.persistent !== true || (config.provider !== "daytona" && config.provider !== "e2b")) {
+    return 0;
+  }
+  const workspaceConfigs = await getStorage().workspaceConfigs.list(accountId).catch(() => []);
+  let released = 0;
+  for (const workspace of workspaceConfigs) {
+    const namespace = workspaceNamespace(accountId, workspace.workspaceId);
+    if (await releaseFromConfigs(config.provider, [config], namespace)) released++;
+  }
+  return released;
+}
+
+async function releaseFromConfigs(
+  provider: "daytona" | "e2b",
+  configs: SandboxConfig[],
+  namespace: string,
+): Promise<boolean> {
+  for (const config of configs) {
+    try {
+      const executor = provider === "daytona"
+        ? new DaytonaSandboxExecutor(config)
+        : new E2BSandboxExecutor(config);
+      await executor.release({ namespace });
+      return true;
+    } catch (error) {
+      logWarn("Reserved sandbox release failed", {
+        provider,
+        namespace,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+  return false;
 }
 
 async function deleteConversations(accountPrefix: string): Promise<number> {
