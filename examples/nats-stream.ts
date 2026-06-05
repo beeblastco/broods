@@ -166,6 +166,7 @@ try {
   // through to `done`. (Production clients pass startSequence/startTime; here we
   // read from the start and skip the already-seen prefix for simplicity.)
   console.log(`\n[Reconnect] resuming from event ${lastEnvelopeSeq + 1}...`);
+  await new Promise((r) => setTimeout(r, 2000)); // Add delay for reconnection
   const reconnectClient = await connectNats({ servers: natsUrl, token: natsToken });
   const resume = await readConversationStream({
     connection: reconnectClient,
