@@ -61,6 +61,7 @@ mock.module("../functions/_shared/s3.ts", () => ({
   deleteS3Prefix: mock(async () => 0),
   copyS3Object: mock(async () => {}),
   ensureS3DirectoryMarkers: mock(async () => {}),
+  getS3ObjectUrl: mock(async () => "https://example.test/tool.mjs"),
 }));
 
 beforeEach(() => {
@@ -70,6 +71,7 @@ beforeEach(() => {
   process.env.SANDBOX_FN_MOUNT_NONET = "sandbox-mount-nonet";
   process.env.SANDBOX_FN_NOMOUNT_NET = "sandbox-nomount-net";
   process.env.SANDBOX_FN_NOMOUNT_NONET = "sandbox-nomount-nonet";
+  process.env.ASYNC_TOOL_RESULT_TABLE_NAME = "async-tool-results";
   lambdaSendMock.mockClear();
   readS3TextMock.mockClear();
   listS3PrefixMock.mockClear();
