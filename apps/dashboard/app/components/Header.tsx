@@ -40,7 +40,7 @@ export function Header() {
                 <div className="h-4 w-px bg-border" />
                 <OrgSwitcher />
 
-                {isProjectPage && <ProjectHeaderLeft />}
+                <ProjectHeaderLeft />
 
                 <div className="ml-auto flex items-center gap-3 h-4">
                     {isProjectPage && <ProjectHeaderRight />}

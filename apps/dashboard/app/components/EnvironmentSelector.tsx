@@ -114,10 +114,10 @@ export function EnvironmentSelector() {
         <>
             <DropdownMenu>
                 <DropdownMenuTrigger asChild>
-                    <Button variant="ghost" className="h-auto gap-1.5 px-2 py-1 text-sm font-medium text-muted-foreground data-[state=open]:bg-accent data-[state=open]:text-foreground">
+                    <Button variant="ghost" className="h-auto gap-1.5 px-2 py-1 text-sm font-medium text-muted-foreground hover:text-foreground data-[state=open]:bg-accent data-[state=open]:text-foreground">
                         <EnvironmentDot isDefault={selectedEnv?.isDefault ?? false} />
                         {selectedEnv?.name ?? "Environment"}
-                        <ChevronDown className="size-3.5 opacity-50" />
+                        <ChevronDown className="size-3.5 text-muted-foreground" />
                     </Button>
                 </DropdownMenuTrigger>
 

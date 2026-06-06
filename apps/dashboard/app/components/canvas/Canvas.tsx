@@ -62,6 +62,9 @@ const CreateAgentConfigDialog = dynamic(
 const ToolSourcePickerDialog = dynamic(
     () => import("@/app/components/ToolSourcePickerDialog").then((mod) => mod.ToolSourcePickerDialog),
 );
+const SkillSourcePickerDialog = dynamic(
+    () => import("@/app/components/SkillSourcePickerDialog").then((mod) => mod.SkillSourcePickerDialog),
+);
 
 const nodeTypes = {
     agent: AgentNode,
@@ -146,6 +149,7 @@ function CanvasInner({ projectId }: { projectId: Id<"projects"> }) {
     const [deleteRequestToken, setDeleteRequestToken] = useState(0);
     const [sourcePickerOpen, setSourcePickerOpen] = useState(false);
     const [toolPickerOpen, setToolPickerOpen] = useState(false);
+    const [skillPickerOpen, setSkillPickerOpen] = useState(false);
     const [configDialogOpen, setConfigDialogOpen] = useState(false);
     const [agentCreatePosition, setAgentCreatePosition] = useState<FlowPosition | null>(null);
     const { screenToFlowPosition, setCenter, getZoom } = useReactFlow();
@@ -329,7 +333,7 @@ function CanvasInner({ projectId }: { projectId: Id<"projects"> }) {
 
     /** Add a service node at a position and auto-connect to the nearest agent. */
     const addNode = useCallback(
-        (type: string, label: string) => {
+        (type: string, label: string, extraData?: Partial<BaseNodeData>) => {
             const position = lastRightClick.current ?? getViewportCenterPosition();
             const id = String(nextId.current++);
             const nodeLabel = `${label} ${id}`;
@@ -338,7 +342,7 @@ function CanvasInner({ projectId }: { projectId: Id<"projects"> }) {
                 id: id,
                 type: type,
                 position: position,
-                data: defaultRuntimeNodeData(type, nodeLabel, id),
+                data: { ...defaultRuntimeNodeData(type, nodeLabel, id), ...extraData },
             };
             setNodes((nds) => [...nds, newNode]);
 
@@ -406,6 +410,14 @@ function CanvasInner({ projectId }: { projectId: Id<"projects"> }) {
         // TODO: handle "docker" and "upload" sources with dedicated flows
         addNode("tool", "Tool");
     }, [addNode]);
+
+    /** Adds a skill node with the chosen source type baked into its config. */
+    const onSkillSelect = useCallback(
+        (source: "files" | "github" | "json") => {
+            addNode("skill", "Skill", { config: { skillSource: source } });
+        },
+        [addNode],
+    );
 
     /** Remove a node and its connected edges from the canvas. */
     const removeNode = useCallback(
@@ -517,7 +529,9 @@ function CanvasInner({ projectId }: { projectId: Id<"projects"> }) {
                                                 ? onOpenSourcePicker()
                                                 : type === "tool"
                                                   ? setToolPickerOpen(true)
-                                                  : addNode(type, label)
+                                                  : type === "skill"
+                                                    ? setSkillPickerOpen(true)
+                                                    : addNode(type, label)
                                         }
                                     >
                                         <Icon />
@@ -567,6 +581,12 @@ function CanvasInner({ projectId }: { projectId: Id<"projects"> }) {
                 open={toolPickerOpen}
                 onOpenChange={setToolPickerOpen}
                 onSelect={onToolSelect}
+            />
+
+            <SkillSourcePickerDialog
+                open={skillPickerOpen}
+                onOpenChange={setSkillPickerOpen}
+                onSelect={onSkillSelect}
             />
         </div>
     );

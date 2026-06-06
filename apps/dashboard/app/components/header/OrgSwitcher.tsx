@@ -80,7 +80,7 @@ export function OrgSwitcher() {
         <>
             <DropdownMenu>
                 <DropdownMenuTrigger asChild>
-                    <button className="flex items-center gap-1.5 rounded-md px-2 py-1 text-sm font-medium text-foreground transition-colors hover:bg-accent/50 focus:outline-none data-[state=open]:bg-accent cursor-pointer">
+                    <button className="flex items-center gap-1.5 rounded-md px-2 py-1 text-sm font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus:outline-none data-[state=open]:bg-accent data-[state=open]:text-foreground cursor-pointer">
                         <Building2 className="size-3.5 text-muted-foreground" />
                         <span className="max-w-40 truncate">{label}</span>
                         <ChevronDown className="size-3.5 text-muted-foreground" />

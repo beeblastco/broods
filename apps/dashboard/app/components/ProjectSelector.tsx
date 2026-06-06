@@ -58,7 +58,7 @@ export function ProjectSelector() {
 
     const currentProjectId = params.projectId;
     const selectedProject = projects.find((p: Doc<"projects">) => p._id === currentProjectId);
-    const displayName = selectedProject?.name ?? projects[0]?.name;
+    const displayName = selectedProject?.name ?? (currentProjectId ? projects[0]?.name : "Projects");
     const userName = currentUser?.name?.split(" ")[0] ?? "";
     const projectsLabel = userName ? `${userName}'s projects` : "Projects";
 
@@ -66,9 +66,9 @@ export function ProjectSelector() {
         <>
             <DropdownMenu>
                 <DropdownMenuTrigger asChild>
-                    <Button variant="ghost" className="h-auto gap-1.5 px-2 py-1 text-sm font-medium text-muted-foreground data-[state=open]:bg-accent data-[state=open]:text-foreground">
+                    <Button variant="ghost" className="h-auto gap-1.5 px-2 py-1 text-sm font-medium text-muted-foreground hover:text-foreground data-[state=open]:bg-accent data-[state=open]:text-foreground">
                         {displayName}
-                        <ChevronDown className="size-3.5 opacity-50" />
+                        <ChevronDown className="size-3.5 text-muted-foreground" />
                     </Button>
                 </DropdownMenuTrigger>
 

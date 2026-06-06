@@ -5,7 +5,7 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/app/components/ui/avatar"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/app/components/ui/dropdown-menu";
 import { useAuth } from "@workos-inc/authkit-nextjs/components";
 import { useConvexAuth } from "convex/react";
-import { Building2, FileText, HelpCircle, LogOut, Moon, ScrollText, Shield, Sun } from "lucide-react";
+import { Building2, FileText, HelpCircle, LogOut, Moon, ScrollText, Settings, Shield, Sun } from "lucide-react";
 import { useTheme } from "next-themes";
 import { useRouter } from "next/navigation";
 
@@ -53,7 +53,10 @@ export function UserMenu() {
                 <DropdownMenuItem onSelect={(e) => e.preventDefault()} onClick={() => setTheme(isDark ? "light" : "dark")}>
                     {isDark ? <Sun /> : <Moon />}{isDark ? "Light mode" : "Dark mode"}
                 </DropdownMenuItem>
-                <DropdownMenuItem onClick={() => router.push("/settings/org")}>
+                <DropdownMenuItem className="cursor-pointer" onClick={() => router.push("/settings/account")}>
+                    <Settings />Account settings
+                </DropdownMenuItem>
+                <DropdownMenuItem className="cursor-pointer" onClick={() => router.push("/settings/org")}>
                     <Building2 />Organization
                 </DropdownMenuItem>
                 <DropdownMenuSeparator />

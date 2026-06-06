@@ -5,15 +5,15 @@ import { Button } from "@/app/components/ui/button";
 import { cn } from "@/app/lib/utils";
 import type { Id } from "@/convex/_generated/dataModel";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
-import { AccountPanel } from "./components/AccountPanel";
 import { DangerPanel } from "./components/DangerPanel";
 import { EnvironmentsPanel } from "./components/EnvironmentsPanel";
+import { ProjectGeneralPanel } from "./components/ProjectGeneralPanel";
 import { WebhooksPanel } from "./components/WebhooksPanel";
 
-type SettingsTab = "account" | "environments" | "webhooks" | "danger";
+type SettingsTab = "general" | "environments" | "webhooks" | "danger";
 
 const TABS: Array<{ id: SettingsTab; label: string; danger?: boolean }> = [
-    { id: "account", label: "Account" },
+    { id: "general", label: "General" },
     { id: "environments", label: "Environments" },
     { id: "webhooks", label: "Webhooks" },
     { id: "danger", label: "Danger Zone", danger: true },
@@ -25,13 +25,13 @@ export default function SettingsPage() {
     const projectId = params.projectId as Id<"projects">;
     const router = useRouter();
 
-    const activeTab = (searchParams.get("tab") as SettingsTab) || "account";
+    const activeTab = (searchParams.get("tab") as SettingsTab) || "general";
     const activeLabel = TABS.find((t) => t.id === activeTab)?.label ?? "Settings";
 
     const renderPanel = () => {
         switch (activeTab) {
-            case "account":
-                return <AccountPanel projectId={projectId} />;
+            case "general":
+                return <ProjectGeneralPanel projectId={projectId} />;
             case "environments":
                 return <EnvironmentsPanel projectId={projectId} />;
             case "webhooks":
@@ -39,7 +39,7 @@ export default function SettingsPage() {
             case "danger":
                 return <DangerPanel projectId={projectId} />;
             default:
-                return <AccountPanel projectId={projectId} />;
+                return <ProjectGeneralPanel projectId={projectId} />;
         }
     };
 

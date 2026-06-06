@@ -9,7 +9,6 @@ import { Input } from "@/app/components/ui/input";
 import { Label } from "@/app/components/ui/label";
 import { Separator } from "@/app/components/ui/separator";
 import { api } from "@/convex/_generated/api";
-import type { Id } from "@/convex/_generated/dataModel";
 import type { ConfiguredPlanTier, PlanTier } from "@/app/lib/pricing";
 import { isMaxPlan, PLAN_CONFIGS, resolvePlan, UPGRADE_URL } from "@/app/lib/pricing";
 import { cn } from "@/app/lib/utils";
@@ -19,14 +18,10 @@ import { ArrowUpRight, Moon, Sun } from "lucide-react";
 import { useTheme } from "next-themes";
 import { useEffect, useRef, useState } from "react";
 
-interface Props {
-    /** Project this settings page belongs to. */
-    projectId: Id<"projects">;
-}
-
 const HANDLE_REGEX = /^[a-z0-9_-]{3,32}$/;
 
-export function AccountPanel({ projectId: _projectId }: Props) {
+/** User profile, avatar, account overview, and theme preferences. */
+export function AccountPanel() {
     const { theme, setTheme } = useTheme();
     const { user: authUser } = useAuth();
 

@@ -11,6 +11,8 @@ import {
 } from "@/app/components/side-panel/ResourceNodeTabs";
 import { SkillConfigTab } from "@/app/components/side-panel/SkillConfigTab";
 import { SkillDetailsTab } from "@/app/components/side-panel/SkillDetailsTab";
+import { WorkspaceFilesTab } from "@/app/components/side-panel/WorkspaceFilesTab";
+import { SkillFilesTab } from "@/app/components/side-panel/SkillFilesTab";
 import { DetailsTab, type AgentProvider } from "@/app/components/side-panel/DetailsTab";
 import { SettingsTab } from "@/app/components/side-panel/SettingsTab";
 import { ToolConfigTab } from "@/app/components/side-panel/ToolConfigTab";
@@ -624,6 +626,7 @@ export const NodeSidePanel = memo(function NodeSidePanel({
                 >
                     <TabsList variant="line" className="w-full shrink-0 px-4 pt-2">
                         <TabsTrigger value="details">Details</TabsTrigger>
+                        {(isWorkspace || (isSkill && (nodeData?.config?.skillSource ?? "") === "files")) && <TabsTrigger value="files">Files</TabsTrigger>}
                         {isAgent && <TabsTrigger value="variables">Variables</TabsTrigger>}
                         {(isAgent || isTool || isWorkspace || isSandbox || isSkill) && <TabsTrigger value="config">Config</TabsTrigger>}
                         {(isAgent || nodeType === "tool") && (
@@ -695,9 +698,19 @@ export const NodeSidePanel = memo(function NodeSidePanel({
                         ) : nodeType === "skill" && node ? (
                             <SkillDetailsTab
                                 nodeId={node.id}
+                                nodeConfig={nodeData?.config}
                                 editName={editName}
                                 setEditName={setEditName}
                                 onSaveName={handleSaveName}
+                                onUpdateNodeConfig={(patch) =>
+                                    onUpdateNodeData(node.id, {
+                                        config: { ...(nodeData?.config ?? {}), ...patch },
+                                    })
+                                }
+                                onUpdateSkillPath={(p) => {
+                                    setEditName(p);
+                                    onUpdateNodeLabel(node.id, p);
+                                }}
                             />
                         ) : (
                             <ServiceDetailsTab
@@ -709,6 +722,31 @@ export const NodeSidePanel = memo(function NodeSidePanel({
                             />
                         )}
                     </TabsContent>
+
+                    {/* Files tab — workspace nodes */}
+                    {isWorkspace && node && (
+                        <TabsContent value="files" className="flex flex-col overflow-hidden">
+                            <WorkspaceFilesTab
+                                projectId={projectId}
+                                nodeId={node.id}
+                            />
+                        </TabsContent>
+                    )}
+
+                    {/* Files tab — skill nodes */}
+                    {isSkill && node && (
+                        <TabsContent value="files" className="flex flex-col overflow-hidden">
+                            <SkillFilesTab
+                                projectId={projectId}
+                                nodeId={node.id}
+                                skillPath={editName}
+                                onUpdateSkillPath={(path) => {
+                                    setEditName(path);
+                                    onUpdateNodeLabel(node.id, path);
+                                }}
+                            />
+                        </TabsContent>
+                    )}
 
                     {/* Variables tab — agent and workspace */}
                     {isAgent && (
