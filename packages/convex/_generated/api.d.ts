@@ -37,10 +37,12 @@ import type * as orgMembers from "../orgMembers.js";
 import type * as project from "../project.js";
 import type * as sandboxConfigs from "../sandboxConfigs.js";
 import type * as skills from "../skills.js";
+import type * as skillsPublic from "../skillsPublic.js";
 import type * as stripe from "../stripe.js";
 import type * as toolService from "../toolService.js";
 import type * as user from "../user.js";
 import type * as workspaceConfigs from "../workspaceConfigs.js";
+import type * as workspaceFiles from "../workspaceFiles.js";
 
 import type {
   ApiFromModules,
@@ -78,10 +80,12 @@ declare const fullApi: ApiFromModules<{
   project: typeof project;
   sandboxConfigs: typeof sandboxConfigs;
   skills: typeof skills;
+  skillsPublic: typeof skillsPublic;
   stripe: typeof stripe;
   toolService: typeof toolService;
   user: typeof user;
   workspaceConfigs: typeof workspaceConfigs;
+  workspaceFiles: typeof workspaceFiles;
 }>;
 
 /**

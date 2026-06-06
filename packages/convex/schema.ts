@@ -221,6 +221,26 @@ export const skillsFields = {
     updatedAt: v.number(),
 };
 
+/**
+ * File/folder entries stored inside a workspace canvas node.
+ * Binary content lives in Convex storage; this table tracks metadata and the tree.
+ */
+export const workspaceFilesFields = {
+    authId: v.string(),
+    projectId: v.id("projects"),
+    nodeId: v.string(),
+    /** Full path from the workspace root, e.g. "src/components/Button.tsx". */
+    path: v.string(),
+    /** Filename or folder name, e.g. "Button.tsx". */
+    name: v.string(),
+    isFolder: v.boolean(),
+    storageId: v.optional(v.id("_storage")),
+    mimeType: v.optional(v.string()),
+    sizeBytes: v.optional(v.number()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+};
+
 /** Async job tracking for the harness-processing /async endpoint. */
 export const asyncResultsFields = {
     accountId: v.id("accounts"),
@@ -322,6 +342,9 @@ export default defineSchema({
         .index("by_conversationId", ["conversationId"])
         .index("by_accountId", ["accountId"]),
     skills: defineTable(skillsFields).index("by_accountId", ["accountId"]),
+    workspaceFiles: defineTable(workspaceFilesFields)
+        .index("by_projectId_and_nodeId", ["projectId", "nodeId"])
+        .index("by_authId", ["authId"]),
     asyncResults: defineTable(asyncResultsFields)
         .index("by_accountId", ["accountId"])
         .index("by_eventId", ["eventId"]),

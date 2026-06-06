@@ -14,6 +14,31 @@ import { projectsFields } from "./schema";
 
 type Ctx = GenericQueryCtx<DataModel> | GenericMutationCtx<DataModel>;
 
+const RANDOM_ADJECTIVES = [
+    "amber", "azure", "brave", "calm", "cedar", "coral", "crisp", "dusk",
+    "ember", "fern", "fleet", "frosted", "golden", "grand", "hazy", "hollow",
+    "indigo", "jade", "keen", "lofty", "lunar", "mellow", "misty", "navy",
+    "noble", "ochre", "onyx", "pale", "quiet", "rapid", "raven", "rugged",
+    "rustic", "sage", "silver", "slate", "solar", "still", "swift", "teal",
+    "vast", "velvet", "vivid", "warm", "wild", "winter", "wooden", "zenith",
+];
+const RANDOM_NOUNS = [
+    "arc", "bay", "bloom", "bolt", "brook", "cave", "cliff", "cloud",
+    "comet", "cove", "creek", "dawn", "delta", "dune", "dusk", "echo",
+    "field", "fjord", "flame", "flare", "forge", "frost", "gale", "glen",
+    "grove", "haven", "hill", "isle", "knoll", "lagoon", "lake", "leaf",
+    "mesa", "moon", "moss", "peak", "pine", "ridge", "rift", "river",
+    "shore", "sky", "slate", "snow", "star", "stone", "tide", "trail",
+    "vale", "vault", "wave", "wind", "wood", "yard", "zephyr", "zone",
+];
+
+/** Generate a random adjective-noun project name, e.g. "amber-cove". */
+function randomProjectName(): string {
+    const adj = RANDOM_ADJECTIVES[Math.floor(Math.random() * RANDOM_ADJECTIVES.length)];
+    const noun = RANDOM_NOUNS[Math.floor(Math.random() * RANDOM_NOUNS.length)];
+    return `${adj}-${noun}`;
+}
+
 const projectDoc = v.object({
     ...projectsFields,
     _id: v.id("projects"),
@@ -80,12 +105,13 @@ export const getOrCreateDefault = mutation({
 
         const now = Date.now();
         const orgId = await getCallerActiveOrgId(ctx, authUser.id);
+        const name = randomProjectName();
         const projectId = await ctx.db.insert("projects", {
             authId: authUser.id,
             orgId: orgId ?? undefined,
-            name: "Workspace",
+            name: name,
             description: undefined,
-            slug: await uniqueProjectSlug(ctx, authUser.id, "Workspace"),
+            slug: await uniqueProjectSlug(ctx, authUser.id, name),
             updatedAt: now,
         });
 
