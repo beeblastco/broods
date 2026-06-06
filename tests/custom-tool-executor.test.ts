@@ -5,10 +5,15 @@
 
 import { beforeEach, describe, expect, it, mock } from "bun:test";
 import type { AccountToolRecord } from "../functions/_shared/storage/index.ts";
+import type {
+  SandboxExecutor,
+  SandboxExecutorConfig,
+  SandboxRunResult,
+} from "../functions/harness-processing/sandbox/types.ts";
 
 const bundle = "export default { name: 'test_async', async execute() { return { ok: true }; } };";
 const getS3ObjectUrlMock = mock(async () => "https://tool-bundles.example/account-tools/acct_test/bundles/hash.mjs?sig=test");
-const runMock = mock(async () => ({
+const runMock = mock(async (): Promise<SandboxRunResult> => ({
   ok: true,
   runtime: "bash",
   exitCode: 0,
@@ -17,7 +22,7 @@ const runMock = mock(async () => ({
   durationMs: 10,
   provider: "kubernetes",
 }));
-const createSandboxExecutorMock = mock(() => ({ run: runMock }));
+const createSandboxExecutorMock = mock((_config: SandboxExecutorConfig): SandboxExecutor => ({ run: runMock }));
 
 mock.module("../functions/_shared/s3.ts", () => ({
   getS3ObjectUrl: getS3ObjectUrlMock,
@@ -27,10 +32,6 @@ mock.module("../functions/_shared/s3.ts", () => ({
   writeS3Object: mock(async () => 0),
   deleteS3Prefix: mock(async () => 0),
   isMissingS3Error: mock(() => false),
-}));
-
-mock.module("../functions/harness-processing/sandbox/index.ts", () => ({
-  createSandboxExecutor: createSandboxExecutorMock,
 }));
 
 beforeEach(() => {
@@ -50,6 +51,7 @@ describe("executeAccountToolInSandbox", () => {
       input: { message: "hi" },
       config: { config: { fromAgent: true } },
       options: { asyncTool: { resultId: "async_tool_1" } },
+      createExecutor: createSandboxExecutorMock,
     });
 
     expect(result).toEqual({ type: "text", value: "done" });
@@ -89,6 +91,7 @@ describe("executeAccountToolInSandbox", () => {
       tool: accountToolRecord("b".repeat(64)),
       input: {},
       config: {},
+      createExecutor: createSandboxExecutorMock,
     })).rejects.toThrow("custom tool bundle hash mismatch inside runner");
     expect(runMock).toHaveBeenCalled();
   });

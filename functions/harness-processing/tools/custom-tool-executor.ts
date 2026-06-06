@@ -15,6 +15,7 @@ interface ExecuteAccountToolOptions {
   input: unknown;
   config: AgentToolConfig;
   options?: unknown;
+  createExecutor?: typeof createSandboxExecutor;
 }
 
 const RESULT_MARKER = "__CUSTOM_TOOL_RESULT__";
@@ -25,6 +26,7 @@ export async function executeAccountToolInSandbox({
   input,
   config,
   options,
+  createExecutor = createSandboxExecutor,
 }: ExecuteAccountToolOptions): Promise<unknown> {
   const bucket = requireEnv("TOOL_BUNDLES_BUCKET_NAME");
   const bundleUrl = await getS3ObjectUrl(bucket, tool.bundleStorageKey);
@@ -49,7 +51,7 @@ export async function executeAccountToolInSandbox({
   const reservationKey = customToolReservationKey(accountId, tool.toolId);
   // createSandboxExecutor only creates a local client object; the pod lookup,
   // first-use creation, and idle resume happen inside executor.run().
-  const executor = createSandboxExecutor({
+  const executor = createExecutor({
     provider: "kubernetes",
     persistent: true,
     internet: true,
