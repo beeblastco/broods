@@ -35,6 +35,11 @@ import {
   normalizeUpdateWorkspaceConfigInput,
   type WorkspaceConfig,
 } from "../workspace-config.ts";
+import {
+  normalizeCreateAccountToolInput,
+  normalizeUpdateAccountToolInput,
+  type AccountToolRecord,
+} from "../account-tools.ts";
 
 // The convex/ submodule is only present in SaaS deployments. We load the
 // generated API namespace lazily via require() so the open-source typecheck
@@ -58,6 +63,7 @@ import type {
   AccountRecord,
   AgentRecord,
   AccountStore,
+  AccountToolStore,
   AgentStore,
   CronJobRecord,
   CronJobStore,
@@ -532,6 +538,93 @@ const workspaceConfigs: WorkspaceConfigStore = {
   },
 };
 
+interface ConvexAccountToolDoc {
+  _id: string;
+  accountId: string;
+  name: string;
+  description: string;
+  inputSchema: AccountToolRecord["inputSchema"];
+  bundleStorageKey: string;
+  sha256: string;
+  defaultConfig?: Record<string, unknown>;
+  status: "active" | "deleted";
+  createdAt: number;
+  updatedAt: number;
+  deletedAt?: number;
+}
+
+function accountToolFromConvex(doc: ConvexAccountToolDoc | null): AccountToolRecord | null {
+  if (!doc) return null;
+  return {
+    accountId: doc.accountId,
+    toolId: doc._id,
+    name: doc.name,
+    description: doc.description,
+    inputSchema: doc.inputSchema,
+    bundleStorageKey: doc.bundleStorageKey,
+    sha256: doc.sha256,
+    ...(doc.defaultConfig !== undefined ? { defaultConfig: doc.defaultConfig } : {}),
+    status: doc.status,
+    createdAt: new Date(doc.createdAt).toISOString(),
+    updatedAt: new Date(doc.updatedAt).toISOString(),
+    ...(doc.deletedAt ? { deletedAt: new Date(doc.deletedAt).toISOString() } : {}),
+  };
+}
+
+const accountTools: AccountToolStore = {
+  async getById(accountId, toolId) {
+    const doc = await getConvexClient().query(internal.accountTools.getById, {
+      accountId: accountId as any,
+      toolId: toolId as any,
+    });
+    return accountToolFromConvex(doc as ConvexAccountToolDoc | null);
+  },
+  async list(accountId) {
+    const docs = (await getConvexClient().query(internal.accountTools.list, {
+      accountId: accountId as any,
+    })) as ConvexAccountToolDoc[];
+    return docs.map((d) => accountToolFromConvex(d)!).filter(Boolean);
+  },
+  async create(accountId, input) {
+    const normalized = normalizeCreateAccountToolInput(input);
+    const id = (await getConvexClient().mutation(internal.accountTools.create, {
+      accountId: accountId as any,
+      name: normalized.name,
+      description: normalized.description,
+      inputSchema: normalized.inputSchema as any,
+      bundleStorageKey: normalized.bundleStorageKey,
+      sha256: normalized.sha256,
+      defaultConfig: normalized.defaultConfig,
+    })) as string;
+    const created = await this.getById(accountId, id);
+    if (!created) throw new Error("Failed to fetch created account tool");
+    return created;
+  },
+  async update(accountId, toolId, rawPatch) {
+    const patch = normalizeUpdateAccountToolInput(rawPatch);
+    await getConvexClient().mutation(internal.accountTools.update, {
+      accountId: accountId as any,
+      toolId: toolId as any,
+      ...patch,
+    } as any);
+    return this.getById(accountId, toolId);
+  },
+  async remove(accountId, toolId) {
+    await getConvexClient().mutation(internal.accountTools.remove, {
+      accountId: accountId as any,
+      toolId: toolId as any,
+    });
+    return true;
+  },
+  async removeAllForAccount(accountId) {
+    const list = await this.list(accountId);
+    for (const toolRecord of list) {
+      await this.remove(accountId, toolRecord.toolId);
+    }
+    return list.length;
+  },
+};
+
 export const convexStorageProvider: StorageProvider = {
   kind: "convex",
   accounts,
@@ -539,4 +632,5 @@ export const convexStorageProvider: StorageProvider = {
   cronJobs,
   sandboxConfigs,
   workspaceConfigs,
+  accountTools,
 };
