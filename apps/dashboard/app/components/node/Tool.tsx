@@ -27,11 +27,10 @@ export function ToolNode({ id, data }: NodeProps) {
             nodeType="tool"
             data={data as BaseNodeData}
             icon={<Wrench className="h-3.5 w-3.5" />}
-            toolMeta={
-                toolService
-                    ? { language: toolService.language, status: toolService.status }
-                    : undefined
-            }
+            toolMeta={{
+                language: toolService?.language ?? "javascript",
+                status: toolService?.status ?? "enabled",
+            }}
         />
     );
 }

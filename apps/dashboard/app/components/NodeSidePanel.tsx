@@ -4,8 +4,11 @@
 import type { BaseNodeData } from "@/app/components/node/BaseNode";
 import { agentStatusConfig } from "@/app/components/node/BaseNode";
 import { ConfigTab, buildBranchPatch } from "@/app/components/side-panel/ConfigTab";
-import { WorkspaceConfigTab } from "@/app/components/side-panel/WorkspaceConfigTab";
-import { WorkspaceDetailsTab } from "@/app/components/side-panel/WorkspaceDetailsTab";
+import {
+    ResourceConfigTab,
+    SandboxResourceDetailsTab,
+    WorkspaceResourceDetailsTab,
+} from "@/app/components/side-panel/ResourceNodeTabs";
 import { SkillConfigTab } from "@/app/components/side-panel/SkillConfigTab";
 import { SkillDetailsTab } from "@/app/components/side-panel/SkillDetailsTab";
 import { DetailsTab, type AgentProvider } from "@/app/components/side-panel/DetailsTab";
@@ -92,7 +95,7 @@ const ToolTestTab = dynamic(
     },
 );
 
-type NodeType = "agent" | "database" | "tool" | "workspace" | "skill";
+type NodeType = "agent" | "database" | "tool" | "workspace" | "sandbox" | "skill";
 type HeaderStatusBadge = {
     text: string;
     color: string;
@@ -105,6 +108,7 @@ const PANEL_TITLES: Record<NodeType, string> = {
     database: "Database",
     tool: "Tool",
     workspace: "Workspace",
+    sandbox: "Sandbox",
     skill: "Skill",
 };
 
@@ -138,18 +142,21 @@ export const NodeSidePanel = memo(function NodeSidePanel({
     onClose,
     onRemoveNode,
     onUpdateNodeLabel,
+    onUpdateNodeData,
 }: {
     node: Node | null;
     deleteRequestToken: number;
     onClose: () => void;
     onRemoveNode: (nodeId: string) => void;
     onUpdateNodeLabel: (nodeId: string, label: string) => void;
+    onUpdateNodeData: (nodeId: string, patch: Partial<BaseNodeData>) => void;
 }) {
     const nodeData = node?.data as BaseNodeData | undefined;
     const nodeType = (node?.type ?? "agent") as NodeType;
     const isAgent = nodeType === "agent";
     const isTool = nodeType === "tool";
     const isWorkspace = nodeType === "workspace";
+    const isSandbox = nodeType === "sandbox";
     const isSkill = nodeType === "skill";
     const { environmentId } = useEnvironment();
     const params = useParams<{ projectId: string }>();
@@ -161,10 +168,10 @@ export const NodeSidePanel = memo(function NodeSidePanel({
     // Agent health status (agent nodes only)
     const healthStatus = useAgentHealth(isAgent ? agentConfigId : undefined);
 
-    // Connected agent config for workspace/skill nodes, so the header status badge
-    // mirrors the same Enabled/Disabled state shown on the node card.
+    // Connected agent config for skill nodes, so the header status badge mirrors
+    // the same Enabled/Disabled state shown on the node card.
     const { agentConfig: connectedAgentConfig } = useConnectedAgentConfig(
-        isWorkspace || isSkill ? nodeId : undefined,
+        isSkill ? nodeId : undefined,
     );
 
     const isConnectedToAgent = useStore(
@@ -175,6 +182,27 @@ export const NodeSidePanel = memo(function NodeSidePanel({
                 const edges = state.edges as Array<{ source: string; target: string }>;
                 const nodeLookup = state.nodeLookup as Map<string, { type?: string }>;
                 if (!edges || !nodeLookup) return false;
+
+                if (nodeType === "workspace" || nodeType === "sandbox") {
+                    const visited = new Set<string>([nodeId]);
+                    const queue = [nodeId];
+                    while (queue.length > 0) {
+                        const current = queue.shift()!;
+                        for (const edge of edges) {
+                            if (edge.source !== current && edge.target !== current) continue;
+                            const otherNodeId = edge.source === current ? edge.target : edge.source;
+                            if (visited.has(otherNodeId)) continue;
+                            visited.add(otherNodeId);
+                            const otherNode = nodeLookup.get(otherNodeId);
+                            if (otherNode?.type === "agent") return true;
+                            if (otherNode?.type === "workspace" || otherNode?.type === "sandbox") {
+                                queue.push(otherNodeId);
+                            }
+                        }
+                    }
+
+                    return false;
+                }
 
                 for (const edge of edges) {
                     if (edge.source !== nodeId && edge.target !== nodeId) continue;
@@ -346,16 +374,22 @@ export const NodeSidePanel = memo(function NodeSidePanel({
         }
 
         if (isWorkspace) {
-            const workspace = readAgentBranch<{ enabled?: boolean }>(
-                connectedAgentConfig as FlatAgentConfig | undefined,
-                "workspace",
-            );
-            const enabled = workspace.enabled !== false;
+            const workspaceStatus = nodeData?.status ?? "idle";
 
             return {
-                text: enabled ? "Enabled" : "Disabled",
-                color: enabled ? "bg-emerald-500" : "bg-red-400",
-                variant: enabled ? "success" : "secondary",
+                text: nodeStatusBadgeText[workspaceStatus],
+                color: nodeStatusBadgeColor[workspaceStatus],
+                variant: nodeStatusBadgeVariant[workspaceStatus],
+            };
+        }
+
+        if (isSandbox) {
+            const sandboxStatus = nodeData?.status ?? "idle";
+
+            return {
+                text: nodeStatusBadgeText[sandboxStatus],
+                color: nodeStatusBadgeColor[sandboxStatus],
+                variant: nodeStatusBadgeVariant[sandboxStatus],
             };
         }
 
@@ -381,7 +415,7 @@ export const NodeSidePanel = memo(function NodeSidePanel({
             color: nodeStatusBadgeColor[nodeStatus],
             variant: nodeStatusBadgeVariant[nodeStatus],
         };
-    }, [isAgent, healthStatus, isTool, canQueryToolStatus, toolService, nodeType, isConnectedToAgent, isWorkspace, isSkill, connectedAgentConfig, nodeData?.status, nodeData?.label]);
+    }, [isAgent, healthStatus, isTool, canQueryToolStatus, toolService, nodeType, isConnectedToAgent, isWorkspace, isSandbox, isSkill, connectedAgentConfig, nodeData?.status, nodeData?.label]);
 
     async function handleSaveName() {
         if (!editName.trim() || !nameChanged) return;
@@ -591,7 +625,7 @@ export const NodeSidePanel = memo(function NodeSidePanel({
                     <TabsList variant="line" className="w-full shrink-0 px-4 pt-2">
                         <TabsTrigger value="details">Details</TabsTrigger>
                         {isAgent && <TabsTrigger value="variables">Variables</TabsTrigger>}
-                        {(isAgent || isTool || isWorkspace || isSkill) && <TabsTrigger value="config">Config</TabsTrigger>}
+                        {(isAgent || isTool || isWorkspace || isSandbox || isSkill) && <TabsTrigger value="config">Config</TabsTrigger>}
                         {(isAgent || nodeType === "tool") && (
                             <TabsTrigger
                                 value="test"
@@ -643,11 +677,20 @@ export const NodeSidePanel = memo(function NodeSidePanel({
                                 isSavingName={isSaving}
                             />
                         ) : nodeType === "workspace" && node ? (
-                            <WorkspaceDetailsTab
-                                nodeId={node.id}
+                            <WorkspaceResourceDetailsTab
+                                data={nodeData}
                                 editName={editName}
                                 setEditName={setEditName}
                                 onSaveName={handleSaveName}
+                                onUpdateNodeData={(patch) => onUpdateNodeData(node.id, patch)}
+                            />
+                        ) : nodeType === "sandbox" && node ? (
+                            <SandboxResourceDetailsTab
+                                data={nodeData}
+                                editName={editName}
+                                setEditName={setEditName}
+                                onSaveName={handleSaveName}
+                                onUpdateNodeData={(patch) => onUpdateNodeData(node.id, patch)}
                             />
                         ) : nodeType === "skill" && node ? (
                             <SkillDetailsTab
@@ -699,9 +742,13 @@ export const NodeSidePanel = memo(function NodeSidePanel({
                             />
                         </TabsContent>
                     )}
-                    {isWorkspace && node && (
+                    {(isWorkspace || isSandbox) && node && (
                         <TabsContent value="config" className="flex flex-col overflow-hidden">
-                            <WorkspaceConfigTab nodeId={node.id} />
+                            <ResourceConfigTab
+                                nodeType={isWorkspace ? "workspace" : "sandbox"}
+                                data={nodeData}
+                                onUpdateNodeData={(patch) => onUpdateNodeData(node.id, patch)}
+                            />
                         </TabsContent>
                     )}
                     {isSkill && node && (

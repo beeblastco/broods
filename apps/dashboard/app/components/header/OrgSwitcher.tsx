@@ -27,15 +27,17 @@ import { Input } from "@/app/components/ui/input";
 import { Label } from "@/app/components/ui/label";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
-import { useMutation, useQuery } from "convex/react";
+import { useConvexAuth, useMutation, useQuery } from "convex/react";
 import { Building2, Check, ChevronDown, Plus, Settings } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 
 export function OrgSwitcher() {
     const router = useRouter();
-    const orgs = useQuery(api.org.list, {});
-    const active = useQuery(api.org.getActive, {});
+    const { isLoading, isAuthenticated } = useConvexAuth();
+    const orgQueryArgs = !isLoading && isAuthenticated ? {} : "skip";
+    const orgs = useQuery(api.org.list, orgQueryArgs);
+    const active = useQuery(api.org.getActive, orgQueryArgs);
     const setActive = useMutation(api.org.setActive);
     const createOrg = useMutation(api.org.create);
 

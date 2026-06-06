@@ -31,6 +31,15 @@ const providerOptions: Array<{ value: AgentProvider; label: string }> = [
     { value: "gateway", label: "Gateway" },
 ];
 
+const DEFAULT_OUTPUT_SCHEMA: Record<string, unknown> = {
+    type: "object",
+    additionalProperties: true,
+    properties: {
+        answer: { type: "string" },
+    },
+    required: ["answer"],
+};
+
 function toWebSocketBaseUrl(gatewayUrl: string): string {
     const url = new URL(gatewayUrl);
     url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
@@ -92,7 +101,9 @@ export function DetailsTab({
     const endpointUrl = activeDeployment ? `${gatewayUrl}/v1${projectPrefix}/agents${envPrefix}/${activeDeployment.endpointId}` : "";
     const websocketUrl = activeDeployment ? `${websocketBaseUrl}/v1${projectPrefix}/agents${envPrefix}/${activeDeployment.endpointId}/ws` : "";
 
-    const outputFormat = agentConfig?.outputFormat as OutputFormatConfig | undefined;
+    const outputFormat = agentConfig?.outputFormat && isRecord(agentConfig.outputFormat)
+        ? agentConfig.outputFormat as OutputFormatConfig
+        : undefined;
     const outputFormatEnabled = outputFormat !== undefined;
     const schemaFromConfigText = isRecord(outputFormat?.schema)
         ? JSON.stringify(outputFormat.schema, null, 2)
@@ -109,7 +120,7 @@ export function DetailsTab({
 
     function buildOutputFormatPayload(schema: Record<string, unknown>): Record<string, unknown> {
         const next: Record<string, unknown> = {
-            type: "json_schema",
+            type: "object",
             schema: schema,
         };
 
@@ -161,9 +172,9 @@ export function DetailsTab({
             setOutputSchemaText(JSON.stringify(existingSchema, null, 2));
             onUpdateOutputFormat?.(buildOutputFormatPayload(existingSchema));
         } else {
-            setHasEditedOutputSchema(false);
-            setOutputSchemaText("");
-            onUpdateOutputFormat?.({ type: "json_schema" });
+            setHasEditedOutputSchema(true);
+            setOutputSchemaText(JSON.stringify(DEFAULT_OUTPUT_SCHEMA, null, 2));
+            onUpdateOutputFormat?.(buildOutputFormatPayload(DEFAULT_OUTPUT_SCHEMA));
         }
     }
 

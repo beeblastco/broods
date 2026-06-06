@@ -4,7 +4,7 @@
 import { Header } from "@/app/components/Header";
 import { api } from "@/convex/_generated/api";
 import { useAuth } from "@workos-inc/authkit-nextjs/components";
-import { useConvexAuth, useMutation } from "convex/react";
+import { useConvexAuth, useMutation, useQuery } from "convex/react";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef } from "react";
 
@@ -17,6 +17,7 @@ export default function MainLayout({
     const { user } = useAuth();
     const router = useRouter();
     const syncProfile = useMutation(api.user.syncProfile);
+    const currentUser = useQuery(api.user.getCurrent, isAuthenticated ? {} : "skip");
     const profileSynced = useRef(false);
 
     useEffect(() => {
@@ -26,7 +27,7 @@ export default function MainLayout({
     }, [isLoading, isAuthenticated, router]);
 
     useEffect(() => {
-        if (profileSynced.current || !isAuthenticated || !user) return;
+        if (profileSynced.current || !isAuthenticated || !user || !currentUser) return;
         const name = [user.firstName, user.lastName].filter(Boolean).join(" ").trim();
         const avatarUrl = user.profilePictureUrl ?? undefined;
         if (!name && !avatarUrl) return;
@@ -34,7 +35,7 @@ export default function MainLayout({
         syncProfile({ name: name || undefined, avatarUrl: avatarUrl }).catch(() => {
             profileSynced.current = false;
         });
-    }, [isAuthenticated, user, syncProfile]);
+    }, [currentUser, isAuthenticated, user, syncProfile]);
 
     if (isLoading) {
         return (

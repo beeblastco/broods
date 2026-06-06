@@ -4,11 +4,18 @@
 import { CanvasControls } from "@/app/components/canvas/CanvasControl";
 import { DeletableEdge } from "@/app/components/canvas/DeletableEdge";
 import { EmptyCanvasGuide } from "@/app/components/canvas/EmptyCanvasGuide";
+import type { BaseNodeData } from "@/app/components/node/BaseNode";
 import { AgentNode } from "@/app/components/node/Agent";
 import { DatabaseNode } from "@/app/components/node/Database";
+import { SandboxNode } from "@/app/components/node/Sandbox";
 import { SkillNode } from "@/app/components/node/Skill";
 import { ToolNode } from "@/app/components/node/Tool";
 import { WorkspaceNode } from "@/app/components/node/Workspace";
+import {
+    defaultRuntimeNodeData,
+    deriveAgentRuntimeRefs,
+    serializeRuntimeRefs,
+} from "@/app/lib/canvasRuntimeRefs";
 import type { Id } from "@/convex/_generated/dataModel";
 import {
     ContextMenu,
@@ -36,7 +43,7 @@ import {
     type OnNodeDrag,
 } from "@xyflow/react";
 import { useMutation, useQuery } from "convex/react";
-import { Bot, Database, FolderOpen, Sparkles, Wrench } from "lucide-react";
+import { Bot, Box, Database, FolderOpen, Sparkles, Wrench } from "lucide-react";
 import { useTheme } from "next-themes";
 import dynamic from "next/dynamic";
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -59,6 +66,7 @@ const ToolSourcePickerDialog = dynamic(
 const nodeTypes = {
     agent: AgentNode,
     database: DatabaseNode,
+    sandbox: SandboxNode,
     workspace: WorkspaceNode,
     tool: ToolNode,
     skill: SkillNode,
@@ -71,6 +79,7 @@ const edgeTypes = {
 const NODE_TEMPLATES = [
     { type: "agent", label: "Agent", icon: Bot },
     { type: "database", label: "Database", icon: Database },
+    { type: "sandbox", label: "Sandbox", icon: Box },
     { type: "workspace", label: "Workspace", icon: FolderOpen },
     { type: "skill", label: "Skill", icon: Sparkles },
     { type: "tool", label: "Tool", icon: Wrench },
@@ -161,8 +170,10 @@ function CanvasInner({ projectId }: { projectId: Id<"projects"> }) {
             );
         },
     );
+    const updateRuntimeRefs = useMutation(api.agentConfig.updateRuntimeRefs);
     const debounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
     const hasLocalChanges = useRef(false);
+    const lastRuntimeRefs = useRef(new Map<string, string>());
 
     /** Debounced save — writes current local state to the database after 500ms of inactivity. */
     const scheduleSave = useCallback(() => {
@@ -170,31 +181,51 @@ function CanvasInner({ projectId }: { projectId: Id<"projects"> }) {
         if (debounceTimer.current) clearTimeout(debounceTimer.current);
         debounceTimer.current = setTimeout(() => {
             if (!environmentId) return;
+            const currentNodes = nodesRef.current;
+            const currentEdges = edgesRef.current;
             saveLayoutMutation({
                 projectId: projectId,
                 environmentId: environmentId,
-                nodes: nodesRef.current.map((n) => ({
+                nodes: currentNodes.map((n) => ({
                     id: n.id,
-                    type: n.type as "agent" | "database" | "workspace" | "tool" | "skill",
+                    type: n.type as "agent" | "database" | "sandbox" | "workspace" | "tool" | "skill",
                     position: n.position,
                     data: n.data as {
                         label: string;
                         status?: "running" | "idle" | "error";
                         agentConfigId?: Id<"agentConfigs">;
+                        resourceId?: string;
+                        mountName?: string;
+                        description?: string;
+                        config?: Record<string, unknown>;
                         properties?: { color: string };
                     },
                 })),
-                edges: edgesRef.current.map((e) => ({
+                edges: currentEdges.map((e) => ({
                     id: e.id,
                     source: e.source,
                     target: e.target,
                     animated: e.animated,
                 })),
+            }).then(async () => {
+                const refs = deriveAgentRuntimeRefs(currentNodes, currentEdges);
+                await Promise.all(refs.map(async (ref) => {
+                    const serialized = serializeRuntimeRefs(ref);
+                    if (lastRuntimeRefs.current.get(ref.configId) === serialized) {
+                        return;
+                    }
+                    lastRuntimeRefs.current.set(ref.configId, serialized);
+                    await updateRuntimeRefs({
+                        configId: ref.configId,
+                        sandbox: ref.sandbox ?? null,
+                        workspaces: ref.workspaces.length > 0 ? ref.workspaces : null,
+                    });
+                }));
             }).finally(() => {
                 hasLocalChanges.current = false;
             });
         }, 500);
-    }, [environmentId, projectId, saveLayoutMutation]);
+    }, [environmentId, projectId, saveLayoutMutation, updateRuntimeRefs]);
 
     // Cleanup debounce timer on unmount
     useEffect(() => {
@@ -307,7 +338,7 @@ function CanvasInner({ projectId }: { projectId: Id<"projects"> }) {
                 id: id,
                 type: type,
                 position: position,
-                data: { label: nodeLabel, status: "idle" },
+                data: defaultRuntimeNodeData(type, nodeLabel, id),
             };
             setNodes((nds) => [...nds, newNode]);
 
@@ -394,6 +425,29 @@ function CanvasInner({ projectId }: { projectId: Id<"projects"> }) {
                 nds.map((n) =>
                     n.id === nodeId ? { ...n, data: { ...n.data, label: label } } : n,
                 ),
+            );
+            setSelectedNode((current) =>
+                current?.id === nodeId
+                    ? { ...current, data: { ...current.data, label: label } }
+                    : current,
+            );
+            scheduleSave();
+        },
+        [setNodes, scheduleSave],
+    );
+
+    /** Update a node's persisted data payload. */
+    const updateNodeData = useCallback(
+        (nodeId: string, patch: Partial<BaseNodeData>) => {
+            setNodes((nds) =>
+                nds.map((n) =>
+                    n.id === nodeId ? { ...n, data: { ...n.data, ...patch } } : n,
+                ),
+            );
+            setSelectedNode((current) =>
+                current?.id === nodeId
+                    ? { ...current, data: { ...current.data, ...patch } }
+                    : current,
             );
             scheduleSave();
         },
@@ -491,6 +545,7 @@ function CanvasInner({ projectId }: { projectId: Id<"projects"> }) {
                     onClose={onPaneClick}
                     onRemoveNode={removeNode}
                     onUpdateNodeLabel={updateNodeLabel}
+                    onUpdateNodeData={updateNodeData}
                 />
             </div>
 

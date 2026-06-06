@@ -3,6 +3,7 @@
 /** Locked, non-interactive React Flow canvas preview for project cards. */
 import { AgentNode } from "@/app/components/node/Agent";
 import { DatabaseNode } from "@/app/components/node/Database";
+import { SandboxNode } from "@/app/components/node/Sandbox";
 import { ToolNode } from "@/app/components/node/Tool";
 import { WorkspaceNode } from "@/app/components/node/Workspace";
 import {
@@ -17,7 +18,7 @@ import { useMemo } from "react";
 
 type CanvasNode = {
     id: string;
-    type: "agent" | "database" | "workspace" | "tool";
+    type: "agent" | "database" | "sandbox" | "workspace" | "tool";
     position: { x: number; y: number };
     data: { label: string; status?: "running" | "idle" | "error" };
 };
@@ -32,6 +33,7 @@ type CanvasEdge = {
 const nodeTypes = {
     agent: AgentNode,
     database: DatabaseNode,
+    sandbox: SandboxNode,
     workspace: WorkspaceNode,
     tool: ToolNode,
 };

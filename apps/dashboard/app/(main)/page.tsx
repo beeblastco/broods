@@ -2,7 +2,7 @@
 
 /** Redirects authenticated users straight to the default workspace canvas. */
 import { api } from "@/convex/_generated/api";
-import { useMutation } from "convex/react";
+import { useMutation, useQuery } from "convex/react";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef } from "react";
 
@@ -11,9 +11,14 @@ export default function HomePage() {
     const router = useRouter();
     const getOrCreateOrg = useMutation(api.org.getOrCreate);
     const getOrCreateDefault = useMutation(api.project.getOrCreateDefault);
+    const currentUser = useQuery(api.user.getCurrent);
     const hasStarted = useRef(false);
 
     useEffect(() => {
+        if (!currentUser) {
+            return;
+        }
+
         if (hasStarted.current) {
             return;
         }
@@ -29,7 +34,7 @@ export default function HomePage() {
                 console.error("Failed to open workspace canvas:", error);
                 hasStarted.current = false;
             });
-    }, [getOrCreateOrg, getOrCreateDefault, router]);
+    }, [currentUser, getOrCreateOrg, getOrCreateDefault, router]);
 
     return (
         <div className="flex h-full items-center justify-center">

@@ -23,9 +23,14 @@ export function applyAgentConfigUpdate(
         if (value !== undefined) patch[key] = value;
     }
 
+    const next = { ...existing, ...patch } as typeof existing;
+    if (rest.outputFormat === null) {
+        delete (next as Record<string, unknown>).outputFormat;
+    }
+
     localStore.setQuery(
         api.agentConfig.getById,
         { configId: configId },
-        { ...existing, ...patch } as typeof existing,
+        next,
     );
 }

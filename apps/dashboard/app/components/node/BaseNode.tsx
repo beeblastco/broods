@@ -11,6 +11,10 @@ export type BaseNodeData = {
     label: string;
     status?: "running" | "idle" | "error";
     agentConfigId?: string;
+    resourceId?: string;
+    mountName?: string;
+    description?: string;
+    config?: Record<string, unknown>;
     properties?: { color: string };
 };
 
@@ -93,6 +97,27 @@ export function BaseNode({
                 const nodeLookup = state.nodeLookup as Map<string, { type?: string }>;
                 if (!edges || !nodeLookup) return false;
 
+                if (nodeType === "workspace" || nodeType === "sandbox") {
+                    const visited = new Set<string>([id]);
+                    const queue = [id];
+                    while (queue.length > 0) {
+                        const current = queue.shift()!;
+                        for (const edge of edges) {
+                            if (edge.source !== current && edge.target !== current) continue;
+                            const otherNodeId = edge.source === current ? edge.target : edge.source;
+                            if (visited.has(otherNodeId)) continue;
+                            visited.add(otherNodeId);
+                            const otherNode = nodeLookup.get(otherNodeId);
+                            if (otherNode?.type === "agent") return true;
+                            if (otherNode?.type === "workspace" || otherNode?.type === "sandbox") {
+                                queue.push(otherNodeId);
+                            }
+                        }
+                    }
+
+                    return false;
+                }
+
                 for (const e of edges) {
                     if (e.source !== id && e.target !== id) continue;
                     const otherNodeId = e.source === id ? e.target : e.source;
@@ -163,10 +188,23 @@ export function BaseNode({
                 </span>
             )}
 
-            {nodeType === "agent" && (
+            {(nodeType === "agent" || nodeType === "sandbox") && (
                 <span className="absolute top-2 right-2.5 z-10 inline-flex size-5 items-center justify-center rounded-full border border-border/70 bg-background/90">
-                    <Globe className={`size-3.5 ${agentConnectivity?.publicAccessEnabled ? "text-emerald-500" : "text-muted-foreground"}`} />
-                    {!agentConnectivity?.publicAccessEnabled && (
+                    <Globe
+                        className={`size-3.5 ${
+                            nodeType === "sandbox"
+                                ? data.config?.internet === true
+                                    ? "text-emerald-500"
+                                    : "text-muted-foreground"
+                                : agentConnectivity?.publicAccessEnabled
+                                  ? "text-emerald-500"
+                                  : "text-muted-foreground"
+                        }`}
+                    />
+                    {nodeType === "agent" && !agentConnectivity?.publicAccessEnabled && (
+                        <Slash className="pointer-events-none absolute size-3.5 text-muted-foreground/80" />
+                    )}
+                    {nodeType === "sandbox" && data.config?.internet !== true && (
                         <Slash className="pointer-events-none absolute size-3.5 text-muted-foreground/80" />
                     )}
                 </span>

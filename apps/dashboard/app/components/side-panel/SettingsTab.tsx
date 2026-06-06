@@ -14,7 +14,7 @@ import {
     DialogTitle,
 } from "@/app/components/ui/dialog";
 
-type NodeType = "agent" | "database" | "tool" | "workspace" | "skill";
+type NodeType = "agent" | "database" | "tool" | "workspace" | "sandbox" | "skill";
 
 /** Delete warning copy per node type. */
 const DELETE_DESCRIPTIONS: Record<NodeType, { summary: string; detail: string }> = {
@@ -31,8 +31,12 @@ const DELETE_DESCRIPTIONS: Record<NodeType, { summary: string; detail: string }>
         detail: "Only the tool configuration will be removed. This will not interfere with any existing code or tool logic.",
     },
     workspace: {
-        summary: "Delete the workspace and all its contents.",
-        detail: "All workspace data, files, and folders will be deleted permanently.",
+        summary: "Remove this workspace reference from the canvas.",
+        detail: "The canvas reference will be removed. The underlying workspaceConfig record is not deleted from the account API.",
+    },
+    sandbox: {
+        summary: "Remove this sandbox reference from the canvas.",
+        detail: "The canvas reference will be removed. The underlying sandboxConfig record is not deleted from the account API.",
     },
     skill: {
         summary: "Remove this skill from the canvas.",
@@ -46,6 +50,7 @@ const NODE_TYPE_LABELS: Record<NodeType, string> = {
     database: "database",
     tool: "tool",
     workspace: "workspace",
+    sandbox: "sandbox",
     skill: "skill",
 };
 

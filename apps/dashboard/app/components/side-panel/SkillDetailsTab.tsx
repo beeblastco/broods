@@ -2,11 +2,11 @@
 
 /**
  * Skill card Details tab — the card label is one entry in the connected agent's
- * `skills.allowed[]`. Exposes the agent-wide skills master switch and publish
- * settings alongside this skill's allowed-list membership; every control
- * auto-saves through the connected agent's `skills` branch.
+ * `skills.allowed[]`. Exposes the agent-wide skills master switch alongside this
+ * skill's allowed-list membership; every control auto-saves through the connected
+ * agent's `skills` branch.
  */
-import { ExpandBlock, ToggleRow } from "@/app/components/side-panel/ConfigControls";
+import { ToggleRow } from "@/app/components/side-panel/ConfigControls";
 import { SectionHeader } from "@/app/components/side-panel/SectionHeader";
 import { Input } from "@/app/components/ui/input";
 import { Separator } from "@/app/components/ui/separator";
@@ -18,7 +18,6 @@ import { useMemo } from "react";
 type SkillsSlice = {
     enabled?: boolean;
     allowed?: string[];
-    publish?: { enabled?: boolean; needApproval?: boolean };
 };
 
 /** Skill card Details tab — auto-saving editor for the connected agent's skills config. */
@@ -42,7 +41,6 @@ export function SkillDetailsTab({
     const skillsEnabled = skills.enabled === true;
     const path = editName.trim();
     const inAllowed = path.length > 0 && (skills.allowed ?? []).includes(path);
-    const publishEnabled = skills.publish?.enabled === true;
 
     /** Adds or removes this card's path from the agent's `skills.allowed` list. */
     function setIncluded(next: boolean) {
@@ -102,30 +100,6 @@ export function SkillDetailsTab({
                 />
             </div>
 
-            <Separator />
-
-            {/* Publish settings — skills.publish */}
-            <div className="flex flex-col gap-3">
-                <SectionHeader>Publish</SectionHeader>
-                <ToggleRow
-                    label="Allow publishing"
-                    description="Let the agent publish skill changes back to storage."
-                    checked={publishEnabled}
-                    disabled={disabled || !skillsEnabled}
-                    onCheckedChange={(next) => updateBranch(["skills", "publish", "enabled"], next)}
-                />
-                {publishEnabled && (
-                    <ExpandBlock>
-                        <ToggleRow
-                            label="Require approval"
-                            description="Pause each publish until the user approves."
-                            checked={skills.publish?.needApproval === true}
-                            disabled={disabled}
-                            onCheckedChange={(next) => updateBranch(["skills", "publish", "needApproval"], next)}
-                        />
-                    </ExpandBlock>
-                )}
-            </div>
         </div>
     );
 }

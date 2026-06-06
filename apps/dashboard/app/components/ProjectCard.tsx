@@ -23,7 +23,7 @@ const CanvasPreview = dynamic(
 type CanvasData = {
     nodes: Array<{
         id: string;
-        type: "agent" | "database" | "workspace" | "tool";
+        type: "agent" | "database" | "sandbox" | "workspace" | "tool";
         position: { x: number; y: number };
         data: { label: string; status?: "running" | "idle" | "error" };
     }>;

@@ -3,7 +3,7 @@
 /**
  * Skill Config tab — raw JSON editor for the connected agent's `skills` branch,
  * matching the Agent and Workspace cards' Config tabs so power users can edit
- * the whole slice (enabled · allowed · publish) directly.
+ * the whole slice (enabled · allowed) directly.
  */
 import { BranchEditor } from "@/app/components/side-panel/BranchEditor";
 import { useConnectedAgentConfig } from "@/app/hooks/useConnectedAgentConfig";
@@ -31,7 +31,7 @@ export function SkillConfigTab({ nodeId }: { nodeId: string }) {
         <div className="flex flex-1 flex-col gap-5 overflow-y-auto p-4">
             <BranchEditor
                 title="Skills"
-                description="enabled · allowed · publish"
+                description="enabled · allowed"
                 value={skills}
                 onSave={(v) => updateBranch(["skills"], v)}
             />
