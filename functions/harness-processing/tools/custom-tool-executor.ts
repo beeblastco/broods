@@ -4,6 +4,7 @@
  * Keep bundle loading and user-code execution out of harness-processing.
  */
 
+import { Readable } from "node:stream";
 import { optionalEnv, requireEnv } from "../../_shared/env.ts";
 import { getS3ObjectUrl, readS3Bytes } from "../../_shared/s3.ts";
 import { logWarn } from "../../_shared/log.ts";
@@ -11,6 +12,7 @@ import type { AccountToolRecord, AgentToolConfig } from "../../_shared/storage/i
 import { createSandboxExecutor } from "../sandbox/index.ts";
 import { generateJobId } from "../sandbox/jobs.ts";
 import { getHarnessPublicUrl } from "../self-url.ts";
+import { buildWorkerEnsureCommand, buildWorkerInvokeCommand, parseWorkerResponse, type WorkerInvokeResult } from "./custom-tool-worker.ts";
 
 // The marker lets the foreground path find the one structured JSON result line
 // reliably instead of accidentally parsing user logs as protocol.
@@ -118,10 +120,66 @@ async function runAccountToolInSandboxForeground({
   });
 
   const executor = createExecutor(customToolExecutorConfig());
+  const reservationKey = customToolReservationKey(accountId, tool.toolId);
+
+  // Fast path: the resident in-pod worker (no per-call node startup). A null
+  // result means the worker was unreachable, so fall through to the one-shot
+  // runner; an {ok:false} result is a real tool error and is surfaced as-is.
+  if (executor.execInReservedPod) {
+    const worker = await tryWorkerInvoke(executor, reservationKey, payload);
+    if (worker) return unwrapWorkerResult(worker);
+  }
+  return runOneShotRunner(executor, reservationKey, payload);
+}
+
+async function tryWorkerInvoke(
+  executor: ReturnType<typeof createSandboxExecutor>,
+  reservationKey: string,
+  payload: RunnerPayload,
+): Promise<WorkerInvokeResult | null> {
+  let result;
+  try {
+    result = await executor.execInReservedPod!({ reservationKey }, buildWorkerInvokeCommand(), {
+      stdin: Readable.from(JSON.stringify(payload)),
+      timeoutSeconds: FOREGROUND_TIMEOUT_SECONDS,
+      outputLimitBytes: RUNNER_OUTPUT_LIMIT_BYTES,
+    });
+  } catch (error) {
+    logWarn("custom tool worker exec failed; falling back to one-shot runner", {
+      reservationKey,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return null;
+  }
+  if (result.timedOut) {
+    return { ok: false, error: `custom tool timed out after ${FOREGROUND_TIMEOUT_SECONDS}s` };
+  }
+  const parsed = parseWorkerResponse(result.stdout);
+  if (!parsed) {
+    logWarn("custom tool worker returned no response; falling back to one-shot runner", {
+      reservationKey,
+      exitCode: result.exitCode,
+      stderr: result.stderr.slice(0, 200),
+    });
+    return null;
+  }
+  return parsed;
+}
+
+function unwrapWorkerResult(worker: WorkerInvokeResult): unknown {
+  if (worker.ok) return worker.result;
+  throw new Error(worker.error || "custom tool execution failed");
+}
+
+async function runOneShotRunner(
+  executor: ReturnType<typeof createSandboxExecutor>,
+  reservationKey: string,
+  payload: RunnerPayload,
+): Promise<unknown> {
   const result = await executor.run({
     runtime: "bash",
     code: nodeHeredoc(runnerCode(payload)),
-    reservationKey: customToolReservationKey(accountId, tool.toolId),
+    reservationKey,
     timeoutSeconds: FOREGROUND_TIMEOUT_SECONDS,
     outputLimitBytes: RUNNER_OUTPUT_LIMIT_BYTES,
   });
@@ -426,9 +484,16 @@ export function prewarmAccountTool(
   if (!optionalEnv("AWS_LAMBDA_FUNCTION_NAME")) return;
   const executor = createExecutor(customToolExecutorConfig());
   if (!executor.prewarm) return;
-  void executor.prewarm({ reservationKey: customToolReservationKey(accountId, toolId) })
-    .catch((error) => logWarn("custom tool prewarm failed", {
-      toolId,
-      error: error instanceof Error ? error.message : String(error),
-    }));
+  const reservationKey = customToolReservationKey(accountId, toolId);
+  void (async () => {
+    await executor.prewarm!({ reservationKey });
+    // Also start the resident worker now, so the first real call skips both pod
+    // create and worker startup.
+    if (executor.execInReservedPod) {
+      await executor.execInReservedPod({ reservationKey }, buildWorkerEnsureCommand(), { timeoutSeconds: 30 });
+    }
+  })().catch((error) => logWarn("custom tool prewarm failed", {
+    toolId,
+    error: error instanceof Error ? error.message : String(error),
+  }));
 }

@@ -8,6 +8,8 @@
  * per-runtime routing no longer exists.
  */
 
+import type { Readable } from "node:stream";
+
 export type SandboxProvider = "lambda" | "e2b" | "daytona" | "kubernetes";
 export type SandboxRuntime = "bash" | "python" | "node";
 
@@ -130,6 +132,14 @@ export interface SandboxExecutor {
   // Ready, ahead of the first real call, to hide cold-start. No-op for
   // non-persistent configs. Callers feature-detect and fire-and-forget.
   prewarm?(request: { namespace?: string; reservationKey?: string }): Promise<void>;
+  // Low-level exec in the reserved pod with optional stdin streaming. Unlike
+  // `run` it does not cd into a workspace or wrap output — used to talk to the
+  // resident in-pod tool worker. Persistent-only; absent for non-pod providers.
+  execInReservedPod?(
+    request: { namespace?: string; reservationKey?: string },
+    command: string[],
+    opts?: { stdin?: Readable; timeoutSeconds?: number; outputLimitBytes?: number },
+  ): Promise<{ stdout: string; stderr: string; exitCode: number | null; timedOut?: boolean }>;
   // Persistent-only background capabilities. Implemented by kubernetes/daytona/
   // e2b when config.persistent is true; absent otherwise (callers feature-detect).
   runBackground?(request: SandboxRunRequest): Promise<SandboxJobHandle>;

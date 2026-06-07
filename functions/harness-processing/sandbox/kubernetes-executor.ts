@@ -15,7 +15,7 @@
  */
 
 import { Buffer } from "node:buffer";
-import { Writable } from "node:stream";
+import { Writable, type Readable } from "node:stream";
 import {
   CoreV1Api,
   CustomObjectsApi,
@@ -139,6 +139,22 @@ export class KubernetesSandboxExecutor implements SandboxExecutor {
     const name = persistentSandboxName(sandboxReservationKey(request)!);
     await this.#ensurePersistentSandbox(k8sNamespace, name);
     await this.#touchActivity(k8sNamespace, name);
+  }
+
+  async execInReservedPod(
+    request: { namespace?: string; reservationKey?: string },
+    command: string[],
+    opts: { stdin?: Readable; timeoutSeconds?: number; outputLimitBytes?: number } = {},
+  ): Promise<{ stdout: string; stderr: string; exitCode: number | null; timedOut?: boolean }> {
+    const pod = await this.#resumeForJob(request);
+    const result = await this.#execInPod(pod, command, opts.timeoutSeconds ?? 60, opts.stdin);
+    const limit = opts.outputLimitBytes;
+    return {
+      stdout: limit ? truncateText(result.stdout, limit).value : result.stdout,
+      stderr: limit ? truncateText(result.stderr, limit).value : result.stderr,
+      exitCode: result.exitCode,
+      ...(result.timedOut ? { timedOut: true } : {}),
+    };
   }
 
   async runBackground(request: SandboxRunRequest): Promise<SandboxJobHandle> {
@@ -490,7 +506,7 @@ export class KubernetesSandboxExecutor implements SandboxExecutor {
     }
   }
 
-  async #execInPod(pod: V1Pod, command: string[], timeoutSeconds: number): Promise<ExecResult> {
+  async #execInPod(pod: V1Pod, command: string[], timeoutSeconds: number, stdin?: Readable): Promise<ExecResult> {
     const k8sNamespace = pod.metadata?.namespace ?? kubeNamespace(options(this.#config));
     const podName = pod.metadata?.name ?? "";
     const debugStream = optionalEnv("KUBERNETES_SANDBOX_DEBUG_STREAM") === "1";
@@ -541,7 +557,7 @@ export class KubernetesSandboxExecutor implements SandboxExecutor {
           command,
           stdoutStream,
           stderrStream,
-          null,
+          stdin ?? null,
           false,
           (status: V1Status) => {
             exitCode = exitCodeFromStatus(status);

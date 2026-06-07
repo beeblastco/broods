@@ -25,9 +25,20 @@ const runMock = mock(async (): Promise<SandboxRunResult> => ({
   provider: "kubernetes",
 }));
 const runBackgroundMock = mock(async (): Promise<SandboxJobHandle> => ({ jobId: "job_test" }));
+const execInReservedPodMock = mock(async () => ({
+  stdout: JSON.stringify({ ok: true, result: { type: "text", value: "worker done" } }),
+  stderr: "",
+  exitCode: 0,
+}));
 const createSandboxExecutorMock = mock((_config: SandboxExecutorConfig): SandboxExecutor => ({
   run: runMock,
   runBackground: runBackgroundMock,
+}));
+// A separate factory whose executor also exposes the resident-worker exec path.
+const createWorkerExecutorMock = mock((_config: SandboxExecutorConfig): SandboxExecutor => ({
+  run: runMock,
+  runBackground: runBackgroundMock,
+  execInReservedPod: execInReservedPodMock as unknown as SandboxExecutor["execInReservedPod"],
 }));
 
 mock.module("../functions/_shared/s3.ts", () => ({
@@ -49,6 +60,8 @@ beforeEach(() => {
   process.env.TOOL_BUNDLES_BUCKET_NAME = "tool-bundles";
   getS3ObjectUrlMock.mockClear();
   readS3BytesMock.mockClear();
+  execInReservedPodMock.mockClear();
+  createWorkerExecutorMock.mockClear();
   runMock.mockClear();
   runBackgroundMock.mockClear();
   createSandboxExecutorMock.mockClear();
@@ -108,6 +121,59 @@ describe("executeAccountToolInSandbox", () => {
     expect(runRequest.code).toContain("https://tool-bundles.example/account-tools/acct_test/bundles/hash.mjs?sig=test");
   });
 
+  it("uses the resident worker when the executor exposes execInReservedPod", async () => {
+    const { executeAccountToolInSandbox } = await import("../functions/harness-processing/tools/custom-tool-executor.ts");
+
+    const result = await executeAccountToolInSandbox({
+      accountId: "acct_test",
+      tool: accountToolRecord(sha256(bundle)),
+      input: { message: "hi" },
+      config: {},
+      options: { asyncTool: { resultId: "async_tool_1" } },
+      createExecutor: createWorkerExecutorMock,
+    });
+
+    expect(result).toEqual({ type: "text", value: "worker done" });
+    expect(execInReservedPodMock).toHaveBeenCalledTimes(1);
+    expect(runMock).not.toHaveBeenCalled();
+    const [, command] = execInReservedPodMock.mock.calls[0] as unknown as [unknown, string[]];
+    expect(command[0]).toBe("bash");
+    expect(command[2]).toContain("http://localhost/invoke");
+  });
+
+  it("falls back to the one-shot runner when the worker is unreachable", async () => {
+    execInReservedPodMock.mockImplementationOnce(async () => ({ stdout: "", stderr: "connection refused", exitCode: 7 }));
+    const { executeAccountToolInSandbox } = await import("../functions/harness-processing/tools/custom-tool-executor.ts");
+
+    const result = await executeAccountToolInSandbox({
+      accountId: "acct_test",
+      tool: accountToolRecord(sha256(bundle)),
+      input: {},
+      config: {},
+      options: { asyncTool: { resultId: "async_tool_1" } },
+      createExecutor: createWorkerExecutorMock,
+    });
+
+    expect(result).toEqual({ type: "text", value: "done" });
+    expect(execInReservedPodMock).toHaveBeenCalledTimes(1);
+    expect(runMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("surfaces a worker tool error without falling back", async () => {
+    execInReservedPodMock.mockImplementationOnce(async () => ({ stdout: JSON.stringify({ ok: false, error: "boom" }), stderr: "", exitCode: 0 }));
+    const { executeAccountToolInSandbox } = await import("../functions/harness-processing/tools/custom-tool-executor.ts");
+
+    await expect(executeAccountToolInSandbox({
+      accountId: "acct_test",
+      tool: accountToolRecord(sha256(bundle)),
+      input: {},
+      config: {},
+      options: { asyncTool: { resultId: "async_tool_1" } },
+      createExecutor: createWorkerExecutorMock,
+    })).rejects.toThrow("boom");
+    expect(runMock).not.toHaveBeenCalled();
+  });
+
   it("starts uploaded async tools as Kubernetes background work when completion metadata is detached", async () => {
     const { executeAccountToolInSandbox } = await import("../functions/harness-processing/tools/custom-tool-executor.ts");
 
@@ -160,6 +226,28 @@ describe("executeAccountToolInSandbox", () => {
       createExecutor: createSandboxExecutorMock,
     })).rejects.toThrow("custom tool bundle hash mismatch inside runner");
     expect(runMock).toHaveBeenCalled();
+  });
+});
+
+describe("custom tool worker helpers", () => {
+  it("builds an ensure-and-invoke command over the unix socket", async () => {
+    const { buildWorkerInvokeCommand } = await import("../functions/harness-processing/tools/custom-tool-worker.ts");
+    const [bin, flag, script] = buildWorkerInvokeCommand();
+    expect(bin).toBe("bash");
+    expect(flag).toBe("-lc");
+    expect(script).toContain("/health");
+    expect(script).toContain("setsid node");
+    expect(script).toContain("--data-binary @-");
+    expect(script).toContain("http://localhost/invoke");
+  });
+
+  it("parses worker responses and rejects non-protocol output", async () => {
+    const { parseWorkerResponse } = await import("../functions/harness-processing/tools/custom-tool-worker.ts");
+    expect(parseWorkerResponse('{"ok":true,"result":1}')).toEqual({ ok: true, result: 1 });
+    expect(parseWorkerResponse('  {"ok":false,"error":"x"}\n')).toEqual({ ok: false, error: "x" });
+    expect(parseWorkerResponse("")).toBeNull();
+    expect(parseWorkerResponse("curl: (7) connection refused")).toBeNull();
+    expect(parseWorkerResponse('{"foo":1}')).toBeNull();
   });
 });
 
