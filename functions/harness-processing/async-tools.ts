@@ -162,9 +162,12 @@ export class AsyncToolCoordinator {
     const wrapped = {
       ...entry,
       outputSchema: undefined,
-      toModelOutput: ({ output }: { output: unknown }) => ({
+      toModelOutput: ({ output }: { output: AsyncToolPendingResult }) => ({
         type: "text" as const,
-        value: pendingResultText((output as AsyncToolPendingResult).resultId),
+        value: pendingResultText(
+          output.resultId, 
+          output.status,
+        ),
       }),
       execute: async (input: never, options: Parameters<ToolExecute>[1]): Promise<AsyncToolPendingResult> => {
         const resultId = `async_tool_${crypto.randomUUID()}`;
@@ -400,12 +403,12 @@ function withAsyncToolMetadata(
 // Model-facing text for a just-started async tool call. The model already knows
 // which tool it called, so only the statusId (needed to poll async_status) matters.
 // statusId carries the internal resultId value, renamed at the model boundary.
-function pendingResultText(resultId: string): string {
+function pendingResultText(resultId: string, status: string): string {
   return [
-    `Started in the background (statusId: ${resultId}).`,
+    `Started in the background (statusId: ${resultId}, current status: ${status}).`,
     "The result will be delivered back into this conversation automatically when it finishes; You can stop to wait for result, or continue with other tasks. Only poll async_status tool with this statusId to check status if the user asks for it.",
   ].join("\n");
-}
+} 
 
 // Format the tool result from unknown to string
 function formatUnknown(value: unknown): string {
