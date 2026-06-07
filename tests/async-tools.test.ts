@@ -54,13 +54,9 @@ describe("AsyncToolCoordinator", () => {
       execute(input: unknown, options: { toolCallId: string; messages: [] }): Promise<unknown>;
     }).execute({ query: "alpha" }, { toolCallId: "tool-call-1", messages: [] });
 
-    expect(pending).toMatchObject({
-      toolName: "slowLookup",
-      toolCallId: "tool-call-1",
+    expect(pending).toEqual({
+      resultId: expect.stringMatching(/^async_tool_/),
       status: "running",
-      statusReference: {
-        table: "AsyncToolResult",
-      },
     });
     expect(coordinator.pendingCount).toBe(1);
     expect(sendMock.mock.calls[0]?.[0]).toBeInstanceOf(PutItemCommand);
@@ -152,7 +148,6 @@ describe("AsyncToolCoordinator", () => {
       completePath?: string;
       completionToken?: string;
       detached?: boolean;
-      statusReference?: { resultId?: string };
     } | undefined;
     const coordinator = new AsyncToolCoordinator({
       conversationKey: "conversation-1",
@@ -190,11 +185,9 @@ describe("AsyncToolCoordinator", () => {
     expect(asyncToolMetadata?.detached).toBe(true);
     expect(asyncToolMetadata?.completePath).toBe(`/sandbox-jobs/${encodeURIComponent(asyncToolMetadata?.resultId ?? "")}/complete`);
     expect(typeof asyncToolMetadata?.completionToken).toBe("string");
-    expect(asyncToolMetadata?.statusReference?.resultId).toBe(asyncToolMetadata?.resultId);
     expect(persistModelMessages).not.toHaveBeenCalled();
-    expect(pending).toMatchObject({
-      toolName: "uploadedLookup",
-      toolCallId: "tool-call-3",
+    expect(pending).toEqual({
+      resultId: asyncToolMetadata?.resultId,
       status: "running",
     });
 
@@ -258,13 +251,11 @@ describe("AsyncToolCoordinator", () => {
     await expect((tools.builtInAsync as {
       execute(input: unknown, options: { toolCallId: string; messages: [] }): Promise<unknown>;
     }).execute({}, { toolCallId: "tool-call-4", messages: [] })).resolves.toMatchObject({
-      toolName: "builtInAsync",
       status: "running",
     });
     await expect((tools.uploadedAsync as {
       execute(input: unknown, options: { toolCallId: string; messages: [] }): Promise<unknown>;
     }).execute({}, { toolCallId: "tool-call-5", messages: [] })).resolves.toMatchObject({
-      toolName: "uploadedAsync",
       status: "running",
     });
 

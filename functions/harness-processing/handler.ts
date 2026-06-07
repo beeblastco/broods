@@ -988,7 +988,6 @@ function settledToolResultsToParentMessages(results: AsyncToolResultRecord[]): D
     .map((result) => completionToParentMessage({
       resultId: result.resultId,
       toolName: result.toolName,
-      toolCallId: result.toolCallId,
       input: result.input,
       status: result.status === "completed" ? "completed" : "failed",
       ...(result.response !== undefined ? { response: result.response } : {}),

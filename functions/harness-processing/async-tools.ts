@@ -3,7 +3,7 @@
  * Keep tool wrapping and parent-result injection outside individual tool files.
  */
 
-import type { JSONValue, ToolSet, UserModelMessage } from "ai";
+import type { ToolSet, UserModelMessage } from "ai";
 import { logError, logInfo, logWarn } from "../_shared/log.ts";
 import {
   createPendingAsyncToolResult,
@@ -18,19 +18,12 @@ const HEARTBEAT_INTERVAL_MS = 15_000;
 
 export interface AsyncToolPendingResult {
   resultId: string;
-  toolName: string;
-  toolCallId: string;
   status: "running";
-  statusReference: {
-    table: "AsyncToolResult";
-    resultId: string;
-  };
 }
 
 export interface AsyncToolCompletion {
   resultId: string;
   toolName: string;
-  toolCallId: string;
   input: unknown;
   status: "completed" | "failed";
   response?: unknown;
@@ -40,8 +33,14 @@ export interface AsyncToolCompletion {
 interface AsyncToolPendingMetadata {
   resultId: string;
   toolName: string;
-  toolCallId: string;
   input: unknown;
+}
+
+// Per-call context handed to the run/dispatch helpers. toolCallId rides along for
+// logging only; it is intentionally absent from the stored metadata/completion.
+interface AsyncToolCall extends AsyncToolPendingMetadata {
+  toolCallId: string;
+  execute: () => ReturnType<ToolExecute>;
 }
 
 type ToolEntry = ToolSet[string];
@@ -164,8 +163,8 @@ export class AsyncToolCoordinator {
       ...entry,
       outputSchema: undefined,
       toModelOutput: ({ output }: { output: unknown }) => ({
-        type: "json" as const,
-        value: output as JSONValue,
+        type: "text" as const,
+        value: pendingResultText((output as AsyncToolPendingResult).resultId),
       }),
       execute: async (input: never, options: Parameters<ToolExecute>[1]): Promise<AsyncToolPendingResult> => {
         const resultId = `async_tool_${crypto.randomUUID()}`;
@@ -207,34 +206,18 @@ export class AsyncToolCoordinator {
           });
         }
 
-        return {
-          resultId,
-          toolName,
-          toolCallId: options.toolCallId,
-          status: "running",
-          statusReference: {
-            table: "AsyncToolResult",
-            resultId,
-          },
-        };
+        return { resultId, status: "running" };
       },
     };
 
     return wrapped as unknown as ToolEntry;
   }
 
-  private startToolCall(options: {
-    resultId: string;
-    toolName: string;
-    toolCallId: string;
-    input: unknown;
-    execute: () => ReturnType<ToolExecute>;
-  }): void {
+  private startToolCall(options: AsyncToolCall): void {
     const promise = this.runToolCall(options)
       .catch((error) => this.completeToolCall({
         resultId: options.resultId,
         toolName: options.toolName,
-        toolCallId: options.toolCallId,
         input: options.input,
         status: "failed",
         error: error instanceof Error ? error.message : String(error),
@@ -249,18 +232,11 @@ export class AsyncToolCoordinator {
     this.pendingMetadata.set(options.resultId, {
       resultId: options.resultId,
       toolName: options.toolName,
-      toolCallId: options.toolCallId,
       input: options.input,
     });
   }
 
-  private async dispatchDetachedToolCall(options: {
-    resultId: string;
-    toolName: string;
-    toolCallId: string;
-    input: unknown;
-    execute: () => ReturnType<ToolExecute>;
-  }): Promise<void> {
+  private async dispatchDetachedToolCall(options: AsyncToolCall): Promise<void> {
     logInfo("Detached async tool started", {
       parentEventId: this.parentSession.eventId,
       resultId: options.resultId,
@@ -291,13 +267,7 @@ export class AsyncToolCoordinator {
     }
   }
 
-  private async runToolCall(options: {
-    resultId: string;
-    toolName: string;
-    toolCallId: string;
-    input: unknown;
-    execute: () => ReturnType<ToolExecute>;
-  }): Promise<void> {
+  private async runToolCall(options: AsyncToolCall): Promise<void> {
     logInfo("Async tool call started", {
       parentEventId: this.parentSession.eventId,
       resultId: options.resultId,
@@ -313,7 +283,6 @@ export class AsyncToolCoordinator {
     await this.completeToolCall({
       resultId: options.resultId,
       toolName: options.toolName,
-      toolCallId: options.toolCallId,
       input: options.input,
       status: "completed",
       response,
@@ -424,12 +393,17 @@ function withAsyncToolMetadata(
         : `/async-tools/${encodeURIComponent(metadata.resultId)}/complete`,
       ...(metadata.detached === true ? { detached: true } : {}),
       ...(metadata.completionToken ? { completionToken: metadata.completionToken } : {}),
-      statusReference: {
-        table: "AsyncToolResult",
-        resultId: metadata.resultId,
-      },
     },
   } as Parameters<ToolExecute>[1];
+}
+
+// Model-facing text for a just-started async tool call. The model already knows
+// which tool it called, so only the resultId (needed to poll async_status) matters.
+function pendingResultText(resultId: string): string {
+  return [
+    `Started in the background (resultId: ${resultId})`,
+    "The result is delivered back into this conversation automatically when it finishes; poll async_status with this resultId to check status.",
+  ].join("\n");
 }
 
 // Format the tool result from unknown to string
