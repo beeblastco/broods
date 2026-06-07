@@ -13,10 +13,9 @@ import {
   createSandbox,
   deleteAccount,
   streamSSE,
-  requireEnv,
 } from "./utils.ts";
 
-const googleApiKey = requireEnv("ACCOUNT_GOOGLE_API_KEY");
+const minimaxApiKey = process.env.ACCOUNT_MINIMAX_API_KEY!;
 const username = `sandbox-stateless-${Date.now()}`;
 
 const account = await createAccount(username);
@@ -31,12 +30,13 @@ const sandbox = await createSandbox(account.secret, "stateless-sandbox", {
 
 const agent = await createAgent(account.secret, "Stateless compute assistant", {
   provider: {
-    google: { apiKey: googleApiKey },
+    minimax: {
+      apiKey: minimaxApiKey,
+    },
   },
   model: {
-    provider: "google",
-    modelId: "gemma-4-31b-it",
-    temperature: 0,
+    provider: "minimax",
+    modelId: "MiniMax-M2.7",
   },
   agent: {
     system: [
@@ -68,7 +68,8 @@ try {
             "1. In a single bash command, write fib.py that prints the first 10 Fibonacci numbers, then run python3 fib.py.",
             "2. In a single bash command, write fib.js that does the same, then run node fib.js.",
             "3. Run `ls -1` on its own and confirm the files from steps 1-2 are GONE (each call is a fresh container).",
-            "4. Summarize stdout and status for every step.",
+            "4. If any files do appear from the `ls -1` call, read the content of each file and report what's in them and whats that for.",
+            "5. Summarize stdout and status for every step.",
           ].join("\n"),
         }],
       },

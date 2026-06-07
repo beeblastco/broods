@@ -6,6 +6,7 @@ Related repo:
 
 - ../infra: Infrastucture repo for the kubernetes cluster and VM provision.
 - ../cherry-code: Application code for the dashboard and SaS platform.
+- ../lambda-sanbdox: Custom Lambda runtime for sandbox to run bash, node and python script, simulate VM machine.
 
 Key rules:
 
