@@ -335,7 +335,7 @@ export class AsyncToolCoordinator {
 
 export function completionToParentMessage(completion: AsyncToolCompletion): UserModelMessage {
   const metadata = [
-    `resultId: ${completion.resultId}`,
+    `statusId: ${completion.resultId}`,
     `toolName: ${completion.toolName}`,
     `status: ${completion.status}`,
   ].join("\n");
@@ -398,11 +398,12 @@ function withAsyncToolMetadata(
 }
 
 // Model-facing text for a just-started async tool call. The model already knows
-// which tool it called, so only the resultId (needed to poll async_status) matters.
+// which tool it called, so only the statusId (needed to poll async_status) matters.
+// statusId carries the internal resultId value, renamed at the model boundary.
 function pendingResultText(resultId: string): string {
   return [
-    `Started in the background (resultId: ${resultId})`,
-    "The result is delivered back into this conversation automatically when it finishes; stop to wait, or continue with other tasks, or poll async_status with this resultId to check status.",
+    `Started in the background (statusId: ${resultId}).`,
+    "The result will be delivered back into this conversation automatically when it finishes; You can stop to wait for result, or continue with other tasks. Only poll async_status tool with this statusId to check status if the user asks for it.",
   ].join("\n");
 }
 

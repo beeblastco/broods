@@ -57,8 +57,7 @@ function inputSchema(context: SandboxToolContext): JSONSchema7 {
         ? {
             background: {
               type: "boolean",
-              description:
-                "Run the command as a detached background job in the reserved sandbox and return immediately with a resultId. Use for long-running tasks (builds, installs, training). The result is delivered back into the conversation automatically when the job finishes; you can also check progress meanwhile with async_status.",
+              description: "Run the command as a detached background job in the reserved sandbox and return immediately with a statusId. Use for long-running tasks in the background. The result is delivered back into the conversation automatically when the job finishes; you can also check progress meanwhile with async_status.",
             } as JSONSchema7,
           }
         : {}),
@@ -157,9 +156,10 @@ async function dispatchBackground(
   logInfo("bash background job started", { namespace: ws.namespace, jobId, resultId, delivers: Boolean(callback) });
   const delivery = callback
     ? "Its result will be delivered back into this conversation when it finishes."
-    : "Poll async_status with this resultId to retrieve the result (automatic delivery is unavailable in this environment).";
-  return toolText(
-    `Started background job ${jobId} (resultId: ${resultId}). ${delivery} ` +
+    : "Poll async_status with this statusId to retrieve the result (automatic delivery is unavailable in this environment).";
+  return toolText( 
+    // We use statusId for model facing, but the database saved record as resultId for consistency with async tool results in general (not just status updates).
+    `Started background job ${jobId} (statusId: ${resultId}). ${delivery} ` +
       `You can also use async_status to check status, tail logs (action "logs"), or stop it (action "stop").`,
   );
 }

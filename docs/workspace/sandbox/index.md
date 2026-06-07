@@ -128,14 +128,19 @@ default 7 days) so nothing lingers indefinitely.
 
 Reserved sandboxes can run **detached background jobs** that outlive the request. `bash`
 gains a `background: true` flag; it starts the work as a detached session in the sandbox and
-returns a `resultId` immediately:
+returns a `statusId` immediately (the model-facing name for the internal `resultId`):
 
 ```text
-bash  { command: "uv run train.py", background: true }   → resultId
-async_status  { resultId }                  → running | completed (with logs) | failed
-async_status  { resultId, action: "logs" }  → tail the job output
-async_status  { resultId, action: "stop" }  → terminate the job
+bash  { command: "uv run train.py", background: true }   → statusId
+async_status  { statusId }                  → running | completed (with logs) | failed
+async_status  { statusId, action: "logs" }  → tail the job output
+async_status  { statusId, action: "stop" }  → terminate the job
 ```
+
+The `logs`/`stop` actions exist **only when the agent can launch background jobs** — a plain
+async tool call has no live process to tail or kill, so for an async-tools-only agent the tool
+is registered with `status` as its single action. The description and action enum are built
+from that capability to keep the prompt accurate.
 
 ```mermaid
 flowchart LR
@@ -167,7 +172,7 @@ Discord delivers a delayed reply with the bot token (its interaction token expir
 the bot must have **Send Messages** permission in the channel.
 
 `async_status` is auto-registered whenever the agent has a persistent sandbox or any
-`config.tools` entry marked `async: true`, and only resolves a `resultId` for its own
+`config.tools` entry marked `async: true`, and only resolves a `statusId` for its own
 conversation. Jobs are tracked in the `AsyncToolResult` table.
 
 **Ownership & limits.** Each sandbox caps concurrent background jobs (10), and a job that is

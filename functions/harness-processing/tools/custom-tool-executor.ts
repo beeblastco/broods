@@ -238,7 +238,7 @@ async function startAccountToolInSandboxBackground({
     timeoutSeconds: FOREGROUND_TIMEOUT_SECONDS,
     outputLimitBytes: RUNNER_OUTPUT_LIMIT_BYTES,
   });
-  return { type: "text", value: `Started async tool ${asyncTool.resultId}` };
+  return { type: "text", value: `Started async tool ${asyncTool.resultId}` }; // statusId (model-facing) === resultId; this text is overridden by the async wrapper's toModelOutput
 }
 
 async function createRunnerPayload(options: {

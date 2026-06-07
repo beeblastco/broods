@@ -223,6 +223,9 @@ export async function createTools(context: Omit<ToolContext, "config">, agentCon
     Object.assign(tools, asyncStatusTool({
       conversationKey: context.conversationKey,
       workspaces,
+      // logs/stop only apply when a background (bash) job can actually be
+      // launched, which is exactly when backgroundContext is wired up.
+      supportsJobs: backgroundContext !== undefined,
     }));
   }
 

@@ -14,6 +14,13 @@ declare module "sst" {
       "type": "sst.sst.Secret"
       "value": string
     }
+    "KubernetesSandboxKubeconfig": {
+      "type": "sst.sst.Secret"
+      "value": string
+    }
+    "SandboxNetwork": {
+      "type": "sst.aws.Vpc"
+    }
   }
 }
 /// <reference path="sst-env.d.ts" />

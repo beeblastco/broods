@@ -1,6 +1,6 @@
 /**
  * async_status — model-facing tool to check, tail, or stop a background job /
- * async tool call by its resultId.
+ * async tool call by its statusId.
  *
  * Auto-registered (see tools/index.ts) when the agent has any async tool or a
  * persistent sandbox. Reads the AsyncToolResult row, and for a detached sandbox
@@ -8,6 +8,13 @@
  * settling the row when the job finishes. Background jobs also deliver themselves
  * automatically (sandbox callback), so polling is optional — it just lets the
  * model see progress or a result sooner.
+ *
+ * The model-facing id is called `statusId`; it carries the same value as the
+ * internal AsyncToolResult `resultId` (the table's partition key), renamed only
+ * at this boundary to read clearly against the action verbs. The `logs`/`stop`
+ * actions exist ONLY when the agent can launch background (bash) jobs — async
+ * tool calls have no live process to tail or kill — so the description and the
+ * action enum are built from `supportsJobs` to keep the prompt from drifting.
  */
 
 import { jsonSchema, tool, type ToolSet } from "ai";
@@ -24,7 +31,7 @@ import { toolError, toolText } from "./filesystem-utils.ts";
 const JOB_LOG_LIMIT_BYTES = 64 * 1024;
 
 interface AsyncStatusInput {
-  resultId: string;
+  statusId: string;
   action?: "status" | "logs" | "stop";
 }
 
@@ -34,43 +41,59 @@ interface SandboxJobRef {
 }
 
 export interface AsyncStatusContext {
-  // The caller's conversation. A resultId only resolves for its own conversation,
+  // The caller's conversation. A statusId only resolves for its own conversation,
   // so one agent cannot inspect or stop another tenant's job.
   conversationKey: string;
   workspaces?: ResolvedWorkspace[];
+  // True only when the agent can launch background (bash) jobs. It gates the
+  // `logs`/`stop` actions, which have no meaning for async tool calls (there is
+  // no live process to tail or kill — those are delivered automatically).
+  // This flag to handle the dynamic tool descripton for the async_status tool, which includes the job-specific actions only when relevant.
+  supportsJobs: boolean;
 }
 
 export default function asyncStatusTool(context: AsyncStatusContext): ToolSet {
   return {
     async_status: tool({
-      description: `Check on a background job or async tool call by its resultId.
+      description: context.supportsJobs
+        ? `Check on a background job or async tool call by its statusId.
 
 Usage notes:
-- Pass the resultId returned when the job/tool started.
-- action "status" (default): report whether it is running, completed, or failed (with exit code for sandbox jobs).
-- action "logs": return the job's output so far (tail).
-- action "stop": terminate a running sandbox job.
-A completed/failed background job is also delivered back into the conversation automatically; polling here is optional and just surfaces progress or the result sooner.`,
+- Pass the statusId returned when the job/tool started.
+- action "status" (default): report whether it is running, completed, or failed (with exit code for background jobs).
+- action "logs": tail a background (bash) job's output so far. Background jobs called from bash only, not applied for other tools.
+- action "stop": terminate a running background (bash) job. Background jobs from bash only, not applied for other tools.
+A completed/failed item is also delivered back into the conversation automatically; polling here is optional and just surfaces progress or the result.`
+        : `Check on an async tool call by its statusId.
+
+Usage notes:
+- Pass the statusId returned when the async tool started.
+- Reports whether it is running, completed, or failed.
+The result is delivered back into the conversation automatically when it finishes; polling here is optional and just surfaces the result.`,
       inputSchema: jsonSchema({
         type: "object",
         properties: {
-          resultId: { type: "string", description: "The resultId returned when the background job/async tool started." },
-          action: {
-            type: "string",
-            enum: ["status", "logs", "stop"],
-            description: "status (default) | logs | stop.",
-          },
+          statusId: { type: "string", description: "The statusId returned when the background job/async tool started." },
+          ...(context.supportsJobs
+            ? {
+              action: {
+                type: "string",
+                enum: ["status", "logs", "stop"],
+                description: "status (default) | logs (background jobs only) | stop (background jobs only).",
+              },
+            }
+            : {}),
         },
-        required: ["resultId"],
+        required: ["statusId"],
         additionalProperties: false,
       }),
       async execute(input) {
-        const { resultId, action = "status" } = input as AsyncStatusInput;
-        const record = await getAsyncToolResult(resultId);
+        const { statusId, action = "status" } = input as AsyncStatusInput;
+        const record = await getAsyncToolResult(statusId);
         // Resolve only within the caller's own conversation (both missing and
         // foreign rows return the same not-found, so it is not an oracle).
         if (!record || record.conversationKey !== context.conversationKey) {
-          return toolError(`Error: no async result found for ${resultId}`);
+          return toolError(`Error: no async result found for ${statusId}`);
         }
         if (record.status === "completed") {
           return toolText(`completed\n${formatUnknown(record.response)}`);
@@ -101,7 +124,7 @@ A completed/failed background job is also delivered back into the conversation a
           if (action === "stop") {
             if (!executor.stopJob) return toolError("Error: this sandbox does not support stopping jobs");
             const stopped = await executor.stopJob({ jobId: job.jobId, namespace: job.namespace });
-            return toolText(await settleTerminalJob(resultId, executor, job, stopped));
+            return toolText(await settleTerminalJob(statusId, executor, job, stopped));
           }
 
           if (!executor.jobStatus) return toolError("Error: this sandbox does not support job status");
@@ -112,7 +135,7 @@ A completed/failed background job is also delivered back into the conversation a
           if (status.state === "unknown") {
             return toolText(`unknown — no record of job ${job.jobId} in the sandbox`);
           }
-          return toolText(await settleTerminalJob(resultId, executor, job, status));
+          return toolText(await settleTerminalJob(statusId, executor, job, status));
         } catch (cause) {
           return toolError(cause instanceof Error ? cause.message : String(cause));
         }
