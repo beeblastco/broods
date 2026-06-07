@@ -78,12 +78,21 @@ export function BaseNode({
     const zoom = useStore(zoomSelector);
     const scale = Math.min(Math.max(1 / Math.sqrt(zoom), 0.9), 1.2);
 
-    // Side handles compete with the top handle for connection snapping, so only mount them
-    // when idle (grabbable to start a mount) or during a workspace↔sandbox drag — never during
-    // an agent connection, so agent edges snap cleanly to the top instead of the sides.
+    // Side handles compete with the top handle for connection snapping, so only mount them when
+    // relevant. Workspace/sandbox sides serve mounts; agent sides serve subagent (agent↔agent)
+    // links. When idle they're all grabbable; mid-drag we light only the sides that match the
+    // drag's intent so agent→service edges still snap cleanly to the top.
     const sideHandlesActive = useConnection((connection) => {
         if (!connection.inProgress) return true;
         const fromType = connection.fromNode?.type;
+        const fromSide = connection.fromHandle?.id === "left" || connection.fromHandle?.id === "right";
+
+        // Gate by THIS node's type so the two side-handle relationships stay isolated: an agent's
+        // sides serve only subagent links (another agent dragging from a side), and a
+        // workspace/sandbox's sides serve only mounts. This way an agent never lights up — or
+        // accepts an edge — during a mount drag, and a service never does during a subagent drag;
+        // normal agent→service edges still land on the top handle.
+        if (nodeType === "agent") return fromType === "agent" && fromSide;
 
         return fromType === "workspace" || fromType === "sandbox";
     });
@@ -175,12 +184,13 @@ export function BaseNode({
         statusColor = config.color;
         statusText = config.text;
     } else if (nodeType === "database") {
+        // Conversation persistence is always on once wired to an agent (the session store).
         if (isConnectedToAgent) {
             statusColor = "bg-emerald-500";
-            statusText = "Connected";
+            statusText = "Persistent";
         } else {
             statusColor = "bg-red-400";
-            statusText = "Disconnected";
+            statusText = "Unconnected";
         }
     } else if (!isConnectedToAgent) {
         statusColor = "bg-red-400";
@@ -206,6 +216,18 @@ export function BaseNode({
                 isConnectableStart={false}
                 className="bg-transparent! w-2.5! h-2.5! border-transparent!"
             />
+
+            {/* Agents source downward edges to services. Declared before the side handles so this
+                no-id handle is the first source bound — xyflow resolves a handle-less edge to the
+                first source handle, so plain agent→service edges land here, not on a side. */}
+            {nodeType === "agent" && (
+                <Handle
+                    type="source"
+                    position={Position.Bottom}
+                    isConnectableEnd={false}
+                    className="bg-transparent! w-2.5! h-2.5! border-transparent!"
+                />
+            )}
 
             {showSideHandles && sideHandlesActive && (
                 <>
@@ -343,17 +365,6 @@ export function BaseNode({
                 </div>
             )}
 
-            {/* Only agents source downward edges; service nodes receive on the top handle and
-                mount via the sides, so omitting their bottom handle stops it from stealing the
-                closest-handle snap and lets agent edges land cleanly on the top. */}
-            {nodeType === "agent" && (
-                <Handle
-                    type="source"
-                    position={Position.Bottom}
-                    isConnectableEnd={false}
-                    className="bg-transparent! w-2.5! h-2.5! border-transparent!"
-                />
-            )}
         </div>
     );
 }

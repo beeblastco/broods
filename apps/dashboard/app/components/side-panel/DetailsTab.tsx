@@ -1,6 +1,7 @@
 "use client";
 
 /** Details tab showing editable agent name, deployment credentials, and built-in tool config. */
+import { ChannelsSection } from "@/app/components/side-panel/ChannelsSection";
 import { ExpandBlock, ToggleRow } from "@/app/components/side-panel/ConfigControls";
 import { Button } from "@/app/components/ui/button";
 import { Input } from "@/app/components/ui/input";
@@ -67,6 +68,7 @@ export function DetailsTab({
     runtimeVariables,
     onSaveModelSettings,
     onUpdateToolConfig,
+    onUpdateChannelConfig,
 }: {
     agentConfig: Doc<"agentConfigs"> | null | undefined;
     activeDeployment: Doc<"agentDeployments"> | undefined;
@@ -88,6 +90,7 @@ export function DetailsTab({
     onSaveModelSettings?: (next: { provider: AgentProvider; modelId: string }) => Promise<void>;
     isSavingModelSettings?: boolean;
     onUpdateToolConfig?: (toolName: string, config: Record<string, unknown> | null) => Promise<void>;
+    onUpdateChannelConfig?: (kind: string, config: Record<string, unknown> | null) => Promise<void>;
 }) {
     const [showApiKey, setShowApiKey] = useState(false);
     const [copiedField, setCopiedField] = useState<string | null>(null);
@@ -754,6 +757,14 @@ export function DetailsTab({
                             </div>
                         )}
                     </div>
+                </>
+            )}
+
+            {/* Channels — inbound webhook integrations on the agent's `channels` branch */}
+            {agentConfig && onUpdateChannelConfig && (
+                <>
+                    <Separator />
+                    <ChannelsSection agentConfig={agentConfig} onUpdateChannel={onUpdateChannelConfig} />
                 </>
             )}
         </div>

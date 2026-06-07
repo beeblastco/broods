@@ -9,6 +9,7 @@ import {
     SandboxResourceDetailsTab,
     WorkspaceResourceDetailsTab,
 } from "@/app/components/side-panel/ResourceNodeTabs";
+import { SessionDetailsTab } from "@/app/components/side-panel/SessionDetailsTab";
 import { SkillConfigTab } from "@/app/components/side-panel/SkillConfigTab";
 import { SkillDetailsTab } from "@/app/components/side-panel/SkillDetailsTab";
 import { WorkspaceFilesTab } from "@/app/components/side-panel/WorkspaceFilesTab";
@@ -107,7 +108,7 @@ type HeaderStatusBadge = {
 /** Panel header labels per node type. */
 const PANEL_TITLES: Record<NodeType, string> = {
     agent: "Agent",
-    database: "Database",
+    database: "Session",
     tool: "Tool",
     workspace: "Workspace",
     sandbox: "Sandbox",
@@ -360,8 +361,9 @@ export const NodeSidePanel = memo(function NodeSidePanel({
         }
 
         if (nodeType === "database") {
+            // Mirror the canvas node: conversation persistence is always on once wired to an agent.
             return {
-                text: isConnectedToAgent ? "Connected" : "Disconnected",
+                text: isConnectedToAgent ? "Persistent" : "Unconnected",
                 color: isConnectedToAgent ? "bg-emerald-500" : "bg-red-400",
                 variant: isConnectedToAgent ? "success" : "destructive",
             };
@@ -588,6 +590,29 @@ export const NodeSidePanel = memo(function NodeSidePanel({
         [agentConfigId, agentConfig, updateConfig],
     );
 
+    const handleUpdateChannelConfig = useCallback(
+        async (kind: string, config: Record<string, unknown> | null) => {
+            if (!agentConfigId || !agentConfig) return;
+
+            const currentExtra = (agentConfig.extraConfig as Record<string, unknown>) ?? {};
+            const currentChannels = (currentExtra.channels as Record<string, unknown>) ?? {};
+            const nextChannels = { ...currentChannels };
+            if (config === null) {
+                delete nextChannels[kind];
+            } else {
+                nextChannels[kind] = config;
+            }
+            await updateConfig({
+                configId: agentConfigId,
+                extraConfig: {
+                    ...currentExtra,
+                    channels: Object.keys(nextChannels).length > 0 ? nextChannels : undefined,
+                },
+            });
+        },
+        [agentConfigId, agentConfig, updateConfig],
+    );
+
     const handleToggleWebSocket = useCallback(
         async (enabled: boolean) => {
             if (!agentConfigId || !publicAccessEnabled) return;
@@ -702,6 +727,7 @@ export const NodeSidePanel = memo(function NodeSidePanel({
                                 onSaveModelSettings={handleSaveModelSettings}
                                 isSavingModelSettings={isSavingModelSettings}
                                 onUpdateToolConfig={handleUpdateToolConfig}
+                                onUpdateChannelConfig={handleUpdateChannelConfig}
                             />
                         ) : isTool && node ? (
                             <ToolDetailsTab
@@ -747,6 +773,15 @@ export const NodeSidePanel = memo(function NodeSidePanel({
                                     setEditName(p);
                                     onUpdateNodeLabel(node.id, p);
                                 }}
+                            />
+                        ) : nodeType === "database" && node ? (
+                            <SessionDetailsTab
+                                nodeId={node.id}
+                                editName={editName}
+                                setEditName={setEditName}
+                                onSaveName={handleSaveName}
+                                nameChanged={!!nameChanged}
+                                isSaving={isSaving}
                             />
                         ) : (
                             <ServiceDetailsTab

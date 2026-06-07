@@ -326,9 +326,10 @@ export function SkillDetailsTab({
 
     const skillSource = nodeConfig?.skillSource as SkillSource | undefined;
     const disabled = !agentConfig;
-    const skillsEnabled = skills.enabled === true;
     const path = editName.trim();
-    const inAllowed = path.length > 0 && (skills.allowed ?? []).includes(path);
+    // This skill is "active" only when the agent's skills master is on AND this path is allowed —
+    // the exact condition the canvas node badge renders, so the toggle and node stay in lockstep.
+    const isActive = skills.enabled === true && path.length > 0 && (skills.allowed ?? []).includes(path);
 
     function setSource(source: SkillSource) {
         onUpdateNodeConfig({ skillSource: source });
@@ -338,17 +339,31 @@ export function SkillDetailsTab({
         onUpdateNodeConfig({ skillSource: undefined });
     }
 
-    /** Adds or removes this card's path from the agent's `skills.allowed` list. */
-    function setIncluded(next: boolean) {
-        const current = new Set(skills.allowed ?? []);
+    /**
+     * Single per-skill activation toggle: enabling adds this path to `skills.allowed` and flips the
+     * `skills.enabled` master on in one write; disabling just removes the path. Writing the whole
+     * branch keeps the master and allow-list consistent so the node badge never lags the panel.
+     */
+    function setActive(next: boolean) {
+        const allowedSet = new Set(skills.allowed ?? []);
         if (next && path) {
-            current.add(path);
+            allowedSet.add(path);
         } else {
-            current.delete(path);
+            allowedSet.delete(path);
         }
-        const allowed = Array.from(current);
+        const allowed = Array.from(allowedSet);
 
-        void updateBranch(["skills", "allowed"], allowed.length > 0 ? allowed : undefined);
+        const nextSkills: Record<string, unknown> = {
+            ...skills,
+            enabled: next ? true : skills.enabled,
+        };
+        if (allowed.length > 0) {
+            nextSkills.allowed = allowed;
+        } else {
+            delete nextSkills.allowed;
+        }
+
+        void updateBranch(["skills"], Object.keys(nextSkills).length > 0 ? nextSkills : undefined);
     }
 
     function handleSuccess(returnedPath: string) {
@@ -489,21 +504,19 @@ export function SkillDetailsTab({
             )}
 
             <div className="flex flex-col gap-3">
-                <SectionHeader>Skills</SectionHeader>
+                <SectionHeader>Skill</SectionHeader>
                 <ToggleRow
                     label="Enabled"
-                    description="Master switch for the agent's skills."
-                    checked={skillsEnabled}
-                    disabled={disabled}
-                    onCheckedChange={(next) => updateBranch(["skills", "enabled"], next)}
+                    description="Activate this skill for the connected agent."
+                    checked={isActive}
+                    disabled={disabled || !path}
+                    onCheckedChange={setActive}
                 />
-                <ToggleRow
-                    label="This skill allowed"
-                    description="Include this skill in the agent's allowed list."
-                    checked={inAllowed}
-                    disabled={disabled || !skillsEnabled || !path}
-                    onCheckedChange={setIncluded}
-                />
+                {!disabled && !path && (
+                    <p className="text-[11px] text-muted-foreground">
+                        Set the skill path above before enabling.
+                    </p>
+                )}
             </div>
         </div>
     );

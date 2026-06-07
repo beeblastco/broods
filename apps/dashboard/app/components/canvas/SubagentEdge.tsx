@@ -5,20 +5,20 @@ import { useEdgeFanOffset } from "@/app/components/canvas/useEdgeFanOffset";
 import {
     BaseEdge,
     EdgeLabelRenderer,
-    getSmoothStepPath,
+    getBezierPath,
     type EdgeProps,
 } from "@xyflow/react";
 import { useState } from "react";
 
-const MOUNT_COLOR = "rgba(20, 184, 166, 0.55)";
-const MOUNT_COLOR_HOVER = "rgb(239, 68, 68, 0.9)";
-const ARROW_ID_PREFIX = "mount-arrow";
+const SUBAGENT_COLOR = "rgba(139, 92, 246, 0.65)";
+const SUBAGENT_COLOR_HOVER = "rgb(239, 68, 68, 0.9)";
+const ARROW_ID_PREFIX = "subagent-arrow";
 
 /**
- * Edge for workspace↔sandbox mount relationships.
- * Renders via side handles with bidirectional arrows to show data flows in both directions.
+ * Edge for agent→agent subagent relationships. Renders via side handles in a distinct
+ * violet, with a single arrowhead pointing at the callee (source can call target).
  */
-export function MountEdge({
+export function SubagentEdge({
     id,
     source,
     target,
@@ -33,25 +33,26 @@ export function MountEdge({
 }: EdgeProps) {
     const [hovered, setHovered] = useState(false);
 
-    // Fan parallel mounts apart so their trunks don't stack (flow is horizontal → offset Y).
-    const [sourceFan, targetFan] = useEdgeFanOffset(id, source, sourceHandleId, target, targetHandleId, "mount");
+    // Fan parallel subagent edges apart so their trunks don't stack (horizontal flow → offset Y).
+    const [sourceFan, targetFan] = useEdgeFanOffset(id, source, sourceHandleId, target, targetHandleId, "subagent");
 
-    const [edgePath, labelX, labelY] = getSmoothStepPath({
+    // Bezier (not orthogonal) so dense agent↔agent webs spread as smooth curves between fanned
+    // endpoints — no shared-center jog to collide the way blocky routing does.
+    const [edgePath, labelX, labelY] = getBezierPath({
         sourceX: sourceX,
         sourceY: sourceY + sourceFan,
         targetX: targetX,
         targetY: targetY + targetFan,
         sourcePosition: sourcePosition,
         targetPosition: targetPosition,
-        borderRadius: 16,
     });
 
-    const stroke = hovered ? MOUNT_COLOR_HOVER : MOUNT_COLOR;
+    const stroke = hovered ? SUBAGENT_COLOR_HOVER : SUBAGENT_COLOR;
     const arrowId = `${ARROW_ID_PREFIX}-${id}`;
 
     return (
         <>
-            {/* Inline marker defs so each mount edge owns its arrowheads */}
+            {/* Inline marker def so each subagent edge owns its arrowhead in its own color */}
             <defs>
                 <marker
                     id={arrowId}
@@ -72,10 +73,7 @@ export function MountEdge({
                 style={{
                     stroke: stroke,
                     strokeWidth: 1.5,
-                    strokeDasharray: "5 3",
-                    animation: "dashdraw 0.5s linear infinite",
                 }}
-                markerStart={`url(#${arrowId})`}
                 markerEnd={`url(#${arrowId})`}
             />
 

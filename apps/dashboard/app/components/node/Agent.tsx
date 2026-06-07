@@ -62,6 +62,7 @@ export function AgentNode({ id, data }: NodeProps) {
                 webSocketEnabled: webSocketEnabled,
             }}
             featureRows={featureRows}
+            showSideHandles={true}
         />
     );
 }

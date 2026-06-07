@@ -4,6 +4,7 @@
 import { CanvasControls } from "@/app/components/canvas/CanvasControl";
 import { DeletableEdge } from "@/app/components/canvas/DeletableEdge";
 import { MountEdge } from "@/app/components/canvas/MountEdge";
+import { SubagentEdge } from "@/app/components/canvas/SubagentEdge";
 import { EmptyCanvasGuide } from "@/app/components/canvas/EmptyCanvasGuide";
 import type { BaseNodeData } from "@/app/components/node/BaseNode";
 import { AgentNode } from "@/app/components/node/Agent";
@@ -84,11 +85,12 @@ const nodeTypes = {
 const edgeTypes = {
     default: DeletableEdge,
     mount: MountEdge,
+    subagent: SubagentEdge,
 };
 
 const NODE_TEMPLATES = [
     { type: "agent", label: "Agent", icon: Bot },
-    { type: "database", label: "Database", icon: Database },
+    { type: "database", label: "Session", icon: Database },
     { type: "sandbox", label: "Sandbox", icon: Box },
     { type: "workspace", label: "Workspace", icon: FolderOpen },
     { type: "skill", label: "Skill", icon: Sparkles },
@@ -124,6 +126,29 @@ function hydrateMountEdge(edge: Edge): Edge {
     };
 }
 
+/**
+ * Reconstruct subagent edge properties from the encoded ID.
+ * Format: "subagent:{source}-{sourceHandle}-{target}-{targetHandle}"
+ * Node IDs are numeric strings so splitting on "-" is safe.
+ */
+function hydrateSubagentEdge(edge: Edge): Edge {
+    if (!edge.id.startsWith("subagent:")) return edge;
+    const parts = edge.id.slice("subagent:".length).split("-");
+    // parts: [source, sourceHandle, target, targetHandle]
+    if (parts.length !== 4) return edge;
+    const [source, sourceHandle, target, targetHandle] = parts;
+
+    return {
+        ...edge,
+        source: source,
+        sourceHandle: sourceHandle,
+        target: target,
+        targetHandle: targetHandle,
+        type: "subagent",
+        animated: false,
+    };
+}
+
 /** Deterministic edge id matching its endpoints. */
 function plainEdgeId(source: string, target: string): string {
     return `xy-edge__${source}-${target}`;
@@ -151,8 +176,8 @@ function hasEdgeBetween(edges: Edge[], a: string, b: string): boolean {
     );
 }
 
-/** Whether a connection uses a workspace↔sandbox mount side handle (left/right). */
-function isMountConnection(c: Pick<Connection, "sourceHandle" | "targetHandle">): boolean {
+/** Whether a connection uses a side handle (left/right) — i.e. a mount or subagent link. */
+function isSideConnection(c: Pick<Connection, "sourceHandle" | "targetHandle">): boolean {
     return (
         c.sourceHandle === "left" ||
         c.sourceHandle === "right" ||
@@ -180,13 +205,19 @@ function agentHasDirectSandbox(
     });
 }
 
-/** Drop duplicate edges by id and by unordered node pair, keeping the first of each. */
+/** Drop duplicate edges by id and by node pair, keeping the first of each. Subagent links are
+ * directional (A→B and B→A coexist), so they key by ordered pair; everything else by unordered. */
 function dedupeEdges(edges: Edge[]): Edge[] {
     const seenIds = new Set<string>();
     const seenPairs = new Set<string>();
 
     return edges.filter((e) => {
-        const pair = e.source < e.target ? `${e.source}|${e.target}` : `${e.target}|${e.source}`;
+        const pair =
+            e.type === "subagent"
+                ? `sub:${e.source}>${e.target}`
+                : e.source < e.target
+                  ? `${e.source}|${e.target}`
+                  : `${e.target}|${e.source}`;
         if (seenIds.has(e.id) || seenPairs.has(pair)) return false;
         seenIds.add(e.id);
         seenPairs.add(pair);
@@ -352,7 +383,14 @@ function CanvasInner({ projectId }: { projectId: Id<"projects"> }) {
 
         if (canvasLayout) {
             setNodes(canvasLayout.nodes as Node[]);
-            setEdges(dedupeEdges((canvasLayout.edges as Edge[]).map(unredirectEdge).map(hydrateMountEdge)));
+            setEdges(
+                dedupeEdges(
+                    (canvasLayout.edges as Edge[])
+                        .map(unredirectEdge)
+                        .map(hydrateMountEdge)
+                        .map(hydrateSubagentEdge),
+                ),
+            );
             const maxId = canvasLayout.nodes.reduce(
                 (max: number, n: { id: string }) => Math.max(max, Number(n.id) || 0),
                 0,
@@ -411,18 +449,24 @@ function CanvasInner({ projectId }: { projectId: Id<"projects"> }) {
     const isValidConnection = useCallback((connection: Connection) => {
         if (connection.source === connection.target) return false;
 
-        // One edge per node pair (either direction).
-        if (hasEdgeBetween(edgesRef.current, connection.source, connection.target)) return false;
-
         const srcNode = nodesRef.current.find((n) => n.id === connection.source);
         const tgtNode = nodesRef.current.find((n) => n.id === connection.target);
         const isMountPair =
             (srcNode?.type === "workspace" || srcNode?.type === "sandbox") &&
             (tgtNode?.type === "workspace" || tgtNode?.type === "sandbox");
+        const isAgentPair = srcNode?.type === "agent" && tgtNode?.type === "agent";
 
-        // Side handles → workspace↔sandbox mount only; top/bottom → never a mount pair.
-        if (isMountConnection(connection)) return isMountPair;
-        if (isMountPair) return false;
+        // Subagent links are directional (A→B and B→A coexist), so dedupe by direction; every other
+        // pair allows a single edge either way.
+        const duplicate = isAgentPair
+            ? edgesRef.current.some((e) => e.source === connection.source && e.target === connection.target)
+            : hasEdgeBetween(edgesRef.current, connection.source, connection.target);
+        if (duplicate) return false;
+
+        // Side handles serve mounts (workspace↔sandbox) and subagent links (agent↔agent) only;
+        // those pairs must use the sides, never the top/bottom handles.
+        if (isSideConnection(connection)) return isMountPair || isAgentPair;
+        if (isMountPair || isAgentPair) return false;
 
         // D — an agent has a single default sandbox (config.sandbox); block a 2nd direct one.
         const agentNode = srcNode?.type === "agent" ? srcNode : tgtNode?.type === "agent" ? tgtNode : null;
@@ -440,16 +484,20 @@ function CanvasInner({ projectId }: { projectId: Id<"projects"> }) {
 
     const onConnect: OnConnect = useCallback(
         (params) => {
-            // isValidConnection already enforced every rule; build the edge and add it.
-            // Mount handle info is encoded in the id so it survives the DB round-trip.
-            const edge = isMountConnection(params)
-                ? {
+            // isValidConnection already enforced every rule; build the edge and add it. Side-handle
+            // info is encoded in the id (mount/subagent) so it survives the DB round-trip — the
+            // saved layout only keeps id/source/target/animated.
+            let edge: Edge | Connection = params;
+            if (isSideConnection(params)) {
+                const isAgentPair = nodesRef.current.find((n) => n.id === params.source)?.type === "agent";
+                const kind = isAgentPair ? "subagent" : "mount";
+                edge = {
                     ...params,
-                    id: `mount:${params.source}-${params.sourceHandle}-${params.target}-${params.targetHandle}`,
-                    type: "mount",
+                    id: `${kind}:${params.source}-${params.sourceHandle}-${params.target}-${params.targetHandle}`,
+                    type: kind,
                     animated: false,
-                  }
-                : params;
+                };
+            }
 
             setEdges((eds) => addEdge(edge, eds));
             scheduleSave();

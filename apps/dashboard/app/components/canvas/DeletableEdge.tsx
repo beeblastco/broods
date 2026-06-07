@@ -2,10 +2,11 @@
 
 import { EdgeDeleteButton } from "@/app/components/canvas/EdgeDeleteButton";
 import { useInfraAnalysis } from "@/app/components/canvas/InfraAnalysisContext";
+import { useEdgeFanOffset } from "@/app/components/canvas/useEdgeFanOffset";
 import {
     BaseEdge,
     EdgeLabelRenderer,
-    getBezierPath,
+    getSmoothStepPath,
     useStore,
     type EdgeProps,
 } from "@xyflow/react";
@@ -19,6 +20,8 @@ export function DeletableEdge({
     id,
     source,
     target,
+    sourceHandleId,
+    targetHandleId,
     sourceX,
     sourceY,
     targetX,
@@ -42,13 +45,18 @@ export function DeletableEdge({
     const { workspaceStates } = useInfraAnalysis();
     const isReadonlyWorkspace = workspaceId ? workspaceStates[workspaceId]?.kind === "readonly" : false;
 
-    const [edgePath, labelX, labelY] = getBezierPath({
-        sourceX: sourceX,
+    // Fan parallel edges apart so their vertical trunks don't stack (flow is vertical → offset X).
+    const [sourceFan, targetFan] = useEdgeFanOffset(id, source, sourceHandleId, target, targetHandleId, "default");
+
+    // Rigid orthogonal routing to match the workspace↔sandbox mount edge styling.
+    const [edgePath, labelX, labelY] = getSmoothStepPath({
+        sourceX: sourceX + sourceFan,
         sourceY: sourceY,
-        targetX: targetX,
+        targetX: targetX + targetFan,
         targetY: targetY,
         sourcePosition: sourcePosition,
         targetPosition: targetPosition,
+        borderRadius: 16,
     });
 
     const edgeStyle = hovered
