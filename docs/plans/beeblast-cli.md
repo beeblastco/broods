@@ -438,6 +438,89 @@ Responsibilities:
 The npm publish workflow must not run `bun run deploy` and must not deploy SST
 infrastructure.
 
+## Tool Code: Bundling and npm Dependencies
+
+Account tools are user-authored TypeScript that runs in the BeeBlast sandbox. The
+CLI owns the bundling step (exactly like Convex's CLI), so the runtime only ever
+receives runnable code and never has to guess intent from a raw uploaded string.
+
+### Authoring
+
+Tools live alongside other resources, e.g. `.beeblast/tools/github.ts`, and import
+npm packages normally:
+
+```ts
+import { defineTool } from "beeblast";
+import { Octokit } from "@octokit/rest"; // ordinary npm import
+
+export const githubIssue = defineTool("github_issue", {
+  description: "Open a GitHub issue.",
+  input: { type: "object", properties: { repo: { type: "string" }, title: { type: "string" } } },
+  async execute(ctx, input) {
+    const gh = new Octokit({ auth: ctx.config.token });
+    return await gh.issues.create({ /* ... */ });
+  },
+});
+```
+
+### What the CLI does on `dev` / `deploy`
+
+```mermaid
+flowchart TD
+  Src["tool .ts + imports"] --> Bundle["esbuild: bundle, format=esm, platform=node"]
+  Bundle --> Classify{"all deps bundlable?"}
+  Classify -- "pure JS (lodash, zod, octokit…)" --> Single["single self-contained .mjs<br/>(deps inlined)"]
+  Classify -- "native/binary (sharp, bcrypt…)" --> Ext["mark external + emit deps manifest"]
+  Single --> Up1["upload bundle → SaaS (Convex)"]
+  Ext --> Build["SaaS build_deps: npm install in a sandbox<br/>→ deps package, cached by dep-set hash"]
+  Build --> Up2["upload bundle + deps-package ref → SaaS"]
+  Up1 --> Rec["tool record: bundleStorageKey, sha256"]
+  Up2 --> Rec2["tool record: bundleStorageKey, sha256, depsPackageKey"]
+```
+
+1. The CLI runs **esbuild** on the tool source (`format: esm`, `platform: node`,
+   `target` = the sandbox runtime's Node version) into one bundle.
+2. **Pure-JS dependencies are inlined** into that single file — the common case for
+   almost all tools. No deps package, no server build. This directly answers the
+   "what happens when a user imports an npm dep" question: *import `lodash` → the CLI
+   inlines it → the runtime gets one self-contained file → it just runs.* (This is
+   also why the runtime can keep inlining small bundles into the exec payload.)
+3. **Native/binary modules** (`sharp`, `bcrypt`, anything shipping `.node` addons or
+   making `require`-time fs/arch assumptions) cannot be inlined. esbuild marks them
+   `external` and the CLI emits a deps manifest (the external subset of
+   `package.json` plus lockfile pins).
+
+### Deps packages (only when a tool has native deps — the Convex model)
+
+When external deps exist, the CLI hands the manifest to the SaaS, which runs a
+**`build_deps` job** (mirrors Convex): an isolated `npm install` whose output is a
+zipped `node_modules` **package cached by a hash of the resolved dep set**, built
+once and reused by every tool/version sharing those deps. The tool record then
+references the deps-package key. At runtime the sandbox worker loads the bundle and,
+if a deps package is referenced, fetches + unpacks it so `import "sharp"` resolves.
+
+### Why this must be CLI-driven (vs. server-side or self-hosted)
+
+Dependency classification (bundle vs external), lockfile pinning, and triggering the
+server build are only knowable at author/build time — the same reason Convex couples
+it to its CLI. The community/self-hosted `filthy-panty` path keeps the current
+contract unchanged: **upload a self-contained single-file bundle** (no CLI, no native
+deps); a bare unbundled `import` simply fails at runtime with a clear error.
+
+### Phasing
+
+- **v1 — single-file bundles only.** CLI esbuilds and inlines pure-JS deps; native
+  deps produce a clear CLI error with guidance. Covers ~all tools, **no server build
+  pipeline required**.
+- **v2 — deps packages.** Add the SaaS `build_deps` job + deps-package cache + worker
+  loading, *only* when native modules are a real product requirement.
+
+> Execution-runtime note: bundling/storage is SaaS/CLI-owned, but tool **execution**
+> stays in the BeeBlast sandbox (a warm resident Node worker per reserved sandbox),
+> not in Convex actions — Convex actions are trusted deploy-time functions and cannot
+> safely run arbitrary per-account code. See the runtime cold-start work in
+> `docs/workspace/sandbox/`.
+
 ## Test Strategy
 
 Implementation should include tests from the first package commit. Minimum test
@@ -541,10 +624,21 @@ CI acceptance for implementation:
 - Add explicit `destroy`.
 - Add `deploy --prune`.
 - Add `pull` from SaaS to local resource code/manifest.
-- Add hosted tool/callback bundling if the product decides BeeBlast should host
-  user TypeScript tool code.
 - Add npm publish workflow once the package API is stable enough for external
   prereleases.
+
+### Phase 6: Hosted Tool Bundling and Dependencies
+
+See "Tool Code: Bundling and npm Dependencies" above for the full design.
+
+- **v1 (single-file):** `beeblast dev`/`deploy` esbuilds each `defineTool` source,
+  inlines pure-JS deps into one ESM bundle, computes sha256, and uploads it through
+  the SaaS to the tool record (`bundleStorageKey`). Native deps fail fast with a
+  clear CLI error. Add bundler tests (inlining, tree-shaking, deterministic output)
+  and a clear "unbundlable native module" diagnostic.
+- **v2 (deps packages):** add the SaaS-side `build_deps` job (sandboxed `npm
+  install` → hashed, cached deps package), a `depsPackageKey` on the tool record,
+  and runtime worker loading of the deps package. Gate on a real native-module need.
 
 ## Open Decisions
 
@@ -553,7 +647,14 @@ CI acceptance for implementation:
 - Whether `beeblast deploy` requires `--env production` until a deploy target is
   configured.
 - Whether user-defined tools are external HTTP callbacks in v1 or hosted
-  TypeScript code.
+  TypeScript code. (Leaning hosted TS via CLI esbuild bundling — see "Tool Code:
+  Bundling and npm Dependencies".)
+- Inline size threshold for shipping a tool bundle in the exec payload vs. fetching
+  it (runtime currently inlines ≤64 KB; align the CLI's "warn if large" cutoff).
+- Whether `build_deps` (v2) runs as a SaaS/Convex job, a dedicated sandbox pod, or
+  a CI step — and which native modules are officially supported.
+- Whether deps packages are mounted into the warm worker pod or fetched+unpacked
+  per cold pod, and how they are cache-keyed (dep-set hash) and evicted.
 - Whether SaaS exposes a dedicated CLI API or the CLI calls existing Convex
   functions/actions directly. The target must remain Convex/SaaS, not DynamoDB.
 - How to represent deployment history and rollback in the SaaS model.
