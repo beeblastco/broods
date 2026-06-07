@@ -1,5 +1,5 @@
 /**
- * Async external tool result persistence.
+ * Async tool result persistence.
  * Keep tool-call status separate from direct async request status rows.
  */
 
@@ -21,7 +21,7 @@ import { requireEnv } from "../_shared/env.ts";
 const ASYNC_TOOL_RESULT_TABLE_NAME = requireEnv("ASYNC_TOOL_RESULT_TABLE_NAME");
 const ASYNC_TOOL_RESULT_TTL_SECONDS = 7 * 24 * 60 * 60;
 // Current fan-in uses one group item inside AsyncToolResult so completion can
-// collect every external async tool from the same parent event without a second
+// collect every detached async tool from the same parent event without a second
 // table. When this path moves to JetStream, replace this index/group tracking
 // with stream consumer state instead of maintaining both.
 const PARENT_EVENT_ID_INDEX = "ParentEventIdIndex";
@@ -61,7 +61,7 @@ export interface AsyncToolResultRecord {
   expiresAt: number;
 }
 
-export interface ExternalAsyncToolDispatchGroup {
+export interface DetachedAsyncToolGroup {
   parentEventId: string;
   resultIds: string[];
   sealed: boolean;
@@ -101,7 +101,10 @@ export async function createPendingAsyncToolResult(options: {
       ConditionExpression: "attribute_not_exists(resultId)",
     }));
     if (options.delivery) {
-      await registerExternalAsyncToolDispatch(options.parentEventId, options.resultId);
+      // Delivery is present only for callback-driven work. Register it in the
+      // per-parent group so a fast callback cannot continue the parent until the
+      // launcher seals the group after all sibling resultIds are known.
+      await registerDetachedAsyncTool(options.parentEventId, options.resultId);
     }
     return true;
   } catch (err) {
@@ -126,22 +129,22 @@ export async function getAsyncToolCompletionToken(resultId: string): Promise<str
   return result.Item?.completionToken?.S ?? null;
 }
 
-export async function getExternalAsyncToolDispatchGroup(parentEventId: string): Promise<ExternalAsyncToolDispatchGroup | null> {
+export async function getDetachedAsyncToolGroup(parentEventId: string): Promise<DetachedAsyncToolGroup | null> {
   const result = await dynamo.send(new GetItemCommand({
     TableName: ASYNC_TOOL_RESULT_TABLE_NAME,
-    Key: { resultId: { S: externalDispatchGroupId(parentEventId) } },
+    Key: { resultId: { S: detachedAsyncToolGroupId(parentEventId) } },
     ConsistentRead: true,
   }));
 
-  return result.Item ? itemToExternalDispatchGroup(result.Item) : null;
+  return result.Item ? itemToDetachedAsyncToolGroup(result.Item) : null;
 }
 
-export async function sealExternalAsyncToolDispatchGroup(parentEventId: string): Promise<ExternalAsyncToolDispatchGroup | null> {
+export async function sealDetachedAsyncToolGroup(parentEventId: string): Promise<DetachedAsyncToolGroup | null> {
   const now = new Date().toISOString();
 
   const result = await dynamo.send(new UpdateItemCommand({
     TableName: ASYNC_TOOL_RESULT_TABLE_NAME,
-    Key: { resultId: { S: externalDispatchGroupId(parentEventId) } },
+    Key: { resultId: { S: detachedAsyncToolGroupId(parentEventId) } },
     UpdateExpression: "SET #sealed = :sealed, updatedAt = :updatedAt, expiresAt = :expiresAt",
     ExpressionAttributeNames: {
       "#sealed": "sealed",
@@ -154,7 +157,7 @@ export async function sealExternalAsyncToolDispatchGroup(parentEventId: string):
     ReturnValues: "ALL_NEW",
   }));
 
-  return result.Attributes ? itemToExternalDispatchGroup(result.Attributes) : null;
+  return result.Attributes ? itemToDetachedAsyncToolGroup(result.Attributes) : null;
 }
 
 export async function listAsyncToolResultsByParentEvent(parentEventId: string): Promise<AsyncToolResultRecord[]> {
@@ -184,7 +187,7 @@ export async function listAsyncToolResultsByParentEvent(parentEventId: string): 
   return records;
 }
 
-async function registerExternalAsyncToolDispatch(parentEventId: string, resultId: string): Promise<void> {
+async function registerDetachedAsyncTool(parentEventId: string, resultId: string): Promise<void> {
   const now = new Date().toISOString();
   const setExpressions = [
     "parentEventId = :parentEventId",
@@ -196,14 +199,14 @@ async function registerExternalAsyncToolDispatch(parentEventId: string, resultId
 
   await dynamo.send(new UpdateItemCommand({
     TableName: ASYNC_TOOL_RESULT_TABLE_NAME,
-    Key: { resultId: { S: externalDispatchGroupId(parentEventId) } },
+    Key: { resultId: { S: detachedAsyncToolGroupId(parentEventId) } },
     UpdateExpression: `SET ${setExpressions.join(", ")} ADD resultIds :resultIds`,
     ExpressionAttributeNames: {
       "#sealed": "sealed",
     },
     ExpressionAttributeValues: {
       ":parentEventId": { S: parentEventId },
-      ":itemType": { S: "external-dispatch-group" },
+      ":itemType": { S: "detached-async-tool-group" },
       ":notSealed": { BOOL: false },
       ":updatedAt": { S: now },
       ":expiresAt": { N: String(asyncToolResultExpiresAt()) },
@@ -212,8 +215,8 @@ async function registerExternalAsyncToolDispatch(parentEventId: string, resultId
   }));
 }
 
-function externalDispatchGroupId(parentEventId: string): string {
-  return `${parentEventId}:async-tool-dispatch-group`;
+function detachedAsyncToolGroupId(parentEventId: string): string {
+  return `${parentEventId}:async-tool-detached-group`;
 }
 
 export async function getAsyncToolResult(resultId: string): Promise<AsyncToolResultRecord | null> {
@@ -246,7 +249,7 @@ export async function markAsyncToolResultFailed(options: {
   });
 }
 
-export async function settleExternalAsyncToolResult(options: {
+export async function settleAsyncToolResultFromCallback(options: {
   resultId: string;
   status: "completed" | "failed";
   response?: unknown;
@@ -360,7 +363,7 @@ function itemToAsyncToolResult(item: Record<string, AttributeValue>): AsyncToolR
   };
 }
 
-function itemToExternalDispatchGroup(item: Record<string, AttributeValue>): ExternalAsyncToolDispatchGroup | null {
+function itemToDetachedAsyncToolGroup(item: Record<string, AttributeValue>): DetachedAsyncToolGroup | null {
   const parentEventId = item.parentEventId?.S;
   const resultIds = item.resultIds?.SS;
   const sealed = item.sealed?.BOOL;

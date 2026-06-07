@@ -50,7 +50,7 @@ flowchart TD
   Harness --> Model["Configured AI SDK provider<br/>Google / OpenAI / Bedrock / Gateway"]
   Harness --> Tools["workspace + account-enabled tools"]
   Harness -->|"structured JSON logs<br/>usage + tool metadata"| CloudWatch["CloudWatch Logs<br/>metrics + dashboards"]
-  Harness --> AsyncTools["async-tools.ts<br/>async external tool wrapper"]
+  Harness --> AsyncTools["async-tools.ts<br/>async tool wrapper"]
   Harness --> Subagents["subagents.ts<br/>parallel child runs + parent continuation"]
   Handler -->|"nats-worker publishes stream events"| NATS
 
@@ -147,9 +147,9 @@ flowchart TD
   ToolCoordinator -->|"wrap async=true execute tools"| Agent
   Agent -->|"SSE chunks"| Caller
   Agent -->|"run_subagent tool call"| Coordinator
-  Agent -->|"async external tool call"| ToolCoordinator
+  Agent -->|"async tool call"| ToolCoordinator
   Coordinator --> ChildRuns["subagents.ts<br/>in-process child agent loops"]
-  ToolCoordinator --> ToolRuns["same-invocation tool execute"]
+  ToolCoordinator --> ToolRuns["built-in execute or uploaded runner wait"]
   ChildRuns -->|"queued completion"| Coordinator
   ToolRuns -->|"queued completion"| ToolCoordinator
   Coordinator -->|"inject batched result events"| Session
@@ -170,16 +170,17 @@ flowchart TD
   Status --> AsyncTable
 ```
 
-The async path stays inside `harness-processing`: `POST /async` creates `AsyncAgentResult`, returns a status URL, and starts an internal Lambda Event invocation. Subagents and `same-invocation` async tools run inside that Lambda. `external-dispatch` async tools store delivery metadata and continue later through `/async-tools/{resultId}/complete`.
+The async path starts inside `harness-processing`: `POST /async` creates `AsyncAgentResult`, returns a status URL, and starts an internal Lambda Event invocation. Subagents and built-in async tools run inside that Lambda. Uploaded custom tools always execute in Kubernetes; uploaded async tools are waited on for SSE, but `/async`, channel, and NATS turns launch them as detached sandbox work that completes through `/sandbox-jobs/{resultId}/complete`.
 
 ```mermaid
 flowchart TD
   Parent["parent model pass"] --> Kind{"child work type"}
   Kind -->|"subagent"| InMemory["in-memory pending work"]
-  Kind -->|"async tool: same-invocation"| InMemory
-  Kind -->|"async tool: external-dispatch"| External["external worker"]
+  Kind -->|"built-in async tool"| InMemory
+  Kind -->|"uploaded async tool on SSE"| InMemory
+  Kind -->|"uploaded async tool on detached path"| External["Kubernetes background runner"]
   InMemory -->|"wait only while pendingCount > 0"| Inject["inject result into conversation"]
-  External -->|"complete endpoint"| Group["sealed dispatch group<br/>all siblings settled"]
+  External -->|"sandbox-jobs complete endpoint"| Group["sealed detached group<br/>all siblings settled"]
   Group --> Inject
   Inject --> Continue["continue parent agent"]
 ```
@@ -293,7 +294,7 @@ Notes:
   - **Purge on persist:** when a turn finishes and is saved to the DB, the server
     (`LiveNatsPublisher.purge`, right after the terminal `done`) deletes that
     conversation from the stream — a later reconnect reads the saved turn from the
-    DB, so keeping the buffer would be pointless. The external-async continuation
+    DB, so keeping the buffer would be pointless. The detached async continuation
     re-enters the same path, so it purges when *it* finishes.
   - **Short backstop `max_age` (~3 min):** only for turns that never persist
     cleanly (e.g. an error/crash before the purge); they expire instead of piling up.
@@ -348,8 +349,8 @@ flowchart TD
   per-job token), the harness settles the row and reuses the existing async-tool
   continuation path: it rebuilds the turn from `parentEventId`/`conversationKey`,
   injects the job result, and runs the agent loop so it **continues where it left
-  off**. This is the same settle→continue pipeline used by `external-dispatch`
-  async tools — background jobs add only the `delivery` routing on top.
+  off**. This is the same settle→continue pipeline used by detached uploaded async
+  tools; background jobs add only the `delivery` routing on top.
 - **Deliver to origin.** After the loop, the follow-up is pushed to the recorded
   origin: a channel `sendText`, a durable JetStream publish (replayed on
   reconnect), or a status-row settle. See `bash.tool.ts`, `handler.ts`
@@ -397,8 +398,8 @@ Agents control model selection, channel credentials, optional skills, subagents,
 - `Conversations`: normalized model messages by account-scoped `conversationKey`.
 - `ProcessedEvents`: dedup markers and short-lived conversation lease records.
 - `AsyncAgentResult`: async direct API and subagent state for `/status/{eventId}` polling.
-- `AsyncToolResult`: async external tool call state, same-table dispatch-group rows for external fan-in, delivery metadata for non-SSE continuations, and structured outputs for parent result injection.
+- `AsyncToolResult`: async tool call state, same-table detached group rows for callback fan-in, delivery metadata for non-SSE continuations, and structured outputs for parent result injection.
 - S3 workspace bucket: account/agent-scoped workspace files and staged skill bundles.
 - S3 skills bucket: account-scoped skill bundles under `<accountId>/<skill-name>`.
 
-Tool execution is inline unless an agent-configured local `execute` tool sets `async: true`. `execution` chooses `same-invocation` or `external-dispatch`; SSE supports only `same-invocation`, while `/async`, channels, and NATS support both. Subagents are in-process child agent loops; they do not require child Lambda workers.
+Built-in tool execution is inline in `harness-processing`. Uploaded custom tools execute in Kubernetes. `async: true` only changes the lifecycle: built-in async stays in the current Lambda, uploaded async waits on SSE, and uploaded async detaches automatically on `/async`, channel, and NATS turns. Subagents are in-process child agent loops; they do not require child Lambda workers.

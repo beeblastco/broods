@@ -178,7 +178,7 @@ describe("async tool result persistence", () => {
     });
   });
 
-  it("stores NATS delivery metadata on external async tool rows", async () => {
+  it("stores NATS delivery metadata on detached async tool rows", async () => {
     process.env.ASYNC_TOOL_RESULT_TABLE_NAME = "async-tool-result";
     dynamo.send = sendMock as never;
     const { createPendingAsyncToolResult } = await import("../functions/harness-processing/async-tool-result.ts");
@@ -214,19 +214,19 @@ describe("async tool result persistence", () => {
     });
     const groupCommand = sendMock.mock.calls.find(([sentCommand]) =>
       sentCommand instanceof UpdateItemCommand &&
-      sentCommand.input.ExpressionAttributeValues?.[":itemType"]?.S === "external-dispatch-group"
+      sentCommand.input.ExpressionAttributeValues?.[":itemType"]?.S === "detached-async-tool-group"
     )?.[0];
     expect(groupCommand).toBeInstanceOf(UpdateItemCommand);
   });
 
-  it("seals external async tool dispatch groups", async () => {
+  it("seals detached async tool groups", async () => {
     process.env.ASYNC_TOOL_RESULT_TABLE_NAME = "async-tool-result";
     dynamo.send = sendMock as never;
     sendMock.mockImplementation(async (command: unknown) => {
       if (command instanceof UpdateItemCommand) {
         return {
           Attributes: {
-            resultId: { S: "event-1:async-tool-dispatch-group" },
+            resultId: { S: "event-1:async-tool-detached-group" },
             parentEventId: { S: "event-1" },
             resultIds: { SS: ["result-2", "result-1"] },
             sealed: { BOOL: true },
@@ -237,9 +237,9 @@ describe("async tool result persistence", () => {
       }
       throw new Error("unexpected command");
     });
-    const { sealExternalAsyncToolDispatchGroup } = await import("../functions/harness-processing/async-tool-result.ts");
+    const { sealDetachedAsyncToolGroup } = await import("../functions/harness-processing/async-tool-result.ts");
 
-    await expect(sealExternalAsyncToolDispatchGroup("event-1")).resolves.toEqual({
+    await expect(sealDetachedAsyncToolGroup("event-1")).resolves.toEqual({
       parentEventId: "event-1",
       resultIds: ["result-1", "result-2"],
       sealed: true,
@@ -333,7 +333,7 @@ describe("async tool result persistence", () => {
     });
   });
 
-  it("settles external async tool results only while processing", async () => {
+  it("settles async tool callback results only while processing", async () => {
     process.env.ASYNC_TOOL_RESULT_TABLE_NAME = "async-tool-result";
     dynamo.send = sendMock as never;
     sendMock.mockImplementation(async (command: unknown) => {
@@ -356,9 +356,9 @@ describe("async tool result persistence", () => {
       }
       throw new Error("unexpected command");
     });
-    const { settleExternalAsyncToolResult } = await import("../functions/harness-processing/async-tool-result.ts");
+    const { settleAsyncToolResultFromCallback } = await import("../functions/harness-processing/async-tool-result.ts");
 
-    await expect(settleExternalAsyncToolResult({
+    await expect(settleAsyncToolResultFromCallback({
       resultId: "result-1",
       status: "completed",
       response: { answer: "done" },

@@ -23,7 +23,7 @@ import {
 import {
   createPendingAsyncToolResult,
   markAsyncToolResultFailed,
-  sealExternalAsyncToolDispatchGroup,
+  sealDetachedAsyncToolGroup,
 } from "../async-tool-result.ts";
 import { generateJobId } from "../sandbox/jobs.ts";
 import { getHarnessPublicUrl } from "../self-url.ts";
@@ -113,8 +113,9 @@ async function dispatchBackground(
   const resultId = `async_tool_${crypto.randomUUID()}`;
   const completionToken = crypto.randomUUID();
   const jobId = generateJobId();
-  // Per-job dispatch group keyed off the turn event so the job's completion
-  // resumes the conversation on its own, independent of the turn's other tools.
+  // Bash background is not wrapped by AsyncToolCoordinator, so give this one
+  // job its own parent event and seal it immediately after the tracking row is
+  // created. Uploaded async tools are sealed by handler.ts after the model pass.
   const parentEventId = `${context.background.eventId}:async-bg:${resultId}`;
   const baseUrl = await getHarnessPublicUrl();
   const callback: SandboxJobCallback | undefined = baseUrl
@@ -135,7 +136,12 @@ async function dispatchBackground(
     delivery: context.background.delivery ?? { kind: "async" },
     completionToken,
   });
-  await sealExternalAsyncToolDispatchGroup(parentEventId);
+  // Seal the group immediately — this is a group of exactly one job, so all
+  // siblings are already registered. Sealing lets the callback handler know it
+  // is safe to resume the conversation once this job completes without waiting
+  // for other sibling registrations (unlike uploaded async tools, where handler.ts
+  // seals the shared group only after the full model pass ends).
+  await sealDetachedAsyncToolGroup(parentEventId);
 
   try {
     await runSandboxBackground(ws.sandbox, ws.namespace, command, {

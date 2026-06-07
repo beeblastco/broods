@@ -343,10 +343,10 @@ describe("createTools", () => {
     expect(Object.keys(tools)).toEqual(["handoffs"]);
   });
 
-  it("passes async-enabled external tools through the async coordinator", async () => {
+  it("passes async-enabled built-in tools through the async coordinator", async () => {
     const { createTools } = await import("../functions/harness-processing/tools/index.ts");
     const dispatch = mock((tools: Record<string, unknown>, asyncToolModes: Map<string, string>) => {
-      expect([...asyncToolModes.entries()]).toEqual([["tavilySearch", "external-dispatch"]]);
+      expect([...asyncToolModes.entries()]).toEqual([["tavilySearch", "built-in"]]);
       expect((tools.tavilySearch as { needsApproval?: boolean }).needsApproval).toBe(true);
       return {
         tavilySearch: {
@@ -366,7 +366,6 @@ describe("createTools", () => {
       tools: {
         tavilySearch: {
           async: true,
-          execution: "external-dispatch",
           needsApproval: true,
           maxResults: 2,
         },
@@ -400,7 +399,7 @@ describe("createTools", () => {
       updatedAt: "2026-06-06T00:00:00.000Z",
     }));
     const dispatch = mock((tools: Record<string, unknown>, asyncToolModes: Map<string, string>) => {
-      expect(asyncToolModes).toEqual(new Map([["test_async", "same-invocation"]]));
+      expect(asyncToolModes).toEqual(new Map([["test_async", "uploaded"]]));
       return {
         ...tools,
         test_async: {

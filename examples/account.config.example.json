@@ -98,7 +98,6 @@
     "tavilySearch": {
       "enabled": true,
       "async": true,
-      "execution": "same-invocation",
       "apiKey": "...",
       "searchDepth": "advanced",
       "includeAnswer": true,
@@ -120,7 +119,6 @@
     "tool_replace_with_uploaded_tool_id": {
       "enabled": true,
       "async": true,
-      "execution": "same-invocation",
       "config": {}
     }
   },

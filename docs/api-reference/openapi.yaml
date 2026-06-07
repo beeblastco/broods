@@ -289,8 +289,8 @@ paths:
     post:
       tags:
         - Direct API
-      summary: Complete external async tool
-      description: Complete an externally dispatched async tool. Completion settles one `AsyncToolResult` row. A sealed dispatch-group item waits for every sibling result before continuing the parent.
+      summary: Complete async tool callback
+      description: Compatibility callback for settling one `AsyncToolResult` row through account bearer auth. Platform-managed sandbox jobs use `/sandbox-jobs/{resultId}/complete` with a per-result token.
       parameters:
         - name: resultId
           in: path
@@ -2148,9 +2148,6 @@ components:
           type: boolean
         async:
           type: boolean
-        execution:
-          type: string
-          enum: [same-invocation, external-dispatch]
         needsApproval:
           type: boolean
         config:
@@ -2164,9 +2161,6 @@ components:
           type: boolean
         async:
           type: boolean
-        execution:
-          type: string
-          enum: [same-invocation, external-dispatch]
         needsApproval:
           type: boolean
         apiKey:
@@ -2190,9 +2184,6 @@ components:
           type: boolean
         async:
           type: boolean
-        execution:
-          type: string
-          enum: [same-invocation, external-dispatch]
         needsApproval:
           type: boolean
         apiKey:

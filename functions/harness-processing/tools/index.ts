@@ -19,7 +19,7 @@ import { logWarn } from "../../_shared/log.ts";
 import type { Session } from "../session.ts";
 import type { ResolvedWorkspace } from "../../_shared/workspaces.ts";
 import type { SandboxExecutorConfig } from "../sandbox/types.ts";
-import type { AsyncToolModeMap, RunAsyncToolDispatch } from "../async-tools.ts";
+import type { AsyncToolModeMap, AsyncToolSource, RunAsyncToolDispatch } from "../async-tools.ts";
 import bashTool from "./bash.tool.ts";
 import readTool from "./read.tool.ts";
 import writeTool from "./write.tool.ts";
@@ -171,7 +171,7 @@ export async function createTools(context: Omit<ToolContext, "config">, agentCon
     }), {
       [toolName]: toolConfig.needsApproval === true,
     }));
-    addAsyncModeIfConfigured(asyncModes, toolName, toolConfig);
+    addAsyncModeIfConfigured(asyncModes, toolName, toolConfig, "built-in");
   }
 
   const handoffsConfig = agentConfig.tools?.handoffs;
@@ -183,7 +183,7 @@ export async function createTools(context: Omit<ToolContext, "config">, agentCon
     }), {
       handoffs: handoffsConfig.needsApproval === true,
     }));
-    addAsyncModeIfConfigured(asyncModes, "handoffs", handoffsConfig);
+    addAsyncModeIfConfigured(asyncModes, "handoffs", handoffsConfig, "built-in");
   }
 
   for (const [toolId, toolConfig] of Object.entries(agentConfig.tools ?? {}).filter(([key]) => isAccountToolId(key))) {
@@ -208,7 +208,7 @@ export async function createTools(context: Omit<ToolContext, "config">, agentCon
     }), {
       [record.name]: toolConfig.needsApproval === true,
     }));
-    addAsyncModeIfConfigured(asyncModes, record.name, toolConfig);
+    addAsyncModeIfConfigured(asyncModes, record.name, toolConfig, "uploaded");
   }
 
   // Auto-add the background-job status tool when the agent has any async tool or
@@ -250,9 +250,10 @@ function addAsyncModeIfConfigured(
   modes: AsyncToolModeMap,
   modelToolName: string,
   config: AgentToolConfig,
+  source: AsyncToolSource,
 ): void {
   if (config.async === true) {
-    modes.set(modelToolName, config.execution ?? "same-invocation");
+    modes.set(modelToolName, source);
   }
 }
 
@@ -261,7 +262,6 @@ function externalToolRuntimeConfig(config: AgentToolConfig): AgentToolConfig {
     enabled: _enabled,
     needsApproval: _needsApproval,
     async: _async,
-    execution: _execution,
     ...runtimeConfig
   } = config;
 

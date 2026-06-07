@@ -1,7 +1,6 @@
 /**
- * Example external-dispatch async tool flow via NATS WebSocket stream.
- * Demonstrates how tools can dispatch work to an external service and
- * receive results via webhook callback.
+ * Example uploaded async tool flow via NATS WebSocket stream.
+ * Demonstrates the detached Kubernetes runner path for non-SSE requests.
  */
 
 import { InvokeCommand, LambdaClient } from "@aws-sdk/client-lambda";
@@ -10,23 +9,23 @@ import { toRuntimeAgentConfig, type AgentConfig } from "../functions/_shared/sto
 import { connectNats, streamResponseSubject, type NatsStreamEvent } from "../functions/_shared/nats.ts";
 import { scopedDirectConversationKey, scopedDirectEventId } from "../functions/_shared/runtime-keys.ts";
 import type { DirectInboundEvent } from "../functions/harness-processing/integrations.ts";
-import { AGENT_SERVICE_URL, createAccount, createAgent, createTool, deleteAccount } from "./utils.ts";
+import { createAccount, createAgent, createTool, deleteAccount } from "./utils.ts";
 
 const minimaxApiKey = process.env.ACCOUNT_MINIMAX_API_KEY!;
 const lambdaFunctionName = process.env.HARNESS_FUNCTION_ARN!;
 const natsUrl = process.env.NATS_URL!;
 const natsToken = process.env.NATS_TOKEN || undefined;
-const connectionId = `ws-external-async-${Date.now()}`;
-const publicEventId = `external-async-${Date.now()}`;
-const publicConversationKey = `external-async-${Date.now()}`;
+const connectionId = `ws-uploaded-async-${Date.now()}`;
+const publicEventId = `uploaded-async-${Date.now()}`;
+const publicConversationKey = `uploaded-async-${Date.now()}`;
 const codec = StringCodec();
 
 const natsClient = await connectNats({ servers: natsUrl, token: natsToken });
 const lambda = new LambdaClient({ region: "eu-central-1", profile: "default" });
-const account = await createAccount(`external-async-${Date.now()}`);
+const account = await createAccount(`uploaded-async-${Date.now()}`);
 const customTool = await createTool(account.secret, {
-  name: "test_external_async",
-  description: "Dispatches a test external async completion.",
+  name: "test_uploaded_async",
+  description: "Runs a test uploaded async tool.",
   inputSchema: {
     type: "object",
     properties: {
@@ -35,35 +34,13 @@ const customTool = await createTool(account.secret, {
     required: ["message"],
     additionalProperties: false,
   },
-  defaultConfig: {
-    completionBaseUrl: AGENT_SERVICE_URL,
-    completionBearerToken: account.secret,
-  },
+  defaultConfig: {},
   bundle: `
 export default {
-  name: "test_external_async",
+  name: "test_uploaded_async",
   async execute(ctx, input) {
-    const completePath = ctx.asyncTool?.completePath;
-    if (!completePath) throw new Error("async completion metadata is required");
-    const baseUrl = ctx.config.completionBaseUrl;
-    const token = ctx.config.completionBearerToken;
-    if (!baseUrl) throw new Error("completionBaseUrl is required");
-    if (!token) throw new Error("completionBearerToken is required");
-    const response = await fetch(new URL(completePath, baseUrl), {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": \`Bearer \${token}\`,
-      },
-      body: JSON.stringify({
-        status: "completed",
-        response: { type: "text", value: \`external async completed: \${input.message}\` },
-      }),
-    });
-    if (!response.ok) {
-      throw new Error(\`completion failed: \${response.status} \${await response.text()}\`);
-    }
-    return { type: "text", value: "external async dispatched" };
+    await new Promise((resolve) => setTimeout(resolve, 3000));
+    return { type: "text", value: \`uploaded async completed: \${input.message}\` };
   },
 };
 `,
@@ -80,13 +57,12 @@ const agentConfig: AgentConfig = {
     modelId: "MiniMax-M2.7",
   },
   agent: {
-    system: "You are a helpful assistant. When asked, call the test_external_async tool with the user's message and report the result after it completes.",
+    system: "You are a helpful assistant. When asked, call the test_uploaded_async tool with the user's message and report the result after it completes.",
   },
   tools: {
     [customTool.toolId]: {
       enabled: true,
       async: true,
-      execution: "external-dispatch", // Using 'external-dispatch' mode
     },
   },
 }
@@ -115,7 +91,7 @@ try {
     connectionId,
     events: [{
       role: "user",
-      content: [{ type: "text", text: "Call the external async tool with the message 'world' and tell me the result." }],
+      content: [{ type: "text", text: "Call the uploaded async tool with the message 'world' and tell me the result." }],
     }],
   };
 

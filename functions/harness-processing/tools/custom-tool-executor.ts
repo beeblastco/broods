@@ -8,6 +8,21 @@ import { requireEnv } from "../../_shared/env.ts";
 import { getS3ObjectUrl } from "../../_shared/s3.ts";
 import type { AccountToolRecord, AgentToolConfig } from "../../_shared/storage/index.ts";
 import { createSandboxExecutor } from "../sandbox/index.ts";
+import { generateJobId } from "../sandbox/jobs.ts";
+import { getHarnessPublicUrl } from "../self-url.ts";
+
+// The marker lets the foreground path find the one structured JSON result line
+// reliably instead of accidentally parsing user logs as protocol.
+// Detached/background tools skip the marker and report via HTTP callback instead.
+const RESULT_MARKER = "__CUSTOM_TOOL_RESULT__";
+const RUNNER_HEREDOC_TAG = "__CUSTOM_TOOL_RUNNER__";
+
+// Timeout for foreground (synchronous) execution only. The kubernetes executor
+// does not enforce timeoutSeconds for runBackground — detached jobs run as
+// setsid processes and are only bounded by the pod's shutdownTime lifecycle.
+// The field is required by SandboxRunRequest so we still pass it for background.
+const FOREGROUND_TIMEOUT_SECONDS = 120;
+const RUNNER_OUTPUT_LIMIT_BYTES = 1024 * 1024;
 
 interface ExecuteAccountToolOptions {
   accountId: string;
@@ -18,7 +33,32 @@ interface ExecuteAccountToolOptions {
   createExecutor?: typeof createSandboxExecutor;
 }
 
-const RESULT_MARKER = "__CUSTOM_TOOL_RESULT__";
+interface DetachedAsyncToolMetadata {
+  resultId: string;
+  completePath: string;
+  completionToken: string;
+  detached: true;
+  [key: string]: unknown;
+}
+
+interface RunnerPayload {
+  bundleUrl: string;
+  expectedSha256: string;
+  toolName: string;
+  input: unknown;
+  config: Record<string, unknown>;
+  asyncTool: unknown;
+  detachedCompletion?: {
+    url: string;
+    token: string;
+  };
+}
+
+interface RunnerResult {
+  ok: boolean;
+  result?: unknown;
+  error?: unknown;
+}
 
 export async function executeAccountToolInSandbox({
   accountId,
@@ -28,47 +68,54 @@ export async function executeAccountToolInSandbox({
   options,
   createExecutor = createSandboxExecutor,
 }: ExecuteAccountToolOptions): Promise<unknown> {
-  const bucket = requireEnv("TOOL_BUNDLES_BUCKET_NAME");
-  const bundleUrl = await getS3ObjectUrl(bucket, tool.bundleStorageKey);
-  const runtimeConfig = mergeToolConfig(tool.defaultConfig, config.config);
   const asyncTool = extractAsyncToolMetadata(options);
-  // The sandbox executor currently accepts shell snippets. This heredoc starts a
-  // short Node process inside the already-reserved pod; it is not executed in
-  // harness-processing.
-  const code = nodeHeredoc(runnerCode({
-    bundleUrl,
-    expectedSha256: tool.sha256,
-    toolName: tool.name,
-    input,
-    config: runtimeConfig,
-    asyncTool,
-  }));
+  if (isDetachedAsyncTool(asyncTool)) {
+    return startAccountToolInSandboxBackground({
+      accountId,
+      tool,
+      input,
+      config,
+      asyncTool,
+      createExecutor,
+    });
+  }
 
-  // Kubernetes persistence is selected by two values together:
-  //  - persistent=true: use the reserved Sandbox path in the executor.
-  //  - reservationKey: stable account/tool identity that becomes the
-  //    deterministic Sandbox name.
-  const reservationKey = customToolReservationKey(accountId, tool.toolId);
-  // createSandboxExecutor only creates a local client object; the pod lookup,
-  // first-use creation, and idle resume happen inside executor.run().
-  const executor = createExecutor({
-    provider: "kubernetes",
-    persistent: true,
-    internet: true,
-    timeout: 120,
-    outputLimitBytes: 1024 * 1024,
-    lifecycle: {
-      idleTimeoutSeconds: 300,
-      maxLifetimeSeconds: 3600,
-    },
+  return runAccountToolInSandboxForeground({
+    accountId,
+    tool,
+    input,
+    config,
+    asyncTool,
+    createExecutor,
   });
+}
+
+async function runAccountToolInSandboxForeground({
+  accountId,
+  tool,
+  input,
+  config,
+  asyncTool,
+  createExecutor,
+}: ExecuteAccountToolOptions & { asyncTool: unknown; createExecutor: typeof createSandboxExecutor }): Promise<unknown> {
+  const bucket = requireEnv("TOOL_BUNDLES_BUCKET_NAME");
+  const payload = await createRunnerPayload({
+    bucket,
+    tool,
+    input,
+    config,
+    asyncTool,
+  });
+
+  const executor = createExecutor(customToolExecutorConfig());
   const result = await executor.run({
     runtime: "bash",
-    code,
-    reservationKey,
-    timeoutSeconds: 120,
-    outputLimitBytes: 1024 * 1024,
+    code: nodeHeredoc(runnerCode(payload)),
+    reservationKey: customToolReservationKey(accountId, tool.toolId),
+    timeoutSeconds: FOREGROUND_TIMEOUT_SECONDS,
+    outputLimitBytes: RUNNER_OUTPUT_LIMIT_BYTES,
   });
+
   const parsed = parseRunnerOutput(result.stdout);
   if (!result.ok) {
     const message = parsed?.ok === false && typeof parsed.error === "string"
@@ -85,14 +132,75 @@ export async function executeAccountToolInSandbox({
   return parsed.result;
 }
 
-function runnerCode(payload: {
-  bundleUrl: string;
-  expectedSha256: string;
-  toolName: string;
+async function startAccountToolInSandboxBackground({
+  accountId,
+  tool,
+  input,
+  config,
+  asyncTool,
+  createExecutor,
+}: ExecuteAccountToolOptions & { asyncTool: DetachedAsyncToolMetadata; createExecutor: typeof createSandboxExecutor }): Promise<unknown> {
+  const bucket = requireEnv("TOOL_BUNDLES_BUCKET_NAME");
+  const completionUrl = await sandboxJobCompletionUrl(asyncTool.completePath);
+  const payload = await createRunnerPayload({
+    bucket,
+    tool,
+    input,
+    config,
+    asyncTool: {
+      ...asyncTool,
+      completeUrl: completionUrl,
+    },
+    detachedCompletion: {
+      url: completionUrl,
+      token: asyncTool.completionToken,
+    },
+  });
+
+  const executor = createExecutor(customToolExecutorConfig());
+  if (!executor.runBackground) {
+    throw new Error("custom async tools require a sandbox executor with background support");
+  }
+  await executor.runBackground({
+    runtime: "bash",
+    code: nodeHeredoc(runnerCode(payload)),
+    reservationKey: customToolReservationKey(accountId, tool.toolId),
+    workspaceRoot: "/tmp",
+    jobId: generateJobId(),
+    timeoutSeconds: FOREGROUND_TIMEOUT_SECONDS,
+    outputLimitBytes: RUNNER_OUTPUT_LIMIT_BYTES,
+  });
+  return { type: "text", value: `Started async tool ${asyncTool.resultId}` };
+}
+
+async function createRunnerPayload(options: {
+  bucket: string;
+  tool: AccountToolRecord;
   input: unknown;
-  config: Record<string, unknown>;
+  config: AgentToolConfig;
   asyncTool: unknown;
-}): string {
+  detachedCompletion?: RunnerPayload["detachedCompletion"];
+}): Promise<RunnerPayload> {
+  return {
+    bundleUrl: await getS3ObjectUrl(options.bucket, options.tool.bundleStorageKey),
+    expectedSha256: options.tool.sha256,
+    toolName: options.tool.name,
+    input: options.input,
+    config: mergeToolConfig(options.tool.defaultConfig, options.config.config),
+    asyncTool: options.asyncTool,
+    ...(options.detachedCompletion ? { detachedCompletion: options.detachedCompletion } : {}),
+  };
+}
+
+async function sandboxJobCompletionUrl(completePath: string): Promise<string> {
+  const baseUrl = await getHarnessPublicUrl();
+  if (!baseUrl) {
+    throw new Error("custom async tool completion requires AGENT_SERVICE_URL or Lambda Function URL");
+  }
+  return new URL(completePath, ensureTrailingSlash(baseUrl)).toString();
+}
+
+function runnerCode(payload: RunnerPayload): string {
   return `
 const { createHash } = await import("node:crypto");
 const { mkdir, writeFile, readFile, rename } = await import("node:fs/promises");
@@ -125,6 +233,10 @@ async function main() {
   // This is the uploaded tool's execute function. The source text lives in this
   // repo only as runner code, but the call happens inside the Kubernetes pod.
   const result = await definition.execute(ctx, payload.input);
+  if (payload.detachedCompletion) {
+    await completeAsyncTool("completed", result);
+    return;
+  }
   process.stdout.write("\\n" + marker + JSON.stringify({ ok: true, result }) + "\\n");
 }
 
@@ -178,21 +290,47 @@ async function fileHash(filePath) {
   }
 }
 
-main().catch((error) => {
+main().catch(async (error) => {
+  if (payload.detachedCompletion) {
+    try {
+      await completeAsyncTool("failed", undefined, error instanceof Error ? error.message : String(error));
+    } catch {}
+    process.exitCode = 1;
+    return;
+  }
   process.stdout.write("\\n" + marker + JSON.stringify({
     ok: false,
     error: error instanceof Error ? error.message : String(error),
   }) + "\\n");
   process.exitCode = 1;
 });
+
+async function completeAsyncTool(status, response, error) {
+  const body = status === "completed"
+    ? { status, response }
+    : { status, error: error || "custom async tool failed" };
+  const result = await fetch(payload.detachedCompletion.url, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-job-token": payload.detachedCompletion.token,
+    },
+    body: JSON.stringify(body),
+  });
+  if (!result.ok) {
+    throw new Error("custom async tool completion failed: " + result.status + " " + await result.text());
+  }
+}
 `;
 }
 
 function nodeHeredoc(code: string): string {
-  return `node <<'__CUSTOM_TOOL_RUNNER__'\n${code}\n__CUSTOM_TOOL_RUNNER__`;
+  return `node <<'${RUNNER_HEREDOC_TAG}'\n${code}\n${RUNNER_HEREDOC_TAG}`;
 }
 
-function parseRunnerOutput(stdout: string): { ok: boolean; result?: unknown; error?: unknown } | null {
+function parseRunnerOutput(stdout: string): RunnerResult | null {
+  // Uploaded tools may log arbitrary stdout. The marker lets the Lambda find the
+  // runner's final structured JSON line without treating user logs as protocol.
   const line = stdout
     .split(/\r?\n/)
     .reverse()
@@ -216,6 +354,37 @@ function mergeToolConfig(
 function extractAsyncToolMetadata(options: unknown): unknown {
   if (!options || typeof options !== "object") return undefined;
   return (options as { asyncTool?: unknown }).asyncTool;
+}
+
+function isDetachedAsyncTool(value: unknown): value is DetachedAsyncToolMetadata {
+  return Boolean(
+    value &&
+    typeof value === "object" &&
+    (value as { detached?: unknown }).detached === true &&
+    typeof (value as { resultId?: unknown }).resultId === "string" &&
+    typeof (value as { completePath?: unknown }).completePath === "string" &&
+    typeof (value as { completionToken?: unknown }).completionToken === "string",
+  );
+}
+
+function customToolExecutorConfig(): Parameters<typeof createSandboxExecutor>[0] {
+  // createSandboxExecutor only creates a local client object. Pod lookup,
+  // first-use creation, and idle resume happen inside executor.run/runBackground.
+  return {
+    provider: "kubernetes",
+    persistent: true,
+    internet: true,
+    timeout: 120,
+    outputLimitBytes: 1024 * 1024,
+    lifecycle: {
+      idleTimeoutSeconds: 300,
+      maxLifetimeSeconds: 3600,
+    },
+  };
+}
+
+function ensureTrailingSlash(value: string): string {
+  return value.endsWith("/") ? value : `${value}/`;
 }
 
 function customToolReservationKey(accountId: string, toolId: string): string {

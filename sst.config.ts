@@ -206,7 +206,6 @@ export default $config({
       asyncAgentResult: resourceName("async-agent-result", stage, region),
       asyncToolResult: resourceName("async-tool-result", stage, region),
       persistentSandboxInstance: resourceName("persistent-sandbox-instance", stage, region),
-      externalAsyncToolMock: resourceName("async-tool-mock", stage, region),
       webhookSubscribeMock: resourceName("webhook-sub-mock", stage, region),
       // Uniform sandbox image deployed across two axes (workspace mount, internet).
       sandboxMountNet: resourceName("sandbox-mount-net", stage, region),
@@ -638,21 +637,6 @@ export default $config({
       securityGroups: sandboxNetwork.securityGroups,
     });
 
-    const mockExternalAsyncTool = new sst.aws.Function("MockExternalAsyncTool", {
-      name: names.externalAsyncToolMock,
-      runtime: "python3.12",
-      architecture: "arm64",
-      bundle: "functions/mock-external-async-tool",
-      handler: "handler.handler",
-      description: "Mock external async tool for testing external-dispatch mode.",
-      timeout: "30 seconds",
-      memory: "128 MB",
-      url: {
-        authorization: "none",
-      },
-      logging: { format: "json", retention: "1 month" },
-    });
-
     const mockWebhookSubscribe = new sst.aws.Function("MockWebhookSubscribe", {
       name: names.webhookSubscribeMock,
       runtime: "python3.12",
@@ -890,7 +874,6 @@ export default $config({
         TOOL_BUNDLES_BUCKET_NAME: names.toolBundles,
         ENABLE_DIRECT_API: ENABLE_DIRECT_API ? "true" : "false",
         ENABLE_WEBSOCKET: ENABLE_WEBSOCKET ? "true" : "false",
-        MOCK_EXTERNAL_ASYNC_TOOL_URL: mockExternalAsyncTool.url,
         SANDBOX_FN_MOUNT_NET: names.sandboxMountNet,
         SANDBOX_FN_MOUNT_NONET: names.sandboxMountNonet,
         SANDBOX_FN_NOMOUNT_NET: names.sandboxNomountNet,
@@ -1295,7 +1278,6 @@ export default $config({
     return {
       agentServiceUrl: harnessProcessing.url,
       accountServiceUrl: accountManage.url,
-      mockExternalAsyncToolUrl: mockExternalAsyncTool.url,
       mockWebhookSubscribeUrl: mockWebhookSubscribe.url,
       sandboxMountNetFunctionName: names.sandboxMountNet,
       sandboxMountNoNetFunctionName: names.sandboxMountNonet,

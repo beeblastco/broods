@@ -41,14 +41,14 @@ import {
   markAsyncAgentResultFailed,
 } from "./async-agent-result.ts";
 import { SubagentCoordinator } from "./subagents.ts";
-import { AsyncToolCoordinator, completionToParentMessage, type AsyncToolExecutionMode } from "./async-tools.ts";
+import { AsyncToolCoordinator, completionToParentMessage } from "./async-tools.ts";
 import {
   getAsyncToolCompletionToken,
-  getExternalAsyncToolDispatchGroup,
+  getDetachedAsyncToolGroup,
   getAsyncToolResult,
   listAsyncToolResultsByParentEvent,
-  sealExternalAsyncToolDispatchGroup,
-  settleExternalAsyncToolResult,
+  sealDetachedAsyncToolGroup,
+  settleAsyncToolResultFromCallback,
   type AsyncToolDelivery,
   type AsyncToolResultRecord,
 } from "./async-tool-result.ts";
@@ -62,7 +62,6 @@ const ENABLE_DIRECT_API = booleanEnv("ENABLE_DIRECT_API", true);
 const ENABLE_WEBSOCKET = booleanEnv("ENABLE_WEBSOCKET", false);
 const LAMBDA_TIMEOUT_SAFETY_MS = 5 * 60 * 1000;
 const DEFAULT_PARENT_WAIT_MS = 8 * 60 * 1000;
-const DETACHED_REQUEST_ASYNC_TOOL_MODES = new Set<AsyncToolExecutionMode>(["same-invocation", "external-dispatch"]);
 const textEncoder = new TextEncoder();
 const lambda = new LambdaClient({ region: process.env.AWS_REGION });
 
@@ -92,7 +91,7 @@ interface ParentContinuationResult {
   failureText: string | null;
   finalResponse?: JSONValue;
   approvals: ToolApprovalSummary[];
-  hasExternalDispatches: boolean;
+  hasDetachedCallbacks: boolean;
 }
 
 export async function handler(
@@ -173,7 +172,7 @@ async function handleScheduledCronJob(event: CronJobInvocation): Promise<void> {
 }
 
 /**
- * Handle the async tool result completion request from external source.
+ * Handle the account-auth async tool result completion request.
  * Requires account-scoped authentication and agent validation.
  */
 async function handleAsyncToolCompletionRequest(event: AsyncToolCompletionInboundEvent): Promise<LambdaResponse> {
@@ -204,7 +203,7 @@ async function handleAsyncToolCompletionRequest(event: AsyncToolCompletionInboun
   }
 
   // Settle the tool result
-  const settled = await settleExternalAsyncToolResult({
+  const settled = await settleAsyncToolResultFromCallback({
     resultId: event.resultId,
     status: event.status,
     ...(event.response !== undefined ? { response: event.response } : {}),
@@ -221,7 +220,7 @@ async function handleAsyncToolCompletionRequest(event: AsyncToolCompletionInboun
  * Handle a background-job completion posted by the detached job itself.
  * Authenticated by the per-job token (matched against the stored row), so the
  * sandbox never needs an account secret. Reuses the same settle → continuation
- * path as the external async-tool completion endpoint.
+ * path as the account-auth async-tool completion endpoint.
  */
 async function handleSandboxJobCompletionRequest(event: SandboxJobCompletionInboundEvent): Promise<LambdaResponse> {
   const existing = await getAsyncToolResult(event.resultId);
@@ -238,7 +237,7 @@ async function handleSandboxJobCompletionRequest(event: SandboxJobCompletionInbo
     return jsonResponse(404, { error: "Background job result not found" });
   }
 
-  const settled = await settleExternalAsyncToolResult({
+  const settled = await settleAsyncToolResultFromCallback({
     resultId: event.resultId,
     status: event.status,
     ...(event.response !== undefined ? { response: event.response } : {}),
@@ -263,7 +262,7 @@ type ContinuationOutcome =
  */
 async function continueAfterAsyncToolSettlement(settled: AsyncToolResultRecord): Promise<ContinuationOutcome> {
   const toolResults = await listCurrentParentToolResults(settled);
-  const dispatchGroup = await getExternalAsyncToolDispatchGroup(settled.parentEventId);
+  const dispatchGroup = await getDetachedAsyncToolGroup(settled.parentEventId);
   const missingCount = Math.max((dispatchGroup?.resultIds.length ?? 0) - toolResults.length, 0);
   const pendingCount = toolResults.filter((result) => result.status === "processing").length + missingCount;
   if (!dispatchGroup?.sealed || pendingCount > 0) {
@@ -447,8 +446,8 @@ async function handleAsyncWorkerRequest(event: DirectInboundEvent, context?: Lam
     if (result.didFail && !didSettle) {
       await settleAsyncFailure(event, result.failureText ?? AGENT_PROCESSING_FAILED);
     }
-    if (result.hasExternalDispatches) {
-      await continueExternalAsyncToolsIfReady(event, event.agentConfig);
+    if (result.hasDetachedCallbacks) {
+      await continueDetachedAsyncToolsIfReady(event, event.agentConfig);
     }
   } catch (err) {
     logError("Async direct request processing failed", {
@@ -507,7 +506,7 @@ async function handleNatsWorkerRequest(event: DirectInboundEvent, context?: Lamb
     try {
       const subagentCoordinator = new SubagentCoordinator(session, event.agentConfig, waitUntilMs(context));
       // Define the async tool mode application map.
-      const asyncToolCoordinator = new AsyncToolCoordinator(session, waitUntilMs(context), DETACHED_REQUEST_ASYNC_TOOL_MODES, {
+      const asyncToolCoordinator = new AsyncToolCoordinator(session, waitUntilMs(context), {
         kind: "nats",
         connectionId,
         publicEventId: event.publicEventId,
@@ -539,12 +538,12 @@ async function handleNatsWorkerRequest(event: DirectInboundEvent, context?: Lamb
         },
       });
 
-      if (asyncToolCoordinator.hasExternalDispatches) {
-        await sealExternalAsyncToolDispatchGroup(event.eventId);
-        await continueExternalAsyncToolsIfReady(event, event.agentConfig);
+      if (asyncToolCoordinator.hasDetachedCallbacks) {
+        await sealDetachedAsyncToolGroup(event.eventId);
+        await continueDetachedAsyncToolsIfReady(event, event.agentConfig);
         await publisher.publish({
           type: "waiting",
-          reason: "external-async-tools",
+          reason: "detached-async-tools",
         });
       } else {
         await publisher.publish({ type: "done" });
@@ -882,11 +881,11 @@ async function invokeHarnessWorker(payload: AsyncWorkerInvocation | NatsWorkerIn
   }));
 }
 
-async function continueExternalAsyncToolsIfReady(
+async function continueDetachedAsyncToolsIfReady(
   event: DirectInboundEvent,
   agentConfig: DirectInboundEvent["agentConfig"],
 ): Promise<boolean> {
-  const dispatchGroup = await getExternalAsyncToolDispatchGroup(event.eventId);
+  const dispatchGroup = await getDetachedAsyncToolGroup(event.eventId);
   if (!dispatchGroup?.sealed) {
     return false;
   }
@@ -962,7 +961,7 @@ async function createCronDirectEvent(job: CronJobRecord): Promise<DirectInboundE
 }
 
 async function listCurrentParentToolResults(settled: AsyncToolResultRecord): Promise<AsyncToolResultRecord[]> {
-  const dispatchGroup = await getExternalAsyncToolDispatchGroup(settled.parentEventId);
+  const dispatchGroup = await getDetachedAsyncToolGroup(settled.parentEventId);
   const queried = dispatchGroup?.sealed
     ? (await Promise.all(dispatchGroup.resultIds.map((resultId) => getAsyncToolResult(resultId))))
       .filter((result): result is AsyncToolResultRecord => result?.parentEventId === settled.parentEventId)
@@ -1006,7 +1005,7 @@ function createDirectContinuationSseBody(
   return new ReadableStream({
     async start(controller) {
       const subagentCoordinator = new SubagentCoordinator(session, event.agentConfig, waitUntilMs(context));
-      const asyncToolCoordinator = new AsyncToolCoordinator(session, waitUntilMs(context), new Set(["same-invocation"] as const));
+      const asyncToolCoordinator = new AsyncToolCoordinator(session, waitUntilMs(context));
 
       try {
         await runParentContinuationLoop({
@@ -1042,9 +1041,9 @@ async function runAgentLoopUntilSubagentsIdle(
     onErrorText(error: string): Promise<void>;
     onApprovalRequired?(approvals: ToolApprovalSummary[]): Promise<void>;
   },
-): Promise<{ didFail: boolean; failureText: string | null; hasExternalDispatches: boolean }> {
+): Promise<{ didFail: boolean; failureText: string | null; hasDetachedCallbacks: boolean }> {
   const subagentCoordinator = new SubagentCoordinator(session, agentConfig, waitUntilMs(context));
-  const asyncToolCoordinator = new AsyncToolCoordinator(session, waitUntilMs(context), DETACHED_REQUEST_ASYNC_TOOL_MODES, { kind: "async" });
+  const asyncToolCoordinator = new AsyncToolCoordinator(session, waitUntilMs(context), session.delivery ?? { kind: "async" });
   const result = await runParentContinuationLoop({
     session: session,
     subagentCoordinator: subagentCoordinator,
@@ -1055,38 +1054,39 @@ async function runAgentLoopUntilSubagentsIdle(
       await stream.consumeStream();
     },
   });
-  const hasExternalDispatches = asyncToolCoordinator.hasExternalDispatches;
-  if (hasExternalDispatches) {
-    await sealExternalAsyncToolDispatchGroup(session.eventId);
+  const hasDetachedCallbacks = asyncToolCoordinator.hasDetachedCallbacks;
+  if (hasDetachedCallbacks) {
+    await sealDetachedAsyncToolGroup(session.eventId);
   }
 
   if (result.approvals.length > 0) {
     await reply.onApprovalRequired?.(result.approvals);
-    return { didFail: false, failureText: null, hasExternalDispatches };
+    return { didFail: false, failureText: null, hasDetachedCallbacks };
   }
 
   if (result.didFail) {
     await reply.onErrorText(result.failureText ?? AGENT_PROCESSING_FAILED);
-    return { didFail: true, failureText: result.failureText, hasExternalDispatches };
+    return { didFail: true, failureText: result.failureText, hasDetachedCallbacks };
   }
 
-  if (hasExternalDispatches) {
-    return { didFail: false, failureText: null, hasExternalDispatches };
+  if (hasDetachedCallbacks) {
+    return { didFail: false, failureText: null, hasDetachedCallbacks };
   }
 
   if (result.finalResponse !== undefined) {
     await reply.onFinalText(result.finalResponse);
   }
 
-  return { didFail: false, failureText: null, hasExternalDispatches };
+  return { didFail: false, failureText: null, hasDetachedCallbacks };
 }
 
 /**
  * Runs parent model passes until there is no runnable injected work.
  *
- * Heartbeats are emitted only while this Lambda waits on in-process subagents
- * or same-invocation async tools. External-dispatch async tools do not add
- * pending work here, so the Lambda can exit after sealing the dispatch group.
+ * Heartbeats are emitted only while this Lambda waits on in-process subagents,
+ * built-in async tools, or uploaded async tools on SSE. Detached uploaded async
+ * tools do not add pending work here, so the Lambda can exit after sealing the
+ * group.
  */
 async function runParentContinuationLoop(options: {
   session: Session;
@@ -1127,7 +1127,7 @@ async function runParentContinuationLoop(options: {
         failureText: null,
         ...(finalResponse !== undefined ? { finalResponse } : {}),
         approvals,
-        hasExternalDispatches: options.asyncToolCoordinator.hasExternalDispatches,
+        hasDetachedCallbacks: options.asyncToolCoordinator.hasDetachedCallbacks,
       };
     }
     if (stream.didFail()) {
@@ -1136,7 +1136,7 @@ async function runParentContinuationLoop(options: {
         failureText: stream.failureText(),
         ...(finalResponse !== undefined ? { finalResponse } : {}),
         approvals: [],
-        hasExternalDispatches: options.asyncToolCoordinator.hasExternalDispatches,
+        hasDetachedCallbacks: options.asyncToolCoordinator.hasDetachedCallbacks,
       };
     }
 
@@ -1150,7 +1150,7 @@ async function runParentContinuationLoop(options: {
         failureText: null,
         ...(finalResponse !== undefined ? { finalResponse } : {}),
         approvals: [],
-        hasExternalDispatches: options.asyncToolCoordinator.hasExternalDispatches,
+        hasDetachedCallbacks: options.asyncToolCoordinator.hasDetachedCallbacks,
       };
     }
 
@@ -1161,7 +1161,7 @@ async function runParentContinuationLoop(options: {
         failureText: null,
         ...(finalResponse !== undefined ? { finalResponse } : {}),
         approvals: [],
-        hasExternalDispatches: options.asyncToolCoordinator.hasExternalDispatches,
+        hasDetachedCallbacks: options.asyncToolCoordinator.hasDetachedCallbacks,
       };
     }
   }
@@ -1174,8 +1174,9 @@ async function runParentContinuationLoop(options: {
  * queued, still be running, or be absent. This helper waits for outstanding
  * in-process work, emits wait heartbeats while waiting, and injects
  * parent-visible completions plus timeout notices near the Lambda deadline.
- * External-dispatch async tools do not add in-memory pending work, so waiting
- * here only holds the Lambda for subagents and same-invocation async tools.
+ * Detached uploaded async tools do not add in-memory pending work, so waiting
+ * here only holds the Lambda for subagents, built-in async tools, and uploaded
+ * async tools on SSE.
  */
 async function waitAndDrainAsyncWork(
   subagentCoordinator: SubagentCoordinator,

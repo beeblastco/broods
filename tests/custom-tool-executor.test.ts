@@ -8,6 +8,7 @@ import type { AccountToolRecord } from "../functions/_shared/storage/index.ts";
 import type {
   SandboxExecutor,
   SandboxExecutorConfig,
+  SandboxJobHandle,
   SandboxRunResult,
 } from "../functions/harness-processing/sandbox/types.ts";
 
@@ -22,7 +23,11 @@ const runMock = mock(async (): Promise<SandboxRunResult> => ({
   durationMs: 10,
   provider: "kubernetes",
 }));
-const createSandboxExecutorMock = mock((_config: SandboxExecutorConfig): SandboxExecutor => ({ run: runMock }));
+const runBackgroundMock = mock(async (): Promise<SandboxJobHandle> => ({ jobId: "job_test" }));
+const createSandboxExecutorMock = mock((_config: SandboxExecutorConfig): SandboxExecutor => ({
+  run: runMock,
+  runBackground: runBackgroundMock,
+}));
 
 mock.module("../functions/_shared/s3.ts", () => ({
   getS3ObjectUrl: getS3ObjectUrlMock,
@@ -34,10 +39,15 @@ mock.module("../functions/_shared/s3.ts", () => ({
   isMissingS3Error: mock(() => false),
 }));
 
+mock.module("../functions/harness-processing/self-url.ts", () => ({
+  getHarnessPublicUrl: mock(async () => "https://agent.example"),
+}));
+
 beforeEach(() => {
   process.env.TOOL_BUNDLES_BUCKET_NAME = "tool-bundles";
   getS3ObjectUrlMock.mockClear();
   runMock.mockClear();
+  runBackgroundMock.mockClear();
   createSandboxExecutorMock.mockClear();
 });
 
@@ -72,6 +82,39 @@ describe("executeAccountToolInSandbox", () => {
     const code = runRequest.code;
     expect(code).toContain("node <<'__CUSTOM_TOOL_RUNNER__'");
     expect(code).toContain("https://tool-bundles.example/account-tools/acct_test/bundles/hash.mjs?sig=test");
+    expect(runBackgroundMock).not.toHaveBeenCalled();
+  });
+
+  it("starts uploaded async tools as Kubernetes background work when completion metadata is detached", async () => {
+    const { executeAccountToolInSandbox } = await import("../functions/harness-processing/tools/custom-tool-executor.ts");
+
+    const result = await executeAccountToolInSandbox({
+      accountId: "acct_test",
+      tool: accountToolRecord(sha256(bundle)),
+      input: { message: "hi" },
+      config: { config: { fromAgent: true } },
+      options: {
+        asyncTool: {
+          resultId: "async_tool_1",
+          detached: true,
+          completePath: "/sandbox-jobs/async_tool_1/complete",
+          completionToken: "tok_123",
+        },
+      },
+      createExecutor: createSandboxExecutorMock,
+    });
+
+    expect(result).toEqual({ type: "text", value: "Started async tool async_tool_1" });
+    expect(runMock).not.toHaveBeenCalled();
+    expect(runBackgroundMock).toHaveBeenCalledWith(expect.objectContaining({
+      runtime: "bash",
+      reservationKey: "custom-tool-acct-test-tool-abc123",
+      workspaceRoot: "/tmp",
+    }));
+    const [runRequest] = runBackgroundMock.mock.calls[0] as unknown as [{ code: string }];
+    expect(runRequest.code).toContain("https://agent.example/sandbox-jobs/async_tool_1/complete");
+    expect(runRequest.code).toContain('"completionToken":"tok_123"');
+    expect(runRequest.code).toContain('"x-job-token"');
   });
 
   it("fails cleanly when the runner reports a missing or corrupt bundle", async () => {

@@ -1,5 +1,5 @@
 /**
- * Async external tool coordinator tests.
+ * Async tool coordinator tests.
  * Cover result persistence and parent-message injection without provider calls.
  */
 
@@ -48,7 +48,7 @@ describe("AsyncToolCoordinator", () => {
           return { answer: `result for ${query}` };
         },
       }),
-    }, new Map([["slowLookup", "same-invocation" as const]]));
+    }, new Map([["slowLookup", "built-in" as const]]));
 
     const pending = await (tools.slowLookup as {
       execute(input: unknown, options: { toolCallId: string; messages: [] }): Promise<unknown>;
@@ -100,7 +100,7 @@ describe("AsyncToolCoordinator", () => {
 
     const tools = coordinator.dispatch({
       googleSearch: providerTool as never,
-    }, new Map([["googleSearch", "same-invocation" as const]]));
+    }, new Map([["googleSearch", "built-in" as const]]));
 
     expect(tools.googleSearch as unknown).toBe(providerTool);
     expect(sendMock).not.toHaveBeenCalled();
@@ -126,7 +126,7 @@ describe("AsyncToolCoordinator", () => {
         }),
         execute: async () => await new Promise(() => {}),
       }),
-    }, new Map([["neverFinishes", "same-invocation" as const]]));
+    }, new Map([["neverFinishes", "built-in" as const]]));
 
     await (tools.neverFinishes as {
       execute(input: unknown, options: { toolCallId: string; messages: [] }): Promise<unknown>;
@@ -143,18 +143,22 @@ describe("AsyncToolCoordinator", () => {
     expect(messageText(messages[0])).toContain("Async tool call is still pending near the parent request timeout.");
   });
 
-  it("uses external-dispatch mode without starting tracked background work", async () => {
+  it("detaches uploaded async tools on delivered request paths", async () => {
     dynamo.send = sendMock as never;
     const { AsyncToolCoordinator } = await import("../functions/harness-processing/async-tools.ts");
     const persistModelMessages = mock(async (_messages: UserModelMessage[]) => []);
-    let finishTool!: (value: unknown) => void;
-    let executeReturned = false;
-    let asyncToolMetadata: { resultId?: string; statusReference?: { resultId?: string } } | undefined;
+    let asyncToolMetadata: {
+      resultId?: string;
+      completePath?: string;
+      completionToken?: string;
+      detached?: boolean;
+      statusReference?: { resultId?: string };
+    } | undefined;
     const coordinator = new AsyncToolCoordinator({
       conversationKey: "conversation-1",
       eventId: "event-1",
       persistModelMessages,
-    } as never, Date.now() + 1_000, new Set(["external-dispatch"] as const), {
+    } as never, Date.now() + 1_000, {
       kind: "nats",
       connectionId: "connection-1",
       publicEventId: "event-public-1",
@@ -162,8 +166,8 @@ describe("AsyncToolCoordinator", () => {
     });
 
     const tools = coordinator.dispatch({
-      externalLookup: tool({
-        description: "External lookup.",
+      uploadedLookup: tool({
+        description: "Uploaded lookup.",
         inputSchema: jsonSchema({
           type: "object",
           properties: {},
@@ -171,37 +175,29 @@ describe("AsyncToolCoordinator", () => {
         }),
         execute: async (_input, options) => {
           asyncToolMetadata = (options as { asyncTool?: typeof asyncToolMetadata }).asyncTool;
-          await new Promise((resolve) => {
-            finishTool = resolve;
-          });
-          return { answer: "late result" };
+          return { started: true };
         },
       }),
-    }, new Map([["externalLookup", "external-dispatch" as const]]));
+    }, new Map([["uploadedLookup", "uploaded" as const]]));
 
-    const pendingPromise = (tools.externalLookup as {
+    const pending = await (tools.uploadedLookup as {
       execute(input: unknown, options: { toolCallId: string; messages: [] }): Promise<unknown>;
-    }).execute({}, { toolCallId: "tool-call-3", messages: [] }).then((result) => {
-      executeReturned = true;
-      return result;
-    });
+    }).execute({}, { toolCallId: "tool-call-3", messages: [] });
 
-    await sleep(0);
     expect(coordinator.pendingCount).toBe(0);
-    expect(coordinator.hasExternalDispatches).toBe(true);
-    expect(executeReturned).toBe(false);
+    expect(coordinator.hasDetachedCallbacks).toBe(true);
     expect(asyncToolMetadata?.resultId?.startsWith("async_tool_")).toBe(true);
+    expect(asyncToolMetadata?.detached).toBe(true);
+    expect(asyncToolMetadata?.completePath).toBe(`/sandbox-jobs/${encodeURIComponent(asyncToolMetadata?.resultId ?? "")}/complete`);
+    expect(typeof asyncToolMetadata?.completionToken).toBe("string");
     expect(asyncToolMetadata?.statusReference?.resultId).toBe(asyncToolMetadata?.resultId);
     expect(persistModelMessages).not.toHaveBeenCalled();
-
-    finishTool(undefined);
-    await expect(pendingPromise).resolves.toMatchObject({
-      toolName: "externalLookup",
+    expect(pending).toMatchObject({
+      toolName: "uploadedLookup",
       toolCallId: "tool-call-3",
       status: "running",
     });
 
-    expect(executeReturned).toBe(true);
     expect(persistModelMessages).not.toHaveBeenCalled();
     expect(sendMock.mock.calls.some(([command]) =>
       command instanceof UpdateItemCommand &&
@@ -220,50 +216,27 @@ describe("AsyncToolCoordinator", () => {
         publicConversationKey: { S: "conversation-public-1" },
       },
     });
+    expect(putCommand.input.Item?.completionToken?.S).toBe(asyncToolMetadata?.completionToken);
     const groupCommand = sendMock.mock.calls.find(([command]) =>
       command instanceof UpdateItemCommand &&
-      command.input.ExpressionAttributeValues?.[":itemType"]?.S === "external-dispatch-group"
+      command.input.ExpressionAttributeValues?.[":itemType"]?.S === "detached-async-tool-group"
     )?.[0];
     expect(groupCommand).toBeInstanceOf(UpdateItemCommand);
   });
 
-  it("rejects same-invocation async tools when only external dispatch is supported", async () => {
+  it("waits for built-in tools but detaches uploaded tools in delivered request paths", async () => {
     dynamo.send = sendMock as never;
     const { AsyncToolCoordinator } = await import("../functions/harness-processing/async-tools.ts");
     const coordinator = new AsyncToolCoordinator({
       conversationKey: "conversation-1",
       eventId: "event-1",
       persistModelMessages: async () => [],
-    } as never, Date.now() + 1_000, new Set(["external-dispatch"] as const));
-
-    expect(() => coordinator.dispatch({
-      slowLookup: tool({
-        description: "Slow lookup.",
-        inputSchema: jsonSchema({
-          type: "object",
-          properties: {},
-          additionalProperties: false,
-        }),
-        execute: async () => ({ ok: true }),
-      }),
-    }, new Map([["slowLookup", "same-invocation" as const]]))).toThrow(
-      "Async tool slowLookup uses same-invocation, which is not supported by this request path",
-    );
-  });
-
-  it("allows same-invocation and external-dispatch tools in detached request paths", async () => {
-    dynamo.send = sendMock as never;
-    const { AsyncToolCoordinator } = await import("../functions/harness-processing/async-tools.ts");
-    const coordinator = new AsyncToolCoordinator({
-      conversationKey: "conversation-1",
-      eventId: "event-1",
-      persistModelMessages: async () => [],
-    } as never, Date.now() + 1_000, new Set(["same-invocation", "external-dispatch"] as const), { kind: "async" });
+    } as never, Date.now() + 1_000, { kind: "async" });
     let finishSameInvocation!: (value: unknown) => void;
 
     const tools = coordinator.dispatch({
-      sameInvocation: tool({
-        description: "Same invocation.",
+      builtInAsync: tool({
+        description: "Built-in async.",
         inputSchema: jsonSchema({ type: "object", properties: {}, additionalProperties: false }),
         execute: async () => {
           await new Promise((resolve) => {
@@ -272,31 +245,31 @@ describe("AsyncToolCoordinator", () => {
           return { ok: true };
         },
       }),
-      externalDispatch: tool({
-        description: "External dispatch.",
+      uploadedAsync: tool({
+        description: "Uploaded async.",
         inputSchema: jsonSchema({ type: "object", properties: {}, additionalProperties: false }),
-        execute: async () => ({ dispatched: true }),
+        execute: async () => ({ started: true }),
       }),
     }, new Map([
-      ["sameInvocation", "same-invocation" as const],
-      ["externalDispatch", "external-dispatch" as const],
+      ["builtInAsync", "built-in" as const],
+      ["uploadedAsync", "uploaded" as const],
     ]));
 
-    await expect((tools.sameInvocation as {
+    await expect((tools.builtInAsync as {
       execute(input: unknown, options: { toolCallId: string; messages: [] }): Promise<unknown>;
     }).execute({}, { toolCallId: "tool-call-4", messages: [] })).resolves.toMatchObject({
-      toolName: "sameInvocation",
+      toolName: "builtInAsync",
       status: "running",
     });
-    await expect((tools.externalDispatch as {
+    await expect((tools.uploadedAsync as {
       execute(input: unknown, options: { toolCallId: string; messages: [] }): Promise<unknown>;
     }).execute({}, { toolCallId: "tool-call-5", messages: [] })).resolves.toMatchObject({
-      toolName: "externalDispatch",
+      toolName: "uploadedAsync",
       status: "running",
     });
 
     expect(coordinator.pendingCount).toBe(1);
-    expect(coordinator.hasExternalDispatches).toBe(true);
+    expect(coordinator.hasDetachedCallbacks).toBe(true);
     finishSameInvocation(undefined);
     await expect(coordinator.waitForIdle()).resolves.toBe("idle");
   });
@@ -313,8 +286,4 @@ function messageText(message: UserModelMessage | undefined): string {
 
   const part = content[0];
   return part?.type === "text" ? part.text : "";
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }
