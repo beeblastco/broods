@@ -337,6 +337,13 @@ export class KubernetesSandboxExecutor implements SandboxExecutor {
     }
 
     const podSpec: Record<string, unknown> = { containers: [container] };
+    if (home && !mounting) {
+      // The home PVC mounts root-owned, but a non-S3 sandbox runs as the image
+      // user (uid 1000). Without fsGroup the user cannot write ${HOME}, so e.g.
+      // background-job tracking under ${HOME}/.jobs fails and detached jobs never
+      // start. fsGroup makes the volume group-writable for that user.
+      podSpec.securityContext = { fsGroup: 1000, fsGroupChangePolicy: "OnRootMismatch" };
+    }
     const sa = configString(opts.serviceAccountName) ?? optionalEnv("KUBERNETES_SANDBOX_SERVICE_ACCOUNT") ??
       (mounting ? DEFAULT_WORKSPACE_SERVICE_ACCOUNT : undefined);
     if (sa) podSpec.serviceAccountName = sa;

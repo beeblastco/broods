@@ -39,7 +39,7 @@ const customTool = await createTool(account.secret, {
 export default {
   name: "test_uploaded_async",
   async execute(ctx, input) {
-    await new Promise((resolve) => setTimeout(resolve, 3000));
+    await new Promise((resolve) => setTimeout(resolve, 5000));
     return { type: "text", value: \`uploaded async completed: \${input.message}\` };
   },
 };

@@ -402,7 +402,7 @@ function withAsyncToolMetadata(
 function pendingResultText(resultId: string): string {
   return [
     `Started in the background (resultId: ${resultId})`,
-    "The result is delivered back into this conversation automatically when it finishes; poll async_status with this resultId to check status.",
+    "The result is delivered back into this conversation automatically when it finishes; stop to wait, or continue with other tasks, or poll async_status with this resultId to check status.",
   ].join("\n");
 }
 
