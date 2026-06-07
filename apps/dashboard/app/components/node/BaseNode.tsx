@@ -3,8 +3,9 @@
 import { JavaScript } from "@/app/components/icons/JavaScript";
 import { Python } from "@/app/components/icons/Python";
 import type { AgentHealthStatus } from "@/app/hooks/useAgentHealth";
-import { Handle, Position, useStore } from "@xyflow/react";
-import { Globe, Slash } from "lucide-react";
+import { useInfraAnalysis } from "@/app/components/canvas/InfraAnalysisContext";
+import { Handle, Position, useConnection, useStore, useUpdateNodeInternals } from "@xyflow/react";
+import { CornerDownRight, Globe, Lock, Slash, Users } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 export type BaseNodeData = {
@@ -56,6 +57,7 @@ export function BaseNode({
     cardStatus,
     subtitle,
     featureRows,
+    showSideHandles,
 }: {
     id: string;
     nodeType: string;
@@ -70,9 +72,35 @@ export function BaseNode({
     subtitle?: React.ReactNode;
     /** Optional list of `+ feature` rows rendered between label and status pill. */
     featureRows?: { key: string; icon?: React.ReactNode; label: string }[];
+    /** Render left/right handles for mount connections (workspace ↔ sandbox). */
+    showSideHandles?: boolean;
 }) {
     const zoom = useStore(zoomSelector);
     const scale = Math.min(Math.max(1 / Math.sqrt(zoom), 0.9), 1.2);
+
+    // Side handles compete with the top handle for connection snapping, so only mount them
+    // when idle (grabbable to start a mount) or during a workspace↔sandbox drag — never during
+    // an agent connection, so agent edges snap cleanly to the top instead of the sides.
+    const sideHandlesActive = useConnection((connection) => {
+        if (!connection.inProgress) return true;
+        const fromType = connection.fromNode?.type;
+
+        return fromType === "workspace" || fromType === "sandbox";
+    });
+
+    // ReactFlow caches each node's handle positions; toggling the side handles above does not
+    // change node dimensions, so we must force a recompute or the hidden handles keep stealing
+    // the closest-handle snap during agent connections.
+    const updateNodeInternals = useUpdateNodeInternals();
+    useEffect(() => {
+        if (showSideHandles) updateNodeInternals(id);
+    }, [showSideHandles, sideHandlesActive, id, updateNodeInternals]);
+
+    // Infra badges: workspace effective-sandbox state (B) and shared-agent count (F).
+    const infraAnalysis = useInfraAnalysis();
+    const workspaceState = nodeType === "workspace" ? infraAnalysis.workspaceStates[id] : undefined;
+    const sharedAgentCount =
+        nodeType === "workspace" || nodeType === "sandbox" ? infraAnalysis.agentRefCounts[id] ?? 0 : 0;
 
     // The header content is counter-scaled to stay legible when zoomed out, but CSS
     // transforms don't reserve layout space — so we measure its unscaled height and
@@ -175,8 +203,26 @@ export function BaseNode({
             <Handle
                 type="target"
                 position={Position.Top}
+                isConnectableStart={false}
                 className="bg-transparent! w-2.5! h-2.5! border-transparent!"
             />
+
+            {showSideHandles && sideHandlesActive && (
+                <>
+                    <Handle
+                        id="left"
+                        type="source"
+                        position={Position.Left}
+                        className="bg-transparent! w-2.5! h-2.5! border-transparent!"
+                    />
+                    <Handle
+                        id="right"
+                        type="source"
+                        position={Position.Right}
+                        className="bg-transparent! w-2.5! h-2.5! border-transparent!"
+                    />
+                </>
+            )}
 
             {toolMeta && (
                 <span className="absolute top-2 right-2.5 z-10">
@@ -251,6 +297,42 @@ export function BaseNode({
                             ))}
                         </div>
                     )}
+
+                    {/* B — workspace effective-sandbox state from the cascade */}
+                    {workspaceState && (
+                        <div className="mt-1.5 flex items-center gap-1.5 text-[11px] min-w-0">
+                            {workspaceState.kind === "readonly" ? (
+                                <>
+                                    <Lock className="size-3 shrink-0 text-amber-500/80" />
+                                    <span className="text-amber-500/90">read-only</span>
+                                </>
+                            ) : workspaceState.kind === "override" ? (
+                                <>
+                                    <CornerDownRight className="size-3 shrink-0 text-teal-500/80" />
+                                    <span className="truncate text-teal-500/90" title={workspaceState.sandboxLabels.join(", ")}>
+                                        {workspaceState.sandboxLabels.join(", ")}
+                                    </span>
+                                    <span className="shrink-0 text-muted-foreground/60">· mounted</span>
+                                </>
+                            ) : (
+                                <>
+                                    <CornerDownRight className="size-3 shrink-0 text-muted-foreground/70" />
+                                    <span className="truncate text-muted-foreground" title={workspaceState.sandboxLabel}>
+                                        {workspaceState.sandboxLabel}
+                                    </span>
+                                    <span className="shrink-0 text-muted-foreground/60">· inherited</span>
+                                </>
+                            )}
+                        </div>
+                    )}
+
+                    {/* F — shared across multiple agents */}
+                    {sharedAgentCount >= 2 && (
+                        <div className="mt-1 flex items-center gap-1 text-[11px] text-muted-foreground">
+                            <Users className="size-3 shrink-0" />
+                            <span>shared ×{sharedAgentCount}</span>
+                        </div>
+                    )}
                 </div>
             </div>
 
@@ -261,11 +343,17 @@ export function BaseNode({
                 </div>
             )}
 
-            <Handle
-                type="source"
-                position={Position.Bottom}
-                className="bg-transparent! w-2.5! h-2.5! border-transparent!"
-            />
+            {/* Only agents source downward edges; service nodes receive on the top handle and
+                mount via the sides, so omitting their bottom handle stops it from stealing the
+                closest-handle snap and lets agent edges land cleanly on the top. */}
+            {nodeType === "agent" && (
+                <Handle
+                    type="source"
+                    position={Position.Bottom}
+                    isConnectableEnd={false}
+                    className="bg-transparent! w-2.5! h-2.5! border-transparent!"
+                />
+            )}
         </div>
     );
 }

@@ -3,6 +3,7 @@
 /** Main canvas component that renders nodes and edges from the database. */
 import { CanvasControls } from "@/app/components/canvas/CanvasControl";
 import { DeletableEdge } from "@/app/components/canvas/DeletableEdge";
+import { MountEdge } from "@/app/components/canvas/MountEdge";
 import { EmptyCanvasGuide } from "@/app/components/canvas/EmptyCanvasGuide";
 import type { BaseNodeData } from "@/app/components/node/BaseNode";
 import { AgentNode } from "@/app/components/node/Agent";
@@ -11,7 +12,9 @@ import { SandboxNode } from "@/app/components/node/Sandbox";
 import { SkillNode } from "@/app/components/node/Skill";
 import { ToolNode } from "@/app/components/node/Tool";
 import { WorkspaceNode } from "@/app/components/node/Workspace";
+import { InfraAnalysisProvider } from "@/app/components/canvas/InfraAnalysisContext";
 import {
+    analyzeCanvasInfra,
     defaultRuntimeNodeData,
     deriveAgentRuntimeRefs,
     serializeRuntimeRefs,
@@ -30,12 +33,15 @@ import { useEnvironment } from "@/app/hooks/useEnvironment";
 import {
     addEdge,
     Background,
+    ConnectionMode,
+    MarkerType,
     Panel,
     ReactFlow,
     ReactFlowProvider,
     useEdgesState,
     useNodesState,
     useReactFlow,
+    type Connection,
     type Edge,
     type Node,
     type NodeMouseHandler,
@@ -77,6 +83,7 @@ const nodeTypes = {
 
 const edgeTypes = {
     default: DeletableEdge,
+    mount: MountEdge,
 };
 
 const NODE_TEMPLATES = [
@@ -92,6 +99,101 @@ const NODE_TEMPLATES = [
 const FIT_VIEW_OPTIONS = { maxZoom: 1.5, padding: 1 } as const;
 const PRO_OPTIONS = { hideAttribution: true } as const;
 type FlowPosition = { x: number; y: number };
+
+/**
+ * Reconstruct mount edge properties from the encoded ID.
+ * Format: "mount:{source}-{sourceHandle}-{target}-{targetHandle}"
+ * Node IDs are numeric strings so splitting on "-" is safe.
+ */
+function hydrateMountEdge(edge: Edge): Edge {
+    if (!edge.id.startsWith("mount:")) return edge;
+    const payload = edge.id.slice("mount:".length);
+    const parts = payload.split("-");
+    // parts: [source, sourceHandle, target, targetHandle]
+    if (parts.length !== 4) return edge;
+    const [source, sourceHandle, target, targetHandle] = parts;
+
+    return {
+        ...edge,
+        source: source,
+        sourceHandle: sourceHandle,
+        target: target,
+        targetHandle: targetHandle,
+        type: "mount",
+        animated: false,
+    };
+}
+
+/** Deterministic edge id matching its endpoints. */
+function plainEdgeId(source: string, target: string): string {
+    return `xy-edge__${source}-${target}`;
+}
+
+/**
+ * Migrate legacy auto-redirected edges (agent→sandbox carrying `_original`) back into direct
+ * agent→workspace edges, matching the explicit-wiring model.
+ */
+function unredirectEdge(edge: Edge): Edge {
+    const data = (edge.data as Record<string, unknown> | undefined) ?? {};
+    const original = data._original;
+    if (typeof original !== "string") return edge;
+
+    const nextData = { ...data };
+    delete nextData._original;
+
+    return { ...edge, id: plainEdgeId(edge.source, original), target: original, data: nextData };
+}
+
+/** Whether an edge already connects the two nodes, in either direction. */
+function hasEdgeBetween(edges: Edge[], a: string, b: string): boolean {
+    return edges.some(
+        (e) => (e.source === a && e.target === b) || (e.source === b && e.target === a),
+    );
+}
+
+/** Whether a connection uses a workspace↔sandbox mount side handle (left/right). */
+function isMountConnection(c: Pick<Connection, "sourceHandle" | "targetHandle">): boolean {
+    return (
+        c.sourceHandle === "left" ||
+        c.sourceHandle === "right" ||
+        c.targetHandle === "left" ||
+        c.targetHandle === "right"
+    );
+}
+
+/**
+ * Whether an agent already has a direct (non-mount) sandbox edge — its single default sandbox
+ * (config.sandbox). `exceptSandboxId` ignores one sandbox so a re-check of the same pair passes.
+ */
+function agentHasDirectSandbox(
+    edges: Edge[],
+    nodes: Node[],
+    agentId: string,
+    exceptSandboxId?: string,
+): boolean {
+    return edges.some((e) => {
+        if (e.type === "mount") return false;
+        const other = e.source === agentId ? e.target : e.target === agentId ? e.source : null;
+        if (!other || other === exceptSandboxId) return false;
+
+        return nodes.find((n) => n.id === other)?.type === "sandbox";
+    });
+}
+
+/** Drop duplicate edges by id and by unordered node pair, keeping the first of each. */
+function dedupeEdges(edges: Edge[]): Edge[] {
+    const seenIds = new Set<string>();
+    const seenPairs = new Set<string>();
+
+    return edges.filter((e) => {
+        const pair = e.source < e.target ? `${e.source}|${e.target}` : `${e.target}|${e.source}`;
+        if (seenIds.has(e.id) || seenPairs.has(pair)) return false;
+        seenIds.add(e.id);
+        seenPairs.add(pair);
+
+        return true;
+    });
+}
 
 /** Ignore global shortcuts while typing in editable controls. */
 function isEditableTarget(target: EventTarget | null): boolean {
@@ -139,6 +241,12 @@ function CanvasInner({ projectId }: { projectId: Id<"projects"> }) {
                 strokeWidth: 1.5,
             },
             animated: true,
+            markerEnd: {
+                type: MarkerType.ArrowClosed,
+                width: 18,
+                height: 18,
+                color: isDark ? "rgba(255,255,255,0.35)" : "rgba(0,0,0,0.3)",
+            },
         }),
         [isDark],
     );
@@ -244,7 +352,7 @@ function CanvasInner({ projectId }: { projectId: Id<"projects"> }) {
 
         if (canvasLayout) {
             setNodes(canvasLayout.nodes as Node[]);
-            setEdges(canvasLayout.edges as Edge[]);
+            setEdges(dedupeEdges((canvasLayout.edges as Edge[]).map(unredirectEdge).map(hydrateMountEdge)));
             const maxId = canvasLayout.nodes.reduce(
                 (max: number, n: { id: string }) => Math.max(max, Number(n.id) || 0),
                 0,
@@ -296,9 +404,54 @@ function CanvasInner({ projectId }: { projectId: Id<"projects"> }) {
         return () => window.clearTimeout(id);
     }, [selectedNode, setCenter, getZoom]);
 
+    /**
+     * Global connection validator — controls which connections ReactFlow highlights
+     * and allows visually. Called before onConnect fires.
+     */
+    const isValidConnection = useCallback((connection: Connection) => {
+        if (connection.source === connection.target) return false;
+
+        // One edge per node pair (either direction).
+        if (hasEdgeBetween(edgesRef.current, connection.source, connection.target)) return false;
+
+        const srcNode = nodesRef.current.find((n) => n.id === connection.source);
+        const tgtNode = nodesRef.current.find((n) => n.id === connection.target);
+        const isMountPair =
+            (srcNode?.type === "workspace" || srcNode?.type === "sandbox") &&
+            (tgtNode?.type === "workspace" || tgtNode?.type === "sandbox");
+
+        // Side handles → workspace↔sandbox mount only; top/bottom → never a mount pair.
+        if (isMountConnection(connection)) return isMountPair;
+        if (isMountPair) return false;
+
+        // D — an agent has a single default sandbox (config.sandbox); block a 2nd direct one.
+        const agentNode = srcNode?.type === "agent" ? srcNode : tgtNode?.type === "agent" ? tgtNode : null;
+        const sandboxNode = srcNode?.type === "sandbox" ? srcNode : tgtNode?.type === "sandbox" ? tgtNode : null;
+        if (
+            agentNode &&
+            sandboxNode &&
+            agentHasDirectSandbox(edgesRef.current, nodesRef.current, agentNode.id, sandboxNode.id)
+        ) {
+            return false;
+        }
+
+        return true;
+    }, []);
+
     const onConnect: OnConnect = useCallback(
         (params) => {
-            setEdges((eds) => addEdge(params, eds));
+            // isValidConnection already enforced every rule; build the edge and add it.
+            // Mount handle info is encoded in the id so it survives the DB round-trip.
+            const edge = isMountConnection(params)
+                ? {
+                    ...params,
+                    id: `mount:${params.source}-${params.sourceHandle}-${params.target}-${params.targetHandle}`,
+                    type: "mount",
+                    animated: false,
+                  }
+                : params;
+
+            setEdges((eds) => addEdge(edge, eds));
             scheduleSave();
         },
         [setEdges, scheduleSave],
@@ -346,9 +499,13 @@ function CanvasInner({ projectId }: { projectId: Id<"projects"> }) {
             };
             setNodes((nds) => [...nds, newNode]);
 
-            // Auto-connect to nearest agent node
+            // Auto-connect to nearest agent — unless it would wire a 2nd default sandbox.
             const nearest = findNearestAgentNode(nodesRef.current, position);
-            if (nearest) {
+            const wouldDoubleSandbox =
+                type === "sandbox" && nearest
+                    ? agentHasDirectSandbox(edgesRef.current, nodesRef.current, nearest.id)
+                    : false;
+            if (nearest && !wouldDoubleSandbox) {
                 const newEdge: Edge = {
                     id: `e${nearest.id}-${id}`,
                     source: nearest.id,
@@ -400,7 +557,7 @@ function CanvasInner({ projectId }: { projectId: Id<"projects"> }) {
         onOpenCreateConfig(agentCreatePosition ?? getViewportCenterPosition());
     }, [agentCreatePosition, getViewportCenterPosition, onOpenCreateConfig]);
 
-    /** Wrapper matching OnEdgesDelete signature. */
+    /** Persist after edges are deleted. */
     const onEdgesDeleteHandler = useCallback(() => {
         scheduleSave();
     }, [scheduleSave]);
@@ -422,8 +579,8 @@ function CanvasInner({ projectId }: { projectId: Id<"projects"> }) {
     /** Remove a node and its connected edges from the canvas. */
     const removeNode = useCallback(
         (nodeId: string) => {
-            setNodes((nds) => nds.filter((n) => n.id !== nodeId));
             setEdges((eds) => eds.filter((e) => e.source !== nodeId && e.target !== nodeId));
+            setNodes((nds) => nds.filter((n) => n.id !== nodeId));
             setSelectedNode(null);
             scheduleSave();
         },
@@ -469,13 +626,85 @@ function CanvasInner({ projectId }: { projectId: Id<"projects"> }) {
     const isLoading = canvasLayout === undefined;
     const isEmpty = !isLoading && nodes.length === 0;
 
+    // Structural signature (ignores positions) so infra badges only recompute on real graph
+    // changes, not on every drag frame.
+    const infraKey = useMemo(
+        () =>
+            JSON.stringify({
+                n: nodes.map((n) => {
+                    const d = n.data as BaseNodeData;
+                    return [n.id, n.type, d?.resourceId, d?.label, d?.mountName];
+                }),
+                e: edges.map((e) => [e.source, e.target]),
+            }),
+        [nodes, edges],
+    );
+    const infraAnalysis = useMemo(
+        () => analyzeCanvasInfra(nodes, edges),
+        // Recompute only when the structural signature changes (positions excluded).
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+        [infraKey],
+    );
+
+    // C — focus mode: selecting an agent dims everything outside its connected component.
+    const focusedIds = useMemo(() => {
+        if (!selectedNode || selectedNode.type !== "agent") return null;
+
+        const adjacency = new Map<string, string[]>();
+        const link = (a: string, b: string) => {
+            const list = adjacency.get(a);
+            if (list) list.push(b);
+            else adjacency.set(a, [b]);
+        };
+        for (const e of edges) {
+            link(e.source, e.target);
+            link(e.target, e.source);
+        }
+
+        const reachable = new Set<string>([selectedNode.id]);
+        const queue = [selectedNode.id];
+        while (queue.length > 0) {
+            const current = queue.shift()!;
+            for (const next of adjacency.get(current) ?? []) {
+                if (reachable.has(next)) continue;
+                reachable.add(next);
+                queue.push(next);
+            }
+        }
+
+        return reachable;
+    }, [selectedNode, edges]);
+
+    const displayNodes = useMemo(() => {
+        if (!focusedIds) return nodes;
+
+        return nodes.map((n) =>
+            focusedIds.has(n.id) ? n : { ...n, style: { ...n.style, opacity: 0.25 } },
+        );
+    }, [nodes, focusedIds]);
+
+    const displayEdges = useMemo(() => {
+        // Dedupe defensively so legacy data with a stale-id edge can't crash the renderer
+        // with duplicate React keys before a reload rewrites it.
+        const base = dedupeEdges(edges);
+        if (!focusedIds) return base;
+
+        return base.map((e) =>
+            focusedIds.has(e.source) && focusedIds.has(e.target)
+                ? e
+                : { ...e, style: { ...e.style, opacity: 0.12 } },
+        );
+    }, [edges, focusedIds]);
+
     const flow = (
+        <InfraAnalysisProvider value={infraAnalysis}>
         <ReactFlow
-            nodes={nodes}
-            edges={edges}
+            nodes={displayNodes}
+            edges={displayEdges}
             onNodesChange={onNodesChange}
             onEdgesChange={onEdgesChange}
             onConnect={onConnect}
+            isValidConnection={isValidConnection}
             onNodeDragStop={onNodeDragStop}
             onNodesDelete={onNodesDelete}
             onEdgesDelete={onEdgesDeleteHandler}
@@ -483,6 +712,7 @@ function CanvasInner({ projectId }: { projectId: Id<"projects"> }) {
             onPaneClick={onPaneClick}
             nodeTypes={nodeTypes}
             edgeTypes={edgeTypes}
+            connectionMode={ConnectionMode.Loose}
             fitView
             fitViewOptions={FIT_VIEW_OPTIONS}
             maxZoom={1.5}
@@ -496,6 +726,7 @@ function CanvasInner({ projectId }: { projectId: Id<"projects"> }) {
                 <CanvasControls />
             </Panel>
         </ReactFlow>
+        </InfraAnalysisProvider>
     );
 
     return (

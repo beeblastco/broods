@@ -49,6 +49,105 @@ export function defaultRuntimeNodeData(type: string, label: string, id: string):
     return { label: label, status: "idle" };
 }
 
+/**
+ * Effective-sandbox state for a workspace, resolved from the filthy-panty cascade
+ * `ws.sandbox (override) ?? config.sandbox (inherited) ?? none (read-only)`.
+ */
+export type WorkspaceSandboxState =
+    | { kind: "override"; sandboxLabels: string[] }
+    | { kind: "inherited"; sandboxLabel: string }
+    | { kind: "readonly" };
+
+/** Per-node infra annotations derived from the canvas graph for badge rendering. */
+export type CanvasInfraAnalysis = {
+    /** Workspace node id → its resolved effective-sandbox state. */
+    workspaceStates: Record<string, WorkspaceSandboxState>;
+    /** Workspace/sandbox node id → number of distinct agents that reference it. */
+    agentRefCounts: Record<string, number>;
+};
+
+/** Short display label for a runtime node, preferring the mount name. */
+function nodeLabel(node: RuntimeNode): string {
+    return (node.data.mountName ?? node.data.label ?? "").trim() || node.id;
+}
+
+/**
+ * Analyze the canvas graph once to drive per-node infra badges: each workspace's
+ * effective-sandbox state (override/inherited/read-only) and how many agents share
+ * each workspace/sandbox.
+ */
+export function analyzeCanvasInfra(nodes: Node[], edges: Edge[]): CanvasInfraAnalysis {
+    const runtimeNodes = nodes as RuntimeNode[];
+    const byId = new Map(runtimeNodes.map((node) => [node.id, node]));
+    const adjacency = buildAdjacency(edges);
+    const agents = runtimeNodes.filter((node) => node.type === "agent");
+
+    // agentId → its directly-attached default sandbox node (config.sandbox)
+    const agentDefaultSandbox = new Map<string, RuntimeNode | undefined>();
+    // resource node id → set of agent ids that reference it (for shared counts)
+    const refAgents = new Map<string, Set<string>>();
+    // workspace node id → agent ids directly wired to it
+    const workspaceDirectAgents = new Map<string, string[]>();
+    const addRef = (nodeId: string, agentId: string) => {
+        if (!refAgents.has(nodeId)) refAgents.set(nodeId, new Set());
+        refAgents.get(nodeId)!.add(agentId);
+    };
+
+    for (const agent of agents) {
+        const directNodes = neighbors(agent.id, adjacency)
+            .map((id) => byId.get(id))
+            .filter((node): node is RuntimeNode => !!node);
+        const defaultSandbox = directNodes.find((node) => node.type === "sandbox");
+        agentDefaultSandbox.set(agent.id, defaultSandbox);
+        if (defaultSandbox) addRef(defaultSandbox.id, agent.id);
+
+        for (const workspace of directNodes.filter((node) => node.type === "workspace")) {
+            addRef(workspace.id, agent.id);
+            if (!workspaceDirectAgents.has(workspace.id)) workspaceDirectAgents.set(workspace.id, []);
+            workspaceDirectAgents.get(workspace.id)!.push(agent.id);
+
+            // The agent also references each sandbox this workspace is mounted into (override).
+            for (const mount of neighbors(workspace.id, adjacency)) {
+                if (byId.get(mount)?.type === "sandbox") addRef(mount, agent.id);
+            }
+        }
+    }
+
+    const agentRefCounts: Record<string, number> = {};
+    for (const [nodeId, agentSet] of refAgents) {
+        agentRefCounts[nodeId] = agentSet.size;
+    }
+
+    const workspaceStates: Record<string, WorkspaceSandboxState> = {};
+    for (const node of runtimeNodes) {
+        if (node.type !== "workspace") continue;
+
+        const mountSandboxes = neighbors(node.id, adjacency)
+            .map((id) => byId.get(id))
+            .filter((n): n is RuntimeNode => n?.type === "sandbox");
+
+        if (mountSandboxes.length > 0) {
+            workspaceStates[node.id] = {
+                kind: "override",
+                sandboxLabels: mountSandboxes.map(nodeLabel),
+            };
+
+            continue;
+        }
+
+        // No mount edge — inherit a directly-wired agent's default sandbox, else read-only.
+        const inheritedFrom = (workspaceDirectAgents.get(node.id) ?? [])
+            .map((agentId) => agentDefaultSandbox.get(agentId))
+            .find((sandbox): sandbox is RuntimeNode => !!sandbox);
+
+        workspaceStates[node.id] = inheritedFrom
+            ? { kind: "inherited", sandboxLabel: nodeLabel(inheritedFrom) }
+            : { kind: "readonly" };
+    }
+
+    return { workspaceStates: workspaceStates, agentRefCounts: agentRefCounts };
+}
+
 /** Derive all agent runtime references from the current canvas graph. */
 export function deriveAgentRuntimeRefs(nodes: Node[], edges: Edge[]): AgentRuntimeRefs[] {
     const runtimeNodes = nodes as RuntimeNode[];
@@ -62,16 +161,18 @@ export function deriveAgentRuntimeRefs(nodes: Node[], edges: Edge[]): AgentRunti
             return [];
         }
 
-        const component = collectRuntimeComponent(agent.id, byId, adjacency);
-        const directSandboxIds = neighbors(agent.id, adjacency)
+        // An agent's resources come from its DIRECT edges (explicit model): the sandbox it
+        // points at is its default; the workspaces it points at are its workspaces. Workspaces
+        // are no longer inferred transitively through a shared sandbox.
+        const directNodes = neighbors(agent.id, adjacency)
             .map((nodeId) => byId.get(nodeId))
-            .filter((node): node is RuntimeNode => node?.type === "sandbox")
+            .filter((node): node is RuntimeNode => !!node);
+        const directSandboxIds = directNodes
+            .filter((node) => node.type === "sandbox")
             .map((node) => resourceIdFor(node, "sandbox"))
             .filter((value): value is string => !!value);
         const defaultSandbox = directSandboxIds[0];
-        const workspaceNodes = [...component]
-            .map((nodeId) => byId.get(nodeId))
-            .filter((node): node is RuntimeNode => node?.type === "workspace");
+        const workspaceNodes = directNodes.filter((node) => node.type === "workspace");
 
         const usedNames = new Set<string>();
         const workspaces: WorkspaceRef[] = [];
@@ -83,7 +184,7 @@ export function deriveAgentRuntimeRefs(nodes: Node[], edges: Edge[]): AgentRunti
                 || `workspace_${workspaceNode.id}`;
             const linkedSandboxes = neighbors(workspaceNode.id, adjacency)
                 .map((nodeId) => byId.get(nodeId))
-                .filter((node): node is RuntimeNode => node?.type === "sandbox" && component.has(node.id));
+                .filter((node): node is RuntimeNode => node?.type === "sandbox");
 
             if (linkedSandboxes.length === 0) {
                 workspaces.push({
@@ -138,31 +239,6 @@ function buildAdjacency(edges: Edge[]): Map<string, Set<string>> {
 
 function neighbors(nodeId: string, adjacency: Map<string, Set<string>>): string[] {
     return [...(adjacency.get(nodeId) ?? [])];
-}
-
-function collectRuntimeComponent(
-    agentId: string,
-    byId: Map<string, RuntimeNode>,
-    adjacency: Map<string, Set<string>>,
-): Set<string> {
-    const visited = new Set<string>([agentId]);
-    const component = new Set<string>();
-    const queue = [agentId];
-
-    while (queue.length > 0) {
-        const current = queue.shift()!;
-        for (const next of neighbors(current, adjacency)) {
-            if (visited.has(next)) continue;
-            visited.add(next);
-            const node = byId.get(next);
-            if (!node) continue;
-            if (node.type !== "workspace" && node.type !== "sandbox") continue;
-            component.add(next);
-            queue.push(next);
-        }
-    }
-
-    return component;
 }
 
 function resourceIdFor(node: RuntimeNode, type: "workspace" | "sandbox"): string | undefined {
