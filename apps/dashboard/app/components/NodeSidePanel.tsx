@@ -3,7 +3,7 @@
 /** Side panel displaying node details, configuration, and settings for the selected canvas node. */
 import type { BaseNodeData } from "@/app/components/node/BaseNode";
 import { agentStatusConfig } from "@/app/components/node/BaseNode";
-import { ConfigTab, buildBranchPatch } from "@/app/components/side-panel/ConfigTab";
+import { ConfigTab } from "@/app/components/side-panel/ConfigTab";
 import {
     ResourceConfigTab,
     SandboxResourceDetailsTab,
@@ -26,7 +26,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/app/components/ui/ta
 import { useAgentHealth, type AgentHealthStatus } from "@/app/hooks/useAgentHealth";
 import { useConnectedAgentConfig } from "@/app/hooks/useConnectedAgentConfig";
 import { useEnvironment } from "@/app/hooks/useEnvironment";
-import { readAgentBranch, type FlatAgentConfig } from "@/app/lib/agentConfigCodec";
+import { fromNestedAgentConfig, readAgentBranch, toNestedAgentConfig, type FlatAgentConfig } from "@/app/lib/agentConfigCodec";
 import { applyAgentConfigUpdate } from "@/app/lib/agentConfigOptimistic";
 import { isRuntimeVariable, type RuntimeVariable } from "@/app/lib/runtimeVariables";
 import {
@@ -434,11 +434,23 @@ export const NodeSidePanel = memo(function NodeSidePanel({
         }
     }
 
-    const handleSaveBranch = useCallback(
-        async (branch: "agent" | "model" | "provider", value: unknown) => {
+    const handleSaveConfig = useCallback(
+        async (value: unknown) => {
             if (!agentConfigId || !agentConfig) return;
 
-            const patch = buildBranchPatch(agentConfig, branch, value);
+            const edited = (value as Record<string, unknown>) ?? {};
+            // Preserve all existing branches (tools, skills, workspace, etc.);
+            // only replace the three branches the Config tab exposes.
+            const base = toNestedAgentConfig(agentConfig) as Record<string, unknown>;
+            const merged: Record<string, unknown> = { ...base };
+            for (const branch of ["agent", "model", "provider"] as const) {
+                if (branch in edited) {
+                    merged[branch] = edited[branch];
+                } else {
+                    delete merged[branch];
+                }
+            }
+            const patch = fromNestedAgentConfig(merged);
             await updateConfig({
                 configId: agentConfigId,
                 provider: patch.provider as AgentProvider | undefined,
@@ -551,6 +563,29 @@ export const NodeSidePanel = memo(function NodeSidePanel({
             }
         },
         [agentConfigId, activeDeployment, createDeployment, revokeDeployment, updateConfig],
+    );
+
+    const handleUpdateToolConfig = useCallback(
+        async (toolName: string, config: Record<string, unknown> | null) => {
+            if (!agentConfigId || !agentConfig) return;
+
+            const currentExtra = (agentConfig.extraConfig as Record<string, unknown>) ?? {};
+            const currentTools = (currentExtra.tools as Record<string, unknown>) ?? {};
+            const nextTools = { ...currentTools };
+            if (config === null) {
+                delete nextTools[toolName];
+            } else {
+                nextTools[toolName] = config;
+            }
+            await updateConfig({
+                configId: agentConfigId,
+                extraConfig: {
+                    ...currentExtra,
+                    tools: Object.keys(nextTools).length > 0 ? nextTools : undefined,
+                },
+            });
+        },
+        [agentConfigId, agentConfig, updateConfig],
     );
 
     const handleToggleWebSocket = useCallback(
@@ -666,6 +701,7 @@ export const NodeSidePanel = memo(function NodeSidePanel({
                                 runtimeVariables={runtimeVariables}
                                 onSaveModelSettings={handleSaveModelSettings}
                                 isSavingModelSettings={isSavingModelSettings}
+                                onUpdateToolConfig={handleUpdateToolConfig}
                             />
                         ) : isTool && node ? (
                             <ToolDetailsTab
@@ -766,7 +802,7 @@ export const NodeSidePanel = memo(function NodeSidePanel({
                         <TabsContent value="config" className="flex flex-col overflow-hidden">
                             <ConfigTab
                                 agentConfig={agentConfig}
-                                onSaveBranch={handleSaveBranch}
+                                onSave={handleSaveConfig}
                             />
                         </TabsContent>
                     )}

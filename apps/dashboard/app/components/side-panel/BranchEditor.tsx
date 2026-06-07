@@ -14,14 +14,12 @@ const EMPTY_DEFAULT = "{}";
 
 export function BranchEditor({
     title,
-    description,
     value,
     placeholder = EMPTY_DEFAULT,
     onSave,
     disabled,
 }: {
     title: string;
-    description?: string;
     value: unknown;
     placeholder?: string;
     onSave: (parsed: unknown) => Promise<void> | void;
@@ -73,14 +71,9 @@ export function BranchEditor({
 
     return (
         <div className="flex flex-col gap-2">
-            <div className="flex items-baseline justify-between">
-                <span className="text-[11px] uppercase tracking-wider text-muted-foreground/70">
-                    {title}
-                </span>
-                {description && (
-                    <span className="text-[10px] text-muted-foreground/60">{description}</span>
-                )}
-            </div>
+            <span className="text-[11px] uppercase tracking-wider text-muted-foreground/70">
+                {title}
+            </span>
             <Textarea
                 value={draft}
                 onChange={(e) => {

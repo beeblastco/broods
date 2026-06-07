@@ -176,7 +176,6 @@ export function ToolConfigTab({
             {agentConfig ? (
                 <BranchEditor
                     title="Tool Options"
-                    description="env · execution · per-tool options"
                     value={toolOptions}
                     placeholder={TOOL_OPTIONS_PLACEHOLDER}
                     onSave={async (value) => {

@@ -1,13 +1,11 @@
 "use client";
 
 /**
- * Agent Config tab split across the three filthy-panty AgentConfig branches
- * that belong to an agent card: `agent` (behavior), `model`, and `provider`.
- * Each section is a self-contained branch editor that saves independently.
+ * Agent Config tab — single JSON editor for the full nested AgentConfig
+ * (`agent`, `model`, `provider` branches merged into one object).
  */
 import { BranchEditor } from "@/app/components/side-panel/BranchEditor";
 import {
-    fromNestedAgentConfig,
     toNestedAgentConfig,
     type FlatAgentConfig,
 } from "@/app/lib/agentConfigCodec";
@@ -16,15 +14,21 @@ import { useMemo } from "react";
 
 export function ConfigTab({
     agentConfig,
-    onSaveBranch,
+    onSave,
 }: {
     agentConfig: (FlatAgentConfig & { _id?: Id<"agentConfigs"> }) | null | undefined;
-    onSaveBranch: (branch: "agent" | "model" | "provider", value: unknown) => Promise<void>;
+    onSave: (value: unknown) => Promise<void>;
 }) {
-    const nested = useMemo(
-        () => (agentConfig ? toNestedAgentConfig(agentConfig) : {}),
-        [agentConfig],
-    );
+    const configValue = useMemo(() => {
+        if (!agentConfig) return {};
+        const n = toNestedAgentConfig(agentConfig) as Record<string, unknown>;
+
+        return {
+            ...(n.agent !== undefined ? { agent: n.agent } : {}),
+            ...(n.model !== undefined ? { model: n.model } : {}),
+            ...(n.provider !== undefined ? { provider: n.provider } : {}),
+        };
+    }, [agentConfig]);
 
     if (!agentConfig) {
         return (
@@ -39,42 +43,11 @@ export function ConfigTab({
     return (
         <div className="flex flex-1 flex-col gap-5 overflow-y-auto p-4">
             <BranchEditor
-                title="Agent"
-                description="behavior · system · maxTurn"
-                value={(nested as Record<string, unknown>).agent ?? {}}
-                onSave={(v) => onSaveBranch("agent", v)}
-            />
-            <BranchEditor
-                title="Model"
-                description="provider · modelId · options · output"
-                value={(nested as Record<string, unknown>).model ?? {}}
-                onSave={(v) => onSaveBranch("model", v)}
-            />
-            <BranchEditor
-                title="Provider"
-                description="per-provider credentials & endpoints"
-                value={(nested as Record<string, unknown>).provider ?? {}}
-                onSave={(v) => onSaveBranch("provider", v)}
+                title="Config"
+                value={configValue}
+                onSave={onSave}
             />
         </div>
     );
 }
 
-/**
- * Builds the patch passed to `api.agentConfig.update` after writing a single
- * branch back into the nested view of an agent config.
- */
-export function buildBranchPatch(
-    agentConfig: FlatAgentConfig,
-    branch: string,
-    value: unknown,
-) {
-    const nested = toNestedAgentConfig(agentConfig) as Record<string, unknown>;
-    if (value === undefined) {
-        delete nested[branch];
-    } else {
-        nested[branch] = value;
-    }
-
-    return fromNestedAgentConfig(nested);
-}

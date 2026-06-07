@@ -31,7 +31,6 @@ export function WorkspaceConfigTab({ nodeId }: { nodeId: string }) {
         <div className="flex flex-1 flex-col gap-5 overflow-y-auto p-4">
             <BranchEditor
                 title="Workspace"
-                description="namespace · harness · workspaces · storage · sandbox"
                 value={workspace}
                 onSave={(v) => updateBranch(["workspace"], v)}
             />

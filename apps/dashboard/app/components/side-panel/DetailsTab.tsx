@@ -1,12 +1,14 @@
 "use client";
 
 /** Details tab showing editable agent name, deployment credentials, and built-in tool config. */
+import { ExpandBlock, ToggleRow } from "@/app/components/side-panel/ConfigControls";
 import { Button } from "@/app/components/ui/button";
 import { Input } from "@/app/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/app/components/ui/select";
 import { Separator } from "@/app/components/ui/separator";
 import { Switch } from "@/app/components/ui/switch";
 import { Textarea } from "@/app/components/ui/textarea";
+import { readAgentBranch, type FlatAgentConfig } from "@/app/lib/agentConfigCodec";
 import { isRecord } from "@/app/lib/utils";
 import type { Doc } from "@/convex/_generated/dataModel";
 import { Check, Copy, Eye, EyeOff, Globe, Slash, Wifi } from "lucide-react";
@@ -64,6 +66,7 @@ export function DetailsTab({
     selectedProvider,
     runtimeVariables,
     onSaveModelSettings,
+    onUpdateToolConfig,
 }: {
     agentConfig: Doc<"agentConfigs"> | null | undefined;
     activeDeployment: Doc<"agentDeployments"> | undefined;
@@ -84,6 +87,7 @@ export function DetailsTab({
     runtimeVariables: RuntimeVariable[];
     onSaveModelSettings?: (next: { provider: AgentProvider; modelId: string }) => Promise<void>;
     isSavingModelSettings?: boolean;
+    onUpdateToolConfig?: (toolName: string, config: Record<string, unknown> | null) => Promise<void>;
 }) {
     const [showApiKey, setShowApiKey] = useState(false);
     const [copiedField, setCopiedField] = useState<string | null>(null);
@@ -93,6 +97,30 @@ export function DetailsTab({
     const [editProvider, setEditProvider] = useState<AgentProvider>(selectedProvider);
     const [editModelId, setEditModelId] = useState(agentConfig?.modelId ?? "");
     const schemaFileInputRef = useRef<HTMLInputElement | null>(null);
+
+    // Built-in tool configs derived from agentConfig (reads extraConfig.tools, falls back to flat columns)
+    const allTools = agentConfig
+        ? (readAgentBranch(agentConfig as unknown as FlatAgentConfig, "tools") as Record<string, unknown>)
+        : {};
+    const tavilySearchCfg = isRecord(allTools.tavilySearch) ? (allTools.tavilySearch as Record<string, unknown>) : {};
+    const tavilyExtractCfg = isRecord(allTools.tavilyExtract) ? (allTools.tavilyExtract as Record<string, unknown>) : {};
+    const googleSearchCfg = isRecord(allTools.googleSearch)
+        ? (allTools.googleSearch as Record<string, unknown>)
+        : { enabled: agentConfig?.searchToolEnabled };
+    const tavilySearchEnabled = tavilySearchCfg.enabled === true;
+    const tavilyExtractEnabled = tavilyExtractCfg.enabled === true;
+    const googleSearchEnabled = googleSearchCfg.enabled === true;
+
+    // Local draft for text inputs that should not save on every keystroke
+    const [tavilySearchApiKey, setTavilySearchApiKey] = useState(
+        () => typeof tavilySearchCfg.apiKey === "string" ? tavilySearchCfg.apiKey : ""
+    );
+    const [tavilyExtractApiKey, setTavilyExtractApiKey] = useState(
+        () => typeof tavilyExtractCfg.apiKey === "string" ? tavilyExtractCfg.apiKey : ""
+    );
+    const [tavilySearchMaxResults, setTavilySearchMaxResults] = useState(
+        () => typeof tavilySearchCfg.maxResults === "number" ? String(tavilySearchCfg.maxResults) : "5"
+    );
 
     const gatewayUrl = process.env.NEXT_PUBLIC_AGENT_GATEWAY_URL ?? "http://localhost:8080";
     const websocketBaseUrl = toWebSocketBaseUrl(gatewayUrl);
@@ -456,6 +484,209 @@ export function DetailsTab({
                     </div>
                 )}
             </div>
+
+            {/* Built-in Tools */}
+            {agentConfig && onUpdateToolConfig && (
+                <>
+                    <Separator />
+                    <div className="flex flex-col gap-3">
+                        <span className="text-[11px] uppercase tracking-wider text-muted-foreground/70">Built-in Tools</span>
+
+                        {/* Tavily Search */}
+                        <ToggleRow
+                            label="Tavily Search"
+                            description="Web search via Tavily"
+                            checked={tavilySearchEnabled}
+                            onCheckedChange={(next) =>
+                                void onUpdateToolConfig("tavilySearch", { ...tavilySearchCfg, enabled: next })
+                            }
+                        />
+                        {tavilySearchEnabled && (
+                            <ExpandBlock>
+                                <ToggleRow
+                                    label="Needs approval"
+                                    checked={tavilySearchCfg.needsApproval === true}
+                                    onCheckedChange={(next) =>
+                                        void onUpdateToolConfig("tavilySearch", { ...tavilySearchCfg, needsApproval: next })
+                                    }
+                                />
+                                <div className="flex items-center justify-between gap-3">
+                                    <span className="text-[11px] text-muted-foreground">Search depth</span>
+                                    <Select
+                                        value={typeof tavilySearchCfg.searchDepth === "string" ? tavilySearchCfg.searchDepth : "basic"}
+                                        onValueChange={(v) =>
+                                            void onUpdateToolConfig("tavilySearch", { ...tavilySearchCfg, searchDepth: v })
+                                        }
+                                    >
+                                        <SelectTrigger className="h-7 w-28 cursor-pointer text-xs">
+                                            <SelectValue />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                            <SelectItem value="basic">Basic</SelectItem>
+                                            <SelectItem value="advanced">Advanced</SelectItem>
+                                        </SelectContent>
+                                    </Select>
+                                </div>
+                                <div className="flex items-center justify-between gap-3">
+                                    <span className="text-[11px] text-muted-foreground">Max results</span>
+                                    <Input
+                                        type="number"
+                                        min={1}
+                                        max={20}
+                                        className="h-7 w-20 text-xs"
+                                        value={tavilySearchMaxResults}
+                                        onChange={(e) => setTavilySearchMaxResults(e.target.value)}
+                                        onBlur={() => {
+                                            const n = parseInt(tavilySearchMaxResults, 10);
+                                            const clamped = Number.isFinite(n) ? Math.min(20, Math.max(1, n)) : 5;
+                                            void onUpdateToolConfig("tavilySearch", { ...tavilySearchCfg, maxResults: clamped });
+                                        }}
+                                    />
+                                </div>
+                                <div className="flex items-center justify-between gap-3">
+                                    <span className="text-[11px] text-muted-foreground">Topic</span>
+                                    <Select
+                                        value={typeof tavilySearchCfg.topic === "string" ? tavilySearchCfg.topic : "general"}
+                                        onValueChange={(v) =>
+                                            void onUpdateToolConfig("tavilySearch", { ...tavilySearchCfg, topic: v })
+                                        }
+                                    >
+                                        <SelectTrigger className="h-7 w-28 cursor-pointer text-xs">
+                                            <SelectValue />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                            <SelectItem value="general">General</SelectItem>
+                                            <SelectItem value="news">News</SelectItem>
+                                            <SelectItem value="finance">Finance</SelectItem>
+                                        </SelectContent>
+                                    </Select>
+                                </div>
+                                <div className="flex flex-col gap-1">
+                                    <span className="text-[11px] text-muted-foreground">
+                                        API key <span className="text-muted-foreground/50">(or set TAVILY_API_KEY env)</span>
+                                    </span>
+                                    <Input
+                                        type="password"
+                                        className="h-7 font-mono text-xs"
+                                        placeholder="tvly-…"
+                                        value={tavilySearchApiKey}
+                                        onChange={(e) => setTavilySearchApiKey(e.target.value)}
+                                        onBlur={() => {
+                                            const key = tavilySearchApiKey.trim();
+                                            const next = { ...tavilySearchCfg };
+                                            if (key) {
+                                                next.apiKey = key;
+                                            } else {
+                                                delete next.apiKey;
+                                            }
+                                            void onUpdateToolConfig("tavilySearch", next);
+                                        }}
+                                    />
+                                </div>
+                            </ExpandBlock>
+                        )}
+
+                        {/* Tavily Extract */}
+                        <ToggleRow
+                            label="Tavily Extract"
+                            description="Web page extraction via Tavily"
+                            checked={tavilyExtractEnabled}
+                            onCheckedChange={(next) =>
+                                void onUpdateToolConfig("tavilyExtract", { ...tavilyExtractCfg, enabled: next })
+                            }
+                        />
+                        {tavilyExtractEnabled && (
+                            <ExpandBlock>
+                                <ToggleRow
+                                    label="Needs approval"
+                                    checked={tavilyExtractCfg.needsApproval === true}
+                                    onCheckedChange={(next) =>
+                                        void onUpdateToolConfig("tavilyExtract", { ...tavilyExtractCfg, needsApproval: next })
+                                    }
+                                />
+                                <div className="flex items-center justify-between gap-3">
+                                    <span className="text-[11px] text-muted-foreground">Extract depth</span>
+                                    <Select
+                                        value={typeof tavilyExtractCfg.extractDepth === "string" ? tavilyExtractCfg.extractDepth : "basic"}
+                                        onValueChange={(v) =>
+                                            void onUpdateToolConfig("tavilyExtract", { ...tavilyExtractCfg, extractDepth: v })
+                                        }
+                                    >
+                                        <SelectTrigger className="h-7 w-28 cursor-pointer text-xs">
+                                            <SelectValue />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                            <SelectItem value="basic">Basic</SelectItem>
+                                            <SelectItem value="advanced">Advanced</SelectItem>
+                                        </SelectContent>
+                                    </Select>
+                                </div>
+                                <div className="flex items-center justify-between gap-3">
+                                    <span className="text-[11px] text-muted-foreground">Format</span>
+                                    <Select
+                                        value={typeof tavilyExtractCfg.format === "string" ? tavilyExtractCfg.format : "markdown"}
+                                        onValueChange={(v) =>
+                                            void onUpdateToolConfig("tavilyExtract", { ...tavilyExtractCfg, format: v })
+                                        }
+                                    >
+                                        <SelectTrigger className="h-7 w-28 cursor-pointer text-xs">
+                                            <SelectValue />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                            <SelectItem value="markdown">Markdown</SelectItem>
+                                            <SelectItem value="text">Plain text</SelectItem>
+                                        </SelectContent>
+                                    </Select>
+                                </div>
+                                <div className="flex flex-col gap-1">
+                                    <span className="text-[11px] text-muted-foreground">
+                                        API key <span className="text-muted-foreground/50">(or set TAVILY_API_KEY env)</span>
+                                    </span>
+                                    <Input
+                                        type="password"
+                                        className="h-7 font-mono text-xs"
+                                        placeholder="tvly-…"
+                                        value={tavilyExtractApiKey}
+                                        onChange={(e) => setTavilyExtractApiKey(e.target.value)}
+                                        onBlur={() => {
+                                            const key = tavilyExtractApiKey.trim();
+                                            const next = { ...tavilyExtractCfg };
+                                            if (key) {
+                                                next.apiKey = key;
+                                            } else {
+                                                delete next.apiKey;
+                                            }
+                                            void onUpdateToolConfig("tavilyExtract", next);
+                                        }}
+                                    />
+                                </div>
+                            </ExpandBlock>
+                        )}
+
+                        {/* Google Search */}
+                        <ToggleRow
+                            label="Google Search"
+                            description={selectedProvider === "google" ? "Grounded search via Google" : "Requires Google provider"}
+                            checked={googleSearchEnabled}
+                            disabled={selectedProvider !== "google"}
+                            onCheckedChange={(next) =>
+                                void onUpdateToolConfig("googleSearch", { ...googleSearchCfg, enabled: next })
+                            }
+                        />
+                        {googleSearchEnabled && selectedProvider === "google" && (
+                            <ExpandBlock>
+                                <ToggleRow
+                                    label="Needs approval"
+                                    checked={googleSearchCfg.needsApproval === true}
+                                    onCheckedChange={(next) =>
+                                        void onUpdateToolConfig("googleSearch", { ...googleSearchCfg, needsApproval: next })
+                                    }
+                                />
+                            </ExpandBlock>
+                        )}
+                    </div>
+                </>
+            )}
 
             {/* Output format schema */}
             {agentConfig && (

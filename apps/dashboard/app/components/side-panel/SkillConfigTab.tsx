@@ -12,10 +12,13 @@ import { useMemo } from "react";
 
 export function SkillConfigTab({ nodeId }: { nodeId: string }) {
     const { agentConfig, updateBranch } = useConnectedAgentConfig(nodeId);
-    const skills = useMemo(
-        () => readAgentBranch(agentConfig as FlatAgentConfig | undefined, "skills"),
-        [agentConfig],
-    );
+    const skills = useMemo(() => {
+        const raw = readAgentBranch(agentConfig as FlatAgentConfig | undefined, "skills") as Record<string, unknown>;
+        // Strip stale keys from previous schema versions
+        const clean = { ...raw };
+        delete (clean as Record<string, unknown>).publish;
+        return clean;
+    }, [agentConfig]);
 
     if (!agentConfig) {
         return (
@@ -31,9 +34,12 @@ export function SkillConfigTab({ nodeId }: { nodeId: string }) {
         <div className="flex flex-1 flex-col gap-5 overflow-y-auto p-4">
             <BranchEditor
                 title="Skills"
-                description="enabled · allowed"
                 value={skills}
-                onSave={(v) => updateBranch(["skills"], v)}
+                onSave={(v) => {
+                    const clean = { ...((v as Record<string, unknown>) ?? {}) };
+                    delete clean.publish;
+                    updateBranch(["skills"], Object.keys(clean).length > 0 ? clean : undefined);
+                }}
             />
         </div>
     );

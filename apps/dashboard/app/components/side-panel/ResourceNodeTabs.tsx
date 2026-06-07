@@ -194,7 +194,6 @@ export function ResourceConfigTab({
         <div className="flex flex-1 flex-col gap-5 overflow-y-auto p-4">
             <BranchEditor
                 title={nodeType === "workspace" ? "Workspace Config" : "Sandbox Config"}
-                description={nodeType === "workspace" ? "storage · harness" : "provider · permissionMode · limits"}
                 value={data.config ?? fallback}
                 onSave={(config) => onUpdateNodeData({ config: isRecord(config) ? config : fallback })}
             />
