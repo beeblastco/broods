@@ -96,6 +96,13 @@ flowchart LR
   Use -. "idle N min, no job" .-> Down["scale to 0 / stop / pause<br/>(disk + installed packages persist)"]
 ```
 
+> **Cold-start note (kubernetes).** A durable home PVC means provisioning a cloud block
+> volume — on Hetzner that create+attach dominates the cold-start (~16s of ~22s). Callers
+> that don't need durable disk set `ephemeralHome: true` to reserve the sandbox *without* a
+> PVC (the pod still outlives the request) and use the image's own `/home/node`, cutting the
+> first-call cold-start to ~5s. Account-uploaded tools use this — their results return via
+> HTTP callback, never via disk.
+
 How idle scale-down happens differs per provider: **kubernetes** uses an infra reaper
 CronJob (scales `replicas` 0↔1; home PVC + S3 persist); **daytona** uses native
 `autoStopInterval` (filesystem persists); **e2b** uses native `lifecycle.onTimeout: "pause"`

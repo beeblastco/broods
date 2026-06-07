@@ -373,6 +373,10 @@ function customToolExecutorConfig(): Parameters<typeof createSandboxExecutor>[0]
   return {
     provider: "kubernetes",
     persistent: true,
+    // Uploaded tools return results via HTTP callback, never via durable disk, so
+    // skip the home PVC: the pod still outlives the request for detached jobs, but
+    // cold-start drops from ~22s to ~5s (no cloud-volume create+attach).
+    ephemeralHome: true,
     internet: true,
     timeout: 120,
     outputLimitBytes: 1024 * 1024,

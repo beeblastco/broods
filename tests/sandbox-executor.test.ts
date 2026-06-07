@@ -376,6 +376,33 @@ describe("createSandboxExecutor", () => {
     expect(k8sPatchNamespacedCustomObjectMock).toHaveBeenCalled();
   });
 
+  it("skips the home PVC for an ephemeralHome persistent sandbox but keeps HOME", async () => {
+    const { KubernetesSandboxExecutor } = await import("../functions/harness-processing/sandbox/kubernetes-executor.ts");
+    const executor = new KubernetesSandboxExecutor({
+      provider: "kubernetes",
+      persistent: true,
+      ephemeralHome: true,
+      options: {},
+    });
+
+    await executor.run({
+      code: "echo hi",
+      reservationKey: "custom-tool:acct_1:tool_1",
+      workspaceRoot: "/tmp",
+      timeoutSeconds: 30,
+      outputLimitBytes: 4096,
+    });
+
+    const body = (k8sCreateNamespacedCustomObjectMock.mock.calls[0]![0] as { body: Record<string, any> }).body;
+    expect(body.spec.replicas).toBe(1);
+    // Reserved + reused, but no cloud volume to provision: the cold-start win.
+    expect(body.spec.volumeClaimTemplates).toBeUndefined();
+    const container = body.spec.podTemplate.spec.containers[0];
+    expect(container.volumeMounts).toBeUndefined();
+    expect(body.spec.podTemplate.spec.securityContext).toBeUndefined();
+    expect(container.env).toEqual(expect.arrayContaining([{ name: "HOME", value: "/home/node" }]));
+  });
+
   it("resumes an idled persistent sandbox by scaling replicas 0 -> 1", async () => {
     const { KubernetesSandboxExecutor } = await import("../functions/harness-processing/sandbox/kubernetes-executor.ts");
     k8sGetSandboxResult = { spec: { replicas: 0 } };

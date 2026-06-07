@@ -70,7 +70,7 @@ const DEFAULT_NAMESPACE = "agent-sandboxes";
 const DEFAULT_IMAGE = "ghcr.io/beeblastco/agent-sandbox-runtime:latest";
 const DEFAULT_WORKSPACE_SERVICE_ACCOUNT = "agent-sandbox-workspace";
 const POD_READY_TIMEOUT_MS = 120_000;
-const POD_POLL_INTERVAL_MS = 1_500;
+const POD_POLL_INTERVAL_MS = 500;
 // Reserved-sandbox home volume + the labels/annotations the infra reaper reads.
 const HOME_VOLUME_NAME = "home";
 const LAST_ACTIVITY_ANNOTATION = "beeblast.co/last-activity-at";
@@ -315,6 +315,10 @@ export class KubernetesSandboxExecutor implements SandboxExecutor {
     const opts = options(this.#config);
     const mounting = opts.mountAwsS3Buckets === true;
     const home = persistent ? persistentHome(opts) : undefined;
+    // A durable home means a cloud-volume PVC (slow to create+attach). When
+    // ephemeralHome is set we still point HOME at the same path, but it resolves
+    // to the image's own node-owned home — no PVC, near-instant cold-start.
+    const durableHome = home !== undefined && this.#config.ephemeralHome !== true;
     const container: Record<string, unknown> = {
       name: CONTAINER_NAME,
       image: configString(opts.image) ?? optionalEnv("KUBERNETES_SANDBOX_IMAGE") ?? DEFAULT_IMAGE,
@@ -332,12 +336,12 @@ export class KubernetesSandboxExecutor implements SandboxExecutor {
       // mount-s3 perform the mount (the image otherwise runs as uid 1000).
       container.securityContext = { privileged: true, runAsUser: 0 };
     }
-    if (home) {
+    if (durableHome) {
       container.volumeMounts = [{ name: HOME_VOLUME_NAME, mountPath: home }];
     }
 
     const podSpec: Record<string, unknown> = { containers: [container] };
-    if (home && !mounting) {
+    if (durableHome && !mounting) {
       // The home PVC mounts root-owned, but a non-S3 sandbox runs as the image
       // user (uid 1000). Without fsGroup the user cannot write ${HOME}, so e.g.
       // background-job tracking under ${HOME}/.jobs fails and detached jobs never
@@ -366,7 +370,7 @@ export class KubernetesSandboxExecutor implements SandboxExecutor {
       // self-deletes, so reserved sandboxes never leak.
       spec.shutdownPolicy = "Delete";
       spec.shutdownTime = this.#shutdownTimeFromNow();
-      spec.volumeClaimTemplates = [homePvcTemplate(opts)];
+      if (durableHome) spec.volumeClaimTemplates = [homePvcTemplate(opts)];
     }
 
     await this.#custom.createNamespacedCustomObject({

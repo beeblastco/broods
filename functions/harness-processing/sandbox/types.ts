@@ -24,6 +24,13 @@ export interface SandboxExecutorConfig {
   // Persistent runs must pass a stable request.reservationKey, or request.namespace
   // for workspace-backed callers. Only meaningful for kubernetes/daytona/e2b.
   persistent?: boolean;
+  // Persistent sandboxes normally reserve a durable home PVC so package-manager
+  // caches survive scale-to-0. Set true to skip the PVC and use the image's own
+  // ephemeral home: the sandbox is still reserved/reused, but provisioning skips
+  // the slow cloud-volume create+attach (the dominant cold-start cost). Used by
+  // account-uploaded tools, whose results return via HTTP callback and never
+  // depend on durable disk.
+  ephemeralHome?: boolean;
   // Idle/expiry policy for a persistent sandbox (Fargate-style scale-to-0).
   lifecycle?: SandboxLifecycle;
   // Account-configured env vars injected into every run.
