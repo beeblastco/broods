@@ -4,8 +4,9 @@
  * Keep bundle loading and user-code execution out of harness-processing.
  */
 
-import { requireEnv } from "../../_shared/env.ts";
-import { getS3ObjectUrl } from "../../_shared/s3.ts";
+import { optionalEnv, requireEnv } from "../../_shared/env.ts";
+import { getS3ObjectUrl, readS3Bytes } from "../../_shared/s3.ts";
+import { logWarn } from "../../_shared/log.ts";
 import type { AccountToolRecord, AgentToolConfig } from "../../_shared/storage/index.ts";
 import { createSandboxExecutor } from "../sandbox/index.ts";
 import { generateJobId } from "../sandbox/jobs.ts";
@@ -23,6 +24,12 @@ const RUNNER_HEREDOC_TAG = "__CUSTOM_TOOL_RUNNER__";
 // The field is required by SandboxRunRequest so we still pass it for background.
 const FOREGROUND_TIMEOUT_SECONDS = 120;
 const RUNNER_OUTPUT_LIMIT_BYTES = 1024 * 1024;
+// Inline the bundle into the exec payload when it fits, so the pod skips the
+// cross-cloud S3 fetch entirely (the Lambda reads it in-region in ~50ms). The
+// runner ships as one `bash -lc` arg, capped by the kernel's MAX_ARG_STRLEN
+// (128 KB); 64 KB raw (~85 KB base64) stays safely under it. Larger (e.g.
+// npm-bundled) tools fall back to the signed URL the pod fetches itself.
+const MAX_INLINE_BUNDLE_BYTES = 64 * 1024;
 
 interface ExecuteAccountToolOptions {
   accountId: string;
@@ -42,7 +49,10 @@ interface DetachedAsyncToolMetadata {
 }
 
 interface RunnerPayload {
-  bundleUrl: string;
+  // Exactly one source is set: bundleSourceB64 for inlined small bundles,
+  // bundleUrl for large ones the pod downloads via the signed URL.
+  bundleSourceB64?: string;
+  bundleUrl?: string;
   expectedSha256: string;
   toolName: string;
   input: unknown;
@@ -181,8 +191,7 @@ async function createRunnerPayload(options: {
   asyncTool: unknown;
   detachedCompletion?: RunnerPayload["detachedCompletion"];
 }): Promise<RunnerPayload> {
-  return {
-    bundleUrl: await getS3ObjectUrl(options.bucket, options.tool.bundleStorageKey),
+  const base: RunnerPayload = {
     expectedSha256: options.tool.sha256,
     toolName: options.tool.name,
     input: options.input,
@@ -190,6 +199,11 @@ async function createRunnerPayload(options: {
     asyncTool: options.asyncTool,
     ...(options.detachedCompletion ? { detachedCompletion: options.detachedCompletion } : {}),
   };
+  const bytes = await readS3Bytes(options.bucket, options.tool.bundleStorageKey);
+  if (bytes.byteLength <= MAX_INLINE_BUNDLE_BYTES) {
+    return { ...base, bundleSourceB64: Buffer.from(bytes).toString("base64") };
+  }
+  return { ...base, bundleUrl: await getS3ObjectUrl(options.bucket, options.tool.bundleStorageKey) };
 }
 
 async function sandboxJobCompletionUrl(completePath: string): Promise<string> {
@@ -264,7 +278,9 @@ async function ensureBundle(bundlePath) {
   if (cached === payload.expectedSha256) {
     return;
   }
-  const source = await downloadBundle(payload.bundleUrl);
+  const source = payload.bundleSourceB64 !== undefined
+    ? Buffer.from(payload.bundleSourceB64, "base64")
+    : await downloadBundle(payload.bundleUrl);
   const tempPath = bundlePath + "." + process.pid + ".tmp";
   await writeFile(tempPath, source);
   const tempHash = await fileHash(tempPath);
@@ -393,4 +409,26 @@ function ensureTrailingSlash(value: string): string {
 
 function customToolReservationKey(accountId: string, toolId: string): string {
   return `custom-tool-${accountId}-${toolId}`.toLowerCase().replace(/[^a-z0-9-]/g, "-").slice(0, 63);
+}
+
+/**
+ * Best-effort pod warm-up. Fired when a request's toolset includes an async
+ * uploaded tool, so the reserved sandbox is created/resumed and Ready while the
+ * model is still producing its first response — the real call then lands on a
+ * warm pod (~0.8s) instead of paying pod-create. Fire-and-forget; only runs in
+ * the deployed Lambda (it would otherwise hit a real cluster from tests/local).
+ */
+export function prewarmAccountTool(
+  accountId: string,
+  toolId: string,
+  createExecutor: typeof createSandboxExecutor = createSandboxExecutor,
+): void {
+  if (!optionalEnv("AWS_LAMBDA_FUNCTION_NAME")) return;
+  const executor = createExecutor(customToolExecutorConfig());
+  if (!executor.prewarm) return;
+  void executor.prewarm({ reservationKey: customToolReservationKey(accountId, toolId) })
+    .catch((error) => logWarn("custom tool prewarm failed", {
+      toolId,
+      error: error instanceof Error ? error.message : String(error),
+    }));
 }

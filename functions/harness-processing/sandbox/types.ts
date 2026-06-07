@@ -126,6 +126,10 @@ export interface SandboxJobRequest {
 
 export interface SandboxExecutor {
   run(request: SandboxRunRequest): Promise<SandboxRunResult>;
+  // Best-effort: create/resume the reserved sandbox and wait until its pod is
+  // Ready, ahead of the first real call, to hide cold-start. No-op for
+  // non-persistent configs. Callers feature-detect and fire-and-forget.
+  prewarm?(request: { namespace?: string; reservationKey?: string }): Promise<void>;
   // Persistent-only background capabilities. Implemented by kubernetes/daytona/
   // e2b when config.persistent is true; absent otherwise (callers feature-detect).
   runBackground?(request: SandboxRunRequest): Promise<SandboxJobHandle>;

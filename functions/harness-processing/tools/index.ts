@@ -35,6 +35,7 @@ import runSubagentTool, {
 import { tavilyExtractTool, tavilySearchTool } from "./tavily.tool.ts";
 import asyncStatusTool from "./async-status.tool.ts";
 import accountTool from "./account-tool.tool.ts";
+import { prewarmAccountTool } from "./custom-tool-executor.ts";
 
 // Runtime dependencies shared by tool factories. Model-facing input schemas
 // stay inside each individual tool file.
@@ -209,6 +210,11 @@ export async function createTools(context: Omit<ToolContext, "config">, agentCon
       [record.name]: toolConfig.needsApproval === true,
     }));
     addAsyncModeIfConfigured(asyncModes, record.name, toolConfig, "uploaded");
+    // Warm the tool's sandbox pod now, in parallel with the model's first
+    // response, so an async call lands on a ready pod instead of cold-starting.
+    if (toolConfig.async === true) {
+      prewarmAccountTool(accountId, toolId);
+    }
   }
 
   // Auto-add the background-job status tool when the agent has any async tool or

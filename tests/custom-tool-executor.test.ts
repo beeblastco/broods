@@ -14,6 +14,7 @@ import type {
 
 const bundle = "export default { name: 'test_async', async execute() { return { ok: true }; } };";
 const getS3ObjectUrlMock = mock(async () => "https://tool-bundles.example/account-tools/acct_test/bundles/hash.mjs?sig=test");
+const readS3BytesMock = mock(async () => new TextEncoder().encode(bundle) as Uint8Array);
 const runMock = mock(async (): Promise<SandboxRunResult> => ({
   ok: true,
   runtime: "bash",
@@ -31,6 +32,7 @@ const createSandboxExecutorMock = mock((_config: SandboxExecutorConfig): Sandbox
 
 mock.module("../functions/_shared/s3.ts", () => ({
   getS3ObjectUrl: getS3ObjectUrlMock,
+  readS3Bytes: readS3BytesMock,
   readS3Text: mock(async () => ""),
   s3ObjectExists: mock(async () => false),
   listS3Prefix: mock(async () => []),
@@ -46,6 +48,7 @@ mock.module("../functions/harness-processing/self-url.ts", () => ({
 beforeEach(() => {
   process.env.TOOL_BUNDLES_BUCKET_NAME = "tool-bundles";
   getS3ObjectUrlMock.mockClear();
+  readS3BytesMock.mockClear();
   runMock.mockClear();
   runBackgroundMock.mockClear();
   createSandboxExecutorMock.mockClear();
@@ -65,7 +68,9 @@ describe("executeAccountToolInSandbox", () => {
     });
 
     expect(result).toEqual({ type: "text", value: "done" });
-    expect(getS3ObjectUrlMock).toHaveBeenCalledWith("tool-bundles", "account-tools/acct_test/bundles/hash.mjs");
+    // Small bundle is inlined: read in-region, never fetched cross-cloud by the pod.
+    expect(readS3BytesMock).toHaveBeenCalledWith("tool-bundles", "account-tools/acct_test/bundles/hash.mjs");
+    expect(getS3ObjectUrlMock).not.toHaveBeenCalled();
     expect(createSandboxExecutorMock).toHaveBeenCalledWith(expect.objectContaining({
       provider: "kubernetes",
       persistent: true,
@@ -81,8 +86,26 @@ describe("executeAccountToolInSandbox", () => {
     const [runRequest] = runMock.mock.calls[0] as unknown as [{ code: string }];
     const code = runRequest.code;
     expect(code).toContain("node <<'__CUSTOM_TOOL_RUNNER__'");
-    expect(code).toContain("https://tool-bundles.example/account-tools/acct_test/bundles/hash.mjs?sig=test");
+    expect(code).toContain(Buffer.from(bundle).toString("base64"));
     expect(runBackgroundMock).not.toHaveBeenCalled();
+  });
+
+  it("falls back to a signed URL for bundles too large to inline", async () => {
+    readS3BytesMock.mockImplementationOnce(async () => new Uint8Array(65 * 1024));
+    const { executeAccountToolInSandbox } = await import("../functions/harness-processing/tools/custom-tool-executor.ts");
+
+    await executeAccountToolInSandbox({
+      accountId: "acct_test",
+      tool: accountToolRecord(sha256(bundle)),
+      input: {},
+      config: {},
+      options: { asyncTool: { resultId: "async_tool_1" } },
+      createExecutor: createSandboxExecutorMock,
+    });
+
+    expect(getS3ObjectUrlMock).toHaveBeenCalledWith("tool-bundles", "account-tools/acct_test/bundles/hash.mjs");
+    const [runRequest] = runMock.mock.calls[0] as unknown as [{ code: string }];
+    expect(runRequest.code).toContain("https://tool-bundles.example/account-tools/acct_test/bundles/hash.mjs?sig=test");
   });
 
   it("starts uploaded async tools as Kubernetes background work when completion metadata is detached", async () => {

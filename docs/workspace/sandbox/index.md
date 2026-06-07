@@ -96,12 +96,19 @@ flowchart LR
   Use -. "idle N min, no job" .-> Down["scale to 0 / stop / pause<br/>(disk + installed packages persist)"]
 ```
 
-> **Cold-start note (kubernetes).** A durable home PVC means provisioning a cloud block
-> volume — on Hetzner that create+attach dominates the cold-start (~16s of ~22s). Callers
-> that don't need durable disk set `ephemeralHome: true` to reserve the sandbox *without* a
-> PVC (the pod still outlives the request) and use the image's own `/home/node`, cutting the
-> first-call cold-start to ~5s. Account-uploaded tools use this — their results return via
-> HTTP callback, never via disk.
+> **Cold-start note (kubernetes).** Three stacked optimizations take the uploaded-tool
+> first-call cold-start from ~22s to ~1s:
+> 1. **`ephemeralHome: true`** — skip the durable home PVC. The Hetzner block-volume
+>    create+attach was ~16s of the ~22s; the pod still outlives the request and just uses
+>    the image's own `/home/node`. Uploaded tools never need durable disk (results return
+>    via HTTP callback).
+> 2. **Inline bundle** — for bundles ≤64 KB the harness reads the source in-region and
+>    embeds it in the exec payload, so the pod skips the cross-cloud S3 fetch (~1.5s).
+>    Larger (npm-bundled) tools fall back to the signed URL.
+> 3. **Pre-warm** — when a request's toolset includes an async uploaded tool, the harness
+>    creates/resumes its sandbox pod in the background, in parallel with the model's first
+>    response, so the call lands on a ready pod. The ~1s residual is the per-call floor
+>    (node spawn + exec round-trips).
 
 How idle scale-down happens differs per provider: **kubernetes** uses an infra reaper
 CronJob (scales `replicas` 0↔1; home PVC + S3 persist); **daytona** uses native

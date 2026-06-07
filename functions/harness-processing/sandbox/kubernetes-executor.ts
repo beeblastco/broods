@@ -129,6 +129,18 @@ export class KubernetesSandboxExecutor implements SandboxExecutor {
     });
   }
 
+  async prewarm(request: { namespace?: string; reservationKey?: string }): Promise<void> {
+    // Only persistent reservations have a pod to warm; ephemeral runs create
+    // their own sandbox per call. Create/resume + wait Ready so the next real
+    // call execs into a live pod. touchActivity keeps the reaper off it.
+    if (!this.#isPersistent(request)) return;
+    await this.#ensureClients();
+    const k8sNamespace = kubeNamespace(options(this.#config));
+    const name = persistentSandboxName(sandboxReservationKey(request)!);
+    await this.#ensurePersistentSandbox(k8sNamespace, name);
+    await this.#touchActivity(k8sNamespace, name);
+  }
+
   async runBackground(request: SandboxRunRequest): Promise<SandboxJobHandle> {
     if (!this.#isPersistent(request)) {
       throw new Error("background jobs require a persistent kubernetes sandbox with a workspace");
