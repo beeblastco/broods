@@ -16,12 +16,12 @@ import { WebhooksPanel } from "./components/WebhooksPanel";
 
 type SettingsTab = "general" | "environments" | "deploy" | "webhooks" | "danger";
 
-const TABS: Array<{ id: SettingsTab; label: string; danger?: boolean; envScoped?: boolean }> = [
+const TABS: Array<{ id: SettingsTab; label: string; danger?: boolean }> = [
     { id: "general", label: "General" },
     { id: "environments", label: "Environments" },
-    { id: "deploy", label: "Deploy", envScoped: true },
-    { id: "webhooks", label: "Webhooks", envScoped: true },
-    { id: "danger", label: "Danger Zone", danger: true, envScoped: true },
+    { id: "deploy", label: "Deploy" },
+    { id: "webhooks", label: "Webhooks" },
+    { id: "danger", label: "Danger Zone", danger: true },
 ];
 
 export default function SettingsPage() {
@@ -51,7 +51,7 @@ export default function SettingsPage() {
             case "general":
                 return <ProjectGeneralPanel projectId={projectId} />;
             case "environments":
-                return <EnvironmentsPanel projectId={projectId} />;
+                return <EnvironmentsPanel projectId={projectId} environmentId={activeEnvId} />;
             case "deploy":
                 return <DeployKeysPanel projectId={projectId} environmentId={activeEnvId} />;
             case "webhooks":
@@ -103,11 +103,6 @@ export default function SettingsPage() {
                 {/* Page title — aligned with sidebar header height */}
                 <div className="px-8 pt-9.25 pb-6 mx-auto w-full max-w-2xl shrink-0">
                     <h2 className="text-xl font-semibold text-foreground">{activeLabel}</h2>
-                    {tab?.envScoped && activeEnv && (
-                        <p className="mt-0.5 text-sm text-muted-foreground">
-                            Environment: <span className="text-foreground">{activeEnv.name}</span>
-                        </p>
-                    )}
                 </div>
                 <div className="mx-auto w-full max-w-2xl px-8 pb-12">
                     {renderPanel()}

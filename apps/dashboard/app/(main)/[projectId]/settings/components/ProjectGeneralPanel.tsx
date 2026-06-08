@@ -31,7 +31,7 @@ export function ProjectGeneralPanel({ projectId }: Props) {
         setDescription(project.description ?? "");
     }, [project]);
 
-    if (project === undefined) {
+    if (!project) {
         return (
             <Section title="Project details" description="Rename this project or update its description.">
                 <p className="text-sm text-muted-foreground">Loading...</p>

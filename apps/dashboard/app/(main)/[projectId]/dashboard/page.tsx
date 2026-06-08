@@ -15,10 +15,10 @@ import { TokensUsagePanel } from "./components/TokensUsagePanel";
 import { TracingPanel } from "./components/TracingPanel";
 
 const TABS = [
-    { id: "monitoring", label: "Monitoring", envScoped: true },
-    { id: "tracing", label: "Tracing", envScoped: true },
-    { id: "tokens", label: "Tokens Usage", envScoped: true },
-    { id: "billing", label: "Billing & Plan", envScoped: false },
+    { id: "monitoring", label: "Monitoring" },
+    { id: "tracing", label: "Tracing" },
+    { id: "tokens", label: "Tokens Usage" },
+    { id: "billing", label: "Billing & Plan" },
 ] as const;
 
 type DashboardTab = (typeof TABS)[number]["id"];
@@ -110,11 +110,6 @@ export default function DashboardPage() {
                 {/* Page title — aligned with sidebar header height */}
                 <div className={cn("px-8 pt-9.25 pb-5 mx-auto w-full shrink-0", contentMaxWidth)}>
                     <h2 className="text-xl font-semibold text-foreground">{activeLabel}</h2>
-                    {tab?.envScoped && activeEnv && (
-                        <p className="mt-0.5 text-sm text-muted-foreground">
-                            Environment: <span className="text-foreground">{activeEnv.name}</span>
-                        </p>
-                    )}
                 </div>
                 <div className={cn("mx-auto w-full px-8 pb-12", contentMaxWidth)}>
                     {renderPanel()}
