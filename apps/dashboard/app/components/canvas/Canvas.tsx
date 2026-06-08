@@ -179,7 +179,7 @@ function hasEdgeBetween(edges: Edge[], a: string, b: string): boolean {
 }
 
 /** Whether a connection uses a side handle (left/right) — i.e. a mount or subagent link. */
-function isSideConnection(c: Pick<Connection, "sourceHandle" | "targetHandle">): boolean {
+function isSideConnection(c: { sourceHandle?: string | null; targetHandle?: string | null }): boolean {
     return (
         c.sourceHandle === "left" ||
         c.sourceHandle === "right" ||
