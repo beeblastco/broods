@@ -464,7 +464,7 @@ function CanvasInner({ projectId }: { projectId: Id<"projects"> }) {
      * Global connection validator — controls which connections ReactFlow highlights
      * and allows visually. Called before onConnect fires.
      */
-    const isValidConnection = useCallback((connection: Connection) => {
+    const isValidConnection = useCallback((connection: Connection | Edge) => {
         if (connection.source === connection.target) return false;
 
         const srcNode = nodesRef.current.find((n) => n.id === connection.source);
