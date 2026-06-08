@@ -3,26 +3,46 @@
  */
 
 import { v } from "convex/values";
+import type { Id } from "./_generated/dataModel";
 import { internalQuery } from "./_generated/server";
 
+/**
+ * Returns the caller's active deployments scoped to a project, and optionally to
+ * a single environment, by resolving each deployment's agent config. Scoping by
+ * the config (which carries projectId/environmentId) keeps dashboard logs and
+ * usage stats aligned with the environment selected in the UI.
+ */
 export const getActiveDeploymentsInternal = internalQuery({
     args: {
         authId: v.string(),
         projectId: v.id("projects"),
+        environmentId: v.optional(v.id("environments")),
     },
     returns: v.array(v.object({
         _id: v.id("agentDeployments"),
         endpointId: v.string(),
     })),
     handler: async (ctx, args) => {
+        const { authId, projectId, environmentId } = args;
+
         const deployments = await ctx.db
             .query("agentDeployments")
-            .withIndex("by_authId", (q) => q.eq("authId", args.authId))
+            .withIndex("by_authId", (q) => q.eq("authId", authId))
             .collect();
 
-        return deployments
-            .filter((d) => d.status === "active")
-            .map((d) => ({ _id: d._id, endpointId: d.endpointId }));
+        const scoped: { _id: Id<"agentDeployments">; endpointId: string }[] = [];
+        for (const deployment of deployments) {
+            if (deployment.status !== "active") continue;
+
+            // Scope to the project (and environment, when given) via the agent config.
+            const config = await ctx.db.get(deployment.agentConfigId);
+            if (!config || config.projectId !== projectId) continue;
+            if (environmentId && config.environmentId !== environmentId) continue;
+
+            scoped.push({ _id: deployment._id, endpointId: deployment.endpointId });
+        }
+
+        return scoped;
     },
 });
 

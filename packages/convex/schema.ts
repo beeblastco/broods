@@ -90,6 +90,27 @@ export const agentDeploymentsFields = {
     updatedAt: v.number(),
 };
 
+/**
+ * Project + environment scoped CLI/API deploy key. Authorizes the `beeblast`
+ * CLI against exactly one project/environment, unlike the org Bearer secret
+ * which grants the whole account. Only the SHA-256 hash is stored.
+ */
+export const deployKeysFields = {
+    /** Org account this key resolves to (mirrors the project's org account). */
+    accountId: v.id("accounts"),
+    projectId: v.id("projects"),
+    environmentId: v.id("environments"),
+    name: v.string(),
+    /** SHA-256 hex of the plaintext token; the plaintext is shown once at creation. */
+    keyHash: v.string(),
+    /** Masked display label (prefix + last four), safe to list without revealing the secret. */
+    keyHint: v.string(),
+    status: v.union(v.literal("active"), v.literal("revoked")),
+    lastUsedAt: v.optional(v.number()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+};
+
 export const toolServicesFields = {
     authId: v.string(),
     projectId: v.id("projects"),
@@ -183,6 +204,20 @@ export const environmentVariablesFields = {
     environmentId: v.id("environments"),
     name: v.string(),
     value: v.string(),
+    updatedAt: v.number(),
+};
+
+/** Per-environment outbound webhook endpoint that receives environment events. */
+export const webhooksFields = {
+    projectId: v.id("projects"),
+    environmentId: v.id("environments"),
+    url: v.string(),
+    /** HMAC signing secret shared with the receiver to verify payload authenticity. */
+    secret: v.string(),
+    /** Event names this endpoint subscribes to; an empty array means all events. */
+    events: v.array(v.string()),
+    active: v.boolean(),
+    createdAt: v.number(),
     updatedAt: v.number(),
 };
 
@@ -315,6 +350,9 @@ export default defineSchema({
             "environmentId",
             "nodeId",
         ]),
+    deployKeys: defineTable(deployKeysFields)
+        .index("by_keyHash", ["keyHash"])
+        .index("by_projectId_and_environmentId", ["projectId", "environmentId"]),
     orgs: defineTable(orgsFields)
         .index("by_slug", ["slug"])
         .index("by_ownerAuthId", ["ownerAuthId"]),
@@ -335,6 +373,8 @@ export default defineSchema({
     environmentVariables: defineTable(environmentVariablesFields)
         .index("by_projectId_and_environmentId", ["projectId", "environmentId"])
         .index("by_environmentId_and_name", ["environmentId", "name"]),
+    webhooks: defineTable(webhooksFields)
+        .index("by_projectId_and_environmentId", ["projectId", "environmentId"]),
     conversations: defineTable(conversationsFields)
         .index("by_accountId", ["accountId"])
         .index("by_accountId_and_agentId", ["accountId", "agentId"]),

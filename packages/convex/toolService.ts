@@ -43,7 +43,13 @@ export const getByNode = query({
     handler: async (ctx, { projectId, environmentId, nodeId }) => {
         const authUser = await authKit.getAuthUser(ctx);
         if (!authUser) throw new Error("User not found or not authenticated");
-        await requireOwnedProjectEnv(ctx, authUser.id, projectId, environmentId);
+
+        // Resolve ownership without throwing: a deleted project/environment should
+        // yield null for this reactive query rather than crashing the canvas.
+        const project = await getOwnedProject(ctx, authUser.id, projectId);
+        if (!project) return null;
+        const environment = await getOwnedEnvironment(ctx, authUser.id, environmentId);
+        if (!environment || environment.projectId !== projectId) return null;
 
         return ctx.db
             .query("toolServices")

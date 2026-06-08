@@ -20,9 +20,11 @@ export const list = query({
         const authUser = await authKit.getAuthUser(ctx);
         if (!authUser) throw new Error("User not found or not authenticated");
 
+        // Return empty rather than throwing so a just-deleted agent config doesn't
+        // crash the reactive side panel before it unmounts.
         const config = await ctx.db.get(agentConfigId);
         if (!config || config.authId !== authUser.id) {
-            throw new Error("Agent config not found.");
+            return [];
         }
 
         return ctx.db

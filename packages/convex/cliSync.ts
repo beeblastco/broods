@@ -86,6 +86,46 @@ export const getManifestBySecretHash = internalQuery({
     },
 });
 
+/**
+ * Resolves a CLI Bearer token hash to the account secret hash it authorizes with.
+ * The org Bearer secret grants full account access (`scoped: false`); a project +
+ * environment deploy key grants access only when the route resolves to the exact
+ * project/environment the key is bound to (`scoped: true`). Returns null when the
+ * token is unknown, revoked, or out of scope.
+ */
+export const resolveCliAuth = internalQuery({
+    args: { tokenHash: v.string(), project: v.string(), environment: v.string() },
+    returns: v.union(v.null(), v.object({ secretHash: v.string(), scoped: v.boolean() })),
+    handler: async (ctx, args) => {
+        const { tokenHash, project, environment } = args;
+
+        // Org Bearer secret → full account access.
+        const account = await accountFromSecretHash(ctx, tokenHash);
+        if (account) return { secretHash: tokenHash, scoped: false };
+
+        // Scoped deploy key → only valid for its bound project + environment.
+        const deployKey = await ctx.db
+            .query("deployKeys")
+            .withIndex("by_keyHash", (q) => q.eq("keyHash", tokenHash))
+            .unique();
+        if (!deployKey || deployKey.status !== "active") return null;
+
+        const keyAccount = await ctx.db.get(deployKey.accountId);
+        if (!keyAccount || keyAccount.status !== "active") return null;
+
+        const resolved = await getProjectEnvironment(ctx, keyAccount, project, environment);
+        if (
+            !resolved ||
+            resolved.projectDoc._id !== deployKey.projectId ||
+            resolved.environmentDoc._id !== deployKey.environmentId
+        ) {
+            return null;
+        }
+
+        return { secretHash: keyAccount.secretHash, scoped: true };
+    },
+});
+
 export const syncManifestBySecretHash = internalMutation({
     args: {
         secretHash: v.string(),

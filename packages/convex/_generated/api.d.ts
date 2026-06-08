@@ -20,7 +20,9 @@ import type * as cliSync from "../cliSync.js";
 import type * as conversations from "../conversations.js";
 import type * as cronJobs from "../cronJobs.js";
 import type * as cronJobsPublic from "../cronJobsPublic.js";
+import type * as deployKeys from "../deployKeys.js";
 import type * as environment from "../environment.js";
+import type * as environmentVariables from "../environmentVariables.js";
 import type * as http from "../http.js";
 import type * as lib_slug from "../lib/slug.js";
 import type * as logs from "../logs.js";
@@ -41,6 +43,7 @@ import type * as skillsPublic from "../skillsPublic.js";
 import type * as stripe from "../stripe.js";
 import type * as toolService from "../toolService.js";
 import type * as user from "../user.js";
+import type * as webhooks from "../webhooks.js";
 import type * as workspaceConfigs from "../workspaceConfigs.js";
 import type * as workspaceFiles from "../workspaceFiles.js";
 
@@ -63,7 +66,9 @@ declare const fullApi: ApiFromModules<{
   conversations: typeof conversations;
   cronJobs: typeof cronJobs;
   cronJobsPublic: typeof cronJobsPublic;
+  deployKeys: typeof deployKeys;
   environment: typeof environment;
+  environmentVariables: typeof environmentVariables;
   http: typeof http;
   "lib/slug": typeof lib_slug;
   logs: typeof logs;
@@ -84,6 +89,7 @@ declare const fullApi: ApiFromModules<{
   stripe: typeof stripe;
   toolService: typeof toolService;
   user: typeof user;
+  webhooks: typeof webhooks;
   workspaceConfigs: typeof workspaceConfigs;
   workspaceFiles: typeof workspaceFiles;
 }>;

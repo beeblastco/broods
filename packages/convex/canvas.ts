@@ -45,13 +45,13 @@ export const getByProject = query({
         const authUser = await authKit.getAuthUser(ctx);
         if (!authUser) throw new Error("User not found or not authenticated");
 
+        // Reactive subscribers may briefly hold a just-deleted project/environment;
+        // return null instead of throwing so the canvas unmounts without crashing.
         const project = await getOwnedProject(ctx, authUser.id, projectId);
-        if (!project) throw new Error("Project not found.");
+        if (!project) return null;
 
         const environment = await getOwnedEnvironment(ctx, authUser.id, environmentId);
-        if (!environment || environment.projectId !== projectId) {
-            throw new Error("Environment not found.");
-        }
+        if (!environment || environment.projectId !== projectId) return null;
 
         const layout = await ctx.db
             .query("canvasLayouts")

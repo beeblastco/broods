@@ -61,9 +61,22 @@ export const handle = httpAction(async (ctx, req) => {
         const route = parseRoute(new URL(req.url).pathname);
         if (!route) return json({ error: "Not found" }, 404);
 
+        // Resolve the token to an account secret hash, enforcing deploy-key scope
+        // against the route's project/environment. `scoped` keys can't forward to
+        // filthy-panty's cron API (which only knows the org secret), so cron sync
+        // is skipped for them — `forwardToken` is null in that case.
+        const resolved = await ctx.runQuery(internal.cliSync.resolveCliAuth, {
+            tokenHash: auth.secretHash,
+            project: route.project,
+            environment: route.environment,
+        });
+        if (!resolved) return json({ error: "Invalid or out-of-scope deploy token" }, 401);
+        const secretHash = resolved.secretHash;
+        const forwardToken = resolved.scoped ? null : auth.token;
+
         if (route.kind === "manifest" && req.method === "GET") {
             const result = await ctx.runQuery(internal.cliSync.getManifestBySecretHash, {
-                secretHash: auth.secretHash,
+                secretHash: secretHash,
                 project: route.project,
                 environment: route.environment,
             });
@@ -74,7 +87,7 @@ export const handle = httpAction(async (ctx, req) => {
         if (route.kind === "logs" && req.method === "GET") {
             const url = new URL(req.url);
             const logs = await ctx.runAction(internal.logs.fetchForCli, {
-                secretHash: auth.secretHash,
+                secretHash: secretHash,
                 project: route.project,
                 environment: route.environment,
                 lookbackMs: numberSearchParam(url, "lookbackMs"),
@@ -92,14 +105,16 @@ export const handle = httpAction(async (ctx, req) => {
                 return json({ error: "Request body must include manifest" }, 400);
             }
             const result = await ctx.runMutation(internal.cliSync.syncManifestBySecretHash, {
-                secretHash: auth.secretHash,
+                secretHash: secretHash,
                 manifest: manifest as never,
                 prune: body.prune === true,
             });
 
-            const cronJobIds = await syncCronJobs(auth.token, manifest as CliManifest, result.ids, body.prune === true);
+            const cronJobIds = forwardToken
+                ? await syncCronJobs(forwardToken, manifest as CliManifest, result.ids, body.prune === true)
+                : {};
             const refreshed = await ctx.runQuery(internal.cliSync.getManifestBySecretHash, {
-                secretHash: auth.secretHash,
+                secretHash: secretHash,
                 project: route.project,
                 environment: route.environment,
             });
@@ -116,7 +131,7 @@ export const handle = httpAction(async (ctx, req) => {
                 return json({ error: "Request body must include string value" }, 400);
             }
             await ctx.runMutation(internal.cliSync.setEnvBySecretHash, {
-                secretHash: auth.secretHash,
+                secretHash: secretHash,
                 project: route.project,
                 environment: route.environment,
                 name: route.name,
@@ -128,10 +143,11 @@ export const handle = httpAction(async (ctx, req) => {
 
         if (route.kind === "resource" && req.method === "DELETE") {
             if (route.resourceKind === "cronJob") {
-                await deleteCronJobByName(auth.token, route.name);
+                // Scoped deploy keys can't manage filthy-panty cron jobs; no-op for them.
+                if (forwardToken) await deleteCronJobByName(forwardToken, route.name);
             } else {
                 await ctx.runMutation(internal.cliSync.deleteResourceBySecretHash, {
-                    secretHash: auth.secretHash,
+                    secretHash: secretHash,
                     project: route.project,
                     environment: route.environment,
                     kind: route.resourceKind,

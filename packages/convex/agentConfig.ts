@@ -255,6 +255,70 @@ export const updateRuntimeRefs = mutation({
     },
 });
 
+/**
+ * Updates the filthy-panty `subagent.allowed` branch for one caller agent from the
+ * canvas's agent→agent edges. Resolves each callee config's linked `agentId`
+ * (provisioning its `agents` row when missing) into the allow-list, enabling
+ * subagent calls when non-empty and clearing the branch when empty.
+ */
+export const updateSubagentRefs = mutation({
+    args: {
+        configId: v.id("agentConfigs"),
+        calleeConfigIds: v.array(v.id("agentConfigs")),
+    },
+    returns: v.id("agentConfigs"),
+    handler: async (ctx, args) => {
+        const { configId, calleeConfigIds } = args;
+
+        // Check authenticated user
+        const user = await authKit.getAuthUser(ctx);
+        if (!user) {
+            throw new Error("User not found or not authenticated");
+        }
+
+        const existing = await ctx.db.get(configId);
+        if (!existing || existing.authId !== user.id) {
+            throw new Error("Agent config not found.");
+        }
+
+        // Map each callee config to its filthy-panty agents-row id, skipping
+        // self-calls and any config the caller doesn't own or can't provision.
+        const allowed: string[] = [];
+        for (const calleeId of calleeConfigIds) {
+            if (calleeId === configId) continue;
+            const callee = await ctx.db.get(calleeId);
+            if (!callee || callee.authId !== user.id) continue;
+            const agentRowId = await ensureAgentsRowForConfig(ctx, calleeId, user.id);
+            if (agentRowId) allowed.push(agentRowId);
+        }
+        allowed.sort();
+
+        const extraConfig = { ...asRecord(existing.extraConfig) };
+        const prevSubagent = asRecord(extraConfig.subagent);
+        // Preserve any context/mode the caller already set; only swap enabled+allowed.
+        const nextSubagent =
+            allowed.length > 0 ? { ...prevSubagent, enabled: true, allowed: allowed } : undefined;
+
+        // Skip the patch and encryption push entirely when the branch is unchanged.
+        if (JSON.stringify(extraConfig.subagent ?? null) === JSON.stringify(nextSubagent ?? null)) {
+            return configId;
+        }
+
+        if (nextSubagent) {
+            extraConfig.subagent = nextSubagent;
+        } else {
+            delete extraConfig.subagent;
+        }
+
+        await ctx.db.patch(configId, { extraConfig: extraConfig, updatedAt: Date.now() });
+
+        await ensureAgentsRowForConfig(ctx, configId, user.id);
+        await pushEncryptedConfigToAgentRow(ctx, configId);
+
+        return configId;
+    },
+});
+
 export const remove = mutation({
     args: { configId: v.id("agentConfigs") },
     returns: v.id("agentConfigs"),

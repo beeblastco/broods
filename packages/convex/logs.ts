@@ -257,6 +257,7 @@ async function runInsightsQuery(opts: {
 export const fetchForProject = action({
     args: {
         projectId: v.id("projects"),
+        environmentId: v.optional(v.id("environments")),
         lookbackMs: v.optional(v.number()),
         limit: v.optional(v.number()),
         errorOnly: v.optional(v.boolean()),
@@ -273,6 +274,7 @@ export const fetchForProject = action({
             await ctx.runQuery(internal.logsHelpers.getActiveDeploymentsInternal, {
                 authId: authUser.id,
                 projectId: args.projectId,
+                environmentId: args.environmentId,
             });
 
         const sources: { logGroup: string; functionName: string }[] = deployments.map((d) => ({
@@ -361,11 +363,12 @@ export const fetchForCli = internalAction({
 export const fetchUsageStats = action({
     args: {
         projectId: v.id("projects"),
+        environmentId: v.optional(v.id("environments")),
         range: usageRange,
     },
     returns: usageStats,
     handler: async (ctx, args) => {
-        const { projectId, range } = args;
+        const { projectId, environmentId, range } = args;
 
         // Check authenticated user
         const authUser = await authKit.getAuthUser(ctx);
@@ -397,6 +400,7 @@ export const fetchUsageStats = action({
         const deployments = await ctx.runQuery(internal.logsHelpers.getActiveDeploymentsInternal, {
             authId: authUser.id,
             projectId: projectId,
+            environmentId: environmentId,
         });
 
         const logGroupNames = deployments.map((d: { endpointId: string }) => `/aws/lambda/${d.endpointId}`);

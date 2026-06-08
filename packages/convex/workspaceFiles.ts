@@ -28,8 +28,10 @@ export const list = query({
             throw new Error("User not found or not authenticated");
         }
 
+        // Return empty rather than throwing so a just-deleted project doesn't crash
+        // the reactive workspace panel before it unmounts.
         const project = await getOwnedProject(ctx, user.id, projectId);
-        if (!project) throw new Error("Project not found.");
+        if (!project) return [];
 
         return await ctx.db
             .query("workspaceFiles")
