@@ -138,7 +138,9 @@ export interface SandboxExecutor {
   execInReservedPod?(
     request: { namespace?: string; reservationKey?: string },
     command: string[],
-    opts?: { stdin?: Readable; timeoutSeconds?: number; outputLimitBytes?: number },
+    // onStdout receives each stdout chunk as it arrives (used to stream a custom
+    // tool's NDJSON frames live). The returned stdout still holds the full output.
+    opts?: { stdin?: Readable; timeoutSeconds?: number; outputLimitBytes?: number; onStdout?: (chunk: string) => void },
   ): Promise<{ stdout: string; stderr: string; exitCode: number | null; timedOut?: boolean }>;
   // Persistent-only background capabilities. Implemented by kubernetes/daytona/
   // e2b when config.persistent is true; absent otherwise (callers feature-detect).

@@ -158,7 +158,7 @@ describe("agent persistence", () => {
     const staleConfig = encryptAgentConfig({
       model: {
         provider: "minimax",
-        modelId: "MiniMax-M2.7",
+        modelId: "MiniMax-M3",
       },
       provider: {
         minimax: {

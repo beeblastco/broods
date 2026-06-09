@@ -15,10 +15,13 @@ const WORKER_LOG = "${HOME:-/tmp}/.beeblast-worker.log";
 const WORKER_HEREDOC_TAG = "__BEEBLAST_WORKER_SRC__";
 
 // The worker process. Listens on a unix socket; `/invoke` loads (and memoizes by
-// sha) a tool bundle, runs execute(ctx, input), and returns the structured result
-// as the HTTP body. User stdout/stderr goes to the process log, never the socket,
-// so the harness reads clean JSON. Foreground-only: detached jobs keep their own
-// reaper-aware background path.
+// sha) a tool bundle and runs execute(ctx, input). The response is an NDJSON
+// stream (one JSON frame per line) so a tool whose execute is an async generator
+// streams partial output live: each `yield` becomes a `chunk` frame, a plain
+// return becomes a single `final` frame, and a throw becomes an `error` frame.
+// User stdout/stderr goes to the process log, never the socket, so the harness
+// reads clean frames. Foreground-only: detached jobs keep their own reaper-aware
+// background path.
 const WORKER_SOURCE = String.raw`
 import { createServer } from "node:http";
 import { createHash } from "node:crypto";
@@ -71,10 +74,32 @@ function loadDefinition(payload) {
   return p;
 }
 
-async function invoke(payload) {
-  const def = await loadDefinition(payload);
-  const ctx = { config: payload.config, asyncTool: payload.asyncTool, env: {} };
-  return await def.execute(ctx, payload.input);
+function isAsyncIterable(value) {
+  return value != null && typeof value[Symbol.asyncIterator] === "function";
+}
+
+// Run the tool and stream NDJSON frames. Mirrors the Vercel AI SDK convention:
+// every yield is an intermediate (chunk); the last yield is also the final output.
+// A non-iterable execute returns one final frame. errMsg lets a failed load report
+// without first having to know whether the tool streams.
+async function streamInvoke(payload, res) {
+  res.writeHead(200, { "content-type": "application/x-ndjson" });
+  const write = (frame) => res.write(JSON.stringify(frame) + "\n");
+  try {
+    const def = await loadDefinition(payload);
+    const ctx = { config: payload.config, asyncTool: payload.asyncTool, env: {} };
+    const result = def.execute(ctx, payload.input);
+    if (isAsyncIterable(result)) {
+      for await (const output of result) write({ t: "chunk", output });
+      write({ t: "end" });
+    } else {
+      write({ t: "final", result: await result });
+    }
+    res.end();
+  } catch (error) {
+    write({ t: "error", error: error instanceof Error ? error.message : String(error) });
+    res.end();
+  }
 }
 
 const server = createServer((req, res) => {
@@ -85,15 +110,8 @@ const server = createServer((req, res) => {
   req.on("data", (c) => { body += c; });
   req.on("end", async () => {
     let payload;
-    try { payload = JSON.parse(body); } catch { res.writeHead(400); res.end(JSON.stringify({ ok: false, error: "invalid invoke payload" })); return; }
-    try {
-      const result = await invoke(payload);
-      res.writeHead(200, { "content-type": "application/json" });
-      res.end(JSON.stringify({ ok: true, result }));
-    } catch (error) {
-      res.writeHead(200, { "content-type": "application/json" });
-      res.end(JSON.stringify({ ok: false, error: error instanceof Error ? error.message : String(error) }));
-    }
+    try { payload = JSON.parse(body); } catch { res.writeHead(400); res.end(JSON.stringify({ t: "error", error: "invalid invoke payload" }) + "\n"); return; }
+    await streamInvoke(payload, res);
   });
 });
 
@@ -130,21 +148,27 @@ export function buildWorkerEnsureCommand(): string[] {
   return ["bash", "-lc", ENSURE_WORKER];
 }
 
-export interface WorkerInvokeResult {
-  ok: boolean;
-  result?: unknown;
-  error?: string;
-}
+// One line of the worker's NDJSON response. `chunk` is an intermediate streamed
+// output; `final` carries the whole result of a non-streaming tool; `end` closes a
+// streamed tool (its last chunk was the final output); `error` is a tool failure.
+export type WorkerFrame =
+  | { t: "chunk"; output: unknown }
+  | { t: "final"; result: unknown }
+  | { t: "end" }
+  | { t: "error"; error: string };
 
-// Parse the worker's single JSON response line. Returns null when the body is not
-// the worker protocol (e.g. the worker was unreachable), so the caller can fall
-// back to the one-shot runner.
-export function parseWorkerResponse(stdout: string): WorkerInvokeResult | null {
-  const trimmed = stdout.trim();
+// Parse one NDJSON line into a frame. Returns null for blank or non-protocol lines
+// (e.g. a curl connection-refused message when the worker is unreachable), so the
+// caller can tell "no frames" (fall back to the one-shot runner) from a real error.
+export function parseWorkerFrame(line: string): WorkerFrame | null {
+  const trimmed = line.trim();
   if (!trimmed) return null;
   try {
-    const parsed = JSON.parse(trimmed) as WorkerInvokeResult;
-    return typeof parsed?.ok === "boolean" ? parsed : null;
+    const parsed = JSON.parse(trimmed) as WorkerFrame;
+    if (parsed && (parsed.t === "chunk" || parsed.t === "final" || parsed.t === "end" || parsed.t === "error")) {
+      return parsed;
+    }
+    return null;
   } catch {
     return null;
   }

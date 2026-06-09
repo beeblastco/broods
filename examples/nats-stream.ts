@@ -47,7 +47,7 @@ const researchAgentConfig: AgentConfig = {
   },
   model: {
     provider: "minimax",
-    modelId: "MiniMax-M2.7",
+    modelId: "MiniMax-M3",
   },
   agent: {
       system: `Knowledge cutoff: Janurary 2025.\n\nYou are a helpful personal assistant that can use tools to get information and perform tasks for the user.\n\nYou also have access to web search and web fetch tools. Always use these tools to research and get up-to-date information or when you are asked for. Your knowledge was limited by cutoff training data date so do not rely on it for up-to-date information or fact checks. Only research and answer the question, don't put additional information.`,
@@ -83,7 +83,7 @@ const agentConfig: AgentConfig = {
   },
   model: {
     provider: "minimax",
-    modelId: "MiniMax-M2.7",
+    modelId: "MiniMax-M3",
   },
   agent: {
       system: "You are a helpful assistant.",

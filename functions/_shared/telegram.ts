@@ -202,3 +202,52 @@ export async function sendMessage(
     }
   }
 }
+
+// Streaming-edit primitives. They operate on a single message capped at the first
+// 4096-char chunk: streaming replies are typically short, and chunk-mode streaming
+// (paragraph messages) handles long replies without this cap. beginMessage posts
+// the first partial and returns its id; editMessageText rewrites it in place.
+export async function sendMessageReturningId(
+  botToken: string,
+  chatId: number,
+  text: string,
+): Promise<string> {
+  const chunk = splitHtmlChunks(markdownToHtml(text))[0] ?? "…";
+  const url = `https://api.telegram.org/bot${botToken}/sendMessage`;
+  const response = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ chat_id: chatId, text: chunk, parse_mode: "HTML" }),
+  });
+  if (!response.ok) {
+    throw new Error(`Telegram sendMessage failed (${response.status}): ${await response.text()}`);
+  }
+  const data = await response.json() as { result?: { message_id?: number } };
+  const messageId = data.result?.message_id;
+  if (messageId === undefined) throw new Error("Telegram sendMessage returned no message_id");
+  return String(messageId);
+}
+
+export async function editMessageText(
+  botToken: string,
+  chatId: number,
+  messageId: string,
+  text: string,
+): Promise<void> {
+  const chunk = splitHtmlChunks(markdownToHtml(text))[0] ?? "…";
+  const url = `https://api.telegram.org/bot${botToken}/editMessageText`;
+  const response = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ chat_id: chatId, message_id: Number(messageId), text: chunk, parse_mode: "HTML" }),
+  });
+  // "message is not modified" (same text) is a benign 400; ignore it. Other
+  // failures are swallowed by the streaming driver so a failed edit never aborts
+  // the turn — the final flush still applies the complete text.
+  if (!response.ok) {
+    const body = await response.text();
+    if (!body.includes("message is not modified")) {
+      throw new Error(`Telegram editMessageText failed (${response.status}): ${body}`);
+    }
+  }
+}

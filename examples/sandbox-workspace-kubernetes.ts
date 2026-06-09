@@ -48,7 +48,7 @@ const analysisAgent = await createAgent(account.secret, "Kubernetes sandbox anal
   },
   model: {
     provider: "minimax",
-    modelId: "MiniMax-M2.7",
+    modelId: "MiniMax-M3",
   },
   agent: {
     system: [
@@ -68,7 +68,7 @@ const visualizationAgent = await createAgent(account.secret, "Kubernetes workspa
   },
   model: {
     provider: "minimax",
-    modelId: "MiniMax-M2.7",
+    modelId: "MiniMax-M3",
   },
   agent: {
     system: [

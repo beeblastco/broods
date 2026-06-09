@@ -9,6 +9,16 @@ export interface ChannelActions {
   sendText(text: string): Promise<void>;
   sendTyping(): Promise<void>;
   reactToMessage(): Promise<void>;
+  // Optional streaming primitives. A channel that can edit a posted message
+  // implements both: beginMessage posts the first partial reply and returns its
+  // id; editMessage rewrites it. The shared streaming driver (channel-streaming.ts)
+  // uses them for "edit" mode and falls back to chunked sendText when absent. Both
+  // format text the same way as sendText.
+  beginMessage?(text: string): Promise<string>;
+  editMessage?(messageId: string, text: string): Promise<void>;
+  // Provider message-length cap for edit/progress streaming (raw chars). The driver
+  // rotates into a new message past this; defaults to ~3500 when unset.
+  editMaxChars?: number;
 }
 
 export interface ChannelRequest {

@@ -50,7 +50,7 @@ const agent = await createAgent(account.secret, "Sandbox assistant", {
   },
   model: {
     provider: "minimax",
-    modelId: "MiniMax-M2.7",
+    modelId: "MiniMax-M3",
   },
   agent: {
     system: [

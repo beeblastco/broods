@@ -1160,7 +1160,7 @@ describe("runAgentLoop", () => {
       },
       model: {
         provider: "minimax",
-        modelId: "MiniMax-M2.7",
+        modelId: "MiniMax-M3",
         temperature: 1,
       },
     });
@@ -1171,9 +1171,9 @@ describe("runAgentLoop", () => {
       apiKey: "minimax-key",
       baseURL: "https://api.minimax.io/anthropic/v1",
     });
-    expect(minimaxModelMock).toHaveBeenCalledWith("MiniMax-M2.7");
+    expect(minimaxModelMock).toHaveBeenCalledWith("MiniMax-M3");
     expect(streamTextMock.mock.calls[0]?.[0]).toMatchObject({
-      model: { provider: "minimax", modelId: "MiniMax-M2.7" },
+      model: { provider: "minimax", modelId: "MiniMax-M3" },
       temperature: 1,
     });
   });

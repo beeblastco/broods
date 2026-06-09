@@ -58,6 +58,10 @@ export interface AsyncToolResultRecord {
   response?: unknown;
   error?: string;
   delivery?: AsyncToolDelivery;
+  // Set when the model already consumed this result by polling async_status. The
+  // resume paths skip auto-injecting an observed result so the model is not handed
+  // the same answer twice (poll + injected continuation).
+  observed?: boolean;
   expiresAt: number;
 }
 
@@ -229,6 +233,24 @@ export async function getAsyncToolResult(resultId: string): Promise<AsyncToolRes
   return result.Item ? itemToAsyncToolResult(result.Item) : null;
 }
 
+/**
+ * Mark a result as observed: the model already saw its terminal value through an
+ * async_status poll, so the auto-delivery resume must not inject it again. Safe to
+ * call once the row is settled; a still-processing row is never marked observed.
+ */
+export async function markAsyncToolResultObserved(resultId: string): Promise<void> {
+  await dynamo.send(new UpdateItemCommand({
+    TableName: ASYNC_TOOL_RESULT_TABLE_NAME,
+    Key: { resultId: { S: resultId } },
+    UpdateExpression: "SET observed = :observed, updatedAt = :updatedAt, expiresAt = :expiresAt",
+    ExpressionAttributeValues: {
+      ":observed": { BOOL: true },
+      ":updatedAt": { S: new Date().toISOString() },
+      ":expiresAt": { N: String(asyncToolResultExpiresAt()) },
+    },
+  }));
+}
+
 export async function markAsyncToolResultCompleted(options: {
   resultId: string;
   response: unknown;
@@ -359,6 +381,7 @@ function itemToAsyncToolResult(item: Record<string, AttributeValue>): AsyncToolR
     response: item.response ? fromAttributeValue(item.response) : undefined,
     error: optionalString(item.error),
     delivery: optionalDelivery(item.delivery),
+    ...(item.observed?.BOOL === true ? { observed: true } : {}),
     expiresAt: expiresAtNumber as number,
   };
 }

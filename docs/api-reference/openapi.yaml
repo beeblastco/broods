@@ -2216,6 +2216,17 @@ components:
               type: string
               description: ISO date string
 
+    ChannelStreamingConfig:
+      type: object
+      description: >
+        Live reply streaming for a channel. `edit` rewrites one message in place;
+        `progress` shows a tool-activity preview then swaps in the final answer
+        (both require channel edit support, else fall back to `chunk`); `chunk`
+        sends one message per paragraph; `off` (default) sends one final message.
+      properties:
+        mode:
+          type: string
+          enum: [edit, chunk, progress, off]
     ChannelsConfig:
       type: object
       description: Channel webhook configuration. Webhook URLs follow the pattern `/webhooks/{accountId}/{agentId}/{channel}`.
@@ -2233,6 +2244,8 @@ components:
                 type: integer
             reactionEmoji:
               type: string
+            streaming:
+              $ref: '#/components/schemas/ChannelStreamingConfig'
         github:
           type: object
           properties:
@@ -2259,6 +2272,8 @@ components:
               type: array
               items:
                 type: string
+            streaming:
+              $ref: '#/components/schemas/ChannelStreamingConfig'
         discord:
           type: object
           properties:
@@ -2270,6 +2285,8 @@ components:
               type: array
               items:
                 type: string
+            streaming:
+              $ref: '#/components/schemas/ChannelStreamingConfig'
         pancake:
           type: object
           description: Page-validated (no signature header). Keep webhook URL private.

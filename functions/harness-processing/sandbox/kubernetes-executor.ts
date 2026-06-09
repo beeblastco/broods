@@ -144,10 +144,10 @@ export class KubernetesSandboxExecutor implements SandboxExecutor {
   async execInReservedPod(
     request: { namespace?: string; reservationKey?: string },
     command: string[],
-    opts: { stdin?: Readable; timeoutSeconds?: number; outputLimitBytes?: number } = {},
+    opts: { stdin?: Readable; timeoutSeconds?: number; outputLimitBytes?: number; onStdout?: (chunk: string) => void } = {},
   ): Promise<{ stdout: string; stderr: string; exitCode: number | null; timedOut?: boolean }> {
     const pod = await this.#resumeForJob(request);
-    const result = await this.#execInPod(pod, command, opts.timeoutSeconds ?? 60, opts.stdin);
+    const result = await this.#execInPod(pod, command, opts.timeoutSeconds ?? 60, opts.stdin, opts.onStdout);
     const limit = opts.outputLimitBytes;
     return {
       stdout: limit ? truncateText(result.stdout, limit).value : result.stdout,
@@ -506,7 +506,7 @@ export class KubernetesSandboxExecutor implements SandboxExecutor {
     }
   }
 
-  async #execInPod(pod: V1Pod, command: string[], timeoutSeconds: number, stdin?: Readable): Promise<ExecResult> {
+  async #execInPod(pod: V1Pod, command: string[], timeoutSeconds: number, stdin?: Readable, onStdout?: (chunk: string) => void): Promise<ExecResult> {
     const k8sNamespace = pod.metadata?.namespace ?? kubeNamespace(options(this.#config));
     const podName = pod.metadata?.name ?? "";
     const debugStream = optionalEnv("KUBERNETES_SANDBOX_DEBUG_STREAM") === "1";
@@ -515,7 +515,9 @@ export class KubernetesSandboxExecutor implements SandboxExecutor {
     let stderr = "";
     const stdoutStream = new Writable({
       write(chunk, _enc, cb) {
-        stdout += chunk.toString();
+        const text = chunk.toString();
+        stdout += text;
+        onStdout?.(text);
         if (debugStream) process.stdout.write(chunk);
         cb();
       },

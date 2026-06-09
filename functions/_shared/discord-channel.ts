@@ -47,6 +47,14 @@ export interface DiscordSource {
   userId?: string;
 }
 
+// Raised when the first interaction request fails, signalling that nothing was
+// delivered yet so the caller may safely fall back to a bot-token channel post.
+class DiscordInteractionUnavailable extends Error {}
+
+// Sentinel message id for the deferred interaction's original ("thinking")
+// message, edited in place via the interaction webhook.
+const DISCORD_ORIGINAL_MESSAGE = "@original";
+
 export function createDiscordChannel(
   botToken: string,
   publicKey: string,
@@ -180,7 +188,14 @@ function createDiscordActions(
   botToken: string,
   source: DiscordSource,
 ): ChannelActions {
+  // Edit streaming reuses the deferred "@original" message for the first message,
+  // then posts follow-ups for any rotation past the 2000-char limit.
+  let usedOriginal = false;
+
   return {
+    // Discord caps a message at 2000 chars; rotate the streaming edit well under it.
+    editMaxChars: 1900,
+
     async sendText(text) {
       const chunks = splitDiscordMessage(formatDiscordMessage(text));
 
@@ -224,12 +239,60 @@ function createDiscordActions(
     async reactToMessage() {
       return;
     },
+
+    // Edit-in-place streaming over the interaction webhook. The first message edits
+    // the deferred "@original"; rotation posts a follow-up and returns its id.
+    async beginMessage(text) {
+      const content = splitDiscordMessage(formatDiscordMessage(text))[0] || "…";
+      if (!usedOriginal) {
+        usedOriginal = true;
+        await editInteractionMessage(source, DISCORD_ORIGINAL_MESSAGE, content);
+        return DISCORD_ORIGINAL_MESSAGE;
+      }
+      return postInteractionFollowup(source, content);
+    },
+
+    async editMessage(messageId, text) {
+      const content = splitDiscordMessage(formatDiscordMessage(text))[0] || "…";
+      await editInteractionMessage(source, messageId, content);
+    },
   };
 }
 
-// Raised when the first interaction request fails, signalling that nothing was
-// delivered yet so the caller may safely fall back to a bot-token channel post.
-class DiscordInteractionUnavailable extends Error {}
+// PATCH a message owned by the interaction (the "@original" deferred reply or a
+// follow-up by id) through the interaction webhook.
+async function editInteractionMessage(source: DiscordSource, messageId: string, content: string): Promise<void> {
+  const response = await fetch(
+    `https://discord.com/api/v10/webhooks/${source.applicationId}/${source.interactionToken}/messages/${messageId}`,
+    {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ content, allowed_mentions: { parse: [] } }),
+    },
+  );
+  if (!response.ok) {
+    throw new Error(`Discord edit message failed (${response.status}): ${await response.text()}`);
+  }
+}
+
+// POST a new follow-up message through the interaction webhook; returns its id so a
+// later edit can target it.
+async function postInteractionFollowup(source: DiscordSource, content: string): Promise<string> {
+  const response = await fetch(
+    `https://discord.com/api/v10/webhooks/${source.applicationId}/${source.interactionToken}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ content, allowed_mentions: { parse: [] } }),
+    },
+  );
+  if (!response.ok) {
+    throw new Error(`Discord follow-up failed (${response.status}): ${await response.text()}`);
+  }
+  const json = await response.json() as { id?: string };
+  if (!json.id) throw new Error("Discord follow-up returned no message id");
+  return json.id;
+}
 
 /**
  * Reply to a slash command through its interaction webhook: the first chunk

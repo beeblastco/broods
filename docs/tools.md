@@ -90,6 +90,25 @@ Tradeoffs:
 
 Recommendation: keep the current warm-pod `exec` runner for MVP because it preserves isolation and is simple to debug. Move to the long-lived Node worker once custom tools are frequently invoked enough that Node/process startup and module import show up in latency metrics.
 
+### Streaming partial output (sync)
+
+A bundle whose `execute` is an async generator streams partial output. The resident worker returns NDJSON frames over the unix socket — one `chunk` frame per `yield`, then `end` (or a single `final` for a normal return, or `error` on throw) — and the executor surfaces them as an async iterable. The AI SDK turns each yield into a **preliminary tool result** on the sync SSE stream; the last yield is the final output the model sees. Auto-detected per call: a non-generator `execute` behaves exactly as before. Streaming is live only on the resident-worker path; the one-shot runner fallback drains the generator to its last value.
+
+```ts
+// uploaded bundle — yields stream as preliminary results, last yield is final
+export default {
+  async *execute(ctx, input) {
+    yield { type: "text", value: "working…" };
+    yield { type: "text", value: "done: " + input.q };
+  },
+};
+```
+
+```text
+worker NDJSON:  {"t":"chunk",...}  {"t":"chunk",...}  {"t":"end"}
+SSE fullStream: tool-result(preliminary) … tool-result(preliminary) … tool-result(final)
+```
+
 When `config.tools.<name>.async` is `true`, the platform chooses the lifecycle from the tool type and request path:
 
 | Tool type | Request path | Tool code runs in | Lambda waits? | Result completion | Model continuation |

@@ -103,14 +103,14 @@ describe("script agent runtime config", () => {
   it("generates MiniMax provider config from environment variables", () => {
     process.env = {};
     process.env.ACCOUNT_MODEL_PROVIDER = "minimax";
-    process.env.ACCOUNT_MODEL_ID = "MiniMax-M2.7";
+    process.env.ACCOUNT_MODEL_ID = "MiniMax-M3";
     process.env.ACCOUNT_MINIMAX_API_KEY = "minimax-key";
     process.env.ACCOUNT_MINIMAX_BASE_URL = "https://api.minimax.io/anthropic/v1";
 
     expect(createScriptAgentConfig()).toEqual({
       model: {
         provider: "minimax",
-        modelId: "MiniMax-M2.7",
+        modelId: "MiniMax-M3",
       },
       agent: {
         system: expect.stringContaining("Knowledge cutoff: January 2025."),

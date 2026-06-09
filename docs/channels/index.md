@@ -52,6 +52,32 @@ Webhook handling is split deliberately:
 
 ---
 
+## Reply Streaming
+
+By default a channel sends one final message per turn. Set `config.channels.<channel>.streaming.mode` to stream the assistant reply live as the model produces it:
+
+| Mode | Behavior | Requirement |
+| --- | --- | --- |
+| `off` (default) | One final `sendText` | — |
+| `edit` | Post a placeholder, then edit it in place on a ~1.2s throttle; final edit holds the complete reply | Channel implements `beginMessage`/`editMessage` (else falls back to `chunk`) |
+| `progress` | Show a live preview of tool activity (`⏳ Working… • <tool>`) while the model runs, then swap the same message for the final answer | Same edit primitives as `edit` (else falls back to `chunk`) |
+| `chunk` | Send each paragraph (blank-line boundary) as its own message as it completes; a fenced code block is never split mid-fence | Uses `sendText` — works on every channel |
+
+```mermaid
+flowchart LR
+  Text["assistant text deltas"] --> Driver["createChannelStreamWriter<br/>(channel-streaming.ts)"]
+  Tools["tool-call names"] --> Driver
+  Driver -->|"edit"| Edit["beginMessage → editMessage*<br/>(throttled, one message, rotates on overflow)"]
+  Driver -->|"progress"| Progress["tool-activity preview<br/>→ final answer"]
+  Driver -->|"chunk / fallback"| Chunk["sendText per paragraph<br/>(fence-aware)"]
+```
+
+The handler reads `text-delta` and `tool-call` parts from the agent's `fullStream`: `edit`/`chunk` consume the text and ignore tool calls; `progress` consumes tool calls and ignores the streamed text (the answer arrives whole at the end).
+
+The driver ([`functions/_shared/channel-streaming.ts`](../../functions/_shared/channel-streaming.ts)) owns accumulation and throttling; channels only provide the `beginMessage`/`editMessage` primitives (and an optional `editMaxChars` cap) for edit/progress modes. Streaming is best-effort — a failed edit/send never aborts the turn, and a structured/object final response always sends as one message. When an edited reply outgrows the provider's message-length cap (Telegram ~4096, Discord 2000), the driver freezes the current message at a clean break and continues streaming in a new one (rotation), so long replies are not truncated. **Telegram**, **Slack** (`chat.postMessage`/`chat.update`), and **Discord** (interaction webhook edits) ship edit primitives; other channels stream via `chunk` until they add the two methods.
+
+---
+
 ## Channel Contract
 
 Each channel implements `ChannelAdapter` from [`functions/_shared/channels.ts`](../../functions/_shared/channels.ts):

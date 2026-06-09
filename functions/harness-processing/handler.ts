@@ -8,12 +8,13 @@ import { InvokeCommand, LambdaClient } from "@aws-sdk/client-lambda";
 import type { ToolModelMessage, JSONValue, UserModelMessage } from "ai";
 import type { LambdaFunctionURLEvent } from "aws-lambda";
 import { formatChannelErrorText } from "../_shared/channels.ts";
+import { createChannelStreamWriter, type ChannelStreamMode, type ChannelStreamWriter } from "../_shared/channel-streaming.ts";
 import { executeCommand } from "../_shared/commands.ts";
 import { toRuntimeAgentConfig } from "../_shared/storage/index.ts";
 import { getStorage, type CronJobRecord } from "../_shared/storage/index.ts";
 import { booleanEnv, requireEnv } from "../_shared/env.ts";
 import { jsonResponse } from "../_shared/http.ts";
-import { logError, logInfo } from "../_shared/log.ts";
+import { logError, logInfo, logWarn } from "../_shared/log.ts";
 import { LiveNatsPublisher, type NatsPublisher } from "../_shared/nats.ts";
 import type { LambdaInvocation, LambdaResponse } from "../_shared/runtime.ts";
 import {
@@ -278,6 +279,13 @@ async function continueAfterAsyncToolSettlement(settled: AsyncToolResultRecord):
     return { kind: "skip" };
   }
 
+  // Drop results the model already pulled via async_status; if everything in the
+  // group was observed, there is nothing to deliver and no continuation to run.
+  const events = settledToolResultsToParentMessages(toolResults);
+  if (events.length === 0) {
+    return { kind: "skip" };
+  }
+
   const continuationEvent = {
     accountId: scope.accountId,
     agentId: scope.agentId,
@@ -290,7 +298,7 @@ async function continueAfterAsyncToolSettlement(settled: AsyncToolResultRecord):
     publicEventId: `async-tools-${settled.resultId}`,
     conversationKey: settled.conversationKey,
     publicConversationKey: eventPublicConversationKey(settled.conversationKey, scope.accountId, scope.agentId),
-    events: settledToolResultsToParentMessages(toolResults),
+    events,
   } satisfies DirectInboundEvent;
 
   const created = await createPendingAsyncAgentResult({
@@ -650,9 +658,68 @@ async function handleChannelRequest(event: ChannelInboundEvent, context?: Lambda
         return;
       }
 
+      // Per-channel reply streaming. When configured, the reply streams into the
+      // chat (edit-in-place, a tool-activity preview, or paragraph chunks); the
+      // final message is the writer's last flush, so onFinalText only sends directly
+      // when nothing was streamed (e.g. a structured/object final or a tool-only
+      // turn). The writer decides what each event does: edit/chunk consume text and
+      // ignore tool calls; progress consumes tool calls and ignores text.
+      const streamMode = channelStreamMode(event.agentConfig, event.channelName);
+      let writer: ChannelStreamWriter | undefined;
+      let streamed = false;
+      let finished = false;
+      const ensureWriter = (): ChannelStreamWriter =>
+        (writer ??= createChannelStreamWriter(event.channel, streamMode!));
+      // Best-effort: a failed edit/send never aborts the turn; the final flush (or
+      // onFinalText fallback) still delivers the complete reply.
+      const streamWarn = (op: string) => (error: unknown) => logWarn(`Channel stream ${op} failed`, {
+        channel: event.channelName,
+        eventId: session.eventId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+
       const result = await runAgentLoopUntilSubagentsIdle(session, turnContext, event.agentConfig ?? {}, context, {
-        // Sending prettify JSON if json, else string
+        ...(streamMode
+          ? {
+            onTextDelta: async (delta) => {
+              // Mark streamed only after a send succeeds, so a total streaming
+              // failure leaves onFinalText to deliver the reply normally.
+              try {
+                await ensureWriter().push(delta);
+                streamed = true;
+              } catch (error) {
+                streamWarn("push")(error);
+              }
+            },
+            onToolCall: async (toolName) => {
+              const w = ensureWriter();
+              if (!w.progress) return; // only progress mode renders tool activity
+              try {
+                await w.progress(toolName);
+                streamed = true;
+              } catch (error) {
+                streamWarn("progress")(error);
+              }
+            },
+          }
+          : {}),
         onFinalText: async (response) => {
+          // Text answer + an active stream: the writer's final flush IS the reply.
+          // For edit/progress modes this overwrites the streamed message in place
+          // with the authoritative final text.
+          if (writer && streamed && typeof response === "string") {
+            finished = true;
+            await writer.finish(response).catch(streamWarn("finish"));
+            return;
+          }
+          // Fallback: nothing streamed, or the final is a structured/object output
+          // (not a string). We send it as one fresh message (prettified JSON if an
+          // object). Note: in progress/edit mode a structured final lands here, so
+          // the streamed "⏳ Working…"/partial preview is NOT overwritten and lingers
+          // above this message — there is no deleteMessage primitive to clear it.
+          // Acceptable because structured/object output to a chat channel is rare;
+          // to overwrite the preview instead, pass the stringified text to
+          // writer.finish() in the branch above.
           const text = typeof response === "string" ? response : JSON.stringify(response, null, 2);
           logInfo("Channel reply sending", {
             channel: event.channelName,
@@ -702,6 +769,14 @@ async function handleChannelRequest(event: ChannelInboundEvent, context?: Lambda
           await session.persistModelMessages([createChannelApprovalDenial(approvals)]);
         },
       });
+
+      // The turn streamed text but ended without a text final (a detached async
+      // tool was dispatched, or approval was required), so onFinalText never ran.
+      // Reconcile the preview so the last throttled delta is flushed; the real
+      // answer, if any, arrives later as a follow-up message.
+      if (writer && streamed && !finished && !result.didFail) {
+        await writer.finish().catch(streamWarn("finish"));
+      }
 
       if (result.didFail) {
         logError("Channel agent loop failed", {
@@ -899,12 +974,19 @@ async function continueDetachedAsyncToolsIfReady(
     return false;
   }
 
+  // Every result the model already saw via async_status is dropped here; if that
+  // leaves nothing, there is no continuation to run (avoids a duplicate answer).
+  const events = settledToolResultsToParentMessages(toolResults);
+  if (events.length === 0) {
+    return false;
+  }
+
   const continuationEvent = {
     ...event,
     agentConfig,
     eventId: asyncToolContinuationEventId(event.eventId),
     ...(event.connectionId ? {} : { asyncResultEventId: event.asyncResultEventId ?? event.eventId }),
-    events: settledToolResultsToParentMessages(toolResults),
+    events,
   } satisfies DirectInboundEvent;
 
   const created = await createPendingAsyncAgentResult({
@@ -983,7 +1065,9 @@ async function listCurrentParentToolResults(settled: AsyncToolResultRecord): Pro
 
 function settledToolResultsToParentMessages(results: AsyncToolResultRecord[]): DirectInboundEvent["events"] {
   return results
-    .filter((result) => result.status === "completed" || result.status === "failed")
+    // Skip results the model already pulled via async_status — re-injecting them
+    // would make the model answer the same completion twice.
+    .filter((result) => (result.status === "completed" || result.status === "failed") && result.observed !== true)
     .sort((left, right) => left.createdAt.localeCompare(right.createdAt))
     .map((result) => completionToParentMessage({
       resultId: result.resultId,
@@ -1039,6 +1123,12 @@ async function runAgentLoopUntilSubagentsIdle(
     onFinalText(response: JSONValue): Promise<void>;
     onErrorText(error: string): Promise<void>;
     onApprovalRequired?(approvals: ToolApprovalSummary[]): Promise<void>;
+    // When present, assistant text deltas are forwarded live (used to stream a
+    // reply into a chat channel). Absent => the stream is just drained.
+    onTextDelta?(delta: string): Promise<void>;
+    // When present, each tool call's name is forwarded live (used by progress-mode
+    // channel streaming to render a tool-activity preview).
+    onToolCall?(toolName: string): Promise<void>;
   },
 ): Promise<{ didFail: boolean; failureText: string | null; hasDetachedCallbacks: boolean }> {
   const subagentCoordinator = new SubagentCoordinator(session, agentConfig, waitUntilMs(context));
@@ -1049,9 +1139,22 @@ async function runAgentLoopUntilSubagentsIdle(
     asyncToolCoordinator: asyncToolCoordinator,
     initialTurnContext: initialTurnContext,
     agentConfig: agentConfig,
-    consumeStream: async (stream) => {
-      await stream.consumeStream();
-    },
+    consumeStream: (reply.onTextDelta || reply.onToolCall)
+      ? async (stream) => {
+          const reader = stream.fullStream.getReader();
+          while (true) {
+            const { done, value: part } = await reader.read();
+            if (done) break;
+            if (part.type === "text-delta") {
+              await reply.onTextDelta?.(part.text);
+            } else if (part.type === "tool-call") {
+              await reply.onToolCall?.(part.toolName);
+            }
+          }
+        }
+      : async (stream) => {
+          await stream.consumeStream();
+        },
   });
   const hasDetachedCallbacks = asyncToolCoordinator.hasDetachedCallbacks;
   if (hasDetachedCallbacks) {
@@ -1393,4 +1496,16 @@ function isRunnableModelInput(message: DirectInboundEvent["events"][number] | Di
 
 function asyncResultEventIds(event: DirectInboundEvent): string[] {
   return [...new Set([event.asyncResultEventId ?? event.eventId, event.eventId])];
+}
+
+// Resolve the configured streaming mode for a channel. "edit"/"chunk"/"progress"
+// enable streaming; "off" or unset keep the single-final-message behavior.
+function channelStreamMode(
+  agentConfig: ChannelInboundEvent["agentConfig"],
+  channelName: string,
+): ChannelStreamMode | undefined {
+  const channels = (agentConfig as { channels?: Record<string, unknown> } | undefined)?.channels;
+  const channel = channels?.[channelName] as { streaming?: { mode?: unknown } } | undefined;
+  const mode = channel?.streaming?.mode;
+  return mode === "edit" || mode === "chunk" || mode === "progress" ? mode : undefined;
 }

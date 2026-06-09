@@ -22,6 +22,7 @@ import {
   getAsyncToolResult,
   markAsyncToolResultCompleted,
   markAsyncToolResultFailed,
+  markAsyncToolResultObserved,
 } from "../async-tool-result.ts";
 import { createSandboxExecutor } from "../sandbox/index.ts";
 import type { SandboxExecutor, SandboxExecutorConfig, SandboxJobStatus } from "../sandbox/types.ts";
@@ -95,10 +96,15 @@ The result is delivered back into the conversation automatically when it finishe
         if (!record || record.conversationKey !== context.conversationKey) {
           return toolError(`Error: no async result found for ${statusId}`);
         }
+        // The model is consuming the terminal result here, so mark it observed
+        // (awaited, since the resume gate reads this row the moment the turn ends)
+        // to stop the auto-delivery resume from injecting the same answer again.
         if (record.status === "completed") {
+          await markAsyncToolResultObserved(statusId);
           return toolText(`completed\n${formatUnknown(record.response)}`);
         }
         if (record.status === "failed") {
+          await markAsyncToolResultObserved(statusId);
           return toolText(`failed\n${record.error ?? "(no error detail)"}`);
         }
 
@@ -161,6 +167,9 @@ async function settleTerminalJob(
   } else {
     await markAsyncToolResultFailed({ resultId, error: `Job exited with code ${status.exitCode ?? "unknown"}.${logs ? `\n${logs}` : ""}` });
   }
+  // The model is consuming this terminal result through the poll, so suppress the
+  // auto-delivery resume from re-injecting the same result.
+  await markAsyncToolResultObserved(resultId);
   return `${status.state} (exit ${status.exitCode ?? "unknown"})\n${logs}`;
 }
 

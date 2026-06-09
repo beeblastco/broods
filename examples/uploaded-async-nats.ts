@@ -54,7 +54,7 @@ const agentConfig: AgentConfig = {
   },
   model: {
     provider: "minimax",
-    modelId: "MiniMax-M2.7",
+    modelId: "MiniMax-M3",
   },
   agent: {
     system: "You are a helpful assistant. When asked, call the test_uploaded_async tool with the user's message and report the result after it completes.",

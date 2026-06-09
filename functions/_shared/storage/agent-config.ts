@@ -6,6 +6,7 @@
 
 import type { JSONSchema7 } from "ai";
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto";
+import type { ChannelStreamMode } from "../channel-streaming.ts";
 import { requireEnv } from "../env.ts";
 import {
   accountModelProviderNames,
@@ -175,11 +176,24 @@ export interface AgentChannelsConfig {
   [key: string]: unknown;
 }
 
+// Per-channel reply streaming: the driver modes (edit/chunk/progress) plus "off"
+// (default, one final message). "edit" rewrites one message in place; "progress"
+// shows a tool-activity preview then swaps in the final answer (both fall back to
+// "chunk" on channels without edit support); "chunk" sends each paragraph as it
+// completes. Derived from ChannelStreamMode so the two never drift.
+export type AgentChannelStreamingMode = ChannelStreamMode | "off";
+
+export interface AgentChannelStreamingConfig {
+  mode?: AgentChannelStreamingMode;
+  [key: string]: unknown;
+}
+
 export interface AgentTelegramChannelConfig {
   botToken?: string;
   webhookSecret?: string;
   allowedChatIds?: number[];
   reactionEmoji?: string;
+  streaming?: AgentChannelStreamingConfig;
   [key: string]: unknown;
 }
 
@@ -195,6 +209,7 @@ export interface AgentSlackChannelConfig {
   botToken?: string;
   signingSecret?: string;
   allowedChannelIds?: string[];
+  streaming?: AgentChannelStreamingConfig;
   [key: string]: unknown;
 }
 
@@ -202,6 +217,7 @@ export interface AgentDiscordChannelConfig {
   botToken?: string;
   publicKey?: string;
   allowedGuildIds?: string[];
+  streaming?: AgentChannelStreamingConfig;
   [key: string]: unknown;
 }
 
@@ -210,6 +226,7 @@ export interface AgentPancakeChannelConfig {
   pageAccessToken?: string;
   senderId?: string;
   options?: Record<string, unknown>;
+  streaming?: AgentChannelStreamingConfig;
   [key: string]: unknown;
 }
 
@@ -217,6 +234,7 @@ export interface AgentZaloChannelConfig {
   botToken?: string;
   webhookSecret?: string;
   allowedUserIds?: string[];
+  streaming?: AgentChannelStreamingConfig;
   [key: string]: unknown;
 }
 
@@ -786,6 +804,7 @@ function normalizeTelegramConfig(value: unknown): void {
   assertOptionalString(config.webhookSecret, "config.channels.telegram.webhookSecret");
   assertOptionalNumberArray(config.allowedChatIds, "config.channels.telegram.allowedChatIds");
   assertOptionalString(config.reactionEmoji, "config.channels.telegram.reactionEmoji");
+  normalizeChannelStreaming(config.streaming, "config.channels.telegram.streaming");
 }
 
 function normalizeGitHubConfig(value: unknown): void {
@@ -805,6 +824,7 @@ function normalizeSlackConfig(value: unknown): void {
   assertOptionalString(config.botToken, "config.channels.slack.botToken");
   assertOptionalString(config.signingSecret, "config.channels.slack.signingSecret");
   assertOptionalStringArray(config.allowedChannelIds, "config.channels.slack.allowedChannelIds");
+  normalizeChannelStreaming(config.streaming, "config.channels.slack.streaming");
 }
 
 function normalizeDiscordConfig(value: unknown): void {
@@ -814,6 +834,7 @@ function normalizeDiscordConfig(value: unknown): void {
   assertOptionalString(config.botToken, "config.channels.discord.botToken");
   assertOptionalString(config.publicKey, "config.channels.discord.publicKey");
   assertOptionalStringArray(config.allowedGuildIds, "config.channels.discord.allowedGuildIds");
+  normalizeChannelStreaming(config.streaming, "config.channels.discord.streaming");
 }
 
 function normalizePancakeConfig(value: unknown): void {
@@ -828,6 +849,7 @@ function normalizePancakeConfig(value: unknown): void {
   }
   const options = isPlainObject(config.options) ? config.options : {};
   assertOptionalStringArray(options.ignoreTagIds, "config.channels.pancake.options.ignoreTagIds");
+  normalizeChannelStreaming(config.streaming, "config.channels.pancake.streaming");
 }
 
 function normalizeZaloConfig(value: unknown): void {
@@ -842,6 +864,16 @@ function normalizeZaloConfig(value: unknown): void {
     if (length < 8 || length > 256) {
       throw new Error("config.channels.zalo.webhookSecret must be 8 to 256 characters");
     }
+  }
+  normalizeChannelStreaming(config.streaming, "config.channels.zalo.streaming");
+}
+
+function normalizeChannelStreaming(value: unknown, path: string): void {
+  if (value === undefined) return;
+  if (!isPlainObject(value)) throw new Error(`${path} must be an object`);
+  const mode = (value as { mode?: unknown }).mode;
+  if (mode !== undefined && mode !== "edit" && mode !== "chunk" && mode !== "progress" && mode !== "off") {
+    throw new Error(`${path}.mode must be one of: edit, chunk, progress, off`);
   }
 }
 

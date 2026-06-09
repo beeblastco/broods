@@ -275,6 +275,26 @@ function createSlackActions(
         name: "eyes",
       });
     },
+
+    // Edit-in-place streaming. Always posts to the channel/thread (chat.update
+    // cannot edit a response_url message) and returns the new message ts.
+    async beginMessage(text) {
+      const result = await slackApi(botToken, "chat.postMessage", {
+        channel: source.channelId,
+        text: formatSlackMessage(text).text,
+        ...(source.threadTs ? { thread_ts: source.threadTs } : {}),
+      });
+      if (!result.ts) throw new Error("Slack chat.postMessage returned no ts");
+      return result.ts;
+    },
+
+    async editMessage(messageTs, text) {
+      await slackApi(botToken, "chat.update", {
+        channel: source.channelId,
+        ts: messageTs,
+        text: formatSlackMessage(text).text,
+      });
+    },
   };
 }
 
@@ -301,7 +321,7 @@ async function slackApi(
   token: string,
   method: string,
   payload: Record<string, unknown>,
-): Promise<void> {
+): Promise<{ ok?: boolean; error?: string; ts?: string }> {
   const response = await fetch(`https://slack.com/api/${method}`, {
     method: "POST",
     headers: {
@@ -311,12 +331,13 @@ async function slackApi(
     body: JSON.stringify(payload),
   });
 
-  const json = await response.json() as { ok?: boolean; error?: string };
+  const json = await response.json() as { ok?: boolean; error?: string; ts?: string };
   if (!response.ok || !json.ok) {
     throw new Error(
       `Slack ${method} failed (${response.status}): ${json.error ?? "unknown_error"}`,
     );
   }
+  return json;
 }
 
 function stripSlackMentions(text: string): string {

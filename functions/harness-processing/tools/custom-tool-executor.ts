@@ -12,7 +12,7 @@ import type { AccountToolRecord, AgentToolConfig } from "../../_shared/storage/i
 import { createSandboxExecutor } from "../sandbox/index.ts";
 import { generateJobId } from "../sandbox/jobs.ts";
 import { getHarnessPublicUrl } from "../self-url.ts";
-import { buildWorkerEnsureCommand, buildWorkerInvokeCommand, parseWorkerResponse, type WorkerInvokeResult } from "./custom-tool-worker.ts";
+import { buildWorkerEnsureCommand, buildWorkerInvokeCommand, parseWorkerFrame, type WorkerFrame } from "./custom-tool-worker.ts";
 
 // The marker lets the foreground path find the one structured JSON result line
 // reliably instead of accidentally parsing user logs as protocol.
@@ -72,103 +72,161 @@ interface RunnerResult {
   error?: unknown;
 }
 
-export async function executeAccountToolInSandbox({
+/**
+ * Buffered entry: run the tool and return its final output. Drains the streaming
+ * generator to the last value, so the detached launch ack, the one-shot fallback,
+ * and tests all get a plain value regardless of whether the tool streamed.
+ */
+export async function executeAccountToolInSandbox(options: ExecuteAccountToolOptions): Promise<unknown> {
+  let last: unknown;
+  for await (const output of streamAccountToolInSandbox(options)) {
+    last = output;
+  }
+  return last;
+}
+
+/**
+ * Streaming entry used by the AI SDK tool adapter (account-tool.tool.ts). A bundle
+ * whose execute is an async generator streams each yield (surfaced as a preliminary
+ * tool result on the sync SSE path); a normal bundle yields exactly once — its
+ * result. The function is a sync-returning async generator so the SDK detects the
+ * async-iterable and streams it (an async function would resolve to the iterator
+ * and the SDK would not stream). Detached async tools are launched, not streamed.
+ */
+export async function* streamAccountToolInSandbox({
   accountId,
   tool,
   input,
   config,
   options,
   createExecutor = createSandboxExecutor,
-}: ExecuteAccountToolOptions): Promise<unknown> {
+}: ExecuteAccountToolOptions): AsyncGenerator<unknown, void, void> {
   const asyncTool = extractAsyncToolMetadata(options);
   if (isDetachedAsyncTool(asyncTool)) {
-    return startAccountToolInSandboxBackground({
-      accountId,
-      tool,
-      input,
-      config,
-      asyncTool,
-      createExecutor,
-    });
+    yield await startAccountToolInSandboxBackground({ accountId, tool, input, config, asyncTool, createExecutor });
+    return;
   }
-
-  return runAccountToolInSandboxForeground({
-    accountId,
-    tool,
-    input,
-    config,
-    asyncTool,
-    createExecutor,
-  });
+  yield* streamAccountToolForeground({ accountId, tool, input, config, asyncTool, createExecutor });
 }
 
-async function runAccountToolInSandboxForeground({
+async function* streamAccountToolForeground({
   accountId,
   tool,
   input,
   config,
   asyncTool,
   createExecutor,
-}: ExecuteAccountToolOptions & { asyncTool: unknown; createExecutor: typeof createSandboxExecutor }): Promise<unknown> {
+}: ExecuteAccountToolOptions & { asyncTool: unknown; createExecutor: typeof createSandboxExecutor }): AsyncGenerator<unknown, void, void> {
   const bucket = requireEnv("TOOL_BUNDLES_BUCKET_NAME");
-  const payload = await createRunnerPayload({
-    bucket,
-    tool,
-    input,
-    config,
-    asyncTool,
-  });
-
+  const payload = await createRunnerPayload({ bucket, tool, input, config, asyncTool });
   const executor = createExecutor(customToolExecutorConfig());
   const reservationKey = customToolReservationKey(accountId, tool.toolId);
 
-  // Fast path: the resident in-pod worker (no per-call node startup). A null
-  // result means the worker was unreachable, so fall through to the one-shot
-  // runner; an {ok:false} result is a real tool error and is surfaced as-is.
+  // Fast path: the resident in-pod worker (no per-call node startup), streaming
+  // NDJSON frames. Zero frames means the worker was unreachable — fall through to
+  // the one-shot runner; an `error` frame is a real tool error surfaced as-is.
   if (executor.execInReservedPod) {
-    const worker = await tryWorkerInvoke(executor, reservationKey, payload);
-    if (worker) return unwrapWorkerResult(worker);
+    let sawFrame = false;
+    for await (const frame of streamWorkerInvoke(executor, reservationKey, payload)) {
+      sawFrame = true;
+      if (frame.t === "chunk") {
+        yield frame.output;
+        continue;
+      }
+      if (frame.t === "final") {
+        yield frame.result;
+        return;
+      }
+      if (frame.t === "end") {
+        return;
+      }
+      throw new Error(frame.error || "custom tool execution failed");
+    }
+    if (sawFrame) {
+      return;
+    }
   }
-  return runOneShotRunner(executor, reservationKey, payload);
+  yield await runOneShotRunner(executor, reservationKey, payload);
 }
 
-async function tryWorkerInvoke(
+// Bridge the worker's NDJSON output (delivered live via onStdout, or all at once
+// by buffered executors) into a stream of frames. An exec failure is treated like
+// an unreachable worker (no frames -> caller falls back to the one-shot runner).
+async function* streamWorkerInvoke(
   executor: ReturnType<typeof createSandboxExecutor>,
   reservationKey: string,
   payload: RunnerPayload,
-): Promise<WorkerInvokeResult | null> {
-  let result;
-  try {
-    result = await executor.execInReservedPod!({ reservationKey }, buildWorkerInvokeCommand(), {
-      stdin: Readable.from(JSON.stringify(payload)),
-      timeoutSeconds: FOREGROUND_TIMEOUT_SECONDS,
-      outputLimitBytes: RUNNER_OUTPUT_LIMIT_BYTES,
-    });
-  } catch (error) {
+): AsyncGenerator<WorkerFrame, void, void> {
+  const queue = new FrameQueue();
+  let fed = 0;
+  const done = executor.execInReservedPod!({ reservationKey }, buildWorkerInvokeCommand(), {
+    stdin: Readable.from(JSON.stringify(payload)),
+    timeoutSeconds: FOREGROUND_TIMEOUT_SECONDS,
+    outputLimitBytes: RUNNER_OUTPUT_LIMIT_BYTES,
+    onStdout: (chunk) => {
+      fed += chunk.length;
+      queue.push(chunk);
+    },
+  }).then((result) => {
+    // Buffered executors (and the test mock) surface the whole body only here;
+    // feed whatever onStdout did not already deliver, then close.
+    if (result.stdout.length > fed) queue.push(result.stdout.slice(fed));
+    queue.close();
+  }).catch((error) => {
     logWarn("custom tool worker exec failed; falling back to one-shot runner", {
       reservationKey,
       error: error instanceof Error ? error.message : String(error),
     });
-    return null;
-  }
-  if (result.timedOut) {
-    return { ok: false, error: `custom tool timed out after ${FOREGROUND_TIMEOUT_SECONDS}s` };
-  }
-  const parsed = parseWorkerResponse(result.stdout);
-  if (!parsed) {
-    logWarn("custom tool worker returned no response; falling back to one-shot runner", {
-      reservationKey,
-      exitCode: result.exitCode,
-      stderr: result.stderr.slice(0, 200),
-    });
-    return null;
-  }
-  return parsed;
+    queue.close();
+  });
+
+  yield* queue.frames();
+  await done;
 }
 
-function unwrapWorkerResult(worker: WorkerInvokeResult): unknown {
-  if (worker.ok) return worker.result;
-  throw new Error(worker.error || "custom tool execution failed");
+// Push/pull buffer that parses incoming NDJSON text into worker frames as whole
+// lines arrive, and lets a consumer await the next frame until the stream closes.
+class FrameQueue {
+  #buffer = "";
+  #frames: WorkerFrame[] = [];
+  #waiters: Array<() => void> = [];
+  #closed = false;
+
+  push(text: string): void {
+    this.#buffer += text;
+    let newline: number;
+    while ((newline = this.#buffer.indexOf("\n")) !== -1) {
+      const line = this.#buffer.slice(0, newline);
+      this.#buffer = this.#buffer.slice(newline + 1);
+      const frame = parseWorkerFrame(line);
+      if (frame) this.#frames.push(frame);
+    }
+    this.#wake();
+  }
+
+  close(): void {
+    const frame = parseWorkerFrame(this.#buffer);
+    this.#buffer = "";
+    if (frame) this.#frames.push(frame);
+    this.#closed = true;
+    this.#wake();
+  }
+
+  async *frames(): AsyncGenerator<WorkerFrame, void, void> {
+    while (true) {
+      while (this.#frames.length > 0) {
+        yield this.#frames.shift()!;
+      }
+      if (this.#closed) return;
+      await new Promise<void>((resolve) => this.#waiters.push(resolve));
+    }
+  }
+
+  #wake(): void {
+    const waiters = this.#waiters;
+    this.#waiters = [];
+    for (const waiter of waiters) waiter();
+  }
 }
 
 async function runOneShotRunner(
@@ -304,7 +362,16 @@ async function main() {
   };
   // This is the uploaded tool's execute function. The source text lives in this
   // repo only as runner code, but the call happens inside the Kubernetes pod.
-  const result = await definition.execute(ctx, payload.input);
+  // The one-shot runner does not stream, so an async-generator execute is drained
+  // to its last yielded value (the final result), matching the SDK's convention.
+  let result = definition.execute(ctx, payload.input);
+  if (result != null && typeof result[Symbol.asyncIterator] === "function") {
+    let last;
+    for await (const chunk of result) last = chunk;
+    result = last;
+  } else {
+    result = await result;
+  }
   if (payload.detachedCompletion) {
     await completeAsyncTool("completed", result);
     return;

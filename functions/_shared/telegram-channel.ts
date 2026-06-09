@@ -8,7 +8,7 @@ import { ConsoleLogger } from "chat";
 import type { ChannelActions, ChannelAdapter, ChannelParseResult } from "./channels.ts";
 import { logWarn } from "./log.ts";
 import { TELEGRAM_INTEGRATION_PREFIX } from "./runtime-keys.ts";
-import { sendMessage, verifyWebhookSecret } from "./telegram.ts";
+import { editMessageText, sendMessage, sendMessageReturningId, verifyWebhookSecret } from "./telegram.ts";
 
 export interface TelegramSource {
   chatId: number;
@@ -95,6 +95,8 @@ export function createTelegramActions(
     sendText: (text) => sendMessage(botToken, source.chatId, text),
     sendTyping: () => transport.startTyping(source.threadId),
     reactToMessage: () => transport.addReaction(source.threadId, source.messageId, reactionEmoji),
+    beginMessage: (text) => sendMessageReturningId(botToken, source.chatId, text),
+    editMessage: (messageId, text) => editMessageText(botToken, source.chatId, messageId, text),
   };
 }
 

@@ -53,7 +53,7 @@ const agent = await createAgent(account.secret, "Reserved Kubernetes coding sand
   },
   model: {
     provider: "minimax",
-    modelId: "MiniMax-M2.7",
+    modelId: "MiniMax-M3",
   },
   agent: {
     system: [

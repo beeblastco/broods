@@ -26,7 +26,7 @@ const runMock = mock(async (): Promise<SandboxRunResult> => ({
 }));
 const runBackgroundMock = mock(async (): Promise<SandboxJobHandle> => ({ jobId: "job_test" }));
 const execInReservedPodMock = mock(async () => ({
-  stdout: JSON.stringify({ ok: true, result: { type: "text", value: "worker done" } }),
+  stdout: JSON.stringify({ t: "final", result: { type: "text", value: "worker done" } }) + "\n",
   stderr: "",
   exitCode: 0,
 }));
@@ -160,7 +160,7 @@ describe("executeAccountToolInSandbox", () => {
   });
 
   it("surfaces a worker tool error without falling back", async () => {
-    execInReservedPodMock.mockImplementationOnce(async () => ({ stdout: JSON.stringify({ ok: false, error: "boom" }), stderr: "", exitCode: 0 }));
+    execInReservedPodMock.mockImplementationOnce(async () => ({ stdout: JSON.stringify({ t: "error", error: "boom" }) + "\n", stderr: "", exitCode: 0 }));
     const { executeAccountToolInSandbox } = await import("../functions/harness-processing/tools/custom-tool-executor.ts");
 
     await expect(executeAccountToolInSandbox({
@@ -241,13 +241,50 @@ describe("custom tool worker helpers", () => {
     expect(script).toContain("http://localhost/invoke");
   });
 
-  it("parses worker responses and rejects non-protocol output", async () => {
-    const { parseWorkerResponse } = await import("../functions/harness-processing/tools/custom-tool-worker.ts");
-    expect(parseWorkerResponse('{"ok":true,"result":1}')).toEqual({ ok: true, result: 1 });
-    expect(parseWorkerResponse('  {"ok":false,"error":"x"}\n')).toEqual({ ok: false, error: "x" });
-    expect(parseWorkerResponse("")).toBeNull();
-    expect(parseWorkerResponse("curl: (7) connection refused")).toBeNull();
-    expect(parseWorkerResponse('{"foo":1}')).toBeNull();
+  it("parses NDJSON worker frames and rejects non-protocol output", async () => {
+    const { parseWorkerFrame } = await import("../functions/harness-processing/tools/custom-tool-worker.ts");
+    expect(parseWorkerFrame('{"t":"chunk","output":1}')).toEqual({ t: "chunk", output: 1 });
+    expect(parseWorkerFrame('  {"t":"final","result":2}\n')).toEqual({ t: "final", result: 2 });
+    expect(parseWorkerFrame('{"t":"end"}')).toEqual({ t: "end" });
+    expect(parseWorkerFrame('{"t":"error","error":"x"}')).toEqual({ t: "error", error: "x" });
+    expect(parseWorkerFrame("")).toBeNull();
+    expect(parseWorkerFrame("curl: (7) connection refused")).toBeNull();
+    expect(parseWorkerFrame('{"foo":1}')).toBeNull();
+  });
+});
+
+describe("streamAccountToolInSandbox", () => {
+  it("streams each worker chunk frame as a separate yield (last is the final output)", async () => {
+    const frames = [
+      JSON.stringify({ t: "chunk", output: { type: "text", value: "par" } }),
+      JSON.stringify({ t: "chunk", output: { type: "text", value: "partial" } }),
+      JSON.stringify({ t: "chunk", output: { type: "text", value: "partial done" } }),
+      JSON.stringify({ t: "end" }),
+    ].join("\n") + "\n";
+    execInReservedPodMock.mockImplementationOnce(((_req: unknown, _cmd: unknown, opts?: { onStdout?: (c: string) => void }) => {
+      opts?.onStdout?.(frames);
+      return Promise.resolve({ stdout: frames, stderr: "", exitCode: 0 });
+    }) as never);
+    const { streamAccountToolInSandbox } = await import("../functions/harness-processing/tools/custom-tool-executor.ts");
+
+    const outputs: unknown[] = [];
+    for await (const output of streamAccountToolInSandbox({
+      accountId: "acct_test",
+      tool: accountToolRecord(sha256(bundle)),
+      input: {},
+      config: {},
+      options: {},
+      createExecutor: createWorkerExecutorMock,
+    })) {
+      outputs.push(output);
+    }
+
+    expect(outputs).toEqual([
+      { type: "text", value: "par" },
+      { type: "text", value: "partial" },
+      { type: "text", value: "partial done" },
+    ]);
+    expect(runMock).not.toHaveBeenCalled();
   });
 });
 

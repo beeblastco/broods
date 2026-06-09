@@ -129,7 +129,10 @@
       "allowedChatIds": [
         123456789
       ],
-      "reactionEmoji": "👀"
+      "reactionEmoji": "👀",
+      "streaming": {
+        "mode": "edit"
+      }
     },
     "github": {
       "webhookSecret": "...",
@@ -144,14 +147,20 @@
       "signingSecret": "...",
       "allowedChannelIds": [
         "C123"
-      ]
+      ],
+      "streaming": {
+        "mode": "progress"
+      }
     },
     "discord": {
       "botToken": "...",
       "publicKey": "...",
       "allowedGuildIds": [
         "123"
-      ]
+      ],
+      "streaming": {
+        "mode": "edit"
+      }
     },
     "pancake": {
       "pageId": "page-id",
