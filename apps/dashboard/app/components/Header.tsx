@@ -5,6 +5,7 @@ import { OrgSwitcher } from "@/app/components/header/OrgSwitcher";
 import { UserMenu } from "@/app/components/UserMenu";
 import { useTheme } from "next-themes";
 import dynamic from "next/dynamic";
+import Image from "next/image";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 
@@ -31,9 +32,9 @@ export function Header() {
                     className="hover:opacity-80 transition-opacity cursor-pointer"
                 >
                     {resolvedTheme === "dark" ? (
-                        <img src="/assets/logo/dark-full.svg" alt="Logo" className="h-7 w-auto" />
+                        <Image src="/assets/logo/dark-full.svg" alt="Logo" width={277} height={64} className="h-7 w-auto" />
                     ) : (
-                        <img src="/assets/logo/light-full.svg" alt="Logo" className="h-7 w-auto" />
+                        <Image src="/assets/logo/light-full.svg" alt="Logo" width={278} height={64} className="h-7 w-auto" />
                     )}
                 </Link>
 

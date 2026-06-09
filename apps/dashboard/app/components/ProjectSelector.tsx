@@ -51,7 +51,7 @@ export function ProjectSelector() {
         return () => window.clearTimeout(timeoutId);
     }, [projects, prefetchProject]);
 
-    // Hide selector entirely when loading or user has no projects (OnboardingGate handles that)
+    // Hide selector entirely when loading or the user has no projects yet.
     if (projects === undefined || projects.length === 0) {
         return null;
     }

@@ -5,7 +5,6 @@
  * Use the Monitoring panel to view logs, or query CloudWatch for detailed traces.
  */
 import { Section } from "@/app/components/Section";
-import { ExternalLink } from "lucide-react";
 
 export function TracingPanel() {
     return (

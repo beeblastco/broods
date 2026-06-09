@@ -1,48 +1,47 @@
 "use client";
 
-/** Routes authenticated users to their most recent project, or the gallery when they have none. */
+/** Home route that ensures the caller has an org, then opens their default project (auto-created on first login). */
 import { api } from "@/convex/_generated/api";
 import { useMutation, useQuery } from "convex/react";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 
-/** Home route that ensures the user's org exists, then redirects into a project or the gallery. */
+/** Routes authenticated users to their most recent project, creating one on first login. */
 export default function HomePage() {
     const router = useRouter();
     const getOrCreateOrg = useMutation(api.org.getOrCreate);
+    const getOrCreateDefault = useMutation(api.project.getOrCreateDefault);
     const currentUser = useQuery(api.user.getCurrent);
-    const projects = useQuery(api.project.list);
-    const orgEnsured = useRef(false);
+    const bootstrapped = useRef(false);
     const [error, setError] = useState<string | null>(null);
 
-    // Ensure the caller has an org so project listing is correctly scoped.
+    // Ensure the caller has an org, then open or create the default project.
     useEffect(() => {
-        if (!currentUser || orgEnsured.current) return;
+        if (!currentUser || bootstrapped.current) return;
 
-        orgEnsured.current = true;
-        getOrCreateOrg({}).catch((err) => {
-            console.error("Failed to prepare workspace:", err);
-            setError(err instanceof Error ? err.message : "Failed to open workspace. Please refresh.");
-            orgEnsured.current = false;
-        });
-    }, [currentUser, getOrCreateOrg]);
-
-    // Open the most recent project, or the gallery when none exist (no auto-create).
-    useEffect(() => {
-        if (projects === undefined) return;
-
-        router.replace(projects.length > 0 ? `/${projects[0]._id}` : "/projects");
-    }, [projects, router]);
+        bootstrapped.current = true;
+        (async () => {
+            try {
+                await getOrCreateOrg({});
+                const projectId = await getOrCreateDefault({});
+                router.replace(projectId ? `/${projectId}` : "/projects");
+            } catch (err) {
+                console.error("Failed to open workspace:", err);
+                setError(err instanceof Error ? err.message : "Failed to open workspace. Please refresh.");
+                bootstrapped.current = false;
+            }
+        })();
+    }, [currentUser, getOrCreateOrg, getOrCreateDefault, router]);
 
     return (
-        <div className="flex h-full items-center justify-center">
+        <div className="flex h-full w-full items-center justify-center bg-background">
             {error ? (
-                <div className="text-center">
+                <div className="flex flex-col items-center gap-3 text-center">
                     <p className="text-sm text-destructive">{error}</p>
                     <button
-                        className="mt-2 text-xs text-muted-foreground underline cursor-pointer"
+                        className="text-xs text-muted-foreground underline cursor-pointer"
                         onClick={() => {
-                            orgEnsured.current = false;
+                            bootstrapped.current = false;
                             setError(null);
                         }}
                     >
@@ -50,7 +49,10 @@ export default function HomePage() {
                     </button>
                 </div>
             ) : (
-                <p className="text-sm text-muted-foreground">Opening workspace…</p>
+                <div className="flex flex-col items-center gap-3">
+                    <div className="h-8 w-8 animate-spin rounded-full border-2 border-muted border-t-foreground" />
+                    <p className="text-sm text-muted-foreground">Setting up your workspace…</p>
+                </div>
             )}
         </div>
     );
