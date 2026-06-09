@@ -133,6 +133,8 @@ export const orgsFields = {
     ownerAuthId: v.string(),
     plan: v.union(v.literal("free"), v.literal("pro"), v.literal("enterprise")),
     createdAt: v.number(),
+    /** Set the first time a project is created in this org; gates the home-page auto-onboarding. */
+    onboardedAt: v.optional(v.number()),
 };
 
 /** Membership join table between users and orgs with role-based access. */

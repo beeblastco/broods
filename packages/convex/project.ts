@@ -94,17 +94,44 @@ async function listProjects(ctx: Ctx, authId: string) {
     return [...merged.values()].sort((a, b) => b.updatedAt - a.updatedAt);
 }
 
+/**
+ * Returns the caller's most recent project. On the very first call for an
+ * org that has never had a project, creates a random one plus a default
+ * Production environment and marks the org as onboarded. On subsequent calls
+ * where the user has deleted every project, returns null so the UI can fall
+ * back to the project gallery.
+ * @returns The existing or newly created project id, or null when the org has
+ * been onboarded but currently has no projects.
+ */
 export const getOrCreateDefault = mutation({
     args: {},
-    returns: v.id("projects"),
+    returns: v.union(v.id("projects"), v.null()),
     handler: async (ctx) => {
         const authUser = await requireAuth(ctx);
 
         const existing = (await listProjects(ctx, authUser.id))[0];
-        if (existing) return existing._id;
+        const orgId = await getCallerActiveOrgId(ctx, authUser.id);
+
+        if (existing) {
+            // Lazy-backfill the flag for legacy orgs whose projects predate it,
+            // so the first-time path doesn't silently re-trigger.
+            if (orgId) {
+                const org = await ctx.db.get(orgId);
+                if (org && !org.onboardedAt) {
+                    await ctx.db.patch(orgId, { onboardedAt: Date.now() });
+                }
+            }
+            return existing._id;
+        }
+
+        if (orgId) {
+            const org = await ctx.db.get(orgId);
+            if (org?.onboardedAt) {
+                return null;
+            }
+        }
 
         const now = Date.now();
-        const orgId = await getCallerActiveOrgId(ctx, authUser.id);
         const name = randomProjectName();
         const projectId = await ctx.db.insert("projects", {
             authId: authUser.id,
@@ -122,6 +149,10 @@ export const getOrCreateDefault = mutation({
             isDefault: true,
             updatedAt: now,
         });
+
+        if (orgId) {
+            await ctx.db.patch(orgId, { onboardedAt: now });
+        }
 
         return projectId;
     },
