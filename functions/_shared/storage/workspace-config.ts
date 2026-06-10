@@ -9,8 +9,14 @@
 
 import { mergeConfigObjects } from "./agent-config.ts";
 
+// Implemented storage backends. The roadmap adds more (s3-compatible endpoints,
+// Cloudflare R2, Google Cloud Storage, Azure Blob): extend this list and wire the
+// provider's mount/read path — validation and the type follow automatically.
+export const WORKSPACE_STORAGE_PROVIDERS = ["s3", "vercel"] as const;
+export type WorkspaceStorageProvider = (typeof WORKSPACE_STORAGE_PROVIDERS)[number];
+
 export interface WorkspaceConfig {
-  storage: { provider: "s3" | "vercel" };
+  storage: { provider: WorkspaceStorageProvider };
   // Whether the workspace harness prompt (memory/tasks guidance) is injected.
   harness?: { enabled?: boolean };
 }
@@ -46,13 +52,13 @@ export function normalizeWorkspaceConfig(value: unknown): WorkspaceConfig {
   }
 
   const config = value;
-  let storageProvider: "s3" | "vercel" = "s3";
+  let storageProvider: WorkspaceStorageProvider = "s3";
   if (config.storage !== undefined) {
     if (!isPlainObject(config.storage)) {
       throw new Error("config.storage must be an object");
     }
-    assertOptionalEnum(config.storage.provider, "config.storage.provider", ["s3", "vercel"]);
-    storageProvider = (config.storage.provider as "s3" | "vercel" | undefined) ?? "s3";
+    assertOptionalEnum(config.storage.provider, "config.storage.provider", WORKSPACE_STORAGE_PROVIDERS);
+    storageProvider = (config.storage.provider as WorkspaceStorageProvider | undefined) ?? "s3";
   }
 
   let harness: { enabled?: boolean } | undefined;
