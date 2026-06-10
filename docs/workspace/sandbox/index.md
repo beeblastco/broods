@@ -81,7 +81,7 @@ Provider enforcement:
 | `lambda` | internet-on function slot | no-internet function slot | no-internet slot (fail closed; allowlists are logged as unsupported) |
 | `vercel` | native `networkPolicy: "allow-all"` | native `networkPolicy: "deny-all"` | native domain + CIDR allowlists |
 | `daytona` | `networkBlockAll: false` | `networkBlockAll: true` | CIDR allowlist only; domain allowlists are ignored with a warning |
-| `kubernetes` | no NetworkPolicy | empty-egress NetworkPolicy | CIDR egress NetworkPolicy; domains require an FQDN-aware CNI/proxy |
+| `kubernetes` | no NetworkPolicy | empty-egress NetworkPolicy | CIDR egress NetworkPolicy with DNS (port 53) kept open; domains require an FQDN-aware CNI/proxy |
 | `e2b` | allowed | rejected by validation | rejected by validation |
 
 ## Reserved (persistent) sandboxes

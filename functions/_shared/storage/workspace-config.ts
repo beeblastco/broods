@@ -46,11 +46,13 @@ export function normalizeWorkspaceConfig(value: unknown): WorkspaceConfig {
   }
 
   const config = value;
+  let storageProvider: "s3" | "vercel" = "s3";
   if (config.storage !== undefined) {
     if (!isPlainObject(config.storage)) {
       throw new Error("config.storage must be an object");
     }
     assertOptionalEnum(config.storage.provider, "config.storage.provider", ["s3", "vercel"]);
+    storageProvider = (config.storage.provider as "s3" | "vercel" | undefined) ?? "s3";
   }
 
   let harness: { enabled?: boolean } | undefined;
@@ -65,7 +67,7 @@ export function normalizeWorkspaceConfig(value: unknown): WorkspaceConfig {
   }
 
   return {
-    storage: { provider: (config.storage && isPlainObject(config.storage) && config.storage.provider === "vercel") ? "vercel" : "s3" },
+    storage: { provider: storageProvider },
     ...(harness ? { harness } : {}),
   };
 }

@@ -19,7 +19,7 @@ import type {
   SandboxRunResult,
 } from "./types.ts";
 import { configString, isRecordObject, isSandboxGoneError, sandboxReservationKey, shellQuote, stringRecord, truncateText, workspacePath } from "./utils.ts";
-import { generateJobId, launchScript, logsScript, parseJobStatus, statusScript, stopScript } from "./jobs.ts";
+import { generateJobId, launchScript, lifecycleScript, logsScript, parseJobStatus, statusScript, stopScript } from "./jobs.ts";
 import { claimSandboxInstance, deleteSandboxInstance, getSandboxExternalId, saveSandboxInstance } from "./instance-store.ts";
 
 export class E2BSandboxExecutor implements SandboxExecutor {
@@ -185,25 +185,6 @@ export class E2BSandboxExecutor implements SandboxExecutor {
       throw new Error([result.stderr, result.error, result.stdout].filter(Boolean).join("\n") || "e2b lifecycle hook failed");
     }
   }
-}
-
-function lifecycleScript(workDir: string, onCreate?: string[], onResume?: string[]): string | undefined {
-  if (!onCreate?.length && !onResume?.length) return undefined;
-  const marker = `${workDir}/.fp-setup-done`;
-  return [
-    "set -e",
-    `mkdir -p ${shellQuote(workDir)}`,
-    `cd ${shellQuote(workDir)}`,
-    ...(onCreate?.length
-      ? [
-          `if [ ! -f ${shellQuote(marker)} ]; then`,
-          ...onCreate,
-          `  touch ${shellQuote(marker)}`,
-          "fi",
-        ]
-      : []),
-    ...(onResume ?? []),
-  ].join("\n");
 }
 
 function e2bApiOptions(config: SandboxExecutorConfig): Record<string, unknown> {

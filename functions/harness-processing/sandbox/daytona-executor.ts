@@ -20,7 +20,7 @@ import type {
   SandboxRunResult,
 } from "./types.ts";
 import { configString, isRecordObject, isSandboxGoneError, isStringRecord, sandboxReservationKey, shellQuote, truncateText, workspacePath } from "./utils.ts";
-import { generateJobId, launchScript, logsScript, parseJobStatus, statusScript, stopScript } from "./jobs.ts";
+import { generateJobId, launchScript, lifecycleScript, logsScript, parseJobStatus, statusScript, stopScript } from "./jobs.ts";
 import { claimSandboxInstance, deleteSandboxInstance, getSandboxExternalId, saveSandboxInstance } from "./instance-store.ts";
 
 export class DaytonaSandboxExecutor implements SandboxExecutor {
@@ -260,25 +260,6 @@ function daytonaNetworkOptions(config: SandboxExecutorConfig): Record<string, un
     networkBlockAll: true,
     ...((network.allowCidrs?.length ?? 0) > 0 ? { networkAllowList: network.allowCidrs!.join(",") } : {}),
   };
-}
-
-function lifecycleScript(workDir: string, onCreate?: string[], onResume?: string[]): string | undefined {
-  if (!onCreate?.length && !onResume?.length) return undefined;
-  const marker = `${workDir}/.fp-setup-done`;
-  return [
-    "set -e",
-    `mkdir -p ${shellQuote(workDir)}`,
-    `cd ${shellQuote(workDir)}`,
-    ...(onCreate?.length
-      ? [
-          `if [ ! -f ${shellQuote(marker)} ]; then`,
-          ...onCreate,
-          `  touch ${shellQuote(marker)}`,
-          "fi",
-        ]
-      : []),
-    ...(onResume ?? []),
-  ].join("\n");
 }
 
 function daytonaEnvVars(userEnv: Record<string, string>, options: Record<string, unknown>): Record<string, string> {

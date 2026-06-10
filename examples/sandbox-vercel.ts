@@ -12,7 +12,7 @@ import {
   requireEnv,
 } from "./utils.ts";
 
-const googleApiKey = requireEnv("ACCOUNT_GOOGLE_API_KEY");
+const minimaxApiKey = requireEnv("ACCOUNT_MINIMAX_API_KEY");
 const vercelToken = requireEnv("VERCEL_TOKEN");
 const vercelTeamId = requireEnv("VERCEL_TEAM_ID");
 const vercelProjectId = requireEnv("VERCEL_PROJECT_ID");
@@ -55,12 +55,13 @@ const workspace = await createWorkspace(account.secret, "vercel-project", {
 
 const agent = await createAgent(account.secret, "Vercel sandbox assistant", {
   provider: {
-    google: { apiKey: googleApiKey },
+    minimax: {
+      apiKey: minimaxApiKey,
+    },
   },
   model: {
-    provider: "google",
-    modelId: "gemma-4-31b-it",
-    temperature: 0,
+    provider: "minimax",
+    modelId: "MiniMax-M3",
   },
   agent: {
     system: [

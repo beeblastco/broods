@@ -8,12 +8,23 @@
 > `bun --compile` build).
 >
 > **Decisions locked (§7):** hooks named `onCreate`/`onResume`; **hard-replace** the
-> `internet` boolean with `network` (no back-compat shim — migrate); **vercel background
-> jobs ship in v1**; the lazy-import pass is a **separate follow-up** with its own cold-start
-> measurement.
+> `internet` boolean with `network` (no back-compat shim); **vercel background jobs ship in
+> v1**; the lazy-import pass is a **separate follow-up** with its own cold-start measurement;
+> unset `network` defaults to **`deny-all`** (secure by default); **no legacy compat** — the
+> repo is pre-release, existing dev records are updated directly in DynamoDB + Convex;
+> lambda maps `restricted` to the **net-off slot** (fail closed, no infra changes).
 >
 > Read §2 for the feature mapping, §3 for the cold-start truth, §4 for the design, §6 for
 > the change list, §7 for the resolved decisions.
+>
+> **Drift check 2026-06-10** (rebased against dev through `246e4d6`): still relevant, no
+> conflicting feature. Adjustments folded in below: reservation identity is now
+> `reservationKey ?? namespace` (use `sandboxReservationKey()` from `sandbox/utils.ts`);
+> a third `internet` touchpoint appeared (`tools/custom-tool-executor.ts`
+> `customToolExecutorConfig()`); `SandboxExecutor` grew optional `prewarm`/
+> `execInReservedPod` (vercel: prewarm cheap+optional, execInReservedPod skipped — pod-only,
+> custom tools are hardcoded to kubernetes); `ephemeralHome` interacts with the `onCreate`
+> marker (note in §4-A).
 
 ---
 
@@ -118,6 +129,11 @@ plain string commands.)
   - **e2b / daytona / kubernetes** → run the command lists ourselves through each executor's
     existing shell path: `onResume` on every successful reconnect; `onCreate` only on a
     fresh create, guarded by an idempotency marker `<workDir>/.fp-setup-done`.
+    *`ephemeralHome` caveat:* with `ephemeralHome: true` (no durable home PVC) the marker
+    does not survive scale-to-0, so `onCreate` re-runs on each resume. `ephemeralHome` is
+    runtime-only (`SandboxExecutorConfig`), not settable from account config, and its only
+    setter (the hardcoded custom-tool config) has no hooks — so no validation rule; add a
+    code comment at `customToolExecutorConfig()` noting the constraint.
   - **lambda** → N/A (ephemeral; hooks require `persistent`, which lambda can't set).
 - **Threading**: add `onCreate?`/`onResume?` to `SandboxExecutorConfig` (`sandbox/types.ts`)
   and populate at the `SandboxConfig → SandboxExecutorConfig` build sites.
@@ -130,7 +146,7 @@ NetworkPolicy is IP/CIDR):
 ```ts
 interface SandboxConfig {
   // REPLACES the old `internet?: boolean` (removed — see D2). Optional; when unset,
-  // normalize defaults it to { mode: "allow-all" } so behavior is uniform across providers.
+  // normalize defaults it to { mode: "deny-all" } — secure by default (D5).
   network?: {
     mode: "allow-all" | "deny-all" | "restricted";
     allowDomains?: string[];   // restricted only
@@ -139,11 +155,13 @@ interface SandboxConfig {
 }
 ```
 
-> **Default-behavior note:** the lambda provider previously treated *unset* `internet` as
-> **off** (net-off slot). With `network` defaulting to `allow-all`, a lambda sandbox that
-> relied on the implicit-off must now set `network: { mode: "deny-all" }` explicitly. This
-> is the one intentional behavior change from the hard-replace; call it out in the migration
-> note and docs.
+> **Default-behavior note (D5 = deny-all):** unset `network` normalizes to `deny-all`.
+> For lambda this matches the old implicit-off behavior exactly. For e2b/daytona/k8s it is
+> an intentional tightening: a sandbox that installs packages (pip/npm) must now state
+> `network: { mode: "allow-all" }` explicitly. Existing dev-stage records get this field
+> added during the record update (see the removal bullet below). The hardcoded
+> `customToolExecutorConfig()` sets `network: { mode: "allow-all" }` explicitly (it needs
+> npm install + the HTTP result callback).
 
 - **Per-provider mapping** (researched):
 
@@ -152,27 +170,45 @@ interface SandboxConfig {
   | **vercel** | ✅ | `networkPolicy:"allow-all"` | `"deny-all"` | `{ allow:[...domains], ipRanges }` |
   | **daytona** | ✅ (IP/CIDR) | `networkBlockAll:false` | `networkBlockAll:true` | `networkAllowList: allowCidrs.join(",")` (domains unsupported → ignored + warn) |
   | **kubernetes** | ✅ via **NetworkPolicy** CRD | no policy | empty-egress policy | egress `ipBlock` per CIDR; **domains need Cilium `toFQDNs`/proxy → out of scope** |
-  | **lambda** | ⚙️ slots | net-on fn | net-off fn | net-off fn (no per-domain filtering; documented) |
-  | **e2b** | ❌ none | — | — | documented no-op |
+  | **lambda** | ⚙️ slots | net-on fn | net-off fn | net-off fn (fail closed — see note below) |
+  | **e2b** | ❌ none | allowed | **validation-rejected** | **validation-rejected** |
+
+- **Lambda = slot selection only, no infra change.** The 4 deployed slots are shared across
+  all accounts; net-off is enforced by the deploy-time `SandboxNoNetSecurityGroup` (egress =
+  NFS-only) in the sandbox VPC (fck-nat on non-prod). Per-sandbox-config domain/CIDR
+  allowlists cannot be expressed in a shared security group, so `restricted` picks the
+  **net-off slot** (fail closed) and the executor logs a warning that the allowlists are not
+  enforceable on lambda. The `../lambda-sanbdox` runtime and `sst.config.ts` are untouched.
+- **e2b has no SDK egress control at all**, so `deny-all`/`restricted` would be silent lies.
+  `normalizeSandboxConfig` rejects them for provider e2b with a clear error ("e2b cannot
+  enforce egress restrictions; set network.mode to 'allow-all' explicitly"). Combined with
+  the deny-all default, every e2b config must therefore state `allow-all` explicitly —
+  honest secure-by-default.
 
 - **Kubernetes = native `NetworkPolicy`, NOT OPA.** OPA/Gatekeeper is an *admission
   controller* (validates the K8s API request at create time); it does not filter runtime
   egress. Apply a `NetworkPolicy` object next to the Sandbox: deny-all = policyTypes:[Egress]
   with empty `egress`; restricted = `egress.to.ipBlock.cidr` per CIDR. Domain-based egress
   requires an FQDN-aware CNI (Cilium) or egress proxy — deferred.
+  **Pre-implementation check:** the cluster is k3s, which enforces `NetworkPolicy` via its
+  embedded kube-router controller *unless* started with `--disable-network-policy` — verify
+  that flag is absent in `../infra` before relying on enforcement (execution step E1).
 - **`internet` removal (D2 = hard-replace)**: delete `internet` from `SandboxConfig`,
-  `SandboxExecutorConfig`, the lambda/daytona executor reads, and all tests. Two concrete
+  `SandboxExecutorConfig`, the lambda/daytona executor reads, and all tests. Three concrete
   touchpoints beyond validation:
   - `lambda-executor.ts` `#functionName(...)` currently reads `this.#config.internet === true`
     to choose the net-on/off slot → switch to `network.mode` (`allow-all` ⇒ net-on; anything
     else ⇒ net-off).
   - **`functions/_shared/workspaces.ts`** builds the read-only `readMount` as
-    `{ provider: "lambda", internet: false }` (two spots) → change to
+    `{ provider: "lambda", internet: false }` (one literal, ~line 114) → change to
     `{ provider: "lambda", network: { mode: "deny-all" } }`.
-  - **Migration**: existing stored sandbox records still carry `internet` (records are
-    persisted post-normalize, not re-normalized on read). Add a one-time backfill (or a
-    read-time shim in the store's `getById/list`) that maps a legacy `internet` to `network`
-    so old records keep working after the field is dropped. Note this in the change list.
+  - **`functions/harness-processing/tools/custom-tool-executor.ts`**
+    `customToolExecutorConfig()` sets `internet: true` (~line 521) →
+    `network: { mode: "allow-all" }`.
+  - **Record update (no legacy compat — the repo is pre-release)**: no shim, no backfill
+    code. Existing dev-stage `sandboxConfigs` records are updated **directly in DynamoDB and
+    Convex** as a deploy step: remove `internet`, add `network: { mode: "allow-all" }` where
+    the old behavior was internet-on (and to e2b records, which now require it explicitly).
 
 ### 4-C. The `vercel` provider executor
 
@@ -185,22 +221,34 @@ mirroring the e2b structure.
 - **Ephemeral** (no namespace): `Sandbox.create({ ...auth, runtime, timeout, networkPolicy,
   env, persistent:false })` → `runCommand({ cmd:"bash", args:["-lc", code], cwd, env })` →
   adapt → `stop()` in `finally`.
-- **Persistent** (namespace): reserve one sandbox per namespace via the **`instance-store`**
-  pattern (`getSandboxExternalId("vercel", ns)` → `Sandbox.get({ name })` to resume, else
-  `getOrCreate({ name, onCreate, onResume })` then `claimSandboxInstance`). Sandbox `name` =
-  slug of the namespace.
+- **Persistent**: reservation identity is **`sandboxReservationKey(request)`**
+  (`sandbox/utils.ts` — resolves `request.reservationKey ?? request.namespace`; this
+  replaced the old namespace-only keying). Reserve one sandbox per key via the
+  **`instance-store`** pattern (`getSandboxExternalId("vercel", key)` → `Sandbox.get({ name })`
+  to resume, else `getOrCreate({ name, onCreate, onResume })` then `claimSandboxInstance`,
+  loser deletes its sandbox — mirror e2b's `#acquire`). Sandbox `name` = slug of the key.
 - **Result adapter**: SDK `CommandFinished` has `.exitCode:number` and **async**
   `.stdout()`/`.stderr()` — await + truncate to `outputLimitBytes`, `ok = exitCode===0`,
   `provider:"vercel"`.
-- **`release`**: `Sandbox.get({name}).delete()` (ignore gone errors) +
-  `deleteSandboxInstance("vercel", ns)`.
+- **`release`**: signature is `release({ namespace?, reservationKey? })` (current
+  `SandboxExecutor` contract) — `Sandbox.get({name}).delete()` (ignore gone errors) +
+  `deleteSandboxInstance("vercel", sandboxReservationKey(request))`.
 - **Background jobs (D3 = include in v1)**: implement `runBackground`/`jobStatus`/`jobLogs`/
   `stopJob`, reusing the provider-agnostic `jobs.ts` scripts (`launchScript`/`statusScript`/
   `logsScript`/`stopScript`) exactly like the e2b executor. Persistent-only: require a
-  reserved sandbox + namespace; jobs dir under the namespace workDir (`.fp-jobs`), marker
+  reservation (key or namespace); jobs dir under the reservation workDir (`.fp-jobs`), marker
   files on the sandbox's own persistent disk. The detached process is launched via
   `runCommand` of the launch script; status/logs/stop are `runCommand` of the respective
   scripts. Mirror e2b's `#jobContext` (reconnect by stored name, derive jobsDir).
+- **Optional capabilities (new since the original draft)**: the `SandboxExecutor` interface
+  now also has optional `prewarm` and `execInReservedPod`.
+  - `prewarm` — cheap for vercel (`getOrCreate` + claim, then return); implement it so the
+    executor stays at parity with e2b/daytona/k8s. Today it is only invoked by the
+    custom-tool path, which is hardcoded to kubernetes, so it's parity, not a requirement.
+  - `execInReservedPod` — **skip**. It is the pod-level streaming channel for the resident
+    in-pod tool worker (k8s-only; e2b/daytona don't implement it either, and the contract
+    says "absent for non-pod providers"). Account-uploaded custom tools therefore never run
+    on vercel — `customToolExecutorConfig()` pins `provider: "kubernetes"`. No conflict.
 - **Lazy import**: `import type { Sandbox } from "@vercel/sandbox"` at top; value via
   `await import("@vercel/sandbox")` inside methods (§3 — defers eval, not size).
 
@@ -225,72 +273,123 @@ tags-as-a-feature, mounting S3 inside the Vercel VM, k8s FQDN egress, **splittin
 executor into its own Lambda** (recorded as the top cold-start follow-up in §3), and the
 full `WorkspaceStorageAdapter` abstraction.
 
-## 6. Change list (file by file)
+## 6. Execution steps (ordered)
 
-**Config + validation**
+**E1 — Pre-checks.**
+- In `../infra`, verify the k3s server is NOT started with `--disable-network-policy`
+  (kube-router is the embedded NetworkPolicy enforcer). If it is disabled, re-enable it
+  there first; the k8s `network` mapping depends on it.
+- Vercel credentials (needed for E14's live dry-test; unit tests mock the SDK): a Vercel
+  account/team (`teamId`), a project in it — an empty one is fine, sandboxes are
+  project-scoped (`projectId`) — and an access token from Account Settings → Tokens
+  (`token`). The Hobby plan includes a Sandbox usage allotment, so dry-testing needs no
+  paid plan. These land in the sandbox config `options.{token,teamId,projectId}`
+  (encrypted) with `VERCEL_TOKEN`/`VERCEL_TEAM_ID`/`VERCEL_PROJECT_ID` env fallback.
 
-- `functions/_shared/storage/sandbox-config.ts` — add `"vercel"` to provider union +
-  `SANDBOX_PROVIDERS`; add `onCreate`/`onResume` (require `persistent`) + `network`
-  (`allowDomains`/`allowCidrs` require `mode:"restricted"`, default `{mode:"allow-all"}`);
-  **remove `internet`**; allow vercel `options` keys (`token`/`teamId`/`projectId`/`runtime`);
-  verify `token` redaction.
-- `functions/_shared/storage/workspace-config.ts` — open `storage.provider` enum to include
-  `"vercel"` (§4-D).
-- **`functions/_shared/workspaces.ts`** — change both read-only `readMount` literals from
-  `{ provider:"lambda", internet:false }` to `{ provider:"lambda", network:{mode:"deny-all"} }`.
-- **Migration** — one-time backfill (or read-time shim in the dynamo/convex
-  `sandboxConfigs.getById/list`) mapping any legacy persisted `internet` → `network`, since
-  stored records aren't re-normalized on read.
+**E2 — Config + validation** (`functions/_shared/storage/sandbox-config.ts`):
+add `"vercel"` to the provider union + `SANDBOX_PROVIDERS`; add `onCreate`/`onResume`
+(non-empty string arrays, require `persistent: true`, mirror the `lifecycle` guard); add
+`network` (default `{ mode: "deny-all" }` when unset; `allowDomains`/`allowCidrs` only valid
+with `mode: "restricted"`; reject `deny-all`/`restricted` for provider e2b); **delete
+`internet`** (field, assertion, normalize spread); allow vercel `options` keys
+(`token`/`teamId`/`projectId`/`runtime`); confirm `token` falls under the existing
+secret-shape redaction.
 
-**Executor layer**
+**E3 — Remaining `internet` deletions:**
+- `functions/harness-processing/sandbox/types.ts` — remove `internet?`; add
+  `onCreate?`/`onResume?`/`network?` to `SandboxExecutorConfig`; add `"vercel"` to
+  `SandboxProvider`.
+- `functions/_shared/workspaces.ts` — `readMount` literal (~line 114) →
+  `{ provider: "lambda", network: { mode: "deny-all" } }`.
+- `functions/harness-processing/tools/custom-tool-executor.ts` —
+  `customToolExecutorConfig()` `internet: true` → `network: { mode: "allow-all" }`, plus the
+  `ephemeralHome`+`onCreate` code comment (§4-A).
+- `sandbox/lambda-executor.ts` — `#functionName` picks the slot from `network.mode`
+  (`allow-all` ⇒ net-on; `deny-all`/`restricted` ⇒ net-off, warn-log when `restricted`
+  carries allowlists); drop the `internet` read.
 
-- `functions/harness-processing/sandbox/types.ts` — `"vercel"` in `SandboxProvider`; add
-  `onCreate?`/`onResume?`/`network?` to `SandboxExecutorConfig`; **remove `internet?`**.
-- `functions/harness-processing/sandbox/index.ts` — register vercel branch + `SANDBOX_PROVIDERS`.
-- `functions/harness-processing/sandbox/vercel-executor.ts` — **new** (§4-C).
-- `sandbox/{e2b,daytona,kubernetes}-executor.ts` — run `onCreate`/`onResume` in the
-  create/reconnect branches (marker-guarded); map `network` (daytona allowlist;
-  k8s NetworkPolicy; e2b no-op).
-- `sandbox/lambda-executor.ts` — pick net-on/off slot from `network.mode` (`allow-all` ⇒
-  net-on; else net-off); drop the `internet` read.
+**E4 — Hooks + network in existing executors**
+(`sandbox/{e2b,daytona,kubernetes}-executor.ts`): run `onResume` on every successful
+reconnect and `onCreate` on fresh create guarded by `<workDir>/.fp-setup-done`, through each
+executor's existing shell path; map `network` — daytona `networkBlockAll`/`networkAllowList`
+(CIDRs, warn on domains), kubernetes `NetworkPolicy` object next to the Sandbox CR, e2b
+nothing at runtime (validation already restricted it to `allow-all`).
 
-**Cleanup**
+**E5 — Workspace storage enum** (`functions/_shared/storage/workspace-config.ts`):
+open `storage.provider` to `"s3" | "vercel"` (§4-D).
 
-- `functions/account-manage/cleanup.ts` — add `"vercel"` to the persistent-provider
-  iteration in `releaseReservedSandboxes` / `releaseSandboxConfigInstances` / `releaseFromConfigs`.
+**E6 — Vercel executor** (`functions/harness-processing/sandbox/vercel-executor.ts`, new):
+implement §4-C exactly — `sandboxReservationKey()` identity, instance-store claim/reconnect,
+native `getOrCreate({onCreate,onResume})`, `CommandFinished` async-stdout adapter,
+background jobs via `jobs.ts`, `prewarm`, `release`, lazy `await import("@vercel/sandbox")`;
+register the branch in `sandbox/index.ts`; add `@vercel/sandbox` to `package.json` and
+verify `bun run build` (ARM64 `--compile`) succeeds.
 
-**Mapping sites** (carry new fields `SandboxConfig → SandboxExecutorConfig`):
-`tools/filesystem-utils.ts`, `tools/bash.tool.ts`, `tools/async-status.tool.ts`,
-`tools/custom-tool-executor.ts` — confirm spread vs field-by-field.
+**E7 — Cleanup** (`functions/account-manage/cleanup.ts`): add `"vercel"` to the
+persistent-provider iteration in `releaseReservedSandboxes` /
+`releaseSandboxConfigInstances` / `releaseFromConfigs`.
 
-**Dependency**: `package.json` add `@vercel/sandbox`; verify Bun ARM64 `--compile` build.
+**E8 — Mapping sites** (`tools/filesystem-utils.ts`, `tools/bash.tool.ts`,
+`tools/async-status.tool.ts`, `tools/custom-tool-executor.ts`): ensure
+`onCreate`/`onResume`/`network` flow from `SandboxConfig` into `SandboxExecutorConfig` at
+every build site (fix any field-by-field site to carry the new fields).
 
-**Docs** (focused, diagrams/tables): `docs/workspace/sandbox/index.md` (network + hooks
-tables, provider diagram), new `docs/workspace/sandbox/vercel.md` (auth + FS caveat),
-`docs/api-reference/openapi.yaml` (schema: `onCreate`/`onResume`/`network`, provider enum,
-workspace storage enum).
+**E9 — Tests** (`tests/`): sandbox-config validation (deny-all default; e2b rejection of
+non-allow-all; allowlists-require-restricted; hooks-require-persistent; `internet` now
+rejected as unknown); vercel-executor unit test mocking `@vercel/sandbox` (focus the
+async-stdout adapter and the create-vs-resume hook paths); update every existing test that
+sets `internet`.
 
-**Tests**: `tests/` — `sandbox-config` validation (network incl. `internet` handling per D2;
-hooks-require-persistent; vercel provider enum); vercel-executor unit test mocking
-`@vercel/sandbox` (focus the async-stdout adapter).
+**E10 — Docs** (focused, diagrams/tables): `docs/workspace/sandbox/index.md` (network +
+hooks tables, provider diagram update), new `docs/workspace/sandbox/vercel.md` (auth, FS
+caveat, jobs), `docs/api-reference/openapi.yaml` (`onCreate`/`onResume`/`network` schema,
+provider enum, workspace storage enum).
 
-**Lazy-load research track (separate change):** convert `sandbox/index.ts` provider
-selection and `integrations.ts` channel selection to dynamic `import()`; lazy `ssm`/`lambda`
-AWS clients; capture before/after init duration.
+**E11 — Examples** (`examples/`, mirror the `sandbox-e2b.ts` shape — account → sandbox →
+agent → `streamSSE` real model inference → cleanup):
+- New `examples/sandbox-vercel.ts` — vercel provider end-to-end: persistent sandbox with
+  `onCreate`/`onResume` (assert the hook side-effects are visible from bash) and
+  `network: { mode: "restricted", allowDomains: [...] }`, auth via
+  `VERCEL_TOKEN`/`VERCEL_TEAM_ID`/`VERCEL_PROJECT_ID` env, plus one background job
+  launch/status round-trip.
+- Update existing sandbox examples (`sandbox-e2b.ts`, `sandbox-workspace-daytona.ts`,
+  `sandbox-{kubernetes,persistent-kubernetes,workspace-kubernetes}*.ts`,
+  `sandbox-workspace-lambda.ts`, `sandbox-stateless.ts`, `workspace-sandbox-override.ts`)
+  to set `network: { mode: "allow-all" }` explicitly — required for e2b (validation) and
+  for any example that installs packages (deny-all default).
 
-## 7. Decisions (resolved)
+**E12 — Local verification gates** (before push, in order): `bun run check` (tsc),
+`bun test` (the repo has no separate lint script — `check` + `test` are the gates), then
+`bun run build` to confirm the ARM64 `--compile` binaries still build with
+`@vercel/sandbox` embedded.
+
+**E13 — Record update (deploy step, dev stage only).** Update existing `sandboxConfigs`
+records directly in DynamoDB and Convex: remove `internet`; add
+`network: { mode: "allow-all" }` to records that had `internet: true` and to all e2b
+records; leave the rest to the deny-all default.
+
+**E14 — Post-deploy live dry-test.** After CI/CD finishes (`gh run list` / `gh run view`
+to confirm the pipeline is green and the dev stage deployed), run the example scripts
+against the deployed stack with real model inference: `examples/sandbox-vercel.ts` (new
+behavior), plus `examples/sandbox-workspace-lambda.ts` and one kubernetes example to
+confirm the `network` slot/NetworkPolicy mapping didn't regress existing providers.
+
+**Separate follow-up (not in this change):** the lazy-import pass — dynamic `import()` for
+`sandbox/index.ts` provider selection, `integrations.ts` channel selection, and the
+`ssm`/`lambda` AWS clients, with before/after CloudWatch init-duration numbers (§3).
+
+## 7. Decisions (all resolved — no open items)
 
 - **D1 — hook naming**: ✅ `onCreate` / `onResume` (Vercel parity).
-- **D2 — `internet` field**: ✅ **hard-replace** with `network` (no back-compat shim).
-  Remove the field everywhere; add a one-time migration for legacy persisted records; accept
-  the lambda default-behavior change (see the note in §4-B).
+- **D2 — `internet` field**: ✅ **hard-replace** with `network`; no shim, no backfill code —
+  dev-stage records updated directly in DynamoDB + Convex (E13).
 - **D3 — vercel background jobs**: ✅ **include in v1** via the shared `jobs.ts` scripts (§4-C).
 - **D4 — lazy-load pass**: ✅ **separate follow-up** with before/after CloudWatch
   init-duration numbers; this change ships only with the vercel SDK lazily imported.
-
-### Minor open item (not blocking)
-
-- **`network` default mode**: plan currently defaults unset `network` to `allow-all` for
-  cross-provider uniformity, which flips the lambda provider's historical implicit-off. If
-  "secure by default" is preferred, default to `deny-all` instead — decide at implementation
-  time (one line in `normalizeSandboxConfig`).
+- **D5 — `network` default**: ✅ **`deny-all`** (secure by default). Matches lambda's old
+  implicit-off; tightens e2b/daytona/k8s (E13 adds explicit `allow-all` where needed).
+- **D6 — legacy compat**: ✅ **none** — pre-release repo; direct record update (E13).
+- **D7 — lambda `restricted`**: ✅ **net-off slot, fail closed** + warn log. No changes to
+  the `../lambda-sanbdox` runtime, `sst.config.ts`, or the shared security groups.
+- **D8 — e2b non-allow-all**: ✅ **validation-rejected** (e2b has no egress control; a
+  silent no-op would misrepresent the policy).

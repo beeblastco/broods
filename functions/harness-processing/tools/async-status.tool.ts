@@ -101,6 +101,12 @@ The result is delivered back into the conversation automatically when it finishe
         // to stop the auto-delivery resume from injecting the same answer again.
         if (record.status === "completed") {
           await markAsyncToolResultObserved(statusId);
+          // For a settled background job, `logs` returns just the captured output
+          // (mirroring the live tail) instead of the whole settled record.
+          const settledLogs = action === "logs" ? settledJobLogs(record.response) : undefined;
+          if (settledLogs !== undefined) {
+            return toolText(settledLogs.length > 0 ? settledLogs : "(no output)");
+          }
           return toolText(`completed\n${formatUnknown(record.response)}`);
         }
         if (record.status === "failed") {
@@ -193,4 +199,12 @@ function formatUnknown(value: unknown): string {
   } catch {
     return String(value);
   }
+}
+
+// A settled background-job response carries the captured logs (see
+// settleTerminalJob); non-job async tools return undefined here.
+function settledJobLogs(response: unknown): string | undefined {
+  if (!response || typeof response !== "object") return undefined;
+  const logs = (response as { logs?: unknown }).logs;
+  return typeof logs === "string" ? logs : undefined;
 }

@@ -57,6 +57,7 @@ import {
 import {
   generateJobId,
   launchScript,
+  lifecycleScript,
   logsScript,
   parseJobStatus,
   statusScript,
@@ -441,6 +442,14 @@ export class KubernetesSandboxExecutor implements SandboxExecutor {
       });
     }
     const cidrs = network.mode === "restricted" ? (network.allowCidrs ?? []) : [];
+    // restricted keeps DNS reachable (port 53 to any resolver) — without it the
+    // CIDR allowlist is unusable by hostname. deny-all stays fully closed.
+    const egress = network.mode === "restricted"
+      ? [
+          { ports: [{ protocol: "UDP", port: 53 }, { protocol: "TCP", port: 53 }] },
+          ...(cidrs.length > 0 ? [{ to: cidrs.map((cidr) => ({ ipBlock: { cidr } })) }] : []),
+        ]
+      : [];
     const body = {
       apiVersion: "networking.k8s.io/v1",
       kind: "NetworkPolicy",
@@ -448,9 +457,7 @@ export class KubernetesSandboxExecutor implements SandboxExecutor {
       spec: {
         podSelector: { matchLabels: { [SANDBOX_NAME_LABEL]: name } },
         policyTypes: ["Egress"],
-        egress: cidrs.length > 0
-          ? [{ to: cidrs.map((cidr) => ({ ipBlock: { cidr } })) }]
-          : [],
+        egress,
       },
     };
     try {
@@ -809,25 +816,6 @@ function stringList(value: unknown): string[] | undefined {
     return value.split(",").map((v) => v.trim()).filter(Boolean);
   }
   return undefined;
-}
-
-function lifecycleScript(workDir: string, onCreate?: string[], onResume?: string[]): string | undefined {
-  if (!onCreate?.length && !onResume?.length) return undefined;
-  const marker = `${workDir}/.fp-setup-done`;
-  return [
-    "set -e",
-    `mkdir -p ${shellQuote(workDir)}`,
-    `cd ${shellQuote(workDir)}`,
-    ...(onCreate?.length
-      ? [
-          `if [ ! -f ${shellQuote(marker)} ]; then`,
-          ...onCreate,
-          `  touch ${shellQuote(marker)}`,
-          "fi",
-        ]
-      : []),
-    ...(onResume ?? []),
-  ].join("\n");
 }
 
 function sleep(ms: number): Promise<void> {

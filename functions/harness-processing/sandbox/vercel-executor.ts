@@ -249,12 +249,18 @@ function vercelCreateOptions(
   };
 }
 
-function vercelAuthOptions(config: SandboxExecutorConfig): Record<string, string> {
+function vercelAuthOptions(config: SandboxExecutorConfig): { token: string; teamId: string; projectId: string } {
   const options = isRecordObject(config.options) ? config.options : {};
   const token = configString(options.token) ?? optionalEnv("VERCEL_TOKEN");
-  const teamId = configString(options.teamId) ?? optionalEnv("VERCEL_TEAM_ID") ?? optionalEnv("TEAM_ID");
-  const projectId = configString(options.projectId) ?? optionalEnv("VERCEL_PROJECT_ID") ?? optionalEnv("PROJECT_ID");
-  return token && teamId && projectId ? { token, teamId, projectId } : {};
+  const teamId = configString(options.teamId) ?? optionalEnv("VERCEL_TEAM_ID");
+  const projectId = configString(options.projectId) ?? optionalEnv("VERCEL_PROJECT_ID");
+  const missing = Object.entries({ token, teamId, projectId })
+    .filter(([, value]) => !value)
+    .map(([key]) => key);
+  if (missing.length > 0) {
+    throw new Error(`vercel sandbox auth is missing ${missing.join(", ")}; set config.options.{token,teamId,projectId} or VERCEL_TOKEN/VERCEL_TEAM_ID/VERCEL_PROJECT_ID`);
+  }
+  return { token: token!, teamId: teamId!, projectId: projectId! };
 }
 
 function vercelNetworkPolicy(config: SandboxExecutorConfig): NetworkPolicy {

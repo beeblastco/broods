@@ -1,8 +1,9 @@
 /**
- * Shell scripts for detached background jobs, shared by the persistent executors.
- * Each provider just runs these strings and reads stdout. State lives in marker
- * files under `jobsDir`: `<id>.running` (live; holds the launching boot id),
- * `.log` (output), `.exit` (code), `.pid` (session leader, for stop).
+ * Shell script builders shared by the persistent executors: detached background
+ * jobs and the onCreate/onResume lifecycle hooks. Each provider just runs these
+ * strings and reads stdout. Job state lives in marker files under `jobsDir`:
+ * `<id>.running` (live; holds the launching boot id), `.log` (output), `.exit`
+ * (code), `.pid` (session leader, for stop).
  */
 
 import { Buffer } from "node:buffer";
@@ -20,6 +21,31 @@ export interface LaunchOptions {
 
 export function generateJobId(): string {
   return `job_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+}
+
+/**
+ * onCreate/onResume hook script for providers without native lifecycle
+ * callbacks (e2b/daytona/kubernetes; vercel uses the SDK's own hooks).
+ * onCreate runs once, guarded by a marker file in the workDir; onResume runs on
+ * every acquisition. Returns undefined when no hooks are configured.
+ */
+export function lifecycleScript(workDir: string, onCreate?: string[], onResume?: string[]): string | undefined {
+  if (!onCreate?.length && !onResume?.length) return undefined;
+  const marker = `${workDir}/.fp-setup-done`;
+  return [
+    "set -e",
+    `mkdir -p ${shellQuote(workDir)}`,
+    `cd ${shellQuote(workDir)}`,
+    ...(onCreate?.length
+      ? [
+          `if [ ! -f ${shellQuote(marker)} ]; then`,
+          ...onCreate,
+          `  touch ${shellQuote(marker)}`,
+          "fi",
+        ]
+      : []),
+    ...(onResume ?? []),
+  ].join("\n");
 }
 
 /**

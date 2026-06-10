@@ -39,6 +39,16 @@ defaults to `node24`.
 Vercel has native per-call lifecycle hooks, so the executor passes `onCreate` and `onResume`
 to `Sandbox.getOrCreate()`/`Sandbox.get()` instead of emulating them with marker files.
 
+Two semantic differences from the other persistent providers:
+
+- **`onResume` timing**: on Vercel the hook fires only when a *stopped* sandbox actually
+  resumes. E2B/Daytona/Kubernetes run `onResume` on every call (they cannot tell a fresh
+  reconnect from a resume), so write hooks that are idempotent either way.
+- **Idle timeout**: Vercel's `timeout` counts from sandbox start, not from last activity.
+  The executor maps `lifecycle.idleTimeoutSeconds` onto it, so a persistent Vercel sandbox
+  stops that many seconds after each wake — even mid-activity — and resumes on the next
+  call. `lifecycle.maxLifetimeSeconds` is not enforced on Vercel.
+
 ```mermaid
 flowchart LR
   Run["tool call"] --> Named["Sandbox.getOrCreate(name)"]
