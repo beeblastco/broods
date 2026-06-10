@@ -157,6 +157,7 @@ function createRequest(body: string, headers: Record<string, string>) {
   return {
     method: "POST",
     rawPath: "/",
+    rawQueryString: "",
     headers,
     body,
   };

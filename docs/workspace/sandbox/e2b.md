@@ -1,8 +1,8 @@
 # E2B
 
-Uses an [E2B](https://e2b.dev/docs) template for stateless sandbox runs. Persistent
-workspace-backed filesystem tools are currently disabled for E2B unless an equivalent S3
-mount integration is added.
+Uses an [E2B](https://e2b.dev/docs) template for sandbox runs. E2B has no S3 mount:
+stateless configs get `bash` only, and workspace-backed filesystem tools require
+`persistent: true` (a reserved sandbox whose native filesystem holds the workspace files).
 
 ## Configuration
 
@@ -11,6 +11,7 @@ mount integration is added.
   "name": "e2b",
   "config": {
     "provider": "e2b",
+    "network": { "mode": "allow-all" },
     "permissionMode": "ask",
     "options": {
       "apiKey": "...",
@@ -21,34 +22,46 @@ mount integration is added.
 }
 ```
 
-Reference the resulting `sandboxId` from `config.sandbox` for stateless `bash`, or from a
-workspace only after the provider has a persistent mount strategy. `apiKey` can be omitted
-when `E2B_API_KEY` is set on the harness runtime. `templateId` is an alias for `template`.
+E2B cannot enforce egress restrictions, so validation requires `network.mode` to be
+`allow-all` explicitly — `deny-all` (the default when omitted) and `restricted` are
+rejected. `apiKey` can be omitted when `E2B_API_KEY` is set on the harness runtime.
+`templateId` is an alias for `template`.
+
+## Persistent mode
+
+Set `persistent: true` to reserve one long-lived sandbox per workspace. The executor maps
+`lifecycle.idleTimeoutSeconds` to the E2B sandbox timeout with `onTimeout: "pause"`, so an
+idle sandbox snapshots and resumes (files, installs, and processes survive). Reserved
+sandboxes are tracked in the instance store and reconnected on later calls; `onCreate` /
+`onResume` hooks and detached background jobs work as described in
+[the sandbox overview](index.md#reserved-persistent-sandboxes). Workspace files live under
+`<workspaceRoot>/<namespace>` (default `/mnt/workspaces`).
 
 ## Requirements
 
-Use a template with Node and Python installed. The E2B executor does not sync workspace
-files itself, so workspace-backed `read`/`write`/`edit`/`glob`/`grep`/`bash` fail fast
-unless this provider grows a durable mount equivalent to Lambda/Daytona/Kubernetes.
+Use a template with Node and Python installed. Without `persistent: true` there is no
+workspace filesystem, so workspace-backed `read`/`write`/`edit`/`glob`/`grep`/`bash`
+fail fast.
 
 ## Execution Notes
 
-See [E2B runtime documentation](https://e2b.dev/docs) for supported runtimes and environment setup.
+See [E2B runtime documentation](https://e2b.dev/docs) for supported runtimes and
+environment setup. The executor runs the tool's bash command as-is inside the sandbox.
 
-TypeScript (`.ts`) files are not transpiled; use compiled JavaScript instead. `python <file>` is rewritten to `python3` at runtime.
-
-`sandbox.envVars` is forwarded as the command's `envs`, so configured variables are visible to executed files.
+`sandbox.envVars` is forwarded as the command's `envs`, so configured variables are
+visible to executed files.
 
 ## What the model sees
 
-Today E2B is stateless in this harness: there is no mounted workspace, so only `bash` is
-available and files do not persist across calls. Treat it like a temporary Linux shell and
-write/run dependent files in one command, usually under `/tmp`.
+Stateless configs behave like a temporary Linux shell: only `bash` is available, files do
+not persist across calls, and dependent files should be written and run in one command,
+usually under `/tmp`.
 
-When E2B gets workspace-backed tools, it should follow the same model-facing contract as
-the other providers: `bash` starts in the workspace root, examples use relative paths, and
-the default underlying mount root is `/mnt/workspaces/<namespace>`.
+Persistent configs follow the same model-facing contract as the other providers: `bash`
+starts in the workspace root, examples use relative paths, and the default underlying
+root is `/mnt/workspaces/<namespace>`.
 
 ## Dependencies
 
-Use a template image with packages installed during template build.
+Use a template image with packages installed during template build, or install into a
+persistent sandbox once via `onCreate`.

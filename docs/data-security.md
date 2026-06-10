@@ -21,13 +21,15 @@ flowchart TD
   Config --> GitHub["GitHub app id / private key / webhook secret"]
   Config --> Slack["Slack bot token / signing secret"]
   Config --> Discord["Discord bot token / public key"]
+  Config --> Pancake["Pancake page access token"]
+  Config --> Zalo["Zalo bot token / webhook secret"]
 ```
 
 The account API secret is never stored directly. It is returned once on create or rotation, then only `secretHash` is stored.
 
 Provider credentials and account-specific runtime options must be usable at runtime, so they cannot be hashed. They are stored inside encrypted account-owned agent config. Normal account and agent responses recursively redact secret-like field names such as `token`, `secret`, `privateKey`, and `apiKey`, including inside tool config.
 
-Workspace files and skill bundles are stored as account-scoped S3 objects. The buckets block public access and use a deny-by-default bucket policy that allows only the project runtime roles, sandbox runtime roles, the AWS S3 Files role, and deployment roles for the active stage.
+Workspace files, skill bundles, and uploaded tool bundles are stored as account-scoped S3 objects (workspace, skills, and tool-bundles buckets). The buckets block public access and use a deny-by-default bucket policy that allows only the project runtime roles, sandbox runtime roles, the AWS S3 Files role, and deployment roles for the active stage.
 
 ## How Config Encryption Works
 
@@ -77,4 +79,4 @@ This keeps the product easy to run and change:
 - Lambdas with the encryption secret and table access can decrypt config.
 - Key rotation needs a migration.
 - This protects against accidental table-read exposure, not compromised application code.
-- Third-party sandbox providers such as E2B and Daytona run outside the AWS Lambda sandbox boundary. Configure them with isolated mounts, minimal environment variables, provider-side egress controls, and no account/provider secrets unless a workload explicitly needs them.
+- Third-party sandbox providers such as E2B, Daytona, and Vercel run outside the AWS Lambda sandbox boundary. Configure them with isolated mounts, minimal environment variables, provider-side egress controls, and no account/provider secrets unless a workload explicitly needs them. Daytona S3 mounts receive short-lived credentials from the dedicated `sandbox-s3mount` IAM role, scoped to the workspace's own key prefix — never the harness runtime's credentials.

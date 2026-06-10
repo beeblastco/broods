@@ -316,7 +316,7 @@ describe("pancake channel actions", () => {
     const fetchMock = installFetchMock();
     fetchMock.responses.push(jsonResponse({ success: true, id: "reply-1" }));
 
-    const actions = createPancakeChannel("page-1", "page-token", "sender-1").actions(
+    const actions = createPancakeChannel("page-1", "page-token", "hook-secret", "sender-1").actions(
       createMessage({
         pageId: "page-1",
         conversationId: "conversation-1",
@@ -346,7 +346,7 @@ describe("pancake channel actions", () => {
     const fetchMock = installFetchMock();
     fetchMock.responses.push(jsonResponse({ success: true, id: "reply-1" }));
 
-    const actions = createPancakeChannel("page-1", "page-token").actions(
+    const actions = createPancakeChannel("page-1", "page-token", "hook-secret").actions(
       createMessage({
         pageId: "page-1",
         conversationId: "conversation-1",
@@ -367,7 +367,7 @@ describe("pancake channel actions", () => {
 
   it("throws on Pancake API failures and rejects invalid source payloads", async () => {
     const fetchMock = installFetchMock();
-    const adapter = createPancakeChannel("page-1", "page-token");
+    const adapter = createPancakeChannel("page-1", "page-token", "hook-secret");
     const actions = adapter.actions(
       createMessage({
         pageId: "page-1",

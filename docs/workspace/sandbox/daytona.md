@@ -35,7 +35,11 @@ Use `snapshot` for Daytona snapshots. Use `image` only when creating the sandbox
 bun run daytona:s3-snapshot
 ```
 
-`sandbox.envVars` passes additional environment variables into the sandbox container. All providers honor it (Lambda, E2B, and Daytona).
+`sandbox.envVars` passes additional environment variables into the sandbox container. All providers honor it.
+
+`network.mode` maps to Daytona's `networkBlockAll` (`allow-all` → `false`, `deny-all` → `true`); `restricted` applies the CIDR allowlist only — domain allowlists are ignored with a warning.
+
+Persistent mode (`persistent: true`) reserves one Daytona sandbox per workspace: idle/lifetime settings map to Daytona's `autoStopInterval`/`autoDeleteInterval`, the instance is tracked and reconnected across calls, and `onCreate`/`onResume` hooks plus detached background jobs work as described in [the sandbox overview](index.md#reserved-persistent-sandboxes).
 
 ## Requirements
 
@@ -61,7 +65,7 @@ setting for the mount location, not a path the model needs for normal file work.
 
 See [Daytona runtime documentation](https://daytona.io/docs) for supported runtimes and environment setup.
 
-TypeScript (`.ts`) files are not transpiled; use compiled JavaScript instead. `python <file>` is rewritten to `python3` at runtime.
+TypeScript (`.ts`) files are not transpiled; use compiled JavaScript instead. The executor runs the tool's bash command as-is, so use `python3` explicitly.
 
 ## AWS S3 Workspace Mount
 
@@ -71,10 +75,16 @@ Set `options.mountAwsS3Buckets` to `true` to mount the current `FILESYSTEM_BUCKE
 bucket at `options.workspaceRoot/<namespace>`. This is required for the Daytona provider
 to see the same files as the Lambda bash tool.
 
-The snapshot must include `mount-s3`; use `bun run daytona:s3-snapshot` to build it from `daytonaio/sandbox:0.8.0`.
+The snapshot must include `mount-s3`; use `bun run daytona:s3-snapshot` to build it. The script requires `DAYTONA_S3_SNAPSHOT_BASE_IMAGE` (base image to build from) and `DAYTONA_S3_SNAPSHOT_NAME` (snapshot name) to be set.
 
-The executor passes AWS credentials and region into the Daytona sandbox for `mount-s3`.
-Treat Daytona sandboxes as trusted account-controlled compute when this option is enabled.
+When `SKILLS_BUCKET_NAME` is set on the harness, the executor also mounts the account skills bucket read-only at `options.skillsMountPath` (default `/mnt/skills`); override the bucket with `options.skillsBucketName`.
+
+The executor assumes the deployed `sandbox-s3mount` IAM role and passes the resulting
+short-lived, prefix-scoped credentials into the Daytona sandbox for `mount-s3` — sandbox
+code can only reach this workspace's own key prefix and the skills bucket (read-only),
+never the harness runtime's broader permissions. Without the role
+(`SANDBOX_MOUNT_ROLE_ARN` unset, e.g. self-managed deployments), supply
+`AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY` through the sandbox `envVars` instead.
 
 Override defaults with:
 

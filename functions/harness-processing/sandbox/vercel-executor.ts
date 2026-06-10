@@ -17,7 +17,7 @@ import type {
   SandboxRunRequest,
   SandboxRunResult,
 } from "./types.ts";
-import { configString, isRecordObject, isSandboxGoneError, sandboxReservationKey, shellQuote, stringRecord, truncateText, workspacePath } from "./utils.ts";
+import { configString, isRecordObject, isSandboxGoneError, persistentSandboxName, sandboxReservationKey, shellQuote, stringRecord, truncateText, workspacePath } from "./utils.ts";
 import { generateJobId, launchScript, logsScript, parseJobStatus, statusScript, stopScript } from "./jobs.ts";
 import { claimSandboxInstance, deleteSandboxInstance, getSandboxExternalId, saveSandboxInstance } from "./instance-store.ts";
 
@@ -289,18 +289,3 @@ async function commandError(result: CommandFinished, fallback: string): Promise<
   return [stderr, stdout].filter(Boolean).join("\n") || fallback;
 }
 
-function persistentSandboxName(reservationKey: string): string {
-  return `fp-p-${slugFor(reservationKey)}-${shortHash(reservationKey)}`;
-}
-
-function slugFor(value: string): string {
-  return value.toLowerCase().replace(/[^a-z0-9-]/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "").slice(0, 40) || "sandbox";
-}
-
-function shortHash(value: string): string {
-  let hash = 5381;
-  for (let i = 0; i < value.length; i++) {
-    hash = ((hash << 5) + hash + value.charCodeAt(i)) >>> 0;
-  }
-  return hash.toString(36).slice(0, 6);
-}

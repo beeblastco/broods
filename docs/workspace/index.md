@@ -96,8 +96,9 @@ implementation details for logs and debugging.
 > argument; each call routes to that workspace's sandbox and inherits its `permissionMode`.
 > Every file tool lists **all** workspaces (so an omitted `workspace` always resolves to
 > the configured default, never a silent substitute). Selecting a read-only workspace for
-> `write`/`edit`/`grep`/`bash` returns a clean "workspace is read-only" error with **no
-> approval prompt** — a workspace with no sandbox has no `permissionMode` to ask against.
+> `write`/`edit`/`grep` returns a clean "workspace is read-only" error, and `bash` reports
+> "no sandbox available for this command" — in both cases with **no approval prompt**,
+> because a workspace with no sandbox has no `permissionMode` to ask against.
 
 ## permissionMode
 
@@ -118,7 +119,7 @@ flowchart TD
   Session --> Resolve["sandbox + workspace records<br/>(account-scoped lookups)"]
   Session --> Harness["harness.ts (streamText loop)"]
   Harness --> Tools["tools/index.ts<br/>per-workspace sandbox + permissionMode"]
-  Tools --> Sandbox["sandbox executor (run)<br/>lambda / e2b / daytona / kubernetes"]
+  Tools --> Sandbox["sandbox executor (run)<br/>lambda / e2b / daytona / kubernetes / vercel"]
   Tools -->|read/glob on read-only workspace| Files
   Sandbox --> Files["workspace files on S3<br/>namespace = hash(accountId:workspaceId)"]
   Session -->|MEMORY.md via S3 API| Files

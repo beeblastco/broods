@@ -16,7 +16,7 @@ flowchart TD
   Url --> Integrations["integrations.ts"]
   Integrations --> Account["load active account"]
   Account --> Agent["load active agent config"]
-  Agent --> Registry["createChannelRegistry(config)"]
+  Agent --> Registry["createChannelRegistry(config, scope)"]
   Registry --> Adapter["ChannelAdapter"]
   Adapter --> Auth["authenticate(req)"]
   Auth --> Parse["parse(req)"]
@@ -47,8 +47,21 @@ Webhook handling is split deliberately:
 | `github` | [`functions/_shared/github-channel.ts`](../../functions/_shared/github-channel.ts) | `webhookSecret`, `appId`, `privateKey` | [GitHub Details](github.md) |
 | `slack` | [`functions/_shared/slack-channel.ts`](../../functions/_shared/slack-channel.ts) | `botToken`, `signingSecret` | [Slack Details](slack.md) |
 | `discord` | [`functions/_shared/discord-channel.ts`](../../functions/_shared/discord-channel.ts) | `botToken`, `publicKey` | [Discord Details](discord.md) |
-| `pancake` | [`functions/_shared/pancake-channel.ts`](../../functions/_shared/pancake-channel.ts) | `pageId`, `pageAccessToken` | [Pancake Details](pancake.md) |
+| `pancake` | [`functions/_shared/pancake-channel.ts`](../../functions/_shared/pancake-channel.ts) | `pageId`, `pageAccessToken`, `webhookSecret` | [Pancake Details](pancake.md) |
 | `zalo` | [`functions/_shared/zalo-channel.ts`](../../functions/_shared/zalo-channel.ts) | `botToken`, `webhookSecret`, `allowedUserIds` | [Zalo Details](zalo.md) |
+
+---
+
+## Shared Channel Behavior
+
+Every channel gets these behaviors from the shared pipeline, not from the adapter:
+
+- **Bot commands** — a message starting with `/command` runs a command from [`functions/_shared/commands.ts`](../../functions/_shared/commands.ts) instead of the agent: `/new` (alias `/start`) clears the conversation context, `/help` lists commands, and Discord additionally exposes `/ask`. Commands only see the channel-agnostic `ChannelActions`.
+- **Typing + reaction** — an accepted message immediately triggers a fire-and-forget typing indicator and a reaction (👀 on Slack/GitHub, configurable on Telegram, no-op on Discord/Pancake/Zalo).
+- **Tool approval auto-deny** — tools configured with `needsApproval` are automatically denied on channel turns with the reason `Tool approval is only supported through the direct API.`
+- **Error replies** — if processing fails, the channel receives `Error: <message>` as the reply.
+- **Per-channel config scoping** — a webhook run only sees its own channel's config; other channels' credentials are stripped from the runtime agent config.
+- **Deferred replies** — when a turn finishes in the background (detached async tools or sandbox jobs), the final result is pushed back into the originating chat once it settles.
 
 ---
 
@@ -74,7 +87,7 @@ flowchart LR
 
 The handler reads `text-delta` and `tool-call` parts from the agent's `fullStream`: `edit`/`chunk` consume the text and ignore tool calls; `progress` consumes tool calls and ignores the streamed text (the answer arrives whole at the end).
 
-The driver ([`functions/_shared/channel-streaming.ts`](../../functions/_shared/channel-streaming.ts)) owns accumulation and throttling; channels only provide the `beginMessage`/`editMessage` primitives (and an optional `editMaxChars` cap) for edit/progress modes. Streaming is best-effort — a failed edit/send never aborts the turn, and a structured/object final response always sends as one message. When an edited reply outgrows the provider's message-length cap (Telegram ~4096, Discord 2000), the driver freezes the current message at a clean break and continues streaming in a new one (rotation), so long replies are not truncated. **Telegram**, **Slack** (`chat.postMessage`/`chat.update`), and **Discord** (interaction webhook edits) ship edit primitives; other channels stream via `chunk` until they add the two methods.
+The driver ([`functions/_shared/channel-streaming.ts`](../../functions/_shared/channel-streaming.ts)) owns accumulation and throttling; channels only provide the `beginMessage`/`editMessage` primitives (and an optional `editMaxChars` cap) for edit/progress modes. Streaming is best-effort — a failed edit/send never aborts the turn, and a structured/object final response always sends as one message. When an edited reply outgrows the channel's `editMaxChars` budget (default ~3500 raw characters; Discord uses 1900, both safely below the provider caps of 4096/2000), the driver freezes the current message at a clean break and continues streaming in a new one (rotation), so long replies are not truncated. **Telegram**, **Slack** (`chat.postMessage`/`chat.update`), and **Discord** (interaction webhook edits) ship edit primitives; other channels stream via `chunk` until they add the two methods.
 
 ---
 

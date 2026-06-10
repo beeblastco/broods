@@ -49,9 +49,11 @@ import type {
 import {
   configString,
   isRecordObject,
+  persistentSandboxName,
   requiredWorkspacePath,
   sandboxReservationKey,
   shellQuote,
+  slugFor,
   truncateText,
 } from "./utils.ts";
 import {
@@ -442,12 +444,15 @@ export class KubernetesSandboxExecutor implements SandboxExecutor {
       });
     }
     const cidrs = network.mode === "restricted" ? (network.allowCidrs ?? []) : [];
+    const except = network.mode === "restricted" ? (network.denyCidrs ?? []) : [];
     // restricted keeps DNS reachable (port 53 to any resolver) — without it the
     // CIDR allowlist is unusable by hostname. deny-all stays fully closed.
     const egress = network.mode === "restricted"
       ? [
           { ports: [{ protocol: "UDP", port: 53 }, { protocol: "TCP", port: 53 }] },
-          ...(cidrs.length > 0 ? [{ to: cidrs.map((cidr) => ({ ipBlock: { cidr } })) }] : []),
+          ...(cidrs.length > 0
+            ? [{ to: cidrs.map((cidr) => ({ ipBlock: { cidr, ...(except.length > 0 ? { except } : {}) } })) }]
+            : []),
         ]
       : [];
     const body = {
@@ -710,26 +715,7 @@ function envList(vars: Record<string, string>): Array<{ name: string; value: str
 
 function sandboxName(namespace: string | undefined): string {
   const suffix = Math.random().toString(36).slice(2, 8);
-  return `fp-${slugFor(namespace)}-${suffix}`;
-}
-
-// Deterministic name for a reserved sandbox: the same reservation key always
-// maps to the same Sandbox, so any later request reconnects to it. The hash keeps
-// names unique after the slug is truncated.
-function persistentSandboxName(reservationKey: string): string {
-  return `fp-p-${slugFor(reservationKey)}-${shortHash(reservationKey)}`;
-}
-
-function slugFor(namespace: string | undefined): string {
-  return (namespace ?? "").toLowerCase().replace(/[^a-z0-9-]/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "").slice(0, 40) || "ws";
-}
-
-function shortHash(value: string): string {
-  let hash = 5381;
-  for (let i = 0; i < value.length; i++) {
-    hash = ((hash << 5) + hash + value.charCodeAt(i)) >>> 0;
-  }
-  return hash.toString(36).slice(0, 6);
+  return `fp-${slugFor(namespace, "ws")}-${suffix}`;
 }
 
 function persistentHome(opts: Record<string, unknown>): string {

@@ -87,7 +87,13 @@ describe("executeAccountToolInSandbox", () => {
     expect(createSandboxExecutorMock).toHaveBeenCalledWith(expect.objectContaining({
       provider: "kubernetes",
       persistent: true,
-      network: { mode: "allow-all" },
+      // Public internet only: uploaded tool code must not reach the cluster,
+      // node metadata service, or other private ranges.
+      network: expect.objectContaining({
+        mode: "restricted",
+        allowCidrs: ["0.0.0.0/0"],
+        denyCidrs: expect.arrayContaining(["169.254.0.0/16", "10.0.0.0/8"]),
+      }),
       lifecycle: expect.objectContaining({
         idleTimeoutSeconds: 300,
       }),

@@ -8,6 +8,7 @@ import {
   PutItemCommand,
   QueryCommand,
   type AttributeValue,
+  type QueryCommandOutput,
 } from "@aws-sdk/client-dynamodb";
 import type {
   AssistantModelMessage,
@@ -458,18 +459,25 @@ export class Session {
     const keyConditionExpression = options.afterCreatedAt
       ? "conversationKey = :conversationKey AND createdAt > :createdAt"
       : "conversationKey = :conversationKey";
-    const result = await dynamo.send(new QueryCommand({
-      TableName: CONVERSATIONS_TABLE_NAME,
-      KeyConditionExpression: keyConditionExpression,
-      ExpressionAttributeValues: {
-        ":conversationKey": { S: this.conversationKey },
-        ...(options.afterCreatedAt ? { ":createdAt": { S: options.afterCreatedAt } } : {}),
-      },
-      ConsistentRead: true,
-      ScanIndexForward: true,
-    }));
+    const items: NonNullable<QueryCommandOutput["Items"]> = [];
+    let exclusiveStartKey: QueryCommandOutput["LastEvaluatedKey"];
+    do {
+      const result: QueryCommandOutput = await dynamo.send(new QueryCommand({
+        TableName: CONVERSATIONS_TABLE_NAME,
+        KeyConditionExpression: keyConditionExpression,
+        ExpressionAttributeValues: {
+          ":conversationKey": { S: this.conversationKey },
+          ...(options.afterCreatedAt ? { ":createdAt": { S: options.afterCreatedAt } } : {}),
+        },
+        ConsistentRead: true,
+        ScanIndexForward: true,
+        ...(exclusiveStartKey ? { ExclusiveStartKey: exclusiveStartKey } : {}),
+      }));
+      items.push(...(result.Items ?? []));
+      exclusiveStartKey = result.LastEvaluatedKey;
+    } while (exclusiveStartKey);
 
-    return (result.Items ?? [])
+    return items
       .map(itemToStoredConversationEntry)
       .filter((entry): entry is StoredConversationEntry => entry != null);
   }

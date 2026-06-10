@@ -20,7 +20,7 @@ If you want to self-host a multi-agent backend, integrate AI into Telegram/Disco
 - **Multi-tenant accounts** — each account has its own encrypted config, hashed API secret, and isolated runtime data.
 - **Bring-your-own model** — Google, OpenAI, Bedrock, Vercel AI Gateway, and custom providers configured per account.
 - **Multi-channel integrations** — Telegram, Discord, Slack, GitHub, Facebook Messenger (Pancake), and Zalo out of the box.
-- **Workspaces & sandboxes** — S3-backed workspace files plus pluggable execution sandboxes (Lambda, E2B, Daytona, Kubernetes).
+- **Workspaces & sandboxes** — S3-backed workspace files plus pluggable execution sandboxes (Lambda, E2B, Daytona, Kubernetes, Vercel).
 - **Skills system** — account-scoped instruction bundles loaded on demand during a turn.
 - **Subagents** — dispatch parallel one-shot child agents and inject their results back into the parent conversation.
 - **Streaming-first** — SSE for sync direct API callers and a NATS JetStream path for WebSocket gateways.
@@ -30,7 +30,7 @@ If you want to self-host a multi-agent backend, integrate AI into Telegram/Disco
 
 ## Architecture
 
-The deployed system exposes two public Lambda Function URLs:
+The deployed system exposes two public Lambda Function URLs (plus a testing-only `mock-webhook-subscribe` URL):
 
 - `account-manage` — account creation, secret rotation, and CRUD for account-owned agents, skills, sandboxes, and workspaces.
 - `harness-processing` — streams agent responses, runs the model/tool loop, and serves account-scoped channel webhooks.
@@ -65,7 +65,7 @@ For the full architecture deep-dive — including account routing, the harness l
 | Infra-as-code | [SST v4](https://sst.dev/) on Pulumi |
 | Model SDK | [Vercel AI SDK](https://sdk.vercel.ai/) (`ai` package) |
 | Providers | Google, OpenAI, Bedrock, Vercel AI Gateway, custom |
-| Persistence | DynamoDB (config + conversations) + S3 (files + skills) |
+| Persistence | DynamoDB (config + conversations; the production stage stores config domains in Convex) + S3 (files + skills) |
 | Streaming | SSE via Lambda Function URL (`RESPONSE_STREAM` invoke mode); NATS JetStream for WebSocket fan-out |
 | Docs | Docusaurus |
 
@@ -121,9 +121,9 @@ bun examples/skills.ts        # Skill CRUD
 Full documentation lives in [`docs/`](docs/) and is published via Docusaurus.
 
 - **Core** — [Getting Started](docs/getting-started.md) · [Architecture](docs/architecture.md) · [Data Security](docs/data-security.md)
-- **Features** — [Workspace](docs/workspace/index.md) · [Sandbox](docs/workspace/sandbox/index.md) · [Skills](docs/skills.md) · [Tools](docs/tools.md) · [Channels](docs/channels.md) · [Subagents](docs/sub-agents.md) · [Webhooks](docs/webhook.md) · [Cron Jobs](docs/cron-jobs.md)
+- **Features** — [Workspace](docs/workspace/index.md) · [Sandbox](docs/workspace/sandbox/index.md) · [Skills](docs/skills.md) · [Tools](docs/tools.md) · [Channels](docs/channels/index.md) · [Subagents](docs/sub-agents.md) · [Webhooks](docs/webhook.md) · [Cron Jobs](docs/cron-jobs.md)
 - **Development** — [Extending](docs/extending.md) · [Deployment](docs/deployment.md) · [CI/CD](docs/ci-cd.md)
-- **API Reference** — [Overview](docs/api-reference.md) · [Direct API](docs/direct-api.md) · [Account Management](docs/account-management.md)
+- **API Reference** — [OpenAPI spec](docs/api-reference/openapi.yaml) (served interactively on the docs site)
 
 Preview the docs locally:
 
@@ -135,7 +135,7 @@ bun run docs
 
 ## Project Layout
 
-```
+```text
 functions/
   account-manage/         # Account + agent + skill CRUD Lambda
   harness-processing/     # Streaming agent loop + channel webhooks Lambda
@@ -167,7 +167,7 @@ bun run test             # unit tests (max-concurrency 1)
 bun run build            # build all Lambda binaries
 ```
 
-CI runs `check`, `test`, and `build` on every PR via [`.github/workflows/ci.yaml`](.github/workflows/ci.yaml). Deployments to the `dev` stage happen automatically on `main` and never on PR branches.
+CI runs `check`, `test`, and `build` on every PR via [`.github/workflows/ci.yaml`](.github/workflows/ci.yaml). Pushes to `dev` deploy the `dev` stage and pushes to `main` deploy the `production` stage; PR branches never deploy.
 
 ### Conventions
 
@@ -189,8 +189,6 @@ CI runs `check`, `test`, and `build` on every PR via [`.github/workflows/ci.yaml
 Active plans live under [`docs/plans/`](docs/plans/). Recent and upcoming work includes:
 
 - BeeBlast CLI and TypeScript SDK
-- Deferred delivery via JetStream channels
-- Persistent reserved sandboxes for background jobs
 - Expanded provider matrix (more first-class AI Gateway recipes)
 
 Contributions to any of these are very welcome.

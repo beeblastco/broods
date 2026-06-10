@@ -218,6 +218,7 @@ async function handleLambdaUrlEvent(
   const request = {
     method,
     rawPath: event.rawPath,
+    rawQueryString: event.rawQueryString ?? "",
     headers,
     body: decodeBody(event.body, event.isBase64Encoded),
   } satisfies ChannelRequest;
@@ -935,13 +936,14 @@ function createPancakeChannelFromConfig(
   scope: { accountId: string; agentId: string },
 ): ChannelAdapter | null {
   const channel = config.channels?.pancake;
-  if (!channel?.pageId || !channel.pageAccessToken) {
+  if (!channel?.pageId || !channel.pageAccessToken || !channel.webhookSecret) {
     return null;
   }
 
   return createPancakeChannel(
     channel.pageId,
     channel.pageAccessToken,
+    channel.webhookSecret,
     channel.senderId,
     {
       accountId: scope.accountId,

@@ -64,3 +64,5 @@ Delete a job:
 curl -X DELETE "$ACCOUNT_SERVICE_URL/accounts/me/cron-jobs/$CRON_JOB_ID" \
   -H "Authorization: Bearer $ACCOUNT_SECRET"
 ```
+
+List jobs with `GET /accounts/me/cron-jobs` or fetch one with `GET /accounts/me/cron-jobs/{cronJobId}`. Responses include the run state: `status`, `lastInvokedAt`, `lastStatus`, and `lastError`. Paused jobs are skipped at invoke time.

@@ -44,6 +44,8 @@ Configure lifecycle delivery in the encrypted agent config:
 | `secret` | string | HMAC signing secret |
 | `events` | string[] | Optional allow-list; omitted means all lifecycle events |
 
+The `url` must be a public HTTPS endpoint — loopback, private (RFC 1918), link-local, and internal hostnames are rejected at config time and again at delivery, and delivery does not follow redirects.
+
 ## Events
 
 | Event | Emitted when |

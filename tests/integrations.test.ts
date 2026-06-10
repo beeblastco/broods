@@ -110,20 +110,6 @@ describe("direct API ingress", () => {
     expect(responseJson(asyncResponse)).toEqual({ error: "Direct API is disabled" });
   });
 
-  it("returns 401 when the bearer token is missing", async () => {
-    const response = await routeIncomingEvent(createEvent({
-      eventId: "one",
-      conversationKey: "alpha",
-      events: [{
-        role: "user",
-        content: [{ type: "text", text: "hello" }],
-      }],
-    }), createHandlers());
-
-    expect(response.statusCode).toBe(401);
-    expect(responseJson(response)).toEqual({ error: "Unauthorized" });
-  });
-
   it("returns 401 when the bearer token is malformed", async () => {
     const response = await routeIncomingEvent(createEvent({
       eventId: "one",

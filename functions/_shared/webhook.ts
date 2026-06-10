@@ -4,6 +4,7 @@
  */
 
 import { createHmac } from "node:crypto";
+import { assertPublicHttpsUrl } from "./http.ts";
 
 export interface WebhookConfig {
   url: string;
@@ -11,6 +12,9 @@ export interface WebhookConfig {
 }
 
 export async function fireWebhook(config: WebhookConfig, payload: unknown): Promise<void> {
+  // Re-checked at delivery (configs may predate validation); redirects are
+  // refused so a public URL cannot 302 into a private address.
+  assertPublicHttpsUrl(config.url, "webhook url");
   const body = JSON.stringify(payload);
   const signature = createWebhookSignature(config.secret, body);
   const response = await fetch(config.url, {
@@ -20,6 +24,7 @@ export async function fireWebhook(config: WebhookConfig, payload: unknown): Prom
       "X-Webhook-Signature": signature,
     },
     body,
+    redirect: "error",
   });
 
   if (!response.ok) {

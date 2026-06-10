@@ -77,7 +77,7 @@ Use this skill when a customer asks for help with a product issue.
 3. Recommend the next action.
 ```
 
-Skill names must be lowercase letters, numbers, and hyphens only. The stored path is generated from the `SKILL.md` name as `<accountId>/<skill-name>`, not from the local folder name used during upload.
+Skill names must be lowercase letters, numbers, and hyphens only (max 64 characters; names containing `anthropic`/`claude` or XML tags are rejected). The stored path is generated from the `SKILL.md` name as `<accountId>/<skill-name>`, not from the local folder name used during upload.
 
 Bundle limits:
 

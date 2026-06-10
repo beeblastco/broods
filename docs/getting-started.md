@@ -55,7 +55,7 @@ Deploy the full infrastructure to your own AWS account.
 
 - [Bun](https://bun.sh/) installed
 - An AWS account with CLI access configured
-- [SST](https://sst.dev/) installed (`npm install -g sst`)
+- [SST](https://sst.dev/) (installed by `bun install` as a project dependency; commands use `bunx sst`)
 
 ### 1. Deploy the Infrastructure
 
@@ -66,11 +66,12 @@ bun install
 cp .env.example .env
 ```
 
-Set the two required SST secrets:
+Set the required SST secrets (fill in `.env` first — `AWS_ACCOUNT_ID`, `PROJECT_NAME`, and `PROJECT_OWNER_EMAIL` have no defaults):
 
 ```bash
 bunx sst secret set AdminAccountSecret <long-random-value>
 bunx sst secret set AccountConfigEncryptionSecret <long-random-value>
+bunx sst secret set DaytonaApiKey <daytona-api-key>
 ```
 
 Build and deploy:
@@ -171,7 +172,7 @@ export AGENT_ID=agent_...
 | --- | --- | --- |
 | Google | `google` | `apiKey` |
 | OpenAI | `openai` | `apiKey` |
-| Bedrock | `bedrock` | `region`, `apiKey` or AWS credentials |
+| Bedrock | `bedrock` | `region`, `apiKey` |
 | Gateway | `gateway` | `apiKey` |
 | MiniMax | `minimax` | `apiKey` |
 
@@ -200,14 +201,10 @@ curl -X POST "$AGENT_SERVICE_URL" \
   }'
 ```
 
-The SSE stream includes raw Vercel AI SDK events (`text`, `tool-call`, `tool-result`, `finish`). When the agent finishes:
+The SSE stream emits `data:`-only lines carrying raw Vercel AI SDK stream chunks (`text-delta`, `tool-call`, `tool-result`, `finish`), with `: waiting…` comment heartbeats during long waits. When the agent finishes, the last data line is the `finish` chunk (followed by a `structured-output` chunk when `config.model.output` is set), then the stream closes:
 
 ```bash
-event: finish
-data: {"type":"finish","finishReason":"stop"}
-
-event: done
-data: {}
+data: {"type":"finish","finishReason":"stop", ...}
 ```
 
 #### Async Request
@@ -241,7 +238,7 @@ The response includes a `statusUrl` for polling:
 }
 ```
 
-Poll the status endpoint:
+Poll the status endpoint (the `agentId` query parameter is required; unknown ids return `404` with `status: not_found`):
 
 ```bash
 curl "$AGENT_SERVICE_URL/status/req-002?agentId=$AGENT_ID" \
@@ -256,6 +253,8 @@ Status responses:
 | `completed` | Finished — includes the response |
 | `failed` | Error occurred |
 | `awaiting_approval` | Tool approval needed |
+
+`events` accepts three kinds of entries: `user` messages, `tool` messages carrying tool-approval responses (only valid while a turn is `awaiting_approval`), and `system` messages with `persist: false` for one-turn ephemeral instructions. Per-request webhook fields (`webhookUrl`, `x-webhook-secret`) are rejected — use `config.hooks.webhook` on the agent instead.
 
 ### Enable Tools (Optional)
 
@@ -278,7 +277,7 @@ curl -X PATCH "$ACCOUNT_SERVICE_URL/accounts/me/agents/$AGENT_ID" \
   }'
 ```
 
-Available tools: `tavilySearch`, `tavilyExtract`, `googleSearch`.
+Available `config.tools` entries: `tavilySearch`, `tavilyExtract`, `googleSearch`, `handoffs`, and uploaded custom tools (`tool_<id>` keys). `async_status` is registered automatically when async tools or a persistent workspace sandbox are present. See [External Tools](tools.md).
 
 ### Set Up a Channel (Optional)
 
@@ -327,7 +326,7 @@ Users can now message your bot on Telegram and get responses from your agent.
 | Discord | `botToken`, `publicKey` |
 | Slack | `botToken`, `signingSecret` |
 | GitHub | `webhookSecret`, `appId`, `privateKey` |
-| Pancake | `pageId`, `pageAccessToken` |
+| Pancake | `pageId`, `pageAccessToken`, `webhookSecret` |
 | Zalo | `botToken`, `webhookSecret`, `allowedUserIds` |
 
 See [Channels](channels/index.md) for full setup details.
@@ -349,10 +348,10 @@ bun examples/subagent.ts      # Subagent dispatch
 bun examples/skills.ts        # Skill CRUD
 bun examples/skill-loads.ts   # Skill loading during a streamed turn
 bun examples/sandbox-workspace-lambda.ts      # Lambda sandbox + workspace smoke test
-bun examples/multiple-workspace.ts            # One agent, two named workspaces
-bun examples/readonly-workspace.ts            # Shared workspace with read-only (no-sandbox) agent
+bun examples/workspace-multiple.ts            # One agent, two named workspaces
+bun examples/workspace-readonly.ts            # Shared workspace with read-only (no-sandbox) agent
 bun examples/sandbox-stateless.ts             # Sandbox with no workspace (bash-only, stateless)
-bun examples/workspace-sandbox-override.ts    # Per-workspace sandbox override (inherit / pin / read-only)
+bun examples/sandbox-workspace-override.ts    # Per-workspace sandbox override (inherit / pin / read-only)
 bun examples/sandbox-e2b.ts                   # E2B provider (stateless bash)
 ```
 
@@ -371,7 +370,7 @@ Key config sections:
 - `sandbox` / `workspaces` — references to account-scoped sandbox and workspace records
 - `skills` — account-scoped skill bundles
 - `subagent` — parallel subagent dispatch
-- `channels` — Telegram, Discord, Slack, GitHub, Pancake
+- `channels` — Telegram, Discord, Slack, GitHub, Pancake, Zalo
 - `hooks` — lifecycle webhook events
 - `session` — history pruning and compaction
 

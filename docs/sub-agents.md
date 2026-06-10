@@ -35,7 +35,7 @@ When a predefined subagent is suitable, the parent prompt tells the model to inc
 
 ## Tool Input
 
-`run_subagent` is model-facing; direct API callers do not call it directly. A single tool call can dispatch multiple tasks:
+`run_subagent` is model-facing; direct API callers do not call it directly. A single tool call can dispatch multiple tasks (up to 10). Children always run with subagent dispatch disabled — subagents cannot spawn nested subagents:
 
 ```json
 {
@@ -153,7 +153,7 @@ If a child finishes while the parent model is still streaming, the result is que
 If the parent finishes before child work completes, the same SSE response remains open. During quiet waits the runtime sends SSE comment heartbeats such as:
 
 ```text
-: waiting for subagents pending=2
+: waiting for async work pending=2
 
 ```
 

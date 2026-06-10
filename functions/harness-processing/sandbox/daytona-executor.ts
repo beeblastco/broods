@@ -5,6 +5,7 @@
  * reconnecting by stored id (Daytona auto-stops it on idle; the harness restarts it).
  */
 
+import { AssumeRoleCommand, STSClient } from "@aws-sdk/client-sts";
 import { optionalEnv } from "../../_shared/env.ts";
 import { logWarn } from "../../_shared/log.ts";
 import { DEFAULT_RELEASE_GRACE_SECONDS, MAX_CONCURRENT_BACKGROUND_JOBS, WORKSPACE_MOUNT_PREFIX, resolveSandboxLifecycle } from "../../_shared/sandbox.ts";
@@ -144,7 +145,7 @@ export class DaytonaSandboxExecutor implements SandboxExecutor {
   async #acquire(request: { namespace?: string; reservationKey?: string; envVars?: Record<string, string> }): Promise<Sandbox> {
     const client = new Daytona(daytonaClientOptions(this.#config));
     if (!this.#persistent(request)) {
-      return client.create(daytonaCreateOptions(this.#config, request.envVars, false));
+      return client.create(await daytonaCreateOptions(this.#config, request, false));
     }
     const ns = sandboxReservationKey(request)!;
     const externalId = await getSandboxExternalId("daytona", ns);
@@ -157,7 +158,7 @@ export class DaytonaSandboxExecutor implements SandboxExecutor {
         await deleteSandboxInstance("daytona", ns).catch(() => {});
       }
     }
-    const sandbox = await client.create(daytonaCreateOptions(this.#config, request.envVars, true));
+    const sandbox = await client.create(await daytonaCreateOptions(this.#config, request, true));
     if (await claimSandboxInstance("daytona", ns, sandbox.id)) {
       return sandbox;
     }
@@ -204,30 +205,26 @@ export class DaytonaSandboxExecutor implements SandboxExecutor {
 
 function daytonaClientOptions(config: SandboxExecutorConfig): Record<string, unknown> {
   const options = isRecordObject(config.options) ? config.options : {};
+  const apiKey = configString(options.apiKey) ?? optionalEnv("DAYTONA_API_KEY");
+  const organizationId = configString(options.organizationId) ?? optionalEnv("DAYTONA_ORGANIZATION_ID");
+  const apiUrl = configString(options.apiUrl) ?? optionalEnv("DAYTONA_API_URL");
+  const target = configString(options.target) ?? optionalEnv("DAYTONA_TARGET");
   return {
-    ...(configString(options.apiKey) ?? optionalEnv("DAYTONA_API_KEY")
-      ? { apiKey: configString(options.apiKey) ?? optionalEnv("DAYTONA_API_KEY") }
-      : {}),
-    ...(configString(options.organizationId) ?? optionalEnv("DAYTONA_ORGANIZATION_ID")
-      ? { organizationId: configString(options.organizationId) ?? optionalEnv("DAYTONA_ORGANIZATION_ID") }
-      : {}),
-    ...(configString(options.apiUrl) ?? optionalEnv("DAYTONA_API_URL")
-      ? { apiUrl: configString(options.apiUrl) ?? optionalEnv("DAYTONA_API_URL") }
-      : {}),
-    ...(configString(options.target) ?? optionalEnv("DAYTONA_TARGET")
-      ? { target: configString(options.target) ?? optionalEnv("DAYTONA_TARGET") }
-      : {}),
+    ...(apiKey ? { apiKey } : {}),
+    ...(organizationId ? { organizationId } : {}),
+    ...(apiUrl ? { apiUrl } : {}),
+    ...(target ? { target } : {}),
   };
 }
 
-function daytonaCreateOptions(
+async function daytonaCreateOptions(
   config: SandboxExecutorConfig,
-  requestEnvVars: Record<string, string> | undefined,
+  request: { namespace?: string; envVars?: Record<string, string> },
   persistent: boolean,
-): Record<string, unknown> {
+): Promise<Record<string, unknown>> {
   const options = isRecordObject(config.options) ? config.options : {};
-  const baseEnv = { ...(isStringRecord(config.envVars) ? config.envVars : {}), ...(requestEnvVars ?? {}) };
-  const envVars = daytonaEnvVars(baseEnv, options);
+  const baseEnv = { ...(isStringRecord(config.envVars) ? config.envVars : {}), ...(request.envVars ?? {}) };
+  const envVars = await daytonaEnvVars(baseEnv, options, request.namespace);
   // Persistent: auto-stop on idle (filesystem persists, harness restarts on next
   // call); auto-delete after the grace if it stays stopped (leak backstop).
   const lifecycle = resolveSandboxLifecycle(config.lifecycle);
@@ -262,13 +259,17 @@ function daytonaNetworkOptions(config: SandboxExecutorConfig): Record<string, un
   };
 }
 
-function daytonaEnvVars(userEnv: Record<string, string>, options: Record<string, unknown>): Record<string, string> {
+async function daytonaEnvVars(
+  userEnv: Record<string, string>,
+  options: Record<string, unknown>,
+  namespace: string | undefined,
+): Promise<Record<string, string>> {
   const envVars = { ...userEnv };
   if (options.mountAwsS3Buckets !== true) {
     return envVars;
   }
 
-  const credentials = awsCredentialEnvVars(envVars);
+  const credentials = await awsCredentialEnvVars(envVars, namespace);
   const region = configString(options.awsRegion) ?? optionalEnv("AWS_REGION") ?? optionalEnv("AWS_DEFAULT_REGION");
   return {
     ...envVars,
@@ -277,21 +278,81 @@ function daytonaEnvVars(userEnv: Record<string, string>, options: Record<string,
   };
 }
 
-function awsCredentialEnvVars(envVars: Record<string, string>): Record<string, string> {
-  const accessKeyId = envVars.AWS_ACCESS_KEY_ID ?? optionalEnv("AWS_ACCESS_KEY_ID");
-  const secretAccessKey = envVars.AWS_SECRET_ACCESS_KEY ?? optionalEnv("AWS_SECRET_ACCESS_KEY");
+// Sandbox env vars are readable by any code the agent runs, so the harness's
+// own runtime credentials must never land there. Use the scoped mount role
+// when deployed, otherwise only credentials the account supplied itself.
+async function awsCredentialEnvVars(
+  envVars: Record<string, string>,
+  namespace: string | undefined,
+): Promise<Record<string, string>> {
+  const roleArn = optionalEnv("SANDBOX_MOUNT_ROLE_ARN");
+  if (roleArn) {
+    return assumeScopedMountCredentials(roleArn, namespace);
+  }
+
+  const accessKeyId = envVars.AWS_ACCESS_KEY_ID;
+  const secretAccessKey = envVars.AWS_SECRET_ACCESS_KEY;
   if (!accessKeyId || !secretAccessKey) {
     throw new Error(
-      "Daytona AWS S3 mounts require AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY in the harness runtime or sandbox envVars.",
+      "Daytona AWS S3 mounts require SANDBOX_MOUNT_ROLE_ARN in the harness runtime or AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY in sandbox envVars.",
     );
   }
 
   return {
     AWS_ACCESS_KEY_ID: accessKeyId,
     AWS_SECRET_ACCESS_KEY: secretAccessKey,
-    ...(envVars.AWS_SESSION_TOKEN ?? optionalEnv("AWS_SESSION_TOKEN")
-      ? { AWS_SESSION_TOKEN: envVars.AWS_SESSION_TOKEN ?? optionalEnv("AWS_SESSION_TOKEN")! }
-      : {}),
+    ...(envVars.AWS_SESSION_TOKEN ? { AWS_SESSION_TOKEN: envVars.AWS_SESSION_TOKEN } : {}),
+  };
+}
+
+// The role policy already limits access to the workspace/skills buckets; the
+// session policy narrows the workspace bucket further to this sandbox's own
+// namespace prefix.
+async function assumeScopedMountCredentials(
+  roleArn: string,
+  namespace: string | undefined,
+): Promise<Record<string, string>> {
+  const workspaceBucket = optionalEnv("FILESYSTEM_BUCKET_NAME");
+  const skillsBucket = optionalEnv("SKILLS_BUCKET_NAME");
+  const prefix = namespace ? `${WORKSPACE_MOUNT_PREFIX}/${namespace}/` : undefined;
+  const statements = workspaceBucket && prefix
+    ? [
+      {
+        Effect: "Allow",
+        Action: ["s3:GetObject", "s3:PutObject", "s3:DeleteObject", "s3:AbortMultipartUpload"],
+        Resource: [`arn:aws:s3:::${workspaceBucket}/${prefix}*`],
+      },
+      {
+        Effect: "Allow",
+        Action: ["s3:ListBucket"],
+        Resource: [`arn:aws:s3:::${workspaceBucket}`],
+        Condition: { StringLike: { "s3:prefix": [`${prefix}*`] } },
+      },
+      ...(skillsBucket
+        ? [{
+          Effect: "Allow",
+          Action: ["s3:GetObject", "s3:ListBucket"],
+          Resource: [`arn:aws:s3:::${skillsBucket}`, `arn:aws:s3:::${skillsBucket}/*`],
+        }]
+        : []),
+    ]
+    : undefined;
+
+  const result = await new STSClient({}).send(new AssumeRoleCommand({
+    RoleArn: roleArn,
+    RoleSessionName: "fp-sandbox-mount",
+    DurationSeconds: 3600,
+    ...(statements ? { Policy: JSON.stringify({ Version: "2012-10-17", Statement: statements }) } : {}),
+  }));
+  const credentials = result.Credentials;
+  if (!credentials?.AccessKeyId || !credentials.SecretAccessKey || !credentials.SessionToken) {
+    throw new Error("Failed to assume the sandbox S3 mount role");
+  }
+
+  return {
+    AWS_ACCESS_KEY_ID: credentials.AccessKeyId,
+    AWS_SECRET_ACCESS_KEY: credentials.SecretAccessKey,
+    AWS_SESSION_TOKEN: credentials.SessionToken,
   };
 }
 

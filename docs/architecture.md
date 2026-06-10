@@ -30,7 +30,7 @@ flowchart TD
   Admin["Admin"] -->|"Bearer AdminAccountSecret"| ManageUrl
   Direct["Direct API client"] -->|"Bearer account secret<br/>POST / or /async"| HarnessUrl["harness-processing<br/>Function URL"]
   Status["Status poller"] -->|"Bearer account secret<br/>GET /status/\{eventId\}"| HarnessUrl
-  Provider["Telegram / GitHub / Slack / Discord"] -->|"/webhooks/\{accountId\}/\{agentId\}/\{channel\}"| HarnessUrl
+  Provider["Telegram / GitHub / Slack / Discord / Pancake / Zalo"] -->|"/webhooks/\{accountId\}/\{agentId\}/\{channel\}"| HarnessUrl
   WSClient["WebSocket client"] <-->|"wss://gateway"| WSGateway["WebSocket Gateway<br/>(caller's service)"]
   WSGateway -->|"Lambda Event invocation"| HarnessUrl
   HarnessUrl -->|"core publish (captured by stream)"| NATS["NATS JetStream"]
@@ -43,9 +43,9 @@ flowchart TD
   ManageUrl -->|"Create/update/delete schedules"| Scheduler["EventBridge Scheduler"]
   AccountStore -->|Authentication| HarnessUrl
   AgentStore -->|agentId config lookup| HarnessUrl
-  HarnessUrl --> Handler["handler.ts"]
-  Handler --> Integrations["integrations.ts<br/>account auth + routing"]
-  Integrations --> Session["session.ts<br/>conversation state + prompt assembly"]
+  HarnessUrl --> Integrations["integrations.ts<br/>account auth + routing"]
+  Integrations --> Handler["handler.ts<br/>orchestration"]
+  Handler --> Session["session.ts<br/>conversation state + prompt assembly"]
   Session --> Harness["harness.ts<br/>model/tool loop"]
   Harness --> Model["Configured AI SDK provider<br/>Google / OpenAI / Bedrock / Gateway"]
   Harness --> Tools["workspace + account-enabled tools"]
@@ -93,6 +93,8 @@ flowchart TD
   Account --> Namespace["prefix event/conversation keys<br/>acct:\{accountId\}:..."]
 ```
 
+A third auth path exists for trusted platform services: when `SERVICE_AUTH_SECRET` is configured, a request bearing that secret plus an `X-Account-Id` header acts on behalf of that account without knowing its account secret. It is used by the dashboard backend for server-side calls.
+
 Root provider webhooks are not accepted. Provider webhook URLs must include the `accountId`, `agentId`, and channel name.
 
 ## Account Management
@@ -120,7 +122,7 @@ sequenceDiagram
   U->>M: PATCH /accounts/me/agents/{agentId}
   M->>A: resolve secretHash
   M->>A: deep-merge agent metadata/config
-  M-->>U: redacted account view
+  M-->>U: redacted agent view
 ```
 
 Provider secrets are not returned in normal account responses. Secret-like fields are redacted as `********`; sending that value back in a patch preserves the existing stored secret.
@@ -185,7 +187,7 @@ flowchart TD
   Inject --> Continue["continue parent agent"]
 ```
 
-Direct sync and async POST access is controlled by `ENABLE_DIRECT_API`, which defaults to `true`. When disabled, `POST /` and `POST /async` are closed while channel webhooks and internal worker invocations remain available.
+Direct sync and async POST access is controlled by `ENABLE_DIRECT_API`. Deploys inject it explicitly and default it to `false` — set `ENABLE_DIRECT_API=true` to open `POST /` and `POST /async`. When disabled, channel webhooks and internal worker invocations remain available. Account-authenticated async tool completions arrive at `POST /async-tools/{resultId}/complete`; sandbox jobs use the token-authenticated `POST /sandbox-jobs/{resultId}/complete` instead.
 
 ## Cron Jobs
 
@@ -395,11 +397,19 @@ Agents control model selection, channel credentials, optional skills, subagents,
 
 - `AccountConfig`: account metadata and account secret hash.
 - `AgentConfig`: account-owned encrypted runtime config payloads.
+- `SandboxConfig` / `WorkspaceConfig`: account-scoped sandbox and workspace records referenced from agent config by id.
+- `AccountTool`: uploaded custom tool records (bundles live in the ToolBundles S3 bucket).
+- `CronJobs`: scheduled agent runs managed by `account-manage`.
 - `Conversations`: normalized model messages by account-scoped `conversationKey`.
 - `ProcessedEvents`: dedup markers and short-lived conversation lease records.
 - `AsyncAgentResult`: async direct API and subagent state for `/status/{eventId}` polling.
 - `AsyncToolResult`: async tool call state, same-table detached group rows for callback fan-in, delivery metadata for non-SSE continuations, and structured outputs for parent result injection.
-- S3 workspace bucket: account/agent-scoped workspace files and staged skill bundles.
+- `AccountSignupRateLimit`: TTL rows throttling public account creation per source IP.
+- `PersistentSandboxInstance`: reserved sandbox instances for persistent e2b/daytona/vercel providers.
+- S3 workspace bucket: workspace files (namespaced by `accountId:workspaceId`) and staged skill bundles.
 - S3 skills bucket: account-scoped skill bundles under `<accountId>/<skill-name>`.
+- S3 tool-bundles bucket: uploaded custom tool bundles.
+
+On the production stage the config domains (accounts, agents, sandboxes, workspaces, tools, cron jobs) are stored in Convex instead of DynamoDB; runtime tables (conversations, dedup, async results) stay in DynamoDB on every stage.
 
 Built-in tool execution is inline in `harness-processing`. Uploaded custom tools execute in Kubernetes. `async: true` only changes the lifecycle: built-in async stays in the current Lambda, uploaded async waits on SSE, and uploaded async detaches automatically on `/async`, channel, and NATS turns. Subagents are in-process child agent loops; they do not require child Lambda workers.

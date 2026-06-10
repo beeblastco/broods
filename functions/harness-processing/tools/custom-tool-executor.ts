@@ -520,7 +520,13 @@ function customToolExecutorConfig(): Parameters<typeof createSandboxExecutor>[0]
     // Do not add onCreate hooks to this ephemeral-home config: the marker would
     // not survive scale-to-0, so one-time setup would rerun on every resume.
     ephemeralHome: true,
-    network: { mode: "allow-all" },
+    // Uploaded tool code may call any external API, but never the cluster,
+    // node metadata service, or other private ranges.
+    network: {
+      mode: "restricted",
+      allowCidrs: ["0.0.0.0/0"],
+      denyCidrs: ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "169.254.0.0/16", "127.0.0.0/8", "100.64.0.0/10"],
+    },
     timeout: 120,
     outputLimitBytes: 1024 * 1024,
     lifecycle: {

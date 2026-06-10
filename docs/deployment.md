@@ -13,7 +13,8 @@ Keep `.env` for local SST inputs only:
 
 - `AWS_PROFILE`
 - `SST_STAGE`
-- `ENABLE_DIRECT_API`
+- `AWS_ACCOUNT_ID`, `PROJECT_NAME`, `PROJECT_OWNER_EMAIL` (required — no in-source defaults)
+- `ENABLE_DIRECT_API` (deploys as `false` unless set to `true`)
 - `ENABLE_WEBSOCKET`
 - `NATS_URL` (transport by scheme: `wss://` WebSocket / `nats://` core TCP)
 - `NATS_TOKEN` (optional; token-auth credential for the NATS server)
@@ -23,7 +24,10 @@ Runtime secrets are SST secrets:
 ```bash
 bunx sst secret set AdminAccountSecret <long-random-value>
 bunx sst secret set AccountConfigEncryptionSecret <long-random-value>
+bunx sst secret set DaytonaApiKey <daytona-api-key>
 ```
+
+`DaytonaApiKey` has no fallback — `sst deploy` fails without it. A fourth secret, `KubernetesSandboxKubeconfig`, is optional and only needed for the Kubernetes sandbox provider.
 
 Provider and tool API keys are account-specific. Store them in the encrypted agent config under fields such as `config.provider.<provider>.apiKey` and `config.tools.<tool>.apiKey`.
 
@@ -41,8 +45,10 @@ Deploy outputs include:
 
 - `accountServiceUrl`
 - `agentServiceUrl`
-- DynamoDB table names
-- `filesystemBucketName`
+- `mockWebhookSubscribeUrl`
+- DynamoDB table names (dev/community stages; `undefined` on production, which stores config domains in Convex)
+- `filesystemBucketName`, `skillsBucketName`, `toolBundlesBucketName`
+- sandbox Lambda function names and `cronScheduleGroupName`
 
 ## Account Setup
 

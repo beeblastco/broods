@@ -49,6 +49,26 @@ export function sandboxReservationKey(request: { reservationKey?: string; namesp
   return request.reservationKey ?? request.namespace;
 }
 
+// Deterministic name for a reserved sandbox: the same reservation key always
+// maps to the same sandbox, so any later request reconnects to it. The hash
+// keeps names unique after the slug is truncated. Kubernetes and vercel both
+// rely on this exact format to find their existing persistent sandboxes.
+export function persistentSandboxName(reservationKey: string): string {
+  return `fp-p-${slugFor(reservationKey)}-${shortHash(reservationKey)}`;
+}
+
+export function slugFor(value: string | undefined, fallback = "sandbox"): string {
+  return (value ?? "").toLowerCase().replace(/[^a-z0-9-]/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "").slice(0, 40) || fallback;
+}
+
+export function shortHash(value: string): string {
+  let hash = 5381;
+  for (let i = 0; i < value.length; i++) {
+    hash = ((hash << 5) + hash + value.charCodeAt(i)) >>> 0;
+  }
+  return hash.toString(36).slice(0, 6);
+}
+
 export function truncateText(value: string, limit: number): { value: string; truncated: boolean } {
   const bytes = textEncoder.encode(value);
   if (bytes.byteLength <= limit) {

@@ -68,6 +68,13 @@ const saveSandboxInstanceMock = mock(async (_provider: string, _key: string, ext
 const deleteSandboxInstanceMock = mock(async () => {
   storedSandboxExternalId = null;
 });
+const stsSendMock = mock(async (_command: unknown) => ({
+  Credentials: {
+    AccessKeyId: "scoped-access-key",
+    SecretAccessKey: "scoped-secret-key",
+    SessionToken: "scoped-session-token",
+  },
+}));
 let lambdaPayload = {
   ok: true,
   runtime: "bash",
@@ -164,6 +171,18 @@ mock.module("@aws-sdk/client-lambda", () => ({
   },
 }));
 
+mock.module("@aws-sdk/client-sts", () => ({
+  STSClient: class {
+    send = stsSendMock;
+  },
+  AssumeRoleCommand: class {
+    input: unknown;
+    constructor(input: unknown) {
+      this.input = input;
+    }
+  },
+}));
+
 mock.module("@kubernetes/client-node", () => ({
   KubeConfig: class {
     loadFromDefault() {}
@@ -197,6 +216,7 @@ beforeEach(() => {
   process.env.AWS_SECRET_ACCESS_KEY = "test-secret-key";
   process.env.AWS_SESSION_TOKEN = "test-session-token";
   process.env.AWS_REGION = "eu-central-1";
+  process.env.SANDBOX_MOUNT_ROLE_ARN = "arn:aws:iam::123456789012:role/sandbox-s3mount";
   process.env.FILESYSTEM_BUCKET_NAME = "workspace-bucket";
   process.env.SKILLS_BUCKET_NAME = "skills-bucket";
   process.env.PERSISTENT_SANDBOX_INSTANCE_TABLE_NAME = "persistent-sandbox-instance";
@@ -378,13 +398,17 @@ describe("createSandboxExecutor", () => {
       language: "typescript",
       envVars: {
         MY_API_BASE: "https://api.example.com",
-        AWS_ACCESS_KEY_ID: "test-access-key",
-        AWS_SECRET_ACCESS_KEY: "test-secret-key",
-        AWS_SESSION_TOKEN: "test-session-token",
+        AWS_ACCESS_KEY_ID: "scoped-access-key",
+        AWS_SECRET_ACCESS_KEY: "scoped-secret-key",
+        AWS_SESSION_TOKEN: "scoped-session-token",
         AWS_REGION: "eu-central-1",
         AWS_DEFAULT_REGION: "eu-central-1",
       },
     }));
+    // The sandbox gets role-scoped credentials, never the harness runtime's own.
+    const assumeRoleInput = (stsSendMock.mock.calls.at(-1)?.[0] as { input: { RoleArn: string; Policy?: string } }).input;
+    expect(assumeRoleInput.RoleArn).toBe("arn:aws:iam::123456789012:role/sandbox-s3mount");
+    expect(assumeRoleInput.Policy).toContain(`workspace-bucket/sandbox/${NS}/`);
     expect(daytonaExecuteCommandMock).toHaveBeenCalledWith(
       `mountpoint -q '/mnt/workspaces/${NS}' || sudo -E mount-s3 --uid "$(id -u)" --gid "$(id -g)" '--allow-delete' '--allow-overwrite' '--allow-other' '--prefix' 'sandbox/${NS}/' '--region' 'eu-central-1' 'workspace-bucket' '/mnt/workspaces/${NS}'`,
     );

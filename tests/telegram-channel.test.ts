@@ -103,6 +103,7 @@ function createRequest(
   return {
     method: "POST",
     rawPath: "/",
+    rawQueryString: "",
     headers,
     body: JSON.stringify(payload),
   };

@@ -8,7 +8,8 @@ Use `.env` for local SST inputs only:
 
 - `AWS_PROFILE`
 - `SST_STAGE`
-- `ENABLE_DIRECT_API` - Defaults to `true`; set to `false` to disable direct sync and async POST access to `harness-processing`.
+- `AWS_ACCOUNT_ID`, `PROJECT_NAME`, `PROJECT_OWNER_EMAIL` - Required by `sst.config.ts`; no in-source defaults.
+- `ENABLE_DIRECT_API` - Deploys as `false` unless set to `true`; enables direct sync and async POST access to `harness-processing`.
 - `ENABLE_WEBSOCKET` - Set to `true` to enable WebSocket gateway worker invocations.
 - `NATS_URL` - Required when `ENABLE_WEBSOCKET=true`; ignored by the deployed Lambda when WebSocket is disabled. The transport is chosen by scheme: `wss://`/`ws://` (WebSocket, e.g. `wss://nats.beeblast.co` from the out-of-cluster Lambda) or `nats://`/`tls://` (core TCP, for future in-cluster callers).
 - `NATS_TOKEN` - Token-auth credential for the NATS server; optional (omit for an unauthenticated server).
@@ -18,10 +19,13 @@ Runtime secrets are SST secrets. Generate your own secret and set
 ```bash
 bunx sst secret set AdminAccountSecret <long-random-value>
 bunx sst secret set AccountConfigEncryptionSecret <long-random-value>
+bunx sst secret set DaytonaApiKey <daytona-api-key>
 ```
 
 - `AdminAccountSecret` - Authenticates admin account-management requests.
 - `AccountConfigEncryptionSecret` - Encrypts agent config payloads in DynamoDB.
+- `DaytonaApiKey` - Daytona sandbox provider key; required by the deploy (no fallback).
+- `KubernetesSandboxKubeconfig` - Optional; enables the Kubernetes sandbox provider.
 
 Treat `AdminAccountSecret` and `AccountConfigEncryptionSecret` as stable production secrets; rotating the encryption secret requires a re-encryption migration for existing agent configs.
 
@@ -62,8 +66,10 @@ Deploy outputs include:
 
 - `accountServiceUrl`
 - `agentServiceUrl`
-- DynamoDB table names
-- `filesystemBucketName`
+- `mockWebhookSubscribeUrl`
+- DynamoDB table names (dev/community stages; `undefined` on production, which stores config domains in Convex)
+- `filesystemBucketName`, `skillsBucketName`, `toolBundlesBucketName`
+- sandbox Lambda function names and `cronScheduleGroupName`
 
 ## Post-Deploy Account Setup
 
@@ -114,7 +120,7 @@ bun run scripts/configure-slack-account.ts
 # Optional: run only if GITHUB_APP_ID and all GITHUB_* token is set
 bun run scripts/configure-github-account.ts
 
-# Optional: run only if PANCAKE_PAGE_ID and PANCAKE_PAGE_ACCESS_TOKEN are set
+# Optional: run only if PANCAKE_PAGE_ID, PANCAKE_PAGE_ACCESS_TOKEN, and PANCAKE_WEBHOOK_SECRET are set
 bun run scripts/configure-pancake-account.ts
 
 # Optional: run only if ZALO_BOT_TOKEN and all ZALO_* token values are set
@@ -125,7 +131,7 @@ Each script uses `ADMIN_ACCOUNT_SECRET` for auth. Account and agent descriptions
 
 For Pancake handoff mode, set `PANCAKE_HANDOFF_TAG_ID` to the Pancake conversation tag ID that should pause agent replies while staff handle the conversation.
 
-Optional agent-name overrides are available when you need stable names other than the defaults: `TELEGRAM_AGENT_NAME`, `DISCORD_AGENT_NAME`, `SLACK_AGENT_NAME`, `GITHUB_AGENT_NAME`, and `PANCAKE_AGENT_NAME`.
+Optional agent-name overrides are available when you need stable names other than the defaults: `TELEGRAM_AGENT_NAME`, `DISCORD_AGENT_NAME`, `SLACK_AGENT_NAME`, `GITHUB_AGENT_NAME`, `PANCAKE_AGENT_NAME`, and `ZALO_AGENT_NAME`.
 
 The integration scripts include `Knowledge cutoff: January 2025.` in `config.agent.system` by default. Override it with `ACCOUNT_MODEL_KNOWLEDGE_CUTOFF` when changing `ACCOUNT_MODEL_ID` to a model with a different cutoff.
 
@@ -172,8 +178,8 @@ bun examples/async.ts
 
 ## CI
 
-- GitHub Actions runs CI on pull requests and non-`main` pushes, and deploys on pushes to `main`.
-- Deploy requires repository secrets `SST_SECRET_ADMINACCOUNTSECRET` and `SST_SECRET_ACCOUNTCONFIGENCRYPTIONSECRET`.
+- GitHub Actions runs CI on pull requests and pushes; deploys run on pushes to `dev` (stage `dev`) and `main` (stage `production`). Docs-only changes are skipped.
+- See [CI/CD](ci-cd.md) for the required repository secrets and variables.
 
 ## Runtime Telemetry
 

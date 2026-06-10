@@ -265,10 +265,16 @@ export async function markAsyncToolResultFailed(options: {
   resultId: string;
   error: string;
 }): Promise<void> {
-  await updateAsyncToolResult(options.resultId, "failed", {
-    error: options.error,
-    response: undefined,
-  });
+  // A failure mark never overwrites an already-settled row.
+  try {
+    await updateAsyncToolResult(options.resultId, "failed", {
+      error: options.error,
+      response: undefined,
+    }, { onlyWhenProcessing: true });
+  } catch (err) {
+    if (isConditionalCheckFailed(err)) return;
+    throw err;
+  }
 }
 
 export async function settleAsyncToolResultFromCallback(options: {

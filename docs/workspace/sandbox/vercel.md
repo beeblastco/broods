@@ -70,9 +70,16 @@ Vercel enforces all three normalized modes natively:
 
 ## Workspace Storage Caveat
 
-A `storage.provider: "vercel"` workspace lives on Vercel's persistent filesystem. It is not
+A workspace backed by a persistent Vercel sandbox lives on Vercel's filesystem. It is not
 mounted from the shared S3 workspace bucket and is not shared with Lambda, Daytona, or
 Kubernetes sandboxes. Use it when the agent and workspace are intentionally Vercel-only.
+The workspace config value `storage.provider: "vercel"` labels this setup but does not
+itself switch any behavior — the persistence comes from the sandbox. Note `MEMORY.md`
+prompt loading always reads from S3, so a Vercel-only workspace's `MEMORY.md` does not
+reach the system prompt.
+
+Without `persistent: true`, the Vercel provider still works for stateless `bash`
+(create → run → stop per call), but workspace-backed file tools are unavailable.
 
 ## Background Jobs
 

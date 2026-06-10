@@ -6,6 +6,8 @@ info:
 
     - **Direct API** — account-authenticated agent runtime endpoint (sync SSE, async jobs, status polling, external tool completion)
     - **Account Management** — tenant configuration (accounts, agents, skills, secrets)
+
+    Every `/accounts/me/...` sub-resource (agents, skills, cron-jobs, tools, sandboxes, workspaces, rotate-secret) is also reachable by admins as `/accounts/{accountId}/...` with the `AdminAccountSecret` bearer token; behavior and shapes are identical.
   version: 0.1.0
 
 servers:
@@ -33,6 +35,12 @@ tags:
     description: Account-owned skill package management.
   - name: Cron Jobs
     description: Account-owned scheduled agent runs.
+  - name: Sandboxes
+    description: Account-owned sandbox execution configs.
+  - name: Workspaces
+    description: Account-owned workspace configs.
+  - name: Tools
+    description: Account-uploaded custom tool bundles.
 
 paths:
   /:
@@ -169,7 +177,7 @@ paths:
                         - type: text
                           text: Generate a summary of today's news
       responses:
-        '200':
+        '202':
           description: Async job accepted
           content:
             application/json:
@@ -322,10 +330,8 @@ paths:
                   status: failed
                   error: External service timeout after 30s
       responses:
-        '200':
-          description: Tool result settled
         '202':
-          description: Waiting for more async tools in dispatch group
+          description: "Result accepted (`status: accepted` when settled, `status: waiting_for_async_tools` with `pendingCount` while siblings are outstanding)"
           content:
             application/json:
               schema:
@@ -333,10 +339,20 @@ paths:
                 properties:
                   status:
                     type: string
+                  pendingCount:
+                    type: integer
               examples:
+                accepted:
+                  value:
+                    status: accepted
                 waiting:
                   value:
                     status: waiting_for_async_tools
+                    pendingCount: 2
+        '404':
+          description: Unknown resultId
+        '409':
+          description: Result already settled
         '401':
           description: Unauthorized
           content:
@@ -347,6 +363,68 @@ paths:
                 unauthorized:
                   value:
                     error: Unauthorized
+
+  /sandbox-jobs/{resultId}/complete:
+    post:
+      tags:
+        - Direct API
+      summary: Complete sandbox job callback
+      description: Token-authenticated completion callback used by detached sandbox background jobs and detached uploaded tools. Authenticated with the per-job `x-job-token` header minted at launch, not an account secret. Unknown ids and bad tokens both return 404.
+      parameters:
+        - name: resultId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: x-job-token
+          in: header
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - $ref: '#/components/schemas/ToolCompletionSuccess'
+                - $ref: '#/components/schemas/ToolCompletionFailure'
+      responses:
+        '202':
+          description: Result accepted
+        '404':
+          description: Unknown resultId or invalid token
+
+  /webhooks/{accountId}/{agentId}/{channelName}:
+    post:
+      tags:
+        - Direct API
+      summary: Channel provider webhook
+      description: Ingress for provider webhooks (telegram, github, slack, discord, pancake, zalo). Authentication is provider-native (signature or secret) per channel; the response shape is channel-specific. See the Channels documentation.
+      parameters:
+        - name: accountId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: agentId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: channelName
+          in: path
+          required: true
+          schema:
+            type: string
+            enum: [telegram, github, slack, discord, pancake, zalo]
+      responses:
+        '200':
+          description: Provider-specific acknowledgement
+        '401':
+          description: Provider authentication failed
+        '404':
+          description: Unknown account, agent, or channel
 
   /accounts:
     post:
@@ -414,18 +492,22 @@ paths:
           content:
             application/json:
               schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/Account'
+                type: object
+                properties:
+                  accounts:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Account'
               examples:
                 list:
                   value:
-                    - accountId: acct_abc123
-                      username: company-a
-                      description: Company A account
-                    - accountId: acct_def456
-                      username: company-b
-                      description: Company B account
+                    accounts:
+                      - accountId: acct_abc123
+                        username: company-a
+                        description: Company A account
+                      - accountId: acct_def456
+                        username: company-b
+                        description: Company B account
 
   /accounts/{accountId}:
     get:
@@ -446,7 +528,10 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Account'
+                type: object
+                properties:
+                  account:
+                    $ref: '#/components/schemas/Account'
 
     patch:
       tags:
@@ -477,7 +562,10 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Account'
+                type: object
+                properties:
+                  account:
+                    $ref: '#/components/schemas/Account'
 
     delete:
       tags:
@@ -533,11 +621,16 @@ paths:
               schema:
                 type: object
                 properties:
+                  account:
+                    $ref: '#/components/schemas/Account'
                   secret:
                     type: string
               examples:
                 rotated:
                   value:
+                    account:
+                      accountId: acct_abc123
+                      username: company-a
                     secret: fp_acct_new...
 
   /accounts/me:
@@ -553,7 +646,10 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Account'
+                type: object
+                properties:
+                  account:
+                    $ref: '#/components/schemas/Account'
 
     patch:
       tags:
@@ -583,7 +679,10 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Account'
+                type: object
+                properties:
+                  account:
+                    $ref: '#/components/schemas/Account'
               examples:
                 updated:
                   value:
@@ -621,11 +720,16 @@ paths:
               schema:
                 type: object
                 properties:
+                  account:
+                    $ref: '#/components/schemas/Account'
                   secret:
                     type: string
               examples:
                 rotated:
                   value:
+                    account:
+                      accountId: acct_abc123
+                      username: company-a
                     secret: fp_acct_new...
 
   /accounts/me/agents:
@@ -718,9 +822,12 @@ paths:
           content:
             application/json:
               schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/Agent'
+                type: object
+                properties:
+                  agents:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Agent'
 
   /accounts/me/agents/{agentId}:
     get:
@@ -1377,6 +1484,7 @@ components:
       required:
         - agentId
         - eventId
+        - conversationKey
         - events
       properties:
         agentId:
@@ -1708,6 +1816,15 @@ components:
           type: string
         description:
           type: string
+        status:
+          type: string
+          enum: [active, disabled]
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
 
     Agent:
       type: object
@@ -1720,6 +1837,18 @@ components:
           type: string
         description:
           type: string
+        status:
+          type: string
+          enum: [active, disabled]
+        config:
+          $ref: '#/components/schemas/AgentConfig'
+          description: Redacted — secret-like fields are returned as `********`
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
 
     Skill:
       type: object
@@ -1730,6 +1859,11 @@ components:
           type: string
         description:
           type: string
+        files:
+          type: array
+          description: Relative file paths in the bundle (returned by create and get)
+          items:
+            type: string
 
     CronJob:
       type: object
@@ -1852,6 +1986,8 @@ components:
             skillObjectsDeleted:
               type: integer
             cronJobsDeleted:
+              type: integer
+            accountToolsDeleted:
               type: integer
 
     AgentConfig:
@@ -2108,6 +2244,31 @@ components:
           $ref: '#/components/schemas/TavilyExtractConfig'
         googleSearch:
           $ref: '#/components/schemas/GoogleSearchConfig'
+        handoffs:
+          type: object
+          description: "Human-handoff tool: Pancake scenario tags + Zalo staff ping. Both `pancake.scenarioTagIds.{order,pending}` and `zalo.{botToken,notifyUserIds}` are required unless `enabled: false`."
+          properties:
+            enabled:
+              type: boolean
+            pancake:
+              type: object
+              properties:
+                scenarioTagIds:
+                  type: object
+                  properties:
+                    order:
+                      type: string
+                    pending:
+                      type: string
+            zalo:
+              type: object
+              properties:
+                botToken:
+                  type: string
+                notifyUserIds:
+                  type: array
+                  items:
+                    type: string
       additionalProperties:
         $ref: '#/components/schemas/UploadedToolConfig'
 
@@ -2168,6 +2329,8 @@ components:
         createdAt:
           type: string
         updatedAt:
+          type: string
+        deletedAt:
           type: string
 
     UploadedToolConfig:
@@ -2319,12 +2482,15 @@ components:
               $ref: '#/components/schemas/ChannelStreamingConfig'
         pancake:
           type: object
-          description: Page-validated (no signature header). Keep webhook URL private.
+          description: Pancake sends no signature header; the webhook URL must carry `?secret=<webhookSecret>`, checked on every request.
           properties:
             pageId:
               type: string
             pageAccessToken:
               type: string
+            webhookSecret:
+              type: string
+              description: Random value verified against the webhook URL's `secret` query parameter.
             senderId:
               type: string
               description: Optional staff user ID for replies
@@ -2332,18 +2498,11 @@ components:
               type: object
               description: Optional Pancake adapter settings.
               properties:
-                handoff:
-                  type: object
-                  description: Skips conversations that include the configured Pancake handoff tag.
-                  properties:
-                    tagId:
-                      type: string
-                      description: Pancake conversation tag ID for human handoff.
-                    assigneeIds:
-                      type: array
-                      items:
-                        type: string
-                      description: Optional staff IDs used by handoff tooling.
+                ignoreTagIds:
+                  type: array
+                  items:
+                    type: string
+                  description: Conversation tag IDs that mark human handoff; tagged conversations are ignored.
         zalo:
           type: object
           description: Official Zalo Bot API webhook channel for direct text messages.

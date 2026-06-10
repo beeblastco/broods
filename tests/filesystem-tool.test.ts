@@ -347,3 +347,21 @@ describe("write/edit approval policy", () => {
     expect(bypass.needsApproval({ file_path: "a.txt" })).toBe(false);
   });
 });
+
+describe("toWorkspaceRelative", () => {
+  it("normalizes leading slashes and dots to workspace-relative paths", async () => {
+    const { toWorkspaceRelative } = await import("../functions/harness-processing/tools/filesystem-utils.ts");
+    expect(toWorkspaceRelative("/src/index.ts")).toBe("src/index.ts");
+    expect(toWorkspaceRelative("./src/./index.ts")).toBe("src/index.ts");
+    expect(toWorkspaceRelative("")).toBe(".");
+    expect(toWorkspaceRelative("/")).toBe(".");
+    expect(toWorkspaceRelative(".")).toBe(".");
+  });
+
+  it("rejects directory traversal anywhere in the path", async () => {
+    const { toWorkspaceRelative } = await import("../functions/harness-processing/tools/filesystem-utils.ts");
+    for (const path of ["../etc/passwd", "a/../../b", "..", "/a/b/..", "a/.."]) {
+      expect(() => toWorkspaceRelative(path)).toThrow("directory traversal not allowed");
+    }
+  });
+});

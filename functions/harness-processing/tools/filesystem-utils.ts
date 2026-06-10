@@ -15,6 +15,7 @@ import { requireEnv } from "../../_shared/env.ts";
 import { workspaceNamespacePrefix, workspaceSandboxLimits } from "../../_shared/sandbox.ts";
 import { isMissingS3Error, listS3Prefix, readS3Text } from "../../_shared/s3.ts";
 import { createSandboxExecutor } from "../sandbox/index.ts";
+import { isRecordObject } from "../sandbox/utils.ts";
 import type { SandboxExecutorConfig, SandboxJobCallback, SandboxJobHandle, SandboxRunResult, SandboxRuntime } from "../sandbox/types.ts";
 import type { ResolvedWorkspace } from "../../_shared/workspaces.ts";
 import type { SandboxPermissionMode } from "../../_shared/storage/index.ts";
@@ -350,10 +351,6 @@ export function boundedInteger(value: unknown, defaultValue: number, max: number
     throw new Error(`sandbox numeric option must be an integer from 1 to ${max}`);
   }
   return value;
-}
-
-function isRecordObject(value: unknown): value is Record<string, unknown> {
-  return Boolean(value && typeof value === "object" && !Array.isArray(value));
 }
 
 function invokesCommand(command: string, names: string[]): boolean {

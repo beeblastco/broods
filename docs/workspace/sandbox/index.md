@@ -39,21 +39,22 @@ A sandbox is a standalone, account-scoped record referenced from agent config by
     "network": { "mode": "allow-all" }, // allow-all | deny-all | restricted
     "permissionMode": "ask",       // edit | ask | bypass
     "runtimes": ["bash", "python", "node"], // advisory allow-list (best-effort)
-    "timeout": 120,                // per-call seconds (max: lambda 300, others 600)
-    "memoryLimit": 512,            // MB; bounded for lambda only, operator-sized otherwise
+    "timeout": 120,                // per-call seconds (default 30; max: lambda 300, others 600)
+    "memoryLimit": 512,            // MB; validated (≤1024 for lambda) but informational — executors do not resize
     "outputLimitBytes": 65536,
-    "envVars": { "FOO": "bar" },   // injected into every run (encrypted at rest)
-    "onCreate": ["npm install"],   // persistent-only, once per reserved sandbox
-    "onResume": ["npm run dev &"]  // persistent-only, every resume/acquire
+    "envVars": { "FOO": "bar" }    // injected into every run (encrypted at rest)
   }
 }
 ```
 
+`onCreate` / `onResume` command hooks are also available, but only on persistent
+configs — see [Reserved (persistent) sandboxes](#reserved-persistent-sandboxes).
+
 > **Per-call limits are provider-aware.** `lambda` runs are hard-bounded by the deployed
-> function (timeout ≤ 300 s, memory ≤ 1024 MB). Persistent providers (`e2b`/`daytona`/
-> `kubernetes`) are long-lived and operator-sized, so a single blocking call is only capped
-> at the harness request budget (600 s) and memory is left to the operator. Output is always
-> truncated harness-side regardless of provider.
+> functions (timeout ≤ 300 s, 512 MB memory). Persistent providers (`e2b`/`daytona`/
+> `kubernetes`/`vercel`) are long-lived and operator-sized, so a single blocking call is only
+> capped at the harness request budget (600 s) and memory is left to the operator. Output is
+> always truncated harness-side regardless of provider.
 
 | Provider | Documentation |
 | --- | --- |
@@ -127,6 +128,7 @@ flowchart LR
 
 > **Cold-start note (kubernetes).** Three stacked optimizations take the uploaded-tool
 > first-call cold-start from ~22s to ~1s:
+>
 > 1. **`ephemeralHome: true`** — skip the durable home PVC. The Hetzner block-volume
 >    create+attach was ~16s of the ~22s; the pod still outlives the request and just uses
 >    the image's own `/home/node`. Uploaded tools never need durable disk (results return
@@ -145,7 +147,9 @@ CronJob (scales `replicas` 0↔1; home PVC + S3 persist); **daytona** uses nativ
 (filesystem + memory snapshot persist); **vercel** uses named persistent sandboxes and native
 `onCreate`/`onResume` callbacks. A reserved sandbox is reconnected by id on the next call
 (kubernetes derives a deterministic Sandbox name from the workspace namespace; daytona/e2b/
-vercel store the id/name in a `persistentSandboxInstance` table).
+vercel store the id/name in a `persistentSandboxInstance` table). Instance rows carry a
+30-day TTL refreshed on every use, and a concurrent first-create race is resolved by a
+conditional claim — the loser discards its duplicate sandbox and reconnects to the winner's.
 
 **Clean delete (no leaks).** Deleting a workspace or account releases its reserved sandboxes:
 daytona/e2b/vercel are torn down explicitly (and their instance rows dropped); kubernetes is reclaimed
@@ -201,9 +205,10 @@ Polling with `async_status` is still available to check progress or fetch a resu
 Discord delivers a delayed reply with the bot token (its interaction token expires ~15 min);
 the bot must have **Send Messages** permission in the channel.
 
-`async_status` is auto-registered whenever the agent has a persistent sandbox or any
-`config.tools` entry marked `async: true`, and only resolves a `statusId` for its own
-conversation. Jobs are tracked in the `AsyncToolResult` table.
+`async_status` is auto-registered whenever the agent has a workspace whose effective
+sandbox is persistent, or any `config.tools` entry marked `async: true`, and only resolves
+a `statusId` for its own conversation. An agent-level persistent sandbox without a
+workspace runs ephemerally and does not register it. Jobs are tracked in the `AsyncToolResult` table.
 
 **Ownership & limits.** Each sandbox caps concurrent background jobs (10), and a job that is
 killed when the sandbox is recreated/scaled-to-0 reports as `failed` (it stamps the launching

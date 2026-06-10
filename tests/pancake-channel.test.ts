@@ -19,7 +19,7 @@ describe("pancake channel adapter", () => {
   });
 
   it("normalizes messaging events into page-scoped conversations", async () => {
-    const adapter = createPancakeChannel("page-1", "page-token");
+    const adapter = createPancakeChannel("page-1", "page-token", "hook-secret");
     const parsed = await adapter.parse(createPancakeRequest({
       page_id: "page-1",
       event_type: "messaging",
@@ -66,7 +66,7 @@ describe("pancake channel adapter", () => {
   });
 
   it("carries comment source fields for comment replies", async () => {
-    const adapter = createPancakeChannel("page-1", "page-token");
+    const adapter = createPancakeChannel("page-1", "page-token", "hook-secret");
     const parsed = await adapter.parse(createPancakeRequest({
       page_id: "page-1",
       event_type: "messaging",
@@ -101,7 +101,7 @@ describe("pancake channel adapter", () => {
   });
 
   it("ignores non-message events, wrong pages, empty text, and page-originated messages", async () => {
-    const adapter = createPancakeChannel("page-1", "page-token");
+    const adapter = createPancakeChannel("page-1", "page-token", "hook-secret");
 
     expect(await adapter.parse(createPancakeRequest({ event_type: "post", page_id: "page-1" }))).toEqual({
       kind: "ignore",
@@ -121,7 +121,7 @@ describe("pancake channel adapter", () => {
   });
 
   it("uses configured scenario handoff tags to ignore human-owned conversations", async () => {
-    const adapter = createPancakeChannel("page-1", "page-token", undefined, {
+    const adapter = createPancakeChannel("page-1", "page-token", "hook-secret", undefined, {
       accountId: "acct_test",
       agentId: "agent_test",
       configOptions: {
@@ -152,7 +152,7 @@ describe("pancake channel adapter", () => {
   });
 
   it("continues normally when scenario handoff tags are absent", async () => {
-    const adapter = createPancakeChannel("page-1", "page-token", undefined, {
+    const adapter = createPancakeChannel("page-1", "page-token", "hook-secret", undefined, {
       configOptions: {
         ignoreTagIds: ["order-tag", "pending-tag"],
       },
@@ -164,12 +164,22 @@ describe("pancake channel adapter", () => {
 
     expect(parsed.kind).toBe("message");
   });
+
+  it("authenticates only requests carrying the webhook secret query parameter", async () => {
+    const adapter = createPancakeChannel("page-1", "page-token", "hook-secret");
+
+    expect(await adapter.authenticate(createPancakeRequest(validPayload(), "secret=hook-secret"))).toBe(true);
+    expect(await adapter.authenticate(createPancakeRequest(validPayload(), "secret=wrong-secret"))).toBe(false);
+    expect(await adapter.authenticate(createPancakeRequest(validPayload(), "secret="))).toBe(false);
+    expect(await adapter.authenticate(createPancakeRequest(validPayload(), ""))).toBe(false);
+  });
 });
 
-function createPancakeRequest(payload: Record<string, unknown>) {
+function createPancakeRequest(payload: Record<string, unknown>, rawQueryString = "") {
   return {
     method: "POST",
     rawPath: "/",
+    rawQueryString,
     headers: { "content-type": "application/json" },
     body: JSON.stringify(payload),
   };

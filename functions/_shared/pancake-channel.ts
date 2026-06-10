@@ -7,6 +7,7 @@
  */
 
 import { createHash } from "node:crypto";
+import { timingSafeStringEqual } from "./auth.ts";
 import type {
   ChannelActions,
   ChannelAdapter,
@@ -83,6 +84,7 @@ export interface PancakeChannelOptions {
 export function createPancakeChannel(
   pageId: string,
   pageAccessToken: string,
+  webhookSecret: string,
   senderId?: string,
   options: PancakeChannelOptions = {},
 ): ChannelAdapter {
@@ -95,8 +97,11 @@ export function createPancakeChannel(
       return req.method === "POST";
     },
 
-    authenticate() {
-      return true;
+    // Pancake sends no signature header; the webhook URL carries the secret as
+    // a ?secret= query parameter instead.
+    authenticate(req) {
+      const provided = new URLSearchParams(req.rawQueryString).get("secret");
+      return Boolean(provided) && timingSafeStringEqual(provided!, webhookSecret);
     },
 
     parse(req): ChannelParseResult | Promise<ChannelParseResult> {

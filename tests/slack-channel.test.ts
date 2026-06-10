@@ -161,6 +161,7 @@ function createEventRequest(
   return {
     method: "POST",
     rawPath: "/",
+    rawQueryString: "",
     headers: createSlackHeaders(body, timestamp),
     body,
   };
@@ -170,6 +171,7 @@ function createSlashCommandRequest(body: string, timestamp: string = "1776988800
   return {
     method: "POST",
     rawPath: "/",
+    rawQueryString: "",
     headers: {
       ...createSlackHeaders(body, timestamp),
       "content-type": "application/x-www-form-urlencoded",

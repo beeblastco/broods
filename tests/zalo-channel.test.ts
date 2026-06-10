@@ -83,6 +83,7 @@ function createZaloRequest(
   return {
     method: "POST",
     rawPath: "/",
+    rawQueryString: "",
     headers,
     body: JSON.stringify(body),
   };

@@ -5,7 +5,7 @@
  * across DynamoDB and Convex modes.
  */
 
-import { timingSafeEqual } from "node:crypto";
+import { createHash, timingSafeEqual } from "node:crypto";
 import { optionalEnv } from "./env.ts";
 import {
   hashAccountSecret,
@@ -52,8 +52,9 @@ export async function resolveBearerAuth(headers: Record<string, string>): Promis
   return { kind: "account", account };
 }
 
-function timingSafeStringEqual(actual: string, expected: string): boolean {
-  const actualBytes = Buffer.from(actual);
-  const expectedBytes = Buffer.from(expected);
-  return actualBytes.length === expectedBytes.length && timingSafeEqual(actualBytes, expectedBytes);
+// Hashing both sides keeps the comparison constant-time regardless of length.
+export function timingSafeStringEqual(actual: string, expected: string): boolean {
+  const actualDigest = createHash("sha256").update(actual).digest();
+  const expectedDigest = createHash("sha256").update(expected).digest();
+  return timingSafeEqual(actualDigest, expectedDigest);
 }

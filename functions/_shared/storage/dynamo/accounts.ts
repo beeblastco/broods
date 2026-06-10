@@ -14,31 +14,22 @@ import {
   UpdateItemCommand,
   type AttributeValue,
 } from "@aws-sdk/client-dynamodb";
-import { randomBytes, createHash } from "node:crypto";
 import { dynamo, isConditionalCheckFailed } from "./client.ts";
 import { optionalEnv, requireEnv } from "../../env.ts";
+import {
+  createAccountId,
+  createAccountSecret,
+  hashAccountSecret,
+  normalizeCreateAccountInput,
+  normalizeUpdateAccountInput,
+} from "../accounts.ts";
 import type {
   AccountRecord,
   AccountStatus,
   AccountStore,
-  CreateAccountInput,
-  UpdateAccountInput,
 } from "../types.ts";
 
-const ACCOUNT_SECRET_PREFIX = "fp_acct_";
 const DEFAULT_ACCOUNT_STATUS: AccountStatus = "active";
-
-function createAccountId(): string {
-  return `acct_${randomBytes(12).toString("hex")}`;
-}
-
-function createAccountSecret(): string {
-  return `${ACCOUNT_SECRET_PREFIX}${randomBytes(32).toString("base64url")}`;
-}
-
-function hashSecret(secret: string): string {
-  return createHash("sha256").update(secret).digest("hex");
-}
 
 function accountConfigsTableName(): string {
   return requireEnv("ACCOUNT_CONFIGS_TABLE_NAME");
@@ -46,42 +37,6 @@ function accountConfigsTableName(): string {
 
 function accountSecretIndexName(): string {
   return optionalEnv("ACCOUNT_SECRET_INDEX_NAME") ?? "SecretHashIndex";
-}
-
-function normalizeCreateInput(input: CreateAccountInput): { username: string; description?: string } {
-  if (!input || typeof input !== "object") throw new Error("Request body must include username");
-  const username = typeof input.username === "string" ? input.username.trim() : "";
-  if (!username) throw new Error("username must be a non-empty string");
-  const description = typeof input.description === "string" ? input.description.trim() : undefined;
-  return { username, ...(description ? { description } : {}) };
-}
-
-function normalizeUpdateInput(input: UpdateAccountInput): UpdateAccountInput {
-  if (!input || typeof input !== "object") throw new Error("Request body must be an object");
-  const normalized: UpdateAccountInput = {
-    ...(input.username !== undefined
-      ? { username: assertNonEmpty(input.username, "username") }
-      : {}),
-    ...(input.description !== undefined
-      ? {
-          description:
-            input.description === null
-              ? null
-              : typeof input.description === "string" && input.description.trim().length > 0
-                ? input.description.trim()
-                : undefined,
-        }
-      : {}),
-  };
-  if (Object.keys(normalized).length === 0) throw new Error("Request body must include username or description");
-  return normalized;
-}
-
-function assertNonEmpty(value: unknown, name: string): string {
-  if (typeof value !== "string" || value.trim().length === 0) {
-    throw new Error(`${name} must be a non-empty string`);
-  }
-  return value.trim();
 }
 
 function accountToItem(account: AccountRecord): Record<string, AttributeValue> {
@@ -158,7 +113,7 @@ export const dynamoAccountStore: AccountStore = {
   },
 
   async create(input) {
-    const normalized = normalizeCreateInput(input);
+    const normalized = normalizeCreateAccountInput(input);
     const accountId = createAccountId();
     const accountSecret = createAccountSecret();
     const now = new Date().toISOString();
@@ -166,7 +121,7 @@ export const dynamoAccountStore: AccountStore = {
       accountId,
       username: normalized.username,
       ...(normalized.description ? { description: normalized.description } : {}),
-      secretHash: hashSecret(accountSecret),
+      secretHash: hashAccountSecret(accountSecret),
       status: DEFAULT_ACCOUNT_STATUS,
       createdAt: now,
       updatedAt: now,
@@ -187,7 +142,7 @@ export const dynamoAccountStore: AccountStore = {
   },
 
   async update(accountId, patch) {
-    const normalized = normalizeUpdateInput(patch);
+    const normalized = normalizeUpdateAccountInput(patch);
     const existing = await dynamoAccountStore.getById(accountId);
     if (!existing) return null;
 
@@ -238,7 +193,7 @@ export const dynamoAccountStore: AccountStore = {
           UpdateExpression: "SET secretHash = :secretHash, updatedAt = :updatedAt",
           ConditionExpression: "attribute_exists(accountId)",
           ExpressionAttributeValues: {
-            ":secretHash": { S: hashSecret(accountSecret) },
+            ":secretHash": { S: hashAccountSecret(accountSecret) },
             ":updatedAt": { S: new Date().toISOString() },
           },
           ReturnValues: "ALL_NEW",

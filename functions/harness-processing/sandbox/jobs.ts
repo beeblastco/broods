@@ -23,6 +23,14 @@ export function generateJobId(): string {
   return `job_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
 }
 
+// Job ids land inside shell-quoted file paths; reject anything that could
+// traverse out of jobsDir.
+function assertSafeJobId(jobId: string): void {
+  if (!/^[A-Za-z0-9_-]+$/.test(jobId)) {
+    throw new Error(`Invalid job id: ${jobId}`);
+  }
+}
+
 /**
  * onCreate/onResume hook script for providers without native lifecycle
  * callbacks (e2b/daytona/kubernetes; vercel uses the SDK's own hooks).
@@ -55,6 +63,7 @@ export function lifecycleScript(workDir: string, onCreate?: string[], onResume?:
  * sandbox was recreated". Exits non-zero (caller throws) if the job cap is hit.
  */
 export function launchScript(jobsDir: string, jobId: string, workDir: string, code: string, options: LaunchOptions): string {
+  assertSafeJobId(jobId);
   const q = shellQuote;
   const f = (ext: string) => q(`${jobsDir}/${jobId}.${ext}`);
   const wrapper = [
@@ -77,6 +86,7 @@ export function launchScript(jobsDir: string, jobId: string, workDir: string, co
 }
 
 export function statusScript(jobsDir: string, jobId: string): string {
+  assertSafeJobId(jobId);
   const f = (ext: string) => shellQuote(`${jobsDir}/${jobId}.${ext}`);
   // Exit recorded => terminal. Otherwise the job is "running" only if it was
   // launched in this boot AND its session leader is still alive; a boot-id
@@ -95,10 +105,12 @@ export function statusScript(jobsDir: string, jobId: string): string {
 }
 
 export function logsScript(jobsDir: string, jobId: string, bytes: number): string {
+  assertSafeJobId(jobId);
   return `tail -c ${bytes} ${shellQuote(`${jobsDir}/${jobId}.log`)} 2>/dev/null || true`;
 }
 
 export function stopScript(jobsDir: string, jobId: string): string {
+  assertSafeJobId(jobId);
   const f = (ext: string) => shellQuote(`${jobsDir}/${jobId}.${ext}`);
   return [
     `if [ -f ${f("pid")} ]; then kill -TERM -"$(cat ${f("pid")})" 2>/dev/null || true; sleep 1; kill -KILL -"$(cat ${f("pid")})" 2>/dev/null || true; fi`,

@@ -42,6 +42,7 @@ const PANCAKE_AGENT = {
       pancake: {
         pageId: "page-1",
         pageAccessToken: "page-token",
+        webhookSecret: "pancake-secret",
         options: {
           ignoreTagIds: ["order-tag", "pending-tag"],
         },
@@ -57,6 +58,7 @@ const PANCAKE_HANDOFF_AGENT = {
       pancake: {
         pageId: "page-1",
         pageAccessToken: "page-token",
+        webhookSecret: "pancake-secret",
         options: {
           ignoreTagIds: ["order-tag", "pending-tag"],
         },
@@ -220,6 +222,7 @@ describe("account webhook ingress", () => {
           pancake: {
             pageId: "page-1",
             pageAccessToken: "page-token",
+            webhookSecret: "pancake-secret",
           },
         },
       },
@@ -360,7 +363,7 @@ function createPancakeEvent(overrides: {
     },
   }, {
     "content-type": "application/json",
-  }, "/webhooks/acct_test/agent_test/pancake");
+  }, "/webhooks/acct_test/agent_test/pancake", "secret=pancake-secret");
 }
 
 function createZaloEvent(
@@ -378,12 +381,13 @@ function createTelegramEvent(
     "x-telegram-bot-api-secret-token": "telegram-secret",
   },
   rawPath = "/webhooks/acct_test/agent_test/telegram",
+  rawQueryString = "",
 ): LambdaFunctionURLEvent {
   return {
     version: "2.0",
     routeKey: "$default",
     rawPath,
-    rawQueryString: "",
+    rawQueryString,
     headers,
     requestContext: {
       accountId: "123456789012",

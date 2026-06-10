@@ -2,7 +2,9 @@
 
 Runs the agent's bash/node/python inside an [agent-sandbox](https://github.com/kubernetes-sigs/agent-sandbox)
 `Sandbox` pod on the Beeblast **k3s cluster** — a VM-like runtime (`bash`, `node`, `python3`, `curl`
-on PATH) whose network is inherited from the cluster. The workspace is the same shared S3 bucket the
+on PATH). Egress follows `config.network` via a per-Sandbox NetworkPolicy: `allow-all` removes the
+policy, `deny-all` (the default when `network` is omitted) blocks all egress, and `restricted`
+allows the listed CIDRs with DNS (port 53) kept open. The workspace is the same shared S3 bucket the
 other providers use, mounted at the selected `sandbox/<namespace>/` prefix for each run.
 
 Infra side (controller install, runtime image, IAM, cluster identity, debugging, migration) is
@@ -53,7 +55,14 @@ Per bash/file run the executor (`functions/harness-processing/sandbox/kubernetes
    the pod (the container runs `privileged` so FUSE works).
 4. Execs the command via the kube exec API after `cd <workspaceRoot>/<namespace>`,
    **streaming** stdout/stderr.
-5. Deletes the `Sandbox` (ephemeral-per-run, like Daytona/E2B).
+5. Deletes the `Sandbox` (ephemeral-per-run).
+
+With `persistent: true` the executor instead reserves one deterministic `Sandbox`
+(`fp-p-<slug>-<hash>`) per workspace: it scales `replicas` 0↔1 to pause/resume, keeps the
+home directory on a PVC (`persistentDiskGb`, `persistentHome`, `storageClass` options), and
+refreshes a `shutdownTime` so the idle reaper only deletes truly expired sandboxes. Hooks
+(`onCreate`/`onResume`) and detached background jobs work as described in
+[the sandbox overview](index.md#reserved-persistent-sandboxes).
 
 > The kubeconfig (CA + token) is ~2.7 KB — over Lambda's 4 KB env-var limit. So `sst.config.ts`
 > stores it in an SSM SecureString parameter (`/filthy-panty/<stage>/kubernetes-sandbox-kubeconfig`,
@@ -89,9 +98,10 @@ runs privileged + `runAsUser: 0` (FUSE needs the device + root) and mounts with
 
 ## Execution Notes
 
-- It's a real shell: `bash`, `node <file>`, `python3 <file>` all run natively. `python <file>` is
-  rewritten to `python3`.
-- Files persist across calls **only** with the S3 mount enabled (each call gets a fresh pod).
+- It's a real shell: `bash`, `node <file>`, `python3 <file>` all run natively; use `python3`
+  explicitly (commands run as-is).
+- Without `persistent: true`, files persist across calls **only** with the S3 mount enabled
+  (each call gets a fresh pod).
 
 ## What the model sees
 

@@ -3,10 +3,10 @@
  * Keep request orchestration, session setup, and response shaping here.
  */
 
-import { timingSafeEqual } from "node:crypto";
 import { InvokeCommand, LambdaClient } from "@aws-sdk/client-lambda";
 import type { ToolModelMessage, JSONValue, UserModelMessage } from "ai";
 import type { LambdaFunctionURLEvent } from "aws-lambda";
+import { timingSafeStringEqual } from "../_shared/auth.ts";
 import { formatChannelErrorText } from "../_shared/channels.ts";
 import { createChannelStreamWriter, type ChannelStreamMode, type ChannelStreamWriter } from "../_shared/channel-streaming.ts";
 import { executeCommand } from "../_shared/commands.ts";
@@ -615,11 +615,16 @@ async function handleChannelRequest(event: ChannelInboundEvent, context?: Lambda
       conversationKey: session.conversationKey,
       commandToken: event.commandToken,
     });
-    await executeCommand(event.commandToken, {
-      conversationKey: event.conversationKey,
-      conversationsTableName: CONVERSATIONS_TABLE_NAME,
-      channel: event.channel,
-    });
+    try {
+      await executeCommand(event.commandToken, {
+        conversationKey: event.conversationKey,
+        conversationsTableName: CONVERSATIONS_TABLE_NAME,
+        channel: event.channel,
+      });
+    } catch (err) {
+      await session.release().catch(() => { });
+      throw err;
+    }
     return;
   }
 
@@ -1447,12 +1452,6 @@ function isAccountScopedKey(value: string, accountId: string, agentId: string): 
 function parseAccountAgentFromScopedKey(value: string): { accountId: string; agentId: string } | null {
   const match = value.match(/^acct:([^:]+):agent:([^:]+):/);
   return match ? { accountId: match[1]!, agentId: match[2]! } : null;
-}
-
-function timingSafeStringEqual(actual: string, expected: string): boolean {
-  const actualBytes = Buffer.from(actual);
-  const expectedBytes = Buffer.from(expected);
-  return actualBytes.length === expectedBytes.length && timingSafeEqual(actualBytes, expectedBytes);
 }
 
 function isAsyncWorkerInvocation(event: unknown): event is AsyncWorkerInvocation {

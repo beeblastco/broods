@@ -18,6 +18,9 @@ export interface SandboxNetworkConfig {
   mode: SandboxNetworkMode;
   allowDomains?: string[];
   allowCidrs?: string[];
+  // Carved out of every allowCidrs block (NetworkPolicy ipBlock.except). Lets a
+  // policy say "all public internet" by allowing 0.0.0.0/0 minus private ranges.
+  denyCidrs?: string[];
 }
 
 // Runtime subset of the persisted sandbox config (see storage/sandbox-config.ts)

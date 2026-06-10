@@ -13,7 +13,7 @@ To enable GitHub, include the following in your agent configuration:
       "webhookSecret": "your-webhook-secret",
       "appId": "your-app-id",
       "privateKey": "your-private-key",
-      "allowedRepos": ["repo-1", "repo-2"]
+      "allowedRepos": ["owner/repo-1", "owner/repo-2"]
     }
   }
 }
@@ -22,4 +22,4 @@ To enable GitHub, include the following in your agent configuration:
 - `webhookSecret`: GitHub Webhook Secret.
 - `appId`: GitHub App ID.
 - `privateKey`: GitHub App Private Key.
-- `allowedRepos` (optional): An array of strings representing allowed repository names.
+- `allowedRepos` (optional): An array of full repository names (`owner/repo`) the agent may respond in. Events are matched against the webhook's `repository.full_name`.

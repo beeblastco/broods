@@ -26,7 +26,11 @@ flowchart LR
 | `tavilySearch` | [`functions/harness-processing/tools/tavily.tool.ts`](../functions/harness-processing/tools/tavily.tool.ts) | Tavily AI SDK search | `config.tools.tavilySearch` |
 | `tavilyExtract` | [`functions/harness-processing/tools/tavily.tool.ts`](../functions/harness-processing/tools/tavily.tool.ts) | Tavily AI SDK extract | `config.tools.tavilyExtract` |
 | `googleSearch` | [`functions/harness-processing/tools/google-search.tool.ts`](../functions/harness-processing/tools/google-search.tool.ts) | Google provider-defined tool | `config.tools.googleSearch` |
+| `handoffs` | [`functions/harness-processing/tools/handoffs.tool.ts`](../functions/harness-processing/tools/handoffs.tool.ts) | Pancake tags + Zalo staff ping | `config.tools.handoffs` (`pancake.scenarioTagIds.{order,pending}`, `zalo.{botToken,notifyUserIds}`) |
+| `async_status` | [`functions/harness-processing/tools/async-status.tool.ts`](../functions/harness-processing/tools/async-status.tool.ts) | — (auto-registered, see below) | — |
 | Uploaded custom tool | S3 bundle + account tool metadata | Kubernetes tool runner | `config.tools.<toolId>` |
+
+`async_status` is not configured directly: it is registered automatically whenever any `config.tools` entry has `async: true` or a workspace has a persistent sandbox. It is the model-facing polling surface for the async lifecycle described below (`statusId` + actions `status`/`logs`/`stop`).
 
 Sandbox tools come from a referenced `sandbox` (+ `workspaces`) — see [Workspace & Sandbox](workspace/index.md). Skills use `config.skills`; see [Skills](skills.md). Subagents use `config.subagent`.
 
@@ -47,7 +51,9 @@ Tool registry path:
 
 Built-in local tools execute during the current `harness-processing` request. Uploaded custom tools run in a persistent Kubernetes runner pod keyed by account/tool. `harness-processing` creates a local Kubernetes executor client, but that does not mean a new pod is created for each call: `persistent: true` selects the reserved-sandbox path, and the stable account/tool `reservationKey` becomes the deterministic Kubernetes Sandbox name. Change the reservation key and the executor will address a different pod; keep it stable and it reconnects to the existing pod, creates it on first use, or resumes it after idle scale-to-zero.
 
-For the MVP, each tool call uses a short `exec` command inside that warm pod. The Lambda sends the tool input, merged config, a short-lived bundle URL, bundle hash, and async metadata to the runner script, then waits for JSON output. The runner verifies the cached bundle under `/cache/tools/<sha256>` first, downloads only on cache miss, verifies the downloaded hash, imports the default export, calls `execute(ctx, input)`, and returns the result. `$HOME/.cache/tools` and `/tmp/cache/tools` are fallback cache roots for images that do not expose `/cache/tools`.
+Runner pods get a NetworkPolicy allowing egress to the public internet only — cluster IPs, the node metadata service, and other private ranges are blocked, so uploaded tool code can call external APIs and the result callback but nothing inside the cluster.
+
+Each call prefers the **resident worker**: a long-lived in-pod Node process serving HTTP over a unix socket (`/invoke` + `/health`), started on first use and reused across calls. The Lambda sends the tool input, merged config, the bundle (inlined base64 when ≤ 64 KB, otherwise a short-lived signed URL), bundle hash, and async metadata. The worker verifies the cached bundle under `/cache/tools/<sha256>` first, downloads only on cache miss, verifies the downloaded hash, imports the default export, calls `execute(ctx, input)`, and returns NDJSON frames. A short `exec` heredoc runner remains as fallback when the worker produces no frames. `$HOME/.cache/tools` and `/tmp/cache/tools` are fallback cache roots for images that do not expose `/cache/tools`.
 
 ```mermaid
 sequenceDiagram
@@ -67,28 +73,15 @@ sequenceDiagram
   P-->>H: JSON result marker
 ```
 
-### Future Runner Process
+### Resident Worker
 
-The next performance step is a long-lived Node worker process inside the same persistent pod. Instead of `exec`-ing a short Node heredoc for every call, the pod would start a small HTTP or gRPC server once:
+The long-lived Node worker ([`custom-tool-worker.ts`](../functions/harness-processing/tools/custom-tool-worker.ts)) is started inside the persistent pod on first use:
 
 ```text
-harness-processing -> invoke runner endpoint -> warm Node process -> cached module -> execute(ctx,input)
+harness-processing -> exec into pod -> warm worker (unix-socket HTTP) -> cached module -> execute(ctx,input)
 ```
 
-Benefits:
-
-- Lower per-call overhead: no per-call shell process, Node startup, heredoc transfer, or module reload.
-- Better cache behavior: loaded modules and parsed JavaScript can stay in process memory, not just on disk.
-- Cleaner invoke protocol: payloads can be sent as JSON over HTTP/gRPC instead of embedded in generated code.
-- Closer to Convex-style function running: a warm runtime owns module loading and dispatch, while the control plane only sends invocations.
-
-Tradeoffs:
-
-- More infrastructure: pod readiness must include the runner server, health checks, port forwarding/service routing, and graceful restarts.
-- More lifecycle code: deploy/update has to tell the worker when a tool hash changes and evict the loaded module.
-- More security surface: the runner API needs local-only or authenticated access so uploaded code cannot invoke other tools directly.
-
-Recommendation: keep the current warm-pod `exec` runner for MVP because it preserves isolation and is simple to debug. Move to the long-lived Node worker once custom tools are frequently invoked enough that Node/process startup and module import show up in latency metrics.
+It keeps loaded modules in process memory (keyed by bundle hash, so a tool update loads the new module), serves only over a local unix socket, and is health-checked before each invoke. If the worker yields no frames, the call falls back to the one-shot `exec` heredoc runner.
 
 ### Streaming partial output (sync)
 
@@ -230,7 +223,7 @@ Omitting a tool disables it. Setting `enabled: false` also disables it. Set `nee
 Set `async: true` when a local `execute` tool may take long enough that the parent agent should keep working while the result is produced.
 For uploaded tools, `config` is merged over the upload-time `defaultConfig` and passed to `ctx.config`. Uploaded tool code always runs in Kubernetes; the platform decides whether to wait or detach from the request path.
 
-See [`examples/tool-async.ts`](../examples/tool-async.ts) for a runnable direct SSE example that uploads `test_async`, enables `config.tools.<toolId>.async`, and asks the agent to call the uploaded tool.
+See [`examples/uploaded-tool-async-sse.ts`](../examples/uploaded-tool-async-sse.ts) for a runnable direct SSE example that uploads `test_async`, enables `config.tools.<toolId>.async`, and asks the agent to call the uploaded tool. [`examples/uploaded-tool-async-nats.ts`](../examples/uploaded-tool-async-nats.ts) and [`examples/uploaded-tool-stream.ts`](../examples/uploaded-tool-stream.ts) cover the NATS and streaming variants.
 
 The full config field reference lives in the [API Reference](/api-reference) under `AgentConfig.tools`.
 

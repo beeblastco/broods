@@ -145,6 +145,8 @@ function denyUnlessProjectPrincipal(stage: string, region: string) {
           `arn:aws:iam::${AWS_ACCOUNT_ID}:role/${PROJECT_NAME}-${stage}-SandboxMountNoNetRole-*`,
           `arn:aws:iam::${AWS_ACCOUNT_ID}:role/beeblast_k3s_role`,
           `arn:aws:iam::${AWS_ACCOUNT_ID}:role/${resourceName("sandbox-s3files", stage, region)}`,
+          // Scoped role assumed by the harness for provider-sandbox mount-s3 credentials.
+          `arn:aws:iam::${AWS_ACCOUNT_ID}:role/${resourceName("sandbox-s3mount", stage, region)}`,
           `arn:aws:iam::${AWS_ACCOUNT_ID}:role/github-actions-aws-infra-deploy`,
           `arn:aws:iam::${AWS_ACCOUNT_ID}:role/github-actions-aws-sst-infra-deploy`,
         ],
@@ -582,6 +584,57 @@ export default $config({
       }),
     });
 
+    // Scoped credentials for provider sandboxes that mount S3 with mount-s3
+    // (daytona). The harness assumes this role per sandbox create and hands the
+    // short-lived session credentials to the sandbox instead of its own runtime
+    // credentials, so sandbox code can only reach the workspace/skills buckets.
+    const sandboxS3MountRole = new aws.iam.Role("SandboxS3MountRole", {
+      name: resourceName("sandbox-s3mount", stage, region),
+      assumeRolePolicy: JSON.stringify({
+        Version: "2012-10-17",
+        Statement: [{
+          Sid: "AllowHarnessAssumeRole",
+          Effect: "Allow",
+          Principal: { AWS: `arn:aws:iam::${AWS_ACCOUNT_ID}:root` },
+          Action: "sts:AssumeRole",
+        }],
+      }),
+    });
+
+    new aws.iam.RolePolicy("SandboxS3MountRolePolicy", {
+      role: sandboxS3MountRole.id,
+      policy: JSON.stringify({
+        Version: "2012-10-17",
+        Statement: [
+          {
+            Effect: "Allow",
+            Action: [
+              "s3:GetObject",
+              "s3:PutObject",
+              "s3:DeleteObject",
+              "s3:AbortMultipartUpload",
+            ],
+            Resource: [`${filesystemBucketArn}/*`],
+          },
+          {
+            Effect: "Allow",
+            Action: ["s3:ListBucket"],
+            Resource: [filesystemBucketArn],
+          },
+          {
+            Effect: "Allow",
+            Action: ["s3:GetObject"],
+            Resource: [`${skillsBucketArn}/*`],
+          },
+          {
+            Effect: "Allow",
+            Action: ["s3:ListBucket"],
+            Resource: [skillsBucketArn],
+          },
+        ],
+      }),
+    });
+
     const sandboxS3Files = new aws.s3.FilesFileSystem("SandboxS3Files", {
       bucket: filesystemBucketArn,
       roleArn: s3FilesRole.arn,
@@ -884,6 +937,7 @@ export default $config({
         ...(NATS_URL ? { NATS_URL } : {}),
         ...(NATS_TOKEN ? { NATS_TOKEN } : {}),
         DAYTONA_API_KEY: daytonaApiKey.value,
+        SANDBOX_MOUNT_ROLE_ARN: sandboxS3MountRole.arn,
         ...(DAYTONA_ORGANIZATION_ID ? { DAYTONA_ORGANIZATION_ID } : {}),
         ...(DAYTONA_API_URL ? { DAYTONA_API_URL } : {}),
         ...(DAYTONA_TARGET ? { DAYTONA_TARGET } : {}),
@@ -905,6 +959,10 @@ export default $config({
         {
           actions: ["ssm:GetParameter"],
           resources: [kubernetesSandboxKubeconfigParam.arn],
+        },
+        {
+          actions: ["sts:AssumeRole"],
+          resources: [sandboxS3MountRole.arn],
         },
         {
           actions: ["kms:Decrypt"],

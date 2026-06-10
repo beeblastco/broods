@@ -76,6 +76,7 @@ function createRequest(payload: Record<string, unknown>) {
   return {
     method: "POST",
     rawPath: "/",
+    rawQueryString: "",
     headers: {
       "x-signature-ed25519": "signature",
       "x-signature-timestamp": "1234567890",

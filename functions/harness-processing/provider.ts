@@ -44,6 +44,8 @@ export function resolveConfiguredModel(agentConfig: AgentConfig): ResolvedModelP
       return resolveProviderModel(providerName, createGateway(providerConfig as never), modelId);
     case "minimax":
       return resolveProviderModel(providerName, createMinimax(providerConfig as never), modelId);
+    default:
+      throw new Error(`Unsupported model provider: ${String(providerName)}`);
   }
 }
 

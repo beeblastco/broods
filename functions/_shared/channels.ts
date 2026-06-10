@@ -24,6 +24,7 @@ export interface ChannelActions {
 export interface ChannelRequest {
   method: string;
   rawPath: string;
+  rawQueryString: string;
   headers: Record<string, string>;
   body: string;
 }

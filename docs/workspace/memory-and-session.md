@@ -93,8 +93,9 @@ flowchart LR
 - `acquireConversationLease()` serializes work per conversation.
 - `appendIngressEvents()` persists incoming user, assistant, tool, and persisted system messages.
 - `createTurnContext()` loads conversation entries, builds system prompt parts, runs compaction when configured, and prunes model-visible messages.
-- `workspaceBindings()` resolves account-scoped workspace and sandbox records, applies
-  per-workspace sandbox overrides, and hashes `accountId:workspaceId` with
+- `resolvedWorkspaces()` (backed by `resolveAgentRuntime()` in
+  `functions/_shared/workspaces.ts`) resolves account-scoped workspace and sandbox records,
+  applies per-workspace sandbox overrides, and hashes `accountId:workspaceId` with
   `normalizeFilesystemNamespace()`.
 - `filesystemNamespace()` returns the default workspace namespace for existing single-workspace callers.
 

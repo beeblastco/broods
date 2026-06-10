@@ -8,6 +8,7 @@ import type { JSONSchema7 } from "ai";
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto";
 import type { ChannelStreamMode } from "../channel-streaming.ts";
 import { requireEnv } from "../env.ts";
+import { assertPublicHttpsUrl } from "../http.ts";
 import {
   accountModelProviderNames,
   isAccountModelProviderName,
@@ -224,6 +225,7 @@ export interface AgentDiscordChannelConfig {
 export interface AgentPancakeChannelConfig {
   pageId?: string;
   pageAccessToken?: string;
+  webhookSecret?: string;
   senderId?: string;
   options?: Record<string, unknown>;
   streaming?: AgentChannelStreamingConfig;
@@ -584,14 +586,7 @@ function normalizeWebhookHookConfig(value: unknown): void {
   }
 
   if (typeof config.url === "string" && config.url.trim().length > 0) {
-    try {
-      const url = new URL(config.url);
-      if (url.protocol !== "https:") {
-        throw new Error("config.hooks.webhook.url must use https");
-      }
-    } catch (err) {
-      throw new Error(err instanceof Error ? err.message : "config.hooks.webhook.url must be a valid URL");
-    }
+    assertPublicHttpsUrl(config.url, "config.hooks.webhook.url");
   }
 }
 
@@ -843,6 +838,7 @@ function normalizePancakeConfig(value: unknown): void {
   const config = value as Record<string, unknown>;
   assertOptionalString(config.pageId, "config.channels.pancake.pageId");
   assertOptionalString(config.pageAccessToken, "config.channels.pancake.pageAccessToken");
+  assertOptionalString(config.webhookSecret, "config.channels.pancake.webhookSecret");
   assertOptionalString(config.senderId, "config.channels.pancake.senderId");
   if (config.options !== undefined && !isPlainObject(config.options)) {
     throw new Error("config.channels.pancake.options must be an object");
@@ -1140,6 +1136,8 @@ function isSecretConfigKey(key: string): boolean {
     normalized.includes("certificate") ||
     normalized.includes("accesskey") ||
     normalized.includes("access_key") ||
+    normalized.includes("password") ||
+    normalized.includes("passwd") ||
     normalized === "apikey" ||
     normalized === "api_key";
 }
