@@ -9,13 +9,13 @@ functions plus one AWS S3 Files filesystem backed by the workspace S3 bucket.
 
 The same image is deployed across two axes; the harness auto-selects one per run:
 
-| | internet **on** | internet **off** |
+| | network `allow-all` | network `deny-all` / `restricted` |
 | --- | --- | --- |
 | **workspace mounted** | `SandboxMountNet` (VPC + NAT + S3 mount) | `SandboxMountNoNet` (VPC, S3 mount) |
 | **no workspace** | `SandboxNoMountNet` (no VPC, fastest) | `SandboxNoMountNoNet` (VPC, no mount) |
 
 - The **mount axis** comes from whether the run has a workspace namespace.
-- The **internet axis** comes from `sandbox.internet`.
+- The **network axis** comes from `sandbox.network.mode`.
 - All four are ARM64, 512 MB (minimum for the S3 mount), 5-minute timeout, pulled from the
   `latest-arm64` ECR image tag.
 
@@ -61,7 +61,7 @@ sst deploy ──creates──▶ ECR repo (per region)  ◀──pushes── l
   "name": "default",
   "config": {
     "provider": "lambda",
-    "internet": true,
+    "network": { "mode": "allow-all" },
     "permissionMode": "ask",
     "envVars": { "MY_API_BASE": "https://api.example.com" }
   }
@@ -203,7 +203,7 @@ Prefer the `write` tool over `bash` redirection when durability matters — it d
 - functions have no public Function URLs and need no account-management permissions
 - child processes run with no AWS credentials (`env_clear()`)
 - only the mounted functions can reach the workspace bucket (bucket policy principals)
-- internet access is gated by `sandbox.internet` selecting the on/off function
+- internet access is gated by `sandbox.network.mode` selecting the on/off function
 - the Lambda mount is rooted at the shared `sandbox/` access-point prefix, so arbitrary
   `bash` should be treated as privileged workspace compute rather than a hard
   cross-workspace filesystem isolation boundary; dedicated file tools still reject path

@@ -21,6 +21,7 @@ const account = await createAccount(username);
 
 const sandbox = await createSandbox(account.secret, "daytona-sandbox", {
   provider: "daytona",
+  network: { mode: "allow-all" },
   permissionMode: "bypass",
   timeout: 120,
   outputLimitBytes: 65536,
@@ -32,8 +33,6 @@ const sandbox = await createSandbox(account.secret, "daytona-sandbox", {
     snapshot: "fuse-s3",
     workspaceRoot: "/mnt/workspaces",
     mountAwsS3Buckets: true,
-    networkBlockAll: false,
-    networkAllowList: "0.0.0.0/0",
   },
 });
 

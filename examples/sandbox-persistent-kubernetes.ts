@@ -24,6 +24,7 @@ const account = await createAccount(username);
 
 const sandbox = await createSandbox(account.secret, "k8s-reserved", {
   provider: "kubernetes",
+  network: { mode: "allow-all" },
   permissionMode: "bypass",
   // Reserve one long-lived sandbox per workspace and reconnect to it each call.
   persistent: true,

@@ -7,13 +7,14 @@ import { LambdaSandboxExecutor } from "./lambda-executor.ts";
 import { E2BSandboxExecutor } from "./e2b-executor.ts";
 import { DaytonaSandboxExecutor } from "./daytona-executor.ts";
 import { KubernetesSandboxExecutor } from "./kubernetes-executor.ts";
+import { VercelSandboxExecutor } from "./vercel-executor.ts";
 import type {
   SandboxExecutor,
   SandboxExecutorConfig,
   SandboxProvider,
 } from "./types.ts";
 
-export const SANDBOX_PROVIDERS = ["lambda", "e2b", "daytona", "kubernetes"] as const satisfies readonly SandboxProvider[];
+export const SANDBOX_PROVIDERS = ["lambda", "e2b", "daytona", "kubernetes", "vercel"] as const satisfies readonly SandboxProvider[];
 
 export function createSandboxExecutor(config: SandboxExecutorConfig): SandboxExecutor {
   const provider = config.provider ?? "lambda";
@@ -28,6 +29,9 @@ export function createSandboxExecutor(config: SandboxExecutorConfig): SandboxExe
   }
   if (provider === "kubernetes") {
     return new KubernetesSandboxExecutor(config);
+  }
+  if (provider === "vercel") {
+    return new VercelSandboxExecutor(config);
   }
 
   throw new Error(`sandbox provider ${provider} is not supported`);

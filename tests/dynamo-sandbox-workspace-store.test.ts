@@ -60,6 +60,7 @@ describe("dynamo sandbox config store", () => {
     expect(fetched?.config).toEqual({
       provider: "lambda",
       permissionMode: "bypass",
+      network: { mode: "deny-all" },
       envVars: { TOKEN: "super-secret" },
     });
   });

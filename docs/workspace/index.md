@@ -27,7 +27,7 @@ stateless `bash` when there is no workspace at all.
 ```mermaid
 flowchart LR
   subgraph Account
-    SB["sandboxConfig (sb_…)<br/>provider · permissionMode · internet"]
+    SB["sandboxConfig (sb_…)<br/>provider · permissionMode · network"]
     WS["workspaceConfig (ws_…)<br/>storage · harness"]
   end
   subgraph AgentA["Agent A config"]
@@ -50,7 +50,7 @@ Create the records via the account API, then reference them from the agent:
 
 ```jsonc
 // POST /accounts/me/sandboxes
-{ "name": "default", "config": { "provider": "lambda", "internet": true, "permissionMode": "ask" } }
+{ "name": "default", "config": { "provider": "lambda", "network": { "mode": "allow-all" }, "permissionMode": "ask" } }
 
 // POST /accounts/me/workspaces
 { "name": "notes", "config": { "storage": { "provider": "s3" }, "harness": { "enabled": true } } }

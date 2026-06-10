@@ -20,6 +20,7 @@ const account = await createAccount(username);
 
 const sandbox = await createSandbox(account.secret, "k8s-sandbox", {
   provider: "kubernetes",
+  network: { mode: "allow-all" },
   permissionMode: "bypass",
   timeout: 60,
   outputLimitBytes: 65536,

@@ -22,7 +22,7 @@ const sandbox = await createSandbox(account.secret, "lambda-sandbox", {
   permissionMode: "bypass",
   timeout: 30,
   outputLimitBytes: 65536,
-  internet: false,
+  network: { mode: "deny-all" },
 });
 
 const personal = await createWorkspace(account.secret, "personal", {

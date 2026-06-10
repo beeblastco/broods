@@ -9,7 +9,7 @@
  *   ws.sandbox omitted    -> inherit the agent-level `sandbox`
  *
  * Here one agent drives three workspaces at once: one inherits the default sandbox, one is
- * pinned to a stricter no-internet sandbox, and one is forced read-only.
+ * pinned to a stricter deny-all network sandbox, and one is forced read-only.
  */
 
 import {
@@ -27,18 +27,18 @@ const username = `ws-override-${Date.now()}`;
 
 const account = await createAccount(username);
 
-// Default sandbox (internet on) — inherited by workspaces that don't override.
+// Default sandbox (network allow-all) — inherited by workspaces that don't override.
 const defaultSandbox = await createSandbox(account.secret, "default-sandbox", {
   provider: "lambda",
-  internet: true,
+  network: { mode: "allow-all" },
   permissionMode: "bypass",
   timeout: 60,
 });
 
-// Stricter sandbox (no internet) — pinned to the `secure` workspace only.
+// Stricter sandbox (deny-all network) — pinned to the `secure` workspace only.
 const secureSandbox = await createSandbox(account.secret, "secure-sandbox", {
   provider: "lambda",
-  internet: false,
+  network: { mode: "deny-all" },
   permissionMode: "bypass",
   timeout: 60,
 });
@@ -49,7 +49,7 @@ const scratch = await createWorkspace(account.secret, "scratch", {
 
 const secure = await createWorkspace(account.secret, "secure", {
   storage: { provider: "s3" },
-}, "Pinned to the no-internet sandbox");
+}, "Pinned to the deny-all network sandbox");
 
 const reference = await createWorkspace(account.secret, "reference", {
   storage: { provider: "s3" },
@@ -67,7 +67,7 @@ const agent = await createAgent(account.secret, "Override assistant", {
     system: [
       "You have three workspaces with different sandbox bindings.",
       "scratch: full read/write via the default sandbox.",
-      "secure: full read/write via a no-internet sandbox.",
+      "secure: full read/write via a deny-all network sandbox.",
       "reference: read-only (read/glob only) — write/edit are not available there.",
       "Always pass the matching `workspace` name to each file tool. Report errors verbatim.",
     ].join("\n"),
@@ -76,7 +76,7 @@ const agent = await createAgent(account.secret, "Override assistant", {
   workspaces: [
     // Omitted sandbox => inherits defaultSandbox.
     { name: "scratch", workspaceId: scratch.workspaceId },
-    // Override => uses secureSandbox (and its no-internet permissionMode) for this workspace.
+    // Override => uses secureSandbox (and its deny-all network permissionMode) for this workspace.
     { name: "secure", workspaceId: secure.workspaceId, sandbox: secureSandbox.sandboxId },
     // null => forced read-only, even though the agent has a default sandbox.
     { name: "reference", workspaceId: reference.workspaceId, sandbox: null },
@@ -103,8 +103,8 @@ try {
           type: "text",
           text: [
             "Exercise the three workspace bindings:",
-            "1. In the `scratch` workspace, write python script connect to internet and output the file 'output.txt', execute it and then read it back.",
-            "2. In the `secure` workspace, write python script connect to internet and output the file 'output.txt', try execute it and then read it back.",
+            "1. In the `scratch` workspace, write a Python script that makes an outbound request and outputs the file 'output.txt', execute it and then read it back.",
+            "2. In the `secure` workspace, write a Python script that makes an outbound request and outputs the file 'output.txt', try to execute it and then read it back.",
             "3. In the `reference` workspace, try to write c.txt — report the read-only error verbatim — then glob **/* there.",
             "4. Summarize which workspaces accepted writes and which rejected them. Dont use urlopen, if have problem, should timeout, or else it will hang indeffinetely",
           ].join("\n"),

@@ -10,15 +10,22 @@
 
 import type { Readable } from "node:stream";
 
-export type SandboxProvider = "lambda" | "e2b" | "daytona" | "kubernetes";
+export type SandboxProvider = "lambda" | "e2b" | "daytona" | "kubernetes" | "vercel";
 export type SandboxRuntime = "bash" | "python" | "node";
+export type SandboxNetworkMode = "allow-all" | "deny-all" | "restricted";
+
+export interface SandboxNetworkConfig {
+  mode: SandboxNetworkMode;
+  allowDomains?: string[];
+  allowCidrs?: string[];
+}
 
 // Runtime subset of the persisted sandbox config (see storage/sandbox-config.ts)
-// that an executor needs. `internet` selects the lambda internet-on/off function.
+// that an executor needs.
 export interface SandboxExecutorConfig {
   provider?: SandboxProvider;
   runtimes?: SandboxRuntime[];
-  internet?: boolean;
+  network?: SandboxNetworkConfig;
   timeout?: number;
   memoryLimit?: number;
   outputLimitBytes?: number;
@@ -35,6 +42,10 @@ export interface SandboxExecutorConfig {
   ephemeralHome?: boolean;
   // Idle/expiry policy for a persistent sandbox (Fargate-style scale-to-0).
   lifecycle?: SandboxLifecycle;
+  // Persistent sandbox command hooks. onCreate is guarded by a marker for
+  // providers without native lifecycle support; onResume runs on acquisition.
+  onCreate?: string[];
+  onResume?: string[];
   // Account-configured env vars injected into every run.
   envVars?: Record<string, string>;
   // Provider-specific knobs (function names, templates, kubeconfig, ...).

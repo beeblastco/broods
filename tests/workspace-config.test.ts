@@ -20,9 +20,10 @@ describe("workspace config", () => {
     expect(normalizeWorkspaceConfig({})).toEqual({ storage: { provider: "s3" } });
   });
 
-  it("rejects a non-s3 storage provider and non-object storage/harness", () => {
+  it("accepts vercel storage and rejects unknown storage providers plus non-object storage/harness", () => {
+    expect(normalizeWorkspaceConfig({ storage: { provider: "vercel" } })).toEqual({ storage: { provider: "vercel" } });
     expect(() => normalizeWorkspaceConfig({ storage: { provider: "gcs" } }))
-      .toThrow("config.storage.provider must be one of: s3");
+      .toThrow("config.storage.provider must be one of: s3, vercel");
     expect(() => normalizeWorkspaceConfig({ storage: "s3" }))
       .toThrow("config.storage must be an object");
     expect(() => normalizeWorkspaceConfig({ harness: true }))

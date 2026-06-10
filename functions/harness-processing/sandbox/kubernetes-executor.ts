@@ -21,6 +21,7 @@ import {
   CustomObjectsApi,
   Exec,
   KubeConfig,
+  NetworkingV1Api,
   type V1Pod,
   type V1Status,
 } from "@kubernetes/client-node";
@@ -76,6 +77,7 @@ const HOME_VOLUME_NAME = "home";
 const LAST_ACTIVITY_ANNOTATION = "beeblast.co/last-activity-at";
 const IDLE_TIMEOUT_ANNOTATION = "beeblast.co/idle-timeout-seconds";
 const MANAGED_LABEL = "beeblast.co/persistent";
+const SANDBOX_NAME_LABEL = "beeblast.co/sandbox-name";
 
 interface ExecResult {
   stdout: string;
@@ -90,6 +92,7 @@ export class KubernetesSandboxExecutor implements SandboxExecutor {
   // (it is too large for a Lambda env var), which is async.
   #core!: CoreV1Api;
   #custom!: CustomObjectsApi;
+  #networking!: NetworkingV1Api;
   #exec!: Exec;
   #clientsReady?: Promise<void>;
 
@@ -103,6 +106,7 @@ export class KubernetesSandboxExecutor implements SandboxExecutor {
         const kc = await resolveKubeConfig(options(this.#config));
         this.#core = kc.makeApiClient(CoreV1Api);
         this.#custom = kc.makeApiClient(CustomObjectsApi);
+        this.#networking = kc.makeApiClient(NetworkingV1Api);
         this.#exec = new Exec(kc);
       })();
     }
@@ -163,6 +167,7 @@ export class KubernetesSandboxExecutor implements SandboxExecutor {
     }
     const pod = await this.#resumeForJob(request);
     await this.#prepareWorkspace(pod, request);
+    await this.#runLifecycle(pod, requiredWorkspacePath(request, "/mnt/workspaces"));
     const jobId = request.jobId ?? generateJobId();
     const workDir = requiredWorkspacePath(request, "/mnt/workspaces");
     // Detached session: the work outlives this exec and survives the request.
@@ -238,6 +243,7 @@ export class KubernetesSandboxExecutor implements SandboxExecutor {
       const name = persistentSandboxName(sandboxReservationKey(request)!);
       const pod = await this.#ensurePersistentSandbox(k8sNamespace, name);
       await this.#prepareWorkspace(pod, request);
+      await this.#runLifecycle(pod, requiredWorkspacePath(request, "/mnt/workspaces"));
       await this.#touchActivity(k8sNamespace, name);
       return await run(pod);
     }
@@ -246,10 +252,12 @@ export class KubernetesSandboxExecutor implements SandboxExecutor {
     const name = sandboxName(request.namespace);
     await this.#createSandbox(k8sNamespace, name, false);
     try {
+      await this.#ensureNetworkPolicy(k8sNamespace, name);
       const pod = await this.#waitForPodReady(k8sNamespace, name);
       await this.#prepareWorkspace(pod, request);
       return await run(pod);
     } finally {
+      await this.#deleteNetworkPolicy(k8sNamespace, name);
       await this.#deleteSandbox(k8sNamespace, name);
     }
   }
@@ -268,6 +276,7 @@ export class KubernetesSandboxExecutor implements SandboxExecutor {
       // Resume on demand: the reaper idled this sandbox; scale it back up.
       await this.#scaleSandbox(k8sNamespace, name, 1);
     }
+    await this.#ensureNetworkPolicy(k8sNamespace, name);
     return this.#waitForPodReady(k8sNamespace, name);
   }
 
@@ -383,7 +392,12 @@ export class KubernetesSandboxExecutor implements SandboxExecutor {
     if (pullSecrets?.length) podSpec.imagePullSecrets = pullSecrets.map((n) => ({ name: n }));
 
     const metadata: Record<string, unknown> = { name };
-    const spec: Record<string, unknown> = { podTemplate: { spec: podSpec } };
+    const spec: Record<string, unknown> = {
+      podTemplate: {
+        metadata: { labels: { [SANDBOX_NAME_LABEL]: name } },
+        spec: podSpec,
+      },
+    };
     if (persistent) {
       const lifecycle = resolveSandboxLifecycle(this.#config.lifecycle);
       metadata.labels = { [MANAGED_LABEL]: "true" };
@@ -413,6 +427,51 @@ export class KubernetesSandboxExecutor implements SandboxExecutor {
         spec,
       },
     });
+  }
+
+  async #ensureNetworkPolicy(k8sNamespace: string, name: string): Promise<void> {
+    const network = this.#config.network ?? { mode: "deny-all" as const };
+    if (network.mode === "allow-all") {
+      await this.#deleteNetworkPolicy(k8sNamespace, name);
+      return;
+    }
+    if (network.mode === "restricted" && (network.allowDomains?.length ?? 0) > 0) {
+      logWarn("kubernetes sandbox ignores restricted network domain allowlist; only CIDRs are enforced", {
+        allowDomains: network.allowDomains?.length ?? 0,
+      });
+    }
+    const cidrs = network.mode === "restricted" ? (network.allowCidrs ?? []) : [];
+    const body = {
+      apiVersion: "networking.k8s.io/v1",
+      kind: "NetworkPolicy",
+      metadata: { name, namespace: k8sNamespace },
+      spec: {
+        podSelector: { matchLabels: { [SANDBOX_NAME_LABEL]: name } },
+        policyTypes: ["Egress"],
+        egress: cidrs.length > 0
+          ? [{ to: cidrs.map((cidr) => ({ ipBlock: { cidr } })) }]
+          : [],
+      },
+    };
+    try {
+      await this.#networking.createNamespacedNetworkPolicy({ namespace: k8sNamespace, body });
+    } catch (cause) {
+      if (!isAlreadyExists(cause)) throw cause;
+      await this.#networking.replaceNamespacedNetworkPolicy({ namespace: k8sNamespace, name, body });
+    }
+  }
+
+  async #deleteNetworkPolicy(k8sNamespace: string, name: string): Promise<void> {
+    try {
+      await this.#networking.deleteNamespacedNetworkPolicy({ namespace: k8sNamespace, name });
+    } catch (cause) {
+      if (!isNotFound(cause)) {
+        logWarn("kubernetes sandbox network policy cleanup failed", {
+          name,
+          error: cause instanceof Error ? cause.message : String(cause),
+        });
+      }
+    }
   }
 
   async #deleteSandbox(k8sNamespace: string, name: string): Promise<void> {
@@ -504,6 +563,12 @@ export class KubernetesSandboxExecutor implements SandboxExecutor {
     if ((result.exitCode ?? 0) !== 0) {
       throw new Error(`sandbox setup command failed (${result.exitCode}): ${command.join(" ")}\n${result.stderr || result.stdout}`);
     }
+  }
+
+  async #runLifecycle(pod: V1Pod, workDir: string): Promise<void> {
+    const script = lifecycleScript(workDir, this.#config.onCreate, this.#config.onResume);
+    if (!script) return;
+    await this.#execOrThrow(pod, ["bash", "-lc", script]);
   }
 
   async #execInPod(pod: V1Pod, command: string[], timeoutSeconds: number, stdin?: Readable, onStdout?: (chunk: string) => void): Promise<ExecResult> {
@@ -744,6 +809,25 @@ function stringList(value: unknown): string[] | undefined {
     return value.split(",").map((v) => v.trim()).filter(Boolean);
   }
   return undefined;
+}
+
+function lifecycleScript(workDir: string, onCreate?: string[], onResume?: string[]): string | undefined {
+  if (!onCreate?.length && !onResume?.length) return undefined;
+  const marker = `${workDir}/.fp-setup-done`;
+  return [
+    "set -e",
+    `mkdir -p ${shellQuote(workDir)}`,
+    `cd ${shellQuote(workDir)}`,
+    ...(onCreate?.length
+      ? [
+          `if [ ! -f ${shellQuote(marker)} ]; then`,
+          ...onCreate,
+          `  touch ${shellQuote(marker)}`,
+          "fi",
+        ]
+      : []),
+    ...(onResume ?? []),
+  ].join("\n");
 }
 
 function sleep(ms: number): Promise<void> {

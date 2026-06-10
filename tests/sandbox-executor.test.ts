@@ -30,6 +30,44 @@ const daytonaCreateMock = mock(async (_options: Record<string, unknown>) => ({
   },
   delete: daytonaDeleteMock,
 }));
+const vercelRunCommandMock = mock(async (_params: Record<string, unknown>) => ({
+  exitCode: 0,
+  stdout: async () => "vercel ok\n",
+  stderr: async () => "",
+}));
+const vercelStopMock = mock(async () => {});
+const vercelDeleteMock = mock(async () => {});
+function vercelSandbox(name = "vercel-sandbox") {
+  return {
+    name,
+    runCommand: vercelRunCommandMock,
+    stop: vercelStopMock,
+    delete: vercelDeleteMock,
+  };
+}
+const vercelCreateMock = mock(async (_options: Record<string, unknown>) => vercelSandbox("ephemeral"));
+const vercelGetMock = mock(async (options: Record<string, unknown>) => {
+  const sandbox = vercelSandbox(String(options.name ?? "stored"));
+  if (typeof options.onResume === "function") await options.onResume(sandbox);
+  return sandbox;
+});
+const vercelGetOrCreateMock = mock(async (options: Record<string, unknown>) => {
+  const sandbox = vercelSandbox(String(options.name ?? "created"));
+  if (typeof options.onCreate === "function") await options.onCreate(sandbox);
+  return sandbox;
+});
+let storedSandboxExternalId: string | null = null;
+const getSandboxExternalIdMock = mock(async (_provider: string, _key: string) => storedSandboxExternalId);
+const claimSandboxInstanceMock = mock(async (_provider: string, _key: string, externalId: string) => {
+  storedSandboxExternalId = externalId;
+  return true;
+});
+const saveSandboxInstanceMock = mock(async (_provider: string, _key: string, externalId: string) => {
+  storedSandboxExternalId = externalId;
+});
+const deleteSandboxInstanceMock = mock(async () => {
+  storedSandboxExternalId = null;
+});
 let lambdaPayload = {
   ok: true,
   runtime: "bash",
@@ -53,6 +91,9 @@ const k8sGetNamespacedCustomObjectMock = mock(async (_input: unknown) => {
   return k8sGetSandboxResult;
 });
 const k8sPatchNamespacedCustomObjectMock = mock(async (_input: unknown) => ({}));
+const k8sCreateNamespacedNetworkPolicyMock = mock(async (_input: unknown) => ({}));
+const k8sReplaceNamespacedNetworkPolicyMock = mock(async (_input: unknown) => ({}));
+const k8sDeleteNamespacedNetworkPolicyMock = mock(async (_input: unknown) => ({}));
 const k8sReadNamespacedPodMock = mock(async (input: { name: string; namespace: string }) => ({
   metadata: { name: input.name, namespace: input.namespace },
   status: { conditions: [{ type: "Ready", status: "True" }] },
@@ -90,6 +131,21 @@ mock.module("@daytona/sdk", () => ({
   },
 }));
 
+mock.module("@vercel/sandbox", () => ({
+  Sandbox: {
+    create: vercelCreateMock,
+    get: vercelGetMock,
+    getOrCreate: vercelGetOrCreateMock,
+  },
+}));
+
+mock.module("../functions/harness-processing/sandbox/instance-store.ts", () => ({
+  getSandboxExternalId: getSandboxExternalIdMock,
+  claimSandboxInstance: claimSandboxInstanceMock,
+  saveSandboxInstance: saveSandboxInstanceMock,
+  deleteSandboxInstance: deleteSandboxInstanceMock,
+}));
+
 mock.module("@aws-sdk/client-lambda", () => ({
   LambdaClient: class {
     send = lambdaSendMock;
@@ -125,6 +181,11 @@ mock.module("@kubernetes/client-node", () => ({
     getNamespacedCustomObject = k8sGetNamespacedCustomObjectMock;
     patchNamespacedCustomObject = k8sPatchNamespacedCustomObjectMock;
   },
+  NetworkingV1Api: class {
+    createNamespacedNetworkPolicy = k8sCreateNamespacedNetworkPolicyMock;
+    replaceNamespacedNetworkPolicy = k8sReplaceNamespacedNetworkPolicyMock;
+    deleteNamespacedNetworkPolicy = k8sDeleteNamespacedNetworkPolicyMock;
+  },
   Exec: class {
     constructor(_kc: unknown) {}
     exec = k8sExecMock;
@@ -150,11 +211,25 @@ beforeEach(() => {
   daytonaExecuteCommandMock.mockClear();
   daytonaDeleteMock.mockClear();
   daytonaCreateMock.mockClear();
+  vercelRunCommandMock.mockClear();
+  vercelStopMock.mockClear();
+  vercelDeleteMock.mockClear();
+  vercelCreateMock.mockClear();
+  vercelGetMock.mockClear();
+  vercelGetOrCreateMock.mockClear();
+  storedSandboxExternalId = null;
+  getSandboxExternalIdMock.mockClear();
+  claimSandboxInstanceMock.mockClear();
+  saveSandboxInstanceMock.mockClear();
+  deleteSandboxInstanceMock.mockClear();
   lambdaSendMock.mockClear();
   k8sCreateNamespacedCustomObjectMock.mockClear();
   k8sDeleteNamespacedCustomObjectMock.mockClear();
   k8sGetNamespacedCustomObjectMock.mockClear();
   k8sPatchNamespacedCustomObjectMock.mockClear();
+  k8sCreateNamespacedNetworkPolicyMock.mockClear();
+  k8sReplaceNamespacedNetworkPolicyMock.mockClear();
+  k8sDeleteNamespacedNetworkPolicyMock.mockClear();
   k8sGetSandboxResult = undefined;
   k8sReadNamespacedPodMock.mockClear();
   k8sExecMock.mockClear();
@@ -177,11 +252,12 @@ describe("createSandboxExecutor", () => {
     expect(createSandboxExecutor({}).constructor.name).toBe("LambdaSandboxExecutor");
   });
 
-  it("creates E2B, Daytona, and Kubernetes executor adapters", () => {
+  it("creates E2B, Daytona, Kubernetes, and Vercel executor adapters", () => {
     const { createSandboxExecutor } = require("../functions/harness-processing/sandbox/index.ts");
     expect(createSandboxExecutor({ provider: "e2b" }).constructor.name).toBe("E2BSandboxExecutor");
     expect(createSandboxExecutor({ provider: "daytona" }).constructor.name).toBe("DaytonaSandboxExecutor");
     expect(createSandboxExecutor({ provider: "kubernetes" }).constructor.name).toBe("KubernetesSandboxExecutor");
+    expect(createSandboxExecutor({ provider: "vercel" }).constructor.name).toBe("VercelSandboxExecutor");
   });
 
   it("selects the mounted (no-internet) lambda when a namespace is present", async () => {
@@ -208,14 +284,26 @@ describe("createSandboxExecutor", () => {
     });
   });
 
-  it("selects the no-mount internet lambda when stateless + internet on", async () => {
+  it("selects the no-mount internet lambda when stateless + allow-all network", async () => {
     const { createSandboxExecutor } = require("../functions/harness-processing/sandbox/index.ts");
-    const executor = createSandboxExecutor({ provider: "lambda", internet: true });
+    const executor = createSandboxExecutor({ provider: "lambda", network: { mode: "allow-all" } });
 
     await executor.run({ code: "echo ok", timeoutSeconds: 30, outputLimitBytes: 4096 });
     const command = lambdaSendMock.mock.calls[0]![0] as { input: { FunctionName: string; Payload: Uint8Array } };
     expect(command.input.FunctionName).toBe("sandbox-nomount-net");
     expect(JSON.parse(new TextDecoder().decode(command.input.Payload)).namespace).toBeUndefined();
+  });
+
+  it("maps restricted lambda network to the no-internet slot", async () => {
+    const { createSandboxExecutor } = require("../functions/harness-processing/sandbox/index.ts");
+    const executor = createSandboxExecutor({
+      provider: "lambda",
+      network: { mode: "restricted", allowDomains: ["api.example.com"], allowCidrs: ["10.0.0.0/8"] },
+    });
+
+    await executor.run({ code: "echo ok", timeoutSeconds: 30, outputLimitBytes: 4096 });
+    const command = lambdaSendMock.mock.calls[0]![0] as { input: { FunctionName: string } };
+    expect(command.input.FunctionName).toBe("sandbox-nomount-nonet");
   });
 
   it("applies the harness output limit to lambda responses", async () => {
@@ -307,6 +395,73 @@ describe("createSandboxExecutor", () => {
       45,
     );
     expect(daytonaDeleteMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("runs Vercel commands and adapts async command output", async () => {
+    const { createSandboxExecutor } = require("../functions/harness-processing/sandbox/index.ts");
+    const executor = createSandboxExecutor({
+      provider: "vercel",
+      network: { mode: "restricted", allowDomains: ["api.example.com"], allowCidrs: ["10.0.0.0/8"] },
+      options: { token: "tok", teamId: "team_1", projectId: "prj_1" },
+    });
+
+    const result = await executor.run({
+      code: "echo hi",
+      namespace: NS,
+      workspaceRoot: "/mnt/workspaces",
+      timeoutSeconds: 30,
+      outputLimitBytes: 4096,
+    });
+
+    expect(result).toMatchObject({ ok: true, provider: "vercel", stdout: "vercel ok\n" });
+    expect(vercelCreateMock).toHaveBeenCalledWith(expect.objectContaining({
+      token: "tok",
+      teamId: "team_1",
+      projectId: "prj_1",
+      runtime: "node24",
+      persistent: false,
+      networkPolicy: { allow: ["api.example.com"], subnets: { allow: ["10.0.0.0/8"] } },
+    }));
+    expect(vercelRunCommandMock).toHaveBeenLastCalledWith(expect.objectContaining({
+      cmd: "bash",
+      args: ["-lc", "echo hi"],
+      cwd: `/mnt/workspaces/${NS}`,
+      timeoutMs: 30000,
+    }));
+    expect(vercelStopMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("uses Vercel native create/resume lifecycle callbacks for persistent sandboxes", async () => {
+    const { VercelSandboxExecutor } = await import("../functions/harness-processing/sandbox/vercel-executor.ts");
+    const executor = new VercelSandboxExecutor({
+      provider: "vercel",
+      persistent: true,
+      network: { mode: "allow-all" },
+      onCreate: ["echo create > hook.txt"],
+      onResume: ["echo resume >> hook.txt"],
+      options: { token: "tok", teamId: "team_1", projectId: "prj_1" },
+    });
+
+    await executor.run({
+      code: "cat hook.txt",
+      namespace: NS,
+      workspaceRoot: "/mnt/workspaces",
+      timeoutSeconds: 30,
+      outputLimitBytes: 4096,
+    });
+    expect(vercelGetOrCreateMock).toHaveBeenCalled();
+    expect((vercelRunCommandMock.mock.calls[0]![0] as { args: string[] }).args[1]).toContain("echo create > hook.txt");
+
+    vercelRunCommandMock.mockClear();
+    await executor.run({
+      code: "cat hook.txt",
+      namespace: NS,
+      workspaceRoot: "/mnt/workspaces",
+      timeoutSeconds: 30,
+      outputLimitBytes: 4096,
+    });
+    expect(vercelGetMock).toHaveBeenCalled();
+    expect((vercelRunCommandMock.mock.calls[0]![0] as { args: string[] }).args[1]).toContain("echo resume >> hook.txt");
   });
 
   it("uses the workspace service account for Kubernetes S3 mounts by default", async () => {
@@ -401,6 +556,25 @@ describe("createSandboxExecutor", () => {
     expect(container.volumeMounts).toBeUndefined();
     expect(body.spec.podTemplate.spec.securityContext).toBeUndefined();
     expect(container.env).toEqual(expect.arrayContaining([{ name: "HOME", value: "/home/node" }]));
+  });
+
+  it("creates a Kubernetes deny-all NetworkPolicy by default", async () => {
+    const { KubernetesSandboxExecutor } = await import("../functions/harness-processing/sandbox/kubernetes-executor.ts");
+    const executor = new KubernetesSandboxExecutor({ provider: "kubernetes" });
+
+    await executor.run({
+      code: "echo hi",
+      namespace: NS,
+      workspaceRoot: "/mnt/workspaces",
+      timeoutSeconds: 30,
+      outputLimitBytes: 4096,
+    });
+
+    const policy = k8sCreateNamespacedNetworkPolicyMock.mock.calls[0]![0] as {
+      body: { spec: { podSelector: { matchLabels: Record<string, string> }; egress: unknown[] } };
+    };
+    expect(policy.body.spec.podSelector.matchLabels["beeblast.co/sandbox-name"]).toMatch(/^fp-/);
+    expect(policy.body.spec.egress).toEqual([]);
   });
 
   it("resumes an idled persistent sandbox by scaling replicas 0 -> 1", async () => {

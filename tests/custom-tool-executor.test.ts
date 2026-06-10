@@ -87,7 +87,7 @@ describe("executeAccountToolInSandbox", () => {
     expect(createSandboxExecutorMock).toHaveBeenCalledWith(expect.objectContaining({
       provider: "kubernetes",
       persistent: true,
-      internet: true,
+      network: { mode: "allow-all" },
       lifecycle: expect.objectContaining({
         idleTimeoutSeconds: 300,
       }),

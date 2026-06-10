@@ -91,7 +91,7 @@ function workspaceCtx(sandboxOverrides: Record<string, unknown> = {}) {
       workspaceId: "ws_a",
       namespace: NS,
       config: { storage: { provider: "s3" } },
-      sandbox: { provider: "lambda", internet: true, ...sandboxOverrides },
+      sandbox: { provider: "lambda", network: { mode: "allow-all" }, ...sandboxOverrides },
     }],
   } as never;
 }
@@ -100,7 +100,7 @@ function workspaceCtx(sandboxOverrides: Record<string, unknown> = {}) {
 function statelessCtx(sandboxOverrides: Record<string, unknown> = {}) {
   return {
     workspaces: [],
-    statelessSandbox: { provider: "lambda", internet: true, ...sandboxOverrides },
+    statelessSandbox: { provider: "lambda", network: { mode: "allow-all" }, ...sandboxOverrides },
     statelessPermissionMode: "ask",
   } as never;
 }
@@ -121,7 +121,7 @@ function readonlyMountCtx() {
       workspaceId: "ws_ro",
       namespace: NS,
       config: { storage: { provider: "s3" } },
-      readMount: { provider: "lambda", internet: false },
+      readMount: { provider: "lambda", network: { mode: "deny-all" } },
     }],
   } as never;
 }
@@ -158,8 +158,8 @@ describe("sandbox tool set", () => {
     expect(input.payload.namespace).toBeUndefined();
   });
 
-  it("internet flag selects the no-internet mounted function", async () => {
-    const bash = await tool("bash", workspaceCtx({ internet: false }));
+  it("deny-all network selects the no-internet mounted function", async () => {
+    const bash = await tool("bash", workspaceCtx({ network: { mode: "deny-all" } }));
     await bash.execute({ command: "pwd" });
     expect(lastLambdaInput().functionName).toBe("sandbox-mount-nonet");
   });
@@ -242,8 +242,8 @@ describe("sandbox tool set", () => {
   it("rejects unknown named workspaces", async () => {
     const bash = await tool("bash", {
       workspaces: [
-        { name: "personal", workspaceId: "ws_a", namespace: "fs-personal", config: { storage: { provider: "s3" } }, sandbox: { provider: "lambda", internet: true } },
-        { name: "team", workspaceId: "ws_b", namespace: "fs-team", config: { storage: { provider: "s3" } }, sandbox: { provider: "lambda", internet: true } },
+        { name: "personal", workspaceId: "ws_a", namespace: "fs-personal", config: { storage: { provider: "s3" } }, sandbox: { provider: "lambda", network: { mode: "allow-all" } } },
+        { name: "team", workspaceId: "ws_b", namespace: "fs-team", config: { storage: { provider: "s3" } }, sandbox: { provider: "lambda", network: { mode: "allow-all" } } },
       ],
     } as never);
     const result = await bash.execute({ command: "pwd", workspace: "unknown" });

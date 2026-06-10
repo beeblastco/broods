@@ -25,6 +25,7 @@ const account = await createAccount(username);
 
 const sandbox = await createSandbox(account.secret, "e2b-sandbox", {
   provider: "e2b",
+  network: { mode: "allow-all" },
   permissionMode: "bypass",
   timeout: 120,
   outputLimitBytes: 65536,

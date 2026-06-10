@@ -814,8 +814,20 @@ paths:
                 config:
                   type: object
                   properties:
-                    provider: { type: string, enum: [lambda, e2b, daytona, kubernetes] }
-                    internet: { type: boolean }
+                    provider: { type: string, enum: [lambda, e2b, daytona, kubernetes, vercel] }
+                    network:
+                      type: object
+                      description: "Egress policy. Defaults to deny-all when omitted."
+                      properties:
+                        mode: { type: string, enum: [allow-all, deny-all, restricted] }
+                        allowDomains:
+                          type: array
+                          description: "Allowed domains when mode is restricted and the provider supports domain rules."
+                          items: { type: string }
+                        allowCidrs:
+                          type: array
+                          description: "Allowed CIDR ranges when mode is restricted and the provider supports CIDR rules."
+                          items: { type: string }
                     permissionMode: { type: string, enum: [edit, ask, bypass] }
                     persistent: { type: boolean, description: "Reserve one long-lived sandbox per workspace (reconnect across calls, background jobs, packages persist). Not valid for lambda." }
                     lifecycle:
@@ -824,6 +836,14 @@ paths:
                       properties:
                         idleTimeoutSeconds: { type: integer, description: "scale down / stop after this idle (default 900)" }
                         maxLifetimeSeconds: { type: integer, description: "hard-expiry backstop from creation (default 7 days)" }
+                    onCreate:
+                      type: array
+                      description: "Persistent-only shell commands run once on first create."
+                      items: { type: string }
+                    onResume:
+                      type: array
+                      description: "Persistent-only shell commands run on every resume/acquire."
+                      items: { type: string }
                     runtimes:
                       type: array
                       items: { type: string, enum: [bash, python, node] }
@@ -836,16 +856,26 @@ paths:
               lambda:
                 value:
                   name: default
-                  config: { provider: lambda, internet: true, permissionMode: ask }
+                  config: { provider: lambda, network: { mode: allow-all }, permissionMode: ask }
               persistentKubernetes:
                 value:
                   name: reserved
                   config:
                     provider: kubernetes
+                    network: { mode: allow-all }
                     persistent: true
                     permissionMode: bypass
                     lifecycle: { idleTimeoutSeconds: 1800 }
                     options: { mountAwsS3Buckets: true, persistentDiskGb: 20, persistentHome: /home/node }
+              vercel:
+                value:
+                  name: vercel
+                  config:
+                    provider: vercel
+                    network: { mode: restricted, allowDomains: [api.example.com], allowCidrs: [10.0.0.0/8] }
+                    persistent: true
+                    permissionMode: bypass
+                    onCreate: ["npm install"]
       responses:
         '201': { description: Sandbox created }
     get:
@@ -907,7 +937,7 @@ paths:
                     storage:
                       type: object
                       properties:
-                        provider: { type: string, enum: [s3] }
+                        provider: { type: string, enum: [s3, vercel] }
                     harness:
                       type: object
                       properties:

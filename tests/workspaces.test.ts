@@ -126,7 +126,7 @@ describe("resolveAgentRuntime", () => {
     expect(resolved.sandbox).toBeUndefined();
     expect(resolved.workspaces[0]?.sandbox).toBeUndefined();
     // Implicit read-only defaults to reading through the service-managed read-only mount.
-    expect(resolved.workspaces[0]?.readMount).toEqual({ provider: "lambda", internet: false });
+    expect(resolved.workspaces[0]?.readMount).toEqual({ provider: "lambda", network: { mode: "deny-all" } });
   });
 
   it("reads a read-only workspace directly from S3 when the ref opts out with sandbox: null", async () => {

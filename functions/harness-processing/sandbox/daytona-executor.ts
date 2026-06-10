@@ -6,6 +6,7 @@
  */
 
 import { optionalEnv } from "../../_shared/env.ts";
+import { logWarn } from "../../_shared/log.ts";
 import { DEFAULT_RELEASE_GRACE_SECONDS, MAX_CONCURRENT_BACKGROUND_JOBS, WORKSPACE_MOUNT_PREFIX, resolveSandboxLifecycle } from "../../_shared/sandbox.ts";
 import { Daytona, type Sandbox } from "@daytona/sdk";
 import type {
@@ -36,6 +37,9 @@ export class DaytonaSandboxExecutor implements SandboxExecutor {
 
     try {
       await mountAwsS3Buckets(sandbox, request, this.#config);
+      if (persistent) {
+        await this.#runLifecycle(sandbox, this.#workDir(sandboxReservationKey(request)!));
+      }
       const response = await sandbox.process.executeCommand(
         request.code,
         workspacePath(request),
@@ -62,6 +66,7 @@ export class DaytonaSandboxExecutor implements SandboxExecutor {
     const ns = this.#requirePersistent(request);
     const sandbox = await this.#acquire(request);
     await mountAwsS3Buckets(sandbox, request, this.#config);
+    await this.#runLifecycle(sandbox, this.#workDir(ns));
     const jobId = request.jobId ?? generateJobId();
     const script = launchScript(this.#jobsDir(ns), jobId, this.#workDir(ns), request.code, {
       maxConcurrentJobs: MAX_CONCURRENT_BACKGROUND_JOBS,
@@ -186,6 +191,15 @@ export class DaytonaSandboxExecutor implements SandboxExecutor {
     const response = await sandbox.process.executeCommand(code);
     return response.result ?? artifactStdout(response.artifacts);
   }
+
+  async #runLifecycle(sandbox: Sandbox, workDir: string): Promise<void> {
+    const script = lifecycleScript(workDir, this.#config.onCreate, this.#config.onResume);
+    if (!script) return;
+    const response = await sandbox.process.executeCommand(script);
+    if ((response.exitCode ?? 0) !== 0) {
+      throw new Error(response.result ?? artifactStdout(response.artifacts) ?? "daytona lifecycle hook failed");
+    }
+  }
 }
 
 function daytonaClientOptions(config: SandboxExecutorConfig): Record<string, unknown> {
@@ -224,10 +238,47 @@ function daytonaCreateOptions(
     ...(configString(options.snapshot) ? { snapshot: configString(options.snapshot) } : {}),
     ...(configString(options.image) ? { image: configString(options.image) } : {}),
     ...(Object.keys(envVars).length > 0 ? { envVars } : {}),
-    ...(typeof options.networkBlockAll === "boolean" ? { networkBlockAll: options.networkBlockAll } : {}),
-    ...(configString(options.networkAllowList) ? { networkAllowList: configString(options.networkAllowList) } : {}),
+    ...daytonaNetworkOptions(config),
     ...(persistent ? { autoStopInterval: autoStopMinutes, autoDeleteInterval: autoDeleteMinutes } : {}),
   };
+}
+
+function daytonaNetworkOptions(config: SandboxExecutorConfig): Record<string, unknown> {
+  const network = config.network ?? { mode: "deny-all" as const };
+  if (network.mode === "allow-all") {
+    return { networkBlockAll: false };
+  }
+  if (network.mode === "deny-all") {
+    return { networkBlockAll: true };
+  }
+  if ((network.allowDomains?.length ?? 0) > 0) {
+    logWarn("daytona sandbox ignores restricted network domain allowlist; only CIDRs are enforced", {
+      allowDomains: network.allowDomains?.length ?? 0,
+    });
+  }
+  return {
+    networkBlockAll: true,
+    ...((network.allowCidrs?.length ?? 0) > 0 ? { networkAllowList: network.allowCidrs!.join(",") } : {}),
+  };
+}
+
+function lifecycleScript(workDir: string, onCreate?: string[], onResume?: string[]): string | undefined {
+  if (!onCreate?.length && !onResume?.length) return undefined;
+  const marker = `${workDir}/.fp-setup-done`;
+  return [
+    "set -e",
+    `mkdir -p ${shellQuote(workDir)}`,
+    `cd ${shellQuote(workDir)}`,
+    ...(onCreate?.length
+      ? [
+          `if [ ! -f ${shellQuote(marker)} ]; then`,
+          ...onCreate,
+          `  touch ${shellQuote(marker)}`,
+          "fi",
+        ]
+      : []),
+    ...(onResume ?? []),
+  ].join("\n");
 }
 
 function daytonaEnvVars(userEnv: Record<string, string>, options: Record<string, unknown>): Record<string, string> {

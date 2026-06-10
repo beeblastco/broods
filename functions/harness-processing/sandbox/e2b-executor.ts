@@ -38,6 +38,7 @@ export class E2BSandboxExecutor implements SandboxExecutor {
     try {
       if (persistent && cwd) {
         await this.#shell(sandbox, `mkdir -p ${shellQuote(cwd)}`);
+        await this.#runLifecycle(sandbox, cwd);
       }
       const result = await sandbox.commands.run(request.code, {
         ...(cwd ? { cwd } : {}),
@@ -66,6 +67,7 @@ export class E2BSandboxExecutor implements SandboxExecutor {
     const sandbox = await this.#acquire(request);
     const workDir = this.#workDir(ns);
     await this.#shell(sandbox, `mkdir -p ${shellQuote(workDir)}`);
+    await this.#runLifecycle(sandbox, workDir);
     const jobId = request.jobId ?? generateJobId();
     const script = launchScript(this.#jobsDir(ns), jobId, workDir, request.code, {
       maxConcurrentJobs: MAX_CONCURRENT_BACKGROUND_JOBS,
@@ -174,6 +176,34 @@ export class E2BSandboxExecutor implements SandboxExecutor {
     const result = await sandbox.commands.run(code, { envs: { ...stringRecord(this.#config.envVars) } });
     return result.stdout ?? "";
   }
+
+  async #runLifecycle(sandbox: Sandbox, workDir: string): Promise<void> {
+    const script = lifecycleScript(workDir, this.#config.onCreate, this.#config.onResume);
+    if (!script) return;
+    const result = await sandbox.commands.run(script, { envs: { ...stringRecord(this.#config.envVars) } });
+    if ((result.exitCode ?? 0) !== 0) {
+      throw new Error([result.stderr, result.error, result.stdout].filter(Boolean).join("\n") || "e2b lifecycle hook failed");
+    }
+  }
+}
+
+function lifecycleScript(workDir: string, onCreate?: string[], onResume?: string[]): string | undefined {
+  if (!onCreate?.length && !onResume?.length) return undefined;
+  const marker = `${workDir}/.fp-setup-done`;
+  return [
+    "set -e",
+    `mkdir -p ${shellQuote(workDir)}`,
+    `cd ${shellQuote(workDir)}`,
+    ...(onCreate?.length
+      ? [
+          `if [ ! -f ${shellQuote(marker)} ]; then`,
+          ...onCreate,
+          `  touch ${shellQuote(marker)}`,
+          "fi",
+        ]
+      : []),
+    ...(onResume ?? []),
+  ].join("\n");
 }
 
 function e2bApiOptions(config: SandboxExecutorConfig): Record<string, unknown> {

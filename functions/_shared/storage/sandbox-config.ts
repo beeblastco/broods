@@ -1,8 +1,8 @@
 /**
  * Sandbox config: account-scoped, reusable sandbox definitions referenced by
  * agents via `config.sandbox`. A sandbox is a collection of Claude-Code-style
- * tools (bash/read/write/edit/glob/grep) backed by a provider (lambda/e2b/
- * daytona/kubernetes). Validation + the public projection live here; the
+ * tools (bash/read/write/edit/glob/grep) backed by a provider. Validation +
+ * the public projection live here; the
  * DynamoDB / Convex stores call these at their create/update entry points.
  * Stored encrypted at rest because `envVars`/`options` may hold secrets.
  */
@@ -15,13 +15,15 @@ import {
 } from "../sandbox.ts";
 import { mergeConfigObjects, redactConfigSecrets } from "./agent-config.ts";
 
-export type SandboxProvider = "lambda" | "e2b" | "daytona" | "kubernetes";
+export type SandboxProvider = "lambda" | "e2b" | "daytona" | "kubernetes" | "vercel";
 export type SandboxRuntimeName = "bash" | "python" | "node";
 export type SandboxPermissionMode = "edit" | "ask" | "bypass";
+export type SandboxNetworkMode = "allow-all" | "deny-all" | "restricted";
 
-const SANDBOX_PROVIDERS: readonly SandboxProvider[] = ["lambda", "e2b", "daytona", "kubernetes"];
+const SANDBOX_PROVIDERS: readonly SandboxProvider[] = ["lambda", "e2b", "daytona", "kubernetes", "vercel"];
 const SANDBOX_RUNTIMES: readonly SandboxRuntimeName[] = ["bash", "python", "node"];
 const SANDBOX_PERMISSION_MODES: readonly SandboxPermissionMode[] = ["edit", "ask", "bypass"];
+const SANDBOX_NETWORK_MODES: readonly SandboxNetworkMode[] = ["allow-all", "deny-all", "restricted"];
 const REDACTED_SECRET_VALUE = "********";
 
 export interface SandboxLifecycleConfig {
@@ -31,12 +33,18 @@ export interface SandboxLifecycleConfig {
   maxLifetimeSeconds?: number;
 }
 
+export interface SandboxNetworkConfig {
+  mode: SandboxNetworkMode;
+  allowDomains?: string[];
+  allowCidrs?: string[];
+}
+
 export interface SandboxConfig {
   provider: SandboxProvider;
   // Advisory runtime allow-list (best-effort harness-side; see docs).
   runtimes?: SandboxRuntimeName[];
-  // Selects the internet-on vs internet-off deployed function (lambda provider).
-  internet?: boolean;
+  // Provider-normalized egress policy. Unset input normalizes to deny-all.
+  network?: SandboxNetworkConfig;
   // Tool approval policy: edit|ask|bypass (replaces the old needsApproval boolean).
   permissionMode?: SandboxPermissionMode;
   // Reserve a long-lived sandbox per workspace namespace (reconnect across calls,
@@ -44,6 +52,9 @@ export interface SandboxConfig {
   persistent?: boolean;
   // Idle/expiry policy when `persistent` is true.
   lifecycle?: SandboxLifecycleConfig;
+  // Command hooks for persistent sandboxes.
+  onCreate?: string[];
+  onResume?: string[];
   timeout?: number;
   memoryLimit?: number;
   outputLimitBytes?: number;
@@ -78,25 +89,36 @@ export interface UpdateSandboxConfigInput {
 
 export function normalizeSandboxConfig(value: unknown): SandboxConfig {
   if (value == null) {
-    return { provider: "lambda", permissionMode: "ask" };
+    return { provider: "lambda", permissionMode: "ask", network: { mode: "deny-all" } };
   }
   if (!isPlainObject(value)) {
     throw new Error("config must be an object");
   }
 
   const config = value;
+  if ("internet" in config) {
+    throw new Error("config.internet is no longer supported; use config.network");
+  }
   assertOptionalEnum(config.provider, "config.provider", SANDBOX_PROVIDERS);
   assertOptionalEnum(config.permissionMode, "config.permissionMode", SANDBOX_PERMISSION_MODES);
-  assertOptionalBoolean(config.internet, "config.internet");
   assertOptionalBoolean(config.persistent, "config.persistent");
 
   const provider = (config.provider as SandboxProvider | undefined) ?? "lambda";
+  const network = normalizeNetwork(config.network);
+  if (provider === "e2b" && network.mode !== "allow-all") {
+    throw new Error("e2b cannot enforce egress restrictions; set config.network.mode to allow-all explicitly");
+  }
   if (config.persistent === true && provider === "lambda") {
     throw new Error("config.persistent is not supported by the lambda provider (lambda is always ephemeral)");
   }
   const lifecycle = config.lifecycle !== undefined ? normalizeLifecycle(config.lifecycle) : undefined;
   if (lifecycle && config.persistent !== true) {
     throw new Error("config.lifecycle requires config.persistent to be true");
+  }
+  const onCreate = config.onCreate !== undefined ? normalizeHookList(config.onCreate, "config.onCreate") : undefined;
+  const onResume = config.onResume !== undefined ? normalizeHookList(config.onResume, "config.onResume") : undefined;
+  if ((onCreate || onResume) && config.persistent !== true) {
+    throw new Error("config.onCreate and config.onResume require config.persistent to be true");
   }
 
   if (config.runtimes !== undefined) {
@@ -128,10 +150,12 @@ export function normalizeSandboxConfig(value: unknown): SandboxConfig {
 
   return {
     provider,
+    network,
     permissionMode: (config.permissionMode as SandboxPermissionMode | undefined) ?? "ask",
-    ...(config.internet !== undefined ? { internet: config.internet as boolean } : {}),
     ...(config.persistent !== undefined ? { persistent: config.persistent as boolean } : {}),
     ...(lifecycle ? { lifecycle } : {}),
+    ...(onCreate ? { onCreate } : {}),
+    ...(onResume ? { onResume } : {}),
     ...(config.runtimes !== undefined ? { runtimes: [...(config.runtimes as SandboxRuntimeName[])] } : {}),
     ...(config.timeout !== undefined ? { timeout: config.timeout as number } : {}),
     ...(config.memoryLimit !== undefined ? { memoryLimit: config.memoryLimit as number } : {}),
@@ -205,6 +229,50 @@ function assertOptionalBoolean(value: unknown, name: string): void {
   }
 }
 
+function normalizeNetwork(value: unknown): SandboxNetworkConfig {
+  if (value === undefined) {
+    return { mode: "deny-all" };
+  }
+  if (!isPlainObject(value)) {
+    throw new Error("config.network must be an object");
+  }
+  assertOptionalEnum(value.mode, "config.network.mode", SANDBOX_NETWORK_MODES);
+  const mode = (value.mode as SandboxNetworkMode | undefined) ?? "deny-all";
+  const allowDomains = normalizeOptionalStringList(value.allowDomains, "config.network.allowDomains");
+  const allowCidrs = normalizeOptionalStringList(value.allowCidrs, "config.network.allowCidrs");
+  if (mode !== "restricted" && (allowDomains || allowCidrs)) {
+    throw new Error("config.network.allowDomains and config.network.allowCidrs are only valid when config.network.mode is restricted");
+  }
+  return {
+    mode,
+    ...(allowDomains ? { allowDomains } : {}),
+    ...(allowCidrs ? { allowCidrs } : {}),
+  };
+}
+
+function normalizeHookList(value: unknown, name: string): string[] {
+  if (!Array.isArray(value) || value.length === 0) {
+    throw new Error(`${name} must be a non-empty array of non-empty strings`);
+  }
+  const commands = value.map((entry) => typeof entry === "string" ? entry.trim() : "");
+  if (commands.some((entry) => entry.length === 0)) {
+    throw new Error(`${name} must be a non-empty array of non-empty strings`);
+  }
+  return commands;
+}
+
+function normalizeOptionalStringList(value: unknown, name: string): string[] | undefined {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value)) {
+    throw new Error(`${name} must be an array of non-empty strings`);
+  }
+  const entries = value.map((entry) => typeof entry === "string" ? entry.trim() : "");
+  if (entries.some((entry) => entry.length === 0)) {
+    throw new Error(`${name} must be an array of non-empty strings`);
+  }
+  return entries;
+}
+
 function assertOptionalEnum<T extends string>(value: unknown, name: string, allowed: readonly T[]): void {
   if (value !== undefined && (typeof value !== "string" || !allowed.includes(value as T))) {
     throw new Error(`${name} must be one of: ${allowed.join(", ")}`);
@@ -271,6 +339,9 @@ function validateProviderOptions(provider: SandboxProvider, options: unknown, pe
   }
   if ("storageClass" in options && typeof options.storageClass !== "string") {
     throw new Error("config.options.storageClass must be a string");
+  }
+  if (provider === "vercel" && "runtime" in options && typeof options.runtime !== "string") {
+    throw new Error("config.options.runtime must be a string");
   }
 
   if (provider !== "kubernetes") {

@@ -20,7 +20,7 @@ const account = await createAccount(username);
 // 1) A standalone, account-scoped sandbox (the compute backend + permission mode).
 const sandbox = await createSandbox(account.secret, "default-sandbox", {
   provider: "lambda",
-  internet: true,
+  network: { mode: "allow-all" },
   permissionMode: "bypass",
   timeout: 60,
   envVars: {

@@ -14,10 +14,12 @@ flowchart LR
   Provider --> E2B["e2b"]
   Provider --> Daytona["daytona"]
   Provider --> Kubernetes["kubernetes"]
+  Provider --> Vercel["vercel"]
   Lambda --> Mount["S3 Files mount<br/>/mnt/workspaces/&lt;namespace&gt;"]
   E2B --> Stateless["native FS<br/>(workspace tools need persistent)"]
   Daytona --> ExternalMount
   Kubernetes --> ExternalMount
+  Vercel --> VercelFS["Vercel persistent FS<br/>(vercel workspace only)"]
   ExternalMount["mount-s3<br/>/mnt/workspaces/&lt;namespace&gt;"]
   Mount --> Bucket["S3 workspace bucket"]
   ExternalMount --> Bucket
@@ -33,14 +35,16 @@ A sandbox is a standalone, account-scoped record referenced from agent config by
 {
   "name": "default",
   "config": {
-    "provider": "lambda",          // lambda | e2b | daytona | kubernetes
-    "internet": true,              // selects the internet-on/off lambda function
+    "provider": "lambda",          // lambda | e2b | daytona | kubernetes | vercel
+    "network": { "mode": "allow-all" }, // allow-all | deny-all | restricted
     "permissionMode": "ask",       // edit | ask | bypass
     "runtimes": ["bash", "python", "node"], // advisory allow-list (best-effort)
     "timeout": 120,                // per-call seconds (max: lambda 300, others 600)
     "memoryLimit": 512,            // MB; bounded for lambda only, operator-sized otherwise
     "outputLimitBytes": 65536,
-    "envVars": { "FOO": "bar" }    // injected into every run (encrypted at rest)
+    "envVars": { "FOO": "bar" },   // injected into every run (encrypted at rest)
+    "onCreate": ["npm install"],   // persistent-only, once per reserved sandbox
+    "onResume": ["npm run dev &"]  // persistent-only, every resume/acquire
   }
 }
 ```
@@ -57,6 +61,28 @@ A sandbox is a standalone, account-scoped record referenced from agent config by
 | `e2b` | [E2B Details](e2b.md) |
 | `daytona` | [Daytona Details](daytona.md) |
 | `kubernetes` | [Kubernetes Details](kubernetes.md) |
+| `vercel` | [Vercel Details](vercel.md) |
+
+## Network policy
+
+`network` replaces the old Lambda-only `internet` boolean. If omitted, the config
+normalizes to `deny-all`.
+
+| Mode | Meaning |
+| --- | --- |
+| `allow-all` | outbound internet allowed |
+| `deny-all` | outbound internet denied |
+| `restricted` | allow only listed domains/CIDRs where the provider can enforce them |
+
+Provider enforcement:
+
+| Provider | `allow-all` | `deny-all` | `restricted` |
+| --- | --- | --- | --- |
+| `lambda` | internet-on function slot | no-internet function slot | no-internet slot (fail closed; allowlists are logged as unsupported) |
+| `vercel` | native `networkPolicy: "allow-all"` | native `networkPolicy: "deny-all"` | native domain + CIDR allowlists |
+| `daytona` | `networkBlockAll: false` | `networkBlockAll: true` | CIDR allowlist only; domain allowlists are ignored with a warning |
+| `kubernetes` | no NetworkPolicy | empty-egress NetworkPolicy | CIDR egress NetworkPolicy; domains require an FQDN-aware CNI/proxy |
+| `e2b` | allowed | rejected by validation | rejected by validation |
 
 ## Reserved (persistent) sandboxes
 
@@ -69,7 +95,8 @@ and running jobs survive across calls, scaling down on idle like Fargate. Not va
 ```jsonc
 {
   "config": {
-    "provider": "kubernetes",   // kubernetes | daytona | e2b
+    "provider": "kubernetes",   // kubernetes | daytona | e2b | vercel
+    "network": { "mode": "allow-all" },
     "persistent": true,
     "permissionMode": "bypass",
     "lifecycle": {
@@ -80,7 +107,9 @@ and running jobs survive across calls, scaling down on idle like Fargate. Not va
       "mountAwsS3Buckets": true,   // S3 = shared workspace files
       "persistentDiskGb": 20,      // home PVC (packages/venvs/caches)
       "persistentHome": "/home/node"
-    }
+    },
+    "onCreate": ["python3 -m venv $HOME/.venv"],
+    "onResume": ["test -x $HOME/.venv/bin/python"]
   }
 }
 ```
@@ -113,12 +142,13 @@ flowchart LR
 How idle scale-down happens differs per provider: **kubernetes** uses an infra reaper
 CronJob (scales `replicas` 0↔1; home PVC + S3 persist); **daytona** uses native
 `autoStopInterval` (filesystem persists); **e2b** uses native `lifecycle.onTimeout: "pause"`
-(filesystem + memory snapshot persist). A reserved sandbox is reconnected by id on the next
-call (kubernetes derives a deterministic Sandbox name from the workspace namespace; daytona/
-e2b store the id in a `persistentSandboxInstance` table).
+(filesystem + memory snapshot persist); **vercel** uses named persistent sandboxes and native
+`onCreate`/`onResume` callbacks. A reserved sandbox is reconnected by id on the next call
+(kubernetes derives a deterministic Sandbox name from the workspace namespace; daytona/e2b/
+vercel store the id/name in a `persistentSandboxInstance` table).
 
 **Clean delete (no leaks).** Deleting a workspace or account releases its reserved sandboxes:
-daytona/e2b are torn down explicitly (and their instance rows dropped); kubernetes is reclaimed
+daytona/e2b/vercel are torn down explicitly (and their instance rows dropped); kubernetes is reclaimed
 cluster-side — every reserved Sandbox carries a `shutdownTime` (`shutdownPolicy: Delete`) the
 harness refreshes on each use, so an abandoned Sandbox self-deletes, and the reaper sweeps any
 orphaned home PVC. There is also a hard-lifetime backstop (`lifecycle.maxLifetimeSeconds`,
@@ -180,9 +210,9 @@ killed when the sandbox is recreated/scaled-to-0 reports as `failed` (it stamps 
 boot id, so a stale `.running` marker is never read as "running forever"). The idle reaper
 never pauses a sandbox while a job is still running.
 
-> **Network note (kubernetes):** auto-delivery requires the sandbox pod to reach the harness
-> Function URL. Daytona/E2B sandboxes have outbound internet by default; for the kubernetes
-> provider the cluster must allow pods egress to the Function URL. Without egress the job still
+> **Network note:** auto-delivery requires the sandbox to reach the harness Function URL.
+> Set `network.mode: "allow-all"` or include the Function URL in provider-supported allowlists.
+> Without egress the job still
 > runs and `async_status` polling still works — only the automatic push-back is skipped.
 >
 > **WebSocket delivery** additionally requires the cluster's NATS to expose a WebSocket
@@ -212,6 +242,7 @@ Provider implementation paths are still useful for debugging:
 | `daytona` | `/mnt/workspaces/<namespace>` by default | `mount-s3` at `options.workspaceRoot/<namespace>` |
 | `kubernetes` | `/mnt/workspaces/<namespace>` by default | `mount-s3` at `options.workspaceRoot/<namespace>` |
 | `e2b` | `/mnt/workspaces/<namespace>` when `persistent` | native sandbox FS (persists via pause); workspace tools require `persistent: true` |
+| `vercel` | `/mnt/workspaces/<namespace>` when `persistent` | Vercel persistent FS; not shared with S3-backed providers |
 
 Keep prompt text small: tell the model "use relative paths." Put provider-specific mount
 paths in docs and logs, not ordinary task prompts.
@@ -220,16 +251,16 @@ paths in docs and logs, not ordinary task prompts.
 
 The lambda provider deploys the **same image** as four functions across two axes, and the
 harness auto-selects one per run. The mount axis comes from whether the run has a workspace
-namespace; the internet axis comes from `sandbox.internet`.
+namespace; the network axis comes from `sandbox.network.mode`.
 
-| | internet **on** | internet **off** |
+| | network `allow-all` | network `deny-all` / `restricted` |
 | --- | --- | --- |
 | **workspace mounted** | VPC + NAT + S3 mount | VPC, no NAT, S3 mount |
 | **no workspace** | plain Lambda (fastest) | VPC, no NAT, no mount |
 
 Function names are wired by SST into four env vars
 (`SANDBOX_FN_{MOUNT,NOMOUNT}_{NET,NONET}`). Cost note: the topology uses fck-nat on
-non-prod (≈10× cheaper than a NAT Gateway) and runs the no-mount + internet-on function
+non-prod (≈10× cheaper than a NAT Gateway) and runs the no-mount + allow-all function
 with no VPC for free managed egress.
 
 ## How agents use it

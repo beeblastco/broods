@@ -517,8 +517,10 @@ function customToolExecutorConfig(): Parameters<typeof createSandboxExecutor>[0]
     // Uploaded tools return results via HTTP callback, never via durable disk, so
     // skip the home PVC: the pod still outlives the request for detached jobs, but
     // cold-start drops from ~22s to ~5s (no cloud-volume create+attach).
+    // Do not add onCreate hooks to this ephemeral-home config: the marker would
+    // not survive scale-to-0, so one-time setup would rerun on every resume.
     ephemeralHome: true,
-    internet: true,
+    network: { mode: "allow-all" },
     timeout: 120,
     outputLimitBytes: 1024 * 1024,
     lifecycle: {

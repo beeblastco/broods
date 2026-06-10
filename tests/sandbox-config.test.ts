@@ -62,8 +62,8 @@ describe("sandbox config", () => {
 
 describe("sandbox config defaults & validation", () => {
   it("defaults to lambda + ask when config is empty or null", () => {
-    expect(normalizeSandboxConfig(undefined)).toEqual({ provider: "lambda", permissionMode: "ask" });
-    expect(normalizeSandboxConfig({})).toEqual({ provider: "lambda", permissionMode: "ask" });
+    expect(normalizeSandboxConfig(undefined)).toEqual({ provider: "lambda", permissionMode: "ask", network: { mode: "deny-all" } });
+    expect(normalizeSandboxConfig({})).toEqual({ provider: "lambda", permissionMode: "ask", network: { mode: "deny-all" } });
   });
 
   it("rejects unknown providers, permission modes, and runtimes", () => {
@@ -73,24 +73,41 @@ describe("sandbox config defaults & validation", () => {
     expect(() => normalizeSandboxConfig({ runtimes: [] })).toThrow("config.runtimes must be a non-empty array");
   });
 
-  it("rejects non-string env vars, non-object options, and non-boolean internet", () => {
+  it("rejects non-string env vars, non-object options, and the removed internet field", () => {
     expect(() => normalizeSandboxConfig({ envVars: { OK: 1 } })).toThrow("config.envVars must be an object with string values");
     expect(() => normalizeSandboxConfig({ options: "nope" })).toThrow("config.options must be an object");
-    expect(() => normalizeSandboxConfig({ internet: "yes" })).toThrow("config.internet must be a boolean");
+    expect(() => normalizeSandboxConfig({ internet: true })).toThrow("config.internet is no longer supported");
   });
 
-  it("round-trips runtimes/internet/envVars and trims name/description through create input", () => {
+  it("defaults network to deny-all and validates restricted allowlists", () => {
+    expect(normalizeSandboxConfig({ provider: "lambda" }).network).toEqual({ mode: "deny-all" });
+    expect(normalizeSandboxConfig({
+      provider: "vercel",
+      network: { mode: "restricted", allowDomains: ["api.example.com"], allowCidrs: ["10.0.0.0/8"] },
+    }).network).toEqual({ mode: "restricted", allowDomains: ["api.example.com"], allowCidrs: ["10.0.0.0/8"] });
+    expect(() => normalizeSandboxConfig({ provider: "lambda", network: { mode: "allow-all", allowDomains: ["api.example.com"] } }))
+      .toThrow("only valid when config.network.mode is restricted");
+  });
+
+  it("rejects e2b configs that do not explicitly allow all network egress", () => {
+    expect(() => normalizeSandboxConfig({ provider: "e2b" }))
+      .toThrow("e2b cannot enforce egress restrictions");
+    expect(normalizeSandboxConfig({ provider: "e2b", network: { mode: "allow-all" } }).network)
+      .toEqual({ mode: "allow-all" });
+  });
+
+  it("round-trips runtimes/network/envVars and trims name/description through create input", () => {
     expect(normalizeCreateSandboxConfigInput({
       name: "  build  ",
       description: "  builder  ",
-      config: { provider: "lambda", internet: true, runtimes: ["bash", "node"], envVars: { TOKEN: "abc" } },
+      config: { provider: "lambda", network: { mode: "allow-all" }, runtimes: ["bash", "node"], envVars: { TOKEN: "abc" } },
     })).toEqual({
       name: "build",
       description: "builder",
       config: {
         provider: "lambda",
         permissionMode: "ask",
-        internet: true,
+        network: { mode: "allow-all" },
         runtimes: ["bash", "node"],
         envVars: { TOKEN: "abc" },
       },
@@ -125,10 +142,11 @@ describe("sandbox config persistent / lifecycle / PVC", () => {
       .toThrow("config.persistent is not supported by the lambda provider");
   });
 
-  it("accepts persistent on kubernetes/daytona/e2b", () => {
+  it("accepts persistent on kubernetes/daytona/e2b/vercel", () => {
     expect(normalizeSandboxConfig({ provider: "kubernetes", persistent: true }).persistent).toBe(true);
     expect(normalizeSandboxConfig({ provider: "daytona", persistent: true }).persistent).toBe(true);
-    expect(normalizeSandboxConfig({ provider: "e2b", persistent: true }).persistent).toBe(true);
+    expect(normalizeSandboxConfig({ provider: "e2b", persistent: true, network: { mode: "allow-all" } }).persistent).toBe(true);
+    expect(normalizeSandboxConfig({ provider: "vercel", persistent: true }).persistent).toBe(true);
   });
 
   it("requires persistent when lifecycle is set, and bounds its intervals", () => {
@@ -144,6 +162,19 @@ describe("sandbox config persistent / lifecycle / PVC", () => {
       persistent: true,
       lifecycle: { idleTimeoutSeconds: 0 },
     })).toThrow("config.lifecycle.idleTimeoutSeconds must be a positive integer");
+  });
+
+  it("requires persistent when lifecycle hooks are set", () => {
+    expect(() => normalizeSandboxConfig({ provider: "kubernetes", onCreate: ["npm install"] }))
+      .toThrow("config.onCreate and config.onResume require config.persistent");
+    expect(() => normalizeSandboxConfig({ provider: "kubernetes", persistent: true, onResume: [] }))
+      .toThrow("config.onResume must be a non-empty array");
+    expect(normalizeSandboxConfig({
+      provider: "vercel",
+      persistent: true,
+      onCreate: ["npm install"],
+      onResume: ["npm run dev &"],
+    })).toMatchObject({ onCreate: ["npm install"], onResume: ["npm run dev &"] });
   });
 
   it("only allows PVC options on a persistent kubernetes sandbox", () => {
@@ -162,7 +193,7 @@ describe("sandbox config persistent / lifecycle / PVC", () => {
 });
 
 describe("sandbox config update merge", () => {
-  const existing: SandboxConfig = { provider: "lambda", permissionMode: "ask", envVars: { A: "1" } };
+  const existing: SandboxConfig = { provider: "lambda", permissionMode: "ask", network: { mode: "deny-all" }, envVars: { A: "1" } };
 
   it("deep-merges a config patch onto the existing config and re-validates", () => {
     const patched = normalizeUpdateSandboxConfigInput(existing, {
@@ -171,6 +202,7 @@ describe("sandbox config update merge", () => {
     expect(patched.config).toEqual({
       provider: "lambda",
       permissionMode: "bypass",
+      network: { mode: "deny-all" },
       envVars: { A: "1", B: "2" },
     });
   });

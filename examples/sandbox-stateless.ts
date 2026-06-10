@@ -23,7 +23,7 @@ const account = await createAccount(username);
 // Sandbox only — no workspace is created or referenced below.
 const sandbox = await createSandbox(account.secret, "stateless-sandbox", {
   provider: "lambda",
-  internet: false,
+  network: { mode: "deny-all" },
   permissionMode: "bypass",
   timeout: 60,
 });

@@ -370,8 +370,8 @@ read-only `read`/`glob` when absent (via a read-only mount by default, or direct
 is resolved per call from the selected workspace.
 
 Every sandbox-backed tool compiles to a single `run` against the provider (`lambda`/`e2b`/
-`daytona`/`kubernetes`). The lambda provider deploys the same image as four functions
-(workspace mount × internet) and auto-selects one per run. A workspace's namespace is
+`daytona`/`kubernetes`/`vercel`). The lambda provider deploys the same image as four functions
+(workspace mount × network slot) and auto-selects one per run. A workspace's namespace is
 derived from `accountId:workspaceId`, so agents that reference the same `workspaceId` share
 files — including across the sandbox-backed and read-only S3 paths. A workspace with no
 sandbox still serves `MEMORY.md` via the S3 API. `workspace.harness.enabled=false`

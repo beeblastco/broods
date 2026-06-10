@@ -106,12 +106,12 @@ export async function resolveAgentRuntime(
       effectiveSandbox = sandbox;
     }
     // Read-only workspace (no effective sandbox): default to reading through a
-    // service-managed read-only Lambda mount (internet off, cheapest mount slot) so
+    // service-managed read-only Lambda mount (network denied, cheapest mount slot) so
     // reads reflect committed writes immediately. The existing `sandbox: null` opt-out
     // ("no sandbox, no compute") also skips the mount: read straight from S3 instead.
     const readMount: SandboxConfig | undefined =
       !effectiveSandbox && ref.sandbox !== null
-        ? { provider: "lambda", internet: false }
+        ? { provider: "lambda", network: { mode: "deny-all" } }
         : undefined;
     workspaces.push({
       name: ref.name,

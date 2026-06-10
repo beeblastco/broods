@@ -3,13 +3,14 @@
  * Invokes the uniform lambda-sandbox container image (real bash/python3/node).
  *
  * Four functions of the same image are deployed across two axes (workspace mount
- * vs none, internet on vs off). The function is auto-selected per run from
- * (namespace present? => mounted) and the configured `internet` flag, via four
- * env vars set by SST (SANDBOX_FN_{MOUNT,NOMOUNT}_{NET,NONET}).
+ * vs none, network allow-all vs denied). The function is auto-selected per run
+ * from (namespace present? => mounted) and the configured `network.mode`, via
+ * four env vars set by SST (SANDBOX_FN_{MOUNT,NOMOUNT}_{NET,NONET}).
  */
 
 import { InvokeCommand, LambdaClient } from "@aws-sdk/client-lambda";
 import { optionalEnv } from "../../_shared/env.ts";
+import { logWarn } from "../../_shared/log.ts";
 import type {
   SandboxExecutor,
   SandboxExecutorConfig,
@@ -53,9 +54,16 @@ export class LambdaSandboxExecutor implements SandboxExecutor {
   async run(request: SandboxRunRequest): Promise<SandboxRunResult> {
     const runtime = request.runtime ?? "bash";
     const hasWorkspace = typeof request.namespace === "string" && request.namespace.length > 0;
-    const internet = this.#config.internet === true;
+    const network = this.#config.network ?? { mode: "deny-all" as const };
+    const allowInternet = network.mode === "allow-all";
+    if (network.mode === "restricted" && ((network.allowDomains?.length ?? 0) > 0 || (network.allowCidrs?.length ?? 0) > 0)) {
+      logWarn("lambda sandbox cannot enforce restricted network allowlists; using no-internet slot", {
+        allowDomains: network.allowDomains?.length ?? 0,
+        allowCidrs: network.allowCidrs?.length ?? 0,
+      });
+    }
 
-    const response = await this.#invoke(this.#functionName(hasWorkspace, internet), {
+    const response = await this.#invoke(this.#functionName(hasWorkspace, allowInternet), {
       runtime,
       code: request.code,
       ...(hasWorkspace ? { namespace: request.namespace } : {}),
@@ -80,10 +88,10 @@ export class LambdaSandboxExecutor implements SandboxExecutor {
     };
   }
 
-  #functionName(hasWorkspace: boolean, internet: boolean): string {
+  #functionName(hasWorkspace: boolean, allowInternet: boolean): string {
     const slot: FunctionSlot = hasWorkspace
-      ? (internet ? "mountNet" : "mountNoNet")
-      : (internet ? "noMountNet" : "noMountNoNet");
+      ? (allowInternet ? "mountNet" : "mountNoNet")
+      : (allowInternet ? "noMountNet" : "noMountNoNet");
 
     const name = optionalEnv(FUNCTION_ENV_VARS[slot]);
     if (!name) {

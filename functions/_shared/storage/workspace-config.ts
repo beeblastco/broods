@@ -10,7 +10,7 @@
 import { mergeConfigObjects } from "./agent-config.ts";
 
 export interface WorkspaceConfig {
-  storage: { provider: "s3" };
+  storage: { provider: "s3" | "vercel" };
   // Whether the workspace harness prompt (memory/tasks guidance) is injected.
   harness?: { enabled?: boolean };
 }
@@ -50,7 +50,7 @@ export function normalizeWorkspaceConfig(value: unknown): WorkspaceConfig {
     if (!isPlainObject(config.storage)) {
       throw new Error("config.storage must be an object");
     }
-    assertOptionalEnum(config.storage.provider, "config.storage.provider", ["s3"]);
+    assertOptionalEnum(config.storage.provider, "config.storage.provider", ["s3", "vercel"]);
   }
 
   let harness: { enabled?: boolean } | undefined;
@@ -65,7 +65,7 @@ export function normalizeWorkspaceConfig(value: unknown): WorkspaceConfig {
   }
 
   return {
-    storage: { provider: "s3" },
+    storage: { provider: (config.storage && isPlainObject(config.storage) && config.storage.provider === "vercel") ? "vercel" : "s3" },
     ...(harness ? { harness } : {}),
   };
 }
