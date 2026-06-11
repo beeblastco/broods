@@ -15,6 +15,7 @@
     "check": "bun run --filter @filthy-panty/core check && bun run --filter @filthy-panty/convex check && bun run --filter filthy-panty check && bun run --filter @filthy-panty/demos check",
     "test": "bun run --filter @filthy-panty/core test",
     "deploy": "bun run --filter @filthy-panty/core deploy",
+    "demo": "bun --cwd packages/demos",
     "dashboard": "bun run --filter @filthy-panty/dashboard dev",
     "dashboard:build": "bun run --filter @filthy-panty/dashboard build",
     "docs": "bun run --filter @filthy-panty/docs start",

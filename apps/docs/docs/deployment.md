@@ -80,16 +80,11 @@ See [`packages/demos/account.config.example.json`](https://github.com/beeblastco
 
 ## Live Probes
 
-```bash
-export AGENT_SERVICE_URL=<agentServiceUrl>
-export ACCOUNT_SERVICE_URL=<accountServiceUrl>
-export ACCOUNT_GOOGLE_API_KEY=<googleApiKey>
-export ACCOUNT_TAVILY_API_KEY=<tavilyApiKey>
-```
+The demo scripts read their environment from `packages/demos/.env` — copy `packages/demos/.env.example` and fill in the service URLs from the deploy output plus your model/tool keys.
 
 ```bash
 curl "$AGENT_SERVICE_URL"
-bun packages/demos/account.ts
-bun packages/demos/stream.ts
-bun packages/demos/async.ts
+bun run demo account.ts
+bun run demo stream.ts
+bun run demo async.ts
 ```

@@ -4,7 +4,7 @@
 
 `sst.config.ts` is the source of truth for infra names, tags, region, Lambda resources, DynamoDB tables, S3 bucket, and SST secrets.
 
-Use `.env` for local SST inputs only:
+Use `apps/core/.env` for local SST inputs only:
 
 - `AWS_PROFILE`
 - `SST_STAGE`
@@ -46,10 +46,10 @@ bun install
 Copy local config:
 
 ```bash
-cp .env.example .env
+cp apps/core/.env.example apps/core/.env
 ```
 
-Keep `.env` for local SST config only. Do not put deployed secrets in `.env`.
+Keep `apps/core/.env` for local SST config only. Do not put deployed secrets in `.env`. Demo scripts read their own env from `packages/demos/.env` (see `packages/demos/.env.example`).
 
 ## Run, Build, and Deploy
 
@@ -167,13 +167,13 @@ Run:
 
 ```bash
 # Account management (Create, Update, Delete)
-bun packages/demos/account.ts
+bun run demo account.ts
 
 # Stream SSE with tools
-bun packages/demos/stream.ts
+bun run demo stream.ts
 
 # Async endpoint with polling
-bun packages/demos/async.ts
+bun run demo async.ts
 ```
 
 ## CI

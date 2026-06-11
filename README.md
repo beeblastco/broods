@@ -106,13 +106,13 @@ Note the two Function URLs from the deploy output (`accountServiceUrl`, `agentSe
 
 ### Run the demos
 
-The [`packages/demos/`](packages/demos/) directory has runnable scripts for every major feature — streaming, async, tool approval, subagents, skills, sandboxes, multi-workspace setups, and more. Each script creates a temporary account, runs a smoke test, and cleans up. They consume the [`filthy-panty` SDK package](packages/filthy-panty/).
+The [`packages/demos/`](packages/demos/) directory has runnable scripts for every major feature — streaming, async, tool approval, subagents, skills, sandboxes, multi-workspace setups, and more. Each script creates a temporary account, runs a smoke test, and cleans up. They consume the [`filthy-panty` SDK package](packages/filthy-panty/) and read their environment from `packages/demos/.env` (`cp packages/demos/.env.example packages/demos/.env`).
 
 ```bash
-bun packages/demos/stream.ts        # SSE with tools
-bun packages/demos/async.ts         # Async with polling
-bun packages/demos/subagent.ts      # Subagent dispatch
-bun packages/demos/skills.ts        # Skill CRUD
+bun run demo stream.ts        # SSE with tools
+bun run demo async.ts         # Async with polling
+bun run demo subagent.ts      # Subagent dispatch
+bun run demo skills.ts        # Skill CRUD
 ```
 
 ---

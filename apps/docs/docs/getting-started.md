@@ -333,26 +333,24 @@ See [Channels](channels/index.md) for full setup details.
 
 ### Run Example Scripts
 
-The repository includes example scripts to probe a live deployment:
+The repository includes example scripts to probe a live deployment. They read their environment from `packages/demos/.env`:
 
 ```bash
-export AGENT_SERVICE_URL=<your-agent-service-url>
-export ACCOUNT_SERVICE_URL=<your-account-service-url>
-export ACCOUNT_GOOGLE_API_KEY=<your-google-api-key>
-export ACCOUNT_TAVILY_API_KEY=<your-tavily-api-key>
+cp packages/demos/.env.example packages/demos/.env
+# fill in the service URLs from the deploy output and your model/tool keys
 
-bun packages/demos/stream.ts        # SSE with tools
-bun packages/demos/async.ts         # Async with polling
-bun packages/demos/tool-approval.ts # Tool approval flow
-bun packages/demos/subagent.ts      # Subagent dispatch
-bun packages/demos/skills.ts        # Skill CRUD
-bun packages/demos/skill-loads.ts   # Skill loading during a streamed turn
-bun packages/demos/sandbox-workspace-lambda.ts      # Lambda sandbox + workspace smoke test
-bun packages/demos/workspace-multiple.ts            # One agent, two named workspaces
-bun packages/demos/workspace-readonly.ts            # Shared workspace with read-only (no-sandbox) agent
-bun packages/demos/sandbox-stateless.ts             # Sandbox with no workspace (bash-only, stateless)
-bun packages/demos/sandbox-workspace-override.ts    # Per-workspace sandbox override (inherit / pin / read-only)
-bun packages/demos/sandbox-e2b.ts                   # E2B provider (stateless bash)
+bun run demo stream.ts        # SSE with tools
+bun run demo async.ts         # Async with polling
+bun run demo tool-approval.ts # Tool approval flow
+bun run demo subagent.ts      # Subagent dispatch
+bun run demo skills.ts        # Skill CRUD
+bun run demo skill-loads.ts   # Skill loading during a streamed turn
+bun run demo sandbox-workspace-lambda.ts      # Lambda sandbox + workspace smoke test
+bun run demo workspace-multiple.ts            # One agent, two named workspaces
+bun run demo workspace-readonly.ts            # Shared workspace with read-only (no-sandbox) agent
+bun run demo sandbox-stateless.ts             # Sandbox with no workspace (bash-only, stateless)
+bun run demo sandbox-workspace-override.ts    # Per-workspace sandbox override (inherit / pin / read-only)
+bun run demo sandbox-e2b.ts                   # E2B provider (stateless bash)
 ```
 
 Each script creates a temporary account, runs the test, and cleans up.
