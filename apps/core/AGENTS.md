@@ -12,12 +12,11 @@ Related external repos (siblings of the monorepo checkout):
 
 - `../../../infra`: infrastructure repo for the kubernetes cluster and VM provision. Keep `sst.config.ts` constants, naming pattern, and tag conventions aligned with it.
 - `../../../lambda-sanbdox`: custom Lambda runtime for sandbox to run bash, node and python script, simulate VM machine.
-- cherry-coke: merged into `../../apps/dashboard/` (old repo archived).
 
 Workspace rules:
 
 - Run `bun install` at the repo root only. Bun uses the isolated linker: every import a package uses must be declared in that package's `package.json` (no hoisted transitive freeloading).
-- Root scripts fan out with `bun run --filter`: `build`/`check`/`test`/`deploy` target `@filthy-panty/core`; `docs`/`docs:build` target `@filthy-panty/docs`. Run `sst` commands from this directory (`apps/core/`).
+- Root scripts fan out with `bun run --filter`: `build`/`check`/`test`/`deploy` target `@filthy-panty/core`; `dashboard`/`dashboard:build` target `@filthy-panty/dashboard`; `docs`/`docs:build` target `@filthy-panty/docs`. Run `sst` commands from this directory (`apps/core/`).
 - React versions are intentionally split: docs pins React 18 (Docusaurus), dashboard pins React 19 (Next 16). Never add react to the root package.json.
 - The core storage adapter reaches the Convex generated API via `require("@filthy-panty/convex/_generated/api")` on purpose — a typed import would drag every backend source into core's stricter typecheck. Keep it a require().
 - `../../packages/convex/_generated/` is committed. After schema changes run `bun run --filter @filthy-panty/convex codegen` and commit the diff. The dashboard image build re-runs `convex deploy`.
