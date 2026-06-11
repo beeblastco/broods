@@ -1,5 +1,5 @@
 import { $ } from "bun";
-import { access, readdir, writeFile } from "node:fs/promises";
+import { access, mkdir, readdir, writeFile } from "node:fs/promises";
 import { syncSystemPromptModule } from "./system-prompt.ts";
 
 const FUNCTIONS_DIR = new URL("../functions/", import.meta.url);
@@ -44,6 +44,7 @@ async function ensureConvexAdapterStub() {
 // this path on SaaS builds. STORAGE_PROVIDER=convex is unsupported here.
 export const convexStorageProvider = null;
 `;
+  await mkdir(new URL(".", CONVEX_ADAPTER_INDEX), { recursive: true });
   await writeFile(CONVEX_ADAPTER_INDEX, stub, "utf8");
   console.log("Wrote Convex adapter stub (submodule not present).");
 }
