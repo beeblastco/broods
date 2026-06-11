@@ -1,0 +1,12 @@
+.git
+node_modules
+**/node_modules
+**/.next
+**/dist
+**/build
+**/.sst
+**/.docusaurus
+.env
+.env.*
+**/.env
+**/.env.*
