@@ -16,8 +16,8 @@ flowchart LR
   subgraph packages
     Cvx["packages/convex<br/>shared Convex backend"]
     Sdk["packages/filthy-panty<br/>CLI + SDK"]
+    Demos["packages/demos<br/>runnable scripts"]
   end
-  Demos["demos/<br/>runnable scripts"]
 
   Dash -->|"deploys + imports _generated API"| Cvx
   Core -->|"STORAGE_PROVIDER=convex<br/>ConvexHttpClient"| Cvx

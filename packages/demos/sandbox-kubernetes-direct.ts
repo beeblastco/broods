@@ -11,8 +11,8 @@
  *   KUBERNETES_SANDBOX_IMAGE_PULL_SECRETS  (default ghcr-pull-secret)
  */
 
-import { KubernetesSandboxExecutor } from "../apps/core/functions/harness-processing/sandbox/kubernetes-executor.ts";
-import type { SandboxExecutorConfig } from "../apps/core/functions/harness-processing/sandbox/types.ts";
+import { KubernetesSandboxExecutor } from "../../apps/core/functions/harness-processing/sandbox/kubernetes-executor.ts";
+import type { SandboxExecutorConfig } from "../../apps/core/functions/harness-processing/sandbox/types.ts";
 
 const namespace = "direct-" + Date.now().toString(36);
 const workspaceRoot = "/mnt/workspaces";

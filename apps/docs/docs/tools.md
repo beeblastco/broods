@@ -223,7 +223,7 @@ Omitting a tool disables it. Setting `enabled: false` also disables it. Set `nee
 Set `async: true` when a local `execute` tool may take long enough that the parent agent should keep working while the result is produced.
 For uploaded tools, `config` is merged over the upload-time `defaultConfig` and passed to `ctx.config`. Uploaded tool code always runs in Kubernetes; the platform decides whether to wait or detach from the request path.
 
-See [`demos/uploaded-tool-async-sse.ts`](https://github.com/beeblastco/filthy-panty/blob/dev/demos/uploaded-tool-async-sse.ts) for a runnable direct SSE example that uploads `test_async`, enables `config.tools.<toolId>.async`, and asks the agent to call the uploaded tool. [`demos/uploaded-tool-async-nats.ts`](https://github.com/beeblastco/filthy-panty/blob/dev/demos/uploaded-tool-async-nats.ts) and [`demos/uploaded-tool-stream.ts`](https://github.com/beeblastco/filthy-panty/blob/dev/demos/uploaded-tool-stream.ts) cover the NATS and streaming variants.
+See [`packages/demos/uploaded-tool-async-sse.ts`](https://github.com/beeblastco/filthy-panty/blob/dev/packages/demos/uploaded-tool-async-sse.ts) for a runnable direct SSE example that uploads `test_async`, enables `config.tools.<toolId>.async`, and asks the agent to call the uploaded tool. [`packages/demos/uploaded-tool-stream.ts`](https://github.com/beeblastco/filthy-panty/blob/dev/packages/demos/uploaded-tool-stream.ts) covers the streaming variant.
 
 The full config field reference lives in the [API Reference](/api-reference) under `AgentConfig.tools`.
 
@@ -281,7 +281,7 @@ MVP limits: uploaded code must already be bundled JavaScript, server-side `npm i
 6. Add the factory to the static `toolFactories` map with the exact model-facing tool name.
 7. Add config validation in [`functions/_shared/storage/agent-config.ts`](https://github.com/beeblastco/filthy-panty/blob/dev/apps/core/functions/_shared/storage/agent-config.ts) only for options the account can set.
 8. Optionally set `config.tools.<name>.async: true` for slow local `execute` tools. Built-in async tools always run in the current Lambda; uploaded async tools are waited on for SSE and detached automatically for `/async`, channels, and NATS.
-9. Update the [API Reference](/api-reference) `AgentConfig.tools` schema, [`demos/account.config.example.json`](https://github.com/beeblastco/filthy-panty/blob/dev/demos/account.config.example.json), and focused tests/examples when the public config shape changes.
+9. Update the [API Reference](/api-reference) `AgentConfig.tools` schema, [`packages/demos/account.config.example.json`](https://github.com/beeblastco/filthy-panty/blob/dev/packages/demos/account.config.example.json), and focused tests/examples when the public config shape changes.
 
 Keep the factory small. It should read `context.config`, resolve any API key, return a `ToolSet`, and leave unrelated orchestration to `harness.ts`.
 

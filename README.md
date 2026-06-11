@@ -106,13 +106,13 @@ Note the two Function URLs from the deploy output (`accountServiceUrl`, `agentSe
 
 ### Run the demos
 
-The [`demos/`](demos/) directory has runnable scripts for every major feature — streaming, async, tool approval, subagents, skills, sandboxes, multi-workspace setups, and more. Each script creates a temporary account, runs a smoke test, and cleans up. They consume the [`filthy-panty` SDK package](packages/filthy-panty/).
+The [`packages/demos/`](packages/demos/) directory has runnable scripts for every major feature — streaming, async, tool approval, subagents, skills, sandboxes, multi-workspace setups, and more. Each script creates a temporary account, runs a smoke test, and cleans up. They consume the [`filthy-panty` SDK package](packages/filthy-panty/).
 
 ```bash
-bun demos/stream.ts        # SSE with tools
-bun demos/async.ts         # Async with polling
-bun demos/subagent.ts      # Subagent dispatch
-bun demos/skills.ts        # Skill CRUD
+bun packages/demos/stream.ts        # SSE with tools
+bun packages/demos/async.ts         # Async with polling
+bun packages/demos/subagent.ts      # Subagent dispatch
+bun packages/demos/skills.ts        # Skill CRUD
 ```
 
 ---
@@ -155,7 +155,7 @@ apps/
 packages/
   convex/                 # Shared Convex backend (schema + functions, deployed with the dashboard)
   filthy-panty/           # CLI + TypeScript SDK package
-demos/                    # Runnable demo scripts using the SDK
+  demos/                  # Runnable demo scripts using the SDK
 ```
 
 A more detailed map (with the routing contract between each module) lives in [`AGENTS.md`](AGENTS.md).

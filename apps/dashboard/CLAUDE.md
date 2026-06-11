@@ -6,6 +6,10 @@ Before any Next.js work, find and read the relevant doc in `node_modules/next/di
 
 <!-- END:nextjs-agent-rules -->
 
+## Monorepo context
+
+This app is `apps/dashboard` in the filthy-panty Bun-workspaces monorepo (see the root `AGENTS.md` for workspace rules). The Convex backend lives at `packages/convex` (`@filthy-panty/convex`) — imported here as `@filthy-panty/convex/...` (e.g. `@filthy-panty/convex/_generated/api`), never via a local `convex/` directory. Run `bun install` at the repo root only; run convex CLI commands from `packages/convex/`.
+
 ## Commands
 
 - Package manager: `bun` (not npm/yarn)
@@ -21,23 +25,13 @@ Before any Next.js work, find and read the relevant doc in `node_modules/next/di
 
 WorkOS AuthKit handles SSO with Google OAuth. The `users` table is synced from WorkOS webhooks:
 
-- `convex/auth.ts` — AuthKit instance and webhook event handlers (`user.created`, `user.updated`, `user.deleted`)
-- `convex/auth.config.ts` — JWT provider config for WorkOS token validation
-- `convex/user.ts` — Public API (`getCurrent`, `updateProfile`, `requestAccountDeletion`)
+- `packages/convex/auth.ts` — AuthKit instance and webhook event handlers (`user.created`, `user.updated`, `user.deleted`)
+- `packages/convex/auth.config.ts` — JWT provider config for WorkOS token validation
+- `packages/convex/user.ts` — Public API (`getCurrent`, `updateProfile`, `requestAccountDeletion`)
 - `proxy.ts` — Next.js middleware for session management
-- `lib/workos.ts` — Client-side auth hooks (`useAuth`, `useWorkOSSession`, `signIn`, `signOut`)
+- `app/auth/` — sign-in/callback routes using `@workos-inc/authkit-nextjs`
 
 All authenticated Convex functions use `authKit.getAuthUser(ctx)` for access control.
-
-## Workflows
-
-Cited workflow orchestration pattern:
-
-- Main coordinator in `convex/workflow.ts`, this file include all the API function to run the workflow, when you want to trigger test api workflow, create test api and from here only.
-- Domain workflows export a `start()` function
-- Coordinator calls domain `start()` function
-
-This keeps workflow logic discoverable and composable.
 
 ## Args Handling
 
@@ -55,7 +49,7 @@ export const myMutation = mutation({
 
 ## Ownership Checks
 
-Place reusable ownership/permission checks in the `convex/model/ownership/` folder.
+Place reusable ownership/permission checks in the `packages/convex/model/ownership/` folder.
 
 ## Function Calls
 
@@ -120,7 +114,7 @@ UI/UX cursor rules — every interactive element must have an explicit cursor cl
 This project uses [Convex](https://convex.dev) as its backend.
 
 When working on Convex code, **always read
-`convex/_generated/ai/guidelines.md` first** for important guidelines on
+`packages/convex/_generated/ai/guidelines.md` first** for important guidelines on
 how to correctly use Convex APIs and patterns. The file contains rules that
 override what you may have learned about Convex from training data.
 

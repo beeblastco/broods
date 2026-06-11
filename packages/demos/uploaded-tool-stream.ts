@@ -2,7 +2,7 @@
  * Example: streaming an uploaded custom tool on the sync SSE path.
  * Uploads a tool whose `execute` is an async generator, then watches the
  * preliminary tool-result chunks arrive live over SSE before the final result.
- * The detached/async path is covered by uploaded-async-nats.ts instead.
+ * The detached/async path is covered by uploaded-tool-async-sse.ts instead.
  */
 
 import { createAccount, createAgent, createTool, deleteAccount, streamSSE } from "filthy-panty";

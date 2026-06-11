@@ -5,8 +5,7 @@
   "private": true,
   "workspaces": [
     "apps/*",
-    "packages/*",
-    "demos"
+    "packages/*"
   ],
   "overrides": {
     "webpack": "5.105.0"

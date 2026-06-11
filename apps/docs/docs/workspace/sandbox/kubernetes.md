@@ -124,11 +124,11 @@ Validate the executor against a cluster without a deployed harness:
 ```bash
 KUBECONFIG=/path/to/kubeconfig.yaml \
 KUBERNETES_SANDBOX_DEBUG_STREAM=1 \
-bun run demos/sandbox-kubernetes-direct.ts
+bun run packages/demos/sandbox-kubernetes-direct.ts
 ```
 
 `KUBERNETES_SANDBOX_DEBUG_STREAM=1` tees the exec stream to your terminal. (Under `bun`, set
 `NODE_TLS_REJECT_UNAUTHORIZED=0` if your kubeconfig CA isn't honored — a bun TLS quirk; real Node
 Lambda honors it.)
 
-The full agent flow example is `demos/sandbox-workspace-kubernetes.ts`.
+The full agent flow example is `packages/demos/sandbox-workspace-kubernetes.ts`.

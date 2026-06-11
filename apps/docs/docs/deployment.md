@@ -76,7 +76,7 @@ Provider webhooks use the deployed harness-processing URL:
 {AGENT_SERVICE_URL}/webhooks/{accountId}/{agentId}/zalo
 ```
 
-See [`demos/account.config.example.json`](https://github.com/beeblastco/filthy-panty/blob/dev/demos/account.config.example.json) for a complete agent config shape.
+See [`packages/demos/account.config.example.json`](https://github.com/beeblastco/filthy-panty/blob/dev/packages/demos/account.config.example.json) for a complete agent config shape.
 
 ## Live Probes
 
@@ -89,7 +89,7 @@ export ACCOUNT_TAVILY_API_KEY=<tavilyApiKey>
 
 ```bash
 curl "$AGENT_SERVICE_URL"
-bun demos/account.ts
-bun demos/stream.ts
-bun demos/async.ts
+bun packages/demos/account.ts
+bun packages/demos/stream.ts
+bun packages/demos/async.ts
 ```

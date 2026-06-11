@@ -119,22 +119,6 @@
         "typescript": "^6.0.3",
       },
     },
-    "demos": {
-      "name": "@filthy-panty/demos",
-      "dependencies": {
-        "@aws-sdk/client-lambda": "3.1017.0",
-        "@filthy-panty/core": "workspace:*",
-        "ai": "^6.0.195",
-        "filthy-panty": "workspace:*",
-        "nats.ws": "^1.30.3",
-      },
-      "devDependencies": {
-        "@types/bun": "^1.3.14",
-      },
-      "peerDependencies": {
-        "typescript": "^6.0.3",
-      },
-    },
     "packages/convex": {
       "name": "@filthy-panty/convex",
       "version": "0.0.1",
@@ -143,6 +127,20 @@
         "@convex-dev/stripe": "^0.1.4",
         "@convex-dev/workos-authkit": "^0.2.6",
         "convex": "^1.40.0",
+      },
+    },
+    "packages/demos": {
+      "name": "@filthy-panty/demos",
+      "dependencies": {
+        "@filthy-panty/core": "workspace:*",
+        "ai": "^6.0.195",
+        "filthy-panty": "workspace:*",
+      },
+      "devDependencies": {
+        "@types/bun": "^1.3.14",
+      },
+      "peerDependencies": {
+        "typescript": "^6.0.3",
       },
     },
     "packages/filthy-panty": {
@@ -813,7 +811,7 @@
 
     "@filthy-panty/dashboard": ["@filthy-panty/dashboard@workspace:apps/dashboard"],
 
-    "@filthy-panty/demos": ["@filthy-panty/demos@workspace:demos"],
+    "@filthy-panty/demos": ["@filthy-panty/demos@workspace:packages/demos"],
 
     "@filthy-panty/docs": ["@filthy-panty/docs@workspace:apps/docs"],
 

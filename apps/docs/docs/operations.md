@@ -101,7 +101,7 @@ Create an agent with model, tool, channel, workspace, skills, and optional subag
 {AGENT_SERVICE_URL}/webhooks/{accountId}/{agentId}/zalo
 ```
 
-Provider credentials for each channel, plus model/tool settings, live on agent config. See the example config file at [`demos/account.config.example.json`](https://github.com/beeblastco/filthy-panty/blob/dev/demos/account.config.example.json) for the supported config shape.
+Provider credentials for each channel, plus model/tool settings, live on agent config. See the example config file at [`packages/demos/account.config.example.json`](https://github.com/beeblastco/filthy-panty/blob/dev/packages/demos/account.config.example.json) for the supported config shape.
 
 ## CI/CD Account Setup
 
@@ -167,13 +167,13 @@ Run:
 
 ```bash
 # Account management (Create, Update, Delete)
-bun demos/account.ts
+bun packages/demos/account.ts
 
 # Stream SSE with tools
-bun demos/stream.ts
+bun packages/demos/stream.ts
 
 # Async endpoint with polling
-bun demos/async.ts
+bun packages/demos/async.ts
 ```
 
 ## CI

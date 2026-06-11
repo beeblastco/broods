@@ -9,7 +9,7 @@
  *     turn from the JetStream consumer, then continues live.
  * Core publish stores nothing itself — the stream is the only copy — so this is
  * NOT double storage. Switching read paths is the consuming app's choice; the
- * platform just provides both. See examples/nats-stream.ts.
+ * platform just provides both.
  *
  * Subject: `v1.<accountId>.<agentId>.ws.response.<token>` where
  * `<token> = base64url(publicConversationKey)` (the conversationKey is not a

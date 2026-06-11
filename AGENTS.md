@@ -10,7 +10,7 @@ apps/dashboard/     @filthy-panty/dashboard — Next.js 16 dashboard (was the ch
 apps/docs/          @filthy-panty/docs — Docusaurus site (React 18, isolated here).
 packages/convex/    @filthy-panty/convex — shared Convex backend, functions flat at the package root (convex.json functions: ".").
 packages/filthy-panty/  filthy-panty — CLI + SDK npm package (name TBD; plan in apps/docs/docs/plans/beeblast-cli.md).
-demos/              @filthy-panty/demos — runnable scripts against the deployed API, importing the SDK.
+packages/demos/     @filthy-panty/demos — runnable scripts against the deployed API, importing the SDK.
 ```
 
 Related repos:

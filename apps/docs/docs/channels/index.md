@@ -133,7 +133,7 @@ The normalized `InboundMessage` contains:
 6. Import the channel factory in [`functions/harness-processing/integrations.ts`](https://github.com/beeblastco/filthy-panty/blob/dev/apps/core/functions/harness-processing/integrations.ts).
 7. Add `create<Channel>ChannelFromConfig()` and include it in `createChannelRegistry()`.
 8. Document the webhook URL as `/webhooks/{accountId}/{agentId}/{channel}`.
-9. Update the [API Reference](/api-reference) `AgentConfig.channels` schema, [`demos/account.config.example.json`](https://github.com/beeblastco/filthy-panty/blob/dev/demos/account.config.example.json), setup scripts, and focused tests/examples when the public config changes.
+9. Update the [API Reference](/api-reference) `AgentConfig.channels` schema, [`packages/demos/account.config.example.json`](https://github.com/beeblastco/filthy-panty/blob/dev/packages/demos/account.config.example.json), setup scripts, and focused tests/examples when the public config changes.
 
 Do not hardcode channel-specific behavior in commands, shared handlers, or the core agent loop. Commands receive only the channel-agnostic `ChannelActions` interface.
 
