@@ -2,7 +2,7 @@
  * Shared utilities for example scripts.
  */
 
-import type { ToolApprovalSummary } from "../functions/harness-processing/harness.ts";
+import type { ToolApprovalSummary } from "../apps/core/functions/harness-processing/harness.ts";
 
 // Service URLs from environment
 export const ACCOUNT_SERVICE_URL = process.env.ACCOUNT_SERVICE_URL!;

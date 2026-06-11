@@ -1,0 +1,15 @@
+{
+  "extends": "@docusaurus/tsconfig",
+  "compilerOptions": {
+    "lib": ["ESNext"],
+    "target": "ESNext",
+    "module": "Preserve",
+    "moduleResolution": "bundler",
+    "jsx": "react-jsx",
+    "noEmit": true,
+    "skipLibCheck": true,
+    "baseUrl": "."
+  },
+  "include": ["docusaurus.config.ts", "sidebar.ts", "docs/**/*.ts", "docs/**/*.tsx"],
+  "exclude": ["node_modules", "build", ".docusaurus"]
+}

@@ -2,17 +2,18 @@ node_modules/
 dist/
 .sst/
 .env
+.env.local
 secrets.env
 .DS_Store
 *.log
-functions/_shared/.generated/
+.generated/
 
 na_tmp/
 .docusaurus/
 build/
 .docusaurus.d
+.next/
 
 .claude
-.env.local
 .agents
-
+resource.enc

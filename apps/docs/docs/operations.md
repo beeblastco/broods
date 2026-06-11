@@ -101,7 +101,7 @@ Create an agent with model, tool, channel, workspace, skills, and optional subag
 {AGENT_SERVICE_URL}/webhooks/{accountId}/{agentId}/zalo
 ```
 
-Provider credentials for each channel, plus model/tool settings, live on agent config. See the example config file at [`examples/account.config.example.json`](../examples/account.config.example.json) for the supported config shape.
+Provider credentials for each channel, plus model/tool settings, live on agent config. See the example config file at [`examples/account.config.example.json`](https://github.com/beeblastco/filthy-panty/blob/dev/demos/account.config.example.json) for the supported config shape.
 
 ## CI/CD Account Setup
 

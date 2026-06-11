@@ -141,7 +141,7 @@ GitHub imports download a skill directory from a public GitHub tree URL. Use thi
 
 :::
 
-See [`examples/skills.ts`](../examples/skills.ts) for create, list, get, and delete calls.
+See [`examples/skills.ts`](https://github.com/beeblastco/filthy-panty/blob/dev/demos/skills.ts) for create, list, get, and delete calls.
 
 ## Enable Skills For An Agent
 
@@ -167,7 +167,7 @@ Runtime behavior:
 4. `load_skill` is registered only for skill-enabled agents with a request session.
 5. The loader rejects paths that are not in `config.skills.allowed`.
 
-Use [`examples/skill-loads.ts`](../examples/skill-loads.ts) for an end-to-end streaming request that creates a temporary skill, attaches it to an agent, and asks the agent to load it.
+Use [`examples/skill-loads.ts`](https://github.com/beeblastco/filthy-panty/blob/dev/demos/skill-loads.ts) for an end-to-end streaming request that creates a temporary skill, attaches it to an agent, and asks the agent to load it.
 
 ## Design Rules
 

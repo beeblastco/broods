@@ -76,7 +76,7 @@ Provider webhooks use the deployed harness-processing URL:
 {AGENT_SERVICE_URL}/webhooks/{accountId}/{agentId}/zalo
 ```
 
-See [`examples/account.config.example.json`](../examples/account.config.example.json) for a complete agent config shape.
+See [`examples/account.config.example.json`](https://github.com/beeblastco/filthy-panty/blob/dev/demos/account.config.example.json) for a complete agent config shape.
 
 ## Live Probes
 

@@ -5,10 +5,10 @@
 
 import { InvokeCommand, LambdaClient } from "@aws-sdk/client-lambda";
 import { StringCodec } from "nats.ws";
-import { toRuntimeAgentConfig, type AgentConfig } from "../functions/_shared/storage/index.ts";
-import { connectNats, streamResponseSubject, type NatsStreamEvent } from "../functions/_shared/nats.ts";
-import { scopedDirectConversationKey, scopedDirectEventId } from "../functions/_shared/runtime-keys.ts";
-import type { DirectInboundEvent } from "../functions/harness-processing/integrations.ts";
+import { toRuntimeAgentConfig, type AgentConfig } from "../apps/core/functions/_shared/storage/index.ts";
+import { connectNats, streamResponseSubject, type NatsStreamEvent } from "../apps/core/functions/_shared/nats.ts";
+import { scopedDirectConversationKey, scopedDirectEventId } from "../apps/core/functions/_shared/runtime-keys.ts";
+import type { DirectInboundEvent } from "../apps/core/functions/harness-processing/integrations.ts";
 import { createAccount, createAgent, createTool, deleteAccount } from "./utils.ts";
 
 const minimaxApiKey = process.env.ACCOUNT_MINIMAX_API_KEY!;

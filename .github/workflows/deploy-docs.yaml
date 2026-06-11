@@ -4,10 +4,7 @@ on:
   push:
     branches: [main]
     paths:
-      - 'docs/**'
-      - 'docusaurus.config.ts'
-      - 'sidebar.ts'
-      - 'static/**'
+      - 'apps/docs/**'
       - '.github/workflows/deploy-docs.yaml'
   workflow_dispatch:
 
@@ -50,7 +47,7 @@ jobs:
 
       - name: Upload to S3
         run: |
-          aws s3 sync build/ "s3://${DOCS_S3_BUCKET}" \
+          aws s3 sync apps/docs/build/ "s3://${DOCS_S3_BUCKET}" \
             --delete \
             --cache-control "public, max-age=3600, s-maxage=86400"
 

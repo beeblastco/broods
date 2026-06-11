@@ -22,7 +22,7 @@ describe("integration account setup scripts", () => {
       "scripts/configure-slack-account.ts",
       "scripts/configure-pancake-account.ts",
       "scripts/configure-zalo-account.ts",
-      ".github/workflows/deploy.yaml",
+      "../../.github/workflows/deploy.yaml",
     ].map((path) => readFileSync(path, "utf-8"));
     const combined = files.join("\n");
 

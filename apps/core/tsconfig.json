@@ -1,0 +1,16 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "types": ["bun"]
+  },
+  "include": [
+    "functions/**/*.ts",
+    "scripts/**/*.ts",
+    "tests/**/*.ts",
+    "sst-env.d.ts"
+  ],
+  "exclude": [
+    "functions/_shared/storage/convex/**",
+    "node_modules"
+  ]
+}

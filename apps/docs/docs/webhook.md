@@ -10,7 +10,7 @@ flowchart LR
   Events --> Webhook["signed HTTPS POST"]
 ```
 
-Check out the [webhook example](../examples/webhook.ts) for how to setup and use.
+Check out the [webhook example](https://github.com/beeblastco/filthy-panty/blob/dev/demos/webhook.ts) for how to setup and use.
 
 ## Agent Config
 

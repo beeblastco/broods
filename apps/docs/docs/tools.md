@@ -23,11 +23,11 @@ flowchart LR
 
 | Tool | File | External dependency | Config key |
 | --- | --- | --- | --- |
-| `tavilySearch` | [`functions/harness-processing/tools/tavily.tool.ts`](../functions/harness-processing/tools/tavily.tool.ts) | Tavily AI SDK search | `config.tools.tavilySearch` |
-| `tavilyExtract` | [`functions/harness-processing/tools/tavily.tool.ts`](../functions/harness-processing/tools/tavily.tool.ts) | Tavily AI SDK extract | `config.tools.tavilyExtract` |
-| `googleSearch` | [`functions/harness-processing/tools/google-search.tool.ts`](../functions/harness-processing/tools/google-search.tool.ts) | Google provider-defined tool | `config.tools.googleSearch` |
-| `handoffs` | [`functions/harness-processing/tools/handoffs.tool.ts`](../functions/harness-processing/tools/handoffs.tool.ts) | Pancake tags + Zalo staff ping | `config.tools.handoffs` (`pancake.scenarioTagIds.{order,pending}`, `zalo.{botToken,notifyUserIds}`) |
-| `async_status` | [`functions/harness-processing/tools/async-status.tool.ts`](../functions/harness-processing/tools/async-status.tool.ts) | — (auto-registered, see below) | — |
+| `tavilySearch` | [`functions/harness-processing/tools/tavily.tool.ts`](https://github.com/beeblastco/filthy-panty/blob/dev/apps/core/functions/harness-processing/tools/tavily.tool.ts) | Tavily AI SDK search | `config.tools.tavilySearch` |
+| `tavilyExtract` | [`functions/harness-processing/tools/tavily.tool.ts`](https://github.com/beeblastco/filthy-panty/blob/dev/apps/core/functions/harness-processing/tools/tavily.tool.ts) | Tavily AI SDK extract | `config.tools.tavilyExtract` |
+| `googleSearch` | [`functions/harness-processing/tools/google-search.tool.ts`](https://github.com/beeblastco/filthy-panty/blob/dev/apps/core/functions/harness-processing/tools/google-search.tool.ts) | Google provider-defined tool | `config.tools.googleSearch` |
+| `handoffs` | [`functions/harness-processing/tools/handoffs.tool.ts`](https://github.com/beeblastco/filthy-panty/blob/dev/apps/core/functions/harness-processing/tools/handoffs.tool.ts) | Pancake tags + Zalo staff ping | `config.tools.handoffs` (`pancake.scenarioTagIds.{order,pending}`, `zalo.{botToken,notifyUserIds}`) |
+| `async_status` | [`functions/harness-processing/tools/async-status.tool.ts`](https://github.com/beeblastco/filthy-panty/blob/dev/apps/core/functions/harness-processing/tools/async-status.tool.ts) | — (auto-registered, see below) | — |
 | Uploaded custom tool | S3 bundle + account tool metadata | Kubernetes tool runner | `config.tools.<toolId>` |
 
 `async_status` is not configured directly: it is registered automatically whenever any `config.tools` entry has `async: true` or a workspace has a persistent sandbox. It is the model-facing polling surface for the async lifecycle described below (`statusId` + actions `status`/`logs`/`stop`).
@@ -36,7 +36,7 @@ Sandbox tools come from a referenced `sandbox` (+ `workspaces`) — see [Workspa
 
 ## Runtime Behavior
 
-`functions/harness-processing/harness.ts` resolves the configured model and calls `createTools()` from [`functions/harness-processing/tools/index.ts`](../functions/harness-processing/tools/index.ts).
+`functions/harness-processing/harness.ts` resolves the configured model and calls `createTools()` from [`functions/harness-processing/tools/index.ts`](https://github.com/beeblastco/filthy-panty/blob/dev/apps/core/functions/harness-processing/tools/index.ts).
 
 Tool registry path:
 
@@ -75,7 +75,7 @@ sequenceDiagram
 
 ### Resident Worker
 
-The long-lived Node worker ([`custom-tool-worker.ts`](../functions/harness-processing/tools/custom-tool-worker.ts)) is started inside the persistent pod on first use:
+The long-lived Node worker ([`custom-tool-worker.ts`](https://github.com/beeblastco/filthy-panty/blob/dev/apps/core/functions/harness-processing/tools/custom-tool-worker.ts)) is started inside the persistent pod on first use:
 
 ```text
 harness-processing -> exec into pod -> warm worker (unix-socket HTTP) -> cached module -> execute(ctx,input)
@@ -223,7 +223,7 @@ Omitting a tool disables it. Setting `enabled: false` also disables it. Set `nee
 Set `async: true` when a local `execute` tool may take long enough that the parent agent should keep working while the result is produced.
 For uploaded tools, `config` is merged over the upload-time `defaultConfig` and passed to `ctx.config`. Uploaded tool code always runs in Kubernetes; the platform decides whether to wait or detach from the request path.
 
-See [`examples/uploaded-tool-async-sse.ts`](../examples/uploaded-tool-async-sse.ts) for a runnable direct SSE example that uploads `test_async`, enables `config.tools.<toolId>.async`, and asks the agent to call the uploaded tool. [`examples/uploaded-tool-async-nats.ts`](../examples/uploaded-tool-async-nats.ts) and [`examples/uploaded-tool-stream.ts`](../examples/uploaded-tool-stream.ts) cover the NATS and streaming variants.
+See [`examples/uploaded-tool-async-sse.ts`](https://github.com/beeblastco/filthy-panty/blob/dev/demos/uploaded-tool-async-sse.ts) for a runnable direct SSE example that uploads `test_async`, enables `config.tools.<toolId>.async`, and asks the agent to call the uploaded tool. [`examples/uploaded-tool-async-nats.ts`](https://github.com/beeblastco/filthy-panty/blob/dev/demos/uploaded-tool-async-nats.ts) and [`examples/uploaded-tool-stream.ts`](https://github.com/beeblastco/filthy-panty/blob/dev/demos/uploaded-tool-stream.ts) cover the NATS and streaming variants.
 
 The full config field reference lives in the [API Reference](/api-reference) under `AgentConfig.tools`.
 
@@ -277,11 +277,11 @@ MVP limits: uploaded code must already be bundled JavaScript, server-side `npm i
 2. Add the standard file header docstring.
 3. Export a default tool factory, or named factories when one provider module exposes several tools.
 4. Keep the model-facing schema and external service call in that tool file.
-5. Import the factory in [`functions/harness-processing/tools/index.ts`](../functions/harness-processing/tools/index.ts).
+5. Import the factory in [`functions/harness-processing/tools/index.ts`](https://github.com/beeblastco/filthy-panty/blob/dev/apps/core/functions/harness-processing/tools/index.ts).
 6. Add the factory to the static `toolFactories` map with the exact model-facing tool name.
-7. Add config validation in [`functions/_shared/storage/agent-config.ts`](../functions/_shared/storage/agent-config.ts) only for options the account can set.
+7. Add config validation in [`functions/_shared/storage/agent-config.ts`](https://github.com/beeblastco/filthy-panty/blob/dev/apps/core/functions/_shared/storage/agent-config.ts) only for options the account can set.
 8. Optionally set `config.tools.<name>.async: true` for slow local `execute` tools. Built-in async tools always run in the current Lambda; uploaded async tools are waited on for SSE and detached automatically for `/async`, channels, and NATS.
-9. Update the [API Reference](/api-reference) `AgentConfig.tools` schema, [`examples/account.config.example.json`](../examples/account.config.example.json), and focused tests/examples when the public config shape changes.
+9. Update the [API Reference](/api-reference) `AgentConfig.tools` schema, [`examples/account.config.example.json`](https://github.com/beeblastco/filthy-panty/blob/dev/demos/account.config.example.json), and focused tests/examples when the public config shape changes.
 
 Keep the factory small. It should read `context.config`, resolve any API key, return a `ToolSet`, and leave unrelated orchestration to `harness.ts`.
 

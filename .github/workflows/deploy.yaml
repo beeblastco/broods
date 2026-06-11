@@ -1,9 +1,8 @@
 # Deploy pipeline.
 # `main` = SaaS production: PR CI already validated, skip re-validation and
-#   deploy directly. Inits the private convex-adapter submodule (requires
-#   SUBMODULE_PAT secret).
+#   deploy directly (Convex storage provider).
 # `dev` = OSS / community staging: re-validates (typecheck + test + build)
-#   before deploying. DynamoDB only, no submodule.
+#   before deploying. DynamoDB only.
 
 name: Deploy
 
@@ -13,10 +12,8 @@ on:
       - main
       - dev
     paths-ignore:
-      - 'docs/**'
-      - 'static/**'
-      - 'docusaurus.config.ts'
-      - 'sidebar.ts'
+      - 'apps/docs/**'
+      - 'apps/dashboard/**'
       - '.github/workflows/deploy-docs.yaml'
       - '**/*.md'
   workflow_dispatch:
@@ -48,8 +45,6 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
-        with:
-          submodules: false
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
@@ -91,7 +86,6 @@ jobs:
       INPUT_STAGE: ${{ inputs.stage }}
       # Switches behavior between local development and CI environments
       CI: "true"
-      IS_SAAS_BRANCH: ${{ github.ref == 'refs/heads/main' }}
       ACCOUNT_MODEL_PROVIDER: ${{ vars.ACCOUNT_MODEL_PROVIDER || 'google' }}
       ACCOUNT_MODEL_ID: ${{ vars.ACCOUNT_MODEL_ID || 'gemma-4-31b-it' }}
       ACCOUNT_MODEL_OPTIONS_JSON: ${{ vars.ACCOUNT_MODEL_OPTIONS_JSON }}
@@ -181,9 +175,6 @@ jobs:
 
       - name: Checkout repository
         uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
-        with:
-          submodules: ${{ env.IS_SAAS_BRANCH == 'true' && 'recursive' || 'false' }}
-          token: ${{ env.IS_SAAS_BRANCH == 'true' && secrets.SUBMODULE_PAT || github.token }}
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
@@ -202,11 +193,13 @@ jobs:
 
       - name: Clear stale SST deploy lock
         shell: bash
+        working-directory: apps/core
         run: |
           set -euo pipefail
           bunx sst unlock --stage "$SST_STAGE" || true
 
       - name: Deploy SST app
+        working-directory: apps/core
         env:
           SST_SECRET_GoogleApiKey: ${{ secrets.SST_SECRET_GOOGLEAPIKEY }}
           SST_SECRET_TavilyApiKey: ${{ secrets.SST_SECRET_TAVILYAPIKEY }}
@@ -259,6 +252,7 @@ jobs:
           INTEGRATIONS_ACCOUNT_USERNAME: ${{ vars.INTEGRATIONS_ACCOUNT_USERNAME || 'integrations-default' }}
           ACCOUNT_MODEL_KNOWLEDGE_CUTOFF: ${{ vars.ACCOUNT_MODEL_KNOWLEDGE_CUTOFF || 'January 2025' }}
         shell: bash
+        working-directory: apps/core
         run: |
           set -euo pipefail
 
@@ -286,6 +280,7 @@ jobs:
           INTEGRATIONS_ACCOUNT_USERNAME: ${{ vars.INTEGRATIONS_ACCOUNT_USERNAME || 'integrations-default' }}
           ACCOUNT_MODEL_KNOWLEDGE_CUTOFF: ${{ vars.ACCOUNT_MODEL_KNOWLEDGE_CUTOFF || 'January 2025' }}
         shell: bash
+        working-directory: apps/core
         run: |
           set -euo pipefail
 
@@ -309,6 +304,7 @@ jobs:
           DISCORD_SYNC_GUILD_ID: ${{ vars.DISCORD_SYNC_GUILD_ID }}
           DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN || secrets.SST_SECRET_DISCORDBOTTOKEN }}
         shell: bash
+        working-directory: apps/core
         run: |
           set -euo pipefail
 
@@ -335,6 +331,7 @@ jobs:
           INTEGRATIONS_ACCOUNT_USERNAME: ${{ vars.INTEGRATIONS_ACCOUNT_USERNAME || 'integrations-default' }}
           ACCOUNT_MODEL_KNOWLEDGE_CUTOFF: ${{ vars.ACCOUNT_MODEL_KNOWLEDGE_CUTOFF || 'January 2025' }}
         shell: bash
+        working-directory: apps/core
         run: |
           set -euo pipefail
 
@@ -363,6 +360,7 @@ jobs:
           INTEGRATIONS_ACCOUNT_USERNAME: ${{ vars.INTEGRATIONS_ACCOUNT_USERNAME || 'integrations-default' }}
           ACCOUNT_MODEL_KNOWLEDGE_CUTOFF: ${{ vars.ACCOUNT_MODEL_KNOWLEDGE_CUTOFF || 'January 2025' }}
         shell: bash
+        working-directory: apps/core
         run: |
           set -euo pipefail
 
@@ -394,6 +392,7 @@ jobs:
           INTEGRATIONS_ACCOUNT_USERNAME: ${{ vars.INTEGRATIONS_ACCOUNT_USERNAME || 'integrations-default' }}
           ACCOUNT_MODEL_KNOWLEDGE_CUTOFF: ${{ vars.ACCOUNT_MODEL_KNOWLEDGE_CUTOFF || 'January 2025' }}
         shell: bash
+        working-directory: apps/core
         run: |
           set -euo pipefail
 
