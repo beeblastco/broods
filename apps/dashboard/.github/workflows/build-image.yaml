@@ -1,0 +1,70 @@
+name: Build Image
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+env:
+  IMAGE_NAME: ghcr.io/beeblastco/cherry-coke
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Initialize submodules
+        env:
+          SUBMODULE_TOKEN: ${{ secrets.SUBMODULE_TOKEN }}
+        run: |
+          git config --global url."https://x-access-token:${SUBMODULE_TOKEN}@github.com/".insteadOf "https://github.com/"
+          git submodule update --init --recursive
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Validate build variables
+        shell: bash
+        env:
+          NEXT_PUBLIC_CONVEX_URL: ${{ vars.NEXT_PUBLIC_CONVEX_URL }}
+          CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
+        run: |
+          if [[ -z "$NEXT_PUBLIC_CONVEX_URL" ]]; then
+            echo "Missing repository variable: NEXT_PUBLIC_CONVEX_URL" >&2
+            exit 1
+          fi
+          if [[ -z "$CONVEX_DEPLOY_KEY" ]]; then
+            echo "Missing repository secret: CONVEX_DEPLOY_KEY" >&2
+            exit 1
+          fi
+
+      - name: Build and push image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ env.IMAGE_NAME }}:main
+            ${{ env.IMAGE_NAME }}:${{ github.sha }}
+          secrets: |
+            CONVEX_DEPLOY_KEY=${{ secrets.CONVEX_DEPLOY_KEY }}
+          build-args: |
+            NEXT_PUBLIC_AGENT_GATEWAY_URL=${{ vars.NEXT_PUBLIC_AGENT_GATEWAY_URL }}
+            NEXT_PUBLIC_CONVEX_SITE_URL=${{ vars.NEXT_PUBLIC_CONVEX_SITE_URL }}
+            NEXT_PUBLIC_CONVEX_URL=${{ vars.NEXT_PUBLIC_CONVEX_URL }}
+            NEXT_PUBLIC_WORKOS_REDIRECT_URI=${{ vars.NEXT_PUBLIC_WORKOS_REDIRECT_URI }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

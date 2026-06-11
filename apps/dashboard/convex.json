@@ -1,0 +1,7 @@
+{
+  "authKit": {
+    "redirectUris": ["http://localhost:3000/auth/callback", "https://dashboard.beeblast.co/auth/callback"],
+    "appHomepageUrl": "https://dashboard.beeblast.co",
+    "corsOrigins": ["http://localhost:3000", "https://dashboard.beeblast.co"]
+  }
+}
