@@ -158,7 +158,7 @@ packages/
   demos/                  # Runnable demo scripts using the SDK
 ```
 
-A more detailed map (with the routing contract between each module) lives in [`AGENTS.md`](AGENTS.md).
+A more detailed map (with the routing contract between each module) lives in [`apps/core/AGENTS.md`](apps/core/AGENTS.md).
 
 ---
 
@@ -180,7 +180,7 @@ CI runs `check`, `test`, and `build` on every PR via [`.github/workflows/ci.yaml
 ### Conventions
 
 - Bun + TypeScript, ESM, no transpile step. Bun workspaces with the isolated linker — declare every dependency a package imports.
-- File header comments use a block-docstring style — see [`AGENTS.md`](AGENTS.md) for the full style guide.
+- File header comments use a block-docstring style — see [`apps/core/AGENTS.md`](apps/core/AGENTS.md) for the full style guide.
 - Channel-specific logic belongs in `apps/core/functions/_shared/<channel>-channel.ts`; commands belong in `apps/core/functions/_shared/commands.ts`.
 - Shared code only goes in `functions/_shared/` when it's actually shared between Lambdas.
 - Don't deploy to anyone else's stage — `dev` is the default.

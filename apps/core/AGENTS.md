@@ -1,36 +1,29 @@
-# Agent
+This is `apps/core` (`@filthy-panty/core`) — the serverless AI agent harness on AWS (Lambda + Vercel AI SDK + SST) and the future Rust port boundary. It lives in the filthy-panty Bun-workspaces monorepo. Paths in this file are relative to `apps/core/` unless written with `../../`.
 
-This repository is a Bun-workspaces monorepo for the agent platform: a serverless AI agent harness on AWS (Lambda + Vercel AI SDK + SST), the Next.js dashboard, the shared Convex backend, the developer docs site, the CLI/SDK package, and runnable demos.
+Dependent workspaces (in this monorepo):
 
-Monorepo layout:
+- `../../packages/convex` (`@filthy-panty/convex`): shared Convex backend. Core's storage adapter at `functions/_shared/storage/convex/` reads it; convex mode is active on the `production` stage only (`dev` uses DynamoDB).
+- `../../packages/filthy-panty` (`filthy-panty`): CLI + SDK npm package that calls core's deployed Function URLs. Update its types/client when the public API or config shape changes.
+- `../../packages/demos` (`@filthy-panty/demos`): runnable scripts against the deployed API, importing the SDK. Keep them and `account.config.example.json` in sync with config changes.
+- `../../apps/dashboard` (`@filthy-panty/dashboard`): Next.js dashboard sharing the Convex backend. Has its own AGENTS.md — read it before dashboard work.
+- `../../apps/docs` (`@filthy-panty/docs`): Docusaurus docs site. Update docs and diagrams there when core behavior changes.
 
-```text
-apps/core/          @filthy-panty/core — SST app (Lambdas, scripts, tests). Future Rust port boundary.
-apps/dashboard/     @filthy-panty/dashboard — Next.js 16 dashboard (was the cherry-coke repo). Has its own AGENTS.md.
-apps/docs/          @filthy-panty/docs — Docusaurus site (React 18, isolated here).
-packages/convex/    @filthy-panty/convex — shared Convex backend, functions flat at the package root (convex.json functions: ".").
-packages/filthy-panty/  filthy-panty — CLI + SDK npm package (name TBD; plan in apps/docs/docs/plans/beeblast-cli.md).
-packages/demos/     @filthy-panty/demos — runnable scripts against the deployed API, importing the SDK.
-```
+Related external repos (siblings of the monorepo checkout):
 
-Related repos:
-
-- ../infra: Infrastucture repo for the kubernetes cluster and VM provision.
-- ../lambda-sanbdox: Custom Lambda runtime for sandbox to run bash, node and python script, simulate VM machine.
-- ../cherry-coke: merged into `apps/dashboard/` (archived).
+- `../../../infra`: infrastructure repo for the kubernetes cluster and VM provision. Keep `sst.config.ts` constants, naming pattern, and tag conventions aligned with it.
+- `../../../lambda-sanbdox`: custom Lambda runtime for sandbox to run bash, node and python script, simulate VM machine.
+- cherry-coke: merged into `../../apps/dashboard/` (old repo archived).
 
 Workspace rules:
 
 - Run `bun install` at the repo root only. Bun uses the isolated linker: every import a package uses must be declared in that package's `package.json` (no hoisted transitive freeloading).
-- Root scripts fan out with `bun run --filter`: `build`/`check`/`test`/`deploy` target `@filthy-panty/core`; `docs`/`docs:build` target `@filthy-panty/docs`. Run `sst` commands from `apps/core/`.
+- Root scripts fan out with `bun run --filter`: `build`/`check`/`test`/`deploy` target `@filthy-panty/core`; `docs`/`docs:build` target `@filthy-panty/docs`. Run `sst` commands from this directory (`apps/core/`).
 - React versions are intentionally split: docs pins React 18 (Docusaurus), dashboard pins React 19 (Next 16). Never add react to the root package.json.
 - The core storage adapter reaches the Convex generated API via `require("@filthy-panty/convex/_generated/api")` on purpose — a typed import would drag every backend source into core's stricter typecheck. Keep it a require().
-- `packages/convex/_generated/` is committed. After schema changes run `bun run --filter @filthy-panty/convex codegen` and commit the diff. The dashboard image build re-runs `convex deploy`.
-- `apps/dashboard/` has its own AGENTS.md with Next.js/Convex/UI conventions — read it before dashboard work.
+- `../../packages/convex/_generated/` is committed. After schema changes run `bun run --filter @filthy-panty/convex codegen` and commit the diff. The dashboard image build re-runs `convex deploy`.
 
-Key rules (core SST app — paths relative to `apps/core/`):
+Key rules:
 
-- Keep the constants, naming pattern, and tag conventions in `sst.config.ts` aligned with the infra repo.
 - Each Lambda function lives in its own folder under `functions/` with a `bootstrap.ts` entry point for the Bun custom runtime.
 - Default runtime is Bun on Lambda `provided.al2023` with ARM64 binaries built by `scripts/build.ts`.
 - The deployed architecture uses two public Lambdas:
@@ -82,7 +75,7 @@ Remember:
 This project uses [Convex](https://convex.dev) as its backend.
 
 When working on Convex code, **always read
-`packages/convex/_generated/ai/guidelines.md` first** for important guidelines on
+`../../packages/convex/_generated/ai/guidelines.md` first** for important guidelines on
 how to correctly use Convex APIs and patterns. The file contains rules that
 override what you may have learned about Convex from training data.
 
