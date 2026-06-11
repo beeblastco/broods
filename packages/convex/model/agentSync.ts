@@ -1,5 +1,5 @@
 /**
- * Keeps the filthy-panty `agents` row in sync with cherry-coke's `agentConfigs`.
+ * Keeps the filthy-panty `agents` row in sync with the dashboard's `agentConfigs`.
  *
  * Filthy-panty's harness queries `agents` (not `agentConfigs`) when invoking
  * an agent. Cherry-coke owns the canvas-side `agentConfigs` row; this helper

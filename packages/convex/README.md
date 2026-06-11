@@ -1,61 +1,52 @@
-# convex-filthy-cherry
+# @filthy-panty/convex
 
-Shared Convex backend used by two repositories:
+Shared Convex backend for the filthy-panty monorepo, used by two workspaces:
 
-- **cherry-coke** — deploys this folder as part of its Convex project (`convex/backend/` submodule). Single source of truth for the backend schema and internal queries/mutations.
-- **filthy-panty** — consumes this folder as a vendored submodule (`vendor/convex-filthy-cherry/`). Filthy-panty does NOT deploy these functions; it only imports the generated `api` types and calls the functions remotely via `ConvexHttpClient` with a Convex deploy key.
+- **`apps/dashboard`** — deploys this package as its Convex project (the
+  dashboard Docker image build runs `convex deploy` from this directory) and
+  calls the public functions through the generated `api`.
+- **`apps/core`** — does NOT deploy these functions; its storage adapter at
+  `apps/core/functions/_shared/storage/convex/` imports the generated
+  `internal` types and calls the functions remotely via `ConvexHttpClient`
+  with a Convex deploy key. Convex storage is active on the `production`
+  stage only (`dev` uses DynamoDB).
 
 ## Tables
 
-- `accounts` — tenant root. One row per cherry-coke org/workspace. Bearer-secret hash indexed for direct-API auth lookup.
-- `agents` — per-account agent configurations (encrypted blob).
-- `conversations` — per-account, per-agent conversation threads.
-- `messages` — per-conversation message stream.
-- `skills` — per-account skill metadata; blobs live in S3.
-- `asyncResults` — per-account async-job status/result entries.
+Dashboard domain: `users`, `orgs`, `orgMembers`, `projects`, `environments`,
+`agentConfigs`, `canvasLayouts`, `agentDeployments`, `toolServices`,
+`deployKeys`.
 
-No prefixes; these are first-class tables in the merged schema.
+Agent-platform domain (shared with core): `accounts`, `agents`,
+`sandboxConfigs`, `workspaceConfigs`, `environmentVariables`, `webhooks`,
+`conversations`, `messages`, `skills`, `workspaceFiles`, `asyncResults`,
+`cronJobs`.
+
+Sensitive config (agent configs, sandbox credentials) is stored as encrypted
+blobs — core encrypts before writing; the dashboard never reads the plaintext.
 
 ## Functions
 
-All functions are `internalQuery` / `internalMutation`. They are only callable by the Convex deploy key (used by filthy-panty Lambda) or by other internal Convex functions (used by cherry-coke server code).
+Functions consumed by core are `internalQuery` / `internalMutation`, callable
+only with the Convex deploy key or from other Convex functions. Dashboard-facing
+functions authenticate the WorkOS user via `authKit.getAuthUser(ctx)`.
 
-Naming follows cherry-coke's CRUD rule: `create`, `update`, `list`, `remove`, `getById`, `get…`.
+Naming follows the CRUD rule: `create`, `update`, `list`, `remove`, `getById`,
+`get…`; internal-only variants end in `Internal`.
 
 ## Tenant isolation (defence in depth)
 
-Every mutation validates the `accountId` argument against the row being touched. A leaked Convex deploy key cannot trivially cross-tenant.
+Every mutation validates the `accountId` argument against the row being
+touched. A leaked Convex deploy key cannot trivially cross-tenant.
 
 ## Workflow
 
-1. Make a change here (PR against this repo).
-2. Bump submodule SHA in cherry-coke → `bunx convex codegen` → commit regenerated `_generated/api.d.ts` back into this repo → re-bump submodule.
-3. Bump submodule SHA in filthy-panty to pick up new types.
+1. Change schema or functions here.
+2. Run `bun run --filter @filthy-panty/convex codegen` (or `bunx convex codegen`
+   from this directory) and commit the `_generated/` diff — it is committed on
+   purpose so core and the dashboard typecheck without codegen.
+3. Deploys happen through the dashboard image build (`convex deploy`); this
+   package is never deployed standalone.
 
-The two consumer repos must move lockstep on schema changes.
-
-## Local development
-
-This repo does not deploy on its own. Iterate inside cherry-coke after bumping the submodule.
-
-## First push to GitHub
-
-After creating the empty repo at `https://github.com/beeblastco/convex-filthy-cherry`:
-
-```sh
-git init
-git commit -m "first commit"
-git branch -M main
-git remote add origin https://github.com/beeblastco/convex-filthy-cherry.git
-git push -u origin main
-```
-
-Once pushed, swap the submodule URL in both consumers from the local file path to the GitHub URL:
-
-```sh
-# in cherry-coke worktree
-git submodule set-url convex/backend https://github.com/beeblastco/convex-filthy-cherry.git
-
-# in filthy-panty worktree
-git submodule set-url vendor/convex-filthy-cherry https://github.com/beeblastco/convex-filthy-cherry.git
-```
+The convex CLI runs from this directory and reads `CONVEX_DEPLOYMENT` from the
+local `.env.local`.

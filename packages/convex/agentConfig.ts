@@ -339,7 +339,7 @@ export const remove = mutation({
         for (const d of deployments) await ctx.db.delete(d._id);
 
         // Clean up the linked filthy-panty `agents` row if present so the
-        // harness side stays consistent with cherry-coke's canvas.
+        // harness side stays consistent with the dashboard's canvas.
         if (existing.agentId) {
             const normalized = ctx.db.normalizeId("agents", existing.agentId);
             if (normalized) {

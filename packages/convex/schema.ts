@@ -145,7 +145,7 @@ export const orgMembersFields = {
     createdAt: v.number(),
 };
 
-/** Tenant root for filthy-panty. One row per cherry-coke org. The doc id IS the accountId. */
+/** Tenant root for filthy-panty. One row per dashboard org. The doc id IS the accountId. */
 export const accountsFields = {
     orgId: v.string(),
     username: v.string(),
@@ -156,7 +156,7 @@ export const accountsFields = {
     updatedAt: v.number(),
 };
 
-/** Agent configuration, stored encrypted so cherry-coke cannot read provider secrets. */
+/** Agent configuration, stored encrypted so the dashboard cannot read provider secrets. */
 export const agentsFields = {
     accountId: v.id("accounts"),
     name: v.string(),
@@ -173,7 +173,7 @@ export const agentsFields = {
  * by agents via the encrypted agent config. Stored encrypted at rest like agents
  * because `envVars`/`options` may carry provider secrets — filthy-panty (the
  * source of truth for this shared SaaS table) encrypts before writing, so
- * cherry-coke only ever persists the opaque blob.
+ * the dashboard only ever persists the opaque blob.
  */
 export const sandboxConfigsFields = {
     accountId: v.id("accounts"),

@@ -115,7 +115,7 @@ export const create = internalMutation({
             updatedAt: now,
         });
 
-        // Back-sync to cherry-coke's canvas so API-created agents appear on
+        // Back-sync to the dashboard's canvas so API-created agents appear on
         // the org owner's default project/environment. Safe no-op when the
         // canvas surface isn't provisioned (no org owner / no projects).
         await backSyncCanvasFromAgentRow(ctx, agentRowId);
@@ -213,7 +213,7 @@ export const remove = internalMutation({
             throw new Error("Agent does not belong to the supplied accountId");
         }
 
-        // Mirror cleanup onto cherry-coke's canvas: drop any agentConfigs row
+        // Mirror cleanup onto the dashboard's canvas: drop any agentConfigs row
         // and matching canvas node that referenced this agent.
         const linkedConfig = await ctx.db
             .query("agentConfigs")

@@ -2,7 +2,7 @@
  * Sandbox config CRUD scoped to an account. Mirrors agents.ts: the doc _id is
  * the public sandboxId, every mutation revalidates the doc's accountId against
  * the caller-supplied accountId, and the config blob is stored encrypted
- * (filthy-panty encrypts before writing; cherry-coke never reads it).
+ * (filthy-panty encrypts before writing; the dashboard never reads it).
  */
 
 import { v } from "convex/values";

@@ -1,5 +1,5 @@
 /**
- * Codec between cherry-coke's flat `agentConfigs` row and the nested
+ * Codec between the dashboard's flat `agentConfigs` row and the nested
  * filthy-panty `AgentConfig` shape that the Config tab exposes for editing.
  *
  * Cherry-coke stores top-level model/runtime settings as columns for fast
@@ -83,7 +83,7 @@ function pruneEmpty(value: Record<string, unknown>): Record<string, unknown> | u
     return Object.keys(cleaned).length === 0 ? undefined : cleaned;
 }
 
-/** Project a flat cherry-coke row into the nested filthy-panty shape. */
+/** Project a flat dashboard row into the nested filthy-panty shape. */
 export function toNestedAgentConfig(flat: FlatAgentConfig): NestedAgentConfig {
     const extra = isPlainObject(flat.extraConfig) ? flat.extraConfig : {};
 

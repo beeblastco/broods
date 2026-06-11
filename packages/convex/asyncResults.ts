@@ -1,6 +1,6 @@
 /**
  * Async-job tracking for the harness-processing /async endpoint. Filthy-panty
- * Lambda writes status transitions; cherry-coke reads them via live queries.
+ * Lambda writes status transitions; the dashboard reads them via live queries.
  */
 
 import { v } from "convex/values";

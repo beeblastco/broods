@@ -1,6 +1,6 @@
 /**
  * Account CRUD + secret-hash lookup. Called by filthy-panty's
- * ConvexStorageProvider (via deploy key) and by cherry-coke's org lifecycle.
+ * ConvexStorageProvider (via deploy key) and by the dashboard's org lifecycle.
  */
 
 import { v } from "convex/values";
