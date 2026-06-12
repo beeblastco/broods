@@ -37,7 +37,6 @@ import {
   addEdge,
   Background,
   ConnectionMode,
-  MarkerType,
   Panel,
   ReactFlow,
   ReactFlowProvider,
@@ -318,6 +317,8 @@ function CanvasInner({ projectId }: { projectId: Id<"projects"> }) {
   const { theme } = useTheme();
   const isDark = theme === "dark";
 
+  // Arrowheads are rendered per-edge inside each edge component (one shared geometry across
+  // all edge kinds, recolorable on hover), so no markerEnd here.
   const defaultEdgeOptions = useMemo(
     () => ({
       style: {
@@ -325,12 +326,6 @@ function CanvasInner({ projectId }: { projectId: Id<"projects"> }) {
         strokeWidth: 1.5,
       },
       animated: true,
-      markerEnd: {
-        type: MarkerType.ArrowClosed,
-        width: 18,
-        height: 18,
-        color: isDark ? "rgba(255,255,255,0.35)" : "rgba(0,0,0,0.3)",
-      },
     }),
     [isDark],
   );

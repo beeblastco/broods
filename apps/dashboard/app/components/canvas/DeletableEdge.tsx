@@ -9,6 +9,7 @@ import {
   useStore,
   type EdgeProps,
 } from "@xyflow/react";
+import { useTheme } from "next-themes";
 import { useState } from "react";
 
 const HOVER_COLOR = "rgb(239, 68, 68, 0.9)";
@@ -31,9 +32,10 @@ export function DeletableEdge({
   sourcePosition,
   targetPosition,
   style,
-  markerEnd,
 }: EdgeProps) {
   const [hovered, setHovered] = useState(false);
+  const { theme } = useTheme();
+  const isDark = theme === "dark";
 
   // Endpoint types as a single primitive so the selector stays referentially stable.
   const endpointTypes = useStore(
@@ -69,31 +71,28 @@ export function DeletableEdge({
   const edgeStyle = hovered
     ? { ...style, stroke: HOVER_COLOR, strokeWidth: 2 }
     : style;
+  const arrowColor = hovered
+    ? HOVER_COLOR
+    : isDark
+      ? "rgba(255,255,255,0.35)"
+      : "rgba(0,0,0,0.3)";
   const arrowId = `${ARROW_ID_PREFIX}-${id}`;
 
   return (
     <>
-      {/* The default arrowhead is a shared theme-colored marker def, so it can't follow the
-          per-edge hover color — swap in this red copy of the same shape while hovered. */}
+      {/* Inline marker matching the mount/subagent arrowhead geometry, so every edge kind
+          shares one arrow style and the color can follow the per-edge hover state. */}
       <defs>
         <marker
           id={arrowId}
-          viewBox="-10 -10 20 20"
-          refX="0"
+          viewBox="-10 -5 10 10"
+          refX="-1"
           refY="0"
-          markerWidth="18"
-          markerHeight="18"
-          markerUnits="strokeWidth"
+          markerWidth="6"
+          markerHeight="6"
           orient="auto-start-reverse"
         >
-          <polyline
-            points="-5,-4 0,0 -5,4 -5,-4"
-            fill={HOVER_COLOR}
-            stroke={HOVER_COLOR}
-            strokeWidth={1}
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          />
+          <path d="M -10,-4 L 0,0 L -10,4 Z" fill={arrowColor} />
         </marker>
       </defs>
 
@@ -101,7 +100,7 @@ export function DeletableEdge({
         id={id}
         path={edgePath}
         style={edgeStyle}
-        markerEnd={hovered ? `url(#${arrowId})` : markerEnd}
+        markerEnd={`url(#${arrowId})`}
       />
       <EdgeLabelRenderer>
         {/* Subtle "default" marker at the midpoint; hidden on hover so the delete button takes over */}
