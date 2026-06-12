@@ -202,7 +202,12 @@ export function BaseNode({
 
     return (
         <div className={`relative w-44 min-h-24 flex flex-col rounded-md border bg-card transition-[border-color,box-shadow] duration-200 hover:shadow-md ${borderClass}`}>
+            {/* The explicit id matters: while connecting, xyflow resolves an id-less hovered
+                handle to the node's FIRST handle (sources before targets) for the snap preview,
+                which is the left side handle — the line would visually snap to the side even
+                though the connection itself lands here on top. */}
             <Handle
+                id="top"
                 type="target"
                 position={Position.Top}
                 isConnectableStart={false}
