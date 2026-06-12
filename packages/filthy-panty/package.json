@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "description": "CLI + TypeScript SDK for the filthy-panty agent platform (name TBD). See docs/plans/beeblast-cli.md for the full product plan.",
   "type": "module",
-  "license": "MIT",
+  "license": "FSL-1.1-Apache-2.0",
   "bin": {
     "filthy-panty": "./src/cli/index.ts"
   },

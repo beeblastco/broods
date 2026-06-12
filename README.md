@@ -1,6 +1,6 @@
 # filthy-panty
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE.md)
+[![License: FSL-1.1-Apache-2.0](https://img.shields.io/badge/License-FSL--1.1--Apache--2.0-blue.svg)](LICENSE.md)
 [![Bun](https://img.shields.io/badge/runtime-Bun-000000?logo=bun)](https://bun.sh/)
 [![SST](https://img.shields.io/badge/infra-SST%20v4-e27152)](https://sst.dev/)
 
@@ -109,4 +109,4 @@ CI runs on every PR via `.github/workflows/ci.yaml`.
 
 ## License
 
-[MIT](LICENSE.md) © beeblastco
+[FSL-1.1-Apache-2.0](LICENSE.md)
