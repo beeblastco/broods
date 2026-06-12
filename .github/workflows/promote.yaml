@@ -1,0 +1,56 @@
+# One-click promotion: fast-forwards main to dev, then dispatches the main
+# deploy workflows. Pushes made with GITHUB_TOKEN do not fire `on: push`
+# workflows (recursion guard), so deploy.yaml and build-dashboard.yaml are
+# dispatched explicitly after the merge.
+
+name: Promote dev to main
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: promote-main
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  promote:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Fast-forward main to dev
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          git fetch origin dev
+          if git merge-base --is-ancestor origin/dev HEAD; then
+            echo "main already contains dev; nothing to promote."
+            echo "PROMOTED=false" >> "$GITHUB_ENV"
+            exit 0
+          fi
+          if ! git merge-base --is-ancestor HEAD origin/dev; then
+            echo "main has commits that are not on dev; refusing a non-fast-forward promote." >&2
+            echo "Merge main back into dev first, then re-run this workflow." >&2
+            exit 1
+          fi
+
+          git merge --ff-only origin/dev
+          git push origin main
+          echo "PROMOTED=true" >> "$GITHUB_ENV"
+
+      - name: Trigger main deploys
+        if: env.PROMOTED == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh workflow run deploy.yaml --ref main --repo "$GITHUB_REPOSITORY"
+          gh workflow run build-dashboard.yaml --ref main --repo "$GITHUB_REPOSITORY"

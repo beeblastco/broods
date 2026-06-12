@@ -334,6 +334,11 @@ function accountProviderConfig(provider: AccountModelProviderName): Record<strin
         ...optionalStringConfig("organization", "ACCOUNT_OPENAI_ORGANIZATION", "OPENAI_ORGANIZATION"),
         ...optionalStringConfig("project", "ACCOUNT_OPENAI_PROJECT", "OPENAI_PROJECT"),
       };
+    case "anthropic":
+      return {
+        apiKey: firstRequiredEnv("ACCOUNT_ANTHROPIC_API_KEY"),
+        ...optionalStringConfig("baseURL", "ACCOUNT_ANTHROPIC_BASE_URL", "ANTHROPIC_BASE_URL"),
+      };
     case "bedrock":
       return {
         apiKey: firstRequiredEnv("ACCOUNT_BEDROCK_API_KEY"),

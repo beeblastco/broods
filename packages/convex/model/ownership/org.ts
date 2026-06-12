@@ -13,6 +13,10 @@ const ROLE_RANK: Record<OrgRole, number> = {
     member: 1,
 };
 
+export function orgRoleMeets(role: OrgRole, requiredRole?: OrgRole): boolean {
+    return !requiredRole || ROLE_RANK[role] >= ROLE_RANK[requiredRole];
+}
+
 export async function getOrgMembership(
     ctx: QueryCtx | MutationCtx,
     orgId: Id<"orgs">,
@@ -67,7 +71,7 @@ export async function requireOrgMember(
     if (!membership) {
         throw new Error("Not a member of this org");
     }
-    if (requiredRole && ROLE_RANK[membership.role] < ROLE_RANK[requiredRole]) {
+    if (!orgRoleMeets(membership.role, requiredRole)) {
         throw new Error(`Role ${requiredRole} required; caller has ${membership.role}`);
     }
 

@@ -5,7 +5,7 @@ import { Section } from "@/app/components/Section";
 import { Button } from "@/app/components/ui/button";
 import { Input } from "@/app/components/ui/input";
 import { api } from "@filthy-panty/convex/_generated/api";
-import type { Doc, Id } from "@filthy-panty/convex/_generated/dataModel";
+import type { Id } from "@filthy-panty/convex/_generated/dataModel";
 import { useMutation, useQuery } from "convex/react";
 import { Plus, Trash2 } from "lucide-react";
 import { useState } from "react";
@@ -22,7 +22,7 @@ export function EnvironmentsPanel({ projectId, environmentId }: Props) {
     const variables = useQuery(
         api.environmentVariables.list,
         environmentId ? { projectId: projectId, environmentId: environmentId } : "skip",
-    ) as Doc<"environmentVariables">[] | undefined;
+    );
     const setVariable = useMutation(api.environmentVariables.set);
     const removeVariable = useMutation(api.environmentVariables.remove);
 

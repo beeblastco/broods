@@ -4,6 +4,7 @@
 
 import type { GenericMutationCtx, GenericQueryCtx } from "convex/server";
 import { v } from "convex/values";
+import { api } from "./_generated/api";
 import type { DataModel, Id } from "./_generated/dataModel";
 import { action, mutation, query } from "./_generated/server";
 import { authKit } from "./auth";
@@ -12,6 +13,11 @@ import { getOwnedProject } from "./model/ownership/project";
 import { toolServicesFields } from "./schema";
 
 type Ctx = GenericQueryCtx<DataModel> | GenericMutationCtx<DataModel>;
+
+const MAX_TOOL_TIMEOUT_MS = 30_000;
+const MAX_TOOL_INPUT_BYTES = 256 * 1024;
+const MAX_TOOL_SOURCE_BYTES = 256 * 1024;
+const MAX_TOOL_OUTPUT_BYTES = 1024 * 1024;
 
 const toolServiceDoc = v.object({
     ...toolServicesFields,
@@ -76,6 +82,10 @@ export const upsertForNode = mutation({
         if (!authUser) throw new Error("User not found or not authenticated");
         await requireOwnedProjectEnv(ctx, authUser.id, projectId, environmentId);
 
+        if (sourceCode && new TextEncoder().encode(sourceCode).byteLength > MAX_TOOL_SOURCE_BYTES) {
+            throw new Error(`Tool source code must be ${MAX_TOOL_SOURCE_BYTES} bytes or smaller.`);
+        }
+
         const now = Date.now();
         const existing = await ctx.db
             .query("toolServices")
@@ -111,13 +121,35 @@ export const upsertForNode = mutation({
 
 export const execute = action({
     args: {
-        language: v.union(v.literal("javascript"), v.literal("python")),
-        sourceCode: v.string(),
+        projectId: v.id("projects"),
+        environmentId: v.id("environments"),
+        nodeId: v.string(),
         input: v.optional(v.any()),
         timeoutMs: v.optional(v.number()),
     },
     returns: v.any(),
-    handler: async (_ctx, { language, sourceCode, input, timeoutMs }) => {
+    handler: async (ctx, { projectId, environmentId, nodeId, input, timeoutMs }) => {
+        const tool = await ctx.runQuery(api.toolService.getByNode, {
+            projectId: projectId,
+            environmentId: environmentId,
+            nodeId: nodeId,
+        });
+        if (!tool) {
+            throw new Error("Tool configuration not found.");
+        }
+        if (tool.status !== "enabled") {
+            throw new Error("Tool is disabled.");
+        }
+
+        const normalizedInput = input ?? {};
+        const inputBytes = new TextEncoder().encode(JSON.stringify(normalizedInput)).byteLength;
+        if (inputBytes > MAX_TOOL_INPUT_BYTES) {
+            throw new Error(`Tool input must be ${MAX_TOOL_INPUT_BYTES} bytes or smaller.`);
+        }
+        const boundedTimeoutMs = Math.min(
+            Math.max(Math.trunc(timeoutMs ?? MAX_TOOL_TIMEOUT_MS), 1_000),
+            MAX_TOOL_TIMEOUT_MS,
+        );
         const url = process.env.CUSTOM_TOOL_EXECUTOR_URL?.trim().replace(/\/+$/, "") ?? "";
         const secret = process.env.CUSTOM_TOOL_EXECUTOR_SECRET?.trim() ?? "";
         const secretHeader =
@@ -135,10 +167,24 @@ export const execute = action({
                 "Content-Type": "application/json",
                 [secretHeader]: secret,
             },
-            body: JSON.stringify({ language, sourceCode, input: input ?? {}, timeoutMs }),
+            body: JSON.stringify({
+                language: tool.language,
+                sourceCode: tool.sourceCode,
+                input: normalizedInput,
+                timeoutMs: boundedTimeoutMs,
+            }),
         });
 
-        const body = (await upstream.json().catch(() => ({}))) as Record<string, unknown>;
+        const rawBody = await upstream.text().catch(() => "");
+        if (new TextEncoder().encode(rawBody).byteLength > MAX_TOOL_OUTPUT_BYTES) {
+            throw new Error(`Tool output must be ${MAX_TOOL_OUTPUT_BYTES} bytes or smaller.`);
+        }
+        let body: Record<string, unknown> = {};
+        try {
+            body = JSON.parse(rawBody) as Record<string, unknown>;
+        } catch {
+            // Non-JSON executor responses fall through to the status check below.
+        }
         if (!upstream.ok) {
             throw new Error(
                 typeof body.error === "string"

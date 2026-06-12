@@ -5,6 +5,7 @@
 import { v } from "convex/values";
 import type { Id } from "./_generated/dataModel";
 import { internalQuery } from "./_generated/server";
+import { getOwnedProject } from "./model/ownership/project";
 
 /**
  * Returns the caller's active deployments scoped to a project, and optionally to
@@ -25,21 +26,31 @@ export const getActiveDeploymentsInternal = internalQuery({
     handler: async (ctx, args) => {
         const { authId, projectId, environmentId } = args;
 
-        const deployments = await ctx.db
-            .query("agentDeployments")
-            .withIndex("by_authId", (q) => q.eq("authId", authId))
-            .collect();
+        const project = await getOwnedProject(ctx, authId, projectId);
+        if (!project) return [];
+
+        const configs = environmentId
+            ? await ctx.db
+                .query("agentConfigs")
+                .withIndex("by_projectId_and_environmentId", (q) =>
+                    q.eq("projectId", projectId).eq("environmentId", environmentId),
+                )
+                .collect()
+            : await ctx.db
+                .query("agentConfigs")
+                .withIndex("by_projectId_and_environmentId", (q) => q.eq("projectId", projectId))
+                .collect();
 
         const scoped: { _id: Id<"agentDeployments">; endpointId: string }[] = [];
-        for (const deployment of deployments) {
-            if (deployment.status !== "active") continue;
-
-            // Scope to the project (and environment, when given) via the agent config.
-            const config = await ctx.db.get(deployment.agentConfigId);
-            if (!config || config.projectId !== projectId) continue;
-            if (environmentId && config.environmentId !== environmentId) continue;
-
-            scoped.push({ _id: deployment._id, endpointId: deployment.endpointId });
+        for (const config of configs) {
+            const deployments = await ctx.db
+                .query("agentDeployments")
+                .withIndex("by_agentConfigId", (q) => q.eq("agentConfigId", config._id))
+                .collect();
+            for (const deployment of deployments) {
+                if (deployment.status !== "active") continue;
+                scoped.push({ _id: deployment._id, endpointId: deployment.endpointId });
+            }
         }
 
         return scoped;

@@ -64,9 +64,17 @@ export const agentConfigsFields = {
      * `agent`, `workspace`, `session`, `hooks`, `channels`, `tools`, `skills`,
      * `subagent`, and `provider` settings. Stored verbatim so the Config tab
      * can edit the full nested shape. Secrets should be expressed as
-     * `${ENV_NAME}` placeholders resolved from `runtimeVariables`.
+     * `${ENV_NAME}` placeholders resolved from encrypted runtime secrets.
      */
     extraConfig: v.optional(v.any()),
+    updatedAt: v.number(),
+};
+
+export const agentRuntimeSecretsFields = {
+    agentConfigId: v.id("agentConfigs"),
+    ciphertext: v.string(),
+    iv: v.string(),
+    tag: v.string(),
     updatedAt: v.number(),
 };
 
@@ -86,7 +94,8 @@ export const agentDeploymentsFields = {
     endpointId: v.string(),
     projectSlug: v.string(),
     environmentSlug: v.string(),
-    apiKey: v.optional(v.string()),
+    apiKeyHash: v.optional(v.string()),
+    keyHint: v.optional(v.string()),
     updatedAt: v.number(),
 };
 
@@ -121,6 +130,21 @@ export const toolServicesFields = {
     sourceCode: v.string(),
     status: v.union(v.literal("enabled"), v.literal("disabled")),
     updatedAt: v.number(),
+};
+
+/** Account-owned custom tool metadata; bundle bytes live in S3. */
+export const accountToolsFields = {
+    accountId: v.id("accounts"),
+    name: v.string(),
+    description: v.string(),
+    inputSchema: v.any(),
+    bundleStorageKey: v.string(),
+    sha256: v.string(),
+    defaultConfig: v.optional(v.any()),
+    status: v.union(v.literal("active"), v.literal("deleted")),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+    deletedAt: v.optional(v.number()),
 };
 
 /**
@@ -205,7 +229,9 @@ export const environmentVariablesFields = {
     projectId: v.id("projects"),
     environmentId: v.id("environments"),
     name: v.string(),
-    value: v.string(),
+    ciphertext: v.string(),
+    iv: v.string(),
+    tag: v.string(),
     updatedAt: v.number(),
 };
 
@@ -341,6 +367,8 @@ export default defineSchema({
         .index("by_authId", ["authId"])
         .index("by_projectId_and_environmentId", ["projectId", "environmentId"])
         .index("by_agentId", ["agentId"]),
+    agentRuntimeSecrets: defineTable(agentRuntimeSecretsFields)
+        .index("by_agentConfigId", ["agentConfigId"]),
     canvasLayouts: defineTable(canvasLayoutsFields)
         .index("by_projectId_and_environmentId", ["projectId", "environmentId"]),
     agentDeployments: defineTable(agentDeploymentsFields)
@@ -366,6 +394,9 @@ export default defineSchema({
         .index("by_orgId", ["orgId"])
         .index("by_secretHash", ["secretHash"]),
     agents: defineTable(agentsFields).index("by_accountId", ["accountId"]),
+    accountTools: defineTable(accountToolsFields)
+        .index("by_accountId", ["accountId"])
+        .index("by_accountId_and_status", ["accountId", "status"]),
     sandboxConfigs: defineTable(sandboxConfigsFields)
         .index("by_accountId", ["accountId"])
         .index("by_accountId_and_name", ["accountId", "name"]),
@@ -386,12 +417,14 @@ export default defineSchema({
     skills: defineTable(skillsFields).index("by_accountId", ["accountId"]),
     workspaceFiles: defineTable(workspaceFilesFields)
         .index("by_projectId_and_nodeId", ["projectId", "nodeId"])
+        .index("by_projectId_nodeId_and_path", ["projectId", "nodeId", "path"])
         .index("by_authId", ["authId"]),
     asyncResults: defineTable(asyncResultsFields)
         .index("by_accountId", ["accountId"])
         .index("by_eventId", ["eventId"]),
     cronJobs: defineTable(cronJobsFields)
         .index("by_accountId", ["accountId"])
+        .index("by_accountId_and_agentId", ["accountId", "agentId"])
         .index("by_accountId_and_status", ["accountId", "status"])
         .index("by_schedulerName", ["schedulerName"]),
 });

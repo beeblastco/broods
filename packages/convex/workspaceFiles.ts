@@ -8,6 +8,10 @@ import { internalMutation, mutation, query } from "./_generated/server";
 import { authKit } from "./auth";
 import { getOwnedProject } from "./model/ownership/project";
 
+function pathPrefixUpperBound(path: string): string {
+    return `${path}\uffff`;
+}
+
 /**
  * List all file/folder entries for a workspace node.
  * @param projectId owning project
@@ -128,7 +132,9 @@ export const remove = mutation({
         }
 
         const file = await ctx.db.get(fileId);
-        if (!file || file.authId !== user.id) throw new Error("File not found.");
+        if (!file) throw new Error("File not found.");
+        const project = await getOwnedProject(ctx, user.id, file.projectId);
+        if (!project) throw new Error("File not found.");
 
         if (file.storageId) {
             await ctx.storage.delete(file.storageId);
@@ -159,7 +165,9 @@ export const rename = mutation({
         }
 
         const file = await ctx.db.get(fileId);
-        if (!file || file.authId !== user.id) throw new Error("File not found.");
+        if (!file) throw new Error("File not found.");
+        const project = await getOwnedProject(ctx, user.id, file.projectId);
+        if (!project) throw new Error("File not found.");
 
         const trimmed = newName.trim();
         if (!trimmed || trimmed.includes("/")) throw new Error("Invalid name.");
@@ -169,16 +177,18 @@ export const rename = mutation({
         const now = Date.now();
 
         if (file.isFolder) {
-            // Patch all children that live under the old folder path
-            const all = await ctx.db
+            const descendants = await ctx.db
                 .query("workspaceFiles")
-                .withIndex("by_projectId_and_nodeId", (q) =>
-                    q.eq("projectId", file.projectId).eq("nodeId", file.nodeId),
+                .withIndex("by_projectId_nodeId_and_path", (q) =>
+                    q
+                        .eq("projectId", file.projectId)
+                        .eq("nodeId", file.nodeId)
+                        .gte("path", `${file.path}/`)
+                        .lt("path", pathPrefixUpperBound(`${file.path}/`)),
                 )
                 .collect();
 
-            for (const doc of all) {
-                if (!doc.path.startsWith(file.path + "/")) continue;
+            for (const doc of descendants) {
                 const childNewPath = newPath + doc.path.slice(file.path.length);
                 await ctx.db.patch(doc._id, { path: childNewPath, updatedAt: now });
             }
@@ -212,12 +222,14 @@ export const getFileDownloadUrl = query({
             throw new Error("User not found or not authenticated");
         }
 
+        const project = await getOwnedProject(ctx, user.id, projectId);
+        if (!project) return null;
+
         const file = await ctx.db
             .query("workspaceFiles")
-            .withIndex("by_projectId_and_nodeId", (q) =>
-                q.eq("projectId", projectId).eq("nodeId", nodeId),
+            .withIndex("by_projectId_nodeId_and_path", (q) =>
+                q.eq("projectId", projectId).eq("nodeId", nodeId).eq("path", path),
             )
-            .filter((q) => q.eq(q.field("path"), path))
             .first();
 
         if (!file?.storageId) return null;
@@ -250,14 +262,18 @@ export const removeFolder = mutation({
         const project = await getOwnedProject(ctx, user.id, projectId);
         if (!project) throw new Error("Project not found.");
 
-        const all = await ctx.db
+        const descendants = await ctx.db
             .query("workspaceFiles")
-            .withIndex("by_projectId_and_nodeId", (q) =>
-                q.eq("projectId", projectId).eq("nodeId", nodeId),
+            .withIndex("by_projectId_nodeId_and_path", (q) =>
+                q
+                    .eq("projectId", projectId)
+                    .eq("nodeId", nodeId)
+                    .gte("path", folderPath)
+                    .lt("path", pathPrefixUpperBound(folderPath)),
             )
             .collect();
 
-        for (const doc of all) {
+        for (const doc of descendants) {
             if (doc.path !== folderPath && !doc.path.startsWith(folderPath + "/")) continue;
             if (doc.storageId) {
                 await ctx.storage.delete(doc.storageId);

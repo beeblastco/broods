@@ -393,8 +393,11 @@ function CanvasInner({ projectId }: { projectId: Id<"projects"> }) {
           animated: e.animated,
         })),
       })
-        .then(async () => {
-          const refs = deriveAgentRuntimeRefs(currentNodes, currentEdges);
+        .then(async (savedLayout) => {
+          const persistedNodes = savedLayout.nodes as Node[];
+          setNodes(persistedNodes);
+
+          const refs = deriveAgentRuntimeRefs(persistedNodes, currentEdges);
           await Promise.all(
             refs.map(async (ref) => {
               const serialized = serializeRuntimeRefs(ref);
@@ -411,7 +414,7 @@ function CanvasInner({ projectId }: { projectId: Id<"projects"> }) {
           );
 
           // Persist agent→agent subagent allow-lists from the canvas edges.
-          const subagentRefs = deriveSubagentRefs(currentNodes, currentEdges);
+          const subagentRefs = deriveSubagentRefs(persistedNodes, currentEdges);
           await Promise.all(
             subagentRefs.map(async (ref) => {
               const serialized = serializeSubagentRefs(ref);

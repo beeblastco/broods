@@ -9,7 +9,7 @@ import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import { authKit } from "./auth";
 import { getOwnedEnvironment } from "./model/ownership/environment";
-import { getOwnedProject } from "./model/ownership/project";
+import { getProjectForRole } from "./model/ownership/project";
 import { deployKeysFields } from "./schema";
 
 const DEPLOY_KEY_PREFIX = "fp_deploy_";
@@ -91,7 +91,7 @@ export const create = mutation({
             throw new Error("User not found or not authenticated");
         }
 
-        const project = await getOwnedProject(ctx, user.id, projectId);
+        const project = await getProjectForRole(ctx, user.id, projectId, "admin");
         if (!project) throw new Error("Project not found.");
         if (!project.orgId) {
             throw new Error("Project is not linked to an organization.");
@@ -144,8 +144,10 @@ export const remove = mutation({
         const deployKey = await ctx.db.get(deployKeyId);
         if (!deployKey) throw new Error("Deploy key not found.");
 
+        const project = await getProjectForRole(ctx, user.id, deployKey.projectId, "admin");
+        if (!project) throw new Error("Deploy key not found.");
         const environment = await getOwnedEnvironment(ctx, user.id, deployKey.environmentId);
-        if (!environment) throw new Error("Deploy key not found.");
+        if (!environment || environment.projectId !== deployKey.projectId) throw new Error("Deploy key not found.");
 
         await ctx.db.delete(deployKeyId);
 

@@ -4,6 +4,7 @@
  */
 
 import { createAmazonBedrock } from "@ai-sdk/amazon-bedrock";
+import { createAnthropic } from "@ai-sdk/anthropic";
 import { createGateway } from "@ai-sdk/gateway";
 import { createGoogleGenerativeAI } from "@ai-sdk/google";
 import { createOpenAI } from "@ai-sdk/openai";
@@ -38,6 +39,8 @@ export function resolveConfiguredModel(agentConfig: AgentConfig): ResolvedModelP
       return resolveProviderModel(providerName, createGoogleGenerativeAI(providerConfig as never), modelId);
     case "openai":
       return resolveProviderModel(providerName, createOpenAI(providerConfig as never), modelId);
+    case "anthropic":
+      return resolveProviderModel(providerName, createAnthropic(providerConfig as never), modelId);
     case "bedrock":
       return resolveProviderModel(providerName, createAmazonBedrock(providerConfig as never), modelId);
     case "gateway":

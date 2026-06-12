@@ -26,9 +26,9 @@ export const provision = action({
         secret: v.string(),
     }),
     handler: async (ctx, args): Promise<{ accountId: Id<"accounts">; secret: string }> => {
-        const org = await ctx.runQuery(api.org.getById, { orgId: args.orgId });
+        const org = await ctx.runQuery(api.org.getByIdForAdmin, { orgId: args.orgId });
         if (!org) {
-            throw new Error("Org not found or you are not a member");
+            throw new Error("Org not found or admin role required");
         }
 
         const existing = await ctx.runQuery(internal.accounts.getByOrgId, { orgId: args.orgId });
@@ -46,6 +46,13 @@ export const provision = action({
             secretHash: secretHash,
         });
 
+        const identity = await ctx.auth.getUserIdentity();
+        console.log("AUDIT account secret provisioned", {
+            orgId: args.orgId,
+            accountId: accountId,
+            actor: identity?.subject ?? "unknown",
+        });
+
         return { accountId: accountId, secret: secret };
     },
 });
@@ -54,9 +61,9 @@ export const rotateSecret = action({
     args: { orgId: v.id("orgs") },
     returns: v.object({ secret: v.string() }),
     handler: async (ctx, args) => {
-        const org = await ctx.runQuery(api.org.getById, { orgId: args.orgId });
+        const org = await ctx.runQuery(api.org.getByIdForAdmin, { orgId: args.orgId });
         if (!org) {
-            throw new Error("Org not found or you are not a member");
+            throw new Error("Org not found or admin role required");
         }
 
         const account = await ctx.runQuery(internal.accounts.getByOrgId, { orgId: args.orgId });
@@ -68,6 +75,13 @@ export const rotateSecret = action({
         await ctx.runMutation(internal.accounts.update, {
             accountId: account._id,
             secretHash: secretHash,
+        });
+
+        const identity = await ctx.auth.getUserIdentity();
+        console.log("AUDIT account secret rotated", {
+            orgId: args.orgId,
+            accountId: account._id,
+            actor: identity?.subject ?? "unknown",
         });
 
         return { secret: secret };

@@ -10,6 +10,35 @@ import { authKit } from "./auth";
 
 export const stripeClient = new StripeSubscriptions(components.stripe);
 
+/** Returns the configured dashboard origin, with localhost fallback for dev. */
+function allowedDashboardOrigin(): string | null {
+    const explicit = process.env.DASHBOARD_ORIGIN?.trim();
+    if (explicit) return new URL(explicit).origin;
+
+    const redirectUri = process.env.NEXT_PUBLIC_WORKOS_REDIRECT_URI?.trim();
+    if (redirectUri) return new URL(redirectUri).origin;
+
+    return null;
+}
+
+/** Validate Stripe return URLs so callers cannot choose arbitrary domains. */
+function safeDashboardUrl(value: string, label: string): string {
+    let url: URL;
+    try {
+        url = new URL(value);
+    } catch {
+        throw new Error(`${label} must be a valid URL`);
+    }
+
+    const allowed = allowedDashboardOrigin();
+    const isLocalDev = url.hostname === "localhost" || url.hostname === "127.0.0.1";
+    if (allowed ? url.origin !== allowed : !isLocalDev) {
+        throw new Error(`${label} must use the configured dashboard origin`);
+    }
+
+    return url.toString();
+}
+
 export const getBillingInfo = query({
     args: {},
     returns: v.union(v.null(), v.any()),
@@ -45,8 +74,8 @@ export const createCheckoutSession = action({
             priceId: priceId,
             customerId: customerId,
             mode: "subscription",
-            successUrl: args.successUrl,
-            cancelUrl: args.cancelUrl,
+            successUrl: safeDashboardUrl(args.successUrl, "successUrl"),
+            cancelUrl: safeDashboardUrl(args.cancelUrl, "cancelUrl"),
             subscriptionMetadata: { authId: authUser.id },
         });
 
@@ -70,7 +99,7 @@ export const createPortalSession = action({
 
         return await stripeClient.createCustomerPortalSession(ctx, {
             customerId: customerId,
-            returnUrl: args.returnUrl,
+            returnUrl: safeDashboardUrl(args.returnUrl, "returnUrl"),
         });
     },
 });

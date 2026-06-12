@@ -99,6 +99,13 @@ const RANGE_CONFIG: Record<
     "1y": { lookbackMs: 365 * 24 * 60 * 60 * 1000, binSeconds: 7 * 24 * 60 * 60 },
 };
 
+const DEFAULT_LOG_LOOKBACK_MS = 60 * 60 * 1000;
+const MIN_LOG_LOOKBACK_MS = 60_000;
+const MAX_LOG_LOOKBACK_MS = 30 * 24 * 60 * 60 * 1000;
+const DEFAULT_LOG_LIMIT = 100;
+const MIN_LOG_LIMIT = 1;
+const MAX_LOG_LIMIT = 1000;
+
 function makeClient(): CloudWatchLogsClient {
     return new CloudWatchLogsClient({
         region: process.env.AWS_REGION!,
@@ -268,7 +275,13 @@ export const fetchForProject = action({
         if (!authUser) return [];
 
         const now = Date.now();
-        const startTime = now - (args.lookbackMs ?? 60 * 60 * 1000);
+        const startTime = now - boundedNumber(
+            args.lookbackMs,
+            DEFAULT_LOG_LOOKBACK_MS,
+            MIN_LOG_LOOKBACK_MS,
+            MAX_LOG_LOOKBACK_MS,
+        );
+        const limit = boundedNumber(args.limit, DEFAULT_LOG_LIMIT, MIN_LOG_LIMIT, MAX_LOG_LIMIT);
 
         const deployments: { _id: Id<"agentDeployments">; endpointId: string }[] =
             await ctx.runQuery(internal.logsHelpers.getActiveDeploymentsInternal, {
@@ -296,14 +309,14 @@ export const fetchForProject = action({
                     functionName: s.functionName,
                     startTimeMs: startTime,
                     endTimeMs: now,
-                    limit: args.limit ?? 100,
+                    limit: limit,
                     errorOnly: args.errorOnly ?? false,
                 });
                 return entries.map((e) => ({ ...e, functionName: s.functionName }));
             }),
         );
 
-        return batches.flat().sort((a, b) => b.timestamp - a.timestamp);
+        return batches.flat().sort((a, b) => b.timestamp - a.timestamp).slice(0, limit);
     },
 });
 

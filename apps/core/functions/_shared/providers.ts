@@ -6,6 +6,7 @@
 export const ACCOUNT_MODEL_PROVIDERS = {
   google: true,
   openai: true,
+  anthropic: true,
   bedrock: true,
   gateway: true,
   minimax: true,

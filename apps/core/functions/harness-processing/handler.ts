@@ -58,6 +58,7 @@ type AgentLoopStream = Awaited<ReturnType<typeof runAgentLoop>>;
 
 const CONVERSATIONS_TABLE_NAME = requireEnv("CONVERSATIONS_TABLE_NAME");
 const AGENT_PROCESSING_FAILED = "Agent processing failed";
+const CONVERSATION_BUSY = "Conversation is already processing another turn. Try again when the current turn finishes.";
 const CHANNEL_APPROVAL_DENIAL_REASON = "Tool approval is only supported through the direct API.";
 const ENABLE_DIRECT_API = booleanEnv("ENABLE_DIRECT_API", true);
 const ENABLE_WEBSOCKET = booleanEnv("ENABLE_WEBSOCKET", false);
@@ -93,6 +94,13 @@ interface ParentContinuationResult {
   finalResponse?: JSONValue;
   approvals: ToolApprovalSummary[];
   hasDetachedCallbacks: boolean;
+}
+
+class ConversationBusyError extends Error {
+  constructor() {
+    super(CONVERSATION_BUSY);
+    this.name = "ConversationBusyError";
+  }
 }
 
 export async function handler(
@@ -346,6 +354,7 @@ async function handleDirectRequest(event: DirectInboundEvent, context?: LambdaIn
 
     const { session, turnContext } = turn;
     if (!isRunnableModelInput(turnContext.messages.at(-1))) {
+      await session.releaseConversationLease().catch(() => { });
       return emptySseResponse();
     }
 
@@ -355,6 +364,10 @@ async function handleDirectRequest(event: DirectInboundEvent, context?: LambdaIn
       body: createDirectContinuationSseBody(event, session, turnContext, context),
     };
   } catch (err) {
+    if (err instanceof ConversationBusyError) {
+      return errorSseResponse(CONVERSATION_BUSY, 409);
+    }
+
     logError("Direct request pre-processing failed", {
       eventId: event.eventId,
       error: err instanceof Error ? err.message : String(err),
@@ -420,47 +433,62 @@ async function handleAsyncWorkerRequest(event: DirectInboundEvent, context?: Lam
     const { session, turnContext } = turn;
     if (!isRunnableModelInput(turnContext.messages.at(-1))) {
       await settleAsyncFailure(event, "Request did not produce pending model input");
+      await session.releaseConversationLease().catch(() => { });
       return;
     }
 
     let didSettle = false;
-    const result = await runAgentLoopUntilSubagentsIdle(session, turnContext, event.agentConfig, context, {
-      onFinalText: async (response) => {
-        didSettle = true;
-        await Promise.all(asyncResultEventIds(event).map((eventId) =>
-          markAsyncAgentResultCompleted({
-            eventId: eventId,
-            response: response,
-          })
-        ));
-        await pushReplyToChannel(event, typeof response === "string" ? response : JSON.stringify(response, null, 2));
-      },
-      onErrorText: async (error) => {
-        didSettle = true;
-        await settleAsyncFailure(event, error);
-        await pushReplyToChannel(event, formatChannelErrorText(error));
-      },
-      onApprovalRequired: async (approvals) => {
-        await Promise.all(asyncResultEventIds(event).map((eventId) =>
-          markAsyncAgentResultAwaitingApproval({
-            eventId,
-            approvals,
-          })
-        ));
-        didSettle = true;
-      },
-    });
+    let result: Awaited<ReturnType<typeof runAgentLoopUntilSubagentsIdle>>;
+    try {
+      result = await runAgentLoopUntilSubagentsIdle(session, turnContext, event.agentConfig, context, {
+        onFinalText: async (response) => {
+          didSettle = true;
+          await Promise.all(asyncResultEventIds(event).map((eventId) =>
+            markAsyncAgentResultCompleted({
+              eventId: eventId,
+              response: response,
+            })
+          ));
+          await pushReplyToChannel(event, typeof response === "string" ? response : JSON.stringify(response, null, 2));
+        },
+        onErrorText: async (error) => {
+          didSettle = true;
+          await settleAsyncFailure(event, error);
+          await pushReplyToChannel(event, formatChannelErrorText(error));
+        },
+        onApprovalRequired: async (approvals) => {
+          await Promise.all(asyncResultEventIds(event).map((eventId) =>
+            markAsyncAgentResultAwaitingApproval({
+              eventId,
+              approvals,
+            })
+          ));
+          didSettle = true;
+        },
+      });
+    } finally {
+      await session.releaseConversationLease().catch(() => { });
+    }
 
     if (result.didFail && !didSettle) {
       await settleAsyncFailure(event, result.failureText ?? AGENT_PROCESSING_FAILED);
     }
     if (result.hasDetachedCallbacks) {
       await continueDetachedAsyncToolsIfReady(event, event.agentConfig);
-    }
-  } catch (err) {
-    logError("Async direct request processing failed", {
-      eventId: event.eventId,
-      error: err instanceof Error ? err.message : String(err),
+      }
+    } catch (err) {
+      if (err instanceof ConversationBusyError) {
+        logInfo("Async direct request rejected while conversation is busy", {
+          eventId: event.eventId,
+          conversationKey: event.conversationKey,
+        });
+        await settleAsyncFailure(event, CONVERSATION_BUSY);
+        return;
+      }
+
+      logError("Async direct request processing failed", {
+        eventId: event.eventId,
+        error: err instanceof Error ? err.message : String(err),
     });
     await settleAsyncFailure(event, err instanceof Error ? err.message : "Async request failed");
     throw err;
@@ -508,6 +536,7 @@ async function handleNatsWorkerRequest(event: DirectInboundEvent, context?: Lamb
 
     const { session, turnContext } = turn;
     if (!isRunnableModelInput(turnContext.messages.at(-1))) {
+      await session.releaseConversationLease().catch(() => { });
       return;
     }
 
@@ -561,9 +590,22 @@ async function handleNatsWorkerRequest(event: DirectInboundEvent, context?: Lamb
         await publisher.purge();
       }
     } finally {
+      await session.releaseConversationLease().catch(() => { });
       await publisher.close();
     }
   } catch (err) {
+    if (err instanceof ConversationBusyError) {
+      logInfo("NATS worker rejected while conversation is busy", {
+        eventId: event.eventId,
+        conversationKey: event.conversationKey,
+      });
+      await publisher.publish({ type: "error", error: CONVERSATION_BUSY }).catch(() => { });
+      await publisher.publish({ type: "done" }).catch(() => { });
+      await publisher.close().catch(() => { });
+      return;
+    }
+
+    await publisher.close().catch(() => { });
     logError("NATS worker processing failed", {
       eventId: event.eventId,
       error: err instanceof Error ? err.message : String(err),
@@ -846,11 +888,24 @@ async function prepareDirectTurn(event: DirectInboundEvent): Promise<DirectTurn 
     return null;
   }
 
+  let leaseAcquired = false;
   try {
+    if (!(await session.acquireConversationLease())) {
+      logInfo("Conversation already processing; direct event rejected", {
+        conversationKey: session.conversationKey,
+        eventId: session.eventId,
+      });
+
+      throw new ConversationBusyError();
+    }
+    leaseAcquired = true;
     const ephemeralSystem = await session.appendIngressEvents(event.events);
     const turnContext = await session.createTurnContext(ephemeralSystem);
     return { session, turnContext };
   } catch (err) {
+    if (leaseAcquired) {
+      await session.releaseConversationLease().catch(() => { });
+    }
     await session.release().catch(() => { });
     throw err;
   }
@@ -1113,6 +1168,7 @@ function createDirectContinuationSseBody(
         });
         controller.enqueue(textEncoder.encode(`data: ${JSON.stringify({ type: "error", error })}\n\n`));
       } finally {
+        await session.releaseConversationLease().catch(() => { });
         controller.close();
       }
     },
@@ -1406,6 +1462,19 @@ function emptySseResponse(): LambdaResponse {
     headers: { "Content-Type": "text/event-stream" },
     body: new ReadableStream({
       start(controller) {
+        controller.close();
+      },
+    }),
+  };
+}
+
+function errorSseResponse(error: string, statusCode = 200): LambdaResponse {
+  return {
+    statusCode,
+    headers: { "Content-Type": "text/event-stream" },
+    body: new ReadableStream({
+      start(controller) {
+        controller.enqueue(textEncoder.encode(`data: ${JSON.stringify({ type: "error", error })}\n\n`));
         controller.close();
       },
     }),

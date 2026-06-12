@@ -231,6 +231,11 @@ export const importSkill = action({
             throw new Error("User not found or not authenticated");
         }
 
+        const project = await ctx.runQuery(api.project.getById, { projectId: projectId });
+        if (!project) {
+            throw new Error("Project not found.");
+        }
+
         // Fetch skill from filthy-panty
         const response = await fetch(
             `${accountManageUrl()}/accounts/me/skills/${encodeURIComponent(skillName)}`,

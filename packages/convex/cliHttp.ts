@@ -104,6 +104,9 @@ export const handle = httpAction(async (ctx, req) => {
             if (!manifest || typeof manifest !== "object") {
                 return json({ error: "Request body must include manifest" }, 400);
             }
+            if (!manifestMatchesRoute(manifest, route)) {
+                return json({ error: "Manifest project/environment must match the request path" }, 400);
+            }
             const result = await ctx.runMutation(internal.cliSync.syncManifestBySecretHash, {
                 secretHash: secretHash,
                 manifest: manifest as never,
@@ -218,6 +221,16 @@ function parseRoute(pathname: string): RouteParts | null {
     }
 
     return null;
+}
+
+function manifestMatchesRoute(
+    manifest: unknown,
+    route: Extract<RouteParts, { kind: "manifest" }>,
+): boolean {
+    if (!manifest || typeof manifest !== "object") return false;
+    const candidate = manifest as { project?: unknown; environment?: unknown };
+
+    return candidate.project === route.project && candidate.environment === route.environment;
 }
 
 function numberSearchParam(url: URL, name: string): number | undefined {

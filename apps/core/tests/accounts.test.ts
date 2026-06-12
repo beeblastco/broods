@@ -166,6 +166,11 @@ describe("agent config", () => {
         openai: {
           apiKey: "openai-key",
           project: "project-id",
+          baseURL: "https://api.openai.example/v1",
+        },
+        anthropic: {
+          apiKey: "anthropic-key",
+          baseURL: "https://api.anthropic.example/v1",
         },
         bedrock: {
           region: "us-east-1",
@@ -195,6 +200,11 @@ describe("agent config", () => {
         openai: {
           apiKey: "openai-key",
           project: "project-id",
+          baseURL: "https://api.openai.example/v1",
+        },
+        anthropic: {
+          apiKey: "anthropic-key",
+          baseURL: "https://api.anthropic.example/v1",
         },
         bedrock: {
           region: "us-east-1",
@@ -222,13 +232,31 @@ describe("agent config", () => {
       model: {
         provider: 12,
       },
-    })).toThrow("config.model.provider must be one of: google, openai, bedrock, gateway, minimax");
+    })).toThrow("config.model.provider must be one of: google, openai, anthropic, bedrock, gateway, minimax");
 
     expect(() => normalizeAgentConfig({
       model: {
         options: "bad",
       },
     })).toThrow("config.model.options must be an object");
+
+    expect(() => normalizeAgentConfig({
+      provider: {
+        openai: {
+          apiKey: "openai-key",
+          baseURL: "http://127.0.0.1:11434/v1",
+        },
+      },
+    })).toThrow("config.provider.openai.baseURL must use https");
+
+    expect(() => normalizeAgentConfig({
+      provider: {
+        anthropic: {
+          apiKey: "anthropic-key",
+          baseURL: "https://10.0.0.5/v1",
+        },
+      },
+    })).toThrow("config.provider.anthropic.baseURL must not point to a private or internal address");
 
     expect(normalizeAgentConfig({
       model: {

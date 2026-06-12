@@ -66,6 +66,9 @@ jobs:
     # Run if validate succeeded OR validate was skipped (main branch).
     if: ${{ always() && (needs.validate.result == 'success' || needs.validate.result == 'skipped') && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev'))) }}
     runs-on: ubuntu-24.04
+    # main resolves CONVEX_URL/CONVEX_DEPLOY_KEY from the production
+    # environment (prod Convex deployment); repo-level secrets stay dev.
+    environment: ${{ github.ref == 'refs/heads/main' && 'production' || 'development' }}
     concurrency:
       group: ${{ github.workflow }}-deploy-${{ github.event_name == 'workflow_dispatch' && inputs.stage || github.ref_name }}
       cancel-in-progress: false

@@ -441,6 +441,9 @@ function normalizeProviderSettings(providerName: AccountModelProviderName, value
   const config = value as Record<string, unknown>;
   assertOptionalString(config.apiKey, `config.provider.${providerName}.apiKey`);
   assertOptionalString(config.baseURL, `config.provider.${providerName}.baseURL`);
+  if (typeof config.baseURL === "string") {
+    assertPublicHttpsUrl(config.baseURL, `config.provider.${providerName}.baseURL`);
+  }
   if (config.headers !== undefined && !isStringRecord(config.headers)) {
     throw new Error(`config.provider.${providerName}.headers must be an object with string values`);
   }

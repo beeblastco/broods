@@ -6,6 +6,11 @@ import { resetStorageForTests, setStorageForTests } from "../functions/_shared/s
 
 const originalAdminSecret = process.env.ADMIN_ACCOUNT_SECRET;
 const originalSignupLimit = process.env.ACCOUNT_SIGNUP_RATE_LIMIT_PER_HOUR;
+const originalServiceSecret = process.env.SERVICE_AUTH_SECRET;
+const originalCronJobsTable = process.env.CRON_JOBS_TABLE_NAME;
+const originalSchedulerRoleArn = process.env.CRON_SCHEDULER_ROLE_ARN;
+const originalSchedulerTargetArn = process.env.CRON_SCHEDULER_TARGET_FUNCTION_ARN;
+const originalSchedulerGroupName = process.env.CRON_SCHEDULER_GROUP_NAME;
 
 afterEach(() => {
   if (originalAdminSecret === undefined) {
@@ -17,6 +22,31 @@ afterEach(() => {
     delete process.env.ACCOUNT_SIGNUP_RATE_LIMIT_PER_HOUR;
   } else {
     process.env.ACCOUNT_SIGNUP_RATE_LIMIT_PER_HOUR = originalSignupLimit;
+  }
+  if (originalServiceSecret === undefined) {
+    delete process.env.SERVICE_AUTH_SECRET;
+  } else {
+    process.env.SERVICE_AUTH_SECRET = originalServiceSecret;
+  }
+  if (originalCronJobsTable === undefined) {
+    delete process.env.CRON_JOBS_TABLE_NAME;
+  } else {
+    process.env.CRON_JOBS_TABLE_NAME = originalCronJobsTable;
+  }
+  if (originalSchedulerRoleArn === undefined) {
+    delete process.env.CRON_SCHEDULER_ROLE_ARN;
+  } else {
+    process.env.CRON_SCHEDULER_ROLE_ARN = originalSchedulerRoleArn;
+  }
+  if (originalSchedulerTargetArn === undefined) {
+    delete process.env.CRON_SCHEDULER_TARGET_FUNCTION_ARN;
+  } else {
+    process.env.CRON_SCHEDULER_TARGET_FUNCTION_ARN = originalSchedulerTargetArn;
+  }
+  if (originalSchedulerGroupName === undefined) {
+    delete process.env.CRON_SCHEDULER_GROUP_NAME;
+  } else {
+    process.env.CRON_SCHEDULER_GROUP_NAME = originalSchedulerGroupName;
   }
   setStorageForTests(null);
   resetStorageForTests();
@@ -113,6 +143,73 @@ describe("account management HTTP handler", () => {
     expect(response.statusCode).toBe(503);
     expect(responseJson(response)).toEqual({ error: "Cron jobs are unavailable" });
   });
+
+  it("allows service tokens only on self cron-job routes", async () => {
+    process.env.SERVICE_AUTH_SECRET = "service-secret";
+    process.env.CRON_JOBS_TABLE_NAME = "cron-jobs";
+    process.env.CRON_SCHEDULER_ROLE_ARN = "arn:aws:iam::123456789012:role/scheduler";
+    process.env.CRON_SCHEDULER_TARGET_FUNCTION_ARN = "arn:aws:lambda:eu-central-1:123456789012:function:harness";
+    process.env.CRON_SCHEDULER_GROUP_NAME = "cron-group";
+    setStorageForTests(createFakeStorage({
+      agents: {
+        async getById() { return fakeAgent({ status: "active" }); },
+      },
+      cronJobs: {
+        async list() { return []; },
+      },
+    }));
+    const serviceHeaders = {
+      authorization: "Bearer service-secret",
+      "x-account-id": "acct_test",
+    };
+
+    for (const path of [
+      "/accounts/me",
+      "/accounts/me/agents",
+      "/accounts/me/skills",
+      "/accounts/me/tools",
+      "/accounts/me/sandboxes",
+      "/accounts/me/workspaces",
+    ]) {
+      const response = await handler(createEvent("GET", path, serviceHeaders));
+      expect(response.statusCode).toBe(400);
+      expect(responseJson(response)).toEqual({ error: "Service token is not allowed for this account endpoint" });
+    }
+
+    const cronResponse = await handler(createEvent("GET", "/accounts/me/cron-jobs", serviceHeaders));
+    expect(cronResponse.statusCode).toBe(200);
+    expect(responseJson(cronResponse)).toEqual({ cronJobs: [] });
+  });
+
+  it("rejects cron jobs that reference inactive agents", async () => {
+    process.env.ADMIN_ACCOUNT_SECRET = "admin-secret";
+    process.env.CRON_JOBS_TABLE_NAME = "cron-jobs";
+    process.env.CRON_SCHEDULER_ROLE_ARN = "arn:aws:iam::123456789012:role/scheduler";
+    process.env.CRON_SCHEDULER_TARGET_FUNCTION_ARN = "arn:aws:lambda:eu-central-1:123456789012:function:harness";
+    process.env.CRON_SCHEDULER_GROUP_NAME = "cron-group";
+    setStorageForTests(createFakeStorage({
+      agents: {
+        async getById() { return fakeAgent({ status: "disabled" }); },
+      },
+      cronJobs: {
+        async create() {
+          throw new Error("cron job should not be created for inactive agents");
+        },
+      },
+    }));
+
+    const response = await handler(createEvent("POST", "/accounts/acct_test/cron-jobs", {
+      authorization: "Bearer admin-secret",
+    }, {
+      name: "Daily",
+      agentId: "agent_main",
+      prompt: "Run maintenance.",
+      scheduleExpression: "rate(1 day)",
+    }));
+
+    expect(response.statusCode).toBe(400);
+    expect(responseJson(response)).toEqual({ error: "Cron job agentId must reference an active agent" });
+  });
 });
 
 function responseJson(response: LambdaResponse): unknown {
@@ -167,7 +264,19 @@ function fakeAccount() {
   };
 }
 
-function createFakeStorage(accountOverrides: Record<string, unknown>) {
+function fakeAgent(overrides: Partial<{ status: "active" | "disabled" }> = {}) {
+  return {
+    accountId: "acct_test",
+    agentId: "agent_main",
+    name: "Main",
+    status: overrides.status ?? "active",
+    config: {},
+    createdAt: "2026-05-01T00:00:00.000Z",
+    updatedAt: "2026-05-01T00:00:00.000Z",
+  };
+}
+
+function createFakeStorage(overrides: Record<string, unknown>) {
   return {
     kind: "fake",
     accounts: {
@@ -178,9 +287,18 @@ function createFakeStorage(accountOverrides: Record<string, unknown>) {
       async update() { return fakeAccount(); },
       async rotateSecret() { return { account: fakeAccount(), secret: "fp_acct_fake" }; },
       async remove() { return true; },
-      ...accountOverrides,
+      ...(overrides.accounts as Record<string, unknown> | undefined),
+      ...(!("accounts" in overrides) ? overrides : {}),
     },
-    agents: {} as never,
-    cronJobs: {} as never,
+    agents: {
+      async getById() { return fakeAgent(); },
+      ...(overrides.agents as Record<string, unknown> | undefined),
+    },
+    cronJobs: {
+      async list() { return []; },
+      async create() { throw new Error("not implemented"); },
+      ...(overrides.cronJobs as Record<string, unknown> | undefined),
+    },
+    accountTools: {} as never,
   } as never;
 }

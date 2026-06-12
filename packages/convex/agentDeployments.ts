@@ -5,7 +5,10 @@
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import { authKit } from "./auth";
+import { getOwnedProject, getProjectForRole } from "./model/ownership/project";
 import { agentDeploymentsFields } from "./schema";
+
+const DEPLOYMENT_KEY_PREFIX = "fp_agent_";
 
 const agentDeploymentDoc = v.object({
     ...agentDeploymentsFields,
@@ -23,7 +26,7 @@ export const list = query({
         // Return empty rather than throwing so a just-deleted agent config doesn't
         // crash the reactive side panel before it unmounts.
         const config = await ctx.db.get(agentConfigId);
-        if (!config || config.authId !== authUser.id) {
+        if (!config || !(await getOwnedProject(ctx, authUser.id, config.projectId))) {
             return [];
         }
 
@@ -33,6 +36,28 @@ export const list = query({
             .collect();
     },
 });
+
+/** SHA-256 hex digest for one-time deployment API keys. */
+async function sha256Hex(value: string): Promise<string> {
+    const hash = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
+
+    return [...new Uint8Array(hash)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+/** Generate a random raw deployment key. */
+function generateDeploymentKey(): string {
+    const bytes = crypto.getRandomValues(new Uint8Array(32));
+    let binary = "";
+    for (const byte of bytes) binary += String.fromCharCode(byte);
+    const base64url = btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+
+    return `${DEPLOYMENT_KEY_PREFIX}${base64url}`;
+}
+
+/** Safe display label for a deployment key. */
+function deploymentKeyHint(token: string): string {
+    return `${DEPLOYMENT_KEY_PREFIX}...${token.slice(-4)}`;
+}
 
 export const create = mutation({
     args: { agentConfigId: v.id("agentConfigs") },
@@ -48,14 +73,15 @@ export const create = mutation({
         if (!authUser) throw new Error("User not found or not authenticated");
 
         const config = await ctx.db.get(agentConfigId);
-        if (!config || config.authId !== authUser.id) {
+        if (!config || !(await getProjectForRole(ctx, authUser.id, config.projectId, "admin"))) {
             throw new Error("Agent config not found.");
         }
 
         const project = await ctx.db.get(config.projectId);
         const environment = await ctx.db.get(config.environmentId);
         const endpointId = `agent-${agentConfigId.slice(-8)}`;
-        const rawApiKey = `tmp_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 12)}`;
+        const rawApiKey = generateDeploymentKey();
+        const apiKeyHash = await sha256Hex(rawApiKey);
         const projectSlug = project?.slug ?? "project";
         const environmentSlug = environment?.name.toLowerCase() ?? "production";
 
@@ -66,7 +92,8 @@ export const create = mutation({
             endpointId,
             projectSlug,
             environmentSlug,
-            apiKey: rawApiKey,
+            apiKeyHash: apiKeyHash,
+            keyHint: deploymentKeyHint(rawApiKey),
             updatedAt: Date.now(),
         });
 
@@ -82,7 +109,11 @@ export const revoke = mutation({
         if (!authUser) throw new Error("User not found or not authenticated");
 
         const deployment = await ctx.db.get(deploymentId);
-        if (!deployment || deployment.authId !== authUser.id) {
+        if (!deployment) {
+            throw new Error("Deployment not found.");
+        }
+        const config = await ctx.db.get(deployment.agentConfigId);
+        if (!config || !(await getProjectForRole(ctx, authUser.id, config.projectId, "admin"))) {
             throw new Error("Deployment not found.");
         }
 

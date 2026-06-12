@@ -12,7 +12,7 @@ export async function getOwnedEnvironment(
     environmentId: Id<"environments">,
 ) {
     const environment = await ctx.db.get(environmentId);
-    if (!environment || environment.authId !== authId) return null;
+    if (!environment) return null;
 
     const project = await getOwnedProject(ctx, authId, environment.projectId);
     if (!project) return null;

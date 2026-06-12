@@ -287,6 +287,9 @@ async function awsCredentialEnvVars(
 ): Promise<Record<string, string>> {
   const roleArn = optionalEnv("SANDBOX_MOUNT_ROLE_ARN");
   if (roleArn) {
+    if (!namespace) {
+      throw new Error("Daytona AWS S3 mounts require a workspace namespace when SANDBOX_MOUNT_ROLE_ARN is configured.");
+    }
     return assumeScopedMountCredentials(roleArn, namespace);
   }
 
@@ -310,39 +313,33 @@ async function awsCredentialEnvVars(
 // namespace prefix.
 async function assumeScopedMountCredentials(
   roleArn: string,
-  namespace: string | undefined,
+  namespace: string,
 ): Promise<Record<string, string>> {
   const workspaceBucket = optionalEnv("FILESYSTEM_BUCKET_NAME");
-  const skillsBucket = optionalEnv("SKILLS_BUCKET_NAME");
-  const prefix = namespace ? `${WORKSPACE_MOUNT_PREFIX}/${namespace}/` : undefined;
-  const statements = workspaceBucket && prefix
-    ? [
-      {
-        Effect: "Allow",
-        Action: ["s3:GetObject", "s3:PutObject", "s3:DeleteObject", "s3:AbortMultipartUpload"],
-        Resource: [`arn:aws:s3:::${workspaceBucket}/${prefix}*`],
-      },
-      {
-        Effect: "Allow",
-        Action: ["s3:ListBucket"],
-        Resource: [`arn:aws:s3:::${workspaceBucket}`],
-        Condition: { StringLike: { "s3:prefix": [`${prefix}*`] } },
-      },
-      ...(skillsBucket
-        ? [{
-          Effect: "Allow",
-          Action: ["s3:GetObject", "s3:ListBucket"],
-          Resource: [`arn:aws:s3:::${skillsBucket}`, `arn:aws:s3:::${skillsBucket}/*`],
-        }]
-        : []),
-    ]
-    : undefined;
+  if (!workspaceBucket) {
+    throw new Error("Daytona AWS S3 mounts require FILESYSTEM_BUCKET_NAME when SANDBOX_MOUNT_ROLE_ARN is configured.");
+  }
+
+  const prefix = `${WORKSPACE_MOUNT_PREFIX}/${namespace}/`;
+  const statements = [
+    {
+      Effect: "Allow",
+      Action: ["s3:GetObject", "s3:PutObject", "s3:DeleteObject", "s3:AbortMultipartUpload"],
+      Resource: [`arn:aws:s3:::${workspaceBucket}/${prefix}*`],
+    },
+    {
+      Effect: "Allow",
+      Action: ["s3:ListBucket"],
+      Resource: [`arn:aws:s3:::${workspaceBucket}`],
+      Condition: { StringLike: { "s3:prefix": [`${prefix}*`] } },
+    },
+  ];
 
   const result = await new STSClient({}).send(new AssumeRoleCommand({
     RoleArn: roleArn,
     RoleSessionName: "fp-sandbox-mount",
     DurationSeconds: 3600,
-    ...(statements ? { Policy: JSON.stringify({ Version: "2012-10-17", Statement: statements }) } : {}),
+    Policy: JSON.stringify({ Version: "2012-10-17", Statement: statements }),
   }));
   const credentials = result.Credentials;
   if (!credentials?.AccessKeyId || !credentials.SecretAccessKey || !credentials.SessionToken) {
@@ -388,13 +385,9 @@ async function mountAwsS3Buckets(
     `${WORKSPACE_MOUNT_PREFIX}/${request.namespace}/`,
   );
 
-  const skillsBucketName = configString(options.skillsBucketName) ?? optionalEnv("SKILLS_BUCKET_NAME");
-  if (!skillsBucketName) {
-    return;
+  if (configString(options.skillsBucketName) || optionalEnv("SKILLS_BUCKET_NAME")) {
+    logWarn("Daytona skills bucket mount skipped; selected skills are staged into the workspace bucket instead");
   }
-
-  const skillsMountPath = configString(options.skillsMountPath) ?? "/mnt/skills";
-  await mountS3Bucket(sandbox, skillsBucketName, skillsMountPath, options);
 }
 
 /**

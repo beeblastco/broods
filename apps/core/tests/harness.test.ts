@@ -13,6 +13,8 @@ const googleModelMock = mock((modelId: string) => ({ provider: "google", modelId
 const createGoogleMock = mock((_options: unknown) => googleModelMock);
 const openAIModelMock = mock((modelId: string) => ({ provider: "openai", modelId }));
 const createOpenAIMock = mock((_options: unknown) => openAIModelMock);
+const anthropicModelMock = mock((modelId: string) => ({ provider: "anthropic", modelId }));
+const createAnthropicMock = mock((_options: unknown) => anthropicModelMock);
 const bedrockModelMock = mock((modelId: string) => ({ provider: "bedrock", modelId }));
 const createBedrockMock = mock((_options: unknown) => bedrockModelMock);
 const gatewayModelMock = mock((modelId: string) => ({ provider: "gateway", modelId }));
@@ -299,6 +301,10 @@ mock.module("@ai-sdk/openai", () => ({
   createOpenAI: createOpenAIMock,
 }));
 
+mock.module("@ai-sdk/anthropic", () => ({
+  createAnthropic: createAnthropicMock,
+}));
+
 mock.module("@ai-sdk/amazon-bedrock", () => ({
   createAmazonBedrock: createBedrockMock,
 }));
@@ -326,6 +332,8 @@ afterEach(() => {
   createGoogleMock.mockClear();
   openAIModelMock.mockClear();
   createOpenAIMock.mockClear();
+  anthropicModelMock.mockClear();
+  createAnthropicMock.mockClear();
   bedrockModelMock.mockClear();
   createBedrockMock.mockClear();
   gatewayModelMock.mockClear();
@@ -1130,6 +1138,52 @@ describe("runAgentLoop", () => {
     });
   });
 
+  it("creates an Anthropic provider from agent provider config", async () => {
+    installHarnessEnv();
+    const { runAgentLoop } = await import("../functions/harness-processing/harness.ts");
+
+    const stream = await runAgentLoop({
+      conversationKey: "direct:conversation",
+      eventId: "direct-event",
+      filesystemNamespace: () => "fs-test",
+      resolvedWorkspaces: () => [],
+      statelessSandbox: () => undefined,
+      statelessPermissionMode: () => "ask",
+      persistModelMessages: async () => { },
+      loadRefreshedSystemPromptParts: async () => ({
+        systemContextSnapshot: { cursor: null, messages: [] },
+        system: [],
+      }),
+    } as never, {
+      messages: [{ role: "user", content: "hello" }],
+      system: [],
+      ephemeralSystem: [],
+      systemContextSnapshot: { cursor: null, messages: [] },
+    }, {
+      provider: {
+        anthropic: {
+          apiKey: "anthropic-key",
+          baseURL: "https://api.anthropic.example/v1",
+        },
+      },
+      model: {
+        provider: "anthropic",
+        modelId: "claude-sonnet-4-5",
+      },
+    });
+
+    await stream.consumeStream();
+
+    expect(createAnthropicMock).toHaveBeenCalledWith({
+      apiKey: "anthropic-key",
+      baseURL: "https://api.anthropic.example/v1",
+    });
+    expect(anthropicModelMock).toHaveBeenCalledWith("claude-sonnet-4-5");
+    expect(streamTextMock.mock.calls[0]?.[0]).toMatchObject({
+      model: { provider: "anthropic", modelId: "claude-sonnet-4-5" },
+    });
+  });
+
   it("creates a MiniMax provider from agent provider config", async () => {
     installHarnessEnv();
     const { runAgentLoop } = await import("../functions/harness-processing/harness.ts");
@@ -1292,4 +1346,5 @@ function installHarnessEnv(): void {
   process.env.MAX_AGENT_ITERATIONS = "3";
   process.env.TAVILY_API_KEY = "tavily-key";
   process.env.FILESYSTEM_BUCKET_NAME = "filesystem-bucket";
+  process.env.ASYNC_TOOL_RESULT_TABLE_NAME = "async-tool-results";
 }

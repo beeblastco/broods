@@ -112,7 +112,7 @@ export function VariablesTab({
     return (
         <div className="flex flex-1 flex-col gap-4 overflow-hidden p-4">
             <p className="text-xs text-muted-foreground">
-                Add runtime environment variables for this agent.
+                Add runtime environment variables for this agent. Saved values are hidden after reload; leave a value blank to keep it unchanged.
                 {providerHint && (
                     <>
                         {" "}For {providerHint.label}, set{" "}

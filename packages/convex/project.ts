@@ -8,8 +8,9 @@ import type { DataModel } from "./_generated/dataModel";
 import { mutation, query } from "./_generated/server";
 import { authKit } from "./auth";
 import { uniqueProjectSlug } from "./lib/slug";
+import { deleteEnvironmentContents } from "./environment";
 import { getActiveOrgForUser } from "./model/ownership/org";
-import { getOwnedProject } from "./model/ownership/project";
+import { getOwnedProject, getProjectForRole } from "./model/ownership/project";
 import { projectsFields } from "./schema";
 
 type Ctx = GenericQueryCtx<DataModel> | GenericMutationCtx<DataModel>;
@@ -241,7 +242,7 @@ export const update = mutation({
     handler: async (ctx, { projectId, name, description }) => {
         const authUser = await requireAuth(ctx);
 
-        const project = await getOwnedProject(ctx, authUser.id, projectId);
+        const project = await getProjectForRole(ctx, authUser.id, projectId, "admin");
         if (!project) throw new Error("Project not found.");
 
         const trimmedName = name.trim();
@@ -269,7 +270,7 @@ export const remove = mutation({
     handler: async (ctx, { projectId }) => {
         const authUser = await requireAuth(ctx);
 
-        const project = await getOwnedProject(ctx, authUser.id, projectId);
+        const project = await getProjectForRole(ctx, authUser.id, projectId, "admin");
         if (!project) throw new Error("Project not found.");
 
         const environments = await ctx.db
@@ -278,7 +279,19 @@ export const remove = mutation({
             .collect();
 
         for (const env of environments) {
+            await deleteEnvironmentContents(ctx, env);
             await ctx.db.delete(env._id);
+        }
+
+        const workspaceFiles = await ctx.db
+            .query("workspaceFiles")
+            .withIndex("by_projectId_and_nodeId", (q) => q.eq("projectId", projectId))
+            .collect();
+        for (const file of workspaceFiles) {
+            if (file.storageId) {
+                await ctx.storage.delete(file.storageId);
+            }
+            await ctx.db.delete(file._id);
         }
 
         await ctx.db.delete(projectId);

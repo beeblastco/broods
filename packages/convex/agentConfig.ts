@@ -3,11 +3,13 @@
  */
 
 import { v } from "convex/values";
+import type { Id } from "./_generated/dataModel";
 import { mutation, query } from "./_generated/server";
 import { ensureAgentsRowForConfig, pushEncryptedConfigToAgentRow, syncAgentRowFields } from "./model/agentSync";
 import { authKit } from "./auth";
 import { getOwnedEnvironment } from "./model/ownership/environment";
 import { getOwnedProject } from "./model/ownership/project";
+import { saveAgentRuntimeSecrets } from "./model/agentRuntimeSecrets";
 import { agentConfigsFields } from "./schema";
 
 const agentProviderValidator = v.union(
@@ -31,11 +33,35 @@ const workspaceRefValidator = v.object({
     sandbox: v.optional(v.union(v.string(), v.null())),
 });
 
+const MASKED_RUNTIME_VARIABLE_VALUE = "";
+
 /** Coerces unknown JSON-ish values into a mutable record for patching. */
 function asRecord(value: unknown): Record<string, unknown> {
     return value !== null && typeof value === "object" && !Array.isArray(value)
         ? value as Record<string, unknown>
         : {};
+}
+
+/** Hide secret values from browser reads while preserving variable names. */
+function maskRuntimeVariables<T extends { runtimeVariables?: Array<{ key: string; value: string }> }>(
+    config: T,
+): T {
+    return {
+        ...config,
+        runtimeVariables: config.runtimeVariables?.map((entry) => ({
+            key: entry.key,
+            value: MASKED_RUNTIME_VARIABLE_VALUE,
+        })),
+    };
+}
+
+/** Returns true when the caller may edit a project-scoped agent config. */
+async function canAccessAgentConfig(
+    ctx: Parameters<typeof getOwnedProject>[0],
+    authId: string,
+    config: { projectId: Id<"projects"> },
+): Promise<boolean> {
+    return Boolean(await getOwnedProject(ctx, authId, config.projectId));
 }
 
 export const getById = query({
@@ -46,7 +72,9 @@ export const getById = query({
         if (!authUser) throw new Error("User not found or not authenticated");
 
         const config = await ctx.db.get(configId);
-        return config && config.authId === authUser.id ? config : null;
+        if (!config || !(await canAccessAgentConfig(ctx, authUser.id, config))) return null;
+
+        return maskRuntimeVariables(config);
     },
 });
 
@@ -178,7 +206,7 @@ export const update = mutation({
         }
 
         const existing = await ctx.db.get(configId);
-        if (!existing || existing.authId !== user.id) {
+        if (!existing || !(await canAccessAgentConfig(ctx, user.id, existing))) {
             throw new Error("Agent config not found.");
         }
 
@@ -187,12 +215,18 @@ export const update = mutation({
                 .filter(([, v]) => v !== undefined)
                 .map(([key, value]) => [key, key === "outputFormat" && value === null ? undefined : value]),
         );
+        if (Array.isArray(patch.runtimeVariables)) {
+            patch.runtimeVariables = await saveAgentRuntimeSecrets(
+                ctx,
+                configId,
+                patch.runtimeVariables as Array<{ key: string; value: string }>,
+            );
+        }
 
         await ctx.db.patch(configId, { ...patch, updatedAt: Date.now() });
 
-        // Keep the filthy-panty `agents` row aligned. ensureAgentsRowForConfig
-        // also covers the legacy case where the row was never provisioned
-        // (e.g. agentConfigs created before this sync was wired).
+        // Keep the filthy-panty `agents` row aligned; this also provisions
+        // the runtime row when an org account was created after the config.
         await ensureAgentsRowForConfig(ctx, configId, user.id);
         await syncAgentRowFields(ctx, configId, {
             name: updates.name,
@@ -225,7 +259,7 @@ export const updateRuntimeRefs = mutation({
         }
 
         const existing = await ctx.db.get(configId);
-        if (!existing || existing.authId !== user.id) {
+        if (!existing || !(await canAccessAgentConfig(ctx, user.id, existing))) {
             throw new Error("Agent config not found.");
         }
 
@@ -277,7 +311,7 @@ export const updateSubagentRefs = mutation({
         }
 
         const existing = await ctx.db.get(configId);
-        if (!existing || existing.authId !== user.id) {
+        if (!existing || !(await canAccessAgentConfig(ctx, user.id, existing))) {
             throw new Error("Agent config not found.");
         }
 
@@ -287,7 +321,7 @@ export const updateSubagentRefs = mutation({
         for (const calleeId of calleeConfigIds) {
             if (calleeId === configId) continue;
             const callee = await ctx.db.get(calleeId);
-            if (!callee || callee.authId !== user.id) continue;
+            if (!callee || !(await canAccessAgentConfig(ctx, user.id, callee))) continue;
             const agentRowId = await ensureAgentsRowForConfig(ctx, calleeId, user.id);
             if (agentRowId) allowed.push(agentRowId);
         }
@@ -327,7 +361,7 @@ export const remove = mutation({
         if (!authUser) throw new Error("User not found or not authenticated");
 
         const existing = await ctx.db.get(configId);
-        if (!existing || existing.authId !== authUser.id) {
+        if (!existing || !(await canAccessAgentConfig(ctx, authUser.id, existing))) {
             throw new Error("Agent config not found.");
         }
 

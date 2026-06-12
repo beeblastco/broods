@@ -282,11 +282,6 @@ export const NodeSidePanel = memo(function NodeSidePanel({
   const activeDeployment = deployments?.find(
     (d: { status?: string }) => d.status === "active",
   );
-  const legacyDeploymentApiKey =
-    typeof (activeDeployment as { apiKey?: unknown } | undefined)?.apiKey ===
-    "string"
-      ? (activeDeployment as { apiKey: string }).apiKey
-      : undefined;
 
   const toolService = useQuery(
     api.toolService.getByNode,
@@ -338,16 +333,13 @@ export const NodeSidePanel = memo(function NodeSidePanel({
   }
 
   // Restore the remembered deployment key when the active deployment changes.
-  const deploymentKeySync = `${activeDeployment?.endpointId ?? ""}|${legacyDeploymentApiKey ?? ""}`;
+  const deploymentKeySync = activeDeployment?.endpointId ?? "";
   const [syncedDeploymentKey, setSyncedDeploymentKey] =
     useState(deploymentKeySync);
   if (deploymentKeySync !== syncedDeploymentKey) {
     setSyncedDeploymentKey(deploymentKeySync);
     setDeploymentApiKey(
-      getRememberedDeploymentApiKey(
-        activeDeployment?.endpointId,
-        legacyDeploymentApiKey,
-      ),
+      getRememberedDeploymentApiKey(activeDeployment?.endpointId),
     );
   }
 

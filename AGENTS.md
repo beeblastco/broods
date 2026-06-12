@@ -23,7 +23,7 @@ This is a Bun workspaces monorepo for BeeBlast / filthy-panty.
   - `bun run build` for core Lambda builds.
   - `bun run dashboard` / `bun run dashboard:build` for the dashboard.
   - `bun run docs` / `bun run docs:build` for docs.
-- Do not deploy unless explicitly asked to do it locally. `bun run deploy` targets `apps/core`; use `dev` only when a stage is needed. Priority to push to `dev` or `main` branch and let CI/CD workflows handle deployment.
+- Do not deploy unless explicitly asked to do it locally. `bun run deploy` targets `apps/core`; use `dev` only when a stage is needed. Always push to the `dev` branch and let CI/CD handle deployment. `main` is branch-protected and only receives fast-forward merges from `dev` via the "Promote dev to main" workflow (Actions tab, one click), which triggers the production deploys.
 - Keep changes scoped to the workspace you are touching, but update linked docs, examples, generated Convex files, and tests when behavior or public contracts change.
 
 ## Cross-Workspace Notes

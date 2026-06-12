@@ -19,6 +19,10 @@ env:
 jobs:
   build:
     runs-on: ubuntu-24.04
+    # main builds against the production Convex deployment, everything else
+    # against dev. Environment-scoped secrets/vars (CONVEX_DEPLOY_KEY,
+    # NEXT_PUBLIC_CONVEX_URL, ...) override the repo-level dev defaults.
+    environment: ${{ github.ref_name == 'main' && 'production' || 'development' }}
     permissions:
       contents: read
       packages: write
@@ -48,6 +52,12 @@ jobs:
           fi
           if [[ -z "$CONVEX_DEPLOY_KEY" ]]; then
             echo "Missing repository secret: CONVEX_DEPLOY_KEY" >&2
+            exit 1
+          fi
+          # Convex deploy keys encode their target deployment. Refuse to ship a
+          # main build that would deploy functions to a non-production deployment.
+          if [[ "${{ github.ref_name }}" == "main" && "$CONVEX_DEPLOY_KEY" != prod:* ]]; then
+            echo "main requires a production Convex deploy key (prod:...) in the 'production' environment secret CONVEX_DEPLOY_KEY" >&2
             exit 1
           fi
 

@@ -15,6 +15,7 @@ import {
     fromNestedAgentConfig,
     toNestedAgentConfig,
 } from "./model/agentConfigCodec";
+import { saveAgentRuntimeSecrets } from "./model/agentRuntimeSecrets";
 import { uniqueProjectSlug } from "./lib/slug";
 
 const resourceValidator = v.object({
@@ -232,19 +233,29 @@ export const setEnvBySecretHash = internalMutation({
                 q.eq("environmentId", environmentDoc._id).eq("name", normalizedName),
             )
             .unique();
+        const secret = process.env.ACCOUNT_CONFIG_ENCRYPTION_SECRET;
+        if (!secret) {
+            throw new Error("ACCOUNT_CONFIG_ENCRYPTION_SECRET is required to store environment variables");
+        }
+        const encrypted = await encryptAgentConfigBlob({ value: value }, secret);
+        const now = Date.now();
 
         if (existing) {
             await ctx.db.patch(existing._id, {
-                value: value,
-                updatedAt: Date.now(),
+                ciphertext: encrypted.ciphertext,
+                iv: encrypted.iv,
+                tag: encrypted.tag,
+                updatedAt: now,
             });
         } else {
             await ctx.db.insert("environmentVariables", {
                 projectId: projectDoc._id,
                 environmentId: environmentDoc._id,
                 name: normalizedName,
-                value: value,
-                updatedAt: Date.now(),
+                ciphertext: encrypted.ciphertext,
+                iv: encrypted.iv,
+                tag: encrypted.tag,
+                updatedAt: now,
             });
         }
 
@@ -477,6 +488,11 @@ async function syncAgentResources(
             .map((envNameEntry) => ({ key: envNameEntry, value: envValues[envNameEntry] }));
         const current = existing.find((entry) => entry.name === name);
         if (current) {
+            const publicRuntimeVariables = await saveAgentRuntimeSecrets(
+                ctx,
+                current._id,
+                runtimeVariables,
+            );
             await ctx.db.patch(current._id, {
                 name: name,
                 description: resource.description,
@@ -490,7 +506,7 @@ async function syncAgentResources(
                 outputFormat: flat.outputFormat,
                 searchToolEnabled: flat.searchToolEnabled,
                 searchToolConfig: flat.searchToolConfig,
-                runtimeVariables: runtimeVariables,
+                runtimeVariables: publicRuntimeVariables,
                 extraConfig: flat.extraConfig,
                 updatedAt: Date.now(),
             });
@@ -521,12 +537,13 @@ async function syncAgentResources(
                 outputFormat: flat.outputFormat,
                 searchToolEnabled: flat.searchToolEnabled,
                 searchToolConfig: flat.searchToolConfig,
-                runtimeVariables: runtimeVariables,
+                runtimeVariables: runtimeVariables.map((entry) => ({ key: entry.key, value: "" })),
                 extraConfig: flat.extraConfig,
                 publicAccessEnabled: false,
                 webSocketEnabled: false,
                 updatedAt: Date.now(),
             });
+            await saveAgentRuntimeSecrets(ctx, configId, runtimeVariables);
             await ensureAgentsRowForConfig(ctx, configId, authId);
             await pushEncryptedConfigToAgentRow(ctx, configId);
             const created = await ctx.db.get(configId);
@@ -671,10 +688,17 @@ async function resourcesForEnvironment(
             q.eq("projectId", projectId).eq("environmentId", environmentId),
         )
         .collect();
-    const cronJobs = await ctx.db
-        .query("cronJobs")
-        .withIndex("by_accountId", (q) => q.eq("accountId", accountId))
-        .collect();
+    const agentIds = agents.flatMap((entry) => entry.agentId ? [entry.agentId] : []);
+    const cronJobs = (await Promise.all(
+        agentIds.map((agentId) =>
+            ctx.db
+                .query("cronJobs")
+                .withIndex("by_accountId_and_agentId", (q) =>
+                    q.eq("accountId", accountId).eq("agentId", agentId as Id<"agents">),
+                )
+                .collect(),
+        ),
+    )).flat();
     const sandboxNames = Object.fromEntries(sandboxes.map((entry) => [entry._id, entry.name]));
     const workspaceNames = Object.fromEntries(workspaces.map((entry) => [entry._id, entry.name]));
     const agentNames = Object.fromEntries(agents.flatMap((entry) =>
@@ -765,10 +789,16 @@ async function idsForEnvironment(
         )
         .collect();
     const agentIds = new Set(agents.flatMap((entry) => entry.agentId ? [entry.agentId] : []));
-    const cronJobs = await ctx.db
-        .query("cronJobs")
-        .withIndex("by_accountId", (q) => q.eq("accountId", accountId))
-        .collect();
+    const cronJobs = (await Promise.all(
+        [...agentIds].map((agentId) =>
+            ctx.db
+                .query("cronJobs")
+                .withIndex("by_accountId_and_agentId", (q) =>
+                    q.eq("accountId", accountId).eq("agentId", agentId as Id<"agents">),
+                )
+                .collect(),
+        ),
+    )).flat();
 
     return {
         agents: Object.fromEntries(agents.flatMap((entry) => entry.agentId ? [[entry.name, entry.agentId]] : [])),
@@ -792,7 +822,22 @@ async function environmentVariables(
         )
         .collect();
 
-    return Object.fromEntries(rows.map((row) => [row.name, row.value]));
+    const secret = process.env.ACCOUNT_CONFIG_ENCRYPTION_SECRET;
+    if (!secret) {
+        throw new Error("ACCOUNT_CONFIG_ENCRYPTION_SECRET is required to read environment variables");
+    }
+    const values: Record<string, string> = {};
+    for (const row of rows) {
+        const decrypted = await decryptAgentConfigBlob({
+            ciphertext: row.ciphertext,
+            iv: row.iv,
+            tag: row.tag,
+        }, secret);
+        const value = decrypted?.value;
+        values[row.name] = typeof value === "string" ? value : "";
+    }
+
+    return values;
 }
 
 async function decryptSandboxConfig(

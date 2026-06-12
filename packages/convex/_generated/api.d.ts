@@ -8,6 +8,7 @@
  * @module
  */
 
+import type * as accountTools from "../accountTools.js";
 import type * as accounts from "../accounts.js";
 import type * as agentConfig from "../agentConfig.js";
 import type * as agentDeployments from "../agentDeployments.js";
@@ -29,6 +30,7 @@ import type * as logs from "../logs.js";
 import type * as logsHelpers from "../logsHelpers.js";
 import type * as messages from "../messages.js";
 import type * as model_agentConfigCodec from "../model/agentConfigCodec.js";
+import type * as model_agentRuntimeSecrets from "../model/agentRuntimeSecrets.js";
 import type * as model_agentSync from "../model/agentSync.js";
 import type * as model_ownership_environment from "../model/ownership/environment.js";
 import type * as model_ownership_org from "../model/ownership/org.js";
@@ -54,6 +56,7 @@ import type {
 } from "convex/server";
 
 declare const fullApi: ApiFromModules<{
+  accountTools: typeof accountTools;
   accounts: typeof accounts;
   agentConfig: typeof agentConfig;
   agentDeployments: typeof agentDeployments;
@@ -75,6 +78,7 @@ declare const fullApi: ApiFromModules<{
   logsHelpers: typeof logsHelpers;
   messages: typeof messages;
   "model/agentConfigCodec": typeof model_agentConfigCodec;
+  "model/agentRuntimeSecrets": typeof model_agentRuntimeSecrets;
   "model/agentSync": typeof model_agentSync;
   "model/ownership/environment": typeof model_ownership_environment;
   "model/ownership/org": typeof model_ownership_org;

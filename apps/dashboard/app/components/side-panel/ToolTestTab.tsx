@@ -98,6 +98,12 @@ export function ToolTestTab({
             return;
         }
 
+        if (!projectId || !environmentId) {
+            setRunError("Project and environment context are required to run this tool.");
+
+            return;
+        }
+
         if (!toolService) {
             setRunError("Tool configuration is missing. Save it from the Config tab first.");
 
@@ -115,8 +121,9 @@ export function ToolTestTab({
         setIsRunning(true);
         try {
             const body = await executeTool({
-                language: toolService.language,
-                sourceCode: toolService.sourceCode,
+                projectId: projectId,
+                environmentId: environmentId,
+                nodeId: nodeId,
                 input: parsedInput,
             });
 

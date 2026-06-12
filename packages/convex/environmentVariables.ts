@@ -4,16 +4,49 @@
  */
 
 import { v } from "convex/values";
+import type { Id } from "./_generated/dataModel";
 import { mutation, query } from "./_generated/server";
 import { authKit } from "./auth";
 import { getOwnedEnvironment } from "./model/ownership/environment";
-import { environmentVariablesFields } from "./schema";
+import { encryptAgentConfigBlob } from "./model/agentConfigCodec";
 
 const environmentVariableDoc = v.object({
-    ...environmentVariablesFields,
     _id: v.id("environmentVariables"),
     _creationTime: v.number(),
+    projectId: v.id("projects"),
+    environmentId: v.id("environments"),
+    name: v.string(),
+    value: v.string(),
+    updatedAt: v.number(),
 });
+
+function encryptionSecret(): string {
+    const secret = process.env.ACCOUNT_CONFIG_ENCRYPTION_SECRET;
+    if (!secret) {
+        throw new Error("ACCOUNT_CONFIG_ENCRYPTION_SECRET is required to store environment variables");
+    }
+
+    return secret;
+}
+
+function maskEnvironmentVariable(variable: {
+    _id: Id<"environmentVariables">;
+    _creationTime: number;
+    projectId: Id<"projects">;
+    environmentId: Id<"environments">;
+    name: string;
+    updatedAt: number;
+}) {
+    return {
+        _id: variable._id,
+        _creationTime: variable._creationTime,
+        projectId: variable.projectId,
+        environmentId: variable.environmentId,
+        name: variable.name,
+        value: "********",
+        updatedAt: variable.updatedAt,
+    };
+}
 
 export const list = query({
     args: { projectId: v.id("projects"), environmentId: v.id("environments") },
@@ -32,12 +65,14 @@ export const list = query({
             return [];
         }
 
-        return ctx.db
+        const variables = await ctx.db
             .query("environmentVariables")
             .withIndex("by_projectId_and_environmentId", (q) =>
                 q.eq("projectId", projectId).eq("environmentId", environmentId),
             )
             .collect();
+
+        return variables.map(maskEnvironmentVariable);
     },
 });
 
@@ -76,8 +111,14 @@ export const set = mutation({
             .unique();
 
         const now = Date.now();
+        const encrypted = await encryptAgentConfigBlob({ value: value }, encryptionSecret());
         if (existing) {
-            await ctx.db.patch(existing._id, { value: value, updatedAt: now });
+            await ctx.db.patch(existing._id, {
+                ciphertext: encrypted.ciphertext,
+                iv: encrypted.iv,
+                tag: encrypted.tag,
+                updatedAt: now,
+            });
 
             return existing._id;
         }
@@ -86,7 +127,9 @@ export const set = mutation({
             projectId: projectId,
             environmentId: environmentId,
             name: trimmedName,
-            value: value,
+            ciphertext: encrypted.ciphertext,
+            iv: encrypted.iv,
+            tag: encrypted.tag,
             updatedAt: now,
         });
     },

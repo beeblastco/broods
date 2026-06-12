@@ -7,13 +7,8 @@
  * records its `_id` back on `agentConfigs.agentId` so the side panel's
  * "Agent ID" row surfaces a value filthy-panty actually accepts.
  *
- * NOTE: the encrypted `AgentConfig` blob (model/provider/workspace/tools)
- * is intentionally NOT written here yet. Encryption requires
- * ACCOUNT_CONFIG_ENCRYPTION_SECRET to be the same value as filthy-panty's
- * SST secret, and we ship the model-config sync in a follow-up. For now,
- * filthy-panty sees an empty config and any invoke that needs a real model
- * will fail with "config.model.provider is required" — a clear signal that
- * the config sync is the remaining gap.
+ * The encrypted `AgentConfig` blob (model/provider/workspace/tools) requires
+ * ACCOUNT_CONFIG_ENCRYPTION_SECRET to match filthy-panty's runtime secret.
  */
 
 import type { Doc, Id } from "../_generated/dataModel";
@@ -25,6 +20,7 @@ import {
     substituteEnvPlaceholders,
     toNestedAgentConfig,
 } from "./agentConfigCodec";
+import { loadAgentRuntimeSecrets } from "./agentRuntimeSecrets";
 import { getActiveOrgForUser } from "./ownership/org";
 
 /**
@@ -95,31 +91,28 @@ export async function ensureAgentsRowForConfig(
  * `${ENV}` placeholders from `runtimeVariables`, encrypts with the shared
  * AES-256-GCM secret, and writes the result onto the linked `agents` row.
  *
- * Silently no-ops in two cases that are not error conditions:
- *   1. `ACCOUNT_CONFIG_ENCRYPTION_SECRET` is not set in the Convex env
- *      (encryption layer not yet provisioned for this deployment).
- *   2. The `agentConfigs` row has no linked `agentId`
+ * Silently no-ops when the `agentConfigs` row has no linked `agentId`
  *      (`ensureAgentsRowForConfig` hasn't run yet, e.g. because the org is
  *      not provisioned with a filthy-panty account).
+ * Throws when a linked core agent exists but the shared encryption secret is
+ * missing, because otherwise the runtime would keep stale or empty config.
  */
 export async function pushEncryptedConfigToAgentRow(
     ctx: MutationCtx,
     configId: Id<"agentConfigs">,
 ): Promise<void> {
-    const secret = process.env.ACCOUNT_CONFIG_ENCRYPTION_SECRET;
-    if (!secret) return;
-
     const config = await ctx.db.get(configId);
     if (!config?.agentId) return;
+    const secret = process.env.ACCOUNT_CONFIG_ENCRYPTION_SECRET;
+    if (!secret) {
+        throw new Error("ACCOUNT_CONFIG_ENCRYPTION_SECRET must be configured before syncing agent runtime config.");
+    }
     const normalized = ctx.db.normalizeId("agents", config.agentId);
     if (!normalized) return;
     const agent = await ctx.db.get(normalized);
     if (!agent) return;
 
-    const variables: Record<string, string> = {};
-    for (const entry of config.runtimeVariables ?? []) {
-        variables[entry.key] = entry.value;
-    }
+    const variables = await loadAgentRuntimeSecrets(ctx, configId);
 
     const nested = toNestedAgentConfig({
         name: config.name,

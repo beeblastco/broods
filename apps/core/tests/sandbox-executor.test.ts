@@ -421,6 +421,29 @@ describe("createSandboxExecutor", () => {
     expect(daytonaDeleteMock).toHaveBeenCalledTimes(1);
   });
 
+  it("rejects Daytona S3 mounts without a namespace before assuming the mount role", async () => {
+    const { createSandboxExecutor } = require("../functions/harness-processing/sandbox/index.ts");
+    const stsCallCount = stsSendMock.mock.calls.length;
+    const executor = createSandboxExecutor({
+      provider: "daytona",
+      options: {
+        organizationId: "org-id",
+        workspaceRoot: "/mnt/workspaces",
+        snapshot: "fuse-s3",
+        mountAwsS3Buckets: true,
+      },
+    });
+
+    await expect(executor.run({
+      code: "echo hi",
+      workspaceRoot: "/mnt/workspaces",
+      timeoutSeconds: 30,
+      outputLimitBytes: 4096,
+    })).rejects.toThrow("Daytona AWS S3 mounts require a workspace namespace");
+
+    expect(stsSendMock.mock.calls.length).toBe(stsCallCount);
+  });
+
   it("runs Vercel commands and adapts async command output", async () => {
     const { createSandboxExecutor } = require("../functions/harness-processing/sandbox/index.ts");
     const executor = createSandboxExecutor({

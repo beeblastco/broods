@@ -137,6 +137,34 @@ export const getById = query({
     },
 });
 
+/** Returns one org by id when the caller has admin-level membership. */
+export const getByIdForAdmin = query({
+    args: { orgId: v.id("orgs") },
+    returns: v.union(orgDoc, v.null()),
+    handler: async (ctx, args) => {
+        const { orgId } = args;
+
+        // Check authenticated user
+        const authUser = await authKit.getAuthUser(ctx);
+        if (!authUser) {
+            return null;
+        }
+
+        const user = await ctx.db
+            .query("users")
+            .withIndex("by_authId", (q) => q.eq("authId", authUser.id))
+            .unique();
+        if (!user) {
+            return null;
+        }
+
+        await requireOrgMember(ctx, orgId, user._id, "admin");
+        const org = await ctx.db.get(orgId);
+
+        return org ?? null;
+    },
+});
+
 /** Lists every org the caller is a member of. */
 export const list = query({
     args: {},

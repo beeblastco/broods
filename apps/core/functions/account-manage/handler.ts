@@ -124,7 +124,7 @@ export async function handler(event: LambdaFunctionURLEvent): Promise<LambdaResp
         const selfCronCollection = rawPath === "/accounts/me/cron-jobs";
         const selfCronMatch = rawPath.match(/^\/accounts\/me\/cron-jobs\/([^/]+)$/);
         if (selfCronCollection || selfCronMatch?.[1]) {
-            const account = requireAccountAuth(auth);
+            const account = requireAccountAuth(auth, { allowServiceToken: true });
             return await handleCronJobRoute(method, account.accountId, selfCronMatch?.[1], event);
         }
 
@@ -250,7 +250,9 @@ async function handleCronJobRoute(
             return jsonResponse(200, { cronJobs: records.map(toCronJobResponse) });
         }
         if (method === "POST") {
-            const cronJob = await cronJobs.create(accountId, parseJsonBody(event) as never, {
+            const body = parseJsonBody(event) as { agentId?: unknown };
+            await assertCronAgentExists(accountId, body.agentId);
+            const cronJob = await cronJobs.create(accountId, body as never, {
                 schedulerGroupName: schedulerGroupName(),
             });
             try {
@@ -275,6 +277,9 @@ async function handleCronJobRoute(
         }
 
         const patch = parseJsonBody(event);
+        if (typeof (patch as { agentId?: unknown }).agentId !== "undefined") {
+            await assertCronAgentExists(accountId, (patch as { agentId?: unknown }).agentId);
+        }
         const patched = applyCronJobPatch(existing, patch as never);
         await updateCronSchedule(patched);
         const cronJob = await cronJobs.update(accountId, cronJobId, patch as never);
@@ -586,9 +591,28 @@ async function deleteAccountResponse(account: Extract<AuthContext, { kind: "acco
     return jsonResponse(200, { deleted: true, cleanup: { ...cleanup, agentsDeleted, skillObjectsDeleted, cronJobsDeleted, accountToolsDeleted } });
 }
 
-function requireAccountAuth(auth: AuthContext): Extract<AuthContext, { kind: "account" }>["account"] {
+async function assertCronAgentExists(accountId: string, agentId: unknown): Promise<void> {
+    if (typeof agentId !== "string" || agentId.trim().length === 0) {
+        throw new Error("agentId is required");
+    }
+    const agent = await getStorage().agents.getById(accountId, agentId);
+    if (!agent) {
+        throw new Error("Cron job agentId must reference an existing agent");
+    }
+    if (agent.status !== "active") {
+        throw new Error("Cron job agentId must reference an active agent");
+    }
+}
+
+function requireAccountAuth(
+    auth: AuthContext,
+    options: { allowServiceToken?: boolean } = {},
+): Extract<AuthContext, { kind: "account" }>["account"] {
     if (auth.kind !== "account") {
         throw new Error("Admin must use account-specific endpoints");
+    }
+    if (auth.viaServiceToken && options.allowServiceToken !== true) {
+        throw new Error("Service token is not allowed for this account endpoint");
     }
 
     return auth.account;

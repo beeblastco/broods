@@ -9,7 +9,7 @@ import { mutation, query } from "./_generated/server";
 import { authKit } from "./auth";
 import { ensureAgentsRowForConfig, pushEncryptedConfigToAgentRow } from "./model/agentSync";
 import { getOwnedEnvironment } from "./model/ownership/environment";
-import { getOwnedProject } from "./model/ownership/project";
+import { getOwnedProject, getProjectForRole } from "./model/ownership/project";
 import { environmentsFields } from "./schema";
 
 const environmentDoc = v.object({
@@ -174,7 +174,7 @@ async function duplicateEnvironmentContents(
  * deployments and linked filthy-panty `agents` rows), the canvas layout, tool
  * services, env vars, and deploy keys.
  */
-async function deleteEnvironmentContents(
+export async function deleteEnvironmentContents(
     ctx: MutationCtx,
     environment: Doc<"environments">,
 ): Promise<void> {
@@ -254,7 +254,7 @@ export const list = query({
 
         // Return empty rather than throwing so a just-deleted project doesn't crash
         // reactive subscribers (header selector, settings) before they navigate away.
-        const project = await getOwnedProject(ctx, authUser.id, projectId);
+        const project = await getProjectForRole(ctx, authUser.id, projectId, "admin");
         if (!project) return [];
 
         const environments = await ctx.db
@@ -365,6 +365,8 @@ export const remove = mutation({
         const environment = await getOwnedEnvironment(ctx, authUser.id, environmentId);
         if (!environment) throw new Error("Environment not found.");
         if (environment.isDefault) throw new Error("The default environment cannot be deleted.");
+        const project = await getProjectForRole(ctx, authUser.id, environment.projectId, "admin");
+        if (!project) throw new Error("Environment not found.");
 
         // Cascade-delete every resource scoped to this environment before the row itself.
         await deleteEnvironmentContents(ctx, environment);
