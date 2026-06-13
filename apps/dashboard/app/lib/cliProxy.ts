@@ -13,16 +13,29 @@ export async function proxyCliRequest(req: NextRequest): Promise<Response> {
     target.pathname = incoming.pathname;
     target.search = incoming.search;
 
-    const response = await fetch(target, {
-        method: req.method,
-        headers: forwardedHeaders(req),
-        body: req.method === "GET" ? undefined : await req.text(),
-        cache: "no-store",
-    });
+    let response: Response;
+    try {
+        response = await fetch(target, {
+            method: req.method,
+            headers: forwardedHeaders(req),
+            body: req.method === "GET" ? undefined : await req.text(),
+            cache: "no-store",
+        });
+    } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
 
-    return new Response(response.body, {
+        return json({ error: `Failed to reach Convex CLI endpoint: ${message}` }, 502);
+    }
+
+    const body = await response.arrayBuffer();
+    const contentType = response.headers.get("content-type") ?? "application/json";
+
+    return new Response(body, {
         status: response.status,
-        headers: response.headers,
+        headers: {
+            "Content-Type": contentType,
+            "Cache-Control": "no-store",
+        },
     });
 }
 
@@ -43,4 +56,14 @@ function forwardedHeaders(req: NextRequest): Headers {
     if (contentType) headers.set("content-type", contentType);
 
     return headers;
+}
+
+function json(body: unknown, status: number): Response {
+    return new Response(JSON.stringify(body), {
+        status: status,
+        headers: {
+            "Content-Type": "application/json",
+            "Cache-Control": "no-store",
+        },
+    });
 }
