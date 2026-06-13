@@ -99,7 +99,13 @@ async function login(args: string[]): Promise<void> {
     runtime.dashboardUrl ??
     DEFAULT_DASHBOARD_URL;
   const auth = await loginWithBrowser(dashboardUrl);
+  const user = auth.user?.email || auth.user?.name || auth.user?.authId;
+  const org = auth.org ? `${auth.org.name} (${auth.org.slug})` : undefined;
+  const account = auth.account?.username;
   console.log(`Logged in to ${auth.dashboardUrl}`);
+  if (user) console.log(`User: ${user}`);
+  if (org) console.log(`Org: ${org}`);
+  if (account) console.log(`Account: ${account}`);
 }
 
 async function diff(args: string[]): Promise<void> {

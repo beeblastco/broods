@@ -60,11 +60,19 @@ export async function loginWithBrowser(dashboardUrl: string): Promise<StoredAuth
     if (!response.ok) {
       throw new Error(`Login exchange failed: ${response.status} ${await response.text()}`);
     }
-    const payload = await response.json() as { token: string };
+    const payload = await response.json() as {
+      token: string;
+      user?: StoredAuthConfig["user"];
+      org?: StoredAuthConfig["org"];
+      account?: StoredAuthConfig["account"];
+    };
     const auth = {
       dashboardUrl: stripTrailingSlash(dashboardUrl),
       token: payload.token,
       createdAt: new Date().toISOString(),
+      ...(payload.user ? { user: payload.user } : {}),
+      ...(payload.org ? { org: payload.org } : {}),
+      ...(payload.account ? { account: payload.account } : {}),
     };
     await writeStoredAuth(auth);
     return auth;

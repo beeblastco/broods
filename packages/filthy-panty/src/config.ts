@@ -14,6 +14,20 @@ export interface StoredAuthConfig {
   dashboardUrl: string;
   token: string;
   createdAt: string;
+  user?: {
+    authId: string;
+    email?: string;
+    name?: string;
+  };
+  org?: {
+    id: string;
+    name: string;
+    slug: string;
+  };
+  account?: {
+    id: string;
+    username: string;
+  };
 }
 
 export async function readStoredAuth(): Promise<StoredAuthConfig | null> {

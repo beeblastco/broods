@@ -74,7 +74,24 @@ export const createLoginCode = mutation({
 /** Exchange a one-time code for a long-lived CLI bearer token. */
 export const exchangeLoginCode = internalMutation({
     args: { code: v.string() },
-    returns: v.object({ token: v.string(), expiresAt: v.number() }),
+    returns: v.object({
+        token: v.string(),
+        expiresAt: v.number(),
+        user: v.object({
+            authId: v.string(),
+            email: v.string(),
+            name: v.string(),
+        }),
+        org: v.object({
+            id: v.string(),
+            name: v.string(),
+            slug: v.string(),
+        }),
+        account: v.object({
+            id: v.string(),
+            username: v.string(),
+        }),
+    }),
     handler: async (ctx, { code }) => {
         const codeHash = await sha256Hex(code);
         const row = await ctx.db
@@ -88,6 +105,12 @@ export const exchangeLoginCode = internalMutation({
 
         const account = await ctx.db.get(row.accountId);
         if (!account || account.status !== "active") throw new Error("Account is not active");
+        const org = await ctx.db.get(row.orgId);
+        if (!org) throw new Error("Organization not found");
+        const user = await ctx.db
+            .query("users")
+            .withIndex("by_authId", (q) => q.eq("authId", row.authId))
+            .unique();
 
         const token = randomToken(CLI_TOKEN_PREFIX);
         const expiresAt = now + TOKEN_TTL_MS;
@@ -103,7 +126,24 @@ export const exchangeLoginCode = internalMutation({
         });
         await ctx.db.patch(row._id, { usedAt: now });
 
-        return { token: token, expiresAt: expiresAt };
+        return {
+            token: token,
+            expiresAt: expiresAt,
+            user: {
+                authId: row.authId,
+                email: user?.email ?? "",
+                name: user?.name ?? user?.email ?? row.authId,
+            },
+            org: {
+                id: row.orgId,
+                name: org.name,
+                slug: org.slug,
+            },
+            account: {
+                id: row.accountId,
+                username: account.username,
+            },
+        };
     },
 });
 
