@@ -158,6 +158,16 @@ export const syncManifestBySecretHash = internalMutation({
             await pruneSandboxResources(ctx, account._id, manifest.resources);
         }
 
+        await syncCanvasLayoutForManifest(ctx, {
+            account: account,
+            projectId: projectDoc._id,
+            environmentId: environmentDoc._id,
+            resources: manifest.resources,
+            workspaceIds: workspaceIds,
+            sandboxIds: sandboxIds,
+            prune: prune === true,
+        });
+
         await ctx.db.patch(projectDoc._id, { updatedAt: Date.now() });
         const externalIds = await externalIdsForEnvironment(ctx, projectDoc._id, environmentDoc._id);
         const ids: Ids = {
@@ -648,6 +658,245 @@ async function resolveSubagentReferences(
         await ctx.db.patch(configId, { extraConfig: flat.extraConfig, updatedAt: Date.now() });
         await pushEncryptedConfigToAgentRow(ctx, configId);
     }
+}
+
+type CanvasNode = {
+    id: string;
+    type: "agent" | "database" | "sandbox" | "workspace" | "tool" | "skill";
+    position: { x: number; y: number };
+    data: Record<string, unknown>;
+};
+
+type CanvasEdge = {
+    id: string;
+    source: string;
+    target: string;
+    animated?: boolean;
+};
+
+type RuntimeCliResource = CliResource & {
+    kind: "agent" | "workspace" | "sandbox";
+};
+
+async function syncCanvasLayoutForManifest(
+    ctx: MutationCtx,
+    options: {
+        account: Doc<"accounts">;
+        projectId: Id<"projects">;
+        environmentId: Id<"environments">;
+        resources: CliResource[];
+        workspaceIds: Record<string, string>;
+        sandboxIds: Record<string, string>;
+        prune: boolean;
+    },
+): Promise<void> {
+    const { account, projectId, environmentId, resources, workspaceIds, sandboxIds, prune } = options;
+    const layout = await ctx.db
+        .query("canvasLayouts")
+        .withIndex("by_projectId_and_environmentId", (q) =>
+            q.eq("projectId", projectId).eq("environmentId", environmentId),
+        )
+        .unique();
+    const existingNodes = ((layout?.nodes ?? []) as CanvasNode[]).map(normalizeCanvasNode);
+    const existingEdges = ((layout?.edges ?? []) as CanvasEdge[]).map(normalizeCanvasEdge);
+    const existingByAgentConfigId = new Map<string, CanvasNode>();
+    const existingByResourceId = new Map<string, CanvasNode>();
+    const existingById = new Map<string, CanvasNode>();
+    for (const node of existingNodes) {
+        existingById.set(node.id, node);
+        const data = isRecord(node.data) ? node.data : {};
+        if (typeof data.agentConfigId === "string") existingByAgentConfigId.set(data.agentConfigId, node);
+        if (typeof data.resourceId === "string") existingByResourceId.set(data.resourceId, node);
+    }
+
+    const agentConfigs = await ctx.db
+        .query("agentConfigs")
+        .withIndex("by_projectId_and_environmentId", (q) =>
+            q.eq("projectId", projectId).eq("environmentId", environmentId),
+        )
+        .collect();
+    const agentConfigByName = new Map(agentConfigs.map((entry) => [entry.name, entry]));
+    const desiredResources: RuntimeCliResource[] = resources
+        .filter((entry): entry is RuntimeCliResource =>
+            entry.kind === "agent" || entry.kind === "workspace" || entry.kind === "sandbox",
+        )
+        .map((entry) => ({ ...entry, name: resourceName(entry.name) }));
+    const desiredNodeKeys = new Set(desiredResources.map((entry) => `${entry.kind}:${entry.name}`));
+    const desiredEdges = new Map<string, CanvasEdge>();
+    const nextById = new Map(existingNodes.map((node) => [node.id, node]));
+    const nodeIdByKindName = new Map<string, string>();
+
+    const ordered = [...desiredResources].sort((a, b) => {
+        const rank = { agent: 0, sandbox: 1, workspace: 2 } as const;
+        return rank[a.kind] - rank[b.kind] || a.name.localeCompare(b.name);
+    });
+    ordered.forEach((resource, index) => {
+        if (resource.kind === "agent") {
+            const config = agentConfigByName.get(resource.name);
+            if (!config) return;
+            const node = upsertCanvasNode({
+                nextById,
+                existingById,
+                preferred: existingByAgentConfigId.get(config._id),
+                kind: "agent",
+                name: resource.name,
+                position: { x: 80, y: 80 + index * 180 },
+                data: {
+                    label: resource.name,
+                    status: "idle",
+                    agentConfigId: config._id,
+                    cliManaged: true,
+                    cliResourceKey: `agent:${resource.name}`,
+                },
+            });
+            nodeIdByKindName.set(`agent:${resource.name}`, node.id);
+            return;
+        }
+
+        const resourceId = resource.kind === "workspace"
+            ? workspaceIds[resource.name]
+            : sandboxIds[resource.name];
+        if (!resourceId) return;
+        const node = upsertCanvasNode({
+            nextById,
+            existingById,
+            preferred: existingByResourceId.get(resourceId),
+            kind: resource.kind,
+            name: resource.name,
+            position: {
+                x: resource.kind === "sandbox" ? 420 : 760,
+                y: 80 + index * 180,
+            },
+            data: {
+                label: resource.name,
+                status: "idle",
+                resourceId: resourceId,
+                mountName: resource.name,
+                description: resource.description,
+                config: resource.config,
+                cliManaged: true,
+                cliResourceKey: `${resource.kind}:${resource.name}`,
+            },
+        });
+        nodeIdByKindName.set(`${resource.kind}:${resource.name}`, node.id);
+    });
+
+    for (const agent of desiredResources.filter((entry) => entry.kind === "agent")) {
+        const agentId = nodeIdByKindName.get(`agent:${agent.name}`);
+        if (!agentId || !isRecord(agent.config)) continue;
+        const sandboxName = typeof agent.config.sandbox === "string" ? resourceName(agent.config.sandbox) : null;
+        if (sandboxName) {
+            const sandboxNodeId = nodeIdByKindName.get(`sandbox:${sandboxName}`);
+            if (sandboxNodeId) addDesiredCanvasEdge(desiredEdges, agentId, sandboxNodeId);
+        }
+
+        if (Array.isArray(agent.config.workspaces)) {
+            for (const workspaceRef of agent.config.workspaces) {
+                if (!isRecord(workspaceRef) || typeof workspaceRef.workspaceId !== "string") continue;
+                const workspaceName = resourceName(workspaceRef.workspaceId);
+                const workspaceNodeId = nodeIdByKindName.get(`workspace:${workspaceName}`);
+                if (workspaceNodeId) addDesiredCanvasEdge(desiredEdges, agentId, workspaceNodeId);
+                if (workspaceNodeId && typeof workspaceRef.sandbox === "string") {
+                    const sandboxNodeId = nodeIdByKindName.get(`sandbox:${resourceName(workspaceRef.sandbox)}`);
+                    if (sandboxNodeId) addDesiredCanvasEdge(desiredEdges, workspaceNodeId, sandboxNodeId);
+                }
+            }
+        }
+    }
+
+    const existingEdgeIds = new Set(existingEdges.map((edge) => edge.id));
+    const nextEdges = existingEdges.filter((edge) =>
+        !prune || !edgeIsCliManaged(edge) || desiredEdges.has(edge.id),
+    );
+    for (const edge of desiredEdges.values()) {
+        if (existingEdgeIds.has(edge.id)) continue;
+        nextEdges.push(edge);
+    }
+
+    const nextNodes = [...nextById.values()].filter((node) => {
+        if (!prune) return true;
+        const key = typeof node.data.cliResourceKey === "string" ? node.data.cliResourceKey : null;
+        return !key || desiredNodeKeys.has(key);
+    });
+    const now = Date.now();
+    if (layout) {
+        await ctx.db.patch(layout._id, { nodes: nextNodes, edges: nextEdges, updatedAt: now });
+    } else if (nextNodes.length > 0) {
+        const authId = await authIdForAccount(ctx, account);
+        if (!authId) throw new Error("Account org owner not found");
+        await ctx.db.insert("canvasLayouts", {
+            authId: authId,
+            projectId: projectId,
+            environmentId: environmentId,
+            nodes: nextNodes,
+            edges: nextEdges,
+            updatedAt: now,
+        });
+    }
+}
+
+function upsertCanvasNode(options: {
+    nextById: Map<string, CanvasNode>;
+    existingById: Map<string, CanvasNode>;
+    preferred: CanvasNode | undefined;
+    kind: CanvasNode["type"];
+    name: string;
+    position: { x: number; y: number };
+    data: Record<string, unknown>;
+}): CanvasNode {
+    const { nextById, existingById, preferred, kind, name, position, data } = options;
+    const id = preferred?.id ?? canvasNodeId(kind, name);
+    const existing = preferred ?? existingById.get(id);
+    const node = {
+        id: id,
+        type: kind,
+        position: existing?.position ?? position,
+        data: {
+            ...(isRecord(existing?.data) ? existing.data : {}),
+            ...data,
+        },
+    };
+    nextById.set(id, node);
+
+    return node;
+}
+
+function normalizeCanvasNode(node: CanvasNode): CanvasNode {
+    return {
+        id: String(node.id),
+        type: node.type,
+        position: node.position ?? { x: 0, y: 0 },
+        data: isRecord(node.data) ? node.data : {},
+    };
+}
+
+function normalizeCanvasEdge(edge: CanvasEdge): CanvasEdge {
+    return {
+        id: String(edge.id),
+        source: String(edge.source),
+        target: String(edge.target),
+        animated: edge.animated,
+    };
+}
+
+function canvasNodeId(kind: string, name: string): string {
+    return `cli-${kind}-${name
+        .toLowerCase()
+        .replace(/[^a-z0-9._-]+/g, "-")
+        .replace(/^-+|-+$/g, "") || "resource"}`;
+}
+
+function canvasEdgeId(source: string, target: string): string {
+    return `xy-edge__${source}-${target}`;
+}
+
+function addDesiredCanvasEdge(edges: Map<string, CanvasEdge>, source: string, target: string): void {
+    const id = canvasEdgeId(source, target);
+    edges.set(id, { id: id, source: source, target: target, animated: false });
+}
+
+function edgeIsCliManaged(edge: CanvasEdge): boolean {
+    return edge.id.startsWith("xy-edge__cli-");
 }
 
 async function pruneAgents(
