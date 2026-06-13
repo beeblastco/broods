@@ -8,6 +8,7 @@ COPY apps/core/package.json ./apps/core/
 COPY apps/dashboard/package.json ./apps/dashboard/
 COPY apps/docs/package.json ./apps/docs/
 COPY packages/convex/package.json ./packages/convex/
+COPY packages/demos/sandbox-stateless/package.json ./packages/demos/sandbox-stateless/
 COPY packages/filthy-panty/package.json ./packages/filthy-panty/
 RUN bun install --frozen-lockfile --ignore-scripts
 
