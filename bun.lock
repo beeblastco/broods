@@ -151,6 +151,8 @@
         "filthy-panty": "./src/cli/index.ts",
       },
       "devDependencies": {
+        "@filthy-panty/convex": "workspace:*",
+        "@filthy-panty/core": "workspace:*",
         "@types/bun": "^1.3.14",
       },
       "peerDependencies": {

@@ -12,6 +12,7 @@ type RouteParts =
     | { kind: "manifest"; project: string; environment: string }
     | { kind: "logs"; project: string; environment: string }
     | { kind: "env"; project: string; environment: string; name: string }
+    | { kind: "run"; project: string; environment: string; agentName: string }
     | {
         kind: "resource";
         project: string;
@@ -70,9 +71,20 @@ export const handle = httpAction(async (ctx, req) => {
             project: route.project,
             environment: route.environment,
         });
-        if (!resolved) return json({ error: "Invalid or out-of-scope deploy token" }, 401);
-        const secretHash = resolved.secretHash;
-        const forwardToken = resolved.scoped ? null : auth.token;
+        const cliResolved = resolved ? null : await ctx.runMutation(internal.cliAuth.resolveCliToken, {
+            tokenHash: auth.secretHash,
+            project: route.project,
+            environment: route.environment,
+        });
+        const authResult = resolved ?? (cliResolved ? {
+            accountId: cliResolved.accountId,
+            secretHash: cliResolved.secretHash,
+            scoped: true,
+        } : null);
+        if (!authResult) return json({ error: "Invalid or out-of-scope deploy token" }, 401);
+        const secretHash = authResult.secretHash;
+        const forwardToken = authResult.scoped ? null : auth.token;
+        const accountId = authResult.accountId;
 
         if (route.kind === "manifest" && req.method === "GET") {
             const result = await ctx.runQuery(internal.cliSync.getManifestBySecretHash, {
@@ -115,7 +127,8 @@ export const handle = httpAction(async (ctx, req) => {
 
             const cronJobIds = forwardToken
                 ? await syncCronJobs(forwardToken, manifest as CliManifest, result.ids, body.prune === true)
-                : {};
+                : await syncCronJobsWithServiceToken(accountId, manifest as CliManifest, result.ids, body.prune === true)
+                    .catch(() => ({}));
             const refreshed = await ctx.runQuery(internal.cliSync.getManifestBySecretHash, {
                 secretHash: secretHash,
                 project: route.project,
@@ -144,10 +157,31 @@ export const handle = httpAction(async (ctx, req) => {
             return json({ ok: true });
         }
 
+        if (route.kind === "run" && req.method === "POST") {
+            const remote = await ctx.runQuery(internal.cliSync.getManifestBySecretHash, {
+                secretHash: secretHash,
+                project: route.project,
+                environment: route.environment,
+            });
+            const agentId = remote?.ids.agents?.[route.agentName];
+            if (!agentId) return json({ error: `Agent not found: ${route.agentName}` }, 404);
+            const body = await req.json() as Record<string, unknown>;
+            const response = await runAgentWithServiceToken(accountId, {
+                ...body,
+                agentId: agentId,
+            });
+
+            return new Response(response.body, {
+                status: response.status,
+                headers: response.headers,
+            });
+        }
+
         if (route.kind === "resource" && req.method === "DELETE") {
             if (route.resourceKind === "cronJob") {
                 // Scoped deploy keys can't manage filthy-panty cron jobs; no-op for them.
                 if (forwardToken) await deleteCronJobByName(forwardToken, route.name);
+                else await deleteCronJobByNameWithServiceToken(accountId, route.name);
             } else {
                 await ctx.runMutation(internal.cliSync.deleteResourceBySecretHash, {
                     secretHash: secretHash,
@@ -201,6 +235,22 @@ function parseRoute(pathname: string): RouteParts | null {
         parts[6] === "logs"
     ) {
         return { kind: "logs", project: parts[3], environment: parts[5] };
+    }
+    if (
+        parts.length === 9 &&
+        parts[0] === "api" &&
+        parts[1] === "cli" &&
+        parts[2] === "projects" &&
+        parts[4] === "environments" &&
+        parts[6] === "agents" &&
+        parts[8] === "run"
+    ) {
+        return {
+            kind: "run",
+            project: parts[3],
+            environment: parts[5],
+            agentName: parts[7],
+        };
     }
     if (
         parts.length === 9 &&
@@ -281,9 +331,23 @@ async function syncCronJobs(
     ids: GeneratedIds,
     prune: boolean,
 ): Promise<Record<string, string>> {
+    return syncCronJobsWithFetch(
+        manifest,
+        ids,
+        prune,
+        (path, init) => accountManageFetch(token, path, init),
+    );
+}
+
+async function syncCronJobsWithFetch(
+    manifest: CliManifest,
+    ids: GeneratedIds,
+    prune: boolean,
+    fetchCron: (path: string, init: RequestInit) => Promise<Response>,
+): Promise<Record<string, string>> {
     const desired = desiredCronJobs(manifest, ids.agents ?? {});
     if (desired.length === 0 && prune !== true) return {};
-    const existing = await listCronJobs(token);
+    const existing = await listCronJobsWithFetch(fetchCron);
     const existingByName = new Map(existing.map((job) => [job.name, job]));
     const desiredNames = new Set(desired.map((job) => job.name));
     const cronJobIds: Record<string, string> = {};
@@ -291,10 +355,10 @@ async function syncCronJobs(
     for (const job of desired) {
         const existingJob = existingByName.get(job.name);
         if (existingJob) {
-            await updateCronJob(token, existingJob.cronJobId, job);
+            await updateCronJobWithFetch(fetchCron, existingJob.cronJobId, job);
             cronJobIds[job.resourceName] = existingJob.cronJobId;
         } else {
-            const created = await createCronJob(token, job);
+            const created = await createCronJobWithFetch(fetchCron, job);
             cronJobIds[job.resourceName] = created.cronJobId;
         }
     }
@@ -303,7 +367,7 @@ async function syncCronJobs(
         const environmentAgentIds = new Set(Object.values(ids.agents ?? {}));
         for (const job of existing) {
             if (!environmentAgentIds.has(job.agentId) || desiredNames.has(job.name)) continue;
-            await deleteCronJob(token, job.cronJobId);
+            await deleteCronJobWithFetch(fetchCron, job.cronJobId);
         }
     }
 
@@ -337,7 +401,13 @@ function desiredCronJobs(
 }
 
 async function listCronJobs(token: string): Promise<CronJobResponse[]> {
-    const response = await accountManageFetch(token, "/accounts/me/cron-jobs", { method: "GET" });
+    return listCronJobsWithFetch((path, init) => accountManageFetch(token, path, init));
+}
+
+async function listCronJobsWithFetch(
+    fetchCron: (path: string, init: RequestInit) => Promise<Response>,
+): Promise<CronJobResponse[]> {
+    const response = await fetchCron("/accounts/me/cron-jobs", { method: "GET" });
     const payload = await response.json() as { cronJobs?: CronJobResponse[] };
     return Array.isArray(payload.cronJobs) ? payload.cronJobs : [];
 }
@@ -346,7 +416,14 @@ async function createCronJob(
     token: string,
     job: DesiredCronJob,
 ): Promise<CronJobResponse> {
-    const response = await accountManageFetch(token, "/accounts/me/cron-jobs", {
+    return createCronJobWithFetch((path, init) => accountManageFetch(token, path, init), job);
+}
+
+async function createCronJobWithFetch(
+    fetchCron: (path: string, init: RequestInit) => Promise<Response>,
+    job: DesiredCronJob,
+): Promise<CronJobResponse> {
+    const response = await fetchCron("/accounts/me/cron-jobs", {
         method: "POST",
         body: JSON.stringify(cronJobBody(job)),
     });
@@ -359,14 +436,29 @@ async function updateCronJob(
     cronJobId: string,
     job: DesiredCronJob,
 ): Promise<void> {
-    await accountManageFetch(token, `/accounts/me/cron-jobs/${encodeURIComponent(cronJobId)}`, {
+    await updateCronJobWithFetch((path, init) => accountManageFetch(token, path, init), cronJobId, job);
+}
+
+async function updateCronJobWithFetch(
+    fetchCron: (path: string, init: RequestInit) => Promise<Response>,
+    cronJobId: string,
+    job: DesiredCronJob,
+): Promise<void> {
+    await fetchCron(`/accounts/me/cron-jobs/${encodeURIComponent(cronJobId)}`, {
         method: "PATCH",
         body: JSON.stringify(cronJobBody(job)),
     });
 }
 
 async function deleteCronJob(token: string, cronJobId: string): Promise<void> {
-    await accountManageFetch(token, `/accounts/me/cron-jobs/${encodeURIComponent(cronJobId)}`, {
+    await deleteCronJobWithFetch((path, init) => accountManageFetch(token, path, init), cronJobId);
+}
+
+async function deleteCronJobWithFetch(
+    fetchCron: (path: string, init: RequestInit) => Promise<Response>,
+    cronJobId: string,
+): Promise<void> {
+    await fetchCron(`/accounts/me/cron-jobs/${encodeURIComponent(cronJobId)}`, {
         method: "DELETE",
     });
 }
@@ -394,6 +486,70 @@ async function accountManageFetch(token: string, path: string, init: RequestInit
     }
 
     return response;
+}
+
+async function accountManageFetchWithServiceToken(accountId: string, path: string, init: RequestInit): Promise<Response> {
+    const baseUrl = process.env.FILTHY_PANTY_ACCOUNT_MANAGE_URL;
+    const token = process.env.FILTHY_PANTY_SERVICE_AUTH_SECRET;
+    if (!baseUrl || !token) {
+        throw new Error("FILTHY_PANTY_ACCOUNT_MANAGE_URL and FILTHY_PANTY_SERVICE_AUTH_SECRET are required");
+    }
+    const response = await fetch(`${baseUrl.replace(/\/$/, "")}${path}`, {
+        ...init,
+        headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+            "X-Account-Id": accountId,
+            ...init.headers,
+        },
+    });
+    if (!response.ok) {
+        throw new Error(`BeeBlast account-manage service call failed: ${response.status} ${await response.text()}`);
+    }
+
+    return response;
+}
+
+async function syncCronJobsWithServiceToken(
+    accountId: string,
+    manifest: CliManifest,
+    ids: GeneratedIds,
+    prune: boolean,
+): Promise<Record<string, string>> {
+    return syncCronJobsWithFetch(
+        manifest,
+        ids,
+        prune,
+        (path, init) => accountManageFetchWithServiceToken(accountId, path, init),
+    );
+}
+
+async function deleteCronJobByNameWithServiceToken(accountId: string, name: string): Promise<void> {
+    const existing = await listCronJobsWithFetch((path, init) => accountManageFetchWithServiceToken(accountId, path, init));
+    const cronJob = existing.find((job) => job.name === name);
+    if (!cronJob) return;
+    await accountManageFetchWithServiceToken(accountId, `/accounts/me/cron-jobs/${encodeURIComponent(cronJob.cronJobId)}`, {
+        method: "DELETE",
+    });
+}
+
+async function runAgentWithServiceToken(accountId: string, body: unknown): Promise<Response> {
+    const baseUrl = process.env.FILTHY_PANTY_AGENT_SERVICE_URL ?? process.env.FILTHY_PANTY_HARNESS_URL;
+    const token = process.env.FILTHY_PANTY_SERVICE_AUTH_SECRET;
+    if (!baseUrl || !token) {
+        throw new Error("FILTHY_PANTY_AGENT_SERVICE_URL/FILTHY_PANTY_HARNESS_URL and FILTHY_PANTY_SERVICE_AUTH_SECRET are required");
+    }
+
+    return fetch(baseUrl.replace(/\/$/, ""), {
+        method: "POST",
+        headers: {
+            "Content-Type": "application/json",
+            "Accept": "text/event-stream",
+            Authorization: `Bearer ${token}`,
+            "X-Account-Id": accountId,
+        },
+        body: JSON.stringify(body),
+    });
 }
 
 function cronJobBody(job: DesiredCronJob): Record<string, unknown> {

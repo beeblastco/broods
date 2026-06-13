@@ -1,7 +1,7 @@
 {
   "name": "filthy-panty",
   "version": "0.1.0",
-  "description": "CLI + TypeScript SDK for the filthy-panty agent platform (name TBD). See docs/plans/beeblast-cli.md for the full product plan.",
+  "description": "CLI + TypeScript SDK for the filthy-panty agent platform.",
   "type": "module",
   "license": "FSL-1.1-Apache-2.0",
   "bin": {
@@ -17,6 +17,8 @@
     "test": "bun test"
   },
   "devDependencies": {
+    "@filthy-panty/convex": "workspace:*",
+    "@filthy-panty/core": "workspace:*",
     "@types/bun": "^1.3.14"
   },
   "peerDependencies": {

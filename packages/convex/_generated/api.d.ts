@@ -16,6 +16,8 @@ import type * as agents from "../agents.js";
 import type * as asyncResults from "../asyncResults.js";
 import type * as auth from "../auth.js";
 import type * as canvas from "../canvas.js";
+import type * as cliAuth from "../cliAuth.js";
+import type * as cliAuthHttp from "../cliAuthHttp.js";
 import type * as cliHttp from "../cliHttp.js";
 import type * as cliSync from "../cliSync.js";
 import type * as conversations from "../conversations.js";
@@ -64,6 +66,8 @@ declare const fullApi: ApiFromModules<{
   asyncResults: typeof asyncResults;
   auth: typeof auth;
   canvas: typeof canvas;
+  cliAuth: typeof cliAuth;
+  cliAuthHttp: typeof cliAuthHttp;
   cliHttp: typeof cliHttp;
   cliSync: typeof cliSync;
   conversations: typeof conversations;

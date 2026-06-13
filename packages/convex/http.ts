@@ -6,6 +6,7 @@ import { registerRoutes } from "@convex-dev/stripe";
 import { httpRouter } from "convex/server";
 import { components, internal } from "./_generated/api";
 import { authKit } from "./auth";
+import { exchange as cliAuthExchange } from "./cliAuthHttp";
 import { handle as cliHttp } from "./cliHttp";
 
 const http = httpRouter();
@@ -35,6 +36,18 @@ registerRoutes(http, components.stripe, {
             }
         },
     },
+});
+
+http.route({
+    pathPrefix: "/api/cli/projects/",
+    method: "POST",
+    handler: cliHttp,
+});
+
+http.route({
+    path: "/api/cli/auth/exchange",
+    method: "POST",
+    handler: cliAuthExchange,
 });
 
 http.route({

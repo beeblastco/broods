@@ -120,6 +120,29 @@ export const deployKeysFields = {
     updatedAt: v.number(),
 };
 
+/** One-time WorkOS-backed login code minted by the dashboard for CLI login. */
+export const cliAuthCodesFields = {
+    codeHash: v.string(),
+    authId: v.string(),
+    orgId: v.id("orgs"),
+    accountId: v.id("accounts"),
+    expiresAt: v.number(),
+    usedAt: v.optional(v.number()),
+    createdAt: v.number(),
+};
+
+/** Long-lived CLI bearer token created from a one-time WorkOS-backed login code. */
+export const cliTokensFields = {
+    tokenHash: v.string(),
+    authId: v.string(),
+    orgId: v.id("orgs"),
+    accountId: v.id("accounts"),
+    status: v.union(v.literal("active"), v.literal("revoked")),
+    expiresAt: v.optional(v.number()),
+    createdAt: v.number(),
+    lastUsedAt: v.optional(v.number()),
+};
+
 export const toolServicesFields = {
     authId: v.string(),
     projectId: v.id("projects"),
@@ -383,6 +406,13 @@ export default defineSchema({
     deployKeys: defineTable(deployKeysFields)
         .index("by_keyHash", ["keyHash"])
         .index("by_projectId_and_environmentId", ["projectId", "environmentId"]),
+    cliAuthCodes: defineTable(cliAuthCodesFields)
+        .index("by_codeHash", ["codeHash"])
+        .index("by_accountId", ["accountId"]),
+    cliTokens: defineTable(cliTokensFields)
+        .index("by_tokenHash", ["tokenHash"])
+        .index("by_accountId", ["accountId"])
+        .index("by_authId", ["authId"]),
     orgs: defineTable(orgsFields)
         .index("by_slug", ["slug"])
         .index("by_ownerAuthId", ["ownerAuthId"]),

@@ -3,7 +3,7 @@
  * Creates a test account, agent, and one-time schedule for one minute from now.
  */
 
-import { ACCOUNT_SERVICE_URL, createAccount, createAgent, deleteAccount } from "filthy-panty";
+import { createAccount, createAgent, deleteAccount, requireEnv } from "filthy-panty";
 
 const googleApiKey = process.env.ACCOUNT_GOOGLE_API_KEY!;
 const timezone = process.env.CRON_TIMEZONE ?? "Europe/Amsterdam";
@@ -26,7 +26,7 @@ try {
   });
 
   const scheduleExpression = atExpressionOneMinuteFromNow(timezone);
-  const response = await fetch(`${ACCOUNT_SERVICE_URL}/accounts/me/cron-jobs`, {
+  const response = await fetch(`${requireEnv("ACCOUNT_SERVICE_URL")}/accounts/me/cron-jobs`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",

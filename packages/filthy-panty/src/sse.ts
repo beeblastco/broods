@@ -3,11 +3,11 @@
  * each `data:` event from a synchronous direct API request.
  */
 
-import { AGENT_SERVICE_URL } from "./client.ts";
+import { requireEnv } from "./client.ts";
 
 // Stream SSE response from agent service
 export async function* streamSSE(body: unknown, secret: string): AsyncGenerator<string> {
-  const response = await fetch(AGENT_SERVICE_URL, {
+  const response = await fetch(requireEnv("AGENT_SERVICE_URL"), {
     method: "POST",
     headers: { "Content-Type": "application/json", "Accept": "text/event-stream", "Authorization": `Bearer ${secret}` },
     body: JSON.stringify(body),

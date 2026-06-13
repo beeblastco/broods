@@ -96,13 +96,17 @@ export const getManifestBySecretHash = internalQuery({
  */
 export const resolveCliAuth = internalQuery({
     args: { tokenHash: v.string(), project: v.string(), environment: v.string() },
-    returns: v.union(v.null(), v.object({ secretHash: v.string(), scoped: v.boolean() })),
+    returns: v.union(v.null(), v.object({
+        accountId: v.id("accounts"),
+        secretHash: v.string(),
+        scoped: v.boolean(),
+    })),
     handler: async (ctx, args) => {
         const { tokenHash, project, environment } = args;
 
         // Org Bearer secret → full account access.
         const account = await accountFromSecretHash(ctx, tokenHash);
-        if (account) return { secretHash: tokenHash, scoped: false };
+        if (account) return { accountId: account._id, secretHash: tokenHash, scoped: false };
 
         // Scoped deploy key → only valid for its bound project + environment.
         const deployKey = await ctx.db
@@ -123,7 +127,7 @@ export const resolveCliAuth = internalQuery({
             return null;
         }
 
-        return { secretHash: keyAccount.secretHash, scoped: true };
+        return { accountId: keyAccount._id, secretHash: keyAccount.secretHash, scoped: true };
     },
 });
 
