@@ -8,6 +8,7 @@ import { readdir, readFile } from "node:fs/promises";
 import { basename, join, relative, resolve } from "node:path";
 import type { CliManifest, CliManifestResource } from "./contracts.ts";
 import { GENERATED_DIR, PROJECT_DIR } from "./config.ts";
+import { loadFilthyPantyRuntimeConfig } from "./runtime-config.ts";
 import {
   isFilthyPantyConfig,
   isResource,
@@ -30,13 +31,18 @@ export interface CompiledProject {
 
 export async function compileProject(options: CompileOptions = {}): Promise<CompiledProject> {
   const cwd = options.cwd ?? process.cwd();
+  loadFilthyPantyRuntimeConfig(cwd);
   const root = resolve(cwd, PROJECT_DIR);
   const files = await listTypeScriptFiles(root);
   const exports = await loadExports(files);
   const config = await findConfig(exports, cwd, options.project);
   const resources = exports.filter(isResource);
   assertUniqueResources(resources);
-  const environment = resolveEnvironment(config, options.environment, options.command ?? "dev");
+  const environment = resolveEnvironment(
+    config,
+    options.environment ?? process.env.FILTHY_PANTY_ENVIRONMENT,
+    options.command ?? "dev",
+  );
   const manifestResources = (await Promise.all(resources.map((resource) => toManifestResource(resource, root)))).sort((a, b) =>
     `${a.kind}:${a.name}`.localeCompare(`${b.kind}:${b.name}`),
   );
@@ -61,7 +67,7 @@ export function resolveEnvironment(
   if (explicit) return explicit;
   const configured = config.environments?.[command];
   if (configured) return configured;
-  return command === "deploy" ? "production" : "development";
+  return "development";
 }
 
 async function listTypeScriptFiles(root: string): Promise<string[]> {

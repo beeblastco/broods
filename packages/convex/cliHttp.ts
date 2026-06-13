@@ -323,6 +323,11 @@ async function syncExternalResources(
     manifest: CliManifest,
     prune: boolean,
 ): Promise<ExternalIds> {
+    const hasExternalResources = manifest.resources.some((entry) =>
+        entry.kind === "skill" || entry.kind === "tool",
+    );
+    if (!hasExternalResources) return { skills: {}, tools: {} };
+
     const skills = await syncSkillResources(accountId, manifest);
     const tools = await syncToolResources(accountId, manifest, prune);
 
@@ -359,7 +364,7 @@ async function syncToolResources(
     prune: boolean,
 ): Promise<Record<string, string>> {
     const desired = manifest.resources.filter((entry) => entry.kind === "tool");
-    if (desired.length === 0 && prune !== true) return {};
+    if (desired.length === 0) return {};
     const existingResponse = await accountManageFetchWithServiceToken(accountId, "/accounts/me/tools", { method: "GET" });
     const existingPayload = await existingResponse.json() as {
         tools?: Array<{ toolId: string; name: string; status?: string }>;

@@ -74,6 +74,40 @@ export const support = defineAgent("support", {
   expect(manifest.project).toBe("docs-demo");
 });
 
+test("compileProject loads project and environment from .env.local", async () => {
+  const cwd = await fixtureProject("", `
+import { defineAgent } from "${join(process.cwd(), "src", "resources.ts")}";
+
+export const support = defineAgent("support", {
+  model: { provider: "openai", modelId: "gpt-5-mini" },
+});
+`);
+  await writeFile(join(cwd, ".env.local"), [
+    "FILTHY_PANTY_PROJECT=env-file-project",
+    "FILTHY_PANTY_ENVIRONMENT=staging",
+    "",
+  ].join("\n"));
+
+  const { manifest } = await compileProject({ cwd: cwd, command: "deploy" });
+
+  expect(manifest.project).toBe("env-file-project");
+  expect(manifest.environment).toBe("staging");
+});
+
+test("compileProject defaults deploy to development without an override", async () => {
+  const cwd = await fixtureProject("", `
+import { defineAgent } from "${join(process.cwd(), "src", "resources.ts")}";
+
+export const support = defineAgent("support", {
+  model: { provider: "openai", modelId: "gpt-5-mini" },
+});
+`);
+
+  const { manifest } = await compileProject({ cwd: cwd, command: "deploy" });
+
+  expect(manifest.environment).toBe("development");
+});
+
 test("compileProject maps workspace overrides, subagents, skills, and tools", async () => {
   const cwd = await fixtureProject(`
 import { defineFilthyPanty } from "${join(process.cwd(), "src", "resources.ts")}";

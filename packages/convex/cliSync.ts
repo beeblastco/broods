@@ -165,7 +165,6 @@ export const syncManifestBySecretHash = internalMutation({
             resources: manifest.resources,
             workspaceIds: workspaceIds,
             sandboxIds: sandboxIds,
-            prune: prune === true,
         });
 
         await ctx.db.patch(projectDoc._id, { updatedAt: Date.now() });
@@ -687,10 +686,9 @@ async function syncCanvasLayoutForManifest(
         resources: CliResource[];
         workspaceIds: Record<string, string>;
         sandboxIds: Record<string, string>;
-        prune: boolean;
     },
 ): Promise<void> {
-    const { account, projectId, environmentId, resources, workspaceIds, sandboxIds, prune } = options;
+    const { account, projectId, environmentId, resources, workspaceIds, sandboxIds } = options;
     const layout = await ctx.db
         .query("canvasLayouts")
         .withIndex("by_projectId_and_environmentId", (q) =>
@@ -806,7 +804,7 @@ async function syncCanvasLayoutForManifest(
 
     const existingEdgeIds = new Set(existingEdges.map((edge) => edge.id));
     const nextEdges = existingEdges.filter((edge) =>
-        !prune || !edgeIsCliManaged(edge) || desiredEdges.has(edge.id),
+        !edgeIsCliManaged(edge) || desiredEdges.has(edge.id),
     );
     for (const edge of desiredEdges.values()) {
         if (existingEdgeIds.has(edge.id)) continue;
@@ -814,9 +812,10 @@ async function syncCanvasLayoutForManifest(
     }
 
     const nextNodes = [...nextById.values()].filter((node) => {
-        if (!prune) return true;
         const key = typeof node.data.cliResourceKey === "string" ? node.data.cliResourceKey : null;
-        return !key || desiredNodeKeys.has(key);
+        if (key) return desiredNodeKeys.has(key);
+        if (node.id.startsWith("cli-")) return desiredNodeKeys.has(cliResourceKeyForNode(node));
+        return true;
     });
     const now = Date.now();
     if (layout) {
@@ -897,6 +896,14 @@ function addDesiredCanvasEdge(edges: Map<string, CanvasEdge>, source: string, ta
 
 function edgeIsCliManaged(edge: CanvasEdge): boolean {
     return edge.id.startsWith("xy-edge__cli-");
+}
+
+function cliResourceKeyForNode(node: CanvasNode): string {
+    const name = typeof node.data.label === "string" && node.data.label.trim()
+        ? node.data.label.trim()
+        : node.id.replace(/^cli-[^-]+-/, "");
+
+    return `${node.type}:${name}`;
 }
 
 async function pruneAgents(

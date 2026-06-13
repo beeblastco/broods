@@ -3,8 +3,9 @@
  * CLI entry point for code-first filthy-panty resources.
  */
 
-import { mkdir, writeFile } from "node:fs/promises";
-import { resolve } from "node:path";
+import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { basename, join, relative, resolve } from "node:path";
 import { watch } from "node:fs";
 import { compileProject } from "../manifest.ts";
 import { GENERATED_DIR, PROJECT_DIR } from "../config.ts";
@@ -86,6 +87,12 @@ async function init(args: string[]): Promise<void> {
   await mkdir(resolve(root, GENERATED_DIR), { recursive: true });
   await writeStarter(resolve(root, "agents.ts"), starterAgent(), force);
   await writeStarter(resolve(root, ".gitignore"), "_generated/*.tmp\n.cache/\n", force);
+  await writeLocalEnvDefaults({
+    dashboardUrl: optionValue(args, "--dashboard-url") ?? DEFAULT_DASHBOARD_URL,
+    project: optionValue(args, "--project") ?? inferProjectName(process.cwd()),
+    environment: optionValue(args, "--env") ?? "development",
+    force: force,
+  });
   console.log(`Created ${PROJECT_DIR}/`);
 }
 
@@ -99,6 +106,12 @@ async function login(args: string[]): Promise<void> {
     runtime.dashboardUrl ??
     DEFAULT_DASHBOARD_URL;
   const auth = await loginWithBrowser(dashboardUrl);
+  await writeLocalEnvDefaults({
+    dashboardUrl: auth.dashboardUrl,
+    project: optionValue(args, "--project") ?? process.env.FILTHY_PANTY_PROJECT ?? inferProjectName(process.cwd()),
+    environment: optionValue(args, "--env") ?? process.env.FILTHY_PANTY_ENVIRONMENT ?? "development",
+    force: false,
+  });
   const user = auth.user?.email || auth.user?.name || auth.user?.authId;
   const org = auth.org ? `${auth.org.name} (${auth.org.slug})` : undefined;
   const account = auth.account?.username;
@@ -140,6 +153,7 @@ async function dev(args: string[]): Promise<void> {
   let timer: NodeJS.Timeout | undefined;
   let syncing = false;
   let pending = false;
+  let lastSourceSignature = await sourceSignature();
 
   const runSync = (): void => {
     if (syncing) {
@@ -147,7 +161,12 @@ async function dev(args: string[]): Promise<void> {
       return;
     }
     syncing = true;
-    syncDev(args)
+    sourceSignature()
+      .then(async (signature) => {
+        if (signature === lastSourceSignature) return;
+        lastSourceSignature = signature;
+        await syncDev(args);
+      })
       .catch((error) => console.error(error instanceof Error ? error.message : String(error)))
       .finally(() => {
         syncing = false;
@@ -159,7 +178,7 @@ async function dev(args: string[]): Promise<void> {
   };
 
   const watcher = watch(resolve(process.cwd(), PROJECT_DIR), { recursive: true }, (_event, filename) => {
-    if (!filename || filename.includes("generated")) return;
+    if (!filename || isGeneratedPath(filename)) return;
     clearTimeout(timer);
     timer = setTimeout(runSync, 150);
   });
@@ -255,6 +274,104 @@ async function writeStarter(path: string, contents: string, force: boolean): Pro
     if ((error as { code?: string }).code === "EEXIST") return;
     throw error;
   }
+}
+
+async function writeLocalEnvDefaults(options: {
+  dashboardUrl: string;
+  project: string;
+  environment: string;
+  force: boolean;
+}): Promise<void> {
+  const path = resolve(process.cwd(), ".env.local");
+  const current = await readTextIfExists(path);
+  const values = parseEnv(current);
+  const nextValues = {
+    FILTHY_PANTY_DASHBOARD_URL: options.dashboardUrl,
+    FILTHY_PANTY_PROJECT: options.project,
+    FILTHY_PANTY_ENVIRONMENT: options.environment,
+  };
+  const lines = current ? current.replace(/\n?$/, "\n").split(/\n/) : [
+    "# Local filthy-panty CLI settings. Tokens are stored outside the repo.",
+  ];
+  let changed = false;
+
+  for (const [key, value] of Object.entries(nextValues)) {
+    if (values[key] !== undefined && !options.force) continue;
+    const index = lines.findIndex((line) => line.trim().startsWith(`${key}=`));
+    if (index >= 0) lines[index] = `${key}=${quoteEnv(value)}`;
+    else lines.push(`${key}=${quoteEnv(value)}`);
+    changed = true;
+  }
+
+  if (!changed && current) return;
+  const body = `${lines.filter((line, index, all) => !(line === "" && index === all.length - 1)).join("\n")}\n`;
+  await writeFile(path, body, "utf8");
+}
+
+async function readTextIfExists(path: string): Promise<string> {
+  try {
+    return await readFile(path, "utf8");
+  } catch (error) {
+    if ((error as { code?: string }).code === "ENOENT") return "";
+    throw error;
+  }
+}
+
+function parseEnv(source: string): Record<string, string> {
+  const values: Record<string, string> = {};
+  for (const rawLine of source.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith("#")) continue;
+    const index = line.indexOf("=");
+    if (index <= 0) continue;
+    values[line.slice(0, index).trim()] = line.slice(index + 1).trim();
+  }
+
+  return values;
+}
+
+function quoteEnv(value: string): string {
+  return JSON.stringify(value);
+}
+
+function inferProjectName(cwd: string): string {
+  return basename(resolve(cwd))
+    .replace(/^@/, "")
+    .replace(/\//g, "-")
+    .replace(/[^A-Za-z0-9_-]+/g, "-")
+    .replace(/^-+|-+$/g, "") || "filthy-panty-app";
+}
+
+async function sourceSignature(): Promise<string> {
+  const root = resolve(process.cwd(), PROJECT_DIR);
+  const files: string[] = [];
+  await collectSourceFiles(root, files);
+  const hash = createHash("sha256");
+  for (const file of files.sort()) {
+    hash.update(relative(root, file));
+    hash.update("\0");
+    hash.update(await readFile(file));
+    hash.update("\0");
+  }
+
+  return hash.digest("hex");
+}
+
+async function collectSourceFiles(dir: string, files: string[]): Promise<void> {
+  const entries = await readdir(dir, { withFileTypes: true });
+  for (const entry of entries) {
+    const full = join(dir, entry.name);
+    if (entry.isDirectory()) {
+      if (entry.name === GENERATED_DIR || entry.name === "generated" || entry.name === ".cache") continue;
+      await collectSourceFiles(full, files);
+      continue;
+    }
+    if (entry.isFile() && entry.name.endsWith(".ts")) files.push(full);
+  }
+}
+
+function isGeneratedPath(path: string): boolean {
+  return path.split(/[\\/]/).some((part) => part === GENERATED_DIR || part === "generated" || part === ".cache");
 }
 
 function starterAgent(): string {
