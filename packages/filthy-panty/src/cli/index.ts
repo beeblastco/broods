@@ -134,7 +134,7 @@ async function diff(args: string[]): Promise<void> {
 }
 
 async function deploy(args: string[]): Promise<void> {
-  const { manifest, config } = await compileProject({
+  const { manifest, config, resourceAliases } = await compileProject({
     project: optionValue(args, "--project"),
     environment: optionValue(args, "--env"),
     command: "deploy",
@@ -142,7 +142,7 @@ async function deploy(args: string[]): Promise<void> {
   const auth = await requireAuth(optionValue(args, "--dashboard-url") ?? config.dashboardUrl);
   const client = new FilthyPantySyncClient({ dashboardUrl: auth.dashboardUrl, token: auth.token });
   const result = await client.putManifest(manifest, hasFlag(args, "--prune"));
-  await writeGeneratedFiles(result.manifest, result.ids);
+  await writeGeneratedFiles(result.manifest, result.ids, process.cwd(), resourceAliases);
   console.log(`Synced ${result.manifest.resources.length} resources to ${manifest.project}/${manifest.environment}`);
 }
 
@@ -190,7 +190,7 @@ async function dev(args: string[]): Promise<void> {
 }
 
 async function syncDev(args: string[]): Promise<void> {
-  const { manifest, config } = await compileProject({
+  const { manifest, config, resourceAliases } = await compileProject({
     project: optionValue(args, "--project"),
     environment: optionValue(args, "--env"),
     command: "dev",
@@ -201,7 +201,7 @@ async function syncDev(args: string[]): Promise<void> {
   const diff = diffManifests(manifest, remote?.manifest ?? null);
   printDiff(diff.filter((entry) => entry.operation !== "delete"));
   const result = await client.putManifest(manifest, false);
-  await writeGeneratedFiles(result.manifest, result.ids);
+  await writeGeneratedFiles(result.manifest, result.ids, process.cwd(), resourceAliases);
   const deletes = diff.filter((entry) => entry.operation === "delete");
   if (deletes.length > 0) {
     console.log(`${deletes.length} remote resources are undeclared locally; run deploy --prune to remove them.`);

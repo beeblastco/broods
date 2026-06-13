@@ -74,6 +74,45 @@ export const support = defineAgent("support", {
   expect(manifest.project).toBe("docs-demo");
 });
 
+test("compileProject preserves exported resource aliases for generated api handles", async () => {
+  const cwd = await fixtureProject("", `
+import { defineAgent } from "${join(process.cwd(), "src", "resources.ts")}";
+
+export const myAgent = defineAgent("my-agent", {
+  model: { provider: "openai", modelId: "gpt-5-mini" },
+});
+`);
+
+  const { resourceAliases } = await compileProject({ cwd: cwd, command: "dev" });
+
+  expect(resourceAliases.agent).toEqual({ "my-agent": "myAgent" });
+});
+
+test("writeGeneratedFiles uses exported resource aliases for api property names", async () => {
+  const cwd = await fixtureProject("", `
+import { defineAgent } from "${join(process.cwd(), "src", "resources.ts")}";
+
+export const myAgent = defineAgent("my-agent", {
+  model: { provider: "openai", modelId: "gpt-5-mini" },
+});
+`);
+  const { manifest, resourceAliases } = await compileProject({ cwd: cwd, command: "dev" });
+
+  await writeGeneratedFiles(manifest, {
+    agents: { "my-agent": "agent_123" },
+    workspaces: {},
+    sandboxes: {},
+    cronJobs: {},
+    skills: {},
+    tools: {},
+  }, cwd, resourceAliases);
+
+  const api = await readFile(join(cwd, "filthypanty", "_generated", "api.ts"), "utf8");
+
+  expect(api).toContain('myAgent: { kind: "agent", name: "my-agent", id: ids.agents["my-agent"]');
+  expect(api).not.toContain('"my-agent": { kind: "agent"');
+});
+
 test("compileProject loads project and environment from .env.local", async () => {
   const cwd = await fixtureProject("", `
 import { defineAgent } from "${join(process.cwd(), "src", "resources.ts")}";
@@ -217,7 +256,7 @@ test("writeGeneratedFiles creates Convex-style typed resource references", async
   const dataModel = await readFile(join(cwd, "filthypanty", "_generated", "dataModel.ts"), "utf8");
 
   expect(api).toContain('export const api = {');
-  expect(api).toContain('"support": { kind: "agent", name: "support", id: ids.agents["support"], project: "typed-app", environment: "development" }');
+  expect(api).toContain('support: { kind: "agent", name: "support", id: ids.agents["support"], project: "typed-app", environment: "development" }');
   expect(ids).toContain('"support": "agent_123"');
   expect(dataModel).toContain("AgentReference");
   expect(api).not.toContain("new FilthyPantyClient");

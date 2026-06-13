@@ -13,6 +13,7 @@ import {
   isFilthyPantyConfig,
   isResource,
   type AnyResource,
+  type FilthyPantyConfigDefinition,
   type FilthyPantyProjectConfig,
 } from "./resources.ts";
 
@@ -27,7 +28,20 @@ export interface CompiledProject {
   config: FilthyPantyProjectConfig;
   manifest: CliManifest;
   resources: AnyResource[];
+  resourceAliases: ResourceAliases;
 }
+
+export type ResourceAliases = Partial<Record<AnyResource["kind"], Record<string, string>>>;
+
+type ExportedValue = {
+  exportName: string;
+  value: unknown;
+};
+
+type ExportedResource = {
+  exportName: string;
+  resource: AnyResource;
+};
 
 export async function compileProject(options: CompileOptions = {}): Promise<CompiledProject> {
   const cwd = options.cwd ?? process.cwd();
@@ -36,8 +50,12 @@ export async function compileProject(options: CompileOptions = {}): Promise<Comp
   const files = await listTypeScriptFiles(root);
   const exports = await loadExports(files);
   const config = await findConfig(exports, cwd, options.project);
-  const resources = exports.filter(isResource);
+  const resourceExports = exports
+    .filter((entry): entry is ExportedValue & { value: AnyResource } => isResource(entry.value))
+    .map((entry): ExportedResource => ({ exportName: entry.exportName, resource: entry.value }));
+  const resources = resourceExports.map((entry) => entry.resource);
   assertUniqueResources(resources);
+  const resourceAliases = aliasesForResources(resourceExports);
   const environment = resolveEnvironment(
     config,
     options.environment ?? process.env.FILTHY_PANTY_ENVIRONMENT,
@@ -50,6 +68,7 @@ export async function compileProject(options: CompileOptions = {}): Promise<Comp
   return {
     config: config,
     resources: resources,
+    resourceAliases: resourceAliases,
     manifest: {
       version: 1,
       project: config.project!,
@@ -90,32 +109,35 @@ async function listTypeScriptFiles(root: string): Promise<string[]> {
   return results.sort((a, b) => relative(root, a).localeCompare(relative(root, b)));
 }
 
-async function loadExports(files: string[]): Promise<unknown[]> {
-  const values: unknown[] = [];
+async function loadExports(files: string[]): Promise<ExportedValue[]> {
+  const values: ExportedValue[] = [];
   for (const file of files) {
     const href = `${pathToFileURL(file).href}?t=${Date.now()}`;
     const mod = await import(href) as Record<string, unknown>;
-    values.push(...Object.values(mod));
+    values.push(...Object.entries(mod).map(([exportName, value]) => ({ exportName, value })));
   }
   return values;
 }
 
 async function findConfig(
-  exports: unknown[],
+  exports: ExportedValue[],
   cwd: string,
   explicitProject: string | undefined,
 ): Promise<FilthyPantyProjectConfig> {
-  const config = exports.find(isFilthyPantyConfig)?.config ?? {};
+  const config = exports.find((entry): entry is ExportedValue & { value: FilthyPantyConfigDefinition } =>
+    isFilthyPantyConfig(entry.value)
+  )?.value;
+  const configValue = config?.config ?? {};
   const project = explicitProject ??
     process.env.FILTHY_PANTY_PROJECT ??
-    config.project ??
+    configValue.project ??
     await inferProjectName(cwd);
   if (!project.trim()) {
     throw new Error("Project name is required. Pass --project <name> or set FILTHY_PANTY_PROJECT.");
   }
 
   return {
-    ...config,
+    ...configValue,
     project: project,
   };
 }
@@ -129,6 +151,27 @@ function assertUniqueResources(resources: AnyResource[]): void {
     }
     seen.add(key);
   }
+}
+
+function aliasesForResources(resources: ExportedResource[]): ResourceAliases {
+  const aliases: ResourceAliases = {};
+  const seenAliases = new Set<string>();
+  for (const { exportName, resource } of resources) {
+    if (exportName === "default" || !isValidIdentifier(exportName)) continue;
+    const key = `${resource.kind}:${exportName}`;
+    if (seenAliases.has(key)) {
+      throw new Error(`Duplicate export alias for ${resource.kind}: ${exportName}`);
+    }
+    seenAliases.add(key);
+    aliases[resource.kind] ??= {};
+    aliases[resource.kind]![resource.name] = exportName;
+  }
+
+  return aliases;
+}
+
+function isValidIdentifier(value: string): boolean {
+  return /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(value);
 }
 
 async function toManifestResource(resource: AnyResource, projectRoot: string): Promise<CliManifestResource> {
