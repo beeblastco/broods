@@ -7,6 +7,7 @@ import { spawn } from "node:child_process";
 import { createInterface } from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
 import { readStoredAuth, stripTrailingSlash, writeStoredAuth, type StoredAuthConfig } from "../config.ts";
+import { loadFilthyPantyRuntimeConfig } from "../runtime-config.ts";
 
 const LOGIN_TIMEOUT_MS = 3 * 60 * 1000;
 
@@ -20,6 +21,7 @@ export function hasFlag(args: string[], name: string): boolean {
 }
 
 export async function requireAuth(dashboardUrl?: string): Promise<StoredAuthConfig> {
+  loadFilthyPantyRuntimeConfig();
   const auth = await readStoredAuth();
   if (!auth) {
     throw new Error("Run `filthy-panty login` first, or set FILTHY_PANTY_TOKEN and FILTHY_PANTY_DASHBOARD_URL.");
@@ -154,9 +156,10 @@ async function waitWithTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
     timer = setTimeout(
       () => reject(new Error(
         "Timed out waiting for browser login to complete.\n" +
-        "Check the browser tab and the dashboard logs for an error. A common cause is the\n" +
-        "dashboard's cliAuth functions not being deployed in the target environment, or the\n" +
-        "org missing an active API account (Settings -> API Access).",
+        "Check the browser tab and the dashboard logs for an error. If the browser shows\n" +
+        "404 on /cli-auth/start, deploy the dashboard build that includes CLI auth or pass\n" +
+        "--dashboard-url for the environment you deployed. Other common causes are missing\n" +
+        "cliAuth Convex functions or no active API account (Settings -> API Access).",
       )),
       ms,
     );

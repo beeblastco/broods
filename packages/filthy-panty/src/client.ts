@@ -1,223 +1,12 @@
 /**
- * Typed fetch client for the account-manage and harness HTTP APIs.
- * Standalone functions read the service URLs from the environment
- * (ACCOUNT_SERVICE_URL / AGENT_SERVICE_URL) at call time via requireEnv,
- * matching the deployed Function URL endpoints. Reading lazily keeps the
- * module importable in environments where those vars are unset.
+ * Configurable client for running deployed agents over SSE, via either the
+ * dashboard CLI API (token auth) or the harness Function URL (account secret).
+ * Stream chunks are the Vercel AI SDK's `TextStreamPart` parts that core emits.
  */
 
-import type {
-  Account,
-  Agent,
-  AsyncStatus,
-  CustomTool,
-  Sandbox,
-  Skill,
-  Workspace,
-} from "./types.ts";
+import type { TextStreamPart, ToolSet } from "ai";
 import { FilthyPantySyncClient } from "./sync.ts";
-
-// Create a new account
-export async function createAccount(username: string): Promise<Account> {
-  const response = await fetch(`${requireEnv("ACCOUNT_SERVICE_URL")}/accounts`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ username }),
-  });
-
-  if (!response.ok) throw new Error(`Create failed: ${response.status} ${await response.text()}`);
-
-  const payload = await response.json() as Account;
-  if (!payload.account?.accountId || !payload.secret) {
-    throw new Error("Response missing accountId or secret");
-  }
-
-  return payload;
-}
-
-export async function createAgent(
-  secret: string,
-  name: string,
-  config: Record<string, unknown>,
-  description?: string,
-): Promise<Agent> {
-  const response = await fetch(`${requireEnv("ACCOUNT_SERVICE_URL")}/accounts/me/agents`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "Authorization": `Bearer ${secret}` },
-    body: JSON.stringify({ name, ...(description ? { description } : {}), config }),
-  });
-
-  if (!response.ok) throw new Error(`Create agent failed: ${response.status} ${await response.text()}`);
-  return await response.json() as Agent;
-}
-
-// Create an account-scoped sandbox config (referenced from agent config by id).
-export async function createSandbox(
-  secret: string,
-  name: string,
-  config: Record<string, unknown>,
-  description?: string,
-): Promise<Sandbox> {
-  const response = await fetch(`${requireEnv("ACCOUNT_SERVICE_URL")}/accounts/me/sandboxes`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "Authorization": `Bearer ${secret}` },
-    body: JSON.stringify({ name, ...(description ? { description } : {}), config }),
-  });
-
-  if (!response.ok) throw new Error(`Create sandbox failed: ${response.status} ${await response.text()}`);
-  return await response.json() as Sandbox;
-}
-
-// Create an account-scoped workspace config (referenced from agent config by id).
-export async function createWorkspace(
-  secret: string,
-  name: string,
-  config: Record<string, unknown>,
-  description?: string,
-): Promise<Workspace> {
-  const response = await fetch(`${requireEnv("ACCOUNT_SERVICE_URL")}/accounts/me/workspaces`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "Authorization": `Bearer ${secret}` },
-    body: JSON.stringify({ name, ...(description ? { description } : {}), config }),
-  });
-
-  if (!response.ok) throw new Error(`Create workspace failed: ${response.status} ${await response.text()}`);
-  return await response.json() as Workspace;
-}
-
-export async function createSkill(
-  secret: string,
-  input: Record<string, unknown>,
-): Promise<Skill> {
-  const response = await fetch(`${requireEnv("ACCOUNT_SERVICE_URL")}/accounts/me/skills`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "Authorization": `Bearer ${secret}` },
-    body: JSON.stringify(input),
-  });
-
-  if (!response.ok) throw new Error(`Create skill failed: ${response.status} ${await response.text()}`);
-  return await response.json() as Skill;
-}
-
-export async function createTool(
-  secret: string,
-  input: Record<string, unknown>,
-): Promise<CustomTool> {
-  const response = await fetch(`${requireEnv("ACCOUNT_SERVICE_URL")}/accounts/me/tools`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "Authorization": `Bearer ${secret}` },
-    body: JSON.stringify(input),
-  });
-
-  if (!response.ok) throw new Error(`Create tool failed: ${response.status} ${await response.text()}`);
-  return await response.json() as CustomTool;
-}
-
-export async function listSkills(secret: string): Promise<Skill[]> {
-  const response = await fetch(`${requireEnv("ACCOUNT_SERVICE_URL")}/accounts/me/skills`, {
-    method: "GET",
-    headers: { "Authorization": `Bearer ${secret}` },
-  });
-
-  if (!response.ok) throw new Error(`List skills failed: ${response.status} ${await response.text()}`);
-  const payload = await response.json() as { skills: Skill[] };
-  return payload.skills;
-}
-
-export async function getSkill(secret: string, skillName: string): Promise<Skill | null> {
-  const response = await fetch(`${requireEnv("ACCOUNT_SERVICE_URL")}/accounts/me/skills/${encodeURIComponent(skillName)}`, {
-    method: "GET",
-    headers: { "Authorization": `Bearer ${secret}` },
-  });
-
-  if (response.status === 404) return null;
-  if (!response.ok) throw new Error(`Get skill failed: ${response.status} ${await response.text()}`);
-  return await response.json() as Skill;
-}
-
-export async function deleteAgent(secret: string, agentId: string): Promise<void> {
-  const response = await fetch(`${requireEnv("ACCOUNT_SERVICE_URL")}/accounts/me/agents/${encodeURIComponent(agentId)}`, {
-    method: "DELETE",
-    headers: { "Authorization": `Bearer ${secret}` },
-  });
-
-  if (!response.ok) throw new Error(`Delete agent failed: ${response.status} ${await response.text()}`);
-}
-
-export async function deleteSkill(secret: string, skillName: string): Promise<boolean> {
-  const response = await fetch(`${requireEnv("ACCOUNT_SERVICE_URL")}/accounts/me/skills/${encodeURIComponent(skillName)}`, {
-    method: "DELETE",
-    headers: { "Authorization": `Bearer ${secret}` },
-  });
-
-  if (response.status === 404) return false;
-  if (!response.ok) throw new Error(`Delete skill failed: ${response.status} ${await response.text()}`);
-  const payload = await response.json() as { deleted: boolean };
-  return payload.deleted;
-}
-
-// Update current account
-export async function updateAccount(secret: string, config: Record<string, unknown>): Promise<void> {
-  const response = await fetch(`${requireEnv("ACCOUNT_SERVICE_URL")}/accounts/me`, {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json", "Authorization": `Bearer ${secret}` },
-    body: JSON.stringify({ config }),
-  });
-
-  if (!response.ok) throw new Error(`Update failed: ${response.status} ${await response.text()}`);
-}
-
-// Delete current account
-export async function deleteAccount(secret: string): Promise<void> {
-  const response = await fetch(`${requireEnv("ACCOUNT_SERVICE_URL")}/accounts/me`, {
-    method: "DELETE",
-    headers: { "Authorization": `Bearer ${secret}` },
-  });
-
-  if (!response.ok) throw new Error(`Delete failed: ${response.status} ${await response.text()}`);
-}
-
-// Post async request to agent service
-export async function postAsyncRequest(body: unknown, secret: string): Promise<{ statusUrl: string }> {
-  const response = await fetch(`${requireEnv("AGENT_SERVICE_URL")}/async`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "Authorization": `Bearer ${secret}` },
-    body: JSON.stringify(body),
-  });
-
-  if (response.status !== 202) throw new Error(`Expected 202, got ${response.status}: ${await response.text()}`);
-  return await response.json() as { statusUrl: string };
-}
-
-// Poll async status until it reaches a terminal or user-actionable state
-export async function pollStatus(secret: string, statusUrl: string): Promise<AsyncStatus> {
-  const deadline = Date.now() + 180000;
-
-  while (Date.now() < deadline) {
-    const response = await fetch(statusUrl, { method: "GET", headers: { "Authorization": `Bearer ${secret}` } });
-
-    if (response.status === 404) return { status: "not_found" };
-    if (response.status !== 200) throw new Error(`Status check failed: ${response.status}`);
-
-    const payload = await response.json() as AsyncStatus;
-    console.log(`Status: ${payload.status}`);
-
-    if (payload.status === "awaiting_approval" || payload.status === "completed" || payload.status === "failed") {
-      return payload;
-    }
-    await new Promise((r) => setTimeout(r, 2000));
-  }
-
-  throw new Error("Polling timeout");
-}
-
-export function requireEnv(name: string): string {
-  const value = process.env[name];
-  if (!value) {
-    throw new Error(`${name} is required`);
-  }
-  return value;
-}
+import { loadFilthyPantyRuntimeConfig } from "./runtime-config.ts";
 
 export interface AgentRunInput {
   input: string;
@@ -227,7 +16,24 @@ export interface AgentRunInput {
 
 export interface AgentRunResult {
   text: string;
-  events: unknown[];
+  events: TextStreamPart<ToolSet>[];
+}
+
+export interface AgentReference<Name extends string = string> {
+  readonly kind: "agent";
+  readonly name: Name;
+  readonly id: string;
+  readonly project: string;
+  readonly environment: string;
+}
+
+export interface ResourceApi {
+  readonly agents: Record<string, AgentReference>;
+  readonly workspaces?: Record<string, unknown>;
+  readonly sandboxes?: Record<string, unknown>;
+  readonly cronJobs?: Record<string, unknown>;
+  readonly skills?: Record<string, unknown>;
+  readonly tools?: Record<string, unknown>;
 }
 
 export interface FilthyPantyClientOptions {
@@ -240,9 +46,11 @@ export interface FilthyPantyClientOptions {
   fetch?: typeof fetch;
 }
 
-export interface FilthyPantyGeneratedClient {
-  agents: Record<string, ReturnType<FilthyPantyClient["agent"]>>;
-}
+export type AgentHandle = {
+  id: string;
+  run: (input: AgentRunInput) => Promise<AgentRunResult>;
+  stream: (input: AgentRunInput) => AsyncGenerator<TextStreamPart<ToolSet>>;
+};
 
 export class FilthyPantyClient {
   private readonly dashboardUrl?: string;
@@ -254,68 +62,115 @@ export class FilthyPantyClient {
   private readonly fetchImpl: typeof fetch;
 
   constructor(options: FilthyPantyClientOptions = {}) {
-    this.dashboardUrl = options.dashboardUrl ?? process.env.FILTHY_PANTY_DASHBOARD_URL;
-    this.token = options.token ?? process.env.FILTHY_PANTY_TOKEN;
-    this.project = options.project;
-    this.environment = options.environment;
+    const runtime = loadFilthyPantyRuntimeConfig();
+    this.dashboardUrl = options.dashboardUrl ?? runtime.dashboardUrl;
+    this.token = options.token ?? runtime.token;
+    this.project = options.project ?? runtime.project;
+    this.environment = options.environment ?? runtime.environment;
     this.agentServiceUrl = options.agentServiceUrl ?? process.env.AGENT_SERVICE_URL;
     this.accountSecret = options.accountSecret ?? process.env.ACCOUNT_SECRET;
     this.fetchImpl = options.fetch ?? fetch;
   }
 
-  agent(name: string, agentId: string) {
+  agent<const Name extends string>(ref: AgentReference<Name>): AgentHandle;
+  agent(name: string, agentId: string): AgentHandle;
+  agent(refOrName: AgentReference | string, agentId?: string): AgentHandle {
+    if (typeof refOrName === "string") {
+      const name = refOrName;
+      const id = agentId ?? "";
+      if (!id) throw new Error(`Agent ${name} is missing a generated id. Run filthy-panty deploy first.`);
+
+      return {
+        id: id,
+        run: (input: AgentRunInput) => this.run({ ...input, agentName: name, agentId: id }),
+        stream: (input: AgentRunInput) => this.stream({ ...input, agentName: name, agentId: id }),
+      };
+    }
+
+    const ref = refOrName;
+    if (!ref.id) throw new Error(`Agent ${ref.name} is missing a generated id. Run filthy-panty deploy first.`);
+
     return {
-      id: agentId,
-      run: (input: AgentRunInput) => this.run({ ...input, agentName: name, agentId: agentId }),
-      stream: (input: AgentRunInput) => this.stream({ ...input, agentName: name, agentId: agentId }),
+      id: ref.id,
+      run: (input: AgentRunInput) => this.run(ref, input),
+      stream: (input: AgentRunInput) => this.stream(ref, input),
     };
   }
 
-  async run(input: AgentRunInput & { agentId: string; agentName?: string }): Promise<AgentRunResult> {
-    const events: unknown[] = [];
+  /** Run an agent and accumulate the streamed text and raw parts. */
+  async run(ref: AgentReference, input: AgentRunInput): Promise<AgentRunResult>;
+  async run(input: AgentRunInput & { agentId: string; agentName?: string; project?: string; environment?: string }): Promise<AgentRunResult>;
+  async run(
+    refOrInput: AgentReference | (AgentRunInput & { agentId: string; agentName?: string; project?: string; environment?: string }),
+    maybeInput?: AgentRunInput,
+  ): Promise<AgentRunResult> {
+    const events: TextStreamPart<ToolSet>[] = [];
     let text = "";
 
-    for await (const chunk of this.stream(input)) {
-      const parsed = parseEvent(chunk);
-      events.push(parsed);
-      if (isTextEvent(parsed)) {
-        text += parsed.text;
-      }
+    const stream = maybeInput
+      ? this.stream(refOrInput as AgentReference, maybeInput)
+      : this.stream(refOrInput as AgentRunInput & { agentId: string; agentName?: string; project?: string; environment?: string });
+
+    for await (const part of stream) {
+      events.push(part);
+      if (part.type === "text-delta") text += part.text;
     }
 
-    return { text: text, events: events };
+    return { text, events };
   }
 
-  async *stream(input: AgentRunInput & { agentId: string; agentName?: string }): AsyncGenerator<string> {
+  /** Stream an agent run, yielding each AI SDK `TextStreamPart` as it arrives. */
+  stream(ref: AgentReference, input: AgentRunInput): AsyncGenerator<TextStreamPart<ToolSet>>;
+  stream(input: AgentRunInput & { agentId: string; agentName?: string; project?: string; environment?: string }): AsyncGenerator<TextStreamPart<ToolSet>>;
+  async *stream(
+    refOrInput: AgentReference | (AgentRunInput & { agentId: string; agentName?: string; project?: string; environment?: string }),
+    maybeInput?: AgentRunInput,
+  ): AsyncGenerator<TextStreamPart<ToolSet>> {
+    const input = maybeInput
+      ? {
+        ...maybeInput,
+        agentId: (refOrInput as AgentReference).id,
+        agentName: (refOrInput as AgentReference).name,
+        project: (refOrInput as AgentReference).project,
+        environment: (refOrInput as AgentReference).environment,
+      }
+      : refOrInput as AgentRunInput & { agentId: string; agentName?: string; project?: string; environment?: string };
     const body = {
       agentId: input.agentId,
       eventId: input.eventId ?? `cli-${Date.now()}`,
       conversationKey: input.conversationKey ?? "cli",
-      events: [
-        {
-          role: "user",
-          content: [{ type: "text", text: input.input }],
-        },
-      ],
+      events: [{ role: "user", content: [{ type: "text", text: input.input }] }],
     };
 
-    const response = await this.openStream(input.agentName, body);
-    if (!response.ok) {
-      throw new Error(`Run failed: ${response.status} ${await response.text()}`);
-    }
+    const response = await this.openStream(input.agentName, body, input.project, input.environment);
+    if (!response.ok) throw new Error(`Run failed: ${response.status} ${await response.text()}`);
     if (!response.body) throw new Error("Run response has no body");
 
-    yield* readSseData(response.body);
+    for await (const data of readSseStream(response.body)) {
+      try {
+        yield JSON.parse(data) as TextStreamPart<ToolSet>;
+      } catch {
+        // Skip non-JSON lines (e.g. a heartbeat comment that slipped through).
+      }
+    }
   }
 
-  private async openStream(agentName: string | undefined, body: unknown): Promise<Response> {
-    if (this.dashboardUrl && this.token && this.project && this.environment && agentName) {
+  private async openStream(
+    agentName: string | undefined,
+    body: unknown,
+    project?: string,
+    environment?: string,
+  ): Promise<Response> {
+    const resolvedProject = project ?? this.project;
+    const resolvedEnvironment = environment ?? this.environment;
+    if (this.dashboardUrl && this.token && resolvedProject && resolvedEnvironment && agentName) {
       const sync = new FilthyPantySyncClient({
         dashboardUrl: this.dashboardUrl,
         token: this.token,
         fetch: this.fetchImpl,
       });
-      return await sync.run(this.project, this.environment, agentName, body);
+
+      return await sync.run(resolvedProject, resolvedEnvironment, agentName, body);
     }
 
     if (this.agentServiceUrl && this.accountSecret) {
@@ -330,11 +185,14 @@ export class FilthyPantyClient {
       });
     }
 
-    throw new Error("FilthyPantyClient requires either dashboardUrl/token/project/environment or agentServiceUrl/accountSecret");
+    throw new Error(
+      "FilthyPantyClient requires either dashboardUrl/token/project/environment or agentServiceUrl/accountSecret",
+    );
   }
 }
 
-async function* readSseData(body: ReadableStream<Uint8Array>): AsyncGenerator<string> {
+/** Yield the payload of each `data:` line from an SSE response body. */
+export async function* readSseStream(body: ReadableStream<Uint8Array>): AsyncGenerator<string> {
   const reader = body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
@@ -347,24 +205,10 @@ async function* readSseData(body: ReadableStream<Uint8Array>): AsyncGenerator<st
       const lines = buffer.split("\n");
       buffer = lines.pop() ?? "";
       for (const line of lines) {
-        if (line.startsWith("data: ")) {
-          yield line.slice(6);
-        }
+        if (line.startsWith("data: ")) yield line.slice(6);
       }
     }
   } finally {
     reader.releaseLock();
   }
-}
-
-function parseEvent(chunk: string): unknown {
-  try {
-    return JSON.parse(chunk);
-  } catch {
-    return chunk;
-  }
-}
-
-function isTextEvent(value: unknown): value is { type: string; text: string } {
-  return Boolean(value && typeof value === "object" && (value as { type?: unknown }).type === "text" && typeof (value as { text?: unknown }).text === "string");
 }

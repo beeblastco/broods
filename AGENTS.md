@@ -9,7 +9,7 @@ This is a Bun workspaces monorepo for BeeBlast / filthy-panty.
 - `apps/docs` (`@filthy-panty/docs`): Docusaurus docs for the core, public API, and whole application architecture. Update it when core behavior, public config, API shape, diagrams, or workflows change.
 - `packages/convex` (`@filthy-panty/convex`): shared Convex backend used by the dashboard and read by core in production. Read `packages/convex/AGENTS.md` before changing Convex schema, functions, auth, or generated files.
 - `packages/filthy-panty` (`filthy-panty`): CLI + TypeScript client SDK package. This is not finished yet; the CLI is currently a scaffold and the SDK is a thin HTTP/SSE client.
-- `packages/demos` (`@filthy-panty/demos`): runnable demo scripts using the SDK against a deployed core API. This is not finished yet; keep demos aligned with public API/config changes.
+- `packages/demos`: runnable demo folders using the SDK against a deployed core API. This is not a workspace package; keep demos aligned with public API/config changes.
 
 ## How To Work Here
 
@@ -18,7 +18,7 @@ This is a Bun workspaces monorepo for BeeBlast / filthy-panty.
 - Declare dependencies in the package that imports them; the workspace uses Bun's isolated linker.
 - Keep env files package-local. Do not commit real secrets.
 - Run focused checks from the root when possible:
-  - `bun run check` for core + Convex + SDK + demos type checks.
+  - `bun run check` for core + Convex + SDK type checks.
   - `bun run test` for core tests.
   - `bun run build` for core Lambda builds.
   - `bun run dashboard` / `bun run dashboard:build` for the dashboard.

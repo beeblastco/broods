@@ -333,24 +333,13 @@ See [Channels](channels/index.md) for full setup details.
 
 ### Run Example Scripts
 
-The repository includes example scripts to probe a live deployment. They read their environment from `packages/demos/.env`:
+The repository includes example scripts to probe a live deployment. Each demo has its own folder and `.env.example`:
 
 ```bash
-cp packages/demos/.env.example packages/demos/.env
+cp packages/demos/stream/.env.example packages/demos/stream/.env
 # fill in the service URLs from the deploy output and your model/tool keys
 
-bun run demo stream.ts        # SSE with tools
-bun run demo async.ts         # Async with polling
-bun run demo tool-approval.ts # Tool approval flow
-bun run demo subagent.ts      # Subagent dispatch
-bun run demo skills.ts        # Skill CRUD
-bun run demo skill-loads.ts   # Skill loading during a streamed turn
-bun run demo sandbox-workspace-lambda.ts      # Lambda sandbox + workspace smoke test
-bun run demo workspace-multiple.ts            # One agent, two named workspaces
-bun run demo workspace-readonly.ts            # Shared workspace with read-only (no-sandbox) agent
-bun run demo sandbox-stateless.ts             # Sandbox with no workspace (bash-only, stateless)
-bun run demo sandbox-workspace-override.ts    # Per-workspace sandbox override (inherit / pin / read-only)
-bun run demo sandbox-e2b.ts                   # E2B provider (stateless bash)
+cd packages/demos/stream && bun index.ts
 ```
 
 Each script creates a temporary account, runs the test, and cleans up.

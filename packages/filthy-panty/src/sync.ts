@@ -46,7 +46,7 @@ export class FilthyPantySyncClient {
     const response = await this.request(manifest.project, manifest.environment, "/manifest", {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ manifest: manifest, prune: prune }),
+      body: JSON.stringify({ manifest, prune }),
     });
     await assertOk(response, "Sync manifest failed");
     return await response.json() as RemoteManifestResponse;
@@ -56,7 +56,7 @@ export class FilthyPantySyncClient {
     const response = await this.request(project, environment, `/env/${encodeURIComponent(name)}`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ value: value }),
+      body: JSON.stringify({ value }),
     });
     await assertOk(response, "Set environment variable failed");
   }
@@ -101,7 +101,7 @@ export function diffManifests(local: CliManifest, remote: CliManifest | null): D
     const remoteResource = remoteResources.get(key);
     if (!remoteResource) {
       entries.push({ operation: "create", kind: resource.kind, name: resource.name });
-    } else if (stableJson(remoteResource) !== stableJson(resource)) {
+    } else if (stableJson(snapshotResource(remoteResource)) !== stableJson(snapshotResource(resource))) {
       entries.push({ operation: "update", kind: resource.kind, name: resource.name });
     }
   }
@@ -113,6 +113,27 @@ export function diffManifests(local: CliManifest, remote: CliManifest | null): D
   }
 
   return entries.sort((a, b) => `${a.operation}:${a.kind}:${a.name}`.localeCompare(`${b.operation}:${b.kind}:${b.name}`));
+}
+
+function snapshotResource(resource: { kind: string; config: unknown } & Record<string, unknown>): unknown {
+  if (resource.kind !== "skill" && resource.kind !== "tool") return resource;
+
+  return {
+    ...resource,
+    config: stripArtifactContent(resource.config),
+  };
+}
+
+function stripArtifactContent(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(stripArtifactContent);
+  if (value && typeof value === "object") {
+    return Object.fromEntries(Object.entries(value).flatMap(([key, entry]) => {
+      if (key === "contentBase64" || key === "bundle") return [];
+      return [[key, stripArtifactContent(entry)]];
+    }));
+  }
+
+  return value;
 }
 
 function stableJson(value: unknown): string {

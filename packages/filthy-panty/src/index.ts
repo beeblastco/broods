@@ -1,8 +1,10 @@
 /**
- * Public package entry. Re-exports the runtime client, contracts, and resource DSL.
+ * Public package entry. Re-exports the wire types, account helpers, runtime
+ * client, manifest contracts, and the resource DSL.
  */
 
 export * from "./types.ts";
+export * from "./account.ts";
 export * from "./client.ts";
 export * from "./sse.ts";
 export * from "./contracts.ts";

@@ -143,6 +143,19 @@ export const cliTokensFields = {
     lastUsedAt: v.optional(v.number()),
 };
 
+/** Lightweight desired-state snapshots for CLI-managed account-service resources. */
+export const cliExternalResourcesFields = {
+    accountId: v.id("accounts"),
+    projectId: v.id("projects"),
+    environmentId: v.id("environments"),
+    kind: v.union(v.literal("skill"), v.literal("tool")),
+    name: v.string(),
+    description: v.optional(v.string()),
+    externalId: v.string(),
+    config: v.any(),
+    updatedAt: v.number(),
+};
+
 export const toolServicesFields = {
     authId: v.string(),
     projectId: v.id("projects"),
@@ -413,6 +426,10 @@ export default defineSchema({
         .index("by_tokenHash", ["tokenHash"])
         .index("by_accountId", ["accountId"])
         .index("by_authId", ["authId"]),
+    cliExternalResources: defineTable(cliExternalResourcesFields)
+        .index("by_projectId_and_environmentId", ["projectId", "environmentId"])
+        .index("by_environmentId_kind_and_name", ["environmentId", "kind", "name"])
+        .index("by_accountId", ["accountId"]),
     orgs: defineTable(orgsFields)
         .index("by_slug", ["slug"])
         .index("by_ownerAuthId", ["ownerAuthId"]),

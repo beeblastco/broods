@@ -49,7 +49,7 @@ Copy local config:
 cp apps/core/.env.example apps/core/.env
 ```
 
-Keep `apps/core/.env` for local SST config only. Do not put deployed secrets in `.env`. Demo scripts read their own env from `packages/demos/.env` (see `packages/demos/.env.example`).
+Keep `apps/core/.env` for local SST config only. Do not put deployed secrets in that file. Demo scripts read their own env from `packages/demos/<name>/.env`.
 
 ## Run, Build, and Deploy
 
@@ -167,13 +167,13 @@ Run:
 
 ```bash
 # Account management (Create, Update, Delete)
-bun run demo account.ts
+cd packages/demos/account && bun index.ts
 
 # Stream SSE with tools
-bun run demo stream.ts
+cd packages/demos/stream && bun index.ts
 
 # Async endpoint with polling
-bun run demo async.ts
+cd packages/demos/async && bun index.ts
 ```
 
 ## CI

@@ -3,6 +3,7 @@ import { mkdtemp, readFile, rm, writeFile, mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { writeGeneratedFiles } from "../src/codegen.ts";
+import { loadFilthyPantyRuntimeConfig } from "../src/runtime-config.ts";
 import { compileProject } from "../src/manifest.ts";
 import { diffManifests } from "../src/sync.ts";
 
@@ -13,6 +14,10 @@ afterEach(async () => {
     await rm(dir, { recursive: true, force: true });
   }
   tempDirs = [];
+  delete process.env.FILTHY_PANTY_DASHBOARD_URL;
+  delete process.env.FILTHY_PANTY_TOKEN;
+  delete process.env.FILTHY_PANTY_PROJECT;
+  delete process.env.FILTHY_PANTY_ENVIRONMENT;
 });
 
 test("compileProject maps workspace resources and env refs to the SaaS manifest shape", async () => {
@@ -38,6 +43,99 @@ test("compileProject maps workspace resources and env refs to the SaaS manifest 
     },
     workspaces: [{ name: "repo", workspaceId: "repo" }],
   });
+});
+
+test("compileProject works without a config file and infers project from cwd", async () => {
+  const cwd = await fixtureProject("", `
+import { defineAgent } from "${join(process.cwd(), "src", "resources.ts")}";
+
+export const support = defineAgent("support", {
+  model: { provider: "openai", modelId: "gpt-5-mini" },
+});
+`);
+
+  const { manifest } = await compileProject({ cwd: cwd, command: "dev" });
+
+  expect(manifest.project).toStartWith("filthy-panty-test-");
+  expect(manifest.environment).toBe("development");
+});
+
+test("compileProject accepts explicit project override", async () => {
+  const cwd = await fixtureProject("", `
+import { defineAgent } from "${join(process.cwd(), "src", "resources.ts")}";
+
+export const support = defineAgent("support", {
+  model: { provider: "openai", modelId: "gpt-5-mini" },
+});
+`);
+
+  const { manifest } = await compileProject({ cwd: cwd, command: "dev", project: "docs-demo" });
+
+  expect(manifest.project).toBe("docs-demo");
+});
+
+test("compileProject maps workspace overrides, subagents, skills, and tools", async () => {
+  const cwd = await fixtureProject(`
+import { defineFilthyPanty } from "${join(process.cwd(), "src", "resources.ts")}";
+
+export default defineFilthyPanty({ project: "typed-app" });
+`, `
+import { defineAgent, defineSkill, defineTool, defineWorkspace, defineSandbox } from "${join(process.cwd(), "src", "resources.ts")}";
+
+export const docs = defineSkill("greeting-skill", { path: "skills/greeting-skill" });
+export const progress = defineTool("stream_progress", {
+  path: "tools/stream_progress.mjs",
+  description: "Streams progress updates.",
+  inputSchema: { type: "object", properties: { steps: { type: "number" } } },
+});
+export const repo = defineWorkspace("repo", { storage: { provider: "s3" } });
+export const readonly = defineWorkspace("readonly", { storage: { provider: "s3" } });
+export const runner = defineSandbox("runner", { provider: "lambda" });
+export const helper = defineAgent("helper", { model: { provider: "openai", modelId: "gpt-5-mini" } });
+export const support = defineAgent("support", {
+  model: { provider: "openai", modelId: "gpt-5-mini" },
+  sandbox: runner,
+  workspaces: [repo, { workspace: readonly, sandbox: null }],
+  skills: { enabled: true, allowed: [docs] },
+  subagent: { enabled: true, allowed: [helper] },
+  tools: { [progress.name]: { enabled: true } },
+});
+`);
+  await mkdir(join(cwd, "filthypanty", "skills", "greeting-skill"), { recursive: true });
+  await writeFile(join(cwd, "filthypanty", "skills", "greeting-skill", "SKILL.md"), `---
+name: greeting-skill
+description: Says hello.
+---
+
+# Greeting
+`);
+  await mkdir(join(cwd, "filthypanty", "tools"), { recursive: true });
+  await writeFile(join(cwd, "filthypanty", "tools", "stream_progress.mjs"), "export default { name: 'stream_progress' };\n");
+
+  const { manifest } = await compileProject({ cwd: cwd, command: "dev" });
+  const support = manifest.resources.find((resource) => resource.kind === "agent" && resource.name === "support");
+  const skill = manifest.resources.find((resource) => resource.kind === "skill" && resource.name === "greeting-skill");
+  const tool = manifest.resources.find((resource) => resource.kind === "tool" && resource.name === "stream_progress");
+
+  expect(support?.config).toMatchObject({
+    sandbox: "runner",
+    workspaces: [
+      { name: "repo", workspaceId: "repo" },
+      { name: "readonly", workspaceId: "readonly", sandbox: null },
+    ],
+    skills: { enabled: true, allowed: ["greeting-skill"] },
+    subagent: { enabled: true, allowed: ["helper"] },
+    tools: { stream_progress: { enabled: true } },
+  });
+  expect(skill?.config).toMatchObject({
+    source: "files",
+    path: "skills/greeting-skill",
+    files: [expect.objectContaining({ path: "SKILL.md", contentBase64: expect.any(String) })],
+  });
+  expect((tool?.config as Record<string, unknown>).path).toBe("tools/stream_progress.mjs");
+  expect((tool?.config as Record<string, unknown>).description).toBe("Streams progress updates.");
+  expect((tool?.config as Record<string, unknown>).bundle).toBe("export default { name: 'stream_progress' };\n");
+  expect(typeof (tool?.config as Record<string, unknown>).sha256).toBe("string");
 });
 
 test("diffManifests reports create, update, and delete operations", () => {
@@ -67,7 +165,7 @@ test("diffManifests reports create, update, and delete operations", () => {
   ]);
 });
 
-test("writeGeneratedFiles creates typed IDs and client files", async () => {
+test("writeGeneratedFiles creates Convex-style typed resource references", async () => {
   const cwd = await fixtureProject();
   const { manifest } = await compileProject({ cwd: cwd, command: "dev" });
 
@@ -76,21 +174,49 @@ test("writeGeneratedFiles creates typed IDs and client files", async () => {
     workspaces: { repo: "workspace_123" },
     sandboxes: {},
     cronJobs: {},
+    skills: {},
+    tools: {},
   }, cwd);
 
-  const client = await readFile(join(cwd, "filthypanty", "generated", "client.ts"), "utf8");
-  const ids = await readFile(join(cwd, "filthypanty", "generated", "ids.ts"), "utf8");
+  const api = await readFile(join(cwd, "filthypanty", "_generated", "api.ts"), "utf8");
+  const ids = await readFile(join(cwd, "filthypanty", "_generated", "ids.ts"), "utf8");
+  const dataModel = await readFile(join(cwd, "filthypanty", "_generated", "dataModel.ts"), "utf8");
 
-  expect(client).toContain('"support": client.agent("support", ids.agents["support"])');
+  expect(api).toContain('export const api = {');
+  expect(api).toContain('"support": { kind: "agent", name: "support", id: ids.agents["support"], project: "typed-app", environment: "development" }');
   expect(ids).toContain('"support": "agent_123"');
+  expect(dataModel).toContain("AgentReference");
+  expect(api).not.toContain("new FilthyPantyClient");
+  await expect(readFile(join(cwd, "filthypanty", "_generated", "client.ts"), "utf8")).rejects.toThrow();
 });
 
-async function fixtureProject(): Promise<string> {
+test("runtime config loads .env.local without manual client wiring", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "filthy-panty-env-test-"));
+  tempDirs.push(cwd);
+  await writeFile(join(cwd, ".env.local"), [
+    "FILTHY_PANTY_DASHBOARD_URL=https://dashboard.dev.beeblast.co",
+    "FILTHY_PANTY_TOKEN=fp_cli_test",
+    "FILTHY_PANTY_PROJECT=sandbox-stateless",
+    "FILTHY_PANTY_ENVIRONMENT=development",
+    "",
+  ].join("\n"));
+
+  const config = loadFilthyPantyRuntimeConfig(cwd);
+
+  expect(config).toEqual({
+    dashboardUrl: "https://dashboard.dev.beeblast.co",
+    token: "fp_cli_test",
+    project: "sandbox-stateless",
+    environment: "development",
+  });
+});
+
+async function fixtureProject(configSource?: string, resourcesSource?: string): Promise<string> {
   const cwd = await mkdtemp(join(tmpdir(), "filthy-panty-test-"));
   tempDirs.push(cwd);
   const projectDir = join(cwd, "filthypanty");
   await mkdir(projectDir, { recursive: true });
-  await writeFile(join(projectDir, "filthy-panty.config.ts"), `
+  await writeFile(join(projectDir, "filthy-panty.config.ts"), configSource ?? `
 import { defineFilthyPanty } from "${join(process.cwd(), "src", "resources.ts")}";
 
 export default defineFilthyPanty({
@@ -98,7 +224,7 @@ export default defineFilthyPanty({
   environments: { dev: "development", deploy: "production" },
 });
 `);
-  await writeFile(join(projectDir, "agents.ts"), `
+  await writeFile(join(projectDir, "agents.ts"), resourcesSource ?? `
 import { defineAgent, defineWorkspace, env } from "${join(process.cwd(), "src", "resources.ts")}";
 
 export const repo = defineWorkspace("repo", {

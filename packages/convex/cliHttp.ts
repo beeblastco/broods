@@ -7,6 +7,7 @@
 
 import { httpAction } from "./_generated/server";
 import { internal } from "./_generated/api";
+import type { CliManifest, GeneratedIds } from "./cliTypes";
 
 type RouteParts =
     | { kind: "manifest"; project: string; environment: string }
@@ -20,25 +21,6 @@ type RouteParts =
         resourceKind: "agent" | "workspace" | "sandbox" | "cronJob";
         name: string;
     };
-
-type CliManifest = {
-    version: 1;
-    project: string;
-    environment: string;
-    resources: Array<{
-        kind: "agent" | "workspace" | "sandbox" | "cronJob";
-        name: string;
-        description?: string;
-        config: unknown;
-    }>;
-};
-
-type GeneratedIds = {
-    agents?: Record<string, string>;
-    workspaces?: Record<string, string>;
-    sandboxes?: Record<string, string>;
-    cronJobs?: Record<string, string>;
-};
 
 type CronJobResponse = {
     cronJobId: string;
@@ -119,15 +101,26 @@ export const handle = httpAction(async (ctx, req) => {
             if (!manifestMatchesRoute(manifest, route)) {
                 return json({ error: "Manifest project/environment must match the request path" }, 400);
             }
+            const originalManifest = manifest as CliManifest;
+            const externalIds = await syncExternalResources(accountId, originalManifest, body.prune === true);
+            await ctx.runMutation(internal.cliSync.recordExternalResourcesBySecretHash, {
+                secretHash: secretHash,
+                project: route.project,
+                environment: route.environment,
+                resources: originalManifest.resources as never,
+                ids: externalIds,
+                prune: body.prune === true,
+            });
+            const syncManifest = rewriteExternalResourceRefs(originalManifest, externalIds);
             const result = await ctx.runMutation(internal.cliSync.syncManifestBySecretHash, {
                 secretHash: secretHash,
-                manifest: manifest as never,
+                manifest: syncManifest as never,
                 prune: body.prune === true,
             });
 
             const cronJobIds = forwardToken
-                ? await syncCronJobs(forwardToken, manifest as CliManifest, result.ids, body.prune === true)
-                : await syncCronJobsWithServiceToken(accountId, manifest as CliManifest, result.ids, body.prune === true)
+                ? await syncCronJobs(forwardToken, syncManifest, result.ids, body.prune === true)
+                : await syncCronJobsWithServiceToken(accountId, syncManifest, result.ids, body.prune === true)
                     .catch(() => ({}));
             const refreshed = await ctx.runQuery(internal.cliSync.getManifestBySecretHash, {
                 secretHash: secretHash,
@@ -137,7 +130,7 @@ export const handle = httpAction(async (ctx, req) => {
 
             return json(refreshed ?? {
                 ...result,
-                ids: { ...result.ids, cronJobs: cronJobIds },
+                ids: { ...result.ids, ...externalIds, cronJobs: cronJobIds },
             });
         }
 
@@ -323,6 +316,129 @@ function json(body: unknown, status = 200): Response {
         status: status,
         headers: { "Content-Type": "application/json" },
     });
+}
+
+type ExternalIds = Pick<GeneratedIds, "skills" | "tools">;
+
+async function syncExternalResources(
+    accountId: string,
+    manifest: CliManifest,
+    prune: boolean,
+): Promise<ExternalIds> {
+    const skills = await syncSkillResources(accountId, manifest);
+    const tools = await syncToolResources(accountId, manifest, prune);
+
+    return { skills, tools };
+}
+
+async function syncSkillResources(
+    accountId: string,
+    manifest: CliManifest,
+): Promise<Record<string, string>> {
+    const ids: Record<string, string> = {};
+    for (const resource of manifest.resources.filter((entry) => entry.kind === "skill")) {
+        const config = asRecord(resource.config, `skill:${resource.name}`);
+        const files = config.files;
+        if (!Array.isArray(files)) throw new Error(`skill:${resource.name}.files must be an array`);
+        const response = await accountManageFetchWithServiceToken(
+            accountId,
+            `/accounts/me/skills/${encodeURIComponent(resource.name)}`,
+            {
+                method: "PUT",
+                body: JSON.stringify({ source: "files", files }),
+            },
+        );
+        const payload = await response.json() as { path?: string };
+        ids[resource.name] = payload.path ?? `${accountId}/${resource.name}`;
+    }
+
+    return ids;
+}
+
+async function syncToolResources(
+    accountId: string,
+    manifest: CliManifest,
+    prune: boolean,
+): Promise<Record<string, string>> {
+    const desired = manifest.resources.filter((entry) => entry.kind === "tool");
+    if (desired.length === 0 && prune !== true) return {};
+    const existingResponse = await accountManageFetchWithServiceToken(accountId, "/accounts/me/tools", { method: "GET" });
+    const existingPayload = await existingResponse.json() as {
+        tools?: Array<{ toolId: string; name: string; status?: string }>;
+    };
+    const existing = new Map((existingPayload.tools ?? []).map((tool) => [tool.name, tool]));
+    const desiredNames = new Set(desired.map((resource) => resource.name));
+    const ids: Record<string, string> = {};
+
+    for (const resource of desired) {
+        const config = asRecord(resource.config, `tool:${resource.name}`);
+        const body = JSON.stringify({
+            name: resource.name,
+            description: stringField(config.description ?? resource.description, `tool:${resource.name}.description`),
+            inputSchema: asRecord(config.inputSchema, `tool:${resource.name}.inputSchema`),
+            ...(config.defaultConfig !== undefined ? { defaultConfig: asRecord(config.defaultConfig, `tool:${resource.name}.defaultConfig`) } : {}),
+            bundle: stringField(config.bundle, `tool:${resource.name}.bundle`),
+        });
+        const current = existing.get(resource.name);
+        const response = current
+            ? await accountManageFetchWithServiceToken(accountId, `/accounts/me/tools/${encodeURIComponent(current.toolId)}`, {
+                method: "PATCH",
+                body,
+            })
+            : await accountManageFetchWithServiceToken(accountId, "/accounts/me/tools", {
+                method: "POST",
+                body,
+            });
+        const payload = await response.json() as { toolId: string };
+        ids[resource.name] = payload.toolId;
+    }
+
+    if (prune === true) {
+        for (const tool of existing.values()) {
+            if (!desiredNames.has(tool.name)) {
+                await accountManageFetchWithServiceToken(accountId, `/accounts/me/tools/${encodeURIComponent(tool.toolId)}`, {
+                    method: "DELETE",
+                });
+            }
+        }
+    }
+
+    return ids;
+}
+
+function rewriteExternalResourceRefs(manifest: CliManifest, ids: ExternalIds): CliManifest {
+    return {
+        ...manifest,
+        resources: manifest.resources.map((resource) => {
+            if (resource.kind !== "agent") return resource;
+            return {
+                ...resource,
+                config: rewriteExternalConfigRefs(asRecord(resource.config, `agent:${resource.name}`), ids),
+            };
+        }),
+    };
+}
+
+function rewriteExternalConfigRefs(config: Record<string, unknown>, ids: ExternalIds): Record<string, unknown> {
+    const result = { ...config };
+    if (asOptionalRecord(result.skills) && Array.isArray(asOptionalRecord(result.skills)?.allowed)) {
+        const skills = asOptionalRecord(result.skills)!;
+        result.skills = {
+            ...skills,
+            allowed: (skills.allowed as unknown[]).map((entry) =>
+                typeof entry === "string" && ids.skills[entry] ? ids.skills[entry] : entry,
+            ),
+        };
+    }
+    if (asOptionalRecord(result.tools)) {
+        const tools = asOptionalRecord(result.tools)!;
+        result.tools = Object.fromEntries(Object.entries(tools).map(([key, value]) => [
+            ids.tools[key] ?? key,
+            value,
+        ]));
+    }
+
+    return result;
 }
 
 async function syncCronJobs(
@@ -564,6 +680,11 @@ function asRecord(value: unknown, label: string): Record<string, unknown> {
         throw new Error(`${label} config must be an object`);
     }
 
+    return value as Record<string, unknown>;
+}
+
+function asOptionalRecord(value: unknown): Record<string, unknown> | null {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return null;
     return value as Record<string, unknown>;
 }
 

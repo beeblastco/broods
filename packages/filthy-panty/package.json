@@ -16,6 +16,9 @@
     "check": "tsc --noEmit",
     "test": "bun test"
   },
+  "dependencies": {
+    "ai": "^6.0.195"
+  },
   "devDependencies": {
     "@filthy-panty/convex": "workspace:*",
     "@filthy-panty/core": "workspace:*",

@@ -7,7 +7,7 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 
 export const PROJECT_DIR = "filthypanty";
-export const PROJECT_CONFIG_FILE = "filthy-panty.config.ts";
+export const GENERATED_DIR = "_generated";
 export const USER_CONFIG_PATH = join(homedir(), ".filthy-panty", "config.json");
 
 export interface StoredAuthConfig {

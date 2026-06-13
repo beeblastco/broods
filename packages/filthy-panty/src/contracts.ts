@@ -31,23 +31,6 @@ export type CronJobDoc = Doc<"cronJobs">;
 
 export type CliResourceKind = "agent" | "workspace" | "sandbox" | "cronJob";
 
-export interface CliManifestResource {
-  kind: CliResourceKind;
-  name: string;
-  description?: string;
-  config: unknown;
-}
-
-export interface CliManifest {
-  version: 1;
-  project: string;
-  environment: string;
-  resources: CliManifestResource[];
-}
-
-export interface GeneratedIds {
-  agents: Record<string, string>;
-  workspaces: Record<string, string>;
-  sandboxes: Record<string, string>;
-  cronJobs: Record<string, string>;
-}
+// Manifest wire types come from the backend's canonical leaf module so the
+// CLI/SDK can't silently drift from the server contract.
+export type { CliManifest, CliManifestResource, GeneratedIds } from "../../convex/cliTypes.ts";

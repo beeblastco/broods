@@ -1,43 +1,24 @@
 /**
- * SSE streaming client for the harness Function URL. Yields the payload of
- * each `data:` event from a synchronous direct API request.
+ * Direct SSE streaming against the harness Function URL using an account
+ * secret. Yields each raw `data:` payload. Higher-level callers should prefer
+ * `FilthyPantyClient.stream`, which decodes these into typed AI SDK parts.
  */
 
-import { requireEnv } from "./client.ts";
+import { readSseStream } from "./client.ts";
 
-// Stream SSE response from agent service
 export async function* streamSSE(body: unknown, secret: string): AsyncGenerator<string> {
-  const response = await fetch(requireEnv("AGENT_SERVICE_URL"), {
+  const response = await fetch(process.env.AGENT_SERVICE_URL!, {
     method: "POST",
-    headers: { "Content-Type": "application/json", "Accept": "text/event-stream", "Authorization": `Bearer ${secret}` },
+    headers: {
+      "Content-Type": "application/json",
+      "Accept": "text/event-stream",
+      "Authorization": `Bearer ${secret}`,
+    },
     body: JSON.stringify(body),
   });
 
   if (!response.ok) throw new Error(`Request failed: ${response.status} ${await response.text()}`);
   if (!response.body) throw new Error("No response body");
 
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = "";
-  let chunks = 0;
-
-  try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split("\n");
-      buffer = lines.pop() ?? "";
-      for (const line of lines) {
-        if (!line.startsWith("data: ")) continue;
-        chunks += 1;
-        yield line.slice(6);
-      }
-    }
-    if (chunks === 0) {
-      throw new Error("SSE stream ended without any data events");
-    }
-  } finally {
-    reader.releaseLock();
-  }
+  yield* readSseStream(response.body);
 }

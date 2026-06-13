@@ -7,6 +7,7 @@
 
 import { v } from "convex/values";
 import type { Doc, Id } from "./_generated/dataModel";
+import type { CliManifestResource, GeneratedIds } from "./cliTypes";
 import { internalMutation, internalQuery, type MutationCtx, type QueryCtx } from "./_generated/server";
 import { ensureAgentsRowForConfig, pushEncryptedConfigToAgentRow, syncAgentRowFields } from "./model/agentSync";
 import {
@@ -24,6 +25,8 @@ const resourceValidator = v.object({
         v.literal("workspace"),
         v.literal("sandbox"),
         v.literal("cronJob"),
+        v.literal("skill"),
+        v.literal("tool"),
     ),
     name: v.string(),
     description: v.optional(v.string()),
@@ -42,21 +45,12 @@ const idsValidator = v.object({
     workspaces: v.record(v.string(), v.string()),
     sandboxes: v.record(v.string(), v.string()),
     cronJobs: v.record(v.string(), v.string()),
+    skills: v.record(v.string(), v.string()),
+    tools: v.record(v.string(), v.string()),
 });
 
-type CliResource = {
-    kind: "agent" | "workspace" | "sandbox" | "cronJob";
-    name: string;
-    description?: string;
-    config: unknown;
-};
-
-type Ids = {
-    agents: Record<string, string>;
-    workspaces: Record<string, string>;
-    sandboxes: Record<string, string>;
-    cronJobs: Record<string, string>;
-};
+type CliResource = CliManifestResource;
+type Ids = GeneratedIds;
 
 export const getManifestBySecretHash = internalQuery({
     args: {
@@ -165,11 +159,14 @@ export const syncManifestBySecretHash = internalMutation({
         }
 
         await ctx.db.patch(projectDoc._id, { updatedAt: Date.now() });
+        const externalIds = await externalIdsForEnvironment(ctx, projectDoc._id, environmentDoc._id);
         const ids: Ids = {
             agents: agentIds,
             workspaces: workspaceIds,
             sandboxes: sandboxIds,
             cronJobs: {},
+            skills: externalIds.skills,
+            tools: externalIds.tools,
         };
         const resources = await resourcesForEnvironment(ctx, account._id, projectDoc._id, environmentDoc._id);
 
@@ -182,6 +179,64 @@ export const syncManifestBySecretHash = internalMutation({
             },
             ids: ids,
         };
+    },
+});
+
+export const recordExternalResourcesBySecretHash = internalMutation({
+    args: {
+        secretHash: v.string(),
+        project: v.string(),
+        environment: v.string(),
+        resources: v.array(resourceValidator),
+        ids: v.object({
+            skills: v.record(v.string(), v.string()),
+            tools: v.record(v.string(), v.string()),
+        }),
+        prune: v.optional(v.boolean()),
+    },
+    returns: v.null(),
+    handler: async (ctx, args) => {
+        const account = await accountFromSecretHash(ctx, args.secretHash);
+        if (!account) throw new Error("Invalid BeeBlast token");
+        const projectDoc = await ensureProject(ctx, account, args.project);
+        const environmentDoc = await ensureEnvironment(ctx, projectDoc, args.environment);
+        const existing = await ctx.db
+            .query("cliExternalResources")
+            .withIndex("by_projectId_and_environmentId", (q) =>
+                q.eq("projectId", projectDoc._id).eq("environmentId", environmentDoc._id),
+            )
+            .collect();
+        const desired = args.resources.filter((entry) => entry.kind === "skill" || entry.kind === "tool");
+        const desiredKeys = new Set(desired.map((entry) => `${entry.kind}:${resourceName(entry.name)}`));
+
+        for (const resource of desired) {
+            const name = resourceName(resource.name);
+            const kind: "skill" | "tool" = resource.kind === "skill" ? "skill" : "tool";
+            const externalId = resource.kind === "skill" ? args.ids.skills[name] : args.ids.tools[name];
+            if (!externalId) throw new Error(`${resource.kind}:${name} did not return an external id`);
+            const current = existing.find((entry) => entry.kind === kind && entry.name === name);
+            const row = {
+                accountId: account._id,
+                projectId: projectDoc._id,
+                environmentId: environmentDoc._id,
+                kind: kind,
+                name: name,
+                description: resource.description,
+                externalId: externalId,
+                config: snapshotExternalConfig(resource.config),
+                updatedAt: Date.now(),
+            };
+            if (current) await ctx.db.patch(current._id, row);
+            else await ctx.db.insert("cliExternalResources", row);
+        }
+
+        if (args.prune === true) {
+            for (const resource of existing) {
+                if (!desiredKeys.has(`${resource.kind}:${resource.name}`)) await ctx.db.delete(resource._id);
+            }
+        }
+
+        return null;
     },
 });
 
@@ -471,6 +526,9 @@ async function syncAgentResources(
 ): Promise<Record<string, string>> {
     const { account, projectId, environmentId, resources, workspaceIds, sandboxIds, envValues } = options;
     const ids: Record<string, string> = {};
+    // Agents whose `subagent.allowed` references other agents by name. Resolved
+    // to deploy-time agent ids in a second pass, once every agent row exists.
+    const pendingSubagentRefs: Array<{ configId: Id<"agentConfigs">; nested: Record<string, unknown> }> = [];
     const existing = await ctx.db
         .query("agentConfigs")
         .withIndex("by_projectId_and_environmentId", (q) =>
@@ -522,6 +580,7 @@ async function syncAgentResources(
             await pushEncryptedConfigToAgentRow(ctx, current._id);
             const refreshed = await ctx.db.get(current._id);
             if (refreshed?.agentId) ids[name] = refreshed.agentId;
+            if (hasSubagentAllowed(nested)) pendingSubagentRefs.push({ configId: current._id, nested: nested });
         } else {
             const authId = await authIdForAccount(ctx, account);
             if (!authId) throw new Error("Account org owner not found");
@@ -552,10 +611,43 @@ async function syncAgentResources(
             await pushEncryptedConfigToAgentRow(ctx, configId);
             const created = await ctx.db.get(configId);
             if (created?.agentId) ids[name] = created.agentId;
+            if (hasSubagentAllowed(nested)) pendingSubagentRefs.push({ configId: configId, nested: nested });
         }
     }
 
+    await resolveSubagentReferences(ctx, pendingSubagentRefs, ids);
+
     return ids;
+}
+
+/** True when an agent's nested config lists other agents in `subagent.allowed`. */
+function hasSubagentAllowed(nested: Record<string, unknown>): boolean {
+    const subagent = nested.subagent;
+
+    return isRecord(subagent) && Array.isArray(subagent.allowed) && subagent.allowed.length > 0;
+}
+
+/**
+ * Second pass over agents that reference other agents in `subagent.allowed`.
+ * Rewrites declared agent names to their deploy-time agent ids (leaving any
+ * non-declared string, e.g. a literal agent id, untouched) and re-pushes the
+ * encrypted config so the runtime can dispatch the named subagents.
+ */
+async function resolveSubagentReferences(
+    ctx: MutationCtx,
+    pending: Array<{ configId: Id<"agentConfigs">; nested: Record<string, unknown> }>,
+    agentIds: Record<string, string>,
+): Promise<void> {
+    for (const { configId, nested } of pending) {
+        const subagent = nested.subagent as Record<string, unknown>;
+        const allowed = (subagent.allowed as unknown[]).map((entry) =>
+            typeof entry === "string" && agentIds[entry] ? agentIds[entry] : entry,
+        );
+        const resolved = { ...nested, subagent: { ...subagent, allowed: allowed } };
+        const flat = fromNestedAgentConfig(resolved);
+        await ctx.db.patch(configId, { extraConfig: flat.extraConfig, updatedAt: Date.now() });
+        await pushEncryptedConfigToAgentRow(ctx, configId);
+    }
 }
 
 async function pruneAgents(
@@ -708,6 +800,18 @@ async function resourcesForEnvironment(
     const agentNames = Object.fromEntries(agents.flatMap((entry) =>
         entry.agentId ? [[entry.agentId, entry.name]] : [],
     ));
+    const externalResources = await ctx.db
+        .query("cliExternalResources")
+        .withIndex("by_projectId_and_environmentId", (q) =>
+            q.eq("projectId", projectId).eq("environmentId", environmentId),
+        )
+        .collect();
+    const skillNames = Object.fromEntries(externalResources
+        .filter((entry) => entry.kind === "skill")
+        .map((entry) => [entry.externalId, entry.name]));
+    const toolNames = Object.fromEntries(externalResources
+        .filter((entry) => entry.kind === "tool")
+        .map((entry) => [entry.externalId, entry.name]));
 
     // sandboxConfigs is stored encrypted (filthy-panty contract); decrypt back
     // into the manifest shape the CLI expects.
@@ -741,7 +845,13 @@ async function resourcesForEnvironment(
                 searchToolEnabled: agent.searchToolEnabled,
                 searchToolConfig: agent.searchToolConfig as Record<string, unknown> | undefined,
                 extraConfig: agent.extraConfig as Record<string, unknown> | undefined,
-            }), workspaceNames, sandboxNames),
+            }), workspaceNames, sandboxNames, agentNames, skillNames, toolNames),
+        })),
+        ...externalResources.map((resource): CliResource => ({
+            kind: resource.kind,
+            name: resource.name,
+            description: resource.description,
+            config: resource.config,
         })),
         ...sandboxResources,
         ...workspaces.map((workspace): CliResource => ({
@@ -803,6 +913,7 @@ async function idsForEnvironment(
                 .collect(),
         ),
     )).flat();
+    const externalIds = await externalIdsForEnvironment(ctx, projectId, environmentId);
 
     return {
         agents: Object.fromEntries(agents.flatMap((entry) => entry.agentId ? [[entry.name, entry.agentId]] : [])),
@@ -811,6 +922,30 @@ async function idsForEnvironment(
         cronJobs: Object.fromEntries(cronJobs.flatMap((entry) =>
             agentIds.has(entry.agentId) ? [[entry.name, entry._id]] : [],
         )),
+        skills: externalIds.skills,
+        tools: externalIds.tools,
+    };
+}
+
+async function externalIdsForEnvironment(
+    ctx: QueryCtx | MutationCtx,
+    projectId: Id<"projects">,
+    environmentId: Id<"environments">,
+): Promise<{ skills: Record<string, string>; tools: Record<string, string> }> {
+    const resources = await ctx.db
+        .query("cliExternalResources")
+        .withIndex("by_projectId_and_environmentId", (q) =>
+            q.eq("projectId", projectId).eq("environmentId", environmentId),
+        )
+        .collect();
+
+    return {
+        skills: Object.fromEntries(resources
+            .filter((entry) => entry.kind === "skill")
+            .map((entry) => [entry.name, entry.externalId])),
+        tools: Object.fromEntries(resources
+            .filter((entry) => entry.kind === "tool")
+            .map((entry) => [entry.name, entry.externalId])),
     };
 }
 
@@ -932,6 +1067,9 @@ function rewriteIdsToNames(
     config: Record<string, unknown>,
     workspaceNames: Record<string, string>,
     sandboxNames: Record<string, string>,
+    agentNames: Record<string, string> = {},
+    skillNames: Record<string, string> = {},
+    toolNames: Record<string, string> = {},
 ): Record<string, unknown> {
     const result = { ...config };
     if (typeof result.sandbox === "string" && sandboxNames[result.sandbox]) {
@@ -954,8 +1092,50 @@ function rewriteIdsToNames(
             };
         });
     }
+    if (isRecord(result.subagent) && Array.isArray(result.subagent.allowed)) {
+        result.subagent = {
+            ...result.subagent,
+            allowed: result.subagent.allowed.map((entry) =>
+                typeof entry === "string" && agentNames[entry] ? agentNames[entry] : entry,
+            ),
+        };
+    }
+    if (isRecord(result.skills) && Array.isArray(result.skills.allowed)) {
+        result.skills = {
+            ...result.skills,
+            allowed: result.skills.allowed.map((entry) =>
+                typeof entry === "string" && skillNames[entry] ? skillNames[entry] : entry,
+            ),
+        };
+    }
+    if (isRecord(result.tools)) {
+        result.tools = Object.fromEntries(Object.entries(result.tools).map(([key, value]) => [
+            toolNames[key] ?? key,
+            value,
+        ]));
+    }
 
     return result;
+}
+
+function snapshotExternalConfig(value: unknown): unknown {
+    if (Array.isArray(value)) return value.map(snapshotExternalConfig);
+    if (isRecord(value)) {
+        return Object.fromEntries(Object.entries(value).flatMap(([key, entry]) => {
+            if (key === "contentBase64" || key === "bundle") return [];
+            if (key === "files" && Array.isArray(entry)) {
+                return [[key, entry.map((file) => {
+                    if (!isRecord(file)) return snapshotExternalConfig(file);
+                    const { contentBase64: _contentBase64, ...rest } = file;
+                    return snapshotExternalConfig(rest);
+                })]];
+            }
+
+            return [[key, snapshotExternalConfig(entry)]];
+        }));
+    }
+
+    return value;
 }
 
 function asObject(value: unknown): Record<string, unknown> {

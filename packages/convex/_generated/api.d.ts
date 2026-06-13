@@ -20,6 +20,7 @@ import type * as cliAuth from "../cliAuth.js";
 import type * as cliAuthHttp from "../cliAuthHttp.js";
 import type * as cliHttp from "../cliHttp.js";
 import type * as cliSync from "../cliSync.js";
+import type * as cliTypes from "../cliTypes.js";
 import type * as conversations from "../conversations.js";
 import type * as cronJobs from "../cronJobs.js";
 import type * as cronJobsPublic from "../cronJobsPublic.js";
@@ -70,6 +71,7 @@ declare const fullApi: ApiFromModules<{
   cliAuthHttp: typeof cliAuthHttp;
   cliHttp: typeof cliHttp;
   cliSync: typeof cliSync;
+  cliTypes: typeof cliTypes;
   conversations: typeof conversations;
   cronJobs: typeof cronJobs;
   cronJobsPublic: typeof cronJobsPublic;

@@ -9,7 +9,6 @@ COPY apps/dashboard/package.json ./apps/dashboard/
 COPY apps/docs/package.json ./apps/docs/
 COPY packages/convex/package.json ./packages/convex/
 COPY packages/filthy-panty/package.json ./packages/filthy-panty/
-COPY packages/demos/package.json ./packages/demos/
 RUN bun install --frozen-lockfile --ignore-scripts
 
 FROM oven/bun:1.3.3-alpine AS builder

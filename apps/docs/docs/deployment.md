@@ -80,11 +80,11 @@ Reference the [API Reference](/api-reference) for the complete agent config shap
 
 ## Live Probes
 
-The demo scripts read their environment from `packages/demos/.env` — copy `packages/demos/.env.example` and fill in the service URLs from the deploy output plus your model/tool keys.
+Each demo script reads its environment from its own folder — copy the matching `.env.example` and fill in the service URLs from the deploy output plus your model/tool keys.
 
 ```bash
 curl "$AGENT_SERVICE_URL"
-bun run demo account.ts
-bun run demo stream.ts
-bun run demo async.ts
+cd packages/demos/account && bun index.ts
+cd packages/demos/stream && bun index.ts
+cd packages/demos/async && bun index.ts
 ```

@@ -11,13 +11,12 @@ dashboard/Convex control plane.
 
 ```text
 filthypanty/
-  filthy-panty.config.ts
   agents.ts
-  generated/
+  _generated/
+    api.ts
     ids.ts
-    client.ts
     resources.ts
-    types.ts
+    dataModel.ts
 ```
 
 Example:
@@ -25,18 +24,9 @@ Example:
 ```ts
 import {
   defineAgent,
-  defineFilthyPanty,
   defineWorkspace,
   env,
 } from "filthy-panty";
-
-export default defineFilthyPanty({
-  project: "my-app",
-  environments: {
-    dev: "development",
-    deploy: "production",
-  },
-});
 
 export const repo = defineWorkspace("repo", {
   storage: { provider: "s3" },
@@ -56,6 +46,24 @@ export const support = defineAgent("support", {
 
 Workspace references are resource objects. The compiler maps `workspaces: [repo]`
 to the runtime shape expected by the harness.
+
+Project and environment can be inferred from the folder and command, passed as
+CLI flags, read from `.env.local`, or optionally defined with
+`defineFilthyPanty(...)` in `filthypanty/filthy-panty.config.ts`.
+
+Runtime code follows the same split as Convex: import the client from the
+package and typed generated references from `filthypanty/_generated/api`.
+
+```ts
+import { FilthyPantyClient } from "filthy-panty";
+import { api } from "./filthypanty/_generated/api";
+
+const client = new FilthyPantyClient();
+
+const result = await client.run(api.agents.support, {
+  input: "hello",
+});
+```
 
 ## Commands
 

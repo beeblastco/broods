@@ -7,10 +7,11 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { watch } from "node:fs";
 import { compileProject } from "../manifest.ts";
-import { PROJECT_CONFIG_FILE, PROJECT_DIR } from "../config.ts";
+import { GENERATED_DIR, PROJECT_DIR } from "../config.ts";
 import { writeGeneratedFiles } from "../codegen.ts";
 import { diffManifests, FilthyPantySyncClient } from "../sync.ts";
 import { FilthyPantyClient } from "../client.ts";
+import { loadFilthyPantyRuntimeConfig } from "../runtime-config.ts";
 import { hasFlag, loginWithBrowser, optionValue, promptSecret, requireAuth } from "./utils.ts";
 
 const VERSION = "0.1.0";
@@ -32,6 +33,7 @@ Commands:
 
 Options:
   --dashboard-url <url> Dashboard base URL (default: ${DEFAULT_DASHBOARD_URL})
+  --project <name>      Project name override (default: package name or folder)
   --env <name>          Target environment override
   --prune               Allow deploy to delete undeclared remote resources
   --force               Allow init to overwrite starter files`;
@@ -81,10 +83,9 @@ async function main(): Promise<void> {
 async function init(args: string[]): Promise<void> {
   const force = hasFlag(args, "--force");
   const root = resolve(process.cwd(), PROJECT_DIR);
-  await mkdir(resolve(root, "generated"), { recursive: true });
-  await writeStarter(resolve(root, PROJECT_CONFIG_FILE), starterConfig(), force);
+  await mkdir(resolve(root, GENERATED_DIR), { recursive: true });
   await writeStarter(resolve(root, "agents.ts"), starterAgent(), force);
-  await writeStarter(resolve(root, ".gitignore"), "generated/*.tmp\n.cache/\n", force);
+  await writeStarter(resolve(root, ".gitignore"), "_generated/*.tmp\n.cache/\n", force);
   console.log(`Created ${PROJECT_DIR}/`);
 }
 
@@ -93,8 +94,9 @@ async function login(args: string[]): Promise<void> {
     console.log("Usage: filthy-panty login [--dashboard-url <url>]");
     return;
   }
+  const runtime = loadFilthyPantyRuntimeConfig();
   const dashboardUrl = optionValue(args, "--dashboard-url") ??
-    process.env.FILTHY_PANTY_DASHBOARD_URL ??
+    runtime.dashboardUrl ??
     DEFAULT_DASHBOARD_URL;
   const auth = await loginWithBrowser(dashboardUrl);
   console.log(`Logged in to ${auth.dashboardUrl}`);
@@ -102,6 +104,7 @@ async function login(args: string[]): Promise<void> {
 
 async function diff(args: string[]): Promise<void> {
   const { manifest, config } = await compileProject({
+    project: optionValue(args, "--project"),
     environment: optionValue(args, "--env"),
     command: "dev",
   });
@@ -113,6 +116,7 @@ async function diff(args: string[]): Promise<void> {
 
 async function deploy(args: string[]): Promise<void> {
   const { manifest, config } = await compileProject({
+    project: optionValue(args, "--project"),
     environment: optionValue(args, "--env"),
     command: "deploy",
   });
@@ -162,6 +166,7 @@ async function dev(args: string[]): Promise<void> {
 
 async function syncDev(args: string[]): Promise<void> {
   const { manifest, config } = await compileProject({
+    project: optionValue(args, "--project"),
     environment: optionValue(args, "--env"),
     command: "dev",
   });
@@ -183,6 +188,7 @@ async function envCommand(args: string[]): Promise<void> {
     throw new Error("Usage: filthy-panty env set <name>");
   }
   const { manifest, config } = await compileProject({
+    project: optionValue(args, "--project"),
     environment: optionValue(args, "--env"),
     command: "dev",
   });
@@ -195,6 +201,7 @@ async function envCommand(args: string[]): Promise<void> {
 
 async function logs(args: string[]): Promise<void> {
   const { manifest, config } = await compileProject({
+    project: optionValue(args, "--project"),
     environment: optionValue(args, "--env"),
     command: "dev",
   });
@@ -210,6 +217,7 @@ async function run(args: string[]): Promise<void> {
     throw new Error("Usage: filthy-panty run <agent> <prompt>");
   }
   const { manifest, config } = await compileProject({
+    project: optionValue(args, "--project"),
     environment: optionValue(args, "--env"),
     command: "dev",
   });
@@ -221,15 +229,17 @@ async function run(args: string[]): Promise<void> {
   const agentId = remote?.ids.agents[agentName];
   if (!agentId) throw new Error(`Agent ${agentName} is not deployed. Run filthy-panty deploy first.`);
 
-  const client = new FilthyPantyClient({
-    dashboardUrl: auth.dashboardUrl,
-    token: auth.token,
+  const client = new FilthyPantyClient({ dashboardUrl: auth.dashboardUrl, token: auth.token });
+  for await (const part of client.stream({
+    kind: "agent",
+    name: agentName,
+    id: agentId,
     project: manifest.project,
     environment: manifest.environment,
-  });
-  for await (const chunk of client.stream({ agentName: agentName, agentId: agentId, input: promptParts.join(" ") })) {
-    process.stdout.write(`${chunk}\n`);
+  }, { input: promptParts.join(" ") })) {
+    if (part.type === "text-delta") process.stdout.write(part.text);
   }
+  process.stdout.write("\n");
 }
 
 async function writeStarter(path: string, contents: string, force: boolean): Promise<void> {
@@ -239,17 +249,6 @@ async function writeStarter(path: string, contents: string, force: boolean): Pro
     if ((error as { code?: string }).code === "EEXIST") return;
     throw error;
   }
-}
-
-function starterConfig(): string {
-  return `import { defineFilthyPanty } from "filthy-panty";\n\n` +
-    `export default defineFilthyPanty({\n` +
-    `  project: "my-app",\n` +
-    `  environments: {\n` +
-    `    dev: "development",\n` +
-    `    deploy: "production",\n` +
-    `  },\n` +
-    `});\n`;
 }
 
 function starterAgent(): string {

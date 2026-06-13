@@ -18,7 +18,7 @@ export interface EnvRef<Name extends string = string> {
 }
 
 export interface FilthyPantyProjectConfig {
-  project: string;
+  project?: string;
   environments?: {
     dev?: string;
     deploy?: string;
@@ -32,7 +32,7 @@ export interface FilthyPantyConfigDefinition {
   readonly config: FilthyPantyProjectConfig;
 }
 
-export type ResourceKind = "agent" | "workspace" | "sandbox" | "cronJob";
+export type ResourceKind = "agent" | "workspace" | "sandbox" | "cronJob" | "skill" | "tool";
 
 export interface ResourceDefinition<
   Kind extends ResourceKind,
@@ -48,10 +48,59 @@ export interface ResourceDefinition<
 
 export type WorkspaceResource<Name extends string = string> = ResourceDefinition<"workspace", Name, WorkspaceConfig>;
 export type SandboxResource<Name extends string = string> = ResourceDefinition<"sandbox", Name, SandboxConfig>;
+export type SkillResource<Name extends string = string> = ResourceDefinition<"skill", Name, SkillDefinitionConfig>;
+export type ToolResource<Name extends string = string> = ResourceDefinition<"tool", Name, ToolDefinitionConfig>;
 
-export type AgentDefinitionConfig = Omit<AgentConfig, "sandbox" | "workspaces"> & {
+export interface SkillDefinitionConfig {
+  /**
+   * Folder containing SKILL.md plus optional scripts/assets. Relative paths are
+   * resolved from the `filthypanty/` project directory.
+   */
+  path: string;
+}
+
+export interface ToolDefinitionConfig {
+  /**
+   * JavaScript module file exporting the custom tool bundle. Relative paths are
+   * resolved from the `filthypanty/` project directory.
+   */
+  path: string;
+  description: string;
+  inputSchema: Record<string, unknown>;
+  defaultConfig?: Record<string, unknown>;
+}
+
+/**
+ * Per-agent workspace mount with an optional sandbox override. A bare
+ * `defineWorkspace(...)` inherits the agent-level sandbox; the object form lets
+ * a single workspace pin its own sandbox, or set `sandbox: null` to force the
+ * workspace read-only (no compute attached).
+ */
+export interface AgentWorkspaceRefInput {
+  workspace: WorkspaceResource | string;
+  sandbox?: SandboxResource | string | null;
+}
+
+export type AgentWorkspaceInput = WorkspaceResource | AgentWorkspaceRefInput;
+
+/**
+ * `subagent` block where `allowed` may reference other `defineAgent(...)`
+ * resources directly; the compiler rewrites them to agent names and the backend
+ * resolves those to deploy-time agent ids.
+ */
+export type AgentSubagentDefinitionConfig = Omit<NonNullable<AgentConfig["subagent"]>, "allowed"> & {
+  allowed?: readonly (AgentResource | string)[];
+};
+
+export type AgentSkillsDefinitionConfig = Omit<NonNullable<AgentConfig["skills"]>, "allowed"> & {
+  allowed?: readonly (SkillResource | string)[];
+};
+
+export type AgentDefinitionConfig = Omit<AgentConfig, "sandbox" | "workspaces" | "subagent" | "skills"> & {
   sandbox?: SandboxResource | string;
-  workspaces?: readonly WorkspaceResource[];
+  workspaces?: readonly AgentWorkspaceInput[];
+  subagent?: AgentSubagentDefinitionConfig;
+  skills?: AgentSkillsDefinitionConfig;
 };
 
 export type AgentResource<Name extends string = string> = ResourceDefinition<"agent", Name, AgentDefinitionConfig>;
@@ -66,7 +115,9 @@ export type AnyResource =
   | AgentResource
   | WorkspaceResource
   | SandboxResource
-  | CronJobResource;
+  | CronJobResource
+  | SkillResource
+  | ToolResource;
 
 export function defineFilthyPanty(config: FilthyPantyProjectConfig): FilthyPantyConfigDefinition {
   return { [CONFIG_MARKER]: true, config: config };
@@ -86,6 +137,22 @@ export function defineSandbox<const Name extends string>(
   options: { description?: string } = {},
 ): SandboxResource<Name> {
   return defineResource("sandbox", name, config, options);
+}
+
+export function defineSkill<const Name extends string>(
+  name: Name,
+  config: SkillDefinitionConfig,
+  options: { description?: string } = {},
+): SkillResource<Name> {
+  return defineResource("skill", name, config, options);
+}
+
+export function defineTool<const Name extends string>(
+  name: Name,
+  config: ToolDefinitionConfig,
+  options: { description?: string } = {},
+): ToolResource<Name> {
+  return defineResource("tool", name, config, options);
 }
 
 export function defineAgent<const Name extends string>(
