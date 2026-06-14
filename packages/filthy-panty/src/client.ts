@@ -1,18 +1,34 @@
 /**
  * Configurable client for running deployed agents over SSE, via either the
- * dashboard CLI API (token auth) or the harness Function URL (account secret).
+ * dashboard CLI API (token auth) or the harness Function URL.
  * Stream chunks are the Vercel AI SDK's `TextStreamPart` parts that core emits.
  */
 
-import type { TextStreamPart, ToolSet } from "ai";
+import type { ModelMessage, TextStreamPart, ToolSet } from "ai";
 import { FilthyPantySyncClient } from "./sync.ts";
 import { loadFilthyPantyRuntimeConfig } from "./runtime-config.ts";
 
-export interface AgentRunInput {
-  input: string;
+/**
+ * Input for a single agent run. The core direct API is event-based (a list of
+ * Vercel AI SDK model messages), so `events` is the full-fidelity form — use it
+ * for multimodal content (images/files), ephemeral system messages, or
+ * tool-approval responses. `input` is a shorthand for a single user text message
+ * and is wrapped into one user event. Provide exactly one of the two.
+ */
+type AgentRunInputBase = {
   conversationKey?: string;
   eventId?: string;
-}
+};
+
+export type AgentRunInput = AgentRunInputBase & ({
+  /** Shorthand for a single user text message. */
+  input: string;
+  events?: never;
+} | {
+  /** Full-fidelity event list for multimodal content or tool responses. */
+  events: [ModelMessage, ...ModelMessage[]];
+  input?: never;
+});
 
 export interface AgentRunResult {
   text: string;
@@ -43,6 +59,8 @@ export interface FilthyPantyClientOptions {
   environment?: string;
   agentServiceUrl?: string;
   accountSecret?: string;
+  serviceAuthSecret?: string;
+  accountId?: string;
   fetch?: typeof fetch;
 }
 
@@ -59,6 +77,8 @@ export class FilthyPantyClient {
   private readonly environment?: string;
   private readonly agentServiceUrl?: string;
   private readonly accountSecret?: string;
+  private readonly serviceAuthSecret?: string;
+  private readonly accountId?: string;
   private readonly fetchImpl: typeof fetch;
 
   constructor(options: FilthyPantyClientOptions = {}) {
@@ -67,8 +87,19 @@ export class FilthyPantyClient {
     this.token = options.token ?? runtime.token;
     this.project = options.project ?? runtime.project;
     this.environment = options.environment ?? runtime.environment;
-    this.agentServiceUrl = options.agentServiceUrl ?? process.env.AGENT_SERVICE_URL;
-    this.accountSecret = options.accountSecret ?? process.env.ACCOUNT_SECRET;
+    this.agentServiceUrl = options.agentServiceUrl ??
+      process.env.FILTHY_PANTY_AGENT_SERVICE_URL ??
+      process.env.FILTHY_PANTY_HARNESS_URL ??
+      process.env.AGENT_SERVICE_URL;
+    this.accountSecret = options.accountSecret ??
+      process.env.FILTHY_PANTY_ACCOUNT_SECRET ??
+      process.env.ACCOUNT_SECRET;
+    this.serviceAuthSecret = options.serviceAuthSecret ??
+      process.env.FILTHY_PANTY_SERVICE_AUTH_SECRET ??
+      process.env.SERVICE_AUTH_SECRET;
+    this.accountId = options.accountId ??
+      process.env.FILTHY_PANTY_ACCOUNT_ID ??
+      process.env.ACCOUNT_ID;
     this.fetchImpl = options.fetch ?? fetch;
   }
 
@@ -139,7 +170,7 @@ export class FilthyPantyClient {
       agentId: input.agentId,
       eventId: input.eventId ?? `cli-${Date.now()}`,
       conversationKey: input.conversationKey ?? "cli",
-      events: [{ role: "user", content: [{ type: "text", text: input.input }] }],
+      events: resolveRunEvents(input),
     };
 
     const response = await this.openStream(input.agentName, body, input.project, input.environment);
@@ -161,18 +192,6 @@ export class FilthyPantyClient {
     project?: string,
     environment?: string,
   ): Promise<Response> {
-    const resolvedProject = project ?? this.project;
-    const resolvedEnvironment = environment ?? this.environment;
-    if (this.dashboardUrl && this.token && resolvedProject && resolvedEnvironment && agentName) {
-      const sync = new FilthyPantySyncClient({
-        dashboardUrl: this.dashboardUrl,
-        token: this.token,
-        fetch: this.fetchImpl,
-      });
-
-      return await sync.run(resolvedProject, resolvedEnvironment, agentName, body);
-    }
-
     if (this.agentServiceUrl && this.accountSecret) {
       return await this.fetchImpl(this.agentServiceUrl, {
         method: "POST",
@@ -185,10 +204,53 @@ export class FilthyPantyClient {
       });
     }
 
+    if (this.agentServiceUrl && this.serviceAuthSecret && this.accountId) {
+      return await this.fetchImpl(this.agentServiceUrl, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Accept": "text/event-stream",
+          "Authorization": `Bearer ${this.serviceAuthSecret}`,
+          "X-Account-Id": this.accountId,
+        },
+        body: JSON.stringify(body),
+      });
+    }
+
+    const resolvedProject = project ?? this.project;
+    const resolvedEnvironment = environment ?? this.environment;
+    if (this.dashboardUrl && this.token && resolvedProject && resolvedEnvironment && agentName) {
+      const sync = new FilthyPantySyncClient({
+        dashboardUrl: this.dashboardUrl,
+        token: this.token,
+        fetch: this.fetchImpl,
+      });
+
+      return await sync.run(resolvedProject, resolvedEnvironment, agentName, body);
+    }
+
     throw new Error(
-      "FilthyPantyClient requires either dashboardUrl/token/project/environment or agentServiceUrl/accountSecret",
+      "FilthyPantyClient requires dashboardUrl/token/project/environment, agentServiceUrl/accountSecret, or agentServiceUrl/serviceAuthSecret/accountId",
     );
   }
+}
+
+/**
+ * Resolves a run's events from either the explicit `events` list or the `input`
+ * string shorthand, matching the core direct API's event contract. Throws when
+ * neither is provided so a missing prompt fails fast instead of sending an empty
+ * request the server rejects.
+ */
+function resolveRunEvents(input: AgentRunInput): ModelMessage[] {
+  if (input.events && input.input !== undefined) {
+    throw new Error("AgentRunInput accepts either `input` or `events`, not both");
+  }
+  if (input.events && input.events.length > 0) return input.events;
+  if (typeof input.input === "string") {
+    return [{ role: "user", content: [{ type: "text", text: input.input }] }];
+  }
+
+  throw new Error("AgentRunInput requires `input` (string) or a non-empty `events` array");
 }
 
 /** Yield the payload of each `data:` line from an SSE response body. */

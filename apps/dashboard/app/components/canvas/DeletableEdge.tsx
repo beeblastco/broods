@@ -1,6 +1,8 @@
 "use client";
 
 import { EdgeDeleteButton } from "@/app/components/canvas/EdgeDeleteButton";
+import { LockedEdgeBadge } from "@/app/components/canvas/LockedEdgeBadge";
+import { isCodeManagedEdgeId } from "@/app/components/canvas/edgeOwnership";
 import { useEdgeFanOffset } from "@/app/components/canvas/useEdgeFanOffset";
 import {
   BaseEdge,
@@ -37,12 +39,22 @@ export function DeletableEdge({
   const { theme } = useTheme();
   const isDark = theme === "dark";
 
-  // Endpoint types as a single primitive so the selector stays referentially stable.
-  const endpointTypes = useStore(
-    (s) =>
-      `${s.nodeLookup.get(source)?.type ?? ""}>${s.nodeLookup.get(target)?.type ?? ""}`,
-  );
-  const [sourceType, targetType] = endpointTypes.split(">");
+  // Endpoint info as a single primitive so the selector stays referentially stable.
+  const endpointInfo = useStore((s) => {
+    const sourceNode = s.nodeLookup.get(source);
+    const targetNode = s.nodeLookup.get(target);
+    const sourceData = sourceNode?.data as { managedBy?: string } | undefined;
+    const targetData = targetNode?.data as { managedBy?: string } | undefined;
+
+    return [
+      sourceNode?.type ?? "",
+      sourceData?.managedBy ?? "",
+      targetNode?.type ?? "",
+      targetData?.managedBy ?? "",
+    ].join(">");
+  });
+  const [sourceType, sourceManagedBy, targetType, targetManagedBy] =
+    endpointInfo.split(">");
   const isDefaultSandbox =
     (sourceType === "agent" && targetType === "sandbox") ||
     (sourceType === "sandbox" && targetType === "agent");
@@ -68,10 +80,14 @@ export function DeletableEdge({
     borderRadius: 16,
   });
 
-  const edgeStyle = hovered
+  // Code-managed edges can't be deleted here: no red delete-hover, no trash.
+  const locked =
+    isCodeManagedEdgeId(id) ||
+    (sourceManagedBy === "cli" && targetManagedBy === "cli");
+  const edgeStyle = hovered && !locked
     ? { ...style, stroke: HOVER_COLOR, strokeWidth: 2 }
     : style;
-  const arrowColor = hovered
+  const arrowColor = hovered && !locked
     ? HOVER_COLOR
     : isDark
       ? "rgba(255,255,255,0.35)"
@@ -118,12 +134,20 @@ export function DeletableEdge({
           </div>
         )}
 
-        <EdgeDeleteButton
-          edgeId={id}
-          labelX={labelX}
-          labelY={labelY}
-          onHoverChange={setHovered}
-        />
+        {locked ? (
+          <LockedEdgeBadge
+            labelX={labelX}
+            labelY={labelY}
+            onHoverChange={setHovered}
+          />
+        ) : (
+          <EdgeDeleteButton
+            edgeId={id}
+            labelX={labelX}
+            labelY={labelY}
+            onHoverChange={setHovered}
+          />
+        )}
       </EdgeLabelRenderer>
     </>
   );

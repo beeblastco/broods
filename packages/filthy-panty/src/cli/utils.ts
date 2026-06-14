@@ -40,6 +40,21 @@ export async function promptSecret(label: string): Promise<string> {
   }
 }
 
+/**
+ * Asks a yes/no question on the terminal, defaulting to no. Returns false when
+ * stdin is not a TTY (e.g. CI) so non-interactive runs never block on a prompt.
+ */
+export async function promptConfirm(question: string): Promise<boolean> {
+  if (!input.isTTY) return false;
+  const rl = createInterface({ input, output });
+  try {
+    const answer = (await rl.question(`${question} [y/N] `)).trim().toLowerCase();
+    return answer === "y" || answer === "yes";
+  } finally {
+    rl.close();
+  }
+}
+
 export async function loginWithBrowser(dashboardUrl: string): Promise<StoredAuthConfig> {
   const state = crypto.randomUUID();
   const { code, close } = await waitForCallback(state);

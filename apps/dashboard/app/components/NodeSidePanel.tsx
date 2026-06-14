@@ -585,7 +585,53 @@ export const NodeSidePanel = memo(function NodeSidePanel({
     }
   }
 
+  // Resource owned by a filthypanty/ project. Agents read the authoritative
+  // `managedBy` from their config row; workspaces/sandboxes read it from the live
+  // `resourceOwnership` query keyed by the row `_id` (the node's `resourceId`),
+  // not the cached `managedBy` on canvas node data which can be stale or missing.
+  // Falls back to the cached value while the query loads. Code-managed resources
+  // stay editable but cannot be deleted here.
+  const resourceId = nodeData?.resourceId as string | undefined;
+  const resourceOwnership = useQuery(
+    api.canvas.resourceOwnership,
+    (isWorkspace || isSandbox) && projectId && environmentId
+      ? { projectId: projectId, environmentId: environmentId }
+      : "skip",
+  );
+  const isCliManaged = isAgent
+    ? agentConfig?.managedBy === "cli"
+    : resourceId && resourceOwnership
+      ? resourceOwnership[resourceId] === "cli"
+      : (nodeData as { managedBy?: string } | undefined)?.managedBy === "cli";
+  const isOwnershipLoading =
+    (isAgent && !!agentConfigId && agentConfig === undefined) ||
+    ((isWorkspace || isSandbox) &&
+      !!resourceId &&
+      resourceOwnership === undefined);
+
+  // Warn when a dashboard-owned node is named the same as a code-managed resource
+  // of the same kind: the next `filthy-panty deploy` resolves by (environment,
+  // name) and would adopt + overwrite this resource with the code definition.
+  const cliManagedNames = useQuery(
+    api.canvas.cliManagedResourceNames,
+    (isAgent || isWorkspace || isSandbox) && projectId && environmentId
+      ? { projectId: projectId, environmentId: environmentId }
+      : "skip",
+  );
+  const currentResourceName = isAgent
+    ? agentConfig?.name
+    : (nodeData?.mountName ?? nodeData?.label);
+  const collidesWithCode =
+    !isCliManaged &&
+    !!currentResourceName &&
+    !!cliManagedNames &&
+    (isAgent || isWorkspace || isSandbox) &&
+    cliManagedNames[nodeType as "agent" | "workspace" | "sandbox"].includes(
+      currentResourceName,
+    );
+
   async function handleDelete() {
+    if (isCliManaged || isOwnershipLoading) return;
     if (isAgent && agentConfigId) {
       await removeConfig({ configId: agentConfigId });
     }
@@ -779,6 +825,23 @@ export const NodeSidePanel = memo(function NodeSidePanel({
       </div>
 
       <Separator />
+
+      {isCliManaged && (
+        <div className="border-b border-amber-500/30 bg-amber-500/10 px-4 py-2.5">
+          <p className="text-sm text-amber-600 dark:text-amber-400">
+            Managed by filthypanty packages, edits sync on deploy, delete is locked.
+          </p>
+        </div>
+      )}
+
+      {collidesWithCode && (
+        <div className="border-b border-amber-500/30 bg-amber-500/10 px-4 py-2.5">
+          <p className="text-sm text-amber-600 dark:text-amber-400">
+            Name matches a code-managed {nodeType}, next deploy overwrites this.
+            Rename to keep it.
+          </p>
+        </div>
+      )}
 
       {nodeData && (
         <Tabs
@@ -1023,6 +1086,8 @@ export const NodeSidePanel = memo(function NodeSidePanel({
               nodeName={resolvedName}
               openDeleteDialogToken={deleteRequestToken}
               onDelete={handleDelete}
+              managedByCode={isCliManaged}
+              deleteLocked={isCliManaged || isOwnershipLoading}
             />
           </TabsContent>
         </Tabs>

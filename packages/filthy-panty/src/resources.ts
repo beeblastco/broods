@@ -96,12 +96,22 @@ export type AgentSkillsDefinitionConfig = Omit<NonNullable<AgentConfig["skills"]
   allowed?: readonly (SkillResource | string)[];
 };
 
-export type AgentDefinitionConfig = Omit<AgentConfig, "sandbox" | "workspaces" | "subagent" | "skills"> & {
-  sandbox?: SandboxResource | string;
-  workspaces?: readonly AgentWorkspaceInput[];
-  subagent?: AgentSubagentDefinitionConfig;
-  skills?: AgentSkillsDefinitionConfig;
-};
+/**
+ * Code-first agent config surface. Built from an explicit `Pick` of `AgentConfig`
+ * (not `Omit`) so the SDK input type does NOT inherit `AgentConfig`'s
+ * `[key: string]: unknown` index signature — which would otherwise disable
+ * TypeScript's excess-property checks and silently accept typos like
+ * `workspace:` instead of `workspaces:`. Add a key here when core's `AgentConfig`
+ * gains a new top-level field that should be code-definable.
+ */
+export type AgentDefinitionConfig =
+  & Pick<AgentConfig, "agent" | "model" | "provider" | "session" | "hooks" | "channels" | "tools">
+  & {
+    sandbox?: SandboxResource | string;
+    workspaces?: readonly AgentWorkspaceInput[];
+    subagent?: AgentSubagentDefinitionConfig;
+    skills?: AgentSkillsDefinitionConfig;
+  };
 
 export type AgentResource<Name extends string = string> = ResourceDefinition<"agent", Name, AgentDefinitionConfig>;
 

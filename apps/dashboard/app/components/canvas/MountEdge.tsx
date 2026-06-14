@@ -1,11 +1,14 @@
 "use client";
 
 import { EdgeDeleteButton } from "@/app/components/canvas/EdgeDeleteButton";
+import { LockedEdgeBadge } from "@/app/components/canvas/LockedEdgeBadge";
+import { isCodeManagedEdgeId } from "@/app/components/canvas/edgeOwnership";
 import { useEdgeFanOffset } from "@/app/components/canvas/useEdgeFanOffset";
 import {
   BaseEdge,
   EdgeLabelRenderer,
   getSmoothStepPath,
+  useStore,
   type EdgeProps,
 } from "@xyflow/react";
 import { useState } from "react";
@@ -33,6 +36,17 @@ export function MountEdge({
   style,
 }: EdgeProps) {
   const [hovered, setHovered] = useState(false);
+  const endpointOwnership = useStore((s) => {
+    const sourceData = s.nodeLookup.get(source)?.data as
+      | { managedBy?: string }
+      | undefined;
+    const targetData = s.nodeLookup.get(target)?.data as
+      | { managedBy?: string }
+      | undefined;
+
+    return `${sourceData?.managedBy ?? ""}>${targetData?.managedBy ?? ""}`;
+  });
+  const [sourceManagedBy, targetManagedBy] = endpointOwnership.split(">");
 
   // Fan parallel mounts apart so their trunks don't stack (flow is horizontal → offset Y).
   const [sourceFan, targetFan] = useEdgeFanOffset(
@@ -54,7 +68,12 @@ export function MountEdge({
     borderRadius: 16,
   });
 
-  const stroke = hovered ? MOUNT_COLOR_HOVER : MOUNT_COLOR;
+  // Code-managed edges can't be deleted here, so they never show the red
+  // delete-hover or the trash button — only a passive lock affordance.
+  const locked =
+    isCodeManagedEdgeId(id) ||
+    (sourceManagedBy === "cli" && targetManagedBy === "cli");
+  const stroke = hovered && !locked ? MOUNT_COLOR_HOVER : MOUNT_COLOR;
   const arrowId = `${ARROW_ID_PREFIX}-${id}`;
 
   return (
@@ -91,12 +110,20 @@ export function MountEdge({
       />
 
       <EdgeLabelRenderer>
-        <EdgeDeleteButton
-          edgeId={id}
-          labelX={labelX}
-          labelY={labelY}
-          onHoverChange={setHovered}
-        />
+        {locked ? (
+          <LockedEdgeBadge
+            labelX={labelX}
+            labelY={labelY}
+            onHoverChange={setHovered}
+          />
+        ) : (
+          <EdgeDeleteButton
+            edgeId={id}
+            labelX={labelX}
+            labelY={labelY}
+            onHoverChange={setHovered}
+          />
+        )}
       </EdgeLabelRenderer>
     </>
   );

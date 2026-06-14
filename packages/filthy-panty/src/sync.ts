@@ -116,12 +116,29 @@ export function diffManifests(local: CliManifest, remote: CliManifest | null): D
 }
 
 function snapshotResource(resource: { kind: string; config: unknown } & Record<string, unknown>): unknown {
-  if (resource.kind !== "skill" && resource.kind !== "tool") return resource;
+  const normalized = normalizeEnvRefs(resource) as typeof resource;
+  if (resource.kind !== "skill" && resource.kind !== "tool") return normalized;
 
   return {
-    ...resource,
-    config: stripArtifactContent(resource.config),
+    ...normalized,
+    config: stripArtifactContent(normalized.config),
   };
+}
+
+function normalizeEnvRefs(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(normalizeEnvRefs);
+  if (value && typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    if (record.__beeblastEnv === true && typeof record.name === "string") {
+      return `\${${record.name}}`;
+    }
+
+    return Object.fromEntries(
+      Object.entries(record).map(([key, entry]) => [key, normalizeEnvRefs(entry)]),
+    );
+  }
+
+  return value;
 }
 
 function stripArtifactContent(value: unknown): unknown {

@@ -3,6 +3,7 @@
 /** Main canvas component that renders nodes and edges from the database. */
 import { CanvasControls } from "@/app/components/canvas/CanvasControl";
 import { DeletableEdge } from "@/app/components/canvas/DeletableEdge";
+import { isCodeManagedEdgeId } from "@/app/components/canvas/edgeOwnership";
 import { MountEdge } from "@/app/components/canvas/MountEdge";
 import { SubagentEdge } from "@/app/components/canvas/SubagentEdge";
 import { EmptyCanvasGuide } from "@/app/components/canvas/EmptyCanvasGuide";
@@ -119,51 +120,102 @@ const FIT_VIEW_OPTIONS = { maxZoom: 1.5, padding: 1 } as const;
 const PRO_OPTIONS = { hideAttribution: true } as const;
 type FlowPosition = { x: number; y: number };
 
+function hydrateEncodedHandleEdge(
+  edge: Edge,
+  prefix: "mount:" | "subagent:",
+  type: "mount" | "subagent",
+): Edge {
+  if (!edge.id.startsWith(prefix)) return edge;
+  const payload = edge.id.slice(prefix.length);
+  const parts = payload.split("-");
+  // parts: [source, sourceHandle, target, targetHandle] — works for numeric
+  // dashboard node ids that contain no hyphens.
+  if (parts.length === 4) {
+    const [source, sourceHandle, target, targetHandle] = parts;
+
+    return {
+      ...edge,
+      source: source,
+      sourceHandle: sourceHandle,
+      target: target,
+      targetHandle: targetHandle,
+      type: type,
+      animated: false,
+    };
+  }
+
+  // CLI-synced node ids contain hyphens (e.g. `cli-agent-foo`), so the split
+  // above is ambiguous. The persisted edge still carries source/target, so peel
+  // off the two handle tokens that wrap the target id in the payload.
+  const { source, target } = edge;
+  if (source && target && payload.startsWith(`${source}-`)) {
+    const rest = payload.slice(source.length + 1);
+    const marker = `-${target}-`;
+    const markerIndex = rest.indexOf(marker);
+    if (markerIndex > -1) {
+      return {
+        ...edge,
+        source: source,
+        sourceHandle: rest.slice(0, markerIndex),
+        target: target,
+        targetHandle: rest.slice(markerIndex + marker.length),
+        type: type,
+        animated: false,
+      };
+    }
+  }
+
+  return edge;
+}
+
 /**
  * Reconstruct mount edge properties from the encoded ID.
  * Format: "mount:{source}-{sourceHandle}-{target}-{targetHandle}"
- * Node IDs are numeric strings so splitting on "-" is safe.
  */
 function hydrateMountEdge(edge: Edge): Edge {
-  if (!edge.id.startsWith("mount:")) return edge;
-  const payload = edge.id.slice("mount:".length);
-  const parts = payload.split("-");
-  // parts: [source, sourceHandle, target, targetHandle]
-  if (parts.length !== 4) return edge;
-  const [source, sourceHandle, target, targetHandle] = parts;
-
-  return {
-    ...edge,
-    source: source,
-    sourceHandle: sourceHandle,
-    target: target,
-    targetHandle: targetHandle,
-    type: "mount",
-    animated: false,
-  };
+  return hydrateEncodedHandleEdge(edge, "mount:", "mount");
 }
 
 /**
  * Reconstruct subagent edge properties from the encoded ID.
  * Format: "subagent:{source}-{sourceHandle}-{target}-{targetHandle}"
- * Node IDs are numeric strings so splitting on "-" is safe.
  */
 function hydrateSubagentEdge(edge: Edge): Edge {
-  if (!edge.id.startsWith("subagent:")) return edge;
-  const parts = edge.id.slice("subagent:".length).split("-");
-  // parts: [source, sourceHandle, target, targetHandle]
-  if (parts.length !== 4) return edge;
-  const [source, sourceHandle, target, targetHandle] = parts;
+  return hydrateEncodedHandleEdge(edge, "subagent:", "subagent");
+}
 
-  return {
-    ...edge,
-    source: source,
-    sourceHandle: sourceHandle,
-    target: target,
-    targetHandle: targetHandle,
-    type: "subagent",
-    animated: false,
-  };
+/** Mark code-managed edges non-deletable; pass dashboard-owned edges through. */
+function lockCodeManagedEdge(edge: Edge, nodesById: Map<string, Node>): Edge {
+  const sourceManagedBy = (nodesById.get(edge.source)?.data as
+    | { managedBy?: string }
+    | undefined)?.managedBy;
+  const targetManagedBy = (nodesById.get(edge.target)?.data as
+    | { managedBy?: string }
+    | undefined)?.managedBy;
+  if (
+    !isCodeManagedEdgeId(edge.id) &&
+    !(sourceManagedBy === "cli" && targetManagedBy === "cli")
+  ) {
+    return edge;
+  }
+
+  return { ...edge, deletable: false, reconnectable: false };
+}
+
+/**
+ * Drop nodes that repeat an id. Two nodes sharing an id make ReactFlow apply a
+ * drag to both at once (they "move together"); this can happen after a layout
+ * carries stale duplicates. Keeps the first occurrence.
+ */
+function dedupeNodes(nodes: Node[]): Node[] {
+  const seen = new Set<string>();
+
+  return nodes.filter((node) => {
+    if (seen.has(node.id)) return false;
+    seen.add(node.id);
+
+    return true;
+  });
 }
 
 /** Deterministic edge id matching its endpoints. */
@@ -497,13 +549,16 @@ function CanvasInner({ projectId }: { projectId: Id<"projects"> }) {
         canvasLayout.edges as Edge[],
       );
       if (incoming !== layoutSignature(nodesRef.current, edgesRef.current)) {
-        setNodes(canvasLayout.nodes as Node[]);
+        const nextNodes = dedupeNodes(canvasLayout.nodes as Node[]);
+        const nodesById = new Map(nextNodes.map((node) => [node.id, node]));
+        setNodes(nextNodes);
         setEdges(
           dedupeEdges(
             (canvasLayout.edges as Edge[])
               .map(unredirectEdge)
               .map(hydrateMountEdge)
-              .map(hydrateSubagentEdge),
+              .map(hydrateSubagentEdge)
+              .map((edge) => lockCodeManagedEdge(edge, nodesById)),
           ),
         );
         const maxId = canvasLayout.nodes.reduce(

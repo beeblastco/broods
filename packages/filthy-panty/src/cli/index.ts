@@ -7,13 +7,15 @@ import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { basename, join, relative, resolve } from "node:path";
 import { watch } from "node:fs";
+import { spawn } from "node:child_process";
+import { tmpdir } from "node:os";
 import { compileProject } from "../manifest.ts";
 import { GENERATED_DIR, PROJECT_DIR } from "../config.ts";
 import { writeGeneratedFiles } from "../codegen.ts";
-import { diffManifests, FilthyPantySyncClient } from "../sync.ts";
+import { diffManifests, FilthyPantySyncClient, type RemoteManifestResponse } from "../sync.ts";
 import { FilthyPantyClient } from "../client.ts";
 import { loadFilthyPantyRuntimeConfig } from "../runtime-config.ts";
-import { hasFlag, loginWithBrowser, optionValue, promptSecret, requireAuth } from "./utils.ts";
+import { hasFlag, loginWithBrowser, optionValue, promptConfirm, promptSecret, requireAuth } from "./utils.ts";
 
 const VERSION = "0.1.0";
 const DEFAULT_DASHBOARD_URL = "https://dashboard.beeblast.co";
@@ -25,7 +27,8 @@ Usage: filthy-panty <command>
 Commands:
   init                 Create a filthypanty/ project shell
   login                Authenticate with WorkOS through the dashboard
-  dev                  Watch resources and sync non-destructive changes
+  dev                  Watch resources and sync the dev environment (confirms before deleting)
+  dev --once           Sync the dev environment a single time and exit (no watch)
   diff                 Show local desired state vs remote state
   deploy               Sync resources once (--prune deletes undeclared remote resources)
   env set <name>       Store an encrypted environment variable
@@ -142,12 +145,26 @@ async function deploy(args: string[]): Promise<void> {
   const auth = await requireAuth(optionValue(args, "--dashboard-url") ?? config.dashboardUrl);
   const client = new FilthyPantySyncClient({ dashboardUrl: auth.dashboardUrl, token: auth.token });
   const result = await client.putManifest(manifest, hasFlag(args, "--prune"));
-  await writeGeneratedFiles(result.manifest, result.ids, process.cwd(), resourceAliases);
+  await writeGeneratedFiles(manifest, result.ids, process.cwd(), resourceAliases);
   console.log(`Synced ${result.manifest.resources.length} resources to ${manifest.project}/${manifest.environment}`);
 }
 
 async function dev(args: string[]): Promise<void> {
-  await syncDev(args);
+  if (hasFlag(args, "--once")) {
+    const result = await syncDev(args);
+    console.log(`Synced ${result.manifest.resources.length} resources to ${result.manifest.project}/${result.manifest.environment}`);
+    return;
+  }
+
+  // Each sync runs in a FRESH child process (`dev --once`). Bun does not bust the
+  // dynamic-import cache via query strings, so an in-process watch would keep
+  // recompiling the file content captured at startup and never see edits. The
+  // child shares a declined-deletes file so a removed resource is not re-prompted
+  // on every later save.
+  const declinedFile = join(tmpdir(), `filthy-panty-declined-${process.pid}.txt`);
+  const childEnv = { ...process.env, FILTHY_PANTY_DECLINED_FILE: declinedFile };
+
+  await runSyncChild(args, childEnv);
   console.log(`Watching ${PROJECT_DIR}/`);
 
   let timer: NodeJS.Timeout | undefined;
@@ -165,7 +182,7 @@ async function dev(args: string[]): Promise<void> {
       .then(async (signature) => {
         if (signature === lastSourceSignature) return;
         lastSourceSignature = signature;
-        await syncDev(args);
+        await runSyncChild(args, childEnv);
       })
       .catch((error) => console.error(error instanceof Error ? error.message : String(error)))
       .finally(() => {
@@ -189,7 +206,40 @@ async function dev(args: string[]): Promise<void> {
   });
 }
 
-async function syncDev(args: string[]): Promise<void> {
+/**
+ * Runs one `dev --once` sync in a fresh child process with inherited stdio, so
+ * each compile starts from an empty module cache (see {@link dev}) and any delete
+ * confirmation prompt still reaches the terminal.
+ */
+function runSyncChild(args: string[], env: NodeJS.ProcessEnv): Promise<void> {
+  return new Promise((resolvePromise, reject) => {
+    const entryPoint = process.argv[1] ?? "";
+    const child = spawn(process.execPath, [entryPoint, "dev", "--once", ...args], {
+      stdio: "inherit",
+      env: env,
+    });
+    child.on("error", reject);
+    child.on("exit", (code, signal) => {
+      if (code === 0) {
+        resolvePromise();
+        return;
+      }
+      reject(new Error(signal
+        ? `Sync child exited from signal ${signal}`
+        : `Sync child exited with code ${code ?? "unknown"}`));
+    });
+  });
+}
+
+/**
+ * Syncs the dev environment once. Creates/updates are pushed first so they apply
+ * immediately; deletions (resources removed from code) are then confirmed
+ * interactively before pruning, so an edit-in-progress never silently destroys
+ * an agent's history or a workspace's files — and a slow answer never blocks the
+ * non-destructive sync. Declined deletes are remembered (across watch child
+ * processes via `FILTHY_PANTY_DECLINED_FILE`) so they are not re-prompted.
+ */
+async function syncDev(args: string[]): Promise<RemoteManifestResponse> {
   const { manifest, config, resourceAliases } = await compileProject({
     project: optionValue(args, "--project"),
     environment: optionValue(args, "--env"),
@@ -200,12 +250,60 @@ async function syncDev(args: string[]): Promise<void> {
   const remote = await client.getManifest(manifest.project, manifest.environment);
   const diff = diffManifests(manifest, remote?.manifest ?? null);
   printDiff(diff.filter((entry) => entry.operation !== "delete"));
-  const result = await client.putManifest(manifest, false);
-  await writeGeneratedFiles(result.manifest, result.ids, process.cwd(), resourceAliases);
+
+  // Push creates/updates (and canvas wiring) immediately, undeleted.
+  let result = await client.putManifest(manifest, false);
+  await writeGeneratedFiles(manifest, result.ids, process.cwd(), resourceAliases);
+
+  const declined = await loadDeclinedDeletes();
   const deletes = diff.filter((entry) => entry.operation === "delete");
-  if (deletes.length > 0) {
-    console.log(`${deletes.length} remote resources are undeclared locally; run deploy --prune to remove them.`);
+  const undecided = deletes.filter((entry) => !declined.has(`${entry.kind}:${entry.name}`));
+  let pruned = false;
+  if (undecided.length > 0) {
+    console.log("These remote resources are no longer declared locally:");
+    for (const entry of undecided) console.log(`  delete ${entry.kind}:${entry.name}`);
+    if (await promptConfirm(`Delete ${undecided.length} resource(s) from ${manifest.project}/${manifest.environment}?`)) {
+      result = await client.putManifest(manifest, true);
+      await writeGeneratedFiles(manifest, result.ids, process.cwd(), resourceAliases);
+      await clearDeclinedDeletes();
+      pruned = true;
+    } else {
+      await rememberDeclinedDeletes(undecided.map((entry) => `${entry.kind}:${entry.name}`));
+    }
   }
+
+  // Persistent reminder: kept-but-undeclared resources are easy to forget once
+  // the prompt stops re-asking, so re-surface them (non-blocking) every sync
+  // until they are re-declared in code or pruned.
+  if (!pruned && deletes.length > 0) {
+    const names = deletes.map((entry) => `${entry.kind}:${entry.name}`).join(", ");
+    console.log(`⚠ ${deletes.length} undeclared resource(s) kept remotely: ${names} — re-declare in code or run \`deploy --prune\` to remove.`);
+  }
+
+  return result;
+}
+
+/** Reads the delete keys already declined this watch session, if any. */
+async function loadDeclinedDeletes(): Promise<Set<string>> {
+  const path = process.env.FILTHY_PANTY_DECLINED_FILE;
+  if (!path) return new Set();
+  const text = await readTextIfExists(path);
+
+  return new Set(text.split(/\r?\n/).map((line) => line.trim()).filter(Boolean));
+}
+
+/** Appends declined delete keys so later watch syncs do not re-prompt for them. */
+async function rememberDeclinedDeletes(keys: string[]): Promise<void> {
+  const path = process.env.FILTHY_PANTY_DECLINED_FILE;
+  if (!path || keys.length === 0) return;
+  await writeFile(path, `${keys.join("\n")}\n`, { flag: "a" });
+}
+
+/** Resets declined deletes after a prune so re-added-then-removed resources prompt again. */
+async function clearDeclinedDeletes(): Promise<void> {
+  const path = process.env.FILTHY_PANTY_DECLINED_FILE;
+  if (!path) return;
+  await writeFile(path, "", "utf8");
 }
 
 async function envCommand(args: string[]): Promise<void> {

@@ -15,11 +15,46 @@ export async function writeGeneratedFiles(
   aliases: ResourceAliases = {},
 ): Promise<void> {
   const dir = resolve(cwd, PROJECT_DIR, GENERATED_DIR);
+  const scopedIds = idsForManifest(ids, manifest);
   await mkdir(dir, { recursive: true });
-  await writeFile(resolve(dir, "ids.ts"), idsFile(ids), "utf8");
-  await writeFile(resolve(dir, "api.ts"), apiFile(manifest, ids, aliases), "utf8");
+  await writeFile(resolve(dir, "ids.ts"), idsFile(scopedIds), "utf8");
+  await writeFile(resolve(dir, "api.ts"), apiFile(manifest, scopedIds, aliases), "utf8");
   await writeFile(resolve(dir, "resources.ts"), resourcesFile(manifest), "utf8");
   await writeFile(resolve(dir, "dataModel.ts"), dataModelFile(), "utf8");
+}
+
+function idsForManifest(ids: GeneratedIds, manifest: CliManifest): GeneratedIds {
+  const namesByKind = {
+    agents: namesForKind(manifest, "agent"),
+    workspaces: namesForKind(manifest, "workspace"),
+    sandboxes: namesForKind(manifest, "sandbox"),
+    cronJobs: namesForKind(manifest, "cronJob"),
+    skills: namesForKind(manifest, "skill"),
+    tools: namesForKind(manifest, "tool"),
+  };
+
+  return {
+    agents: pickIds(ids.agents, namesByKind.agents),
+    workspaces: pickIds(ids.workspaces, namesByKind.workspaces),
+    sandboxes: pickIds(ids.sandboxes, namesByKind.sandboxes),
+    cronJobs: pickIds(ids.cronJobs, namesByKind.cronJobs),
+    skills: pickIds(ids.skills, namesByKind.skills),
+    tools: pickIds(ids.tools, namesByKind.tools),
+  };
+}
+
+function namesForKind(manifest: CliManifest, kind: string): Set<string> {
+  return new Set(
+    manifest.resources
+      .filter((resource) => resource.kind === kind)
+      .map((resource) => resource.name),
+  );
+}
+
+function pickIds(values: Record<string, string>, names: Set<string>): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(values).filter(([name]) => names.has(name)),
+  );
 }
 
 function idsFile(ids: GeneratedIds): string {

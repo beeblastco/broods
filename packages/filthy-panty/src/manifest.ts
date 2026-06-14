@@ -55,6 +55,7 @@ export async function compileProject(options: CompileOptions = {}): Promise<Comp
     .map((entry): ExportedResource => ({ exportName: entry.exportName, resource: entry.value }));
   const resources = resourceExports.map((entry) => entry.resource);
   assertUniqueResources(resources);
+  for (const resource of resources) assertKnownConfigKeys(resource);
   const resourceAliases = aliasesForResources(resourceExports);
   const environment = resolveEnvironment(
     config,
@@ -140,6 +141,59 @@ async function findConfig(
     ...configValue,
     project: project,
   };
+}
+
+/**
+ * Top-level agent config keys the code-first surface accepts. Mirrors
+ * `AgentDefinitionConfig` in resources.ts; keep both in sync when core gains a
+ * new agent field.
+ */
+const KNOWN_AGENT_CONFIG_KEYS = new Set([
+  "agent",
+  "model",
+  "provider",
+  "session",
+  "hooks",
+  "channels",
+  "tools",
+  "sandbox",
+  "workspaces",
+  "subagent",
+  "skills",
+]);
+
+/** Common typos mapped to the key the author almost certainly meant. */
+const AGENT_KEY_SUGGESTIONS: Record<string, string> = {
+  workspace: "workspaces",
+  skill: "skills",
+  tool: "tools",
+  channel: "channels",
+  hook: "hooks",
+  subagents: "subagent",
+  sandboxes: "sandbox",
+  systemPrompt: "agent",
+  system: "agent",
+};
+
+/**
+ * Rejects unknown top-level keys on a resource config so a typo such as
+ * `workspace:` (instead of `workspaces:`) fails loudly at compile time — the way
+ * a Convex validator rejects unknown fields — instead of being silently dropped
+ * by the sync pipeline. Runs during `dev`/`deploy`, so it surfaces in the watch
+ * loop even though `bun` does not run `tsc`.
+ * @throws when an agent config carries a key outside the known set
+ */
+function assertKnownConfigKeys(resource: AnyResource): void {
+  if (resource.kind !== "agent") return;
+  const config = resource.config as Record<string, unknown>;
+  for (const key of Object.keys(config)) {
+    if (KNOWN_AGENT_CONFIG_KEYS.has(key)) continue;
+    const suggestion = AGENT_KEY_SUGGESTIONS[key];
+    const hint = suggestion
+      ? ` Did you mean "${suggestion}"?`
+      : ` Allowed keys: ${[...KNOWN_AGENT_CONFIG_KEYS].sort().join(", ")}.`;
+    throw new Error(`Agent "${resource.name}" has an unknown config key "${key}".${hint}`);
+  }
 }
 
 function assertUniqueResources(resources: AnyResource[]): void {

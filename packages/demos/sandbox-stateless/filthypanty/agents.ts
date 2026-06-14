@@ -1,6 +1,6 @@
 import { defineAgent, defineSandbox, env } from "filthy-panty";
 
-// A stateless, bash-only sandbox — no workspace, fresh ephemeral container per call.
+// A stateless, bash-only sandbox, fresh ephemeral container per call.
 export const statelessSandbox = defineSandbox("stateless-sandbox", {
   provider: "lambda",
   network: { mode: "deny-all" },
@@ -8,8 +8,7 @@ export const statelessSandbox = defineSandbox("stateless-sandbox", {
   timeout: 60,
 });
 
-// An agent that references the sandbox but no workspace => only the `bash` tool.
-export const compute = defineAgent("compute", {
+export const myAgent = defineAgent("my-agent", {
   provider: {
     minimax: { apiKey: env("ACCOUNT_MINIMAX_API_KEY") },
   },

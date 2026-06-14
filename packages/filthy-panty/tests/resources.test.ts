@@ -238,6 +238,47 @@ test("diffManifests reports create, update, and delete operations", () => {
   ]);
 });
 
+test("diffManifests treats env refs and remote placeholders as equal", () => {
+  const local = {
+    version: 1 as const,
+    project: "app",
+    environment: "dev",
+    resources: [
+      {
+        kind: "agent" as const,
+        name: "support",
+        config: {
+          provider: {
+            openai: {
+              apiKey: { __beeblastEnv: true, name: "OPENAI_API_KEY" },
+            },
+          },
+        },
+      },
+    ],
+  };
+  const remote = {
+    version: 1 as const,
+    project: "app",
+    environment: "dev",
+    resources: [
+      {
+        kind: "agent" as const,
+        name: "support",
+        config: {
+          provider: {
+            openai: {
+              apiKey: "${OPENAI_API_KEY}",
+            },
+          },
+        },
+      },
+    ],
+  };
+
+  expect(diffManifests(local, remote)).toEqual([]);
+});
+
 test("writeGeneratedFiles creates Convex-style typed resource references", async () => {
   const cwd = await fixtureProject();
   const { manifest } = await compileProject({ cwd: cwd, command: "dev" });
@@ -261,6 +302,35 @@ test("writeGeneratedFiles creates Convex-style typed resource references", async
   expect(dataModel).toContain("AgentReference");
   expect(api).not.toContain("new FilthyPantyClient");
   await expect(readFile(join(cwd, "filthypanty", "_generated", "client.ts"), "utf8")).rejects.toThrow();
+});
+
+test("writeGeneratedFiles only exposes ids for locally declared resources", async () => {
+  const cwd = await fixtureProject("", `
+import { defineAgent } from "${join(process.cwd(), "src", "resources.ts")}";
+
+export const myAgent = defineAgent("my-agent", {
+  model: { provider: "openai", modelId: "gpt-5-mini" },
+});
+`);
+  const { manifest, resourceAliases } = await compileProject({ cwd: cwd, command: "dev" });
+
+  await writeGeneratedFiles(manifest, {
+    agents: { "my-agent": "agent_1", "remote-only": "agent_2" },
+    workspaces: { "remote-workspace": "workspace_1" },
+    sandboxes: {},
+    cronJobs: {},
+    skills: {},
+    tools: {},
+  }, cwd, resourceAliases);
+
+  const api = await readFile(join(cwd, "filthypanty", "_generated", "api.ts"), "utf8");
+  const ids = await readFile(join(cwd, "filthypanty", "_generated", "ids.ts"), "utf8");
+
+  expect(api).toContain("myAgent");
+  expect(api).not.toContain("remote-only");
+  expect(ids).toContain('"my-agent": "agent_1"');
+  expect(ids).not.toContain("remote-only");
+  expect(ids).not.toContain("remote-workspace");
 });
 
 test("runtime config loads .env.local without manual client wiring", async () => {

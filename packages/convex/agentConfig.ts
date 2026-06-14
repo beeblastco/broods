@@ -365,6 +365,14 @@ export const remove = mutation({
             throw new Error("Agent config not found.");
         }
 
+        // Code is the source of truth for CLI-managed agents: the dashboard may
+        // edit them (changes are overwritten on the next sync) but must not delete
+        // them. Removal happens by deleting them from `filthypanty/` and running
+        // `filthy-panty deploy --prune`.
+        if (existing.managedBy === "cli") {
+            throw new Error("This agent is managed by code. Remove it from your project and run `filthy-panty deploy --prune` to delete it.");
+        }
+
         const deployments = await ctx.db
             .query("agentDeployments")
             .withIndex("by_agentConfigId", (q) => q.eq("agentConfigId", configId))

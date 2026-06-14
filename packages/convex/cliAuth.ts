@@ -11,6 +11,7 @@ const CLI_CODE_PREFIX = "fp_code_";
 const CLI_TOKEN_PREFIX = "fp_cli_";
 const CODE_TTL_MS = 5 * 60 * 1000;
 const TOKEN_TTL_MS = 90 * 24 * 60 * 60 * 1000;
+const CLI_TOKEN_LAST_USED_WRITE_INTERVAL_MS = 5 * 60 * 1000;
 
 function randomToken(prefix: string): string {
     const bytes = crypto.getRandomValues(new Uint8Array(32));
@@ -148,7 +149,7 @@ export const exchangeLoginCode = internalMutation({
 
 /**
  * Resolve a CLI token to the account secret hash used by existing sync code.
- * Also touches lastUsedAt so administrators can audit token activity.
+ * Touches lastUsedAt at a coarse interval to avoid write contention.
  */
 export const resolveCliToken = internalMutation({
     args: {
@@ -175,7 +176,12 @@ export const resolveCliToken = internalMutation({
         const account = await ctx.db.get(token.accountId);
         if (!account || account.status !== "active") return null;
 
-        await ctx.db.patch(token._id, { lastUsedAt: now });
+        if (
+            token.lastUsedAt === undefined ||
+            now - token.lastUsedAt >= CLI_TOKEN_LAST_USED_WRITE_INTERVAL_MS
+        ) {
+            await ctx.db.patch(token._id, { lastUsedAt: now });
+        }
 
         return {
             accountId: token.accountId,

@@ -67,6 +67,14 @@ export const agentConfigsFields = {
      * `${ENV_NAME}` placeholders resolved from encrypted runtime secrets.
      */
     extraConfig: v.optional(v.any()),
+    /**
+     * Ownership marker. `"cli"` means a `filthypanty/` project is the source of
+     * truth: the dashboard may still edit it, but those edits are overwritten on
+     * the next CLI sync and deleting it from the dashboard is blocked. Unset (or
+     * `"dashboard"`) means the dashboard owns it and the CLI never prunes it. The
+     * CLI stamps `"cli"` on every sync.
+     */
+    managedBy: v.optional(v.union(v.literal("cli"), v.literal("dashboard"))),
     updatedAt: v.number(),
 };
 
@@ -237,11 +245,23 @@ export const agentsFields = {
  */
 export const sandboxConfigsFields = {
     accountId: v.id("accounts"),
+    /**
+     * Environment scope. Optional for backward compatibility: legacy rows and
+     * rows created through the account-management REST API are account-scoped
+     * (env unset) and shared, while CLI- and dashboard-managed rows are scoped
+     * to one `(projectId, environmentId)` so the same name can repeat — and stay
+     * isolated — across environments. The runtime resolves sandboxes by `_id`,
+     * so a per-environment row already yields a per-environment resource.
+     */
+    projectId: v.optional(v.id("projects")),
+    environmentId: v.optional(v.id("environments")),
     name: v.string(),
     description: v.optional(v.string()),
     encryptedConfig: v.optional(v.string()),
     encryptionIv: v.optional(v.string()),
     encryptionTag: v.optional(v.string()),
+    /** Ownership marker; see `agentConfigsFields.managedBy`. */
+    managedBy: v.optional(v.union(v.literal("cli"), v.literal("dashboard"))),
     createdAt: v.number(),
     updatedAt: v.number(),
 };
@@ -253,9 +273,19 @@ export const sandboxConfigsFields = {
  */
 export const workspaceConfigsFields = {
     accountId: v.id("accounts"),
+    /**
+     * Environment scope. Optional for backward compatibility (see
+     * `sandboxConfigsFields`). A per-environment row gives the workspace its own
+     * `_id`, and the runtime filesystem namespace keys off that `_id`
+     * (`accountId:workspaceId`), so two environments never share files.
+     */
+    projectId: v.optional(v.id("projects")),
+    environmentId: v.optional(v.id("environments")),
     name: v.string(),
     description: v.optional(v.string()),
     config: v.any(),
+    /** Ownership marker; see `agentConfigsFields.managedBy`. */
+    managedBy: v.optional(v.union(v.literal("cli"), v.literal("dashboard"))),
     createdAt: v.number(),
     updatedAt: v.number(),
 };
@@ -446,10 +476,12 @@ export default defineSchema({
         .index("by_accountId_and_status", ["accountId", "status"]),
     sandboxConfigs: defineTable(sandboxConfigsFields)
         .index("by_accountId", ["accountId"])
-        .index("by_accountId_and_name", ["accountId", "name"]),
+        .index("by_accountId_and_name", ["accountId", "name"])
+        .index("by_environmentId_and_name", ["environmentId", "name"]),
     workspaceConfigs: defineTable(workspaceConfigsFields)
         .index("by_accountId", ["accountId"])
-        .index("by_accountId_and_name", ["accountId", "name"]),
+        .index("by_accountId_and_name", ["accountId", "name"])
+        .index("by_environmentId_and_name", ["environmentId", "name"]),
     environmentVariables: defineTable(environmentVariablesFields)
         .index("by_projectId_and_environmentId", ["projectId", "environmentId"])
         .index("by_environmentId_and_name", ["environmentId", "name"]),

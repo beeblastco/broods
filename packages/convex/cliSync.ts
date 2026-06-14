@@ -139,8 +139,8 @@ export const syncManifestBySecretHash = internalMutation({
 
         const projectDoc = await ensureProject(ctx, account, manifest.project);
         const environmentDoc = await ensureEnvironment(ctx, projectDoc, manifest.environment);
-        const workspaceIds = await syncWorkspaceResources(ctx, account._id, manifest.resources);
-        const sandboxIds = await syncSandboxResources(ctx, account._id, manifest.resources);
+        const workspaceIds = await syncWorkspaceResources(ctx, account._id, projectDoc._id, environmentDoc._id, manifest.resources);
+        const sandboxIds = await syncSandboxResources(ctx, account._id, projectDoc._id, environmentDoc._id, manifest.resources);
         const envValues = await environmentVariables(ctx, projectDoc._id, environmentDoc._id);
         const agentIds = await syncAgentResources(ctx, {
             account: account,
@@ -154,8 +154,8 @@ export const syncManifestBySecretHash = internalMutation({
 
         if (prune === true) {
             await pruneAgents(ctx, projectDoc._id, environmentDoc._id, manifest.resources);
-            await pruneWorkspaceResources(ctx, account._id, manifest.resources);
-            await pruneSandboxResources(ctx, account._id, manifest.resources);
+            await pruneWorkspaceResources(ctx, environmentDoc._id, manifest.resources);
+            await pruneSandboxResources(ctx, environmentDoc._id, manifest.resources);
         }
 
         await syncCanvasLayoutForManifest(ctx, {
@@ -269,9 +269,9 @@ export const deleteResourceBySecretHash = internalMutation({
         if (kind === "agent") {
             await deleteAgentResource(ctx, resolved.projectDoc._id, resolved.environmentDoc._id, normalizedName);
         } else if (kind === "workspace") {
-            await deleteWorkspaceResource(ctx, account._id, normalizedName);
+            await deleteWorkspaceResource(ctx, resolved.environmentDoc._id, normalizedName);
         } else {
-            await deleteSandboxResource(ctx, account._id, normalizedName);
+            await deleteSandboxResource(ctx, resolved.environmentDoc._id, normalizedName);
         }
 
         await ctx.db.patch(resolved.projectDoc._id, { updatedAt: Date.now() });
@@ -433,6 +433,8 @@ async function ensureEnvironment(
 async function syncWorkspaceResources(
     ctx: MutationCtx,
     accountId: Id<"accounts">,
+    projectId: Id<"projects">,
+    environmentId: Id<"environments">,
     resources: CliResource[],
 ): Promise<Record<string, string>> {
     const ids: Record<string, string> = {};
@@ -440,24 +442,35 @@ async function syncWorkspaceResources(
         const name = resourceName(resource.name);
         const existing = await ctx.db
             .query("workspaceConfigs")
-            .withIndex("by_accountId_and_name", (q) =>
-                q.eq("accountId", accountId).eq("name", name),
+            .withIndex("by_environmentId_and_name", (q) =>
+                q.eq("environmentId", environmentId).eq("name", name),
             )
             .unique();
         if (existing) {
             await ctx.db.patch(existing._id, {
+                accountId: accountId,
+                projectId: projectId,
                 description: resource.description,
                 config: resource.config,
+                managedBy: "cli",
                 updatedAt: Date.now(),
             });
             ids[name] = existing._id;
         } else {
+            await assertNoAccountScopedResourceConflict(ctx, {
+                table: "workspaceConfigs",
+                accountId: accountId,
+                name: name,
+            });
             const now = Date.now();
             const id = await ctx.db.insert("workspaceConfigs", {
                 accountId: accountId,
+                projectId: projectId,
+                environmentId: environmentId,
                 name: name,
                 description: resource.description,
                 config: resource.config,
+                managedBy: "cli",
                 createdAt: now,
                 updatedAt: now,
             });
@@ -471,6 +484,8 @@ async function syncWorkspaceResources(
 async function syncSandboxResources(
     ctx: MutationCtx,
     accountId: Id<"accounts">,
+    projectId: Id<"projects">,
+    environmentId: Id<"environments">,
     resources: CliResource[],
 ): Promise<Record<string, string>> {
     const ids: Record<string, string> = {};
@@ -489,28 +504,39 @@ async function syncSandboxResources(
         const encrypted = await encryptAgentConfigBlob(asObject(resource.config), secret);
         const existing = await ctx.db
             .query("sandboxConfigs")
-            .withIndex("by_accountId_and_name", (q) =>
-                q.eq("accountId", accountId).eq("name", name),
+            .withIndex("by_environmentId_and_name", (q) =>
+                q.eq("environmentId", environmentId).eq("name", name),
             )
             .unique();
         if (existing) {
             await ctx.db.patch(existing._id, {
+                accountId: accountId,
+                projectId: projectId,
                 description: resource.description,
                 encryptedConfig: encrypted.ciphertext,
                 encryptionIv: encrypted.iv,
                 encryptionTag: encrypted.tag,
+                managedBy: "cli",
                 updatedAt: Date.now(),
             });
             ids[name] = existing._id;
         } else {
+            await assertNoAccountScopedResourceConflict(ctx, {
+                table: "sandboxConfigs",
+                accountId: accountId,
+                name: name,
+            });
             const now = Date.now();
             const id = await ctx.db.insert("sandboxConfigs", {
                 accountId: accountId,
+                projectId: projectId,
+                environmentId: environmentId,
                 name: name,
                 description: resource.description,
                 encryptedConfig: encrypted.ciphertext,
                 encryptionIv: encrypted.iv,
                 encryptionTag: encrypted.tag,
+                managedBy: "cli",
                 createdAt: now,
                 updatedAt: now,
             });
@@ -519,6 +545,33 @@ async function syncSandboxResources(
     }
 
     return ids;
+}
+
+/**
+ * Fail loudly when an old account-scoped runtime resource would shadow the new
+ * environment-scoped row. Operators must migrate or delete that row explicitly.
+ */
+async function assertNoAccountScopedResourceConflict(
+    ctx: MutationCtx,
+    options: {
+        table: "workspaceConfigs" | "sandboxConfigs";
+        accountId: Id<"accounts">;
+        name: string;
+    },
+): Promise<void> {
+    const rows = await ctx.db
+        .query(options.table)
+        .withIndex("by_accountId_and_name", (q) =>
+            q.eq("accountId", options.accountId).eq("name", options.name),
+        )
+        .collect();
+    const accountScoped = rows.find((row) => row.environmentId === undefined);
+    if (!accountScoped) return;
+
+    throw new Error(
+        `${options.table} "${options.name}" is account-scoped legacy data. ` +
+        "Migrate it to a project/environment or delete it before syncing code-managed resources.",
+    );
 }
 
 async function syncAgentResources(
@@ -579,6 +632,7 @@ async function syncAgentResources(
                 searchToolConfig: flat.searchToolConfig,
                 runtimeVariables: publicRuntimeVariables,
                 extraConfig: flat.extraConfig,
+                managedBy: "cli",
                 updatedAt: Date.now(),
             });
             await ensureAgentsRowForConfig(ctx, current._id, current.authId);
@@ -613,6 +667,7 @@ async function syncAgentResources(
                 extraConfig: flat.extraConfig,
                 publicAccessEnabled: false,
                 webSocketEnabled: false,
+                managedBy: "cli",
                 updatedAt: Date.now(),
             });
             await saveAgentRuntimeSecrets(ctx, configId, runtimeVariables);
@@ -743,7 +798,7 @@ async function syncCanvasLayoutForManifest(
                     label: resource.name,
                     status: "idle",
                     agentConfigId: config._id,
-                    cliManaged: true,
+                    managedBy: "cli",
                     cliResourceKey: `agent:${resource.name}`,
                 },
             });
@@ -772,7 +827,7 @@ async function syncCanvasLayoutForManifest(
                 mountName: resource.name,
                 description: resource.description,
                 config: resource.config,
-                cliManaged: true,
+                managedBy: "cli",
                 cliResourceKey: `${resource.kind}:${resource.name}`,
             },
         });
@@ -782,10 +837,13 @@ async function syncCanvasLayoutForManifest(
     for (const agent of desiredResources.filter((entry) => entry.kind === "agent")) {
         const agentId = nodeIdByKindName.get(`agent:${agent.name}`);
         if (!agentId || !isRecord(agent.config)) continue;
+        // Agent→service edges are default (top/bottom handle) edges, like the
+        // dashboard's own auto-connect. Only workspace↔sandbox uses a side-handle
+        // mount edge (sandbox x=420 sits left of workspace x=760).
         const sandboxName = typeof agent.config.sandbox === "string" ? resourceName(agent.config.sandbox) : null;
         if (sandboxName) {
             const sandboxNodeId = nodeIdByKindName.get(`sandbox:${sandboxName}`);
-            if (sandboxNodeId) addDesiredCanvasEdge(desiredEdges, agentId, sandboxNodeId);
+            if (sandboxNodeId) addDesiredDefaultEdge(desiredEdges, agentId, sandboxNodeId);
         }
 
         if (Array.isArray(agent.config.workspaces)) {
@@ -793,10 +851,10 @@ async function syncCanvasLayoutForManifest(
                 if (!isRecord(workspaceRef) || typeof workspaceRef.workspaceId !== "string") continue;
                 const workspaceName = resourceName(workspaceRef.workspaceId);
                 const workspaceNodeId = nodeIdByKindName.get(`workspace:${workspaceName}`);
-                if (workspaceNodeId) addDesiredCanvasEdge(desiredEdges, agentId, workspaceNodeId);
+                if (workspaceNodeId) addDesiredDefaultEdge(desiredEdges, agentId, workspaceNodeId);
                 if (workspaceNodeId && typeof workspaceRef.sandbox === "string") {
                     const sandboxNodeId = nodeIdByKindName.get(`sandbox:${resourceName(workspaceRef.sandbox)}`);
-                    if (sandboxNodeId) addDesiredCanvasEdge(desiredEdges, workspaceNodeId, sandboxNodeId);
+                    if (sandboxNodeId) addDesiredMountEdge(desiredEdges, workspaceNodeId, "left", sandboxNodeId, "right");
                 }
             }
         }
@@ -804,7 +862,7 @@ async function syncCanvasLayoutForManifest(
 
     const existingEdgeIds = new Set(existingEdges.map((edge) => edge.id));
     const nextEdges = existingEdges.filter((edge) =>
-        !edgeIsCliManaged(edge) || desiredEdges.has(edge.id),
+        desiredEdges.has(edge.id) || !edgeIsCliManaged(edge, nextById),
     );
     for (const edge of desiredEdges.values()) {
         if (existingEdgeIds.has(edge.id)) continue;
@@ -885,17 +943,44 @@ function canvasNodeId(kind: string, name: string): string {
         .replace(/^-+|-+$/g, "") || "resource"}`;
 }
 
-function canvasEdgeId(source: string, target: string): string {
-    return `xy-edge__${source}-${target}`;
+/**
+ * Default agent→service edge (agent→sandbox, agent→workspace): top/bottom handles,
+ * rendered by the dashboard's DeletableEdge. `animated: true` gives the flowing
+ * dashed look the dashboard uses for these connections.
+ */
+function addDesiredDefaultEdge(edges: Map<string, CanvasEdge>, source: string, target: string): void {
+    const id = `xy-edge__${source}-${target}`;
+    edges.set(id, { id: id, source: source, target: target, animated: true });
 }
 
-function addDesiredCanvasEdge(edges: Map<string, CanvasEdge>, source: string, target: string): void {
-    const id = canvasEdgeId(source, target);
+/**
+ * Side-handle "mount" edge for a workspace↔sandbox relationship, matching the
+ * dashboard's id scheme so it renders as the dotted MountEdge. The handles are
+ * encoded in the id because the persisted edge keeps only id/source/target.
+ */
+function addDesiredMountEdge(
+    edges: Map<string, CanvasEdge>,
+    source: string,
+    sourceHandle: string,
+    target: string,
+    targetHandle: string,
+): void {
+    const id = `mount:${source}-${sourceHandle}-${target}-${targetHandle}`;
     edges.set(id, { id: id, source: source, target: target, animated: false });
 }
 
-function edgeIsCliManaged(edge: CanvasEdge): boolean {
-    return edge.id.startsWith("xy-edge__cli-");
+function edgeIsCliManaged(edge: CanvasEdge, nodesById: Map<string, CanvasNode>): boolean {
+    if (
+        edge.id.startsWith("xy-edge__cli-") ||
+        edge.id.startsWith("mount:cli-") ||
+        edge.id.startsWith("subagent:cli-")
+    ) {
+        return true;
+    }
+    const sourceManagedBy = nodesById.get(edge.source)?.data.managedBy;
+    const targetManagedBy = nodesById.get(edge.target)?.data.managedBy;
+
+    return sourceManagedBy === "cli" && targetManagedBy === "cli";
 }
 
 function cliResourceKeyForNode(node: CanvasNode): string {
@@ -922,7 +1007,7 @@ async function pruneAgents(
         )
         .collect();
     for (const config of existing) {
-        if (declared.has(config.name)) continue;
+        if (config.managedBy !== "cli" || declared.has(config.name)) continue;
         if (config.agentId) {
             const agentId = ctx.db.normalizeId("agents", config.agentId);
             if (agentId) {
@@ -936,24 +1021,26 @@ async function pruneAgents(
 
 async function pruneWorkspaceResources(
     ctx: MutationCtx,
-    accountId: Id<"accounts">,
+    environmentId: Id<"environments">,
     resources: CliResource[],
 ): Promise<void> {
     const declared = new Set(
         resources.filter((entry) => entry.kind === "workspace").map((entry) => resourceName(entry.name)),
     );
+    // Scope to this environment so prune never reaches across environments or
+    // touches account-scoped (env-less) legacy / dashboard-shared rows.
     const existing = await ctx.db
         .query("workspaceConfigs")
-        .withIndex("by_accountId", (q) => q.eq("accountId", accountId))
+        .withIndex("by_environmentId_and_name", (q) => q.eq("environmentId", environmentId))
         .collect();
     for (const workspace of existing) {
-        if (!declared.has(workspace.name)) await ctx.db.delete(workspace._id);
+        if (workspace.managedBy === "cli" && !declared.has(workspace.name)) await ctx.db.delete(workspace._id);
     }
 }
 
 async function pruneSandboxResources(
     ctx: MutationCtx,
-    accountId: Id<"accounts">,
+    environmentId: Id<"environments">,
     resources: CliResource[],
 ): Promise<void> {
     const declared = new Set(
@@ -961,10 +1048,10 @@ async function pruneSandboxResources(
     );
     const existing = await ctx.db
         .query("sandboxConfigs")
-        .withIndex("by_accountId", (q) => q.eq("accountId", accountId))
+        .withIndex("by_environmentId_and_name", (q) => q.eq("environmentId", environmentId))
         .collect();
     for (const sandbox of existing) {
-        if (!declared.has(sandbox.name)) await ctx.db.delete(sandbox._id);
+        if (sandbox.managedBy === "cli" && !declared.has(sandbox.name)) await ctx.db.delete(sandbox._id);
     }
 }
 
@@ -982,6 +1069,9 @@ async function deleteAgentResource(
         .collect();
     const config = configs.find((entry) => entry.name === name);
     if (!config) return;
+    if (config.managedBy !== "cli") {
+        throw new Error(`Agent "${name}" is dashboard-managed and cannot be deleted through the CLI.`);
+    }
     if (config.agentId) {
         const agentId = ctx.db.normalizeId("agents", config.agentId);
         if (agentId) {
@@ -994,30 +1084,38 @@ async function deleteAgentResource(
 
 async function deleteWorkspaceResource(
     ctx: MutationCtx,
-    accountId: Id<"accounts">,
+    environmentId: Id<"environments">,
     name: string,
 ): Promise<void> {
     const workspace = await ctx.db
         .query("workspaceConfigs")
-        .withIndex("by_accountId_and_name", (q) =>
-            q.eq("accountId", accountId).eq("name", name),
+        .withIndex("by_environmentId_and_name", (q) =>
+            q.eq("environmentId", environmentId).eq("name", name),
         )
         .unique();
-    if (workspace) await ctx.db.delete(workspace._id);
+    if (!workspace) return;
+    if (workspace.managedBy !== "cli") {
+        throw new Error(`Workspace "${name}" is dashboard-managed and cannot be deleted through the CLI.`);
+    }
+    await ctx.db.delete(workspace._id);
 }
 
 async function deleteSandboxResource(
     ctx: MutationCtx,
-    accountId: Id<"accounts">,
+    environmentId: Id<"environments">,
     name: string,
 ): Promise<void> {
     const sandbox = await ctx.db
         .query("sandboxConfigs")
-        .withIndex("by_accountId_and_name", (q) =>
-            q.eq("accountId", accountId).eq("name", name),
+        .withIndex("by_environmentId_and_name", (q) =>
+            q.eq("environmentId", environmentId).eq("name", name),
         )
         .unique();
-    if (sandbox) await ctx.db.delete(sandbox._id);
+    if (!sandbox) return;
+    if (sandbox.managedBy !== "cli") {
+        throw new Error(`Sandbox "${name}" is dashboard-managed and cannot be deleted through the CLI.`);
+    }
+    await ctx.db.delete(sandbox._id);
 }
 
 async function resourcesForEnvironment(
@@ -1028,11 +1126,11 @@ async function resourcesForEnvironment(
 ): Promise<CliResource[]> {
     const sandboxes = await ctx.db
         .query("sandboxConfigs")
-        .withIndex("by_accountId", (q) => q.eq("accountId", accountId))
+        .withIndex("by_environmentId_and_name", (q) => q.eq("environmentId", environmentId))
         .collect();
     const workspaces = await ctx.db
         .query("workspaceConfigs")
-        .withIndex("by_accountId", (q) => q.eq("accountId", accountId))
+        .withIndex("by_environmentId_and_name", (q) => q.eq("environmentId", environmentId))
         .collect();
     const agents = await ctx.db
         .query("agentConfigs")
@@ -1073,7 +1171,7 @@ async function resourcesForEnvironment(
     // into the manifest shape the CLI expects.
     const secret = process.env.ACCOUNT_CONFIG_ENCRYPTION_SECRET;
     const sandboxResources: CliResource[] = await Promise.all(
-        sandboxes.map(async (sandbox): Promise<CliResource> => ({
+        sandboxes.filter((sandbox) => sandbox.managedBy === "cli").map(async (sandbox): Promise<CliResource> => ({
             kind: "sandbox",
             name: sandbox.name,
             description: sandbox.description,
@@ -1082,7 +1180,7 @@ async function resourcesForEnvironment(
     );
 
     return [
-        ...agents.map((agent): CliResource => ({
+        ...agents.filter((agent) => agent.managedBy === "cli").map((agent): CliResource => ({
             kind: "agent",
             name: agent.name,
             description: agent.description,
@@ -1110,7 +1208,7 @@ async function resourcesForEnvironment(
             config: resource.config,
         })),
         ...sandboxResources,
-        ...workspaces.map((workspace): CliResource => ({
+        ...workspaces.filter((workspace) => workspace.managedBy === "cli").map((workspace): CliResource => ({
             kind: "workspace",
             name: workspace.name,
             description: workspace.description,
@@ -1146,11 +1244,11 @@ async function idsForEnvironment(
 ): Promise<Ids> {
     const sandboxes = await ctx.db
         .query("sandboxConfigs")
-        .withIndex("by_accountId", (q) => q.eq("accountId", accountId))
+        .withIndex("by_environmentId_and_name", (q) => q.eq("environmentId", environmentId))
         .collect();
     const workspaces = await ctx.db
         .query("workspaceConfigs")
-        .withIndex("by_accountId", (q) => q.eq("accountId", accountId))
+        .withIndex("by_environmentId_and_name", (q) => q.eq("environmentId", environmentId))
         .collect();
     const agents = await ctx.db
         .query("agentConfigs")
@@ -1172,9 +1270,9 @@ async function idsForEnvironment(
     const externalIds = await externalIdsForEnvironment(ctx, projectId, environmentId);
 
     return {
-        agents: Object.fromEntries(agents.flatMap((entry) => entry.agentId ? [[entry.name, entry.agentId]] : [])),
-        workspaces: Object.fromEntries(workspaces.map((entry) => [entry.name, entry._id])),
-        sandboxes: Object.fromEntries(sandboxes.map((entry) => [entry.name, entry._id])),
+        agents: Object.fromEntries(agents.filter((entry) => entry.managedBy === "cli").flatMap((entry) => entry.agentId ? [[entry.name, entry.agentId]] : [])),
+        workspaces: Object.fromEntries(workspaces.filter((entry) => entry.managedBy === "cli").map((entry) => [entry.name, entry._id])),
+        sandboxes: Object.fromEntries(sandboxes.filter((entry) => entry.managedBy === "cli").map((entry) => [entry.name, entry._id])),
         cronJobs: Object.fromEntries(cronJobs.flatMap((entry) =>
             agentIds.has(entry.agentId) ? [[entry.name, entry._id]] : [],
         )),
