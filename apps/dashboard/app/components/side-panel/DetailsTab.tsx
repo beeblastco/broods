@@ -137,7 +137,7 @@ export function DetailsTab({
         () => typeof tavilySearchCfg.maxResults === "number" ? String(tavilySearchCfg.maxResults) : "5"
     );
 
-    const coreUrl = (process.env.NEXT_PUBLIC_FILTHY_PANTY_BASE_URL ?? "https://app.beeblast.co").replace(/\/+$/, "");
+    const coreUrl = (process.env.NEXT_PUBLIC_FILTHY_PANTY_BASE_URL || "https://app.beeblast.co").replace(/\/+$/, "");
     const websocketBaseUrl = toWebSocketBaseUrl(coreUrl);
     const envPrefix = activeDeployment?.environmentSlug ? `/${activeDeployment.environmentSlug}` : "";
     const projectPrefix = activeDeployment?.projectSlug ? `/${activeDeployment.projectSlug}` : "";

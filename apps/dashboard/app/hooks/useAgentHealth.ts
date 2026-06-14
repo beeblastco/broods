@@ -48,7 +48,7 @@ async function checkServiceHealth(): Promise<boolean> {
 
     if (pendingCheck) return pendingCheck;
 
-    const coreUrl = (process.env.NEXT_PUBLIC_FILTHY_PANTY_BASE_URL ?? "https://app.beeblast.co").replace(/\/+$/, "");
+    const coreUrl = (process.env.NEXT_PUBLIC_FILTHY_PANTY_BASE_URL || "https://app.beeblast.co").replace(/\/+$/, "");
 
     pendingCheck = fetchHealthWithTimeout(coreUrl, 5000)
         .then((res) => {

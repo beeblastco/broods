@@ -603,7 +603,7 @@ export function useAgentChat({
   const mainAssistantMessageIdRef = useRef<string | null>(null);
   const continuationMessageIdRef = useRef<string | null>(null);
   const subagentMessageIdsRef = useRef<Record<string, string>>({});
-  const baseUrl = (process.env.NEXT_PUBLIC_FILTHY_PANTY_BASE_URL ?? "https://app.beeblast.co").replace(/\/+$/, "");
+  const baseUrl = (process.env.NEXT_PUBLIC_FILTHY_PANTY_BASE_URL || "https://app.beeblast.co").replace(/\/+$/, "");
 
   useEffect(() => {
     messagesRef.current = messages;

@@ -40,6 +40,15 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Type-check dashboard
+        run: cd apps/dashboard && npx tsc --noEmit
+
       - name: Validate build variables
         shell: bash
         env:
@@ -76,5 +85,6 @@ jobs:
             NEXT_PUBLIC_AGENT_GATEWAY_URL=${{ vars.NEXT_PUBLIC_AGENT_GATEWAY_URL }}
             NEXT_PUBLIC_CONVEX_URL=${{ vars.NEXT_PUBLIC_CONVEX_URL }}
             NEXT_PUBLIC_WORKOS_REDIRECT_URI=${{ vars.NEXT_PUBLIC_WORKOS_REDIRECT_URI }}
+            NEXT_PUBLIC_FILTHY_PANTY_BASE_URL=${{ vars.NEXT_PUBLIC_FILTHY_PANTY_BASE_URL || 'https://app.beeblast.co' }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
