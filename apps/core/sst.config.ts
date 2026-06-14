@@ -231,6 +231,11 @@ export default $config({
 
     const adminAccountSecret = new sst.Secret("AdminAccountSecret");
     const accountConfigEncryptionSecret = new sst.Secret("AccountConfigEncryptionSecret");
+    // Shared token for trusted server-side callers (the dashboard's Convex run/sync
+    // proxy) that act on behalf of an account via the X-Account-Id header. Optional:
+    // the empty default keeps deploys working for stages that only use the public
+    // account-secret API; set a real value per stage to enable the service-token path.
+    const serviceAuthSecret = new sst.Secret("ServiceAuthSecret", "");
     const daytonaApiKey = new sst.Secret("DaytonaApiKey");
     // Base64 kubeconfig (SA bearer token) for the kubernetes sandbox provider. Optional:
     // the placeholder keeps deploys working for stages that don't use this provider.
@@ -922,6 +927,7 @@ export default $config({
           : {}),
         ACCOUNT_SECRET_INDEX_NAME: "SecretHashIndex",
         ACCOUNT_CONFIG_ENCRYPTION_SECRET: accountConfigEncryptionSecret.value,
+        SERVICE_AUTH_SECRET: serviceAuthSecret.value,
         FILESYSTEM_BUCKET_NAME: names.memory,
         SKILLS_BUCKET_NAME: names.skills,
         TOOL_BUNDLES_BUCKET_NAME: names.toolBundles,
@@ -1184,6 +1190,7 @@ export default $config({
         ACCOUNT_SIGNUP_RATE_LIMIT_PER_HOUR: "5",
         ADMIN_ACCOUNT_SECRET: adminAccountSecret.value,
         ACCOUNT_CONFIG_ENCRYPTION_SECRET: accountConfigEncryptionSecret.value,
+        SERVICE_AUTH_SECRET: serviceAuthSecret.value,
         ...(cronJobsTable
           ? { CRON_JOBS_TABLE_NAME: cronJobsTable.name }
           : {}),

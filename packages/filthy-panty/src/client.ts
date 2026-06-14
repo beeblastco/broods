@@ -53,14 +53,22 @@ export interface ResourceApi {
 }
 
 export interface FilthyPantyClientOptions {
-  dashboardUrl?: string;
-  token?: string;
-  project?: string;
-  environment?: string;
+  /**
+   * Base URL of the harness/agent service to call directly — e.g. the Lambda
+   * Function URL. This is the Convex-style path: give a `baseUrl` plus an
+   * `accountSecret` (or `serviceAuthSecret` + `accountId`) and the client talks
+   * straight to the service with no dashboard wiring required.
+   */
+  baseUrl?: string;
+  /** @deprecated Use {@link FilthyPantyClientOptions.baseUrl}. */
   agentServiceUrl?: string;
   accountSecret?: string;
   serviceAuthSecret?: string;
   accountId?: string;
+  dashboardUrl?: string;
+  token?: string;
+  project?: string;
+  environment?: string;
   fetch?: typeof fetch;
 }
 
@@ -75,7 +83,7 @@ export class FilthyPantyClient {
   private readonly token?: string;
   private readonly project?: string;
   private readonly environment?: string;
-  private readonly agentServiceUrl?: string;
+  private readonly baseUrl?: string;
   private readonly accountSecret?: string;
   private readonly serviceAuthSecret?: string;
   private readonly accountId?: string;
@@ -87,7 +95,9 @@ export class FilthyPantyClient {
     this.token = options.token ?? runtime.token;
     this.project = options.project ?? runtime.project;
     this.environment = options.environment ?? runtime.environment;
-    this.agentServiceUrl = options.agentServiceUrl ??
+    this.baseUrl = options.baseUrl ??
+      options.agentServiceUrl ??
+      process.env.FILTHY_PANTY_BASE_URL ??
       process.env.FILTHY_PANTY_AGENT_SERVICE_URL ??
       process.env.FILTHY_PANTY_HARNESS_URL ??
       process.env.AGENT_SERVICE_URL;
@@ -192,8 +202,8 @@ export class FilthyPantyClient {
     project?: string,
     environment?: string,
   ): Promise<Response> {
-    if (this.agentServiceUrl && this.accountSecret) {
-      return await this.fetchImpl(this.agentServiceUrl, {
+    if (this.baseUrl && this.accountSecret) {
+      return await this.fetchImpl(this.baseUrl, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -204,8 +214,8 @@ export class FilthyPantyClient {
       });
     }
 
-    if (this.agentServiceUrl && this.serviceAuthSecret && this.accountId) {
-      return await this.fetchImpl(this.agentServiceUrl, {
+    if (this.baseUrl && this.serviceAuthSecret && this.accountId) {
+      return await this.fetchImpl(this.baseUrl, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -230,7 +240,7 @@ export class FilthyPantyClient {
     }
 
     throw new Error(
-      "FilthyPantyClient requires dashboardUrl/token/project/environment, agentServiceUrl/accountSecret, or agentServiceUrl/serviceAuthSecret/accountId",
+      "FilthyPantyClient requires baseUrl/accountSecret, baseUrl/serviceAuthSecret/accountId, or dashboardUrl/token/project/environment",
     );
   }
 }
