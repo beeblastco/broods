@@ -479,7 +479,7 @@ function starterAgent(): string {
     `});\n\n` +
     `export const support = defineAgent("support", {\n` +
     `  provider: {\n` +
-    `    openai: { apiKey: env("OPENAI_API_KEY") },\n` +
+    `    openai: { apiKey: env.OPENAI_API_KEY },\n` +
     `  },\n` +
     `  model: {\n` +
     `    provider: "openai",\n` +
