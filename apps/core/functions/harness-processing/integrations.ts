@@ -349,7 +349,33 @@ async function handleLambdaUrlEvent(
     return directApiDisabledResponse();
   }
 
+  const publicEndpoint = parsePublicEndpointPath(event.rawPath);
   const auth = await context.authResolver(request.headers);
+
+  // A project+environment runtime key works on both the root direct API and the
+  // scoped /v1/{project}/agents/{environment}/{endpointId} URL the dashboard
+  // advertises. When the scoped path is present it must match the key's
+  // environment; the agent itself is chosen by the request body's agentId and
+  // loaded against the key's account.
+  if (auth?.kind === "deployment") {
+    if (publicEndpoint && !deploymentMatchesPath(auth, publicEndpoint)) {
+      return unauthorizedResponse();
+    }
+
+    try {
+      const parsed = await parseDirectPayload(request.body, request.headers, auth.account, context.agentLoader);
+
+      return handlers.handleDirectRequest(parsed);
+    } catch (err) {
+      return badRequestResponse(err);
+    }
+  }
+
+  // The scoped public URL only accepts a deployment key.
+  if (publicEndpoint) {
+    return unauthorizedResponse();
+  }
+
   const account = auth?.kind === "account" ? auth.account : null;
   if (!account) {
     return unauthorizedResponse();
@@ -623,6 +649,39 @@ export async function sendChannelReply(options: {
   await adapter.actions(message).sendText(options.text);
 }
 
+type PublicEndpointPath = {
+  endpointId: string;
+  projectSlug?: string;
+  environmentSlug?: string;
+};
+
+function parsePublicEndpointPath(rawPath: string): PublicEndpointPath | null {
+  const scoped = rawPath.match(/^\/v1\/([^/]+)\/agents\/([^/]+)\/([^/]+)$/);
+  if (scoped?.[1] && scoped[2] && scoped[3]) {
+    return {
+      projectSlug: decodeURIComponent(scoped[1]),
+      environmentSlug: decodeURIComponent(scoped[2]),
+      endpointId: decodeURIComponent(scoped[3]),
+    };
+  }
+
+  const unscoped = rawPath.match(/^\/v1\/agents\/([^/]+)$/);
+  if (unscoped?.[1]) {
+    return { endpointId: decodeURIComponent(unscoped[1]) };
+  }
+
+  return null;
+}
+
+function deploymentMatchesPath(
+  auth: Extract<AuthContext, { kind: "deployment" }>,
+  endpoint: PublicEndpointPath,
+): boolean {
+  return auth.endpointId === endpoint.endpointId &&
+    (endpoint.projectSlug === undefined || auth.projectSlug === endpoint.projectSlug) &&
+    (endpoint.environmentSlug === undefined || auth.environmentSlug === endpoint.environmentSlug);
+}
+
 async function parseDirectPayload(
   bodyText: string,
   headers: Record<string, string>,
@@ -637,16 +696,15 @@ async function parseDirectPayload(
     throw new Error(`Invalid request JSON: ${err instanceof Error ? err.message : String(err)}`);
   }
 
-  if (
-    typeof parsed !== "object" ||
-    parsed === null ||
-    typeof (parsed as Record<string, unknown>).eventId !== "string" ||
-    typeof (parsed as Record<string, unknown>).conversationKey !== "string"
-  ) {
+  if (typeof parsed !== "object" || parsed === null) {
+    throw new Error("Request body must be a JSON object");
+  }
+
+  const record = normalizeDirectPayloadShape(parsed as Record<string, unknown>);
+  if (typeof record.eventId !== "string" || typeof record.conversationKey !== "string") {
     throw new Error("Request body must include eventId and conversationKey");
   }
 
-  const record = parsed as Record<string, unknown>;
   if (typeof record.agentId !== "string" || record.agentId.trim().length === 0) {
     throw new Error("Request body must include agentId");
   }
@@ -676,6 +734,27 @@ async function parseDirectPayload(
     conversationKey: scopedDirectConversationKey(account.accountId, agent.agentId, rawConversationKey),
     publicConversationKey: rawConversationKey,
     events,
+  };
+}
+
+function normalizeDirectPayloadShape(record: Record<string, unknown>): Record<string, unknown> {
+  if (typeof record.message !== "string" || Array.isArray(record.events)) {
+    return record;
+  }
+
+  return {
+    ...record,
+    agentId: typeof record.agentId === "string" ? record.agentId : undefined,
+    eventId: typeof record.eventId === "string" ? record.eventId : `evt-${crypto.randomUUID()}`,
+    conversationKey: typeof record.conversationKey === "string"
+      ? record.conversationKey
+      : typeof record.sessionId === "string"
+        ? record.sessionId
+        : `session-${crypto.randomUUID()}`,
+    events: [{
+      role: "user",
+      content: [{ type: "text", text: record.message }],
+    }],
   };
 }
 

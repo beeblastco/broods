@@ -88,6 +88,22 @@ export interface AgentStore {
   removeAllForAccount(accountId: string): Promise<number>;
 }
 
+export interface AgentDeploymentRecord {
+  accountId: string;
+  endpointId: string;
+  projectSlug: string;
+  environmentSlug: string;
+}
+
+/**
+ * Project + environment scoped runtime keys, keyed by the dashboard/CLI-issued
+ * API key hash. The key authorizes the account/environment scope; the agent is
+ * chosen per request by id.
+ */
+export interface AgentDeploymentStore {
+  getByApiKeyHash(apiKeyHash: string): Promise<AgentDeploymentRecord | null>;
+}
+
 /** Account-scoped cron job schedules. */
 export interface CronJobStore {
   getById(accountId: string, cronJobId: string): Promise<CronJobRecord | null>;
@@ -156,6 +172,7 @@ export interface StorageProvider {
   readonly kind: "dynamodb" | "convex";
   accounts: AccountStore;
   agents: AgentStore;
+  agentDeployments: AgentDeploymentStore;
   cronJobs: CronJobStore;
   sandboxConfigs: SandboxConfigStore;
   workspaceConfigs: WorkspaceConfigStore;

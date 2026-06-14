@@ -16,6 +16,11 @@ export const dynamoStorageProvider: StorageProvider = {
   kind: "dynamodb",
   accounts: dynamoAccountStore,
   agents: dynamoAgentStore,
+  agentDeployments: {
+    async getByApiKeyHash() {
+      return null;
+    },
+  },
   cronJobs: dynamoCronJobStore,
   sandboxConfigs: dynamoSandboxConfigStore,
   workspaceConfigs: dynamoWorkspaceConfigStore,

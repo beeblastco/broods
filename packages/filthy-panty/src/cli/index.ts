@@ -12,7 +12,7 @@ import { tmpdir } from "node:os";
 import { compileProject } from "../manifest.ts";
 import { GENERATED_DIR, PROJECT_DIR } from "../config.ts";
 import { writeGeneratedFiles } from "../codegen.ts";
-import { diffManifests, FilthyPantySyncClient, type RemoteManifestResponse } from "../sync.ts";
+import { type CliLogEntry, diffManifests, FilthyPantySyncClient, type RemoteManifestResponse } from "../sync.ts";
 import { FilthyPantyClient } from "../client.ts";
 import { loadFilthyPantyRuntimeConfig } from "../runtime-config.ts";
 import { hasFlag, loginWithBrowser, optionValue, promptConfirm, promptSecret, requireAuth } from "./utils.ts";
@@ -27,12 +27,13 @@ Usage: filthy-panty <command>
 Commands:
   init                 Create a filthypanty/ project shell
   login                Authenticate with WorkOS through the dashboard
-  dev                  Watch resources and sync the dev environment (confirms before deleting)
+  dev                  Watch resources, sync the dev environment, and tail logs (confirms before deleting)
   dev --once           Sync the dev environment a single time and exit (no watch)
   diff                 Show local desired state vs remote state
-  deploy               Sync resources once (--prune deletes undeclared remote resources)
+  deploy               Sync resources once; writes FILTHY_PANTY_API_KEY to .env.local on first run
+                       (--prune deletes undeclared remote resources; --rotate-key mints a fresh key)
   env set <name>       Store an encrypted environment variable
-  logs                 Fetch recent SaaS/runtime logs
+  logs [-f]            Show recent ERROR logs; -f/--follow tails them live (Ctrl+C to stop)
   run <agent> <prompt> Run an agent and stream the result
 
 Options:
@@ -40,6 +41,12 @@ Options:
   --project <name>      Project name override (default: package name or folder)
   --env <name>          Target environment override
   --prune               Allow deploy to delete undeclared remote resources
+  --rotate-key          Mint a fresh runtime API key on deploy and write it to .env.local
+  --no-logs             Do not tail logs during \`dev\`
+  -f, --follow          Tail logs live (with \`logs\`)
+  --all                 Include INFO/WARN/DEBUG logs (with \`logs\`)
+  --limit <n>           Max log lines to fetch (with \`logs\`, default 50)
+  --json                Print logs as raw JSON (with \`logs\`)
   --force               Allow init to overwrite starter files`;
 
 async function main(): Promise<void> {
@@ -144,9 +151,46 @@ async function deploy(args: string[]): Promise<void> {
   });
   const auth = await requireAuth(optionValue(args, "--dashboard-url") ?? config.dashboardUrl);
   const client = new FilthyPantySyncClient({ dashboardUrl: auth.dashboardUrl, token: auth.token });
-  const result = await client.putManifest(manifest, hasFlag(args, "--prune"));
-  await writeGeneratedFiles(manifest, result.ids, process.cwd(), resourceAliases);
+  const result = await client.putManifest(manifest, hasFlag(args, "--prune"), hasFlag(args, "--rotate-key"));
+  await writeGeneratedFiles(manifest, result.ids, process.cwd(), resourceAliases, result.deployment);
   console.log(`Synced ${result.manifest.resources.length} resources to ${manifest.project}/${manifest.environment}`);
+  await applyDeploymentKey(result.deployment);
+  printSyncWarnings(result);
+}
+
+/**
+ * Persist the environment's runtime API key after a deploy. The plaintext is
+ * returned only when the key was just minted (or rotated), so we write it then;
+ * otherwise we nudge the operator to rotate if no local key is present.
+ */
+async function applyDeploymentKey(
+  deployment: RemoteManifestResponse["deployment"],
+): Promise<void> {
+  if (!deployment) return;
+  if (deployment.apiKey) {
+    await writeEnvValue("FILTHY_PANTY_API_KEY", deployment.apiKey);
+    console.log(`Wrote FILTHY_PANTY_API_KEY (${deployment.keyHint}) to .env.local`);
+    return;
+  }
+
+  const path = resolve(process.cwd(), ".env.local");
+  const existing = parseEnv(await readTextIfExists(path));
+  if (!existing.FILTHY_PANTY_API_KEY) {
+    console.log(
+      `⚠ Runtime key already exists (${deployment.keyHint}) but its secret is only shown once. ` +
+      "Run `filthy-panty deploy --rotate-key` to mint a fresh one and write it to .env.local.",
+    );
+  }
+}
+
+/** Surface non-fatal deploy advisories (e.g. env vars referenced but not set). */
+function printSyncWarnings(result: RemoteManifestResponse): void {
+  const missing = result.warnings?.missingEnv ?? [];
+  if (missing.length === 0) return;
+  console.log(
+    `⚠ ${missing.length} env var(s) referenced in agent config but not set: ${missing.join(", ")}`,
+  );
+  for (const name of missing) console.log(`    filthy-panty env set ${name}`);
 }
 
 async function dev(args: string[]): Promise<void> {
@@ -166,6 +210,14 @@ async function dev(args: string[]): Promise<void> {
 
   await runSyncChild(args, childEnv);
   console.log(`Watching ${PROJECT_DIR}/`);
+
+  // Live log tail alongside the file watch, mirroring `convex dev` so logs show
+  // up in the same terminal without opening the dashboard. Suppress with --no-logs.
+  const logController = new AbortController();
+  if (!hasFlag(args, "--no-logs")) {
+    console.log("Streaming logs (Ctrl+C to stop) …");
+    void startDevLogTail(args, logController.signal);
+  }
 
   let timer: NodeJS.Timeout | undefined;
   let syncing = false;
@@ -201,9 +253,32 @@ async function dev(args: string[]): Promise<void> {
   });
 
   process.on("SIGINT", () => {
+    logController.abort();
     watcher.close();
     process.exit(0);
   });
+}
+
+/**
+ * Background log tail for `dev` watch mode. Compiles once to learn the
+ * project/environment, then streams logs until `signal` aborts. Failures are
+ * non-fatal: the file watch keeps running even if log streaming can't start.
+ */
+async function startDevLogTail(args: string[], signal: AbortSignal): Promise<void> {
+  try {
+    const { manifest, config } = await compileProject({
+      project: optionValue(args, "--project"),
+      environment: optionValue(args, "--env"),
+      command: "dev",
+    });
+    const auth = await requireAuth(optionValue(args, "--dashboard-url") ?? config.dashboardUrl);
+    const client = new FilthyPantySyncClient({ dashboardUrl: auth.dashboardUrl, token: auth.token });
+    await tailLogs(client, manifest.project, manifest.environment, { errorOnly: true, signal: signal });
+  } catch (error) {
+    if (!signal.aborted) {
+      console.error(`log tail: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
 }
 
 /**
@@ -253,7 +328,7 @@ async function syncDev(args: string[]): Promise<RemoteManifestResponse> {
 
   // Push creates/updates (and canvas wiring) immediately, undeleted.
   let result = await client.putManifest(manifest, false);
-  await writeGeneratedFiles(manifest, result.ids, process.cwd(), resourceAliases);
+  await writeGeneratedFiles(manifest, result.ids, process.cwd(), resourceAliases, result.deployment);
 
   const declined = await loadDeclinedDeletes();
   const deletes = diff.filter((entry) => entry.operation === "delete");
@@ -264,7 +339,7 @@ async function syncDev(args: string[]): Promise<RemoteManifestResponse> {
     for (const entry of undecided) console.log(`  delete ${entry.kind}:${entry.name}`);
     if (await promptConfirm(`Delete ${undecided.length} resource(s) from ${manifest.project}/${manifest.environment}?`)) {
       result = await client.putManifest(manifest, true);
-      await writeGeneratedFiles(manifest, result.ids, process.cwd(), resourceAliases);
+      await writeGeneratedFiles(manifest, result.ids, process.cwd(), resourceAliases, result.deployment);
       await clearDeclinedDeletes();
       pruned = true;
     } else {
@@ -280,6 +355,8 @@ async function syncDev(args: string[]): Promise<RemoteManifestResponse> {
     console.log(`⚠ ${deletes.length} undeclared resource(s) kept remotely: ${names} — re-declare in code or run \`deploy --prune\` to remove.`);
   }
 
+  await applyDeploymentKey(result.deployment);
+  printSyncWarnings(result);
   return result;
 }
 
@@ -330,8 +407,90 @@ async function logs(args: string[]): Promise<void> {
   });
   const auth = await requireAuth(optionValue(args, "--dashboard-url") ?? config.dashboardUrl);
   const client = new FilthyPantySyncClient({ dashboardUrl: auth.dashboardUrl, token: auth.token });
-  const payload = await client.logs(manifest.project, manifest.environment, { limit: 50 });
-  console.log(JSON.stringify(payload.logs, null, 2));
+  const errorOnly = !hasFlag(args, "--all");
+
+  if (hasFlag(args, "--follow") || hasFlag(args, "-f")) {
+    const controller = new AbortController();
+    process.on("SIGINT", () => controller.abort());
+    console.log(`Tailing logs for ${manifest.project}/${manifest.environment} — Ctrl+C to stop`);
+    await tailLogs(client, manifest.project, manifest.environment, { errorOnly: errorOnly, signal: controller.signal });
+    return;
+  }
+
+  const limit = Number(optionValue(args, "--limit") ?? 50);
+  const payload = await client.logs(manifest.project, manifest.environment, { limit: limit, errorOnly: errorOnly });
+  if (hasFlag(args, "--json")) {
+    console.log(JSON.stringify(payload.logs, null, 2));
+    return;
+  }
+  const ascending = [...payload.logs].sort((a, b) => a.timestamp - b.timestamp);
+  for (const entry of ascending) console.log(formatLogEntry(entry));
+  if (ascending.length === 0) console.log("No logs in the lookback window.");
+}
+
+/** Render a single log line as `HH:mm:ss.SSS LEVEL message`, mirroring `convex dev`. */
+function formatLogEntry(entry: CliLogEntry): string {
+  const time = new Date(entry.timestamp).toISOString().slice(11, 23);
+  return `${time} ${entry.level.padEnd(5)} ${entry.message}`;
+}
+
+/** Resolve after `ms`, or immediately if `signal` aborts first. */
+function delay(ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolvePromise) => {
+    if (signal.aborted) return resolvePromise();
+    const timer = setTimeout(resolvePromise, ms);
+    signal.addEventListener("abort", () => {
+      clearTimeout(timer);
+      resolvePromise();
+    }, { once: true });
+  });
+}
+
+/**
+ * Poll the logs endpoint and print new lines as they arrive, deduping by
+ * timestamp+requestId+message, until `signal` aborts. CloudWatch has no push
+ * channel, so this is a poll loop over a rolling lookback window — the CLI analog
+ * of `convex dev`'s live log tail. The first poll prints the recent window for
+ * context; later polls print only previously-unseen lines.
+ */
+async function tailLogs(
+  client: FilthyPantySyncClient,
+  project: string,
+  environment: string,
+  options: { errorOnly?: boolean; intervalMs?: number; signal: AbortSignal },
+): Promise<void> {
+  const intervalMs = options.intervalMs ?? 3000;
+  const lookbackMs = Math.max(intervalMs * 4, 30_000);
+  const printed = new Set<string>();
+
+  while (!options.signal.aborted) {
+    try {
+      const { logs } = await client.logs(project, environment, {
+        errorOnly: options.errorOnly,
+        lookbackMs: lookbackMs,
+        limit: 200,
+      });
+      const ascending = [...logs].sort((a, b) => a.timestamp - b.timestamp);
+      for (const entry of ascending) {
+        const key = `${entry.timestamp}|${entry.requestId ?? ""}|${entry.message}`;
+        if (printed.has(key)) continue;
+        printed.add(key);
+        console.log(formatLogEntry(entry));
+      }
+      if (printed.size > 2000) {
+        const cutoff = Date.now() - lookbackMs;
+        for (const key of printed) {
+          const ts = Number(key.slice(0, key.indexOf("|")));
+          if (Number.isFinite(ts) && ts < cutoff) printed.delete(key);
+        }
+      }
+    } catch (error) {
+      if (!options.signal.aborted) {
+        console.error(`log tail: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
+    await delay(intervalMs, options.signal);
+  }
 }
 
 async function run(args: string[]): Promise<void> {
@@ -352,7 +511,7 @@ async function run(args: string[]): Promise<void> {
   const agentId = remote?.ids.agents[agentName];
   if (!agentId) throw new Error(`Agent ${agentName} is not deployed. Run filthy-panty deploy first.`);
 
-  const client = new FilthyPantyClient({ dashboardUrl: auth.dashboardUrl, token: auth.token });
+  const client = new FilthyPantyClient();
   for await (const part of client.stream({
     kind: "agent",
     name: agentName,
@@ -403,6 +562,20 @@ async function writeLocalEnvDefaults(options: {
 
   if (!changed && current) return;
   const body = `${lines.filter((line, index, all) => !(line === "" && index === all.length - 1)).join("\n")}\n`;
+  await writeFile(path, body, "utf8");
+}
+
+/** Upsert a single KEY=value into `.env.local`, preserving other lines. */
+async function writeEnvValue(key: string, value: string): Promise<void> {
+  const path = resolve(process.cwd(), ".env.local");
+  const current = await readTextIfExists(path);
+  const lines = current
+    ? current.replace(/\n?$/, "\n").split(/\n/)
+    : ["# Local filthy-panty CLI settings. Tokens are stored outside the repo."];
+  const index = lines.findIndex((line) => line.trim().startsWith(`${key}=`));
+  if (index >= 0) lines[index] = `${key}=${quoteEnv(value)}`;
+  else lines.push(`${key}=${quoteEnv(value)}`);
+  const body = `${lines.filter((line, i, all) => !(line === "" && i === all.length - 1)).join("\n")}\n`;
   await writeFile(path, body, "utf8");
 }
 

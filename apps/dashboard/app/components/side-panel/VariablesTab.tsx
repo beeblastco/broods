@@ -29,6 +29,7 @@ const PROVIDER_API_KEY_HINTS: Record<string, { envVar: string; label: string }> 
     google: { envVar: "GOOGLE_GENERATIVE_AI_API_KEY", label: "Google" },
     anthropic: { envVar: "ANTHROPIC_API_KEY", label: "Anthropic" },
     bedrock: { envVar: "AWS_BEDROCK_API_KEY", label: "Bedrock" },
+    minimax: { envVar: "MINIMAX_API_KEY", label: "MiniMax" },
 };
 
 export function VariablesTab({

@@ -40,11 +40,6 @@ export type ToolMeta = {
     status: "enabled" | "disabled";
 };
 
-export type AgentConnectivityMeta = {
-    publicAccessEnabled: boolean;
-    webSocketEnabled: boolean;
-};
-
 /** Shared node shell with handles, label, and status indicator. */
 export function BaseNode({
     id,
@@ -52,7 +47,6 @@ export function BaseNode({
     data,
     icon,
     agentStatus,
-    agentConnectivity,
     toolMeta,
     cardStatus,
     subtitle,
@@ -64,7 +58,6 @@ export function BaseNode({
     data: BaseNodeData;
     icon: React.ReactNode;
     agentStatus?: AgentHealthStatus;
-    agentConnectivity?: AgentConnectivityMeta;
     toolMeta?: ToolMeta;
     /** Binary enabled/disabled display for cards whose state mirrors a config `enabled` flag. */
     cardStatus?: { enabled: boolean };
@@ -263,14 +256,9 @@ export function BaseNode({
                                 ? data.config?.internet === true
                                     ? "text-emerald-500"
                                     : "text-muted-foreground"
-                                : agentConnectivity?.publicAccessEnabled
-                                  ? "text-emerald-500"
-                                  : "text-muted-foreground"
+                                : "text-emerald-500"
                         }`}
                     />
-                    {nodeType === "agent" && !agentConnectivity?.publicAccessEnabled && (
-                        <Slash className="pointer-events-none absolute size-3.5 text-muted-foreground/80" />
-                    )}
                     {nodeType === "sandbox" && data.config?.internet !== true && (
                         <Slash className="pointer-events-none absolute size-3.5 text-muted-foreground/80" />
                     )}

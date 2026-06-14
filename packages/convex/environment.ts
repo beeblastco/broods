@@ -187,12 +187,6 @@ export async function deleteEnvironmentContents(
         )
         .collect();
     for (const config of configs) {
-        const deployments = await ctx.db
-            .query("agentDeployments")
-            .withIndex("by_agentConfigId", (q) => q.eq("agentConfigId", config._id))
-            .collect();
-        for (const deployment of deployments) await ctx.db.delete(deployment._id);
-
         if (config.agentId) {
             const normalized = ctx.db.normalizeId("agents", config.agentId);
             if (normalized) {
@@ -203,6 +197,17 @@ export async function deleteEnvironmentContents(
 
         await ctx.db.delete(config._id);
     }
+
+    // The environment's runtime API key is scoped to (project, environment), not
+    // to an agent config, so it must be deleted here or it would keep
+    // authenticating requests against a deleted environment.
+    const envDeployments = await ctx.db
+        .query("agentDeployments")
+        .withIndex("by_projectId_and_environmentId", (q) =>
+            q.eq("projectId", projectId).eq("environmentId", environmentId),
+        )
+        .collect();
+    for (const deployment of envDeployments) await ctx.db.delete(deployment._id);
 
     const layouts = await ctx.db
         .query("canvasLayouts")

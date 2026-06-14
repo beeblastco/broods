@@ -58,12 +58,22 @@ package and typed generated references from `filthypanty/_generated/api`.
 import { FilthyPantyClient } from "filthy-panty";
 import { api } from "./filthypanty/_generated/api";
 
-const client = new FilthyPantyClient();
+const client = new FilthyPantyClient({
+  host: process.env.FILTHY_PANTY_HOST,
+  apiKey: process.env.FILTHY_PANTY_API_KEY,
+});
 
 const result = await client.run(api.agents.support, {
   input: "hello",
 });
 ```
+
+`FILTHY_PANTY_API_KEY` is the environment's runtime key (`fp_agent_…`). One key
+invokes **any** agent in that project/environment — the agent is selected by the
+generated `api.agents.*` reference, not by the key. `filthy-panty deploy` mints
+the key on first run and writes it to `.env.local` (the full secret is shown
+once; `filthy-panty deploy --rotate-key` mints a fresh one). You can also
+generate or rotate it from an agent's **Public API** panel in the dashboard.
 
 ## Commands
 
@@ -74,6 +84,7 @@ filthy-panty dev
 filthy-panty diff
 filthy-panty deploy
 filthy-panty deploy --prune
+filthy-panty deploy --rotate-key
 filthy-panty env set OPENAI_API_KEY
 filthy-panty logs
 filthy-panty run support "hello"

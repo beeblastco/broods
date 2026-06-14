@@ -101,8 +101,13 @@ function inMemoryStorage(): StorageProvider {
         return account;
       },
     } as never,
-    agents: {} as never,
-    cronJobs: {} as never,
+	    agents: {} as never,
+	    agentDeployments: {
+	      async getByApiKeyHash() {
+	        return null;
+	      },
+	    },
+	    cronJobs: {} as never,
     sandboxConfigs: {} as never,
     workspaceConfigs: {} as never,
     accountTools: {

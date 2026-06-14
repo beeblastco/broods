@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * Streaming chat hook for testing a deployed agent via the gateway API.
+ * Streaming chat hook for testing a deployed agent via the core service API.
  * Uses AI SDK utilities to parse the UIMessage SSE stream.
  */
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -53,8 +53,8 @@ type HttpStreamResult = {
   sessionId?: string;
 };
 
-function toWebSocketBaseUrl(gatewayUrl: string): string {
-  const url = new URL(gatewayUrl);
+function toWebSocketBaseUrl(baseUrl: string): string {
+  const url = new URL(baseUrl);
   url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
 
   return url.toString().replace(/\/$/, "");
@@ -63,7 +63,7 @@ function toWebSocketBaseUrl(gatewayUrl: string): string {
 async function startHttpSseStream(options: {
   endpointId: string;
   apiKey: string;
-  gatewayUrl: string;
+  baseUrl: string;
   projectSlug?: string;
   environmentSlug?: string;
   message: string;
@@ -73,7 +73,7 @@ async function startHttpSseStream(options: {
   const {
     endpointId,
     apiKey,
-    gatewayUrl,
+    baseUrl,
     projectSlug,
     environmentSlug,
     message,
@@ -83,7 +83,7 @@ async function startHttpSseStream(options: {
 
   const envPrefix = environmentSlug ? `/${environmentSlug}` : "";
   const projectPrefix = projectSlug ? `/${projectSlug}` : "";
-  const endpointUrl = `${gatewayUrl.replace(/\/$/, "")}/v1${projectPrefix}/agents${envPrefix}/${endpointId}`;
+  const endpointUrl = `${baseUrl.replace(/\/+$/, "")}/v1${projectPrefix}/agents${envPrefix}/${endpointId}`;
 
   const response = await fetch(endpointUrl, {
     method: "POST",
@@ -117,7 +117,7 @@ async function startHttpSseStream(options: {
 async function startWebSocketSseStream(options: {
   endpointId: string;
   apiKey: string;
-  gatewayUrl: string;
+  baseUrl: string;
   projectSlug?: string;
   environmentSlug?: string;
   message: string;
@@ -143,7 +143,7 @@ async function startWebSocketSseStream(options: {
   const {
     endpointId,
     apiKey,
-    gatewayUrl,
+    baseUrl,
     projectSlug,
     environmentSlug,
     message,
@@ -158,7 +158,7 @@ async function startWebSocketSseStream(options: {
 
   const envPrefix = environmentSlug ? `/${environmentSlug}` : "";
   const projectPrefix = projectSlug ? `/${projectSlug}` : "";
-  const wsBaseUrl = toWebSocketBaseUrl(gatewayUrl);
+  const wsBaseUrl = toWebSocketBaseUrl(baseUrl);
   const wsUrl =
     `${wsBaseUrl}/v1${projectPrefix}/agents${envPrefix}/${endpointId}/ws` +
     `?token=${encodeURIComponent(apiKey)}`;
@@ -575,7 +575,7 @@ function upsertSubagentPanel(options: {
 }
 
 /**
- * Streams chat messages from the agent gateway and maintains conversation state.
+ * Streams chat messages from the core service and maintains conversation state.
  * @param endpointId Deployment endpoint ID
  * @param apiKey API key for bearer authentication
  * @param projectSlug Optional project slug for the URL path prefix
@@ -603,7 +603,7 @@ export function useAgentChat({
   const mainAssistantMessageIdRef = useRef<string | null>(null);
   const continuationMessageIdRef = useRef<string | null>(null);
   const subagentMessageIdsRef = useRef<Record<string, string>>({});
-  const gatewayUrl = process.env.NEXT_PUBLIC_AGENT_GATEWAY_URL ?? "http://localhost:8080";
+  const baseUrl = (process.env.NEXT_PUBLIC_FILTHY_PANTY_BASE_URL ?? "https://app.beeblast.co").replace(/\/+$/, "");
 
   useEffect(() => {
     messagesRef.current = messages;
@@ -651,7 +651,7 @@ export function useAgentChat({
             const wsResult = await startWebSocketSseStream({
               endpointId: endpointId,
               apiKey: apiKey,
-              gatewayUrl: gatewayUrl,
+              baseUrl: baseUrl,
               projectSlug: projectSlug,
               environmentSlug: environmentSlug,
               message: trimmed,
@@ -748,7 +748,7 @@ export function useAgentChat({
           const httpResult = await startHttpSseStream({
             endpointId: endpointId,
             apiKey: apiKey,
-            gatewayUrl: gatewayUrl,
+            baseUrl: baseUrl,
             projectSlug: projectSlug,
             environmentSlug: environmentSlug,
             message: trimmed,
@@ -799,7 +799,7 @@ export function useAgentChat({
         if ((err as Error).name === "AbortError") return;
         const message =
           err instanceof TypeError && err.message === "Failed to fetch"
-            ? `Cannot reach gateway at ${gatewayUrl}. Is the service running?`
+            ? `Cannot reach core service at ${baseUrl}. Is the service running?`
             : err instanceof Error && err.message.includes("WebSocket")
               ? err.message
             : err instanceof Error
@@ -809,7 +809,7 @@ export function useAgentChat({
         setStatus("error");
       }
     },
-    [endpointId, apiKey, projectSlug, environmentSlug, gatewayUrl, webSocketEnabled],
+    [endpointId, apiKey, projectSlug, environmentSlug, baseUrl, webSocketEnabled],
   );
 
   /** Reset chat history and server session for a new conversation. */

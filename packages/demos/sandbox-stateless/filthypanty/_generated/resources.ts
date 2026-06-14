@@ -6,13 +6,13 @@ export const manifest = {
   "resources": [
     {
       "kind": "agent",
-      "name": "compute",
+      "name": "my-agent",
       "config": {
         "provider": {
           "minimax": {
             "apiKey": {
               "__beeblastEnv": true,
-              "name": "ACCOUNT_MINIMAX_API_KEY"
+              "name": "MINIMAX_API_KEY"
             }
           }
         },

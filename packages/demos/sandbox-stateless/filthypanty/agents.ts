@@ -10,7 +10,7 @@ export const statelessSandbox = defineSandbox("stateless-sandbox", {
 
 export const myAgent = defineAgent("my-agent", {
   provider: {
-    minimax: { apiKey: env("ACCOUNT_MINIMAX_API_KEY") },
+    minimax: { apiKey: env.MINIMAX_API_KEY },
   },
   model: {
     provider: "minimax",

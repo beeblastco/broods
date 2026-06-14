@@ -5,7 +5,7 @@ import { ids } from "./ids";
 /** Typed references for resources defined in filthypanty/. */
 export const api = {
   agents: {
-    "compute": { kind: "agent", name: "compute", id: ids.agents["compute"], project: "sandbox-stateless", environment: "development" },
+    myAgent: { kind: "agent", name: "my-agent", id: ids.agents["my-agent"], project: "sandbox-stateless", environment: "development", endpointId: "env-e988jf3e", projectSlug: "sandbox-stateless", environmentSlug: "development" },
   },
   workspaces: ids.workspaces,
   sandboxes: ids.sandboxes,

@@ -9,7 +9,13 @@ import { v } from "convex/values";
 import type { Doc, Id } from "./_generated/dataModel";
 import type { CliManifestResource, GeneratedIds } from "./cliTypes";
 import { internalMutation, internalQuery, type MutationCtx, type QueryCtx } from "./_generated/server";
-import { ensureAgentsRowForConfig, pushEncryptedConfigToAgentRow, syncAgentRowFields } from "./model/agentSync";
+import { ensureEnvironmentDeployment } from "./agentDeployments";
+import {
+    ensureAgentsRowForConfig,
+    pushEncryptedConfigToAgentRow,
+    refreshAgentConfigsForEnvironmentVariable,
+    syncAgentRowFields,
+} from "./model/agentSync";
 import {
     decryptAgentConfigBlob,
     encryptAgentConfigBlob,
@@ -47,6 +53,15 @@ const idsValidator = v.object({
     cronJobs: v.record(v.string(), v.string()),
     skills: v.record(v.string(), v.string()),
     tools: v.record(v.string(), v.string()),
+});
+
+/**
+ * Non-fatal deploy advisories returned to the CLI. `missingEnv` lists env var
+ * names referenced via `env.NAME` in agent config but not yet stored for the
+ * environment, so the operator can run `filthy-panty env set <NAME>`.
+ */
+const warningsValidator = v.object({
+    missingEnv: v.array(v.string()),
 });
 
 type CliResource = CliManifestResource;
@@ -131,7 +146,7 @@ export const syncManifestBySecretHash = internalMutation({
         manifest: manifestValidator,
         prune: v.optional(v.boolean()),
     },
-    returns: v.object({ manifest: v.any(), ids: idsValidator }),
+    returns: v.object({ manifest: v.any(), ids: idsValidator, warnings: warningsValidator }),
     handler: async (ctx, args) => {
         const { secretHash, manifest, prune } = args;
         const account = await accountFromSecretHash(ctx, secretHash);
@@ -142,6 +157,7 @@ export const syncManifestBySecretHash = internalMutation({
         const workspaceIds = await syncWorkspaceResources(ctx, account._id, projectDoc._id, environmentDoc._id, manifest.resources);
         const sandboxIds = await syncSandboxResources(ctx, account._id, projectDoc._id, environmentDoc._id, manifest.resources);
         const envValues = await environmentVariables(ctx, projectDoc._id, environmentDoc._id);
+        const missingEnv = new Set<string>();
         const agentIds = await syncAgentResources(ctx, {
             account: account,
             projectId: projectDoc._id,
@@ -150,6 +166,7 @@ export const syncManifestBySecretHash = internalMutation({
             workspaceIds: workspaceIds,
             sandboxIds: sandboxIds,
             envValues: envValues,
+            missingEnv: missingEnv,
         });
 
         if (prune === true) {
@@ -187,6 +204,52 @@ export const syncManifestBySecretHash = internalMutation({
                 resources: resources,
             },
             ids: ids,
+            warnings: { missingEnv: [...missingEnv].sort() },
+        };
+    },
+});
+
+/**
+ * Ensure the synced environment has a runtime API key (`fp_agent_…`) so the CLI
+ * can write `FILTHY_PANTY_API_KEY` into `.env.local`. Returns the plaintext only
+ * when freshly minted (reveal-once); otherwise just the masked hint/endpoint.
+ */
+export const ensureRuntimeKeyBySecretHash = internalMutation({
+    args: {
+        secretHash: v.string(),
+        project: v.string(),
+        environment: v.string(),
+        rotate: v.optional(v.boolean()),
+    },
+    returns: v.union(v.null(), v.object({
+        endpointId: v.string(),
+        projectSlug: v.string(),
+        environmentSlug: v.string(),
+        keyHint: v.string(),
+        apiKey: v.union(v.string(), v.null()),
+    })),
+    handler: async (ctx, args) => {
+        const account = await accountFromSecretHash(ctx, args.secretHash);
+        if (!account) return null;
+        const resolved = await getProjectEnvironment(ctx, account, args.project, args.environment);
+        if (!resolved) return null;
+        const { projectDoc, environmentDoc } = resolved;
+        const result = await ensureEnvironmentDeployment(ctx, {
+            authId: projectDoc.authId,
+            accountId: account._id,
+            projectId: projectDoc._id,
+            environmentId: environmentDoc._id,
+            projectSlug: projectDoc.slug ?? resourceName(args.project),
+            environmentSlug: environmentDoc.name.toLowerCase(),
+            rotate: args.rotate === true,
+        });
+
+        return {
+            endpointId: result.endpointId,
+            projectSlug: result.projectSlug,
+            environmentSlug: result.environmentSlug,
+            keyHint: result.keyHint,
+            apiKey: result.rawApiKey,
         };
     },
 });
@@ -326,6 +389,13 @@ export const setEnvBySecretHash = internalMutation({
                 updatedAt: now,
             });
         }
+        await refreshAgentConfigsForEnvironmentVariable(
+            ctx,
+            projectDoc._id,
+            environmentDoc._id,
+            normalizedName,
+            value,
+        );
 
         return null;
     },
@@ -584,9 +654,10 @@ async function syncAgentResources(
         workspaceIds: Record<string, string>;
         sandboxIds: Record<string, string>;
         envValues: Record<string, string>;
+        missingEnv: Set<string>;
     },
 ): Promise<Record<string, string>> {
-    const { account, projectId, environmentId, resources, workspaceIds, sandboxIds, envValues } = options;
+    const { account, projectId, environmentId, resources, workspaceIds, sandboxIds, envValues, missingEnv } = options;
     const ids: Record<string, string> = {};
     // Agents whose `subagent.allowed` references other agents by name. Resolved
     // to deploy-time agent ids in a second pass, once every agent row exists.
@@ -607,6 +678,12 @@ async function syncAgentResources(
             sandboxIds,
         );
         const flat = fromNestedAgentConfig(nested);
+        // Names referenced via `env.NAME` but not yet stored for this environment.
+        // Surfaced as a deploy warning so a typo/rename can't silently no-op into
+        // an unresolved `${NAME}` placeholder at run time.
+        for (const envNameEntry of envNames) {
+            if (envValues[envNameEntry] === undefined) missingEnv.add(envNameEntry);
+        }
         const runtimeVariables = [...envNames]
             .filter((envNameEntry) => envValues[envNameEntry] !== undefined)
             .map((envNameEntry) => ({ key: envNameEntry, value: envValues[envNameEntry] }));
@@ -665,8 +742,6 @@ async function syncAgentResources(
                 searchToolConfig: flat.searchToolConfig,
                 runtimeVariables: runtimeVariables.map((entry) => ({ key: entry.key, value: "" })),
                 extraConfig: flat.extraConfig,
-                publicAccessEnabled: false,
-                webSocketEnabled: false,
                 managedBy: "cli",
                 updatedAt: Date.now(),
             });

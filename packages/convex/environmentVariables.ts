@@ -9,6 +9,7 @@ import { mutation, query } from "./_generated/server";
 import { authKit } from "./auth";
 import { getOwnedEnvironment } from "./model/ownership/environment";
 import { encryptAgentConfigBlob } from "./model/agentConfigCodec";
+import { refreshAgentConfigsForEnvironmentVariable } from "./model/agentSync";
 
 const environmentVariableDoc = v.object({
     _id: v.id("environmentVariables"),
@@ -120,10 +121,18 @@ export const set = mutation({
                 updatedAt: now,
             });
 
+            await refreshAgentConfigsForEnvironmentVariable(
+                ctx,
+                projectId,
+                environmentId,
+                trimmedName,
+                value,
+            );
+
             return existing._id;
         }
 
-        return ctx.db.insert("environmentVariables", {
+        const variableId = await ctx.db.insert("environmentVariables", {
             projectId: projectId,
             environmentId: environmentId,
             name: trimmedName,
@@ -132,6 +141,16 @@ export const set = mutation({
             tag: encrypted.tag,
             updatedAt: now,
         });
+
+        await refreshAgentConfigsForEnvironmentVariable(
+            ctx,
+            projectId,
+            environmentId,
+            trimmedName,
+            value,
+        );
+
+        return variableId;
     },
 });
 

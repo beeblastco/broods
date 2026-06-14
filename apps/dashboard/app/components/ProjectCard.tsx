@@ -1,7 +1,7 @@
 "use client";
 
 /** Project card with a flush canvas preview on top and project info on the bottom. */
-import { useGatewayHealth } from "@/app/hooks/useAgentHealth";
+import { useCoreServiceHealth } from "@/app/hooks/useAgentHealth";
 import dynamic from "next/dynamic";
 import {
     Card,
@@ -40,13 +40,13 @@ const STATUS_CONFIG: Record<ProjectStatus, { label: string; color: string }> = {
     empty: { label: "No agents", color: "bg-zinc-700" },
 };
 
-/** Derives the overall project status from deployment count and gateway health. */
-function getProjectStatus(agentCount: number, deployedAgentCount: number, gatewayHealthy: boolean | null): ProjectStatus {
+/** Derives the overall project status from deployment count and core service health. */
+function getProjectStatus(agentCount: number, deployedAgentCount: number, serviceHealthy: boolean | null): ProjectStatus {
     if (agentCount === 0) return "empty";
     if (deployedAgentCount === 0) return "idle";
-    if (gatewayHealthy === null) return "deploying";
+    if (serviceHealthy === null) return "deploying";
 
-    return gatewayHealthy ? "healthy" : "unhealthy";
+    return serviceHealthy ? "healthy" : "unhealthy";
 }
 
 interface ProjectCardProps {
@@ -62,9 +62,9 @@ const preloadCanvas = () => import("@/app/components/canvas/Canvas");
 /** Renders a project card with a canvas preview on top flush to the border, and project info below on the card background. */
 export const ProjectCard = memo(function ProjectCard({ name, canvas, projectId, deployedAgentCount }: ProjectCardProps) {
     const router = useRouter();
-    const gatewayHealthy = useGatewayHealth();
+    const serviceHealthy = useCoreServiceHealth();
     const agentCount = canvas?.nodes.filter((n) => n.type === "agent").length ?? 0;
-    const status = getProjectStatus(agentCount, deployedAgentCount, gatewayHealthy);
+    const status = getProjectStatus(agentCount, deployedAgentCount, serviceHealthy);
     const { label, color } = STATUS_CONFIG[status];
     const nodeCount = canvas?.nodes.length ?? 0;
     const warmProject = useCallback(() => {
