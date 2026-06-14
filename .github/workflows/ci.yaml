@@ -38,7 +38,10 @@ jobs:
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
 
       - name: Install dependencies
-        run: bun install --frozen-lockfile
+        # Skip workspace postinstall (`sst install`). This validation job does
+        # not deploy infrastructure, and `bun run check` / `bun run build`
+        # regenerate the prompt artifacts they need.
+        run: bun install --frozen-lockfile --ignore-scripts
 
       - name: Typecheck
         run: bun run check

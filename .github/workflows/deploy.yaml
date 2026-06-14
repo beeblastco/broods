@@ -51,7 +51,10 @@ jobs:
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
 
       - name: Install dependencies
-        run: bun install --frozen-lockfile
+        # Skip workspace postinstall (`sst install`) during validation. The
+        # deploy job installs with the same flag and runs SST explicitly after
+        # resolving the stage and AWS credentials.
+        run: bun install --frozen-lockfile --ignore-scripts
 
       - name: Typecheck
         run: bun run check
