@@ -10,6 +10,7 @@ import { Separator } from "@/app/components/ui/separator";
 import { Switch } from "@/app/components/ui/switch";
 import { Textarea } from "@/app/components/ui/textarea";
 import { readAgentBranch, type FlatAgentConfig } from "@/app/lib/agentConfigCodec";
+import { resolveCoreEndpoint } from "@/app/lib/coreEndpoint";
 import { isRecord } from "@/app/lib/utils";
 import type { Doc, Id } from "@filthy-panty/convex/_generated/dataModel";
 import { Check, Copy, Eye, EyeOff, KeyRound, RefreshCw, Wifi } from "lucide-react";
@@ -56,13 +57,6 @@ const DEFAULT_OUTPUT_SCHEMA: Record<string, unknown> = {
     },
     required: ["answer"],
 };
-
-function toWebSocketBaseUrl(baseUrl: string): string {
-    const url = new URL(baseUrl);
-    url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
-
-    return url.toString().replace(/\/$/, "");
-}
 
 export function DetailsTab({
     agentConfig,
@@ -137,12 +131,11 @@ export function DetailsTab({
         () => typeof tavilySearchCfg.maxResults === "number" ? String(tavilySearchCfg.maxResults) : "5"
     );
 
-    const coreUrl = (process.env.NEXT_PUBLIC_FILTHY_PANTY_BASE_URL || "https://app.beeblast.co").replace(/\/+$/, "");
-    const websocketBaseUrl = toWebSocketBaseUrl(coreUrl);
+    const coreEndpoint = resolveCoreEndpoint();
     const envPrefix = activeDeployment?.environmentSlug ? `/${activeDeployment.environmentSlug}` : "";
     const projectPrefix = activeDeployment?.projectSlug ? `/${activeDeployment.projectSlug}` : "";
-    const endpointUrl = activeDeployment ? `${coreUrl}/v1${projectPrefix}/agents${envPrefix}/${activeDeployment.endpointId}` : "";
-    const websocketUrl = activeDeployment ? `${websocketBaseUrl}/v1${projectPrefix}/agents${envPrefix}/${activeDeployment.endpointId}/ws` : "";
+    const endpointUrl = activeDeployment && coreEndpoint.ok ? `${coreEndpoint.httpBaseUrl}/v1${projectPrefix}/agents${envPrefix}/${activeDeployment.endpointId}` : "";
+    const websocketUrl = activeDeployment && coreEndpoint.ok ? `${coreEndpoint.websocketBaseUrl}/v1${projectPrefix}/agents${envPrefix}/${activeDeployment.endpointId}/ws` : "";
 
     const outputFormat = agentConfig?.outputFormat && isRecord(agentConfig.outputFormat)
         ? agentConfig.outputFormat as OutputFormatConfig
@@ -365,38 +358,46 @@ export function DetailsTab({
                     </div>
                 ) : (
                     <div className="flex flex-col gap-2.5">
-                        <div className="flex flex-col gap-1.5">
-                            <span className="text-[11px] uppercase tracking-wider text-muted-foreground/70">Endpoint URL (HTTP/SSE)</span>
-                            <div className="flex items-center gap-2 rounded-md border border-border bg-muted/50 px-2.5 py-1.5">
-                                <code className="flex-1 text-xs text-foreground break-all">{endpointUrl}</code>
-                                <Button
-                                    variant="ghost"
-                                    size="icon-xs"
-                                    className="shrink-0 cursor-pointer text-muted-foreground"
-                                    onClick={() => handleCopy(endpointUrl, "url")}
-                                >
-                                    {copiedField === "url" ? <Check className="size-3" /> : <Copy className="size-3" />}
-                                </Button>
-                            </div>
-                        </div>
+                        {!coreEndpoint.ok ? (
+                            <p className="rounded-md border border-destructive/30 bg-destructive/10 px-2.5 py-2 text-xs text-destructive">
+                                {coreEndpoint.message}
+                            </p>
+                        ) : (
+                            <>
+                                <div className="flex flex-col gap-1.5">
+                                    <span className="text-[11px] uppercase tracking-wider text-muted-foreground/70">Endpoint URL (HTTP/SSE)</span>
+                                    <div className="flex items-center gap-2 rounded-md border border-border bg-muted/50 px-2.5 py-1.5">
+                                        <code className="flex-1 text-xs text-foreground break-all">{endpointUrl}</code>
+                                        <Button
+                                            variant="ghost"
+                                            size="icon-xs"
+                                            className="shrink-0 cursor-pointer text-muted-foreground"
+                                            onClick={() => handleCopy(endpointUrl, "url")}
+                                        >
+                                            {copiedField === "url" ? <Check className="size-3" /> : <Copy className="size-3" />}
+                                        </Button>
+                                    </div>
+                                </div>
 
-                        <div className="flex flex-col gap-1.5">
-                            <span className="inline-flex items-center gap-1 text-[11px] uppercase tracking-wider text-muted-foreground/70">
-                                <Wifi className="size-3" />
-                                WebSocket URL
-                            </span>
-                            <div className="flex items-center gap-2 rounded-md border border-border bg-muted/50 px-2.5 py-1.5">
-                                <code className="flex-1 text-xs text-foreground break-all">{websocketUrl}</code>
-                                <Button
-                                    variant="ghost"
-                                    size="icon-xs"
-                                    className="shrink-0 cursor-pointer text-muted-foreground"
-                                    onClick={() => handleCopy(websocketUrl, "websocket")}
-                                >
-                                    {copiedField === "websocket" ? <Check className="size-3" /> : <Copy className="size-3" />}
-                                </Button>
-                            </div>
-                        </div>
+                                <div className="flex flex-col gap-1.5">
+                                    <span className="inline-flex items-center gap-1 text-[11px] uppercase tracking-wider text-muted-foreground/70">
+                                        <Wifi className="size-3" />
+                                        WebSocket URL
+                                    </span>
+                                    <div className="flex items-center gap-2 rounded-md border border-border bg-muted/50 px-2.5 py-1.5">
+                                        <code className="flex-1 text-xs text-foreground break-all">{websocketUrl}</code>
+                                        <Button
+                                            variant="ghost"
+                                            size="icon-xs"
+                                            className="shrink-0 cursor-pointer text-muted-foreground"
+                                            onClick={() => handleCopy(websocketUrl, "websocket")}
+                                        >
+                                            {copiedField === "websocket" ? <Check className="size-3" /> : <Copy className="size-3" />}
+                                        </Button>
+                                    </div>
+                                </div>
+                            </>
+                        )}
 
                         {agentConfig?.agentId && (
                             <div className="flex flex-col gap-1.5">

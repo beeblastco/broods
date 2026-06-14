@@ -133,7 +133,7 @@ export const support = defineAgent("support", {
   expect(manifest.environment).toBe("staging");
 });
 
-test("compileProject defaults deploy to development without an override", async () => {
+test("compileProject defaults deploy to production without an override", async () => {
   const cwd = await fixtureProject("", `
 import { defineAgent } from "${join(process.cwd(), "src", "resources.ts")}";
 
@@ -144,7 +144,29 @@ export const support = defineAgent("support", {
 
   const { manifest } = await compileProject({ cwd: cwd, command: "deploy" });
 
-  expect(manifest.environment).toBe("development");
+  expect(manifest.environment).toBe("production");
+});
+
+test("compileProject can ignore runtime env when deploy uses command defaults", async () => {
+  const cwd = await fixtureProject("", `
+import { defineAgent } from "${join(process.cwd(), "src", "resources.ts")}";
+
+export const support = defineAgent("support", {
+  model: { provider: "openai", modelId: "gpt-5-mini" },
+});
+`);
+  await writeFile(join(cwd, ".env.local"), [
+    "FILTHY_PANTY_ENVIRONMENT=development",
+    "",
+  ].join("\n"));
+
+  const { manifest } = await compileProject({
+    cwd: cwd,
+    command: "deploy",
+    useRuntimeEnvironment: false,
+  });
+
+  expect(manifest.environment).toBe("production");
 });
 
 test("compileProject maps workspace overrides, subagents, skills, and tools", async () => {

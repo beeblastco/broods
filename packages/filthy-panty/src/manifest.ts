@@ -22,6 +22,7 @@ export interface CompileOptions {
   project?: string;
   environment?: string;
   command?: "dev" | "deploy";
+  useRuntimeEnvironment?: boolean;
 }
 
 export interface CompiledProject {
@@ -59,7 +60,7 @@ export async function compileProject(options: CompileOptions = {}): Promise<Comp
   const resourceAliases = aliasesForResources(resourceExports);
   const environment = resolveEnvironment(
     config,
-    options.environment ?? process.env.FILTHY_PANTY_ENVIRONMENT,
+    options.environment ?? (options.useRuntimeEnvironment === false ? undefined : process.env.FILTHY_PANTY_ENVIRONMENT),
     options.command ?? "dev",
   );
   const manifestResources = (await Promise.all(resources.map((resource) => toManifestResource(resource, root)))).sort((a, b) =>
@@ -87,7 +88,7 @@ export function resolveEnvironment(
   if (explicit) return explicit;
   const configured = config.environments?.[command];
   if (configured) return configured;
-  return "development";
+  return command === "deploy" ? "production" : "development";
 }
 
 async function listTypeScriptFiles(root: string): Promise<string[]> {

@@ -12,11 +12,33 @@ import { getOwnedEnvironment } from "./model/ownership/environment";
 import { getOwnedProject, getProjectForRole } from "./model/ownership/project";
 import { environmentsFields } from "./schema";
 
+const deploymentRegion = v.union(v.literal("ap-southeast-1"), v.literal("eu-central-1"), v.literal("us-east-1"));
+
 const environmentDoc = v.object({
     ...environmentsFields,
     _id: v.id("environments"),
     _creationTime: v.number(),
 });
+
+type EnvironmentKind = "development" | "production" | "custom";
+
+/** Infer semantic environment role for legacy rows that predate `kind`. */
+export function environmentKindForName(environment: Pick<Doc<"environments">, "name" | "kind">): EnvironmentKind {
+    if (environment.kind) return environment.kind;
+    const normalized = environment.name.trim().toLowerCase();
+    if (normalized === "development") return "development";
+    if (normalized === "production") return "production";
+
+    return "custom";
+}
+
+/** Case-insensitive lookup by explicit kind or conventional environment name. */
+function findEnvironmentByKind(
+    environments: Doc<"environments">[],
+    kind: EnvironmentKind,
+): Doc<"environments"> | undefined {
+    return environments.find((environment) => environmentKindForName(environment) === kind);
+}
 
 /** Strip Convex system fields so a fetched doc can be re-inserted as a clone. */
 function stripSystemFields<T extends object>(doc: T): Omit<T, "_id" | "_creationTime"> {
@@ -250,6 +272,54 @@ export async function deleteEnvironmentContents(
     for (const webhook of webhooks) await ctx.db.delete(webhook._id);
 }
 
+/** Returns true when an environment already has user/configuration content. */
+async function hasEnvironmentContents(
+    ctx: MutationCtx,
+    projectId: Id<"projects">,
+    environmentId: Id<"environments">,
+): Promise<boolean> {
+    const agentConfig = await ctx.db
+        .query("agentConfigs")
+        .withIndex("by_projectId_and_environmentId", (q) =>
+            q.eq("projectId", projectId).eq("environmentId", environmentId),
+        )
+        .first();
+    if (agentConfig) return true;
+
+    const layout = await ctx.db
+        .query("canvasLayouts")
+        .withIndex("by_projectId_and_environmentId", (q) =>
+            q.eq("projectId", projectId).eq("environmentId", environmentId),
+        )
+        .first();
+    if (layout) return true;
+
+    const tool = await ctx.db
+        .query("toolServices")
+        .withIndex("by_projectId_environmentId_and_nodeId", (q) =>
+            q.eq("projectId", projectId).eq("environmentId", environmentId),
+        )
+        .first();
+    if (tool) return true;
+
+    const variable = await ctx.db
+        .query("environmentVariables")
+        .withIndex("by_projectId_and_environmentId", (q) =>
+            q.eq("projectId", projectId).eq("environmentId", environmentId),
+        )
+        .first();
+    if (variable) return true;
+
+    const webhook = await ctx.db
+        .query("webhooks")
+        .withIndex("by_projectId_and_environmentId", (q) =>
+            q.eq("projectId", projectId).eq("environmentId", environmentId),
+        )
+        .first();
+
+    return Boolean(webhook);
+}
+
 export const list = query({
     args: { projectId: v.id("projects") },
     returns: v.array(environmentDoc),
@@ -293,20 +363,61 @@ export const ensureDefault = mutation({
             .withIndex("by_projectId", (q) => q.eq("projectId", projectId))
             .collect();
 
-        const existingDefault = existing.find((e) => e.isDefault);
-        if (existingDefault) return existingDefault._id;
-
         const now = Date.now();
-        const environmentId = await ctx.db.insert("environments", {
-            authId: authUser.id,
-            projectId,
-            name: "Production",
-            isDefault: true,
-            updatedAt: now,
-        });
+        const development = findEnvironmentByKind(existing, "development");
 
-        await ctx.db.patch(projectId, { updatedAt: now });
-        return environmentId;
+        // Legacy rows predating `kind` named "Production" were really the dev
+        // workspace, so promote a lone one to Development. A row with an explicit
+        // `kind` is an intentional choice and must never be renamed.
+        const legacyProductionToPromote =
+            !development &&
+            existing.length === 1 &&
+            existing[0]?.kind === undefined &&
+            environmentKindForName(existing[0]) === "production"
+                ? existing[0]
+                : undefined;
+        if (legacyProductionToPromote) {
+            await ctx.db.patch(legacyProductionToPromote._id, {
+                name: "Development",
+                kind: "development",
+                deploymentRegion: undefined,
+                isDefault: true,
+                updatedAt: now,
+            });
+            await ctx.db.patch(projectId, { updatedAt: now });
+
+            return legacyProductionToPromote._id;
+        }
+
+        // Otherwise guarantee a Development row that is the sole default, creating
+        // one if needed and demoting any other environment that claims the default.
+        let changed = !development;
+        const developmentId =
+            development?._id ??
+            (await ctx.db.insert("environments", {
+                authId: authUser.id,
+                projectId,
+                name: "Development",
+                kind: "development",
+                isDefault: true,
+                updatedAt: now,
+            }));
+
+        for (const environment of existing) {
+            const shouldBeDefault = environment._id === developmentId;
+            const needsNameFix = shouldBeDefault && (environment.kind !== "development" || environment.name !== "Development");
+            if (environment.isDefault !== shouldBeDefault || needsNameFix) {
+                await ctx.db.patch(environment._id, {
+                    ...(shouldBeDefault ? { name: "Development", kind: "development" as const } : {}),
+                    isDefault: shouldBeDefault,
+                    updatedAt: now,
+                });
+                changed = true;
+            }
+        }
+        if (changed) await ctx.db.patch(projectId, { updatedAt: now });
+
+        return developmentId;
     },
 });
 
@@ -339,6 +450,7 @@ export const create = mutation({
             authId: authUser.id,
             projectId,
             name: trimmedName,
+            kind: "custom",
             isDefault: false,
             updatedAt: now,
         });
@@ -357,6 +469,71 @@ export const create = mutation({
 
         await ctx.db.patch(projectId, { updatedAt: now });
         return environmentId;
+    },
+});
+
+export const initializeProduction = mutation({
+    args: {
+        projectId: v.id("projects"),
+        sourceEnvironmentId: v.id("environments"),
+        deploymentRegion: deploymentRegion,
+    },
+    returns: v.id("environments"),
+    handler: async (ctx, { projectId, sourceEnvironmentId, deploymentRegion }) => {
+        const authUser = await authKit.getAuthUser(ctx);
+        if (!authUser) throw new Error("User not found or not authenticated");
+
+        const project = await getOwnedProject(ctx, authUser.id, projectId);
+        if (!project) throw new Error("Project not found.");
+
+        const source = await getOwnedEnvironment(ctx, authUser.id, sourceEnvironmentId);
+        if (!source || source.projectId !== projectId) {
+            throw new Error("Source environment not found.");
+        }
+
+        const existing = await ctx.db
+            .query("environments")
+            .withIndex("by_projectId", (q) => q.eq("projectId", projectId))
+            .collect();
+        const production = findEnvironmentByKind(existing, "production");
+        const now = Date.now();
+        const productionId = production?._id ?? await ctx.db.insert("environments", {
+            authId: authUser.id,
+            projectId: projectId,
+            name: "Production",
+            kind: "production",
+            deploymentRegion: deploymentRegion,
+            isDefault: false,
+            updatedAt: now,
+        });
+
+        const productionHasContents = production
+            ? await hasEnvironmentContents(ctx, projectId, production._id)
+            : false;
+        if (!productionHasContents && productionId !== sourceEnvironmentId) {
+            await duplicateEnvironmentContents(
+                ctx,
+                authUser.id,
+                projectId,
+                sourceEnvironmentId,
+                productionId,
+                now,
+            );
+        }
+
+        await ctx.db.patch(productionId, {
+            name: "Production",
+            kind: "production",
+            deploymentRegion: deploymentRegion,
+            isDefault: false,
+            updatedAt: now,
+        });
+        for (const environment of existing.filter((entry) => entry._id !== productionId && entry.isDefault && environmentKindForName(entry) !== "development")) {
+            await ctx.db.patch(environment._id, { isDefault: false, updatedAt: now });
+        }
+        await ctx.db.patch(projectId, { updatedAt: now });
+
+        return productionId;
     },
 });
 

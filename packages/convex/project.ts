@@ -146,7 +146,8 @@ export const getOrCreateDefault = mutation({
         await ctx.db.insert("environments", {
             authId: authUser.id,
             projectId,
-            name: "Production",
+            name: "Development",
+            kind: "development",
             isDefault: true,
             updatedAt: now,
         });
@@ -197,6 +198,42 @@ export const getById = query({
     },
 });
 
+/**
+ * Resolves a CLI-style project name/slug (and optional environment name) to the
+ * caller's real project and environment ids, so a `filthy-panty` deep link can
+ * land directly on that project's architecture view.
+ * @param project name or slug as printed by the CLI
+ * @param environment optional environment name (e.g. "development"); matched case-insensitively
+ * @returns the matching ids, or null when the project is not visible to the caller
+ */
+export const resolveTarget = query({
+    args: { project: v.string(), environment: v.optional(v.string()) },
+    returns: v.union(v.null(), v.object({
+        projectId: v.id("projects"),
+        environmentId: v.union(v.null(), v.id("environments")),
+    })),
+    handler: async (ctx, { project, environment }) => {
+        const authUser = await requireAuth(ctx);
+        const needle = project.trim().toLowerCase();
+        const match = (await listProjects(ctx, authUser.id)).find((entry) =>
+            entry.name.toLowerCase() === needle || entry.slug.toLowerCase() === needle,
+        );
+        if (!match) return null;
+
+        const environments = await ctx.db
+            .query("environments")
+            .withIndex("by_projectId", (q) => q.eq("projectId", match._id))
+            .collect();
+        const wanted = environment?.trim().toLowerCase();
+        const target =
+            (wanted ? environments.find((entry) => entry.name.toLowerCase() === wanted) : undefined) ??
+            environments.find((entry) => entry.isDefault) ??
+            null;
+
+        return { projectId: match._id, environmentId: target?._id ?? null };
+    },
+});
+
 export const create = mutation({
     args: {
         name: v.string(),
@@ -223,7 +260,8 @@ export const create = mutation({
         await ctx.db.insert("environments", {
             authId: authUser.id,
             projectId,
-            name: "Production",
+            name: "Development",
+            kind: "development",
             isDefault: true,
             updatedAt: now,
         });

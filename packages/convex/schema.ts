@@ -31,6 +31,10 @@ export const environmentsFields = {
     authId: v.string(),
     projectId: v.id("projects"),
     name: v.string(),
+    /** Semantic environment role. Optional for legacy rows created before roles existed. */
+    kind: v.optional(v.union(v.literal("development"), v.literal("production"), v.literal("custom"))),
+    /** Lambda deploy region for promoted/deployable environments. */
+    deploymentRegion: v.optional(v.union(v.literal("ap-southeast-1"), v.literal("eu-central-1"), v.literal("us-east-1"))),
     isDefault: v.boolean(),
     updatedAt: v.number(),
 };

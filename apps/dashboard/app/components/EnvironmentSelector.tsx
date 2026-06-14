@@ -36,13 +36,33 @@ import { Input } from "@/app/components/ui/input";
 import { Label } from "@/app/components/ui/label";
 import { cn } from "@/app/lib/utils";
 
-/** Color dot indicating environment type: green for production, purple for others. */
-export function EnvironmentDot({ isDefault }: { isDefault: boolean }) {
+type EnvironmentKind = "development" | "production" | "custom";
+type DeploymentRegion = "ap-southeast-1" | "eu-central-1" | "us-east-1";
+
+const regionOptions: Array<{ value: DeploymentRegion; label: string; flag: string; enabled: boolean }> = [
+  { value: "ap-southeast-1", label: "Asia Pacific (Singapore)", flag: "🇸🇬", enabled: true },
+  { value: "eu-central-1", label: "Europe (Frankfurt)", flag: "🇩🇪", enabled: false },
+  { value: "us-east-1", label: "US East (N. Virginia)", flag: "🇺🇸", enabled: false },
+];
+
+/** Infer environment type for legacy rows that predate the explicit kind field. */
+function environmentKind(env: Pick<Doc<"environments">, "name" | "kind"> | null | undefined): EnvironmentKind {
+  if (!env) return "custom";
+  if (env.kind) return env.kind;
+  const normalized = env.name.trim().toLowerCase();
+  if (normalized === "development") return "development";
+  if (normalized === "production") return "production";
+
+  return "custom";
+}
+
+/** Color dot indicating environment type: green for Development, purple for Production. */
+export function EnvironmentDot({ kind }: { kind: EnvironmentKind }) {
   return (
     <Circle
       className={cn(
         "size-2 fill-current",
-        isDefault ? "text-emerald-500" : "text-violet-500",
+        kind === "development" ? "text-emerald-500" : kind === "production" ? "text-violet-500" : "text-cyan-500",
       )}
     />
   );
@@ -60,21 +80,30 @@ export function EnvironmentSelector() {
   ) as Doc<"environments">[] | undefined;
   const ensureDefault = useMutation(api.environment.ensureDefault);
   const createEnvironment = useMutation(api.environment.create);
+  const initializeProduction = useMutation(api.environment.initializeProduction);
 
   const [createOpen, setCreateOpen] = useState(false);
+  const [productionOpen, setProductionOpen] = useState(false);
+  const [productionRegion, setProductionRegion] = useState<DeploymentRegion>("ap-southeast-1");
   const [newName, setNewName] = useState("");
   const [createMode, setCreateMode] = useState<"empty" | "duplicate">("empty");
   const [duplicateFromId, setDuplicateFromId] =
     useState<Id<"environments"> | null>(null);
   const [isCreating, setIsCreating] = useState(false);
+  const [isInitializingProduction, setIsInitializingProduction] = useState(false);
 
-  // Ensure default Production environment exists when project loads
+  const developmentEnv = environments?.find((env) => environmentKind(env) === "development");
+  const productionEnv = environments?.find((env) => environmentKind(env) === "production");
+
+  // Ensure default Development environment exists when project loads.
   useEffect(() => {
     if (!projectId || environments === undefined) return;
-    if (environments.length === 0) {
+    const defaultEnv = environments.find((env) => env.isDefault);
+    const hasDevelopmentDefault = defaultEnv && environmentKind(defaultEnv) === "development";
+    if (environments.length === 0 || !developmentEnv || !hasDevelopmentDefault) {
       ensureDefault({ projectId: projectId }).catch(console.error);
     }
-  }, [projectId, environments, ensureDefault]);
+  }, [projectId, environments, developmentEnv, ensureDefault]);
 
   // Auto-select the default environment when environments load or selection becomes invalid
   useEffect(() => {
@@ -84,6 +113,8 @@ export function EnvironmentSelector() {
     );
     if (!currentValid) {
       const defaultEnv =
+        environments.find((e: Doc<"environments">) => environmentKind(e) === "development" && e.isDefault) ??
+        environments.find((e: Doc<"environments">) => environmentKind(e) === "development") ??
         environments.find((e: Doc<"environments">) => e.isDefault) ??
         environments[0];
       setEnvironmentId(defaultEnv._id);
@@ -97,6 +128,27 @@ export function EnvironmentSelector() {
   const selectedEnv = environments.find(
     (e: Doc<"environments">) => e._id === environmentId,
   );
+  const selectedKind = environmentKind(selectedEnv);
+
+  function handleSelectEnvironment(env: Doc<"environments">) {
+    if (environmentKind(env) === "production" && !env.deploymentRegion) {
+      setProductionOpen(true);
+
+      return;
+    }
+
+    setEnvironmentId(env._id);
+  }
+
+  function handleSelectProductionTarget() {
+    if (productionEnv?.deploymentRegion) {
+      setEnvironmentId(productionEnv._id);
+
+      return;
+    }
+
+    setProductionOpen(true);
+  }
 
   async function handleCreate() {
     if (!newName.trim() || !projectId) return;
@@ -120,6 +172,24 @@ export function EnvironmentSelector() {
     }
   }
 
+  async function handleInitializeProduction() {
+    if (!projectId) return;
+    const sourceEnvironmentId = developmentEnv?._id;
+    if (!sourceEnvironmentId) return;
+    setIsInitializingProduction(true);
+    try {
+      const productionId = await initializeProduction({
+        projectId: projectId,
+        sourceEnvironmentId: sourceEnvironmentId,
+        deploymentRegion: productionRegion,
+      });
+      setEnvironmentId(productionId);
+      setProductionOpen(false);
+    } finally {
+      setIsInitializingProduction(false);
+    }
+  }
+
   return (
     <>
       <DropdownMenu>
@@ -128,7 +198,7 @@ export function EnvironmentSelector() {
             variant="ghost"
             className="h-auto select-none gap-1.5 px-2 py-1 text-sm font-medium text-muted-foreground hover:text-foreground active:bg-accent/80 data-[state=open]:bg-accent data-[state=open]:text-foreground focus-visible:ring-0 focus-visible:ring-offset-0 focus:outline-none cursor-pointer"
           >
-            <EnvironmentDot isDefault={selectedEnv?.isDefault ?? false} />
+            <EnvironmentDot kind={selectedKind} />
             {selectedEnv?.name ?? "Environment"}
             <ChevronDown className="size-3.5 text-muted-foreground" />
           </Button>
@@ -142,20 +212,31 @@ export function EnvironmentSelector() {
             <DropdownMenuItem
               key={env._id}
               className={cn(
-                "gap-2",
+                "gap-2 cursor-pointer",
                 env._id === environmentId
                   ? "bg-accent text-accent-foreground"
                   : "",
               )}
-              onClick={() => setEnvironmentId(env._id)}
+              onClick={() => handleSelectEnvironment(env)}
             >
-              <EnvironmentDot isDefault={env.isDefault} />
+              <EnvironmentDot kind={environmentKind(env)} />
               {env.name}
             </DropdownMenuItem>
           ))}
 
+          {!productionEnv && (
+            <DropdownMenuItem
+              className="gap-2 cursor-pointer"
+              onClick={handleSelectProductionTarget}
+            >
+              <EnvironmentDot kind="production" />
+              Production
+            </DropdownMenuItem>
+          )}
+
           <DropdownMenuSeparator />
           <DropdownMenuItem
+            className="cursor-pointer"
             onClick={() => {
               setDuplicateFromId(environmentId);
               setCreateOpen(true);
@@ -200,7 +281,7 @@ export function EnvironmentSelector() {
                     type="button"
                     onClick={() => setCreateMode("empty")}
                     className={cn(
-                      "flex items-start gap-3 rounded-lg border p-3 text-left transition-colors",
+                      "flex cursor-pointer items-start gap-3 rounded-lg border p-3 text-left transition-colors",
                       createMode === "empty"
                         ? "border-cyan-500 bg-cyan-500/10"
                         : "border-border hover:bg-accent/50",
@@ -219,7 +300,7 @@ export function EnvironmentSelector() {
                     type="button"
                     onClick={() => setCreateMode("duplicate")}
                     className={cn(
-                      "flex items-start gap-3 rounded-lg border p-3 text-left transition-colors",
+                      "flex cursor-pointer items-start gap-3 rounded-lg border p-3 text-left transition-colors",
                       createMode === "duplicate"
                         ? "border-cyan-500 bg-cyan-500/10"
                         : "border-border hover:bg-accent/50",
@@ -267,11 +348,13 @@ export function EnvironmentSelector() {
                 type="button"
                 variant="ghost"
                 onClick={() => setCreateOpen(false)}
+                className="cursor-pointer"
               >
                 Cancel
               </Button>
               <Button
                 type="submit"
+                className="cursor-pointer disabled:cursor-not-allowed"
                 disabled={
                   !newName.trim() ||
                   isCreating ||
@@ -282,6 +365,70 @@ export function EnvironmentSelector() {
               </Button>
             </DialogFooter>
           </form>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={productionOpen} onOpenChange={setProductionOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Initialize Production</DialogTitle>
+            <DialogDescription>
+              Copy the current Development configuration into a deployable Production environment.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="grid gap-3 py-2">
+            <Label>Deployment region</Label>
+            <div className="grid gap-2">
+              {regionOptions.map((region) => (
+                <button
+                  key={region.value}
+                  type="button"
+                  disabled={!region.enabled}
+                  onClick={() => setProductionRegion(region.value)}
+                  className={cn(
+                    "flex items-center justify-between rounded-md border px-3 py-2 text-left transition-colors",
+                    region.enabled ? "cursor-pointer hover:bg-accent/50" : "cursor-not-allowed opacity-50",
+                    productionRegion === region.value
+                      ? "border-violet-500 bg-violet-500/10"
+                      : "border-border",
+                  )}
+                >
+                  <span className="flex items-center gap-2">
+                    <span className="text-lg">{region.flag}</span>
+                    <span className="flex flex-col gap-0.5">
+                      <span className="text-sm font-medium">{region.label}</span>
+                      <span className="text-xs text-muted-foreground">{region.value}</span>
+                    </span>
+                  </span>
+                  {!region.enabled && (
+                    <span className="rounded border border-border px-1.5 py-0.5 text-xs text-muted-foreground">
+                      Soon
+                    </span>
+                  )}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="ghost"
+              className="cursor-pointer"
+              onClick={() => setProductionOpen(false)}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              className="cursor-pointer disabled:cursor-not-allowed"
+              disabled={!developmentEnv || isInitializingProduction}
+              onClick={handleInitializeProduction}
+            >
+              {isInitializingProduction ? "Initializing…" : "Initialize Production"}
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </>

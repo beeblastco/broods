@@ -49,7 +49,10 @@ to the runtime shape expected by the harness.
 
 Project and environment can be inferred from the folder and command, passed as
 CLI flags, read from `.env.local`, or optionally defined with
-`defineFilthyPanty(...)` in `filthypanty/filthy-panty.config.ts`.
+`defineFilthyPanty(...)` in `filthypanty/filthy-panty.config.ts`. By default,
+`filthy-panty dev` syncs `development`; `filthy-panty deploy` syncs
+`production`. Use `filthy-panty deploy --env staging` to deploy another
+environment explicitly.
 
 Runtime code follows the same split as Convex: import the client from the
 package and typed generated references from `filthypanty/_generated/api`.
@@ -83,6 +86,7 @@ filthy-panty login
 filthy-panty dev
 filthy-panty diff
 filthy-panty deploy
+filthy-panty deploy --env staging
 filthy-panty deploy --prune
 filthy-panty deploy --rotate-key
 filthy-panty env set OPENAI_API_KEY

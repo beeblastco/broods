@@ -29,10 +29,10 @@ Usage: filthy-panty <command>
 Commands:
   init                 Create a filthypanty/ project shell
   login                Authenticate with WorkOS through the dashboard
-  dev                  Watch resources and sync the dev environment (confirms before deleting)
-  dev --once           Sync the dev environment a single time and exit (no watch)
+  dev                  Watch resources and sync Development (confirms before deleting)
+  dev --once           Sync Development a single time and exit (no watch)
   diff                 Show local desired state vs remote state
-  deploy               Sync resources once; writes FILTHY_PANTY_API_KEY to .env.local on first run
+  deploy               Sync Production once; writes FILTHY_PANTY_API_KEY to .env.local on first run
                        (--prune deletes undeclared remote resources; --rotate-key mints a fresh key)
   env set <name>       Store an encrypted environment variable
   logs [-f]            Show recent ERROR logs; -f/--follow tails them live (Ctrl+C to stop)
@@ -149,6 +149,7 @@ async function deploy(args: string[]): Promise<void> {
     project: optionValue(args, "--project"),
     environment: optionValue(args, "--env"),
     command: "deploy",
+    useRuntimeEnvironment: false,
   });
   const auth = await requireAuth(optionValue(args, "--dashboard-url") ?? config.dashboardUrl);
   const client = new FilthyPantySyncClient({ dashboardUrl: auth.dashboardUrl, token: auth.token });

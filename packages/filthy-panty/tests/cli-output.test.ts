@@ -52,9 +52,9 @@ test("formatDeploymentTarget includes project, environment, and dashboard URL", 
     dashboardUrl: "https://dashboard.dev.beeblast.co",
   }, { color: false });
 
-  expect(output).toContain("▌ Developing against deployment:");
-  expect(output).toContain("[Development] sandbox-stateless/development (dashboard)");
-  expect(output).toContain("▌ └─ https://dashboard.dev.beeblast.co");
+  expect(output).toContain("▌ Syncing Development: sandbox-stateless");
+  expect(output).toContain("[Development] development (dashboard)");
+  expect(output).toContain("▌ └─ https://dashboard.dev.beeblast.co?project=sandbox-stateless&env=development");
 });
 
 test("formatWarning renders yellow warning output", () => {

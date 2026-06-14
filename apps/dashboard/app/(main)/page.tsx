@@ -2,20 +2,21 @@
 
 /** Home route that ensures the caller has an org, then opens their default project (auto-created on first login). */
 import { api } from "@filthy-panty/convex/_generated/api";
-import { useMutation, useQuery } from "convex/react";
+import { useConvex, useMutation, useQuery } from "convex/react";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 
 /** Routes authenticated users to their most recent project, creating one on first login. */
 export default function HomePage() {
     const router = useRouter();
+    const convex = useConvex();
     const getOrCreateOrg = useMutation(api.org.getOrCreate);
     const getOrCreateDefault = useMutation(api.project.getOrCreateDefault);
     const currentUser = useQuery(api.user.getCurrent);
     const bootstrapped = useRef(false);
     const [error, setError] = useState<string | null>(null);
 
-    // Ensure the caller has an org, then open or create the default project.
+    // Ensure the caller has an org, then open the requested or default project.
     useEffect(() => {
         if (!currentUser || bootstrapped.current) return;
 
@@ -23,6 +24,26 @@ export default function HomePage() {
         (async () => {
             try {
                 await getOrCreateOrg({});
+
+                // A `filthy-panty` deep link (?project=&env=) jumps straight to that
+                // project's architecture view with the same environment selected.
+                const params = new URLSearchParams(window.location.search);
+                const project = params.get("project");
+                if (project) {
+                    const target = await convex.query(api.project.resolveTarget, {
+                        project: project,
+                        environment: params.get("env") ?? undefined,
+                    });
+                    if (target) {
+                        router.replace(
+                            target.environmentId
+                                ? `/${target.projectId}?env=${target.environmentId}`
+                                : `/${target.projectId}`,
+                        );
+                        return;
+                    }
+                }
+
                 const projectId = await getOrCreateDefault({});
                 router.replace(projectId ? `/${projectId}` : "/projects");
             } catch (err) {
@@ -31,7 +52,7 @@ export default function HomePage() {
                 bootstrapped.current = false;
             }
         })();
-    }, [currentUser, getOrCreateOrg, getOrCreateDefault, router]);
+    }, [currentUser, convex, getOrCreateOrg, getOrCreateDefault, router]);
 
     return (
         <div className="flex h-full w-full items-center justify-center bg-background">

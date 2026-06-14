@@ -32,11 +32,12 @@ export function formatDeploymentTarget(
   const bar = paint("▌", GREEN, color);
   const label = color ? `${LABEL_BG_GREEN} Development ${RESET}` : "[Development]";
   const dashboardText = color ? paint("dashboard", UNDERLINE, color) : "dashboard";
-  const url = paint(target.dashboardUrl, `${DIM}${UNDERLINE}`, color);
+  const deepLink = `${target.dashboardUrl}?project=${encodeURIComponent(target.project)}&env=${encodeURIComponent(target.environment)}`;
+  const url = paint(deepLink, `${DIM}${UNDERLINE}`, color);
 
   return [
-    `${bar} Developing against deployment:`,
-    `${bar} ${label} ${target.project}/${target.environment} (${dashboardText})`,
+    `${bar} Syncing Development: ${paint(target.project, "", color)}`,
+    `${bar} ${label} ${target.environment} (${dashboardText})`,
     `${bar} ${paint("└─", DIM, color)} ${url}`,
   ].join("\n");
 }

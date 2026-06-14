@@ -7,6 +7,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { parseJsonEventStream, readUIMessageStream, uiMessageChunkSchema } from "ai";
 import type { UIMessage } from "ai";
+import { resolveCoreEndpoint } from "@/app/lib/coreEndpoint";
 
 type ChatStatus = "ready" | "streaming" | "error";
 const WEBSOCKET_CONNECT_TIMEOUT_MS = 2000;
@@ -52,13 +53,6 @@ type HttpStreamResult = {
   stream: ReadableStream<Uint8Array>;
   sessionId?: string;
 };
-
-function toWebSocketBaseUrl(baseUrl: string): string {
-  const url = new URL(baseUrl);
-  url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
-
-  return url.toString().replace(/\/$/, "");
-}
 
 async function startHttpSseStream(options: {
   endpointId: string;
@@ -117,7 +111,7 @@ async function startHttpSseStream(options: {
 async function startWebSocketSseStream(options: {
   endpointId: string;
   apiKey: string;
-  baseUrl: string;
+  websocketBaseUrl: string;
   projectSlug?: string;
   environmentSlug?: string;
   message: string;
@@ -143,7 +137,7 @@ async function startWebSocketSseStream(options: {
   const {
     endpointId,
     apiKey,
-    baseUrl,
+    websocketBaseUrl,
     projectSlug,
     environmentSlug,
     message,
@@ -158,9 +152,8 @@ async function startWebSocketSseStream(options: {
 
   const envPrefix = environmentSlug ? `/${environmentSlug}` : "";
   const projectPrefix = projectSlug ? `/${projectSlug}` : "";
-  const wsBaseUrl = toWebSocketBaseUrl(baseUrl);
   const wsUrl =
-    `${wsBaseUrl}/v1${projectPrefix}/agents${envPrefix}/${endpointId}/ws` +
+    `${websocketBaseUrl}/v1${projectPrefix}/agents${envPrefix}/${endpointId}/ws` +
     `?token=${encodeURIComponent(apiKey)}`;
 
   const socket = new WebSocket(wsUrl);
@@ -603,7 +596,11 @@ export function useAgentChat({
   const mainAssistantMessageIdRef = useRef<string | null>(null);
   const continuationMessageIdRef = useRef<string | null>(null);
   const subagentMessageIdsRef = useRef<Record<string, string>>({});
-  const baseUrl = (process.env.NEXT_PUBLIC_FILTHY_PANTY_BASE_URL || "https://app.beeblast.co").replace(/\/+$/, "");
+  const coreEndpoint = resolveCoreEndpoint();
+  const coreEndpointOk = coreEndpoint.ok;
+  const coreEndpointMessage = coreEndpoint.ok ? "" : coreEndpoint.message;
+  const baseUrl = coreEndpoint.ok ? coreEndpoint.httpBaseUrl : "";
+  const websocketBaseUrl = coreEndpoint.ok ? coreEndpoint.websocketBaseUrl : "";
 
   useEffect(() => {
     messagesRef.current = messages;
@@ -641,6 +638,10 @@ export function useAgentChat({
       subagentMessageIdsRef.current = {};
 
       try {
+        if (!coreEndpointOk) {
+          throw new Error(coreEndpointMessage);
+        }
+
         let streamBody: ReadableStream<Uint8Array> | null = null;
         if (
           webSocketEnabled &&
@@ -651,7 +652,7 @@ export function useAgentChat({
             const wsResult = await startWebSocketSseStream({
               endpointId: endpointId,
               apiKey: apiKey,
-              baseUrl: baseUrl,
+              websocketBaseUrl: websocketBaseUrl,
               projectSlug: projectSlug,
               environmentSlug: environmentSlug,
               message: trimmed,
@@ -809,7 +810,7 @@ export function useAgentChat({
         setStatus("error");
       }
     },
-    [endpointId, apiKey, projectSlug, environmentSlug, baseUrl, webSocketEnabled],
+    [endpointId, apiKey, projectSlug, environmentSlug, coreEndpointOk, coreEndpointMessage, baseUrl, websocketBaseUrl, webSocketEnabled],
   );
 
   /** Reset chat history and server session for a new conversation. */

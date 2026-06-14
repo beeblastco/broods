@@ -436,7 +436,7 @@ async function getProjectEnvironment(
         .withIndex("by_projectId", (q) => q.eq("projectId", projectDoc._id))
         .collect();
     const normalizedEnvironment = resourceName(environment);
-    const environmentDoc = environments.find((entry) => entry.name === normalizedEnvironment);
+    const environmentDoc = environments.find((entry) => environmentNameEquals(entry.name, normalizedEnvironment));
     if (!environmentDoc) return null;
 
     return { projectDoc: projectDoc, environmentDoc: environmentDoc };
@@ -471,6 +471,17 @@ async function ensureProject(
     const created = await ctx.db.get(projectId);
     if (!created) throw new Error("Failed to create project");
 
+    // Seed a Development default so the dashboard lands on Development even when
+    // the first CLI command deploys straight to Production.
+    await ctx.db.insert("environments", {
+        authId: org.ownerAuthId,
+        projectId: projectId,
+        name: "Development",
+        kind: "development",
+        isDefault: true,
+        updatedAt: now,
+    });
+
     return created;
 }
 
@@ -484,18 +495,43 @@ async function ensureEnvironment(
         .withIndex("by_projectId", (q) => q.eq("projectId", project._id))
         .collect();
     const name = resourceName(environment);
-    const existing = environments.find((entry) => entry.name === name);
-    if (existing) return existing;
+    const existing = environments.find((entry) => environmentNameEquals(entry.name, name));
+    const kind = environmentKindForName(name);
+    if (existing) {
+        if (existing.kind !== kind || existing.name !== displayEnvironmentName(name)) {
+            await ctx.db.patch(existing._id, {
+                name: displayEnvironmentName(name),
+                kind: kind,
+                isDefault: kind === "development" ? true : existing.isDefault,
+                updatedAt: Date.now(),
+            });
+        }
+        if (kind === "development") {
+            for (const environment of environments.filter((entry) => entry._id !== existing._id && entry.isDefault)) {
+                await ctx.db.patch(environment._id, { isDefault: false, updatedAt: Date.now() });
+            }
+        }
 
+        return existing;
+    }
+
+    // Only Development is ever the default; Production/custom environments are
+    // never auto-defaulted, even when created first.
     const environmentId = await ctx.db.insert("environments", {
         authId: project.authId,
         projectId: project._id,
-        name: name,
-        isDefault: environments.length === 0,
+        name: displayEnvironmentName(name),
+        kind: kind,
+        isDefault: kind === "development",
         updatedAt: Date.now(),
     });
     const created = await ctx.db.get(environmentId);
     if (!created) throw new Error("Failed to create environment");
+    if (kind === "development") {
+        for (const environment of environments.filter((entry) => entry.isDefault)) {
+            await ctx.db.patch(environment._id, { isDefault: false, updatedAt: Date.now() });
+        }
+    }
 
     return created;
 }
@@ -1582,6 +1618,26 @@ function resourceName(value: string): string {
     if (!trimmed) throw new Error("Resource name is required");
 
     return trimmed;
+}
+
+function environmentNameEquals(left: string, right: string): boolean {
+    return left.trim().toLowerCase() === right.trim().toLowerCase();
+}
+
+function environmentKindForName(name: string): "development" | "production" | "custom" {
+    const normalized = name.trim().toLowerCase();
+    if (normalized === "development") return "development";
+    if (normalized === "production") return "production";
+
+    return "custom";
+}
+
+function displayEnvironmentName(name: string): string {
+    const kind = environmentKindForName(name);
+    if (kind === "development") return "Development";
+    if (kind === "production") return "Production";
+
+    return name;
 }
 
 function envName(value: string): string {
