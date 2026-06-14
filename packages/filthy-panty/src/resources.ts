@@ -181,9 +181,40 @@ export function defineCronJob<const Name extends string>(
   return defineResource("cronJob", name, config, options);
 }
 
-export function env<const Name extends string>(name: Name): EnvRef<Name> {
+/** Callable + property-access accessor for {@link env}. */
+export interface EnvAccessor {
+  <const Name extends string>(name: Name): EnvRef<Name>;
+  readonly [name: string]: EnvRef;
+}
+
+function makeEnvRef<const Name extends string>(name: Name): EnvRef<Name> {
   return { __beeblastEnv: true, name: name };
 }
+
+/**
+ * References an account/environment variable resolved on the SERVER at runtime —
+ * set it with `filthy-panty env set <NAME>` or in the dashboard (the Convex-style
+ * `convex env set` model). It is a deferred reference, never read from your local
+ * environment and never baked into the deployed config. Use either form:
+ *
+ *   apiKey: env.ACCOUNT_MINIMAX_API_KEY     // property access (reads like process.env)
+ *   apiKey: env("ACCOUNT_MINIMAX_API_KEY")  // call form (equivalent)
+ *
+ * Both compile to a `${NAME}` placeholder the harness fills in at run time. This is
+ * NOT `process.env`: agent configs are compiled locally, so `process.env.NAME` would
+ * bake the literal local value into the deployed config instead of deferring it.
+ */
+export const env: EnvAccessor = new Proxy(
+  function env(name: string) {
+    return makeEnvRef(name);
+  } as unknown as EnvAccessor,
+  {
+    get(target, property, receiver) {
+      if (typeof property === "string") return makeEnvRef(property);
+      return Reflect.get(target, property, receiver);
+    },
+  },
+);
 
 export function isResource(value: unknown): value is AnyResource {
   return Boolean(value && typeof value === "object" && (value as { [RESOURCE_MARKER]?: boolean })[RESOURCE_MARKER]);
