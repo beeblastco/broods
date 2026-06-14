@@ -3,13 +3,12 @@
  */
 
 import { v } from "convex/values";
-import type { Id } from "./_generated/dataModel";
 import { internalQuery } from "./_generated/server";
 import { getOwnedProject } from "./model/ownership/project";
 
 /**
- * Returns the caller's active deployments scoped to a project, and optionally to
- * a single environment, by resolving each deployment's agent config. Scoping by
+ * Returns the caller's active environment-scoped runtime keys for a project, and
+ * optionally a single environment, as `{ _id, endpointId }`. Scoping by
  * the config (which carries projectId/environmentId) keeps dashboard logs and
  * usage stats aligned with the environment selected in the UI.
  */
@@ -29,29 +28,21 @@ export const getActiveDeploymentsInternal = internalQuery({
         const project = await getOwnedProject(ctx, authId, projectId);
         if (!project) return [];
 
-        const configs = environmentId
+        // Env-scoped runtime key(s): one active key per (project, environment).
+        const envDeployments = environmentId
             ? await ctx.db
-                .query("agentConfigs")
-                .withIndex("by_projectId_and_environmentId", (q) =>
-                    q.eq("projectId", projectId).eq("environmentId", environmentId),
+                .query("agentDeployments")
+                .withIndex("by_projectId_and_environmentId_and_status", (q) =>
+                    q.eq("projectId", projectId).eq("environmentId", environmentId).eq("status", "active"),
                 )
                 .collect()
             : await ctx.db
-                .query("agentConfigs")
-                .withIndex("by_projectId_and_environmentId", (q) => q.eq("projectId", projectId))
-                .collect();
-
-        const scoped: { _id: Id<"agentDeployments">; endpointId: string }[] = [];
-        for (const config of configs) {
-            const deployments = await ctx.db
                 .query("agentDeployments")
-                .withIndex("by_agentConfigId", (q) => q.eq("agentConfigId", config._id))
+                .withIndex("by_projectId_and_environmentId_and_status", (q) => q.eq("projectId", projectId))
                 .collect();
-            for (const deployment of deployments) {
-                if (deployment.status !== "active") continue;
-                scoped.push({ _id: deployment._id, endpointId: deployment.endpointId });
-            }
-        }
+        const scoped = envDeployments
+            .filter((deployment) => deployment.status === "active")
+            .map((deployment) => ({ _id: deployment._id, endpointId: deployment.endpointId }));
 
         return scoped;
     },
@@ -96,27 +87,17 @@ export const getCliLogSourcesBySecretHash = internalQuery({
         const environment = environments.find((entry) => entry.name === args.environment);
         if (!environment) return null;
 
-        const agentConfigs = await ctx.db
-            .query("agentConfigs")
-            .withIndex("by_projectId_and_environmentId", (q) =>
-                q.eq("projectId", project._id).eq("environmentId", environment._id),
+        // Env-scoped runtime key for this (project, environment).
+        const envDeployments = await ctx.db
+            .query("agentDeployments")
+            .withIndex("by_projectId_and_environmentId_and_status", (q) =>
+                q.eq("projectId", project._id).eq("environmentId", environment._id).eq("status", "active"),
             )
             .collect();
-
-        const sources = [];
-        for (const config of agentConfigs) {
-            const deployments = await ctx.db
-                .query("agentDeployments")
-                .withIndex("by_agentConfigId", (q) => q.eq("agentConfigId", config._id))
-                .collect();
-            for (const deployment of deployments) {
-                if (deployment.status !== "active") continue;
-                sources.push({
-                    logGroup: `/aws/lambda/${deployment.endpointId}`,
-                    functionName: deployment.endpointId,
-                });
-            }
-        }
+        const sources = envDeployments.map((deployment) => ({
+            logGroup: `/aws/lambda/${deployment.endpointId}`,
+            functionName: deployment.endpointId,
+        }));
 
         return sources;
     },

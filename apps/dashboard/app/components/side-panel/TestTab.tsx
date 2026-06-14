@@ -13,7 +13,7 @@ import {
     InputGroupTextarea,
 } from "@/app/components/ui/input-group";
 import { useAgentChat } from "@/app/hooks/useAgentChat";
-import type { Doc } from "@filthy-panty/convex/_generated/dataModel";
+import type { EnvironmentDeployment } from "@/app/components/side-panel/DetailsTab";
 import type { UIMessage } from "ai";
 import {
     ArrowUp,
@@ -160,30 +160,17 @@ function colorFromName(name: string): string {
 export function TestTab({
     activeDeployment,
     deploymentApiKey,
-    publicAccessEnabled,
-    webSocketEnabled,
     nodeColor,
 }: {
-    activeDeployment: Doc<"agentDeployments"> | undefined;
+    activeDeployment: EnvironmentDeployment | undefined;
     deploymentApiKey?: string;
-    publicAccessEnabled: boolean;
-    webSocketEnabled: boolean;
     nodeColor?: string;
 }) {
-    if (!publicAccessEnabled) {
-        return (
-            <div className="flex flex-1 items-center justify-center p-4">
-                <p className="text-center text-xs text-muted-foreground">
-                    Public access is disabled. Enable it in Details to test this agent.
-                </p>
-            </div>
-        );
-    }
     if (!activeDeployment) {
         return (
             <div className="flex flex-1 items-center justify-center p-4">
                 <p className="text-center text-xs text-muted-foreground">
-                    No active deployment endpoint yet.
+                    No runtime API key for this environment yet. Generate one in Details to test this agent.
                 </p>
             </div>
         );
@@ -192,7 +179,7 @@ export function TestTab({
         return (
             <div className="flex flex-1 items-center justify-center p-4">
                 <p className="text-center text-xs text-muted-foreground">
-                    This deployment does not expose a stored API key in the UI. Reuse the key captured at deployment time, or reissue one from the backend before using the test panel.
+                    The runtime key is shown only once. Rotate it in Details to reveal a fresh key, then return here to test.
                 </p>
             </div>
         );
@@ -205,33 +192,30 @@ export function TestTab({
             projectSlug={activeDeployment.projectSlug}
             nodeColor={nodeColor}
             environmentSlug={activeDeployment.environmentSlug}
-            webSocketEnabled={webSocketEnabled}
         />
     );
 }
 
-/** Chat window that streams messages from the agent gateway. */
+/** Chat window that streams messages from the core service. */
 function ChatWindow({
     endpointId,
     apiKey,
     projectSlug,
     nodeColor,
     environmentSlug,
-    webSocketEnabled,
 }: {
     endpointId: string;
     apiKey: string;
     projectSlug?: string;
     nodeColor?: string;
     environmentSlug?: string;
-    webSocketEnabled: boolean;
 }) {
     const { messages, status, error, sendMessage, resetChat } = useAgentChat({
         endpointId: endpointId,
         apiKey: apiKey,
         projectSlug: projectSlug,
         environmentSlug: environmentSlug,
-        webSocketEnabled: webSocketEnabled,
+        webSocketEnabled: true,
     });
     const [input, setInput] = useState("");
     const bottomRef = useRef<HTMLDivElement>(null);

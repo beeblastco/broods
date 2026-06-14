@@ -45,10 +45,10 @@ console.log("Created test account:", JSON.stringify(account));
 console.log("Created test agent:", JSON.stringify(agent));
 
 try {
-  // Stream the run through the harness Function URL using the account secret.
+  // Stream the run through the core service using the SDK API key option.
   const client = new FilthyPantyClient({
-    agentServiceUrl: process.env.AGENT_SERVICE_URL!,
-    accountSecret: account.secret,
+    ...(process.env.AGENT_SERVICE_URL ? { baseUrl: process.env.AGENT_SERVICE_URL } : {}),
+    apiKey: account.secret,
   });
   for await (const part of client.stream({
     agentId: agent.agentId,

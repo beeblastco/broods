@@ -475,6 +475,11 @@ function storageWithAccountTool(accountTool: AccountToolRecord): StorageProvider
     kind: "dynamodb",
     accounts: {} as never,
     agents: {} as never,
+    agentDeployments: {
+      async getByApiKeyHash() {
+        return null;
+      },
+    },
     cronJobs: {} as never,
     sandboxConfigs: {} as never,
     workspaceConfigs: {} as never,

@@ -118,8 +118,6 @@ export const create = mutation({
             systemPrompt: systemPrompt?.trim() || undefined,
             memoryToolEnabled: true,
             searchToolEnabled: false,
-            publicAccessEnabled: false,
-            webSocketEnabled: false,
             updatedAt: now,
         });
 
@@ -186,8 +184,6 @@ export const update = mutation({
         providerOptions: v.optional(v.any()),
         temperature: v.optional(v.number()),
         maxTokens: v.optional(v.number()),
-        publicAccessEnabled: v.optional(v.boolean()),
-        webSocketEnabled: v.optional(v.boolean()),
         memoryToolEnabled: v.optional(v.boolean()),
         searchToolEnabled: v.optional(v.boolean()),
         searchToolConfig: v.optional(v.any()),
@@ -373,12 +369,9 @@ export const remove = mutation({
             throw new Error("This agent is managed by code. Remove it from your project and run `filthy-panty deploy --prune` to delete it.");
         }
 
-        const deployments = await ctx.db
-            .query("agentDeployments")
-            .withIndex("by_agentConfigId", (q) => q.eq("agentConfigId", configId))
-            .collect();
-
-        for (const d of deployments) await ctx.db.delete(d._id);
+        // Note: the environment's runtime API key is shared across all its agents
+        // (env-scoped), so deleting one agent config must NOT delete it. The key is
+        // only removed when the whole environment is deleted (see environment.ts).
 
         // Clean up the linked filthy-panty `agents` row if present so the
         // harness side stays consistent with the dashboard's canvas.

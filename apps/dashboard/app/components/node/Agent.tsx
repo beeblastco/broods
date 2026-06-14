@@ -36,8 +36,6 @@ export function AgentNode({ id, data }: NodeProps) {
         api.agentConfig.getById,
         agentConfigId ? { configId: agentConfigId } : "skip",
     );
-    const publicAccessEnabled = agentConfig?.publicAccessEnabled === true;
-    const webSocketEnabled = publicAccessEnabled && agentConfig?.webSocketEnabled === true;
     const featureRows = useMemo(() => {
         if (!isStructuredOutputEnabled(agentConfig?.outputFormat)) {
             return undefined;
@@ -57,10 +55,6 @@ export function AgentNode({ id, data }: NodeProps) {
             data={withColor}
             icon={null}
             agentStatus={healthStatus}
-            agentConnectivity={{
-                publicAccessEnabled: publicAccessEnabled,
-                webSocketEnabled: webSocketEnabled,
-            }}
             featureRows={featureRows}
             showSideHandles={true}
         />

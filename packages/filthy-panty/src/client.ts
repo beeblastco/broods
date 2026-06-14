@@ -1,12 +1,13 @@
 /**
- * Configurable client for running deployed agents over SSE, via either the
- * dashboard CLI API (token auth) or the harness Function URL.
+ * Configurable client for running deployed agents over direct core SSE.
  * Stream chunks are the Vercel AI SDK's `TextStreamPart` parts that core emits.
  */
 
 import type { ModelMessage, TextStreamPart, ToolSet } from "ai";
-import { FilthyPantySyncClient } from "./sync.ts";
 import { loadFilthyPantyRuntimeConfig } from "./runtime-config.ts";
+import { stripTrailingSlash } from "./config.ts";
+
+export const DEFAULT_CORE_BASE_URL = "https://app.beeblast.co";
 
 /**
  * Input for a single agent run. The core direct API is event-based (a list of
@@ -41,6 +42,15 @@ export interface AgentReference<Name extends string = string> {
   readonly id: string;
   readonly project: string;
   readonly environment: string;
+  /**
+   * Authoritative scope of the environment's runtime key, embedded by codegen
+   * from the deploy response. When present the client posts to the scoped URL
+   * `/v1/{projectSlug}/agents/{environmentSlug}/{endpointId}` (matching the
+   * dashboard); when absent it falls back to the base URL.
+   */
+  readonly endpointId?: string;
+  readonly projectSlug?: string;
+  readonly environmentSlug?: string;
 }
 
 export interface ResourceApi {
@@ -54,21 +64,14 @@ export interface ResourceApi {
 
 export interface FilthyPantyClientOptions {
   /**
-   * Base URL of the harness/agent service to call directly — e.g. the Lambda
-   * Function URL. This is the Convex-style path: give a `baseUrl` plus an
-   * `accountSecret` (or `serviceAuthSecret` + `accountId`) and the client talks
-   * straight to the service with no dashboard wiring required.
+   * Base URL of the core service to call directly. Use `https://app.beeblast.co`
+   * for the hosted service. If you only have a domain, use `host` instead.
    */
   baseUrl?: string;
-  /** @deprecated Use {@link FilthyPantyClientOptions.baseUrl}. */
-  agentServiceUrl?: string;
-  accountSecret?: string;
-  serviceAuthSecret?: string;
-  accountId?: string;
-  dashboardUrl?: string;
-  token?: string;
-  project?: string;
-  environment?: string;
+  /** Hostname or URL of the core service. `app.beeblast.co` becomes `https://app.beeblast.co`. */
+  host?: string;
+  /** API key used as the Bearer token for direct runtime calls. */
+  apiKey?: string;
   fetch?: typeof fetch;
 }
 
@@ -79,37 +82,22 @@ export type AgentHandle = {
 };
 
 export class FilthyPantyClient {
-  private readonly dashboardUrl?: string;
-  private readonly token?: string;
-  private readonly project?: string;
-  private readonly environment?: string;
-  private readonly baseUrl?: string;
-  private readonly accountSecret?: string;
-  private readonly serviceAuthSecret?: string;
-  private readonly accountId?: string;
+  private readonly baseUrl: string;
+  private readonly apiKey?: string;
   private readonly fetchImpl: typeof fetch;
 
   constructor(options: FilthyPantyClientOptions = {}) {
-    const runtime = loadFilthyPantyRuntimeConfig();
-    this.dashboardUrl = options.dashboardUrl ?? runtime.dashboardUrl;
-    this.token = options.token ?? runtime.token;
-    this.project = options.project ?? runtime.project;
-    this.environment = options.environment ?? runtime.environment;
-    this.baseUrl = options.baseUrl ??
-      options.agentServiceUrl ??
-      process.env.FILTHY_PANTY_BASE_URL ??
-      process.env.FILTHY_PANTY_AGENT_SERVICE_URL ??
-      process.env.FILTHY_PANTY_HARNESS_URL ??
-      process.env.AGENT_SERVICE_URL;
-    this.accountSecret = options.accountSecret ??
-      process.env.FILTHY_PANTY_ACCOUNT_SECRET ??
-      process.env.ACCOUNT_SECRET;
-    this.serviceAuthSecret = options.serviceAuthSecret ??
-      process.env.FILTHY_PANTY_SERVICE_AUTH_SECRET ??
-      process.env.SERVICE_AUTH_SECRET;
-    this.accountId = options.accountId ??
-      process.env.FILTHY_PANTY_ACCOUNT_ID ??
-      process.env.ACCOUNT_ID;
+    // Loads package-local .env/.env.local files for Node/Bun callers. Dashboard
+    // auth from the returned object is intentionally ignored for runtime calls.
+    loadFilthyPantyRuntimeConfig();
+    this.baseUrl = normalizeHttpServiceUrl(options.baseUrl ||
+      options.host ||
+      process.env.FILTHY_PANTY_BASE_URL ||
+      process.env.FILTHY_PANTY_HOST ||
+      DEFAULT_CORE_BASE_URL);
+    this.apiKey = options.apiKey ||
+      process.env.FILTHY_PANTY_API_KEY ||
+      undefined;
     this.fetchImpl = options.fetch ?? fetch;
   }
 
@@ -140,9 +128,9 @@ export class FilthyPantyClient {
 
   /** Run an agent and accumulate the streamed text and raw parts. */
   async run(ref: AgentReference, input: AgentRunInput): Promise<AgentRunResult>;
-  async run(input: AgentRunInput & { agentId: string; agentName?: string; project?: string; environment?: string }): Promise<AgentRunResult>;
+  async run(input: AgentRunInput & { agentId: string; agentName?: string }): Promise<AgentRunResult>;
   async run(
-    refOrInput: AgentReference | (AgentRunInput & { agentId: string; agentName?: string; project?: string; environment?: string }),
+    refOrInput: AgentReference | (AgentRunInput & { agentId: string; agentName?: string }),
     maybeInput?: AgentRunInput,
   ): Promise<AgentRunResult> {
     const events: TextStreamPart<ToolSet>[] = [];
@@ -150,7 +138,7 @@ export class FilthyPantyClient {
 
     const stream = maybeInput
       ? this.stream(refOrInput as AgentReference, maybeInput)
-      : this.stream(refOrInput as AgentRunInput & { agentId: string; agentName?: string; project?: string; environment?: string });
+      : this.stream(refOrInput as AgentRunInput & { agentId: string; agentName?: string });
 
     for await (const part of stream) {
       events.push(part);
@@ -162,9 +150,9 @@ export class FilthyPantyClient {
 
   /** Stream an agent run, yielding each AI SDK `TextStreamPart` as it arrives. */
   stream(ref: AgentReference, input: AgentRunInput): AsyncGenerator<TextStreamPart<ToolSet>>;
-  stream(input: AgentRunInput & { agentId: string; agentName?: string; project?: string; environment?: string }): AsyncGenerator<TextStreamPart<ToolSet>>;
+  stream(input: AgentRunInput & { agentId: string; agentName?: string }): AsyncGenerator<TextStreamPart<ToolSet>>;
   async *stream(
-    refOrInput: AgentReference | (AgentRunInput & { agentId: string; agentName?: string; project?: string; environment?: string }),
+    refOrInput: AgentReference | (AgentRunInput & { agentId: string; agentName?: string }),
     maybeInput?: AgentRunInput,
   ): AsyncGenerator<TextStreamPart<ToolSet>> {
     const input = maybeInput
@@ -172,77 +160,95 @@ export class FilthyPantyClient {
         ...maybeInput,
         agentId: (refOrInput as AgentReference).id,
         agentName: (refOrInput as AgentReference).name,
-        project: (refOrInput as AgentReference).project,
-        environment: (refOrInput as AgentReference).environment,
       }
-      : refOrInput as AgentRunInput & { agentId: string; agentName?: string; project?: string; environment?: string };
+      : refOrInput as AgentRunInput & { agentId: string; agentName?: string };
     const body = {
       agentId: input.agentId,
       eventId: input.eventId ?? `cli-${Date.now()}`,
       conversationKey: input.conversationKey ?? "cli",
       events: resolveRunEvents(input),
     };
+    const targetUrl = maybeInput ? this.scopedUrl(refOrInput as AgentReference) : this.baseUrl;
 
-    const response = await this.openStream(input.agentName, body, input.project, input.environment);
+    const response = await this.openStream(body, targetUrl);
     if (!response.ok) throw new Error(`Run failed: ${response.status} ${await response.text()}`);
     if (!response.body) throw new Error("Run response has no body");
 
     for await (const data of readSseStream(response.body)) {
+      let part: TextStreamPart<ToolSet>;
       try {
-        yield JSON.parse(data) as TextStreamPart<ToolSet>;
+        part = JSON.parse(data) as TextStreamPart<ToolSet>;
       } catch {
         // Skip non-JSON lines (e.g. a heartbeat comment that slipped through).
+        continue;
       }
+      // A fatal `error` part means the run aborted server-side (model/auth/tool
+      // failure). Surface it instead of yielding it, so callers that only read
+      // `text-delta` parts can never silently swallow a failed run.
+      if (part.type === "error") throw new Error(`Agent run failed: ${formatStreamError(part.error)}`);
+      yield part;
     }
+  }
+
+  /**
+   * Scoped invoke URL for a deployed agent. When codegen embedded the runtime
+   * key's scope, this is `/v1/{projectSlug}/agents/{environmentSlug}/{endpointId}`
+   * (the same URL the dashboard shows, so core can validate the key against the
+   * path); otherwise it falls back to the base URL.
+   */
+  private scopedUrl(ref: AgentReference): string {
+    if (ref.projectSlug && ref.environmentSlug && ref.endpointId) {
+      return `${this.baseUrl}/v1/${encodeURIComponent(ref.projectSlug)}` +
+        `/agents/${encodeURIComponent(ref.environmentSlug)}/${encodeURIComponent(ref.endpointId)}`;
+    }
+
+    return this.baseUrl;
   }
 
   private async openStream(
-    agentName: string | undefined,
     body: unknown,
-    project?: string,
-    environment?: string,
+    targetUrl: string,
   ): Promise<Response> {
-    if (this.baseUrl && this.accountSecret) {
-      return await this.fetchImpl(this.baseUrl, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Accept": "text/event-stream",
-          "Authorization": `Bearer ${this.accountSecret}`,
-        },
-        body: JSON.stringify(body),
+    if (this.apiKey) {
+      return await this.fetchCore(body, targetUrl, {
+        "Authorization": `Bearer ${this.apiKey}`,
       });
-    }
-
-    if (this.baseUrl && this.serviceAuthSecret && this.accountId) {
-      return await this.fetchImpl(this.baseUrl, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Accept": "text/event-stream",
-          "Authorization": `Bearer ${this.serviceAuthSecret}`,
-          "X-Account-Id": this.accountId,
-        },
-        body: JSON.stringify(body),
-      });
-    }
-
-    const resolvedProject = project ?? this.project;
-    const resolvedEnvironment = environment ?? this.environment;
-    if (this.dashboardUrl && this.token && resolvedProject && resolvedEnvironment && agentName) {
-      const sync = new FilthyPantySyncClient({
-        dashboardUrl: this.dashboardUrl,
-        token: this.token,
-        fetch: this.fetchImpl,
-      });
-
-      return await sync.run(resolvedProject, resolvedEnvironment, agentName, body);
     }
 
     throw new Error(
-      "FilthyPantyClient requires baseUrl/accountSecret, baseUrl/serviceAuthSecret/accountId, or dashboardUrl/token/project/environment",
+      `FilthyPantyClient streams directly from the core service at ${this.baseUrl}. ` +
+      "Provide apiKey. " +
+      "For a self-hosted core service, set host/baseUrl or FILTHY_PANTY_HOST/FILTHY_PANTY_BASE_URL.",
     );
   }
+
+  private async fetchCore(body: unknown, targetUrl: string, authHeaders: Record<string, string>): Promise<Response> {
+    try {
+      return await this.fetchImpl(targetUrl, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Accept": "text/event-stream",
+          ...authHeaders,
+        },
+        body: JSON.stringify(body),
+      });
+    } catch (error) {
+      throw new Error(
+        `Cannot access the filthy-panty core service at ${targetUrl}. ` +
+        `The SDK uses ${DEFAULT_CORE_BASE_URL} by default; set host/baseUrl or FILTHY_PANTY_HOST/FILTHY_PANTY_BASE_URL ` +
+        `to your own core service URL if your account uses a custom deployment. ` +
+        `Cause: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+}
+
+export function normalizeHttpServiceUrl(value: string): string {
+  const trimmed = value.trim();
+  const withProtocol = /^[A-Za-z][A-Za-z0-9+.-]*:\/\//.test(trimmed) ? trimmed : `https://${trimmed}`;
+
+  return stripTrailingSlash(withProtocol);
 }
 
 /**
@@ -261,6 +267,32 @@ function resolveRunEvents(input: AgentRunInput): ModelMessage[] {
   }
 
   throw new Error("AgentRunInput requires `input` (string) or a non-empty `events` array");
+}
+
+/**
+ * Render a streamed `error` part into a single human-readable line. Handles the
+ * AI SDK's `APICallError` shape (a nested provider error under `data.error` or a
+ * raw `responseBody`) and falls back to `message`/JSON so no failure mode is lost.
+ */
+function formatStreamError(error: unknown): string {
+  if (typeof error === "string") return error;
+  if (!error || typeof error !== "object") return String(error);
+  const err = error as {
+    name?: string;
+    message?: string;
+    statusCode?: number;
+    responseBody?: string;
+    data?: { error?: { message?: string } };
+  };
+  const detail =
+    err.data?.error?.message ??
+    err.message ??
+    err.responseBody ??
+    JSON.stringify(error);
+  const prefix = err.name ? `${err.name}: ` : "";
+  const status = err.statusCode ? ` (HTTP ${err.statusCode})` : "";
+
+  return `${prefix}${detail}${status}`;
 }
 
 /** Yield the payload of each `data:` line from an SSE response body. */

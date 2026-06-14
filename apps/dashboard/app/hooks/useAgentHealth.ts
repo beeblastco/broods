@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * Derives agent health status from gateway/server reachability.
+ * Derives agent health status from core service reachability.
  * Uses a shared module-level cache so multiple agent nodes don't duplicate health requests.
  */
 import type { Id } from "@filthy-panty/convex/_generated/dataModel";
@@ -13,7 +13,7 @@ export type AgentHealthStatus = "healthy" | "deploying" | "idle" | "unhealthy";
 /** Health check polling interval in ms. */
 const HEALTH_CHECK_INTERVAL = 30_000;
 
-/** Shared cache for gateway health across all hook instances. */
+/** Shared cache for core service health across all hook instances. */
 let healthCache: { healthy: boolean | null; checkedAt: number } = { healthy: null, checkedAt: 0 };
 let pendingCheck: Promise<boolean> | null = null;
 let listenerCount = 0;
@@ -39,8 +39,8 @@ function notifyListeners() {
     }
 }
 
-/** Fetch gateway health, deduplicating concurrent requests. */
-async function checkGatewayHealth(): Promise<boolean> {
+/** Fetch core service health, deduplicating concurrent requests. */
+async function checkServiceHealth(): Promise<boolean> {
     const now = Date.now();
     if (now - healthCache.checkedAt < HEALTH_CHECK_INTERVAL && healthCache.healthy !== null) {
         return healthCache.healthy;
@@ -48,16 +48,9 @@ async function checkGatewayHealth(): Promise<boolean> {
 
     if (pendingCheck) return pendingCheck;
 
-    const gatewayUrl = process.env.NEXT_PUBLIC_AGENT_GATEWAY_URL?.replace(/\/+$/, "");
-    if (!gatewayUrl) {
-        healthCache = { healthy: false, checkedAt: Date.now() };
-        pendingCheck = null;
-        notifyListeners();
+    const coreUrl = (process.env.NEXT_PUBLIC_FILTHY_PANTY_BASE_URL ?? "https://app.beeblast.co").replace(/\/+$/, "");
 
-        return false;
-    }
-
-    pendingCheck = fetchHealthWithTimeout(`${gatewayUrl}/healthz`, 5000)
+    pendingCheck = fetchHealthWithTimeout(coreUrl, 5000)
         .then((res) => {
             healthCache = { healthy: res.ok, checkedAt: Date.now() };
             pendingCheck = null;
@@ -81,8 +74,8 @@ function subscribe(listener: () => void) {
     listeners.add(listener);
     listenerCount++;
     if (listenerCount === 1) {
-        void checkGatewayHealth();
-        pollingInterval = setInterval(checkGatewayHealth, HEALTH_CHECK_INTERVAL);
+        void checkServiceHealth();
+        pollingInterval = setInterval(checkServiceHealth, HEALTH_CHECK_INTERVAL);
     }
 
     return () => {
@@ -96,10 +89,10 @@ function subscribe(listener: () => void) {
 }
 
 /**
- * Returns whether the agent gateway server is reachable.
+ * Returns whether the core service is reachable.
  * @returns true if healthy, false if unhealthy, null if not yet checked
  */
-export function useGatewayHealth(): boolean | null {
+export function useCoreServiceHealth(): boolean | null {
     const [, forceUpdate] = useState(0);
 
     useEffect(() => {
@@ -112,7 +105,7 @@ export function useGatewayHealth(): boolean | null {
 }
 
 /**
- * Returns the health status of an agent based on gateway/server reachability.
+ * Returns the health status of an agent based on core service reachability.
  * @param agentConfigId agent config to check health for
  * @returns AgentHealthStatus: healthy, deploying, idle, or unhealthy
  */

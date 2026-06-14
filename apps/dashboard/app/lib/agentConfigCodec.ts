@@ -54,8 +54,6 @@ export interface FlatAgentConfig {
     providerOptions?: Record<string, unknown>;
     temperature?: number;
     maxTokens?: number;
-    publicAccessEnabled?: boolean;
-    webSocketEnabled?: boolean;
     memoryToolEnabled?: boolean;
     searchToolEnabled?: boolean;
     searchToolConfig?: Record<string, unknown>;

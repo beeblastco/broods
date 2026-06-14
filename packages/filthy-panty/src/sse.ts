@@ -4,10 +4,18 @@
  * `FilthyPantyClient.stream`, which decodes these into typed AI SDK parts.
  */
 
-import { readSseStream } from "./client.ts";
+import { DEFAULT_CORE_BASE_URL, normalizeHttpServiceUrl, readSseStream } from "./client.ts";
 
 export async function* streamSSE(body: unknown, secret: string): AsyncGenerator<string> {
-  const response = await fetch(process.env.AGENT_SERVICE_URL!, {
+  const baseUrl = normalizeHttpServiceUrl(
+    process.env.FILTHY_PANTY_BASE_URL ||
+    process.env.FILTHY_PANTY_HOST ||
+    process.env.FILTHY_PANTY_AGENT_SERVICE_URL ||
+    process.env.FILTHY_PANTY_HARNESS_URL ||
+    process.env.AGENT_SERVICE_URL ||
+    DEFAULT_CORE_BASE_URL,
+  );
+  const response = await fetch(baseUrl, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",

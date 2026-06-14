@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import type { LambdaFunctionURLEvent } from "aws-lambda";
+import type { AuthContext } from "../functions/_shared/auth.ts";
 import type { LambdaResponse } from "../functions/_shared/runtime.ts";
 import {
   createIncomingEventRouter,
@@ -85,6 +86,76 @@ describe("direct API ingress", () => {
       method: "PUT",
       allowedMethods: ["GET", "POST"],
     });
+  });
+
+  it("accepts an env-scoped runtime key on the public endpoint path and selects the agent by id", async () => {
+    const handledEvents: DirectInboundEvent[] = [];
+    const response = await routeIncomingEvent(createEvent({
+      agentId: "agent_test",
+      message: "hello",
+      sessionId: "chat_1",
+    }, {
+      authorization: "Bearer fp_agent_test",
+    }, {
+      rawPath: "/v1/demo/agents/development/env-endpoint",
+      addDefaultAgentId: false,
+    }), createHandlers({
+      handleDirectRequest: async (event) => {
+        handledEvents.push(event);
+
+        return {
+          statusCode: 200,
+          headers: { "Content-Type": "text/plain; charset=utf-8" },
+          body: "ok",
+        };
+      },
+    }), {
+      authResolver: async (headers) =>
+        headers.authorization === "Bearer fp_agent_test"
+          ? {
+            kind: "deployment",
+            account: TEST_ACCOUNT,
+            endpointId: "env-endpoint",
+            projectSlug: "demo",
+            environmentSlug: "development",
+          }
+          : null,
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(handledEvents).toHaveLength(1);
+    expect(handledEvents[0]?.agentId).toBe("agent_test");
+    expect(handledEvents[0]?.publicConversationKey).toBe("chat_1");
+    expect(handledEvents[0]?.events).toEqual([{
+      role: "user",
+      content: [{ type: "text", text: "hello" }],
+    }]);
+  });
+
+  it("rejects an env-scoped runtime key when the scoped path endpoint does not match", async () => {
+    const response = await routeIncomingEvent(createEvent({
+      agentId: "agent_test",
+      message: "hello",
+      sessionId: "chat_1",
+    }, {
+      authorization: "Bearer fp_agent_test",
+    }, {
+      rawPath: "/v1/demo/agents/development/some-other-endpoint",
+      addDefaultAgentId: false,
+    }), createHandlers(), {
+      authResolver: async (headers) =>
+        headers.authorization === "Bearer fp_agent_test"
+          ? {
+            kind: "deployment",
+            account: TEST_ACCOUNT,
+            endpointId: "env-endpoint",
+            projectSlug: "demo",
+            environmentSlug: "development",
+          }
+          : null,
+    });
+
+    expect(response.statusCode).toBe(401);
   });
 
   it("returns 404 for direct sync and async POST when direct API is disabled", async () => {
@@ -616,15 +687,18 @@ function createHandlers(overrides: Partial<{
 async function routeIncomingEvent(
   event: LambdaFunctionURLEvent,
   handlers: ReturnType<typeof createHandlers>,
-  options: { directApiEnabled?: boolean } = {},
+  options: {
+    directApiEnabled?: boolean;
+    authResolver?: (headers: Record<string, string>) => Promise<AuthContext | null>;
+  } = {},
 ): Promise<ResponseShape> {
   const router = createIncomingEventRouter({
-    authResolver: async (headers) =>
+    authResolver: options.authResolver ?? (async (headers) =>
       headers.authorization === "Bearer secret"
         ? { kind: "account", account: TEST_ACCOUNT }
-        : null,
+        : null),
     agentLoader: async (_accountId, agentId) => agentId === TEST_AGENT.agentId ? TEST_AGENT : null,
-    ...options,
+    directApiEnabled: options.directApiEnabled,
   });
 
   const response = await router(event, handlers);

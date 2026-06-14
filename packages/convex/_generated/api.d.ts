@@ -32,6 +32,7 @@ import type * as lib_slug from "../lib/slug.js";
 import type * as logs from "../logs.js";
 import type * as logsHelpers from "../logsHelpers.js";
 import type * as messages from "../messages.js";
+import type * as migrations from "../migrations.js";
 import type * as model_agentConfigCodec from "../model/agentConfigCodec.js";
 import type * as model_agentRuntimeSecrets from "../model/agentRuntimeSecrets.js";
 import type * as model_agentSync from "../model/agentSync.js";
@@ -83,6 +84,7 @@ declare const fullApi: ApiFromModules<{
   logs: typeof logs;
   logsHelpers: typeof logsHelpers;
   messages: typeof messages;
+  migrations: typeof migrations;
   "model/agentConfigCodec": typeof model_agentConfigCodec;
   "model/agentRuntimeSecrets": typeof model_agentRuntimeSecrets;
   "model/agentSync": typeof model_agentSync;

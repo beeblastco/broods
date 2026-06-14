@@ -15,7 +15,17 @@ import { getStorage } from "./storage/index.ts";
 
 export type AuthContext =
   | { kind: "admin" }
-  | { kind: "account"; account: AccountRecord; viaServiceToken?: boolean };
+  | { kind: "account"; account: AccountRecord; viaServiceToken?: boolean }
+  | {
+    // Project + environment scoped runtime key. It does not bind to a single
+    // agent — the agent is chosen per request by id and loaded against this
+    // account, so any deployed agent in the environment is reachable.
+    kind: "deployment";
+    account: AccountRecord;
+    endpointId: string;
+    projectSlug: string;
+    environmentSlug: string;
+  };
 
 export function extractBearerToken(authorization: string | undefined): string | null {
   if (!authorization) return null;
@@ -47,9 +57,27 @@ export async function resolveBearerAuth(headers: Record<string, string>): Promis
     return { kind: "account", account, viaServiceToken: true };
   }
 
+  const deployment = await getStorage().agentDeployments.getByApiKeyHash(sha256Hex(token));
+  if (deployment) {
+    const account = await getStorage().accounts.getById(deployment.accountId);
+    if (!account || account.status !== "active") return null;
+
+    return {
+      kind: "deployment",
+      account: account,
+      endpointId: deployment.endpointId,
+      projectSlug: deployment.projectSlug,
+      environmentSlug: deployment.environmentSlug,
+    };
+  }
+
   const account = await getStorage().accounts.getBySecretHash(hashAccountSecret(token));
   if (!account || account.status !== "active") return null;
   return { kind: "account", account };
+}
+
+function sha256Hex(value: string): string {
+  return createHash("sha256").update(value).digest("hex");
 }
 
 // Hashing both sides keeps the comparison constant-time regardless of length.

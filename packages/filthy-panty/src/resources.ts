@@ -197,8 +197,8 @@ function makeEnvRef<const Name extends string>(name: Name): EnvRef<Name> {
  * `convex env set` model). It is a deferred reference, never read from your local
  * environment and never baked into the deployed config. Use either form:
  *
- *   apiKey: env.ACCOUNT_MINIMAX_API_KEY     // property access (reads like process.env)
- *   apiKey: env("ACCOUNT_MINIMAX_API_KEY")  // call form (equivalent)
+ *   apiKey: env.OPENAI_API_KEY     // property access (reads like process.env)
+ *   apiKey: env("OPENAI_API_KEY")  // call form (equivalent)
  *
  * Both compile to a `${NAME}` placeholder the harness fills in at run time. This is
  * NOT `process.env`: agent configs are compiled locally, so `process.env.NAME` would

@@ -13,7 +13,6 @@ type RouteParts =
     | { kind: "manifest"; project: string; environment: string }
     | { kind: "logs"; project: string; environment: string }
     | { kind: "env"; project: string; environment: string; name: string }
-    | { kind: "run"; project: string; environment: string; agentName: string }
     | {
         kind: "resource";
         project: string;
@@ -91,7 +90,7 @@ export const handle = httpAction(async (ctx, req) => {
         }
 
         if (route.kind === "manifest" && req.method === "PUT") {
-            const body = await req.json() as { manifest?: unknown; prune?: boolean };
+            const body = await req.json() as { manifest?: unknown; prune?: boolean; rotateRuntimeKey?: boolean };
             const manifest = body.manifest;
             if (!manifest || typeof manifest !== "object") {
                 return json({ error: "Request body must include manifest" }, 400);
@@ -126,9 +125,25 @@ export const handle = httpAction(async (ctx, req) => {
                 environment: route.environment,
             });
 
-            return json(refreshed ?? {
-                ...result,
-                ids: { ...result.ids, ...externalIds, cronJobs: cronJobIds },
+            // Ensure the environment has a runtime API key so the CLI can write
+            // FILTHY_PANTY_API_KEY locally. The plaintext is returned only on the
+            // first deploy (or after a rotate); later deploys carry just the hint.
+            const deployment = await ctx.runMutation(internal.cliSync.ensureRuntimeKeyBySecretHash, {
+                secretHash: secretHash,
+                project: route.project,
+                environment: route.environment,
+                rotate: body.rotateRuntimeKey === true,
+            });
+
+            // `refreshed` is re-read from the DB and carries no warnings, so merge
+            // the sync mutation's warnings back in either way.
+            return json({
+                ...(refreshed ?? {
+                    ...result,
+                    ids: { ...result.ids, ...externalIds, cronJobs: cronJobIds },
+                }),
+                warnings: result.warnings,
+                deployment: deployment,
             });
         }
 
@@ -146,26 +161,6 @@ export const handle = httpAction(async (ctx, req) => {
             });
 
             return json({ ok: true });
-        }
-
-        if (route.kind === "run" && req.method === "POST") {
-            const remote = await ctx.runQuery(internal.cliSync.getManifestBySecretHash, {
-                secretHash: secretHash,
-                project: route.project,
-                environment: route.environment,
-            });
-            const agentId = remote?.ids.agents?.[route.agentName];
-            if (!agentId) return json({ error: `Agent not found: ${route.agentName}` }, 404);
-            const body = await req.json() as Record<string, unknown>;
-            const response = await runAgentWithServiceToken(accountId, {
-                ...body,
-                agentId: agentId,
-            });
-
-            return new Response(response.body, {
-                status: response.status,
-                headers: response.headers,
-            });
         }
 
         if (route.kind === "resource" && req.method === "DELETE") {
@@ -226,22 +221,6 @@ function parseRoute(pathname: string): RouteParts | null {
         parts[6] === "logs"
     ) {
         return { kind: "logs", project: parts[3], environment: parts[5] };
-    }
-    if (
-        parts.length === 9 &&
-        parts[0] === "api" &&
-        parts[1] === "cli" &&
-        parts[2] === "projects" &&
-        parts[4] === "environments" &&
-        parts[6] === "agents" &&
-        parts[8] === "run"
-    ) {
-        return {
-            kind: "run",
-            project: parts[3],
-            environment: parts[5],
-            agentName: parts[7],
-        };
     }
     if (
         parts.length === 9 &&
@@ -649,25 +628,6 @@ async function deleteCronJobByNameWithServiceToken(accountId: string, name: stri
     if (!cronJob) return;
     await accountManageFetchWithServiceToken(accountId, `/accounts/me/cron-jobs/${encodeURIComponent(cronJob.cronJobId)}`, {
         method: "DELETE",
-    });
-}
-
-async function runAgentWithServiceToken(accountId: string, body: unknown): Promise<Response> {
-    const baseUrl = process.env.FILTHY_PANTY_AGENT_SERVICE_URL ?? process.env.FILTHY_PANTY_HARNESS_URL;
-    const token = process.env.FILTHY_PANTY_SERVICE_AUTH_SECRET;
-    if (!baseUrl || !token) {
-        throw new Error("FILTHY_PANTY_AGENT_SERVICE_URL/FILTHY_PANTY_HARNESS_URL and FILTHY_PANTY_SERVICE_AUTH_SECRET are required");
-    }
-
-    return fetch(baseUrl.replace(/\/$/, ""), {
-        method: "POST",
-        headers: {
-            "Content-Type": "application/json",
-            "Accept": "text/event-stream",
-            Authorization: `Bearer ${token}`,
-            "X-Account-Id": accountId,
-        },
-        body: JSON.stringify(body),
     });
 }
 

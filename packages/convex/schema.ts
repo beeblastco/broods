@@ -53,8 +53,6 @@ export const agentConfigsFields = {
     providerOptions: v.optional(v.any()),
     temperature: v.optional(v.number()),
     maxTokens: v.optional(v.number()),
-    publicAccessEnabled: v.optional(v.boolean()),
-    webSocketEnabled: v.optional(v.boolean()),
     memoryToolEnabled: v.optional(v.boolean()),
     searchToolEnabled: v.optional(v.boolean()),
     searchToolConfig: v.optional(v.any()),
@@ -95,9 +93,17 @@ export const canvasLayoutsFields = {
     updatedAt: v.number(),
 };
 
+/**
+ * Project + environment scoped runtime API key (`fp_agent_…`). One key per
+ * environment invokes ANY deployed agent in it; the agent is selected per request
+ * by id. Only the SHA-256 hash is stored; the plaintext is shown once at creation
+ * or rotation.
+ */
 export const agentDeploymentsFields = {
     authId: v.string(),
-    agentConfigId: v.id("agentConfigs"),
+    accountId: v.id("accounts"),
+    projectId: v.id("projects"),
+    environmentId: v.id("environments"),
     status: v.union(v.literal("active"), v.literal("revoked")),
     endpointId: v.string(),
     projectSlug: v.string(),
@@ -438,7 +444,9 @@ export default defineSchema({
     canvasLayouts: defineTable(canvasLayoutsFields)
         .index("by_projectId_and_environmentId", ["projectId", "environmentId"]),
     agentDeployments: defineTable(agentDeploymentsFields)
-        .index("by_agentConfigId", ["agentConfigId"])
+        .index("by_projectId_and_environmentId", ["projectId", "environmentId"])
+        .index("by_projectId_and_environmentId_and_status", ["projectId", "environmentId", "status"])
+        .index("by_apiKeyHash", ["apiKeyHash"])
         .index("by_authId", ["authId"]),
     toolServices: defineTable(toolServicesFields)
         .index("by_projectId_environmentId_and_nodeId", [

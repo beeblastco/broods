@@ -51,6 +51,8 @@ import {
 const internal: any = require("@filthy-panty/convex/_generated/api").internal;
 import type {
   AccountRecord,
+  AgentDeploymentRecord,
+  AgentDeploymentStore,
   AgentRecord,
   AccountStore,
   AccountToolStore,
@@ -264,6 +266,15 @@ const agents: AgentStore = {
       await this.remove(accountId, a.agentId);
     }
     return list.length;
+  },
+};
+
+const agentDeployments: AgentDeploymentStore = {
+  async getByApiKeyHash(apiKeyHash) {
+    const doc = await getConvexClient().query(internal.agentDeployments.getByApiKeyHash, {
+      apiKeyHash: apiKeyHash,
+    }) as AgentDeploymentRecord | null;
+    return doc;
   },
 };
 
@@ -619,6 +630,7 @@ export const convexStorageProvider: StorageProvider = {
   kind: "convex",
   accounts,
   agents,
+  agentDeployments,
   cronJobs,
   sandboxConfigs,
   workspaceConfigs,

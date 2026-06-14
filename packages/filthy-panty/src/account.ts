@@ -13,6 +13,7 @@ import type {
   Skill,
   Workspace,
 } from "./types.ts";
+import { DEFAULT_CORE_BASE_URL, normalizeHttpServiceUrl } from "./client.ts";
 
 // Create a new account.
 export async function createAccount(username: string): Promise<Account> {
@@ -180,7 +181,15 @@ export async function deleteAccount(secret: string): Promise<void> {
 
 // Post an async request to the agent service.
 export async function postAsyncRequest(body: unknown, secret: string): Promise<{ statusUrl: string }> {
-  const response = await fetch(`${process.env.AGENT_SERVICE_URL!}/async`, {
+  const baseUrl = normalizeHttpServiceUrl(
+    process.env.FILTHY_PANTY_BASE_URL ||
+    process.env.FILTHY_PANTY_HOST ||
+    process.env.FILTHY_PANTY_AGENT_SERVICE_URL ||
+    process.env.FILTHY_PANTY_HARNESS_URL ||
+    process.env.AGENT_SERVICE_URL ||
+    DEFAULT_CORE_BASE_URL,
+  );
+  const response = await fetch(`${baseUrl}/async`, {
     method: "POST",
     headers: { "Content-Type": "application/json", "Authorization": `Bearer ${secret}` },
     body: JSON.stringify(body),

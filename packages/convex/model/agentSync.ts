@@ -20,7 +20,7 @@ import {
     substituteEnvPlaceholders,
     toNestedAgentConfig,
 } from "./agentConfigCodec";
-import { loadAgentRuntimeSecrets } from "./agentRuntimeSecrets";
+import { loadAgentRuntimeSecrets, saveAgentRuntimeSecrets } from "./agentRuntimeSecrets";
 import { getActiveOrgForUser } from "./ownership/org";
 
 /**
@@ -142,6 +142,49 @@ export async function pushEncryptedConfigToAgentRow(
 }
 
 /**
+ * Updates agent runtime secrets for configs that already reference an
+ * environment variable, then re-pushes their encrypted harness config.
+ */
+export async function refreshAgentConfigsForEnvironmentVariable(
+    ctx: MutationCtx,
+    projectId: Id<"projects">,
+    environmentId: Id<"environments">,
+    name: string,
+    value: string,
+): Promise<void> {
+    const configs = await ctx.db
+        .query("agentConfigs")
+        .withIndex("by_projectId_and_environmentId", (q) =>
+            q.eq("projectId", projectId).eq("environmentId", environmentId),
+        )
+        .collect();
+
+    for (const config of configs) {
+        const referencesVariable = config.runtimeVariables?.some((entry) => entry.key === name);
+        if (!referencesVariable) continue;
+
+        const previous = await loadAgentRuntimeSecrets(ctx, config._id);
+        const nextVariables = {
+            ...previous,
+            [name]: value,
+        };
+        const publicRuntimeVariables = await saveAgentRuntimeSecrets(
+            ctx,
+            config._id,
+            Object.entries(nextVariables).map(([key, entryValue]) => ({
+                key: key,
+                value: entryValue,
+            })),
+        );
+        await ctx.db.patch(config._id, {
+            runtimeVariables: publicRuntimeVariables,
+            updatedAt: Date.now(),
+        });
+        await pushEncryptedConfigToAgentRow(ctx, config._id);
+    }
+}
+
+/**
  * Reverse sync: when an `agents` row is inserted via the API path (not via
  * the canvas), provision a matching `agentConfigs` row + canvas node on the
  * org owner's default project/environment so the agent appears on the
@@ -241,8 +284,6 @@ export async function backSyncCanvasFromAgentRow(
         searchToolEnabled: flat?.searchToolEnabled ?? false,
         searchToolConfig: flat?.searchToolConfig,
         extraConfig: flat?.extraConfig,
-        publicAccessEnabled: false,
-        webSocketEnabled: false,
         updatedAt: now,
     });
 

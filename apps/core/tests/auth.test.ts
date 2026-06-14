@@ -1,9 +1,11 @@
 /**
- * Bearer auth tests: admin secret, the cherry-coke service-token path, and
- * account-secret hash lookup.
+ * Bearer auth tests: admin secret, service-token path, deployment API keys,
+ * and account lookup.
  */
 
+import { createHash } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import type { AgentRecord } from "../functions/_shared/storage/agents.ts";
 import { hashAccountSecret, type AccountRecord } from "../functions/_shared/storage/accounts.ts";
 import { resetStorageForTests, setStorageForTests, type StorageProvider } from "../functions/_shared/storage/index.ts";
 import { extractBearerToken, resolveBearerAuth } from "../functions/_shared/auth.ts";
@@ -16,19 +18,45 @@ const ACCOUNT: AccountRecord = {
   createdAt: "2026-06-01T00:00:00.000Z",
   updatedAt: "2026-06-01T00:00:00.000Z",
 };
+const AGENT: AgentRecord = {
+  accountId: "acct_1",
+  agentId: "agent_1",
+  name: "Tester",
+  status: "active",
+  config: {},
+  createdAt: "2026-06-01T00:00:00.000Z",
+  updatedAt: "2026-06-01T00:00:00.000Z",
+};
+const DEPLOYMENT_API_KEY = "fp_agent_known-key";
 
 let accountsById: Record<string, AccountRecord>;
 let accountsBySecretHash: Record<string, AccountRecord>;
+let agentsById: Record<string, AgentRecord>;
 
 beforeEach(() => {
   process.env.ADMIN_ACCOUNT_SECRET = "admin-secret";
   process.env.SERVICE_AUTH_SECRET = "service-secret";
   accountsById = { [ACCOUNT.accountId]: ACCOUNT };
   accountsBySecretHash = { [ACCOUNT.secretHash]: ACCOUNT };
+  agentsById = { [AGENT.agentId]: AGENT };
   setStorageForTests({
     accounts: {
       getById: async (accountId: string) => accountsById[accountId] ?? null,
       getBySecretHash: async (secretHash: string) => accountsBySecretHash[secretHash] ?? null,
+    },
+    agents: {
+      getById: async (_accountId: string, agentId: string) => agentsById[agentId] ?? null,
+    },
+    agentDeployments: {
+      getByApiKeyHash: async (apiKeyHash: string) =>
+        apiKeyHash === sha256Hex(DEPLOYMENT_API_KEY)
+          ? {
+            accountId: ACCOUNT.accountId,
+            endpointId: "env-endpoint",
+            projectSlug: "demo",
+            environmentSlug: "development",
+          }
+          : null,
     },
   } as unknown as StorageProvider);
 });
@@ -63,6 +91,17 @@ describe("resolveBearerAuth", () => {
     expect(auth).toMatchObject({ kind: "account", account: { accountId: "acct_1" } });
   });
 
+  it("resolves a project/environment runtime API key", async () => {
+    const auth = await resolveBearerAuth({ authorization: `Bearer ${DEPLOYMENT_API_KEY}` });
+    expect(auth).toMatchObject({
+      kind: "deployment",
+      account: { accountId: "acct_1" },
+      endpointId: "env-endpoint",
+      projectSlug: "demo",
+      environmentSlug: "development",
+    });
+  });
+
   it("rejects unknown tokens", async () => {
     expect(await resolveBearerAuth({ authorization: "Bearer nope" })).toBeNull();
     expect(await resolveBearerAuth({})).toBeNull();
@@ -95,3 +134,7 @@ describe("resolveBearerAuth", () => {
     expect(await resolveBearerAuth({ authorization: "Bearer fp_acct_known-secret" })).toBeNull();
   });
 });
+
+function sha256Hex(value: string): string {
+  return createHash("sha256").update(value).digest("hex");
+}

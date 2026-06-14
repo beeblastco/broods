@@ -50,7 +50,6 @@ import {
   type RuntimeVariable,
 } from "@/app/lib/runtimeVariables";
 import {
-  forgetDeploymentCredential,
   getRememberedDeploymentApiKey,
   rememberDeploymentCredential,
 } from "@/app/lib/deploymentCredentials";
@@ -271,17 +270,19 @@ export const NodeSidePanel = memo(function NodeSidePanel({
     applyAgentConfigUpdate,
   );
   const removeConfig = useMutation(api.agentConfig.remove);
-  const createDeployment = useMutation(api.agentDeployments.create);
-  const revokeDeployment = useMutation(api.agentDeployments.revoke);
+  const ensureDeployment = useMutation(api.agentDeployments.ensureForEnvironment);
+  const rotateDeployment = useMutation(api.agentDeployments.rotate);
 
-  // Deployment credentials (agent nodes only)
-  const deployments = useQuery(
-    api.agentDeployments.list,
-    isAgent && agentConfigId ? { agentConfigId: agentConfigId } : "skip",
-  );
-  const activeDeployment = deployments?.find(
-    (d: { status?: string }) => d.status === "active",
-  );
+  // The environment's runtime API key (shared by every agent in it). The agent
+  // itself is selected per request by its Agent ID. Created on demand here or on
+  // the first `filthy-panty deploy`.
+  const activeDeployment =
+    useQuery(
+      api.agentDeployments.getForEnvironment,
+      isAgent && projectId && environmentId
+        ? { projectId: projectId, environmentId: environmentId }
+        : "skip",
+    ) ?? undefined;
 
   const toolService = useQuery(
     api.toolService.getByNode,
@@ -298,10 +299,8 @@ export const NodeSidePanel = memo(function NodeSidePanel({
   const [editName, setEditName] = useState("");
   const [isSaving, setIsSaving] = useState(false);
 
-  const [isSavingModelSettings, setIsSavingModelSettings] = useState(false);
   const [isSavingVariables, setIsSavingVariables] = useState(false);
-  const [isSavingPublicAccess, setIsSavingPublicAccess] = useState(false);
-  const [isSavingWebSocket, setIsSavingWebSocket] = useState(false);
+  const [isSavingKey, setIsSavingKey] = useState(false);
   const [deploymentApiKey, setDeploymentApiKey] = useState<string | undefined>(
     undefined,
   );
@@ -376,27 +375,6 @@ export const NodeSidePanel = memo(function NodeSidePanel({
         : [],
     [agentConfig],
   );
-  // Cheap boolean derived each render; no memo needed (and the compiler lint
-  // can't preserve a manual memo whose dep is a nested optional member access).
-  const publicAccessEnabled = ((): boolean => {
-    if (!isAgent) return false;
-    if (agentConfig?.publicAccessEnabled !== undefined) {
-      return agentConfig.publicAccessEnabled === true;
-    }
-
-    return !!activeDeployment;
-  })();
-  // Cheap boolean derived each render; no memo needed (same nested-optional-dep
-  // limitation as publicAccessEnabled above).
-  const webSocketEnabled = ((): boolean => {
-    if (!publicAccessEnabled) return false;
-    if (agentConfig?.webSocketEnabled !== undefined) {
-      return agentConfig.webSocketEnabled === true;
-    }
-
-    // Preserve behavior for legacy deployments that predate this flag.
-    return !!activeDeployment;
-  })();
   const headerStatus = useMemo<HeaderStatusBadge | null>(() => {
     if (isAgent) {
       const config = agentStatusConfig[healthStatus];
@@ -559,16 +537,11 @@ export const NodeSidePanel = memo(function NodeSidePanel({
   }) {
     if (!agentConfigId) return;
 
-    setIsSavingModelSettings(true);
-    try {
-      await updateConfig({
-        configId: agentConfigId,
-        provider: next.provider,
-        modelId: next.modelId,
-      });
-    } finally {
-      setIsSavingModelSettings(false);
-    }
+    await updateConfig({
+      configId: agentConfigId,
+      provider: next.provider,
+      modelId: next.modelId,
+    });
   }
 
   async function handleSaveVariables(next: RuntimeVariable[]) {
@@ -650,60 +623,35 @@ export const NodeSidePanel = memo(function NodeSidePanel({
     [agentConfigId, updateConfig],
   );
 
-  const handleTogglePublicAccess = useCallback(
-    async (enabled: boolean) => {
-      if (!agentConfigId) return;
+  // Mint the environment's runtime key on demand, or rotate it. Both return the
+  // plaintext once; we remember it locally so the panel can reveal/copy it until
+  // the key is rotated again. `rotate` also lands here via `handleRotateKey`.
+  const ensureRuntimeKey = useCallback(
+    async (rotate: boolean) => {
+      if (!isAgent || !projectId || !environmentId) return;
 
-      setIsSavingPublicAccess(true);
+      setIsSavingKey(true);
       try {
-        if (enabled) {
-          if (!activeDeployment) {
-            const createdDeployment = await createDeployment({
-              agentConfigId: agentConfigId,
-            });
-            if (
-              createdDeployment &&
-              typeof createdDeployment.endpointId === "string" &&
-              typeof createdDeployment.rawApiKey === "string"
-            ) {
-              rememberDeploymentCredential({
-                endpointId: createdDeployment.endpointId,
-                apiKey: createdDeployment.rawApiKey,
-                projectSlug: createdDeployment.projectSlug,
-                environmentSlug: createdDeployment.environmentSlug,
-              });
-              setDeploymentApiKey(createdDeployment.rawApiKey);
-            }
-          }
-          await updateConfig({
-            configId: agentConfigId,
-            publicAccessEnabled: true,
+        const result = rotate
+          ? await rotateDeployment({ projectId: projectId, environmentId: environmentId })
+          : await ensureDeployment({ projectId: projectId, environmentId: environmentId });
+        if (result?.rawApiKey) {
+          rememberDeploymentCredential({
+            endpointId: result.endpointId,
+            apiKey: result.rawApiKey,
+            projectSlug: result.projectSlug,
+            environmentSlug: result.environmentSlug,
           });
-          return;
+          setDeploymentApiKey(result.rawApiKey);
         }
-
-        if (activeDeployment) {
-          forgetDeploymentCredential(activeDeployment.endpointId);
-          setDeploymentApiKey(undefined);
-          await revokeDeployment({ deploymentId: activeDeployment._id });
-        }
-        await updateConfig({
-          configId: agentConfigId,
-          publicAccessEnabled: false,
-          webSocketEnabled: false,
-        });
       } finally {
-        setIsSavingPublicAccess(false);
+        setIsSavingKey(false);
       }
     },
-    [
-      agentConfigId,
-      activeDeployment,
-      createDeployment,
-      revokeDeployment,
-      updateConfig,
-    ],
+    [isAgent, projectId, environmentId, ensureDeployment, rotateDeployment],
   );
+  const handleGenerateKey = useCallback(() => ensureRuntimeKey(false), [ensureRuntimeKey]);
+  const handleRotateKey = useCallback(() => ensureRuntimeKey(true), [ensureRuntimeKey]);
 
   const handleUpdateToolConfig = useCallback(
     async (toolName: string, config: Record<string, unknown> | null) => {
@@ -754,23 +702,6 @@ export const NodeSidePanel = memo(function NodeSidePanel({
       });
     },
     [agentConfigId, agentConfig, updateConfig],
-  );
-
-  const handleToggleWebSocket = useCallback(
-    async (enabled: boolean) => {
-      if (!agentConfigId || !publicAccessEnabled) return;
-
-      setIsSavingWebSocket(true);
-      try {
-        await updateConfig({
-          configId: agentConfigId,
-          webSocketEnabled: enabled,
-        });
-      } finally {
-        setIsSavingWebSocket(false);
-      }
-    },
-    [agentConfigId, publicAccessEnabled, updateConfig],
   );
 
   /** Resolved name for the SettingsTab delete confirmation. */
@@ -887,19 +818,13 @@ export const NodeSidePanel = memo(function NodeSidePanel({
                 editName={editName}
                 setEditName={setEditName}
                 onSaveName={handleSaveName}
-                nameChanged={!!nameChanged}
-                isSaving={isSaving}
                 onUpdateOutputFormat={handleUpdateOutputFormat}
-                publicAccessEnabled={publicAccessEnabled}
-                webSocketEnabled={webSocketEnabled}
-                onTogglePublicAccess={handleTogglePublicAccess}
-                onToggleWebSocket={handleToggleWebSocket}
-                isSavingPublicAccess={isSavingPublicAccess}
-                isSavingWebSocket={isSavingWebSocket}
+                onGenerateKey={handleGenerateKey}
+                onRotateKey={handleRotateKey}
+                isSavingKey={isSavingKey}
                 selectedProvider={selectedProvider}
                 runtimeVariables={runtimeVariables}
                 onSaveModelSettings={handleSaveModelSettings}
-                isSavingModelSettings={isSavingModelSettings}
                 onUpdateToolConfig={handleUpdateToolConfig}
                 onUpdateChannelConfig={handleUpdateChannelConfig}
               />
@@ -1062,8 +987,6 @@ export const NodeSidePanel = memo(function NodeSidePanel({
                 <TestTab
                   activeDeployment={activeDeployment}
                   deploymentApiKey={deploymentApiKey}
-                  publicAccessEnabled={publicAccessEnabled}
-                  webSocketEnabled={webSocketEnabled}
                   nodeColor={nodeData?.properties?.color}
                 />
               ) : node ? (
