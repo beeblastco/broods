@@ -143,14 +143,15 @@ export async function pushEncryptedConfigToAgentRow(
 
 /**
  * Updates agent runtime secrets for configs that already reference an
- * environment variable, then re-pushes their encrypted harness config.
+ * environment variable, then re-pushes their encrypted harness config. Pass
+ * `undefined` as the value to clear the secret when the variable is removed.
  */
 export async function refreshAgentConfigsForEnvironmentVariable(
     ctx: MutationCtx,
     projectId: Id<"projects">,
     environmentId: Id<"environments">,
     name: string,
-    value: string,
+    value: string | undefined,
 ): Promise<void> {
     const configs = await ctx.db
         .query("agentConfigs")
@@ -164,10 +165,12 @@ export async function refreshAgentConfigsForEnvironmentVariable(
         if (!referencesVariable) continue;
 
         const previous = await loadAgentRuntimeSecrets(ctx, config._id);
-        const nextVariables = {
-            ...previous,
-            [name]: value,
-        };
+        const nextVariables = { ...previous };
+        if (value === undefined) {
+            delete nextVariables[name];
+        } else {
+            nextVariables[name] = value;
+        }
         const publicRuntimeVariables = await saveAgentRuntimeSecrets(
             ctx,
             config._id,

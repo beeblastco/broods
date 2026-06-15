@@ -46,8 +46,18 @@ export interface ResourceDefinition<
   readonly config: Config;
 }
 
+/**
+ * Code-first sandbox config surface. Mirrors core's `SandboxConfig` but lets
+ * `envVars` values be `env.NAME` references (compiled to `${NAME}` placeholders
+ * at sync time, exactly like provider `apiKey`). Add overrides here if more
+ * sandbox fields should accept env refs.
+ */
+export type SandboxDefinitionConfig = Omit<SandboxConfig, "envVars"> & {
+  envVars?: Record<string, string | EnvRef | undefined>;
+};
+
 export type WorkspaceResource<Name extends string = string> = ResourceDefinition<"workspace", Name, WorkspaceConfig>;
-export type SandboxResource<Name extends string = string> = ResourceDefinition<"sandbox", Name, SandboxConfig>;
+export type SandboxResource<Name extends string = string> = ResourceDefinition<"sandbox", Name, SandboxDefinitionConfig>;
 export type SkillResource<Name extends string = string> = ResourceDefinition<"skill", Name, SkillDefinitionConfig>;
 export type ToolResource<Name extends string = string> = ResourceDefinition<"tool", Name, ToolDefinitionConfig>;
 
@@ -143,7 +153,7 @@ export function defineWorkspace<const Name extends string>(
 
 export function defineSandbox<const Name extends string>(
   name: Name,
-  config: SandboxConfig,
+  config: SandboxDefinitionConfig,
   options: { description?: string } = {},
 ): SandboxResource<Name> {
   return defineResource("sandbox", name, config, options);

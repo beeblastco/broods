@@ -47,11 +47,25 @@ export function formatReadyLine(durationMs: number, options: FormatOptions = {})
   return `${paint("✔", GREEN, shouldUseColor(options))} ${time} Resources ready! (${formatDuration(durationMs)})`;
 }
 
+/**
+ * One-line summary of the env vars `dev` pushed from `.env.local` to the cloud
+ * environment, e.g. `▌ ↑ Synced 2 env var(s) from .env.local: OPENAI_API_KEY, …`.
+ */
+export function formatEnvSync(names: string[], options: FormatOptions = {}): string {
+  const color = shouldUseColor(options);
+  const bar = paint("▌", GREEN, color);
+  const arrow = paint("↑", GREEN, color);
+  return `${bar} ${arrow} Synced ${names.length} env var(s) from .env.local: ${names.join(", ")}`;
+}
+
 export function formatDiffEntries(entries: DiffEntry[], options: FormatOptions = {}): string[] {
   const color = shouldUseColor(options);
 
   return entries.map((entry) => {
     const marker = formatDiffMarker(entry.operation, color);
+    if (entry.operation === "rename" && entry.previousName) {
+      return `  ${marker} ${entry.kind}:${entry.previousName} -> ${entry.name}`;
+    }
     return `  ${marker} ${entry.kind}:${entry.name}`;
   });
 }
@@ -66,6 +80,10 @@ export function printReadyLine(durationMs: number): void {
 
 export function printDeploymentTarget(target: DeploymentTarget): void {
   console.error(formatDeploymentTarget(target));
+}
+
+export function printEnvSync(names: string[]): void {
+  console.error(formatEnvSync(names));
 }
 
 export function printDiffEntries(entries: DiffEntry[]): void {
@@ -89,6 +107,7 @@ function paint(value: string, style: string, color: boolean): string {
 
 function formatDiffMarker(operation: DiffEntry["operation"], color: boolean): string {
   if (operation === "create") return `[${paint("+", GREEN, color)}]`;
+  if (operation === "rename") return `[${paint("~", YELLOW, color)}]`;
   if (operation === "update") return `[${paint("*", CYAN, color)}]`;
   return `[${paint("-", RED, color)}]`;
 }

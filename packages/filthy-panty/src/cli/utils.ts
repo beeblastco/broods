@@ -40,6 +40,51 @@ export async function promptSecret(label: string): Promise<string> {
   }
 }
 
+export async function promptText(label: string, defaultValue?: string): Promise<string> {
+  const rl = createInterface({ input, output });
+  try {
+    const pending = rl.question(`${label}: `);
+    if (defaultValue) {
+      if (input.isTTY && output.isTTY) output.write("\x1b[90m");
+      rl.write(defaultValue);
+      if (input.isTTY && output.isTTY) output.write("\x1b[0m");
+    }
+    const answer = (await pending).trim();
+
+    return answer || defaultValue || "";
+  } finally {
+    rl.close();
+  }
+}
+
+export async function promptSelect<T>(
+  label: string,
+  options: T[],
+  render: (option: T) => string,
+): Promise<T> {
+  if (options.length === 0) throw new Error(`${label}: no options available`);
+  if (options.length === 1) return options[0]!;
+
+  console.log(label);
+  options.forEach((option, index) => {
+    console.log(`  ${index + 1}. ${render(option)}`);
+  });
+
+  const rl = createInterface({ input, output });
+  try {
+    while (true) {
+      const answer = (await rl.question(`Choose 1-${options.length}: `)).trim();
+      const index = Number(answer);
+      if (Number.isInteger(index) && index >= 1 && index <= options.length) {
+        return options[index - 1]!;
+      }
+      console.log(`Enter a number from 1 to ${options.length}.`);
+    }
+  } finally {
+    rl.close();
+  }
+}
+
 /**
  * Asks a yes/no question on the terminal, defaulting to no. Returns false when
  * stdin is not a TTY (e.g. CI) so non-interactive runs never block on a prompt.

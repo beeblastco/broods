@@ -30,6 +30,32 @@ export interface RemoteManifestResponse {
   } | null;
 }
 
+export interface CliOnboardingOrg {
+  id: string;
+  name: string;
+  slug: string;
+  role: "owner" | "admin" | "member";
+  accountStatus: "active" | "missing" | "disabled";
+}
+
+export interface CliOnboardingProject {
+  id: string;
+  name: string;
+  slug: string;
+}
+
+export interface CliOnboardingContext {
+  currentOrgId: string;
+  orgs: CliOnboardingOrg[];
+  projects: CliOnboardingProject[];
+}
+
+/** A stored environment variable as listed by the CLI (name only; value is write-only). */
+export interface CliEnvVar {
+  name: string;
+  updatedAt: number;
+}
+
 /** A single runtime/deploy log line as returned by the CLI logs endpoint. */
 export interface CliLogEntry {
   timestamp: number;
@@ -41,12 +67,13 @@ export interface CliLogEntry {
   requestId?: string;
 }
 
-export type DiffOperation = "create" | "update" | "delete";
+export type DiffOperation = "create" | "update" | "delete" | "rename";
 
 export interface DiffEntry {
   operation: DiffOperation;
   kind: string;
   name: string;
+  previousName?: string;
 }
 
 export class FilthyPantySyncClient {
@@ -86,6 +113,35 @@ export class FilthyPantySyncClient {
     await assertOk(response, "Set environment variable failed");
   }
 
+  /**
+   * Lists the names of the environment's stored variables (values stay
+   * server-side and encrypted, so only names and last-updated times return).
+   */
+  async listEnv(project: string, environment: string): Promise<CliEnvVar[]> {
+    const response = await this.request(project, environment, "/env", { method: "GET" });
+    await assertOk(response, "List environment variables failed");
+    const payload = await response.json() as { variables?: CliEnvVar[] };
+
+    return payload.variables ?? [];
+  }
+
+  /** Reveals a single env var's plaintext value, or null when it is not set. The reveal is audited server-side. */
+  async getEnv(project: string, environment: string, name: string): Promise<string | null> {
+    const response = await this.request(project, environment, `/env/${encodeURIComponent(name)}`, { method: "GET" });
+    if (response.status === 404) return null;
+    await assertOk(response, "Read environment variable failed");
+    const payload = await response.json() as { value?: string };
+
+    return payload.value ?? null;
+  }
+
+  async removeEnv(project: string, environment: string, name: string): Promise<void> {
+    const response = await this.request(project, environment, `/env/${encodeURIComponent(name)}`, {
+      method: "DELETE",
+    });
+    await assertOk(response, "Remove environment variable failed");
+  }
+
   async logs(
     project: string,
     environment: string,
@@ -99,6 +155,32 @@ export class FilthyPantySyncClient {
     const response = await this.request(project, environment, suffix, { method: "GET" });
     await assertOk(response, "Fetch logs failed");
     return await response.json() as { logs: CliLogEntry[] };
+  }
+
+  async getOnboarding(): Promise<CliOnboardingContext> {
+    const response = await this.fetchImpl(`${this.dashboardUrl}/api/cli/onboarding`, {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${this.token}`,
+      },
+    });
+    await assertOk(response, "Fetch CLI onboarding context failed");
+
+    return await response.json() as CliOnboardingContext;
+  }
+
+  async selectOnboardingOrg(orgId: string): Promise<CliOnboardingContext> {
+    const response = await this.fetchImpl(`${this.dashboardUrl}/api/cli/onboarding`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${this.token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ orgId: orgId }),
+    });
+    await assertOk(response, "Select CLI org failed");
+
+    return await response.json() as CliOnboardingContext;
   }
 
   private async request(project: string, environment: string, suffix: string, init: RequestInit): Promise<Response> {
@@ -118,11 +200,13 @@ export function diffManifests(local: CliManifest, remote: CliManifest | null): D
   const remoteResources = new Map((remote?.resources ?? []).map((entry) => [`${entry.kind}:${entry.name}`, entry]));
   const localResources = new Map(local.resources.map((entry) => [`${entry.kind}:${entry.name}`, entry]));
   const entries: DiffEntry[] = [];
+  const unmatchedLocal: Array<{ key: string; resource: CliManifest["resources"][number] }> = [];
+  const unmatchedRemote: Array<{ key: string; resource: CliManifest["resources"][number] }> = [];
 
   for (const [key, resource] of localResources) {
     const remoteResource = remoteResources.get(key);
     if (!remoteResource) {
-      entries.push({ operation: "create", kind: resource.kind, name: resource.name });
+      unmatchedLocal.push({ key: key, resource: resource });
     } else if (stableJson(snapshotResource(remoteResource)) !== stableJson(snapshotResource(resource))) {
       entries.push({ operation: "update", kind: resource.kind, name: resource.name });
     }
@@ -130,11 +214,43 @@ export function diffManifests(local: CliManifest, remote: CliManifest | null): D
 
   for (const [key, resource] of remoteResources) {
     if (!localResources.has(key)) {
+      unmatchedRemote.push({ key: key, resource: resource });
+    }
+  }
+
+  const renamedRemoteKeys = new Set<string>();
+  const renamedLocalKeys = new Set<string>();
+  for (const localEntry of unmatchedLocal) {
+    const match = unmatchedRemote.find((remoteEntry) =>
+      !renamedRemoteKeys.has(remoteEntry.key) &&
+      isRenamableKind(localEntry.resource.kind) &&
+      localEntry.resource.kind === remoteEntry.resource.kind &&
+      stableJson(renameSnapshot(localEntry.resource)) === stableJson(renameSnapshot(remoteEntry.resource))
+    );
+    if (!match) continue;
+    renamedLocalKeys.add(localEntry.key);
+    renamedRemoteKeys.add(match.key);
+    entries.push({
+      operation: "rename",
+      kind: localEntry.resource.kind,
+      name: localEntry.resource.name,
+      previousName: match.resource.name,
+    });
+  }
+
+  for (const { key, resource } of unmatchedLocal) {
+    if (!renamedLocalKeys.has(key)) {
+      entries.push({ operation: "create", kind: resource.kind, name: resource.name });
+    }
+  }
+
+  for (const { key, resource } of unmatchedRemote) {
+    if (!renamedRemoteKeys.has(key)) {
       entries.push({ operation: "delete", kind: resource.kind, name: resource.name });
     }
   }
 
-  return entries.sort((a, b) => `${a.operation}:${a.kind}:${a.name}`.localeCompare(`${b.operation}:${b.kind}:${b.name}`));
+  return entries.sort((a, b) => diffSortKey(a).localeCompare(diffSortKey(b)));
 }
 
 function snapshotResource(resource: { kind: string; config: unknown } & Record<string, unknown>): unknown {
@@ -145,6 +261,28 @@ function snapshotResource(resource: { kind: string; config: unknown } & Record<s
     ...normalized,
     config: stripArtifactContent(normalized.config),
   };
+}
+
+function renameSnapshot(resource: { kind: string; config: unknown } & Record<string, unknown>): unknown {
+  const normalized = snapshotResource(resource) as Record<string, unknown>;
+  const { name: _name, ...rest } = normalized;
+
+  return rest;
+}
+
+function isRenamableKind(kind: string): boolean {
+  return kind === "agent" || kind === "workspace" || kind === "sandbox";
+}
+
+function diffSortKey(entry: DiffEntry): string {
+  const rank: Record<DiffOperation, number> = {
+    create: 0,
+    rename: 1,
+    update: 2,
+    delete: 3,
+  };
+
+  return `${rank[entry.operation]}:${entry.kind}:${entry.previousName ?? ""}:${entry.name}`;
 }
 
 function normalizeEnvRefs(value: unknown): unknown {

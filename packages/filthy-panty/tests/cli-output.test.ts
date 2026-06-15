@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import {
   formatDeploymentTarget,
   formatDiffEntries,
+  formatEnvSync,
   formatReadyLine,
   formatWarning,
 } from "../src/cli/output.ts";
@@ -10,30 +11,34 @@ test("formatDiffEntries prints nothing for no changes", () => {
   expect(formatDiffEntries([], { color: false })).toEqual([]);
 });
 
-test("formatDiffEntries renders create, update, and delete labels", () => {
+test("formatDiffEntries renders create, rename, update, and delete labels", () => {
   const lines = formatDiffEntries([
     { operation: "create", kind: "agent", name: "support" },
+    { operation: "rename", kind: "agent", previousName: "old-support", name: "support" },
     { operation: "update", kind: "workspace", name: "repo" },
     { operation: "delete", kind: "sandbox", name: "old" },
   ], { color: false });
 
   expect(lines).toEqual([
     "  [+] agent:support",
+    "  [~] agent:old-support -> support",
     "  [*] workspace:repo",
     "  [-] sandbox:old",
   ]);
 });
 
-test("formatDiffEntries colors create, update, and delete markers", () => {
+test("formatDiffEntries colors create, rename, update, and delete markers", () => {
   const lines = formatDiffEntries([
     { operation: "create", kind: "agent", name: "support" },
+    { operation: "rename", kind: "agent", previousName: "old-support", name: "support" },
     { operation: "update", kind: "workspace", name: "repo" },
     { operation: "delete", kind: "sandbox", name: "old" },
   ], { color: true });
 
   expect(lines[0]).toBe("  [\x1b[32m+\x1b[0m] agent:support");
-  expect(lines[1]).toBe("  [\x1b[36m*\x1b[0m] workspace:repo");
-  expect(lines[2]).toBe("  [\x1b[31m-\x1b[0m] sandbox:old");
+  expect(lines[1]).toBe("  [\x1b[33m~\x1b[0m] agent:old-support -> support");
+  expect(lines[2]).toBe("  [\x1b[36m*\x1b[0m] workspace:repo");
+  expect(lines[3]).toBe("  [\x1b[31m-\x1b[0m] sandbox:old");
 });
 
 test("formatReadyLine includes a checkmark, time, message, and duration", () => {
@@ -55,6 +60,12 @@ test("formatDeploymentTarget includes project, environment, and dashboard URL", 
   expect(output).toContain("▌ Syncing Development: sandbox-stateless");
   expect(output).toContain("[Development] development (dashboard)");
   expect(output).toContain("▌ └─ https://dashboard.dev.beeblast.co?project=sandbox-stateless&env=development");
+});
+
+test("formatEnvSync lists the synced env var names", () => {
+  const line = formatEnvSync(["OPENAI_API_KEY", "STRIPE_API_KEY"], { color: false });
+
+  expect(line).toBe("▌ ↑ Synced 2 env var(s) from .env.local: OPENAI_API_KEY, STRIPE_API_KEY");
 });
 
 test("formatWarning renders yellow warning output", () => {

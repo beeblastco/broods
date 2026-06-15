@@ -8,6 +8,7 @@ import { components, internal } from "./_generated/api";
 import { authKit } from "./auth";
 import { exchange as cliAuthExchange } from "./cliAuthHttp";
 import { handle as cliHttp } from "./cliHttp";
+import { handle as cliOnboardingHttp } from "./cliOnboardingHttp";
 
 const http = httpRouter();
 
@@ -48,6 +49,18 @@ http.route({
     path: "/api/cli/auth/exchange",
     method: "POST",
     handler: cliAuthExchange,
+});
+
+http.route({
+    path: "/api/cli/onboarding",
+    method: "GET",
+    handler: cliOnboardingHttp,
+});
+
+http.route({
+    path: "/api/cli/onboarding",
+    method: "POST",
+    handler: cliOnboardingHttp,
 });
 
 http.route({

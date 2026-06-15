@@ -49,8 +49,9 @@ export interface SandboxExecutorConfig {
   // providers without native lifecycle support; onResume runs on acquisition.
   onCreate?: string[];
   onResume?: string[];
-  // Account-configured env vars injected into every run.
-  envVars?: Record<string, string>;
+  // Account-configured env vars injected into every run. Values may be
+  // `undefined` (an unset key); `stringRecord()` filters those at injection.
+  envVars?: Record<string, string | undefined>;
   // Provider-specific knobs (function names, templates, kubeconfig, ...).
   options?: Record<string, unknown>;
 }

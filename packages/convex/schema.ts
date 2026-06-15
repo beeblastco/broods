@@ -270,6 +270,18 @@ export const sandboxConfigsFields = {
     encryptedConfig: v.optional(v.string()),
     encryptionIv: v.optional(v.string()),
     encryptionTag: v.optional(v.string()),
+    /**
+     * Unresolved config blob retaining `${ENV_NAME}` placeholders (the form
+     * before env vars are substituted into `encryptedConfig`). Kept so a later
+     * `environmentVariables.set` can re-resolve and re-push `encryptedConfig`
+     * without a CLI re-sync — the sandbox equivalent of how `agentConfigs` keeps
+     * its flat columns as the placeholder source. Absent on legacy rows.
+     */
+    encryptedSourceConfig: v.optional(v.string()),
+    sourceEncryptionIv: v.optional(v.string()),
+    sourceEncryptionTag: v.optional(v.string()),
+    /** Masked markers of the `env.NAME` refs this config uses; see `agentConfigsFields.runtimeVariables`. */
+    runtimeVariables: v.optional(v.array(v.object({ key: v.string(), value: v.string() }))),
     /** Ownership marker; see `agentConfigsFields.managedBy`. */
     managedBy: v.optional(v.union(v.literal("cli"), v.literal("dashboard"))),
     createdAt: v.number(),
@@ -309,6 +321,30 @@ export const environmentVariablesFields = {
     iv: v.string(),
     tag: v.string(),
     updatedAt: v.number(),
+};
+
+/**
+ * Audit record written every time an environment variable's plaintext value is
+ * revealed (via the dashboard eye-icon or the CLI `env get`), so reveals of
+ * otherwise write-only secrets leave a trail of who read what and when.
+ */
+export const environmentVariableRevealsFields = {
+    projectId: v.id("projects"),
+    environmentId: v.id("environments"),
+    environmentVariableId: v.id("environmentVariables"),
+    name: v.string(),
+    source: v.union(v.literal("dashboard"), v.literal("cli")),
+    /** WorkOS authId of the dashboard user who revealed it (when source is "dashboard"). */
+    revealedByAuthId: v.optional(v.string()),
+    /** Account that revealed it through a CLI deploy token (when source is "cli"). */
+    revealedByAccountId: v.optional(v.id("accounts")),
+    /** CLI token row used for the reveal, when authenticated by `filthy-panty login`. */
+    revealedByCliTokenId: v.optional(v.id("cliTokens")),
+    /** WorkOS authId attached to the CLI token used for the reveal. */
+    revealedByCliAuthId: v.optional(v.string()),
+    /** Project/environment deploy key used for the reveal, when authenticated by a deploy key. */
+    revealedByDeployKeyId: v.optional(v.id("deployKeys")),
+    revealedAt: v.number(),
 };
 
 /** Per-environment outbound webhook endpoint that receives environment events. */
@@ -497,6 +533,9 @@ export default defineSchema({
     environmentVariables: defineTable(environmentVariablesFields)
         .index("by_projectId_and_environmentId", ["projectId", "environmentId"])
         .index("by_environmentId_and_name", ["environmentId", "name"]),
+    environmentVariableReveals: defineTable(environmentVariableRevealsFields)
+        .index("by_environmentId", ["environmentId"])
+        .index("by_environmentVariableId", ["environmentVariableId"]),
     webhooks: defineTable(webhooksFields)
         .index("by_projectId_and_environmentId", ["projectId", "environmentId"]),
     conversations: defineTable(conversationsFields)

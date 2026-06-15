@@ -8,7 +8,7 @@ If you started directly in this folder, also read `../../AGENTS.md` for the mono
 
 - `../../apps/dashboard` deploys this package as its Convex project and imports functions through `@filthy-panty/convex/_generated/api`.
 - `../../apps/core` does not deploy these functions. Its storage adapter calls internal functions remotely through `ConvexHttpClient` with a Convex deploy key.
-- Sensitive agent config and sandbox credentials are encrypted before storage. The dashboard must not read plaintext secrets.
+- Sensitive agent config and sandbox credentials are encrypted before storage. The dashboard must not read those plaintext secrets. The one deliberate exception is environment variables: their values can be revealed on demand by the environment owner via `environmentVariables.reveal` (dashboard eye-icon) or the CLI `env get`, and every reveal writes an `environmentVariableReveals` audit row. Agent config and sandbox credentials stay non-readable.
 - The Convex CLI runs from this directory and reads `CONVEX_DEPLOYMENT` from `.env.local`.
 
 ## Workflow

@@ -16,13 +16,16 @@ import {
     refreshAgentConfigsForEnvironmentVariable,
     syncAgentRowFields,
 } from "./model/agentSync";
+import { refreshSandboxConfigsForEnvironmentVariable } from "./model/sandboxConfigSync";
 import {
     decryptAgentConfigBlob,
     encryptAgentConfigBlob,
     fromNestedAgentConfig,
+    substituteEnvPlaceholders,
     toNestedAgentConfig,
 } from "./model/agentConfigCodec";
 import { saveAgentRuntimeSecrets } from "./model/agentRuntimeSecrets";
+import { loadEnvironmentVariableValues } from "./model/environmentValues";
 import { uniqueProjectSlug } from "./lib/slug";
 
 const resourceValidator = v.object({
@@ -109,6 +112,7 @@ export const resolveCliAuth = internalQuery({
         accountId: v.id("accounts"),
         secretHash: v.string(),
         scoped: v.boolean(),
+        deployKeyId: v.optional(v.id("deployKeys")),
     })),
     handler: async (ctx, args) => {
         const { tokenHash, project, environment } = args;
@@ -136,7 +140,12 @@ export const resolveCliAuth = internalQuery({
             return null;
         }
 
-        return { accountId: keyAccount._id, secretHash: keyAccount.secretHash, scoped: true };
+        return {
+            accountId: keyAccount._id,
+            secretHash: keyAccount.secretHash,
+            scoped: true,
+            deployKeyId: deployKey._id,
+        };
     },
 });
 
@@ -155,9 +164,16 @@ export const syncManifestBySecretHash = internalMutation({
         const projectDoc = await ensureProject(ctx, account, manifest.project);
         const environmentDoc = await ensureEnvironment(ctx, projectDoc, manifest.environment);
         const workspaceIds = await syncWorkspaceResources(ctx, account._id, projectDoc._id, environmentDoc._id, manifest.resources);
-        const sandboxIds = await syncSandboxResources(ctx, account._id, projectDoc._id, environmentDoc._id, manifest.resources);
-        const envValues = await environmentVariables(ctx, projectDoc._id, environmentDoc._id);
+        const envValues = await loadEnvironmentVariableValues(ctx, projectDoc._id, environmentDoc._id);
         const missingEnv = new Set<string>();
+        const sandboxIds = await syncSandboxResources(ctx, {
+            accountId: account._id,
+            projectId: projectDoc._id,
+            environmentId: environmentDoc._id,
+            resources: manifest.resources,
+            envValues: envValues,
+            missingEnv: missingEnv,
+        });
         const agentIds = await syncAgentResources(ctx, {
             account: account,
             projectId: projectDoc._id,
@@ -396,8 +412,157 @@ export const setEnvBySecretHash = internalMutation({
             normalizedName,
             value,
         );
+        await refreshSandboxConfigsForEnvironmentVariable(
+            ctx,
+            projectDoc._id,
+            environmentDoc._id,
+            normalizedName,
+            value,
+        );
 
         return null;
+    },
+});
+
+/**
+ * Lists the names (and last-updated times) of an environment's stored variables
+ * for the CLI `env list`. Values are never returned — they are encrypted at rest
+ * and write-only by design, so the dashboard and CLI only ever see the names.
+ */
+export const listEnvBySecretHash = internalQuery({
+    args: {
+        secretHash: v.string(),
+        project: v.string(),
+        environment: v.string(),
+    },
+    returns: v.array(v.object({ name: v.string(), updatedAt: v.number() })),
+    handler: async (ctx, args) => {
+        const { secretHash, project, environment } = args;
+        const account = await accountFromSecretHash(ctx, secretHash);
+        if (!account) throw new Error("Invalid BeeBlast token");
+        const resolved = await getProjectEnvironment(ctx, account, project, environment);
+        if (!resolved) return [];
+
+        const variables = await ctx.db
+            .query("environmentVariables")
+            .withIndex("by_projectId_and_environmentId", (q) =>
+                q.eq("projectId", resolved.projectDoc._id).eq("environmentId", resolved.environmentDoc._id),
+            )
+            .collect();
+
+        return variables
+            .map((variable) => ({ name: variable.name, updatedAt: variable.updatedAt }))
+            .sort((a, b) => a.name.localeCompare(b.name));
+    },
+});
+
+/**
+ * Decrypts and returns one environment variable's plaintext value for the CLI
+ * `env get`, writing an audit record of the reveal. A mutation (not a query) so
+ * decryption and the audit insert happen together. Returns null when the
+ * project/environment or the named variable does not exist.
+ */
+export const getEnvBySecretHash = internalMutation({
+    args: {
+        secretHash: v.string(),
+        project: v.string(),
+        environment: v.string(),
+        name: v.string(),
+        revealedByCliTokenId: v.optional(v.id("cliTokens")),
+        revealedByCliAuthId: v.optional(v.string()),
+        revealedByDeployKeyId: v.optional(v.id("deployKeys")),
+    },
+    returns: v.union(v.null(), v.object({ value: v.string() })),
+    handler: async (ctx, args) => {
+        const { secretHash, project, environment, name } = args;
+        const account = await accountFromSecretHash(ctx, secretHash);
+        if (!account) throw new Error("Invalid BeeBlast token");
+        const resolved = await getProjectEnvironment(ctx, account, project, environment);
+        if (!resolved) return null;
+        const normalizedName = envName(name);
+
+        const existing = await ctx.db
+            .query("environmentVariables")
+            .withIndex("by_environmentId_and_name", (q) =>
+                q.eq("environmentId", resolved.environmentDoc._id).eq("name", normalizedName),
+            )
+            .unique();
+        if (!existing) return null;
+
+        const secret = process.env.ACCOUNT_CONFIG_ENCRYPTION_SECRET;
+        if (!secret) {
+            throw new Error("ACCOUNT_CONFIG_ENCRYPTION_SECRET is required to read environment variables");
+        }
+        const decrypted = await decryptAgentConfigBlob(
+            { ciphertext: existing.ciphertext, iv: existing.iv, tag: existing.tag },
+            secret,
+        );
+        const revealed = decrypted as { value?: unknown } | null;
+        const value = typeof revealed?.value === "string" ? revealed.value : "";
+
+        await ctx.db.insert("environmentVariableReveals", {
+            projectId: resolved.projectDoc._id,
+            environmentId: resolved.environmentDoc._id,
+            environmentVariableId: existing._id,
+            name: normalizedName,
+            source: "cli",
+            revealedByAccountId: account._id,
+            revealedByCliTokenId: args.revealedByCliTokenId,
+            revealedByCliAuthId: args.revealedByCliAuthId,
+            revealedByDeployKeyId: args.revealedByDeployKeyId,
+            revealedAt: Date.now(),
+        });
+
+        return { value: value };
+    },
+});
+
+/**
+ * Removes one environment variable by name for the CLI `env rm`. Resolving the
+ * project/environment is required; a missing variable is treated as success so
+ * the command is idempotent.
+ */
+export const removeEnvBySecretHash = internalMutation({
+    args: {
+        secretHash: v.string(),
+        project: v.string(),
+        environment: v.string(),
+        name: v.string(),
+    },
+    returns: v.object({ removed: v.boolean() }),
+    handler: async (ctx, args) => {
+        const { secretHash, project, environment, name } = args;
+        const account = await accountFromSecretHash(ctx, secretHash);
+        if (!account) throw new Error("Invalid BeeBlast token");
+        const resolved = await getProjectEnvironment(ctx, account, project, environment);
+        if (!resolved) throw new Error("Project/environment not found");
+        const normalizedName = envName(name);
+
+        const existing = await ctx.db
+            .query("environmentVariables")
+            .withIndex("by_environmentId_and_name", (q) =>
+                q.eq("environmentId", resolved.environmentDoc._id).eq("name", normalizedName),
+            )
+            .unique();
+        if (!existing) return { removed: false };
+
+        await ctx.db.delete(existing._id);
+        await refreshAgentConfigsForEnvironmentVariable(
+            ctx,
+            resolved.projectDoc._id,
+            resolved.environmentDoc._id,
+            normalizedName,
+            undefined,
+        );
+        await refreshSandboxConfigsForEnvironmentVariable(
+            ctx,
+            resolved.projectDoc._id,
+            resolved.environmentDoc._id,
+            normalizedName,
+            undefined,
+        );
+
+        return { removed: true };
     },
 });
 
@@ -544,24 +709,35 @@ async function syncWorkspaceResources(
     resources: CliResource[],
 ): Promise<Record<string, string>> {
     const ids: Record<string, string> = {};
-    for (const resource of resources.filter((entry) => entry.kind === "workspace")) {
+    const existing = await ctx.db
+        .query("workspaceConfigs")
+        .withIndex("by_environmentId_and_name", (q) => q.eq("environmentId", environmentId))
+        .collect();
+    const workspaceResources = resources.filter((entry) => entry.kind === "workspace");
+    const desiredNames = new Set(workspaceResources.map((entry) => resourceName(entry.name)));
+    const claimed = new Set<Id<"workspaceConfigs">>();
+    for (const resource of workspaceResources) {
         const name = resourceName(resource.name);
-        const existing = await ctx.db
-            .query("workspaceConfigs")
-            .withIndex("by_environmentId_and_name", (q) =>
-                q.eq("environmentId", environmentId).eq("name", name),
-            )
-            .unique();
-        if (existing) {
-            await ctx.db.patch(existing._id, {
+        const current = existing.find((entry) => entry.name === name);
+        const target = current ?? existing.find((entry) =>
+            entry.managedBy === "cli" &&
+            !claimed.has(entry._id) &&
+            !desiredNames.has(entry.name) &&
+            stableJson(renameComparableResource(entry.description, entry.config)) ===
+            stableJson(renameComparableResource(resource.description, resource.config))
+        );
+        if (target) {
+            claimed.add(target._id);
+            await ctx.db.patch(target._id, {
                 accountId: accountId,
                 projectId: projectId,
+                name: name,
                 description: resource.description,
                 config: resource.config,
                 managedBy: "cli",
                 updatedAt: Date.now(),
             });
-            ids[name] = existing._id;
+            ids[name] = target._id;
         } else {
             await assertNoAccountScopedResourceConflict(ctx, {
                 table: "workspaceConfigs",
@@ -589,11 +765,16 @@ async function syncWorkspaceResources(
 
 async function syncSandboxResources(
     ctx: MutationCtx,
-    accountId: Id<"accounts">,
-    projectId: Id<"projects">,
-    environmentId: Id<"environments">,
-    resources: CliResource[],
+    options: {
+        accountId: Id<"accounts">;
+        projectId: Id<"projects">;
+        environmentId: Id<"environments">;
+        resources: CliResource[];
+        envValues: Record<string, string>;
+        missingEnv: Set<string>;
+    },
 ): Promise<Record<string, string>> {
+    const { accountId, projectId, environmentId, resources, envValues, missingEnv } = options;
     const ids: Record<string, string> = {};
     const sandboxes = resources.filter((entry) => entry.kind === "sandbox");
     if (sandboxes.length === 0) return ids;
@@ -604,28 +785,64 @@ async function syncSandboxResources(
     if (!secret) {
         throw new Error("ACCOUNT_CONFIG_ENCRYPTION_SECRET is required to sync sandbox configs");
     }
+    const existing = await ctx.db
+        .query("sandboxConfigs")
+        .withIndex("by_environmentId_and_name", (q) => q.eq("environmentId", environmentId))
+        .collect();
+    const desiredNames = new Set(sandboxes.map((entry) => resourceName(entry.name)));
+    const existingConfigs = new Map<Id<"sandboxConfigs">, Record<string, unknown>>();
+    for (const sandbox of existing) {
+        existingConfigs.set(sandbox._id, await decryptSandboxConfig(sandbox, secret));
+    }
+    const claimed = new Set<Id<"sandboxConfigs">>();
 
     for (const resource of sandboxes) {
         const name = resourceName(resource.name);
-        const encrypted = await encryptAgentConfigBlob(asObject(resource.config), secret);
-        const existing = await ctx.db
-            .query("sandboxConfigs")
-            .withIndex("by_environmentId_and_name", (q) =>
-                q.eq("environmentId", environmentId).eq("name", name),
-            )
-            .unique();
-        if (existing) {
-            await ctx.db.patch(existing._id, {
+        // Resolve `env.NAME` refs to their stored values before encrypting, the
+        // same way agent configs are resolved at sync time — core reads the
+        // sandbox blob verbatim and has no placeholder substitution of its own.
+        // Missing names surface as a deploy warning instead of leaking a literal
+        // `${NAME}` into the sandbox environment. The resolved form is also what
+        // the rename comparison runs on, since `existingConfigs` is resolved too.
+        const envNames = new Set<string>();
+        // `sourceConfig` keeps `${NAME}` placeholders; `resolvedConfig` bakes in
+        // current values. We store both: resolved for core to read, source so
+        // `refreshSandboxConfigsForEnvironmentVariable` can re-resolve on a later
+        // env-var change without a CLI re-sync (parity with agent configs).
+        const sourceConfig = rewriteEnvRefs(asObject(resource.config), envNames);
+        const resolvedConfig = substituteEnvPlaceholders(sourceConfig, envValues);
+        for (const envNameEntry of envNames) {
+            if (envValues[envNameEntry] === undefined) missingEnv.add(envNameEntry);
+        }
+        const runtimeVariables = [...envNames].map((key) => ({ key: key, value: "" }));
+        const encrypted = await encryptAgentConfigBlob(resolvedConfig, secret);
+        const encryptedSource = await encryptAgentConfigBlob(sourceConfig, secret);
+        const current = existing.find((entry) => entry.name === name);
+        const target = current ?? existing.find((entry) =>
+            entry.managedBy === "cli" &&
+            !claimed.has(entry._id) &&
+            !desiredNames.has(entry.name) &&
+            stableJson(renameComparableResource(entry.description, existingConfigs.get(entry._id) ?? {})) ===
+            stableJson(renameComparableResource(resource.description, resolvedConfig))
+        );
+        if (target) {
+            claimed.add(target._id);
+            await ctx.db.patch(target._id, {
                 accountId: accountId,
                 projectId: projectId,
+                name: name,
                 description: resource.description,
                 encryptedConfig: encrypted.ciphertext,
                 encryptionIv: encrypted.iv,
                 encryptionTag: encrypted.tag,
+                encryptedSourceConfig: encryptedSource.ciphertext,
+                sourceEncryptionIv: encryptedSource.iv,
+                sourceEncryptionTag: encryptedSource.tag,
+                runtimeVariables: runtimeVariables,
                 managedBy: "cli",
                 updatedAt: Date.now(),
             });
-            ids[name] = existing._id;
+            ids[name] = target._id;
         } else {
             await assertNoAccountScopedResourceConflict(ctx, {
                 table: "sandboxConfigs",
@@ -642,6 +859,10 @@ async function syncSandboxResources(
                 encryptedConfig: encrypted.ciphertext,
                 encryptionIv: encrypted.iv,
                 encryptionTag: encrypted.tag,
+                encryptedSourceConfig: encryptedSource.ciphertext,
+                sourceEncryptionIv: encryptedSource.iv,
+                sourceEncryptionTag: encryptedSource.tag,
+                runtimeVariables: runtimeVariables,
                 managedBy: "cli",
                 createdAt: now,
                 updatedAt: now,
@@ -704,8 +925,15 @@ async function syncAgentResources(
             q.eq("projectId", projectId).eq("environmentId", environmentId),
         )
         .collect();
+    const agentResources = resources.filter((entry) => entry.kind === "agent");
+    const desiredNames = new Set(agentResources.map((entry) => resourceName(entry.name)));
+    const existingSnapshots = new Map<Id<"agentConfigs">, string>();
+    for (const config of existing) {
+        existingSnapshots.set(config._id, stableJson(renameComparableAgent(config)));
+    }
+    const claimed = new Set<Id<"agentConfigs">>();
 
-    for (const resource of resources.filter((entry) => entry.kind === "agent")) {
+    for (const resource of agentResources) {
         const name = resourceName(resource.name);
         const envNames = new Set<string>();
         const nested = rewriteResourceRefs(
@@ -724,13 +952,20 @@ async function syncAgentResources(
             .filter((envNameEntry) => envValues[envNameEntry] !== undefined)
             .map((envNameEntry) => ({ key: envNameEntry, value: envValues[envNameEntry] }));
         const current = existing.find((entry) => entry.name === name);
-        if (current) {
+        const target = current ?? existing.find((entry) =>
+            entry.managedBy === "cli" &&
+            !claimed.has(entry._id) &&
+            !desiredNames.has(entry.name) &&
+            existingSnapshots.get(entry._id) === stableJson(renameComparableResource(resource.description, nested))
+        );
+        if (target) {
+            claimed.add(target._id);
             const publicRuntimeVariables = await saveAgentRuntimeSecrets(
                 ctx,
-                current._id,
+                target._id,
                 runtimeVariables,
             );
-            await ctx.db.patch(current._id, {
+            await ctx.db.patch(target._id, {
                 name: name,
                 description: resource.description,
                 provider: flat.provider,
@@ -748,15 +983,15 @@ async function syncAgentResources(
                 managedBy: "cli",
                 updatedAt: Date.now(),
             });
-            await ensureAgentsRowForConfig(ctx, current._id, current.authId);
-            await syncAgentRowFields(ctx, current._id, {
+            await ensureAgentsRowForConfig(ctx, target._id, target.authId);
+            await syncAgentRowFields(ctx, target._id, {
                 name: name,
                 description: resource.description,
             });
-            await pushEncryptedConfigToAgentRow(ctx, current._id);
-            const refreshed = await ctx.db.get(current._id);
+            await pushEncryptedConfigToAgentRow(ctx, target._id);
+            const refreshed = await ctx.db.get(target._id);
             if (refreshed?.agentId) ids[name] = refreshed.agentId;
-            if (hasSubagentAllowed(nested)) pendingSubagentRefs.push({ configId: current._id, nested: nested });
+            if (hasSubagentAllowed(nested)) pendingSubagentRefs.push({ configId: target._id, nested: nested });
         } else {
             const authId = await authIdForAccount(ctx, account);
             if (!authId) throw new Error("Account org owner not found");
@@ -1286,7 +1521,7 @@ async function resourcesForEnvironment(
             kind: "sandbox",
             name: sandbox.name,
             description: sandbox.description,
-            config: await decryptSandboxConfig(sandbox, secret),
+            config: await decryptSandboxManifestConfig(sandbox, secret),
         })),
     );
 
@@ -1414,35 +1649,6 @@ async function externalIdsForEnvironment(
     };
 }
 
-async function environmentVariables(
-    ctx: MutationCtx,
-    projectId: Id<"projects">,
-    environmentId: Id<"environments">,
-): Promise<Record<string, string>> {
-    const rows = await ctx.db
-        .query("environmentVariables")
-        .withIndex("by_projectId_and_environmentId", (q) =>
-            q.eq("projectId", projectId).eq("environmentId", environmentId),
-        )
-        .collect();
-
-    const secret = process.env.ACCOUNT_CONFIG_ENCRYPTION_SECRET;
-    if (!secret) {
-        throw new Error("ACCOUNT_CONFIG_ENCRYPTION_SECRET is required to read environment variables");
-    }
-    const values: Record<string, string> = {};
-    for (const row of rows) {
-        const decrypted = await decryptAgentConfigBlob({
-            ciphertext: row.ciphertext,
-            iv: row.iv,
-            tag: row.tag,
-        }, secret);
-        const value = decrypted?.value;
-        values[row.name] = typeof value === "string" ? value : "";
-    }
-
-    return values;
-}
 
 async function decryptSandboxConfig(
     sandbox: Doc<"sandboxConfigs">,
@@ -1461,6 +1667,77 @@ async function decryptSandboxConfig(
     );
 
     return decrypted ?? {};
+}
+
+async function decryptSandboxManifestConfig(
+    sandbox: Doc<"sandboxConfigs">,
+    secret: string | undefined,
+): Promise<Record<string, unknown>> {
+    if (
+        secret &&
+        sandbox.encryptedSourceConfig &&
+        sandbox.sourceEncryptionIv &&
+        sandbox.sourceEncryptionTag
+    ) {
+        const decrypted = await decryptAgentConfigBlob(
+            {
+                ciphertext: sandbox.encryptedSourceConfig,
+                iv: sandbox.sourceEncryptionIv,
+                tag: sandbox.sourceEncryptionTag,
+            },
+            secret,
+        );
+
+        return decrypted ?? {};
+    }
+
+    return await decryptSandboxConfig(sandbox, secret);
+}
+
+function renameComparableAgent(agent: Doc<"agentConfigs">): unknown {
+    return renameComparableResource(
+        agent.description,
+        toNestedAgentConfig({
+            name: agent.name,
+            description: agent.description,
+            provider: agent.provider,
+            modelId: agent.modelId,
+            systemPrompt: agent.systemPrompt,
+            maxTurns: agent.maxTurns,
+            outputFormat: agent.outputFormat as Record<string, unknown> | undefined,
+            providerOptions: agent.providerOptions as Record<string, unknown> | undefined,
+            temperature: agent.temperature,
+            maxTokens: agent.maxTokens,
+            memoryToolEnabled: agent.memoryToolEnabled,
+            searchToolEnabled: agent.searchToolEnabled,
+            searchToolConfig: agent.searchToolConfig as Record<string, unknown> | undefined,
+            extraConfig: agent.extraConfig as Record<string, unknown> | undefined,
+        }),
+    );
+}
+
+function renameComparableResource(description: string | undefined, config: unknown): unknown {
+    return {
+        description: description,
+        config: config,
+    };
+}
+
+function stableJson(value: unknown): string {
+    return JSON.stringify(sortValue(value));
+}
+
+function sortValue(value: unknown): unknown {
+    if (Array.isArray(value)) return value.map(sortValue);
+    if (isRecord(value)) {
+        return Object.fromEntries(
+            Object.entries(value)
+                .sort(([a], [b]) => a.localeCompare(b))
+                .map(([key, entry]) => [key, sortValue(entry)]),
+        );
+    }
+
+    return value;
 }
 
 async function authIdForAccount(

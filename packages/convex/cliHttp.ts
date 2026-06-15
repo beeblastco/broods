@@ -12,6 +12,7 @@ import type { CliManifest, GeneratedIds } from "./cliTypes";
 type RouteParts =
     | { kind: "manifest"; project: string; environment: string }
     | { kind: "logs"; project: string; environment: string }
+    | { kind: "envList"; project: string; environment: string }
     | { kind: "env"; project: string; environment: string; name: string }
     | {
         kind: "resource";
@@ -59,6 +60,8 @@ export const handle = httpAction(async (ctx, req) => {
             accountId: cliResolved.accountId,
             secretHash: cliResolved.secretHash,
             scoped: true,
+            cliTokenId: cliResolved.cliTokenId,
+            cliAuthId: cliResolved.authId,
         } : null);
         if (!authResult) return json({ error: "Invalid or out-of-scope deploy token" }, 401);
         const secretHash = authResult.secretHash;
@@ -147,6 +150,41 @@ export const handle = httpAction(async (ctx, req) => {
             });
         }
 
+        if (route.kind === "envList" && req.method === "GET") {
+            const variables = await ctx.runQuery(internal.cliSync.listEnvBySecretHash, {
+                secretHash: secretHash,
+                project: route.project,
+                environment: route.environment,
+            });
+
+            return json({ variables });
+        }
+
+        if (route.kind === "env" && req.method === "GET") {
+            const result = await ctx.runMutation(internal.cliSync.getEnvBySecretHash, {
+                secretHash: secretHash,
+                project: route.project,
+                environment: route.environment,
+                name: route.name,
+                revealedByCliTokenId: "cliTokenId" in authResult ? authResult.cliTokenId : undefined,
+                revealedByCliAuthId: "cliAuthId" in authResult ? authResult.cliAuthId : undefined,
+                revealedByDeployKeyId: "deployKeyId" in authResult ? authResult.deployKeyId : undefined,
+            });
+
+            return result ? json(result) : json({ error: "Environment variable not found" }, 404);
+        }
+
+        if (route.kind === "env" && req.method === "DELETE") {
+            const result = await ctx.runMutation(internal.cliSync.removeEnvBySecretHash, {
+                secretHash: secretHash,
+                project: route.project,
+                environment: route.environment,
+                name: route.name,
+            });
+
+            return json({ removed: result.removed });
+        }
+
         if (route.kind === "env" && req.method === "PUT") {
             const body = await req.json() as { value?: unknown };
             if (typeof body.value !== "string") {
@@ -221,6 +259,16 @@ function parseRoute(pathname: string): RouteParts | null {
         parts[6] === "logs"
     ) {
         return { kind: "logs", project: parts[3], environment: parts[5] };
+    }
+    if (
+        parts.length === 7 &&
+        parts[0] === "api" &&
+        parts[1] === "cli" &&
+        parts[2] === "projects" &&
+        parts[4] === "environments" &&
+        parts[6] === "env"
+    ) {
+        return { kind: "envList", project: parts[3], environment: parts[5] };
     }
     if (
         parts.length === 9 &&

@@ -8,8 +8,9 @@ import type { Id } from "./_generated/dataModel";
 import { mutation, query } from "./_generated/server";
 import { authKit } from "./auth";
 import { getOwnedEnvironment } from "./model/ownership/environment";
-import { encryptAgentConfigBlob } from "./model/agentConfigCodec";
+import { decryptAgentConfigBlob, encryptAgentConfigBlob } from "./model/agentConfigCodec";
 import { refreshAgentConfigsForEnvironmentVariable } from "./model/agentSync";
+import { refreshSandboxConfigsForEnvironmentVariable } from "./model/sandboxConfigSync";
 
 const environmentVariableDoc = v.object({
     _id: v.id("environmentVariables"),
@@ -128,6 +129,13 @@ export const set = mutation({
                 trimmedName,
                 value,
             );
+            await refreshSandboxConfigsForEnvironmentVariable(
+                ctx,
+                projectId,
+                environmentId,
+                trimmedName,
+                value,
+            );
 
             return existing._id;
         }
@@ -149,8 +157,66 @@ export const set = mutation({
             trimmedName,
             value,
         );
+        await refreshSandboxConfigsForEnvironmentVariable(
+            ctx,
+            projectId,
+            environmentId,
+            trimmedName,
+            value,
+        );
 
         return variableId;
+    },
+});
+
+/**
+ * Decrypts and returns one variable's plaintext value for the dashboard eye-icon
+ * reveal, writing an audit record of the reveal. A mutation (not a query) so the
+ * audit insert and decryption happen atomically for the owning user.
+ * @throws when the caller does not own the environment or the variable is gone
+ */
+export const reveal = mutation({
+    args: {
+        projectId: v.id("projects"),
+        environmentId: v.id("environments"),
+        variableId: v.id("environmentVariables"),
+    },
+    returns: v.object({ value: v.string() }),
+    handler: async (ctx, { projectId, environmentId, variableId }) => {
+        // Check authenticated user
+        const user = await authKit.getAuthUser(ctx);
+        if (!user) {
+            throw new Error("User not found or not authenticated");
+        }
+
+        const environment = await getOwnedEnvironment(ctx, user.id, environmentId);
+        if (!environment || environment.projectId !== projectId) {
+            throw new Error("Environment not found.");
+        }
+
+        const variable = await ctx.db.get(variableId);
+        if (!variable || variable.environmentId !== environmentId) {
+            throw new Error("Variable not found.");
+        }
+
+        const decrypted = await decryptAgentConfigBlob(
+            { ciphertext: variable.ciphertext, iv: variable.iv, tag: variable.tag },
+            encryptionSecret(),
+        );
+        const revealed = decrypted as { value?: unknown } | null;
+        const value = typeof revealed?.value === "string" ? revealed.value : "";
+
+        await ctx.db.insert("environmentVariableReveals", {
+            projectId: projectId,
+            environmentId: environmentId,
+            environmentVariableId: variableId,
+            name: variable.name,
+            source: "dashboard",
+            revealedByAuthId: user.id,
+            revealedAt: Date.now(),
+        });
+
+        return { value: value };
     },
 });
 
@@ -171,6 +237,20 @@ export const remove = mutation({
         if (!environment) throw new Error("Variable not found.");
 
         await ctx.db.delete(variableId);
+        await refreshAgentConfigsForEnvironmentVariable(
+            ctx,
+            variable.projectId,
+            variable.environmentId,
+            variable.name,
+            undefined,
+        );
+        await refreshSandboxConfigsForEnvironmentVariable(
+            ctx,
+            variable.projectId,
+            variable.environmentId,
+            variable.name,
+            undefined,
+        );
 
         return variableId;
     },

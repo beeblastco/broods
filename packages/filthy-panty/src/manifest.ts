@@ -80,6 +80,35 @@ export async function compileProject(options: CompileOptions = {}): Promise<Comp
   };
 }
 
+/**
+ * Collects the distinct account/environment variable names referenced via
+ * `env.NAME` (the `{ __beeblastEnv }` marker) across every resource config in a
+ * compiled manifest, sorted. `dev` uses this to auto-sync exactly those vars
+ * from the local environment to the cloud — never unrelated `.env.local` keys.
+ */
+export function collectEnvRefNames(manifest: CliManifest): string[] {
+  const names = new Set<string>();
+
+  function walk(value: unknown): void {
+    if (Array.isArray(value)) {
+      for (const entry of value) walk(entry);
+      return;
+    }
+    if (value && typeof value === "object") {
+      const record = value as Record<string, unknown>;
+      if (record.__beeblastEnv === true && typeof record.name === "string") {
+        names.add(record.name);
+        return;
+      }
+      for (const entry of Object.values(record)) walk(entry);
+    }
+  }
+
+  for (const resource of manifest.resources) walk(resource.config);
+
+  return [...names].sort();
+}
+
 export function resolveEnvironment(
   config: FilthyPantyProjectConfig,
   explicit: string | undefined,

@@ -5,19 +5,20 @@
 
 import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
-import { basename, join, relative, resolve } from "node:path";
+import { basename, dirname, join, relative, resolve } from "node:path";
 import { watch } from "node:fs";
 import { spawn } from "node:child_process";
 import { tmpdir } from "node:os";
 import { performance } from "node:perf_hooks";
-import { compileProject } from "../manifest.ts";
-import { GENERATED_DIR, PROJECT_DIR } from "../config.ts";
+import { collectEnvRefNames, compileProject } from "../manifest.ts";
+import type { CliManifest } from "../contracts.ts";
+import { GENERATED_DIR, PROJECT_DIR, USER_CONFIG_PATH } from "../config.ts";
 import { writeGeneratedFiles } from "../codegen.ts";
-import { type CliLogEntry, diffManifests, FilthyPantySyncClient, type RemoteManifestResponse } from "../sync.ts";
+import { type CliLogEntry, type CliOnboardingContext, type CliOnboardingOrg, diffManifests, FilthyPantySyncClient, type RemoteManifestResponse } from "../sync.ts";
 import { FilthyPantyClient } from "../client.ts";
 import { loadFilthyPantyRuntimeConfig } from "../runtime-config.ts";
-import { hasFlag, loginWithBrowser, optionValue, promptConfirm, promptSecret, requireAuth } from "./utils.ts";
-import { printDeploymentTarget, printDiffEntries, printReadyLine, printWarning } from "./output.ts";
+import { hasFlag, loginWithBrowser, optionValue, promptConfirm, promptSecret, promptSelect, promptText, requireAuth } from "./utils.ts";
+import { printDeploymentTarget, printDiffEntries, printEnvSync, printReadyLine, printWarning } from "./output.ts";
 
 const VERSION = "0.1.0";
 const DEFAULT_DASHBOARD_URL = "https://dashboard.beeblast.co";
@@ -29,12 +30,16 @@ Usage: filthy-panty <command>
 Commands:
   init                 Create a filthypanty/ project shell
   login                Authenticate with WorkOS through the dashboard
-  dev                  Watch resources and sync Development (confirms before deleting)
+  dev                  Watch resources and sync Development (confirms before deleting);
+                       auto-pushes any env.NAME values found in .env.local to the cloud
   dev --once           Sync Development a single time and exit (no watch)
   diff                 Show local desired state vs remote state
   deploy               Sync Production once; writes FILTHY_PANTY_API_KEY to .env.local on first run
                        (--prune deletes undeclared remote resources; --rotate-key mints a fresh key)
   env set <name>       Store an encrypted environment variable
+  env get <name>       Reveal a variable's value (audited)
+  env list             List environment variable names (values stay hidden)
+  env rm <name>        Remove an environment variable
   logs [-f]            Show recent ERROR logs; -f/--follow tails them live (Ctrl+C to stop)
   run <agent> <prompt> Run an agent and stream the result
 
@@ -197,6 +202,8 @@ function printSyncWarnings(result: RemoteManifestResponse): void {
 }
 
 async function dev(args: string[]): Promise<void> {
+  await ensureDevOnboarding(args);
+
   if (hasFlag(args, "--once")) {
     if (!process.env.FILTHY_PANTY_SUPPRESS_DEV_TARGET) {
       await printDevTarget(args);
@@ -261,6 +268,130 @@ async function dev(args: string[]): Promise<void> {
   });
 }
 
+async function ensureDevOnboarding(args: string[]): Promise<void> {
+  await ensureProjectShell();
+  await ensureLocalDevDefaults(args);
+}
+
+async function ensureProjectShell(): Promise<void> {
+  const root = resolve(process.cwd(), PROJECT_DIR);
+  await mkdir(resolve(root, GENERATED_DIR), { recursive: true });
+
+  const files: string[] = [];
+  await collectSourceFiles(root, files);
+  if (files.length > 0) return;
+
+  await writeStarter(resolve(root, "agents.ts"), starterAgent(), false);
+  await writeStarter(resolve(root, ".gitignore"), "_generated/\n.cache/\n", false);
+  console.log(`Created starter ${PROJECT_DIR}/`);
+}
+
+async function ensureLocalDevDefaults(args: string[]): Promise<void> {
+  const path = resolve(process.cwd(), ".env.local");
+  const current = await readTextIfExists(path);
+  const values = parseEnv(current);
+  const missing = [
+    "FILTHY_PANTY_DASHBOARD_URL",
+    "FILTHY_PANTY_PROJECT",
+    "FILTHY_PANTY_ENVIRONMENT",
+  ].filter((key) => values[key] === undefined);
+  if (missing.length === 0) return;
+  const needsProject = values.FILTHY_PANTY_PROJECT === undefined;
+  const needsEnvironment = values.FILTHY_PANTY_ENVIRONMENT === undefined;
+
+  const runtime = loadFilthyPantyRuntimeConfig();
+  const dashboardUrl = optionValue(args, "--dashboard-url") ??
+    runtime.dashboardUrl ??
+    DEFAULT_DASHBOARD_URL;
+  let project = optionValue(args, "--project") ??
+    process.env.FILTHY_PANTY_PROJECT ??
+    inferProjectName(process.cwd());
+  let environment = optionValue(args, "--env") ??
+    process.env.FILTHY_PANTY_ENVIRONMENT ??
+    "development";
+
+  if (process.stdin.isTTY && needsProject) {
+    const auth = await requireAuthOrLogin(dashboardUrl);
+    const client = new FilthyPantySyncClient({ dashboardUrl: auth.dashboardUrl, token: auth.token });
+    const context = await getOnboardingContextOrFallback(client, auth);
+    const selectableOrgs = context.orgs.filter((org) => org.accountStatus === "active");
+    if (selectableOrgs.length === 0) {
+      throw new Error("No selectable org has an active API account. Open Settings -> API Access in the dashboard first.");
+    }
+    const selectedOrg = await promptSelect(
+      "Select organization",
+      selectableOrgs,
+      formatOrgChoice,
+    );
+    const selectedContext = selectedOrg.id === context.currentOrgId
+      ? context
+      : await client.selectOnboardingOrg(selectedOrg.id);
+    project = await promptText("Project name", defaultProjectName(selectedContext, project));
+    if (!project.trim()) throw new Error("Project name is required.");
+  }
+
+  if (process.stdin.isTTY && needsEnvironment) {
+    environment = await promptText("Environment", environment);
+    if (!environment.trim()) throw new Error("Environment is required.");
+  }
+
+  await writeLocalEnvDefaults({
+    dashboardUrl: dashboardUrl,
+    project: project,
+    environment: environment,
+    force: false,
+  });
+}
+
+async function requireAuthOrLogin(dashboardUrl: string) {
+  try {
+    return await requireAuth(dashboardUrl);
+  } catch (error) {
+    if (!process.stdin.isTTY) throw error;
+    printWarning("No CLI login found. Starting browser login.");
+
+    return await loginWithBrowser(dashboardUrl);
+  }
+}
+
+async function getOnboardingContextOrFallback(
+  client: FilthyPantySyncClient,
+  auth: Awaited<ReturnType<typeof requireAuthOrLogin>>,
+): Promise<CliOnboardingContext> {
+  try {
+    return await client.getOnboarding();
+  } catch (error) {
+    if (!auth.org) throw error;
+    printWarning(
+      "CLI onboarding endpoint is not available yet; using the org from the current login.",
+    );
+
+    return {
+      currentOrgId: auth.org.id,
+      orgs: [{
+        id: auth.org.id,
+        name: auth.org.name,
+        slug: auth.org.slug,
+        role: "admin",
+        accountStatus: "active",
+      }],
+      projects: [],
+    };
+  }
+}
+
+function formatOrgChoice(org: CliOnboardingOrg): string {
+  const suffix = org.role === "owner" || org.role === "admin" ? org.role : "member";
+
+  return `${org.name} (${org.slug}, ${suffix})`;
+}
+
+function defaultProjectName(context: CliOnboardingContext, inferred: string): string {
+  const exact = context.projects.find((project) => project.name === inferred || project.slug === inferred);
+
+  return exact?.name ?? inferred;
+}
+
 /**
  * Runs one `dev --once` sync in a fresh child process with inherited stdio, so
  * each compile starts from an empty module cache (see {@link dev}) and any delete
@@ -306,6 +437,10 @@ async function syncDev(args: string[]): Promise<RemoteManifestResponse> {
   const diff = diffManifests(manifest, remote?.manifest ?? null);
   printDiff(diff.filter((entry) => entry.operation !== "delete"));
 
+  // Push any `env.NAME` values from .env.local up first, so this sync's configs
+  // resolve them and the missing-env warning only fires for genuinely-absent vars.
+  await syncLocalEnvVars(client, manifest);
+
   // Push creates/updates (and canvas wiring) immediately, undeleted.
   let result = await client.putManifest(manifest, false);
   await writeGeneratedFiles(manifest, result.ids, process.cwd(), resourceAliases, result.deployment);
@@ -339,6 +474,94 @@ async function syncDev(args: string[]): Promise<RemoteManifestResponse> {
   await applyDeploymentKey(result.deployment);
   printSyncWarnings(result);
   return result;
+}
+
+/**
+ * Auto-syncs the env vars an agent config references via `env.NAME` from the
+ * local environment (`.env.local`, already loaded into `process.env`) up to the
+ * cloud environment during `dev`. This fulfills the Convex-style `env set` flow
+ * automatically so the dashboard never needs a manual step for local secrets.
+ *
+ * Deliberately one-way and set-only: only manifest-referenced names are pushed
+ * (never `FILTHY_PANTY_*` control vars or unrelated `.env.local` keys), values
+ * are never read back (the backend stores them encrypted/write-only), and
+ * removing a var locally never deletes it remotely. `deploy` is left untouched
+ * so production secrets stay an explicit `filthy-panty env set`.
+ */
+async function syncLocalEnvVars(client: FilthyPantySyncClient, manifest: CliManifest): Promise<void> {
+  const present = collectEnvRefNames(manifest).filter((name) => {
+    const value = process.env[name];
+    return !name.startsWith("FILTHY_PANTY_") && value !== undefined && value !== "";
+  });
+  if (present.length === 0) return;
+
+  // Churn guard: only push a var whose value changed since we last synced it,
+  // tracked by a user-local hash cache outside the project tree. Without this
+  // every watch save would re-encrypt and re-bake every agent config that
+  // references the var. The cache stores hashes (never the values), survives
+  // across watch child processes, and a cleared cache just re-pushes once —
+  // safe because the set is idempotent.
+  const cache = await loadEnvSyncCache();
+  const known = cache[envCacheKey(manifest.project, manifest.environment)] ?? {};
+  const changed = present.filter((name) => known[name] !== hashEnvValue(process.env[name]!));
+  if (changed.length === 0) return;
+
+  await Promise.all(
+    changed.map((name) => client.setEnv(manifest.project, manifest.environment, name, process.env[name]!)),
+  );
+  for (const name of changed) known[name] = hashEnvValue(process.env[name]!);
+  cache[envCacheKey(manifest.project, manifest.environment)] = known;
+  await saveEnvSyncCache(cache);
+  printEnvSync(changed);
+}
+
+type EnvSyncCache = Record<string, Record<string, string>>;
+
+function envCacheKey(project: string, environment: string): string {
+  return `${project}:${environment}`;
+}
+
+function envSyncCachePath(): string {
+  return resolve(dirname(USER_CONFIG_PATH), "env-sync.json");
+}
+
+function hashEnvValue(value: string): string {
+  return createHash("sha256").update(value).digest("hex");
+}
+
+/** Reads the local env-sync hash cache, returning an empty map when absent or corrupt. */
+async function loadEnvSyncCache(): Promise<EnvSyncCache> {
+  const text = await readTextIfExists(envSyncCachePath());
+  if (!text) return {};
+  try {
+    const parsed = JSON.parse(text) as unknown;
+    return parsed && typeof parsed === "object" ? (parsed as EnvSyncCache) : {};
+  } catch {
+    return {};
+  }
+}
+
+async function saveEnvSyncCache(cache: EnvSyncCache): Promise<void> {
+  const path = envSyncCachePath();
+  await mkdir(resolve(path, ".."), { recursive: true });
+  await writeFile(path, `${JSON.stringify(cache, null, 2)}\n`, "utf8");
+}
+
+/** Records the synced hash for a var set via `env set`, so `dev` won't re-push an unchanged value. */
+async function rememberEnvSyncValue(project: string, environment: string, name: string, value: string): Promise<void> {
+  const cache = await loadEnvSyncCache();
+  const key = envCacheKey(project, environment);
+  cache[key] = { ...(cache[key] ?? {}), [name]: hashEnvValue(value) };
+  await saveEnvSyncCache(cache);
+}
+
+/** Drops a var's cached hash after `env rm`, so a later re-add with the same value re-pushes. */
+async function forgetEnvSyncValue(project: string, environment: string, name: string): Promise<void> {
+  const cache = await loadEnvSyncCache();
+  const key = envCacheKey(project, environment);
+  if (!cache[key] || !(name in cache[key])) return;
+  delete cache[key][name];
+  await saveEnvSyncCache(cache);
 }
 
 async function printDevTarget(args: string[]): Promise<void> {
@@ -379,9 +602,16 @@ async function clearDeclinedDeletes(): Promise<void> {
 }
 
 async function envCommand(args: string[]): Promise<void> {
-  if (args[0] !== "set" || !args[1]) {
-    throw new Error("Usage: filthy-panty env set <name>");
+  const subcommand = args[0];
+  const name = args[1];
+  const isList = subcommand === "list" || subcommand === "ls";
+  const isRemove = subcommand === "rm" || subcommand === "remove";
+  const isGet = subcommand === "get";
+  const needsName = subcommand === "set" || isRemove || isGet;
+  if ((needsName && !name) || (!isList && !needsName)) {
+    throw new Error("Usage: filthy-panty env <set|get|list|rm> [name]");
   }
+
   const { manifest, config } = await compileProject({
     project: optionValue(args, "--project"),
     environment: optionValue(args, "--env"),
@@ -389,9 +619,42 @@ async function envCommand(args: string[]): Promise<void> {
   });
   const auth = await requireAuth(optionValue(args, "--dashboard-url") ?? config.dashboardUrl);
   const client = new FilthyPantySyncClient({ dashboardUrl: auth.dashboardUrl, token: auth.token });
-  const value = await promptSecret(args[1]);
-  await client.setEnv(manifest.project, manifest.environment, args[1], value);
-  console.log(`Stored ${args[1]} for ${manifest.project}/${manifest.environment}`);
+  const target = `${manifest.project}/${manifest.environment}`;
+
+  if (isList) {
+    const variables = await client.listEnv(manifest.project, manifest.environment);
+    if (variables.length === 0) {
+      console.log(`No environment variables set for ${target}.`);
+      return;
+    }
+    console.log(`Environment variables for ${target} (values hidden):`);
+    for (const variable of variables) console.log(`  ${variable.name}`);
+    return;
+  }
+
+  if (isGet) {
+    const value = await client.getEnv(manifest.project, manifest.environment, name!);
+    if (value === null) {
+      console.error(`${name} is not set for ${target}`);
+      process.exitCode = 1;
+      return;
+    }
+    // Print the raw value to stdout so it can be piped/captured.
+    console.log(value);
+    return;
+  }
+
+  if (isRemove) {
+    await client.removeEnv(manifest.project, manifest.environment, name!);
+    await forgetEnvSyncValue(manifest.project, manifest.environment, name!);
+    console.log(`Removed ${name} from ${target}`);
+    return;
+  }
+
+  const value = await promptSecret(name!);
+  await client.setEnv(manifest.project, manifest.environment, name!, value);
+  await rememberEnvSyncValue(manifest.project, manifest.environment, name!, value);
+  console.log(`Stored ${name} for ${target}`);
 }
 
 async function logs(args: string[]): Promise<void> {
@@ -563,6 +826,7 @@ async function writeLocalEnvDefaults(options: {
     const index = lines.findIndex((line) => line.trim().startsWith(`${key}=`));
     if (index >= 0) lines[index] = `${key}=${quoteEnv(value)}`;
     else lines.push(`${key}=${quoteEnv(value)}`);
+    if (process.env[key] === undefined) process.env[key] = value;
     changed = true;
   }
 
@@ -581,6 +845,7 @@ async function writeEnvValue(key: string, value: string): Promise<void> {
   const index = lines.findIndex((line) => line.trim().startsWith(`${key}=`));
   if (index >= 0) lines[index] = `${key}=${quoteEnv(value)}`;
   else lines.push(`${key}=${quoteEnv(value)}`);
+  process.env[key] = value;
   const body = `${lines.filter((line, i, all) => !(line === "" && i === all.length - 1)).join("\n")}\n`;
   await writeFile(path, body, "utf8");
 }

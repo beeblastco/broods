@@ -54,6 +54,7 @@ import {
   sandboxReservationKey,
   shellQuote,
   slugFor,
+  stringRecord,
   truncateText,
 } from "./utils.ts";
 import {
@@ -364,7 +365,7 @@ export class KubernetesSandboxExecutor implements SandboxExecutor {
       image: configString(opts.image) ?? optionalEnv("KUBERNETES_SANDBOX_IMAGE") ?? DEFAULT_IMAGE,
       command: ["sleep", "infinity"],
       env: envList({
-        ...(this.#config.envVars ?? {}),
+        ...stringRecord(this.#config.envVars),
         ...sandboxRegionEnv(opts),
         // Point HOME + package-manager caches at the persistent home PVC so
         // pip/npm/uv state survives a scale-to-0.

@@ -24,6 +24,9 @@ Agent-platform domain (shared with core): `accounts`, `agents`,
 
 Sensitive config (agent configs, sandbox credentials) is stored as encrypted
 blobs — core encrypts before writing; the dashboard never reads the plaintext.
+Environment variables are the exception: their values can be revealed on demand
+by the environment owner (`environmentVariables.reveal` / CLI `env get`), and
+each reveal is recorded in the `environmentVariableReveals` audit table.
 
 ## Functions
 

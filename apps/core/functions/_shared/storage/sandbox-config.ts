@@ -60,7 +60,7 @@ export interface SandboxConfig {
   outputLimitBytes?: number;
   // Env vars injected into every run. Reserved runtime vars always win and the
   // host process.env is never inherited (the sandbox env_clear()s first).
-  envVars?: Record<string, string>;
+  envVars?: Record<string, undefined | string>;
   // Provider-specific knobs (e2b/daytona/kubernetes endpoints, templates, etc.).
   options?: Record<string, unknown>;
 }

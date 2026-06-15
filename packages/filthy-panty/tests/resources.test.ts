@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { writeGeneratedFiles } from "../src/codegen.ts";
 import { loadFilthyPantyRuntimeConfig } from "../src/runtime-config.ts";
-import { compileProject } from "../src/manifest.ts";
+import { collectEnvRefNames, compileProject } from "../src/manifest.ts";
 import { diffManifests } from "../src/sync.ts";
 
 let tempDirs: string[] = [];
@@ -43,6 +43,40 @@ test("compileProject maps workspace resources and env refs to the SaaS manifest 
     },
     workspaces: [{ name: "repo", workspaceId: "repo" }],
   });
+});
+
+test("collectEnvRefNames returns the sorted, de-duplicated env.NAME references", async () => {
+  const cwd = await fixtureProject("", `
+import { defineAgent, env } from "${join(process.cwd(), "src", "resources.ts")}";
+
+export const support = defineAgent("support", {
+  provider: { openai: { apiKey: env.OPENAI_API_KEY } },
+  model: { provider: "openai", modelId: "gpt-5-mini" },
+});
+
+export const billing = defineAgent("billing", {
+  provider: { stripe: { apiKey: env("STRIPE_API_KEY"), webhook: env.OPENAI_API_KEY } },
+  model: { provider: "openai", modelId: "gpt-5-mini" },
+});
+`);
+
+  const { manifest } = await compileProject({ cwd: cwd, command: "dev" });
+
+  expect(collectEnvRefNames(manifest)).toEqual(["OPENAI_API_KEY", "STRIPE_API_KEY"]);
+});
+
+test("collectEnvRefNames returns nothing when no env refs are present", async () => {
+  const cwd = await fixtureProject("", `
+import { defineAgent } from "${join(process.cwd(), "src", "resources.ts")}";
+
+export const support = defineAgent("support", {
+  model: { provider: "openai", modelId: "gpt-5-mini" },
+});
+`);
+
+  const { manifest } = await compileProject({ cwd: cwd, command: "dev" });
+
+  expect(collectEnvRefNames(manifest)).toEqual([]);
 });
 
 test("compileProject works without a config file and infers project from cwd", async () => {
@@ -255,8 +289,36 @@ test("diffManifests reports create, update, and delete operations", () => {
 
   expect(diffManifests(local, remote)).toEqual([
     { operation: "create", kind: "agent", name: "new" },
-    { operation: "delete", kind: "sandbox", name: "old" },
     { operation: "update", kind: "workspace", name: "changed" },
+    { operation: "delete", kind: "sandbox", name: "old" },
+  ]);
+});
+
+test("diffManifests reports a pure resource rename without delete prompt noise", () => {
+  const local = {
+    version: 1 as const,
+    project: "app",
+    environment: "dev",
+    resources: [
+      { kind: "agent" as const, name: "async-search", config: { model: { provider: "google", modelId: "gemma" } } },
+    ],
+  };
+  const remote = {
+    version: 1 as const,
+    project: "app",
+    environment: "dev",
+    resources: [
+      { kind: "agent" as const, name: "async-search-assistant", config: { model: { provider: "google", modelId: "gemma" } } },
+    ],
+  };
+
+  expect(diffManifests(local, remote)).toEqual([
+    {
+      operation: "rename",
+      kind: "agent",
+      previousName: "async-search-assistant",
+      name: "async-search",
+    },
   ]);
 });
 

@@ -7,8 +7,8 @@ import { Input } from "@/app/components/ui/input";
 import { api } from "@filthy-panty/convex/_generated/api";
 import type { Id } from "@filthy-panty/convex/_generated/dataModel";
 import { useMutation, useQuery } from "convex/react";
-import { Plus, Trash2 } from "lucide-react";
-import { useState } from "react";
+import { Eye, EyeOff, Plus, Trash2 } from "lucide-react";
+import { useEffect, useState } from "react";
 
 interface Props {
     /** Project that owns the environment. */
@@ -25,11 +25,38 @@ export function EnvironmentsPanel({ projectId, environmentId }: Props) {
     );
     const setVariable = useMutation(api.environmentVariables.set);
     const removeVariable = useMutation(api.environmentVariables.remove);
+    const revealVariable = useMutation(api.environmentVariables.reveal);
 
     const [adding, setAdding] = useState(false);
     const [name, setName] = useState("");
     const [value, setValue] = useState("");
     const [busy, setBusy] = useState(false);
+    // Plaintext values revealed via the eye icon, keyed by variable id. Each reveal is audited server-side.
+    const [revealed, setRevealed] = useState<Record<string, string>>({});
+
+    useEffect(() => {
+        setRevealed({});
+    }, [environmentId]);
+
+    async function toggleReveal(variableId: Id<"environmentVariables">) {
+        if (!environmentId) return;
+        if (revealed[variableId] !== undefined) {
+            setRevealed((prev) => {
+                const next = { ...prev };
+                delete next[variableId];
+
+                return next;
+            });
+
+            return;
+        }
+        const { value: plaintext } = await revealVariable({
+            projectId: projectId,
+            environmentId: environmentId,
+            variableId: variableId,
+        });
+        setRevealed((prev) => ({ ...prev, [variableId]: plaintext }));
+    }
 
     async function handleAdd() {
         if (!name.trim() || busy || !environmentId) return;
@@ -67,8 +94,21 @@ export function EnvironmentsPanel({ projectId, environmentId }: Props) {
                     <div key={v._id} className="flex items-center gap-2">
                         <code className="flex-1 rounded bg-muted px-2 py-1 font-mono text-xs">{v.name}</code>
                         <code className="flex-1 truncate rounded bg-muted px-2 py-1 font-mono text-xs">
-                            {v.value ? "••••••••" : <span className="text-muted-foreground">empty</span>}
+                            {revealed[v._id] !== undefined
+                                ? (revealed[v._id] || <span className="text-muted-foreground">empty</span>)
+                                : v.value
+                                    ? "••••••••"
+                                    : <span className="text-muted-foreground">empty</span>}
                         </code>
+                        <Button
+                            variant="ghost"
+                            size="icon-xs"
+                            className="cursor-pointer text-muted-foreground hover:text-foreground"
+                            title={revealed[v._id] !== undefined ? "Hide value" : "Reveal value"}
+                            onClick={() => toggleReveal(v._id)}
+                        >
+                            {revealed[v._id] !== undefined ? <EyeOff className="size-3.5" /> : <Eye className="size-3.5" />}
+                        </Button>
                         <Button
                             variant="ghost"
                             size="icon-xs"
