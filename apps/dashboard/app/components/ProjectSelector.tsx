@@ -76,12 +76,14 @@ export function ProjectSelector() {
             variant="ghost"
             className="h-auto select-none gap-1.5 px-2 py-1 text-sm font-medium text-muted-foreground hover:text-foreground active:bg-accent/80 data-[state=open]:bg-accent data-[state=open]:text-foreground focus-visible:ring-0 focus-visible:ring-offset-0 focus:outline-none cursor-pointer"
           >
-            {displayName}
+            <span className="truncate block">
+              {displayName}
+            </span>
             <ChevronDown className="size-3.5 text-muted-foreground" />
           </Button>
         </DropdownMenuTrigger>
 
-        <DropdownMenuContent align="start" sideOffset={8} className="w-56">
+        <DropdownMenuContent align="start" sideOffset={8} className="w-72">
           <DropdownMenuLabel>{projectsLabel}</DropdownMenuLabel>
           <DropdownMenuSeparator />
 
@@ -98,7 +100,9 @@ export function ProjectSelector() {
               }
             >
               <Folder className="size-4" />
-              {project.name}
+              <span className="truncate max-w-60 block">
+                {project.name}
+              </span>
             </DropdownMenuItem>
           ))}
 
