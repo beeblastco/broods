@@ -102,7 +102,7 @@ async function init(args: string[]): Promise<void> {
   const root = resolve(process.cwd(), PROJECT_DIR);
   await mkdir(resolve(root, GENERATED_DIR), { recursive: true });
   await writeStarter(resolve(root, "agents.ts"), starterAgent(), force);
-  await writeStarter(resolve(root, ".gitignore"), "_generated/\n.cache/\n", force);
+  await writeStarter(resolve(root, ".gitignore"), "_generated\n.cache\n", force);
   await writeLocalEnvDefaults({
     dashboardUrl: optionValue(args, "--dashboard-url") ?? DEFAULT_DASHBOARD_URL,
     project: optionValue(args, "--project") ?? inferProjectName(process.cwd()),
@@ -282,7 +282,7 @@ async function ensureProjectShell(): Promise<void> {
   if (files.length > 0) return;
 
   await writeStarter(resolve(root, "agents.ts"), starterAgent(), false);
-  await writeStarter(resolve(root, ".gitignore"), "_generated/\n.cache/\n", false);
+  await writeStarter(resolve(root, ".gitignore"), "_generated\n.cache\n", false);
   console.log(`Created starter ${PROJECT_DIR}/`);
 }
 
@@ -795,7 +795,7 @@ async function writeStarter(path: string, contents: string, force: boolean): Pro
 async function ensureGitIgnore(): Promise<void> {
   const path = resolve(process.cwd(), PROJECT_DIR, ".gitignore");
   const existing = await readTextIfExists(path);
-  const needed = ["_generated/", ".cache/"];
+  const needed = ["_generated", ".cache"];
   const missing = needed.filter((line) => !existing.split(/\r?\n/).some((l) => l.trim() === line));
   if (missing.length === 0) return;
   const body = existing ? existing.trimEnd() + "\n" + missing.join("\n") + "\n" : missing.join("\n") + "\n";

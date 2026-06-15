@@ -1,75 +1,22 @@
 /**
- * Example Async with structured output parsing
+ * Example: async run with structured output polling.
  */
 
-import { createAccount, createAgent, deleteAccount, postAsyncRequest, pollStatus } from "filthy-panty";
+import { FilthyPantyClient } from "filthy-panty";
+import { api } from "./filthypanty/_generated/api";
 
-// Define all the API keys and url required
-const googleApiKey = process.env.ACCOUNT_GOOGLE_API_KEY!;
-
-// Create account and an agent with tools enabled
-const account = await createAccount(`async-${Date.now()}`);
-const agent = await createAgent(account.secret, "Structured assistant", {
-  // Add Google API key to the google provider.
-  provider: {
-    google: {
-      apiKey: googleApiKey
-    }
-  },
-  // Specify the model and provider will use.
-  model: {
-    provider: "google",
-    modelId: "gemma-4-31b-it",
-    output: {
-      type: "object",
-      name: "AgentAnswer",
-      description: "A concise answer with optional follow-up actions.",
-      schema: {
-        type: "object",
-        properties: {
-          answer: { type: "string" },
-          actions: {
-            type: "array",
-            items: { type: "string" }
-          }
-        },
-        required: ["answer"],
-        additionalProperties: false
-      }
-    }
-  },
-  // Specify the agent behavior.
-  agent: {
-    system: "You are a helpful assistant that returns structured output.",
-  },
+const client = new FilthyPantyClient({
+  host: process.env.FILTHY_PANTY_HOST,
+  apiKey: process.env.FILTHY_PANTY_API_KEY!,
 });
-console.log("Created test account:", JSON.stringify(account));
-console.log("Created test agent:", JSON.stringify(agent));
 
-try {
-  // Post async request
-  const body = {
-    agentId: agent.agentId,
-    eventId: `test-${Date.now()}`,
-    conversationKey: `test-${Date.now()}`,
-    events: [
-      {
-        role: "user",
-        content: [{
-          type: "text",
-          text: "What is the newest model release from OpenAI? Provide a concise answer and suggest follow-up actions."
-        }]
-      },
-    ],
-  };
-  const { statusUrl } = await postAsyncRequest(body, account.secret);
-  console.log("Status URL:", statusUrl);
+const run = await client.runAsync(api.agents.structuredAssistant, {
+  input: "What is the newest model release from OpenAI? Provide a concise answer and suggest follow-up actions.",
+});
 
-  // Poll for result
-  const result = await pollStatus(account.secret, statusUrl);
-  console.log(JSON.stringify(result, null, 2));
-} finally {
-  // Delete when finish
-  await deleteAccount(account.secret);
-  console.log("\nDeleted test account");
-}
+console.log("Async status id:", run.statusId);
+console.log("Status URL:", run.statusUrl);
+
+const status = await run.wait();
+
+console.log(JSON.stringify(status, null, 2));

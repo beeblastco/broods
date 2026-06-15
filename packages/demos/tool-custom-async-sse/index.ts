@@ -1,71 +1,47 @@
 /**
- * Example async local tool flow.
+ * Example: async local tool flow via declarative filthy-panty resources.
+ *
+ * The test_async tool simulates a long-running operation (5s delay).
+ * The agent is configured to call it when asked.
  */
 
-import { createAccount, createAgent, createTool, deleteAccount, streamSSE } from "filthy-panty";
+import { FilthyPantyClient } from "filthy-panty";
+import { api } from "./filthypanty/_generated/api";
 
-const googleApiKey = process.env.ACCOUNT_GOOGLE_API_KEY!;
-
-const account = await createAccount(`tool-async-${Date.now()}`);
-const customTool = await createTool(account.secret, {
-  name: "test_async",
-  description: "Test async tool.",
-  inputSchema: {
-    type: "object",
-    properties: {},
-    additionalProperties: false,
-  },
-  bundle: `
-export default {
-  name: "test_async",
-  async execute(ctx, input) {
-    await new Promise((resolve) => setTimeout(resolve, 5000));
-    return { type: "text", value: "test_async completed successfully" };
-  },
-};
-`,
-});
-const agent = await createAgent(account.secret, "Async tool test assistant", {
-  provider: {
-    google: {
-      apiKey: googleApiKey,
-    },
-  },
-  model: {
-    provider: "google",
-    modelId: "gemma-4-31b-it",
-  },
-  agent: {
-    system: "When the user asks, call the test_async tool and then report the injected async result.",
-  },
-  tools: {
-    [customTool.toolId]: {
-      enabled: true,
-      async: true,
-    },
-  },
+const client = new FilthyPantyClient({
+  host: process.env.FILTHY_PANTY_HOST,
+  apiKey: process.env.FILTHY_PANTY_API_KEY!,
 });
 
-console.log("Created test account:", JSON.stringify(account));
-console.log("Uploaded test tool:", JSON.stringify(customTool));
-console.log("Created test agent:", JSON.stringify(agent));
+console.log("--- SSE stream (async tool will take ~5s) ---\n");
 
-try {
-  for await (const chunk of streamSSE({
-    agentId: agent.agentId,
-    eventId: `tool-async-${Date.now()}`,
-    conversationKey: `tool-async-${Date.now()}`,
-    events: [{
-      role: "user",
-      content: [{
-        type: "text",
-        text: "Call the test_async tool now and tell me the result after it finishes.",
-      }],
-    }],
-  }, account.secret)) {
-    process.stdout.write(chunk + "\n\n");
-  }
-} finally {
-  await deleteAccount(account.secret);
-  console.log("\n\nDeleted test account");
+for await (const chunk of client.stream(api.agents.asyncToolAgent, {
+  input: "Call the test_async tool now and tell me the result after it finishes.",
+})) {
+    switch (chunk.type) {
+      case "reasoning-delta":
+        process.stdout.write(`\x1b[90m${chunk.text}\x1b[0m`);
+        break;
+      case "reasoning-end":
+        process.stdout.write(`\n\n`);
+        break;
+      case "text-delta":
+        process.stdout.write(`\x1b[32m${chunk.text}\x1b[0m`);
+        break;
+      case "text-end":
+        process.stdout.write(`\n\n`);
+        break;
+      case "tool-input-delta":
+        process.stdout.write(`\x1b[36m${chunk.delta}\x1b[0m`);
+        break;
+      case "tool-call":
+        process.stdout.write(`\n\x1b[36m[Tool Call: ${chunk.toolName}]\x1b[0m\n`);
+        break;
+      case "tool-result":
+        process.stdout.write(`\n\x1b[35m[Tool Result: ${JSON.stringify(chunk.output)}]\x1b[0m\n`);
+        break;
+      case "finish":
+        process.stdout.write(`\n\x1b[37m[Finished: ${chunk.finishReason}]\x1b[0m\n`);
+        break;
+    }
 }

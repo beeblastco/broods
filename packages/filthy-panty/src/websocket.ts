@@ -276,6 +276,9 @@ export class FilthyPantyWebSocketClient {
   }
 }
 
+export { FilthyPantyWebSocketClient as WebSocketClient };
+export { FilthyPantyWebSocketClient as WebsocketClient };
+
 export function toWebSocketBaseUrl(url: string): string {
   const parsed = new URL(normalizeWebSocketServiceUrl(url));
   if (parsed.protocol === "https:") parsed.protocol = "wss:";

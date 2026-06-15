@@ -6,6 +6,12 @@
 import type { ModelMessage, TextStreamPart, ToolSet } from "ai";
 import { loadFilthyPantyRuntimeConfig } from "./runtime-config.ts";
 import { stripTrailingSlash } from "./config.ts";
+import type {
+  AsyncRequestAccepted,
+  AsyncStatus,
+  CronJob,
+} from "./types.ts";
+import type { CreateCronJobInput, UpdateCronJobInput } from "./contracts.ts";
 
 export const DEFAULT_CORE_BASE_URL = "https://app.beeblast.co";
 
@@ -34,6 +40,18 @@ export type AgentRunInput = AgentRunInputBase & ({
 export interface AgentRunResult {
   text: string;
   events: TextStreamPart<ToolSet>[];
+}
+
+export interface AsyncPollOptions {
+  intervalMs?: number;
+  timeoutMs?: number;
+  signal?: AbortSignal;
+}
+
+export interface AsyncAgentRun extends AsyncRequestAccepted {
+  conversationKey: string;
+  poll(): Promise<AsyncStatus>;
+  wait(options?: AsyncPollOptions): Promise<AsyncStatus>;
 }
 
 export interface AgentReference<Name extends string = string> {
@@ -78,8 +96,13 @@ export interface FilthyPantyClientOptions {
 export type AgentHandle = {
   id: string;
   run: (input: AgentRunInput) => Promise<AgentRunResult>;
+  runAsync: (input: AgentRunInput) => Promise<AsyncAgentRun>;
   stream: (input: AgentRunInput) => AsyncGenerator<TextStreamPart<ToolSet>>;
 };
+
+export type CreateClientCronJobInput =
+  | CreateCronJobInput
+  | (Omit<CreateCronJobInput, "agentId"> & { agent: AgentReference | string });
 
 export class FilthyPantyClient {
   private readonly baseUrl: string;
@@ -112,6 +135,7 @@ export class FilthyPantyClient {
       return {
         id: id,
         run: (input: AgentRunInput) => this.run({ ...input, agentName: name, agentId: id }),
+        runAsync: (input: AgentRunInput) => this.runAsync({ ...input, agentName: name, agentId: id }),
         stream: (input: AgentRunInput) => this.stream({ ...input, agentName: name, agentId: id }),
       };
     }
@@ -122,6 +146,7 @@ export class FilthyPantyClient {
     return {
       id: ref.id,
       run: (input: AgentRunInput) => this.run(ref, input),
+      runAsync: (input: AgentRunInput) => this.runAsync(ref, input),
       stream: (input: AgentRunInput) => this.stream(ref, input),
     };
   }
@@ -162,12 +187,7 @@ export class FilthyPantyClient {
         agentName: (refOrInput as AgentReference).name,
       }
       : refOrInput as AgentRunInput & { agentId: string; agentName?: string };
-    const body = {
-      agentId: input.agentId,
-      eventId: input.eventId ?? `cli-${Date.now()}`,
-      conversationKey: input.conversationKey ?? "cli",
-      events: resolveRunEvents(input),
-    };
+    const body = directRunBody(input, "cli");
     const targetUrl = maybeInput ? this.scopedUrl(refOrInput as AgentReference) : this.baseUrl;
 
     const response = await this.openStream(body, targetUrl);
@@ -188,6 +208,140 @@ export class FilthyPantyClient {
       if (part.type === "error") throw new Error(`Agent run failed: ${formatStreamError(part.error)}`);
       yield part;
     }
+  }
+
+  /** Start an async agent run and return the status id/URL used for polling. */
+  async runAsync(ref: AgentReference, input: AgentRunInput): Promise<AsyncAgentRun>;
+  async runAsync(input: AgentRunInput & { agentId: string; agentName?: string }): Promise<AsyncAgentRun>;
+  async runAsync(
+    refOrInput: AgentReference | (AgentRunInput & { agentId: string; agentName?: string }),
+    maybeInput?: AgentRunInput,
+  ): Promise<AsyncAgentRun> {
+    const input = maybeInput
+      ? {
+        ...maybeInput,
+        agentId: (refOrInput as AgentReference).id,
+        agentName: (refOrInput as AgentReference).name,
+      }
+      : refOrInput as AgentRunInput & { agentId: string; agentName?: string };
+    const body = directRunBody(input, "async");
+    const response = await this.fetchJson(`${this.baseUrl}/async`, {
+      method: "POST",
+      headers: this.apiKeyHeaders(),
+      body: JSON.stringify(body),
+    });
+    if (response.status !== 202) {
+      throw new Error(`Async run failed: ${response.status} ${await responseErrorDetails(response, "202 JSON")}`);
+    }
+
+    const accepted = normalizeAsyncAccepted(await response.json(), body);
+
+    return {
+      ...accepted,
+      conversationKey: body.conversationKey,
+      poll: () => this.getAsyncStatus(accepted),
+      wait: (options?: AsyncPollOptions) => this.waitForAsyncStatus(accepted, options),
+    };
+  }
+
+  /** Fetch one async status snapshot by status URL or status id + agent id. */
+  async getAsyncStatus(
+    status: AsyncRequestAccepted | string,
+    options: { agentId?: string } = {},
+  ): Promise<AsyncStatus> {
+    const statusUrl = this.resolveStatusUrl(status, options);
+    const response = await this.fetchJson(statusUrl, {
+      method: "GET",
+      headers: this.apiKeyHeaders(),
+    });
+
+    if (response.status === 404) return { status: "not_found" };
+    if (!response.ok) throw new Error(`Status check failed: ${response.status} ${await response.text()}`);
+
+    return await response.json() as AsyncStatus;
+  }
+
+  /** Poll async status until it reaches completed, failed, awaiting_approval, or timeout. */
+  async waitForAsyncStatus(
+    status: AsyncRequestAccepted | string,
+    options: AsyncPollOptions & { agentId?: string } = {},
+  ): Promise<AsyncStatus> {
+    const deadline = Date.now() + (options.timeoutMs ?? 180_000);
+    const intervalMs = options.intervalMs ?? 2_000;
+
+    while (Date.now() < deadline) {
+      if (options.signal?.aborted) throw new Error("Async status polling aborted.");
+      const payload = await this.getAsyncStatus(status, options);
+      if (payload.status === "awaiting_approval" || payload.status === "completed" || payload.status === "failed" || payload.status === "not_found") {
+        return payload;
+      }
+      await sleep(intervalMs, options.signal);
+    }
+
+    throw new Error("Polling timeout");
+  }
+
+  async createCronJob(input: CreateClientCronJobInput): Promise<CronJob> {
+    const response = await this.fetchJson(`${this.baseUrl}/accounts/me/cron-jobs`, {
+      method: "POST",
+      headers: this.apiKeyHeaders(),
+      body: JSON.stringify(resolveCronJobInput(input)),
+    });
+
+    if (response.status !== 201) throw new Error(`Create cron job failed: ${response.status} ${await response.text()}`);
+
+    return await response.json() as CronJob;
+  }
+
+  async listCronJobs(): Promise<CronJob[]> {
+    const response = await this.fetchJson(`${this.baseUrl}/accounts/me/cron-jobs`, {
+      method: "GET",
+      headers: this.apiKeyHeaders(),
+    });
+
+    if (!response.ok) throw new Error(`List cron jobs failed: ${response.status} ${await response.text()}`);
+
+    const payload = await response.json() as { cronJobs: CronJob[] };
+
+    return payload.cronJobs;
+  }
+
+  async getCronJob(cronJobId: string): Promise<CronJob | null> {
+    const response = await this.fetchJson(`${this.baseUrl}/accounts/me/cron-jobs/${encodeURIComponent(cronJobId)}`, {
+      method: "GET",
+      headers: this.apiKeyHeaders(),
+    });
+
+    if (response.status === 404) return null;
+    if (!response.ok) throw new Error(`Get cron job failed: ${response.status} ${await response.text()}`);
+
+    return await response.json() as CronJob;
+  }
+
+  async updateCronJob(cronJobId: string, patch: UpdateCronJobInput): Promise<CronJob> {
+    const response = await this.fetchJson(`${this.baseUrl}/accounts/me/cron-jobs/${encodeURIComponent(cronJobId)}`, {
+      method: "PATCH",
+      headers: this.apiKeyHeaders(),
+      body: JSON.stringify(patch),
+    });
+
+    if (!response.ok) throw new Error(`Update cron job failed: ${response.status} ${await response.text()}`);
+
+    return await response.json() as CronJob;
+  }
+
+  async deleteCronJob(cronJobId: string): Promise<boolean> {
+    const response = await this.fetchJson(`${this.baseUrl}/accounts/me/cron-jobs/${encodeURIComponent(cronJobId)}`, {
+      method: "DELETE",
+      headers: this.apiKeyHeaders(),
+    });
+
+    if (response.status === 404) return false;
+    if (!response.ok) throw new Error(`Delete cron job failed: ${response.status} ${await response.text()}`);
+
+    const payload = await response.json() as { deleted: boolean };
+
+    return payload.deleted;
   }
 
   /**
@@ -242,6 +396,44 @@ export class FilthyPantyClient {
       );
     }
   }
+
+  private apiKeyHeaders(): Record<string, string> {
+    if (!this.apiKey) {
+      throw new Error(
+        "FilthyPantyClient requires apiKey or FILTHY_PANTY_API_KEY.",
+      );
+    }
+
+    return {
+      "Content-Type": "application/json",
+      "Authorization": `Bearer ${this.apiKey}`,
+    };
+  }
+
+  private async fetchJson(targetUrl: string, init: RequestInit): Promise<Response> {
+    try {
+      return await this.fetchImpl(targetUrl, {
+        ...init,
+        headers: {
+          "Content-Type": "application/json",
+          ...(init.headers ?? {}),
+        },
+      });
+    } catch (error) {
+      throw new Error(
+        `Cannot access the filthy-panty core service at ${targetUrl}. ` +
+        `Cause: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+
+  private resolveStatusUrl(status: AsyncRequestAccepted | string, options: { agentId?: string }): string {
+    if (typeof status !== "string") return status.statusUrl;
+    if (/^https?:\/\//.test(status)) return status;
+    if (!options.agentId) throw new Error("Polling by status id requires agentId.");
+
+    return statusUrlFor(this.baseUrl, status, options.agentId);
+  }
 }
 
 export function normalizeHttpServiceUrl(value: string): string {
@@ -267,6 +459,86 @@ function resolveRunEvents(input: AgentRunInput): ModelMessage[] {
   }
 
   throw new Error("AgentRunInput requires `input` (string) or a non-empty `events` array");
+}
+
+function directRunBody(input: AgentRunInput & { agentId: string; agentName?: string }, prefix: "cli" | "async") {
+  const eventId = input.eventId ?? `${prefix}-${Date.now()}`;
+
+  return {
+    agentId: input.agentId,
+    eventId,
+    conversationKey: input.conversationKey ?? eventId,
+    events: resolveRunEvents(input),
+  };
+}
+
+function normalizeAsyncAccepted(payload: unknown, requestBody: { agentId: string }): AsyncRequestAccepted {
+  if (!payload || typeof payload !== "object") {
+    throw new Error("Async response must be an object");
+  }
+  const statusUrl = (payload as { statusUrl?: unknown }).statusUrl;
+  if (typeof statusUrl !== "string" || statusUrl.length === 0) {
+    throw new Error("Async response missing statusUrl");
+  }
+  const status = parseStatusUrl(statusUrl);
+  if (!status.statusId) throw new Error("Async response statusUrl missing status id");
+
+  return {
+    statusUrl,
+    statusId: status.statusId,
+    eventId: status.statusId,
+    agentId: status.agentId ?? requestBody.agentId,
+  };
+}
+
+function parseStatusUrl(statusUrl: string): { statusId?: string; agentId?: string } {
+  const url = new URL(statusUrl);
+  const match = url.pathname.match(/\/status\/([^/]+)$/);
+
+  return {
+    statusId: match?.[1] ? decodeURIComponent(match[1]) : undefined,
+    agentId: url.searchParams.get("agentId") ?? undefined,
+  };
+}
+
+function statusUrlFor(baseUrl: string, statusId: string, agentId: string): string {
+  return `${normalizeHttpServiceUrl(baseUrl)}/status/${encodeURIComponent(statusId)}?agentId=${encodeURIComponent(agentId)}`;
+}
+
+async function responseErrorDetails(response: Response, expected: string): Promise<string> {
+  const contentType = response.headers.get("content-type") ?? "";
+  if (contentType.toLowerCase().includes("text/event-stream")) {
+    await response.body?.cancel().catch(() => {});
+    return `expected ${expected}, but the server returned an SSE stream. This usually means the core deployment routed /async to the direct streaming runner instead of the async handler.`;
+  }
+
+  const text = await response.text();
+  if (text.length <= 2_000) return text;
+
+  return `${text.slice(0, 2_000)}... [truncated ${text.length - 2_000} chars]`;
+}
+
+function resolveCronJobInput(input: CreateClientCronJobInput): CreateCronJobInput {
+  if ("agentId" in input) return input;
+  const agent = input.agent;
+  const agentId = typeof agent === "string" ? agent : agent.id;
+  const { agent: _agent, ...rest } = input;
+
+  return { ...rest, agentId };
+}
+
+function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolvePromise, reject) => {
+    if (signal?.aborted) {
+      reject(new Error("Async status polling aborted."));
+      return;
+    }
+    const timer = setTimeout(resolvePromise, ms);
+    signal?.addEventListener("abort", () => {
+      clearTimeout(timer);
+      reject(new Error("Async status polling aborted."));
+    }, { once: true });
+  });
 }
 
 /**

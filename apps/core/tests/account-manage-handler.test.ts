@@ -181,6 +181,61 @@ describe("account management HTTP handler", () => {
     expect(responseJson(cronResponse)).toEqual({ cronJobs: [] });
   });
 
+  it("allows deployment runtime keys on self cron-job routes", async () => {
+    process.env.CRON_JOBS_TABLE_NAME = "cron-jobs";
+    process.env.CRON_SCHEDULER_ROLE_ARN = "arn:aws:iam::123456789012:role/scheduler";
+    process.env.CRON_SCHEDULER_TARGET_FUNCTION_ARN = "arn:aws:lambda:eu-central-1:123456789012:function:harness";
+    process.env.CRON_SCHEDULER_GROUP_NAME = "cron-group";
+    setStorageForTests(createFakeStorage({
+      cronJobs: {
+        async list(accountId: string) {
+          return [{
+            accountId: accountId,
+            cronJobId: "cron_1",
+            name: "Daily",
+            agentId: "agent_main",
+            prompt: "Run maintenance.",
+            scheduleExpression: "rate(1 day)",
+            status: "active",
+            schedulerName: "cron_1",
+            schedulerGroupName: "cron-group",
+            createdAt: "2026-05-01T00:00:00.000Z",
+            updatedAt: "2026-05-01T00:00:00.000Z",
+          }];
+        },
+      },
+      agentDeployments: {
+        async getByApiKeyHash() {
+          return {
+            accountId: "acct_test",
+            endpointId: "env-endpoint",
+            projectSlug: "demo",
+            environmentSlug: "development",
+          };
+        },
+      },
+    }));
+
+    const response = await handler(createEvent("GET", "/accounts/me/cron-jobs", {
+      authorization: "Bearer fp_agent_test",
+    }));
+
+    expect(response.statusCode).toBe(200);
+    expect(responseJson(response)).toEqual({
+      cronJobs: [{
+        accountId: "acct_test",
+        cronJobId: "cron_1",
+        name: "Daily",
+        agentId: "agent_main",
+        prompt: "Run maintenance.",
+        scheduleExpression: "rate(1 day)",
+        status: "active",
+        createdAt: "2026-05-01T00:00:00.000Z",
+        updatedAt: "2026-05-01T00:00:00.000Z",
+      }],
+    });
+  });
+
   it("rejects cron jobs that reference inactive agents", async () => {
     process.env.ADMIN_ACCOUNT_SECRET = "admin-secret";
     process.env.CRON_JOBS_TABLE_NAME = "cron-jobs";
@@ -298,6 +353,10 @@ function createFakeStorage(overrides: Record<string, unknown>) {
       async list() { return []; },
       async create() { throw new Error("not implemented"); },
       ...(overrides.cronJobs as Record<string, unknown> | undefined),
+    },
+    agentDeployments: {
+      async getByApiKeyHash() { return null; },
+      ...(overrides.agentDeployments as Record<string, unknown> | undefined),
     },
     accountTools: {} as never,
   } as never;

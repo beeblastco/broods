@@ -1,103 +1,110 @@
 /**
- * Example tool approval flow.
+ * Example: tool approval flow via declarative filthy-panty resources.
  */
 
 import type { ToolApprovalRequestOutput, ToolSet } from "ai";
-
-import {
-  createAccount,
-  createAgent,
-  deleteAccount,
-  streamSSE,
-} from "filthy-panty";
+import { FilthyPantyClient } from "filthy-panty";
+import { api } from "./filthypanty/_generated/api";
 
 type ToolApprovalRequestChunk = ToolApprovalRequestOutput<ToolSet>;
 
-const googleApiKey = process.env.ACCOUNT_GOOGLE_API_KEY!;
-const tavilyApiKey = process.env.ACCOUNT_TAVILY_API_KEY!;
-
-const account = await createAccount(`approval-${Date.now()}`);
-const agent = await createAgent(account.secret, "Approval search assistant", {
-  provider: {
-    google: {
-      apiKey: googleApiKey,
-    },
-  },
-  model: {
-    provider: "google",
-    modelId: "gemma-4-31b-it",
-  },
-  agent: {
-    system: "Use Tavily search when current web information is needed.",
-  },
-  tools: {
-    tavilySearch: {
-      enabled: true,
-      needsApproval: true,
-      apiKey: tavilyApiKey,
-      searchDepth: "advanced",
-      includeAnswer: true,
-      maxResults: 3,
-    },
-  },
+const client = new FilthyPantyClient({
+  host: process.env.FILTHY_PANTY_HOST,
+  apiKey: process.env.FILTHY_PANTY_API_KEY!,
 });
+
 const conversationKey = `approval-${Date.now()}`;
 
-console.log("Created test account:", JSON.stringify(account));
-console.log("Created test agent:", JSON.stringify(agent));
+// First pass: stream until approval request is received.
+let approvalRequest: ToolApprovalRequestChunk | null = null;
 
-try {
-  let approvalRequest: ToolApprovalRequestChunk | null = null;
-
-  for await (const chunk of streamSSE({
-    agentId: agent.agentId,
-    eventId: `approval-request-${Date.now()}`,
-    conversationKey: conversationKey,
-    events: [{
-      role: "user",
-      content: [{
-        type: "text",
-        text: "Search the web for the latest OpenAI model release and summarize one result.",
-      }],
-    }],
-  }, account.secret)) {
-    process.stdout.write(chunk + "\n\n");
-    const parsedChunk = parseToolApprovalRequestChunk(chunk);
-    if (parsedChunk) {
-      approvalRequest = parsedChunk;
-    }
+for await (const chunk of client.stream(api.agents.approvalAgent, {
+  input: "Search the web for the latest OpenAI model release and summarize one result.",
+  conversationKey,
+})) {
+  switch (chunk.type) {
+    case "reasoning-delta":
+      process.stdout.write(`\x1b[90m${chunk.text}\x1b[0m`);
+      break;
+    case "reasoning-end":
+      process.stdout.write(`\n\n`);
+      break;
+    case "text-delta":
+      process.stdout.write(`\x1b[32m${chunk.text}\x1b[0m`);
+      break;
+    case "text-end":
+      process.stdout.write(`\n\n`);
+      break;
+    case "tool-input-delta":
+      process.stdout.write(`\x1b[36m${chunk.delta}\x1b[0m`);
+      break;
+    case "tool-call":
+      process.stdout.write(`\n\x1b[36m[Tool Call: ${chunk.toolName}]\x1b[0m\n`);
+      break;
+    case "tool-result":
+      process.stdout.write(`\n\x1b[35m[Tool Result: ${JSON.stringify(chunk.output)}]\x1b[0m\n`);
+      break;
+    case "finish":
+      process.stdout.write(`\n\x1b[37m[Finished: ${chunk.finishReason}]\x1b[0m\n`);
+      break;
   }
 
-  if (!approvalRequest) {
-    throw new Error("Expected sync stream to include a tool-approval-request chunk");
+  const parsed = parseToolApprovalRequestChunk(chunk);
+  if (parsed) {
+    approvalRequest = parsed;
   }
-
-  console.log("\n\nApproving tool call:", JSON.stringify(approvalRequest, null, 2));
-
-  for await (const chunk of streamSSE({
-    agentId: agent.agentId,
-    eventId: `approval-${Date.now()}`,
-    conversationKey: conversationKey,
-    events: [{
-      role: "tool",
-      content: [{
-        type: "tool-approval-response",
-        approvalId: approvalRequest.approvalId,
-        approved: true,
-        reason: "Approved by example script",
-      }],
-    }],
-  }, account.secret)) {
-    process.stdout.write(chunk + "\n\n");
-  }
-} finally {
-  await deleteAccount(account.secret);
-  console.log("\n\nDeleted test account");
 }
 
-function parseToolApprovalRequestChunk(chunk: string): ToolApprovalRequestChunk | null {
+if (!approvalRequest) {
+  throw new Error("Expected sync stream to include a tool-approval-request chunk");
+}
+
+console.log("\n\nApproving tool call:", JSON.stringify(approvalRequest, null, 2));
+
+// Second pass: respond with approval.
+for await (const chunk of client.stream(api.agents.approvalAgent, {
+  events: [{
+    role: "tool",
+    content: [{
+      type: "tool-approval-response",
+      approvalId: approvalRequest.approvalId,
+      approved: true,
+      reason: "Approved by example script",
+    }],
+  }],
+  conversationKey,
+})) {
+  switch (chunk.type) {
+    case "reasoning-delta":
+      process.stdout.write(`\x1b[90m${chunk.text}\x1b[0m`);
+      break;
+    case "reasoning-end":
+      process.stdout.write(`\n\n`);
+      break;
+    case "text-delta":
+      process.stdout.write(`\x1b[32m${chunk.text}\x1b[0m`);
+      break;
+    case "text-end":
+      process.stdout.write(`\n\n`);
+      break;
+    case "tool-input-delta":
+      process.stdout.write(`\x1b[36m${chunk.delta}\x1b[0m`);
+      break;
+    case "tool-call":
+      process.stdout.write(`\n\x1b[36m[Tool Call: ${chunk.toolName}]\x1b[0m\n`);
+      break;
+    case "tool-result":
+      process.stdout.write(`\n\x1b[35m[Tool Result: ${JSON.stringify(chunk.output)}]\x1b[0m\n`);
+      break;
+    case "finish":
+      process.stdout.write(`\n\x1b[37m[Finished: ${chunk.finishReason}]\x1b[0m\n`);
+      break;
+  }
+}
+
+function parseToolApprovalRequestChunk(chunk: unknown): ToolApprovalRequestChunk | null {
   try {
-    const parsed = JSON.parse(chunk) as unknown;
+    const parsed = chunk as unknown;
     if (!isRecord(parsed) || parsed.type !== "tool-approval-request" || typeof parsed.approvalId !== "string") {
       return null;
     }

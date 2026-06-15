@@ -1,6 +1,7 @@
 import { afterEach, expect, test } from "bun:test";
 import {
   FilthyPantyWebSocketClient,
+  WebsocketClient,
   toWebSocketBaseUrl,
   type WebSocketServerMessage,
   type WebSocketLike,
@@ -57,6 +58,10 @@ test("websocket client accepts host as a shorthand for the core service URL", ()
 test("websocket URL normalization accepts https and wss service URLs", () => {
   expect(toWebSocketBaseUrl("https://app.example")).toBe("wss://app.example");
   expect(toWebSocketBaseUrl("wss://app.example")).toBe("wss://app.example");
+});
+
+test("exports WebsocketClient as an alias", () => {
+  expect(WebsocketClient).toBe(FilthyPantyWebSocketClient);
 });
 
 test("websocket client reads apiKey from the shared SDK environment variable", () => {

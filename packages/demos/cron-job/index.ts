@@ -1,62 +1,38 @@
 /**
- * Cron job API example.
- * Creates a test account, agent, and one-time schedule for one minute from now.
+ * Cron job SDK example using declarative filthy-panty resources.
+ *
+ * The agent is defined in filthypanty/agents.ts and deployed via the CLI.
+ * This script creates a one-time schedule for one minute from now using the
+ * deployed agent's ID.
  */
 
-import { createAccount, createAgent, deleteAccount } from "filthy-panty";
+import { FilthyPantyClient } from "filthy-panty";
+import { api } from "./filthypanty/_generated/api";
 
-const googleApiKey = process.env.ACCOUNT_GOOGLE_API_KEY!;
 const timezone = process.env.CRON_TIMEZONE ?? "Europe/Amsterdam";
 
-const account = await createAccount(`cron-${Date.now()}`);
-try {
-  const agent = await createAgent(account.secret, "Cron test assistant", {
-    provider: {
-      google: {
-        apiKey: googleApiKey,
-      },
-    },
-    model: {
-      provider: "google",
-      modelId: "gemma-4-31b-it",
-    },
-    agent: {
-      system: "You are a concise scheduled maintenance assistant.",
-    },
-  });
+const scheduleExpression = atExpressionOneMinuteFromNow(timezone);
 
-  const scheduleExpression = atExpressionOneMinuteFromNow(timezone);
-  const response = await fetch(`${process.env.ACCOUNT_SERVICE_URL!}/accounts/me/cron-jobs`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "Authorization": `Bearer ${account.secret}`,
-    },
-    body: JSON.stringify({
-      name: "One minute cron test",
-      agentId: agent.agentId,
-      conversationKey: "cron:one-minute-test",
-      prompt: "Confirm this scheduled cron test ran successfully in one sentence.",
-      scheduleExpression,
-      timezone,
-    }),
-  });
+const client = new FilthyPantyClient({
+  host: process.env.FILTHY_PANTY_HOST,
+  apiKey: process.env.FILTHY_PANTY_API_KEY!,
+});
 
-  if (!response.ok) {
-    throw new Error(`Create cron job failed: ${response.status} ${await response.text()}`);
-  }
+const cronJob = await client.createCronJob({
+  name: "One minute cron test",
+  agent: api.agents.cronAgent,
+  conversationKey: "cron:one-minute-test",
+  prompt: "Confirm this scheduled cron test ran successfully in one sentence.",
+  scheduleExpression,
+  timezone,
+});
 
-  console.log(JSON.stringify({
-    accountId: account.account.accountId,
-    agentId: agent.agentId,
-    scheduleExpression,
-    timezone,
-    cronJob: await response.json(),
-  }, null, 2));
-} finally {
-  await deleteAccount(account.secret);
-  console.log("\nDeleted test account");
-}
+console.log(JSON.stringify({
+  agentId: api.agents.cronAgent.id,
+  scheduleExpression,
+  timezone,
+  cronJob,
+}, null, 2));
 
 function atExpressionOneMinuteFromNow(timeZone: string): string {
   const date = new Date(Date.now() + 60_000);

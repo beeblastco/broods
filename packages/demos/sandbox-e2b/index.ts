@@ -1,5 +1,5 @@
 /**
- * Example: E2B sandbox provider (stateless bash).
+ * Example: E2B sandbox provider (stateless bash) via declarative filthy-panty resources.
  *
  * E2B runs each command in an ephemeral template sandbox and does NOT mount the S3
  * workspace, so workspace-backed tools (read/write/edit/glob/grep) are disabled. Reference
@@ -7,87 +7,49 @@
  * installed; `apiKey` can be omitted when `E2B_API_KEY` is set on the harness runtime.
  */
 
-import {
-  createAccount,
-  createAgent,
-  createSandbox,
-  deleteAccount,
-  streamSSE,
-} from "filthy-panty";
+import { FilthyPantyClient } from "filthy-panty";
+import { api } from "./filthypanty/_generated/api";
 
-const googleApiKey = process.env.ACCOUNT_GOOGLE_API_KEY!;
-const e2bApiKey = process.env.E2B_API_KEY!;
-const e2bTemplate = process.env.E2B_TEMPLATE ?? "runtime-template";
-const username = `sandbox-e2b-${Date.now()}`;
-
-const account = await createAccount(username);
-
-const sandbox = await createSandbox(account.secret, "e2b-sandbox", {
-  provider: "e2b",
-  network: { mode: "allow-all" },
-  permissionMode: "bypass",
-  timeout: 120,
-  outputLimitBytes: 65536,
-  envVars: {
-    SANDBOX_SMOKE_VAR: "sandbox-env-ok",
-  },
-  options: {
-    apiKey: e2bApiKey,
-    template: e2bTemplate,
-    workspaceRoot: "/mnt/workspaces",
-  },
+// Create a client to connect to the Filthy Panty API.
+const client = new FilthyPantyClient({
+  host: process.env.FILTHY_PANTY_HOST,
+  apiKey: process.env.FILTHY_PANTY_API_KEY!,
 });
 
-const agent = await createAgent(account.secret, "E2B sandbox assistant", {
-  provider: {
-    google: { apiKey: googleApiKey },
-  },
-  model: {
-    provider: "google",
-    modelId: "gemma-4-31b-it",
-    temperature: 0,
-  },
-  agent: {
-    system: [
-      "You only have the bash tool — E2B does not mount a persistent workspace.",
-      "Write any files and run them in the SAME bash command.",
-      "Report stdout and status for every run.",
-    ].join("\n"),
-  },
-  sandbox: sandbox.sandboxId,
-  // No `workspaces`: E2B has no S3 mount, so the surface is stateless bash only.
-});
-
-console.log("Created test account:", JSON.stringify(account));
-console.log("Created sandbox:", JSON.stringify(sandbox));
-console.log("Created test agent:", JSON.stringify(agent));
-
-try {
-  const body = {
-    agentId: agent.agentId,
-    eventId: `sandbox-e2b-${Date.now()}`,
-    conversationKey: `sandbox-e2b-${Date.now()}`,
-    events: [
-      {
-        role: "user",
-        content: [{
-          type: "text",
-          text: [
-            "Run this E2B smoke test using ONE bash call per numbered step.",
-            "1. echo \"shell:$SANDBOX_SMOKE_VAR\" (expect sandbox-env-ok).",
-            "2. In a single bash command, write main.py that prints the Python version, then run python3 main.py.",
-            "3. In a single bash command, write main.js that prints the Node version, then run node main.js.",
-            "4. Summarize stdout and status for every step.",
-          ].join("\n"),
-        }],
-      },
-    ],
-  };
-
-  for await (const chunk of streamSSE(body, account.secret)) {
-    process.stdout.write(`${chunk}\n\n`);
-  }
-} finally {
-  await deleteAccount(account.secret);
-  console.log("\n\nDeleted test account");
+// Stream the response from the agent and print it to stdout.
+for await (const chunk of client.stream(api.agents.e2bAgent, {
+  input: [
+    "Run this E2B smoke test using ONE bash call per numbered step.",
+    "1. echo \"shell:$SANDBOX_SMOKE_VAR\" (expect sandbox-env-ok).",
+    "2. In a single bash command, write main.py that prints the Python version, then run python3 main.py.",
+    "3. In a single bash command, write main.js that prints the Node version, then run node main.js.",
+    "4. Summarize stdout and status for every step.",
+  ].join("\n"),
+})) {
+    switch (chunk.type) {
+      case "reasoning-delta":
+        process.stdout.write(`\x1b[90m${chunk.text}\x1b[0m`);
+        break;
+      case "reasoning-end":
+        process.stdout.write(`\n\n`);
+        break;
+      case "text-delta":
+        process.stdout.write(`\x1b[32m${chunk.text}\x1b[0m`);
+        break;
+      case "text-end":
+        process.stdout.write(`\n\n`);
+        break;
+      case "tool-input-delta":
+        process.stdout.write(`\x1b[36m${chunk.delta}\x1b[0m`);
+        break;
+      case "tool-call":
+        process.stdout.write(`\n\x1b[36m[Tool Call: ${chunk.toolName}]\x1b[0m\n`);
+        break;
+      case "tool-result":
+        process.stdout.write(`\n\x1b[35m[Tool Result: ${JSON.stringify(chunk.output)}]\x1b[0m\n`);
+        break;
+      case "finish":
+        process.stdout.write(`\n\x1b[37m[Finished: ${chunk.finishReason}]\x1b[0m\n`);
+        break;
+    }
 }

@@ -185,7 +185,7 @@ async function handleLambdaUrlEvent(
 
   if (method === "GET" && isStatusPath(event.rawPath)) {
     const auth = await context.authResolver(headers);
-    const account = auth?.kind === "account" ? auth.account : null;
+    const account = auth?.kind === "account" || auth?.kind === "deployment" ? auth.account : null;
     if (!account) {
       return unauthorizedResponse();
     }
@@ -364,6 +364,16 @@ async function handleLambdaUrlEvent(
 
     try {
       const parsed = await parseDirectPayload(request.body, request.headers, auth.account, context.agentLoader);
+      if (isAsyncPath(event.rawPath)) {
+        if (!handlers.handleAsyncRequest) {
+          return notFoundResponse();
+        }
+
+        return handlers.handleAsyncRequest({
+          ...parsed,
+          statusUrl: buildStatusUrl(event, parsed.publicEventId, parsed.agentId),
+        });
+      }
 
       return handlers.handleDirectRequest(parsed);
     } catch (err) {

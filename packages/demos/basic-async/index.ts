@@ -1,70 +1,28 @@
 /**
- * Example Async endpoint with polling
+ * Example: start an async run and poll its status via the SDK.
  */
 
-import { createAccount, createAgent, deleteAccount, postAsyncRequest, pollStatus } from "filthy-panty";
+import { FilthyPantyClient } from "filthy-panty";
+import { api } from "./filthypanty/_generated/api";
 
-// Define all the API keys and url required
-const googleApiKey = process.env.ACCOUNT_GOOGLE_API_KEY!;
-const tavilyApiKey = process.env.ACCOUNT_TAVILY_API_KEY!;
-
-// Create account and an agent with tools enabled
-const account = await createAccount(`async-${Date.now()}`);
-const agent = await createAgent(account.secret, "Async search assistant", {
-  // Add Google API key to the google provider.
-  provider: {
-    google: {
-      apiKey: googleApiKey
-    }
-  },
-  // Specific the model and provider will use.
-  model: {
-    provider: "google",
-    modelId: "gemma-4-31b-it"
-  },
-  // Specify the agent behavior.
-  agent: {
-    system: "You are a helpful assistant.",
-  },
-  // Tools configuration with Tavily search enabled
-  tools: {
-    tavilySearch: {
-      enabled: true,
-      apiKey: tavilyApiKey,
-      searchDepth: "advanced",
-      includeAnswer: true,
-      maxResults: 5,
-      topic: "news",
-    },
-  },
+const client = new FilthyPantyClient({
+  host: process.env.FILTHY_PANTY_HOST,
+  apiKey: process.env.FILTHY_PANTY_API_KEY!,
 });
-console.log("Created test account:", JSON.stringify(account));
-console.log("Created test agent:", JSON.stringify(agent));
 
-try {
-  // Post async request
-  const body = {
-    agentId: agent.agentId,
-    eventId: `async-${Date.now()}`,
-    conversationKey: `async-${Date.now()}`,
-    events: [
-      { 
-        role: "user", 
-        content: [{ 
-          type: "text", 
-          text: "Search the web for the latest weather in Hanoi." 
-        }] 
-      },
-    ],
-  }
-  const { statusUrl } = await postAsyncRequest(body, account.secret);
-  console.log("Status URL:", statusUrl);
+const run = await client.runAsync(api.agents.search, {
+  input: "Search the web for the latest weather in Hanoi.",
+});
 
-  // Poll for result
-  const result = await pollStatus(account.secret, statusUrl);
-  console.log(JSON.stringify(result, null, 2));
-} finally {
-  // Delete when finish
-  await deleteAccount(account.secret);
-  console.log("\nDeleted test account");
+console.log("Async status id:", run.statusId);
+console.log("Status URL:", run.statusUrl);
+
+const status = await run.wait();
+
+console.log("Status:", status.status);
+console.log("Response:", formatResponse(status.response));
+if (status.error) console.error("Error:", status.error);
+
+function formatResponse(response: unknown): string {
+  return typeof response === "string" ? response : JSON.stringify(response, null, 2);
 }

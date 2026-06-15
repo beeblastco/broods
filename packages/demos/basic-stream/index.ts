@@ -1,63 +1,44 @@
 /**
- * Example Stream SSE with tools
+ * Example: streaming SSE with tools via declarative filthy-panty resources.
  */
 
-import { createAccount, createAgent, deleteAccount, FilthyPantyClient } from "filthy-panty";
+import { FilthyPantyClient } from "filthy-panty";
+import { api } from "./filthypanty/_generated/api";
 
-// Define all the API keys and url required
-const googleApiKey = process.env.ACCOUNT_GOOGLE_API_KEY!;
-const tavilyApiKey = process.env.ACCOUNT_TAVILY_API_KEY!;
-
-// Test username account
-const username = `stream-${Date.now()}`;
-
-// Create account and an agent with tools enabled
-const account = await createAccount(username);
-const agent = await createAgent(account.secret, "Search assistant", {
-  // Add Google API key to the google provider.
-  provider: {
-    google: {
-      apiKey: googleApiKey
-    }
-  },
-  // Specific the model and provider will use.
-  model: {
-    provider: "google",
-    modelId: "gemma-4-31b-it"
-  },
-  // Specify the agent behavior.
-  agent: {
-    system: "You are a helpful assistant.",
-  },
-  // Tools configuration with Tavily search enabled
-  tools: {
-    tavilySearch: {
-      enabled: true,
-      apiKey: tavilyApiKey,
-      searchDepth: "advanced",
-      includeAnswer: true,
-      maxResults: 5,
-      topic: "news",
-    },
-  },
+// Create a client to connect to the Filthy Panty API.
+const client = new FilthyPantyClient({
+  host: process.env.FILTHY_PANTY_HOST!,
+  apiKey: process.env.FILTHY_PANTY_API_KEY!,
 });
-console.log("Created test account:", JSON.stringify(account));
-console.log("Created test agent:", JSON.stringify(agent));
 
-try {
-  // Stream the run through the core service using the SDK API key option.
-  const client = new FilthyPantyClient({
-    ...(process.env.AGENT_SERVICE_URL ? { baseUrl: process.env.AGENT_SERVICE_URL } : {}),
-    apiKey: account.secret,
-  });
-  for await (const part of client.stream({
-    agentId: agent.agentId,
-    input: "What is the newest model release from OpenAI",
-  })) {
-    if (part.type === "text-delta") process.stdout.write(part.text);
-  }
-} finally {
-  // Delete account when finish
-  await deleteAccount(account.secret);
-  console.log("\n\nDeleted test account");
+// Stream the response from the agent and print it to stdout.
+for await (const chunk of client.stream(api.agents.search, {
+  input: "What is the newest model release from OpenAI",
+})) {
+    switch (chunk.type) {
+      case "reasoning-delta":
+        process.stdout.write(`\x1b[90m${chunk.text}\x1b[0m`);
+        break;
+      case "reasoning-end":
+        process.stdout.write(`\n\n`);
+        break;
+      case "text-delta":
+        process.stdout.write(`\x1b[32m${chunk.text}\x1b[0m`);
+        break;
+      case "text-end":
+        process.stdout.write(`\n\n`);
+        break;
+      case "tool-input-delta":
+        process.stdout.write(`\x1b[36m${chunk.delta}\x1b[0m`);
+        break;
+      case "tool-call":
+        process.stdout.write(`\n\x1b[36m[Tool Call: ${chunk.toolName}]\x1b[0m\n`);
+        break;
+      case "tool-result":
+        process.stdout.write(`\n\x1b[35m[Tool Result: ${JSON.stringify(chunk.output)}]\x1b[0m\n`);
+        break;
+      case "finish":
+        process.stdout.write(`\n\x1b[37m[Finished: ${chunk.finishReason}]\x1b[0m\n`);
+        break;
+    }
 }

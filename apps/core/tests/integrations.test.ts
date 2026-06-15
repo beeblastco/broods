@@ -565,6 +565,51 @@ describe("direct API ingress", () => {
     expect(handledEvents[0]?.statusUrl).toBe("https://example.lambda-url.aws/status/one?agentId=agent_test");
   });
 
+  it("routes async direct API requests with an env-scoped runtime key", async () => {
+    const handledEvents: AsyncDirectInboundEvent[] = [];
+    const response = await routeIncomingEvent(createEvent({
+      agentId: "agent_test",
+      eventId: "one",
+      conversationKey: "alpha",
+      events: [{
+        role: "user",
+        content: [{ type: "text", text: "hello" }],
+      }],
+    }, {
+      authorization: "Bearer fp_agent_test",
+      host: "example.lambda-url.aws",
+      "x-forwarded-proto": "https",
+    }, {
+      rawPath: "/async",
+      addDefaultAgentId: false,
+    }), createHandlers({
+      handleAsyncRequest: async (event) => {
+        handledEvents.push(event);
+        return {
+          statusCode: 202,
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ statusUrl: event.statusUrl }),
+        };
+      },
+    }), {
+      authResolver: async (headers) =>
+        headers.authorization === "Bearer fp_agent_test"
+          ? {
+            kind: "deployment",
+            account: TEST_ACCOUNT,
+            endpointId: "env-endpoint",
+            projectSlug: "demo",
+            environmentSlug: "development",
+          }
+          : null,
+    });
+
+    expect(response.statusCode).toBe(202);
+    expect(handledEvents).toHaveLength(1);
+    expect(handledEvents[0]?.eventId).toBe("acct:acct_test:agent:agent_test:api:one");
+    expect(handledEvents[0]?.statusUrl).toBe("https://example.lambda-url.aws/status/one?agentId=agent_test");
+  });
+
   it("rejects per-request webhook callback config for direct API requests", async () => {
     const response = await routeIncomingEvent(createEvent({
       eventId: "one",
@@ -603,6 +648,45 @@ describe("direct API ingress", () => {
         };
       },
     }));
+
+    expect(response.statusCode).toBe(200);
+    expect(handledEvents).toEqual([{
+      accountId: "acct_test",
+      agentId: "agent_test",
+      eventId: "acct:acct_test:agent:agent_test:api:one",
+      publicEventId: "one",
+    }]);
+  });
+
+  it("routes status requests through env-scoped runtime key auth", async () => {
+    const handledEvents: StatusInboundEvent[] = [];
+    const response = await routeIncomingEvent(createEvent(undefined, {
+      authorization: "Bearer fp_agent_test",
+    }, {
+      method: "GET",
+      rawPath: "/status/one",
+      rawQueryString: "agentId=agent_test",
+    }), createHandlers({
+      handleStatusRequest: async (event) => {
+        handledEvents.push(event);
+        return {
+          statusCode: 200,
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ status: "processing" }),
+        };
+      },
+    }), {
+      authResolver: async (headers) =>
+        headers.authorization === "Bearer fp_agent_test"
+          ? {
+            kind: "deployment",
+            account: TEST_ACCOUNT,
+            endpointId: "env-endpoint",
+            projectSlug: "demo",
+            environmentSlug: "development",
+          }
+          : null,
+    });
 
     expect(response.statusCode).toBe(200);
     expect(handledEvents).toEqual([{

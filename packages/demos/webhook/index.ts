@@ -1,88 +1,48 @@
 /**
- * Example webhook subscription flow.
- * Creates a temporary account and agent with webhook events configured,
- * sends a message to trigger the agent, and demonstrates how lifecycle
- * events are delivered to the mock-webhook-subscribe Lambda.
+ * Example: webhook subscription flow via declarative filthy-panty resources.
  *
- * The mock-webhook-subscribe Lambda logs all received webhook events
- * to CloudWatch. Check CloudWatch Logs to see the full event payloads.
+ * Creates a pre-deployed agent with webhook events configured.
+ * Lifecycle events are delivered to the mock webhook endpoint.
+ * Check CloudWatch Logs for the mock-webhook-subscribe Lambda to see received events.
  */
 
-import { createAccount, createAgent, deleteAccount, streamSSE } from "filthy-panty";
+import { FilthyPantyClient } from "filthy-panty";
+import { api } from "./filthypanty/_generated/api";
 
-const googleApiKey = process.env.ACCOUNT_GOOGLE_API_KEY!;
-const tavilyApiKey = process.env.ACCOUNT_TAVILY_API_KEY!;
-const mockWebhookUrl = process.env.MOCK_WEBHOOK_URL!;
-const mockWebhookSecret = process.env.MOCK_WEBHOOK_SECRET!;
-
-const account = await createAccount(`webhook-test-${Date.now()}`);
-
-const agent = await createAgent(account.secret, "Webhook test assistant", {
-  provider: {
-    google: {
-      apiKey: googleApiKey,
-    },
-  },
-  model: {
-    provider: "google",
-    modelId: "gemma-4-31b-it",
-  },
-  agent: {
-    system: "You are a helpful assistant. Answer the user's question briefly.",
-  },
-    tools: {
-    tavilySearch: {
-      enabled: true,
-      apiKey: tavilyApiKey,
-      searchDepth: "advanced",
-      includeAnswer: true,
-      maxResults: 5,
-      topic: "news",
-    },
-  },
-  hooks: {
-    webhook: {
-      enabled: true,
-      url: mockWebhookUrl,
-      secret: mockWebhookSecret,
-      events: [
-        "agent.started",
-        "tool.call.started",
-        "tool.call.finished",
-        "agent.finished",
-        "agent.failed",
-      ],
-    },
-  },
+// Create a client to connect to the Filthy Panty API.
+const client = new FilthyPantyClient({
+  host: process.env.FILTHY_PANTY_HOST,
+  apiKey: process.env.FILTHY_PANTY_API_KEY!,
 });
 
-console.log("Created test account:", JSON.stringify(account));
-console.log("Created test agent:", JSON.stringify(agent));
-console.log("Webhook target:", mockWebhookUrl);
-console.log("");
-console.log("Check CloudWatch Logs for the mock-webhook-subscribe Lambda to see received events.");
-console.log("");
-
-try {
-  const body = {
-    agentId: agent.agentId,
-    eventId: `test-${Date.now()}`,
-    conversationKey: `test-${Date.now()}`,
-    events: [
-      {
-        role: "user",
-        content: [{
-          type: "text",
-          text: "What is the newest model release from OpenAI"
-        }]
-      },
-    ],
-  };
-  for await (const chunk of streamSSE(body, account.secret)) {
-    process.stdout.write(chunk + "\n\n");
-  }
-} finally {
-  // Delete account when finish
-  await deleteAccount(account.secret);
-  console.log("\n\nDeleted test account");
+// Stream the response from the agent and print it to stdout.
+for await (const chunk of client.stream(api.agents.webhookAgent, {
+  input: "What is the newest model release from OpenAI",
+})) {
+    switch (chunk.type) {
+      case "reasoning-delta":
+        process.stdout.write(`\x1b[90m${chunk.text}\x1b[0m`);
+        break;
+      case "reasoning-end":
+        process.stdout.write(`\n\n`);
+        break;
+      case "text-delta":
+        process.stdout.write(`\x1b[32m${chunk.text}\x1b[0m`);
+        break;
+      case "text-end":
+        process.stdout.write(`\n\n`);
+        break;
+      case "tool-input-delta":
+        process.stdout.write(`\x1b[36m${chunk.delta}\x1b[0m`);
+        break;
+      case "tool-call":
+        process.stdout.write(`\n\x1b[36m[Tool Call: ${chunk.toolName}]\x1b[0m\n`);
+        break;
+      case "tool-result":
+        process.stdout.write(`\n\x1b[35m[Tool Result: ${JSON.stringify(chunk.output)}]\x1b[0m\n`);
+        break;
+      case "finish":
+        process.stdout.write(`\n\x1b[37m[Finished: ${chunk.finishReason}]\x1b[0m\n`);
+        break;
+    }
 }

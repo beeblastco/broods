@@ -4,7 +4,6 @@
  */
 
 import { existsSync, readFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { USER_CONFIG_PATH, stripTrailingSlash } from "./config.ts";
 
@@ -58,21 +57,7 @@ function readStoredAuthSync(): { dashboardUrl: string; token: string } | null {
       token: value.token,
     };
   } catch {
-    try {
-      const legacyPath = join(homedir(), ".filthy-panty", "config.json");
-      if (legacyPath === USER_CONFIG_PATH) return null;
-      const value = JSON.parse(readFileSync(legacyPath, "utf8")) as {
-        dashboardUrl?: unknown;
-        token?: unknown;
-      };
-      if (typeof value.dashboardUrl !== "string" || typeof value.token !== "string") return null;
-      return {
-        dashboardUrl: stripTrailingSlash(value.dashboardUrl),
-        token: value.token,
-      };
-    } catch {
-      return null;
-    }
+    return null;
   }
 }
 

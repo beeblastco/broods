@@ -1,75 +1,44 @@
 /**
- * Example streaming direct API skill using.
- * Creates a temporary skill through account-management, attaches it to an agent,
- * and streams a harness request that asks the agent to load and use the skill.
+ * Example: streaming direct API skill usage via declarative filthy-panty resources.
  */
 
-import { createAccount, createAgent, createSkill, deleteAccount, streamSSE } from "filthy-panty";
+import { FilthyPantyClient } from "filthy-panty";
+import { api } from "./filthypanty/_generated/api";
 
-const googleApiKey = process.env.ACCOUNT_GOOGLE_API_KEY!;
-const username = `skill-stream-${Date.now()}`;
+// Create a client to connect to the Filthy Panty API.
+const client = new FilthyPantyClient({
+  host: process.env.FILTHY_PANTY_HOST,
+  apiKey: process.env.FILTHY_PANTY_API_KEY!,
+});
 
-const account = await createAccount(username);
-console.log("Created test account:", JSON.stringify(account));
-
-try {
-  const skill = await createSkill(account.secret, {
-    source: "json",
-    name: "greeting-skill",
-    description: "Provides greeting functionality, use when the user greets you. When used, respond with the specific phrase.",
-    content: `# Greeting Skill
-
-## When to Use This Skill
-
-Use this skill when greeting users or demonstrating skill invocation.
-
-## Skill Response
-
-When you read this skill, please respond with: **"Potato initiate squirt all juice"**`,
-  });
-  console.log("\nCreated skill:", JSON.stringify(skill));
-
-  const agent = await createAgent(account.secret, "Skill stream assistant", {
-    provider: {
-      google: {
-        apiKey: googleApiKey,
-      },
-    },
-    model: {
-      provider: "google",
-      modelId: "gemma-4-31b-it",
-    },
-    agent: {
-      system: "You are a concise assistant.",
-    },
-    skills: {
-      enabled: true,
-      allowed: [skill.path],
-    },
-  });
-  console.log("\nCreated skill-enabled agent:", JSON.stringify(agent));
-
-  const body = {
-    agentId: agent.agentId,
-    eventId: `skill-stream-${Date.now()}`,
-    conversationKey: `skill-stream-${Date.now()}`,
-    events: [
-      {
-        role: "user",
-        content: [{
-          type: "text",
-          text: "Hello",
-        }],
-      },
-    ],
-  };
-
-  console.log("\nStreaming skill invocation response:\n");
-  for await (const chunk of streamSSE(body, account.secret)) {
-    process.stdout.write(chunk + "\n");
-  }
-  console.log();
-} finally {
-  await deleteAccount(account.secret);
-  console.log("\nDeleted test account");
+// Stream the response from the agent and print it to stdout.
+for await (const chunk of client.stream(api.agents.skillAgent, {
+  input: "Hello",
+})) {
+    switch (chunk.type) {
+      case "reasoning-delta":
+        process.stdout.write(`\x1b[90m${chunk.text}\x1b[0m`);
+        break;
+      case "reasoning-end":
+        process.stdout.write(`\n\n`);
+        break;
+      case "text-delta":
+        process.stdout.write(`\x1b[32m${chunk.text}\x1b[0m`);
+        break;
+      case "text-end":
+        process.stdout.write(`\n\n`);
+        break;
+      case "tool-input-delta":
+        process.stdout.write(`\x1b[36m${chunk.delta}\x1b[0m`);
+        break;
+      case "tool-call":
+        process.stdout.write(`\n\x1b[36m[Tool Call: ${chunk.toolName}]\x1b[0m\n`);
+        break;
+      case "tool-result":
+        process.stdout.write(`\n\x1b[35m[Tool Result: ${JSON.stringify(chunk.output)}]\x1b[0m\n`);
+        break;
+      case "finish":
+        process.stdout.write(`\n\x1b[37m[Finished: ${chunk.finishReason}]\x1b[0m\n`);
+        break;
+    }
 }

@@ -1,5 +1,5 @@
 /**
- * Example: per-workspace sandbox override.
+ * Example: per-workspace sandbox override via declarative filthy-panty resources.
  *
  * The agent-level `sandbox` is a DEFAULT. Each `workspaces[]` entry can set its own
  * `sandbox` to override it for that workspace. The cascade is:
@@ -12,110 +12,49 @@
  * pinned to a stricter deny-all network sandbox, and one is forced read-only.
  */
 
-import {
-  createAccount,
-  createAgent,
-  createSandbox,
-  createWorkspace,
-  deleteAccount,
-  streamSSE,
-} from "filthy-panty";
+import { FilthyPantyClient } from "filthy-panty";
+import { api } from "./filthypanty/_generated/api";
 
-const minimaxApiKey = process.env.ACCOUNT_MINIMAX_API_KEY!;
-const username = `ws-override-${Date.now()}`;
-
-const account = await createAccount(username);
-
-// Default sandbox (network allow-all) — inherited by workspaces that don't override.
-const defaultSandbox = await createSandbox(account.secret, "default-sandbox", {
-  provider: "lambda",
-  network: { mode: "allow-all" },
-  permissionMode: "bypass",
-  timeout: 60,
+// Create a client to connect to the Filthy Panty API.
+const client = new FilthyPantyClient({
+  host: process.env.FILTHY_PANTY_HOST,
+  apiKey: process.env.FILTHY_PANTY_API_KEY!,
 });
 
-// Stricter sandbox (deny-all network) — pinned to the `secure` workspace only.
-const secureSandbox = await createSandbox(account.secret, "secure-sandbox", {
-  provider: "lambda",
-  network: { mode: "deny-all" },
-  permissionMode: "bypass",
-  timeout: 60,
-});
-
-const scratch = await createWorkspace(account.secret, "scratch", {
-  storage: { provider: "s3" },
-}, "Inherits the agent default sandbox");
-
-const secure = await createWorkspace(account.secret, "secure", {
-  storage: { provider: "s3" },
-}, "Pinned to the deny-all network sandbox");
-
-const reference = await createWorkspace(account.secret, "reference", {
-  storage: { provider: "s3" },
-}, "Forced read-only via sandbox: null");
-
-const agent = await createAgent(account.secret, "Override assistant", {
-  provider: {
-    minimax: { apiKey: minimaxApiKey },
-  },
-  model: {
-    provider: "minimax",
-    modelId: "MiniMax-M3",
-  },
-  agent: {
-    system: [
-      "You have three workspaces with different sandbox bindings.",
-      "scratch: full read/write via the default sandbox.",
-      "secure: full read/write via a deny-all network sandbox.",
-      "reference: read-only (read/glob only) — write/edit are not available there.",
-      "Always pass the matching `workspace` name to each file tool. Report errors verbatim.",
-    ].join("\n"),
-  },
-  sandbox: defaultSandbox.sandboxId,
-  workspaces: [
-    // Omitted sandbox => inherits defaultSandbox.
-    { name: "scratch", workspaceId: scratch.workspaceId },
-    // Override => uses secureSandbox (and its deny-all network permissionMode) for this workspace.
-    { name: "secure", workspaceId: secure.workspaceId, sandbox: secureSandbox.sandboxId },
-    // null => forced read-only, even though the agent has a default sandbox.
-    { name: "reference", workspaceId: reference.workspaceId, sandbox: null },
-  ],
-});
-
-console.log("Created test account:", JSON.stringify(account));
-console.log("Created default sandbox:", JSON.stringify(defaultSandbox));
-console.log("Created secure sandbox:", JSON.stringify(secureSandbox));
-console.log("Created scratch workspace:", JSON.stringify(scratch));
-console.log("Created secure workspace:", JSON.stringify(secure));
-console.log("Created reference workspace:", JSON.stringify(reference));
-console.log("Created test agent:", JSON.stringify(agent));
-
-try {
-  const body = {
-    agentId: agent.agentId,
-    eventId: `ws-override-${Date.now()}`,
-    conversationKey: `ws-override-${Date.now()}`,
-    events: [
-      {
-        role: "user",
-        content: [{
-          type: "text",
-          text: [
-            "Exercise the three workspace bindings:",
-            "1. In the `scratch` workspace, write a Python script that makes an outbound request and outputs the file 'output.txt', execute it and then read it back.",
-            "2. In the `secure` workspace, write a Python script that makes an outbound request and outputs the file 'output.txt', try to execute it and then read it back.",
-            "3. In the `reference` workspace, try to write c.txt — report the read-only error verbatim — then glob **/* there.",
-            "4. Summarize which workspaces accepted writes and which rejected them. Dont use urlopen, if have problem, should timeout, or else it will hang indeffinetely",
-          ].join("\n"),
-        }],
-      },
-    ],
-  };
-
-  for await (const chunk of streamSSE(body, account.secret)) {
-    process.stdout.write(`${chunk}\n\n`);
-  }
-} finally {
-  await deleteAccount(account.secret);
-  console.log("\n\nDeleted test account");
+// Stream the response from the agent and print it to stdout.
+for await (const chunk of client.stream(api.agents.overrideAgent, {
+  input: [
+    "Exercise the three workspace bindings:",
+    "1. In the `scratch` workspace, write a Python script that makes an outbound request and outputs the file 'output.txt', execute it and then read it back.",
+    "2. In the `secure` workspace, write a Python script that makes an outbound request and outputs the file 'output.txt', try to execute it and then read it back.",
+    "3. In the `reference` workspace, try to write c.txt — report the read-only error verbatim — then glob **/* there.",
+    "4. Summarize which workspaces accepted writes and which rejected them. Dont use urlopen, if have problem, should timeout, or else it will hang indeffinetely",
+  ].join("\n"),
+})) {
+    switch (chunk.type) {
+      case "reasoning-delta":
+        process.stdout.write(`\x1b[90m${chunk.text}\x1b[0m`);
+        break;
+      case "reasoning-end":
+        process.stdout.write(`\n\n`);
+        break;
+      case "text-delta":
+        process.stdout.write(`\x1b[32m${chunk.text}\x1b[0m`);
+        break;
+      case "text-end":
+        process.stdout.write(`\n\n`);
+        break;
+      case "tool-input-delta":
+        process.stdout.write(`\x1b[36m${chunk.delta}\x1b[0m`);
+        break;
+      case "tool-call":
+        process.stdout.write(`\n\x1b[36m[Tool Call: ${chunk.toolName}]\x1b[0m\n`);
+        break;
+      case "tool-result":
+        process.stdout.write(`\n\x1b[35m[Tool Result: ${JSON.stringify(chunk.output)}]\x1b[0m\n`);
+        break;
+      case "finish":
+        process.stdout.write(`\n\x1b[37m[Finished: ${chunk.finishReason}]\x1b[0m\n`);
+        break;
+    }
 }

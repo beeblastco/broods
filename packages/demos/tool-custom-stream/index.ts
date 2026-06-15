@@ -1,93 +1,47 @@
 /**
- * Example: streaming an uploaded custom tool on the sync SSE path.
- * Uploads a tool whose `execute` is an async generator, then watches the
- * preliminary tool-result chunks arrive live over SSE before the final result.
- * The detached/async path is covered by uploaded-tool-async-sse.ts instead.
+ * Example: streaming an uploaded custom tool on the sync SSE path via declarative filthy-panty resources.
+ *
+ * The tool whose `execute` is an async generator streams preliminary tool-result
+ * chunks live over SSE before the final result.
  */
 
-import { createAccount, createAgent, createTool, deleteAccount, streamSSE } from "filthy-panty";
+import { FilthyPantyClient } from "filthy-panty";
+import { api } from "./filthypanty/_generated/api";
 
-const minimaxApiKey = process.env.ACCOUNT_MINIMAX_API_KEY!;
+const client = new FilthyPantyClient({
+  host: process.env.FILTHY_PANTY_HOST,
+  apiKey: process.env.FILTHY_PANTY_API_KEY!,
+});
 
-const username = `uploaded-stream-${Date.now()}`;
+console.log("--- SSE stream (watch for preliminary tool-result chunks) ---\n");
 
-// A streaming tool: `execute` is an async *generator*. Each `yield` is surfaced by
-// the AI SDK as a preliminary tool-result; the last yield is repeated as the final
-// output. A non-generator `execute` (plain return) would simply emit one result.
-const account = await createAccount(username);
-const customTool = await createTool(account.secret, {
-  name: "stream_progress",
-  description: "Counts to `steps`, streaming one progress update per step before the final summary.",
-  inputSchema: {
-    type: "object",
-    properties: {
-      steps: { type: "number", description: "How many progress updates to stream." },
-    },
-    required: ["steps"],
-    additionalProperties: false,
-  },
-  defaultConfig: {},
-  bundle: `
-export default {
-  name: "stream_progress",
-  async *execute(ctx, input) {
-    const steps = Math.max(1, Math.min(10, input.steps ?? 5));
-    for (let i = 1; i <= steps; i++) {
-      await new Promise((resolve) => setTimeout(resolve, 1000));
-      yield { type: "text", value: \`progress \${i}/\${steps}\` };
+for await (const chunk of client.stream(api.agents.streamingToolAgent, {
+  input: "Call the stream_progress tool with steps=5 and tell me the final result.",
+})) {
+    switch (chunk.type) {
+      case "reasoning-delta":
+        process.stdout.write(`\x1b[90m${chunk.text}\x1b[0m`);
+        break;
+      case "reasoning-end":
+        process.stdout.write(`\n\n`);
+        break;
+      case "text-delta":
+        process.stdout.write(`\x1b[32m${chunk.text}\x1b[0m`);
+        break;
+      case "text-end":
+        process.stdout.write(`\n\n`);
+        break;
+      case "tool-input-delta":
+        process.stdout.write(`\x1b[36m${chunk.delta}\x1b[0m`);
+        break;
+      case "tool-call":
+        process.stdout.write(`\n\x1b[36m[Tool Call: ${chunk.toolName}]\x1b[0m\n`);
+        break;
+      case "tool-result":
+        process.stdout.write(`\n\x1b[35m[Tool Result: ${JSON.stringify(chunk.output)}]\x1b[0m\n`);
+        break;
+      case "finish":
+        process.stdout.write(`\n\x1b[37m[Finished: ${chunk.finishReason}]\x1b[0m\n`);
+        break;
     }
-    // The last yield is also the final tool output the model reads.
-    yield { type: "text", value: \`done: counted to \${steps}\` };
-  },
-};
-`,
-});
-
-const agent = await createAgent(account.secret, "Streaming uploaded tool assistant", {
-  provider: {
-    minimax: {
-      apiKey: minimaxApiKey,
-    },
-  },
-  model: {
-    provider: "minimax",
-    modelId: "MiniMax-M3",
-  },
-  agent: {
-    system:
-      "You are a helpful assistant. When asked, call the stream_progress tool and then report its final result.",
-  },
-  tools: {
-    // Sync (foreground) streaming: NOT `async: true`. The detached path would
-    // report via callback and would not stream preliminary chunks.
-    [customTool.toolId]: {
-      enabled: true,
-    },
-  },
-});
-
-console.log("Created test account:", account.account.accountId);
-console.log("Uploaded streaming tool:", customTool.toolId);
-console.log("Created test agent:", agent.agentId);
-console.log("\n--- SSE stream (watch for preliminary tool-result chunks) ---\n");
-
-try {
-  const body = {
-    agentId: agent.agentId,
-    eventId: `test-${Date.now()}`,
-    conversationKey: `test-${Date.now()}`,
-    events: [
-      {
-        role: "user",
-        content: [{ type: "text", text: "Call the stream_progress tool with steps=5 and tell me the final result." }],
-      },
-    ],
-  };
-
-  for await (const chunk of streamSSE(body, account.secret)) {
-    process.stdout.write(chunk + "\n\n");
-  }
-} finally {
-  await deleteAccount(account.secret);
-  console.log("\nDeleted test account");
 }

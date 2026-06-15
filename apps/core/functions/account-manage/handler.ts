@@ -124,7 +124,7 @@ export async function handler(event: LambdaFunctionURLEvent): Promise<LambdaResp
         const selfCronCollection = rawPath === "/accounts/me/cron-jobs";
         const selfCronMatch = rawPath.match(/^\/accounts\/me\/cron-jobs\/([^/]+)$/);
         if (selfCronCollection || selfCronMatch?.[1]) {
-            const account = requireAccountAuth(auth, { allowServiceToken: true });
+            const account = requireAccountAuth(auth, { allowServiceToken: true, allowDeployment: true });
             return await handleCronJobRoute(method, account.accountId, selfCronMatch?.[1], event);
         }
 
@@ -606,8 +606,11 @@ async function assertCronAgentExists(accountId: string, agentId: unknown): Promi
 
 function requireAccountAuth(
     auth: AuthContext,
-    options: { allowServiceToken?: boolean } = {},
+    options: { allowServiceToken?: boolean; allowDeployment?: boolean } = {},
 ): Extract<AuthContext, { kind: "account" }>["account"] {
+    if (auth.kind === "deployment" && options.allowDeployment === true) {
+        return auth.account;
+    }
     if (auth.kind !== "account") {
         throw new Error("Admin must use account-specific endpoints");
     }

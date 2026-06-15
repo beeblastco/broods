@@ -8,7 +8,10 @@ import type {
   AgentConfig,
   AgentWorkspaceRef,
   CreateCronJobInput,
+  CronJobLastStatus,
+  CronJobStatus,
   SandboxConfig,
+  UpdateCronJobInput,
   WorkspaceConfig,
 } from "../../../apps/core/functions/_shared/storage/index.ts";
 
@@ -16,9 +19,12 @@ export type {
   AgentConfig,
   AgentWorkspaceRef,
   CreateCronJobInput,
+  CronJobLastStatus,
+  CronJobStatus,
   Doc,
   Id,
   SandboxConfig,
+  UpdateCronJobInput,
   WorkspaceConfig,
 };
 

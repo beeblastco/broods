@@ -1,75 +1,44 @@
 /**
- * Example Stream SSE with structured output parsing
+ * Example: streaming SSE with structured output parsing via declarative filthy-panty resources.
  */
 
-import { createAccount, createAgent, deleteAccount, streamSSE } from "filthy-panty";
+import { FilthyPantyClient } from "filthy-panty";
+import { api } from "./filthypanty/_generated/api";
 
-// Define all the API keys and url required
-const googleApiKey = process.env.ACCOUNT_GOOGLE_API_KEY!;
-
-// Test username account
-const username = `stream-${Date.now()}`;
-
-// Create account and an agent with structured output
-const account = await createAccount(username);
-const agent = await createAgent(account.secret, "Structured assistant", {
-  // Add Google API key to the google provider.
-  provider: {
-    google: {
-      apiKey: googleApiKey
-    }
-  },
-  // Specify the model and provider will use.
-  model: {
-    provider: "google",
-    modelId: "gemma-4-31b-it",
-    output: {
-      type: "object",
-      name: "AgentAnswer",
-      description: "A concise answer with optional follow-up actions.",
-      schema: {
-        type: "object",
-        properties: {
-          answer: { type: "string" },
-          actions: {
-            type: "array",
-            items: { type: "string" }
-          }
-        },
-        required: ["answer"],
-        additionalProperties: false
-      }
-    }
-  },
-  // Specify the agent behavior.
-  agent: {
-    system: "You are a helpful assistant that returns structured output.",
-  },
+// Create a client to connect to the Filthy Panty API.
+const client = new FilthyPantyClient({
+  host: process.env.FILTHY_PANTY_HOST,
+  apiKey: process.env.FILTHY_PANTY_API_KEY!,
 });
-console.log("Created test account:", JSON.stringify(account));
-console.log("Created test agent:", JSON.stringify(agent));
 
-try {
-  // Stream SSE response
-  const body = {
-    agentId: agent.agentId,
-    eventId: `test-${Date.now()}`,
-    conversationKey: `test-${Date.now()}`,
-    events: [
-      {
-        role: "user",
-        content: [{
-          type: "text",
-          text: "What is the newest model release from OpenAI? Provide a concise answer and suggest follow-up actions."
-        }]
-      },
-    ],
-  };
-  for await (const chunk of streamSSE(body, account.secret)) {
-    process.stdout.write(chunk + "\n\n");
-  }
-} finally {
-  // Delete account when finish
-  await deleteAccount(account.secret);
-  console.log("\n\nDeleted test account");
+// Stream the response from the agent and print it to stdout.
+for await (const chunk of client.stream(api.agents.structuredAssistant, {
+  input: "What is the newest model release from OpenAI? Provide a concise answer and suggest follow-up actions.",
+})) {
+    switch (chunk.type) {
+      case "reasoning-delta":
+        process.stdout.write(`\x1b[90m${chunk.text}\x1b[0m`);
+        break;
+      case "reasoning-end":
+        process.stdout.write(`\n\n`);
+        break;
+      case "text-delta":
+        process.stdout.write(`\x1b[32m${chunk.text}\x1b[0m`);
+        break;
+      case "text-end":
+        process.stdout.write(`\n\n`);
+        break;
+      case "tool-input-delta":
+        process.stdout.write(`\x1b[36m${chunk.delta}\x1b[0m`);
+        break;
+      case "tool-call":
+        process.stdout.write(`\n\x1b[36m[Tool Call: ${chunk.toolName}]\x1b[0m\n`);
+        break;
+      case "tool-result":
+        process.stdout.write(`\n\x1b[35m[Tool Result: ${JSON.stringify(chunk.output)}]\x1b[0m\n`);
+        break;
+      case "finish":
+        process.stdout.write(`\n\x1b[37m[Finished: ${chunk.finishReason}]\x1b[0m\n`);
+        break;
+    }
 }

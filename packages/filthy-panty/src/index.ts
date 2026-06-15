@@ -4,9 +4,7 @@
  */
 
 export * from "./types.ts";
-export * from "./account.ts";
 export * from "./client.ts";
 export * from "./websocket.ts";
-export * from "./sse.ts";
 export * from "./contracts.ts";
 export * from "./resources.ts";

@@ -1,110 +1,51 @@
 /**
- * Example: Vercel Sandbox provider with persistent lifecycle hooks.
+ * Example: Vercel Sandbox provider with persistent lifecycle hooks via declarative filthy-panty resources.
  */
 
-import {
-  createAccount,
-  createAgent,
-  createSandbox,
-  createWorkspace,
-  deleteAccount,
-  streamSSE,
-} from "filthy-panty";
+import { FilthyPantyClient } from "filthy-panty";
+import { api } from "./filthypanty/_generated/api";
 
-const minimaxApiKey = process.env.ACCOUNT_MINIMAX_API_KEY!;
-const vercelToken = process.env.VERCEL_TOKEN!;
-const vercelTeamId = process.env.VERCEL_TEAM_ID!;
-const vercelProjectId = process.env.VERCEL_PROJECT_ID!;
-const username = `sandbox-vercel-${Date.now()}`;
-
-const account = await createAccount(username);
-
-const sandbox = await createSandbox(account.secret, "vercel-sandbox", {
-  provider: "vercel",
-  persistent: true,
-  network: {
-    mode: "restricted",
-    allowDomains: ["api.github.com", "registry.npmjs.org"],
-  },
-  permissionMode: "bypass",
-  timeout: 120,
-  outputLimitBytes: 65536,
-  envVars: {
-    SANDBOX_SMOKE_VAR: "sandbox-env-ok",
-  },
-  onCreate: [
-    "printf 'created\\n' > .fp-vercel-hook.txt",
-  ],
-  onResume: [
-    "printf 'resumed\\n' >> .fp-vercel-hook.txt",
-  ],
-  options: {
-    token: vercelToken,
-    teamId: vercelTeamId,
-    projectId: vercelProjectId,
-    runtime: "node24",
-    workspaceRoot: "/mnt/workspaces",
-  },
+// Create a client to connect to the Filthy Panty API.
+const client = new FilthyPantyClient({
+  host: process.env.FILTHY_PANTY_HOST,
+  apiKey: process.env.FILTHY_PANTY_API_KEY!,
 });
 
-const workspace = await createWorkspace(account.secret, "vercel-project", {
-  storage: { provider: "vercel" },
-  harness: { enabled: true },
-});
-
-const agent = await createAgent(account.secret, "Vercel sandbox assistant", {
-  provider: {
-    minimax: {
-      apiKey: minimaxApiKey,
-    },
-  },
-  model: {
-    provider: "minimax",
-    modelId: "MiniMax-M3",
-  },
-  agent: {
-    system: [
-      "You are testing a persistent Vercel Sandbox.",
-      "Use the bash tool for each numbered step.",
-      "Report stdout and status for every run.",
-    ].join("\n"),
-  },
-  sandbox: sandbox.sandboxId,
-  workspaces: [{ name: "vercel-project", workspaceId: workspace.workspaceId }],
-});
-
-console.log("Created test account:", JSON.stringify(account));
-console.log("Created sandbox:", JSON.stringify(sandbox));
-console.log("Created workspace:", JSON.stringify(workspace));
-console.log("Created test agent:", JSON.stringify(agent));
-
-try {
-  const body = {
-    agentId: agent.agentId,
-    eventId: `sandbox-vercel-${Date.now()}`,
-    conversationKey: `sandbox-vercel-${Date.now()}`,
-    events: [
-      {
-        role: "user",
-        content: [{
-          type: "text",
-          text: [
-            "Run this Vercel Sandbox smoke test using separate bash calls.",
-            "1. Print the contents of .fp-vercel-hook.txt and echo shell:$SANDBOX_SMOKE_VAR.",
-            "2. Write hook-check.txt containing the hook file contents, then read it back.",
-            "3. Start a background job with bash background:true that runs: sleep 2; echo vercel-bg-done.",
-            "4. Poll async_status for the returned statusId until it is completed, then fetch logs.",
-            "5. Summarize the hook side effects and the background job result.",
-          ].join("\n"),
-        }],
-      },
-    ],
-  };
-
-  for await (const chunk of streamSSE(body, account.secret)) {
-    process.stdout.write(`${chunk}\n\n`);
-  }
-} finally {
-  await deleteAccount(account.secret);
-  console.log("\n\nDeleted test account");
+// Stream the response from the agent and print it to stdout.
+for await (const chunk of client.stream(api.agents.vercelAgent, {
+  input: [
+    "Run this Vercel Sandbox smoke test using separate bash calls.",
+    "1. Print the contents of .fp-vercel-hook.txt and echo shell:$SANDBOX_SMOKE_VAR.",
+    "2. Write hook-check.txt containing the hook file contents, then read it back.",
+    "3. Start a background job with bash background:true that runs: sleep 2; echo vercel-bg-done.",
+    "4. Poll async_status for the returned statusId until it is completed, then fetch logs.",
+    "5. Summarize the hook side effects and the background job result.",
+  ].join("\n"),
+})) {
+    switch (chunk.type) {
+      case "reasoning-delta":
+        process.stdout.write(`\x1b[90m${chunk.text}\x1b[0m`);
+        break;
+      case "reasoning-end":
+        process.stdout.write(`\n\n`);
+        break;
+      case "text-delta":
+        process.stdout.write(`\x1b[32m${chunk.text}\x1b[0m`);
+        break;
+      case "text-end":
+        process.stdout.write(`\n\n`);
+        break;
+      case "tool-input-delta":
+        process.stdout.write(`\x1b[36m${chunk.delta}\x1b[0m`);
+        break;
+      case "tool-call":
+        process.stdout.write(`\n\x1b[36m[Tool Call: ${chunk.toolName}]\x1b[0m\n`);
+        break;
+      case "tool-result":
+        process.stdout.write(`\n\x1b[35m[Tool Result: ${JSON.stringify(chunk.output)}]\x1b[0m\n`);
+        break;
+      case "finish":
+        process.stdout.write(`\n\x1b[37m[Finished: ${chunk.finishReason}]\x1b[0m\n`);
+        break;
+    }
 }

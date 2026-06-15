@@ -5,6 +5,8 @@
  * the SDK keeps working when the runtime is ported.
  */
 
+import type { CronJobLastStatus, CronJobStatus } from "./contracts.ts";
+
 export interface Account {
   account: {
     accountId: string;
@@ -39,9 +41,34 @@ export interface ToolApprovalSummary {
 
 export interface AsyncStatus {
   status: "processing" | "awaiting_approval" | "completed" | "failed" | "not_found";
-  response?: string;
+  response?: unknown;
   error?: string;
   approvals?: ToolApprovalSummary[];
+}
+
+export interface AsyncRequestAccepted {
+  statusUrl: string;
+  statusId: string;
+  eventId: string;
+  agentId: string;
+}
+
+export interface CronJob {
+  accountId: string;
+  cronJobId: string;
+  name: string;
+  description?: string;
+  agentId: string;
+  prompt: string;
+  conversationKey?: string;
+  scheduleExpression: string;
+  timezone?: string;
+  status: CronJobStatus;
+  createdAt: string;
+  updatedAt: string;
+  lastInvokedAt?: string;
+  lastStatus?: CronJobLastStatus;
+  lastError?: string;
 }
 
 export interface Skill {
