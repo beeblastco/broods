@@ -3,7 +3,7 @@
 /**
  * Cron jobs management page. Lists the active org's scheduled agent runs and
  * lets the user create, edit, and remove them. CRUD goes through Convex
- * actions that proxy to filthy-panty's /accounts/me/cron-jobs HTTP endpoints
+ * actions that proxy to filthy-panty's /accounts/me/crons HTTP endpoints
  * to keep EventBridge Scheduler in sync.
  */
 
@@ -12,17 +12,17 @@ import { api } from "@filthy-panty/convex/_generated/api";
 import { useQuery } from "convex/react";
 import { Plus } from "lucide-react";
 import { useState } from "react";
-import { CronJobDialog } from "./components/CronJobDialog";
-import { CronJobsTable } from "./components/CronJobsTable";
+import { CronDialog } from "./components/CronDialog";
+import { CronsTable } from "./components/CronsTable";
 
-export default function CronJobsPage() {
-    const cronJobs = useQuery(api.cronJobs.listForActiveOrg, {});
+export default function CronsPage() {
+    const crons = useQuery(api.cron.listForActiveOrg, {});
     const agents = useQuery(api.agents.listForActiveOrg, {});
     const account = useQuery(api.org.getActiveAccount, {});
 
     const [createOpen, setCreateOpen] = useState(false);
 
-    const loading = cronJobs === undefined || agents === undefined || account === undefined;
+    const loading = crons === undefined || agents === undefined || account === undefined;
 
     return (
         <div className="mx-auto w-full max-w-5xl px-8 pt-9 pb-12">
@@ -53,7 +53,7 @@ export default function CronJobsPage() {
                         account in settings before creating cron jobs.
                     </p>
                 </div>
-            ) : cronJobs.length === 0 ? (
+            ) : crons.length === 0 ? (
                 <div className="rounded-lg border border-border bg-card px-4 py-10 text-center">
                     <p className="text-sm text-foreground">No scheduled jobs yet.</p>
                     <p className="mt-1 text-xs text-muted-foreground">
@@ -69,11 +69,11 @@ export default function CronJobsPage() {
                     </Button>
                 </div>
             ) : (
-                <CronJobsTable cronJobs={cronJobs} agents={agents} />
+                <CronsTable crons={crons} agents={agents} />
             )}
 
             {createOpen && (
-                <CronJobDialog
+                <CronDialog
                     mode="create"
                     agents={agents ?? []}
                     onClose={() => setCreateOpen(false)}

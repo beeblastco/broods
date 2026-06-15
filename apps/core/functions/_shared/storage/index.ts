@@ -50,15 +50,15 @@ export function setStorageForTests(provider: StorageProvider | null): void {
 export type { StorageProvider } from "./types.ts";
 export { getDedupeStore } from "./dedupe.ts";
 export {
-  applyCronJobPatch,
-  isCronJobsConfigured,
-  type CronJobRecord,
-  type CronJobRunRecord,
-  type CronJobStatus,
-  type CronJobLastStatus,
-  type CreateCronJobInput,
-  type UpdateCronJobInput,
-} from "./cron-jobs.ts";
+  applyCronPatch,
+  isCronsConfigured,
+  type CronRecord,
+  type CronRunRecord,
+  type CronStatus,
+  type CronLastStatus,
+  type CreateCronInput,
+  type UpdateCronInput,
+} from "./cron.ts";
 export {
   AgentSkillAuthorizationError,
   AgentSkillNotFoundError,

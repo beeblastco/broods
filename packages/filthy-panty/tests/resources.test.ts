@@ -136,7 +136,7 @@ export const myAgent = defineAgent("my-agent", {
     agents: { "my-agent": "agent_123" },
     workspaces: {},
     sandboxes: {},
-    cronJobs: {},
+    crons: {},
     skills: {},
     tools: {},
   }, cwd, resourceAliases);
@@ -145,6 +145,49 @@ export const myAgent = defineAgent("my-agent", {
 
   expect(api).toContain('myAgent: { kind: "agent", name: "my-agent", id: ids.agents["my-agent"]');
   expect(api).not.toContain('"my-agent": { kind: "agent"');
+});
+
+test("writeGeneratedFiles keys non-agent resources by export alias under api.crons", async () => {
+  const cwd = await fixtureProject("", `
+import { defineAgent, defineWorkspace, defineCron } from "${join(process.cwd(), "src", "resources.ts")}";
+
+export const cron = defineAgent("cron-agent", {
+  model: { provider: "openai", modelId: "gpt-5-mini" },
+});
+
+export const myRepo = defineWorkspace("my-repo", {
+  storage: { provider: "s3" },
+});
+
+export const oneMinuteCron = defineCron("one-minute-cron-test", {
+  agent: cron,
+  conversationKey: "cron:test",
+  input: "Confirm the test ran.",
+  scheduleExpression: "at(2030-01-01T00:00:00)",
+  timezone: "UTC",
+});
+`);
+  const { manifest, resourceAliases } = await compileProject({ cwd: cwd, command: "dev" });
+
+  await writeGeneratedFiles(manifest, {
+    agents: { "cron-agent": "agent_1" },
+    workspaces: { "my-repo": "workspace_1" },
+    sandboxes: {},
+    crons: { "one-minute-cron-test": "cron_1" },
+    skills: {},
+    tools: {},
+  }, cwd, resourceAliases);
+
+  const api = await readFile(join(cwd, "filthypanty", "_generated", "api.ts"), "utf8");
+
+  // Renamed namespace + export-name keys pointing at the unchanged ids contract.
+  expect(api).toContain('crons: {');
+  expect(api).toContain('oneMinuteCron: ids.crons["one-minute-cron-test"],');
+  expect(api).toContain('myRepo: ids.workspaces["my-repo"],');
+  expect(api).not.toContain('crons: ids.crons');
+  expect(api).not.toContain('"one-minute-cron-test":');
+  // Kinds with no local resources stay as an empty literal.
+  expect(api).toContain('sandboxes: {}');
 });
 
 test("compileProject loads project and environment from .env.local", async () => {
@@ -371,7 +414,7 @@ test("writeGeneratedFiles creates Convex-style typed resource references", async
     agents: { support: "agent_123" },
     workspaces: { repo: "workspace_123" },
     sandboxes: {},
-    cronJobs: {},
+    crons: {},
     skills: {},
     tools: {},
   }, cwd);
@@ -402,7 +445,7 @@ export const myAgent = defineAgent("my-agent", {
     agents: { "my-agent": "agent_1", "remote-only": "agent_2" },
     workspaces: { "remote-workspace": "workspace_1" },
     sandboxes: {},
-    cronJobs: {},
+    crons: {},
     skills: {},
     tools: {},
   }, cwd, resourceAliases);

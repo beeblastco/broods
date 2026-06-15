@@ -8,7 +8,7 @@ import type { StorageProvider } from "../types.ts";
 import { dynamoAccountToolStore } from "./account-tools.ts";
 import { dynamoAccountStore } from "./accounts.ts";
 import { dynamoAgentStore } from "./agents.ts";
-import { dynamoCronJobStore } from "./cron-jobs.ts";
+import { dynamoCronStore } from "./cron.ts";
 import { dynamoSandboxConfigStore } from "./sandbox-configs.ts";
 import { dynamoWorkspaceConfigStore } from "./workspace-configs.ts";
 
@@ -21,7 +21,7 @@ export const dynamoStorageProvider: StorageProvider = {
       return null;
     },
   },
-  cronJobs: dynamoCronJobStore,
+  crons: dynamoCronStore,
   sandboxConfigs: dynamoSandboxConfigStore,
   workspaceConfigs: dynamoWorkspaceConfigStore,
   accountTools: dynamoAccountToolStore,
@@ -31,7 +31,7 @@ export {
   dynamoAccountToolStore,
   dynamoAccountStore,
   dynamoAgentStore,
-  dynamoCronJobStore,
+  dynamoCronStore,
   dynamoSandboxConfigStore,
   dynamoWorkspaceConfigStore,
 };

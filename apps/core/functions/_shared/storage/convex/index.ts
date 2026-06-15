@@ -6,7 +6,7 @@
  * Read paths (the auth path + harness reads) are fully implemented.
  * Account-create / rotate-secret are owned by the cherry-coke side
  * (orgLifecycle) and intentionally throw here — filthy-panty does not
- * create accounts in SaaS mode. Agent + cron-job writes are wired so
+ * create accounts in SaaS mode. Agent + cron writes are wired so
  * the harness can persist normally.
  */
 
@@ -21,10 +21,11 @@ import {
   normalizeUpdateAgentInput,
 } from "../agents.ts";
 import {
-  normalizeCreateCronJobInput,
+  normalizeCreateCronInput,
   normalizeSchedulerGroupName,
-  normalizeUpdateCronJobInput,
-} from "../cron-jobs.ts";
+  normalizeUpdateCronInput,
+} from "../cron.ts";
+import type { ModelMessage } from "ai";
 import {
   normalizeCreateSandboxConfigInput,
   normalizeUpdateSandboxConfigInput,
@@ -57,9 +58,9 @@ import type {
   AccountStore,
   AccountToolStore,
   AgentStore,
-  CronJobRecord,
-  CronJobRunRecord,
-  CronJobStore,
+  CronRecord,
+  CronRunRecord,
+  CronStore,
   SandboxConfigRecord,
   SandboxConfigStore,
   StorageProvider,
@@ -130,13 +131,13 @@ function agentFromConvex(doc: ConvexAgentDoc | null): AgentRecord | null {
   };
 }
 
-interface ConvexCronJobDoc {
+interface ConvexCronDoc {
   _id: string;
   accountId: string;
   name: string;
   description?: string;
   agentId: string;
-  prompt: string;
+  events: ModelMessage[];
   conversationKey?: string;
   scheduleExpression: string;
   timezone?: string;
@@ -150,10 +151,10 @@ interface ConvexCronJobDoc {
   lastError?: string;
 }
 
-interface ConvexCronJobRunDoc {
+interface ConvexCronRunDoc {
   _id: string;
   accountId: string;
-  cronJobId: string;
+  cronId: string;
   eventId: string;
   conversationKey: string;
   status: "started" | "completed" | "failed";
@@ -163,15 +164,15 @@ interface ConvexCronJobRunDoc {
   completedAt?: number;
 }
 
-function cronJobFromConvex(doc: ConvexCronJobDoc | null): CronJobRecord | null {
+function cronFromConvex(doc: ConvexCronDoc | null): CronRecord | null {
   if (!doc) return null;
   return {
     accountId: doc.accountId,
-    cronJobId: doc._id,
+    cronId: doc._id,
     name: doc.name,
     ...(doc.description ? { description: doc.description } : {}),
     agentId: doc.agentId,
-    prompt: doc.prompt,
+    events: doc.events,
     ...(doc.conversationKey ? { conversationKey: doc.conversationKey } : {}),
     scheduleExpression: doc.scheduleExpression,
     ...(doc.timezone ? { timezone: doc.timezone } : {}),
@@ -186,11 +187,11 @@ function cronJobFromConvex(doc: ConvexCronJobDoc | null): CronJobRecord | null {
   };
 }
 
-function cronJobRunFromConvex(doc: ConvexCronJobRunDoc | null): CronJobRunRecord | null {
+function cronRunFromConvex(doc: ConvexCronRunDoc | null): CronRunRecord | null {
   if (!doc) return null;
   return {
     accountId: doc.accountId,
-    cronJobId: doc.cronJobId,
+    cronId: doc.cronId,
     runId: doc._id,
     eventId: doc.eventId,
     conversationKey: doc.conversationKey,
@@ -308,30 +309,30 @@ const agentDeployments: AgentDeploymentStore = {
   },
 };
 
-const cronJobs: CronJobStore = {
-  async getById(accountId, cronJobId) {
-    const doc = await getConvexClient().query(internal.cronJobs.getById, {
+const crons: CronStore = {
+  async getById(accountId, cronId) {
+    const doc = await getConvexClient().query(internal.cron.getById, {
       accountId: accountId as any,
-      cronJobId: cronJobId as any,
+      cronId: cronId as any,
     });
-    return cronJobFromConvex(doc as ConvexCronJobDoc | null);
+    return cronFromConvex(doc as ConvexCronDoc | null);
   },
   async list(accountId) {
-    const docs = (await getConvexClient().query(internal.cronJobs.list, {
+    const docs = (await getConvexClient().query(internal.cron.list, {
       accountId: accountId as any,
-    })) as ConvexCronJobDoc[];
-    return docs.map((d) => cronJobFromConvex(d)!).filter(Boolean);
+    })) as ConvexCronDoc[];
+    return docs.map((d) => cronFromConvex(d)!).filter(Boolean);
   },
   async create(accountId, input, options) {
-    const normalized = normalizeCreateCronJobInput(input);
+    const normalized = normalizeCreateCronInput(input);
     const schedulerGroupName = normalizeSchedulerGroupName(options.schedulerGroupName);
     const schedulerName = `${accountId}-${cryptoRandomId()}`;
-    const id = (await getConvexClient().mutation(internal.cronJobs.create, {
+    const id = (await getConvexClient().mutation(internal.cron.create, {
       accountId: accountId as any,
       name: normalized.name,
       description: normalized.description,
       agentId: normalized.agentId as any,
-      prompt: normalized.prompt,
+      events: normalized.events,
       conversationKey: normalized.conversationKey,
       scheduleExpression: normalized.scheduleExpression,
       timezone: normalized.timezone,
@@ -343,55 +344,55 @@ const cronJobs: CronJobStore = {
     if (!created) throw new Error("Failed to fetch created cron job");
     return created;
   },
-  async update(accountId, cronJobId, rawPatch) {
-    const patch = normalizeUpdateCronJobInput(rawPatch);
-    await getConvexClient().mutation(internal.cronJobs.update, {
+  async update(accountId, cronId, rawPatch) {
+    const patch = normalizeUpdateCronInput(rawPatch);
+    await getConvexClient().mutation(internal.cron.update, {
       accountId: accountId as any,
-      cronJobId: cronJobId as any,
+      cronId: cronId as any,
       name: patch.name,
       description: patch.description,
       agentId: patch.agentId as any,
-      prompt: patch.prompt,
+      events: patch.events,
       conversationKey: patch.conversationKey,
       scheduleExpression: patch.scheduleExpression,
       timezone: patch.timezone,
       status: patch.status,
     });
-    return this.getById(accountId, cronJobId);
+    return this.getById(accountId, cronId);
   },
-  async remove(accountId, cronJobId) {
-    await getConvexClient().mutation(internal.cronJobs.remove, {
+  async remove(accountId, cronId) {
+    await getConvexClient().mutation(internal.cron.remove, {
       accountId: accountId as any,
-      cronJobId: cronJobId as any,
+      cronId: cronId as any,
     });
     return true;
   },
-  async markStarted(accountId, cronJobId) {
-    await getConvexClient().mutation(internal.cronJobs.recordInvocation, {
+  async markStarted(accountId, cronId) {
+    await getConvexClient().mutation(internal.cron.recordInvocation, {
       accountId: accountId as any,
-      cronJobId: cronJobId as any,
+      cronId: cronId as any,
       lastStatus: "started",
     });
   },
-  async markCompleted(accountId, cronJobId) {
-    await getConvexClient().mutation(internal.cronJobs.recordInvocation, {
+  async markCompleted(accountId, cronId) {
+    await getConvexClient().mutation(internal.cron.recordInvocation, {
       accountId: accountId as any,
-      cronJobId: cronJobId as any,
+      cronId: cronId as any,
       lastStatus: "completed",
     });
   },
-  async markFailed(accountId, cronJobId, error) {
-    await getConvexClient().mutation(internal.cronJobs.recordInvocation, {
+  async markFailed(accountId, cronId, error) {
+    await getConvexClient().mutation(internal.cron.recordInvocation, {
       accountId: accountId as any,
-      cronJobId: cronJobId as any,
+      cronId: cronId as any,
       lastStatus: "failed",
       lastError: error,
     });
   },
   async createRun(input) {
-    const runId = await getConvexClient().mutation(internal.cronJobs.createRun, {
+    const runId = await getConvexClient().mutation(internal.cron.createRun, {
       accountId: input.accountId as any,
-      cronJobId: input.cronJobId as any,
+      cronId: input.cronId as any,
       eventId: input.eventId,
       conversationKey: input.conversationKey,
     }) as string;
@@ -402,29 +403,29 @@ const cronJobs: CronJobStore = {
       startedAt: new Date().toISOString(),
     };
   },
-  async completeRun(accountId, cronJobId, runId, result) {
-    await getConvexClient().mutation(internal.cronJobs.completeRun, {
+  async completeRun(accountId, cronId, runId, result) {
+    await getConvexClient().mutation(internal.cron.completeRun, {
       accountId: accountId as any,
-      cronJobId: cronJobId as any,
+      cronId: cronId as any,
       runId: runId as any,
       result,
     });
   },
-  async failRun(accountId, cronJobId, runId, error) {
-    await getConvexClient().mutation(internal.cronJobs.failRun, {
+  async failRun(accountId, cronId, runId, error) {
+    await getConvexClient().mutation(internal.cron.failRun, {
       accountId: accountId as any,
-      cronJobId: cronJobId as any,
+      cronId: cronId as any,
       runId: runId as any,
       error,
     });
   },
-  async listRuns(accountId, cronJobId, limit) {
-    const docs = await getConvexClient().query(internal.cronJobs.listRuns, {
+  async listRuns(accountId, cronId, limit) {
+    const docs = await getConvexClient().query(internal.cron.listRuns, {
       accountId: accountId as any,
-      cronJobId: cronJobId as any,
+      cronId: cronId as any,
       limit,
-    }) as ConvexCronJobRunDoc[];
-    return docs.map((d) => cronJobRunFromConvex(d)!).filter(Boolean);
+    }) as ConvexCronRunDoc[];
+    return docs.map((d) => cronRunFromConvex(d)!).filter(Boolean);
   },
 };
 
@@ -699,7 +700,7 @@ export const convexStorageProvider: StorageProvider = {
   accounts,
   agents,
   agentDeployments,
-  cronJobs,
+  crons,
   sandboxConfigs,
   workspaceConfigs,
   accountTools,

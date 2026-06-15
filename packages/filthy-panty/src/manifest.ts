@@ -292,12 +292,18 @@ async function normalizeConfig(resource: AnyResource, projectRoot: string): Prom
     }, projectRoot);
   }
 
-  if (resource.kind === "cronJob") {
+  if (resource.kind === "cron") {
     const config = { ...(resource.config as Record<string, unknown>) };
     const agent = config.agent;
     config.agentId = isResource(agent) ? agent.name : agent;
     config.name = config.name ?? resource.name;
     delete config.agent;
+    // Mirror the agent direct API: collapse the `input` shorthand into the
+    // canonical events list so local and remote manifests diff identically.
+    if (typeof config.input === "string") {
+      config.events = [{ role: "user", content: [{ type: "text", text: config.input }] }];
+      delete config.input;
+    }
     return rewriteValues(config);
   }
 

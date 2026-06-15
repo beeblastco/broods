@@ -433,18 +433,18 @@ export const asyncResultsFields = {
 };
 
 /**
- * Per-account scheduled agent runs. Mirrors filthy-panty's CronJobRecord
- * (functions/_shared/cron-jobs.ts) so the SaaS dashboard can manage them
+ * Per-account scheduled agent runs. Mirrors filthy-panty's CronRecord
+ * (functions/_shared/cron.ts) so the SaaS dashboard can manage them
  * directly via Convex live queries. The schedulerName / schedulerGroupName
  * are still the AWS EventBridge Scheduler identifiers — Convex stores them
  * for visibility but filthy-panty Lambda is what actually invokes EBS.
  */
-export const cronJobsFields = {
+export const cronsFields = {
     accountId: v.id("accounts"),
     name: v.string(),
     description: v.optional(v.string()),
     agentId: v.id("agents"),
-    prompt: v.string(),
+    events: v.array(v.any()),
     conversationKey: v.optional(v.string()),
     scheduleExpression: v.string(),
     timezone: v.optional(v.string()),
@@ -464,9 +464,9 @@ export const cronJobsFields = {
     updatedAt: v.number(),
 };
 
-export const cronJobRunsFields = {
+export const cronRunsFields = {
     accountId: v.id("accounts"),
-    cronJobId: v.id("cronJobs"),
+    cronId: v.id("crons"),
     eventId: v.string(),
     conversationKey: v.string(),
     status: v.union(
@@ -568,11 +568,11 @@ export default defineSchema({
     asyncResults: defineTable(asyncResultsFields)
         .index("by_accountId", ["accountId"])
         .index("by_eventId", ["eventId"]),
-    cronJobs: defineTable(cronJobsFields)
+    crons: defineTable(cronsFields)
         .index("by_accountId", ["accountId"])
         .index("by_accountId_and_agentId", ["accountId", "agentId"])
         .index("by_accountId_and_status", ["accountId", "status"])
         .index("by_schedulerName", ["schedulerName"]),
-    cronJobRuns: defineTable(cronJobRunsFields)
-        .index("by_accountId_and_cronJobId_and_startedAt", ["accountId", "cronJobId", "startedAt"]),
+    cronRuns: defineTable(cronRunsFields)
+        .index("by_accountId_and_cronId_and_startedAt", ["accountId", "cronId", "startedAt"]),
 });

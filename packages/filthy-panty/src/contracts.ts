@@ -7,24 +7,24 @@ import type { Doc, Id } from "../../convex/_generated/dataModel";
 import type {
   AgentConfig,
   AgentWorkspaceRef,
-  CreateCronJobInput,
-  CronJobLastStatus,
-  CronJobStatus,
+  CreateCronInput,
+  CronLastStatus,
+  CronStatus,
   SandboxConfig,
-  UpdateCronJobInput,
+  UpdateCronInput,
   WorkspaceConfig,
 } from "../../../apps/core/functions/_shared/storage/index.ts";
 
 export type {
   AgentConfig,
   AgentWorkspaceRef,
-  CreateCronJobInput,
-  CronJobLastStatus,
-  CronJobStatus,
+  CreateCronInput,
+  CronLastStatus,
+  CronStatus,
   Doc,
   Id,
   SandboxConfig,
-  UpdateCronJobInput,
+  UpdateCronInput,
   WorkspaceConfig,
 };
 
@@ -33,9 +33,9 @@ export type EnvironmentDoc = Doc<"environments">;
 export type AgentConfigDoc = Doc<"agentConfigs">;
 export type WorkspaceConfigDoc = Doc<"workspaceConfigs">;
 export type SandboxConfigDoc = Doc<"sandboxConfigs">;
-export type CronJobDoc = Doc<"cronJobs">;
+export type CronDoc = Doc<"crons">;
 
-export type CliResourceKind = "agent" | "workspace" | "sandbox" | "cronJob";
+export type CliResourceKind = "agent" | "workspace" | "sandbox" | "cron";
 
 // Manifest wire types come from the backend's canonical leaf module so the
 // CLI/SDK can't silently drift from the server contract.

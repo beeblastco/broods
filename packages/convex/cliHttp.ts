@@ -18,12 +18,12 @@ type RouteParts =
         kind: "resource";
         project: string;
         environment: string;
-        resourceKind: "agent" | "workspace" | "sandbox" | "cronJob";
+        resourceKind: "agent" | "workspace" | "sandbox" | "cron";
         name: string;
     };
 
-type CronJobResponse = {
-    cronJobId: string;
+type CronResponse = {
+    cronId: string;
     name: string;
     agentId: string;
     prompt: string;
@@ -34,7 +34,7 @@ type CronJobResponse = {
     description?: string;
 };
 
-type DesiredCronJob = Omit<CronJobResponse, "cronJobId"> & {
+type DesiredCron = Omit<CronResponse, "cronId"> & {
     resourceName: string;
 };
 
@@ -118,9 +118,9 @@ export const handle = httpAction(async (ctx, req) => {
                 prune: body.prune === true,
             });
 
-            const cronJobIds = forwardToken
-                ? await syncCronJobs(forwardToken, syncManifest, result.ids, body.prune === true)
-                : await syncCronJobsWithServiceToken(accountId, syncManifest, result.ids, body.prune === true);
+            const cronIds = forwardToken
+                ? await syncCrons(forwardToken, syncManifest, result.ids, body.prune === true)
+                : await syncCronsWithServiceToken(accountId, syncManifest, result.ids, body.prune === true);
             const refreshed = await ctx.runQuery(internal.cliSync.getManifestBySecretHash, {
                 secretHash: secretHash,
                 project: route.project,
@@ -142,7 +142,7 @@ export const handle = httpAction(async (ctx, req) => {
             return json({
                 ...(refreshed ?? {
                     ...result,
-                    ids: { ...result.ids, ...externalIds, cronJobs: cronJobIds },
+                    ids: { ...result.ids, ...externalIds, crons: cronIds },
                 }),
                 warnings: result.warnings,
                 deployment: deployment,
@@ -201,10 +201,10 @@ export const handle = httpAction(async (ctx, req) => {
         }
 
         if (route.kind === "resource" && req.method === "DELETE") {
-            if (route.resourceKind === "cronJob") {
+            if (route.resourceKind === "cron") {
                 // Scoped deploy keys can't manage filthy-panty cron jobs; no-op for them.
-                if (forwardToken) await deleteCronJobByName(forwardToken, route.name);
-                else await deleteCronJobByNameWithServiceToken(accountId, route.name);
+                if (forwardToken) await deleteCronByName(forwardToken, route.name);
+                else await deleteCronByNameWithServiceToken(accountId, route.name);
             } else {
                 await ctx.runMutation(internal.cliSync.deleteResourceBySecretHash, {
                     secretHash: secretHash,
@@ -314,8 +314,8 @@ function booleanSearchParam(url: URL, name: string): boolean | undefined {
     return raw === "1" || raw === "true";
 }
 
-function isResourceKind(value: string): value is "agent" | "workspace" | "sandbox" | "cronJob" {
-    return value === "agent" || value === "workspace" || value === "sandbox" || value === "cronJob";
+function isResourceKind(value: string): value is "agent" | "workspace" | "sandbox" | "cron" {
+    return value === "agent" || value === "workspace" || value === "sandbox" || value === "cron";
 }
 
 async function bearerAuth(req: Request): Promise<{ token: string; secretHash: string }> {
@@ -470,13 +470,13 @@ function rewriteExternalConfigRefs(config: Record<string, unknown>, ids: Externa
     return result;
 }
 
-async function syncCronJobs(
+async function syncCrons(
     token: string,
     manifest: CliManifest,
     ids: GeneratedIds,
     prune: boolean,
 ): Promise<Record<string, string>> {
-    return syncCronJobsWithFetch(
+    return syncCronsWithFetch(
         manifest,
         ids,
         prune,
@@ -484,27 +484,27 @@ async function syncCronJobs(
     );
 }
 
-async function syncCronJobsWithFetch(
+async function syncCronsWithFetch(
     manifest: CliManifest,
     ids: GeneratedIds,
     prune: boolean,
     fetchCron: (path: string, init: RequestInit) => Promise<Response>,
 ): Promise<Record<string, string>> {
-    const desired = desiredCronJobs(manifest, ids.agents ?? {});
+    const desired = desiredCrons(manifest, ids.agents ?? {});
     if (desired.length === 0 && prune !== true) return {};
-    const existing = await listCronJobsWithFetch(fetchCron);
+    const existing = await listCronsWithFetch(fetchCron);
     const existingByName = new Map(existing.map((job) => [job.name, job]));
     const desiredNames = new Set(desired.map((job) => job.name));
-    const cronJobIds: Record<string, string> = {};
+    const cronIds: Record<string, string> = {};
 
     for (const job of desired) {
         const existingJob = existingByName.get(job.name);
         if (existingJob) {
-            await updateCronJobWithFetch(fetchCron, existingJob.cronJobId, job);
-            cronJobIds[job.resourceName] = existingJob.cronJobId;
+            await updateCronWithFetch(fetchCron, existingJob.cronId, job);
+            cronIds[job.resourceName] = existingJob.cronId;
         } else {
-            const created = await createCronJobWithFetch(fetchCron, job);
-            cronJobIds[job.resourceName] = created.cronJobId;
+            const created = await createCronWithFetch(fetchCron, job);
+            cronIds[job.resourceName] = created.cronId;
         }
     }
 
@@ -512,107 +512,107 @@ async function syncCronJobsWithFetch(
         const environmentAgentIds = new Set(Object.values(ids.agents ?? {}));
         for (const job of existing) {
             if (!environmentAgentIds.has(job.agentId) || desiredNames.has(job.name)) continue;
-            await deleteCronJobWithFetch(fetchCron, job.cronJobId);
+            await deleteCronWithFetch(fetchCron, job.cronId);
         }
     }
 
-    return cronJobIds;
+    return cronIds;
 }
 
-function desiredCronJobs(
+function desiredCrons(
     manifest: CliManifest,
     agentIds: Record<string, string>,
-): DesiredCronJob[] {
+): DesiredCron[] {
     return manifest.resources
-        .filter((resource) => resource.kind === "cronJob")
+        .filter((resource) => resource.kind === "cron")
         .map((resource) => {
-            const config = asRecord(resource.config, `cronJob:${resource.name}`);
-            const localAgentName = stringField(config.agentId, `cronJob:${resource.name}.agentId`);
+            const config = asRecord(resource.config, `cron:${resource.name}`);
+            const localAgentName = stringField(config.agentId, `cron:${resource.name}.agentId`);
             const agentId = agentIds[localAgentName];
             if (!agentId) throw new Error(`Cron job ${resource.name} references unknown deployed agent: ${localAgentName}`);
 
             return stripUndefined({
                 resourceName: resource.name,
-                name: stringField(config.name, `cronJob:${resource.name}.name`),
+                name: stringField(config.name, `cron:${resource.name}.name`),
                 description: optionalStringField(config.description ?? resource.description),
                 agentId: agentId,
-                prompt: stringField(config.prompt, `cronJob:${resource.name}.prompt`),
+                prompt: stringField(config.prompt, `cron:${resource.name}.prompt`),
                 conversationKey: optionalStringField(config.conversationKey),
-                scheduleExpression: stringField(config.scheduleExpression, `cronJob:${resource.name}.scheduleExpression`),
+                scheduleExpression: stringField(config.scheduleExpression, `cron:${resource.name}.scheduleExpression`),
                 timezone: optionalStringField(config.timezone),
-                status: cronJobStatus(config.status),
+                status: cronStatus(config.status),
             });
         });
 }
 
-async function listCronJobs(token: string): Promise<CronJobResponse[]> {
-    return listCronJobsWithFetch((path, init) => accountManageFetch(token, path, init));
+async function listCrons(token: string): Promise<CronResponse[]> {
+    return listCronsWithFetch((path, init) => accountManageFetch(token, path, init));
 }
 
-async function listCronJobsWithFetch(
+async function listCronsWithFetch(
     fetchCron: (path: string, init: RequestInit) => Promise<Response>,
-): Promise<CronJobResponse[]> {
-    const response = await fetchCron("/accounts/me/cron-jobs", { method: "GET" });
-    const payload = await response.json() as { cronJobs?: CronJobResponse[] };
-    return Array.isArray(payload.cronJobs) ? payload.cronJobs : [];
+): Promise<CronResponse[]> {
+    const response = await fetchCron("/accounts/me/crons", { method: "GET" });
+    const payload = await response.json() as { crons?: CronResponse[] };
+    return Array.isArray(payload.crons) ? payload.crons : [];
 }
 
-async function createCronJob(
+async function createCron(
     token: string,
-    job: DesiredCronJob,
-): Promise<CronJobResponse> {
-    return createCronJobWithFetch((path, init) => accountManageFetch(token, path, init), job);
+    job: DesiredCron,
+): Promise<CronResponse> {
+    return createCronWithFetch((path, init) => accountManageFetch(token, path, init), job);
 }
 
-async function createCronJobWithFetch(
+async function createCronWithFetch(
     fetchCron: (path: string, init: RequestInit) => Promise<Response>,
-    job: DesiredCronJob,
-): Promise<CronJobResponse> {
-    const response = await fetchCron("/accounts/me/cron-jobs", {
+    job: DesiredCron,
+): Promise<CronResponse> {
+    const response = await fetchCron("/accounts/me/crons", {
         method: "POST",
-        body: JSON.stringify(cronJobBody(job)),
+        body: JSON.stringify(cronBody(job)),
     });
-    const payload = await response.json() as CronJobResponse | { cronJob?: CronJobResponse };
-    return "cronJob" in payload && payload.cronJob ? payload.cronJob : payload as CronJobResponse;
+    const payload = await response.json() as CronResponse | { cron?: CronResponse };
+    return "cron" in payload && payload.cron ? payload.cron : payload as CronResponse;
 }
 
-async function updateCronJob(
+async function updateCron(
     token: string,
-    cronJobId: string,
-    job: DesiredCronJob,
+    cronId: string,
+    job: DesiredCron,
 ): Promise<void> {
-    await updateCronJobWithFetch((path, init) => accountManageFetch(token, path, init), cronJobId, job);
+    await updateCronWithFetch((path, init) => accountManageFetch(token, path, init), cronId, job);
 }
 
-async function updateCronJobWithFetch(
+async function updateCronWithFetch(
     fetchCron: (path: string, init: RequestInit) => Promise<Response>,
-    cronJobId: string,
-    job: DesiredCronJob,
+    cronId: string,
+    job: DesiredCron,
 ): Promise<void> {
-    await fetchCron(`/accounts/me/cron-jobs/${encodeURIComponent(cronJobId)}`, {
+    await fetchCron(`/accounts/me/crons/${encodeURIComponent(cronId)}`, {
         method: "PATCH",
-        body: JSON.stringify(cronJobBody(job)),
+        body: JSON.stringify(cronBody(job)),
     });
 }
 
-async function deleteCronJob(token: string, cronJobId: string): Promise<void> {
-    await deleteCronJobWithFetch((path, init) => accountManageFetch(token, path, init), cronJobId);
+async function deleteCron(token: string, cronId: string): Promise<void> {
+    await deleteCronWithFetch((path, init) => accountManageFetch(token, path, init), cronId);
 }
 
-async function deleteCronJobWithFetch(
+async function deleteCronWithFetch(
     fetchCron: (path: string, init: RequestInit) => Promise<Response>,
-    cronJobId: string,
+    cronId: string,
 ): Promise<void> {
-    await fetchCron(`/accounts/me/cron-jobs/${encodeURIComponent(cronJobId)}`, {
+    await fetchCron(`/accounts/me/crons/${encodeURIComponent(cronId)}`, {
         method: "DELETE",
     });
 }
 
-async function deleteCronJobByName(token: string, name: string): Promise<void> {
-    const existing = await listCronJobs(token);
-    const cronJob = existing.find((job) => job.name === name);
-    if (!cronJob) return;
-    await deleteCronJob(token, cronJob.cronJobId);
+async function deleteCronByName(token: string, name: string): Promise<void> {
+    const existing = await listCrons(token);
+    const cron = existing.find((job) => job.name === name);
+    if (!cron) return;
+    await deleteCron(token, cron.cronId);
 }
 
 async function accountManageFetch(token: string, path: string, init: RequestInit): Promise<Response> {
@@ -655,13 +655,13 @@ async function accountManageFetchWithServiceToken(accountId: string, path: strin
     return response;
 }
 
-async function syncCronJobsWithServiceToken(
+async function syncCronsWithServiceToken(
     accountId: string,
     manifest: CliManifest,
     ids: GeneratedIds,
     prune: boolean,
 ): Promise<Record<string, string>> {
-    return syncCronJobsWithFetch(
+    return syncCronsWithFetch(
         manifest,
         ids,
         prune,
@@ -669,16 +669,16 @@ async function syncCronJobsWithServiceToken(
     );
 }
 
-async function deleteCronJobByNameWithServiceToken(accountId: string, name: string): Promise<void> {
-    const existing = await listCronJobsWithFetch((path, init) => accountManageFetchWithServiceToken(accountId, path, init));
-    const cronJob = existing.find((job) => job.name === name);
-    if (!cronJob) return;
-    await accountManageFetchWithServiceToken(accountId, `/accounts/me/cron-jobs/${encodeURIComponent(cronJob.cronJobId)}`, {
+async function deleteCronByNameWithServiceToken(accountId: string, name: string): Promise<void> {
+    const existing = await listCronsWithFetch((path, init) => accountManageFetchWithServiceToken(accountId, path, init));
+    const cron = existing.find((job) => job.name === name);
+    if (!cron) return;
+    await accountManageFetchWithServiceToken(accountId, `/accounts/me/crons/${encodeURIComponent(cron.cronId)}`, {
         method: "DELETE",
     });
 }
 
-function cronJobBody(job: DesiredCronJob): Record<string, unknown> {
+function cronBody(job: DesiredCron): Record<string, unknown> {
     const body: Record<string, unknown> = { ...job };
     delete body.resourceName;
 
@@ -708,7 +708,7 @@ function optionalStringField(value: unknown): string | undefined {
     return typeof value === "string" ? value : undefined;
 }
 
-function cronJobStatus(value: unknown): "active" | "paused" {
+function cronStatus(value: unknown): "active" | "paused" {
     if (value === undefined) return "active";
     if (value === "active" || value === "paused") return value;
     throw new Error("Cron job status must be active or paused");

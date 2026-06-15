@@ -42,7 +42,7 @@ export const getById = internalQuery({
 });
 
 /**
- * Public query: lists the caller's active-org agents. Used by the cron-jobs
+ * Public query: lists the caller's active-org agents. Used by the crons
  * UI dropdown to pick which agent a scheduled run targets.
  */
 export const listForActiveOrg = query({

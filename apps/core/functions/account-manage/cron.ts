@@ -10,30 +10,30 @@ import {
   SchedulerClient,
   UpdateScheduleCommand,
 } from "@aws-sdk/client-scheduler";
-import { isCronJobsConfigured, type CronJobRecord } from "../_shared/storage/index.ts";
+import { isCronsConfigured, type CronRecord } from "../_shared/storage/index.ts";
 import { optionalEnv, requireEnv } from "../_shared/env.ts";
 
 const scheduler = new SchedulerClient({ region: process.env.AWS_REGION });
 
-export class CronJobsUnavailableError extends Error {
+export class CronsUnavailableError extends Error {
   constructor() {
     super("Cron jobs are unavailable");
   }
 }
 
-export function assertCronJobsAvailable(): void {
+export function assertCronsAvailable(): void {
   if (
-    !isCronJobsConfigured() ||
+    !isCronsConfigured() ||
     !optionalEnv("CRON_SCHEDULER_TARGET_FUNCTION_ARN") ||
     !optionalEnv("CRON_SCHEDULER_ROLE_ARN") ||
     !optionalEnv("CRON_SCHEDULER_GROUP_NAME")
   ) {
-    throw new CronJobsUnavailableError();
+    throw new CronsUnavailableError();
   }
 }
 
-export async function createCronSchedule(job: CronJobRecord): Promise<void> {
-  assertCronJobsAvailable();
+export async function createCronSchedule(job: CronRecord): Promise<void> {
+  assertCronsAvailable();
 
   await scheduler.send(new CreateScheduleCommand({
     Name: job.schedulerName,
@@ -47,8 +47,8 @@ export async function createCronSchedule(job: CronJobRecord): Promise<void> {
   }));
 }
 
-export async function updateCronSchedule(job: CronJobRecord): Promise<void> {
-  assertCronJobsAvailable();
+export async function updateCronSchedule(job: CronRecord): Promise<void> {
+  assertCronsAvailable();
 
   await scheduler.send(new UpdateScheduleCommand({
     Name: job.schedulerName,
@@ -62,8 +62,8 @@ export async function updateCronSchedule(job: CronJobRecord): Promise<void> {
   }));
 }
 
-export async function deleteCronSchedule(job: CronJobRecord): Promise<void> {
-  assertCronJobsAvailable();
+export async function deleteCronSchedule(job: CronRecord): Promise<void> {
+  assertCronsAvailable();
 
   try {
     await scheduler.send(new DeleteScheduleCommand({
@@ -82,18 +82,18 @@ export function schedulerGroupName(): string {
   return requireEnv("CRON_SCHEDULER_GROUP_NAME");
 }
 
-function scheduleTarget(job: CronJobRecord) {
+function scheduleTarget(job: CronRecord) {
   return {
     Arn: requireEnv("CRON_SCHEDULER_TARGET_FUNCTION_ARN"),
     RoleArn: requireEnv("CRON_SCHEDULER_ROLE_ARN"),
     Input: JSON.stringify({
-      kind: "cron-job",
+      kind: "cron",
       accountId: job.accountId,
-      cronJobId: job.cronJobId,
+      cronId: job.cronId,
     }),
   };
 }
 
-function scheduleDescription(job: CronJobRecord): string {
-  return `Cron job ${job.cronJobId} for account ${job.accountId}`;
+function scheduleDescription(job: CronRecord): string {
+  return `Cron job ${job.cronId} for account ${job.accountId}`;
 }

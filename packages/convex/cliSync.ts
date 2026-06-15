@@ -33,7 +33,7 @@ const resourceValidator = v.object({
         v.literal("agent"),
         v.literal("workspace"),
         v.literal("sandbox"),
-        v.literal("cronJob"),
+        v.literal("cron"),
         v.literal("skill"),
         v.literal("tool"),
     ),
@@ -53,7 +53,7 @@ const idsValidator = v.object({
     agents: v.record(v.string(), v.string()),
     workspaces: v.record(v.string(), v.string()),
     sandboxes: v.record(v.string(), v.string()),
-    cronJobs: v.record(v.string(), v.string()),
+    crons: v.record(v.string(), v.string()),
     skills: v.record(v.string(), v.string()),
     tools: v.record(v.string(), v.string()),
 });
@@ -206,7 +206,7 @@ export const syncManifestBySecretHash = internalMutation({
             agents: agentIds,
             workspaces: workspaceIds,
             sandboxes: sandboxIds,
-            cronJobs: {},
+            crons: {},
             skills: externalIds.skills,
             tools: externalIds.tools,
         };
@@ -1485,10 +1485,10 @@ async function resourcesForEnvironment(
         )
         .collect();
     const agentIds = agents.flatMap((entry) => entry.agentId ? [entry.agentId] : []);
-    const cronJobs = (await Promise.all(
+    const crons = (await Promise.all(
         agentIds.map((agentId) =>
             ctx.db
-                .query("cronJobs")
+                .query("crons")
                 .withIndex("by_accountId_and_agentId", (q) =>
                     q.eq("accountId", accountId).eq("agentId", agentId as Id<"agents">),
                 )
@@ -1560,22 +1560,22 @@ async function resourcesForEnvironment(
             description: workspace.description,
             config: workspace.config,
         })),
-        ...cronJobs.flatMap((cronJob): CliResource[] => {
-            const agentName = agentNames[cronJob.agentId];
+        ...crons.flatMap((cron): CliResource[] => {
+            const agentName = agentNames[cron.agentId];
             if (!agentName) return [];
 
             return [{
-                kind: "cronJob",
-                name: cronJob.name,
-                description: cronJob.description,
+                kind: "cron",
+                name: cron.name,
+                description: cron.description,
                 config: {
-                    name: cronJob.name,
+                    name: cron.name,
                     agentId: agentName,
-                    prompt: cronJob.prompt,
-                    scheduleExpression: cronJob.scheduleExpression,
-                    ...(cronJob.conversationKey ? { conversationKey: cronJob.conversationKey } : {}),
-                    ...(cronJob.timezone ? { timezone: cronJob.timezone } : {}),
-                    status: cronJob.status,
+                    events: cron.events,
+                    scheduleExpression: cron.scheduleExpression,
+                    ...(cron.conversationKey ? { conversationKey: cron.conversationKey } : {}),
+                    ...(cron.timezone ? { timezone: cron.timezone } : {}),
+                    status: cron.status,
                 },
             }];
         }),
@@ -1603,10 +1603,10 @@ async function idsForEnvironment(
         )
         .collect();
     const agentIds = new Set(agents.flatMap((entry) => entry.agentId ? [entry.agentId] : []));
-    const cronJobs = (await Promise.all(
+    const crons = (await Promise.all(
         [...agentIds].map((agentId) =>
             ctx.db
-                .query("cronJobs")
+                .query("crons")
                 .withIndex("by_accountId_and_agentId", (q) =>
                     q.eq("accountId", accountId).eq("agentId", agentId as Id<"agents">),
                 )
@@ -1619,7 +1619,7 @@ async function idsForEnvironment(
         agents: Object.fromEntries(agents.filter((entry) => entry.managedBy === "cli").flatMap((entry) => entry.agentId ? [[entry.name, entry.agentId]] : [])),
         workspaces: Object.fromEntries(workspaces.filter((entry) => entry.managedBy === "cli").map((entry) => [entry.name, entry._id])),
         sandboxes: Object.fromEntries(sandboxes.filter((entry) => entry.managedBy === "cli").map((entry) => [entry.name, entry._id])),
-        cronJobs: Object.fromEntries(cronJobs.flatMap((entry) =>
+        crons: Object.fromEntries(crons.flatMap((entry) =>
             agentIds.has(entry.agentId) ? [[entry.name, entry._id]] : [],
         )),
         skills: externalIds.skills,

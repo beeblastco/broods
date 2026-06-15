@@ -20,7 +20,7 @@ Dashboard domain: `users`, `orgs`, `orgMembers`, `projects`, `environments`,
 Agent-platform domain (shared with core): `accounts`, `agents`,
 `sandboxConfigs`, `workspaceConfigs`, `environmentVariables`, `webhooks`,
 `conversations`, `messages`, `skills`, `workspaceFiles`, `asyncResults`,
-`cronJobs`.
+`crons`.
 
 Sensitive config (agent configs, sandbox credentials) is stored as encrypted
 blobs — core encrypts before writing; the dashboard never reads the plaintext.

@@ -12,13 +12,13 @@ storage/
 ├── accounts.ts       # Account types & helpers
 ├── agents.ts         # Agent types & helpers
 ├── agent-config.ts   # Config types & encryption
-├── cron-jobs.ts      # CronJob types & helpers
+├── cron.ts      # Cron types & helpers
 ├── dynamo/           # DynamoDB implementation
 │   ├── index.ts
 │   ├── client.ts
 │   ├── accounts.ts
 │   ├── agents.ts
-│   └── cron-jobs.ts
+│   └── cron.ts
 ├── convex/           # Convex implementation (private submodule)
 └── ...               # Your other providers
 ```
@@ -35,7 +35,7 @@ Community builds skip the private submodule. SaaS deployments get both.
 ## Adding a New Adapter
 
 1. Create `storage/mydb/` folder
-2. Implement `AccountStore`, `AgentStore`, `CronJobStore` from `types.ts`
+2. Implement `AccountStore`, `AgentStore`, `CronStore` from `types.ts`
 3. Export `mydbStorageProvider` from `storage/mydb/index.ts`
 4. Add case in `storage/index.ts` factory
 

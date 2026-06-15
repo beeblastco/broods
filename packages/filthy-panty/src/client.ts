@@ -9,10 +9,10 @@ import { stripTrailingSlash } from "./config.ts";
 import type {
   AsyncRequestAccepted,
   AsyncStatus,
-  CronJob,
-  CronJobRun,
+  Cron,
+  CronRun,
 } from "./types.ts";
-import type { CreateCronJobInput, UpdateCronJobInput } from "./contracts.ts";
+import type { CreateCronInput, UpdateCronInput } from "./contracts.ts";
 
 export const DEFAULT_CORE_BASE_URL = "https://app.beeblast.co";
 
@@ -76,7 +76,7 @@ export interface ResourceApi {
   readonly agents: Record<string, AgentReference>;
   readonly workspaces?: Record<string, unknown>;
   readonly sandboxes?: Record<string, unknown>;
-  readonly cronJobs?: Record<string, unknown>;
+  readonly crons?: Record<string, unknown>;
   readonly skills?: Record<string, unknown>;
   readonly tools?: Record<string, unknown>;
 }
@@ -101,9 +101,9 @@ export type AgentHandle = {
   stream: (input: AgentRunInput) => AsyncGenerator<TextStreamPart<ToolSet>>;
 };
 
-export type CreateClientCronJobInput =
-  | CreateCronJobInput
-  | (Omit<CreateCronJobInput, "agentId"> & { agent: AgentReference | string });
+export type CreateClientCronInput =
+  | CreateCronInput
+  | (Omit<CreateCronInput, "agentId"> & { agent: AgentReference | string });
 
 export class FilthyPantyClient {
   private readonly baseUrl: string;
@@ -282,82 +282,82 @@ export class FilthyPantyClient {
     throw new Error("Polling timeout");
   }
 
-  async createCronJob(input: CreateClientCronJobInput): Promise<CronJob> {
-    const response = await this.fetchJson(`${this.baseUrl}/accounts/me/cron-jobs`, {
+  async createCron(input: CreateClientCronInput): Promise<Cron> {
+    const response = await this.fetchJson(`${this.baseUrl}/accounts/me/crons`, {
       method: "POST",
       headers: this.apiKeyHeaders(),
-      body: JSON.stringify(resolveCronJobInput(input)),
+      body: JSON.stringify(resolveCronInput(input)),
     });
 
-    if (response.status !== 201) throw new Error(`Create cron job failed: ${response.status} ${await cronJobErrorDetails(response)}`);
+    if (response.status !== 201) throw new Error(`Create cron job failed: ${response.status} ${await cronErrorDetails(response)}`);
 
-    return await response.json() as CronJob;
+    return await response.json() as Cron;
   }
 
-  async listCronJobs(): Promise<CronJob[]> {
-    const response = await this.fetchJson(`${this.baseUrl}/accounts/me/cron-jobs`, {
+  async listCrons(): Promise<Cron[]> {
+    const response = await this.fetchJson(`${this.baseUrl}/accounts/me/crons`, {
       method: "GET",
       headers: this.apiKeyHeaders(),
     });
 
-    if (!response.ok) throw new Error(`List cron jobs failed: ${response.status} ${await cronJobErrorDetails(response)}`);
+    if (!response.ok) throw new Error(`List cron jobs failed: ${response.status} ${await cronErrorDetails(response)}`);
 
-    const payload = await response.json() as { cronJobs: CronJob[] };
+    const payload = await response.json() as { crons: Cron[] };
 
-    return payload.cronJobs;
+    return payload.crons;
   }
 
-  async getCronJob(cronJobId: string): Promise<CronJob | null> {
-    const response = await this.fetchJson(`${this.baseUrl}/accounts/me/cron-jobs/${encodeURIComponent(cronJobId)}`, {
+  async getCron(cronId: string): Promise<Cron | null> {
+    const response = await this.fetchJson(`${this.baseUrl}/accounts/me/crons/${encodeURIComponent(cronId)}`, {
       method: "GET",
       headers: this.apiKeyHeaders(),
     });
 
     if (response.status === 404) return null;
-    if (!response.ok) throw new Error(`Get cron job failed: ${response.status} ${await cronJobErrorDetails(response)}`);
+    if (!response.ok) throw new Error(`Get cron job failed: ${response.status} ${await cronErrorDetails(response)}`);
 
-    return await response.json() as CronJob;
+    return await response.json() as Cron;
   }
 
-  async listCronJobRuns(cronJobId: string, options: { limit?: number } = {}): Promise<CronJobRun[]> {
+  async listCronRuns(cronId: string, options: { limit?: number } = {}): Promise<CronRun[]> {
     const params = new URLSearchParams();
     if (options.limit !== undefined) params.set("limit", String(options.limit));
     const suffix = params.size > 0 ? `?${params}` : "";
     const response = await this.fetchJson(
-      `${this.baseUrl}/accounts/me/cron-jobs/${encodeURIComponent(cronJobId)}/runs${suffix}`,
+      `${this.baseUrl}/accounts/me/crons/${encodeURIComponent(cronId)}/runs${suffix}`,
       {
         method: "GET",
         headers: this.apiKeyHeaders(),
       },
     );
 
-    if (!response.ok) throw new Error(`List cron job runs failed: ${response.status} ${await cronJobErrorDetails(response)}`);
+    if (!response.ok) throw new Error(`List cron job runs failed: ${response.status} ${await cronErrorDetails(response)}`);
 
-    const payload = await response.json() as { runs: CronJobRun[] };
+    const payload = await response.json() as { runs: CronRun[] };
 
     return payload.runs;
   }
 
-  async updateCronJob(cronJobId: string, patch: UpdateCronJobInput): Promise<CronJob> {
-    const response = await this.fetchJson(`${this.baseUrl}/accounts/me/cron-jobs/${encodeURIComponent(cronJobId)}`, {
+  async updateCron(cronId: string, patch: UpdateCronInput): Promise<Cron> {
+    const response = await this.fetchJson(`${this.baseUrl}/accounts/me/crons/${encodeURIComponent(cronId)}`, {
       method: "PATCH",
       headers: this.apiKeyHeaders(),
       body: JSON.stringify(patch),
     });
 
-    if (!response.ok) throw new Error(`Update cron job failed: ${response.status} ${await cronJobErrorDetails(response)}`);
+    if (!response.ok) throw new Error(`Update cron job failed: ${response.status} ${await cronErrorDetails(response)}`);
 
-    return await response.json() as CronJob;
+    return await response.json() as Cron;
   }
 
-  async deleteCronJob(cronJobId: string): Promise<boolean> {
-    const response = await this.fetchJson(`${this.baseUrl}/accounts/me/cron-jobs/${encodeURIComponent(cronJobId)}`, {
+  async deleteCron(cronId: string): Promise<boolean> {
+    const response = await this.fetchJson(`${this.baseUrl}/accounts/me/crons/${encodeURIComponent(cronId)}`, {
       method: "DELETE",
       headers: this.apiKeyHeaders(),
     });
 
     if (response.status === 404) return false;
-    if (!response.ok) throw new Error(`Delete cron job failed: ${response.status} ${await cronJobErrorDetails(response)}`);
+    if (!response.ok) throw new Error(`Delete cron job failed: ${response.status} ${await cronErrorDetails(response)}`);
 
     const payload = await response.json() as { deleted: boolean };
 
@@ -538,23 +538,25 @@ async function responseErrorDetails(response: Response, expected: string): Promi
   return `${text.slice(0, 2_000)}... [truncated ${text.length - 2_000} chars]`;
 }
 
-async function cronJobErrorDetails(response: Response): Promise<string> {
+async function cronErrorDetails(response: Response): Promise<string> {
   const text = await response.text();
   if (text.includes("Request body must include eventId and conversationKey")) {
     return `${text}. Cron job APIs must be served by the configured baseUrl. ` +
-      "Prefer defining stable cron jobs with defineCronJob(...) in filthypanty/ and syncing with `filthy-panty dev` or `filthy-panty deploy`.";
+      "Prefer defining stable cron jobs with defineCron(...) in filthypanty/ and syncing with `filthy-panty dev` or `filthy-panty deploy`.";
   }
 
   return text;
 }
 
-function resolveCronJobInput(input: CreateClientCronJobInput): CreateCronJobInput {
+function resolveCronInput(input: CreateClientCronInput): CreateCronInput {
   if ("agentId" in input) return input;
   const agent = input.agent;
   const agentId = typeof agent === "string" ? agent : agent.id;
   const { agent: _agent, ...rest } = input;
 
-  return { ...rest, agentId };
+  // Spreading erases the input|events discrimination; the caller already
+  // supplied a valid one-of, so re-assert the union shape.
+  return { ...rest, agentId } as CreateCronInput;
 }
 
 function sleep(ms: number, signal?: AbortSignal): Promise<void> {

@@ -64,7 +64,7 @@ flowchart TD
   ManageUrl --> AccountStore["DynamoDB: AccountConfig<br/>account metadata + secretHash"]
   ManageUrl --> AgentStore["DynamoDB: AgentConfig<br/>encrypted agent configs"]
   ManageUrl -->|"Manage Skills"| SkillStore["S3: Skills<br/>account-scoped skill bundles"]
-  ManageUrl -->|"Manage Cron Jobs"| CronJobs["DynamoDB: CronJobs"]
+  ManageUrl -->|"Manage Cron Jobs"| Crons["DynamoDB: Crons"]
   ManageUrl -->|"Create/update/delete schedules"| Scheduler["EventBridge Scheduler"]
   AccountStore -->|Authentication| HarnessUrl
   AgentStore -->|agentId config lookup| HarnessUrl
@@ -84,8 +84,8 @@ flowchart TD
   AgentStore -->|config resolved before session<br/>passed into session for speed| Session
   Handler --> AsyncAgentResult["DynamoDB: AsyncAgentResult"]
   AsyncTools --> AsyncToolResult["DynamoDB: AsyncToolResult"]
-  Scheduler -->|"cron-job event"| HarnessUrl
-  HarnessUrl --> CronJobs["DynamoDB: CronJobs"]
+  Scheduler -->|"cron event"| HarnessUrl
+  HarnessUrl --> Crons["DynamoDB: Crons"]
   Session --> Workspace["S3: account-scoped workspace files"]
   SkillStore -->|"Load skills metadata"| Session
   Harness -->|"Access skills"| SkillStore 
@@ -216,13 +216,13 @@ Direct sync and async POST access is controlled by `ENABLE_DIRECT_API`. Deploys 
 
 ## Cron Jobs
 
-Cron jobs are included in the default stack as a small scheduled-agent add-on, not a workflow DSL. `account-manage` owns cron job create, update, delete, and list operations: it stores the account-scoped cron job in DynamoDB and creates, updates, or deletes the matching EventBridge Scheduler schedule. EventBridge Scheduler wakes `harness-processing` with `{ kind: "cron-job", accountId, cronJobId }`, and the harness starts the configured agent asynchronously.
+Cron jobs are included in the default stack as a small scheduled-agent add-on, not a workflow DSL. `account-manage` owns cron job create, update, delete, and list operations: it stores the account-scoped cron job in DynamoDB and creates, updates, or deletes the matching EventBridge Scheduler schedule. EventBridge Scheduler wakes `harness-processing` with `{ kind: "cron", accountId, cronId }`, and the harness starts the configured agent asynchronously.
 
 ```mermaid
 flowchart TD
-  Manage["account-manage<br/>cron create/update/delete/list"] --> Jobs["DynamoDB: CronJobs"]
+  Manage["account-manage<br/>cron create/update/delete/list"] --> Jobs["DynamoDB: Crons"]
   Manage --> Scheduler["EventBridge Scheduler<br/>schedule lifecycle"]
-  Scheduler -->|"cron-job event"| Harness["harness-processing"]
+  Scheduler -->|"cron event"| Harness["harness-processing"]
   Harness --> Jobs
   Harness -->|"internal async worker event"| Harness
   Harness --> AsyncAgentResult["AsyncAgentResult"]
@@ -424,7 +424,7 @@ Agents control model selection, channel credentials, optional skills, subagents,
 - `AgentConfig`: account-owned encrypted runtime config payloads.
 - `SandboxConfig` / `WorkspaceConfig`: account-scoped sandbox and workspace records referenced from agent config by id.
 - `AccountTool`: uploaded custom tool records (bundles live in the ToolBundles S3 bucket).
-- `CronJobs`: scheduled agent runs managed by `account-manage`.
+- `Crons`: scheduled agent runs managed by `account-manage`.
 - `Conversations`: normalized model messages by account-scoped `conversationKey`.
 - `ProcessedEvents`: dedup markers and short-lived conversation lease records.
 - `AsyncAgentResult`: async direct API and subagent state for `/status/{eventId}` polling.

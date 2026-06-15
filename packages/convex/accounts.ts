@@ -135,7 +135,7 @@ export const remove = internalMutation({
             "messages",
             "skills",
             "asyncResults",
-            "cronJobs",
+            "crons",
         ] as const;
         for (const table of tables) {
             const docs = await ctx.db

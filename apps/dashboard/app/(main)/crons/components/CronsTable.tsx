@@ -3,7 +3,7 @@
 /**
  * Renders the table of cron jobs for the active org with per-row edit and
  * delete actions. Delete is a typed-confirm modal; edit opens the shared
- * CronJobDialog in edit mode.
+ * CronDialog in edit mode.
  */
 
 import { Badge } from "@/app/components/ui/badge";
@@ -22,11 +22,11 @@ import type { Doc } from "@filthy-panty/convex/_generated/dataModel";
 import { useAction } from "convex/react";
 import { Pencil, Trash2 } from "lucide-react";
 import { useState } from "react";
-import { CronJobDialog } from "./CronJobDialog";
+import { CronDialog } from "./CronDialog";
 
 interface Props {
     /** Cron job rows from Convex. */
-    cronJobs: Array<Doc<"cronJobs">>;
+    crons: Array<Doc<"crons">>;
     /** Agents available in the active org. */
     agents: Array<Doc<"agents">>;
 }
@@ -44,18 +44,18 @@ function relativeTime(ts: number | undefined): string {
     return `${days}d ago`;
 }
 
-function statusBadge(status: Doc<"cronJobs">["lastStatus"]) {
+function statusBadge(status: Doc<"crons">["lastStatus"]) {
     if (!status) return <Badge variant="secondary" className="text-xs">never run</Badge>;
     if (status === "completed") return <Badge className="text-xs">completed</Badge>;
     if (status === "started") return <Badge variant="secondary" className="text-xs">running</Badge>;
     return <Badge variant="destructive" className="text-xs">failed</Badge>;
 }
 
-export function CronJobsTable({ cronJobs, agents }: Props) {
-    const remove = useAction(api.cronJobsPublic.remove);
+export function CronsTable({ crons, agents }: Props) {
+    const remove = useAction(api.cronPublic.remove);
 
-    const [editing, setEditing] = useState<Doc<"cronJobs"> | null>(null);
-    const [deleting, setDeleting] = useState<Doc<"cronJobs"> | null>(null);
+    const [editing, setEditing] = useState<Doc<"crons"> | null>(null);
+    const [deleting, setDeleting] = useState<Doc<"crons"> | null>(null);
     const [confirmText, setConfirmText] = useState("");
     const [pending, setPending] = useState(false);
     const [error, setError] = useState<string | null>(null);
@@ -67,7 +67,7 @@ export function CronJobsTable({ cronJobs, agents }: Props) {
         setPending(true);
         setError(null);
         try {
-            await remove({ cronJobId: deleting._id });
+            await remove({ cronId: deleting._id });
             setDeleting(null);
             setConfirmText("");
         } catch (err) {
@@ -92,7 +92,7 @@ export function CronJobsTable({ cronJobs, agents }: Props) {
                         </tr>
                     </thead>
                     <tbody>
-                        {cronJobs.map((job) => (
+                        {crons.map((job) => (
                             <tr key={job._id} className="border-t border-border">
                                 <td className="px-4 py-2.5">
                                     <div className="font-medium text-foreground">{job.name}</div>
@@ -160,9 +160,9 @@ export function CronJobsTable({ cronJobs, agents }: Props) {
             </div>
 
             {editing && (
-                <CronJobDialog
+                <CronDialog
                     mode="edit"
-                    cronJob={editing}
+                    cron={editing}
                     agents={agents}
                     onClose={() => setEditing(null)}
                 />

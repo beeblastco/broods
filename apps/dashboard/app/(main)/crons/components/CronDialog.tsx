@@ -2,7 +2,7 @@
 
 /**
  * Create-or-edit dialog for a single cron job. Validates the schedule
- * expression client-side, then calls cronJobsPublic.create or .update which
+ * expression client-side, then calls cronPublic.create or .update which
  * proxy to filthy-panty for the dual-write to EventBridge + Convex.
  */
 
@@ -41,31 +41,50 @@ const PRESETS: Array<{ label: string; value: string }> = [
 
 type Mode = "create" | "edit";
 
+/** Extracts the editable text from a stored events list (first user text message). */
+function eventsToText(events: Doc<"crons">["events"] | undefined): string {
+    if (!Array.isArray(events)) return "";
+    for (const message of events) {
+        if (message?.role !== "user") continue;
+        const content = message.content;
+        if (typeof content === "string") return content;
+        if (Array.isArray(content)) {
+            const text = content
+                .filter((part) => part?.type === "text")
+                .map((part) => part.text)
+                .join("\n");
+            if (text) return text;
+        }
+    }
+
+    return "";
+}
+
 interface Props {
     /** Whether this dialog creates a new job or edits an existing one. */
     mode: Mode;
     /** Existing cron job (when mode === "edit"). */
-    cronJob?: Doc<"cronJobs">;
+    cron?: Doc<"crons">;
     /** Agents available in the active org. */
     agents: Array<Doc<"agents">>;
     /** Called when the dialog should close (after success or cancel). */
     onClose: () => void;
 }
 
-export function CronJobDialog({ mode, cronJob, agents, onClose }: Props) {
-    const create = useAction(api.cronJobsPublic.create);
-    const update = useAction(api.cronJobsPublic.update);
+export function CronDialog({ mode, cron, agents, onClose }: Props) {
+    const create = useAction(api.cronPublic.create);
+    const update = useAction(api.cronPublic.update);
 
-    const [name, setName] = useState(cronJob?.name ?? "");
-    const [description, setDescription] = useState(cronJob?.description ?? "");
-    const [agentId, setAgentId] = useState<string>(cronJob?.agentId ?? agents[0]?._id ?? "");
-    const [prompt, setPrompt] = useState(cronJob?.prompt ?? "");
-    const [conversationKey, setConversationKey] = useState(cronJob?.conversationKey ?? "");
+    const [name, setName] = useState(cron?.name ?? "");
+    const [description, setDescription] = useState(cron?.description ?? "");
+    const [agentId, setAgentId] = useState<string>(cron?.agentId ?? agents[0]?._id ?? "");
+    const [prompt, setPrompt] = useState(eventsToText(cron?.events));
+    const [conversationKey, setConversationKey] = useState(cron?.conversationKey ?? "");
     const [scheduleExpression, setScheduleExpression] = useState(
-        cronJob?.scheduleExpression ?? "",
+        cron?.scheduleExpression ?? "",
     );
-    const [timezone, setTimezone] = useState(cronJob?.timezone ?? "");
-    const [status, setStatus] = useState<"active" | "paused">(cronJob?.status ?? "active");
+    const [timezone, setTimezone] = useState(cron?.timezone ?? "");
+    const [status, setStatus] = useState<"active" | "paused">(cron?.status ?? "active");
 
     const [pending, setPending] = useState(false);
     const [error, setError] = useState<string | null>(null);
@@ -87,19 +106,19 @@ export function CronJobDialog({ mode, cronJob, agents, onClose }: Props) {
                 await create({
                     name: name.trim(),
                     agentId: agentId as Id<"agents">,
-                    prompt: prompt.trim(),
+                    input: prompt.trim(),
                     conversationKey: conversationKey.trim() || undefined,
                     scheduleExpression: scheduleExpression.trim(),
                     timezone: timezone.trim() || undefined,
                     status: status,
                     description: description.trim() || undefined,
                 });
-            } else if (cronJob) {
+            } else if (cron) {
                 await update({
-                    cronJobId: cronJob._id,
+                    cronId: cron._id,
                     name: name.trim(),
                     agentId: agentId as Id<"agents">,
-                    prompt: prompt.trim(),
+                    input: prompt.trim(),
                     conversationKey: conversationKey.trim() || undefined,
                     scheduleExpression: scheduleExpression.trim(),
                     timezone: timezone.trim() || undefined,

@@ -40,7 +40,7 @@ function idsForManifest(ids: GeneratedIds, manifest: CliManifest): GeneratedIds 
     agents: namesForKind(manifest, "agent"),
     workspaces: namesForKind(manifest, "workspace"),
     sandboxes: namesForKind(manifest, "sandbox"),
-    cronJobs: namesForKind(manifest, "cronJob"),
+    crons: namesForKind(manifest, "cron"),
     skills: namesForKind(manifest, "skill"),
     tools: namesForKind(manifest, "tool"),
   };
@@ -49,7 +49,7 @@ function idsForManifest(ids: GeneratedIds, manifest: CliManifest): GeneratedIds 
     agents: pickIds(ids.agents, namesByKind.agents),
     workspaces: pickIds(ids.workspaces, namesByKind.workspaces),
     sandboxes: pickIds(ids.sandboxes, namesByKind.sandboxes),
-    cronJobs: pickIds(ids.cronJobs, namesByKind.cronJobs),
+    crons: pickIds(ids.crons, namesByKind.crons),
     skills: pickIds(ids.skills, namesByKind.skills),
     tools: pickIds(ids.tools, namesByKind.tools),
   };
@@ -75,7 +75,7 @@ function idsFile(ids: GeneratedIds): string {
     `export const agents = ids.agents;\n` +
     `export const workspaces = ids.workspaces;\n` +
     `export const sandboxes = ids.sandboxes;\n` +
-    `export const cronJobs = ids.cronJobs;\n` +
+    `export const crons = ids.crons;\n` +
     `export const skills = ids.skills;\n` +
     `export const tools = ids.tools;\n`;
 }
@@ -102,12 +102,29 @@ function apiFile(manifest: CliManifest, ids: GeneratedIds, aliases: ResourceAlia
     `/** Typed references for resources defined in filthypanty/. */\n` +
     `export const api = {\n` +
     `  agents: {\n${agentEntries}\n  },\n` +
-    `  workspaces: ids.workspaces,\n` +
-    `  sandboxes: ids.sandboxes,\n` +
-    `  cronJobs: ids.cronJobs,\n` +
-    `  skills: ids.skills,\n` +
-    `  tools: ids.tools,\n` +
+    `  workspaces: ${aliasedIdMap("workspaces", ids.workspaces, aliases.workspace)},\n` +
+    `  sandboxes: ${aliasedIdMap("sandboxes", ids.sandboxes, aliases.sandbox)},\n` +
+    `  crons: ${aliasedIdMap("crons", ids.crons, aliases.cron)},\n` +
+    `  skills: ${aliasedIdMap("skills", ids.skills, aliases.skill)},\n` +
+    `  tools: ${aliasedIdMap("tools", ids.tools, aliases.tool)},\n` +
     `} as const satisfies ResourceApi;\n`;
+}
+
+/**
+ * Renders an `{ alias: ids.<idsKey>[name], ... }` block keyed by each resource's
+ * exported variable name (falling back to its resource name), mirroring how agent
+ * references are keyed so app code uses dot access instead of bracket lookups.
+ * The api property may differ from the ids key (e.g. `crons` reads `ids.crons`,
+ * which mirrors the server's deploy-response contract).
+ */
+function aliasedIdMap(idsKey: string, values: Record<string, string>, alias: Record<string, string> | undefined): string {
+  const names = Object.keys(values);
+  if (names.length === 0) return "{}";
+  const entries = names.map((name) =>
+    `    ${propertyKey(alias?.[name] ?? name)}: ids.${idsKey}[${JSON.stringify(name)}],`,
+  ).join("\n");
+
+  return `{\n${entries}\n  }`;
 }
 
 function propertyKey(value: string): string {

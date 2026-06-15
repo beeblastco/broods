@@ -11,7 +11,7 @@ import { formatChannelErrorText } from "../_shared/channels.ts";
 import { createChannelStreamWriter, type ChannelStreamMode, type ChannelStreamWriter } from "../_shared/channel-streaming.ts";
 import { executeCommand } from "../_shared/commands.ts";
 import { toRuntimeAgentConfig } from "../_shared/storage/index.ts";
-import { getStorage, type CronJobRecord } from "../_shared/storage/index.ts";
+import { getStorage, type CronRecord } from "../_shared/storage/index.ts";
 import { booleanEnv, requireEnv } from "../_shared/env.ts";
 import { jsonResponse } from "../_shared/http.ts";
 import { logError, logInfo, logWarn } from "../_shared/log.ts";
@@ -77,10 +77,10 @@ interface NatsWorkerInvocation {
   event: DirectInboundEvent;
 }
 
-interface CronJobInvocation {
-  kind: "cron-job";
+interface CronInvocation {
+  kind: "cron";
   accountId: string;
-  cronJobId: string;
+  cronId: string;
 }
 
 interface DirectTurn {
@@ -104,7 +104,7 @@ class ConversationBusyError extends Error {
 }
 
 export async function handler(
-  event: LambdaFunctionURLEvent | AsyncWorkerInvocation | NatsWorkerInvocation | CronJobInvocation,
+  event: LambdaFunctionURLEvent | AsyncWorkerInvocation | NatsWorkerInvocation | CronInvocation,
   context?: LambdaInvocation,
 ): Promise<LambdaResponse> {
   if (isAsyncWorkerInvocation(event)) {
@@ -117,8 +117,8 @@ export async function handler(
     return { statusCode: 204 };
   }
 
-  if (isCronJobInvocation(event)) {
-    await handleScheduledCronJob(event);
+  if (isCronInvocation(event)) {
+    await handleScheduledCron(event);
     return { statusCode: 204 };
   }
 
@@ -137,45 +137,45 @@ export async function handler(
 /**
  * Handle scheduled cron jobs invoked by EventBridge Scheduler.
  */
-async function handleScheduledCronJob(event: CronJobInvocation): Promise<void> {
-  const cronJobs = getStorage().cronJobs;
-  const job = await cronJobs.getById(event.accountId, event.cronJobId);
+async function handleScheduledCron(event: CronInvocation): Promise<void> {
+  const crons = getStorage().crons;
+  const job = await crons.getById(event.accountId, event.cronId);
   if (!job) {
     logInfo("Cron job skipped because it no longer exists", {
       accountId: event.accountId,
-      cronJobId: event.cronJobId,
+      cronId: event.cronId,
     });
     return;
   }
   if (job.status !== "active") {
     logInfo("Cron job skipped because it is paused", {
       accountId: event.accountId,
-      cronJobId: event.cronJobId,
+      cronId: event.cronId,
     });
     return;
   }
 
-  await cronJobs.markStarted(job.accountId, job.cronJobId);
+  await crons.markStarted(job.accountId, job.cronId);
 
   try {
     const result = await startScheduledAgentRun(job);
     logInfo("Cron agent run invoked", {
       accountId: job.accountId,
-      cronJobId: job.cronJobId,
+      cronId: job.cronId,
       agentId: job.agentId,
       eventId: result.eventId,
       conversationKey: result.conversationKey,
     });
-    await cronJobs.markCompleted(job.accountId, job.cronJobId);
+    await crons.markCompleted(job.accountId, job.cronId);
   } catch (err) {
     const error = err instanceof Error ? err.message : String(err);
     logError("Cron agent run failed", {
       accountId: job.accountId,
-      cronJobId: job.cronJobId,
+      cronId: job.cronId,
       agentId: job.agentId,
       error,
     });
-    await cronJobs.markFailed(job.accountId, job.cronJobId, error);
+    await crons.markFailed(job.accountId, job.cronId, error);
     throw err;
   }
 }
@@ -450,7 +450,7 @@ async function handleAsyncWorkerRequest(event: DirectInboundEvent, context?: Lam
             })
           ));
           if (event.cronRun) {
-            await getStorage().cronJobs.completeRun(event.accountId, event.cronRun.cronJobId, event.cronRun.runId, response);
+            await getStorage().crons.completeRun(event.accountId, event.cronRun.cronId, event.cronRun.runId, response);
           }
           await pushReplyToChannel(event, typeof response === "string" ? response : JSON.stringify(response, null, 2));
         },
@@ -458,7 +458,7 @@ async function handleAsyncWorkerRequest(event: DirectInboundEvent, context?: Lam
           didSettle = true;
           await settleAsyncFailure(event, error);
           if (event.cronRun) {
-            await getStorage().cronJobs.failRun(event.accountId, event.cronRun.cronJobId, event.cronRun.runId, error);
+            await getStorage().crons.failRun(event.accountId, event.cronRun.cronId, event.cronRun.runId, error);
           }
           await pushReplyToChannel(event, formatChannelErrorText(error));
         },
@@ -479,9 +479,9 @@ async function handleAsyncWorkerRequest(event: DirectInboundEvent, context?: Lam
     if (result.didFail && !didSettle) {
       await settleAsyncFailure(event, result.failureText ?? AGENT_PROCESSING_FAILED);
       if (event.cronRun) {
-        await getStorage().cronJobs.failRun(
+        await getStorage().crons.failRun(
           event.accountId,
-          event.cronRun.cronJobId,
+          event.cronRun.cronId,
           event.cronRun.runId,
           result.failureText ?? AGENT_PROCESSING_FAILED,
         );
@@ -506,9 +506,9 @@ async function handleAsyncWorkerRequest(event: DirectInboundEvent, context?: Lam
     });
     await settleAsyncFailure(event, err instanceof Error ? err.message : "Async request failed");
     if (event.cronRun) {
-      await getStorage().cronJobs.failRun(
+      await getStorage().crons.failRun(
         event.accountId,
-        event.cronRun.cronJobId,
+        event.cronRun.cronId,
         event.cronRun.runId,
         err instanceof Error ? err.message : "Async request failed",
       );
@@ -1091,21 +1091,21 @@ function asyncToolContinuationEventId(parentEventId: string): string {
   return `${parentEventId}:async-tools`;
 }
 
-async function startScheduledAgentRun(job: CronJobRecord): Promise<{ eventId: string; conversationKey: string }> {
+async function startScheduledAgentRun(job: CronRecord): Promise<{ eventId: string; conversationKey: string }> {
   const event = await createCronDirectEvent(job);
-  const run = await getStorage().cronJobs.createRun({
+  const run = await getStorage().crons.createRun({
     accountId: job.accountId,
-    cronJobId: job.cronJobId,
+    cronId: job.cronId,
     eventId: event.publicEventId,
     conversationKey: event.publicConversationKey,
   });
-  event.cronRun = { cronJobId: job.cronJobId, runId: run.runId };
+  event.cronRun = { cronId: job.cronId, runId: run.runId };
   try {
     await invokeAsyncWorker(event);
   } catch (err) {
-    await getStorage().cronJobs.failRun(
+    await getStorage().crons.failRun(
       job.accountId,
-      job.cronJobId,
+      job.cronId,
       run.runId,
       err instanceof Error ? err.message : "Failed to start cron async worker",
     );
@@ -1118,14 +1118,14 @@ async function startScheduledAgentRun(job: CronJobRecord): Promise<{ eventId: st
   };
 }
 
-async function createCronDirectEvent(job: CronJobRecord): Promise<DirectInboundEvent> {
+async function createCronDirectEvent(job: CronRecord): Promise<DirectInboundEvent> {
   const agent = await getStorage().agents.getById(job.accountId, job.agentId);
   if (!agent || agent.status !== "active") {
     throw new Error(`Agent not found: ${job.agentId}`);
   }
 
-  const publicEventId = `${job.cronJobId}-${crypto.randomUUID()}`;
-  const publicConversationKey = job.conversationKey ?? `cron:${job.cronJobId}`;
+  const publicEventId = `${job.cronId}-${crypto.randomUUID()}`;
+  const publicConversationKey = job.conversationKey ?? `cron:${job.cronId}`;
   return {
     accountId: job.accountId,
     agentId: job.agentId,
@@ -1134,10 +1134,7 @@ async function createCronDirectEvent(job: CronJobRecord): Promise<DirectInboundE
     publicEventId,
     conversationKey: scopedDirectConversationKey(job.accountId, job.agentId, publicConversationKey),
     publicConversationKey,
-    events: [{
-      role: "user",
-      content: [{ type: "text", text: job.prompt }],
-    }],
+    events: job.events as DirectInboundEvent["events"],
   } satisfies DirectInboundEvent;
 }
 
@@ -1578,13 +1575,13 @@ function isNatsWorkerInvocation(event: unknown): event is NatsWorkerInvocation {
   );
 }
 
-function isCronJobInvocation(event: unknown): event is CronJobInvocation {
+function isCronInvocation(event: unknown): event is CronInvocation {
   return Boolean(
     event &&
     typeof event === "object" &&
-    (event as { kind?: unknown }).kind === "cron-job" &&
+    (event as { kind?: unknown }).kind === "cron" &&
     typeof (event as { accountId?: unknown }).accountId === "string" &&
-    typeof (event as { cronJobId?: unknown }).cronJobId === "string"
+    typeof (event as { cronId?: unknown }).cronId === "string"
   );
 }
 

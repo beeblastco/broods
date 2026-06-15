@@ -26,15 +26,15 @@ afterEach(() => {
 
 describe("cron job persistence", () => {
   it("creates account-scoped cron job records", async () => {
-    process.env.CRON_JOBS_TABLE_NAME = "cron-jobs";
+    process.env.CRONS_TABLE_NAME = "crons";
     dynamo.send = sendMock as never;
     const { getStorage, resetStorageForTests } = await import("../functions/_shared/storage/index.ts");
     resetStorageForTests();
 
-    const cronJob = await getStorage().cronJobs.create("acct_test", {
+    const cron = await getStorage().crons.create("acct_test", {
       name: "Daily maintainer",
       agentId: "agent_main",
-      prompt: "Run maintenance.",
+      input: "Run maintenance.",
       conversationKey: "cron:daily-maintenance",
       scheduleExpression: "cron(0 8 * * ? *)",
       timezone: "Europe/Amsterdam",
@@ -42,43 +42,45 @@ describe("cron job persistence", () => {
       schedulerGroupName: "dev-filthy-panty-cron",
     });
 
-    expect(cronJob.accountId).toBe("acct_test");
-    expect(cronJob.agentId).toBe("agent_main");
-    expect(cronJob.prompt).toBe("Run maintenance.");
-    expect(cronJob.status).toBe("active");
-    expect(cronJob.schedulerName.startsWith("acct_test-cron_")).toBe(true);
+    expect(cron.accountId).toBe("acct_test");
+    expect(cron.agentId).toBe("agent_main");
+    expect(cron.events).toEqual([{ role: "user", content: [{ type: "text", text: "Run maintenance." }] }]);
+    expect(cron.status).toBe("active");
+    expect(cron.schedulerName.startsWith("acct_test-cron_")).toBe(true);
 
     const putCommand = sendMock.mock.calls[0]?.[0];
     expect(putCommand).toBeInstanceOf(PutItemCommand);
-    expect((putCommand as PutItemCommand).input.TableName).toBe("cron-jobs");
+    expect((putCommand as PutItemCommand).input.TableName).toBe("crons");
     expect((putCommand as PutItemCommand).input.Item?.agentId).toEqual({ S: "agent_main" });
-    expect((putCommand as PutItemCommand).input.Item?.prompt).toEqual({ S: "Run maintenance." });
+    expect((putCommand as PutItemCommand).input.Item?.events).toEqual({
+      S: JSON.stringify([{ role: "user", content: [{ type: "text", text: "Run maintenance." }] }]),
+    });
   });
 
   it("lists cron jobs by account", async () => {
-    process.env.CRON_JOBS_TABLE_NAME = "cron-jobs";
+    process.env.CRONS_TABLE_NAME = "crons";
     dynamo.send = sendMock as never;
     const { getStorage, resetStorageForTests } = await import("../functions/_shared/storage/index.ts");
     resetStorageForTests();
     sendMock.mockImplementation(async (command: unknown) => {
       if (command instanceof QueryCommand) {
         return {
-          Items: [cronJobItem("acct_test", "cron_one")],
+          Items: [cronItem("acct_test", "cron_one")],
         };
       }
       throw new Error("unexpected command");
     });
 
-    const jobs = await getStorage().cronJobs.list("acct_test");
+    const jobs = await getStorage().crons.list("acct_test");
 
-    expect(jobs.map((job) => job.cronJobId)).toEqual(["cron_one"]);
+    expect(jobs.map((job) => job.cronId)).toEqual(["cron_one"]);
     const queryCommand = sendMock.mock.calls[0]?.[0] as QueryCommand;
     expect(queryCommand.input.KeyConditionExpression).toBe("accountId = :accountId");
     expect(queryCommand.input.ExpressionAttributeValues?.[":accountId"]).toEqual({ S: "acct_test" });
   });
 
   it("updates and deletes cron jobs", async () => {
-    process.env.CRON_JOBS_TABLE_NAME = "cron-jobs";
+    process.env.CRONS_TABLE_NAME = "crons";
     dynamo.send = sendMock as never;
     const { getStorage, resetStorageForTests } = await import("../functions/_shared/storage/index.ts");
     resetStorageForTests();
@@ -86,7 +88,7 @@ describe("cron job persistence", () => {
       if (command instanceof UpdateItemCommand) {
         return {
           Attributes: {
-            ...cronJobItem("acct_test", "cron_one"),
+            ...cronItem("acct_test", "cron_one"),
             status: { S: "paused" },
           },
         };
@@ -97,8 +99,8 @@ describe("cron job persistence", () => {
       throw new Error("unexpected command");
     });
 
-    const updated = await getStorage().cronJobs.update("acct_test", "cron_one", { status: "paused" });
-    const deleted = await getStorage().cronJobs.remove("acct_test", "cron_one");
+    const updated = await getStorage().crons.update("acct_test", "cron_one", { status: "paused" });
+    const deleted = await getStorage().crons.remove("acct_test", "cron_one");
 
     expect(updated?.status).toBe("paused");
     expect(deleted).toBe(true);
@@ -107,26 +109,26 @@ describe("cron job persistence", () => {
   });
 
   it("loads one cron job by account and id", async () => {
-    process.env.CRON_JOBS_TABLE_NAME = "cron-jobs";
+    process.env.CRONS_TABLE_NAME = "crons";
     dynamo.send = sendMock as never;
     const { getStorage, resetStorageForTests } = await import("../functions/_shared/storage/index.ts");
     resetStorageForTests();
     sendMock.mockImplementation(async (command: unknown) => {
       if (command instanceof GetItemCommand) {
-        return { Item: cronJobItem("acct_test", "cron_one") };
+        return { Item: cronItem("acct_test", "cron_one") };
       }
       throw new Error("unexpected command");
     });
 
-    const job = await getStorage().cronJobs.getById("acct_test", "cron_one");
+    const job = await getStorage().crons.getById("acct_test", "cron_one");
 
-    expect(job?.cronJobId).toBe("cron_one");
+    expect(job?.cronId).toBe("cron_one");
     expect(job?.agentId).toBe("agent_main");
-    expect(job?.prompt).toBe("Run.");
+    expect(job?.events).toEqual([{ role: "user", content: [{ type: "text", text: "Run." }] }]);
   });
 
   it("records and lists cron job run history", async () => {
-    process.env.CRON_JOBS_TABLE_NAME = "cron-jobs";
+    process.env.CRONS_TABLE_NAME = "crons";
     dynamo.send = sendMock as never;
     const { getStorage, resetStorageForTests } = await import("../functions/_shared/storage/index.ts");
     resetStorageForTests();
@@ -142,35 +144,35 @@ describe("cron job persistence", () => {
       throw new Error("unexpected command");
     });
 
-    const run = await getStorage().cronJobs.createRun({
+    const run = await getStorage().crons.createRun({
       accountId: "acct_test",
-      cronJobId: "cron_one",
+      cronId: "cron_one",
       eventId: "cron_one-event",
       conversationKey: "cron:daily-maintenance",
     });
-    const runs = await getStorage().cronJobs.listRuns("acct_test", "cron_one", 5);
+    const runs = await getStorage().crons.listRuns("acct_test", "cron_one", 5);
 
     expect(run.status).toBe("started");
     expect(runs[0]?.eventId).toBe("cron_one-event");
     expect(runs[0]?.conversationKey).toBe("cron:daily-maintenance");
     const queryCommand = sendMock.mock.calls[1]?.[0] as QueryCommand;
-    expect(queryCommand.input.KeyConditionExpression).toBe("accountId = :accountId AND begins_with(cronJobId, :prefix)");
+    expect(queryCommand.input.KeyConditionExpression).toBe("accountId = :accountId AND begins_with(cronId, :prefix)");
     expect(queryCommand.input.ExpressionAttributeValues?.[":prefix"]).toEqual({ S: "run#cron_one#" });
   });
 });
 
-function cronJobItem(accountId: string, cronJobId: string): Record<string, AttributeValue> {
+function cronItem(accountId: string, cronId: string): Record<string, AttributeValue> {
   return {
     accountId: { S: accountId },
-    cronJobId: { S: cronJobId },
+    cronId: { S: cronId },
     name: { S: "Daily maintainer" },
     agentId: { S: "agent_main" },
-    prompt: { S: "Run." },
+    events: { S: JSON.stringify([{ role: "user", content: [{ type: "text", text: "Run." }] }]) },
     conversationKey: { S: "cron:daily-maintenance" },
     scheduleExpression: { S: "cron(0 8 * * ? *)" },
     timezone: { S: "Europe/Amsterdam" },
     status: { S: "active" },
-    schedulerName: { S: `${accountId}-${cronJobId}` },
+    schedulerName: { S: `${accountId}-${cronId}` },
     schedulerGroupName: { S: "dev-filthy-panty-cron" },
     createdAt: { S: "2026-05-22T00:00:00.000Z" },
     updatedAt: { S: "2026-05-22T00:00:00.000Z" },

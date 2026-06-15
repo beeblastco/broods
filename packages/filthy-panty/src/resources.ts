@@ -4,7 +4,7 @@
 
 import type {
   AgentConfig,
-  CreateCronJobInput,
+  CreateCronInput,
   SandboxConfig,
   WorkspaceConfig,
 } from "./contracts.ts";
@@ -32,7 +32,7 @@ export interface FilthyPantyConfigDefinition {
   readonly config: FilthyPantyProjectConfig;
 }
 
-export type ResourceKind = "agent" | "workspace" | "sandbox" | "cronJob" | "skill" | "tool";
+export type ResourceKind = "agent" | "workspace" | "sandbox" | "cron" | "skill" | "tool";
 
 export interface ResourceDefinition<
   Kind extends ResourceKind,
@@ -125,17 +125,17 @@ export type AgentDefinitionConfig =
 
 export type AgentResource<Name extends string = string> = ResourceDefinition<"agent", Name, AgentDefinitionConfig>;
 
-export type CronJobDefinitionConfig = Omit<CreateCronJobInput, "agentId" | "name"> & {
+export type CronDefinitionConfig = Omit<CreateCronInput, "agentId" | "name"> & {
   agent: AgentResource | string;
 };
 
-export type CronJobResource<Name extends string = string> = ResourceDefinition<"cronJob", Name, CronJobDefinitionConfig>;
+export type CronResource<Name extends string = string> = ResourceDefinition<"cron", Name, CronDefinitionConfig>;
 
 export type AnyResource =
   | AgentResource
   | WorkspaceResource
   | SandboxResource
-  | CronJobResource
+  | CronResource
   | SkillResource
   | ToolResource;
 
@@ -183,12 +183,12 @@ export function defineAgent<const Name extends string>(
   return defineResource("agent", name, config, options);
 }
 
-export function defineCronJob<const Name extends string>(
+export function defineCron<const Name extends string>(
   name: Name,
-  config: CronJobDefinitionConfig,
+  config: CronDefinitionConfig,
   options: { description?: string } = {},
-): CronJobResource<Name> {
-  return defineResource("cronJob", name, config, options);
+): CronResource<Name> {
+  return defineResource("cron", name, config, options);
 }
 
 /** Callable + property-access accessor for {@link env}. */

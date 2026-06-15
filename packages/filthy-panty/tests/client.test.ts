@@ -206,10 +206,10 @@ test("client creates cron jobs using agent references", async () => {
 
       return Response.json({
         accountId: "acct_1",
-        cronJobId: "cron_1",
+        cronId: "cron_1",
         name: "daily",
         agentId: "agent_1",
-        prompt: "run",
+        events: [{ role: "user", content: [{ type: "text", text: "run" }] }],
         scheduleExpression: "rate(1 day)",
         status: "active",
         createdAt: "2026-01-01T00:00:00.000Z",
@@ -218,7 +218,7 @@ test("client creates cron jobs using agent references", async () => {
     },
   });
 
-  const cronJob = await client.createCronJob({
+  const cron = await client.createCron({
     name: "daily",
     agent: {
       kind: "agent",
@@ -227,17 +227,17 @@ test("client creates cron jobs using agent references", async () => {
       project: "app",
       environment: "development",
     },
-    prompt: "run",
+    input: "run",
     scheduleExpression: "rate(1 day)",
   });
 
-  expect(cronJob.cronJobId).toBe("cron_1");
+  expect(cron.cronId).toBe("cron_1");
   expect(requests).toEqual([{
-    url: "https://core.example/accounts/me/cron-jobs",
+    url: "https://core.example/accounts/me/crons",
     body: {
       name: "daily",
       agentId: "agent_1",
-      prompt: "run",
+      input: "run",
       scheduleExpression: "rate(1 day)",
     },
   }]);
@@ -252,16 +252,16 @@ test("client sends cron job APIs to the configured base URL", async () => {
       urls.push(String(input));
 
       if (String(input).includes("/runs")) return Response.json({ runs: [] });
-      return Response.json({ cronJobs: [] });
+      return Response.json({ crons: [] });
     },
   });
 
-  await client.listCronJobs();
-  await client.listCronJobRuns("cron_1", { limit: 5 });
+  await client.listCrons();
+  await client.listCronRuns("cron_1", { limit: 5 });
 
   expect(urls).toEqual([
-    "https://app.example/accounts/me/cron-jobs",
-    "https://app.example/accounts/me/cron-jobs/cron_1/runs?limit=5",
+    "https://app.example/accounts/me/crons",
+    "https://app.example/accounts/me/crons/cron_1/runs?limit=5",
   ]);
 });
 
@@ -273,10 +273,10 @@ test("client explains cron job calls routed to the runtime harness", async () =>
       Response.json({ error: "Request body must include eventId and conversationKey" }, { status: 400 }),
   });
 
-  await expect(client.createCronJob({
+  await expect(client.createCron({
     name: "daily",
     agentId: "agent_1",
-    prompt: "run",
+    input: "run",
     scheduleExpression: "rate(1 day)",
   })).rejects.toThrow("Cron job APIs must be served by the configured baseUrl");
 });

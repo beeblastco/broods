@@ -188,7 +188,7 @@ function createFakeStorage() {
     agentDeployments: {
       async getByApiKeyHash() { return null; },
     },
-    cronJobs: {} as never,
+    crons: {} as never,
     sandboxConfigs: {
       async getById(_accountId: string, id: string) { return sandboxes.get(id) ?? null; },
       async list() { return [...sandboxes.values()]; },

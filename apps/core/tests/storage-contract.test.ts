@@ -26,7 +26,7 @@ describe("StorageProvider", () => {
     expect(typeof dynamoStorageProvider.accounts.getById).toBe("function");
     expect(typeof dynamoStorageProvider.accounts.getBySecretHash).toBe("function");
     expect(typeof dynamoStorageProvider.agents.list).toBe("function");
-    expect(typeof dynamoStorageProvider.cronJobs.list).toBe("function");
+    expect(typeof dynamoStorageProvider.crons.list).toBe("function");
     expect(typeof dynamoStorageProvider.sandboxConfigs.list).toBe("function");
     expect(typeof dynamoStorageProvider.workspaceConfigs.list).toBe("function");
   });
@@ -66,7 +66,7 @@ describe("StorageProvider", () => {
       it("exposes the required stores", () => {
         expect(storage.accounts).toBeDefined();
         expect(storage.agents).toBeDefined();
-        expect(storage.cronJobs).toBeDefined();
+        expect(storage.crons).toBeDefined();
         expect(storage.sandboxConfigs).toBeDefined();
         expect(storage.workspaceConfigs).toBeDefined();
       });
@@ -135,7 +135,7 @@ describe("StorageProvider", () => {
           async remove(id: string) { return fakeAccounts.delete(id); },
         },
         agents: {} as any,
-        cronJobs: {} as any,
+        crons: {} as any,
       };
 
       setStorageForTests(fakeProvider as any);

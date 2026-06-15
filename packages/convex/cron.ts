@@ -1,6 +1,6 @@
 /**
  * Cron job CRUD scoped to an account. Mirrors filthy-panty's
- * functions/_shared/cron-jobs.ts so the SaaS dashboard can drive the same
+ * functions/_shared/cron.ts so the SaaS dashboard can drive the same
  * lifecycle through Convex live queries. The AWS EventBridge Scheduler
  * names are stored here for visibility; the Lambda invokes EBS.
  */
@@ -11,25 +11,25 @@ import type { DataModel, Id } from "./_generated/dataModel";
 import { internalMutation, internalQuery, query } from "./_generated/server";
 import { authKit } from "./auth";
 import { getActiveOrgForUser } from "./model/ownership/org";
-import { cronJobRunsFields, cronJobsFields } from "./schema";
+import { cronRunsFields, cronsFields } from "./schema";
 
-const cronJobDoc = v.object({
-    ...cronJobsFields,
-    _id: v.id("cronJobs"),
+const cronDoc = v.object({
+    ...cronsFields,
+    _id: v.id("crons"),
     _creationTime: v.number(),
 });
 
-const cronJobRunDoc = v.object({
-    ...cronJobRunsFields,
-    _id: v.id("cronJobRuns"),
+const cronRunDoc = v.object({
+    ...cronRunsFields,
+    _id: v.id("cronRuns"),
     _creationTime: v.number(),
 });
 
-const cronJobStatusValidator = v.union(v.literal("active"), v.literal("paused"));
-const optionalCronJobStringValidator = v.optional(v.string());
-const clearableCronJobStringValidator = v.optional(v.union(v.string(), v.null()));
+const cronStatusValidator = v.union(v.literal("active"), v.literal("paused"));
+const optionalCronStringValidator = v.optional(v.string());
+const clearableCronStringValidator = v.optional(v.union(v.string(), v.null()));
 
-const cronJobLastStatusValidator = v.union(
+const cronLastStatusValidator = v.union(
     v.literal("started"),
     v.literal("completed"),
     v.literal("failed"),
@@ -37,18 +37,18 @@ const cronJobLastStatusValidator = v.union(
 
 type Ctx = GenericQueryCtx<DataModel> | GenericMutationCtx<DataModel>;
 
-async function getOwned(ctx: Ctx, accountId: Id<"accounts">, cronJobId: Id<"cronJobs">) {
-    const cronJob = await ctx.db.get(cronJobId);
-    return cronJob && cronJob.accountId === accountId ? cronJob : null;
+async function getOwned(ctx: Ctx, accountId: Id<"accounts">, cronId: Id<"crons">) {
+    const cron = await ctx.db.get(cronId);
+    return cron && cron.accountId === accountId ? cron : null;
 }
 
 /**
  * Public query: lists cron jobs for the caller's active org. Used by the
- * cron-jobs dashboard page for live updates.
+ * crons dashboard page for live updates.
  */
 export const listForActiveOrg = query({
     args: {},
-    returns: v.array(cronJobDoc),
+    returns: v.array(cronDoc),
     handler: async (ctx) => {
         const authUser = await authKit.getAuthUser(ctx);
         if (!authUser) {
@@ -71,7 +71,7 @@ export const listForActiveOrg = query({
         if (!account) return [];
 
         return await ctx.db
-            .query("cronJobs")
+            .query("crons")
             .withIndex("by_accountId", (q) => q.eq("accountId", account._id))
             .collect();
     },
@@ -80,18 +80,18 @@ export const listForActiveOrg = query({
 export const getById = internalQuery({
     args: {
         accountId: v.id("accounts"),
-        cronJobId: v.id("cronJobs"),
+        cronId: v.id("crons"),
     },
-    returns: v.union(cronJobDoc, v.null()),
-    handler: (ctx, { accountId, cronJobId }) => getOwned(ctx, accountId, cronJobId),
+    returns: v.union(cronDoc, v.null()),
+    handler: (ctx, { accountId, cronId }) => getOwned(ctx, accountId, cronId),
 });
 
 export const list = internalQuery({
     args: { accountId: v.id("accounts") },
-    returns: v.array(cronJobDoc),
+    returns: v.array(cronDoc),
     handler: (ctx, { accountId }) =>
         ctx.db
-            .query("cronJobs")
+            .query("crons")
             .withIndex("by_accountId", (q) => q.eq("accountId", accountId))
             .collect(),
 });
@@ -99,12 +99,12 @@ export const list = internalQuery({
 export const listByStatus = internalQuery({
     args: {
         accountId: v.id("accounts"),
-        status: cronJobStatusValidator,
+        status: cronStatusValidator,
     },
-    returns: v.array(cronJobDoc),
+    returns: v.array(cronDoc),
     handler: (ctx, { accountId, status }) =>
         ctx.db
-            .query("cronJobs")
+            .query("crons")
             .withIndex("by_accountId_and_status", (q) =>
                 q.eq("accountId", accountId).eq("status", status),
             )
@@ -113,13 +113,13 @@ export const listByStatus = internalQuery({
 
 export const getBySchedulerName = internalQuery({
     args: { schedulerName: v.string() },
-    returns: v.union(cronJobDoc, v.null()),
+    returns: v.union(cronDoc, v.null()),
     handler: async (ctx, { schedulerName }) => {
-        const cronJob = await ctx.db
-            .query("cronJobs")
+        const cron = await ctx.db
+            .query("crons")
             .withIndex("by_schedulerName", (q) => q.eq("schedulerName", schedulerName))
             .unique();
-        return cronJob ?? null;
+        return cron ?? null;
     },
 });
 
@@ -127,17 +127,17 @@ export const create = internalMutation({
     args: {
         accountId: v.id("accounts"),
         name: v.string(),
-        description: optionalCronJobStringValidator,
+        description: optionalCronStringValidator,
         agentId: v.id("agents"),
-        prompt: v.string(),
-        conversationKey: optionalCronJobStringValidator,
+        events: v.array(v.any()),
+        conversationKey: optionalCronStringValidator,
         scheduleExpression: v.string(),
-        timezone: optionalCronJobStringValidator,
-        status: v.optional(cronJobStatusValidator),
+        timezone: optionalCronStringValidator,
+        status: v.optional(cronStatusValidator),
         schedulerName: v.string(),
         schedulerGroupName: v.string(),
     },
-    returns: v.id("cronJobs"),
+    returns: v.id("crons"),
     handler: async (ctx, args) => {
         const agent = await ctx.db.get(args.agentId);
         if (!agent || agent.accountId !== args.accountId) {
@@ -145,7 +145,7 @@ export const create = internalMutation({
         }
 
         const now = Date.now();
-        return ctx.db.insert("cronJobs", {
+        return ctx.db.insert("crons", {
             ...args,
             status: args.status ?? "active",
             lastInvokedAt: undefined,
@@ -160,22 +160,22 @@ export const create = internalMutation({
 export const update = internalMutation({
     args: {
         accountId: v.id("accounts"),
-        cronJobId: v.id("cronJobs"),
+        cronId: v.id("crons"),
         name: v.optional(v.string()),
-        description: clearableCronJobStringValidator,
+        description: clearableCronStringValidator,
         agentId: v.optional(v.id("agents")),
-        prompt: v.optional(v.string()),
-        conversationKey: clearableCronJobStringValidator,
+        events: v.optional(v.array(v.any())),
+        conversationKey: clearableCronStringValidator,
         scheduleExpression: v.optional(v.string()),
-        timezone: clearableCronJobStringValidator,
-        status: v.optional(cronJobStatusValidator),
+        timezone: clearableCronStringValidator,
+        status: v.optional(cronStatusValidator),
     },
     returns: v.null(),
     handler: async (ctx, args) => {
-        const { accountId, cronJobId, agentId, ...patch } = args;
+        const { accountId, cronId, agentId, ...patch } = args;
 
-        const cronJob = await getOwned(ctx, accountId, cronJobId);
-        if (!cronJob) {
+        const cron = await getOwned(ctx, accountId, cronId);
+        if (!cron) {
             throw new Error("Cron job does not belong to the supplied accountId");
         }
 
@@ -192,7 +192,7 @@ export const update = internalMutation({
                 .map(([key, value]) => [key, value === null ? undefined : value]),
         );
 
-        await ctx.db.patch(cronJobId, { ...defined, updatedAt: Date.now() });
+        await ctx.db.patch(cronId, { ...defined, updatedAt: Date.now() });
         return null;
     },
 });
@@ -204,19 +204,19 @@ export const update = internalMutation({
 export const recordInvocation = internalMutation({
     args: {
         accountId: v.id("accounts"),
-        cronJobId: v.id("cronJobs"),
-        lastStatus: cronJobLastStatusValidator,
+        cronId: v.id("crons"),
+        lastStatus: cronLastStatusValidator,
         lastError: v.optional(v.string()),
         lastInvokedAt: v.optional(v.number()),
     },
     returns: v.null(),
-    handler: async (ctx, { accountId, cronJobId, lastStatus, lastError, lastInvokedAt }) => {
-        const cronJob = await getOwned(ctx, accountId, cronJobId);
-        if (!cronJob) {
+    handler: async (ctx, { accountId, cronId, lastStatus, lastError, lastInvokedAt }) => {
+        const cron = await getOwned(ctx, accountId, cronId);
+        if (!cron) {
             throw new Error("Cron job does not belong to the supplied accountId");
         }
 
-        await ctx.db.patch(cronJobId, {
+        await ctx.db.patch(cronId, {
             lastStatus,
             lastError,
             lastInvokedAt: lastInvokedAt ?? Date.now(),
@@ -230,18 +230,18 @@ export const recordInvocation = internalMutation({
 export const createRun = internalMutation({
     args: {
         accountId: v.id("accounts"),
-        cronJobId: v.id("cronJobs"),
+        cronId: v.id("crons"),
         eventId: v.string(),
         conversationKey: v.string(),
     },
-    returns: v.id("cronJobRuns"),
+    returns: v.id("cronRuns"),
     handler: async (ctx, args) => {
-        const cronJob = await getOwned(ctx, args.accountId, args.cronJobId);
-        if (!cronJob) {
+        const cron = await getOwned(ctx, args.accountId, args.cronId);
+        if (!cron) {
             throw new Error("Cron job does not belong to the supplied accountId");
         }
 
-        return await ctx.db.insert("cronJobRuns", {
+        return await ctx.db.insert("cronRuns", {
             ...args,
             status: "started",
             startedAt: Date.now(),
@@ -253,15 +253,15 @@ export const createRun = internalMutation({
 export const completeRun = internalMutation({
     args: {
         accountId: v.id("accounts"),
-        cronJobId: v.id("cronJobs"),
-        runId: v.id("cronJobRuns"),
+        cronId: v.id("crons"),
+        runId: v.id("cronRuns"),
         result: v.any(),
     },
     returns: v.null(),
-    handler: async (ctx, { accountId, cronJobId, runId, result }) => {
+    handler: async (ctx, { accountId, cronId, runId, result }) => {
         const run = await ctx.db.get(runId);
-        if (!run || run.accountId !== accountId || run.cronJobId !== cronJobId) {
-            throw new Error("Cron job run does not belong to the supplied accountId and cronJobId");
+        if (!run || run.accountId !== accountId || run.cronId !== cronId) {
+            throw new Error("Cron job run does not belong to the supplied accountId and cronId");
         }
 
         await ctx.db.patch(runId, {
@@ -278,15 +278,15 @@ export const completeRun = internalMutation({
 export const failRun = internalMutation({
     args: {
         accountId: v.id("accounts"),
-        cronJobId: v.id("cronJobs"),
-        runId: v.id("cronJobRuns"),
+        cronId: v.id("crons"),
+        runId: v.id("cronRuns"),
         error: v.string(),
     },
     returns: v.null(),
-    handler: async (ctx, { accountId, cronJobId, runId, error }) => {
+    handler: async (ctx, { accountId, cronId, runId, error }) => {
         const run = await ctx.db.get(runId);
-        if (!run || run.accountId !== accountId || run.cronJobId !== cronJobId) {
-            throw new Error("Cron job run does not belong to the supplied accountId and cronJobId");
+        if (!run || run.accountId !== accountId || run.cronId !== cronId) {
+            throw new Error("Cron job run does not belong to the supplied accountId and cronId");
         }
 
         await ctx.db.patch(runId, {
@@ -303,18 +303,18 @@ export const failRun = internalMutation({
 export const listRuns = internalQuery({
     args: {
         accountId: v.id("accounts"),
-        cronJobId: v.id("cronJobs"),
+        cronId: v.id("crons"),
         limit: v.optional(v.number()),
     },
-    returns: v.array(cronJobRunDoc),
-    handler: async (ctx, { accountId, cronJobId, limit }) => {
-        const cronJob = await getOwned(ctx, accountId, cronJobId);
-        if (!cronJob) return [];
+    returns: v.array(cronRunDoc),
+    handler: async (ctx, { accountId, cronId, limit }) => {
+        const cron = await getOwned(ctx, accountId, cronId);
+        if (!cron) return [];
 
         return await ctx.db
-            .query("cronJobRuns")
-            .withIndex("by_accountId_and_cronJobId_and_startedAt", (q) =>
-                q.eq("accountId", accountId).eq("cronJobId", cronJobId)
+            .query("cronRuns")
+            .withIndex("by_accountId_and_cronId_and_startedAt", (q) =>
+                q.eq("accountId", accountId).eq("cronId", cronId)
             )
             .order("desc")
             .take(limit ?? 20);
@@ -324,12 +324,12 @@ export const listRuns = internalQuery({
 export const remove = internalMutation({
     args: {
         accountId: v.id("accounts"),
-        cronJobId: v.id("cronJobs"),
+        cronId: v.id("crons"),
     },
     returns: v.null(),
-    handler: async (ctx, { accountId, cronJobId }) => {
-        const cronJob = await getOwned(ctx, accountId, cronJobId);
-        if (cronJob) await ctx.db.delete(cronJobId);
+    handler: async (ctx, { accountId, cronId }) => {
+        const cron = await getOwned(ctx, accountId, cronId);
+        if (cron) await ctx.db.delete(cronId);
         return null;
     },
 });

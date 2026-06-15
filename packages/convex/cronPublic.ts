@@ -1,7 +1,7 @@
 "use node";
 /**
- * Public action wrappers for cron-job CRUD. These proxy to filthy-panty's
- * /accounts/me/cron-jobs HTTP endpoints so EventBridge Scheduler stays in
+ * Public action wrappers for cron CRUD. These proxy to filthy-panty's
+ * /accounts/me/crons HTTP endpoints so EventBridge Scheduler stays in
  * sync with Convex. Cherry-coke never touches AWS directly.
  */
 
@@ -35,41 +35,41 @@ export const create = action({
     args: {
         name: v.string(),
         agentId: v.id("agents"),
-        prompt: v.string(),
+        input: v.string(),
         conversationKey: v.optional(v.string()),
         scheduleExpression: v.string(),
         timezone: v.optional(v.string()),
         status: STATUS_VALIDATOR,
         description: v.optional(v.string()),
     },
-    returns: v.object({ cronJobId: v.string() }),
+    returns: v.object({ cronId: v.string() }),
     handler: async (ctx, args) => {
         const account = await ctx.runQuery(api.org.getActiveAccount, {});
         if (!account) throw new Error("No active org / account not provisioned");
 
         const { url, secret } = getServiceEnv();
-        const res = await fetch(`${url}/accounts/me/cron-jobs`, {
+        const res = await fetch(`${url}/accounts/me/crons`, {
             method: "POST",
             headers: headers(account.accountId, secret),
             body: JSON.stringify(args),
         });
         if (!res.ok) {
             throw new Error(
-                `Filthy-panty create cron-job failed: ${res.status} ${await res.text()}`,
+                `Filthy-panty create cron failed: ${res.status} ${await res.text()}`,
             );
         }
-        const { cronJob } = (await res.json()) as { cronJob: { cronJobId: string } };
-        return { cronJobId: cronJob.cronJobId };
+        const { cron } = (await res.json()) as { cron: { cronId: string } };
+        return { cronId: cron.cronId };
     },
 });
 
 /** Updates a cron job via filthy-panty. */
 export const update = action({
     args: {
-        cronJobId: v.string(),
+        cronId: v.string(),
         name: v.optional(v.string()),
         agentId: v.optional(v.id("agents")),
-        prompt: v.optional(v.string()),
+        input: v.optional(v.string()),
         conversationKey: v.optional(v.string()),
         scheduleExpression: v.optional(v.string()),
         timezone: v.optional(v.string()),
@@ -78,19 +78,19 @@ export const update = action({
     },
     returns: v.null(),
     handler: async (ctx, args) => {
-        const { cronJobId, ...patch } = args;
+        const { cronId, ...patch } = args;
         const account = await ctx.runQuery(api.org.getActiveAccount, {});
         if (!account) throw new Error("No active org / account not provisioned");
 
         const { url, secret } = getServiceEnv();
-        const res = await fetch(`${url}/accounts/me/cron-jobs/${cronJobId}`, {
+        const res = await fetch(`${url}/accounts/me/crons/${cronId}`, {
             method: "PATCH",
             headers: headers(account.accountId, secret),
             body: JSON.stringify(patch),
         });
         if (!res.ok) {
             throw new Error(
-                `Filthy-panty update cron-job failed: ${res.status} ${await res.text()}`,
+                `Filthy-panty update cron failed: ${res.status} ${await res.text()}`,
             );
         }
         return null;
@@ -99,20 +99,20 @@ export const update = action({
 
 /** Removes a cron job via filthy-panty. */
 export const remove = action({
-    args: { cronJobId: v.string() },
+    args: { cronId: v.string() },
     returns: v.null(),
     handler: async (ctx, args) => {
         const account = await ctx.runQuery(api.org.getActiveAccount, {});
         if (!account) throw new Error("No active org / account not provisioned");
 
         const { url, secret } = getServiceEnv();
-        const res = await fetch(`${url}/accounts/me/cron-jobs/${args.cronJobId}`, {
+        const res = await fetch(`${url}/accounts/me/crons/${args.cronId}`, {
             method: "DELETE",
             headers: headers(account.accountId, secret),
         });
         if (!res.ok) {
             throw new Error(
-                `Filthy-panty delete cron-job failed: ${res.status} ${await res.text()}`,
+                `Filthy-panty delete cron failed: ${res.status} ${await res.text()}`,
             );
         }
         return null;

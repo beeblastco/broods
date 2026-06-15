@@ -226,7 +226,7 @@ export default $config({
       workspaceConfigs: resourceName("workspace-configs", stage, region),
       accountTools: resourceName("account-tools", stage, region),
       accountSignupRateLimits: resourceName("account-signup-rate-limits", stage, region),
-      cronJobs: resourceName("cron-jobs", stage, region),
+      crons: resourceName("crons", stage, region),
       cronSchedules: resourceName("cron-schedules", stage, region),
       harnessProcessing: resourceName("harness-processing", stage, region),
       accountManage: resourceName("account-manage", stage, region),
@@ -256,7 +256,7 @@ export default $config({
       value: kubernetesSandboxKubeconfig.value.apply((v) => (v && v.length > 0 ? v : "unset")),
     });
 
-    // accounts / agents / cron-jobs DDB tables are skipped on production —
+    // accounts / agents / crons DDB tables are skipped on production —
     // those domains live in Convex on SaaS. Tables stay for dev / community
     // stages so the DynamoDB provider has somewhere to read/write.
     const accountConfigsTable = useConvexStorage
@@ -358,18 +358,18 @@ export default $config({
         },
       });
 
-    const cronJobsTable = useConvexStorage
+    const cronsTable = useConvexStorage
       ? null
-      : new sst.aws.Dynamo("CronJob", {
+      : new sst.aws.Dynamo("Cron", {
         fields: {
           accountId: "string",
-          cronJobId: "string",
+          cronId: "string",
         },
-        primaryIndex: { hashKey: "accountId", rangeKey: "cronJobId" },
+        primaryIndex: { hashKey: "accountId", rangeKey: "cronId" },
         deletionProtection: false,
         transform: {
           table: {
-            name: names.cronJobs,
+            name: names.crons,
           },
         },
       });
@@ -943,8 +943,8 @@ export default $config({
         SANDBOX_FN_MOUNT_NONET: names.sandboxMountNonet,
         SANDBOX_FN_NOMOUNT_NET: names.sandboxNomountNet,
         SANDBOX_FN_NOMOUNT_NONET: names.sandboxNomountNonet,
-        ...(cronJobsTable
-          ? { CRON_JOBS_TABLE_NAME: cronJobsTable.name }
+        ...(cronsTable
+          ? { CRONS_TABLE_NAME: cronsTable.name }
           : {}),
         ...(NATS_URL ? { NATS_URL } : {}),
         ...(NATS_TOKEN ? { NATS_TOKEN } : {}),
@@ -1059,13 +1059,13 @@ export default $config({
           ],
           resources: [persistentSandboxInstanceTable.arn],
         },
-        ...(cronJobsTable
+        ...(cronsTable
           ? [{
             actions: [
               "dynamodb:GetItem",
               "dynamodb:UpdateItem",
             ],
-            resources: [cronJobsTable.arn],
+            resources: [cronsTable.arn],
           }]
           : []),
         {
@@ -1197,8 +1197,8 @@ export default $config({
         ADMIN_ACCOUNT_SECRET: adminAccountSecret.value,
         ACCOUNT_CONFIG_ENCRYPTION_SECRET: accountConfigEncryptionSecret.value,
         SERVICE_AUTH_SECRET: serviceAuthSecret.value,
-        ...(cronJobsTable
-          ? { CRON_JOBS_TABLE_NAME: cronJobsTable.name }
+        ...(cronsTable
+          ? { CRONS_TABLE_NAME: cronsTable.name }
           : {}),
         CRON_SCHEDULER_TARGET_FUNCTION_ARN: harnessProcessing.arn,
         CRON_SCHEDULER_ROLE_ARN: cronSchedulerRole.arn,
@@ -1266,7 +1266,7 @@ export default $config({
             resources: [accountToolsTable.arn],
           }]
           : []),
-        ...(cronJobsTable
+        ...(cronsTable
           ? [{
             actions: [
               "dynamodb:DeleteItem",
@@ -1275,7 +1275,7 @@ export default $config({
               "dynamodb:Query",
               "dynamodb:UpdateItem",
             ],
-            resources: [cronJobsTable.arn],
+            resources: [cronsTable.arn],
           }]
           : []),
         {
@@ -1359,7 +1359,7 @@ export default $config({
       sandboxConfigsTableName: sandboxConfigsTable?.name,
       workspaceConfigsTableName: workspaceConfigsTable?.name,
       accountToolsTableName: accountToolsTable?.name,
-      cronJobsTableName: cronJobsTable?.name,
+      cronsTableName: cronsTable?.name,
       accountSignupRateLimitTableName: accountSignupRateLimitTable.name,
       conversationsTableName: conversationsTable.name,
       processedEventsTableName: processedEventsTable.name,

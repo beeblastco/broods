@@ -480,7 +480,7 @@ function storageWithAccountTool(accountTool: AccountToolRecord): StorageProvider
         return null;
       },
     },
-    cronJobs: {} as never,
+    crons: {} as never,
     sandboxConfigs: {} as never,
     workspaceConfigs: {} as never,
     accountTools: {

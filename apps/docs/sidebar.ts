@@ -142,7 +142,7 @@ const sidebars: SidebarsConfig = {
         },
         {
           type: 'doc',
-          id: 'cron-jobs',
+          id: 'crons',
           label: 'Cron Jobs',
         },
       ],

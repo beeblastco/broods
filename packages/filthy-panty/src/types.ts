@@ -5,7 +5,8 @@
  * the SDK keeps working when the runtime is ported.
  */
 
-import type { CronJobLastStatus, CronJobStatus } from "./contracts.ts";
+import type { ModelMessage } from "ai";
+import type { CronLastStatus, CronStatus } from "./contracts.ts";
 
 export interface Account {
   account: {
@@ -53,31 +54,31 @@ export interface AsyncRequestAccepted {
   agentId: string;
 }
 
-export interface CronJob {
+export interface Cron {
   accountId: string;
-  cronJobId: string;
+  cronId: string;
   name: string;
   description?: string;
   agentId: string;
-  prompt: string;
+  events: ModelMessage[];
   conversationKey?: string;
   scheduleExpression: string;
   timezone?: string;
-  status: CronJobStatus;
+  status: CronStatus;
   createdAt: string;
   updatedAt: string;
   lastInvokedAt?: string;
-  lastStatus?: CronJobLastStatus;
+  lastStatus?: CronLastStatus;
   lastError?: string;
 }
 
-export interface CronJobRun {
+export interface CronRun {
   accountId: string;
-  cronJobId: string;
+  cronId: string;
   runId: string;
   eventId: string;
   conversationKey: string;
-  status: CronJobLastStatus;
+  status: CronLastStatus;
   result?: unknown;
   error?: string;
   startedAt: string;

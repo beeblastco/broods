@@ -7,7 +7,7 @@ import { resetStorageForTests, setStorageForTests } from "../functions/_shared/s
 const originalAdminSecret = process.env.ADMIN_ACCOUNT_SECRET;
 const originalSignupLimit = process.env.ACCOUNT_SIGNUP_RATE_LIMIT_PER_HOUR;
 const originalServiceSecret = process.env.SERVICE_AUTH_SECRET;
-const originalCronJobsTable = process.env.CRON_JOBS_TABLE_NAME;
+const originalCronsTable = process.env.CRONS_TABLE_NAME;
 const originalSchedulerRoleArn = process.env.CRON_SCHEDULER_ROLE_ARN;
 const originalSchedulerTargetArn = process.env.CRON_SCHEDULER_TARGET_FUNCTION_ARN;
 const originalSchedulerGroupName = process.env.CRON_SCHEDULER_GROUP_NAME;
@@ -28,10 +28,10 @@ afterEach(() => {
   } else {
     process.env.SERVICE_AUTH_SECRET = originalServiceSecret;
   }
-  if (originalCronJobsTable === undefined) {
-    delete process.env.CRON_JOBS_TABLE_NAME;
+  if (originalCronsTable === undefined) {
+    delete process.env.CRONS_TABLE_NAME;
   } else {
-    process.env.CRON_JOBS_TABLE_NAME = originalCronJobsTable;
+    process.env.CRONS_TABLE_NAME = originalCronsTable;
   }
   if (originalSchedulerRoleArn === undefined) {
     delete process.env.CRON_SCHEDULER_ROLE_ARN;
@@ -135,8 +135,8 @@ describe("account management HTTP handler", () => {
 
   it("reports cron routes as unavailable when scheduler env is missing", async () => {
     process.env.ADMIN_ACCOUNT_SECRET = "admin-secret";
-    delete process.env.CRON_JOBS_TABLE_NAME;
-    const response = await handler(createEvent("GET", "/accounts/acct_test/cron-jobs", {
+    delete process.env.CRONS_TABLE_NAME;
+    const response = await handler(createEvent("GET", "/accounts/acct_test/crons", {
       authorization: "Bearer admin-secret",
     }));
 
@@ -144,9 +144,9 @@ describe("account management HTTP handler", () => {
     expect(responseJson(response)).toEqual({ error: "Cron jobs are unavailable" });
   });
 
-  it("allows service tokens only on self cron-job routes", async () => {
+  it("allows service tokens only on self cron routes", async () => {
     process.env.SERVICE_AUTH_SECRET = "service-secret";
-    process.env.CRON_JOBS_TABLE_NAME = "cron-jobs";
+    process.env.CRONS_TABLE_NAME = "crons";
     process.env.CRON_SCHEDULER_ROLE_ARN = "arn:aws:iam::123456789012:role/scheduler";
     process.env.CRON_SCHEDULER_TARGET_FUNCTION_ARN = "arn:aws:lambda:eu-central-1:123456789012:function:harness";
     process.env.CRON_SCHEDULER_GROUP_NAME = "cron-group";
@@ -154,7 +154,7 @@ describe("account management HTTP handler", () => {
       agents: {
         async getById() { return fakeAgent({ status: "active" }); },
       },
-      cronJobs: {
+      crons: {
         async list() { return []; },
       },
     }));
@@ -176,25 +176,25 @@ describe("account management HTTP handler", () => {
       expect(responseJson(response)).toEqual({ error: "Service token is not allowed for this account endpoint" });
     }
 
-    const cronResponse = await handler(createEvent("GET", "/accounts/me/cron-jobs", serviceHeaders));
+    const cronResponse = await handler(createEvent("GET", "/accounts/me/crons", serviceHeaders));
     expect(cronResponse.statusCode).toBe(200);
-    expect(responseJson(cronResponse)).toEqual({ cronJobs: [] });
+    expect(responseJson(cronResponse)).toEqual({ crons: [] });
   });
 
-  it("allows deployment runtime keys on self cron-job routes", async () => {
-    process.env.CRON_JOBS_TABLE_NAME = "cron-jobs";
+  it("allows deployment runtime keys on self cron routes", async () => {
+    process.env.CRONS_TABLE_NAME = "crons";
     process.env.CRON_SCHEDULER_ROLE_ARN = "arn:aws:iam::123456789012:role/scheduler";
     process.env.CRON_SCHEDULER_TARGET_FUNCTION_ARN = "arn:aws:lambda:eu-central-1:123456789012:function:harness";
     process.env.CRON_SCHEDULER_GROUP_NAME = "cron-group";
     setStorageForTests(createFakeStorage({
-      cronJobs: {
+      crons: {
         async list(accountId: string) {
           return [{
             accountId: accountId,
-            cronJobId: "cron_1",
+            cronId: "cron_1",
             name: "Daily",
             agentId: "agent_main",
-            prompt: "Run maintenance.",
+            events: [{ role: "user", content: [{ type: "text", text: "Run maintenance." }] }],
             scheduleExpression: "rate(1 day)",
             status: "active",
             schedulerName: "cron_1",
@@ -216,18 +216,18 @@ describe("account management HTTP handler", () => {
       },
     }));
 
-    const response = await handler(createEvent("GET", "/accounts/me/cron-jobs", {
+    const response = await handler(createEvent("GET", "/accounts/me/crons", {
       authorization: "Bearer fp_agent_test",
     }));
 
     expect(response.statusCode).toBe(200);
     expect(responseJson(response)).toEqual({
-      cronJobs: [{
+      crons: [{
         accountId: "acct_test",
-        cronJobId: "cron_1",
+        cronId: "cron_1",
         name: "Daily",
         agentId: "agent_main",
-        prompt: "Run maintenance.",
+        events: [{ role: "user", content: [{ type: "text", text: "Run maintenance." }] }],
         scheduleExpression: "rate(1 day)",
         status: "active",
         createdAt: "2026-05-01T00:00:00.000Z",
@@ -238,7 +238,7 @@ describe("account management HTTP handler", () => {
 
   it("rejects cron jobs that reference inactive agents", async () => {
     process.env.ADMIN_ACCOUNT_SECRET = "admin-secret";
-    process.env.CRON_JOBS_TABLE_NAME = "cron-jobs";
+    process.env.CRONS_TABLE_NAME = "crons";
     process.env.CRON_SCHEDULER_ROLE_ARN = "arn:aws:iam::123456789012:role/scheduler";
     process.env.CRON_SCHEDULER_TARGET_FUNCTION_ARN = "arn:aws:lambda:eu-central-1:123456789012:function:harness";
     process.env.CRON_SCHEDULER_GROUP_NAME = "cron-group";
@@ -246,19 +246,19 @@ describe("account management HTTP handler", () => {
       agents: {
         async getById() { return fakeAgent({ status: "disabled" }); },
       },
-      cronJobs: {
+      crons: {
         async create() {
           throw new Error("cron job should not be created for inactive agents");
         },
       },
     }));
 
-    const response = await handler(createEvent("POST", "/accounts/acct_test/cron-jobs", {
+    const response = await handler(createEvent("POST", "/accounts/acct_test/crons", {
       authorization: "Bearer admin-secret",
     }, {
       name: "Daily",
       agentId: "agent_main",
-      prompt: "Run maintenance.",
+      input: "Run maintenance.",
       scheduleExpression: "rate(1 day)",
     }));
 
@@ -349,10 +349,10 @@ function createFakeStorage(overrides: Record<string, unknown>) {
       async getById() { return fakeAgent(); },
       ...(overrides.agents as Record<string, unknown> | undefined),
     },
-    cronJobs: {
+    crons: {
       async list() { return []; },
       async create() { throw new Error("not implemented"); },
-      ...(overrides.cronJobs as Record<string, unknown> | undefined),
+      ...(overrides.crons as Record<string, unknown> | undefined),
     },
     agentDeployments: {
       async getByApiKeyHash() { return null; },

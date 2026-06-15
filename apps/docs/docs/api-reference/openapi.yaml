@@ -7,7 +7,7 @@ info:
     - **Direct API** — account-authenticated agent runtime endpoint (sync SSE, async jobs, status polling, external tool completion)
     - **Account Management** — tenant configuration (accounts, agents, skills, secrets)
 
-    Every `/accounts/me/...` sub-resource (agents, skills, cron-jobs, tools, sandboxes, workspaces, rotate-secret) is also reachable by admins as `/accounts/{accountId}/...` with the `AdminAccountSecret` bearer token; behavior and shapes are identical.
+    Every `/accounts/me/...` sub-resource (agents, skills, crons, tools, sandboxes, workspaces, rotate-secret) is also reachable by admins as `/accounts/{accountId}/...` with the `AdminAccountSecret` bearer token; behavior and shapes are identical.
   version: 0.1.0
 
 servers:
@@ -1352,7 +1352,7 @@ paths:
         '200':
           description: Skill deleted
 
-  /accounts/me/cron-jobs:
+  /accounts/me/crons:
     post:
       tags:
         - Cron Jobs
@@ -1365,14 +1365,14 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/CronJobCreate'
+              $ref: '#/components/schemas/CronCreate'
             examples:
               agentRun:
                 value:
                   name: Daily maintenance
                   agentId: agent_maintainer
                   conversationKey: cron:daily-maintenance
-                  prompt: Run daily maintenance.
+                  input: Run daily maintenance.
                   scheduleExpression: cron(0 8 * * ? *)
                   timezone: Europe/Amsterdam
       responses:
@@ -1381,7 +1381,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/CronJob'
+                $ref: '#/components/schemas/Cron'
         '503':
           description: Cron jobs unavailable
 
@@ -1399,12 +1399,12 @@ paths:
               schema:
                 type: object
                 properties:
-                  cronJobs:
+                  crons:
                     type: array
                     items:
-                      $ref: '#/components/schemas/CronJob'
+                      $ref: '#/components/schemas/Cron'
 
-  /accounts/me/cron-jobs/{cronJobId}:
+  /accounts/me/crons/{cronId}:
     get:
       tags:
         - Cron Jobs
@@ -1412,7 +1412,7 @@ paths:
       security:
         - BearerAuth: []
       parameters:
-        - name: cronJobId
+        - name: cronId
           in: path
           required: true
           schema:
@@ -1423,7 +1423,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/CronJob'
+                $ref: '#/components/schemas/Cron'
 
     patch:
       tags:
@@ -1432,7 +1432,7 @@ paths:
       security:
         - BearerAuth: []
       parameters:
-        - name: cronJobId
+        - name: cronId
           in: path
           required: true
           schema:
@@ -1442,14 +1442,14 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/CronJobPatch'
+              $ref: '#/components/schemas/CronPatch'
       responses:
         '200':
           description: Cron job updated
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/CronJob'
+                $ref: '#/components/schemas/Cron'
 
     delete:
       tags:
@@ -1458,7 +1458,7 @@ paths:
       security:
         - BearerAuth: []
       parameters:
-        - name: cronJobId
+        - name: cronId
           in: path
           required: true
           schema:
@@ -1865,12 +1865,12 @@ components:
           items:
             type: string
 
-    CronJob:
+    Cron:
       type: object
       properties:
         accountId:
           type: string
-        cronJobId:
+        cronId:
           type: string
         name:
           type: string
@@ -1879,12 +1879,14 @@ components:
         agentId:
           type: string
           description: Account-owned agent to run
-        prompt:
-          type: string
-          description: User prompt sent to the agent on each schedule invocation
+        events:
+          type: array
+          description: Canonical stored model-message list delivered to the agent on each invocation.
+          items:
+            type: object
         conversationKey:
           type: string
-          description: Optional public conversation key. Defaults to `cron:{cronJobId}`.
+          description: Optional public conversation key. Defaults to `cron:{cronId}`.
         scheduleExpression:
           type: string
           description: EventBridge Scheduler expression, such as `cron(...)`, `rate(...)`, or `at(...)`
@@ -1905,12 +1907,12 @@ components:
         lastError:
           type: string
 
-    CronJobCreate:
+    CronCreate:
       type: object
+      description: Provide exactly one of `input` or `events`, mirroring the agent run input.
       required:
         - name
         - agentId
-        - prompt
         - scheduleExpression
       properties:
         name:
@@ -1920,9 +1922,15 @@ components:
         agentId:
           type: string
           example: agent_maintainer
-        prompt:
+        input:
           type: string
+          description: Shorthand instruction wrapped into a single user message.
           example: Run daily maintenance.
+        events:
+          type: array
+          description: Full model-message list, used instead of `input` for multimodal or multi-message payloads.
+          items:
+            type: object
         conversationKey:
           type: string
           example: cron:daily-maintenance
@@ -1936,7 +1944,7 @@ components:
           type: string
           enum: [active, paused]
 
-    CronJobPatch:
+    CronPatch:
       type: object
       properties:
         name:
@@ -1947,8 +1955,12 @@ components:
             - type: "null"
         agentId:
           type: string
-        prompt:
+        input:
           type: string
+        events:
+          type: array
+          items:
+            type: object
         conversationKey:
           oneOf:
             - type: string
@@ -1985,7 +1997,7 @@ components:
               type: integer
             skillObjectsDeleted:
               type: integer
-            cronJobsDeleted:
+            cronsDeleted:
               type: integer
             accountToolsDeleted:
               type: integer

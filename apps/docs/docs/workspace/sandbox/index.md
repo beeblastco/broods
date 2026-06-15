@@ -142,7 +142,7 @@ flowchart LR
 >    (node spawn + exec round-trips).
 
 How idle scale-down happens differs per provider: **kubernetes** uses an infra reaper
-CronJob (scales `replicas` 0↔1; home PVC + S3 persist); **daytona** uses native
+Cron (scales `replicas` 0↔1; home PVC + S3 persist); **daytona** uses native
 `autoStopInterval` (filesystem persists); **e2b** uses native `lifecycle.onTimeout: "pause"`
 (filesystem + memory snapshot persist); **vercel** uses named persistent sandboxes and native
 `onCreate`/`onResume` callbacks. A reserved sandbox is reconnected by id on the next call

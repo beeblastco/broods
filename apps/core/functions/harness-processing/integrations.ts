@@ -77,7 +77,7 @@ export interface DirectInboundEvent {
   // channel (a background job launched from Telegram/Slack/etc.). The worker
   // rebuilds the sender from the agent config via sendChannelReply.
   replyTarget?: { channelName: string; source: Record<string, unknown> };
-  cronRun?: { cronJobId: string; runId: string };
+  cronRun?: { cronId: string; runId: string };
 }
 
 export interface AsyncDirectInboundEvent extends DirectInboundEvent {

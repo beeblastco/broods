@@ -21,12 +21,12 @@ import type {
   UpdateAgentInput,
 } from "./agents.ts";
 import type {
-  CronJobRecord,
-  CronJobRunRecord,
-  CronJobStatus,
-  CreateCronJobInput,
-  UpdateCronJobInput,
-} from "./cron-jobs.ts";
+  CronRecord,
+  CronRunRecord,
+  CronStatus,
+  CreateCronInput,
+  UpdateCronInput,
+} from "./cron.ts";
 import type {
   SandboxConfigRecord,
   CreateSandboxConfigInput,
@@ -52,11 +52,11 @@ export type {
   AgentStatus,
   CreateAgentInput,
   UpdateAgentInput,
-  CronJobRecord,
-  CronJobRunRecord,
-  CronJobStatus,
-  CreateCronJobInput,
-  UpdateCronJobInput,
+  CronRecord,
+  CronRunRecord,
+  CronStatus,
+  CreateCronInput,
+  UpdateCronInput,
   SandboxConfigRecord,
   CreateSandboxConfigInput,
   UpdateSandboxConfigInput,
@@ -107,23 +107,23 @@ export interface AgentDeploymentStore {
 }
 
 /** Account-scoped cron job schedules. */
-export interface CronJobStore {
-  getById(accountId: string, cronJobId: string): Promise<CronJobRecord | null>;
-  list(accountId: string): Promise<CronJobRecord[]>;
+export interface CronStore {
+  getById(accountId: string, cronId: string): Promise<CronRecord | null>;
+  list(accountId: string): Promise<CronRecord[]>;
   create(
     accountId: string,
-    input: CreateCronJobInput,
+    input: CreateCronInput,
     options: { schedulerGroupName: string },
-  ): Promise<CronJobRecord>;
-  update(accountId: string, cronJobId: string, patch: UpdateCronJobInput): Promise<CronJobRecord | null>;
-  remove(accountId: string, cronJobId: string): Promise<boolean>;
-  markStarted(accountId: string, cronJobId: string): Promise<void>;
-  markCompleted(accountId: string, cronJobId: string): Promise<void>;
-  markFailed(accountId: string, cronJobId: string, error: string): Promise<void>;
-  createRun(input: Omit<CronJobRunRecord, "runId" | "status" | "startedAt">): Promise<CronJobRunRecord>;
-  completeRun(accountId: string, cronJobId: string, runId: string, result: unknown): Promise<void>;
-  failRun(accountId: string, cronJobId: string, runId: string, error: string): Promise<void>;
-  listRuns(accountId: string, cronJobId: string, limit?: number): Promise<CronJobRunRecord[]>;
+  ): Promise<CronRecord>;
+  update(accountId: string, cronId: string, patch: UpdateCronInput): Promise<CronRecord | null>;
+  remove(accountId: string, cronId: string): Promise<boolean>;
+  markStarted(accountId: string, cronId: string): Promise<void>;
+  markCompleted(accountId: string, cronId: string): Promise<void>;
+  markFailed(accountId: string, cronId: string, error: string): Promise<void>;
+  createRun(input: Omit<CronRunRecord, "runId" | "status" | "startedAt">): Promise<CronRunRecord>;
+  completeRun(accountId: string, cronId: string, runId: string, result: unknown): Promise<void>;
+  failRun(accountId: string, cronId: string, runId: string, error: string): Promise<void>;
+  listRuns(accountId: string, cronId: string, limit?: number): Promise<CronRunRecord[]>;
 }
 
 /**
@@ -179,7 +179,7 @@ export interface StorageProvider {
   accounts: AccountStore;
   agents: AgentStore;
   agentDeployments: AgentDeploymentStore;
-  cronJobs: CronJobStore;
+  crons: CronStore;
   sandboxConfigs: SandboxConfigStore;
   workspaceConfigs: WorkspaceConfigStore;
   accountTools: AccountToolStore;
