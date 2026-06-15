@@ -26,7 +26,7 @@ type CronResponse = {
     cronId: string;
     name: string;
     agentId: string;
-    prompt: string;
+    events: unknown[];
     conversationKey?: string;
     scheduleExpression: string;
     timezone?: string;
@@ -536,7 +536,7 @@ function desiredCrons(
                 name: stringField(config.name, `cron:${resource.name}.name`),
                 description: optionalStringField(config.description ?? resource.description),
                 agentId: agentId,
-                prompt: stringField(config.prompt, `cron:${resource.name}.prompt`),
+                events: cronEvents(config, `cron:${resource.name}`),
                 conversationKey: optionalStringField(config.conversationKey),
                 scheduleExpression: stringField(config.scheduleExpression, `cron:${resource.name}.scheduleExpression`),
                 timezone: optionalStringField(config.timezone),
@@ -706,6 +706,15 @@ function stringField(value: unknown, label: string): string {
 
 function optionalStringField(value: unknown): string | undefined {
     return typeof value === "string" ? value : undefined;
+}
+
+function cronEvents(config: Record<string, unknown>, label: string): unknown[] {
+    if (Array.isArray(config.events) && config.events.length > 0) return config.events;
+    if (typeof config.prompt === "string" && config.prompt.trim()) {
+        return [{ role: "user", content: [{ type: "text", text: config.prompt }] }];
+    }
+
+    throw new Error(`${label}.events must be a non-empty array`);
 }
 
 function cronStatus(value: unknown): "active" | "paused" {
