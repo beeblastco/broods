@@ -1,5 +1,5 @@
 # Build from the monorepo root: docker build -f apps/gateway/Dockerfile .
-FROM oven/bun:1.3.3-alpine AS deps
+FROM oven/bun:1.3.14-alpine AS deps
 WORKDIR /app
 COPY package.json bun.lock ./
 COPY apps/core/package.json ./apps/core/
@@ -10,7 +10,7 @@ COPY packages/convex/package.json ./packages/convex/
 COPY packages/filthy-panty/package.json ./packages/filthy-panty/
 RUN bun install --frozen-lockfile --ignore-scripts
 
-FROM oven/bun:1.3.3-alpine AS builder
+FROM oven/bun:1.3.14-alpine AS builder
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY --from=deps /app/apps/core/node_modules ./apps/core/node_modules

@@ -1,5 +1,5 @@
 # Build from the monorepo root: docker build -f apps/dashboard/Dockerfile .
-FROM oven/bun:1.3.3-alpine AS deps
+FROM oven/bun:1.3.14-alpine AS deps
 WORKDIR /app
 # The lockfile spans every workspace, so each workspace package.json must be
 # present for --frozen-lockfile to resolve.
@@ -12,7 +12,7 @@ COPY packages/convex/package.json ./packages/convex/
 COPY packages/filthy-panty/package.json ./packages/filthy-panty/
 RUN bun install --frozen-lockfile --ignore-scripts
 
-FROM oven/bun:1.3.3-alpine AS builder
+FROM oven/bun:1.3.14-alpine AS builder
 WORKDIR /app
 ENV NEXT_TELEMETRY_DISABLED=1
 ARG NEXT_PUBLIC_FILTHY_PANTY_BASE_URL
@@ -32,7 +32,7 @@ COPY apps/dashboard/ ./apps/dashboard/
 # NEXT_PUBLIC_CONVEX_URL.
 RUN bun run --cwd apps/dashboard build
 
-FROM oven/bun:1.3.4-alpine AS runner
+FROM oven/bun:1.3.14-alpine AS runner
 WORKDIR /app
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
