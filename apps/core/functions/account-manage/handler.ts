@@ -118,7 +118,10 @@ export async function handler(event: LambdaFunctionURLEvent): Promise<LambdaResp
         const selfSkillCollection = rawPath === "/accounts/me/skills";
         const selfSkillMatch = rawPath.match(/^\/accounts\/me\/skills\/([^/]+)$/);
         if (selfSkillCollection || selfSkillMatch?.[1]) {
-            const account = requireAccountAuth(auth);
+            // The Convex CLI sync (`filthy-panty dev`) pushes skill manifests with the
+            // account-scoped service token. Deployment runtime keys are intentionally
+            // excluded: they can run agents, not mutate account skill bundles.
+            const account = requireAccountAuth(auth, { allowServiceToken: true });
             return await handleSkillRoute(method, account.accountId, selfSkillMatch?.[1], event);
         }
 
@@ -135,7 +138,10 @@ export async function handler(event: LambdaFunctionURLEvent): Promise<LambdaResp
         const selfToolCollection = rawPath === "/accounts/me/tools";
         const selfToolMatch = rawPath.match(/^\/accounts\/me\/tools\/([^/]+)$/);
         if (selfToolCollection || selfToolMatch?.[1]) {
-            const account = requireAccountAuth(auth);
+            // The Convex CLI sync pushes tool manifests with the account-scoped
+            // service token. Deployment runtime keys are intentionally excluded:
+            // they can run agents, not mutate uploaded account tools.
+            const account = requireAccountAuth(auth, { allowServiceToken: true });
             return await handleToolRoute(method, account.accountId, selfToolMatch?.[1], event);
         }
 
@@ -624,6 +630,9 @@ function requireAccountAuth(
     if (auth.kind === "deployment" && options.allowDeployment === true) {
         return auth.account;
     }
+    if (auth.kind === "deployment") {
+        throw new AccountEndpointUnauthorizedError();
+    }
     if (auth.kind !== "account") {
         throw new Error("Admin must use account-specific endpoints");
     }
@@ -632,6 +641,12 @@ function requireAccountAuth(
     }
 
     return auth.account;
+}
+
+class AccountEndpointUnauthorizedError extends Error {
+    constructor() {
+        super("Unauthorized");
+    }
 }
 
 function toCreateAccountResponse(account: AccountRecord): Record<string, unknown> {
@@ -728,6 +743,9 @@ function parseAccountPatch(event: LambdaFunctionURLEvent): unknown {
 }
 
 function errorResponseForError(err: unknown): LambdaResponse {
+    if (err instanceof AccountEndpointUnauthorizedError) {
+        return errorResponse(401, err.message);
+    }
     if (err instanceof CronsUnavailableError) {
         return errorResponse(503, err.message);
     }

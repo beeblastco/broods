@@ -1,7 +1,7 @@
 /**
- * Shell script builders shared by the persistent executors: detached background
- * jobs and the onCreate/onResume lifecycle hooks. Each provider just runs these
- * strings and reads stdout. Job state lives in marker files under `jobsDir`:
+ * Shell script builders shared by the persistent executors that use POSIX shell
+ * state for detached background jobs and onCreate/onResume lifecycle hooks.
+ * Job state lives in marker files under `jobsDir`:
  * `<id>.running` (live; holds the launching boot id), `.log` (output), `.exit`
  * (code), `.pid` (session leader, for stop).
  */
@@ -33,7 +33,7 @@ function assertSafeJobId(jobId: string): void {
 
 /**
  * onCreate/onResume hook script for providers without native lifecycle
- * callbacks (e2b/daytona/kubernetes; vercel uses the SDK's own hooks).
+ * callbacks (daytona/kubernetes; vercel uses the SDK's own hooks).
  * onCreate runs once, guarded by a marker file in the workDir; onResume runs on
  * every acquisition. Returns undefined when no hooks are configured.
  */
@@ -132,7 +132,7 @@ export function parseJobStatus(jobId: string, stdout: string): SandboxJobStatus 
 // POSTs the job's outcome back to the harness so the conversation resumes without
 // the model having to poll. python3 is on PATH in every sandbox image; failures
 // (no egress, no python) are swallowed and the model can still poll async_status.
-function callbackSnippet(callback: SandboxJobCallback, logFile: string): string {
+export function callbackSnippet(callback: SandboxJobCallback, logFile: string): string {
   const env = [
     `__CB_URL=${shellQuote(callback.url)}`,
     `__CB_TOKEN=${shellQuote(callback.token)}`,

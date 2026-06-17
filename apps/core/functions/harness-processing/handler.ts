@@ -922,6 +922,9 @@ async function prepareDirectTurn(event: DirectInboundEvent): Promise<DirectTurn 
     }
     leaseAcquired = true;
     const ephemeralSystem = await session.appendIngressEvents(event.events);
+    if (event.ephemeralSystem) {
+      ephemeralSystem.push(...event.ephemeralSystem);
+    }
     const turnContext = await session.createTurnContext(ephemeralSystem);
     return { session, turnContext };
   } catch (err) {
@@ -1458,6 +1461,7 @@ async function pipeAgentNatsStream(
   stream: AgentLoopStream,
   publisher: NatsPublisher,
 ): Promise<void> {
+  let emittedErrorChunk = false;
   const reader = stream.fullStream.getReader();
 
   while (true) {
@@ -1465,7 +1469,16 @@ async function pipeAgentNatsStream(
     if (done) {
       break;
     }
+    if (isErrorStreamChunk(value)) {
+      emittedErrorChunk = true;
+    }
     publisher.publish(value as Record<string, unknown>).catch(() => { });
+  }
+  // Mirror the SSE path: surface a terminal failure as an in-stream error part so
+  // WebSocket clients receive the same AI SDK stream parts as SSE clients.
+  const failureText = stream.failureText();
+  if (failureText && !emittedErrorChunk) {
+    await publisher.publish({ type: "error", error: failureText });
   }
   const finalResponse = stream.finalResponse();
   if (stream.hasStructuredOutput() && finalResponse !== undefined) {

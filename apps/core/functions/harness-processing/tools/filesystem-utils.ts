@@ -51,6 +51,14 @@ export function workspaceRootFor(config: SandboxExecutorConfig): string {
     : DEFAULT_WORKSPACE_ROOT;
 }
 
+export function sandboxSupportsBackgroundJobs(config: SandboxExecutorConfig | undefined): boolean {
+  return config?.persistent === true && config.provider !== "lambda";
+}
+
+export function sandboxSupportsJobControls(config: SandboxExecutorConfig | undefined): boolean {
+  return sandboxSupportsBackgroundJobs(config) && config?.provider !== "e2b";
+}
+
 /**
  * Resolve the workspace a call targets. Returns undefined when no workspace is
  * configured (stateless / ephemeral run). The first workspace is the default.
@@ -87,13 +95,11 @@ export async function runSandbox(
   namespace: string | undefined,
   code: string,
 ): Promise<SandboxRunResult> {
-  assertWorkspacePersistenceSupported(config, namespace);
   const executor = createSandboxExecutor(config);
   const limits = workspaceSandboxLimits(config.provider);
   return executor.run({
     code,
-    ...(namespace ? { namespace } : {}),
-    workspaceRoot: workspaceRootFor(config),
+    ...(namespace ? { namespace, workspaceRoot: workspaceRootFor(config) } : {}),
     timeoutSeconds: boundedInteger(config.timeout, limits.defaultTimeoutSeconds, limits.maxTimeoutSeconds),
     outputLimitBytes: boundedInteger(config.outputLimitBytes, limits.defaultOutputLimitBytes, limits.maxOutputLimitBytes),
   });
@@ -125,29 +131,6 @@ export async function runSandboxBackground(
     timeoutSeconds: boundedInteger(config.timeout, limits.defaultTimeoutSeconds, limits.maxTimeoutSeconds),
     outputLimitBytes: boundedInteger(config.outputLimitBytes, limits.defaultOutputLimitBytes, limits.maxOutputLimitBytes),
   });
-}
-
-function assertWorkspacePersistenceSupported(config: SandboxExecutorConfig, namespace: string | undefined): void {
-  if (!namespace) {
-    return;
-  }
-  const provider = config.provider ?? "lambda";
-  if (provider === "lambda") {
-    return;
-  }
-  // A reserved (persistent) sandbox carries its own durable storage — the k8s home
-  // PVC + S3 mount, e2b pause snapshot, or daytona stop-persistent disk — so
-  // workspace files persist even without (or in addition to) the S3 mount.
-  if (config.persistent === true) {
-    return;
-  }
-  const options = isRecordObject(config.options) ? config.options : {};
-  if ((provider === "daytona" || provider === "kubernetes") && options.mountAwsS3Buckets === true) {
-    return;
-  }
-  throw new Error(
-    `sandbox provider ${provider} does not support persistent workspace tools without an S3 workspace mount`,
-  );
 }
 
 // Approval policy is evaluated per call so workspaces with different

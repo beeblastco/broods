@@ -3,9 +3,10 @@
  * Stream chunks are the Vercel AI SDK's `TextStreamPart` parts that core emits.
  */
 
-import type { ModelMessage, TextStreamPart, ToolSet } from "ai";
+import type { TextStreamPart, ToolSet } from "ai";
 import { loadFilthyPantyRuntimeConfig } from "./runtime-config.ts";
 import { stripTrailingSlash } from "./config.ts";
+import { resolveRunEvents, type AgentRunEventInput, type AgentRunOverrides } from "./run-input.ts";
 import type {
   AsyncRequestAccepted,
   AsyncStatus,
@@ -26,17 +27,9 @@ export const DEFAULT_CORE_BASE_URL = "https://app.beeblast.co";
 type AgentRunInputBase = {
   conversationKey?: string;
   eventId?: string;
-};
+} & AgentRunOverrides;
 
-export type AgentRunInput = AgentRunInputBase & ({
-  /** Shorthand for a single user text message. */
-  input: string;
-  events?: never;
-} | {
-  /** Full-fidelity event list for multimodal content or tool responses. */
-  events: [ModelMessage, ...ModelMessage[]];
-  input?: never;
-});
+export type AgentRunInput = AgentRunInputBase & AgentRunEventInput;
 
 export interface AgentRunResult {
   text: string;
@@ -463,24 +456,6 @@ export function normalizeHttpServiceUrl(value: string): string {
   return stripTrailingSlash(withProtocol);
 }
 
-/**
- * Resolves a run's events from either the explicit `events` list or the `input`
- * string shorthand, matching the core direct API's event contract. Throws when
- * neither is provided so a missing prompt fails fast instead of sending an empty
- * request the server rejects.
- */
-function resolveRunEvents(input: AgentRunInput): ModelMessage[] {
-  if (input.events && input.input !== undefined) {
-    throw new Error("AgentRunInput accepts either `input` or `events`, not both");
-  }
-  if (input.events && input.events.length > 0) return input.events;
-  if (typeof input.input === "string") {
-    return [{ role: "user", content: [{ type: "text", text: input.input }] }];
-  }
-
-  throw new Error("AgentRunInput requires `input` (string) or a non-empty `events` array");
-}
-
 function directRunBody(input: AgentRunInput & { agentId: string; agentName?: string }, prefix: "cli" | "async") {
   const eventId = input.eventId ?? `${prefix}-${Date.now()}`;
 
@@ -489,6 +464,8 @@ function directRunBody(input: AgentRunInput & { agentId: string; agentName?: str
     eventId,
     conversationKey: input.conversationKey ?? eventId,
     events: resolveRunEvents(input),
+    ...(input.system !== undefined ? { system: input.system } : {}),
+    ...(input.model !== undefined ? { model: input.model } : {}),
   };
 }
 

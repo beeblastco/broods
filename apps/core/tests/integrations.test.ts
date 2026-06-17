@@ -92,8 +92,12 @@ describe("direct API ingress", () => {
     const handledEvents: DirectInboundEvent[] = [];
     const response = await routeIncomingEvent(createEvent({
       agentId: "agent_test",
-      message: "hello",
-      sessionId: "chat_1",
+      eventId: "one",
+      conversationKey: "chat_1",
+      events: [{
+        role: "user",
+        content: [{ type: "text", text: "hello" }],
+      }],
     }, {
       authorization: "Bearer fp_agent_test",
     }, {
@@ -135,8 +139,12 @@ describe("direct API ingress", () => {
   it("rejects an env-scoped runtime key when the scoped path endpoint does not match", async () => {
     const response = await routeIncomingEvent(createEvent({
       agentId: "agent_test",
-      message: "hello",
-      sessionId: "chat_1",
+      eventId: "one",
+      conversationKey: "chat_1",
+      events: [{
+        role: "user",
+        content: [{ type: "text", text: "hello" }],
+      }],
     }, {
       authorization: "Bearer fp_agent_test",
     }, {
@@ -451,6 +459,55 @@ describe("direct API ingress", () => {
         content: [{ type: "text", text: "hello" }],
       },
     ]);
+  });
+
+  it("passes top-level system as ephemeral AI SDK system messages", async () => {
+    const handledEvents: DirectInboundEvent[] = [];
+    const response = await routeIncomingEvent(createEvent({
+      eventId: "system-override",
+      conversationKey: "alpha",
+      events: [{
+        role: "user",
+        content: [{ type: "text", text: "hello" }],
+      }],
+      system: {
+        role: "system",
+        content: "one-turn instruction",
+        providerOptions: { anthropic: { cacheControl: { type: "ephemeral" } } },
+      },
+    }, {
+      authorization: "Bearer secret",
+    }), createHandlers({
+      handleDirectRequest: async (event) => {
+        handledEvents.push(event);
+        return {
+          statusCode: 200,
+          headers: { "Content-Type": "text/plain; charset=utf-8" },
+          body: "ok",
+        };
+      },
+    }));
+
+    expect(response.statusCode).toBe(200);
+    expect(handledEvents[0]?.ephemeralSystem).toEqual([{
+      role: "system",
+      content: "one-turn instruction",
+      providerOptions: { anthropic: { cacheControl: { type: "ephemeral" } } },
+    }]);
+  });
+
+  it("rejects the params wrapper on direct API requests", async () => {
+    const response = await routeIncomingEvent(createEvent({
+      eventId: "params-wrapper",
+      conversationKey: "alpha",
+      events: [{ role: "user", content: [{ type: "text", text: "hello" }] }],
+      params: { model: { temperature: 0 } },
+    }, {
+      authorization: "Bearer secret",
+    }), createHandlers());
+
+    expect(response.statusCode).toBe(400);
+    expect(response.body).toContain("Request body params is not supported");
   });
 
   it("accepts direct tool approval response events", async () => {

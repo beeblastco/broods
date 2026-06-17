@@ -135,7 +135,16 @@ export function analyzeCanvasInfra(nodes: Node[], edges: Edge[]): CanvasInfraAna
             continue;
         }
 
-        // No mount edge — inherit a directly-wired agent's default sandbox, else read-only.
+        // No mount edge. A CLI-resolved `readOnly` flag (e.g. a `sandbox: null` ref
+        // with no other writer) forces read-only even when a directly-wired agent has
+        // a default sandbox — the pure-canvas graph can't express that intent.
+        if (node.data.readOnly === true) {
+            workspaceStates[node.id] = { kind: "readonly" };
+
+            continue;
+        }
+
+        // Otherwise inherit a directly-wired agent's default sandbox, else read-only.
         const inheritedFrom = (workspaceDirectAgents.get(node.id) ?? [])
             .map((agentId) => agentDefaultSandbox.get(agentId))
             .find((sandbox): sandbox is RuntimeNode => !!sandbox);

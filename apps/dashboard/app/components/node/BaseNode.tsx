@@ -17,6 +17,10 @@ export type BaseNodeData = {
     description?: string;
     config?: Record<string, unknown>;
     properties?: { color: string };
+    // CLI-resolved forced read-only state for a workspace node (e.g. a `sandbox: null`
+    // ref with no other writer). The pure-canvas graph can't express it, so analysis
+    // honors this flag over the topology-inferred "inherited" state.
+    readOnly?: boolean;
 };
 
 export const statusConfig = {

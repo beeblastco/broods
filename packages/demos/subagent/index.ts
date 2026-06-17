@@ -12,7 +12,7 @@ const client = new FilthyPantyClient({
 });
 
 // Stream the response from the parent agent and print it to stdout.
-for await (const chunk of client.stream(api.agents.parentAgent, {
+for await (const chunk of client.stream(api.agents.parent, {
   input: [
     "Launch two subagents in parallel to",
     "research the newest model release from OpenAI",

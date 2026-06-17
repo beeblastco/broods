@@ -56,6 +56,7 @@ type HttpStreamResult = {
 
 async function startHttpSseStream(options: {
   endpointId: string;
+  agentId: string;
   apiKey: string;
   baseUrl: string;
   projectSlug?: string;
@@ -66,6 +67,7 @@ async function startHttpSseStream(options: {
 }): Promise<HttpStreamResult> {
   const {
     endpointId,
+    agentId,
     apiKey,
     baseUrl,
     projectSlug,
@@ -78,6 +80,7 @@ async function startHttpSseStream(options: {
   const envPrefix = environmentSlug ? `/${environmentSlug}` : "";
   const projectPrefix = projectSlug ? `/${projectSlug}` : "";
   const endpointUrl = `${baseUrl.replace(/\/+$/, "")}/v1${projectPrefix}/agents${envPrefix}/${endpointId}`;
+  const conversationKey = sessionId || `chat-${crypto.randomUUID()}`;
 
   const response = await fetch(endpointUrl, {
     method: "POST",
@@ -86,8 +89,13 @@ async function startHttpSseStream(options: {
       Authorization: `Bearer ${apiKey}`,
     },
     body: JSON.stringify({
-      message: message,
-      sessionId: sessionId,
+      agentId: agentId,
+      eventId: `evt-${crypto.randomUUID()}`,
+      conversationKey: conversationKey,
+      events: [{
+        role: "user",
+        content: [{ type: "text", text: message }],
+      }],
       stream: true,
     }),
     signal: signal,
@@ -104,12 +112,13 @@ async function startHttpSseStream(options: {
 
   return {
     stream: response.body,
-    sessionId: response.headers.get("X-Session-Id") ?? undefined,
+    sessionId: response.headers.get("X-Session-Id") ?? conversationKey,
   };
 }
 
 async function startWebSocketSseStream(options: {
   endpointId: string;
+  agentId: string;
   apiKey: string;
   websocketBaseUrl: string;
   projectSlug?: string;
@@ -136,6 +145,7 @@ async function startWebSocketSseStream(options: {
 }): Promise<WebSocketStreamResult> {
   const {
     endpointId,
+    agentId,
     apiKey,
     websocketBaseUrl,
     projectSlug,
@@ -242,7 +252,11 @@ async function startWebSocketSseStream(options: {
       socket.send(
         JSON.stringify({
           type: "execute",
-          message: message,
+          events: [{
+            role: "user",
+            content: [{ type: "text", text: message }],
+          }],
+          agentId: agentId,
           sessionId: sessionId,
         }),
       );
@@ -576,12 +590,14 @@ function upsertSubagentPanel(options: {
  */
 export function useAgentChat({
   endpointId,
+  agentId,
   apiKey,
   projectSlug,
   environmentSlug,
   webSocketEnabled,
 }: {
   endpointId: string;
+  agentId: string;
   apiKey: string;
   projectSlug?: string;
   environmentSlug?: string;
@@ -651,6 +667,7 @@ export function useAgentChat({
           try {
             const wsResult = await startWebSocketSseStream({
               endpointId: endpointId,
+              agentId: agentId,
               apiKey: apiKey,
               websocketBaseUrl: websocketBaseUrl,
               projectSlug: projectSlug,
@@ -748,6 +765,7 @@ export function useAgentChat({
         if (!streamBody) {
           const httpResult = await startHttpSseStream({
             endpointId: endpointId,
+            agentId: agentId,
             apiKey: apiKey,
             baseUrl: baseUrl,
             projectSlug: projectSlug,
@@ -810,7 +828,7 @@ export function useAgentChat({
         setStatus("error");
       }
     },
-    [endpointId, apiKey, projectSlug, environmentSlug, coreEndpointOk, coreEndpointMessage, baseUrl, websocketBaseUrl, webSocketEnabled],
+    [endpointId, agentId, apiKey, projectSlug, environmentSlug, coreEndpointOk, coreEndpointMessage, baseUrl, websocketBaseUrl, webSocketEnabled],
   );
 
   /** Reset chat history and server session for a new conversation. */

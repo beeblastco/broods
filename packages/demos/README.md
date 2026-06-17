@@ -15,5 +15,5 @@ selected environment.
 
 - `basic-stream`: stream an agent over SSE.
 - `basic-async`: start `/async`, then poll by the returned status id.
-- `cron-job`: create a scheduled agent run with the SDK cron helper.
+- `cron`: create a scheduled agent run with the SDK cron helper.
 - `websocket`: stream a deployed endpoint with `WebsocketClient`.

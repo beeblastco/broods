@@ -5,6 +5,7 @@
 
 import { DEFAULT_CORE_BASE_URL, normalizeHttpServiceUrl } from "./client.ts";
 import { stripTrailingSlash } from "./config.ts";
+import { resolveRunEvents, type AgentRunEventInput, type AgentRunOverrides } from "./run-input.ts";
 
 const DEFAULT_CONNECT_TIMEOUT_MS = 2000;
 const WS_CONNECTING = 0;
@@ -27,14 +28,13 @@ export type WebSocketServerMessage =
   | { type: "done" }
   | { type: "error"; error: string; status?: number };
 
-export interface WebSocketRunInput {
+export type WebSocketRunInput = {
   endpointId: string;
-  message: string;
   sessionId?: string;
   projectSlug?: string;
   environmentSlug?: string;
   signal?: AbortSignal;
-}
+} & AgentRunEventInput & AgentRunOverrides;
 
 export interface WebSocketHandlers {
   onMessage?(message: WebSocketServerMessage): void;
@@ -146,8 +146,10 @@ export class FilthyPantyWebSocketClient {
 
       socket.send(JSON.stringify({
         type: "execute",
-        message: input.message,
+        events: resolveRunEvents(input),
         sessionId: input.sessionId,
+        ...(input.system !== undefined ? { system: input.system } : {}),
+        ...(input.model !== undefined ? { model: input.model } : {}),
       }));
     };
 

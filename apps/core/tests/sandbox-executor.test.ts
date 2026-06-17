@@ -6,13 +6,23 @@
 
 import { beforeEach, describe, expect, it, mock } from "bun:test";
 
-const e2bRunMock = mock(async (_command: string, _options: Record<string, unknown>) => ({
-  exitCode: 0,
-  stdout: "ok\n",
-  stderr: "",
-}));
+const e2bDisconnectMock = mock(async () => {});
+const e2bRunMock = mock(async (_command: string, options: Record<string, unknown>) => {
+  if (options.background === true) {
+    return {
+      pid: 123,
+      disconnect: e2bDisconnectMock,
+    };
+  }
+  return {
+    exitCode: 0,
+    stdout: "ok\n",
+    stderr: "",
+  };
+});
 const e2bKillMock = mock(async () => {});
 const e2bCreateMock = mock(async (_options: Record<string, unknown>) => ({
+  sandboxId: "e2b-sandbox",
   commands: {
     run: e2bRunMock,
   },
@@ -226,6 +236,7 @@ beforeEach(() => {
   process.env.SANDBOX_FN_NOMOUNT_NONET = "sandbox-nomount-nonet";
   delete process.env.KUBERNETES_SANDBOX_SERVICE_ACCOUNT;
   e2bRunMock.mockClear();
+  e2bDisconnectMock.mockClear();
   e2bKillMock.mockClear();
   e2bCreateMock.mockClear();
   daytonaExecuteCommandMock.mockClear();
@@ -342,7 +353,7 @@ describe("createSandboxExecutor", () => {
     expect(result.truncated).toBe(true);
   });
 
-  it("runs E2B commands as-is in the workspace directory", async () => {
+  it("does not synthesize an S3 workspace cwd for E2B commands", async () => {
     const { createSandboxExecutor } = require("../functions/harness-processing/sandbox/index.ts");
     const executor = createSandboxExecutor({
       provider: "e2b",
@@ -360,15 +371,56 @@ describe("createSandboxExecutor", () => {
 
     expect(result).toMatchObject({ ok: true, provider: "e2b", stdout: "ok\n" });
     expect(e2bCreateMock).toHaveBeenCalledWith(expect.objectContaining({ template: "mounted-template" }));
-    expect(e2bRunMock).toHaveBeenCalledWith(
+    expect(e2bRunMock.mock.calls[0]).toEqual([
       "mkdir -p notes && echo hi > notes/a.txt && cat notes/a.txt",
       {
-        cwd: `/workspace/${NS}`,
         timeoutMs: 30000,
         envs: { MY_API_BASE: "https://api.example.com" },
       },
-    );
+    ]);
     expect(e2bKillMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not synthesize a workspace cwd for stateless E2B commands", async () => {
+    const { createSandboxExecutor } = require("../functions/harness-processing/sandbox/index.ts");
+    const executor = createSandboxExecutor({ provider: "e2b" });
+
+    await executor.run({ code: "echo user", timeoutSeconds: 30, outputLimitBytes: 4096 });
+
+    expect(e2bRunMock).toHaveBeenCalledTimes(1);
+    expect(e2bRunMock.mock.calls[0]).toEqual([
+      "echo user",
+      {
+        timeoutMs: 30000,
+        envs: {},
+      },
+    ]);
+  });
+
+  it("launches persistent E2B background jobs with the native command API", async () => {
+    const { E2BSandboxExecutor } = await import("../functions/harness-processing/sandbox/e2b-executor.ts");
+    const executor = new E2BSandboxExecutor({
+      provider: "e2b",
+      persistent: true,
+      network: { mode: "allow-all" },
+      options: { template: "runtime-template" },
+    });
+
+    const handle = await executor.runBackground({
+      code: "node runner.js",
+      reservationKey: "custom-tool:acct_1:tool_1",
+      jobId: "job_test",
+      timeoutSeconds: 30,
+      outputLimitBytes: 4096,
+    });
+
+    expect(handle).toEqual({ jobId: "job_test" });
+    expect(e2bRunMock).toHaveBeenCalledWith("node runner.js", {
+      background: true,
+      timeoutMs: 30000,
+      envs: {},
+    });
+    expect(e2bDisconnectMock).toHaveBeenCalledTimes(1);
   });
 
   it("runs Daytona commands as-is and mounts the workspace bucket", async () => {
@@ -549,7 +601,7 @@ describe("createSandboxExecutor", () => {
       provider: "kubernetes",
       persistent: true,
       lifecycle: { idleTimeoutSeconds: 1800 },
-      options: { mountAwsS3Buckets: true, workspaceRoot: "/mnt/workspaces", persistentDiskGb: 20 },
+      options: { mountAwsS3Buckets: true, workspaceRoot: "/mnt/workspaces", persistentDiskGb: 10 },
     });
 
     const result = await executor.run({
@@ -571,7 +623,7 @@ describe("createSandboxExecutor", () => {
     expect(body.spec.shutdownPolicy).toBe("Delete");
     expect(typeof body.spec.shutdownTime).toBe("string");
     expect(body.spec.volumeClaimTemplates[0].metadata.name).toBe("home");
-    expect(body.spec.volumeClaimTemplates[0].spec.resources.requests.storage).toBe("20Gi");
+    expect(body.spec.volumeClaimTemplates[0].spec.resources.requests.storage).toBe("10Gi");
     const container = body.spec.podTemplate.spec.containers[0];
     expect(container.volumeMounts).toEqual([{ name: "home", mountPath: "/home/node" }]);
     expect(container.env).toEqual(expect.arrayContaining([{ name: "HOME", value: "/home/node" }]));
@@ -711,6 +763,41 @@ describe("isSandboxGoneError", () => {
     expect(isSandboxGoneError({ statusCode: 403 })).toBe(false);
     expect(isSandboxGoneError(new Error("connection reset"))).toBe(false);
     expect(isSandboxGoneError(undefined)).toBe(false);
+  });
+});
+
+describe("isNoRunnersError", () => {
+  it("matches provider capacity / no-runner errors", async () => {
+    const { isNoRunnersError } = await import("../functions/harness-processing/sandbox/utils.ts");
+    expect(isNoRunnersError(new Error("No available runners"))).toBe(true);
+    expect(isNoRunnersError(new Error("no runner found for snapshot"))).toBe(true);
+    expect(isNoRunnersError("No available runners")).toBe(true);
+  });
+
+  it("does not match unrelated errors", async () => {
+    const { isNoRunnersError } = await import("../functions/harness-processing/sandbox/utils.ts");
+    expect(isNoRunnersError(new Error("connection reset"))).toBe(false);
+    expect(isNoRunnersError({ statusCode: 404 })).toBe(false);
+    expect(isNoRunnersError(undefined)).toBe(false);
+  });
+});
+
+describe("classifyVercelError", () => {
+  it("turns 401/403 auth failures into an actionable VERCEL_TOKEN message", async () => {
+    const { classifyVercelError } = await import("../functions/harness-processing/sandbox/vercel-executor.ts");
+    // The SDK's documented bare-string form.
+    expect(classifyVercelError(new Error("Status code 403 is not ok")).message).toContain("HTTP 403");
+    expect(classifyVercelError(new Error("Status code 403 is not ok")).message).toContain("VERCEL_TOKEN");
+    // A numeric status field on the thrown object.
+    expect(classifyVercelError({ statusCode: 401 }).message).toContain("HTTP 401");
+  });
+
+  it("passes through unrelated errors without misclassifying stray 401/403 numbers", async () => {
+    const { classifyVercelError } = await import("../functions/harness-processing/sandbox/vercel-executor.ts");
+    const stray = classifyVercelError(new Error("operation failed after 403 attempts"));
+    expect(stray.message).toBe("operation failed after 403 attempts");
+    expect(stray.message).not.toContain("VERCEL_TOKEN");
+    expect(classifyVercelError(new Error("connection reset")).message).toBe("connection reset");
   });
 });
 

@@ -13,8 +13,6 @@ const client = new FilthyPantyClient({
   apiKey: process.env.FILTHY_PANTY_API_KEY!,
 });
 
-console.log("--- SSE stream (watch for preliminary tool-result chunks) ---\n");
-
 for await (const chunk of client.stream(api.agents.streamingToolAgent, {
   input: "Call the stream_progress tool with steps=5 and tell me the final result.",
 })) {

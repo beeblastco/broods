@@ -160,6 +160,7 @@ export const syncManifestBySecretHash = internalMutation({
         const { secretHash, manifest, prune } = args;
         const account = await accountFromSecretHash(ctx, secretHash);
         if (!account) throw new Error("Invalid BeeBlast token");
+        assertSupportedWorkspaceSandboxMounts(manifest.resources);
 
         const projectDoc = await ensureProject(ctx, account, manifest.project);
         const environmentDoc = await ensureEnvironment(ctx, projectDoc, manifest.environment);
@@ -717,6 +718,7 @@ async function syncWorkspaceResources(
     const desiredNames = new Set(workspaceResources.map((entry) => resourceName(entry.name)));
     const claimed = new Set<Id<"workspaceConfigs">>();
     for (const resource of workspaceResources) {
+        assertSupportedWorkspaceStorage(resource);
         const name = resourceName(resource.name);
         const current = existing.find((entry) => entry.name === name);
         const target = current ?? existing.find((entry) =>
@@ -761,6 +763,64 @@ async function syncWorkspaceResources(
     }
 
     return ids;
+}
+
+function assertSupportedWorkspaceStorage(resource: CliResource): void {
+    const config = plainRecord(resource.config);
+    const storage = plainRecord(config.storage);
+    const provider = storage.provider;
+    if (provider === undefined || provider === "s3") return;
+    if (provider === "vercel") {
+        throw new Error(
+            `Workspace "${resource.name}" uses storage.provider "vercel", but Vercel Drive workspace storage is not supported yet. ` +
+            `Use storage.provider "s3" or omit storage until Vercel Drive is wired.`,
+        );
+    }
+    throw new Error(`Workspace "${resource.name}" config.storage.provider must be one of: s3`);
+}
+
+function plainRecord(value: unknown): Record<string, unknown> {
+    return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+}
+
+function assertSupportedWorkspaceSandboxMounts(resources: CliResource[]): void {
+    const sandboxes = new Map(resources.filter((entry) => entry.kind === "sandbox").map((entry) => [entry.name, entry]));
+    for (const agent of resources.filter((entry) => entry.kind === "agent")) {
+        const config = plainRecord(agent.config);
+        const agentSandbox = typeof config.sandbox === "string" ? sandboxes.get(config.sandbox) : undefined;
+        const workspaces = config.workspaces;
+        if (!Array.isArray(workspaces)) continue;
+        for (const ref of workspaces) {
+            const workspace = plainRecord(ref);
+            const sandboxName = workspace.sandbox === null
+                ? undefined
+                : typeof workspace.sandbox === "string"
+                    ? workspace.sandbox
+                    : typeof config.sandbox === "string"
+                        ? config.sandbox
+                        : undefined;
+            if (!sandboxName) continue;
+            const sandbox = sandboxes.get(sandboxName);
+            if (!sandbox || supportsS3WorkspaceMount(sandbox)) continue;
+            throw new Error(
+                `Agent "${agent.name}" workspace "${String(workspace.name ?? workspace.workspaceId ?? "<unknown>")}" uses sandbox "${sandbox.name}" ` +
+                `(${sandboxProvider(sandbox)}) which does not support S3 workspace mounts. Use lambda, or daytona/kubernetes with ` +
+                `options.mountAwsS3Buckets: true, or set this workspace ref to sandbox: null for read-only S3 access.`,
+            );
+        }
+    }
+}
+
+function supportsS3WorkspaceMount(sandbox: CliResource): boolean {
+    const provider = sandboxProvider(sandbox);
+    if (provider === "lambda") return true;
+    if (provider !== "daytona" && provider !== "kubernetes") return false;
+    return plainRecord(plainRecord(sandbox.config).options).mountAwsS3Buckets === true;
+}
+
+function sandboxProvider(sandbox: CliResource): string {
+    const provider = plainRecord(sandbox.config).provider;
+    return typeof provider === "string" ? provider : "lambda";
 }
 
 async function syncSandboxResources(
@@ -1180,15 +1240,22 @@ async function syncCanvasLayoutForManifest(
         nodeIdByKindName.set(`${resource.kind}:${resource.name}`, node.id);
     });
 
+    // Track each workspace node's effective writability so we can flag read-only
+    // workspaces for the canvas badge. The pure-canvas graph can't express
+    // `sandbox: null` (the dashboard only emits `sandbox:<id>` or omits it), so the
+    // CLI — which sees every agent's refs — resolves it here and stamps the node.
+    const workspaceReferenced = new Set<string>();
+    const workspaceHasWriter = new Set<string>();
+
     for (const agent of desiredResources.filter((entry) => entry.kind === "agent")) {
         const agentId = nodeIdByKindName.get(`agent:${agent.name}`);
         if (!agentId || !isRecord(agent.config)) continue;
         // Agent→service edges are default (top/bottom handle) edges, like the
         // dashboard's own auto-connect. Only workspace↔sandbox uses a side-handle
         // mount edge (sandbox x=420 sits left of workspace x=760).
-        const sandboxName = typeof agent.config.sandbox === "string" ? resourceName(agent.config.sandbox) : null;
-        if (sandboxName) {
-            const sandboxNodeId = nodeIdByKindName.get(`sandbox:${sandboxName}`);
+        const agentSandboxName = typeof agent.config.sandbox === "string" ? resourceName(agent.config.sandbox) : null;
+        if (agentSandboxName) {
+            const sandboxNodeId = nodeIdByKindName.get(`sandbox:${agentSandboxName}`);
             if (sandboxNodeId) addDesiredDefaultEdge(desiredEdges, agentId, sandboxNodeId);
         }
 
@@ -1197,13 +1264,47 @@ async function syncCanvasLayoutForManifest(
                 if (!isRecord(workspaceRef) || typeof workspaceRef.workspaceId !== "string") continue;
                 const workspaceName = resourceName(workspaceRef.workspaceId);
                 const workspaceNodeId = nodeIdByKindName.get(`workspace:${workspaceName}`);
-                if (workspaceNodeId) addDesiredDefaultEdge(desiredEdges, agentId, workspaceNodeId);
-                if (workspaceNodeId && typeof workspaceRef.sandbox === "string") {
+                if (!workspaceNodeId) continue;
+                addDesiredDefaultEdge(desiredEdges, agentId, workspaceNodeId);
+                workspaceReferenced.add(workspaceNodeId);
+                if (typeof workspaceRef.sandbox === "string") {
+                    // Per-workspace sandbox override → writable, drawn as a mount edge.
+                    workspaceHasWriter.add(workspaceNodeId);
                     const sandboxNodeId = nodeIdByKindName.get(`sandbox:${resourceName(workspaceRef.sandbox)}`);
                     if (sandboxNodeId) addDesiredMountEdge(desiredEdges, workspaceNodeId, "left", sandboxNodeId, "right");
+                } else if (workspaceRef.sandbox !== null && agentSandboxName) {
+                    // Omitted sandbox inherits the agent-level default (writable).
+                    // `null` explicitly forces read-only, so it stays a non-writer.
+                    workspaceHasWriter.add(workspaceNodeId);
                 }
             }
         }
+
+        // Subagent (agent→agent) edges from `subagent.allowed`. The dashboard
+        // reconstructs handles + type from the `subagent:` id prefix on load, so the
+        // CLI only persists id/source/target — the same way mount edges work.
+        const subagent = agent.config.subagent;
+        if (isRecord(subagent) && Array.isArray(subagent.allowed)) {
+            for (const entry of subagent.allowed) {
+                if (typeof entry !== "string" || !entry.trim()) continue;
+                const calleeNodeId = nodeIdByKindName.get(`agent:${resourceName(entry)}`);
+                if (calleeNodeId && calleeNodeId !== agentId) {
+                    addDesiredSubagentEdge(desiredEdges, agentId, calleeNodeId);
+                }
+            }
+        }
+    }
+
+    // Stamp the resolved read-only state onto each workspace node already in
+    // `nextById`. An explicit `false` clears a stale flag once a writer exists.
+    for (const [key, nodeId] of nodeIdByKindName) {
+        if (!key.startsWith("workspace:")) continue;
+        const node = nextById.get(nodeId);
+        if (!node) continue;
+        node.data = {
+            ...node.data,
+            readOnly: workspaceReferenced.has(nodeId) && !workspaceHasWriter.has(nodeId),
+        };
     }
 
     const existingEdgeIds = new Set(existingEdges.map((edge) => edge.id));
@@ -1312,6 +1413,17 @@ function addDesiredMountEdge(
     targetHandle: string,
 ): void {
     const id = `mount:${source}-${sourceHandle}-${target}-${targetHandle}`;
+    edges.set(id, { id: id, source: source, target: target, animated: false });
+}
+
+/**
+ * Side-handle "subagent" edge for an agent→agent call relationship. Matches the
+ * dashboard's id scheme so it hydrates into the violet SubagentEdge; as with mount
+ * edges only id/source/target are persisted and the handles/type are rebuilt from
+ * the `subagent:` prefix on load. Source/target are the caller/callee agent nodes.
+ */
+function addDesiredSubagentEdge(edges: Map<string, CanvasEdge>, source: string, target: string): void {
+    const id = `subagent:${source}-right-${target}-left`;
     edges.set(id, { id: id, source: source, target: target, animated: false });
 }
 

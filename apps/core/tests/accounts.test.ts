@@ -184,15 +184,12 @@ describe("agent config", () => {
         provider: "google",
         modelId: "gemini-custom",
         temperature: 0.2,
-        thinkingConfig: {
-          thinkingBudget: 8192,
-          includeThoughts: true,
-        },
-        thinkingEffort: "high",
-        options: {
+        providerOptions: {
           google: {
             thinkingConfig: {
-              thinkingLevel: "low",
+              thinkingBudget: 8192,
+              includeThoughts: true,
+              thinkingLevel: "high",
             },
           },
         },
@@ -223,15 +220,12 @@ describe("agent config", () => {
         provider: "google",
         modelId: "gemini-custom",
         temperature: 0.2,
-        thinkingConfig: {
-          thinkingBudget: 8192,
-          includeThoughts: true,
-        },
-        thinkingEffort: "high",
-        options: {
+        providerOptions: {
           google: {
             thinkingConfig: {
-              thinkingLevel: "low",
+              thinkingBudget: 8192,
+              includeThoughts: true,
+              thinkingLevel: "high",
             },
           },
         },
@@ -244,17 +238,43 @@ describe("agent config", () => {
       },
     })).toThrow("config.model.provider must be one of: google, openai, anthropic, bedrock, gateway, minimax");
 
-    expect(() => normalizeAgentConfig({
-      model: {
-        options: "bad",
-      },
-    })).toThrow("config.model.options must be an object");
+    for (const key of ["options", "thinking", "thinkingConfig", "unknownSetting"]) {
+      expect(() => normalizeAgentConfig({
+        model: {
+          [key]: {},
+        },
+      })).toThrow(`config.model.${key} is not supported; use config.model.providerOptions for provider-specific settings`);
+    }
 
     expect(() => normalizeAgentConfig({
       model: {
-        thinkingConfig: "bad",
+        providerOptions: "bad",
       },
-    })).toThrow("config.model.thinkingConfig must be an object");
+    })).toThrow("config.model.providerOptions must be an object");
+
+    expect(normalizeAgentConfig({
+      agent: {
+        system: [{
+          role: "system",
+          content: "Persistent policy.",
+          providerOptions: { anthropic: { cacheControl: { type: "ephemeral" } } },
+        }],
+      },
+    })).toEqual({
+      agent: {
+        system: [{
+          role: "system",
+          content: "Persistent policy.",
+          providerOptions: { anthropic: { cacheControl: { type: "ephemeral" } } },
+        }],
+      },
+    });
+
+    expect(() => normalizeAgentConfig({
+      agent: {
+        system: [{ role: "user", content: "wrong role" }],
+      },
+    })).toThrow("config.agent.system must be a string, SystemModelMessage, or SystemModelMessage[]");
 
     expect(() => normalizeAgentConfig({
       provider: {
@@ -742,14 +762,11 @@ describe("agent config", () => {
       model: {
         provider: "google",
         modelId: "gemini-custom",
-        thinkingConfig: {
-          thinkingBudget: 8192,
-        },
-        thinkingEffort: "medium",
-        options: {
+        providerOptions: {
           google: {
             thinkingConfig: {
-              thinkingLevel: "low",
+              thinkingBudget: 8192,
+              thinkingLevel: "medium",
             },
           },
         },
@@ -803,14 +820,11 @@ describe("agent config", () => {
       model: {
         provider: "google",
         modelId: "gemini-custom",
-        thinkingConfig: {
-          thinkingBudget: 8192,
-        },
-        thinkingEffort: "medium",
-        options: {
+        providerOptions: {
           google: {
             thinkingConfig: {
-              thinkingLevel: "low",
+              thinkingBudget: 8192,
+              thinkingLevel: "medium",
             },
           },
         },

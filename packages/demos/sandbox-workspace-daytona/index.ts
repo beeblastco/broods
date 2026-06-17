@@ -13,7 +13,7 @@ const client = new FilthyPantyClient({
 
 // Stream the response from the agent and print it to stdout.
 for await (const chunk of client.stream(api.agents.sandboxAssistant, {
-  input: "Call outside API and check for me the weather in San Francisco, CA.",
+  input: "Interacte with the sandbox for me, write file, access internet, etc. Play with it.",
 })) {
     switch (chunk.type) {
       case "reasoning-delta":

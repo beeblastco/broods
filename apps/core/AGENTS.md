@@ -38,7 +38,7 @@ Key rules:
 - Custom tools run inline inside `harness-processing` during the streaming request. Do not add queue-based tool execution or external tool-Lambda wiring unless the architecture intentionally changes.
 - Sandbox and workspace are independent, account-scoped records (tables `sandboxConfig`/`workspaceConfig`), referenced from agent config by id: `sandbox: "<id>"` + `workspaces: [{name, workspaceId}]`. A referenced sandbox exposes the Claude-Code-style tools (`bash` always; `read`/`write`/`edit`/`glob`/`grep` when a workspace is also attached); approvals follow the sandbox `permissionMode` (`edit`/`ask`/`bypass`). Search/research tools remain opt-in through `config.tools`. CRUD for both lives in `account-manage` (`/accounts/me/{sandboxes,workspaces}`).
 - Google Search lives in `functions/harness-processing/tools/google-search.tool.ts` and is enabled through `config.tools.googleSearch`.
-- Account provider constructor settings live under `config.provider`. Account model configuration lives under `config.model`: `provider`, `modelId`, normal Vercel AI SDK `streamText` settings, and `options` for `providerOptions`.
+- Account provider constructor settings live under `config.provider`. Account model configuration lives under `config.model`: `provider`, `modelId`, normal Vercel AI SDK `streamText` settings, and `providerOptions` for provider-specific AI SDK options.
 - Shared code goes in `functions/_shared/` only when it is actually shared by multiple Lambdas. Keep harness-only code in `functions/harness-processing/`.
 - File header comments must use a block-docstring style:
 

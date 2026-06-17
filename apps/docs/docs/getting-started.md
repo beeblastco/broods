@@ -176,6 +176,33 @@ export AGENT_ID=agent_...
 | Gateway | `gateway` | `apiKey` |
 | MiniMax | `minimax` | `apiKey` |
 
+#### Reasoning / thinking tokens
+
+Use standard Vercel AI SDK call settings directly in `config.model`. Provider-specific thinking controls live under `config.model.providerOptions`:
+
+| Provider | Enable thinking with |
+| --- | --- |
+| OpenAI | `providerOptions.openai.reasoningEffort` (`low`/`medium`/`high`) and `providerOptions.openai.reasoningSummary` |
+| Anthropic | `providerOptions.anthropic.thinking` or `providerOptions.anthropic.effort` |
+| Google | `providerOptions.google.thinkingConfig` |
+| MiniMax | `providerOptions.anthropic.thinking` |
+
+MiniMax's default provider is **Anthropic-compatible**, so it uses the Anthropic-style `thinking` config. **MiniMax-M3 thinking is off by default** — without the provider option the model returns no reasoning tokens:
+
+```jsonc
+"model": {
+  "provider": "minimax",
+  "modelId": "MiniMax-M3",
+  "providerOptions": {
+    "anthropic": {
+      "thinking": { "type": "enabled", "budgetTokens": 4096 }
+    }
+  }
+}
+```
+
+Reasoning surfaces in the stream as `reasoning-start` / `reasoning-delta` parts, the same as any other provider.
+
 ### Send Your First Request
 
 #### Sync SSE Request
@@ -202,6 +229,8 @@ curl -X POST "$AGENT_SERVICE_URL" \
 ```
 
 The SSE stream emits `data:`-only lines carrying raw Vercel AI SDK stream chunks (`text-delta`, `tool-call`, `tool-result`, `finish`), with `: waiting…` comment heartbeats during long waits. When the agent finishes, the last data line is the `finish` chunk (followed by a `structured-output` chunk when `config.model.output` is set), then the stream closes:
+
+> The WebSocket transport carries the **same** AI SDK stream parts. Each part is published in a NATS envelope `{ type: "stream", data: <part>, sequence, headers }`; clients read `.data`, which is byte-identical to one SSE event.
 
 ```bash
 data: {"type":"finish","finishReason":"stop", ...}
@@ -255,6 +284,40 @@ Status responses:
 | `awaiting_approval` | Tool approval needed |
 
 `events` accepts three kinds of entries: `user` messages, `tool` messages carrying tool-approval responses (only valid while a turn is `awaiting_approval`), and `system` messages with `persist: false` for one-turn ephemeral instructions. Per-request webhook fields (`webhookUrl`, `x-webhook-secret`) are rejected — use `config.hooks.webhook` on the agent instead.
+
+### Per-run Overrides
+
+Optional top-level `system` and `model` fields override config for a **single** invocation (direct, async, and websocket). Nothing persists — model overrides are folded into a copy of the agent config for that run only.
+
+```jsonc
+{
+  "agentId": "agent_...",
+  "eventId": "req-003",
+  "conversationKey": "my-first-conversation",
+  "system": [
+    {
+      "role": "system",
+      "content": "Answer concisely.",
+      "persist": false
+    }
+  ],
+  "model": {
+    "temperature": 0.3,
+    "maxOutputTokens": 4096,
+    "providerOptions": {
+      "openai": {
+        "reasoningEffort": "high",
+        "reasoningSummary": "auto"
+      }
+    }
+  },
+  "events": [ { "role": "user", "content": [ { "type": "text", "text": "Summarize today's plan." } ] } ]
+}
+```
+
+`system` accepts one Vercel AI SDK-style system message event or an array of them. These events are request-local and follow the same ephemeral behavior as direct `events` entries with `persist: false`.
+
+`model` accepts any standard Vercel AI SDK call setting (`temperature`, `topP`, `topK`, `maxOutputTokens`, `frequencyPenalty`, `presencePenalty`, `seed`, `stopSequences`) and provider-specific `providerOptions`, the same shape used by `config.model`. The reserved keys `provider`, `modelId`, `output`, and `apiKey` are rejected so a request cannot swap the model, provider, structured output contract, or credentials.
 
 ### Enable Tools (Optional)
 

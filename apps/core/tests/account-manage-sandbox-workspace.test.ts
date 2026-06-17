@@ -136,11 +136,11 @@ describe("account-manage workspace endpoints", () => {
 
     const response = await handler(createEvent("POST", "/accounts/me/workspaces", AUTH, {
       name: "broken",
-      config: { storage: { provider: "gcs" } },
+      config: { storage: { provider: "vercel" } },
     }));
 
     expect(response.statusCode).toBe(400);
-    expect(String((responseJson(response) as { error: string }).error)).toContain("config.storage.provider must be one of");
+    expect(String((responseJson(response) as { error: string }).error)).toContain('config.storage.provider "vercel" is not supported yet');
   });
 
   it("returns 404 when updating a missing workspace", async () => {

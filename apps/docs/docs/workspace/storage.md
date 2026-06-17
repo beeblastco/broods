@@ -1,17 +1,16 @@
 # Storage
 
 Storage is the filesystem backing for Workspace. Workspace config accepts
-`{ "storage": { "provider": "s3" } }` (default) or `{ "storage": { "provider": "vercel" } }`.
-The `vercel` value is accepted for workspaces whose files live on a persistent Vercel
-sandbox's native filesystem; the field itself does not switch any harness behavior —
-see the [Vercel sandbox caveat](sandbox/vercel.md).
+`{ "storage": { "provider": "s3" } }` (default). Provider-native storage values
+such as `vercel` are rejected until they are wired into the same workspace
+mount/read contract.
 
 `workspace.storage` declares the shared backing store used by:
 
 - `MEMORY.md`, `TASKS.md`, and other developer-defined markdown files
 - files read and written by the `bash` sandbox tool
 - staged skill bundles under `.claude/skills/<skill-name>` and `.agents/skills/<skill-name>`
-- mounted workspace paths used by the Lambda (S3 Files), Daytona, and Kubernetes (mount-s3) sandbox providers; E2B and Vercel persistent sandboxes keep workspace files on their native filesystem instead
+- mounted workspace paths used by the Lambda (S3 Files), Daytona, and Kubernetes (mount-s3) sandbox providers
 
 ## Current Architecture
 
@@ -44,10 +43,10 @@ flowchart TD
   S3Files --> Lambda["Lambda sandbox provider"]
   Files --> ExternalMount["Provider-mounted storage<br/>options.workspaceRoot"]
   ExternalMount --> Daytona["Daytona / Kubernetes<br/>(mount-s3 --prefix sandbox/<namespace>/)"]
-  Files -.->|"not mounted"| NativeFS["E2B / Vercel persistent sandboxes<br/>(native sandbox filesystem)"]
+  Files -.->|"not supported yet"| NativeFS["E2B / Vercel volumes/drives<br/>(not wired)"]
 ```
 
-The Lambda sandbox provider uses AWS S3 Files at `/mnt/workspaces`, backed by the same workspace bucket through an access point rooted at `/sandbox`. The uniform Lambda sandbox image writes directly through that mount. Daytona and Kubernetes mount only the selected `sandbox/<namespace>/` prefix at the workspace directory for the run (`mountAwsS3Buckets: true`). E2B and Vercel have no S3 mount: workspace-backed tools require `persistent: true` there, and files live on the reserved sandbox's own filesystem. Any other combination fails fast instead of silently losing files.
+The Lambda sandbox provider uses AWS S3 Files at `/mnt/workspaces`, backed by the same workspace bucket through an access point rooted at `/sandbox`. The uniform Lambda sandbox image writes directly through that mount. Daytona and Kubernetes mount only the selected `sandbox/<namespace>/` prefix at the workspace directory for the run (`mountAwsS3Buckets: true`). E2B and Vercel do not currently support S3 workspaces in this harness; attaching an S3 workspace to those sandboxes fails fast instead of silently using provider-native filesystem state.
 
 Model-facing tools hide the provider path: `bash` starts in the selected workspace
 directory, and file tools use workspace-relative paths. Prefer prompts like

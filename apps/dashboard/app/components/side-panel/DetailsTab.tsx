@@ -9,7 +9,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Separator } from "@/app/components/ui/separator";
 import { Switch } from "@/app/components/ui/switch";
 import { Textarea } from "@/app/components/ui/textarea";
-import { readAgentBranch, type FlatAgentConfig } from "@/app/lib/agentConfigCodec";
+import { readAgentBranch, readModelReasoning, type FlatAgentConfig } from "@/app/lib/agentConfigCodec";
 import { resolveCoreEndpoint } from "@/app/lib/coreEndpoint";
 import { isRecord } from "@/app/lib/utils";
 import type { Doc, Id } from "@filthy-panty/convex/_generated/dataModel";
@@ -74,6 +74,7 @@ export function DetailsTab({
     onSaveModelSettings,
     onUpdateToolConfig,
     onUpdateChannelConfig,
+    onUpdateModelReasoning,
 }: {
     agentConfig: Doc<"agentConfigs"> | null | undefined;
     activeDeployment: EnvironmentDeployment | undefined;
@@ -90,6 +91,7 @@ export function DetailsTab({
     onSaveModelSettings?: (next: { provider: AgentProvider; modelId: string }) => Promise<void>;
     onUpdateToolConfig?: (toolName: string, config: Record<string, unknown> | null) => Promise<void>;
     onUpdateChannelConfig?: (kind: string, config: Record<string, unknown> | null) => Promise<void>;
+    onUpdateModelReasoning?: (next: { budgetTokens?: number; effort?: string }) => Promise<void>;
 }) {
     const [showApiKey, setShowApiKey] = useState(false);
     const [copiedField, setCopiedField] = useState<string | null>(null);
@@ -129,6 +131,17 @@ export function DetailsTab({
     );
     const [tavilySearchMaxResults, setTavilySearchMaxResults] = useState(
         () => typeof tavilySearchCfg.maxResults === "number" ? String(tavilySearchCfg.maxResults) : "5"
+    );
+
+    // Reasoning lives under model.providerOptions.<provider>.* (Vercel AI SDK shape).
+    const modelBranch = agentConfig
+        ? (readAgentBranch(agentConfig as unknown as FlatAgentConfig, "model") as Record<string, unknown>)
+        : {};
+    const { budgetTokens: reasoningBudget, effort: reasoningEffortValue } = readModelReasoning(modelBranch);
+    const reasoningEffort = reasoningEffortValue ?? "";
+    const reasoningEnabled = reasoningBudget !== undefined || reasoningEffort !== "";
+    const [reasoningBudgetText, setReasoningBudgetText] = useState(
+        () => reasoningBudget !== undefined ? String(reasoningBudget) : ""
     );
 
     const coreEndpoint = resolveCoreEndpoint();
@@ -322,6 +335,84 @@ export function DetailsTab({
                             </p>
                         )}
                     </div>
+
+                    {/* Reasoning — budget tokens (Anthropic/MiniMax/Google) + effort (OpenAI/Anthropic),
+                        written to model.providerOptions.<provider> for the selected provider. */}
+                    {onUpdateModelReasoning && (
+                        <div className="flex flex-col gap-2">
+                            <ToggleRow
+                                label="Reasoning"
+                                description="Thinking / extended reasoning"
+                                checked={reasoningEnabled}
+                                onCheckedChange={(next) => {
+                                    if (next) {
+                                        // Seed a provider-appropriate default so the toggle has effect:
+                                        // OpenAI reasons by effort, the others by a thinking-token budget.
+                                        if (selectedProvider === "openai") {
+                                            void onUpdateModelReasoning({ effort: "medium" });
+                                        } else {
+                                            setReasoningBudgetText("4096");
+                                            void onUpdateModelReasoning({ budgetTokens: 4096 });
+                                        }
+                                    } else {
+                                        setReasoningBudgetText("");
+                                        void onUpdateModelReasoning({});
+                                    }
+                                }}
+                            />
+                            {reasoningEnabled && (
+                                <ExpandBlock>
+                                    <div className="flex items-center justify-between gap-3">
+                                        <span className="text-[11px] text-muted-foreground">
+                                            Budget tokens <span className="text-muted-foreground/50">(Anthropic / MiniMax / Google)</span>
+                                        </span>
+                                        <Input
+                                            type="number"
+                                            min={0}
+                                            className="h-7 w-24 text-xs"
+                                            placeholder="4096"
+                                            value={reasoningBudgetText}
+                                            onChange={(e) => setReasoningBudgetText(e.target.value)}
+                                            onBlur={() => {
+                                                const n = parseInt(reasoningBudgetText, 10);
+                                                const budget = Number.isFinite(n) && n > 0 ? n : undefined;
+                                                void onUpdateModelReasoning({ budgetTokens: budget, effort: reasoningEffort || undefined });
+                                            }}
+                                        />
+                                    </div>
+                                    <div className="flex items-center justify-between gap-3">
+                                        <span className="text-[11px] text-muted-foreground">
+                                            Effort <span className="text-muted-foreground/50">(OpenAI / Anthropic)</span>
+                                        </span>
+                                        <Select
+                                            value={reasoningEffort || "none"}
+                                            onValueChange={(v) => {
+                                                const effort = v === "none" ? undefined : v;
+                                                const n = parseInt(reasoningBudgetText, 10);
+                                                const budget = Number.isFinite(n) && n > 0 ? n : undefined;
+                                                void onUpdateModelReasoning({ budgetTokens: budget, effort: effort });
+                                            }}
+                                        >
+                                            <SelectTrigger className="h-7 w-28 cursor-pointer text-xs">
+                                                <SelectValue />
+                                            </SelectTrigger>
+                                            <SelectContent>
+                                                <SelectItem value="none">None</SelectItem>
+                                                <SelectItem value="minimal">Minimal</SelectItem>
+                                                <SelectItem value="low">Low</SelectItem>
+                                                <SelectItem value="medium">Medium</SelectItem>
+                                                <SelectItem value="high">High</SelectItem>
+                                            </SelectContent>
+                                        </Select>
+                                    </div>
+                                    <p className="text-[11px] text-muted-foreground/60">
+                                        Set budget for Anthropic/MiniMax/Google, effort for OpenAI. Anthropic honors either.
+                                    </p>
+                                </ExpandBlock>
+                            )}
+                        </div>
+                    )}
+
                 </>
             )}
 

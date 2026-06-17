@@ -5,7 +5,7 @@
 import { pathToFileURL } from "node:url";
 import { createHash } from "node:crypto";
 import { readdir, readFile } from "node:fs/promises";
-import { basename, join, relative, resolve } from "node:path";
+import { basename, isAbsolute, join, relative, resolve } from "node:path";
 import type { CliManifest, CliManifestResource } from "./contracts.ts";
 import { GENERATED_DIR, PROJECT_DIR } from "./config.ts";
 import { loadFilthyPantyRuntimeConfig } from "./runtime-config.ts";
@@ -15,6 +15,7 @@ import {
   type AnyResource,
   type FilthyPantyConfigDefinition,
   type FilthyPantyProjectConfig,
+  type SandboxResource,
 } from "./resources.ts";
 
 export interface CompileOptions {
@@ -44,6 +45,16 @@ type ExportedResource = {
   resource: AnyResource;
 };
 
+const MAX_BUNDLE_FILE_BYTES = 1_000_000;
+const MAX_BUNDLE_TOTAL_BYTES = 5_000_000;
+const MAX_BUNDLE_FILES = 200;
+const SKIPPED_BUNDLE_DIRECTORIES = new Set(["node_modules", ".git"]);
+const UNSAFE_BUNDLE_FILE_NAMES = [
+  /^\.env(?:\.|$)/i,
+  /^id_(?:rsa|dsa|ecdsa|ed25519)(?:\.pub)?$/i,
+  /\.(?:pem|key|p12|pfx)$/i,
+];
+
 export async function compileProject(options: CompileOptions = {}): Promise<CompiledProject> {
   const cwd = options.cwd ?? process.cwd();
   loadFilthyPantyRuntimeConfig(cwd);
@@ -57,6 +68,8 @@ export async function compileProject(options: CompileOptions = {}): Promise<Comp
   const resources = resourceExports.map((entry) => entry.resource);
   assertUniqueResources(resources);
   for (const resource of resources) assertKnownConfigKeys(resource);
+  for (const resource of resources) assertSupportedWorkspaceStorage(resource);
+  assertSupportedWorkspaceSandboxMounts(resources);
   const resourceAliases = aliasesForResources(resourceExports);
   const environment = resolveEnvironment(
     config,
@@ -109,7 +122,7 @@ export function collectEnvRefNames(manifest: CliManifest): string[] {
   return [...names].sort();
 }
 
-export function resolveEnvironment(
+function resolveEnvironment(
   config: FilthyPantyProjectConfig,
   explicit: string | undefined,
   command: "dev" | "deploy",
@@ -162,7 +175,7 @@ async function findConfig(
   const project = explicitProject ??
     process.env.FILTHY_PANTY_PROJECT ??
     configValue.project ??
-    await inferProjectName(cwd);
+    normalizeProjectName(basename(resolve(cwd)));
   if (!project.trim()) {
     throw new Error("Project name is required. Pass --project <name> or set FILTHY_PANTY_PROJECT.");
   }
@@ -224,6 +237,93 @@ function assertKnownConfigKeys(resource: AnyResource): void {
       : ` Allowed keys: ${[...KNOWN_AGENT_CONFIG_KEYS].sort().join(", ")}.`;
     throw new Error(`Agent "${resource.name}" has an unknown config key "${key}".${hint}`);
   }
+}
+
+/**
+ * Runtime validation for code-first workspace storage. TypeScript catches this
+ * when callers typecheck, but `filthy-panty dev/deploy` must also fail before
+ * upload because the CLI loads resource modules directly with Bun.
+ */
+function assertSupportedWorkspaceStorage(resource: AnyResource): void {
+  if (resource.kind !== "workspace") return;
+  const config = resource.config as unknown as Record<string, unknown>;
+  const storage = config.storage;
+  if (storage === undefined) return;
+  if (!storage || typeof storage !== "object" || Array.isArray(storage)) {
+    throw new Error(`Workspace "${resource.name}" config.storage must be an object`);
+  }
+  const provider = (storage as Record<string, unknown>).provider;
+  if (provider === undefined || provider === "s3") return;
+  if (provider === "vercel") {
+    throw new Error(
+      `Workspace "${resource.name}" uses storage.provider "vercel", but Vercel Drive workspace storage is not supported yet. ` +
+        `Use storage.provider "s3" or omit storage until Vercel Drive is wired.`,
+    );
+  }
+  throw new Error(`Workspace "${resource.name}" config.storage.provider must be one of: s3`);
+}
+
+function assertSupportedWorkspaceSandboxMounts(resources: AnyResource[]): void {
+  const sandboxes = new Map(resources.filter((resource) => resource.kind === "sandbox").map((resource) => [resource.name, resource]));
+  for (const resource of resources) {
+    if (resource.kind !== "agent") continue;
+    const config = resource.config as Record<string, unknown>;
+    const agentSandbox = resolveLocalSandbox(config.sandbox, sandboxes);
+    const workspaces = config.workspaces;
+    if (!Array.isArray(workspaces)) continue;
+    for (const entry of workspaces) {
+      const workspaceName = workspaceNameFor(entry);
+      const sandbox = effectiveWorkspaceSandbox(entry, agentSandbox, sandboxes);
+      if (!sandbox || supportsS3WorkspaceMount(sandbox)) continue;
+      throw new Error(
+        `Agent "${resource.name}" workspace "${workspaceName}" uses sandbox "${sandbox.name}" (${sandboxProvider(sandbox)}) ` +
+          `which does not support S3 workspace mounts. Use lambda, or daytona/kubernetes with options.mountAwsS3Buckets: true, ` +
+          `or set this workspace ref to sandbox: null for read-only S3 access.`,
+      );
+    }
+  }
+}
+
+function resolveLocalSandbox(value: unknown, sandboxes: Map<string, SandboxResource>): SandboxResource | undefined {
+  if (isResource(value) && value.kind === "sandbox") return value;
+  if (typeof value === "string") return sandboxes.get(value);
+  return undefined;
+}
+
+function effectiveWorkspaceSandbox(
+  entry: unknown,
+  agentSandbox: SandboxResource | undefined,
+  sandboxes: Map<string, SandboxResource>,
+): SandboxResource | undefined {
+  if (entry && typeof entry === "object" && "sandbox" in entry) {
+    const sandbox = (entry as { sandbox?: unknown }).sandbox;
+    if (sandbox === null) return undefined;
+    return resolveLocalSandbox(sandbox, sandboxes);
+  }
+  return agentSandbox;
+}
+
+function workspaceNameFor(entry: unknown): string {
+  if (isResource(entry) && entry.kind === "workspace") return entry.name;
+  if (entry && typeof entry === "object" && "workspace" in entry) {
+    const workspace = (entry as { workspace: unknown }).workspace;
+    if (isResource(workspace)) return workspace.name;
+    if (typeof workspace === "string") return workspace;
+  }
+  return "<unknown>";
+}
+
+function supportsS3WorkspaceMount(sandbox: SandboxResource): boolean {
+  const provider = sandboxProvider(sandbox);
+  if (provider === "lambda") return true;
+  if (provider !== "daytona" && provider !== "kubernetes") return false;
+  const options = (sandbox.config as { options?: unknown }).options;
+  return Boolean(options && typeof options === "object" && !Array.isArray(options) &&
+    (options as Record<string, unknown>).mountAwsS3Buckets === true);
+}
+
+function sandboxProvider(sandbox: SandboxResource): string {
+  return typeof sandbox.config.provider === "string" ? sandbox.config.provider : "lambda";
 }
 
 function assertUniqueResources(resources: AnyResource[]): void {
@@ -311,7 +411,8 @@ async function normalizeConfig(resource: AnyResource, projectRoot: string): Prom
 }
 
 async function normalizeSkillConfig(config: { path: string }, projectRoot: string): Promise<Record<string, unknown>> {
-  const skillRoot = resolve(projectRoot, config.path);
+  const skillRoot = resolveContainedResourcePath(projectRoot, config.path, "Skill");
+  const manifestPath = relative(projectRoot, skillRoot).split("\\").join("/");
   const files = await readBundleFiles(skillRoot);
   if (!files.some((file) => file.path === "SKILL.md")) {
     throw new Error(`Skill folder ${config.path} must contain SKILL.md`);
@@ -319,7 +420,7 @@ async function normalizeSkillConfig(config: { path: string }, projectRoot: strin
 
   return {
     source: "files",
-    path: config.path,
+    path: manifestPath,
     files: files,
   };
 }
@@ -333,10 +434,17 @@ async function normalizeToolConfig(
   },
   projectRoot: string,
 ): Promise<Record<string, unknown>> {
-  const bundle = await readFile(resolve(projectRoot, config.path), "utf8");
+  const bundlePath = resolveContainedResourcePath(projectRoot, config.path, "Tool");
+  const manifestPath = relative(projectRoot, bundlePath).split("\\").join("/");
+  assertSafeBundlePath(manifestPath, "Tool");
+  const bundle = await readFile(bundlePath, "utf8");
+  const size = Buffer.byteLength(bundle);
+  if (size > MAX_BUNDLE_FILE_BYTES) {
+    throw new Error(`Tool bundle ${manifestPath} is too large (${size} bytes, max ${MAX_BUNDLE_FILE_BYTES})`);
+  }
 
   return {
-    path: config.path,
+    path: manifestPath,
     description: config.description,
     inputSchema: config.inputSchema,
     ...(config.defaultConfig !== undefined ? { defaultConfig: config.defaultConfig } : {}),
@@ -372,6 +480,18 @@ function normalizeWorkspaceRef(entry: unknown, agentName: string): Record<string
   throw new Error(`Agent ${agentName} workspaces must be defineWorkspace(...) resources or { workspace, sandbox } refs`);
 }
 
+function resolveContainedResourcePath(projectRoot: string, resourcePath: string, kind: "Skill" | "Tool"): string {
+  if (resourcePath.trim().length === 0) throw new Error(`${kind} path is required`);
+  if (resourcePath.includes("\0")) throw new Error(`${kind} path must not contain null bytes`);
+  const root = resolve(projectRoot);
+  const target = resolve(root, resourcePath);
+  const rel = relative(root, target);
+
+  if (rel === "" || (!rel.startsWith("..") && !isAbsolute(rel))) return target;
+
+  throw new Error(`${kind} path ${resourcePath} must stay inside ${PROJECT_DIR}/`);
+}
+
 function rewriteValues(value: unknown): unknown {
   if (Array.isArray(value)) {
     return value.map((entry) => rewriteValues(entry));
@@ -388,6 +508,7 @@ function rewriteValues(value: unknown): unknown {
 
 async function readBundleFiles(root: string): Promise<Array<Record<string, unknown>>> {
   const files: Array<Record<string, unknown>> = [];
+  let totalBytes = 0;
 
   async function walk(dir: string): Promise<void> {
     const entries = await readdir(dir, { withFileTypes: true });
@@ -395,10 +516,21 @@ async function readBundleFiles(root: string): Promise<Array<Record<string, unkno
       const absolute = join(dir, entry.name);
       const rel = relative(root, absolute).split("\\").join("/");
       if (entry.isDirectory()) {
-        if (entry.name === "node_modules" || entry.name === ".git") continue;
+        if (shouldSkipBundleEntry(entry.name)) continue;
         await walk(absolute);
       } else if (entry.isFile()) {
+        if (shouldSkipBundleEntry(entry.name) || isUnsafeBundlePath(rel)) continue;
         const bytes = await readFile(absolute);
+        if (bytes.byteLength > MAX_BUNDLE_FILE_BYTES) {
+          throw new Error(`Skill bundle file ${rel} is too large (${bytes.byteLength} bytes, max ${MAX_BUNDLE_FILE_BYTES})`);
+        }
+        totalBytes += bytes.byteLength;
+        if (totalBytes > MAX_BUNDLE_TOTAL_BYTES) {
+          throw new Error(`Skill bundle at ${root} is too large (${totalBytes} bytes, max ${MAX_BUNDLE_TOTAL_BYTES})`);
+        }
+        if (files.length >= MAX_BUNDLE_FILES) {
+          throw new Error(`Skill bundle at ${root} has too many files (max ${MAX_BUNDLE_FILES})`);
+        }
         files.push({
           path: rel,
           size: bytes.byteLength,
@@ -414,6 +546,24 @@ async function readBundleFiles(root: string): Promise<Array<Record<string, unkno
   return files.sort((a, b) => String(a.path).localeCompare(String(b.path)));
 }
 
+function shouldSkipBundleEntry(name: string): boolean {
+  return name.startsWith(".") || SKIPPED_BUNDLE_DIRECTORIES.has(name);
+}
+
+function assertSafeBundlePath(path: string, kind: "Skill" | "Tool"): void {
+  if (isUnsafeBundlePath(path)) {
+    throw new Error(`${kind} bundle path ${path} looks like a hidden file or secret and will not be bundled`);
+  }
+}
+
+function isUnsafeBundlePath(path: string): boolean {
+  const parts = path.split("/");
+  return parts.some((part) =>
+    part.startsWith(".") ||
+    UNSAFE_BUNDLE_FILE_NAMES.some((pattern) => pattern.test(part))
+  );
+}
+
 function sha256Hex(value: string | Buffer): string {
   return createHash("sha256").update(value).digest("hex");
 }
@@ -425,10 +575,6 @@ function contentTypeForPath(path: string): string {
   if (path.endsWith(".ts")) return "text/typescript; charset=utf-8";
   if (path.endsWith(".txt")) return "text/plain; charset=utf-8";
   return "application/octet-stream";
-}
-
-async function inferProjectName(cwd: string): Promise<string> {
-  return normalizeProjectName(basename(resolve(cwd)));
 }
 
 function normalizeProjectName(name: string): string {

@@ -175,6 +175,12 @@ describe("sandbox config persistent / lifecycle / PVC", () => {
       onCreate: ["npm install"],
       onResume: ["npm run dev &"],
     })).toMatchObject({ onCreate: ["npm install"], onResume: ["npm run dev &"] });
+    expect(() => normalizeSandboxConfig({
+      provider: "e2b",
+      persistent: true,
+      network: { mode: "allow-all" },
+      onCreate: ["npm install"],
+    })).toThrow("config.onCreate and config.onResume are not supported by the e2b provider");
   });
 
   it("only allows PVC options on a persistent kubernetes sandbox", () => {
@@ -182,13 +188,13 @@ describe("sandbox config persistent / lifecycle / PVC", () => {
       .toThrow("config.options.persistentDiskGb requires a persistent kubernetes sandbox");
     expect(() => normalizeSandboxConfig({ provider: "daytona", persistent: true, options: { persistentHome: "/home/x" } }))
       .toThrow("config.options.persistentHome requires a persistent kubernetes sandbox");
-    expect(() => normalizeSandboxConfig({ provider: "kubernetes", persistent: true, options: { persistentDiskGb: 1000 } }))
-      .toThrow("config.options.persistentDiskGb must be an integer from 1 to 200");
+    expect(() => normalizeSandboxConfig({ provider: "kubernetes", persistent: true, options: { persistentDiskGb: 11 } }))
+      .toThrow("config.options.persistentDiskGb must be an integer from 1 to 10");
     expect(normalizeSandboxConfig({
       provider: "kubernetes",
       persistent: true,
-      options: { persistentDiskGb: 20, persistentHome: "/home/node", storageClass: "local-path" },
-    }).options).toEqual({ persistentDiskGb: 20, persistentHome: "/home/node", storageClass: "local-path" });
+      options: { persistentDiskGb: 10, persistentHome: "/home/node", storageClass: "local-path" },
+    }).options).toEqual({ persistentDiskGb: 10, persistentHome: "/home/node", storageClass: "local-path" });
   });
 });
 

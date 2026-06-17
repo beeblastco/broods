@@ -90,8 +90,15 @@ test("websocket client subscribes to the core service and forwards server messag
     endpointId: "agent_1",
     projectSlug: "demo",
     environmentSlug: "development",
-    message: "hello",
+    events: [{ role: "user", content: [{ type: "text", text: "hello" }] }],
     sessionId: "session_1",
+    system: {
+      role: "system",
+      content: "Keep the answer short.",
+    },
+    model: {
+      providerOptions: { anthropic: { thinking: { type: "enabled", budgetTokens: 1024 } } },
+    },
   }, {
     onMessage(message) {
       messages.push(message);
@@ -112,8 +119,15 @@ test("websocket client subscribes to the core service and forwards server messag
   const socket = FakeWebSocket.instances[0]!;
   expect(JSON.parse(socket.sent[0]!)).toEqual({
     type: "execute",
-    message: "hello",
+    events: [{ role: "user", content: [{ type: "text", text: "hello" }] }],
     sessionId: "session_1",
+    system: {
+      role: "system",
+      content: "Keep the answer short.",
+    },
+    model: {
+      providerOptions: { anthropic: { thinking: { type: "enabled", budgetTokens: 1024 } } },
+    },
   });
 
   socket.emit({ type: "sse", chunk: "data: {}\n\n" });

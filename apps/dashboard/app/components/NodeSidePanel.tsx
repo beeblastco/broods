@@ -38,6 +38,7 @@ import {
 import { useConnectedAgentConfig } from "@/app/hooks/useConnectedAgentConfig";
 import { useEnvironment } from "@/app/hooks/useEnvironment";
 import {
+  applyModelReasoning,
   fromNestedAgentConfig,
   readAgentBranch,
   toNestedAgentConfig,
@@ -662,6 +663,31 @@ export const NodeSidePanel = memo(function NodeSidePanel({
     [agentConfigId, agentConfig, updateConfig],
   );
 
+  // Reasoning config. Maps the budget/effort knobs to the selected provider's
+  // Vercel AI SDK providerOptions (model.providerOptions.<provider>.*) — the only
+  // reasoning shape the core accepts. See applyModelReasoning in the config codec.
+  const handleUpdateModelReasoning = useCallback(
+    async (next: { budgetTokens?: number; effort?: string }) => {
+      if (!agentConfigId || !agentConfig) return;
+
+      const currentExtra =
+        (agentConfig.extraConfig as Record<string, unknown>) ?? {};
+      const nextModel = applyModelReasoning(
+        (currentExtra.model as Record<string, unknown>) ?? {},
+        selectedProvider,
+        next,
+      );
+      await updateConfig({
+        configId: agentConfigId,
+        extraConfig: {
+          ...currentExtra,
+          model: Object.keys(nextModel).length > 0 ? nextModel : undefined,
+        },
+      });
+    },
+    [agentConfigId, agentConfig, selectedProvider, updateConfig],
+  );
+
   const handleUpdateChannelConfig = useCallback(
     async (kind: string, config: Record<string, unknown> | null) => {
       if (!agentConfigId || !agentConfig) return;
@@ -810,6 +836,7 @@ export const NodeSidePanel = memo(function NodeSidePanel({
                 onSaveModelSettings={handleSaveModelSettings}
                 onUpdateToolConfig={handleUpdateToolConfig}
                 onUpdateChannelConfig={handleUpdateChannelConfig}
+                onUpdateModelReasoning={handleUpdateModelReasoning}
               />
             ) : isTool && node ? (
               <ToolDetailsTab
@@ -954,6 +981,7 @@ export const NodeSidePanel = memo(function NodeSidePanel({
                 <TestTab
                   activeDeployment={activeDeployment}
                   deploymentApiKey={deploymentApiKey}
+                  agentId={agentConfigId ?? ""}
                   nodeColor={nodeData?.properties?.color}
                 />
               ) : node ? (

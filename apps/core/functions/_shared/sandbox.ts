@@ -41,7 +41,7 @@ export const MAX_LIFETIME_SECONDS = 30 * 24 * 60 * 60;
 export const DEFAULT_RELEASE_GRACE_SECONDS = 7 * 24 * 60 * 60;
 export const DEFAULT_PERSISTENT_HOME = "/home/node";
 export const DEFAULT_PERSISTENT_DISK_GB = 10;
-export const MAX_PERSISTENT_DISK_GB = 200;
+export const MAX_PERSISTENT_DISK_GB = 10;
 // Cap concurrent detached background jobs per reserved sandbox so a runaway agent
 // cannot pin a sandbox busy (and defeat scale-to-0) with unbounded jobs.
 export const MAX_CONCURRENT_BACKGROUND_JOBS = 10;

@@ -94,8 +94,8 @@ afterAll(() => {
   setStorageForTests(null);
 });
 
-describe("session environment context", () => {
-  it("adds current time and timezone without a knowledge cutoff", async () => {
+describe("session system context", () => {
+  it("uses only developer-provided system context", async () => {
     process.env.CONVERSATIONS_TABLE_NAME = "conversations";
     process.env.PROCESSED_EVENTS_TABLE_NAME = "processed-events";
     process.env.FILESYSTEM_BUCKET_NAME = "filesystem";
@@ -107,15 +107,35 @@ describe("session environment context", () => {
     });
 
     const turnContext = await session.createEphemeralTurnContext([{ role: "user", content: "hello" }]);
-    const environmentPrompt = turnContext.system[0]?.content;
 
-    expect(environmentPrompt).toContain("Current time:");
-    expect(environmentPrompt).toContain("Current timezone:");
-    expect(environmentPrompt).not.toContain("Knowledge cutoff");
-    expect(turnContext.system[1]).toEqual({
+    expect(turnContext.system).toEqual([{
       role: "system",
       content: "Agent-specific prompt.",
+    }]);
+  });
+
+  it("preserves agent-level system message events", async () => {
+    process.env.CONVERSATIONS_TABLE_NAME = "conversations";
+    process.env.PROCESSED_EVENTS_TABLE_NAME = "processed-events";
+    process.env.FILESYSTEM_BUCKET_NAME = "filesystem";
+    const { Session } = await import("../functions/harness-processing/session.ts");
+    const session = new Session("event", "conversation", "acct", "agent", {
+      agent: {
+        system: [{
+          role: "system",
+          content: "Use cached policy.",
+          providerOptions: { anthropic: { cacheControl: { type: "ephemeral" } } },
+        }],
+      },
     });
+
+    const turnContext = await session.createEphemeralTurnContext([{ role: "user", content: "hello" }]);
+
+    expect(turnContext.system).toEqual([{
+      role: "system",
+      content: "Use cached policy.",
+      providerOptions: { anthropic: { cacheControl: { type: "ephemeral" } } },
+    }]);
   });
 
   it("tells the model to use matching predefined subagent ids", async () => {

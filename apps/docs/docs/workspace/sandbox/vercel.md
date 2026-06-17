@@ -70,19 +70,28 @@ Vercel enforces all three normalized modes natively:
 
 ## Workspace Storage Caveat
 
-A workspace backed by a persistent Vercel sandbox lives on Vercel's filesystem. It is not
-mounted from the shared S3 workspace bucket and is not shared with Lambda, Daytona, or
-Kubernetes sandboxes. Use it when the agent and workspace are intentionally Vercel-only.
-The workspace config value `storage.provider: "vercel"` labels this setup but does not
-itself switch any behavior — the persistence comes from the sandbox. Note `MEMORY.md`
-prompt loading always reads from S3, so a Vercel-only workspace's `MEMORY.md` does not
-reach the system prompt.
+Vercel persistent sandboxes have provider-native filesystem state, but they are not wired
+to the shared S3 workspace bucket. Attaching an S3 workspace to a Vercel sandbox is
+rejected, and `workspace.storage.provider: "vercel"` is also rejected until Vercel Drive
+workspace storage is wired.
 
-Without `persistent: true`, the Vercel provider still works for stateless `bash`
-(create → run → stop per call), but workspace-backed file tools are unavailable.
+Vercel also provides Sandbox Drives as native persistent storage that can be mounted into
+sandboxes. The current executor does not use Drives and does not expose Drive sizing or
+mount configuration; it relies on the named persistent sandbox filesystem managed by
+`@vercel/sandbox`.
+
+Without a workspace, the Vercel provider works for `bash` (create → run → stop per call,
+or named persistent sandbox when `persistent: true`). Workspace-backed file tools are
+unavailable.
 
 ## Background Jobs
 
-Persistent Vercel sandboxes support `bash` background jobs and `async_status` using the same
-`.fp-jobs` marker scripts as E2B and Daytona. Auto-delivery still needs egress to the harness
+Persistent Vercel sandboxes support `bash` background jobs and `async_status` using the
+harness job-control scripts also used by Daytona and Kubernetes. Auto-delivery still needs egress to the harness
 Function URL; with `deny-all` the job runs, but completion must be fetched by polling.
+
+## Troubleshooting
+
+| Symptom | Cause / fix |
+| --- | --- |
+| `Vercel Sandbox rejected the request (HTTP 403 / 401)` | The `VERCEL_TOKEN` is invalid/expired or doesn't have access to the configured team/project. Verify the token at vercel.com/account/tokens and that `VERCEL_TEAM_ID` / `VERCEL_PROJECT_ID` belong to a project the token can reach (a quick check: `GET https://api.vercel.com/v2/user` with the token should return your user, not `invalidToken`). |

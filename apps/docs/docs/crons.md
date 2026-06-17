@@ -55,7 +55,7 @@ Supported schedule expressions are AWS EventBridge Scheduler expressions: `cron(
 | Yearly, Jan 1 09:00 | `cron(0 9 1 1 ? *)` |
 | Once, at a fixed time | `at(2027-01-01T09:00:00)` |
 
-`timezone` maps to EventBridge Scheduler `ScheduleExpressionTimezone`. When omitted, schedules are evaluated in UTC. Use an IANA timezone such as `Europe/Amsterdam` when account owners expect local wall-clock time.
+`timezone` maps to EventBridge Scheduler `ScheduleExpressionTimezone`. When omitted, schedules are evaluated in UTC. Use an IANA timezone such as `Europe/Amsterdam` when account owners expect local wall-clock time. This only controls schedule evaluation; it is not injected into the agent prompt.
 
 Pause a job:
 

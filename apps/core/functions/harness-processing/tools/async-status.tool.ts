@@ -139,7 +139,9 @@ The result is delivered back into the conversation automatically when it finishe
             return toolText(await settleTerminalJob(statusId, executor, job, stopped));
           }
 
-          if (!executor.jobStatus) return toolError("Error: this sandbox does not support job status");
+          if (!executor.jobStatus) {
+            return toolText("running — this sandbox does not support live job status; the result will be delivered automatically when it completes.");
+          }
           const status = await executor.jobStatus({ jobId: job.jobId, namespace: job.namespace });
           if (status.state === "running") {
             return toolText(`running (job ${job.jobId})`);

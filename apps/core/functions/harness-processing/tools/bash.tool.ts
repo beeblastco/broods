@@ -15,6 +15,8 @@ import {
   runtimeDescription,
   runSandbox,
   runSandboxBackground,
+  sandboxSupportsBackgroundJobs,
+  sandboxSupportsJobControls,
   toolError,
   toolText,
   workspaceParamSchema,
@@ -40,7 +42,7 @@ interface BashInput {
 // Background jobs need a persistent workspace sandbox (to outlive the request)
 // and a parent session to track the job as an AsyncToolResult.
 function backgroundAvailable(context: SandboxToolContext): boolean {
-  return Boolean(context.background) && context.workspaces.some((workspace) => workspace.sandbox?.persistent === true);
+  return Boolean(context.background) && context.workspaces.some((workspace) => sandboxSupportsBackgroundJobs(workspace.sandbox));
 }
 
 function inputSchema(context: SandboxToolContext): JSONSchema7 {
@@ -105,6 +107,9 @@ async function dispatchBackground(
   if (!ws || ws.sandbox?.persistent !== true) {
     return toolError("Error: background jobs require a persistent workspace sandbox");
   }
+  if (!sandboxSupportsBackgroundJobs(ws.sandbox)) {
+    return toolError("Error: this workspace sandbox does not support background jobs");
+  }
   if (!context.background) {
     return toolError("Error: background jobs are not available in this context");
   }
@@ -120,6 +125,9 @@ async function dispatchBackground(
   const callback: SandboxJobCallback | undefined = baseUrl
     ? { url: `${baseUrl}/sandbox-jobs/${encodeURIComponent(resultId)}/complete`, token: completionToken }
     : undefined;
+  if (!callback && !sandboxSupportsJobControls(ws.sandbox)) {
+    return toolError("Error: this sandbox requires AGENT_SERVICE_URL or Lambda Function URL for background job completion");
+  }
 
   // Create + seal the tracking row BEFORE launching so a fast job's callback can
   // never arrive before the row exists.
@@ -157,10 +165,13 @@ async function dispatchBackground(
   const delivery = callback
     ? "Its result will be delivered back into this conversation when it finishes."
     : "Poll async_status with this statusId to retrieve the result (automatic delivery is unavailable in this environment).";
+  const controls = sandboxSupportsJobControls(ws.sandbox)
+    ? `You can also use async_status to check status, tail logs (action "logs"), or stop it (action "stop").`
+    : `You can use async_status with this statusId to read the completed result after delivery; this sandbox does not support live log tailing or stop controls.`;
   return toolText( 
     // We use statusId for model facing, but the database saved record as resultId for consistency with async tool results in general (not just status updates).
     `Started background job ${jobId} (statusId: ${resultId}). ${delivery} ` +
-      `You can also use async_status to check status, tail logs (action "logs"), or stop it (action "stop").`,
+      controls,
   );
 }
 

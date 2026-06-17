@@ -17,12 +17,16 @@ import {
 import type { LambdaFunctionURLEvent } from "aws-lambda";
 import { resolveBearerAuth, type AuthContext } from "../_shared/auth.ts";
 import {
+  applyRunOverrides,
   getStorage,
+  MODEL_CONFIG_SETTING_KEYS,
+  RUN_OVERRIDE_RESERVED_MODEL_KEYS,
   toChannelRuntimeAgentConfig,
   toRuntimeAgentConfig,
   type AccountRecord,
   type AgentConfig,
   type AgentRecord,
+  type RunOverrides,
 } from "../_shared/storage/index.ts";
 import type {
   ChannelActions,
@@ -73,6 +77,8 @@ export interface DirectInboundEvent {
   publicConversationKey: string;
   events: DirectIngressEvent[];
   connectionId?: string;
+  // One-turn system events from the direct request. Model overrides are already folded into agentConfig.
+  ephemeralSystem?: SystemModelMessage[];
   // Set on a continuation that should also push its final text to a chat
   // channel (a background job launched from Telegram/Slack/etc.). The worker
   // rebuilds the sender from the agent config via sendChannelReply.
@@ -711,7 +717,7 @@ async function parseDirectPayload(
     throw new Error("Request body must be a JSON object");
   }
 
-  const record = normalizeDirectPayloadShape(parsed as Record<string, unknown>);
+  const record = parsed as Record<string, unknown>;
   if (typeof record.eventId !== "string" || typeof record.conversationKey !== "string") {
     throw new Error("Request body must include eventId and conversationKey");
   }
@@ -736,37 +742,77 @@ async function parseDirectPayload(
     throw new Error("Per-request webhook callbacks are no longer supported; configure config.hooks.webhook on the agent");
   }
 
+  const overrides = parseRunOverrides(record);
+
   return {
     accountId: account.accountId,
     agentId: agent.agentId,
-    agentConfig: toRuntimeAgentConfig(agent.config),
+    agentConfig: applyRunOverrides(toRuntimeAgentConfig(agent.config), overrides),
     eventId: scopedDirectEventId(account.accountId, agent.agentId, rawEventId),
     publicEventId: rawEventId,
     conversationKey: scopedDirectConversationKey(account.accountId, agent.agentId, rawConversationKey),
     publicConversationKey: rawConversationKey,
     events,
+    ...(overrides?.system ? { ephemeralSystem: overrides.system } : {}),
   };
 }
 
-function normalizeDirectPayloadShape(record: Record<string, unknown>): Record<string, unknown> {
-  if (typeof record.message !== "string" || Array.isArray(record.events)) {
-    return record;
+/**
+ * Validates optional per-run overrides from a request body. `model` rejects the
+ * reserved identity/credential keys (RUN_OVERRIDE_RESERVED_MODEL_KEYS), rejects unsupported
+ * keys, and forwards AI SDK call settings/providerOptions to the same
+ * model path as the stored config. Returns undefined when absent.
+ */
+export function parseRunOverrides(record: Record<string, unknown>): RunOverrides | undefined {
+  if (record.params !== undefined) {
+    throw new Error("Request body params is not supported; use top-level system and model");
+  }
+  const overrides: RunOverrides = {};
+
+  if (record.system !== undefined) {
+    overrides.system = parseSystemOverride(record.system);
   }
 
-  return {
-    ...record,
-    agentId: typeof record.agentId === "string" ? record.agentId : undefined,
-    eventId: typeof record.eventId === "string" ? record.eventId : `evt-${crypto.randomUUID()}`,
-    conversationKey: typeof record.conversationKey === "string"
-      ? record.conversationKey
-      : typeof record.sessionId === "string"
-        ? record.sessionId
-        : `session-${crypto.randomUUID()}`,
-    events: [{
-      role: "user",
-      content: [{ type: "text", text: record.message }],
-    }],
-  };
+  if (record.model !== undefined) {
+    if (typeof record.model !== "object" || record.model === null || Array.isArray(record.model)) {
+      throw new Error("model must be an object");
+    }
+    const reserved = new Set<string>(RUN_OVERRIDE_RESERVED_MODEL_KEYS);
+    const supportedSettings = new Set<string>(MODEL_CONFIG_SETTING_KEYS);
+    const model: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(record.model)) {
+      if (reserved.has(key)) {
+        throw new Error(`model.${key} cannot be overridden per run`);
+      }
+      if (!supportedSettings.has(key)) {
+        throw new Error(`model.${key} is not supported; use model.providerOptions for provider-specific settings`);
+      }
+      model[key] = value;
+    }
+    if (Object.keys(model).length > 0) {
+      overrides.model = model;
+    }
+  }
+
+  return Object.keys(overrides).length > 0 ? overrides : undefined;
+}
+
+function parseSystemOverride(raw: unknown): SystemModelMessage[] {
+  const values = Array.isArray(raw) ? raw : [raw];
+  if (values.length === 0) {
+    throw new Error("system must include at least one SystemModelMessage");
+  }
+
+  return values.map((value) => {
+    const parsed = systemModelMessageSchema.safeParse(value);
+    if (!parsed.success) {
+      throw new Error(`system must be a SystemModelMessage or array of SystemModelMessage: ${
+        parsed.error.issues[0]?.message ?? "invalid system message"
+      }`);
+    }
+
+    return parsed.data;
+  });
 }
 
 function parseStatusPath(rawPath: string, rawQueryString: string, account: AccountRecord): StatusInboundEvent {

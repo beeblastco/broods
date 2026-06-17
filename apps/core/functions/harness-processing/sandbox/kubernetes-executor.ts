@@ -520,7 +520,16 @@ export class KubernetesSandboxExecutor implements SandboxExecutor {
       }
       await sleep(POD_POLL_INTERVAL_MS);
     }
-    const reason = last?.status?.containerStatuses?.[0]?.state?.waiting?.reason;
+    const waiting = last?.status?.containerStatuses?.[0]?.state?.waiting;
+    const reason = waiting?.reason;
+    if (reason === "ErrImagePull" || reason === "ImagePullBackOff") {
+      const image = last?.spec?.containers?.[0]?.image ?? DEFAULT_IMAGE;
+      throw new Error(
+        `sandbox image ${image} could not be pulled (${reason}). The cluster has no pull access — ` +
+        `make the image's registry package public, or attach an image pull secret to the ` +
+        `'agent-sandboxes' service account (set KUBERNETES_SANDBOX_IMAGE_PULL_SECRETS).`,
+      );
+    }
     throw new Error(`sandbox pod ${name} not ready within ${POD_READY_TIMEOUT_MS}ms${reason ? ` (${reason})` : ""}`);
   }
 

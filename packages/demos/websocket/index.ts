@@ -5,22 +5,20 @@
 import { WebsocketClient } from "filthy-panty";
 import { api } from "./filthypanty/_generated/api";
 
-const endpointId = api.agents.chat.endpointId;
-if (!endpointId) {
-  throw new Error("WebSocket demo requires generated endpoint metadata. Run `bun run dev` or `bun run deploy` first.");
-}
-
 const client = new WebsocketClient({
-  host: process.env.FILTHY_PANTY_HOST,
+  host: process.env.FILTHY_PANTY_HOST!,
   apiKey: process.env.FILTHY_PANTY_API_KEY!,
 });
 
 for await (const message of client.stream({
-  endpointId,
+  endpointId: api.agents.chat.endpointId,
   projectSlug: api.agents.chat.projectSlug,
   environmentSlug: api.agents.chat.environmentSlug,
   sessionId: "websocket-demo",
-  message: "Reply with one sentence confirming this websocket demo is connected.",
+  events: [{
+    role: "user",
+    content: [{ type: "text", text: "Generate a short story about two unlikely friends." }],
+  }],
 })) {
   switch (message.type) {
     case "meta":
