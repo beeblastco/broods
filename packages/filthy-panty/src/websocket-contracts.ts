@@ -3,23 +3,16 @@
  */
 
 import type { AgentRunEventInput, AgentRunOverrides } from "./run-input.ts";
+import type { AgentStreamPart } from "./stream.ts";
+
+export type WebSocketStreamMessage = AgentStreamPart | {
+  type: string;
+  [key: string]: unknown;
+};
 
 export type WebSocketServerMessage =
   | { type: "meta"; sessionId: string; taskId: string }
-  | { type: "sse"; chunk: string }
-  | { type: "continuation_delta"; delta: string }
-  | { type: "subagent_delta"; sessionId: string; taskId: string; agentName?: string; delta: string }
-  | {
-    type: "subagent_activity";
-    sessionId: string;
-    taskId: string;
-    agentName?: string;
-    phase: "started" | "tool_call" | "tool_result";
-    toolNames?: string[];
-  }
-  | { type: "subagent_result"; output: string }
-  | { type: "done" }
-  | { type: "error"; error: string; status?: number };
+  | WebSocketStreamMessage;
 
 export type WebSocketClientExecuteMessage = {
   type: "execute";
