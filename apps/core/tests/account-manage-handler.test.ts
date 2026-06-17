@@ -144,7 +144,7 @@ describe("account management HTTP handler", () => {
     expect(responseJson(response)).toEqual({ error: "Cron jobs are unavailable" });
   });
 
-  it("allows service tokens only on self cron routes", async () => {
+  it("allows service tokens on self cron, skill, and tool routes only", async () => {
     process.env.SERVICE_AUTH_SECRET = "service-secret";
     process.env.CRONS_TABLE_NAME = "crons";
     process.env.CRON_SCHEDULER_ROLE_ARN = "arn:aws:iam::123456789012:role/scheduler";
@@ -162,18 +162,25 @@ describe("account management HTTP handler", () => {
       authorization: "Bearer service-secret",
       "x-account-id": "acct_test",
     };
+    const serviceTokenRejection = { error: "Service token is not allowed for this account endpoint" };
 
     for (const path of [
       "/accounts/me",
       "/accounts/me/agents",
-      "/accounts/me/skills",
-      "/accounts/me/tools",
       "/accounts/me/sandboxes",
       "/accounts/me/workspaces",
     ]) {
       const response = await handler(createEvent("GET", path, serviceHeaders));
       expect(response.statusCode).toBe(400);
-      expect(responseJson(response)).toEqual({ error: "Service token is not allowed for this account endpoint" });
+      expect(responseJson(response)).toEqual(serviceTokenRejection);
+    }
+
+    // Skill/tool sync routes accept the account-scoped service token (the Convex CLI
+    // sync path); the request gets past auth (downstream listing may fail without S3,
+    // but it is never the service-token rejection).
+    for (const path of ["/accounts/me/skills", "/accounts/me/tools"]) {
+      const response = await handler(createEvent("GET", path, serviceHeaders));
+      expect(responseJson(response)).not.toEqual(serviceTokenRejection);
     }
 
     const cronResponse = await handler(createEvent("GET", "/accounts/me/crons", serviceHeaders));

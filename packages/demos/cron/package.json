@@ -1,5 +1,5 @@
 {
-  "name": "@filthy-panty/demo-cron-job",
+  "name": "@filthy-panty/demo-cron",
   "type": "module",
   "private": true,
   "scripts": {

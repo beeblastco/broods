@@ -98,3 +98,9 @@ Override defaults with:
 ## Dependencies
 
 Use an image or image builder with packages installed before runtime.
+
+## Troubleshooting
+
+| Symptom | Cause / fix |
+| --- | --- |
+| `Daytona has no available runner for snapshot '<name>'` | The snapshot is **non-general** (pinned to one runner) or that runner is at capacity. Rebuild it as a general snapshot so any runner in the region can schedule it, drop the `target` region pin if it doesn't match the snapshot's region, or retry. Capacity is Daytona-side. |

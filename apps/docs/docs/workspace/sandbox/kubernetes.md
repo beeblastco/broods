@@ -132,3 +132,10 @@ bun run packages/demos/sandbox-kubernetes-direct.ts
 Lambda honors it.)
 
 The full agent flow example is `packages/demos/sandbox-workspace-kubernetes.ts`.
+
+## Troubleshooting
+
+| Symptom | Cause / fix |
+| --- | --- |
+| `sandbox pod ... not ready ... (ErrImagePull / ImagePullBackOff)` | The sandbox pod can't pull the private runtime image. Attach the registry pull secret (`ghcr-pull-secret`) to the `agent-sandboxes` `default` and `agent-sandbox-workspace` service accounts (the infra "Deploy Kubernetes Apps" workflow does this), set `KUBERNETES_SANDBOX_IMAGE_PULL_SECRETS`, or make the image package public. Verify with `kubectl describe pod <name> -n agent-sandboxes`. |
+| Harness gets `401` from the cluster API | SA token expired or kubeconfig not base64; regenerate. |

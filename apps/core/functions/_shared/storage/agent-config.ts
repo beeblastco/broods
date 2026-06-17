@@ -4,7 +4,8 @@
  * Account types and auth live in `./accounts.ts` and `../auth.ts`.
  */
 
-import type { JSONSchema7 } from "ai";
+import type { CallSettings, JSONSchema7, SystemModelMessage, streamText } from "ai";
+import { systemModelMessageSchema } from "ai";
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto";
 import type { ChannelStreamMode } from "../channel-streaming.ts";
 import { requireEnv } from "../env.ts";
@@ -54,9 +55,47 @@ export interface AgentConfig {
 
 export interface AgentBehaviorConfig {
   maxTurn?: number;
-  system?: string;
+  system?: string | SystemModelMessage | SystemModelMessage[];
   [key: string]: unknown;
 }
+
+/**
+ * Per-invocation overrides supplied on a single request. They never persist:
+ * applyRunOverrides folds them into a copy of the agent config for one run only.
+ */
+export interface RunOverrides {
+  system?: SystemModelMessage[];
+  model?: Partial<AgentModelConfig>;
+}
+
+// A per-run `model` override may tune sampling (the Vercel AI SDK `CallSettings`:
+// temperature, topP, topK, maxOutputTokens, …) and provider-specific
+// `providerOptions`. Identity/credential keys are rejected.
+export const RUN_OVERRIDE_RESERVED_MODEL_KEYS = [
+  "provider",
+  "modelId",
+  "output",
+  "apiKey",
+] as const;
+
+type StreamTextOptions = Parameters<typeof streamText>[0];
+export type AgentModelProviderOptions = StreamTextOptions["providerOptions"];
+export const MODEL_CONFIG_SETTING_KEYS = [
+  "provider",
+  "modelId",
+  "providerOptions",
+  "output",
+  "maxOutputTokens",
+  "temperature",
+  "topP",
+  "topK",
+  "presencePenalty",
+  "frequencyPenalty",
+  "stopSequences",
+  "seed",
+  "maxRetries",
+  "timeout",
+] as const;
 
 export interface AgentSkillsConfig {
   enabled?: boolean;
@@ -72,23 +111,11 @@ export interface AgentSubagentConfig {
   [key: string]: unknown;
 }
 
-export interface AgentModelConfig {
+export interface AgentModelConfig extends Omit<CallSettings, "abortSignal" | "headers"> {
   provider?: AccountModelProviderName;
   modelId?: string;
-  options?: Record<string, unknown>;
+  providerOptions?: AgentModelProviderOptions;
   output?: AgentModelOutputConfig;
-  /**
-   * Convenience aliases for common AI SDK provider options. At runtime these
-   * are translated into `providerOptions` for the active provider and merged
-   * with `options`, which remains the raw providerOptions escape hatch.
-   */
-  thinking?: Record<string, unknown>;
-  thinkingConfig?: Record<string, unknown>;
-  thinkingEffort?: string;
-  reasoningEffort?: string;
-  reasoningSummary?: string;
-  effort?: string;
-  [key: string]: unknown;
 }
 
 export type AgentModelOutputConfig =
@@ -366,7 +393,26 @@ function normalizeAgentBehaviorConfig(value: unknown): void {
 
   const config = value as Record<string, unknown>;
   assertOptionalPositiveInteger(config.maxTurn, "config.agent.maxTurn", AGENT_MAX_TURN_LIMIT);
-  assertOptionalString(config.system, "config.agent.system");
+  validateAgentSystemConfig(config.system);
+}
+
+function validateAgentSystemConfig(value: unknown): void {
+  if (value === undefined) {
+    return;
+  }
+  if (typeof value === "string") {
+    return;
+  }
+
+  const values = Array.isArray(value) ? value : [value];
+  for (const entry of values) {
+    const parsed = systemModelMessageSchema.safeParse(entry);
+    if (!parsed.success) {
+      throw new Error(`config.agent.system must be a string, SystemModelMessage, or SystemModelMessage[]: ${
+        parsed.error.issues[0]?.message ?? "invalid system message"
+      }`);
+    }
+  }
 }
 
 function normalizeModelConfig(value: unknown): void {
@@ -378,21 +424,16 @@ function normalizeModelConfig(value: unknown): void {
   }
 
   const config = value as Record<string, unknown>;
+  for (const key of Object.keys(config)) {
+    if (!MODEL_CONFIG_SETTING_KEYS.includes(key as (typeof MODEL_CONFIG_SETTING_KEYS)[number])) {
+      throw new Error(`config.model.${key} is not supported; use config.model.providerOptions for provider-specific settings`);
+    }
+  }
   assertOptionalProviderName(config.provider, "config.model.provider");
   assertOptionalString(config.modelId, "config.model.modelId");
-  if (config.options !== undefined && !isPlainObject(config.options)) {
-    throw new Error("config.model.options must be an object");
+  if (config.providerOptions !== undefined && !isPlainObject(config.providerOptions)) {
+    throw new Error("config.model.providerOptions must be an object");
   }
-  if (config.thinking !== undefined && !isPlainObject(config.thinking)) {
-    throw new Error("config.model.thinking must be an object");
-  }
-  if (config.thinkingConfig !== undefined && !isPlainObject(config.thinkingConfig)) {
-    throw new Error("config.model.thinkingConfig must be an object");
-  }
-  assertOptionalString(config.thinkingEffort, "config.model.thinkingEffort");
-  assertOptionalString(config.reasoningEffort, "config.model.reasoningEffort");
-  assertOptionalString(config.reasoningSummary, "config.model.reasoningSummary");
-  assertOptionalString(config.effort, "config.model.effort");
   normalizeModelOutputConfig(config.output);
 }
 
@@ -1083,6 +1124,23 @@ function isEncryptedAgentConfig(value: unknown): value is EncryptedAgentConfig {
 
 export function mergeAgentConfig(existing: AgentConfig, patch: AgentConfigPatch): AgentConfig {
     return normalizeAgentConfig(mergeConfigValue(existing, patch));
+}
+
+/**
+ * Folds per-run overrides into a shallow copy of the agent config for one
+ * invocation. Model overrides ride on `model` and are read where the config
+ * already flows. `system` is handled separately as ephemeral system messages.
+ * Returns the original config untouched when there are no model overrides.
+ */
+export function applyRunOverrides(config: AgentConfig, overrides?: RunOverrides): AgentConfig {
+    if (!overrides || !(overrides.model && Object.keys(overrides.model).length > 0)) {
+        return config;
+    }
+    const next: AgentConfig = { ...config };
+    if (overrides.model && Object.keys(overrides.model).length > 0) {
+        next.model = { ...config.model, ...overrides.model };
+    }
+    return next;
 }
 
 function mergeConfigValue(existing: unknown, patch: unknown): unknown {

@@ -1,39 +1,54 @@
 import { defineAgent, defineSandbox, defineWorkspace, env } from "filthy-panty";
 
-export const lambdaSandbox = defineSandbox("lambda-sandbox", {
-  provider: "lambda",
-  permissionMode: "bypass",
-  timeout: 30,
-  outputLimitBytes: 65536,
-  network: { mode: "deny-all" },
+export const lambdaSandbox = defineSandbox({
+  name: "lambda-sandbox",
+  config: {
+    provider: "lambda",
+    permissionMode: "bypass",
+    timeout: 30,
+    outputLimitBytes: 65536,
+    network: { mode: "deny-all" },
+  },
 });
 
-export const personalWorkspace = defineWorkspace("personal", {
-  storage: { provider: "s3" },
-}, { description: "Agent notes workspace" });
+export const personalWorkspace = defineWorkspace({
+  name: "personal",
+  description: "Agent notes workspace",
+  config: {
+    storage: { provider: "s3" },
+  },
+});
 
-export const teamWorkspace = defineWorkspace("team", {
-  storage: { provider: "s3" },
-}, { description: "Shared team workspace" });
+export const teamWorkspace = defineWorkspace({
+  name: "team",
+  description: "Shared team workspace",
+  config: {
+    storage: { provider: "s3" },
+  },
+});
 
-export const multiWorkspaceAgent = defineAgent("multi-workspace-agent", {
-  provider: {
-    google: { apiKey: env.GOOGLE_API_KEY },
+export const multiWorkspaceAgent = defineAgent({
+  name: "multi-workspace-agent",
+  config: {
+    provider: {
+      minimax: {
+        apiKey: env.MINIMAX_API_KEY
+      },
+    },
+    model: {
+      provider: "minimax",
+      modelId: "MiniMax-M3",
+    },
+    agent: {
+      system: [
+        "You are testing named workspaces.",
+        "Use the bash tool for every filesystem check.",
+        "Use the default personal workspace for notes.",
+        "Use the team workspace when the user asks for shared team files.",
+        "Report any bash tool error exactly.",
+      ].join("\n"),
+    },
+    sandbox: lambdaSandbox,
+    workspaces: [personalWorkspace, teamWorkspace],
   },
-  model: {
-    provider: "google",
-    modelId: "gemma-4-31b-it",
-    temperature: 0,
-  },
-  agent: {
-    system: [
-      "You are testing named workspaces.",
-      "Use the bash tool for every filesystem check.",
-      "Use the default personal workspace for notes.",
-      "Use the team workspace when the user asks for shared team files.",
-      "Report any bash tool error exactly.",
-    ].join("\n"),
-  },
-  sandbox: lambdaSandbox,
-  workspaces: [personalWorkspace, teamWorkspace],
 });

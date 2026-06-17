@@ -32,13 +32,8 @@ const NESTED_BRANCHES = [
 /** Cherry-coke columns that round-trip through `model` / `agent` branches. */
 const MODEL_OPTION_KEYS = ["temperature", "maxTokens"] as const;
 
-/**
- * Workspace sub-keys removed from filthy-panty's `AgentWorkspaceConfig`. They are
- * stripped on projection so the Config tab and synced runtime config drop the
- * legacy shape, and a subsequent save persists the cleaned branch.
- */
-const LEGACY_WORKSPACE_KEYS = ["memory", "tasks", "filesystem"] as const;
-const LEGACY_SANDBOX_KEYS = ["filesystem"] as const;
+const UNSUPPORTED_WORKSPACE_KEYS = ["memory", "tasks", "filesystem"] as const;
+const UNSUPPORTED_SANDBOX_KEYS = ["filesystem"] as const;
 
 /** Cherry-coke flat `agentConfigs` document shape (only fields we touch). */
 export interface FlatAgentConfig {
@@ -67,6 +62,27 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
     return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+/**
+ * One-level-deep merge of two `providerOptions` maps. Provider sub-objects
+ * (e.g. `anthropic`, `openai`) merge key-by-key rather than replacing wholesale,
+ * so options kept in separate stores — reasoning in `extraConfig.model` vs other
+ * provider options in the flat column — don't clobber each other. `overlay` wins
+ * on direct key conflicts.
+ */
+function mergeProviderOptions(base: unknown, overlay: unknown): Record<string, unknown> {
+    const result: Record<string, unknown> = isPlainObject(base) ? { ...base } : {};
+    if (isPlainObject(overlay)) {
+        for (const [key, value] of Object.entries(overlay)) {
+            const existing = result[key];
+            result[key] = isPlainObject(existing) && isPlainObject(value)
+                ? { ...existing, ...value }
+                : value;
+        }
+    }
+
+    return result;
+}
+
 function pruneEmpty(value: Record<string, unknown>): Record<string, unknown> | undefined {
     const cleaned: Record<string, unknown> = {};
     for (const [key, raw] of Object.entries(value)) {
@@ -81,18 +97,26 @@ function pruneEmpty(value: Record<string, unknown>): Record<string, unknown> | u
     return Object.keys(cleaned).length === 0 ? undefined : cleaned;
 }
 
+function assertNoUnsupportedKeys(value: Record<string, unknown>, keys: readonly string[], path: string): void {
+    for (const key of keys) {
+        if (value[key] !== undefined) {
+            throw new Error(`${path}.${key} is not supported`);
+        }
+    }
+}
+
 /** Project a flat dashboard row into the nested filthy-panty shape. */
 export function toNestedAgentConfig(flat: FlatAgentConfig): NestedAgentConfig {
     const extra = isPlainObject(flat.extraConfig) ? flat.extraConfig : {};
 
     const agent: Record<string, unknown> = { ...((extra.agent as Record<string, unknown> | undefined) ?? {}) };
     if (flat.maxTurns !== undefined) agent.maxTurn = flat.maxTurns;
-    if (flat.systemPrompt) agent.system = flat.systemPrompt;
+    if (flat.systemPrompt && agent.system === undefined) agent.system = flat.systemPrompt;
 
-    const modelOptions: Record<string, unknown> = {
-        ...((extra.model as Record<string, unknown> | undefined)?.options as Record<string, unknown> | undefined ?? {}),
-        ...(isPlainObject(flat.providerOptions) ? flat.providerOptions : {}),
-    };
+    const modelOptions = mergeProviderOptions(
+        (extra.model as Record<string, unknown> | undefined)?.providerOptions,
+        flat.providerOptions,
+    );
     for (const key of MODEL_OPTION_KEYS) {
         if (flat[key] !== undefined) modelOptions[key] = flat[key];
     }
@@ -102,7 +126,8 @@ export function toNestedAgentConfig(flat: FlatAgentConfig): NestedAgentConfig {
     };
     if (flat.provider) model.provider = flat.provider;
     if (flat.modelId) model.modelId = flat.modelId;
-    if (Object.keys(modelOptions).length > 0) model.options = modelOptions;
+    assertNoUnsupportedKeys(model, ["options"], "config.model");
+    if (Object.keys(modelOptions).length > 0) model.providerOptions = modelOptions;
     if (flat.outputFormat !== undefined) model.output = flat.outputFormat;
 
     // Provider settings — kept entirely in extraConfig.provider.
@@ -115,10 +140,10 @@ export function toNestedAgentConfig(flat: FlatAgentConfig): NestedAgentConfig {
     }
 
     const workspace: Record<string, unknown> = { ...((extra.workspace as Record<string, unknown> | undefined) ?? {}) };
-    for (const legacyKey of LEGACY_WORKSPACE_KEYS) delete workspace[legacyKey];
+    assertNoUnsupportedKeys(workspace, UNSUPPORTED_WORKSPACE_KEYS, "config.workspace");
     if (isPlainObject(workspace.sandbox)) {
         const sandbox = { ...workspace.sandbox };
-        for (const legacyKey of LEGACY_SANDBOX_KEYS) delete sandbox[legacyKey];
+        assertNoUnsupportedKeys(sandbox, UNSUPPORTED_SANDBOX_KEYS, "config.workspace.sandbox");
         workspace.sandbox = sandbox;
     }
 
@@ -182,7 +207,9 @@ export function fromNestedAgentConfig(nested: NestedAgentConfig): FlatPatch {
 
     const agent = isPlainObject(nested.agent) ? { ...nested.agent } : undefined;
     const model = isPlainObject(nested.model) ? { ...nested.model } : undefined;
-    const modelOptions = isPlainObject(model?.options) ? { ...(model.options as Record<string, unknown>) } : undefined;
+    const modelOptions = isPlainObject(model?.providerOptions)
+        ? { ...(model.providerOptions as Record<string, unknown>) }
+        : undefined;
     const tools = isPlainObject(nested.tools) ? { ...nested.tools } : undefined;
     const workspace = isPlainObject(nested.workspace) ? { ...nested.workspace } : undefined;
 
@@ -224,7 +251,7 @@ export function fromNestedAgentConfig(nested: NestedAgentConfig): FlatPatch {
             if (Object.keys(modelOptions).length > 0) {
                 patch.providerOptions = modelOptions;
             }
-            delete model.options;
+            delete model.providerOptions;
         }
     }
 
@@ -290,4 +317,126 @@ export function substituteEnvPlaceholders<T>(
         return result as unknown as T;
     }
     return config;
+}
+
+/**
+ * Vercel AI SDK `providerOptions` keys the budget/effort knobs own per provider.
+ * Only these are cleared on rewrite so unrelated options the UI doesn't manage
+ * (e.g. OpenAI `reasoningSummary`) survive. MiniMax's default provider is
+ * Anthropic-compatible, so it reuses the `anthropic` slot. Mirrors the
+ * per-provider table in the core docs (getting-started → "Reasoning / thinking
+ * tokens").
+ */
+const REASONING_PROVIDER_KEYS: Record<string, string[]> = {
+    openai: ["reasoningEffort"],
+    anthropic: ["thinking", "effort"],
+    google: ["thinkingConfig"],
+};
+
+/** The `providerOptions` slot a provider stores reasoning under, if any. */
+function reasoningSlot(provider: string): "openai" | "anthropic" | "google" | undefined {
+    if (provider === "minimax") return "anthropic";
+    if (provider === "openai" || provider === "anthropic" || provider === "google") return provider;
+
+    return undefined;
+}
+
+/**
+ * Build the reasoning slice for a provider's `providerOptions` sub-object from
+ * the dashboard's two knobs. Budget tokens map to Anthropic/MiniMax `thinking`
+ * or Google `thinkingConfig.thinkingBudget`; effort maps to OpenAI
+ * `reasoningEffort` or Anthropic `effort`. Returns undefined when neither knob
+ * applies to the slot.
+ */
+function reasoningSlice(
+    slot: "openai" | "anthropic" | "google",
+    next: { budgetTokens?: number; effort?: string },
+): Record<string, unknown> | undefined {
+    if (slot === "openai") {
+        return next.effort ? { reasoningEffort: next.effort } : undefined;
+    }
+    if (slot === "google") {
+        return typeof next.budgetTokens === "number"
+            ? { thinkingConfig: { thinkingBudget: next.budgetTokens, includeThoughts: true } }
+            : undefined;
+    }
+
+    // anthropic (and minimax via the anthropic slot): prefer an explicit budget,
+    // otherwise fall back to effort.
+    if (typeof next.budgetTokens === "number") {
+        return { thinking: { type: "enabled", budgetTokens: next.budgetTokens } };
+    }
+
+    return next.effort ? { effort: next.effort } : undefined;
+}
+
+/**
+ * Rewrite the reasoning portion of a `model` branch for `provider`, returning a
+ * new model object. Strips every provider's known reasoning keys first (so
+ * toggling off or switching providers leaves no residue) plus the removed
+ * top-level aliases (`thinking`, `thinkingEffort`, …) the core rejects, then
+ * writes the active provider's reasoning under `model.providerOptions`.
+ */
+export function applyModelReasoning(
+    model: Record<string, unknown>,
+    provider: string,
+    next: { budgetTokens?: number; effort?: string },
+): Record<string, unknown> {
+    const result: Record<string, unknown> = { ...model };
+    for (const alias of ["thinking", "thinkingConfig", "thinkingEffort", "reasoningEffort", "reasoningSummary", "effort"]) {
+        delete result[alias];
+    }
+
+    const providerOptions: Record<string, unknown> = isPlainObject(result.providerOptions)
+        ? { ...result.providerOptions }
+        : {};
+    for (const [slot, keys] of Object.entries(REASONING_PROVIDER_KEYS)) {
+        if (!isPlainObject(providerOptions[slot])) continue;
+        const sub = { ...providerOptions[slot] };
+        for (const key of keys) delete sub[key];
+        if (Object.keys(sub).length > 0) providerOptions[slot] = sub;
+        else delete providerOptions[slot];
+    }
+
+    const slot = reasoningSlot(provider);
+    const slice = slot ? reasoningSlice(slot, next) : undefined;
+    if (slot && slice) {
+        const existing = isPlainObject(providerOptions[slot]) ? providerOptions[slot] : {};
+        providerOptions[slot] = { ...existing, ...slice };
+    }
+
+    if (Object.keys(providerOptions).length > 0) result.providerOptions = providerOptions;
+    else delete result.providerOptions;
+
+    return result;
+}
+
+/**
+ * Read the dashboard's reasoning knobs back out of a `model` branch's
+ * `providerOptions`, regardless of which provider stored them. Inverse of
+ * {@link applyModelReasoning}.
+ */
+export function readModelReasoning(modelBranch: Record<string, unknown>): { budgetTokens?: number; effort?: string } {
+    const providerOptions = isPlainObject(modelBranch.providerOptions) ? modelBranch.providerOptions : {};
+    const anthropic: Record<string, unknown> = isPlainObject(providerOptions.anthropic) ? providerOptions.anthropic : {};
+    const openai: Record<string, unknown> = isPlainObject(providerOptions.openai) ? providerOptions.openai : {};
+    const google: Record<string, unknown> = isPlainObject(providerOptions.google) ? providerOptions.google : {};
+    const anthropicThinking: Record<string, unknown> = isPlainObject(anthropic.thinking) ? anthropic.thinking : {};
+    const googleThinking: Record<string, unknown> = isPlainObject(google.thinkingConfig) ? google.thinkingConfig : {};
+
+    const budgetTokens = typeof anthropicThinking.budgetTokens === "number"
+        ? anthropicThinking.budgetTokens
+        : typeof googleThinking.thinkingBudget === "number"
+            ? googleThinking.thinkingBudget
+            : undefined;
+    const effort = typeof openai.reasoningEffort === "string"
+        ? openai.reasoningEffort
+        : typeof anthropic.effort === "string"
+            ? anthropic.effort
+            : undefined;
+
+    return {
+        ...(budgetTokens !== undefined ? { budgetTokens } : {}),
+        ...(effort ? { effort } : {}),
+    };
 }

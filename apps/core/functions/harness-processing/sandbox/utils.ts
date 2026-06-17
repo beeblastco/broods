@@ -101,3 +101,15 @@ export function isSandboxGoneError(error: unknown): boolean {
   const message = typeof error.message === "string" ? error.message : "";
   return /not ?found|does not exist|no such|already (deleted|destroyed)/i.test(message);
 }
+
+/**
+ * True when a provider rejected sandbox creation because no runner could host it
+ * (capacity, or a region-pinned/non-general snapshot). Capacity is the provider's
+ * to resolve; the executor only surfaces a clearer message.
+ */
+export function isNoRunnersError(error: unknown): boolean {
+  const message = isRecordObject(error) && typeof error.message === "string"
+    ? error.message
+    : typeof error === "string" ? error : "";
+  return /no (available )?runners?/i.test(message);
+}

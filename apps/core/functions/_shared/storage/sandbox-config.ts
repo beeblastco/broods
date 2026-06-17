@@ -120,6 +120,9 @@ export function normalizeSandboxConfig(value: unknown): SandboxConfig {
   if ((onCreate || onResume) && config.persistent !== true) {
     throw new Error("config.onCreate and config.onResume require config.persistent to be true");
   }
+  if (provider === "e2b" && (onCreate || onResume)) {
+    throw new Error("config.onCreate and config.onResume are not supported by the e2b provider; use an E2B template or run setup commands explicitly");
+  }
 
   if (config.runtimes !== undefined) {
     if (

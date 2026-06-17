@@ -53,8 +53,8 @@ Create the records via the account API, then reference them from the agent:
 { "name": "default", "config": { "provider": "lambda", "network": { "mode": "allow-all" }, "permissionMode": "ask" } }
 
 // POST /accounts/me/workspaces
-// storage.provider: "s3" (default) | "vercel" — roadmap: s3-compatible endpoints,
-// Cloudflare R2, Google Cloud Storage, Azure Blob
+// storage.provider: "s3" (default). Provider-native storage such as Vercel Drive
+// is not accepted until it is wired into the workspace mount/read contract.
 { "name": "notes", "config": { "storage": { "provider": "s3" }, "harness": { "enabled": true } } }
 
 // agent config

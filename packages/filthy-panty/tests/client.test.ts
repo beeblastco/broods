@@ -124,6 +124,56 @@ test("client starts async runs and exposes status id for polling", async () => {
   });
 });
 
+test("client passes typed run overrides through async run bodies", async () => {
+  const bodies: unknown[] = [];
+  const client = new FilthyPantyClient({
+    baseUrl: "https://core.example",
+    apiKey: "runtime-key",
+    fetch: async (_input, init) => {
+      bodies.push(init?.body ? JSON.parse(String(init.body)) : undefined);
+
+      return Response.json({
+        statusUrl: "https://core.example/status/request-1?agentId=agent_1",
+      }, { status: 202 });
+    },
+  });
+
+  await client.runAsync({
+    agentId: "agent_1",
+    eventId: "request-1",
+    events: [{ role: "user", content: [{ type: "text", text: "hello" }] }],
+    system: {
+      role: "system",
+      content: "Use the deployment-local policy.",
+      providerOptions: { openai: { cacheControl: { type: "ephemeral" } } },
+    },
+    model: {
+      maxOutputTokens: 256,
+      temperature: 0,
+      providerOptions: {
+        openai: { reasoningEffort: "medium", reasoningSummary: "auto" },
+      },
+    },
+  });
+
+  expect(bodies[0]).toMatchObject({
+    agentId: "agent_1",
+    eventId: "request-1",
+    system: {
+      role: "system",
+      content: "Use the deployment-local policy.",
+      providerOptions: { openai: { cacheControl: { type: "ephemeral" } } },
+    },
+    model: {
+      maxOutputTokens: 256,
+      temperature: 0,
+      providerOptions: {
+        openai: { reasoningEffort: "medium", reasoningSummary: "auto" },
+      },
+    },
+  });
+});
+
 test("client defaults async conversation key to the generated event id", async () => {
   const bodies: unknown[] = [];
   const client = new FilthyPantyClient({

@@ -110,6 +110,27 @@ paths:
                       content:
                         - type: text
                           text: What is the capital of France?
+              withOverrides:
+                summary: With per-run overrides (top-level system and model)
+                value:
+                  agentId: agent_abc123
+                  eventId: unique-id-for-dedup
+                  conversationKey: conversation-identifier
+                  system:
+                    - role: system
+                      content: Answer concisely.
+                      persist: false
+                  model:
+                    temperature: 0.3
+                    providerOptions:
+                      openai:
+                        reasoningEffort: high
+                        reasoningSummary: auto
+                  events:
+                    - role: user
+                      content:
+                        - type: text
+                          text: Summarize today's plan.
       responses:
         '200':
           description: SSE stream of agent execution
@@ -973,7 +994,7 @@ paths:
                     persistent: true
                     permissionMode: bypass
                     lifecycle: { idleTimeoutSeconds: 1800 }
-                    options: { mountAwsS3Buckets: true, persistentDiskGb: 20, persistentHome: /home/node }
+                    options: { mountAwsS3Buckets: true, persistentDiskGb: 10, persistentHome: /home/node }
               vercel:
                 value:
                   name: vercel
@@ -1044,7 +1065,7 @@ paths:
                     storage:
                       type: object
                       properties:
-                        provider: { type: string, enum: [s3, vercel] }
+                        provider: { type: string, enum: [s3] }
                     harness:
                       type: object
                       properties:
@@ -1501,6 +1522,37 @@ components:
           description: Vercel AI SDK-style messages
           items:
             $ref: '#/components/schemas/Message'
+        system:
+          oneOf:
+            - $ref: '#/components/schemas/SystemRunEvent'
+            - type: array
+              items:
+                $ref: '#/components/schemas/SystemRunEvent'
+          description: >-
+            One-turn Vercel AI SDK-style system message event(s), appended last
+            with highest priority. Same lifetime as a direct `events` entry with
+            `persist: false`.
+        model:
+          $ref: '#/components/schemas/RunModelOverrides'
+
+    RunModelOverrides:
+      type: object
+      description: >-
+        Per-run model setting overrides, merged onto `config.model` for one
+        invocation only. Accepts standard Vercel AI SDK call settings
+        (temperature, topP, topK, maxOutputTokens, frequencyPenalty,
+        presencePenalty, seed, stopSequences) and provider-specific
+        `providerOptions`, the same shape used by `config.model`. The reserved
+        keys `provider`, `modelId`, `output`, and `apiKey` are rejected so a
+        request cannot swap the model, provider, structured output contract, or
+        credentials.
+      example:
+        temperature: 0.3
+        maxOutputTokens: 4096
+        providerOptions:
+          openai:
+            reasoningEffort: high
+            reasoningSummary: auto
 
     Message:
       type: object
@@ -1521,6 +1573,27 @@ components:
         persist:
           type: boolean
           description: Must be `false` for system events. Request-local, not stored in DynamoDB.
+
+    SystemRunEvent:
+      type: object
+      required:
+        - role
+        - content
+      properties:
+        role:
+          type: string
+          enum: [system]
+        content:
+          type: string
+          example: Answer concisely.
+        providerOptions:
+          type: object
+          additionalProperties: true
+          description: Provider-specific system-message options such as prompt caching metadata.
+        persist:
+          type: boolean
+          enum: [false]
+          description: Optional marker matching direct ephemeral system events.
 
     ContentBlock:
       type: object
@@ -2108,7 +2181,7 @@ components:
 
     ModelConfig:
       type: object
-      description: Controls the Vercel AI SDK `streamText` call. All standard `streamText` parameters pass through directly. The `options` field maps to `providerOptions`.
+      description: Controls the Vercel AI SDK `streamText` call. All standard call settings pass through directly, and provider-specific settings use `providerOptions`.
       properties:
         provider:
           type: string
@@ -2120,54 +2193,35 @@ components:
           type: number
         maxOutputTokens:
           type: integer
-        thinking:
-          type: object
-          description: Anthropic thinking configuration. Ported to `providerOptions.anthropic.thinking`.
-          additionalProperties: true
-          example:
-            type: enabled
-            budgetTokens: 12000
-        thinkingConfig:
-          type: object
-          description: Google Gemini thinking configuration. Ported to `providerOptions.google.thinkingConfig`.
-          additionalProperties: true
-          example:
-            thinkingBudget: 8192
-            includeThoughts: true
-        thinkingEffort:
-          type: string
-          description: Provider-neutral convenience alias. Ports to OpenAI `reasoningEffort`, Anthropic `effort`, or Google `thinkingConfig.thinkingLevel` based on the active provider.
-          enum: [none, minimal, low, medium, high, xhigh, max]
-        reasoningEffort:
-          type: string
-          description: OpenAI reasoning effort. Ported to `providerOptions.openai.reasoningEffort`.
-          enum: [none, minimal, low, medium, high, xhigh]
-        reasoningSummary:
-          type: string
-          description: OpenAI reasoning summary mode. Ported to `providerOptions.openai.reasoningSummary`.
-          enum: [auto, detailed]
-        effort:
-          type: string
-          description: Anthropic effort setting. Ported to `providerOptions.anthropic.effort`.
-          enum: [low, medium, high, max]
         topP:
           type: number
         topK:
+          type: integer
+        presencePenalty:
+          type: number
+        frequencyPenalty:
+          type: number
+        seed:
+          type: integer
+        maxRetries:
           type: integer
         stopSequences:
           type: array
           items:
             type: string
-        headers:
-          type: object
         timeout:
-          type: integer
-          description: Request timeout in seconds
+          description: Vercel AI SDK timeout setting in milliseconds or `{ totalMs }`
+          oneOf:
+            - type: integer
+            - type: object
+              properties:
+                totalMs:
+                  type: integer
         output:
           $ref: '#/components/schemas/OutputConfig'
-        options:
+        providerOptions:
           type: object
-          description: Provider-specific `providerOptions`
+          description: Vercel AI SDK provider-specific options
 
     OutputConfig:
       type: object
@@ -2194,14 +2248,19 @@ components:
 
     AgentRuntimeConfig:
       type: object
-      description: Controls harness behavior. The runtime always prepends an environment system prompt (current time, timezone) before this agent prompt.
+      description: Controls harness behavior for the model/tool loop and agent-level system prompt.
       properties:
         maxTurn:
           type: integer
           description: Maximum model/tool loop steps per conversation turn
         system:
-          type: string
-          description: Replaces the generated default system prompt. Do not duplicate current-time instructions.
+          oneOf:
+            - type: string
+            - $ref: '#/components/schemas/SystemRunEvent'
+            - type: array
+              items:
+                $ref: '#/components/schemas/SystemRunEvent'
+          description: Agent-level system prompt used on every run. Accepts a string shorthand or Vercel AI SDK-style system message event(s).
 
     HooksConfig:
       type: object

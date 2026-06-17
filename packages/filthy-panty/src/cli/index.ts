@@ -101,7 +101,7 @@ async function init(args: string[]): Promise<void> {
   const force = hasFlag(args, "--force");
   const root = resolve(process.cwd(), PROJECT_DIR);
   await mkdir(resolve(root, GENERATED_DIR), { recursive: true });
-  await writeStarter(resolve(root, "agents.ts"), starterAgent(), force);
+  await writeStarter(resolve(root, "index.ts"), starterAgent(), force);
   await writeStarter(resolve(root, ".gitignore"), "_generated\n.cache\n", force);
   await writeLocalEnvDefaults({
     dashboardUrl: optionValue(args, "--dashboard-url") ?? DEFAULT_DASHBOARD_URL,
@@ -146,7 +146,7 @@ async function diff(args: string[]): Promise<void> {
   const auth = await requireAuth(optionValue(args, "--dashboard-url") ?? config.dashboardUrl);
   const client = new FilthyPantySyncClient({ dashboardUrl: auth.dashboardUrl, token: auth.token });
   const remote = await client.getManifest(manifest.project, manifest.environment);
-  printDiff(diffManifests(manifest, remote?.manifest ?? null));
+  printDiffEntries(diffManifests(manifest, remote?.manifest ?? null));
 }
 
 async function deploy(args: string[]): Promise<void> {
@@ -281,7 +281,7 @@ async function ensureProjectShell(): Promise<void> {
   await collectSourceFiles(root, files);
   if (files.length > 0) return;
 
-  await writeStarter(resolve(root, "agents.ts"), starterAgent(), false);
+  await writeStarter(resolve(root, "index.ts"), starterAgent(), false);
   await writeStarter(resolve(root, ".gitignore"), "_generated\n.cache\n", false);
   console.log(`Created starter ${PROJECT_DIR}/`);
 }
@@ -435,7 +435,7 @@ async function syncDev(args: string[]): Promise<RemoteManifestResponse> {
   const client = new FilthyPantySyncClient({ dashboardUrl: auth.dashboardUrl, token: auth.token });
   const remote = await client.getManifest(manifest.project, manifest.environment);
   const diff = diffManifests(manifest, remote?.manifest ?? null);
-  printDiff(diff.filter((entry) => entry.operation !== "delete"));
+  printDiffEntries(diff.filter((entry) => entry.operation !== "delete"));
 
   // Push any `env.NAME` values from .env.local up first, so this sync's configs
   // resolve them and the missing-env warning only fires for genuinely-absent vars.
@@ -452,7 +452,7 @@ async function syncDev(args: string[]): Promise<RemoteManifestResponse> {
   let pruned = false;
   if (undecided.length > 0) {
     printWarning("⚠ These remote resources are no longer declared locally:");
-    printDiff(undecided);
+    printDiffEntries(undecided);
     if (await promptConfirm(`Delete ${undecided.length} resource(s) from ${manifest.project}/${manifest.environment}?`)) {
       result = await client.putManifest(manifest, true);
       await writeGeneratedFiles(manifest, result.ids, process.cwd(), resourceAliases, result.deployment);
@@ -917,27 +917,33 @@ function isGeneratedPath(path: string): boolean {
 }
 
 function starterAgent(): string {
-  return `import { defineAgent, defineWorkspace, env } from "filthy-panty";\n\n` +
-    `export const repo = defineWorkspace("repo", {\n` +
-    `  storage: { provider: "s3" },\n` +
+  return `import { defineAgent, defineSandbox, env } from "filthy-panty";\n\n` +
+    `// A Lambda sandbox: a fresh, ephemeral bash environment created per run.\n` +
+    `export const lambdaSandbox = defineSandbox({\n` +
+    `  name: "lambda-sandbox",\n` +
+    `  config: {\n` +
+    `    provider: "lambda",\n` +
+    `    network: { mode: "deny-all" },\n` +
+    `    permissionMode: "bypass",\n` +
+    `    timeout: 60,\n` +
+    `  },\n` +
     `});\n\n` +
-    `export const support = defineAgent("support", {\n` +
-    `  provider: {\n` +
-    `    openai: { apiKey: env.OPENAI_API_KEY },\n` +
+    `export const myAgent = defineAgent({\n` +
+    `  name: "my-agent",\n` +
+    `  config: {\n` +
+    `    provider: {\n` +
+    `      openai: { apiKey: env.OPENAI_API_KEY },\n` +
+    `    },\n` +
+    `    model: {\n` +
+    `      provider: "openai",\n` +
+    `      modelId: "gpt-5.5",\n` +
+    `    },\n` +
+    `    agent: {\n` +
+    `      system: "You are a helpful assistant.",\n` +
+    `    },\n` +
+    `    sandbox: lambdaSandbox,\n` +
     `  },\n` +
-    `  model: {\n` +
-    `    provider: "openai",\n` +
-    `    modelId: "gpt-5-mini",\n` +
-    `  },\n` +
-    `  agent: {\n` +
-    `    system: "You are a helpful support agent.",\n` +
-    `  },\n` +
-    `  workspaces: [repo],\n` +
     `});\n`;
-}
-
-function printDiff(entries: ReturnType<typeof diffManifests>): void {
-  printDiffEntries(entries);
 }
 
 main().catch((error) => {

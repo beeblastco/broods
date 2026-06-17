@@ -86,6 +86,9 @@ export {
   type PublicAccountRecord,
 } from "./accounts.ts";
 export {
+  applyRunOverrides,
+  RUN_OVERRIDE_RESERVED_MODEL_KEYS,
+  MODEL_CONFIG_SETTING_KEYS,
   decodeStoredAgentConfig,
   decodeStoredConfigObject,
   encryptAgentConfig,
@@ -107,9 +110,11 @@ export {
   type AgentLifecycleEventName,
   type AgentModelConfig,
   type AgentModelOutputConfig,
+  type AgentModelProviderOptions,
   type AgentPancakeChannelConfig,
   type AgentProviderConfig,
   type AgentProviderSettings,
+  type RunOverrides,
   type AgentSessionConfig,
   type AgentSessionCompactionConfig,
   type AgentSessionPruningConfig,

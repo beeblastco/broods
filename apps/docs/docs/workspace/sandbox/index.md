@@ -16,10 +16,10 @@ flowchart LR
   Provider --> Kubernetes["kubernetes"]
   Provider --> Vercel["vercel"]
   Lambda --> Mount["S3 Files mount<br/>/mnt/workspaces/&lt;namespace&gt;"]
-  E2B --> Stateless["native FS<br/>(workspace tools need persistent)"]
+  E2B --> Stateless["native FS<br/>(no S3 workspace mount)"]
   Daytona --> ExternalMount
   Kubernetes --> ExternalMount
-  Vercel --> VercelFS["Vercel persistent FS<br/>(vercel workspace only)"]
+  Vercel --> VercelFS["Vercel persistent FS<br/>(no S3 workspace mount)"]
   ExternalMount["mount-s3<br/>/mnt/workspaces/&lt;namespace&gt;"]
   Mount --> Bucket["S3 workspace bucket"]
   ExternalMount --> Bucket
@@ -64,6 +64,24 @@ configs — see [Reserved (persistent) sandboxes](#reserved-persistent-sandboxes
 | `kubernetes` | [Kubernetes Details](kubernetes.md) |
 | `vercel` | [Vercel Details](vercel.md) |
 
+## Storage capability matrix
+
+This table describes the current harness behavior. Some providers expose additional
+native storage features in their own SDKs; those are called out in provider docs when they
+are not yet wired into the shared workspace contract.
+
+| Provider | Stateless bash | Shared S3 workspace mount | Persistent sandbox | Background jobs | Configurable storage limit |
+| --- | --- | --- | --- | --- | --- |
+| `lambda` | yes | yes, through AWS S3 Files | no | no | S3 bucket/account limits outside sandbox config |
+| `daytona` | yes | yes, through `mount-s3` when `options.mountAwsS3Buckets` is true | yes, native persistent sandbox | yes, with live status/logs/stop | provider/account limit outside sandbox config |
+| `kubernetes` | yes | yes, through `mount-s3` when `options.mountAwsS3Buckets` is true | yes | yes, with live status/logs/stop | `options.persistentDiskGb` for the home PVC (1-10 GB) |
+| `e2b` | yes | not wired; S3 workspaces are rejected | yes, native sandbox pause/resume | yes, native launch + callback delivery; no harness live logs/stop | E2B plan/template limit outside sandbox config |
+| `vercel` | yes | not wired; S3 workspaces are rejected | yes, named persistent sandbox filesystem | yes, with live status/logs/stop | Vercel sandbox/drive limits outside sandbox config |
+
+The shared S3 workspace mount is intentionally the cross-provider workspace model for
+`lambda`, `daytona`, and `kubernetes`. `e2b` and `vercel` provider-native storage is not
+wired into Workspace yet, so attaching an S3 workspace to those providers is rejected.
+
 ## Network policy
 
 `network` replaces the old Lambda-only `internet` boolean. If omitted, the config
@@ -106,7 +124,7 @@ and running jobs survive across calls, scaling down on idle like Fargate. Not va
     },
     "options": {                   // kubernetes PVC for the coding env (optional)
       "mountAwsS3Buckets": true,   // S3 = shared workspace files
-      "persistentDiskGb": 20,      // home PVC (packages/venvs/caches)
+      "persistentDiskGb": 10,      // home PVC (packages/venvs/caches)
       "persistentHome": "/home/node"
     },
     "onCreate": ["python3 -m venv $HOME/.venv"],
@@ -171,10 +189,11 @@ async_status  { statusId, action: "logs" }  → tail the job output
 async_status  { statusId, action: "stop" }  → terminate the job
 ```
 
-The `logs`/`stop` actions exist **only when the agent can launch background jobs** — a plain
-async tool call has no live process to tail or kill, so for an async-tools-only agent the tool
-is registered with `status` as its single action. The description and action enum are built
-from that capability to keep the prompt accurate.
+The `logs`/`stop` actions exist **only when the selected sandbox exposes live job controls**.
+A plain async tool call has no live process to tail or kill, and E2B background jobs use
+native launch plus callback delivery without the harness marker files used for log tailing
+and stop. In those cases `async_status` is registered with `status` as its single action.
+The description and action enum are built from that capability to keep the prompt accurate.
 
 ```mermaid
 flowchart LR
@@ -210,7 +229,7 @@ sandbox is persistent, or any `config.tools` entry marked `async: true`, and onl
 a `statusId` for its own conversation. An agent-level persistent sandbox without a
 workspace runs ephemerally and does not register it. Jobs are tracked in the `AsyncToolResult` table.
 
-**Ownership & limits.** Each sandbox caps concurrent background jobs (10), and a job that is
+**Ownership & limits.** Daytona, Kubernetes, and Vercel cap concurrent background jobs (10), and a job that is
 killed when the sandbox is recreated/scaled-to-0 reports as `failed` (it stamps the launching
 boot id, so a stale `.running` marker is never read as "running forever"). The idle reaper
 never pauses a sandbox while a job is still running.
@@ -246,8 +265,8 @@ Provider implementation paths are still useful for debugging:
 | `lambda` | `/mnt/workspaces/<namespace>` | AWS S3 Files at `/mnt/workspaces/<namespace>` |
 | `daytona` | `/mnt/workspaces/<namespace>` by default | `mount-s3` at `options.workspaceRoot/<namespace>` |
 | `kubernetes` | `/mnt/workspaces/<namespace>` by default | `mount-s3` at `options.workspaceRoot/<namespace>` |
-| `e2b` | `/mnt/workspaces/<namespace>` when `persistent` | native sandbox FS (persists via pause); workspace tools require `persistent: true` |
-| `vercel` | `/mnt/workspaces/<namespace>` when `persistent` | Vercel persistent FS; not shared with S3-backed providers |
+| `e2b` | not supported for S3 workspaces | no shared S3 mount wired |
+| `vercel` | not supported for S3 workspaces | no shared S3 mount wired |
 
 Keep prompt text small: tell the model "use relative paths." Put provider-specific mount
 paths in docs and logs, not ordinary task prompts.

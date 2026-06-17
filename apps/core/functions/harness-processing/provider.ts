@@ -14,6 +14,7 @@ import type {
   AgentConfig,
   AccountModelProviderName,
   AgentModelOutputConfig,
+  AgentModelProviderOptions,
   AgentProviderSettings,
 } from "../_shared/storage/index.ts";
 
@@ -56,71 +57,16 @@ export function modelSettingsFromModelConfig(agentConfig: AgentConfig): Record<s
   const {
     provider: _provider,
     modelId: _modelId,
-    options: _options,
+    providerOptions: _providerOptions,
     output: _output,
-    thinking: _thinking,
-    thinkingConfig: _thinkingConfig,
-    thinkingEffort: _thinkingEffort,
-    reasoningEffort: _reasoningEffort,
-    reasoningSummary: _reasoningSummary,
-    effort: _effort,
     ...settings
   } = agentConfig.model ?? {};
 
   return settings;
 }
 
-export function providerOptionsFromModelConfig(agentConfig: AgentConfig): Record<string, unknown> | undefined {
-  const model = agentConfig.model;
-  if (!model) {
-    return undefined;
-  }
-
-  const providerOptions = { ...(model.options ?? {}) };
-  const providerName = model.provider === "gateway" && model.modelId?.includes("/")
-    ? model.modelId.split("/", 1)[0]
-    : model.provider;
-
-  if (
-    providerName === "openai" &&
-    (model.reasoningEffort !== undefined || model.thinkingEffort !== undefined || model.reasoningSummary !== undefined)
-  ) {
-    providerOptions.openai = {
-      ...(model.reasoningEffort !== undefined || model.thinkingEffort !== undefined ? {
-        reasoningEffort: model.reasoningEffort ?? model.thinkingEffort,
-      } : {}),
-      ...(model.reasoningSummary !== undefined ? { reasoningSummary: model.reasoningSummary } : {}),
-      ...(isPlainObject(providerOptions.openai) ? providerOptions.openai : {}),
-    };
-  }
-
-  if (
-    providerName === "anthropic" &&
-    (model.thinking !== undefined || model.effort !== undefined || model.thinkingEffort !== undefined)
-  ) {
-    providerOptions.anthropic = {
-      ...(model.thinking !== undefined ? { thinking: model.thinking } : {}),
-      ...(model.effort !== undefined || model.thinkingEffort !== undefined ? {
-        effort: model.effort ?? model.thinkingEffort,
-      } : {}),
-      ...(isPlainObject(providerOptions.anthropic) ? providerOptions.anthropic : {}),
-    };
-  }
-
-  if (providerName === "google" && (model.thinkingConfig !== undefined || model.thinkingEffort !== undefined)) {
-    const existingGoogle = isPlainObject(providerOptions.google) ? providerOptions.google : {};
-    const existingThinkingConfig = isPlainObject(existingGoogle.thinkingConfig) ? existingGoogle.thinkingConfig : {};
-    providerOptions.google = {
-      ...existingGoogle,
-      thinkingConfig: {
-        ...(model.thinkingEffort !== undefined ? { thinkingLevel: model.thinkingEffort } : {}),
-        ...(model.thinkingConfig ?? {}),
-        ...existingThinkingConfig,
-      },
-    };
-  }
-
-  return Object.keys(providerOptions).length > 0 ? providerOptions : undefined;
+export function providerOptionsFromModelConfig(agentConfig: AgentConfig): AgentModelProviderOptions | undefined {
+  return agentConfig.model?.providerOptions;
 }
 
 export function modelOutputFromModelConfig(agentConfig: AgentConfig): ModelOutputSpec | undefined {
@@ -172,10 +118,6 @@ function requireProviderSettings(
     throw new Error(`config.provider.${providerName}.apiKey is required`);
   }
   return providerConfig;
-}
-
-function isPlainObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 // Parse the structure output to vercel-ai sdk type

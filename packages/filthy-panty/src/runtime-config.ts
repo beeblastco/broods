@@ -1,6 +1,10 @@
 /**
- * Runtime config loading for Node/Bun SDK usage.
- * Generated clients use this so app code does not manually wire CLI auth.
+ * Runtime config (dashboard URL, token, project, environment) for SDK/CLI callers.
+ *
+ * Reads `.env`/`.env.local` from the target project directory (`cwd`, which is
+ * not always the directory the process started in) so a generated client picks
+ * up package-local config without wiring up dotenv. Kept zero-dependency and
+ * synchronous so the FilthyPantyClient constructor can call it without awaiting.
  */
 
 import { existsSync, readFileSync } from "node:fs";
@@ -28,6 +32,12 @@ export function loadFilthyPantyRuntimeConfig(cwd = process.cwd()): FilthyPantyRu
   };
 }
 
+/**
+ * Loads `.env` then `.env.local` from `cwd` into `process.env`, so `.env.local`
+ * overrides `.env` while neither clobbers a variable already set in the real
+ * environment. Memoized per resolved cwd so repeated client/compile calls don't
+ * re-read the files.
+ */
 function loadEnvFiles(cwd: string): void {
   const root = resolve(cwd);
   if (loadedEnvForCwd === root) return;
@@ -37,14 +47,48 @@ function loadEnvFiles(cwd: string): void {
   for (const file of [".env", ".env.local"]) {
     const path = join(root, file);
     if (!existsSync(path)) continue;
-    const values = parseEnv(readFileSync(path, "utf8"));
-    for (const [key, value] of Object.entries(values)) {
-      if (originallySet.has(key)) continue;
-      process.env[key] = value;
+    for (const [key, value] of Object.entries(parseEnv(readFileSync(path, "utf8")))) {
+      if (!originallySet.has(key)) process.env[key] = value;
     }
   }
 }
 
+/** Parses dotenv-style `KEY=value` lines, tolerating `export `, comments, and blanks. */
+function parseEnv(source: string): Record<string, string> {
+  const values: Record<string, string> = {};
+  for (const rawLine of source.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith("#")) continue;
+    const assignment = line.startsWith("export ") ? line.slice("export ".length).trim() : line;
+    const eq = assignment.indexOf("=");
+    if (eq <= 0) continue;
+    const key = assignment.slice(0, eq).trim();
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) continue;
+    values[key] = unquoteEnvValue(assignment.slice(eq + 1).trim());
+  }
+
+  return values;
+}
+
+function unquoteEnvValue(value: string): string {
+  // Double-quoted: strip the quotes and unescape \n and \".
+  if (value.startsWith('"') && value.endsWith('"')) {
+    return value.slice(1, -1).replace(/\\n/g, "\n").replace(/\\"/g, '"');
+  }
+  // Single-quoted: strip the quotes, keep the contents literal.
+  if (value.startsWith("'") && value.endsWith("'")) {
+    return value.slice(1, -1);
+  }
+  // Unquoted: drop a trailing ` # comment`, if present.
+  const commentIndex = value.indexOf(" #");
+  return commentIndex >= 0 ? value.slice(0, commentIndex).trimEnd() : value;
+}
+
+/**
+ * Reads the CLI-stored auth (dashboard URL + token) synchronously so the client
+ * constructor can use it without awaiting. Returns null when the file is absent
+ * or malformed.
+ */
 function readStoredAuthSync(): { dashboardUrl: string; token: string } | null {
   try {
     const value = JSON.parse(readFileSync(USER_CONFIG_PATH, "utf8")) as {
@@ -59,33 +103,4 @@ function readStoredAuthSync(): { dashboardUrl: string; token: string } | null {
   } catch {
     return null;
   }
-}
-
-function parseEnv(source: string): Record<string, string> {
-  const values: Record<string, string> = {};
-  for (const rawLine of source.split(/\r?\n/)) {
-    const line = rawLine.trim();
-    if (!line || line.startsWith("#")) continue;
-    const normalized = line.startsWith("export ") ? line.slice("export ".length).trim() : line;
-    const index = normalized.indexOf("=");
-    if (index <= 0) continue;
-    const key = normalized.slice(0, index).trim();
-    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) continue;
-    values[key] = unquoteEnvValue(normalized.slice(index + 1).trim());
-  }
-
-  return values;
-}
-
-function unquoteEnvValue(value: string): string {
-  if (
-    (value.startsWith('"') && value.endsWith('"')) ||
-    (value.startsWith("'") && value.endsWith("'"))
-  ) {
-    const inner = value.slice(1, -1);
-    return value.startsWith('"') ? inner.replace(/\\n/g, "\n").replace(/\\"/g, '"') : inner;
-  }
-
-  const commentIndex = value.indexOf(" #");
-  return commentIndex >= 0 ? value.slice(0, commentIndex).trimEnd() : value;
 }

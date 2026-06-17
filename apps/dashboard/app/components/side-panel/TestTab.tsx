@@ -160,10 +160,12 @@ function colorFromName(name: string): string {
 export function TestTab({
     activeDeployment,
     deploymentApiKey,
+    agentId,
     nodeColor,
 }: {
     activeDeployment: EnvironmentDeployment | undefined;
     deploymentApiKey?: string;
+    agentId: string;
     nodeColor?: string;
 }) {
     if (!activeDeployment) {
@@ -171,6 +173,15 @@ export function TestTab({
             <div className="flex flex-1 items-center justify-center p-4">
                 <p className="text-center text-xs text-muted-foreground">
                     No runtime API key for this environment yet. Generate one in Details to test this agent.
+                </p>
+            </div>
+        );
+    }
+    if (!agentId) {
+        return (
+            <div className="flex flex-1 items-center justify-center p-4">
+                <p className="text-center text-xs text-muted-foreground">
+                    Save this agent before testing it.
                 </p>
             </div>
         );
@@ -188,6 +199,7 @@ export function TestTab({
     return (
         <ChatWindow
             endpointId={activeDeployment.endpointId}
+            agentId={agentId}
             apiKey={deploymentApiKey}
             projectSlug={activeDeployment.projectSlug}
             nodeColor={nodeColor}
@@ -199,12 +211,14 @@ export function TestTab({
 /** Chat window that streams messages from the core service. */
 function ChatWindow({
     endpointId,
+    agentId,
     apiKey,
     projectSlug,
     nodeColor,
     environmentSlug,
 }: {
     endpointId: string;
+    agentId: string;
     apiKey: string;
     projectSlug?: string;
     nodeColor?: string;
@@ -212,6 +226,7 @@ function ChatWindow({
 }) {
     const { messages, status, error, sendMessage, resetChat } = useAgentChat({
         endpointId: endpointId,
+        agentId: agentId,
         apiKey: apiKey,
         projectSlug: projectSlug,
         environmentSlug: environmentSlug,

@@ -626,7 +626,7 @@ describe("runAgentLoop", () => {
         modelId: "gemini-custom",
         temperature: 0.2,
         maxOutputTokens: 2048,
-        options: {
+        providerOptions: {
           google: {
             thinkingConfig: {
               thinkingLevel: "low",
@@ -654,7 +654,7 @@ describe("runAgentLoop", () => {
     });
   });
 
-  it("ports top-level thinking config into providerOptions", async () => {
+  it("passes providerOptions through without custom thinking aliases", async () => {
     installHarnessEnv();
     const { runAgentLoop } = await import("../functions/harness-processing/harness.ts");
 
@@ -684,15 +684,12 @@ describe("runAgentLoop", () => {
       model: {
         provider: "google",
         modelId: "gemini-custom",
-        thinkingConfig: {
-          thinkingBudget: 8192,
-          includeThoughts: true,
-        },
-        thinkingEffort: "high",
-        options: {
+        providerOptions: {
           google: {
             thinkingConfig: {
-              includeThoughts: false,
+              thinkingLevel: "high",
+              thinkingBudget: 8192,
+              includeThoughts: true,
             },
           },
         },
@@ -707,7 +704,7 @@ describe("runAgentLoop", () => {
           thinkingConfig: {
             thinkingLevel: "high",
             thinkingBudget: 8192,
-            includeThoughts: false,
+            includeThoughts: true,
           },
         },
       },
@@ -716,7 +713,7 @@ describe("runAgentLoop", () => {
     expect(streamTextMock.mock.calls[0]?.[0]).not.toHaveProperty("thinkingEffort");
   });
 
-  it("ports OpenAI and Anthropic reasoning aliases into providerOptions", async () => {
+  it("passes OpenAI and Anthropic providerOptions through directly", async () => {
     installHarnessEnv();
     const { runAgentLoop } = await import("../functions/harness-processing/harness.ts");
 
@@ -749,8 +746,12 @@ describe("runAgentLoop", () => {
       model: {
         provider: "openai",
         modelId: "gpt-5-mini",
-        reasoningEffort: "high",
-        reasoningSummary: "detailed",
+        providerOptions: {
+          openai: {
+            reasoningEffort: "high",
+            reasoningSummary: "detailed",
+          },
+        },
       },
     });
     await openAIStream.consumeStream();
@@ -773,11 +774,15 @@ describe("runAgentLoop", () => {
       model: {
         provider: "anthropic",
         modelId: "claude-sonnet-4-5",
-        thinking: {
-          type: "enabled",
-          budgetTokens: 12000,
+        providerOptions: {
+          anthropic: {
+            thinking: {
+              type: "enabled",
+              budgetTokens: 12000,
+            },
+            effort: "low",
+          },
         },
-        effort: "low",
       },
     });
     await anthropicStream.consumeStream();
@@ -793,6 +798,55 @@ describe("runAgentLoop", () => {
         },
       },
     });
+  });
+
+  it("passes MiniMax providerOptions through directly", async () => {
+    installHarnessEnv();
+    const { runAgentLoop } = await import("../functions/harness-processing/harness.ts");
+
+    const stream = await runAgentLoop({
+      conversationKey: "direct:conversation",
+      eventId: "direct-event",
+      filesystemNamespace: () => "fs-test",
+      resolvedWorkspaces: () => [],
+      statelessSandbox: () => undefined,
+      statelessPermissionMode: () => "ask",
+      persistModelMessages: async () => { },
+      loadRefreshedSystemPromptParts: async () => ({
+        systemContextSnapshot: { cursor: null, messages: [] },
+        system: [],
+      }),
+    } as never, {
+      messages: [{ role: "user", content: "hello" }],
+      system: [],
+      ephemeralSystem: [],
+      systemContextSnapshot: { cursor: null, messages: [] },
+    }, {
+      provider: {
+        minimax: {
+          apiKey: "minimax-key",
+        },
+      },
+      model: {
+        provider: "minimax",
+        modelId: "MiniMax-M3",
+        providerOptions: {
+          anthropic: {
+            thinking: {
+              type: "enabled",
+              budgetTokens: 4096,
+            },
+          },
+        },
+      },
+    });
+    await stream.consumeStream();
+
+    const args = streamTextMock.mock.calls[0]?.[0] as { providerOptions?: { anthropic?: Record<string, unknown> } };
+    expect(args?.providerOptions?.anthropic).toMatchObject({
+      thinking: { type: "enabled", budgetTokens: 4096 },
+    });
+    expect(args?.providerOptions?.anthropic).not.toHaveProperty("effort");
   });
 
   it("passes structured output config into streamText and returns parsed output", async () => {
@@ -1469,7 +1523,11 @@ describe("runAgentLoop", () => {
       model: {
         provider: "gateway",
         modelId: "openai/gpt-5.4",
-        reasoningEffort: "low",
+        providerOptions: {
+          openai: {
+            reasoningEffort: "low",
+          },
+        },
       },
     });
     await gatewayStream.consumeStream();

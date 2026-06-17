@@ -20,7 +20,7 @@ import type {
   SandboxRunRequest,
   SandboxRunResult,
 } from "./types.ts";
-import { configString, isRecordObject, isSandboxGoneError, isStringRecord, sandboxReservationKey, shellQuote, truncateText, workspacePath } from "./utils.ts";
+import { configString, isNoRunnersError, isRecordObject, isSandboxGoneError, isStringRecord, sandboxReservationKey, shellQuote, truncateText, workspacePath } from "./utils.ts";
 import { generateJobId, launchScript, lifecycleScript, logsScript, parseJobStatus, statusScript, stopScript } from "./jobs.ts";
 import { claimSandboxInstance, deleteSandboxInstance, getSandboxExternalId, saveSandboxInstance } from "./instance-store.ts";
 
@@ -145,7 +145,7 @@ export class DaytonaSandboxExecutor implements SandboxExecutor {
   async #acquire(request: { namespace?: string; reservationKey?: string; envVars?: Record<string, string> }): Promise<Sandbox> {
     const client = new Daytona(daytonaClientOptions(this.#config));
     if (!this.#persistent(request)) {
-      return client.create(await daytonaCreateOptions(this.#config, request, false));
+      return this.#create(client, await daytonaCreateOptions(this.#config, request, false));
     }
     const ns = sandboxReservationKey(request)!;
     const externalId = await getSandboxExternalId("daytona", ns);
@@ -158,7 +158,7 @@ export class DaytonaSandboxExecutor implements SandboxExecutor {
         await deleteSandboxInstance("daytona", ns).catch(() => {});
       }
     }
-    const sandbox = await client.create(await daytonaCreateOptions(this.#config, request, true));
+    const sandbox = await this.#create(client, await daytonaCreateOptions(this.#config, request, true));
     if (await claimSandboxInstance("daytona", ns, sandbox.id)) {
       return sandbox;
     }
@@ -177,6 +177,22 @@ export class DaytonaSandboxExecutor implements SandboxExecutor {
     if (!externalId) throw new Error("no reserved daytona sandbox for this workspace");
     const sandbox = await this.#reconnect(new Daytona(daytonaClientOptions(this.#config)), externalId);
     return { sandbox, jobsDir: this.#jobsDir(key) };
+  }
+
+  async #create(client: Daytona, options: Record<string, unknown>): Promise<Sandbox> {
+    try {
+      return await client.create(options);
+    } catch (err) {
+      if (isNoRunnersError(err)) {
+        const snapshot = configString(isRecordObject(this.#config.options) ? this.#config.options.snapshot : undefined);
+        throw new Error(
+          `Daytona has no available runner for ${snapshot ? `snapshot '${snapshot}'` : "the request"} in the ` +
+          `selected region. The snapshot may be non-general (pinned to one runner) or the runner is at capacity — ` +
+          `rebuild it as a general snapshot or retry.`,
+        );
+      }
+      throw err;
+    }
   }
 
   async #reconnect(client: Daytona, externalId: string): Promise<Sandbox> {

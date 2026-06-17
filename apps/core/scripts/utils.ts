@@ -5,7 +5,7 @@
 
 import { readFileSync } from "node:fs";
 
-import type { AgentConfig } from "../functions/_shared/storage/index.ts";
+import type { AgentConfig, AgentModelProviderOptions } from "../functions/_shared/storage/index.ts";
 import { DEFAULT_SYSTEM_PROMPT } from "../functions/_shared/.generated/system-prompt.ts";
 import {
   accountModelProviderNames,
@@ -104,7 +104,7 @@ export function createScriptAgentConfig(): AgentConfig {
   const provider = parseAccountModelProvider(optionalScriptEnv("ACCOUNT_MODEL_PROVIDER") ?? DEFAULT_ACCOUNT_MODEL_PROVIDER);
   const modelId = optionalScriptEnv("ACCOUNT_MODEL_ID") ?? DEFAULT_ACCOUNT_MODEL_ID;
   const knowledgeCutoff = optionalScriptEnv("ACCOUNT_MODEL_KNOWLEDGE_CUTOFF") ?? DEFAULT_ACCOUNT_KNOWLEDGE_CUTOFF;
-  const modelOptions = optionalJsonRecord("ACCOUNT_MODEL_OPTIONS_JSON");
+  const modelOptions = optionalProviderOptions("ACCOUNT_MODEL_PROVIDER_OPTIONS_JSON");
   const sandboxId = optionalScriptEnv("ACCOUNT_SANDBOX_ID");
   const workspaceId = optionalScriptEnv("ACCOUNT_WORKSPACE_ID");
   const workspaceName = optionalScriptEnv("ACCOUNT_WORKSPACE_NAME") ?? "default";
@@ -113,7 +113,7 @@ export function createScriptAgentConfig(): AgentConfig {
     model: {
       provider,
       modelId,
-      ...(modelOptions ? { options: modelOptions } : {}),
+      ...(modelOptions ? { providerOptions: modelOptions } : {}),
     },
     agent: {
       system: formatScriptAgentSystemPrompt(knowledgeCutoff),
@@ -404,6 +404,10 @@ function optionalJsonRecord(name: string): Record<string, unknown> | undefined {
   }
 
   return parsed;
+}
+
+function optionalProviderOptions(name: string): AgentModelProviderOptions | undefined {
+  return optionalJsonRecord(name) as AgentModelProviderOptions | undefined;
 }
 
 function firstRequiredEnv(name: string): string {

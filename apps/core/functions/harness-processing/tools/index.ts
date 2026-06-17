@@ -36,6 +36,7 @@ import { tavilyExtractTool, tavilySearchTool } from "./tavily.tool.ts";
 import asyncStatusTool from "./async-status.tool.ts";
 import accountTool from "./account-tool.tool.ts";
 import { prewarmAccountTool } from "./custom-tool-executor.ts";
+import { sandboxSupportsBackgroundJobs, sandboxSupportsJobControls } from "./filesystem-utils.ts";
 
 // Runtime dependencies shared by tool factories. Model-facing input schemas
 // stay inside each individual tool file.
@@ -94,12 +95,12 @@ export async function createTools(context: Omit<ToolContext, "config">, agentCon
   
   // Reserved (persistent) workspaces can run detached background jobs; bash then
   // exposes a `background` flag and records each job under the parent session.
-  const hasPersistentWorkspace = workspaces.some((workspace) => workspace.sandbox?.persistent === true);
+  const hasBackgroundWorkspace = workspaces.some((workspace) => sandboxSupportsBackgroundJobs(workspace.sandbox));
   // eventId identifies the turn that spawned the job (stored as parentEventId on the
   // async-tool-result record); conversationKey identifies which conversation to resume
   // when the job completes in a future Lambda invocation. delivery carries the
   // originating channel/WebSocket so the result is pushed back there, not just polled.
-  const backgroundContext = hasPersistentWorkspace && context.session
+  const backgroundContext = hasBackgroundWorkspace && context.session
     ? {
       eventId: context.session.eventId,
       conversationKey: context.conversationKey,
@@ -219,13 +220,12 @@ export async function createTools(context: Omit<ToolContext, "config">, agentCon
 
   // Auto-add the background-job status tool when the agent has any async tool or
   // a reserved sandbox that can launch background jobs.
-  if (asyncModes.size > 0 || hasPersistentWorkspace) {
+  if (asyncModes.size > 0 || hasBackgroundWorkspace) {
     Object.assign(tools, asyncStatusTool({
       conversationKey: context.conversationKey,
       workspaces,
-      // logs/stop only apply when a background (bash) job can actually be
-      // launched, which is exactly when backgroundContext is wired up.
-      supportsJobs: backgroundContext !== undefined,
+      // logs/stop only apply when the background provider exposes live controls.
+      supportsJobs: workspaces.some((workspace) => sandboxSupportsJobControls(workspace.sandbox)),
     }));
   }
 

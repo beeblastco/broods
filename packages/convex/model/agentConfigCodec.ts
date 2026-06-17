@@ -31,8 +31,32 @@ export interface FlatAgentConfig {
 
 export type NestedAgentConfig = Record<string, unknown>;
 
+const UNSUPPORTED_WORKSPACE_KEYS = ["memory", "tasks", "filesystem"] as const;
+const UNSUPPORTED_SANDBOX_KEYS = ["filesystem"] as const;
+
 function isPlainObject(value: unknown): value is Record<string, unknown> {
     return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/**
+ * One-level-deep merge of two `providerOptions` maps. Provider sub-objects
+ * (e.g. `anthropic`, `openai`) merge key-by-key rather than replacing wholesale,
+ * so options kept in separate stores — reasoning in `extraConfig.model` vs other
+ * provider options in the flat column — don't clobber each other. `overlay` wins
+ * on direct key conflicts.
+ */
+function mergeProviderOptions(base: unknown, overlay: unknown): Record<string, unknown> {
+    const result: Record<string, unknown> = isPlainObject(base) ? { ...base } : {};
+    if (isPlainObject(overlay)) {
+        for (const [key, value] of Object.entries(overlay)) {
+            const existing = result[key];
+            result[key] = isPlainObject(existing) && isPlainObject(value)
+                ? { ...existing, ...value }
+                : value;
+        }
+    }
+
+    return result;
 }
 
 function pruneEmpty(value: Record<string, unknown>): Record<string, unknown> | undefined {
@@ -49,18 +73,26 @@ function pruneEmpty(value: Record<string, unknown>): Record<string, unknown> | u
     return Object.keys(cleaned).length === 0 ? undefined : cleaned;
 }
 
+function assertNoUnsupportedKeys(value: Record<string, unknown>, keys: readonly string[], path: string): void {
+    for (const key of keys) {
+        if (value[key] !== undefined) {
+            throw new Error(`${path}.${key} is not supported`);
+        }
+    }
+}
+
 /** Project a flat dashboard row into the nested filthy-panty shape. */
 export function toNestedAgentConfig(flat: FlatAgentConfig): NestedAgentConfig {
     const extra = isPlainObject(flat.extraConfig) ? flat.extraConfig : {};
 
     const agent: Record<string, unknown> = { ...((extra.agent as Record<string, unknown> | undefined) ?? {}) };
     if (flat.maxTurns !== undefined) agent.maxTurn = flat.maxTurns;
-    if (flat.systemPrompt) agent.system = flat.systemPrompt;
+    if (flat.systemPrompt && agent.system === undefined) agent.system = flat.systemPrompt;
 
-    const modelOptions: Record<string, unknown> = {
-        ...((extra.model as Record<string, unknown> | undefined)?.options as Record<string, unknown> | undefined ?? {}),
-        ...(isPlainObject(flat.providerOptions) ? flat.providerOptions : {}),
-    };
+    const modelOptions = mergeProviderOptions(
+        (extra.model as Record<string, unknown> | undefined)?.providerOptions,
+        flat.providerOptions,
+    );
     if (flat.temperature !== undefined) modelOptions.temperature = flat.temperature;
     if (flat.maxTokens !== undefined) modelOptions.maxTokens = flat.maxTokens;
 
@@ -69,7 +101,8 @@ export function toNestedAgentConfig(flat: FlatAgentConfig): NestedAgentConfig {
     };
     if (flat.provider) model.provider = flat.provider;
     if (flat.modelId) model.modelId = flat.modelId;
-    if (Object.keys(modelOptions).length > 0) model.options = modelOptions;
+    assertNoUnsupportedKeys(model, ["options"], "config.model");
+    if (Object.keys(modelOptions).length > 0) model.providerOptions = modelOptions;
     if (flat.outputFormat !== undefined) model.output = flat.outputFormat;
 
     const provider = extra.provider;
@@ -80,11 +113,10 @@ export function toNestedAgentConfig(flat: FlatAgentConfig): NestedAgentConfig {
     }
 
     const workspace: Record<string, unknown> = { ...((extra.workspace as Record<string, unknown> | undefined) ?? {}) };
-    // Drop legacy workspace keys removed from filthy-panty's AgentWorkspaceConfig.
-    for (const legacyKey of ["memory", "tasks", "filesystem"]) delete workspace[legacyKey];
+    assertNoUnsupportedKeys(workspace, UNSUPPORTED_WORKSPACE_KEYS, "config.workspace");
     if (isPlainObject(workspace.sandbox)) {
         const sandbox = { ...workspace.sandbox };
-        delete sandbox.filesystem;
+        assertNoUnsupportedKeys(sandbox, UNSUPPORTED_SANDBOX_KEYS, "config.workspace.sandbox");
         workspace.sandbox = sandbox;
     }
 
@@ -158,7 +190,9 @@ export function fromNestedAgentConfig(nested: NestedAgentConfig): FlatPatch {
 
     const agent = isPlainObject(nested.agent) ? { ...nested.agent } : undefined;
     const model = isPlainObject(nested.model) ? { ...nested.model } : undefined;
-    const modelOptions = isPlainObject(model?.options) ? { ...(model.options as Record<string, unknown>) } : undefined;
+    const modelOptions = isPlainObject(model?.providerOptions)
+        ? { ...(model.providerOptions as Record<string, unknown>) }
+        : undefined;
     const tools = isPlainObject(nested.tools) ? { ...nested.tools } : undefined;
     const workspace = isPlainObject(nested.workspace) ? { ...nested.workspace } : undefined;
 
@@ -176,7 +210,7 @@ export function fromNestedAgentConfig(nested: NestedAgentConfig): FlatPatch {
             if (typeof modelOptions.temperature === "number") { patch.temperature = modelOptions.temperature; delete modelOptions.temperature; }
             if (typeof modelOptions.maxTokens === "number") { patch.maxTokens = modelOptions.maxTokens; delete modelOptions.maxTokens; }
             if (Object.keys(modelOptions).length > 0) patch.providerOptions = modelOptions;
-            delete model.options;
+            delete model.providerOptions;
         }
     }
     if (tools?.googleSearch && isPlainObject(tools.googleSearch)) {

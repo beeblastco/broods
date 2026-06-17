@@ -236,7 +236,7 @@ export class Session {
 
     for (const event of events) {
       if (event.role === "system") {
-        const message = normalizeSystemMessage(event);
+        const message = systemModelMessageSchema.parse(event);
 
         if (event.persist === false) {
           // Direct API system injections are one-turn instructions. They are
@@ -425,11 +425,7 @@ export class Session {
       : [];
 
     return [
-      {
-        role: "system",
-        content: loadEnvironmentContextPrompt(),
-      },
-      ...(this.agentConfig.agent?.system ? [{ role: "system" as const, content: this.agentConfig.agent.system }] : []),
+      ...agentSystemMessages(this.agentConfig.agent?.system),
       ...memorySystem,
       ...workspaceHarnessSystem,
       ...skillsSystem,
@@ -703,12 +699,15 @@ Tool guidance:
 }
 
 // DynamoDB row decoding.
+function agentSystemMessages(system: string | SystemModelMessage | SystemModelMessage[] | undefined): SystemModelMessage[] {
+  if (system === undefined) {
+    return [];
+  }
+  if (typeof system === "string") {
+    return [{ role: "system", content: system }];
+  }
 
-function normalizeSystemMessage(message: SystemModelMessage): SystemModelMessage {
-  return systemModelMessageSchema.parse({
-    role: "system",
-    content: message.content,
-  });
+  return Array.isArray(system) ? system : [system];
 }
 
 function itemToStoredConversationEntry(item: Record<string, AttributeValue>): StoredConversationEntry | null {
@@ -742,7 +741,6 @@ function normalizeStoredConversationEvent(value: unknown): StoredConversationEve
 }
 
 // Message persistence sanitization.
-
 function createStoredEventFromModelMessage(
   message: ModelMessage | undefined,
   sourceEventId: string,
@@ -759,7 +757,7 @@ function createStoredEventFromModelMessage(
     case "tool":
       return toStoredConversationEvent(sanitizeToolMessage(message), sourceEventId);
     case "system":
-      return toStoredConversationEvent(normalizeSystemMessage(message), sourceEventId);
+      return toStoredConversationEvent(systemModelMessageSchema.parse(message), sourceEventId);
     default:
       return null;
   }
@@ -777,7 +775,6 @@ function toStoredConversationEvent<TMessage extends StoredConversationEvent["mes
 }
 
 // Conversation projection.
-
 function projectEntriesToMessages(entries: StoredConversationEntry[]): ModelMessage[] {
   return entries.flatMap(({ event }) => {
     switch (event.message.role) {
@@ -822,7 +819,6 @@ function projectActiveConversationEntries(entries: StoredConversationEntry[]): S
 }
 
 // Compaction resume support.
-
 export function selectPostCompactionPendingMessages(messages: ModelMessage[]): ModelMessage[] {
   const lastMessage = messages.at(-1);
   if (lastMessage?.role === "user") {
@@ -926,8 +922,4 @@ function isToolApprovalResponseMessage(message: ModelMessage | undefined): messa
   return message?.role === "tool" &&
     message.content.length > 0 &&
     message.content.every((part) => part.type === "tool-approval-response");
-}
-
-function loadEnvironmentContextPrompt(): string {
-  return `Current time: ${new Date().toISOString()}.\n\nCurrent timezone: ${Intl.DateTimeFormat().resolvedOptions().timeZone}`;
 }

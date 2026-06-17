@@ -8,11 +8,12 @@
  */
 
 import { mergeConfigObjects } from "./agent-config.ts";
+import { logError } from "../log.ts";
 
 // Implemented storage backends. The roadmap adds more (s3-compatible endpoints,
 // Cloudflare R2, Google Cloud Storage, Azure Blob): extend this list and wire the
 // provider's mount/read path — validation and the type follow automatically.
-export const WORKSPACE_STORAGE_PROVIDERS = ["s3", "vercel"] as const;
+export const WORKSPACE_STORAGE_PROVIDERS = ["s3"] as const;
 export type WorkspaceStorageProvider = (typeof WORKSPACE_STORAGE_PROVIDERS)[number];
 
 export interface WorkspaceConfig {
@@ -56,6 +57,15 @@ export function normalizeWorkspaceConfig(value: unknown): WorkspaceConfig {
   if (config.storage !== undefined) {
     if (!isPlainObject(config.storage)) {
       throw new Error("config.storage must be an object");
+    }
+    if (config.storage.provider === "vercel") {
+      logError("Unsupported workspace storage provider rejected", {
+        provider: "vercel",
+        reason: "Vercel Drive workspace storage is not wired yet",
+      });
+      throw new Error(
+        'config.storage.provider "vercel" is not supported yet; Vercel Drive workspace storage is not wired. Use "s3" or omit config.storage.',
+      );
     }
     assertOptionalEnum(config.storage.provider, "config.storage.provider", WORKSPACE_STORAGE_PROVIDERS);
     storageProvider = (config.storage.provider as WorkspaceStorageProvider | undefined) ?? "s3";

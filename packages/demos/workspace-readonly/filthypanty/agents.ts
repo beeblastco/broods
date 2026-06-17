@@ -1,47 +1,66 @@
 import { defineAgent, defineSandbox, defineWorkspace, env } from "filthy-panty";
 
-export const writerSandbox = defineSandbox("writer-sandbox", {
-  provider: "lambda",
-  permissionMode: "bypass",
+export const writerSandbox = defineSandbox({
+  name: "writer-sandbox",
+  config: {
+    provider: "lambda",
+    permissionMode: "bypass",
+  },
 });
 
-export const sharedWorkspace = defineWorkspace("shared", {
-  storage: { provider: "s3" },
-}, { description: "Shared workspace read by sandbox-less agents" });
-
-export const writer = defineAgent("writer", {
-  provider: {
-    google: { apiKey: env.GOOGLE_API_KEY },
+export const sharedWorkspace = defineWorkspace({
+  name: "shared",
+  description: "Shared workspace read by sandbox-less agents",
+  config: {
+    storage: { provider: "s3" },
   },
-  model: {
-    provider: "google",
-    modelId: "gemma-4-31b-it",
-    temperature: 0,
-  },
-  sandbox: writerSandbox,
-  workspaces: [sharedWorkspace],
 });
 
-export const readerMount = defineAgent("reader-mount", {
-  provider: {
-    google: { apiKey: env.GOOGLE_API_KEY },
+export const writer = defineAgent({
+  name: "writer",
+  config: {
+    provider: {
+      minimax: {
+        apiKey: env.MINIMAX_API_KEY
+      },
+    },
+    model: {
+      provider: "minimax",
+      modelId: "MiniMax-M3",
+    },
+    sandbox: writerSandbox,
+    workspaces: [sharedWorkspace],
   },
-  model: {
-    provider: "google",
-    modelId: "gemma-4-31b-it",
-    temperature: 0,
-  },
-  workspaces: [sharedWorkspace],
 });
 
-export const readerS3 = defineAgent("reader-s3", {
-  provider: {
-    google: { apiKey: env.GOOGLE_API_KEY },
+export const readerMount = defineAgent({
+  name: "reader-mount",
+  config: {
+    provider: {
+      minimax: {
+        apiKey: env.MINIMAX_API_KEY
+      },
+    },
+    model: {
+      provider: "minimax",
+      modelId: "MiniMax-M3",
+    },
+    workspaces: [sharedWorkspace],
   },
-  model: {
-    provider: "google",
-    modelId: "gemma-4-31b-it",
-    temperature: 0,
+});
+
+export const readerS3 = defineAgent({
+  name: "reader-s3",
+  config: {
+    provider: {
+      minimax: {
+        apiKey: env.MINIMAX_API_KEY
+      },
+    },
+    model: {
+      provider: "minimax",
+      modelId: "MiniMax-M3",
+    },
+    workspaces: [{ workspace: sharedWorkspace, sandbox: null }],
   },
-  workspaces: [{ workspace: sharedWorkspace, sandbox: null }],
 });

@@ -7,6 +7,10 @@ import { loadFilthyPantyRuntimeConfig } from "../src/runtime-config.ts";
 import { collectEnvRefNames, compileProject } from "../src/manifest.ts";
 import { diffManifests } from "../src/sync.ts";
 
+// Resolve the SDK entrypoint relative to this test file so generated fixtures
+// import it regardless of the cwd the suite runs from (repo root or package dir).
+const RESOURCES_MODULE = join(import.meta.dir, "..", "src", "resources.ts");
+
 let tempDirs: string[] = [];
 
 afterEach(async () => {
@@ -45,18 +49,166 @@ test("compileProject maps workspace resources and env refs to the SaaS manifest 
   });
 });
 
-test("collectEnvRefNames returns the sorted, de-duplicated env.NAME references", async () => {
+test("compileProject accepts object-shaped resource definitions", async () => {
   const cwd = await fixtureProject("", `
-import { defineAgent, env } from "${join(process.cwd(), "src", "resources.ts")}";
+import { defineAgent, defineWorkspace, env } from "${RESOURCES_MODULE}";
 
-export const support = defineAgent("support", {
-  provider: { openai: { apiKey: env.OPENAI_API_KEY } },
-  model: { provider: "openai", modelId: "gpt-5-mini" },
+export const repo = defineWorkspace({
+  name: "repo",
+  description: "Repository workspace",
+  config: { storage: { provider: "s3" } },
 });
 
-export const billing = defineAgent("billing", {
-  provider: { stripe: { apiKey: env("STRIPE_API_KEY"), webhook: env.OPENAI_API_KEY } },
-  model: { provider: "openai", modelId: "gpt-5-mini" },
+export const support = defineAgent({
+  name: "support",
+  description: "Support assistant",
+  config: {
+    provider: { openai: { apiKey: env("OPENAI_API_KEY") } },
+    model: { provider: "openai", modelId: "gpt-5-mini" },
+    workspaces: [repo],
+  },
+});
+`);
+
+  const { manifest } = await compileProject({ cwd: cwd, command: "dev" });
+
+  expect(manifest.resources).toContainEqual(expect.objectContaining({
+    kind: "workspace",
+    name: "repo",
+    description: "Repository workspace",
+  }));
+  expect(manifest.resources).toContainEqual(expect.objectContaining({
+    kind: "agent",
+    name: "support",
+    description: "Support assistant",
+  }));
+});
+
+test("compileProject rejects provider-native workspace storage before upload", async () => {
+  const cwd = await fixtureProject("", `
+import { defineWorkspace } from "${RESOURCES_MODULE}";
+
+export const repo = defineWorkspace({
+  name: "repo",
+  config: { storage: { provider: "vercel" } },
+});
+`);
+
+  await expect(compileProject({ cwd: cwd, command: "dev" }))
+    .rejects.toThrow('Workspace "repo" uses storage.provider "vercel", but Vercel Drive workspace storage is not supported yet');
+});
+
+test("compileProject rejects S3 workspaces on an incompatible default sandbox", async () => {
+  const cwd = await fixtureProject("", `
+import { defineAgent, defineSandbox, defineWorkspace } from "${RESOURCES_MODULE}";
+
+export const repo = defineWorkspace({
+  name: "repo",
+  config: { storage: { provider: "s3" } },
+});
+
+export const runner = defineSandbox({
+  name: "runner",
+  config: { provider: "vercel", persistent: true },
+});
+
+export const support = defineAgent({
+  name: "support",
+  config: {
+    sandbox: runner,
+    workspaces: [repo],
+  },
+});
+`);
+
+  await expect(compileProject({ cwd: cwd, command: "dev" }))
+    .rejects.toThrow('Agent "support" workspace "repo" uses sandbox "runner" (vercel) which does not support S3 workspace mounts');
+});
+
+test("compileProject rejects S3 workspaces on an incompatible workspace sandbox override", async () => {
+  const cwd = await fixtureProject("", `
+import { defineAgent, defineSandbox, defineWorkspace } from "${RESOURCES_MODULE}";
+
+export const repo = defineWorkspace({
+  name: "repo",
+  config: { storage: { provider: "s3" } },
+});
+
+export const defaultRunner = defineSandbox({
+  name: "default-runner",
+  config: { provider: "lambda" },
+});
+
+export const e2bRunner = defineSandbox({
+  name: "e2b-runner",
+  config: { provider: "e2b", network: { mode: "allow-all" }, persistent: true },
+});
+
+export const support = defineAgent({
+  name: "support",
+  config: {
+    sandbox: defaultRunner,
+    workspaces: [{ workspace: repo, sandbox: e2bRunner }],
+  },
+});
+`);
+
+  await expect(compileProject({ cwd: cwd, command: "dev" }))
+    .rejects.toThrow('Agent "support" workspace "repo" uses sandbox "e2b-runner" (e2b) which does not support S3 workspace mounts');
+});
+
+test("compileProject accepts env refs in webhook hook strings", async () => {
+  const cwd = await fixtureProject("", `
+import { defineAgent, env } from "${RESOURCES_MODULE}";
+
+export const webhookAgent = defineAgent({
+  name: "webhook-agent",
+  config: {
+    provider: { openai: { apiKey: env.OPENAI_API_KEY } },
+    model: { provider: "openai", modelId: "gpt-5-mini" },
+    hooks: {
+      webhook: {
+        enabled: true,
+        url: env.MOCK_WEBHOOK_URL,
+        secret: env.MOCK_WEBHOOK_SECRET,
+        events: ["agent.started", "agent.finished"],
+      },
+    },
+  },
+});
+`);
+
+  const { manifest } = await compileProject({ cwd: cwd, command: "dev" });
+  const agent = manifest.resources.find((resource) => resource.kind === "agent" && resource.name === "webhook-agent");
+
+  expect(agent?.config).toMatchObject({
+    hooks: {
+      webhook: {
+        url: { __beeblastEnv: true, name: "MOCK_WEBHOOK_URL" },
+        secret: { __beeblastEnv: true, name: "MOCK_WEBHOOK_SECRET" },
+      },
+    },
+  });
+});
+
+test("collectEnvRefNames returns the sorted, de-duplicated env.NAME references", async () => {
+  const cwd = await fixtureProject("", `
+import { defineAgent, env } from "${RESOURCES_MODULE}";
+
+export const support = defineAgent({
+  name: "support",
+  config: {
+    provider: { openai: { apiKey: env.OPENAI_API_KEY } },
+    model: { provider: "openai", modelId: "gpt-5-mini" },
+  },
+});
+
+export const billing = defineAgent({
+  name: "billing",
+  config: {
+    provider: { stripe: { apiKey: env("STRIPE_API_KEY"), webhook: env.OPENAI_API_KEY } },
+    model: { provider: "openai", modelId: "gpt-5-mini" },
+  },
 });
 `);
 
@@ -67,10 +219,13 @@ export const billing = defineAgent("billing", {
 
 test("collectEnvRefNames returns nothing when no env refs are present", async () => {
   const cwd = await fixtureProject("", `
-import { defineAgent } from "${join(process.cwd(), "src", "resources.ts")}";
+import { defineAgent } from "${RESOURCES_MODULE}";
 
-export const support = defineAgent("support", {
-  model: { provider: "openai", modelId: "gpt-5-mini" },
+export const support = defineAgent({
+  name: "support",
+  config: {
+    model: { provider: "openai", modelId: "gpt-5-mini" },
+  },
 });
 `);
 
@@ -81,10 +236,13 @@ export const support = defineAgent("support", {
 
 test("compileProject works without a config file and infers project from cwd", async () => {
   const cwd = await fixtureProject("", `
-import { defineAgent } from "${join(process.cwd(), "src", "resources.ts")}";
+import { defineAgent } from "${RESOURCES_MODULE}";
 
-export const support = defineAgent("support", {
-  model: { provider: "openai", modelId: "gpt-5-mini" },
+export const support = defineAgent({
+  name: "support",
+  config: {
+    model: { provider: "openai", modelId: "gpt-5-mini" },
+  },
 });
 `);
 
@@ -96,10 +254,13 @@ export const support = defineAgent("support", {
 
 test("compileProject accepts explicit project override", async () => {
   const cwd = await fixtureProject("", `
-import { defineAgent } from "${join(process.cwd(), "src", "resources.ts")}";
+import { defineAgent } from "${RESOURCES_MODULE}";
 
-export const support = defineAgent("support", {
-  model: { provider: "openai", modelId: "gpt-5-mini" },
+export const support = defineAgent({
+  name: "support",
+  config: {
+    model: { provider: "openai", modelId: "gpt-5-mini" },
+  },
 });
 `);
 
@@ -110,10 +271,13 @@ export const support = defineAgent("support", {
 
 test("compileProject preserves exported resource aliases for generated api handles", async () => {
   const cwd = await fixtureProject("", `
-import { defineAgent } from "${join(process.cwd(), "src", "resources.ts")}";
+import { defineAgent } from "${RESOURCES_MODULE}";
 
-export const myAgent = defineAgent("my-agent", {
-  model: { provider: "openai", modelId: "gpt-5-mini" },
+export const myAgent = defineAgent({
+  name: "my-agent",
+  config: {
+    model: { provider: "openai", modelId: "gpt-5-mini" },
+  },
 });
 `);
 
@@ -124,10 +288,13 @@ export const myAgent = defineAgent("my-agent", {
 
 test("writeGeneratedFiles uses exported resource aliases for api property names", async () => {
   const cwd = await fixtureProject("", `
-import { defineAgent } from "${join(process.cwd(), "src", "resources.ts")}";
+import { defineAgent } from "${RESOURCES_MODULE}";
 
-export const myAgent = defineAgent("my-agent", {
-  model: { provider: "openai", modelId: "gpt-5-mini" },
+export const myAgent = defineAgent({
+  name: "my-agent",
+  config: {
+    model: { provider: "openai", modelId: "gpt-5-mini" },
+  },
 });
 `);
   const { manifest, resourceAliases } = await compileProject({ cwd: cwd, command: "dev" });
@@ -149,22 +316,31 @@ export const myAgent = defineAgent("my-agent", {
 
 test("writeGeneratedFiles keys non-agent resources by export alias under api.crons", async () => {
   const cwd = await fixtureProject("", `
-import { defineAgent, defineWorkspace, defineCron } from "${join(process.cwd(), "src", "resources.ts")}";
+import { defineAgent, defineWorkspace, defineCron } from "${RESOURCES_MODULE}";
 
-export const cron = defineAgent("cron-agent", {
-  model: { provider: "openai", modelId: "gpt-5-mini" },
+export const cron = defineAgent({
+  name: "cron-agent",
+  config: {
+    model: { provider: "openai", modelId: "gpt-5-mini" },
+  },
 });
 
-export const myRepo = defineWorkspace("my-repo", {
-  storage: { provider: "s3" },
+export const myRepo = defineWorkspace({
+  name: "my-repo",
+  config: {
+    storage: { provider: "s3" },
+  },
 });
 
-export const oneMinuteCron = defineCron("one-minute-cron-test", {
-  agent: cron,
-  conversationKey: "cron:test",
-  input: "Confirm the test ran.",
-  scheduleExpression: "at(2030-01-01T00:00:00)",
-  timezone: "UTC",
+export const oneMinuteCron = defineCron({
+  name: "one-minute-cron-test",
+  config: {
+    agent: cron,
+    conversationKey: "cron:test",
+    input: "Confirm the test ran.",
+    scheduleExpression: "at(2030-01-01T00:00:00)",
+    timezone: "UTC",
+  },
 });
 `);
   const { manifest, resourceAliases } = await compileProject({ cwd: cwd, command: "dev" });
@@ -192,10 +368,13 @@ export const oneMinuteCron = defineCron("one-minute-cron-test", {
 
 test("compileProject loads project and environment from .env.local", async () => {
   const cwd = await fixtureProject("", `
-import { defineAgent } from "${join(process.cwd(), "src", "resources.ts")}";
+import { defineAgent } from "${RESOURCES_MODULE}";
 
-export const support = defineAgent("support", {
-  model: { provider: "openai", modelId: "gpt-5-mini" },
+export const support = defineAgent({
+  name: "support",
+  config: {
+    model: { provider: "openai", modelId: "gpt-5-mini" },
+  },
 });
 `);
   await writeFile(join(cwd, ".env.local"), [
@@ -212,10 +391,13 @@ export const support = defineAgent("support", {
 
 test("compileProject defaults deploy to production without an override", async () => {
   const cwd = await fixtureProject("", `
-import { defineAgent } from "${join(process.cwd(), "src", "resources.ts")}";
+import { defineAgent } from "${RESOURCES_MODULE}";
 
-export const support = defineAgent("support", {
-  model: { provider: "openai", modelId: "gpt-5-mini" },
+export const support = defineAgent({
+  name: "support",
+  config: {
+    model: { provider: "openai", modelId: "gpt-5-mini" },
+  },
 });
 `);
 
@@ -226,10 +408,13 @@ export const support = defineAgent("support", {
 
 test("compileProject can ignore runtime env when deploy uses command defaults", async () => {
   const cwd = await fixtureProject("", `
-import { defineAgent } from "${join(process.cwd(), "src", "resources.ts")}";
+import { defineAgent } from "${RESOURCES_MODULE}";
 
-export const support = defineAgent("support", {
-  model: { provider: "openai", modelId: "gpt-5-mini" },
+export const support = defineAgent({
+  name: "support",
+  config: {
+    model: { provider: "openai", modelId: "gpt-5-mini" },
+  },
 });
 `);
   await writeFile(join(cwd, ".env.local"), [
@@ -248,29 +433,48 @@ export const support = defineAgent("support", {
 
 test("compileProject maps workspace overrides, subagents, skills, and tools", async () => {
   const cwd = await fixtureProject(`
-import { defineFilthyPanty } from "${join(process.cwd(), "src", "resources.ts")}";
+import { defineFilthyPanty } from "${RESOURCES_MODULE}";
 
 export default defineFilthyPanty({ project: "typed-app" });
 `, `
-import { defineAgent, defineSkill, defineTool, defineWorkspace, defineSandbox } from "${join(process.cwd(), "src", "resources.ts")}";
+import { defineAgent, defineSkill, defineTool, defineWorkspace, defineSandbox } from "${RESOURCES_MODULE}";
 
-export const docs = defineSkill("greeting-skill", { path: "skills/greeting-skill" });
-export const progress = defineTool("stream_progress", {
-  path: "tools/stream_progress.mjs",
-  description: "Streams progress updates.",
-  inputSchema: { type: "object", properties: { steps: { type: "number" } } },
+export const docs = defineSkill({
+  name: "greeting-skill",
+  config: { path: "skills/greeting-skill" },
 });
-export const repo = defineWorkspace("repo", { storage: { provider: "s3" } });
-export const readonly = defineWorkspace("readonly", { storage: { provider: "s3" } });
-export const runner = defineSandbox("runner", { provider: "lambda" });
-export const helper = defineAgent("helper", { model: { provider: "openai", modelId: "gpt-5-mini" } });
-export const support = defineAgent("support", {
-  model: { provider: "openai", modelId: "gpt-5-mini" },
-  sandbox: runner,
-  workspaces: [repo, { workspace: readonly, sandbox: null }],
-  skills: { enabled: true, allowed: [docs] },
-  subagent: { enabled: true, allowed: [helper] },
-  tools: { [progress.name]: { enabled: true } },
+export const progress = defineTool({
+  name: "stream_progress",
+  config: {
+    path: "tools/stream_progress.mjs",
+    description: "Streams progress updates.",
+    inputSchema: { type: "object", properties: { steps: { type: "number" } } },
+  },
+});
+export const repo = defineWorkspace({ name: "repo", config: { storage: { provider: "s3" } } });
+export const readonly = defineWorkspace({ name: "readonly", config: { storage: { provider: "s3" } } });
+export const runner = defineSandbox({ name: "runner", config: { provider: "lambda" } });
+export const helper = defineAgent({
+  name: "helper",
+  config: { model: { provider: "openai", modelId: "gpt-5-mini" } },
+});
+export const support = defineAgent({
+  name: "support",
+  config: {
+    agent: {
+      system: [{
+        role: "system",
+        content: "Use the support policy.",
+        providerOptions: { anthropic: { cacheControl: { type: "ephemeral" } } },
+      }],
+    },
+    model: { provider: "openai", modelId: "gpt-5-mini" },
+    sandbox: runner,
+    workspaces: [repo, { workspace: readonly, sandbox: null }],
+    skills: { enabled: true, allowed: [docs] },
+    subagent: { enabled: true, allowed: [helper] },
+    tools: { [progress.name]: { enabled: true } },
+  },
 });
 `);
   await mkdir(join(cwd, "filthypanty", "skills", "greeting-skill"), { recursive: true });
@@ -290,6 +494,13 @@ description: Says hello.
   const tool = manifest.resources.find((resource) => resource.kind === "tool" && resource.name === "stream_progress");
 
   expect(support?.config).toMatchObject({
+    agent: {
+      system: [{
+        role: "system",
+        content: "Use the support policy.",
+        providerOptions: { anthropic: { cacheControl: { type: "ephemeral" } } },
+      }],
+    },
     sandbox: "runner",
     workspaces: [
       { name: "repo", workspaceId: "repo" },
@@ -308,6 +519,71 @@ description: Says hello.
   expect((tool?.config as Record<string, unknown>).description).toBe("Streams progress updates.");
   expect((tool?.config as Record<string, unknown>).bundle).toBe("export default { name: 'stream_progress' };\n");
   expect(typeof (tool?.config as Record<string, unknown>).sha256).toBe("string");
+});
+
+test("compileProject rejects skill and tool paths outside filthypanty project root", async () => {
+  const cwd = await fixtureProject("", `
+import { defineSkill, defineTool } from "${RESOURCES_MODULE}";
+
+export const escapedSkill = defineSkill({
+  name: "escaped-skill",
+  config: { path: "../outside-skill" },
+});
+
+export const escapedTool = defineTool({
+  name: "escaped_tool",
+  config: {
+    path: "../outside-tool.mjs",
+    description: "Should not bundle.",
+    inputSchema: { type: "object" },
+  },
+});
+`);
+
+  await expect(compileProject({ cwd: cwd, command: "dev" })).rejects.toThrow("must stay inside filthypanty/");
+});
+
+test("compileProject skips hidden and secret-looking files from skill bundles", async () => {
+  const cwd = await fixtureProject("", `
+import { defineSkill } from "${RESOURCES_MODULE}";
+
+export const docs = defineSkill({
+  name: "safe-skill",
+  config: { path: "skills/safe-skill" },
+});
+`);
+  const skillRoot = join(cwd, "filthypanty", "skills", "safe-skill");
+  await mkdir(join(skillRoot, ".cache"), { recursive: true });
+  await writeFile(join(skillRoot, "SKILL.md"), "# Safe\n");
+  await writeFile(join(skillRoot, "notes.txt"), "ok\n");
+  await writeFile(join(skillRoot, ".env"), "TOKEN=secret\n");
+  await writeFile(join(skillRoot, ".cache", "payload.txt"), "secret\n");
+  await writeFile(join(skillRoot, "private.pem"), "secret\n");
+
+  const { manifest } = await compileProject({ cwd: cwd, command: "dev" });
+  const skill = manifest.resources.find((resource) => resource.kind === "skill" && resource.name === "safe-skill");
+  const files = ((skill?.config as Record<string, unknown>).files as Array<{ path: string }>).map((file) => file.path);
+
+  expect(files.sort()).toEqual(["SKILL.md", "notes.txt"].sort());
+});
+
+test("compileProject rejects hidden or secret-looking tool bundle paths", async () => {
+  const cwd = await fixtureProject("", `
+import { defineTool } from "${RESOURCES_MODULE}";
+
+export const hiddenTool = defineTool({
+  name: "hidden_tool",
+  config: {
+    path: ".secret/tool.mjs",
+    description: "Should not bundle.",
+    inputSchema: { type: "object" },
+  },
+});
+`);
+  await mkdir(join(cwd, "filthypanty", ".secret"), { recursive: true });
+  await writeFile(join(cwd, "filthypanty", ".secret", "tool.mjs"), "export default {};\n");
+
+  await expect(compileProject({ cwd: cwd, command: "dev" })).rejects.toThrow("looks like a hidden file or secret");
 });
 
 test("diffManifests reports create, update, and delete operations", () => {
@@ -433,10 +709,13 @@ test("writeGeneratedFiles creates Convex-style typed resource references", async
 
 test("writeGeneratedFiles only exposes ids for locally declared resources", async () => {
   const cwd = await fixtureProject("", `
-import { defineAgent } from "${join(process.cwd(), "src", "resources.ts")}";
+import { defineAgent } from "${RESOURCES_MODULE}";
 
-export const myAgent = defineAgent("my-agent", {
-  model: { provider: "openai", modelId: "gpt-5-mini" },
+export const myAgent = defineAgent({
+  name: "my-agent",
+  config: {
+    model: { provider: "openai", modelId: "gpt-5-mini" },
+  },
 });
 `);
   const { manifest, resourceAliases } = await compileProject({ cwd: cwd, command: "dev" });
@@ -487,7 +766,7 @@ async function fixtureProject(configSource?: string, resourcesSource?: string): 
   const projectDir = join(cwd, "filthypanty");
   await mkdir(projectDir, { recursive: true });
   await writeFile(join(projectDir, "filthy-panty.config.ts"), configSource ?? `
-import { defineFilthyPanty } from "${join(process.cwd(), "src", "resources.ts")}";
+import { defineFilthyPanty } from "${RESOURCES_MODULE}";
 
 export default defineFilthyPanty({
   project: "typed-app",
@@ -495,21 +774,27 @@ export default defineFilthyPanty({
 });
 `);
   await writeFile(join(projectDir, "agents.ts"), resourcesSource ?? `
-import { defineAgent, defineWorkspace, env } from "${join(process.cwd(), "src", "resources.ts")}";
+import { defineAgent, defineWorkspace, env } from "${RESOURCES_MODULE}";
 
-export const repo = defineWorkspace("repo", {
-  storage: { provider: "s3" },
+export const repo = defineWorkspace({
+  name: "repo",
+  config: {
+    storage: { provider: "s3" },
+  },
 });
 
-export const support = defineAgent("support", {
-  provider: {
-    openai: { apiKey: env("OPENAI_API_KEY") },
+export const support = defineAgent({
+  name: "support",
+  config: {
+    provider: {
+      openai: { apiKey: env("OPENAI_API_KEY") },
+    },
+    model: {
+      provider: "openai",
+      modelId: "gpt-5-mini",
+    },
+    workspaces: [repo],
   },
-  model: {
-    provider: "openai",
-    modelId: "gpt-5-mini",
-  },
-  workspaces: [repo],
 });
 `);
 

@@ -1,5 +1,10 @@
 /**
  * Resource definition helpers for the code-first `filthypanty/` project folder.
+ *
+ * Layout: markers, then types (env refs, project config, resource primitives,
+ * per-kind config surfaces, per-kind resource aliases), then the env runtime
+ * value, the resource constructors, and the type guards. Every runtime function
+ * here is synchronous.
  */
 
 import type {
@@ -16,6 +21,19 @@ export interface EnvRef<Name extends string = string> {
   readonly __beeblastEnv: true;
   readonly name: Name;
 }
+
+/** Callable + property-access accessor for {@link env}. */
+export interface EnvAccessor {
+  <const Name extends string>(name: Name): EnvRef<Name>;
+  readonly [name: string]: EnvRef;
+}
+
+type EnvRefString<T> =
+  T extends string ? T | EnvRef :
+  T extends readonly (infer Item)[] ? readonly EnvRefString<Item>[] :
+  T extends (infer Item)[] ? EnvRefString<Item>[] :
+  T extends object ? { [Key in keyof T]: EnvRefString<T[Key]> } :
+  T;
 
 export interface FilthyPantyProjectConfig {
   project?: string;
@@ -46,6 +64,12 @@ export interface ResourceDefinition<
   readonly config: Config;
 }
 
+export interface ResourceDefinitionInput<Name extends string, Config> {
+  name: Name;
+  description?: string;
+  config: Config;
+}
+
 /**
  * Code-first sandbox config surface. Mirrors core's `SandboxConfig` but lets
  * `envVars` values be `env.NAME` references (compiled to `${NAME}` placeholders
@@ -55,11 +79,6 @@ export interface ResourceDefinition<
 export type SandboxDefinitionConfig = Omit<SandboxConfig, "envVars"> & {
   envVars?: Record<string, string | EnvRef | undefined>;
 };
-
-export type WorkspaceResource<Name extends string = string> = ResourceDefinition<"workspace", Name, WorkspaceConfig>;
-export type SandboxResource<Name extends string = string> = ResourceDefinition<"sandbox", Name, SandboxDefinitionConfig>;
-export type SkillResource<Name extends string = string> = ResourceDefinition<"skill", Name, SkillDefinitionConfig>;
-export type ToolResource<Name extends string = string> = ResourceDefinition<"tool", Name, ToolDefinitionConfig>;
 
 export interface SkillDefinitionConfig {
   /**
@@ -115,7 +134,7 @@ export type AgentSkillsDefinitionConfig = Omit<NonNullable<AgentConfig["skills"]
  * gains a new top-level field that should be code-definable.
  */
 export type AgentDefinitionConfig =
-  & Pick<AgentConfig, "agent" | "model" | "provider" | "session" | "hooks" | "channels" | "tools">
+  & EnvRefString<Pick<AgentConfig, "agent" | "model" | "provider" | "session" | "hooks" | "channels" | "tools">>
   & {
     sandbox?: SandboxResource | string;
     workspaces?: readonly AgentWorkspaceInput[];
@@ -123,12 +142,15 @@ export type AgentDefinitionConfig =
     skills?: AgentSkillsDefinitionConfig;
   };
 
-export type AgentResource<Name extends string = string> = ResourceDefinition<"agent", Name, AgentDefinitionConfig>;
-
 export type CronDefinitionConfig = Omit<CreateCronInput, "agentId" | "name"> & {
   agent: AgentResource | string;
 };
 
+export type AgentResource<Name extends string = string> = ResourceDefinition<"agent", Name, AgentDefinitionConfig>;
+export type WorkspaceResource<Name extends string = string> = ResourceDefinition<"workspace", Name, WorkspaceConfig>;
+export type SandboxResource<Name extends string = string> = ResourceDefinition<"sandbox", Name, SandboxDefinitionConfig>;
+export type SkillResource<Name extends string = string> = ResourceDefinition<"skill", Name, SkillDefinitionConfig>;
+export type ToolResource<Name extends string = string> = ResourceDefinition<"tool", Name, ToolDefinitionConfig>;
 export type CronResource<Name extends string = string> = ResourceDefinition<"cron", Name, CronDefinitionConfig>;
 
 export type AnyResource =
@@ -138,68 +160,6 @@ export type AnyResource =
   | CronResource
   | SkillResource
   | ToolResource;
-
-export function defineFilthyPanty(config: FilthyPantyProjectConfig): FilthyPantyConfigDefinition {
-  return { [CONFIG_MARKER]: true, config: config };
-}
-
-export function defineWorkspace<const Name extends string>(
-  name: Name,
-  config: WorkspaceConfig,
-  options: { description?: string } = {},
-): WorkspaceResource<Name> {
-  return defineResource("workspace", name, config, options);
-}
-
-export function defineSandbox<const Name extends string>(
-  name: Name,
-  config: SandboxDefinitionConfig,
-  options: { description?: string } = {},
-): SandboxResource<Name> {
-  return defineResource("sandbox", name, config, options);
-}
-
-export function defineSkill<const Name extends string>(
-  name: Name,
-  config: SkillDefinitionConfig,
-  options: { description?: string } = {},
-): SkillResource<Name> {
-  return defineResource("skill", name, config, options);
-}
-
-export function defineTool<const Name extends string>(
-  name: Name,
-  config: ToolDefinitionConfig,
-  options: { description?: string } = {},
-): ToolResource<Name> {
-  return defineResource("tool", name, config, options);
-}
-
-export function defineAgent<const Name extends string>(
-  name: Name,
-  config: AgentDefinitionConfig,
-  options: { description?: string } = {},
-): AgentResource<Name> {
-  return defineResource("agent", name, config, options);
-}
-
-export function defineCron<const Name extends string>(
-  name: Name,
-  config: CronDefinitionConfig,
-  options: { description?: string } = {},
-): CronResource<Name> {
-  return defineResource("cron", name, config, options);
-}
-
-/** Callable + property-access accessor for {@link env}. */
-export interface EnvAccessor {
-  <const Name extends string>(name: Name): EnvRef<Name>;
-  readonly [name: string]: EnvRef;
-}
-
-function makeEnvRef<const Name extends string>(name: Name): EnvRef<Name> {
-  return { __beeblastEnv: true, name: name };
-}
 
 /**
  * References an account/environment variable resolved on the SERVER at runtime —
@@ -216,15 +176,78 @@ function makeEnvRef<const Name extends string>(name: Name): EnvRef<Name> {
  */
 export const env: EnvAccessor = new Proxy(
   function env(name: string) {
-    return makeEnvRef(name);
+    return { __beeblastEnv: true, name };
   } as unknown as EnvAccessor,
   {
     get(target, property, receiver) {
-      if (typeof property === "string") return makeEnvRef(property);
+      if (typeof property === "string") return { __beeblastEnv: true, name: property };
       return Reflect.get(target, property, receiver);
     },
   },
 );
+
+/**
+ * Shared builder behind every `define*` helper below. The public helpers are
+ * thin, per-kind typed front doors into this one function: each pins its `kind`
+ * (the discriminant the sync/codegen pipeline switches on) and constrains
+ * `config` to that resource's shape so callers get autocomplete and typo checks.
+ */
+function defineResource<const Kind extends ResourceKind, const Name extends string, Config>(
+  kind: Kind,
+  input: ResourceDefinitionInput<Name, Config>,
+): ResourceDefinition<Kind, Name, Config> {
+  if (input.config === undefined) {
+    throw new Error(`Resource "${input.name}" must include config`);
+  }
+
+  return {
+    [RESOURCE_MARKER]: true,
+    kind,
+    name: input.name,
+    ...(input.description ? { description: input.description } : {}),
+    config: input.config,
+  };
+}
+
+export function defineFilthyPanty(config: FilthyPantyProjectConfig): FilthyPantyConfigDefinition {
+  return { [CONFIG_MARKER]: true, config };
+}
+
+export function defineAgent<const Name extends string>(
+  input: ResourceDefinitionInput<Name, AgentDefinitionConfig>,
+): AgentResource<Name> {
+  return defineResource("agent", input);
+}
+
+export function defineWorkspace<const Name extends string>(
+  input: ResourceDefinitionInput<Name, WorkspaceConfig>,
+): WorkspaceResource<Name> {
+  return defineResource("workspace", input);
+}
+
+export function defineSandbox<const Name extends string>(
+  input: ResourceDefinitionInput<Name, SandboxDefinitionConfig>,
+): SandboxResource<Name> {
+  return defineResource("sandbox", input);
+}
+
+export function defineSkill<const Name extends string>(
+  input: ResourceDefinitionInput<Name, SkillDefinitionConfig>,
+): SkillResource<Name> {
+  return defineResource("skill", input);
+}
+
+export function defineTool<const Name extends string>(
+  input: ResourceDefinitionInput<Name, ToolDefinitionConfig>,
+): ToolResource<Name> {
+  return defineResource("tool", input);
+}
+
+export function defineCron<const Name extends string>(
+  input: ResourceDefinitionInput<Name, CronDefinitionConfig>,
+): CronResource<Name> {
+  return defineResource("cron", input);
+}
 
 export function isResource(value: unknown): value is AnyResource {
   return Boolean(value && typeof value === "object" && (value as { [RESOURCE_MARKER]?: boolean })[RESOURCE_MARKER]);
@@ -232,19 +255,4 @@ export function isResource(value: unknown): value is AnyResource {
 
 export function isFilthyPantyConfig(value: unknown): value is FilthyPantyConfigDefinition {
   return Boolean(value && typeof value === "object" && (value as { [CONFIG_MARKER]?: boolean })[CONFIG_MARKER]);
-}
-
-function defineResource<const Kind extends ResourceKind, const Name extends string, Config>(
-  kind: Kind,
-  name: Name,
-  config: Config,
-  options: { description?: string },
-): ResourceDefinition<Kind, Name, Config> {
-  return {
-    [RESOURCE_MARKER]: true,
-    kind: kind,
-    name: name,
-    ...(options.description ? { description: options.description } : {}),
-    config: config,
-  };
 }

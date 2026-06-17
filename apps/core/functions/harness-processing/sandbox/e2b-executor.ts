@@ -1,25 +1,23 @@
 /**
  * E2B-backed sandbox executor.
- * Keep E2B SDK adaptation here. A real VM: run the bash `code` as-is in the
- * workspace directory. Persistent mode reserves one sandbox per workspace,
- * reconnecting by stored id (E2B auto-pauses it on idle and connect resumes it).
+ * Keep E2B SDK adaptation here. Commands run in E2B's native sandbox filesystem.
+ * Persistent mode reserves one sandbox per key, reconnecting by stored id (E2B
+ * auto-pauses it on idle and connect resumes it).
  */
 
 import { optionalEnv } from "../../_shared/env.ts";
-import { MAX_CONCURRENT_BACKGROUND_JOBS, resolveSandboxLifecycle } from "../../_shared/sandbox.ts";
+import { resolveSandboxLifecycle } from "../../_shared/sandbox.ts";
+import { Buffer } from "node:buffer";
 import { Sandbox } from "e2b";
 import type {
   SandboxExecutor,
   SandboxExecutorConfig,
   SandboxJobHandle,
-  SandboxJobLogs,
-  SandboxJobRequest,
-  SandboxJobStatus,
   SandboxRunRequest,
   SandboxRunResult,
 } from "./types.ts";
-import { configString, isRecordObject, isSandboxGoneError, sandboxReservationKey, shellQuote, stringRecord, truncateText, workspacePath } from "./utils.ts";
-import { generateJobId, launchScript, lifecycleScript, logsScript, parseJobStatus, statusScript, stopScript } from "./jobs.ts";
+import { configString, isRecordObject, isSandboxGoneError, sandboxReservationKey, shellQuote, stringRecord, truncateText } from "./utils.ts";
+import { callbackSnippet, generateJobId } from "./jobs.ts";
 import { claimSandboxInstance, deleteSandboxInstance, getSandboxExternalId, saveSandboxInstance } from "./instance-store.ts";
 
 export class E2BSandboxExecutor implements SandboxExecutor {
@@ -33,15 +31,9 @@ export class E2BSandboxExecutor implements SandboxExecutor {
     const startedAt = Date.now();
     const persistent = this.#persistent(request);
     const sandbox = await this.#acquire(request);
-    const cwd = persistent ? this.#workDir(sandboxReservationKey(request)!) : workspacePath(request);
 
     try {
-      if (persistent && cwd) {
-        await this.#shell(sandbox, `mkdir -p ${shellQuote(cwd)}`);
-        await this.#runLifecycle(sandbox, cwd);
-      }
       const result = await sandbox.commands.run(request.code, {
-        ...(cwd ? { cwd } : {}),
         timeoutMs: request.timeoutSeconds * 1000,
         envs: { ...stringRecord(this.#config.envVars), ...(request.envVars ?? {}) },
       });
@@ -63,41 +55,16 @@ export class E2BSandboxExecutor implements SandboxExecutor {
   }
 
   async runBackground(request: SandboxRunRequest): Promise<SandboxJobHandle> {
-    const ns = this.#requirePersistent(request);
+    this.#requirePersistent(request);
     const sandbox = await this.#acquire(request);
-    const workDir = this.#workDir(ns);
-    await this.#shell(sandbox, `mkdir -p ${shellQuote(workDir)}`);
-    await this.#runLifecycle(sandbox, workDir);
     const jobId = request.jobId ?? generateJobId();
-    const script = launchScript(this.#jobsDir(ns), jobId, workDir, request.code, {
-      maxConcurrentJobs: MAX_CONCURRENT_BACKGROUND_JOBS,
-      ...(request.callback ? { callback: request.callback } : {}),
+    const handle = await sandbox.commands.run(e2bBackgroundCommand(request, jobId), {
+      background: true,
+      timeoutMs: request.timeoutSeconds * 1000,
+      envs: { ...stringRecord(this.#config.envVars), ...(request.envVars ?? {}) },
     });
-    const result = await sandbox.commands.run(script, { envs: { ...stringRecord(this.#config.envVars) } });
-    if ((result.exitCode ?? 0) !== 0) {
-      throw new Error([result.stderr, result.error].filter(Boolean).join("\n") || "failed to launch background job");
-    }
+    await handle.disconnect().catch(() => {});
     return { jobId };
-  }
-
-  async jobStatus(request: SandboxJobRequest): Promise<SandboxJobStatus> {
-    const { sandbox, jobsDir } = await this.#jobContext(request);
-    return parseJobStatus(request.jobId, await this.#shell(sandbox, statusScript(jobsDir, request.jobId)));
-  }
-
-  async jobLogs(request: SandboxJobRequest): Promise<SandboxJobLogs> {
-    const bytes = request.outputLimitBytes ?? 64 * 1024;
-    const { sandbox, jobsDir } = await this.#jobContext(request);
-    const logs = truncateText(await this.#shell(sandbox, logsScript(jobsDir, request.jobId, bytes)), bytes);
-    return { jobId: request.jobId, logs: logs.value, truncated: logs.truncated };
-  }
-
-  async stopJob(request: SandboxJobRequest): Promise<SandboxJobStatus> {
-    const { sandbox, jobsDir } = await this.#jobContext(request);
-    await this.#shell(sandbox, stopScript(jobsDir, request.jobId));
-    // Report the real terminal state: a job that had already finished keeps its
-    // own exit code instead of being recorded as killed.
-    return parseJobStatus(request.jobId, await this.#shell(sandbox, statusScript(jobsDir, request.jobId)));
   }
 
   async release(request: { namespace?: string; reservationKey?: string }): Promise<void> {
@@ -119,21 +86,10 @@ export class E2BSandboxExecutor implements SandboxExecutor {
     return this.#config.persistent === true && !!sandboxReservationKey(request);
   }
 
-  #requirePersistent(request: { namespace?: string; reservationKey?: string }): string {
+  #requirePersistent(request: { namespace?: string; reservationKey?: string }): void {
     if (!this.#persistent(request)) {
       throw new Error("background jobs require a persistent e2b sandbox reservation key");
     }
-    return sandboxReservationKey(request)!;
-  }
-
-  #workDir(namespace: string): string {
-    const options = isRecordObject(this.#config.options) ? this.#config.options : {};
-    const root = (configString(options.workspaceRoot) ?? "/mnt/workspaces").replace(/\/+$/, "");
-    return `${root}/${namespace}`;
-  }
-
-  #jobsDir(namespace: string): string {
-    return `${this.#workDir(namespace)}/.fp-jobs`;
   }
 
   async #acquire(request: SandboxRunRequest): Promise<Sandbox> {
@@ -163,28 +119,24 @@ export class E2BSandboxExecutor implements SandboxExecutor {
     return Sandbox.connect(winner, e2bApiOptions(this.#config));
   }
 
-  async #jobContext(request: SandboxJobRequest): Promise<{ sandbox: Sandbox; jobsDir: string }> {
-    const key = sandboxReservationKey(request);
-    if (!key) throw new Error("job operations require a persistent sandbox reservation key");
-    const externalId = await getSandboxExternalId("e2b", key);
-    if (!externalId) throw new Error("no reserved e2b sandbox for this workspace");
-    const sandbox = await Sandbox.connect(externalId, e2bApiOptions(this.#config));
-    return { sandbox, jobsDir: this.#jobsDir(key) };
-  }
+}
 
-  async #shell(sandbox: Sandbox, code: string): Promise<string> {
-    const result = await sandbox.commands.run(code, { envs: { ...stringRecord(this.#config.envVars) } });
-    return result.stdout ?? "";
+function e2bBackgroundCommand(request: SandboxRunRequest, jobId: string): string {
+  if (!request.callback) {
+    return request.code;
   }
-
-  async #runLifecycle(sandbox: Sandbox, workDir: string): Promise<void> {
-    const script = lifecycleScript(workDir, this.#config.onCreate, this.#config.onResume);
-    if (!script) return;
-    const result = await sandbox.commands.run(script, { envs: { ...stringRecord(this.#config.envVars) } });
-    if ((result.exitCode ?? 0) !== 0) {
-      throw new Error([result.stderr, result.error, result.stdout].filter(Boolean).join("\n") || "e2b lifecycle hook failed");
-    }
+  if (!/^[A-Za-z0-9_-]+$/.test(jobId)) {
+    throw new Error(`Invalid job id: ${jobId}`);
   }
+  const logFile = `/tmp/fp-e2b-job-${jobId}.log`;
+  const codeB64 = Buffer.from(request.code, "utf8").toString("base64");
+  return [
+    `bash -lc "$(printf %s ${shellQuote(codeB64)} | base64 -d)" > ${shellQuote(logFile)} 2>&1`,
+    `__rc=$?`,
+    callbackSnippet(request.callback, logFile),
+    `rm -f ${shellQuote(logFile)}`,
+    `exit "$__rc"`,
+  ].join("\n");
 }
 
 function e2bApiOptions(config: SandboxExecutorConfig): Record<string, unknown> {

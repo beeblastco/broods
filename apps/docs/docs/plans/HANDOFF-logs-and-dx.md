@@ -41,6 +41,7 @@ Fixed the immediate state by running (already done this session):
 ## Changes made (uncommitted) — file by file
 
 ### 1. SDK surfaces stream errors — `packages/filthy-panty/src/client.ts`
+
 - In `stream()`, parse each SSE part; if `part.type === "error"`, **throw**
   `Agent run failed: <formatStreamError(part.error)>` instead of yielding/swallowing.
 - Added `formatStreamError()` helper: handles AI SDK `APICallError` shape
@@ -49,6 +50,7 @@ Fixed the immediate state by running (already done this session):
   `text-delta`.
 
 ### 2. Deploy-time missing-env warning — Convex + SDK + CLI
+
 - `packages/convex/cliSync.ts`:
   - `syncAgentResources` options now take `missingEnv: Set<string>`; inside the agent loop, every
     referenced env name not present in `envValues` is added to it (sits right above the
@@ -72,6 +74,7 @@ Fixed the immediate state by running (already done this session):
   do not deploy unprompted). Verified by code inspection only.
 
 ### 3. CLI logs (polling baseline) — `packages/filthy-panty/src/cli/index.ts` + `sync.ts`
+
 - `sync.ts`: `logs()` now takes `lookbackMs`, returns typed `{ logs: CliLogEntry[] }`; exported
   `CliLogEntry` interface (timestamp/message/level/logGroup/logStream/functionName/requestId).
   NOTE: the Convex `/logs` route already accepted `lookbackMs` — **no Convex change needed for tail.**
@@ -87,6 +90,7 @@ Fixed the immediate state by running (already done this session):
   - HELP text updated for `logs [-f]`, `--no-logs`, `-f/--follow`, `--error`, `--limit`, `--json`.
 
 ### 4. Pre-existing (from earlier in session, still uncommitted)
+
 - `packages/filthy-panty/src/resources.ts`: `env` is a Proxy supporting BOTH `env.NAME` and
   `env("NAME")` (the `EnvAccessor` interface with `readonly [name: string]: EnvRef`).
 - `packages/demos/sandbox-stateless/filthypanty/agents.ts`: uses `env.MINIMAX_API_KEY`.
@@ -94,7 +98,8 @@ Fixed the immediate state by running (already done this session):
   — now safe because the SDK throws on errors).
 
 Diff stat (core code, excludes the unrelated demo deletions in `git status`):
-```
+
+```text
 cliHttp.ts   11 ++   |  cliSync.ts   23 ++   |  cli/index.ts  140 ++
 client.ts    35 ++   |  resources.ts  4 ++   |  sync.ts        22 ++
 ```
@@ -161,7 +166,8 @@ should switch off polling too), then re-pose A–D and proceed with their pick.
       values that appeared in earlier transcripts.
 
 ## Quick verify commands
-```
+
+```text
 bun run check                                   # core + convex + SDK typecheck (currently green)
 cd packages/demos/sandbox-stateless && bun index.ts          # demo (works; key is set)
 bun ../../filthy-panty/src/cli/index.ts logs --limit 8       # pretty logs
