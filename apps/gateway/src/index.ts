@@ -1,6 +1,6 @@
 /**
- * Bun gateway for app.beeblast.co. It proxies normal HTTP/SSE requests to core
- * and adapts the public WebSocket endpoint to core's direct SSE API.
+ * Bun gateway for public app traffic. It forwards normal HTTP requests to core
+ * and adapts public WebSocket clients to core's NATS-backed stream.
  */
 
 import {
