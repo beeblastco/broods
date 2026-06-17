@@ -3,9 +3,6 @@
  * and adapts public WebSocket clients to core's NATS-backed stream.
  */
 
-import {
-  type AgentStreamPart,
-} from "../../../packages/filthy-panty/src/stream.ts";
 import { resolveRunEvents } from "../../../packages/filthy-panty/src/run-input.ts";
 import type {
   WebSocketClientExecuteMessage,
@@ -28,31 +25,51 @@ type GatewayServerOptions = {
   coreBaseUrl: string;
   port?: number;
   host?: string;
+  limits?: GatewayLimits;
 };
 
 type ActiveRun = {
   abort: AbortController;
+  startTimeout: ReturnType<typeof setTimeout>;
+};
+
+type GatewayLimits = {
+  maxConnections: number;
+  maxPayloadBytes: number;
+  backpressureBytes: number;
+  idleTimeoutSeconds: number;
+  runStartTimeoutMs: number;
 };
 
 const decoder = new TextDecoder();
 const activeRuns = new WeakMap<Bun.ServerWebSocket<GatewayData>, ActiveRun>();
 let natsConnectionPromise: Promise<NatsConnection> | null = null;
+let activeSocketCount = 0;
 
 export function createGatewayServer(options: GatewayServerOptions): Bun.Server<GatewayData> {
   const coreBaseUrl = normalizeBaseUrl(options.coreBaseUrl);
+  const limits = options.limits ?? gatewayLimitsFromEnv();
 
   return Bun.serve<GatewayData>({
     port: options.port ?? Number(process.env.PORT ?? "3000"),
     hostname: options.host ?? process.env.BIND_HOST ?? process.env.HOSTNAME ?? "0.0.0.0",
-    idleTimeout: 255,
+    idleTimeout: limits.idleTimeoutSeconds,
     fetch(request, server) {
       const url = new URL(request.url);
 
       if (url.pathname === "/" || url.pathname === "/healthz") {
-        return json({ status: "ok", coreBaseUrl });
+        return json({
+          status: "ok",
+          activeWebSockets: activeSocketCount,
+          maxWebSockets: limits.maxConnections,
+        });
       }
 
       if (isWebSocketRequest(request) && isWebSocketPath(url.pathname)) {
+        if (activeSocketCount >= limits.maxConnections) {
+          return json({ error: "Gateway is at capacity" }, { status: 503 });
+        }
+
         const token = bearerToken(request.headers.get("authorization")) ?? url.searchParams.get("token") ?? "";
         if (!token.trim()) {
           return json({ error: "Missing WebSocket token" }, { status: 401 });
@@ -68,9 +85,20 @@ export function createGatewayServer(options: GatewayServerOptions): Bun.Server<G
         return upgraded ? undefined : json({ error: "WebSocket upgrade failed" }, { status: 400 });
       }
 
+      if (!isCoreHttpPath(url.pathname)) {
+        return json({ error: "Not found" }, { status: 404 });
+      }
+
       return proxyHttp(request, coreBaseUrl);
     },
     websocket: {
+      maxPayloadLength: limits.maxPayloadBytes,
+      backpressureLimit: limits.backpressureBytes,
+      closeOnBackpressureLimit: true,
+      idleTimeout: limits.idleTimeoutSeconds,
+      open() {
+        activeSocketCount += 1;
+      },
       async message(socket, rawMessage) {
         const message = parseGatewayMessage(rawMessage);
         if (!message) {
@@ -90,10 +118,11 @@ export function createGatewayServer(options: GatewayServerOptions): Bun.Server<G
           return;
         }
 
-        await runCoreStream(socket, coreBaseUrl, message);
+        void runCoreStream(socket, coreBaseUrl, message, limits);
       },
       close(socket) {
-        activeRuns.get(socket)?.abort.abort();
+        activeSocketCount = Math.max(0, activeSocketCount - 1);
+        stopActiveRun(socket);
         activeRuns.delete(socket);
       },
     },
@@ -119,27 +148,6 @@ export function buildCoreRunBody(message: ExecuteMessage): Record<string, unknow
   };
 }
 
-export function websocketMessageForStreamPart(part: AgentStreamPart): WebSocketServerMessage | null {
-  if (!part || typeof part !== "object") {
-    return null;
-  }
-
-  if (part.type === "text-delta") {
-    return { type: "continuation_delta", delta: part.text };
-  }
-  if (part.type === "error") {
-    return { type: "error", error: formatStreamError(part.error) };
-  }
-  if (part.type === "structured-output") {
-    return { type: "sse", chunk: JSON.stringify(part) };
-  }
-  if (part.type === "tool-approval-request") {
-    return { type: "sse", chunk: JSON.stringify(part) };
-  }
-
-  return null;
-}
-
 type ExecuteMessage = WebSocketClientExecuteMessage;
 type NatsStartResponse = {
   eventId: string;
@@ -155,16 +163,22 @@ async function runCoreStream(
   socket: Bun.ServerWebSocket<GatewayData>,
   coreBaseUrl: string,
   message: ExecuteMessage,
+  limits: GatewayLimits,
 ): Promise<void> {
   const abort = new AbortController();
-  activeRuns.set(socket, { abort });
+  let startTimedOut = false;
+  const startTimeout = setTimeout(() => {
+    startTimedOut = true;
+    abort.abort();
+  }, limits.runStartTimeoutMs);
+  activeRuns.set(socket, { abort, startTimeout });
 
   let body: Record<string, unknown>;
   try {
     body = buildCoreRunBody(message);
   } catch (error) {
     send(socket, { type: "error", error: errorMessage(error) });
-    activeRuns.delete(socket);
+    stopActiveRun(socket);
     return;
   }
 
@@ -187,6 +201,7 @@ async function runCoreStream(
     });
 
     if (!response.ok) {
+      clearTimeout(startTimeout);
       send(socket, {
         type: "error",
         status: response.status,
@@ -196,13 +211,16 @@ async function runCoreStream(
     }
 
     const started = await response.json() as NatsStartResponse;
+    clearTimeout(startTimeout);
     await streamNatsResponses(socket, started, abort.signal);
   } catch (error) {
     if (!abort.signal.aborted) {
       send(socket, { type: "error", error: errorMessage(error) });
+    } else if (startTimedOut) {
+      send(socket, { type: "error", error: "Run start timed out" });
     }
   } finally {
-    activeRuns.delete(socket);
+    stopActiveRun(socket);
   }
 }
 
@@ -211,11 +229,13 @@ async function proxyHttp(request: Request, coreBaseUrl: string): Promise<Respons
   const target = `${coreBaseUrl}${url.pathname}${url.search}`;
   const headers = new Headers(request.headers);
   headers.delete("host");
+  headers.delete("connection");
+  headers.delete("upgrade");
 
   return fetch(target, {
     method: request.method,
     headers,
-    body: request.body,
+    body: request.method === "GET" || request.method === "HEAD" ? undefined : request.body,
     redirect: "manual",
   });
 }
@@ -260,18 +280,8 @@ async function streamNatsResponses(
   }
 }
 
-function websocketMessageForNatsData(data: Record<string, unknown>): WebSocketServerMessage | null {
-  if (data.type === "done") {
-    return { type: "done" };
-  }
-  if (data.type === "waiting") {
-    return { type: "sse", chunk: JSON.stringify(data) };
-  }
-  if (data.type === "tool-approval-request") {
-    return { type: "sse", chunk: JSON.stringify(data) };
-  }
-
-  return websocketMessageForStreamPart(data as AgentStreamPart);
+export function websocketMessageForNatsData(data: Record<string, unknown>): WebSocketServerMessage | null {
+  return typeof data.type === "string" ? data as WebSocketServerMessage : null;
 }
 
 function decodeNatsStreamEvent(data: Uint8Array): NatsStreamEvent | null {
@@ -336,6 +346,14 @@ function send(socket: Bun.ServerWebSocket<GatewayData>, payload: WebSocketServer
   socket.send(JSON.stringify(payload));
 }
 
+function stopActiveRun(socket: Bun.ServerWebSocket<GatewayData>): void {
+  const activeRun = activeRuns.get(socket);
+  if (!activeRun) return;
+  clearTimeout(activeRun.startTimeout);
+  activeRun.abort.abort();
+  activeRuns.delete(socket);
+}
+
 function json(payload: Record<string, unknown>, init: ResponseInit = {}): Response {
   return new Response(JSON.stringify(payload), {
     ...init,
@@ -370,6 +388,10 @@ function isWebSocketPath(pathname: string): boolean {
     /^\/v1\/[^/]+\/agents\/[^/]+\/[^/]+\/ws$/.test(pathname);
 }
 
+function isCoreHttpPath(pathname: string): boolean {
+  return pathname === "/v1" || pathname.startsWith("/v1/");
+}
+
 function isExecuteMessage(value: object): value is WebSocketClientExecuteMessage {
   const record = value as { type?: unknown; agentId?: unknown };
 
@@ -378,19 +400,25 @@ function isExecuteMessage(value: object): value is WebSocketClientExecuteMessage
     record.agentId.trim().length > 0;
 }
 
-function formatStreamError(error: unknown): string {
-  if (typeof error === "string") {
-    return error;
-  }
-  if (error && typeof error === "object" && typeof (error as { message?: unknown }).message === "string") {
-    return (error as { message: string }).message;
-  }
-
-  return JSON.stringify(error);
-}
-
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+export function gatewayLimitsFromEnv(env: Record<string, string | undefined> = process.env): GatewayLimits {
+  return {
+    maxConnections: positiveInt(env.GATEWAY_MAX_CONNECTIONS, 10_000),
+    maxPayloadBytes: positiveInt(env.GATEWAY_MAX_PAYLOAD_BYTES, 1024 * 1024),
+    backpressureBytes: positiveInt(env.GATEWAY_BACKPRESSURE_BYTES, 1024 * 1024),
+    idleTimeoutSeconds: positiveInt(env.GATEWAY_IDLE_TIMEOUT_SECONDS, 300),
+    runStartTimeoutMs: positiveInt(env.GATEWAY_RUN_START_TIMEOUT_MS, 15_000),
+  };
+}
+
+function positiveInt(value: string | undefined, fallback: number): number {
+  if (value === undefined || value.trim() === "") return fallback;
+  const parsed = Number(value);
+
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : fallback;
 }
 
 if (import.meta.main) {
