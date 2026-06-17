@@ -120,7 +120,6 @@ test("websocket client explains Lambda Function URL upgrade failures", async () 
 
 test("websocket client subscribes to the core service and forwards server messages", async () => {
   const messages: WebSocketServerMessage[] = [];
-  const sseChunks: string[] = [];
   let done = false;
   const client = new FilthyPantyWebSocketClient({
     baseUrl: "https://app.example",
@@ -144,9 +143,6 @@ test("websocket client subscribes to the core service and forwards server messag
   }, {
     onMessage(message) {
       messages.push(message);
-    },
-    onSse(chunk) {
-      sseChunks.push(chunk);
     },
     onDone() {
       done = true;
@@ -173,14 +169,15 @@ test("websocket client subscribes to the core service and forwards server messag
     },
   });
 
-  socket.emit({ type: "sse", chunk: "data: {}\n\n" });
+  socket.emit({ type: "text-delta", id: "text-1", text: "hello" });
+  socket.emit({ type: "waiting" });
   socket.emit({ type: "done" });
 
   expect(messages).toEqual([
-    { type: "sse", chunk: "data: {}\n\n" },
+    { type: "text-delta", id: "text-1", text: "hello" },
+    { type: "waiting" },
     { type: "done" },
   ]);
-  expect(sseChunks).toEqual(["data: {}\n\n"]);
   expect(done).toBe(true);
 });
 
