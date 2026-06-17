@@ -15,32 +15,25 @@ for await (const message of client.stream({
   sessionId: "websocket-demo",
   events: [{
     role: "user",
-    content: [{ type: "text", text: "Generate a short story about two unlikely friends." }],
+    content: [{ 
+      type: "text", 
+      text: "Generate a short story about two unlikely friends." 
+    }],
   }],
 })) {
   switch (message.type) {
     case "meta":
       console.log(`session=${message.sessionId} task=${message.taskId}`);
       break;
-    case "sse":
-      process.stdout.write(message.chunk);
-      break;
-    case "continuation_delta":
-      process.stdout.write(message.delta);
-      break;
-    case "subagent_delta":
-      process.stdout.write(message.delta);
-      break;
-    case "subagent_activity":
-      console.log(`\n[subagent ${message.phase}]`);
-      break;
-    case "subagent_result":
-      console.log(`\n[subagent result] ${message.output}`);
+    case "text-delta":
+      process.stdout.write(message.text);
       break;
     case "done":
       process.stdout.write("\n");
       break;
     case "error":
-      throw new Error(message.error);
+      throw new Error(typeof message.error === "string" ? message.error : JSON.stringify(message.error));
+    default:
+      console.log(JSON.stringify(message));
   }
 }

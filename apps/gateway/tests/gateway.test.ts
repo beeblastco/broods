@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { buildCoreRunBody, websocketMessageForStreamPart } from "../src/index.ts";
+import { buildCoreRunBody, gatewayLimitsFromEnv, websocketMessageForNatsData } from "../src/index.ts";
 
 test("builds the core direct API body from a websocket execute message", () => {
   const body = buildCoreRunBody({
@@ -36,16 +36,44 @@ test("supports input shorthand for websocket execute messages", () => {
   expect(typeof body.connectionId).toBe("string");
 });
 
-test("translates text stream parts to websocket deltas", () => {
-  expect(websocketMessageForStreamPart({ type: "text-delta", id: "text-1", text: "hello" })).toEqual({
-    type: "continuation_delta",
-    delta: "hello",
+test("forwards typed NATS stream payloads directly", () => {
+  expect(websocketMessageForNatsData({ type: "text-delta", id: "text-1", text: "hello" })).toEqual({
+    type: "text-delta",
+    id: "text-1",
+    text: "hello",
+  });
+  expect(websocketMessageForNatsData({ type: "waiting" })).toEqual({ type: "waiting" });
+});
+
+test("forwards stream errors directly", () => {
+  expect(websocketMessageForNatsData({ type: "error", error: "bad key" })).toEqual({
+    type: "error",
+    error: "bad key",
   });
 });
 
-test("translates stream errors to websocket errors", () => {
-  expect(websocketMessageForStreamPart({ type: "error", error: { message: "bad key" } })).toEqual({
-    type: "error",
-    error: "bad key",
+test("uses conservative gateway limit defaults", () => {
+  expect(gatewayLimitsFromEnv({})).toEqual({
+    maxConnections: 10_000,
+    maxPayloadBytes: 1024 * 1024,
+    backpressureBytes: 1024 * 1024,
+    idleTimeoutSeconds: 300,
+    runStartTimeoutMs: 15_000,
+  });
+});
+
+test("ignores invalid gateway limit overrides", () => {
+  expect(gatewayLimitsFromEnv({
+    GATEWAY_MAX_CONNECTIONS: "500",
+    GATEWAY_MAX_PAYLOAD_BYTES: "bad",
+    GATEWAY_BACKPRESSURE_BYTES: "-1",
+    GATEWAY_IDLE_TIMEOUT_SECONDS: "60",
+    GATEWAY_RUN_START_TIMEOUT_MS: "2500",
+  })).toEqual({
+    maxConnections: 500,
+    maxPayloadBytes: 1024 * 1024,
+    backpressureBytes: 1024 * 1024,
+    idleTimeoutSeconds: 60,
+    runStartTimeoutMs: 2500,
   });
 });

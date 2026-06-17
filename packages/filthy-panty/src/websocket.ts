@@ -1,6 +1,6 @@
 /**
  * WebSocket client for deployed-agent endpoints.
- * Uses the same core service base URL as the HTTP/SSE client.
+ * Uses the gateway URL when configured, or derives one from the core service URL.
  */
 
 import { DEFAULT_CORE_BASE_URL, normalizeHttpServiceUrl } from "./client.ts";
@@ -12,6 +12,7 @@ import type {
   WebSocketClientExecuteMessage,
   WebSocketClientMessage,
   WebSocketServerMessage,
+  WebSocketStreamMessage,
 } from "./websocket-contracts.ts";
 
 const DEFAULT_CONNECT_TIMEOUT_MS = 2000;
@@ -33,11 +34,6 @@ export type WebSocketRunInput = {
 export interface WebSocketHandlers {
   onMessage?(message: WebSocketServerMessage): void;
   onMeta?(meta: Extract<WebSocketServerMessage, { type: "meta" }>): void;
-  onSse?(chunk: string): void;
-  onContinuationDelta?(delta: string): void;
-  onSubagentDelta?(event: Extract<WebSocketServerMessage, { type: "subagent_delta" }>): void;
-  onSubagentActivity?(event: Extract<WebSocketServerMessage, { type: "subagent_activity" }>): void;
-  onSubagentResult?(output: string): void;
   onDone?(): void;
   onError?(error: Error): void;
 }
@@ -161,28 +157,13 @@ export class FilthyPantyWebSocketClient {
 
       switch (payload.type) {
         case "meta":
-          handlers.onMeta?.(payload);
-          break;
-        case "sse":
-          handlers.onSse?.(payload.chunk);
-          break;
-        case "continuation_delta":
-          handlers.onContinuationDelta?.(payload.delta);
-          break;
-        case "subagent_delta":
-          handlers.onSubagentDelta?.(payload);
-          break;
-        case "subagent_activity":
-          handlers.onSubagentActivity?.(payload);
-          break;
-        case "subagent_result":
-          handlers.onSubagentResult?.(payload.output);
+          handlers.onMeta?.(payload as Extract<WebSocketServerMessage, { type: "meta" }>);
           break;
         case "done":
           finish();
           break;
         case "error":
-          fail(new Error(payload.error || "WebSocket stream error."));
+          fail(new Error(formatWireError(payload.error)));
           break;
       }
     };
@@ -247,17 +228,6 @@ export class FilthyPantyWebSocketClient {
     }
   }
 
-  async *streamSse(input: WebSocketRunInput): AsyncGenerator<string> {
-    for await (const message of this.stream(input)) {
-      if (message.type === "sse") {
-        yield message.chunk;
-      }
-      if (message.type === "error") {
-        throw new Error(message.error || "WebSocket stream error.");
-      }
-    }
-  }
-
   buildUrl(input: Pick<WebSocketRunInput, "agent" | "endpointId" | "projectSlug" | "environmentSlug">): string {
     const endpointId = resolveEndpointId(input);
     const projectSlug = input.projectSlug ?? input.agent?.projectSlug;
@@ -305,6 +275,7 @@ export type {
   WebSocketClientExecuteMessage,
   WebSocketClientMessage,
   WebSocketServerMessage,
+  WebSocketStreamMessage,
 };
 
 export function toWebSocketBaseUrl(url: string): string {
@@ -341,4 +312,13 @@ function parseServerMessage(data: string): WebSocketServerMessage | null {
   } catch {
     return null;
   }
+}
+
+function formatWireError(error: unknown): string {
+  if (typeof error === "string") return error;
+  if (error && typeof error === "object" && typeof (error as { message?: unknown }).message === "string") {
+    return (error as { message: string }).message;
+  }
+
+  return error === undefined ? "WebSocket stream error." : JSON.stringify(error);
 }
