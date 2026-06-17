@@ -342,6 +342,20 @@ function continuationResponse(settled: AsyncToolResultRecord, outcome: Continuat
  * Handle the direct SSE request invoke to the Lambda function.
  */
 async function handleDirectRequest(event: DirectInboundEvent, context?: LambdaInvocation): Promise<LambdaResponse> {
+  if (event.connectionId) {
+    await invokeNatsWorker(event);
+
+    return jsonResponse(202, {
+      eventId: event.publicEventId,
+      conversationKey: event.publicConversationKey,
+      nats: {
+        accountId: event.accountId,
+        agentId: event.agentId,
+        conversationKey: event.publicConversationKey,
+      },
+    });
+  }
+
   if (!hasRunnableDirectEvents(event)) {
     return emptySseResponse();
   }

@@ -11,7 +11,7 @@ const client = new WebsocketClient({
 });
 
 for await (const message of client.stream({
-  endpointId: api.agents.chat.endpointId,
+  agent: api.agents.chat,
   sessionId: "websocket-demo",
   events: [{
     role: "user",

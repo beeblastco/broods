@@ -743,6 +743,9 @@ async function parseDirectPayload(
   }
 
   const overrides = parseRunOverrides(record);
+  const connectionId = typeof record.connectionId === "string" && record.connectionId.trim().length > 0
+    ? record.connectionId.trim()
+    : undefined;
 
   return {
     accountId: account.accountId,
@@ -753,6 +756,7 @@ async function parseDirectPayload(
     conversationKey: scopedDirectConversationKey(account.accountId, agent.agentId, rawConversationKey),
     publicConversationKey: rawConversationKey,
     events,
+    ...(connectionId ? { connectionId } : {}),
     ...(overrides?.system ? { ephemeralSystem: overrides.system } : {}),
   };
 }

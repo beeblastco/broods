@@ -5,6 +5,8 @@
 
 export * from "./types.ts";
 export * from "./run-input.ts";
+export * from "./stream.ts";
+export * from "./websocket-contracts.ts";
 export * from "./client.ts";
 export * from "./websocket.ts";
 export * from "./contracts.ts";

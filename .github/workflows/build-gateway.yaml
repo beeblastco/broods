@@ -1,0 +1,60 @@
+name: Build Gateway Image
+
+on:
+  push:
+    branches:
+      - main
+      - dev
+    paths:
+      - 'apps/gateway/**'
+      - 'package.json'
+      - 'bun.lock'
+      - '.github/workflows/build-gateway.yaml'
+  workflow_dispatch:
+
+env:
+  IMAGE_NAME: ghcr.io/beeblastco/filthy-panty-gateway
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile --ignore-scripts
+
+      - name: Type-check gateway
+        run: bun run --filter @filthy-panty/gateway check
+
+      - name: Test gateway
+        run: bun run --filter @filthy-panty/gateway test
+
+      - name: Build and push image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: apps/gateway/Dockerfile
+          push: true
+          tags: |
+            ${{ env.IMAGE_NAME }}:${{ github.ref_name }}
+            ${{ env.IMAGE_NAME }}:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

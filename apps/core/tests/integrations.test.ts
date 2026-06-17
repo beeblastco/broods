@@ -136,6 +136,49 @@ describe("direct API ingress", () => {
     }]);
   });
 
+  it("preserves websocket connection ids for the NATS worker path", async () => {
+    const handledEvents: DirectInboundEvent[] = [];
+    const response = await routeIncomingEvent(createEvent({
+      agentId: "agent_test",
+      eventId: "one",
+      conversationKey: "chat_1",
+      connectionId: "conn_123",
+      events: [{
+        role: "user",
+        content: [{ type: "text", text: "hello" }],
+      }],
+    }, {
+      authorization: "Bearer fp_agent_test",
+    }, {
+      rawPath: "/v1/demo/agents/development/env-endpoint",
+      addDefaultAgentId: false,
+    }), createHandlers({
+      handleDirectRequest: async (event) => {
+        handledEvents.push(event);
+
+        return {
+          statusCode: 202,
+          headers: { "Content-Type": "application/json" },
+          body: "{}",
+        };
+      },
+    }), {
+      authResolver: async (headers) =>
+        headers.authorization === "Bearer fp_agent_test"
+          ? {
+            kind: "deployment",
+            account: TEST_ACCOUNT,
+            endpointId: "env-endpoint",
+            projectSlug: "demo",
+            environmentSlug: "development",
+          }
+          : null,
+    });
+
+    expect(response.statusCode).toBe(202);
+    expect(handledEvents[0]?.connectionId).toBe("conn_123");
+  });
+
   it("rejects an env-scoped runtime key when the scoped path endpoint does not match", async () => {
     const response = await routeIncomingEvent(createEvent({
       agentId: "agent_test",

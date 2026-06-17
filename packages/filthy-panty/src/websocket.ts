@@ -4,34 +4,27 @@
  */
 
 import { DEFAULT_CORE_BASE_URL, normalizeHttpServiceUrl } from "./client.ts";
+import type { AgentReference } from "./client.ts";
 import { stripTrailingSlash } from "./config.ts";
 import { resolveRunEvents, type AgentRunEventInput, type AgentRunOverrides } from "./run-input.ts";
+import type {
+  WebSocketClientCancelMessage,
+  WebSocketClientExecuteMessage,
+  WebSocketClientMessage,
+  WebSocketServerMessage,
+} from "./websocket-contracts.ts";
 
 const DEFAULT_CONNECT_TIMEOUT_MS = 2000;
 const WS_CONNECTING = 0;
 const WS_OPEN = 1;
 const LAMBDA_FUNCTION_URL_HOST_RE = /\.lambda-url\.[a-z0-9-]+\.on\.aws$/i;
 
-export type WebSocketServerMessage =
-  | { type: "meta"; sessionId: string; taskId: string }
-  | { type: "sse"; chunk: string }
-  | { type: "continuation_delta"; delta: string }
-  | { type: "subagent_delta"; sessionId: string; taskId: string; agentName?: string; delta: string }
-  | {
-    type: "subagent_activity";
-    sessionId: string;
-    taskId: string;
-    agentName?: string;
-    phase: "started" | "tool_call" | "tool_result";
-    toolNames?: string[];
-  }
-  | { type: "subagent_result"; output: string }
-  | { type: "done" }
-  | { type: "error"; error: string; status?: number };
-
 export type WebSocketRunInput = {
-  endpointId: string;
+  agent?: AgentReference;
+  agentId?: string;
+  endpointId?: string;
   sessionId?: string;
+  eventId?: string;
   projectSlug?: string;
   environmentSlug?: string;
   signal?: AbortSignal;
@@ -102,6 +95,7 @@ export class FilthyPantyWebSocketClient {
   subscribe(input: WebSocketRunInput, handlers: WebSocketHandlers = {}): WebSocketSubscription {
     const WebSocketImpl = this.resolveWebSocket();
     const url = this.buildUrl(input);
+    const agentId = resolveAgentId(input);
     const accessError = webSocketAccessError(this.baseUrl);
     const socket = new WebSocketImpl(url);
     let opened = false;
@@ -149,8 +143,10 @@ export class FilthyPantyWebSocketClient {
 
       socket.send(JSON.stringify({
         type: "execute",
+        agentId,
         events: resolveRunEvents(input),
         sessionId: input.sessionId,
+        ...(input.eventId !== undefined ? { eventId: input.eventId } : {}),
         ...(input.system !== undefined ? { system: input.system } : {}),
         ...(input.model !== undefined ? { model: input.model } : {}),
       }));
@@ -262,12 +258,15 @@ export class FilthyPantyWebSocketClient {
     }
   }
 
-  buildUrl(input: Pick<WebSocketRunInput, "endpointId" | "projectSlug" | "environmentSlug">): string {
-    const projectPrefix = input.projectSlug ? `/${input.projectSlug}` : "";
-    const environmentPrefix = input.environmentSlug ? `/${input.environmentSlug}` : "";
+  buildUrl(input: Pick<WebSocketRunInput, "agent" | "endpointId" | "projectSlug" | "environmentSlug">): string {
+    const endpointId = resolveEndpointId(input);
+    const projectSlug = input.projectSlug ?? input.agent?.projectSlug;
+    const environmentSlug = input.environmentSlug ?? input.agent?.environmentSlug;
+    const projectPrefix = projectSlug ? `/${projectSlug}` : "";
+    const environmentPrefix = environmentSlug ? `/${environmentSlug}` : "";
     const wsBaseUrl = toWebSocketBaseUrl(this.baseUrl);
 
-    return `${wsBaseUrl}/v1${projectPrefix}/agents${environmentPrefix}/${encodeURIComponent(input.endpointId)}/ws` +
+    return `${wsBaseUrl}/v1${projectPrefix}/agents${environmentPrefix}/${encodeURIComponent(endpointId)}/ws` +
       `?token=${encodeURIComponent(this.apiKey)}`;
   }
 
@@ -281,8 +280,32 @@ export class FilthyPantyWebSocketClient {
   }
 }
 
+function resolveAgentId(input: Pick<WebSocketRunInput, "agent" | "agentId" | "endpointId">): string {
+  const agentId = input.agentId ?? input.agent?.id ?? input.endpointId;
+  if (!agentId) {
+    throw new Error("WebSocket run requires agent, agentId, or endpointId.");
+  }
+
+  return agentId;
+}
+
+function resolveEndpointId(input: Pick<WebSocketRunInput, "agent" | "endpointId">): string {
+  const endpointId = input.endpointId ?? input.agent?.endpointId ?? input.agent?.id;
+  if (!endpointId) {
+    throw new Error("WebSocket run requires agent or endpointId.");
+  }
+
+  return endpointId;
+}
+
 export { FilthyPantyWebSocketClient as WebSocketClient };
 export { FilthyPantyWebSocketClient as WebsocketClient };
+export type {
+  WebSocketClientCancelMessage,
+  WebSocketClientExecuteMessage,
+  WebSocketClientMessage,
+  WebSocketServerMessage,
+};
 
 export function toWebSocketBaseUrl(url: string): string {
   const parsed = new URL(normalizeWebSocketServiceUrl(url));

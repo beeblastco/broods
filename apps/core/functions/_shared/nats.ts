@@ -48,6 +48,8 @@ import {
 } from "nats.ws";
 import { connect as connectTcp } from "nats";
 
+export type { NatsConnection };
+
 export interface NatsPublisher {
   publish(data: Record<string, unknown>): Promise<void>;
   close(): Promise<void>;

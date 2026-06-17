@@ -161,6 +161,7 @@ test("websocket client subscribes to the core service and forwards server messag
   const socket = FakeWebSocket.instances[0]!;
   expect(JSON.parse(socket.sent[0]!)).toEqual({
     type: "execute",
+    agentId: "agent_1",
     events: [{ role: "user", content: [{ type: "text", text: "hello" }] }],
     sessionId: "session_1",
     system: {
@@ -181,4 +182,36 @@ test("websocket client subscribes to the core service and forwards server messag
   ]);
   expect(sseChunks).toEqual(["data: {}\n\n"]);
   expect(done).toBe(true);
+});
+
+test("websocket client can build scoped URLs from generated agent references", async () => {
+  const client = new FilthyPantyWebSocketClient({
+    baseUrl: "https://app.example",
+    apiKey: "test-key",
+    WebSocket: FakeWebSocket,
+  });
+
+  const subscription = client.subscribe({
+    agent: {
+      kind: "agent",
+      name: "chat",
+      id: "agent_123",
+      project: "demo",
+      environment: "development",
+      endpointId: "env_123",
+      projectSlug: "demo",
+      environmentSlug: "development",
+    },
+    input: "hello",
+  });
+
+  expect(subscription.url).toBe("wss://app.example/v1/demo/agents/development/env_123/ws?token=test-key");
+
+  await Promise.resolve();
+  const socket = FakeWebSocket.instances[0]!;
+  expect(JSON.parse(socket.sent[0]!)).toEqual({
+    type: "execute",
+    agentId: "agent_123",
+    events: [{ role: "user", content: [{ type: "text", text: "hello" }] }],
+  });
 });
