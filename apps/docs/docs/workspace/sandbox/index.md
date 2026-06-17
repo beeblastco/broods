@@ -271,22 +271,6 @@ Provider implementation paths are still useful for debugging:
 Keep prompt text small: tell the model "use relative paths." Put provider-specific mount
 paths in docs and logs, not ordinary task prompts.
 
-## Lambda: 4-function topology
-
-The lambda provider deploys the **same image** as four functions across two axes, and the
-harness auto-selects one per run. The mount axis comes from whether the run has a workspace
-namespace; the network axis comes from `sandbox.network.mode`.
-
-| | network `allow-all` | network `deny-all` / `restricted` |
-| --- | --- | --- |
-| **workspace mounted** | VPC + NAT + S3 mount | VPC, no NAT, S3 mount |
-| **no workspace** | plain Lambda (fastest) | VPC, no NAT, no mount |
-
-Function names are wired by SST into four env vars
-(`SANDBOX_FN_{MOUNT,NOMOUNT}_{NET,NONET}`). Cost note: the topology uses fck-nat on
-non-prod (≈10× cheaper than a NAT Gateway) and runs the no-mount + allow-all function
-with no VPC for free managed egress.
-
 ## How agents use it
 
 With a workspace attached, the file tools operate on the mount:
