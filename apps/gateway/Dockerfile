@@ -13,6 +13,7 @@ RUN bun install --frozen-lockfile --ignore-scripts
 FROM oven/bun:1.3.3-alpine AS builder
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
+COPY --from=deps /app/apps/core/node_modules ./apps/core/node_modules
 COPY --from=deps /app/apps/gateway/node_modules ./apps/gateway/node_modules
 COPY package.json bun.lock ./
 COPY packages/filthy-panty ./packages/filthy-panty
