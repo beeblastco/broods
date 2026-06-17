@@ -57,7 +57,7 @@ test("uses conservative gateway limit defaults", () => {
     maxConnections: 10_000,
     maxPayloadBytes: 1024 * 1024,
     backpressureBytes: 1024 * 1024,
-    idleTimeoutSeconds: 300,
+    idleTimeoutSeconds: 255,
     runStartTimeoutMs: 15_000,
   });
 });
@@ -76,4 +76,10 @@ test("ignores invalid gateway limit overrides", () => {
     idleTimeoutSeconds: 60,
     runStartTimeoutMs: 2500,
   });
+});
+
+test("caps gateway idle timeout at Bun's supported maximum", () => {
+  expect(gatewayLimitsFromEnv({
+    GATEWAY_IDLE_TIMEOUT_SECONDS: "300",
+  }).idleTimeoutSeconds).toBe(255);
 });

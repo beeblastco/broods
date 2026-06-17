@@ -45,6 +45,7 @@ const decoder = new TextDecoder();
 const activeRuns = new WeakMap<Bun.ServerWebSocket<GatewayData>, ActiveRun>();
 let natsConnectionPromise: Promise<NatsConnection> | null = null;
 let activeSocketCount = 0;
+const maxBunIdleTimeoutSeconds = 255;
 
 export function createGatewayServer(options: GatewayServerOptions): Bun.Server<GatewayData> {
   const coreBaseUrl = normalizeBaseUrl(options.coreBaseUrl);
@@ -409,7 +410,10 @@ export function gatewayLimitsFromEnv(env: Record<string, string | undefined> = p
     maxConnections: positiveInt(env.GATEWAY_MAX_CONNECTIONS, 10_000),
     maxPayloadBytes: positiveInt(env.GATEWAY_MAX_PAYLOAD_BYTES, 1024 * 1024),
     backpressureBytes: positiveInt(env.GATEWAY_BACKPRESSURE_BYTES, 1024 * 1024),
-    idleTimeoutSeconds: positiveInt(env.GATEWAY_IDLE_TIMEOUT_SECONDS, 300),
+    idleTimeoutSeconds: Math.min(
+      positiveInt(env.GATEWAY_IDLE_TIMEOUT_SECONDS, maxBunIdleTimeoutSeconds),
+      maxBunIdleTimeoutSeconds,
+    ),
     runStartTimeoutMs: positiveInt(env.GATEWAY_RUN_START_TIMEOUT_MS, 15_000),
   };
 }
