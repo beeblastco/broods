@@ -26,7 +26,7 @@ WORKDIR /app
 ENV NODE_ENV=production \
     HOSTNAME=0.0.0.0 \
     PORT=3000
-RUN apk add --no-cache ca-certificates \
+RUN apk add --no-cache ca-certificates libgcc libstdc++ \
     && addgroup --system --gid 1001 gateway \
     && adduser --system --uid 1001 gateway
 COPY --from=builder --chown=1001:1001 /out/gateway ./gateway
