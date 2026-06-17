@@ -12,9 +12,8 @@ bun run start
 Use `.env.local` for local runtime settings. SDK demos use the runtime key in
 `FILTHY_PANTY_API_KEY`, which `bun run dev`/`bun run deploy` writes for the
 selected environment.
-The WebSocket demo also accepts `FILTHY_PANTY_WEBSOCKET_URL` when the normal
-`FILTHY_PANTY_HOST` points at a Lambda Function URL instead of a WebSocket
-gateway.
+The WebSocket demo uses the SDK default runtime host, `app.beeblast.co`; only
+set `FILTHY_PANTY_WEBSOCKET_URL` for a non-default or self-hosted gateway.
 
 - `basic-stream`: stream an agent over SSE.
 - `basic-async`: start `/async`, then poll by the returned status id.

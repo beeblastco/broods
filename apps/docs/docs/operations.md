@@ -13,7 +13,7 @@ Use `apps/core/.env` for local SST inputs only:
 - `ENABLE_WEBSOCKET` - Set to `true` to enable WebSocket gateway worker invocations.
 - `NATS_URL` - Required when `ENABLE_WEBSOCKET=true`; ignored by the deployed Lambda when WebSocket is disabled. The transport is chosen by scheme: `wss://`/`ws://` (WebSocket, e.g. `wss://nats.beeblast.co` from the out-of-cluster Lambda) or `nats://`/`tls://` (core TCP, for future in-cluster callers).
 - `NATS_TOKEN` - Token-auth credential for the NATS server; optional (omit for an unauthenticated server).
-- `FILTHY_PANTY_WEBSOCKET_URL` - Optional SDK/demo override for WebSocket clients when the HTTP runtime URL is an AWS Lambda Function URL. Lambda Function URLs do not support WebSocket upgrades, so point this at the deployed WebSocket gateway.
+- `FILTHY_PANTY_WEBSOCKET_URL` - Optional SDK/demo override for WebSocket clients using a non-default or self-hosted gateway. The hosted SDK default is `app.beeblast.co`.
 
 Runtime secrets are SST secrets. Generate your own secret and set
 

@@ -6,7 +6,6 @@ import { WebsocketClient } from "filthy-panty";
 import { api } from "./filthypanty/_generated/api";
 
 const client = new WebsocketClient({
-  host: process.env.FILTHY_PANTY_HOST!,
   apiKey: process.env.FILTHY_PANTY_API_KEY!,
 });
 
@@ -26,7 +25,9 @@ for await (const message of client.stream({
       console.log(`session=${message.sessionId} task=${message.taskId}`);
       break;
     case "text-delta":
-      process.stdout.write(message.text);
+      if (typeof message.text === "string") {
+        process.stdout.write(message.text);
+      }
       break;
     case "done":
       process.stdout.write("\n");
