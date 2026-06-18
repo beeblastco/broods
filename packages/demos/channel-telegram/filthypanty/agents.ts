@@ -1,12 +1,31 @@
-import { defineAgent, defineTelegramChannel, env } from "filthy-panty";
+import { defineAgent, defineSandbox, defineWorkspace, defineTelegramChannel, env } from "filthy-panty";
 
 export const telegram = defineTelegramChannel({
   botToken: env.TELEGRAM_BOT_TOKEN,
   webhookSecret: env.TELEGRAM_WEBHOOK_SECRET,
   allowedChatIds: [Number(process.env.TELEGRAM_ALLOWED_CHAT_ID ?? "0")],
   reactionEmoji: "\u{1F440}",
-  streaming: { mode: "edit" },
+  streaming: { mode: "progress" },
 });
+
+export const lambdaSandbox = defineSandbox({
+  name: "stateless-sandbox",
+  config: {
+    provider: "lambda",
+    network: { mode: "allow-all" },
+    permissionMode: "bypass",
+    timeout: 60,
+  },
+})
+
+export const personalWorkspace = defineWorkspace({
+  name: "personal",
+  description: "Workspace for personal notes",
+  config: {
+    storage: { provider: "s3" },
+    harness: { enabled: true },
+  },
+})
 
 export const agent = defineAgent({
   name: "telegram-channel-agent",
@@ -34,5 +53,8 @@ export const agent = defineAgent({
       },
     },
     channels: [telegram],
+    workspaces: [
+      { workspace: personalWorkspace, sandbox: lambdaSandbox }
+    ],
   },
 });
