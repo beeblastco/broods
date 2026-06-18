@@ -9,10 +9,29 @@ export const zalo = defineZaloChannel({
 
 export const agent = defineAgent({
   name: "zalo-channel-agent",
-  config: {
-    provider: { minimax: { apiKey: env.MINIMAX_API_KEY } },
-    model: { provider: "minimax", modelId: "MiniMax-M3" },
-    agent: { system: "You are a concise Zalo assistant." },
+  config: { 
+    provider: { 
+      minimax: { 
+        apiKey: env.MINIMAX_API_KEY,
+      } 
+    },
+    model: {
+      provider: "minimax", 
+      modelId: "MiniMax-M3",
+    },
+    agent: { 
+      system: "You are a helpful assistant.",
+    },
+    tools: {
+      tavilySearch: {
+        enabled: true,
+        apiKey: env.TAVILY_API_KEY,
+        searchDepth: "advanced",
+        includeAnswer: true,
+        maxResults: 5,
+        topic: "news",
+      },
+    },
     channels: [zalo],
   },
 });

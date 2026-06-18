@@ -10,9 +10,18 @@ export const discord = defineDiscordChannel({
 export const agent = defineAgent({
   name: "discord-channel-agent",
   config: {
-    provider: { minimax: { apiKey: env.MINIMAX_API_KEY } },
-    model: { provider: "minimax", modelId: "MiniMax-M3" },
-    agent: { system: "You are a concise Discord assistant." },
+    provider: { 
+      minimax: { 
+        apiKey: env.MINIMAX_API_KEY 
+      } 
+    },
+    model: { 
+      provider: "minimax", 
+      modelId: "MiniMax-M3" 
+    },
+    agent: { 
+      system: "You are a concise Discord assistant." 
+    },
     channels: [discord],
   },
 });
