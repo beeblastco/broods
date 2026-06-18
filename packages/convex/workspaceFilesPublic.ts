@@ -25,25 +25,24 @@ type LegacyFile = {
     storageId?: Id<"_storage">;
 };
 
-/** Moves old canvas-node files into S3 once, then removes their legacy records. */
+/** Moves legacy files into S3 when needed and returns the authoritative file list. */
 export const migrateLegacy = action({
     args: {
         projectId: v.id("projects"),
         nodeId: v.string(),
         workspaceId: v.string(),
     },
-    returns: v.number(),
+    returns: v.array(fileEntry),
     handler: async (ctx, args) => {
         const workspace = await resolveWorkspace(ctx, args);
         const legacyFiles: LegacyFile[] = await ctx.runQuery(api.workspaceFiles.list, {
             projectId: args.projectId,
             nodeId: args.nodeId,
         });
-        if (legacyFiles.length === 0) return 0;
-        const currentResponse = await callWorkspaceApi(workspace, "GET");
-        const current = await currentResponse.json() as { files: Array<{ path: string }> };
+        if (legacyFiles.length === 0) return (await readWorkspaceFiles(workspace)).files;
+        const current = await readWorkspaceFiles(workspace);
         const existingPaths = new Set(current.files.map((file) => file.path));
-        let migrated = 0;
+        let changed = false;
 
         for (const file of legacyFiles) {
             if (!file.isFolder && file.storageId && !existingPaths.has(file.path)) {
@@ -62,12 +61,12 @@ export const migrateLegacy = action({
                     contentBase64: Buffer.from(bytes).toString("base64"),
                     contentType: response.headers.get("content-type") ?? undefined,
                 });
-                migrated += 1;
+                changed = true;
             }
             await ctx.runMutation(api.workspaceFiles.remove, { fileId: file._id });
         }
 
-        return migrated;
+        return changed ? (await readWorkspaceFiles(workspace)).files : current.files;
     },
 });
 
@@ -77,16 +76,8 @@ export const list = action({
     returns: v.array(fileEntry),
     handler: async (ctx, args) => {
         const workspace = await resolveWorkspace(ctx, args);
-        const response = await callWorkspaceApi(workspace, "GET");
-        const body = await response.json() as { files: Array<{
-            path: string;
-            name: string;
-            isFolder: boolean;
-            sizeBytes?: number;
-            updatedAt?: string;
-        }> };
 
-        return body.files;
+        return (await readWorkspaceFiles(workspace)).files;
     },
 });
 
@@ -197,4 +188,22 @@ async function callWorkspaceApi(
     if (!response.ok) throw new Error(`Workspace file request failed (${response.status}): ${await response.text()}`);
 
     return response;
+}
+
+async function readWorkspaceFiles(workspace: RuntimeWorkspace): Promise<{ files: Array<{
+    path: string;
+    name: string;
+    isFolder: boolean;
+    sizeBytes?: number;
+    updatedAt?: string;
+}> }> {
+    const response = await callWorkspaceApi(workspace, "GET");
+
+    return await response.json() as { files: Array<{
+        path: string;
+        name: string;
+        isFolder: boolean;
+        sizeBytes?: number;
+        updatedAt?: string;
+    }> };
 }

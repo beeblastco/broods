@@ -57,10 +57,15 @@ skill-node bundles.
 
 The panel uses a reactive, server-reconciled UX:
 
+- the last confirmed file tree is cached in memory and browser `sessionStorage`, so
+  reopening the workspace or reloading the page paints cached metadata immediately
+- cached metadata is stale-while-revalidate: S3 remains authoritative and refreshes in
+  the background; file contents and signed download URLs are never cached
 - uploads appear immediately as pending rows, then become authoritative after S3 confirms them
 - rename and delete update the tree optimistically, then reload S3; failures show an error and restore the server state
 - while the workspace panel is visible, it lists S3 every five seconds
 - returning focus to the window, restoring a hidden tab, or pressing **Refresh** triggers another listing
+- overlapping list requests are deduplicated and older responses cannot overwrite newer optimistic changes
 
 This polling detects direct S3 changes and files exported by an agent without requiring
 the panel or page to be reopened. It cannot display an agent write before S3 Files has
