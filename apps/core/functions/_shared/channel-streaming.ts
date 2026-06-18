@@ -40,6 +40,9 @@ export interface ChannelStreamWriter {
   // Feed a tool-activity label (progress mode only; no-op otherwise). Present only
   // on writers that render a status preview.
   progress?(label: string): Promise<void>;
+  // Flush text completed by the current model step. Chunk mode sends one
+  // message per completed step even when the model did not emit a paragraph.
+  stepFinish?(): Promise<void>;
   // Final flush. Pass the authoritative final text so the last message matches the
   // model's final response exactly even if deltas were coalesced.
   finish(finalText?: string): Promise<void>;
@@ -145,16 +148,22 @@ function editWriter(actions: ChannelActions, throttleMs: number, maxChars: numbe
   };
 }
 
-// Show a live status preview of tool activity while the model works, then swap the
-// same message for the final answer. Assistant text deltas are ignored (the answer
-// arrives whole at finish), mirroring openclaw's "progress" mode.
+// Show a live status preview while the model works, append tool activity, then swap
+// the same message for the final answer. The first text delta posts the header so a
+// turn without tool calls still visibly remains in progress.
 function progressWriter(actions: ChannelActions, throttleMs: number, maxChars: number): ChannelStreamWriter {
   const editor = messageEditor(actions, throttleMs, maxChars);
   const lines: string[] = [];
+  let started = false;
   const render = (): string => [PROGRESS_HEADER, ...lines.slice(-PROGRESS_MAX_LINES)].join("\n");
   return {
-    push: async () => {}, // progress mode shows tool status, not the streamed text
+    push: async () => {
+      if (started) return;
+      started = true;
+      await editor.update(render());
+    },
     progress: async (label) => {
+      started = true;
       lines.push(`• ${label}`);
       await editor.update(render());
     },
@@ -173,6 +182,12 @@ function progressWriter(actions: ChannelActions, throttleMs: number, maxChars: n
 function chunkWriter(actions: ChannelActions): ChannelStreamWriter {
   let buffer = "";
 
+  const flush = async (): Promise<void> => {
+    const remainder = buffer.trim();
+    buffer = "";
+    if (remainder) await actions.sendText(remainder);
+  };
+
   return {
     push: async (delta) => {
       buffer += delta;
@@ -183,13 +198,8 @@ function chunkWriter(actions: ChannelActions): ChannelStreamWriter {
         if (paragraph) await actions.sendText(paragraph);
       }
     },
-    finish: async () => {
-      // The accumulated deltas already equal the final text, so just flush the
-      // last unsent paragraph.
-      const remainder = buffer.trim();
-      buffer = "";
-      if (remainder) await actions.sendText(remainder);
-    },
+    stepFinish: flush,
+    finish: flush,
   };
 }
 

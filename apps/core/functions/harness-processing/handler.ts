@@ -774,14 +774,23 @@ async function handleChannelRequest(event: ChannelInboundEvent, context?: Lambda
                 streamWarn("push")(error);
               }
             },
-            onToolCall: async (toolName) => {
+            onToolCall: async (toolName, input) => {
               const w = ensureWriter();
               if (!w.progress) return; // only progress mode renders tool activity
               try {
-                await w.progress(toolName);
+                await w.progress(formatToolProgress(toolName, input));
                 streamed = true;
               } catch (error) {
                 streamWarn("progress")(error);
+              }
+            },
+            onStepFinish: async () => {
+              const w = ensureWriter();
+              if (!w.stepFinish) return;
+              try {
+                await w.stepFinish();
+              } catch (error) {
+                streamWarn("step finish")(error);
               }
             },
           }
@@ -1242,7 +1251,10 @@ async function runAgentLoopUntilSubagentsIdle(
     onTextDelta?(delta: string): Promise<void>;
     // When present, each tool call's name is forwarded live (used by progress-mode
     // channel streaming to render a tool-activity preview).
-    onToolCall?(toolName: string): Promise<void>;
+    onToolCall?(toolName: string, input: unknown): Promise<void>;
+    // Chunk streaming flushes once per completed model step, including steps
+    // without paragraph boundaries.
+    onStepFinish?(): Promise<void>;
   },
 ): Promise<{ didFail: boolean; failureText: string | null; hasDetachedCallbacks: boolean }> {
   const subagentCoordinator = new SubagentCoordinator(session, agentConfig, waitUntilMs(context));
@@ -1253,7 +1265,7 @@ async function runAgentLoopUntilSubagentsIdle(
     asyncToolCoordinator: asyncToolCoordinator,
     initialTurnContext: initialTurnContext,
     agentConfig: agentConfig,
-    consumeStream: (reply.onTextDelta || reply.onToolCall)
+    consumeStream: (reply.onTextDelta || reply.onToolCall || reply.onStepFinish)
       ? async (stream) => {
           const reader = stream.fullStream.getReader();
           while (true) {
@@ -1262,7 +1274,9 @@ async function runAgentLoopUntilSubagentsIdle(
             if (part.type === "text-delta") {
               await reply.onTextDelta?.(part.text);
             } else if (part.type === "tool-call") {
-              await reply.onToolCall?.(part.toolName);
+              await reply.onToolCall?.(part.toolName, part.input);
+            } else if (part.type === "finish-step") {
+              await reply.onStepFinish?.();
             }
           }
         }
@@ -1639,4 +1653,16 @@ function channelStreamMode(
   const channel = channels?.[channelName] as { streaming?: { mode?: unknown } } | undefined;
   const mode = channel?.streaming?.mode;
   return mode === "edit" || mode === "chunk" || mode === "progress" ? mode : undefined;
+}
+
+function formatToolProgress(toolName: string, input: unknown): string {
+  if (input === undefined) return toolName;
+  try {
+    const serialized = JSON.stringify(input);
+    if (!serialized || serialized === "{}") return toolName;
+    const maxLength = 240;
+    return `${toolName} ${serialized.length > maxLength ? `${serialized.slice(0, maxLength - 1)}…` : serialized}`;
+  } catch {
+    return toolName;
+  }
 }

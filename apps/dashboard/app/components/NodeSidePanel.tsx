@@ -910,7 +910,11 @@ export const NodeSidePanel = memo(function NodeSidePanel({
               value="files"
               className="flex flex-col overflow-hidden"
             >
-              <WorkspaceFilesTab projectId={projectId} nodeId={node.id} />
+              <WorkspaceFilesTab
+                projectId={projectId}
+                nodeId={node.id}
+                workspaceId={resourceId}
+              />
             </TabsContent>
           )}
 

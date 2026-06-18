@@ -75,7 +75,7 @@ describe("createChannelStreamWriter", () => {
     const { actions, calls } = recordingActions(true);
     const writer = createChannelStreamWriter(actions, "progress", 0);
 
-    await writer.push("streamed assistant text"); // progress mode ignores text deltas
+    await writer.push("streamed assistant text"); // posts the status header, not assistant text
     await writer.progress!("search");
     await writer.progress!("read");
     await writer.finish("Here is the answer.");
@@ -83,9 +83,39 @@ describe("createChannelStreamWriter", () => {
     const first = calls[0]!;
     expect(first[0]).toBe("beginMessage");
     expect(first[2]).toContain("⏳ Working…");
-    expect(first[2]).toContain("• search");
+    expect(calls.some((call) => call[2]?.includes("• search"))).toBe(true);
     expect(calls.some(([op]) => op === "sendText")).toBe(false);     // text never streamed
     expect(calls.at(-1)).toEqual(["editMessage", "m1", "Here is the answer."]); // final swap
+  });
+
+  it("progress mode remains visible on turns without tool calls", async () => {
+    const { actions, calls } = recordingActions(true);
+    const writer = createChannelStreamWriter(actions, "progress", 0);
+
+    await writer.push("first token");
+    await writer.push(" more tokens");
+    await writer.finish("Complete answer");
+
+    expect(calls).toEqual([
+      ["beginMessage", "m1", "⏳ Working…"],
+      ["editMessage", "m1", "Complete answer"],
+    ]);
+  });
+
+  it("chunk mode flushes unfinished text at each model step", async () => {
+    const { actions, calls } = recordingActions(false);
+    const writer = createChannelStreamWriter(actions, "chunk", 0);
+
+    await writer.push("step one without a paragraph");
+    await writer.stepFinish!();
+    await writer.push("step two");
+    await writer.stepFinish!();
+    await writer.finish("ignored authoritative accumulation");
+
+    expect(calls).toEqual([
+      ["sendText", "step one without a paragraph"],
+      ["sendText", "step two"],
+    ]);
   });
 
   it("chunk mode keeps a code fence whole instead of splitting on its inner blank line", async () => {

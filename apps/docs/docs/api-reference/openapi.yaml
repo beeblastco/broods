@@ -1113,6 +1113,74 @@ paths:
       responses:
         '200': { description: Deleted }
 
+  /accounts/me/workspaces/{workspaceId}/files:
+    get:
+      tags: [Workspaces]
+      summary: List workspace files or create a download URL
+      description: Lists the authoritative S3 namespace mounted by the workspace. When `path` is supplied, returns a short-lived download URL for that file.
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - { name: workspaceId, in: path, required: true, schema: { type: string } }
+        - { name: path, in: query, required: false, schema: { type: string } }
+      responses:
+        '200': { description: Workspace file list or download URL }
+        '404': { description: Workspace or file not found }
+    post:
+      tags: [Workspaces]
+      summary: Upload a workspace file
+      description: Uploads or replaces one file. Dashboard-proxied uploads are limited to 512 KiB so the base64 request remains within Convex action limits.
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - { name: workspaceId, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [path, contentBase64]
+              properties:
+                path: { type: string }
+                contentBase64: { type: string, format: byte }
+                contentType: { type: string }
+      responses:
+        '201': { description: File uploaded }
+    patch:
+      tags: [Workspaces]
+      summary: Rename a workspace file or folder
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - { name: workspaceId, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [path, newPath]
+              properties:
+                path: { type: string }
+                newPath: { type: string }
+      responses:
+        '200': { description: File or folder renamed }
+    delete:
+      tags: [Workspaces]
+      summary: Delete a workspace file or folder
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - { name: workspaceId, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [path]
+              properties:
+                path: { type: string }
+      responses:
+        '200': { description: File or folder deleted }
+
   /accounts/me/tools:
     post:
       tags: [Tools]

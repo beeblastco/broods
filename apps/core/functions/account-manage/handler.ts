@@ -53,6 +53,13 @@ import {
 } from "./cron.ts";
 import { createAccountTool, updateAccountTool } from "./account-tools.ts";
 import { logError, logInfo, logWarn } from "../_shared/log.ts";
+import {
+    deleteWorkspacePath,
+    listWorkspaceFiles,
+    renameWorkspacePath,
+    uploadWorkspaceFile,
+    workspaceFileDownloadUrl,
+} from "./workspace-files.ts";
 
 export async function handler(event: LambdaFunctionURLEvent): Promise<LambdaResponse> {
     const method = event.requestContext.http.method;
@@ -152,6 +159,17 @@ export async function handler(event: LambdaFunctionURLEvent): Promise<LambdaResp
             return await handleSandboxRoute(method, account.accountId, selfSandboxMatch?.[1], event);
         }
 
+        const selfWorkspaceFilesMatch = rawPath.match(/^\/accounts\/me\/workspaces\/([^/]+)\/files$/);
+        if (selfWorkspaceFilesMatch?.[1]) {
+            const account = requireAccountAuth(auth, { allowServiceToken: true });
+            return await handleWorkspaceFilesRoute(
+                method,
+                account.accountId,
+                decodeURIComponent(selfWorkspaceFilesMatch[1]),
+                event,
+            );
+        }
+
         const selfWorkspaceCollection = rawPath === "/accounts/me/workspaces";
         const selfWorkspaceMatch = rawPath.match(/^\/accounts\/me\/workspaces\/([^/]+)$/);
         if (selfWorkspaceCollection || selfWorkspaceMatch?.[1]) {
@@ -221,6 +239,16 @@ export async function handler(event: LambdaFunctionURLEvent): Promise<LambdaResp
             return await handleSandboxRoute(method, decodeURIComponent(adminSandboxMatch[1]), adminSandboxMatch[2], event);
         }
 
+        const adminWorkspaceFilesMatch = rawPath.match(/^\/accounts\/([^/]+)\/workspaces\/([^/]+)\/files$/);
+        if (adminWorkspaceFilesMatch?.[1] && adminWorkspaceFilesMatch[2]) {
+            return await handleWorkspaceFilesRoute(
+                method,
+                decodeURIComponent(adminWorkspaceFilesMatch[1]),
+                decodeURIComponent(adminWorkspaceFilesMatch[2]),
+                event,
+            );
+        }
+
         const adminWorkspaceMatch = rawPath.match(/^\/accounts\/([^/]+)\/workspaces(?:\/([^/]+))?$/);
         if (adminWorkspaceMatch?.[1]) {
             return await handleWorkspaceRoute(method, decodeURIComponent(adminWorkspaceMatch[1]), adminWorkspaceMatch[2], event);
@@ -242,6 +270,40 @@ export async function handler(event: LambdaFunctionURLEvent): Promise<LambdaResp
         }
         return errorResponseForError(err);
     }
+}
+
+async function handleWorkspaceFilesRoute(
+    method: string,
+    accountId: string,
+    workspaceId: string,
+    event: LambdaFunctionURLEvent,
+): Promise<LambdaResponse> {
+    const workspace = await getStorage().workspaceConfigs.getById(accountId, workspaceId);
+    if (!workspace) return errorResponse(404, "Workspace not found");
+
+    if (method === "GET") {
+        const path = event.queryStringParameters?.path;
+        if (path) {
+            return jsonResponse(200, { url: await workspaceFileDownloadUrl(accountId, workspaceId, path) });
+        }
+        return jsonResponse(200, { files: await listWorkspaceFiles(accountId, workspaceId) });
+    }
+    if (method === "POST") {
+        const file = await uploadWorkspaceFile(accountId, workspaceId, parseJsonBody(event) as never);
+        return jsonResponse(201, { file: file });
+    }
+    if (method === "PATCH") {
+        const body = parseJsonBody(event) as { path?: unknown; newPath?: unknown };
+        const renamed = await renameWorkspacePath(accountId, workspaceId, body.path, body.newPath);
+        return jsonResponse(200, { renamed: renamed });
+    }
+    if (method === "DELETE") {
+        const body = parseJsonBody(event) as { path?: unknown };
+        const deleted = await deleteWorkspacePath(accountId, workspaceId, body.path);
+        return jsonResponse(200, { deleted: deleted });
+    }
+
+    return errorResponse(405, "Method not allowed", { allowedMethods: ["GET", "POST", "PATCH", "DELETE"] });
 }
 
 async function handleCronRoute(

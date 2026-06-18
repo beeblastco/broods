@@ -47,6 +47,36 @@ export const list = query({
 });
 
 /**
+ * Resolve an S3-backed workspace to its owning account after project ownership checks.
+ * @param projectId owning project
+ * @param workspaceId workspaceConfigs document ID stored on the canvas node
+ * @returns runtime account/workspace identifiers, or null when inaccessible
+ */
+export const resolveRuntimeWorkspace = query({
+    args: {
+        projectId: v.id("projects"),
+        workspaceId: v.string(),
+    },
+    returns: v.union(v.object({ accountId: v.id("accounts"), workspaceId: v.id("workspaceConfigs") }), v.null()),
+    handler: async (ctx, args) => {
+        // Check authenticated user
+        const user = await authKit.getAuthUser(ctx);
+        if (!user) {
+            throw new Error("User not found or not authenticated");
+        }
+
+        const project = await getOwnedProject(ctx, user.id, args.projectId);
+        if (!project) return null;
+        const workspaceId = ctx.db.normalizeId("workspaceConfigs", args.workspaceId);
+        if (!workspaceId) return null;
+        const workspace = await ctx.db.get(workspaceId);
+        if (!workspace || workspace.projectId !== args.projectId) return null;
+
+        return { accountId: workspace.accountId, workspaceId: workspace._id };
+    },
+});
+
+/**
  * Generate a one-time upload URL for Convex file storage.
  * @returns a pre-signed upload URL
  */

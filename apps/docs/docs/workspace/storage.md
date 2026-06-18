@@ -35,6 +35,8 @@ Sandbox paths map to S3 keys through that prefix: the bucket holds `sandbox/<nam
 flowchart TD
   Namespace["Session.filesystemNamespace()"] --> Prefix["workspaceNamespacePrefix()<br/>sandbox/&lt;namespace&gt;"]
   Prefix --> S3["S3 workspace bucket<br/>FILESYSTEM_BUCKET_NAME"]
+  Dashboard["Dashboard workspace Files tab"] --> AccountApi["account-manage workspace file API"]
+  AccountApi --> Prefix
   S3 --> Memory["sandbox/<namespace>/MEMORY.md"]
   S3 --> Tasks["sandbox/<namespace>/TASKS.md"]
   S3 --> Skills["sandbox/<namespace>/.claude/skills/<name><br/>+ mirror .agents/skills/<name>"]
@@ -48,6 +50,35 @@ flowchart TD
 
 The Lambda sandbox provider uses AWS S3 Files at `/mnt/workspaces`, backed by the same workspace bucket through an access point rooted at `/sandbox`. The uniform Lambda sandbox image writes directly through that mount. Daytona and Kubernetes mount only the selected `sandbox/<namespace>/` prefix at the workspace directory for the run (`mountAwsS3Buckets: true`). E2B and Vercel do not currently support S3 workspaces in this harness; attaching an S3 workspace to those sandboxes fails fast instead of silently using provider-native filesystem state.
 
+The dashboard workspace **Files** tab lists and mutates this same S3 namespace through
+the authenticated account-management API. Uploads, renames, and deletes therefore
+operate on the files the agent mounts; Convex file storage is used only for editable
+skill-node bundles.
+
+The panel uses a reactive, server-reconciled UX:
+
+- uploads appear immediately as pending rows, then become authoritative after S3 confirms them
+- rename and delete update the tree optimistically, then reload S3; failures show an error and restore the server state
+- while the workspace panel is visible, it lists S3 every five seconds
+- returning focus to the window, restoring a hidden tab, or pressing **Refresh** triggers another listing
+
+This polling detects direct S3 changes and files exported by an agent without requiring
+the panel or page to be reopened. It cannot display an agent write before S3 Files has
+exported that mount change to S3. Dashboard uploads are currently limited to 512 KiB
+per file because their base64 payload crosses a Convex action; agents can create larger
+files directly through the mounted workspace.
+When a workspace panel first loads after this storage path was introduced, any
+legacy canvas-node files are copied from Convex storage into S3 and the old records
+are removed. Existing S3 paths win, preventing stale legacy content from overwriting
+newer agent files or reappearing after deletion.
+
+The `sandbox/` folder is the only active application workspace root in the current
+deployment. A top-level `sandbox-workspaces/` folder is legacy data and is not read by
+the current runtime. Top-level `fs-<40 hex>/` folders also match this application's
+hashed workspace namespace format and are legacy pre-`sandbox/` workspace data, not
+AWS-owned internal objects. Inspect or back them up before deletion; the current runtime
+only reads the corresponding active keys under `sandbox/fs-<40 hex>/`.
+
 Model-facing tools hide the provider path: `bash` starts in the selected workspace
 directory, and file tools use workspace-relative paths. Prefer prompts like
 `python3 script.py` or `read analysis.json`, not provider mount paths.
@@ -58,7 +89,7 @@ Skills are staged from the account skill bucket into `<namespace>/.claude/skills
 
 There are two ways to reach the same workspace bytes, and they are **not** interchangeable because the mount syncs to the bucket asymmetrically:
 
-- **bucket → mount** (a file the harness wrote with S3 `PutObject`/`CopyObject`): visible through the mount **immediately**.
+- **bucket → mount** (a file the harness wrote with S3 `PutObject`/`CopyObject`): S3 Files detects and imports the object without remounting; allow for propagation delay.
 - **mount → bucket** (a file the agent wrote through `bash`/NFS): visible through the mount immediately, but the S3 API does **not** list/return it for **~1–2 minutes** (AWS S3 Files writes back to the bucket asynchronously — measured: not visible at +0s/+45s, visible at +120s).
 
 So pick the door by **who last wrote the file**, not by how much time has passed. There is no timer or "switch to the mount after writing" — each read site is wired to the correct door:

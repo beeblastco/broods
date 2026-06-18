@@ -1312,6 +1312,8 @@ export default $config({
         },
         {
           actions: [
+            "s3:GetObject",
+            "s3:PutObject",
             "s3:DeleteObject",
           ],
           resources: [`${filesystemBucketArn}/*`],

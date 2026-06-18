@@ -55,6 +55,7 @@ import type * as user from "../user.js";
 import type * as webhooks from "../webhooks.js";
 import type * as workspaceConfigs from "../workspaceConfigs.js";
 import type * as workspaceFiles from "../workspaceFiles.js";
+import type * as workspaceFilesPublic from "../workspaceFilesPublic.js";
 
 import type {
   ApiFromModules,
@@ -110,6 +111,7 @@ declare const fullApi: ApiFromModules<{
   webhooks: typeof webhooks;
   workspaceConfigs: typeof workspaceConfigs;
   workspaceFiles: typeof workspaceFiles;
+  workspaceFilesPublic: typeof workspaceFilesPublic;
 }>;
 
 /**
