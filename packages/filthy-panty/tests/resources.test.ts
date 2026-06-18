@@ -191,6 +191,165 @@ export const webhookAgent = defineAgent({
   });
 });
 
+test("compileProject lowers all typed channel constructors into the existing keyed config", async () => {
+  const cwd = await fixtureProject("", `
+import {
+  defineAgent,
+  defineTelegramChannel,
+  defineGitHubChannel,
+  defineSlackChannel,
+  defineDiscordChannel,
+  definePancakeChannel,
+  defineZaloChannel,
+  env,
+} from "${RESOURCES_MODULE}";
+
+export const telegram = defineTelegramChannel({
+  botToken: env.TELEGRAM_BOT_TOKEN,
+  webhookSecret: env.TELEGRAM_WEBHOOK_SECRET,
+  allowedChatIds: [123],
+  reactionEmoji: "eyes",
+  streaming: { mode: "edit" },
+});
+export const github = defineGitHubChannel({
+  appId: env.GITHUB_APP_ID,
+  privateKey: env.GITHUB_PRIVATE_KEY,
+  webhookSecret: env.GITHUB_WEBHOOK_SECRET,
+  allowedRepos: ["owner/repo"],
+});
+export const slack = defineSlackChannel({
+  botToken: env.SLACK_BOT_TOKEN,
+  signingSecret: env.SLACK_SIGNING_SECRET,
+  allowedChannelIds: ["C123"],
+});
+export const discord = defineDiscordChannel({
+  botToken: env.DISCORD_BOT_TOKEN,
+  publicKey: env.DISCORD_PUBLIC_KEY,
+  allowedGuildIds: ["G123"],
+});
+export const pancake = definePancakeChannel({
+  pageId: env.PANCAKE_PAGE_ID,
+  pageAccessToken: env.PANCAKE_PAGE_ACCESS_TOKEN,
+  webhookSecret: env.PANCAKE_WEBHOOK_SECRET,
+  senderId: "staff-1",
+  ignoreTagIds: ["handoff"],
+});
+export const zalo = defineZaloChannel({
+  botToken: env.ZALO_BOT_TOKEN,
+  webhookSecret: env.ZALO_WEBHOOK_SECRET,
+  allowedUserIds: ["user-1"],
+  streaming: { mode: "chunk" },
+});
+
+export const support = defineAgent({
+  name: "support",
+  config: { channels: [telegram, github, slack, discord, pancake, zalo] },
+});
+`);
+
+  const { manifest, channels } = await compileProject({ cwd, command: "dev" });
+  const agent = manifest.resources.find((resource) => resource.kind === "agent")!;
+
+  expect(agent.config).toMatchObject({
+    channels: {
+      telegram: { allowedChatIds: [123], reactionEmoji: "eyes", streaming: { mode: "edit" } },
+      github: { allowedRepos: ["owner/repo"] },
+      slack: { allowedChannelIds: ["C123"] },
+      discord: { allowedGuildIds: ["G123"] },
+      pancake: { senderId: "staff-1", options: { ignoreTagIds: ["handoff"] } },
+      zalo: { allowedUserIds: ["user-1"], streaming: { mode: "chunk" } },
+    },
+  });
+  expect(channels.map(({ alias, type, agentName }) => ({ alias, type, agentName }))).toEqual([
+    { alias: "discord", type: "discord", agentName: "support" },
+    { alias: "github", type: "github", agentName: "support" },
+    { alias: "pancake", type: "pancake", agentName: "support" },
+    { alias: "slack", type: "slack", agentName: "support" },
+    { alias: "telegram", type: "telegram", agentName: "support" },
+    { alias: "zalo", type: "zalo", agentName: "support" },
+  ]);
+  expect(collectEnvRefNames(manifest)).toContain("GITHUB_PRIVATE_KEY");
+});
+
+test("compileProject rejects a channel reused by two agents", async () => {
+  const cwd = await fixtureProject("", `
+import { defineAgent, defineGitHubChannel, env } from "${RESOURCES_MODULE}";
+export const github = defineGitHubChannel({
+  appId: env.GITHUB_APP_ID,
+  privateKey: env.GITHUB_PRIVATE_KEY,
+  webhookSecret: env.GITHUB_WEBHOOK_SECRET,
+});
+export const first = defineAgent({ name: "first", config: { channels: [github] } });
+export const second = defineAgent({ name: "second", config: { channels: [github] } });
+`);
+
+  await expect(compileProject({ cwd, command: "dev" })).rejects.toThrow(
+    'Channel github is already attached to agent "first" and cannot also attach to "second"',
+  );
+});
+
+test("compileProject rejects duplicate channel types on one agent", async () => {
+  const cwd = await fixtureProject("", `
+import { defineAgent, defineGitHubChannel, env } from "${RESOURCES_MODULE}";
+const one = defineGitHubChannel({ appId: env.APP_1, privateKey: env.KEY_1, webhookSecret: env.SECRET_1 });
+const two = defineGitHubChannel({ appId: env.APP_2, privateKey: env.KEY_2, webhookSecret: env.SECRET_2 });
+export const support = defineAgent({ name: "support", config: { channels: [one, two] } });
+`);
+
+  await expect(compileProject({ cwd, command: "dev" })).rejects.toThrow(
+    'Agent "support" cannot configure more than one github channel',
+  );
+});
+
+test("compileProject rejects keyed channel configuration", async () => {
+  const cwd = await fixtureProject("", `
+import { defineAgent, env } from "${RESOURCES_MODULE}";
+export const support = defineAgent({
+  name: "support",
+  config: { channels: { github: { appId: env.APP_ID, privateKey: env.PRIVATE_KEY, webhookSecret: env.WEBHOOK_SECRET } } },
+});
+`);
+
+  await expect(compileProject({ cwd, command: "dev" })).rejects.toThrow(
+    'Agent "support" config.channels must be an array of channel definitions',
+  );
+});
+
+test("compileProject keeps uploaded tool bundles intact beside typed channels", async () => {
+  const cwd = await fixtureProject("", `
+import { defineAgent, defineGitHubChannel, defineTool, env } from "${RESOURCES_MODULE}";
+export const github = defineGitHubChannel({
+  appId: env.GITHUB_APP_ID,
+  privateKey: env.GITHUB_PRIVATE_KEY,
+  webhookSecret: env.GITHUB_WEBHOOK_SECRET,
+});
+export const helper = defineTool({
+  name: "helper",
+  config: {
+    path: "tools/helper.ts",
+    description: "Returns a result",
+    inputSchema: { type: "object", properties: {} },
+  },
+});
+export const support = defineAgent({
+  name: "support",
+  config: { channels: [github], tools: { [helper.name]: { enabled: true, needsApproval: false } } },
+});
+`);
+  await mkdir(join(cwd, "filthypanty", "tools"), { recursive: true });
+  await writeFile(join(cwd, "filthypanty", "tools", "helper.ts"), "export default { execute: async () => ({ ok: true }) };\n");
+
+  const { manifest } = await compileProject({ cwd, command: "dev" });
+  const tool = manifest.resources.find((resource) => resource.kind === "tool");
+  const agent = manifest.resources.find((resource) => resource.kind === "agent");
+  expect(tool?.config).toMatchObject({ path: "tools/helper.ts", description: "Returns a result" });
+  expect(typeof (tool?.config as { bundle?: unknown }).bundle).toBe("string");
+  expect(agent?.config).toMatchObject({
+    channels: { github: {} },
+    tools: { helper: { enabled: true, needsApproval: false } },
+  });
+});
+
 test("collectEnvRefNames returns the sorted, de-duplicated env.NAME references", async () => {
   const cwd = await fixtureProject("", `
 import { defineAgent, env } from "${RESOURCES_MODULE}";
@@ -705,6 +864,27 @@ test("writeGeneratedFiles creates Convex-style typed resource references", async
   expect(dataModel).toContain("AgentReference");
   expect(api).not.toContain("new FilthyPantyClient");
   await expect(readFile(join(cwd, "filthypanty", "_generated", "client.ts"), "utf8")).rejects.toThrow();
+});
+
+test("writeGeneratedFiles emits typed channel references with authoritative webhook paths", async () => {
+  const cwd = await fixtureProject("", `
+import { defineAgent, defineGitHubChannel, env } from "${RESOURCES_MODULE}";
+export const github = defineGitHubChannel({ appId: env.APP_ID, privateKey: env.KEY, webhookSecret: env.SECRET });
+export const support = defineAgent({ name: "support", config: { channels: [github] } });
+`);
+  const { manifest, resourceAliases, channels } = await compileProject({ cwd, command: "dev" });
+  await writeGeneratedFiles(manifest, {
+    agents: { support: "agent/123" }, workspaces: {}, sandboxes: {}, crons: {}, skills: {}, tools: {},
+  }, cwd, resourceAliases, {
+    accountId: "account/123",
+    endpointId: "endpoint-1",
+    projectSlug: "typed-app",
+    environmentSlug: "development",
+  }, channels);
+
+  const api = await readFile(join(cwd, "filthypanty", "_generated", "api.ts"), "utf8");
+  expect(api).toContain('github: { kind: "channel", type: "github"');
+  expect(api).toContain('webhookPath: "/webhooks/account%2F123/agent%2F123/github"');
 });
 
 test("writeGeneratedFiles only exposes ids for locally declared resources", async () => {

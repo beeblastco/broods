@@ -52,6 +52,38 @@ Webhook handling is split deliberately:
 
 ---
 
+## Code-First Configuration
+
+The CLI SDK exposes one constructor per provider. Attach the resulting definitions to one agent; an agent may receive from multiple channel types, while one channel definition cannot be shared by multiple agents.
+
+```ts
+import { defineAgent, defineGitHubChannel, defineSlackChannel, env } from "filthy-panty";
+
+export const github = defineGitHubChannel({
+  appId: env.GITHUB_APP_ID,
+  privateKey: env.GITHUB_PRIVATE_KEY,
+  webhookSecret: env.GITHUB_WEBHOOK_SECRET,
+  allowedRepos: ["owner/repo"],
+});
+
+export const slack = defineSlackChannel({
+  botToken: env.SLACK_BOT_TOKEN,
+  signingSecret: env.SLACK_SIGNING_SECRET,
+  streaming: { mode: "edit" },
+});
+
+export const support = defineAgent({
+  name: "support",
+  config: { channels: [github, slack] },
+});
+```
+
+`filthy-panty dev` lowers the list to the runtime's keyed `config.channels` shape, syncs referenced environment values, generates `api.channels`, and prints each provider webhook URL. Code-first agent definitions must use channel constructors; keyed channel objects are rejected.
+
+Runnable examples live under `packages/demos/channel-*`. Provider registration is explicit: Telegram, Zalo, and Discord demos include a `register` command; other providers use their administration console.
+
+---
+
 ## Shared Channel Behavior
 
 Every channel gets these behaviors from the shared pipeline, not from the adapter:
@@ -133,7 +165,7 @@ The normalized `InboundMessage` contains:
 6. Import the channel factory in [`functions/harness-processing/integrations.ts`](https://github.com/beeblastco/filthy-panty/blob/dev/apps/core/functions/harness-processing/integrations.ts).
 7. Add `create<Channel>ChannelFromConfig()` and include it in `createChannelRegistry()`.
 8. Document the webhook URL as `/webhooks/{accountId}/{agentId}/{channel}`.
-9. Update the [API Reference](/api-reference) `AgentConfig.channels` schema, setup scripts, and focused tests/examples when the public config changes.
+9. Update the SDK constructor, [API Reference](/api-reference), and focused tests/examples when the public config changes.
 
 Do not hardcode channel-specific behavior in commands, shared handlers, or the core agent loop. Commands receive only the channel-agnostic `ChannelActions` interface.
 

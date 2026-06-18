@@ -150,7 +150,7 @@ async function diff(args: string[]): Promise<void> {
 }
 
 async function deploy(args: string[]): Promise<void> {
-  const { manifest, config, resourceAliases } = await compileProject({
+  const { manifest, config, resourceAliases, channels } = await compileProject({
     project: optionValue(args, "--project"),
     environment: optionValue(args, "--env"),
     command: "deploy",
@@ -159,10 +159,11 @@ async function deploy(args: string[]): Promise<void> {
   const auth = await requireAuth(optionValue(args, "--dashboard-url") ?? config.dashboardUrl);
   const client = new FilthyPantySyncClient({ dashboardUrl: auth.dashboardUrl, token: auth.token });
   const result = await client.putManifest(manifest, hasFlag(args, "--prune"), hasFlag(args, "--rotate-key"));
-  await writeGeneratedFiles(manifest, result.ids, process.cwd(), resourceAliases, result.deployment);
+  await writeGeneratedFiles(manifest, result.ids, process.cwd(), resourceAliases, result.deployment, channels);
   await ensureGitIgnore();
   console.log(`Synced ${result.manifest.resources.length} resources to ${manifest.project}/${manifest.environment}`);
   await applyDeploymentKey(result.deployment);
+  printChannelEndpoints(channels, result);
   printSyncWarnings(result);
 }
 
@@ -426,7 +427,7 @@ function runSyncChild(args: string[], env: NodeJS.ProcessEnv): Promise<void> {
  * processes via `FILTHY_PANTY_DECLINED_FILE`) so they are not re-prompted.
  */
 async function syncDev(args: string[]): Promise<RemoteManifestResponse> {
-  const { manifest, config, resourceAliases } = await compileProject({
+  const { manifest, config, resourceAliases, channels } = await compileProject({
     project: optionValue(args, "--project"),
     environment: optionValue(args, "--env"),
     command: "dev",
@@ -443,7 +444,7 @@ async function syncDev(args: string[]): Promise<RemoteManifestResponse> {
 
   // Push creates/updates (and canvas wiring) immediately, undeleted.
   let result = await client.putManifest(manifest, false);
-  await writeGeneratedFiles(manifest, result.ids, process.cwd(), resourceAliases, result.deployment);
+  await writeGeneratedFiles(manifest, result.ids, process.cwd(), resourceAliases, result.deployment, channels);
   await ensureGitIgnore();
 
   const declined = await loadDeclinedDeletes();
@@ -455,7 +456,7 @@ async function syncDev(args: string[]): Promise<RemoteManifestResponse> {
     printDiffEntries(undecided);
     if (await promptConfirm(`Delete ${undecided.length} resource(s) from ${manifest.project}/${manifest.environment}?`)) {
       result = await client.putManifest(manifest, true);
-      await writeGeneratedFiles(manifest, result.ids, process.cwd(), resourceAliases, result.deployment);
+      await writeGeneratedFiles(manifest, result.ids, process.cwd(), resourceAliases, result.deployment, channels);
       await clearDeclinedDeletes();
       pruned = true;
     } else {
@@ -472,8 +473,32 @@ async function syncDev(args: string[]): Promise<RemoteManifestResponse> {
   }
 
   await applyDeploymentKey(result.deployment);
+  printChannelEndpoints(channels, result);
   printSyncWarnings(result);
   return result;
+}
+
+function printChannelEndpoints(
+  channels: Awaited<ReturnType<typeof compileProject>>["channels"],
+  result: RemoteManifestResponse,
+): void {
+  const deployment = result.deployment;
+  if (!deployment || channels.length === 0) return;
+  const client = new FilthyPantyClient();
+  for (const channel of channels) {
+    const agentId = result.ids.agents[channel.agentName];
+    if (!agentId) continue;
+    const webhookPath = `/webhooks/${encodeURIComponent(deployment.accountId)}/${encodeURIComponent(agentId)}/${encodeURIComponent(channel.type)}`;
+    const url = client.channelWebhookUrl({
+      kind: "channel",
+      type: channel.type,
+      agentName: channel.agentName,
+      agentId,
+      accountId: deployment.accountId,
+      webhookPath,
+    });
+    console.log(`Channel ${channel.alias} (${channel.type}): ${url}${channel.type === "pancake" ? "?secret=<PANCAKE_WEBHOOK_SECRET>" : ""}`);
+  }
 }
 
 /**

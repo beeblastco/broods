@@ -10,8 +10,10 @@ import type { CliManifest, CliManifestResource } from "./contracts.ts";
 import { GENERATED_DIR, PROJECT_DIR } from "./config.ts";
 import { loadFilthyPantyRuntimeConfig } from "./runtime-config.ts";
 import {
+  isChannelDefinition,
   isFilthyPantyConfig,
   isResource,
+  type AnyChannelDefinition,
   type AnyResource,
   type FilthyPantyConfigDefinition,
   type FilthyPantyProjectConfig,
@@ -31,6 +33,13 @@ export interface CompiledProject {
   manifest: CliManifest;
   resources: AnyResource[];
   resourceAliases: ResourceAliases;
+  channels: CompiledChannel[];
+}
+
+export interface CompiledChannel {
+  alias: string;
+  type: AnyChannelDefinition["type"];
+  agentName: string;
 }
 
 export type ResourceAliases = Partial<Record<AnyResource["kind"], Record<string, string>>>;
@@ -67,6 +76,7 @@ export async function compileProject(options: CompileOptions = {}): Promise<Comp
     .map((entry): ExportedResource => ({ exportName: entry.exportName, resource: entry.value }));
   const resources = resourceExports.map((entry) => entry.resource);
   assertUniqueResources(resources);
+  const channels = compileChannels(resourceExports, exports);
   for (const resource of resources) assertKnownConfigKeys(resource);
   for (const resource of resources) assertSupportedWorkspaceStorage(resource);
   assertSupportedWorkspaceSandboxMounts(resources);
@@ -84,6 +94,7 @@ export async function compileProject(options: CompileOptions = {}): Promise<Comp
     config: config,
     resources: resources,
     resourceAliases: resourceAliases,
+    channels: channels,
     manifest: {
       version: 1,
       project: config.project!,
@@ -354,6 +365,61 @@ function aliasesForResources(resources: ExportedResource[]): ResourceAliases {
   return aliases;
 }
 
+function compileChannels(resources: ExportedResource[], exports: ExportedValue[]): CompiledChannel[] {
+  const exportedAliases = new Map<AnyChannelDefinition, string>();
+  for (const entry of exports) {
+    if (!isChannelDefinition(entry.value) || entry.exportName === "default" || !isValidIdentifier(entry.exportName)) continue;
+    const previous = exportedAliases.get(entry.value);
+    if (previous && previous !== entry.exportName) {
+      throw new Error(`Channel is exported more than once: ${previous}, ${entry.exportName}`);
+    }
+    exportedAliases.set(entry.value, entry.exportName);
+  }
+
+  const owners = new Map<AnyChannelDefinition, string>();
+  const aliases = new Set<string>();
+  const compiled: CompiledChannel[] = [];
+
+  for (const { exportName, resource } of resources) {
+    if (resource.kind !== "agent") continue;
+    const value = (resource.config as { channels?: unknown }).channels;
+    if (value === undefined) continue;
+    if (!Array.isArray(value)) {
+      throw new Error(`Agent "${resource.name}" config.channels must be an array of channel definitions`);
+    }
+    const types = new Set<string>();
+    for (const entry of value) {
+      if (!isChannelDefinition(entry)) {
+        throw new Error(`Agent "${resource.name}" config.channels must contain channel definitions`);
+      }
+      const owner = owners.get(entry);
+      if (owner && owner !== resource.name) {
+        throw new Error(`Channel ${entry.type} is already attached to agent "${owner}" and cannot also attach to "${resource.name}"`);
+      }
+      if (types.has(entry.type)) {
+        throw new Error(`Agent "${resource.name}" cannot configure more than one ${entry.type} channel`);
+      }
+      owners.set(entry, resource.name);
+      types.add(entry.type);
+      const fallbackAgent = exportName !== "default" && isValidIdentifier(exportName) ? exportName : resource.name;
+      const alias = exportedAliases.get(entry) ?? `${fallbackAgent}${capitalize(entry.type)}Channel`;
+      if (aliases.has(alias)) throw new Error(`Duplicate channel export alias: ${alias}`);
+      aliases.add(alias);
+      compiled.push({ alias, type: entry.type, agentName: resource.name });
+    }
+  }
+
+  for (const [channel, alias] of exportedAliases) {
+    if (!owners.has(channel)) throw new Error(`Channel "${alias}" must be attached to exactly one agent`);
+  }
+
+  return compiled.sort((left, right) => left.alias.localeCompare(right.alias));
+}
+
+function capitalize(value: string): string {
+  return value.charAt(0).toUpperCase() + value.slice(1);
+}
+
 function isValidIdentifier(value: string): boolean {
   return /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(value);
 }
@@ -370,6 +436,17 @@ async function toManifestResource(resource: AnyResource, projectRoot: string): P
 async function normalizeConfig(resource: AnyResource, projectRoot: string): Promise<unknown> {
   if (resource.kind === "agent") {
     const config = { ...(resource.config as Record<string, unknown>) };
+    if (config.channels !== undefined) {
+      if (!Array.isArray(config.channels)) {
+        throw new Error(`Agent "${resource.name}" config.channels must be an array of channel definitions`);
+      }
+      config.channels = Object.fromEntries(config.channels.map((channel) => {
+        if (!isChannelDefinition(channel)) {
+          throw new Error(`Agent "${resource.name}" config.channels must contain channel definitions`);
+        }
+        return [channel.type, channel.config];
+      }));
+    }
     if (isResource(config.sandbox)) {
       config.sandbox = config.sandbox.name;
     }

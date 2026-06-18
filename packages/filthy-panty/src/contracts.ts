@@ -6,6 +6,13 @@
 import type { Doc, Id } from "../../convex/_generated/dataModel";
 import type {
   AgentConfig,
+  AgentChannelsConfig,
+  AgentDiscordChannelConfig,
+  AgentGitHubChannelConfig,
+  AgentPancakeChannelConfig,
+  AgentSlackChannelConfig,
+  AgentTelegramChannelConfig,
+  AgentZaloChannelConfig,
   AgentWorkspaceRef,
   CreateCronInput,
   CronLastStatus,
@@ -17,6 +24,13 @@ import type {
 
 export type {
   AgentConfig,
+  AgentChannelsConfig,
+  AgentDiscordChannelConfig,
+  AgentGitHubChannelConfig,
+  AgentPancakeChannelConfig,
+  AgentSlackChannelConfig,
+  AgentTelegramChannelConfig,
+  AgentZaloChannelConfig,
   AgentWorkspaceRef,
   CreateCronInput,
   CronLastStatus,

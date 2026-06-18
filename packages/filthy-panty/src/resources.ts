@@ -9,6 +9,11 @@
 
 import type {
   AgentConfig,
+  AgentDiscordChannelConfig,
+  AgentPancakeChannelConfig,
+  AgentSlackChannelConfig,
+  AgentTelegramChannelConfig,
+  AgentZaloChannelConfig,
   CreateCronInput,
   SandboxConfig,
   WorkspaceConfig,
@@ -16,6 +21,7 @@ import type {
 
 const RESOURCE_MARKER = Symbol.for("filthy-panty.resource");
 const CONFIG_MARKER = Symbol.for("filthy-panty.config");
+const CHANNEL_MARKER = Symbol.for("filthy-panty.channel");
 
 export interface EnvRef<Name extends string = string> {
   readonly __beeblastEnv: true;
@@ -28,7 +34,7 @@ export interface EnvAccessor {
   readonly [name: string]: EnvRef;
 }
 
-type EnvRefString<T> =
+export type EnvRefString<T> =
   T extends string ? T | EnvRef :
   T extends readonly (infer Item)[] ? readonly EnvRefString<Item>[] :
   T extends (infer Item)[] ? EnvRefString<Item>[] :
@@ -99,6 +105,78 @@ export interface ToolDefinitionConfig {
   defaultConfig?: Record<string, unknown>;
 }
 
+export type ChannelType = "telegram" | "github" | "slack" | "discord" | "pancake" | "zalo";
+
+export interface ChannelDefinition<Type extends ChannelType, Config> {
+  readonly [CHANNEL_MARKER]: true;
+  readonly kind: "channel";
+  readonly type: Type;
+  readonly config: Config;
+}
+
+type ChannelSecret = string | EnvRef;
+
+export interface TelegramChannelInput {
+  botToken: ChannelSecret;
+  webhookSecret: ChannelSecret;
+  allowedChatIds: readonly number[];
+  reactionEmoji?: string | EnvRef;
+  streaming?: EnvRefString<NonNullable<AgentTelegramChannelConfig["streaming"]>>;
+}
+
+export interface GitHubChannelInput {
+  webhookSecret: ChannelSecret;
+  appId: ChannelSecret;
+  privateKey: ChannelSecret;
+  allowedRepos?: readonly (string | EnvRef)[];
+}
+
+export interface SlackChannelInput {
+  botToken: ChannelSecret;
+  signingSecret: ChannelSecret;
+  allowedChannelIds?: readonly (string | EnvRef)[];
+  streaming?: EnvRefString<NonNullable<AgentSlackChannelConfig["streaming"]>>;
+}
+
+export interface DiscordChannelInput {
+  botToken: ChannelSecret;
+  publicKey: ChannelSecret;
+  allowedGuildIds?: readonly (string | EnvRef)[];
+  streaming?: EnvRefString<NonNullable<AgentDiscordChannelConfig["streaming"]>>;
+}
+export interface PancakeChannelInput {
+  pageId: ChannelSecret;
+  pageAccessToken: ChannelSecret;
+  webhookSecret: ChannelSecret;
+  senderId?: string | EnvRef;
+  ignoreTagIds?: readonly (string | EnvRef)[];
+  streaming?: EnvRefString<NonNullable<AgentPancakeChannelConfig["streaming"]>>;
+}
+
+type PancakeChannelDefinitionConfig = Omit<PancakeChannelInput, "ignoreTagIds"> & {
+  options?: { ignoreTagIds?: readonly (string | EnvRef)[] };
+};
+export interface ZaloChannelInput {
+  botToken: ChannelSecret;
+  webhookSecret: ChannelSecret;
+  allowedUserIds: readonly (string | EnvRef)[];
+  streaming?: EnvRefString<NonNullable<AgentZaloChannelConfig["streaming"]>>;
+}
+
+export type TelegramChannelDefinition = ChannelDefinition<"telegram", TelegramChannelInput>;
+export type GitHubChannelDefinition = ChannelDefinition<"github", GitHubChannelInput>;
+export type SlackChannelDefinition = ChannelDefinition<"slack", SlackChannelInput>;
+export type DiscordChannelDefinition = ChannelDefinition<"discord", DiscordChannelInput>;
+export type PancakeChannelDefinition = ChannelDefinition<"pancake", PancakeChannelDefinitionConfig>;
+export type ZaloChannelDefinition = ChannelDefinition<"zalo", ZaloChannelInput>;
+export type AnyChannelDefinition =
+  | TelegramChannelDefinition
+  | GitHubChannelDefinition
+  | SlackChannelDefinition
+  | DiscordChannelDefinition
+  | PancakeChannelDefinition
+  | ZaloChannelDefinition;
+
 /**
  * Per-agent workspace mount with an optional sandbox override. A bare
  * `defineWorkspace(...)` inherits the agent-level sandbox; the object form lets
@@ -134,8 +212,9 @@ export type AgentSkillsDefinitionConfig = Omit<NonNullable<AgentConfig["skills"]
  * gains a new top-level field that should be code-definable.
  */
 export type AgentDefinitionConfig =
-  & EnvRefString<Pick<AgentConfig, "agent" | "model" | "provider" | "session" | "hooks" | "channels" | "tools">>
+  & EnvRefString<Pick<AgentConfig, "agent" | "model" | "provider" | "session" | "hooks" | "tools">>
   & {
+    channels?: readonly AnyChannelDefinition[];
     sandbox?: SandboxResource | string;
     workspaces?: readonly AgentWorkspaceInput[];
     subagent?: AgentSubagentDefinitionConfig;
@@ -209,6 +288,46 @@ function defineResource<const Kind extends ResourceKind, const Name extends stri
   };
 }
 
+function defineChannel<const Type extends ChannelType, Config>(
+  type: Type,
+  config: Config,
+): ChannelDefinition<Type, Config> {
+  return {
+    [CHANNEL_MARKER]: true,
+    kind: "channel",
+    type,
+    config,
+  };
+}
+
+export function defineTelegramChannel(config: TelegramChannelInput): TelegramChannelDefinition {
+  return defineChannel("telegram", config);
+}
+
+export function defineGitHubChannel(config: GitHubChannelInput): GitHubChannelDefinition {
+  return defineChannel("github", config);
+}
+
+export function defineSlackChannel(config: SlackChannelInput): SlackChannelDefinition {
+  return defineChannel("slack", config);
+}
+
+export function defineDiscordChannel(config: DiscordChannelInput): DiscordChannelDefinition {
+  return defineChannel("discord", config);
+}
+
+export function definePancakeChannel(config: PancakeChannelInput): PancakeChannelDefinition {
+  const { ignoreTagIds, ...channelConfig } = config;
+  return defineChannel("pancake", {
+    ...channelConfig,
+    ...(ignoreTagIds === undefined ? {} : { options: { ignoreTagIds } }),
+  });
+}
+
+export function defineZaloChannel(config: ZaloChannelInput): ZaloChannelDefinition {
+  return defineChannel("zalo", config);
+}
+
 export function defineFilthyPanty(config: FilthyPantyProjectConfig): FilthyPantyConfigDefinition {
   return { [CONFIG_MARKER]: true, config };
 }
@@ -251,6 +370,10 @@ export function defineCron<const Name extends string>(
 
 export function isResource(value: unknown): value is AnyResource {
   return Boolean(value && typeof value === "object" && (value as { [RESOURCE_MARKER]?: boolean })[RESOURCE_MARKER]);
+}
+
+export function isChannelDefinition(value: unknown): value is AnyChannelDefinition {
+  return Boolean(value && typeof value === "object" && (value as { [CHANNEL_MARKER]?: boolean })[CHANNEL_MARKER]);
 }
 
 export function isFilthyPantyConfig(value: unknown): value is FilthyPantyConfigDefinition {

@@ -10,6 +10,7 @@ import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:
 import type { ChannelStreamMode } from "../channel-streaming.ts";
 import { requireEnv } from "../env.ts";
 import { assertPublicHttpsUrl } from "../http.ts";
+import { isAccountToolId } from "./account-tools.ts";
 import {
   accountModelProviderNames,
   isAccountModelProviderName,
@@ -778,10 +779,6 @@ function isSupportedConfigToolName(
     toolName === "tavilyExtract" ||
     toolName === "googleSearch" ||
     toolName === "handoffs";
-}
-
-function isAccountToolId(toolName: string): boolean {
-  return /^tool_[A-Za-z0-9_-]+$/.test(toolName);
 }
 
 function normalizeTavilySearchToolConfig(config: Record<string, unknown>): void {

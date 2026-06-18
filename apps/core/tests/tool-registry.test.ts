@@ -387,7 +387,7 @@ describe("createTools", () => {
     const { createTools } = await import("../functions/harness-processing/tools/index.ts");
     setStorageForTests(storageWithAccountTool({
       accountId: "acct_test",
-      toolId: "tool_abc123",
+      toolId: "qs78zwc4z4q5ysxm74fgrhd13s88xxtv",
       name: "test_async",
       description: "Uploaded async test tool.",
       inputSchema: { type: "object", properties: {}, additionalProperties: false },
@@ -411,7 +411,7 @@ describe("createTools", () => {
 
     const tools = await createTools(createToolContext(undefined, "google", undefined, dispatch), {
       tools: {
-        tool_abc123: {
+        qs78zwc4z4q5ysxm74fgrhd13s88xxtv: {
           enabled: true,
           async: true,
           needsApproval: true,

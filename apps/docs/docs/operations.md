@@ -104,37 +104,9 @@ Create an agent with model, tool, channel, workspace, skills, and optional subag
 
 Provider credentials for each channel, plus model/tool settings, live on agent config. Reference the [API Reference](/api-reference) for the supported config shape.
 
-## CI/CD Account Setup
+## Channel Setup
 
-After deploy, the GitHub workflow optionally runs configure scripts for the built-in CI channels if credentials are provided. The scripts share one account, `INTEGRATIONS_ACCOUNT_USERNAME` or `integrations-default`, then create or update one default agent per configured channel and print or register the agent-scoped webhook URL. The Pancake helper is available for manual setup because Pancake webhook registration is done in Pancake settings.
-
-```bash
-# Optional: run only if TELEGRAM_BOT_TOKEN and all other TELEGRAM_* is token set
-bun run scripts/configure-telegram-account.ts
-
-# Optional: run only if DISCORD_BOT_TOKEN and all other DISCORD_* token is set  
-bun run scripts/configure-discord-account.ts
-
-# Optional: run only if SLACK_BOT_TOKEN and all SLACK_* token is set
-bun run scripts/configure-slack-account.ts
-
-# Optional: run only if GITHUB_APP_ID and all GITHUB_* token is set
-bun run scripts/configure-github-account.ts
-
-# Optional: run only if PANCAKE_PAGE_ID, PANCAKE_PAGE_ACCESS_TOKEN, and PANCAKE_WEBHOOK_SECRET are set
-bun run scripts/configure-pancake-account.ts
-
-# Optional: run only if ZALO_BOT_TOKEN and all ZALO_* token values are set
-bun run scripts/configure-zalo-account.ts
-```
-
-Each script uses `ADMIN_ACCOUNT_SECRET` for auth. Account and agent descriptions are optional; set `INTEGRATIONS_ACCOUNT_DESCRIPTION` or channel-specific `*_AGENT_DESCRIPTION` only when you want those fields stored.
-
-For Pancake handoff mode, set `PANCAKE_HANDOFF_TAG_ID` to the Pancake conversation tag ID that should pause agent replies while staff handle the conversation.
-
-Optional agent-name overrides are available when you need stable names other than the defaults: `TELEGRAM_AGENT_NAME`, `DISCORD_AGENT_NAME`, `SLACK_AGENT_NAME`, `GITHUB_AGENT_NAME`, `PANCAKE_AGENT_NAME`, and `ZALO_AGENT_NAME`.
-
-The integration scripts include `Knowledge cutoff: January 2025.` in `config.agent.system` by default. Override it with `ACCOUNT_MODEL_KNOWLEDGE_CUTOFF` when changing `ACCOUNT_MODEL_ID` to a model with a different cutoff.
+Declare channel agents with the CLI SDK and run `filthy-panty dev` or `filthy-panty deploy`. The CLI prints the agent-scoped webhook URL after synchronization. Provider registration remains an explicit operation documented by the matching `packages/demos/channel-*` package; infrastructure deployment does not provision demo channel accounts.
 
 ## Live Probes
 

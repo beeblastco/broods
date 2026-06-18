@@ -239,6 +239,7 @@ export const ensureRuntimeKeyBySecretHash = internalMutation({
         rotate: v.optional(v.boolean()),
     },
     returns: v.union(v.null(), v.object({
+        accountId: v.id("accounts"),
         endpointId: v.string(),
         projectSlug: v.string(),
         environmentSlug: v.string(),
@@ -262,6 +263,7 @@ export const ensureRuntimeKeyBySecretHash = internalMutation({
         });
 
         return {
+            accountId: account._id,
             endpointId: result.endpointId,
             projectSlug: result.projectSlug,
             environmentSlug: result.environmentSlug,

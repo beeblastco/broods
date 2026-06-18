@@ -37,6 +37,7 @@ import asyncStatusTool from "./async-status.tool.ts";
 import accountTool from "./account-tool.tool.ts";
 import { prewarmAccountTool } from "./custom-tool-executor.ts";
 import { sandboxSupportsBackgroundJobs, sandboxSupportsJobControls } from "./filesystem-utils.ts";
+import { isAccountToolId } from "../../_shared/storage/account-tools.ts";
 
 // Runtime dependencies shared by tool factories. Model-facing input schemas
 // stay inside each individual tool file.
@@ -279,8 +280,4 @@ function externalToolRuntimeConfig(config: AgentToolConfig): AgentToolConfig {
   } = config;
 
   return runtimeConfig;
-}
-
-function isAccountToolId(toolName: string): boolean {
-  return /^tool_[A-Za-z0-9_-]+$/.test(toolName);
 }

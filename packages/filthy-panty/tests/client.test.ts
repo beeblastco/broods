@@ -64,6 +64,18 @@ test("client accepts host as a shorthand for https baseUrl", async () => {
   expect(urls).toEqual(["https://core.example"]);
 });
 
+test("client resolves generated channel webhook paths against its configured host", () => {
+  const client = new FilthyPantyClient({ host: "hooks.example.com" });
+  expect(client.channelWebhookUrl({
+    kind: "channel",
+    type: "github",
+    agentName: "support",
+    agentId: "agent_1",
+    accountId: "account_1",
+    webhookPath: "/webhooks/account_1/agent_1/github",
+  })).toBe("https://hooks.example.com/webhooks/account_1/agent_1/github");
+});
+
 test("client reads apiKey from the shared SDK environment variable", async () => {
   process.env.FILTHY_PANTY_API_KEY = "env-key";
   const headers: HeadersInit[] = [];

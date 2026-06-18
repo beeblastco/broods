@@ -223,7 +223,7 @@ Omitting a tool disables it. Setting `enabled: false` also disables it. Set `nee
 Set `async: true` when a local `execute` tool may take long enough that the parent agent should keep working while the result is produced.
 For uploaded tools, `config` is merged over the upload-time `defaultConfig` and passed to `ctx.config`. Uploaded tool code always runs in Kubernetes; the platform decides whether to wait or detach from the request path.
 
-See [`packages/demos/uploaded-tool-async-sse.ts`](https://github.com/beeblastco/filthy-panty/blob/dev/packages/demos/uploaded-tool-async-sse.ts) for a runnable direct SSE example that uploads `test_async`, enables `config.tools.<toolId>.async`, and asks the agent to call the uploaded tool. [`packages/demos/uploaded-tool-stream.ts`](https://github.com/beeblastco/filthy-panty/blob/dev/packages/demos/uploaded-tool-stream.ts) covers the streaming variant.
+See [`packages/demos/tool-custom-async-sse`](https://github.com/beeblastco/filthy-panty/tree/dev/packages/demos/tool-custom-async-sse) for a runnable direct SSE example that uploads `test_async`, enables `config.tools.<toolId>.async`, and asks the agent to call the uploaded tool. [`packages/demos/tool-custom-stream`](https://github.com/beeblastco/filthy-panty/tree/dev/packages/demos/tool-custom-stream) covers the streaming variant. Uploaded tools continue to execute in the isolated Kubernetes worker, including when their agent is reached through a channel.
 
 The full config field reference lives in the [API Reference](/api-reference) under `AgentConfig.tools`.
 

@@ -22,6 +22,7 @@ export interface RemoteManifestResponse {
    * carry just the masked `keyHint`. Used to write `FILTHY_PANTY_API_KEY` locally.
    */
   deployment?: {
+    accountId: string;
     endpointId: string;
     projectSlug: string;
     environmentSlug: string;

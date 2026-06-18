@@ -75,6 +75,11 @@ export interface PublicAccountToolRecord {
 const MODEL_TOOL_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_-]{0,63}$/;
 const MAX_BUNDLE_BYTES = 512 * 1024;
 
+/** Accept DynamoDB public ids and native Convex document ids during migration/sync. */
+export function isAccountToolId(value: string): boolean {
+  return /^tool_[A-Za-z0-9_-]+$/.test(value) || /^[a-z0-9]{32}$/.test(value);
+}
+
 export function createAccountToolId(): string {
   return `tool_${randomBytes(12).toString("hex")}`;
 }

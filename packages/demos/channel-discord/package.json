@@ -1,0 +1,11 @@
+{
+  "name": "@filthy-panty/demo-channel-discord", "type": "module", "private": true,
+  "scripts": {
+    "check": "tsc --noEmit",
+    "dev": "filthy-panty dev --dashboard-url https://dashboard.dev.beeblast.co --project channel-discord",
+    "deploy": "filthy-panty deploy --dashboard-url https://dashboard.dev.beeblast.co --project channel-discord",
+    "register": "bun register.ts"
+  },
+  "dependencies": { "filthy-panty": "file:../../filthy-panty" },
+  "devDependencies": { "@types/bun": "^1.3.14" }
+}

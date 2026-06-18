@@ -122,6 +122,7 @@ export {
   type AgentSlackChannelConfig,
   type AgentSubagentConfig,
   type AgentTelegramChannelConfig,
+  type AgentZaloChannelConfig,
   type AgentToolConfig,
   type AgentToolsConfig,
   type AgentWebhookHookConfig,

@@ -66,8 +66,18 @@ export interface AgentReference<Name extends string = string> {
   readonly environmentSlug?: string;
 }
 
+export interface ChannelReference {
+  readonly kind: "channel";
+  readonly type: "telegram" | "github" | "slack" | "discord" | "pancake" | "zalo";
+  readonly agentName: string;
+  readonly agentId: string;
+  readonly accountId: string;
+  readonly webhookPath: string;
+}
+
 export interface ResourceApi {
   readonly agents: Record<string, AgentReference>;
+  readonly channels?: Record<string, ChannelReference>;
   readonly workspaces?: Record<string, unknown>;
   readonly sandboxes?: Record<string, unknown>;
   readonly crons?: Record<string, unknown>;
@@ -117,6 +127,11 @@ export class FilthyPantyClient {
       process.env.FILTHY_PANTY_API_KEY ||
       undefined;
     this.fetchImpl = options.fetch ?? fetch;
+  }
+
+  /** Return the public provider webhook URL for a generated channel reference. */
+  channelWebhookUrl(ref: ChannelReference): string {
+    return `${this.baseUrl}${ref.webhookPath.startsWith("/") ? "" : "/"}${ref.webhookPath}`;
   }
 
   agent<const Name extends string>(ref: AgentReference<Name>): AgentHandle;

@@ -10,7 +10,7 @@ flowchart LR
   Events --> Webhook["signed HTTPS POST"]
 ```
 
-Check out the [webhook example](https://github.com/beeblastco/filthy-panty/blob/dev/packages/demos/webhook.ts) for how to setup and use.
+Check out the [webhook example](https://github.com/beeblastco/filthy-panty/tree/dev/packages/demos/webhook) for setup and usage. Lifecycle webhooks remain declarative HTTPS delivery; they do not upload or execute user hook code.
 
 ## Agent Config
 
