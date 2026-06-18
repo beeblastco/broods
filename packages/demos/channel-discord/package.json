@@ -3,6 +3,7 @@
   "scripts": {
     "check": "tsc --noEmit",
     "dev": "filthy-panty dev --dashboard-url https://dashboard.dev.beeblast.co --project channel-discord",
+    "diff": "filthy-panty diff --dashboard-url https://dashboard.dev.beeblast.co --project channel-discord",
     "deploy": "filthy-panty deploy --dashboard-url https://dashboard.dev.beeblast.co --project channel-discord",
     "register": "bun register.ts"
   },

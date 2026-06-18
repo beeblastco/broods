@@ -3,6 +3,7 @@
   "scripts": {
     "check": "tsc --noEmit",
     "dev": "filthy-panty dev --dashboard-url https://dashboard.dev.beeblast.co --project channel-slack",
+    "diff": "filthy-panty diff --dashboard-url https://dashboard.dev.beeblast.co --project channel-slack",
     "deploy": "filthy-panty deploy --dashboard-url https://dashboard.dev.beeblast.co --project channel-slack"
   },
   "dependencies": { "filthy-panty": "file:../../filthy-panty" },

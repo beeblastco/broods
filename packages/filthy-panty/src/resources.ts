@@ -114,7 +114,7 @@ export interface ChannelDefinition<Type extends ChannelType, Config> {
   readonly config: Config;
 }
 
-type ChannelSecret = string | EnvRef;
+type ChannelSecret = string | EnvRef | undefined;
 
 export interface TelegramChannelInput {
   botToken: ChannelSecret;

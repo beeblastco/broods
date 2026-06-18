@@ -6,6 +6,7 @@
     "check": "tsc --noEmit",
     "cli:login": "filthy-panty login --dashboard-url https://dashboard.dev.beeblast.co",
     "dev": "filthy-panty dev --dashboard-url https://dashboard.dev.beeblast.co --project channel-github",
+    "diff": "filthy-panty diff --dashboard-url https://dashboard.dev.beeblast.co --project channel-github",
     "deploy": "filthy-panty deploy --dashboard-url https://dashboard.dev.beeblast.co --project channel-github"
   },
   "dependencies": {
