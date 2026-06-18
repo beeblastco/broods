@@ -50,6 +50,9 @@ export interface SandboxConfig {
   // Reserve a long-lived sandbox per workspace namespace (reconnect across calls,
   // run background jobs, persist installed packages). Not valid for `lambda`.
   persistent?: boolean;
+  // Persistent kubernetes sandboxes can skip the durable home PVC and use the
+  // image's ephemeral home while still reserving/reusing the sandbox.
+  ephemeralHome?: boolean;
   // Idle/expiry policy when `persistent` is true.
   lifecycle?: SandboxLifecycleConfig;
   // Command hooks for persistent sandboxes.
@@ -102,6 +105,7 @@ export function normalizeSandboxConfig(value: unknown): SandboxConfig {
   assertOptionalEnum(config.provider, "config.provider", SANDBOX_PROVIDERS);
   assertOptionalEnum(config.permissionMode, "config.permissionMode", SANDBOX_PERMISSION_MODES);
   assertOptionalBoolean(config.persistent, "config.persistent");
+  assertOptionalBoolean(config.ephemeralHome, "config.ephemeralHome");
 
   const provider = (config.provider as SandboxProvider | undefined) ?? "lambda";
   const network = normalizeNetwork(config.network);
@@ -110,6 +114,9 @@ export function normalizeSandboxConfig(value: unknown): SandboxConfig {
   }
   if (config.persistent === true && provider === "lambda") {
     throw new Error("config.persistent is not supported by the lambda provider (lambda is always ephemeral)");
+  }
+  if (config.ephemeralHome === true && (provider !== "kubernetes" || config.persistent !== true)) {
+    throw new Error("config.ephemeralHome requires a persistent kubernetes sandbox");
   }
   const lifecycle = config.lifecycle !== undefined ? normalizeLifecycle(config.lifecycle) : undefined;
   if (lifecycle && config.persistent !== true) {
@@ -156,6 +163,7 @@ export function normalizeSandboxConfig(value: unknown): SandboxConfig {
     network,
     permissionMode: (config.permissionMode as SandboxPermissionMode | undefined) ?? "ask",
     ...(config.persistent !== undefined ? { persistent: config.persistent as boolean } : {}),
+    ...(config.ephemeralHome !== undefined ? { ephemeralHome: config.ephemeralHome as boolean } : {}),
     ...(lifecycle ? { lifecycle } : {}),
     ...(onCreate ? { onCreate } : {}),
     ...(onResume ? { onResume } : {}),

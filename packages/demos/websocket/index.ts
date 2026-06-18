@@ -5,9 +5,7 @@
 import { WebsocketClient } from "filthy-panty";
 import { api } from "./filthypanty/_generated/api";
 
-const client = new WebsocketClient({
-  apiKey: process.env.FILTHY_PANTY_API_KEY!,
-});
+const client = new WebsocketClient();
 
 for await (const message of client.stream({
   agent: api.agents.chat,
@@ -30,7 +28,7 @@ for await (const message of client.stream({
       }
       break;
     case "done":
-      process.stdout.write("\n");
+      process.stdout.write("\nFinished\n");
       break;
     case "error":
       throw new Error(typeof message.error === "string" ? message.error : JSON.stringify(message.error));

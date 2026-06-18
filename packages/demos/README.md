@@ -9,9 +9,9 @@ bun run dev
 bun run start
 ```
 
-Use `.env.local` for local runtime settings. SDK demos use the runtime key in
-`FILTHY_PANTY_API_KEY`, which `bun run dev`/`bun run deploy` writes for the
-selected environment.
+Use `.env.local` for local runtime settings. SDK clients automatically read the
+runtime key from `FILTHY_PANTY_API_KEY`, which `bun run dev`/`bun run deploy`
+writes for the selected environment.
 The WebSocket demo uses the SDK default runtime host, `app.beeblast.co`; only
 set `FILTHY_PANTY_WEBSOCKET_URL` for a non-default or self-hosted gateway.
 

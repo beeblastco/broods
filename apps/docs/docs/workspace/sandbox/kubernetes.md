@@ -64,6 +64,57 @@ refreshes a `shutdownTime` so the idle reaper only deletes truly expired sandbox
 (`onCreate`/`onResume`) and detached background jobs work as described in
 [the sandbox overview](index.md#reserved-persistent-sandboxes).
 
+## Home storage
+
+`$HOME` is runtime state; the S3 workspace mount is the user-facing shared file store.
+
+```mermaid
+flowchart LR
+  User["account / workspace"] --> Sandbox["reserved Sandbox<br/>fp-p-&lt;slug&gt;-&lt;hash&gt;"]
+  Sandbox --> Pod["sandbox pod"]
+  Pod --> Home{"$HOME mode"}
+  Home --> PVC["home PVC<br/>venvs, packages, caches"]
+  Home --> Ephemeral["image filesystem<br/>fast, not durable"]
+  Pod --> Workspace["S3 workspace mount<br/>shared artifacts"]
+```
+
+| Mode | Config | Persists after scale-to-zero? | Use for |
+| --- | --- | --- | --- |
+| Durable home PVC | `persistent: true` + `options.persistentDiskGb` | yes | package caches, virtualenvs, background-job metadata |
+| Ephemeral home | `persistent: true` + `ephemeralHome: true` | no | fast-start workloads that write durable files to S3 workspace |
+| S3 workspace | `options.mountAwsS3Buckets: true` + attached workspace | yes | user/project files, read-only sharing, downloadable artifacts |
+
+```jsonc
+// Durable home PVC
+{
+  "provider": "kubernetes",
+  "persistent": true,
+  "options": {
+    "persistentDiskGb": 10,
+    "persistentHome": "/home/node",
+    "storageClass": "local-path"
+  }
+}
+```
+
+```jsonc
+// Ephemeral home: skips the home PVC entirely.
+{
+  "provider": "kubernetes",
+  "persistent": true,
+  "ephemeralHome": true
+}
+```
+
+`options.persistentDiskGb` is the requested home PVC size in GiB (currently 1-10).
+`options.persistentHome` is the mounted `HOME` path, not a boolean.
+`options.storageClass` selects the Kubernetes StorageClass, such as `local-path` or
+`hcloud-volumes`; omit it to use the cluster default.
+
+PVCs are per reserved Sandbox and mounted only into that Sandbox's pod. They are good
+for private runtime state, not cross-user file sharing. For read-only or multi-user
+access, write artifacts to the S3 workspace and enforce access there.
+
 > The kubeconfig (CA + token) is ~2.7 KB — over Lambda's 4 KB env-var limit. So `sst.config.ts`
 > stores it in an SSM SecureString parameter (`/filthy-panty/<stage>/kubernetes-sandbox-kubeconfig`,
 > value from the `KubernetesSandboxKubeconfig` secret) and passes only the parameter **name** as

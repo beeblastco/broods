@@ -8,10 +8,7 @@ import { FilthyPantyClient } from "filthy-panty";
 import { api } from "./filthypanty/_generated/api";
 
 
-const client = new FilthyPantyClient({
-  apiKey: process.env.FILTHY_PANTY_API_KEY!,
-  host: process.env.FILTHY_PANTY_HOST!,
-});
+const client = new FilthyPantyClient();
 
 const runs = await client.listCronRuns(api.crons.oneMinuteCron, { limit: 10 });
 

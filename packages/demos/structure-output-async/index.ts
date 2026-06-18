@@ -5,10 +5,7 @@
 import { FilthyPantyClient } from "filthy-panty";
 import { api } from "./filthypanty/_generated/api";
 
-const client = new FilthyPantyClient({
-  host: process.env.FILTHY_PANTY_HOST,
-  apiKey: process.env.FILTHY_PANTY_API_KEY!,
-});
+const client = new FilthyPantyClient();
 
 const run = await client.runAsync(api.agents.structuredAssistant, {
   input: "What is the newest model release from OpenAI? Provide a concise answer and suggest follow-up actions.",

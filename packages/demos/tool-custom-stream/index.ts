@@ -8,10 +8,7 @@
 import { FilthyPantyClient } from "filthy-panty";
 import { api } from "./filthypanty/_generated/api";
 
-const client = new FilthyPantyClient({
-  host: process.env.FILTHY_PANTY_HOST,
-  apiKey: process.env.FILTHY_PANTY_API_KEY!,
-});
+const client = new FilthyPantyClient();
 
 for await (const chunk of client.stream(api.agents.streamingToolAgent, {
   input: "Call the stream_progress tool with steps=5 and tell me the final result.",

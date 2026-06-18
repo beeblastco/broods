@@ -8,10 +8,7 @@
 import { FilthyPantyClient } from "filthy-panty";
 import { api } from "./filthypanty/_generated/api";
 
-const client = new FilthyPantyClient({
-  host: process.env.FILTHY_PANTY_HOST,
-  apiKey: process.env.FILTHY_PANTY_API_KEY!,
-});
+const client = new FilthyPantyClient();
 
 console.log("--- SSE stream (async tool will take ~5s) ---\n");
 

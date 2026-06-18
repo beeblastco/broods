@@ -6,6 +6,7 @@
 import { DEFAULT_CORE_BASE_URL, normalizeHttpServiceUrl } from "./client.ts";
 import type { AgentReference } from "./client.ts";
 import { stripTrailingSlash } from "./config.ts";
+import { loadFilthyPantyRuntimeConfig } from "./runtime-config.ts";
 import { resolveRunEvents, type AgentRunEventInput, type AgentRunOverrides } from "./run-input.ts";
 import type {
   WebSocketClientCancelMessage,
@@ -48,6 +49,7 @@ export interface FilthyPantyWebSocketClientOptions {
   baseUrl?: string;
   /** Hostname or URL of the core service. `app.beeblast.co` becomes `https://app.beeblast.co`. */
   host?: string;
+  /** API key used as the WebSocket token. Defaults to FILTHY_PANTY_API_KEY from the environment or local .env files. */
   apiKey?: string;
   WebSocket?: WebSocketConstructorLike;
   connectTimeoutMs?: number;
@@ -73,7 +75,8 @@ export class FilthyPantyWebSocketClient {
   private readonly WebSocketImpl?: WebSocketConstructorLike;
   private readonly connectTimeoutMs: number;
 
-  constructor(options: FilthyPantyWebSocketClientOptions) {
+  constructor(options: FilthyPantyWebSocketClientOptions = {}) {
+    loadFilthyPantyRuntimeConfig();
     this.baseUrl = normalizeWebSocketServiceUrl(options.baseUrl ||
       process.env.FILTHY_PANTY_WEBSOCKET_URL ||
       options.host ||

@@ -1,7 +1,14 @@
 import { afterEach, expect, test } from "bun:test";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { DEFAULT_CORE_BASE_URL, FilthyPantyClient } from "../src/client.ts";
 
 afterEach(() => {
+  delete process.env.FILTHY_PANTY_DASHBOARD_URL;
+  delete process.env.FILTHY_PANTY_TOKEN;
+  delete process.env.FILTHY_PANTY_PROJECT;
+  delete process.env.FILTHY_PANTY_ENVIRONMENT;
   delete process.env.FILTHY_PANTY_BASE_URL;
   delete process.env.FILTHY_PANTY_HOST;
   delete process.env.FILTHY_PANTY_API_KEY;
@@ -76,6 +83,38 @@ test("client reads apiKey from the shared SDK environment variable", async () =>
   expect(headers[0]).toMatchObject({
     Authorization: "Bearer env-key",
   });
+});
+
+test("client reads apiKey from package-local .env.local", async () => {
+  const originalCwd = process.cwd();
+  const tempDir = mkdtempSync(join(tmpdir(), "filthy-panty-client-"));
+  delete process.env.FILTHY_PANTY_API_KEY;
+  writeFileSync(join(tempDir, ".env.local"), "FILTHY_PANTY_API_KEY=local-env-key\n");
+  process.chdir(tempDir);
+
+  try {
+    const headers: HeadersInit[] = [];
+    const client = new FilthyPantyClient({
+      fetch: async (_input, init) => {
+        headers.push(init?.headers ?? {});
+
+        return new Response('data: {"type":"finish","finishReason":"stop","totalUsage":{"inputTokens":0,"outputTokens":0,"totalTokens":0}}\n\n');
+      },
+    });
+
+    await client.run({
+      agentId: "agent_1",
+      input: "hello",
+    });
+
+    expect(headers[0]).toMatchObject({
+      Authorization: "Bearer local-env-key",
+    });
+  } finally {
+    process.chdir(originalCwd);
+    rmSync(tempDir, { recursive: true, force: true });
+    delete process.env.FILTHY_PANTY_API_KEY;
+  }
 });
 
 test("client starts async runs and exposes status id for polling", async () => {

@@ -5,10 +5,7 @@
 import { FilthyPantyClient } from "filthy-panty";
 import { api } from "./filthypanty/_generated/api";
 
-const client = new FilthyPantyClient({
-  host: process.env.FILTHY_PANTY_HOST,
-  apiKey: process.env.FILTHY_PANTY_API_KEY!,
-});
+const client = new FilthyPantyClient();
 
 const run = await client.runAsync(api.agents.search, {
   input: "Search the web for the latest weather in Hanoi.",

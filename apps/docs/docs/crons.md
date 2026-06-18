@@ -83,10 +83,7 @@ Cron jobs are not limited to declarative `defineCron` resources synced by `bun r
 import { FilthyPantyClient } from "filthy-panty";
 import { api } from "./filthypanty/_generated/api";
 
-const client = new FilthyPantyClient({
-  apiKey: process.env.FILTHY_PANTY_API_KEY!,
-  host: process.env.FILTHY_PANTY_HOST!,
-});
+const client = new FilthyPantyClient();
 
 await client.createCron({
   name: "Weekly digest",

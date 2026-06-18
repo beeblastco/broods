@@ -958,6 +958,7 @@ paths:
                           items: { type: string }
                     permissionMode: { type: string, enum: [edit, ask, bypass] }
                     persistent: { type: boolean, description: "Reserve one long-lived sandbox per workspace (reconnect across calls, background jobs, packages persist). Not valid for lambda." }
+                    ephemeralHome: { type: boolean, description: "Persistent kubernetes only. Skip the durable home PVC and use the image's ephemeral home while still reserving/reusing the sandbox." }
                     lifecycle:
                       type: object
                       description: "Idle/expiry policy when persistent. Requires persistent: true."
@@ -979,7 +980,7 @@ paths:
                     memoryLimit: { type: integer, description: "MB; bounded for lambda (max 1024), operator-sized for other providers" }
                     outputLimitBytes: { type: integer }
                     envVars: { type: object, additionalProperties: { type: string } }
-                    options: { type: object, description: "Provider knobs. Persistent kubernetes also accepts persistentDiskGb, persistentHome, storageClass for the home PVC." }
+                    options: { type: object, description: "Provider knobs. Persistent kubernetes also accepts persistentDiskGb (GiB), persistentHome (HOME path), and storageClass (PVC StorageClass) for the home PVC." }
             examples:
               lambda:
                 value:

@@ -164,6 +164,18 @@ describe("sandbox config persistent / lifecycle / PVC", () => {
     })).toThrow("config.lifecycle.idleTimeoutSeconds must be a positive integer");
   });
 
+  it("only allows ephemeral home on a persistent kubernetes sandbox", () => {
+    expect(() => normalizeSandboxConfig({ provider: "kubernetes", ephemeralHome: true }))
+      .toThrow("config.ephemeralHome requires a persistent kubernetes sandbox");
+    expect(() => normalizeSandboxConfig({ provider: "daytona", persistent: true, ephemeralHome: true }))
+      .toThrow("config.ephemeralHome requires a persistent kubernetes sandbox");
+    expect(normalizeSandboxConfig({
+      provider: "kubernetes",
+      persistent: true,
+      ephemeralHome: true,
+    }).ephemeralHome).toBe(true);
+  });
+
   it("requires persistent when lifecycle hooks are set", () => {
     expect(() => normalizeSandboxConfig({ provider: "kubernetes", onCreate: ["npm install"] }))
       .toThrow("config.onCreate and config.onResume require config.persistent");

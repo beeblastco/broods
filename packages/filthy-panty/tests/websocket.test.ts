@@ -1,4 +1,7 @@
 import { afterEach, expect, test } from "bun:test";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   FilthyPantyWebSocketClient,
   WebsocketClient,
@@ -40,6 +43,12 @@ class FakeWebSocket implements WebSocketLike {
 
 afterEach(() => {
   FakeWebSocket.instances = [];
+  delete process.env.FILTHY_PANTY_DASHBOARD_URL;
+  delete process.env.FILTHY_PANTY_TOKEN;
+  delete process.env.FILTHY_PANTY_PROJECT;
+  delete process.env.FILTHY_PANTY_ENVIRONMENT;
+  delete process.env.FILTHY_PANTY_BASE_URL;
+  delete process.env.FILTHY_PANTY_HOST;
   delete process.env.FILTHY_PANTY_API_KEY;
   delete process.env.FILTHY_PANTY_WEBSOCKET_URL;
 });
@@ -74,6 +83,38 @@ test("websocket client reads apiKey from the shared SDK environment variable", (
 
   expect(client.buildUrl({ endpointId: "agent_1" })).toBe(
     "wss://app.example/v1/agents/agent_1/ws?token=env-key",
+  );
+});
+
+test("websocket client reads apiKey from package-local .env.local", () => {
+  const originalCwd = process.cwd();
+  const tempDir = mkdtempSync(join(tmpdir(), "filthy-panty-websocket-"));
+  delete process.env.FILTHY_PANTY_API_KEY;
+  writeFileSync(join(tempDir, ".env.local"), "FILTHY_PANTY_API_KEY=local-env-key\n");
+  process.chdir(tempDir);
+
+  try {
+    const client = new FilthyPantyWebSocketClient({
+      host: "app.example",
+      WebSocket: FakeWebSocket,
+    });
+
+    expect(client.buildUrl({ endpointId: "agent_1" })).toBe(
+      "wss://app.example/v1/agents/agent_1/ws?token=local-env-key",
+    );
+  } finally {
+    process.chdir(originalCwd);
+    rmSync(tempDir, { recursive: true, force: true });
+    delete process.env.FILTHY_PANTY_API_KEY;
+  }
+});
+
+test("websocket client can be constructed without options", () => {
+  process.env.FILTHY_PANTY_API_KEY = "env-key";
+  const client = new FilthyPantyWebSocketClient();
+
+  expect(client.buildUrl({ endpointId: "agent_1" })).toBe(
+    "wss://app.beeblast.co/v1/agents/agent_1/ws?token=env-key",
   );
 });
 

@@ -6,10 +6,7 @@ import { FilthyPantyClient } from "filthy-panty";
 import { api } from "./filthypanty/_generated/api";
 
 // Create a client to connect to the Filthy Panty API.
-const client = new FilthyPantyClient({
-  host: process.env.FILTHY_PANTY_HOST!,
-  apiKey: process.env.FILTHY_PANTY_API_KEY!,
-});
+const client = new FilthyPantyClient();
 
 // Stream the response from the agent and print it to stdout.
 for await (const chunk of client.stream(api.agents.search, {

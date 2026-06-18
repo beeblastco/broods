@@ -74,7 +74,7 @@ are not yet wired into the shared workspace contract.
 | --- | --- | --- | --- | --- | --- |
 | `lambda` | yes | yes, through AWS S3 Files | no | no | S3 bucket/account limits outside sandbox config |
 | `daytona` | yes | yes, through `mount-s3` when `options.mountAwsS3Buckets` is true | yes, native persistent sandbox | yes, with live status/logs/stop | provider/account limit outside sandbox config |
-| `kubernetes` | yes | yes, through `mount-s3` when `options.mountAwsS3Buckets` is true | yes | yes, with live status/logs/stop | `options.persistentDiskGb` for the home PVC (1-10 GB) |
+| `kubernetes` | yes | yes, through `mount-s3` when enabled | yes | yes, with live status/logs/stop | see [Kubernetes Details](kubernetes.md) |
 | `e2b` | yes | not wired; S3 workspaces are rejected | yes, native sandbox pause/resume | yes, native launch + callback delivery; no harness live logs/stop | E2B plan/template limit outside sandbox config |
 | `vercel` | yes | not wired; S3 workspaces are rejected | yes, named persistent sandbox filesystem | yes, with live status/logs/stop | Vercel sandbox/drive limits outside sandbox config |
 
@@ -122,11 +122,6 @@ and running jobs survive across calls, scaling down on idle like Fargate. Not va
       "idleTimeoutSeconds": 1800,   // scale down after 30 min idle (default 900)
       "maxLifetimeSeconds": 86400   // hard expiry backstop (optional)
     },
-    "options": {                   // kubernetes PVC for the coding env (optional)
-      "mountAwsS3Buckets": true,   // S3 = shared workspace files
-      "persistentDiskGb": 10,      // home PVC (packages/venvs/caches)
-      "persistentHome": "/home/node"
-    },
     "onCreate": ["python3 -m venv $HOME/.venv"],
     "onResume": ["test -x $HOME/.venv/bin/python"]
   }
@@ -144,23 +139,8 @@ flowchart LR
   Use -. "idle N min, no job" .-> Down["scale to 0 / stop / pause<br/>(disk + installed packages persist)"]
 ```
 
-> **Cold-start note (kubernetes).** Three stacked optimizations take the uploaded-tool
-> first-call cold-start from ~22s to ~1s:
->
-> 1. **`ephemeralHome: true`** — skip the durable home PVC. The Hetzner block-volume
->    create+attach was ~16s of the ~22s; the pod still outlives the request and just uses
->    the image's own `/home/node`. Uploaded tools never need durable disk (results return
->    via HTTP callback).
-> 2. **Inline bundle** — for bundles ≤64 KB the harness reads the source in-region and
->    embeds it in the exec payload, so the pod skips the cross-cloud S3 fetch (~1.5s).
->    Larger (npm-bundled) tools fall back to the signed URL.
-> 3. **Pre-warm** — when a request's toolset includes an async uploaded tool, the harness
->    creates/resumes its sandbox pod in the background, in parallel with the model's first
->    response, so the call lands on a ready pod. The ~1s residual is the per-call floor
->    (node spawn + exec round-trips).
-
 How idle scale-down happens differs per provider: **kubernetes** uses an infra reaper
-Cron (scales `replicas` 0↔1; home PVC + S3 persist); **daytona** uses native
+Cron (scales `replicas` 0↔1); **daytona** uses native
 `autoStopInterval` (filesystem persists); **e2b** uses native `lifecycle.onTimeout: "pause"`
 (filesystem + memory snapshot persist); **vercel** uses named persistent sandboxes and native
 `onCreate`/`onResume` callbacks. A reserved sandbox is reconnected by id on the next call
@@ -172,8 +152,7 @@ conditional claim — the loser discards its duplicate sandbox and reconnects to
 **Clean delete (no leaks).** Deleting a workspace or account releases its reserved sandboxes:
 daytona/e2b/vercel are torn down explicitly (and their instance rows dropped); kubernetes is reclaimed
 cluster-side — every reserved Sandbox carries a `shutdownTime` (`shutdownPolicy: Delete`) the
-harness refreshes on each use, so an abandoned Sandbox self-deletes, and the reaper sweeps any
-orphaned home PVC. There is also a hard-lifetime backstop (`lifecycle.maxLifetimeSeconds`,
+harness refreshes on each use, so abandoned resources self-delete. There is also a hard-lifetime backstop (`lifecycle.maxLifetimeSeconds`,
 default 7 days) so nothing lingers indefinitely.
 
 ### Background jobs + `async_status`
@@ -318,12 +297,3 @@ truncated at 256 KB by the image and again at `outputLimitBytes` harness-side.
 Skills load from the skills S3 bucket. With a workspace attached, `load_skill` stages the
 bundle into the workspace namespace at `/.claude/skills/<name>` so the agent can read and
 run it with `bash`. See [Skills](../../skills.md).
-
-## Related code
-
-| Concern | Code |
-| --- | --- |
-| Tool registration + permissionMode | `functions/harness-processing/tools/index.ts` |
-| Tool set | `functions/harness-processing/tools/{bash,read,write,edit,glob,grep}.tool.ts` |
-| Provider selection | `functions/harness-processing/sandbox/index.ts` |
-| Run contract | `functions/harness-processing/sandbox/types.ts` |

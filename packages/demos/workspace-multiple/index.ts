@@ -6,10 +6,7 @@ import { FilthyPantyClient } from "filthy-panty";
 import { api } from "./filthypanty/_generated/api";
 
 // Create a client to connect to the Filthy Panty API.
-const client = new FilthyPantyClient({
-  host: process.env.FILTHY_PANTY_HOST,
-  apiKey: process.env.FILTHY_PANTY_API_KEY!,
-});
+const client = new FilthyPantyClient();
 
 async function runAgent(label: string, input: string): Promise<void> {
   console.log(`\n[${label}]\n`);

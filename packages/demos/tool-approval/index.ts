@@ -8,10 +8,7 @@ import { api } from "./filthypanty/_generated/api";
 
 type ToolApprovalRequestChunk = ToolApprovalRequestOutput<ToolSet>;
 
-const client = new FilthyPantyClient({
-  host: process.env.FILTHY_PANTY_HOST,
-  apiKey: process.env.FILTHY_PANTY_API_KEY!,
-});
+const client = new FilthyPantyClient();
 
 const conversationKey = `approval-${Date.now()}`;
 
