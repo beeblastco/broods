@@ -229,7 +229,9 @@ The full config field reference lives in the [API Reference](/api-reference) und
 
 ## Upload a Custom Tool
 
-Create an already-bundled JavaScript module whose default export is a tool definition object or factory:
+With the CLI, point `defineTool()` at a TypeScript or JavaScript entrypoint under `filthypanty/`. The CLI bundles it as self-contained Node ESM, rejects source or output over 1 MB, hashes the compiled bundle, and uploads it through manifest sync. Agent references are rewritten to the deployed tool ID.
+
+The raw account-management API does not run a build step. When calling it directly, provide an already-bundled JavaScript module whose default export is a tool definition object or factory:
 
 ```ts
 export default {
@@ -269,7 +271,7 @@ Tool management endpoints:
 - `PATCH /accounts/me/tools/{toolId}`
 - `DELETE /accounts/me/tools/{toolId}`
 
-MVP limits: uploaded code must already be bundled JavaScript, server-side `npm install` is not supported, and shared multi-pod dependency caches are future work. This is intentionally close to Convex's deployed-function developer loop, but the MVP does not build/install dependencies server-side yet; it runs the uploaded bundle in a warm sandbox and reuses the bundle cache between calls for the same account/tool.
+MVP limits: raw API uploads must already be bundled JavaScript, server-side `npm install` is not supported, and shared multi-pod dependency caches are future work. The CLI performs local dependency bundling instead. The platform runs the resulting bundle in a warm sandbox and reuses the bundle cache between calls for the same account/tool.
 
 ## Add a Built-In Tool
 

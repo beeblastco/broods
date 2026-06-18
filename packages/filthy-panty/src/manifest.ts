@@ -514,10 +514,25 @@ async function normalizeToolConfig(
   const bundlePath = resolveContainedResourcePath(projectRoot, config.path, "Tool");
   const manifestPath = relative(projectRoot, bundlePath).split("\\").join("/");
   assertSafeBundlePath(manifestPath, "Tool");
-  const bundle = await readFile(bundlePath, "utf8");
-  const size = Buffer.byteLength(bundle);
-  if (size > MAX_BUNDLE_FILE_BYTES) {
-    throw new Error(`Tool bundle ${manifestPath} is too large (${size} bytes, max ${MAX_BUNDLE_FILE_BYTES})`);
+  const sourceSize = Buffer.byteLength(await readFile(bundlePath));
+  if (sourceSize > MAX_BUNDLE_FILE_BYTES) {
+    throw new Error(`Tool source ${manifestPath} is too large (${sourceSize} bytes, max ${MAX_BUNDLE_FILE_BYTES})`);
+  }
+  const build = await Bun.build({
+    entrypoints: [bundlePath],
+    root: projectRoot,
+    target: "node",
+    format: "esm",
+    minify: false,
+  });
+  if (!build.success || build.outputs.length !== 1) {
+    const details = build.logs.map((entry) => entry.message).filter(Boolean).join("; ");
+    throw new Error(`Tool bundle ${manifestPath} failed to build${details ? `: ${details}` : ""}`);
+  }
+  const bundle = await build.outputs[0]!.text();
+  const bundleSize = Buffer.byteLength(bundle);
+  if (bundleSize > MAX_BUNDLE_FILE_BYTES) {
+    throw new Error(`Tool bundle ${manifestPath} is too large (${bundleSize} bytes, max ${MAX_BUNDLE_FILE_BYTES})`);
   }
 
   return {

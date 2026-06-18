@@ -337,13 +337,17 @@ export const support = defineAgent({
 });
 `);
   await mkdir(join(cwd, "filthypanty", "tools"), { recursive: true });
-  await writeFile(join(cwd, "filthypanty", "tools", "helper.ts"), "export default { execute: async () => ({ ok: true }) };\n");
+  await writeFile(
+    join(cwd, "filthypanty", "tools", "helper.ts"),
+    "export default { execute: async (_ctx: unknown, input: { value?: string }) => ({ ok: true, value: input.value }) };\n",
+  );
 
   const { manifest } = await compileProject({ cwd, command: "dev" });
   const tool = manifest.resources.find((resource) => resource.kind === "tool");
   const agent = manifest.resources.find((resource) => resource.kind === "agent");
   expect(tool?.config).toMatchObject({ path: "tools/helper.ts", description: "Returns a result" });
   expect(typeof (tool?.config as { bundle?: unknown }).bundle).toBe("string");
+  expect((tool?.config as { bundle: string }).bundle).not.toContain("_ctx: unknown");
   expect(agent?.config).toMatchObject({
     channels: { github: {} },
     tools: { helper: { enabled: true, needsApproval: false } },
@@ -676,7 +680,7 @@ description: Says hello.
   });
   expect((tool?.config as Record<string, unknown>).path).toBe("tools/stream_progress.mjs");
   expect((tool?.config as Record<string, unknown>).description).toBe("Streams progress updates.");
-  expect((tool?.config as Record<string, unknown>).bundle).toBe("export default { name: 'stream_progress' };\n");
+  expect((tool?.config as Record<string, unknown>).bundle).toContain('name: "stream_progress"');
   expect(typeof (tool?.config as Record<string, unknown>).sha256).toBe("string");
 });
 
