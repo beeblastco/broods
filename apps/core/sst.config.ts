@@ -458,10 +458,10 @@ export default $config({
           bucket: names.memory,
         },
         publicAccessBlock: {
-          blockPublicAcls: true,
-          ignorePublicAcls: true,
-          blockPublicPolicy: true,
-          restrictPublicBuckets: true,
+          blockPublicAcls: false,
+          ignorePublicAcls: false,
+          blockPublicPolicy: false,
+          restrictPublicBuckets: false,
         },
       },
     });
