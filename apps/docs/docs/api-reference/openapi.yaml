@@ -2360,22 +2360,25 @@ components:
       type: object
       description: Lifecycle hooks publish stable agent runtime events. Delivery is best-effort.
       properties:
-        webhook:
-          type: object
-          properties:
-            enabled:
-              type: boolean
-            url:
-              type: string
-              description: HTTPS endpoint for event JSON
-            secret:
-              type: string
-              description: HMAC signing secret for `X-Webhook-Signature`
-            events:
-              type: array
-              items:
+        webhooks:
+          type: array
+          description: Outbound event webhooks. An agent may register several; every enabled entry whose events allow-list matches is delivered independently.
+          items:
+            type: object
+            properties:
+              enabled:
+                type: boolean
+              url:
                 type: string
-              description: Optional allow-list; omitted means all events
+                description: HTTPS endpoint for event JSON
+              secret:
+                type: string
+                description: HMAC signing secret for `X-Webhook-Signature`
+              events:
+                type: array
+                items:
+                  type: string
+                description: Optional allow-list; omitted means all events
 
     SkillsConfig:
       type: object

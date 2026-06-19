@@ -14,39 +14,47 @@ Check out the [webhook example](https://github.com/beeblastco/filthy-panty/tree/
 
 ## Agent Config
 
-Configure lifecycle delivery in the encrypted agent config:
+Configure lifecycle delivery in the encrypted agent config. An agent can register **several** webhooks — `hooks.webhooks` is an array, so events can fan out to multiple of your services:
 
 ```json
 {
   "hooks": {
-    "webhook": {
-      "enabled": true,
-      "url": "https://example.com/agent-events",
-      "secret": "...",
-      "events": [
-        "agent.started",
-        "tool.call.started",
-        "tool.call.finished",
-        "tool.result",
-        "subagent.task.finished",
-        "agent.finished",
-        "agent.failed"
-      ]
-    }
+    "webhooks": [
+      {
+        "enabled": true,
+        "url": "https://example.com/agent-events",
+        "secret": "...",
+        "events": [
+          "agent.started",
+          "tool.call.started",
+          "tool.call.finished",
+          "tool.result",
+          "subagent.task.finished",
+          "agent.finished",
+          "agent.failed"
+        ]
+      },
+      {
+        "enabled": true,
+        "url": "https://audit.example.com/agent-events",
+        "secret": "...",
+        "events": ["agent.failed"]
+      }
+    ]
   }
 }
 ```
 
 | Field | Type | Description |
 | --- | --- | --- |
-| `enabled` | boolean | Enables lifecycle webhook delivery |
+| `enabled` | boolean | Enables delivery for this webhook |
 | `url` | string | HTTPS endpoint that receives event JSON |
 | `secret` | string | HMAC signing secret |
 | `events` | string[] | Optional allow-list; omitted means all lifecycle events |
 
-The `url` must be a public HTTPS endpoint — loopback, private (RFC 1918), link-local, and internal hostnames are rejected at config time and again at delivery, and delivery does not follow redirects.
+Each entry is delivered independently: every enabled webhook whose `events` allow-list matches (or is omitted) receives the event. The `url` must be a public HTTPS endpoint — loopback, private (RFC 1918), link-local, and internal hostnames are rejected at config time and again at delivery, and delivery does not follow redirects.
 
-Whether you configure the hook in code (`config.hooks.webhook`, with `url`/`secret` as `env.NAME` references) or in the dashboard, it is surfaced in the dashboard **Settings → Webhooks** tab, which aggregates every agent's outbound webhook (URL, subscribed events, signing secret) for the environment. The values still resolve from the agent's environment variables; the panel reads them from `config.hooks.webhook` rather than a separate store.
+Whether you configure webhooks in code (`config.hooks.webhooks`, with `url`/`secret` as `env.NAME` references) or in the dashboard, they are surfaced in the dashboard **Settings → Webhooks** tab. There you can add a webhook, toggle each one **active/inactive**, or remove it; the panel writes straight to `config.hooks.webhooks` (the config the harness delivers from) rather than a separate store. The CLI shows them via `filthy-panty agent get <name>`.
 
 ## Events
 

@@ -857,9 +857,9 @@ async function agentGet(name: string | undefined, args: string[]): Promise<void>
     ? ((config.subagent as { allowed: unknown[] }).allowed).map((entry) =>
         typeof entry === "string" ? entry : (entry as { name?: string }).name).filter(Boolean)
     : [];
-  const webhook = isRecord(config.hooks) && isRecord((config.hooks as { webhook?: unknown }).webhook)
-    ? (config.hooks as { webhook: Record<string, unknown> }).webhook
-    : undefined;
+  const webhooks = isRecord(config.hooks) && Array.isArray((config.hooks as { webhooks?: unknown }).webhooks)
+    ? ((config.hooks as { webhooks: unknown[] }).webhooks).filter(isRecord)
+    : [];
 
   console.log(`Agent: ${agent.name}`);
   console.log(`  Project/Env:  ${manifest.project}/${manifest.environment}`);
@@ -871,9 +871,13 @@ async function agentGet(name: string | undefined, args: string[]): Promise<void>
   console.log(`  Tools:        ${tools.length > 0 ? tools.join(", ") : "—"}`);
   console.log(`  Subagents:    ${subagents.length > 0 ? subagents.join(", ") : "—"}`);
   console.log(`  Channels:     ${channels.length > 0 ? channels.join(", ") : "—"}`);
-  if (webhook) {
-    const events = Array.isArray(webhook.events) && webhook.events.length > 0 ? webhook.events.join(", ") : "all events";
-    console.log(`  Webhook:      ${webhook.enabled === false ? "disabled" : "enabled"} → ${webhook.url ?? "—"} (${events})`);
+  if (webhooks.length > 0) {
+    console.log(`  Webhooks:`);
+    webhooks.forEach((webhook, index) => {
+      const events = Array.isArray(webhook.events) && webhook.events.length > 0 ? webhook.events.join(", ") : "all events";
+      const state = webhook.enabled === false ? "disabled" : "enabled";
+      console.log(`    [${index}] ${state} → ${webhook.url ?? "—"} (${events})`);
+    });
   }
 }
 

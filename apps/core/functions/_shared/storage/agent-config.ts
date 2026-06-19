@@ -177,7 +177,8 @@ export interface AgentSessionCompactionConfig {
 }
 
 export interface AgentHooksConfig {
-  webhook?: AgentWebhookHookConfig;
+  /** Outbound event webhooks. An agent may register several independent endpoints. */
+  webhooks?: AgentWebhookHookConfig[];
   [key: string]: unknown;
 }
 
@@ -627,40 +628,44 @@ function normalizeHooksConfig(value: unknown): void {
   }
 
   const config = value as Record<string, unknown>;
-  normalizeWebhookHookConfig(config.webhook);
+  if (config.webhooks !== undefined) {
+    if (!Array.isArray(config.webhooks)) {
+      throw new Error("config.hooks.webhooks must be an array");
+    }
+    config.webhooks.forEach((webhook, index) =>
+      normalizeWebhookHookConfig(webhook, `config.hooks.webhooks[${index}]`),
+    );
+  }
 }
 
-function normalizeWebhookHookConfig(value: unknown): void {
-  if (value == null) {
-    return;
-  }
+function normalizeWebhookHookConfig(value: unknown, path: string): void {
   if (!isPlainObject(value)) {
-    throw new Error("config.hooks.webhook must be an object");
+    throw new Error(`${path} must be an object`);
   }
 
   const config = value as Record<string, unknown>;
-  assertOptionalBoolean(config.enabled, "config.hooks.webhook.enabled");
-  assertOptionalNonEmptyString(config.url, "config.hooks.webhook.url");
-  assertOptionalNonEmptyString(config.secret, "config.hooks.webhook.secret");
+  assertOptionalBoolean(config.enabled, `${path}.enabled`);
+  assertOptionalNonEmptyString(config.url, `${path}.url`);
+  assertOptionalNonEmptyString(config.secret, `${path}.secret`);
   if (config.events !== undefined) {
     if (!Array.isArray(config.events) || !config.events.every((event) =>
       typeof event === "string" && AGENT_LIFECYCLE_EVENT_NAMES.includes(event as AgentLifecycleEventName)
     )) {
-      throw new Error(`config.hooks.webhook.events must be an array of: ${AGENT_LIFECYCLE_EVENT_NAMES.join(", ")}`);
+      throw new Error(`${path}.events must be an array of: ${AGENT_LIFECYCLE_EVENT_NAMES.join(", ")}`);
     }
   }
 
   if (config.enabled === true) {
     if (typeof config.url !== "string" || config.url.trim().length === 0) {
-      throw new Error("config.hooks.webhook.url is required when config.hooks.webhook.enabled is true");
+      throw new Error(`${path}.url is required when ${path}.enabled is true`);
     }
     if (typeof config.secret !== "string" || config.secret.trim().length === 0) {
-      throw new Error("config.hooks.webhook.secret is required when config.hooks.webhook.enabled is true");
+      throw new Error(`${path}.secret is required when ${path}.enabled is true`);
     }
   }
 
   if (typeof config.url === "string" && config.url.trim().length > 0) {
-    assertPublicHttpsUrl(config.url, "config.hooks.webhook.url");
+    assertPublicHttpsUrl(config.url, `${path}.url`);
   }
 }
 

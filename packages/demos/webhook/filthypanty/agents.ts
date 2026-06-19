@@ -24,7 +24,9 @@ export const webhookAgent = defineAgent({
       },
     },
     hooks: {
-      webhook: {
+      // An agent can register several outbound webhooks — add more entries to fan
+      // events out to multiple of your services.
+      webhooks: [{
         enabled: true,
         url: env.MOCK_WEBHOOK_URL!,
         secret: env.MOCK_WEBHOOK_SECRET!,
@@ -35,7 +37,7 @@ export const webhookAgent = defineAgent({
           "agent.finished",
           "agent.failed",
         ],
-      },
+      }],
     },
   },
 });

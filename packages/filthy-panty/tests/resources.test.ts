@@ -167,12 +167,12 @@ export const webhookAgent = defineAgent({
     provider: { openai: { apiKey: env.OPENAI_API_KEY } },
     model: { provider: "openai", modelId: "gpt-5-mini" },
     hooks: {
-      webhook: {
+      webhooks: [{
         enabled: true,
         url: env.MOCK_WEBHOOK_URL,
         secret: env.MOCK_WEBHOOK_SECRET,
         events: ["agent.started", "agent.finished"],
-      },
+      }],
     },
   },
 });
@@ -183,10 +183,10 @@ export const webhookAgent = defineAgent({
 
   expect(agent?.config).toMatchObject({
     hooks: {
-      webhook: {
+      webhooks: [{
         url: { __beeblastEnv: true, name: "MOCK_WEBHOOK_URL" },
         secret: { __beeblastEnv: true, name: "MOCK_WEBHOOK_SECRET" },
-      },
+      }],
     },
   });
 });

@@ -433,12 +433,12 @@ describe("runAgentLoop", () => {
         modelId: "gemini-test",
       },
       hooks: {
-        webhook: {
+        webhooks: [{
           enabled: true,
           url: "https://hooks.example/agent-events",
           secret: "hook-secret",
           events: ["agent.started", "agent.failed"],
-        },
+        }],
       },
     });
 
