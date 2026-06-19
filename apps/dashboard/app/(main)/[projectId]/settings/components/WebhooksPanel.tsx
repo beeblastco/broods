@@ -14,7 +14,7 @@ import { cn } from "@/app/lib/utils";
 import { api } from "@filthy-panty/convex/_generated/api";
 import type { Id } from "@filthy-panty/convex/_generated/dataModel";
 import { useMutation, useQuery } from "convex/react";
-import { Copy, Eye, EyeOff, Globe, Plus, Trash2 } from "lucide-react";
+import { Copy, Eye, EyeOff, Plus, Trash2 } from "lucide-react";
 import { useState } from "react";
 
 interface Props {
@@ -61,38 +61,37 @@ export function WebhooksPanel({ projectId, environmentId }: Props) {
     return (
         <Section description="Outbound event webhooks delivered to your services. Each agent can register several — add one, toggle it active/inactive, or remove it. (Webhooks defined in code via the SDK resolve their URL/secret from environment variables.)">
             {agents && agents.length === 0 && (
-                <div className="rounded-lg border border-border bg-card px-4 py-8 text-center">
-                    <Globe className="mx-auto mb-2 size-8 text-muted-foreground" />
-                    <p className="text-sm text-muted-foreground">No agents in this environment yet.</p>
-                </div>
+                <p className="text-sm text-muted-foreground">No agents in this environment yet.</p>
             )}
 
-            {agents?.map((agent) => (
-                <div key={agent.agentConfigId} className="rounded-lg border border-border bg-card px-4 py-3">
-                    <div className="mb-2 flex items-center justify-between gap-2">
-                        <span className="truncate text-sm font-medium text-foreground">{agent.agentName}</span>
-                        <Button
-                            variant="ghost"
-                            size="sm"
-                            className="shrink-0 cursor-pointer gap-1 text-muted-foreground hover:text-foreground"
-                            onClick={() => setAddingFor(addingFor === agent.agentConfigId ? null : agent.agentConfigId)}
-                        >
-                            <Plus className="size-3.5" />
-                            Add webhook
-                        </Button>
-                    </div>
+            <div className="grid gap-6">
+                {agents?.map((agent) => (
+                    <div key={agent.agentConfigId} className="grid gap-2">
+                        <div className="flex items-center justify-between gap-2">
+                            <span className="text-xs font-medium uppercase tracking-wider text-muted-foreground/70">
+                                {agent.agentName}
+                            </span>
+                            <Button
+                                variant="ghost"
+                                size="sm"
+                                className="h-7 shrink-0 cursor-pointer gap-1 px-2 text-xs text-muted-foreground hover:text-foreground"
+                                onClick={() => setAddingFor(addingFor === agent.agentConfigId ? null : agent.agentConfigId)}
+                            >
+                                <Plus className="size-3.5" />
+                                Add webhook
+                            </Button>
+                        </div>
 
-                    {agent.webhooks.length === 0 && addingFor !== agent.agentConfigId && (
-                        <p className="text-xs text-muted-foreground">No webhooks configured for this agent.</p>
-                    )}
+                        {agent.webhooks.length === 0 && addingFor !== agent.agentConfigId && (
+                            <p className="text-xs text-muted-foreground">No webhooks configured.</p>
+                        )}
 
-                    <div className="flex flex-col gap-2">
                         {agent.webhooks.map((webhook) => {
                             const key = `${agent.agentConfigId}:${webhook.index}`;
 
                             return (
-                                <div key={key} className="rounded-md border border-border/70 bg-background/40 px-3 py-2">
-                                    <div className="mb-1.5 flex items-center gap-2">
+                                <div key={key} className="grid gap-1.5 border-t border-border/60 pt-2 first:border-t-0 first:pt-0">
+                                    <div className="flex items-center gap-2">
                                         <span className="min-w-0 flex-1 truncate text-sm text-foreground">
                                             {webhook.url || "(no URL set)"}
                                         </span>
@@ -135,7 +134,7 @@ export function WebhooksPanel({ projectId, environmentId }: Props) {
                                     </div>
 
                                     {webhook.secret && (
-                                        <div className="mb-1.5 flex items-center gap-1.5">
+                                        <div className="flex items-center gap-1.5">
                                             <code className="font-mono text-xs text-muted-foreground">
                                                 {revealed === key ? webhook.secret : "••••••••••••••••"}
                                             </code>
@@ -168,16 +167,16 @@ export function WebhooksPanel({ projectId, environmentId }: Props) {
                                 </div>
                             );
                         })}
-                    </div>
 
-                    {addingFor === agent.agentConfigId && (
-                        <AddWebhookForm
-                            agentConfigId={agent.agentConfigId}
-                            onDone={() => setAddingFor(null)}
-                        />
-                    )}
-                </div>
-            ))}
+                        {addingFor === agent.agentConfigId && (
+                            <AddWebhookForm
+                                agentConfigId={agent.agentConfigId}
+                                onDone={() => setAddingFor(null)}
+                            />
+                        )}
+                    </div>
+                ))}
+            </div>
         </Section>
     );
 }
@@ -220,34 +219,35 @@ function AddWebhookForm({
     }
 
     return (
-        <div className="mt-2 grid gap-2 rounded-md border border-dashed border-border bg-background/40 p-3">
+        <div className="grid gap-2 border-t border-border/60 pt-2">
             <Input
                 value={url}
                 onChange={(e) => setUrl(e.target.value)}
                 placeholder="https://your-service.example/hooks"
-                className="text-xs"
+                className="text-sm"
+                autoFocus
             />
             <Input
                 value={secret}
                 onChange={(e) => setSecret(e.target.value)}
                 placeholder="HMAC signing secret"
-                className="text-xs"
+                className="text-sm"
             />
             <Input
                 value={events}
                 onChange={(e) => setEvents(e.target.value)}
                 placeholder="Events, comma-separated (blank = all, e.g. agent.started, agent.finished)"
-                className="text-xs"
+                className="text-sm"
             />
             {error && <p className="text-xs text-destructive">{error}</p>}
             <div className="flex items-center gap-2">
                 <Button
                     size="sm"
-                    className="cursor-pointer"
+                    className="cursor-pointer disabled:cursor-not-allowed"
                     disabled={!url.trim() || !secret.trim() || busy}
                     onClick={handleSave}
                 >
-                    {busy ? "Adding…" : "Add"}
+                    {busy ? "Adding…" : "Add webhook"}
                 </Button>
                 <Button variant="ghost" size="sm" className="cursor-pointer" onClick={onDone}>
                     Cancel
