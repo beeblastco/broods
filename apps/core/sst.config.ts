@@ -756,8 +756,21 @@ export default $config({
       }),
     });
 
-    // ARM64-only image; there is no multi-arch `latest` manifest, so pin the arch tag.
-    const sandboxImageUri = $interpolate`${sandboxEcr.repositoryUrl}:latest-arm64`;
+    // ARM64-only image; there is no multi-arch `latest` manifest, so the source tag is
+    // `latest-arm64`. Pin the function to the tag's *resolved digest* rather than the
+    // mutable tag: with a bare tag, Pulumi diffs the unchanged tag string and never
+    // updates the function, so a freshly pushed image (e.g. the lambda-sanbdox bash
+    // durability fix) silently never rolls out. Resolving the digest at deploy time makes
+    // the imageUri change whenever the tag moves, so each deploy rolls the current image.
+    // Only resolve when SANDBOX_IMAGE_READY: the lookup requires the image to already
+    // exist in ECR, which the flag guarantees (a brand-new region's first deploy leaves it
+    // false, skips the functions, and never queries). See docs/workspace/sandbox/lambda.md.
+    const sandboxImageUri = SANDBOX_IMAGE_READY
+      ? $interpolate`${sandboxEcr.repositoryUrl}@${aws.ecr.getImageOutput({
+        repositoryName: sandboxEcr.name,
+        imageTag: "latest-arm64",
+      }).imageDigest}`
+      : $interpolate`${sandboxEcr.repositoryUrl}:latest-arm64`;
 
     // The uniform sandbox image is deployed across two axes — workspace mount (VPC +
     // S3 Files mount) vs none, and internet on vs off. The harness auto-selects the
