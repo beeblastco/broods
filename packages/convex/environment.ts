@@ -171,24 +171,6 @@ async function duplicateEnvironmentContents(
             updatedAt: now,
         });
     }
-
-    // 6. Clone webhooks (each gets a fresh signing secret rather than copying it).
-    const sourceWebhooks = await ctx.db
-        .query("webhooks")
-        .withIndex("by_projectId_and_environmentId", (q) =>
-            q.eq("projectId", projectId).eq("environmentId", sourceEnvironmentId),
-        )
-        .collect();
-    for (const webhook of sourceWebhooks) {
-        const bytes = crypto.getRandomValues(new Uint8Array(32));
-        await ctx.db.insert("webhooks", {
-            ...stripSystemFields(webhook),
-            environmentId: targetEnvironmentId,
-            secret: `whsec_${[...bytes].map((byte) => byte.toString(16).padStart(2, "0")).join("")}`,
-            createdAt: now,
-            updatedAt: now,
-        });
-    }
 }
 
 /**
@@ -262,14 +244,6 @@ export async function deleteEnvironmentContents(
         )
         .collect();
     for (const deployKey of deployKeys) await ctx.db.delete(deployKey._id);
-
-    const webhooks = await ctx.db
-        .query("webhooks")
-        .withIndex("by_projectId_and_environmentId", (q) =>
-            q.eq("projectId", projectId).eq("environmentId", environmentId),
-        )
-        .collect();
-    for (const webhook of webhooks) await ctx.db.delete(webhook._id);
 }
 
 /** Returns true when an environment already has user/configuration content. */
@@ -308,16 +282,8 @@ async function hasEnvironmentContents(
             q.eq("projectId", projectId).eq("environmentId", environmentId),
         )
         .first();
-    if (variable) return true;
 
-    const webhook = await ctx.db
-        .query("webhooks")
-        .withIndex("by_projectId_and_environmentId", (q) =>
-            q.eq("projectId", projectId).eq("environmentId", environmentId),
-        )
-        .first();
-
-    return Boolean(webhook);
+    return Boolean(variable);
 }
 
 export const list = query({

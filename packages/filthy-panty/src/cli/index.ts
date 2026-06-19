@@ -19,6 +19,7 @@ import { FilthyPantyClient } from "../client.ts";
 import { loadFilthyPantyRuntimeConfig } from "../runtime-config.ts";
 import { hasFlag, loginWithBrowser, optionValue, promptConfirm, promptSecret, promptSelect, promptText, requireAuth } from "./utils.ts";
 import { printDeploymentTarget, printDiffEntries, printEnvSync, printReadyLine, printWarning } from "./output.ts";
+import { createRenderState, renderStreamPart } from "./render.ts";
 
 const VERSION = "0.1.0";
 const DEFAULT_DASHBOARD_URL = "https://dashboard.beeblast.co";
@@ -41,7 +42,9 @@ Commands:
   env list             List environment variable names (values stay hidden)
   env rm <name>        Remove an environment variable
   logs [-f]            Show recent ERROR logs; -f/--follow tails them live (Ctrl+C to stop)
-  run <agent> <prompt> Run an agent and stream the result
+  agent list           List the agents in the current project/environment scope
+  agent get <name>     Show an agent's resources (model, sandbox, workspaces, tools, channels)
+  run <agent> <prompt> Run an agent once and pretty-stream the result (thinking, tool calls, text)
 
 Options:
   --dashboard-url <url> Dashboard base URL (default: ${DEFAULT_DASHBOARD_URL})
@@ -88,6 +91,9 @@ async function main(): Promise<void> {
       return;
     case "logs":
       await logs(args);
+      return;
+    case "agent":
+      await agentCommand(args);
       return;
     case "run":
       await run(args);
@@ -776,6 +782,115 @@ async function tailLogs(
   }
 }
 
+/**
+ * `agent` subcommands: `list` (overview of the scope's agents) and
+ * `get <name>` (one agent's resolved resources). Both read the locally compiled
+ * manifest — which already has the full nested config — and annotate it with the
+ * remote deploy ids, so no extra backend endpoint is needed.
+ */
+async function agentCommand(args: string[]): Promise<void> {
+  const subcommand = args[0];
+  if (subcommand === "list" || subcommand === "ls") {
+    await agentList(args);
+    return;
+  }
+  if (subcommand === "get") {
+    await agentGet(args[1], args);
+    return;
+  }
+  throw new Error("Usage: filthy-panty agent <list|get> [name]");
+}
+
+/** Compile the local manifest and pair each agent with its remote deploy id. */
+async function loadAgentsWithIds(args: string[]): Promise<{
+  manifest: CliManifest;
+  agents: Array<{ name: string; config: Record<string, unknown>; agentId?: string }>;
+}> {
+  const { manifest, config } = await compileProject({
+    project: optionValue(args, "--project"),
+    environment: optionValue(args, "--env"),
+    command: "dev",
+  });
+  const auth = await requireAuth(optionValue(args, "--dashboard-url") ?? config.dashboardUrl);
+  const remote = await new FilthyPantySyncClient({ dashboardUrl: auth.dashboardUrl, token: auth.token })
+    .getManifest(manifest.project, manifest.environment);
+  const agents = manifest.resources
+    .filter((resource) => resource.kind === "agent")
+    .map((resource) => ({
+      name: resource.name,
+      config: (resource.config ?? {}) as Record<string, unknown>,
+      agentId: remote?.ids.agents[resource.name],
+    }));
+
+  return { manifest, agents };
+}
+
+async function agentList(args: string[]): Promise<void> {
+  const { manifest, agents } = await loadAgentsWithIds(args);
+  if (agents.length === 0) {
+    console.log(`No agents declared in ${manifest.project}/${manifest.environment}.`);
+    return;
+  }
+  console.log(`Agents in ${manifest.project}/${manifest.environment}:`);
+  for (const agent of agents) {
+    const model = agentModelLabel(agent.config);
+    const access = agent.config.publicAccess === true ? "public" : "private";
+    const status = agent.agentId ? agent.agentId : "not deployed";
+    console.log(`  ${agent.name}  [${access}]  ${model}  (${status})`);
+  }
+}
+
+async function agentGet(name: string | undefined, args: string[]): Promise<void> {
+  if (!name) throw new Error("Usage: filthy-panty agent get <name>");
+  const { manifest, agents } = await loadAgentsWithIds(args);
+  const agent = agents.find((entry) => entry.name === name);
+  if (!agent) throw new Error(`Unknown local agent: ${name}`);
+
+  const config = agent.config;
+  const sandbox = typeof config.sandbox === "string" ? config.sandbox : undefined;
+  const workspaces = Array.isArray(config.workspaces)
+    ? config.workspaces.map((ref) => (typeof ref === "string" ? ref : (ref as { name?: string }).name)).filter(Boolean)
+    : [];
+  const tools = isRecord(config.tools) ? Object.keys(config.tools) : [];
+  const channels = isRecord(config.channels) ? Object.keys(config.channels) : [];
+  const subagents = isRecord(config.subagent) && Array.isArray((config.subagent as { allowed?: unknown }).allowed)
+    ? ((config.subagent as { allowed: unknown[] }).allowed).map((entry) =>
+        typeof entry === "string" ? entry : (entry as { name?: string }).name).filter(Boolean)
+    : [];
+  const webhook = isRecord(config.hooks) && isRecord((config.hooks as { webhook?: unknown }).webhook)
+    ? (config.hooks as { webhook: Record<string, unknown> }).webhook
+    : undefined;
+
+  console.log(`Agent: ${agent.name}`);
+  console.log(`  Project/Env:  ${manifest.project}/${manifest.environment}`);
+  console.log(`  Deployed id:  ${agent.agentId ?? "not deployed"}`);
+  console.log(`  Public access: ${config.publicAccess === true ? "public (SSE/WebSocket enabled)" : "private (secured by default)"}`);
+  console.log(`  Model:        ${agentModelLabel(config)}`);
+  console.log(`  Sandbox:      ${sandbox ?? "—"}`);
+  console.log(`  Workspaces:   ${workspaces.length > 0 ? workspaces.join(", ") : "—"}`);
+  console.log(`  Tools:        ${tools.length > 0 ? tools.join(", ") : "—"}`);
+  console.log(`  Subagents:    ${subagents.length > 0 ? subagents.join(", ") : "—"}`);
+  console.log(`  Channels:     ${channels.length > 0 ? channels.join(", ") : "—"}`);
+  if (webhook) {
+    const events = Array.isArray(webhook.events) && webhook.events.length > 0 ? webhook.events.join(", ") : "all events";
+    console.log(`  Webhook:      ${webhook.enabled === false ? "disabled" : "enabled"} → ${webhook.url ?? "—"} (${events})`);
+  }
+}
+
+/** A compact `provider/modelId` label from an agent's nested config. */
+function agentModelLabel(config: Record<string, unknown>): string {
+  const model = isRecord(config.model) ? config.model : {};
+  const provider = typeof model.provider === "string" ? model.provider : undefined;
+  const modelId = typeof model.modelId === "string" ? model.modelId : undefined;
+  if (provider && modelId) return `${provider}/${modelId}`;
+
+  return modelId ?? provider ?? "unconfigured model";
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
 async function run(args: string[]): Promise<void> {
   const [agentName, ...promptParts] = args.filter((arg) => !arg.startsWith("--"));
   if (!agentName || promptParts.length === 0) {
@@ -794,17 +909,39 @@ async function run(args: string[]): Promise<void> {
   const agentId = remote?.ids.agents[agentName];
   if (!agentId) throw new Error(`Agent ${agentName} is not deployed. Run filthy-panty deploy first.`);
 
-  const client = new FilthyPantyClient();
-  for await (const part of client.stream({
-    kind: "agent",
-    name: agentName,
-    id: agentId,
-    project: manifest.project,
-    environment: manifest.environment,
-  }, { input: promptParts.join(" ") })) {
-    if (part.type === "text-delta") process.stdout.write(part.text);
+  // `run` reaches the agent over the public SSE endpoint, which is off by
+  // default (issue #65). Warn early if the local config has not opted in; the
+  // server is still the source of truth, so we also surface its 403 below.
+  if ((agent.config as Record<string, unknown>).publicAccess !== true) {
+    printWarning(
+      `⚠ Agent "${agentName}" does not set publicAccess: true. The public endpoint is secured by default; ` +
+      "if the deployed agent has not enabled it, this run will be refused.",
+    );
   }
-  process.stdout.write("\n");
+
+  const client = new FilthyPantyClient();
+  const state = createRenderState();
+  try {
+    for await (const part of client.stream({
+      kind: "agent",
+      name: agentName,
+      id: agentId,
+      project: manifest.project,
+      environment: manifest.environment,
+    }, { input: promptParts.join(" ") })) {
+      renderStreamPart(part, state);
+    }
+    process.stdout.write("\n");
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (message.includes("public_access_disabled")) {
+      throw new Error(
+        `Agent "${agentName}" is not publicly accessible (secured by default). ` +
+        "Set publicAccess: true in its config and redeploy, or enable Public access in the dashboard.",
+      );
+    }
+    throw error;
+  }
 }
 
 async function writeStarter(path: string, contents: string, force: boolean): Promise<void> {
@@ -967,6 +1104,10 @@ function starterAgent(): string {
     `      system: "You are a helpful assistant.",\n` +
     `    },\n` +
     `    sandbox: lambdaSandbox,\n` +
+    `    // Expose the public runtime endpoint (SSE/WebSocket) so the API key and\n` +
+    `    // \`filthy-panty run\` can reach this agent. Off by default — secured: a\n` +
+    `    // private agent is only reachable via internal endpoints or channel webhooks.\n` +
+    `    publicAccess: true,\n` +
     `  },\n` +
     `});\n`;
 }

@@ -160,6 +160,17 @@ paths:
 
                     event: 0
                     data: {"type":"finish","finishReason":"stop"}
+        '403':
+          description: Agent has not opted into public access (secure by default)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                publicAccessDisabled:
+                  value:
+                    error: "Agent agent_... is not publicly accessible. Enable public access (publicAccess: true) and redeploy, or reach it through an internal endpoint or channel webhook."
+                    code: public_access_disabled
         '404':
           description: Direct API disabled (ENABLE_DIRECT_API=false)
         '401':
@@ -212,6 +223,17 @@ paths:
                 accepted:
                   value:
                     statusUrl: https://your-function-url.lambda-url.us-east-1.on.aws/status/async-unique-id?agentId=agent_abc123
+        '403':
+          description: Agent has not opted into public access (secure by default)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                publicAccessDisabled:
+                  value:
+                    error: "Agent agent_... is not publicly accessible. Enable public access (publicAccess: true) and redeploy, or reach it through an internal endpoint or channel webhook."
+                    code: public_access_disabled
         '404':
           description: Direct API disabled (ENABLE_DIRECT_API=false)
         '401':
@@ -2160,6 +2182,9 @@ components:
           $ref: '#/components/schemas/SkillsConfig'
         subagent:
           $ref: '#/components/schemas/SubagentConfig'
+        publicAccess:
+          type: boolean
+          description: "Opt the agent into the public runtime endpoint (SSE/WebSocket via the environment runtime key). Off by default — secured. When false/unset, public-key requests for this agent are refused with HTTP 403 (code public_access_disabled); internal callers and channel webhooks are unaffected."
         sandbox:
           type: string
           description: Id of the agent-level sandbox config (POST /accounts/me/sandboxes). Powers stateless bash and is the default sandbox for workspaces that don't set their own.

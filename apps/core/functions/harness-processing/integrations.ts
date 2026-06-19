@@ -371,6 +371,16 @@ async function handleLambdaUrlEvent(
 
     try {
       const parsed = await parseDirectPayload(request.body, request.headers, auth.account, context.agentLoader);
+      // Secure by default: the public runtime key only reaches agents that have
+      // explicitly opted into the public endpoint. Internal callers (account/
+      // admin secret), channel webhooks, and cron paths are never gated here.
+      if (parsed.agentConfig.publicAccess !== true) {
+        return errorResponse(
+          403,
+          `Agent ${parsed.agentId} is not publicly accessible. Enable public access and redeploy, or reach it through an internal endpoint or channel webhook.`,
+          { code: "public_access_disabled", agentId: parsed.agentId },
+        );
+      }
       if (isAsyncPath(event.rawPath)) {
         if (!handlers.handleAsyncRequest) {
           return notFoundResponse();

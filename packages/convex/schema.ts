@@ -347,20 +347,6 @@ export const environmentVariableRevealsFields = {
     revealedAt: v.number(),
 };
 
-/** Per-environment outbound webhook endpoint that receives environment events. */
-export const webhooksFields = {
-    projectId: v.id("projects"),
-    environmentId: v.id("environments"),
-    url: v.string(),
-    /** HMAC signing secret shared with the receiver to verify payload authenticity. */
-    secret: v.string(),
-    /** Event names this endpoint subscribes to; an empty array means all events. */
-    events: v.array(v.string()),
-    active: v.boolean(),
-    createdAt: v.number(),
-    updatedAt: v.number(),
-};
-
 /** Conversation thread between an account's caller and one of its agents. */
 export const conversationsFields = {
     accountId: v.id("accounts"),
@@ -552,8 +538,6 @@ export default defineSchema({
     environmentVariableReveals: defineTable(environmentVariableRevealsFields)
         .index("by_environmentId", ["environmentId"])
         .index("by_environmentVariableId", ["environmentVariableId"]),
-    webhooks: defineTable(webhooksFields)
-        .index("by_projectId_and_environmentId", ["projectId", "environmentId"]),
     conversations: defineTable(conversationsFields)
         .index("by_accountId", ["accountId"])
         .index("by_accountId_and_agentId", ["accountId", "agentId"]),

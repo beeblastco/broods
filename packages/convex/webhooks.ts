@@ -1,35 +1,34 @@
 /**
- * Per-environment outbound webhooks. Each endpoint is scoped to one project
- * environment and receives the events it subscribes to. The signing secret is
- * generated server-side and stored in plaintext so it can be revealed for
- * receiver-side signature verification.
+ * Outbound webhook views for the dashboard. The harness delivers events from
+ * each agent's `config.hooks.webhook`; this module aggregates those per-agent
+ * hooks for an environment so the settings tab can show them. There is no
+ * separate webhook store — the agent config is the source of truth.
  */
 
 import { v } from "convex/values";
-import { mutation, query } from "./_generated/server";
+import { query } from "./_generated/server";
 import { authKit } from "./auth";
 import { getOwnedEnvironment } from "./model/ownership/environment";
-import { webhooksFields } from "./schema";
-
-const webhookDoc = v.object({
-    ...webhooksFields,
-    _id: v.id("webhooks"),
-    _creationTime: v.number(),
-});
 
 /**
- * Generate a random `whsec_<hex>` signing secret for a webhook endpoint.
- * @returns a 64-char hex secret prefixed with `whsec_`
+ * Aggregate the outbound webhooks configured per agent in an environment. These
+ * live on each agent's `config.hooks.webhook` (the config the harness actually
+ * delivers from) and are configured via the SDK/CLI or the agent Config tab, so
+ * the settings tab can show them instead of leaving them buried in env vars.
+ * @returns one row per agent that declares a webhook hook
  */
-function generateWebhookSecret(): string {
-    const bytes = crypto.getRandomValues(new Uint8Array(32));
-
-    return `whsec_${[...bytes].map((byte) => byte.toString(16).padStart(2, "0")).join("")}`;
-}
-
-export const list = query({
+export const listAgentWebhooks = query({
     args: { projectId: v.id("projects"), environmentId: v.id("environments") },
-    returns: v.array(webhookDoc),
+    returns: v.array(
+        v.object({
+            agentConfigId: v.id("agentConfigs"),
+            agentName: v.string(),
+            enabled: v.boolean(),
+            url: v.optional(v.string()),
+            secret: v.optional(v.string()),
+            events: v.array(v.string()),
+        }),
+    ),
     handler: async (ctx, { projectId, environmentId }) => {
         // Check authenticated user
         const user = await authKit.getAuthUser(ctx);
@@ -37,140 +36,40 @@ export const list = query({
             throw new Error("User not found or not authenticated");
         }
 
-        // Return empty rather than throwing so a just-deleted environment doesn't
-        // crash reactive subscribers before they unmount.
         const environment = await getOwnedEnvironment(ctx, user.id, environmentId);
         if (!environment || environment.projectId !== projectId) {
             return [];
         }
 
-        return ctx.db
-            .query("webhooks")
+        const configs = await ctx.db
+            .query("agentConfigs")
             .withIndex("by_projectId_and_environmentId", (q) =>
                 q.eq("projectId", projectId).eq("environmentId", environmentId),
             )
             .collect();
-    },
-});
 
-export const create = mutation({
-    args: {
-        projectId: v.id("projects"),
-        environmentId: v.id("environments"),
-        url: v.string(),
-        events: v.array(v.string()),
-    },
-    returns: v.id("webhooks"),
-    handler: async (ctx, { projectId, environmentId, url, events }) => {
-        // Check authenticated user
-        const user = await authKit.getAuthUser(ctx);
-        if (!user) {
-            throw new Error("User not found or not authenticated");
+        const rows: Array<{
+            agentConfigId: typeof configs[number]["_id"];
+            agentName: string;
+            enabled: boolean;
+            url?: string;
+            secret?: string;
+            events: string[];
+        }> = [];
+        for (const config of configs) {
+            const extra = config.extraConfig as { hooks?: { webhook?: Record<string, unknown> } } | undefined;
+            const webhook = extra?.hooks?.webhook;
+            if (!webhook) continue;
+            rows.push({
+                agentConfigId: config._id,
+                agentName: config.name,
+                enabled: webhook.enabled !== false,
+                url: typeof webhook.url === "string" ? webhook.url : undefined,
+                secret: typeof webhook.secret === "string" ? webhook.secret : undefined,
+                events: Array.isArray(webhook.events) ? webhook.events.filter((event): event is string => typeof event === "string") : [],
+            });
         }
 
-        const environment = await getOwnedEnvironment(ctx, user.id, environmentId);
-        if (!environment || environment.projectId !== projectId) {
-            throw new Error("Environment not found.");
-        }
-
-        const trimmedUrl = url.trim();
-        if (!trimmedUrl) throw new Error("Webhook URL is required.");
-
-        const now = Date.now();
-
-        return ctx.db.insert("webhooks", {
-            projectId: projectId,
-            environmentId: environmentId,
-            url: trimmedUrl,
-            secret: generateWebhookSecret(),
-            events: events,
-            active: true,
-            createdAt: now,
-            updatedAt: now,
-        });
-    },
-});
-
-/** Patch a webhook's URL, subscribed events, and/or active flag. */
-export const update = mutation({
-    args: {
-        webhookId: v.id("webhooks"),
-        url: v.optional(v.string()),
-        events: v.optional(v.array(v.string())),
-        active: v.optional(v.boolean()),
-    },
-    returns: v.id("webhooks"),
-    handler: async (ctx, { webhookId, url, events, active }) => {
-        // Check authenticated user
-        const user = await authKit.getAuthUser(ctx);
-        if (!user) {
-            throw new Error("User not found or not authenticated");
-        }
-
-        const webhook = await ctx.db.get(webhookId);
-        if (!webhook) throw new Error("Webhook not found.");
-
-        const environment = await getOwnedEnvironment(ctx, user.id, webhook.environmentId);
-        if (!environment) throw new Error("Webhook not found.");
-
-        const patch: { url?: string; events?: string[]; active?: boolean; updatedAt: number } = {
-            updatedAt: Date.now(),
-        };
-        if (url !== undefined) {
-            const trimmedUrl = url.trim();
-            if (!trimmedUrl) throw new Error("Webhook URL is required.");
-            patch.url = trimmedUrl;
-        }
-        if (events !== undefined) patch.events = events;
-        if (active !== undefined) patch.active = active;
-
-        await ctx.db.patch(webhookId, patch);
-
-        return webhookId;
-    },
-});
-
-/** Rotate a webhook's signing secret, invalidating the previous one. */
-export const rotateSecret = mutation({
-    args: { webhookId: v.id("webhooks") },
-    returns: v.id("webhooks"),
-    handler: async (ctx, { webhookId }) => {
-        // Check authenticated user
-        const user = await authKit.getAuthUser(ctx);
-        if (!user) {
-            throw new Error("User not found or not authenticated");
-        }
-
-        const webhook = await ctx.db.get(webhookId);
-        if (!webhook) throw new Error("Webhook not found.");
-
-        const environment = await getOwnedEnvironment(ctx, user.id, webhook.environmentId);
-        if (!environment) throw new Error("Webhook not found.");
-
-        await ctx.db.patch(webhookId, { secret: generateWebhookSecret(), updatedAt: Date.now() });
-
-        return webhookId;
-    },
-});
-
-export const remove = mutation({
-    args: { webhookId: v.id("webhooks") },
-    returns: v.id("webhooks"),
-    handler: async (ctx, { webhookId }) => {
-        // Check authenticated user
-        const user = await authKit.getAuthUser(ctx);
-        if (!user) {
-            throw new Error("User not found or not authenticated");
-        }
-
-        const webhook = await ctx.db.get(webhookId);
-        if (!webhook) throw new Error("Webhook not found.");
-
-        const environment = await getOwnedEnvironment(ctx, user.id, webhook.environmentId);
-        if (!environment) throw new Error("Webhook not found.");
-
-        await ctx.db.delete(webhookId);
-
-        return webhookId;
+        return rows;
     },
 });

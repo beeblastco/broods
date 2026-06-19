@@ -191,6 +191,26 @@ export const webhookAgent = defineAgent({
   });
 });
 
+test("compileProject carries the per-agent publicAccess opt-in into the manifest", async () => {
+  const cwd = await fixtureProject("", `
+import { defineAgent, env } from "${RESOURCES_MODULE}";
+
+export const publicAgent = defineAgent({
+  name: "public-agent",
+  config: {
+    provider: { openai: { apiKey: env.OPENAI_API_KEY } },
+    model: { provider: "openai", modelId: "gpt-5-mini" },
+    publicAccess: true,
+  },
+});
+`);
+
+  const { manifest } = await compileProject({ cwd: cwd, command: "dev" });
+  const agent = manifest.resources.find((resource) => resource.kind === "agent" && resource.name === "public-agent");
+
+  expect(agent?.config).toMatchObject({ publicAccess: true });
+});
+
 test("compileProject lowers all typed channel constructors into the existing keyed config", async () => {
   const cwd = await fixtureProject("", `
 import {

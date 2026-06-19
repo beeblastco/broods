@@ -46,6 +46,8 @@ Configure lifecycle delivery in the encrypted agent config:
 
 The `url` must be a public HTTPS endpoint — loopback, private (RFC 1918), link-local, and internal hostnames are rejected at config time and again at delivery, and delivery does not follow redirects.
 
+Whether you configure the hook in code (`config.hooks.webhook`, with `url`/`secret` as `env.NAME` references) or in the dashboard, it is surfaced in the dashboard **Settings → Webhooks** tab, which aggregates every agent's outbound webhook (URL, subscribed events, signing secret) for the environment. The values still resolve from the agent's environment variables; the panel reads them from `config.hooks.webhook` rather than a separate store.
+
 ## Events
 
 | Event | Emitted when |

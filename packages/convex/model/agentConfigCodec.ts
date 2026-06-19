@@ -133,6 +133,9 @@ export function toNestedAgentConfig(flat: FlatAgentConfig): NestedAgentConfig {
         ...(pruneEmpty(tools) ? { tools: pruneEmpty(tools) } : {}),
         ...(extra.skills ? { skills: extra.skills } : {}),
         ...(extra.subagent ? { subagent: extra.subagent } : {}),
+        // Top-level scalar carried in extraConfig so it flows through every
+        // flat-row builder unchanged; surfaced as nested `publicAccess` (issue #65).
+        ...(typeof extra.publicAccess === "boolean" ? { publicAccess: extra.publicAccess } : {}),
     };
 }
 
@@ -237,6 +240,8 @@ export function fromNestedAgentConfig(nested: NestedAgentConfig): FlatPatch {
         ) continue;
         if (nested[branch] !== undefined) extra[branch] = nested[branch];
     }
+    // Preserve the top-level public-endpoint opt-in inside extraConfig (issue #65).
+    if (typeof nested.publicAccess === "boolean") extra.publicAccess = nested.publicAccess;
     patch.extraConfig = extra;
     return patch;
 }

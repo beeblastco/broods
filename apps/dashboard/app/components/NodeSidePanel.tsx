@@ -664,6 +664,22 @@ export const NodeSidePanel = memo(function NodeSidePanel({
     [agentConfigId, agentConfig, updateConfig],
   );
 
+  // Public-endpoint opt-in (issue #65). Stored as a top-level scalar in
+  // extraConfig so it rides through the codec to the harness; off by default.
+  const handleUpdatePublicAccess = useCallback(
+    async (enabled: boolean) => {
+      if (!agentConfigId || !agentConfig) return;
+
+      const currentExtra =
+        (agentConfig.extraConfig as Record<string, unknown>) ?? {};
+      await updateConfig({
+        configId: agentConfigId,
+        extraConfig: { ...currentExtra, publicAccess: enabled },
+      });
+    },
+    [agentConfigId, agentConfig, updateConfig],
+  );
+
   // Reasoning config. Maps the budget/effort knobs to the selected provider's
   // Vercel AI SDK providerOptions (model.providerOptions.<provider>.*) — the only
   // reasoning shape the core accepts. See applyModelReasoning in the config codec.
@@ -838,6 +854,7 @@ export const NodeSidePanel = memo(function NodeSidePanel({
                 onUpdateToolConfig={handleUpdateToolConfig}
                 onUpdateChannelConfig={handleUpdateChannelConfig}
                 onUpdateModelReasoning={handleUpdateModelReasoning}
+                onUpdatePublicAccess={handleUpdatePublicAccess}
               />
             ) : isTool && node ? (
               <ToolDetailsTab

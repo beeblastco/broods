@@ -75,6 +75,7 @@ export function DetailsTab({
     onUpdateToolConfig,
     onUpdateChannelConfig,
     onUpdateModelReasoning,
+    onUpdatePublicAccess,
 }: {
     agentConfig: Doc<"agentConfigs"> | null | undefined;
     activeDeployment: EnvironmentDeployment | undefined;
@@ -92,6 +93,7 @@ export function DetailsTab({
     onUpdateToolConfig?: (toolName: string, config: Record<string, unknown> | null) => Promise<void>;
     onUpdateChannelConfig?: (kind: string, config: Record<string, unknown> | null) => Promise<void>;
     onUpdateModelReasoning?: (next: { budgetTokens?: number; effort?: string }) => Promise<void>;
+    onUpdatePublicAccess?: (enabled: boolean) => Promise<void>;
 }) {
     const [showApiKey, setShowApiKey] = useState(false);
     const [copiedField, setCopiedField] = useState<string | null>(null);
@@ -149,6 +151,10 @@ export function DetailsTab({
     const projectPrefix = activeDeployment?.projectSlug ? `/${activeDeployment.projectSlug}` : "";
     const endpointUrl = activeDeployment && coreEndpoint.ok ? `${coreEndpoint.httpBaseUrl}/v1${projectPrefix}/agents${envPrefix}/${activeDeployment.endpointId}` : "";
     const websocketUrl = activeDeployment && coreEndpoint.ok ? `${coreEndpoint.websocketBaseUrl}/v1${projectPrefix}/agents${envPrefix}/${activeDeployment.endpointId}/ws` : "";
+
+    // Per-agent public-endpoint opt-in (issue #65). Stored as a top-level scalar
+    // in extraConfig; off by default so the agent is secured until enabled.
+    const publicAccess = ((agentConfig?.extraConfig as Record<string, unknown> | undefined)?.publicAccess) === true;
 
     const outputFormat = agentConfig?.outputFormat && isRecord(agentConfig.outputFormat)
         ? agentConfig.outputFormat as OutputFormatConfig
@@ -421,10 +427,19 @@ export function DetailsTab({
             {/* Public access controls */}
             <div className="flex flex-col gap-3">
                 <span className="text-[11px] uppercase tracking-wider text-muted-foreground/70">Public API</span>
+                {onUpdatePublicAccess && (
+                    <ToggleRow
+                        label="Public access"
+                        description="Reachable over HTTP/SSE and WebSocket with the runtime API key"
+                        checked={publicAccess}
+                        onCheckedChange={(next) => void onUpdatePublicAccess(next)}
+                    />
+                )}
                 <div className="rounded-lg border border-border/70 bg-muted/20 p-3">
                     <p className="text-[11px] text-muted-foreground">
-                        Every deployed agent in this environment is reachable over HTTP/SSE and WebSocket with
-                        the environment&apos;s runtime API key. Select the agent per request with its Agent ID below.
+                        {publicAccess
+                            ? "This agent is reachable over HTTP/SSE and WebSocket with the environment's runtime API key. Select the agent per request with its Agent ID below."
+                            : "Secured by default — this agent is not publicly accessible. Reach it through an internal endpoint or a channel webhook, or enable public access above."}
                     </p>
                 </div>
 
@@ -449,7 +464,12 @@ export function DetailsTab({
                     </div>
                 ) : (
                     <div className="flex flex-col gap-2.5">
-                        {!coreEndpoint.ok ? (
+                        {!publicAccess ? (
+                            <p className="rounded-md border border-border bg-muted/40 px-2.5 py-2 text-xs text-muted-foreground">
+                                Endpoint URLs are hidden while public access is off. Requests to this agent over the
+                                public endpoint are refused until you enable public access above.
+                            </p>
+                        ) : !coreEndpoint.ok ? (
                             <p className="rounded-md border border-destructive/30 bg-destructive/10 px-2.5 py-2 text-xs text-destructive">
                                 {coreEndpoint.message}
                             </p>

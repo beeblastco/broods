@@ -219,6 +219,13 @@ export type AgentDefinitionConfig =
     workspaces?: readonly AgentWorkspaceInput[];
     subagent?: AgentSubagentDefinitionConfig;
     skills?: AgentSkillsDefinitionConfig;
+    /**
+     * Opt the agent into the public runtime endpoint (SSE/WebSocket via the
+     * environment runtime key). Off by default — secured: when unset the public
+     * endpoint refuses requests for this agent. Reach a private agent through an
+     * internal endpoint or a channel webhook. See issue #65.
+     */
+    publicAccess?: boolean;
   };
 
 export type CronDefinitionConfig = Omit<CreateCronInput, "agentId" | "name"> & {

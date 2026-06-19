@@ -45,9 +45,19 @@ const TEST_AGENT = {
   agentId: "agent_test",
   name: "Test agent",
   status: "active" as const,
-  config: TEST_ACCOUNT.config,
+  // Opted into the public endpoint so the deployment (runtime-key) path is allowed.
+  config: { ...TEST_ACCOUNT.config, publicAccess: true },
   createdAt: "2026-04-24T00:00:00.000Z",
   updatedAt: "2026-04-24T00:00:00.000Z",
+};
+
+// A second agent that has NOT opted into the public endpoint, used to assert the
+// secure-by-default gate on the deployment (runtime-key) path.
+const TEST_AGENT_PRIVATE = {
+  ...TEST_AGENT,
+  agentId: "agent_private",
+  name: "Private agent",
+  config: TEST_ACCOUNT.config,
 };
 
 describe("direct API ingress", () => {
@@ -207,6 +217,37 @@ describe("direct API ingress", () => {
     });
 
     expect(response.statusCode).toBe(401);
+  });
+
+  it("refuses the public runtime key for an agent that has not opted into public access", async () => {
+    const response = await routeIncomingEvent(createEvent({
+      agentId: "agent_private",
+      eventId: "one",
+      conversationKey: "chat_1",
+      events: [{
+        role: "user",
+        content: [{ type: "text", text: "hello" }],
+      }],
+    }, {
+      authorization: "Bearer fp_agent_test",
+    }, {
+      rawPath: "/v1/demo/agents/development/env-endpoint",
+      addDefaultAgentId: false,
+    }), createHandlers(), {
+      authResolver: async (headers) =>
+        headers.authorization === "Bearer fp_agent_test"
+          ? {
+            kind: "deployment",
+            account: TEST_ACCOUNT,
+            endpointId: "env-endpoint",
+            projectSlug: "demo",
+            environmentSlug: "development",
+          }
+          : null,
+    });
+
+    expect(response.statusCode).toBe(403);
+    expect(responseJson(response).code).toBe("public_access_disabled");
   });
 
   it("returns 404 for direct sync and async POST when direct API is disabled", async () => {
@@ -487,6 +528,7 @@ describe("direct API ingress", () => {
       },
       sandbox: "sb_1",
       workspaces: [{ name: "notes", workspaceId: "ws_a" }],
+      publicAccess: true,
     });
     expect(directEvent.publicEventId).toBe("one");
     expect(directEvent.conversationKey).toBe("acct:acct_test:agent:agent_test:api:alpha");
@@ -881,7 +923,12 @@ async function routeIncomingEvent(
       headers.authorization === "Bearer secret"
         ? { kind: "account", account: TEST_ACCOUNT }
         : null),
-    agentLoader: async (_accountId, agentId) => agentId === TEST_AGENT.agentId ? TEST_AGENT : null,
+    agentLoader: async (_accountId, agentId) =>
+      agentId === TEST_AGENT.agentId
+        ? TEST_AGENT
+        : agentId === TEST_AGENT_PRIVATE.agentId
+          ? TEST_AGENT_PRIVATE
+          : null,
     directApiEnabled: options.directApiEnabled,
   });
 

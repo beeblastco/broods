@@ -108,6 +108,34 @@ Provider credentials for each channel, plus model/tool settings, live on agent c
 
 Declare channel agents with the CLI SDK and run `filthy-panty dev` or `filthy-panty deploy`. The CLI prints the agent-scoped webhook URL after synchronization. Provider registration remains an explicit operation documented by the matching `packages/demos/channel-*` package; infrastructure deployment does not provision demo channel accounts.
 
+## Public Access & Agent Commands
+
+The public runtime endpoint (HTTP/SSE and WebSocket, authenticated with the environment runtime key) is **off by default** for each agent — secured. An agent only answers public-key requests when its config opts in:
+
+```ts
+export const myAgent = defineAgent({
+  name: "my-agent",
+  config: {
+    // …model, provider, sandbox…
+    publicAccess: true, // expose the public SSE/WebSocket endpoint
+  },
+});
+```
+
+When `publicAccess` is not set, a public-key request for that agent is refused with HTTP `403` (`{"error": "...", "code": "public_access_disabled"}`). Internal callers (account/admin secret), channel webhooks, and cron runs are never gated by this flag, so a private agent stays reachable through an internal endpoint or a channel webhook. The dashboard's agent **Public API** panel shows the toggle and hides the endpoint URLs while access is off.
+
+> Bringing your own custom domain to replace the generated endpoint URL is tracked as a future enhancement.
+
+Inspect and test agents from the CLI:
+
+```bash
+filthy-panty agent list            # name, public/private, model, deploy status
+filthy-panty agent get <name>      # model, sandbox, workspaces, tools, channels, webhook
+filthy-panty run <name> "<prompt>" # one-off run; pretty-streams thinking, tool calls, results over SSE
+```
+
+`run` reaches the agent over the public endpoint, so it needs `publicAccess: true`; otherwise it reports the secured-by-default `403` with guidance to enable it.
+
 ## Live Probes
 
 Example scripts use these environment variables:

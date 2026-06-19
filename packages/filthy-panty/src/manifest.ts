@@ -214,6 +214,7 @@ const KNOWN_AGENT_CONFIG_KEYS = new Set([
   "workspaces",
   "subagent",
   "skills",
+  "publicAccess",
 ]);
 
 /** Common typos mapped to the key the author almost certainly meant. */

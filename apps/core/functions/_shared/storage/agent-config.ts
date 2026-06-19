@@ -51,6 +51,11 @@ export interface AgentConfig {
   tools?: AgentToolsConfig;
   skills?: AgentSkillsConfig;
   subagent?: AgentSubagentConfig;
+  // Opt-in flag for the public runtime endpoint (SSE/WebSocket via the
+  // environment runtime key). Off by default: when not `true` the deployment
+  // (public-key) request path is refused. Internal callers (account/admin
+  // secret, cron, async worker) and channel webhooks are never gated by this.
+  publicAccess?: boolean;
   [key: string]: unknown;
 }
 
@@ -301,6 +306,7 @@ export function toRuntimeAgentConfig(config: AgentConfig): AgentConfig {
     tools,
     skills,
     subagent,
+    publicAccess,
   } = config;
 
   return normalizeAgentConfig({
@@ -314,6 +320,7 @@ export function toRuntimeAgentConfig(config: AgentConfig): AgentConfig {
     ...(tools !== undefined ? { tools } : {}),
     ...(skills !== undefined ? { skills } : {}),
     ...(subagent !== undefined ? { subagent } : {}),
+    ...(publicAccess !== undefined ? { publicAccess } : {}),
   });
 }
 
@@ -354,6 +361,7 @@ export function normalizeAgentConfig(value: unknown): AgentConfig {
   normalizeToolsConfig(config.tools);
   normalizeSkillsConfig(config.skills);
   normalizeSubagentConfig(config.subagent);
+  assertOptionalBoolean(config.publicAccess, "config.publicAccess");
 
   return config as AgentConfig;
 }
