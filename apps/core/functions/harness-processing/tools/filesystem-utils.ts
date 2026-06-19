@@ -303,7 +303,9 @@ export function outsideWorkspaceCommand(command: string): string | undefined {
     return "Error: parent directory traversal is not allowed";
   }
 
-  const absolutePath = scanned.match(/(^|[\s"'=:{([<>,])\/(?!dev\/null(?:\s|$)|[>\s]|$)[^\s"'`;&|)]*/);
+  // A leading `:` still flags `host:/abs/path`, but a `:` followed by `//` is a
+  // URL scheme separator (https://...), not an absolute path, so it is exempt.
+  const absolutePath = scanned.match(/(?:^|[\s"'={([<>,]|:(?!\/\/))\/(?!dev\/null(?:\s|$)|[>\s]|$)[^\s"'`;&|)]*/);
   if (absolutePath) {
     return `Error: absolute paths are not allowed in workspace bash commands: ${absolutePath[0].trim()}`;
   }

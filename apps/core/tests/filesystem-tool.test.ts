@@ -182,6 +182,16 @@ describe("sandbox tool set", () => {
     expect(lambdaSendMock).not.toHaveBeenCalled();
   });
 
+  it("bash allows URL scheme separators while still blocking absolute paths", async () => {
+    const bash = await tool("bash", workspaceCtx());
+    const ok = await bash.execute({ command: "curl -sS https://api.github.com/zen -o out.txt" });
+    expect(ok.type).toBe("text");
+    expect(lastLambdaInput().payload.code).toContain("https://api.github.com/zen");
+    // A bare absolute path stays rejected; only the scheme `://` is exempt.
+    await expect(bash.execute({ command: "curl https://x -o /tmp/out.txt" }))
+      .resolves.toEqual({ type: "error-text", value: "Error: absolute paths are not allowed in workspace bash commands: /tmp/out.txt" });
+  });
+
   it("bash allows relative workspace commands and heredoc bodies", async () => {
     const bash = await tool("bash", workspaceCtx());
     const result = await bash.execute({
