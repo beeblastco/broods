@@ -43,8 +43,13 @@ export function AgentNode({ id, data }: NodeProps) {
 
         return [{ key: "structured-output", label: "structured output" }];
     }, [agentConfig?.outputFormat]);
+    // Surface the secure-by-default public-access opt-in so the node's globe can
+    // reflect it (green only when the agent is actually reachable publicly).
+    const publicAccess =
+        ((agentConfig?.extraConfig as Record<string, unknown> | undefined)?.publicAccess) === true;
     const withColor: BaseNodeData = {
         ...nodeData,
+        config: { ...nodeData.config, publicAccess },
         properties: nodeData.properties ?? { color: DEFAULT_AGENT_COLOR },
     };
 

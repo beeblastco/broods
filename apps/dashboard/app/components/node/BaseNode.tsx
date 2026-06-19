@@ -252,22 +252,23 @@ export function BaseNode({
                 </span>
             )}
 
-            {(nodeType === "agent" || nodeType === "sandbox") && (
-                <span className="absolute top-2 right-2.5 z-10 inline-flex size-5 items-center justify-center rounded-full border border-border/70 bg-background/90">
-                    <Globe
-                        className={`size-3.5 ${
-                            nodeType === "sandbox"
-                                ? data.config?.internet === true
-                                    ? "text-emerald-500"
-                                    : "text-muted-foreground"
-                                : "text-emerald-500"
-                        }`}
-                    />
-                    {nodeType === "sandbox" && data.config?.internet !== true && (
-                        <Slash className="pointer-events-none absolute size-3.5 text-muted-foreground/80" />
-                    )}
-                </span>
-            )}
+            {(nodeType === "agent" || nodeType === "sandbox") && (() => {
+                // Agent: lit when public access is on (secure-by-default → off). Sandbox: lit
+                // when internet egress is on. Both fall back to a muted, slashed globe when off.
+                const isOn =
+                    nodeType === "sandbox"
+                        ? data.config?.internet === true
+                        : data.config?.publicAccess === true;
+
+                return (
+                    <span className="absolute top-2 right-2.5 z-10 inline-flex size-5 items-center justify-center rounded-full border border-border/70 bg-background/90">
+                        <Globe className={`size-3.5 ${isOn ? "text-emerald-500" : "text-muted-foreground"}`} />
+                        {!isOn && (
+                            <Slash className="pointer-events-none absolute size-3.5 text-muted-foreground/80" />
+                        )}
+                    </span>
+                );
+            })()}
 
             <div style={{ height: contentHeight != null ? contentHeight * scale : undefined }}>
                 <div
