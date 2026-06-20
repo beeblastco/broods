@@ -5,7 +5,15 @@
 
 import { afterEach, describe, expect, it } from "bun:test";
 import { booleanEnv, optionalEnv, requireEnv } from "../functions/_shared/env.ts";
-import { logError, logInfo, logWarn } from "../functions/_shared/log.ts";
+import {
+  collectSecretValues,
+  logError,
+  logInfo,
+  logWarn,
+  redact,
+  redactSensitiveText,
+} from "../functions/_shared/log.ts";
+import { forceFlushOtel, observabilityAttributes } from "../functions/_shared/otel.ts";
 
 const ORIGINAL_ENV = { ...process.env };
 const REAL_DATE = Date;
@@ -156,5 +164,52 @@ describe("logging helpers", () => {
         code: 500,
       },
     ]);
+  });
+
+  it("redacts secret values from arbitrary strings, nested data, and auth URLs", () => {
+    process.env.ACCOUNT_GOOGLE_API_KEY = "env-secret-value";
+    process.env.OTEL_EXPORTER_OTLP_HEADERS = "Authorization=Basic dXNlcjpwYXNz";
+    const taskSecrets = collectSecretValues({
+      provider: { google: { apiKey: "provider-secret-value" } },
+      runtimeVariables: [{ key: "PUBLIC_URL", value: "runtime-secret-value" }],
+    });
+
+    const result = redact({
+      detail: "env-secret-value provider-secret-value runtime-secret-value",
+      nested: { url: "https://example.test/run?token=url-secret" },
+      authorization: "Bearer direct-secret",
+    }, ["env-secret-value", ...taskSecrets]);
+    const serialized = JSON.stringify(result);
+
+    expect(serialized).not.toContain("env-secret-value");
+    expect(serialized).not.toContain("provider-secret-value");
+    expect(serialized).not.toContain("runtime-secret-value");
+    expect(serialized).not.toContain("url-secret");
+    expect(serialized).not.toContain("direct-secret");
+    expect(redactSensitiveText("request failed: Basic dXNlcjpwYXNz")).toBe(
+      "request failed: Basic [redacted]",
+    );
+  });
+
+  it("builds the exact tenant attributes consumed by observability queries", () => {
+    expect(observabilityAttributes({
+      accountId: "acct_1",
+      project: "project-one",
+      environment: "development",
+      endpointId: "env-1234",
+      agentId: "agent-1",
+      conversationKey: "conversation-1",
+    })).toEqual({
+      account_id: "acct_1",
+      project: "project-one",
+      environment: "development",
+      endpoint_id: "env-1234",
+      agent_id: "agent-1",
+      conversation_key: "conversation-1",
+    });
+  });
+
+  it("allows an explicit OTel flush when exporters are not configured", async () => {
+    await expect(forceFlushOtel()).resolves.toBeUndefined();
   });
 });

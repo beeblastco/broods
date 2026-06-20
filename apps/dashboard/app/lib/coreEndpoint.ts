@@ -12,7 +12,6 @@ export type CoreEndpoint =
 export function resolveCoreEndpoint(): CoreEndpoint {
     const candidates = [
         process.env.NEXT_PUBLIC_FILTHY_PANTY_BASE_URL,
-        process.env.NEXT_PUBLIC_AGENT_GATEWAY_URL,
         DEFAULT_CORE_BASE_URL,
     ];
 

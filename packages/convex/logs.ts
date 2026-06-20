@@ -1,50 +1,14 @@
 /**
- * Direct CloudWatch Logs queries for deployment logs and token-usage stats.
+ * Reactive reads for the dashboard usage panel. Queries the pre-aggregated
+ * `usageRollups` table (written by `usage.recordTask`) so the panel streams
+ * live token/compute totals via Convex subscriptions. Durable/raw logs now
+ * live in Loki and are streamed via the gateway (NATS + Loki backfill).
  */
 
-"use node";
-
-import {
-    CloudWatchLogsClient,
-    FilterLogEventsCommand,
-    GetQueryResultsCommand,
-    StartQueryCommand,
-} from "@aws-sdk/client-cloudwatch-logs";
 import { v } from "convex/values";
-import { internal } from "./_generated/api";
-import type { Id } from "./_generated/dataModel";
-import { action, internalAction } from "./_generated/server";
+import { action, query } from "./_generated/server";
 import { authKit } from "./auth";
-
-const logEntry = v.object({
-    timestamp: v.number(),
-    message: v.string(),
-    level: v.union(
-        v.literal("INFO"),
-        v.literal("WARN"),
-        v.literal("ERROR"),
-        v.literal("DEBUG"),
-    ),
-    logGroup: v.string(),
-    logStream: v.optional(v.string()),
-    functionName: v.string(),
-    requestId: v.optional(v.string()),
-});
-
-type LogEntry = {
-    timestamp: number;
-    message: string;
-    level: "INFO" | "WARN" | "ERROR" | "DEBUG";
-    logGroup: string;
-    logStream?: string;
-    functionName: string;
-    requestId?: string;
-};
-
-type LogSource = {
-    logGroup: string;
-    functionName: string;
-};
+import { projectEndpointIds } from "./logsHelpers";
 
 const usageRange = v.union(
     v.literal("1h"),
@@ -64,9 +28,13 @@ const usageBucket = v.object({
     outputTokens: v.number(),
     reasoningTokens: v.number(),
     cachedInputTokens: v.number(),
+    cacheWriteTokens: v.number(),
     totalTokens: v.number(),
     invocations: v.number(),
     modelCalls: v.number(),
+    runtimeWallMs: v.number(),
+    agentSandboxCpuUsec: v.number(),
+    toolSandboxCpuUsec: v.number(),
 });
 
 const usageStats = v.object({
@@ -80,13 +48,16 @@ const usageStats = v.object({
         outputTokens: v.number(),
         reasoningTokens: v.number(),
         cachedInputTokens: v.number(),
+        cacheWriteTokens: v.number(),
         totalTokens: v.number(),
         invocations: v.number(),
         modelCalls: v.number(),
+        runtimeWallMs: v.number(),
+        agentSandboxCpuUsec: v.number(),
+        toolSandboxCpuUsec: v.number(),
     }),
 });
 
-// Insights caps results at 10_000 rows, so longer windows need coarser bins.
 const RANGE_CONFIG: Record<
     "1h" | "3h" | "1d" | "7d" | "30d" | "1y",
     { lookbackMs: number; binSeconds: number }
@@ -99,281 +70,108 @@ const RANGE_CONFIG: Record<
     "1y": { lookbackMs: 365 * 24 * 60 * 60 * 1000, binSeconds: 7 * 24 * 60 * 60 },
 };
 
-const DEFAULT_LOG_LOOKBACK_MS = 60 * 60 * 1000;
-const MIN_LOG_LOOKBACK_MS = 60_000;
-const MAX_LOG_LOOKBACK_MS = 30 * 24 * 60 * 60 * 1000;
-const DEFAULT_LOG_LIMIT = 100;
-const MIN_LOG_LIMIT = 1;
-const MAX_LOG_LIMIT = 1000;
+/**
+ * Re-group 5-minute usage rollups into the requested range's bins and total them.
+ */
+function aggregateUsage(
+    rows: Array<{
+        bucketStart: number;
+        modelProvider: string;
+        modelId: string;
+        inputTokens: number;
+        outputTokens: number;
+        reasoningTokens: number;
+        cachedInputTokens: number;
+        cacheWriteTokens: number;
+        totalTokens: number;
+        invocations: number;
+        modelCalls: number;
+        runtimeWallMs: number;
+        agentSandboxCpuUsec: number;
+        toolSandboxCpuUsec: number;
+    }>,
+    binSeconds: number,
+) {
+    const binMs = binSeconds * 1000;
+    const byKey = new Map<string, (typeof rows)[number]>();
+    for (const row of rows) {
+        const bucketStart = Math.floor(row.bucketStart / binMs) * binMs;
+        const key = `${bucketStart}|${row.modelProvider}|${row.modelId}`;
+        const acc = byKey.get(key);
+        if (acc) {
+            acc.inputTokens += row.inputTokens;
+            acc.outputTokens += row.outputTokens;
+            acc.reasoningTokens += row.reasoningTokens;
+            acc.cachedInputTokens += row.cachedInputTokens;
+            acc.cacheWriteTokens += row.cacheWriteTokens;
+            acc.totalTokens += row.totalTokens;
+            acc.invocations += row.invocations;
+            acc.modelCalls += row.modelCalls;
+            acc.runtimeWallMs += row.runtimeWallMs;
+            acc.agentSandboxCpuUsec += row.agentSandboxCpuUsec;
+            acc.toolSandboxCpuUsec += row.toolSandboxCpuUsec;
+        } else {
+            byKey.set(key, {
+                bucketStart: bucketStart,
+                modelProvider: row.modelProvider,
+                modelId: row.modelId,
+                inputTokens: row.inputTokens,
+                outputTokens: row.outputTokens,
+                reasoningTokens: row.reasoningTokens,
+                cachedInputTokens: row.cachedInputTokens,
+                cacheWriteTokens: row.cacheWriteTokens,
+                totalTokens: row.totalTokens,
+                invocations: row.invocations,
+                modelCalls: row.modelCalls,
+                runtimeWallMs: row.runtimeWallMs,
+                agentSandboxCpuUsec: row.agentSandboxCpuUsec,
+                toolSandboxCpuUsec: row.toolSandboxCpuUsec,
+            });
+        }
+    }
 
-function makeClient(): CloudWatchLogsClient {
-    return new CloudWatchLogsClient({
-        region: process.env.AWS_REGION!,
-        credentials: {
-            accessKeyId: process.env.AWS_ACCESS_KEY_ID ?? "",
-            secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY ?? "",
+    const buckets = [...byKey.values()].sort((a, b) => a.bucketStart - b.bucketStart);
+    const totals = buckets.reduce(
+        (acc, b) => {
+            acc.inputTokens += b.inputTokens;
+            acc.outputTokens += b.outputTokens;
+            acc.reasoningTokens += b.reasoningTokens;
+            acc.cachedInputTokens += b.cachedInputTokens;
+            acc.cacheWriteTokens += b.cacheWriteTokens;
+            acc.totalTokens += b.totalTokens;
+            acc.invocations += b.invocations;
+            acc.modelCalls += b.modelCalls;
+            acc.runtimeWallMs += b.runtimeWallMs;
+            acc.agentSandboxCpuUsec += b.agentSandboxCpuUsec;
+            acc.toolSandboxCpuUsec += b.toolSandboxCpuUsec;
+
+            return acc;
         },
-    });
+        {
+            inputTokens: 0,
+            outputTokens: 0,
+            reasoningTokens: 0,
+            cachedInputTokens: 0,
+            cacheWriteTokens: 0,
+            totalTokens: 0,
+            invocations: 0,
+            modelCalls: 0,
+            runtimeWallMs: 0,
+            agentSandboxCpuUsec: 0,
+            toolSandboxCpuUsec: 0,
+        },
+    );
+
+    return { buckets: buckets, totals: totals };
 }
 
 /**
- * Returns the filthy-panty harness function's CloudWatch log group, if
- * configured. Set FILTHY_PANTY_HARNESS_LOG_GROUP in Convex env to e.g.
- * `/aws/lambda/filthy-panty-harness-processing-us-east-1-123456789012`
- * (production) or `/aws/lambda/dev-filthy-panty-harness-processing-...` (dev).
+ * Reactive token-usage aggregates for the dashboard usage panel, scoped to the
+ * caller's project/environment. Re-groups the 5-minute rollups into the
+ * requested range. Subscribed via `useQuery`, so totals update live.
+ * @returns time-bucketed usage grouped by (modelProvider, modelId) plus totals
  */
-function getFilthyPantyLogGroup(): string | null {
-    const raw = process.env.FILTHY_PANTY_HARNESS_LOG_GROUP?.trim();
-    if (!raw) return null;
-    return raw.startsWith("/aws/lambda/") ? raw : `/aws/lambda/${raw}`;
-}
-
-async function fetchFromCloudWatch(opts: {
-    functionName: string;
-    startTimeMs: number;
-    endTimeMs: number;
-    limit: number;
-    errorOnly: boolean;
-}) {
-    const logGroup = `/aws/lambda/${opts.functionName}`;
-
-    let response;
-    try {
-        response = await makeClient().send(new FilterLogEventsCommand({
-            logGroupName: logGroup,
-            startTime: opts.startTimeMs,
-            endTime: opts.endTimeMs,
-            limit: opts.limit,
-            ...(opts.errorOnly ? { filterPattern: '{ $.level = "ERROR" }' } : {}),
-        }));
-    } catch (err) {
-        console.warn(`CloudWatch log group ${logGroup} not found or inaccessible:`, err);
-        return [];
-    }
-
-    return (response.events ?? []).map((event) => {
-        const msg = event.message ?? "";
-        return {
-            timestamp: event.timestamp ?? Date.now(),
-            message: msg.trim(),
-            level: detectLogLevel(msg),
-            logGroup,
-            logStream: event.logStreamName,
-            requestId: extractRequestId(msg),
-        };
-    });
-}
-
-function detectLogLevel(msg: string): "INFO" | "WARN" | "ERROR" | "DEBUG" {
-    const trimmed = msg.trim();
-    if (trimmed.startsWith("{")) {
-        try {
-            const lvl = String(JSON.parse(trimmed).level ?? "").toUpperCase();
-            if (lvl === "ERROR" || lvl === "WARN" || lvl === "INFO" || lvl === "DEBUG") {
-                return lvl;
-            }
-        } catch {
-            // fall through to heuristic
-        }
-    }
-
-    const upper = msg.toUpperCase();
-    if (upper.includes("ERROR")) return "ERROR";
-    if (upper.includes("WARN")) return "WARN";
-    if (upper.includes("[DEBUG]") || upper.startsWith("DEBUG")) return "DEBUG";
-    return "INFO";
-}
-
-function extractRequestId(msg: string): string | undefined {
-    return msg.match(/RequestId:\s*([a-f0-9-]{36})/i)?.[1];
-}
-
-async function runInsightsQuery(opts: {
-    logGroupNames: string[];
-    startTimeSec: number;
-    endTimeSec: number;
-    queryString: string;
-}): Promise<Array<Record<string, string>>> {
-    if (opts.logGroupNames.length === 0) return [];
-
-    const client = makeClient();
-
-    let queryId: string | undefined;
-    try {
-        const start = await client.send(new StartQueryCommand({
-            logGroupNames: opts.logGroupNames,
-            startTime: opts.startTimeSec,
-            endTime: opts.endTimeSec,
-            queryString: opts.queryString,
-            limit: 10000,
-        }));
-        queryId = start.queryId;
-    } catch (err) {
-        console.warn("CloudWatch Logs Insights StartQuery failed:", err);
-        if (opts.logGroupNames.length <= 1) {
-            return [];
-        }
-
-        const perGroupRows = await Promise.all(
-            opts.logGroupNames.map((logGroupName) =>
-                runInsightsQuery({
-                    logGroupNames: [logGroupName],
-                    startTimeSec: opts.startTimeSec,
-                    endTimeSec: opts.endTimeSec,
-                    queryString: opts.queryString,
-                }),
-            ),
-        );
-
-        return perGroupRows.flat();
-    }
-    if (!queryId) return [];
-
-    const deadline = Date.now() + 60_000;
-    while (Date.now() < deadline) {
-        await new Promise((resolve) => setTimeout(resolve, 1000));
-
-        let result;
-        try {
-            result = await client.send(new GetQueryResultsCommand({ queryId }));
-        } catch (err) {
-            console.warn("CloudWatch Logs Insights GetQueryResults failed:", err);
-            return [];
-        }
-
-        const status = result.status ?? "Running";
-        if (status === "Complete") {
-            return (result.results ?? []).map((row) => {
-                const out: Record<string, string> = {};
-                for (const field of row) {
-                    if (field.field) out[field.field] = field.value ?? "";
-                }
-                return out;
-            });
-        }
-        if (status === "Failed" || status === "Cancelled" || status === "Timeout") {
-            console.warn(`CloudWatch Logs Insights query ${status.toLowerCase()}`);
-            return [];
-        }
-    }
-
-    console.warn("CloudWatch Logs Insights query timed out client-side");
-    return [];
-}
-
-export const fetchForProject = action({
-    args: {
-        projectId: v.id("projects"),
-        environmentId: v.optional(v.id("environments")),
-        lookbackMs: v.optional(v.number()),
-        limit: v.optional(v.number()),
-        errorOnly: v.optional(v.boolean()),
-    },
-    returns: v.array(logEntry),
-    handler: async (ctx, args): Promise<LogEntry[]> => {
-        const authUser = await authKit.getAuthUser(ctx);
-        if (!authUser) return [];
-
-        const now = Date.now();
-        const startTime = now - boundedNumber(
-            args.lookbackMs,
-            DEFAULT_LOG_LOOKBACK_MS,
-            MIN_LOG_LOOKBACK_MS,
-            MAX_LOG_LOOKBACK_MS,
-        );
-        const limit = boundedNumber(args.limit, DEFAULT_LOG_LIMIT, MIN_LOG_LIMIT, MAX_LOG_LIMIT);
-
-        const deployments: { _id: Id<"agentDeployments">; endpointId: string }[] =
-            await ctx.runQuery(internal.logsHelpers.getActiveDeploymentsInternal, {
-                authId: authUser.id,
-                projectId: args.projectId,
-                environmentId: args.environmentId,
-            });
-
-        const sources: { logGroup: string; functionName: string }[] = deployments.map((d) => ({
-            logGroup: `/aws/lambda/${d.endpointId}`,
-            functionName: d.endpointId,
-        }));
-        const harnessLogGroup = getFilthyPantyLogGroup();
-        if (harnessLogGroup) {
-            sources.push({
-                logGroup: harnessLogGroup,
-                functionName: harnessLogGroup.replace(/^\/aws\/lambda\//, ""),
-            });
-        }
-        if (sources.length === 0) return [];
-
-        const batches = await Promise.all(
-            sources.map(async (s) => {
-                const entries = await fetchFromCloudWatch({
-                    functionName: s.functionName,
-                    startTimeMs: startTime,
-                    endTimeMs: now,
-                    limit: limit,
-                    errorOnly: args.errorOnly ?? false,
-                });
-                return entries.map((e) => ({ ...e, functionName: s.functionName }));
-            }),
-        );
-
-        return batches.flat().sort((a, b) => b.timestamp - a.timestamp).slice(0, limit);
-    },
-});
-
-export const fetchForCli = internalAction({
-    args: {
-        secretHash: v.string(),
-        project: v.string(),
-        environment: v.string(),
-        lookbackMs: v.optional(v.number()),
-        limit: v.optional(v.number()),
-        errorOnly: v.optional(v.boolean()),
-    },
-    returns: v.array(logEntry),
-    handler: async (ctx, args) => {
-        const now = Date.now();
-        const startTime = now - boundedNumber(args.lookbackMs, 60 * 60 * 1000, 60_000, 30 * 24 * 60 * 60 * 1000);
-        const limit = boundedNumber(args.limit, 100, 1, 1000);
-        const sources: LogSource[] | null = await ctx.runQuery(internal.logsHelpers.getCliLogSourcesBySecretHash, {
-            secretHash: args.secretHash,
-            project: args.project,
-            environment: args.environment,
-        });
-        if (!sources) throw new Error("Project/environment not found");
-
-        const allSources: LogSource[] = [...sources];
-        const harnessLogGroup = getFilthyPantyLogGroup();
-        if (harnessLogGroup) {
-            allSources.push({
-                logGroup: harnessLogGroup,
-                functionName: harnessLogGroup.replace(/^\/aws\/lambda\//, ""),
-            });
-        }
-        if (allSources.length === 0) return [];
-
-        const batches: LogEntry[][] = await Promise.all(
-            allSources.map(async (source: LogSource): Promise<LogEntry[]> => {
-                const entries = await fetchFromCloudWatch({
-                    functionName: source.functionName,
-                    startTimeMs: startTime,
-                    endTimeMs: now,
-                    limit: limit,
-                    errorOnly: args.errorOnly ?? false,
-                });
-                return entries.map((entry): LogEntry => ({ ...entry, functionName: source.functionName }));
-            }),
-        );
-
-        return batches.flat().sort((a: LogEntry, b: LogEntry) => b.timestamp - a.timestamp).slice(0, limit);
-    },
-});
-
-/**
- * Aggregate token usage and model invocation counts from CloudWatch Logs Insights
- * for all deployments belonging to the requesting user's project.
- * @returns time-bucketed buckets grouped by (modelProvider, modelId) plus overall totals.
- */
-export const fetchUsageStats = action({
+export const fetchUsageStats = query({
     args: {
         projectId: v.id("projects"),
         environmentId: v.optional(v.id("environments")),
@@ -393,144 +191,63 @@ export const fetchUsageStats = action({
         const nowMs = Date.now();
         const startMs = nowMs - cfg.lookbackMs;
 
-        const empty = {
+        const endpointIds = await projectEndpointIds(ctx, authUser.id, projectId, environmentId);
+        const base = {
             range: range,
             binSeconds: cfg.binSeconds,
             startTimeMs: startMs,
             endTimeMs: nowMs,
-            buckets: [],
-            totals: {
-                inputTokens: 0,
-                outputTokens: 0,
-                reasoningTokens: 0,
-                cachedInputTokens: 0,
-                totalTokens: 0,
-                invocations: 0,
-                modelCalls: 0,
-            },
         };
-
-        const deployments = await ctx.runQuery(internal.logsHelpers.getActiveDeploymentsInternal, {
-            authId: authUser.id,
-            projectId: projectId,
-            environmentId: environmentId,
-        });
-
-        const logGroupNames = deployments.map((d: { endpointId: string }) => `/aws/lambda/${d.endpointId}`);
-        const harnessLogGroup = getFilthyPantyLogGroup();
-        if (harnessLogGroup) {
-            logGroupNames.push(harnessLogGroup);
-        }
-        if (logGroupNames.length === 0) {
-            return empty;
-        }
-
-        // Single Insights query: bucket by time + (provider, model) and aggregate token usage.
-        // Counts: `invocations` = model.invocation.finished (tasks),
-        //         `modelCalls`  = model.step.finished (individual model calls).
-        const queryString = `
-fields @timestamp, eventType, modelProvider, modelId, usage.inputTokens, usage.outputTokens, usage.reasoningTokens, usage.cachedInputTokens, usage.totalTokens
-| filter eventType = "model.invocation.finished" or eventType = "model.step.finished"
-| stats
-    sum(usage.inputTokens) as inputTokens,
-    sum(usage.outputTokens) as outputTokens,
-    sum(usage.reasoningTokens) as reasoningTokens,
-    sum(usage.cachedInputTokens) as cachedInputTokens,
-    sum(usage.totalTokens) as totalTokens,
-    sum(eventType = "model.invocation.finished") as invocations,
-    sum(eventType = "model.step.finished") as modelCalls
-    by bin(${cfg.binSeconds}s) as bucketStart, modelProvider, modelId
-| sort bucketStart asc
-        `.trim();
-
-        const rows = await runInsightsQuery({
-            logGroupNames: logGroupNames,
-            startTimeSec: Math.floor(startMs / 1000),
-            endTimeSec: Math.floor(nowMs / 1000),
-            queryString: queryString,
-        });
-
-        const buckets = rows.map((row) => {
-            const bucketStart = parseBucketTimestamp(row.bucketStart);
-            const inputTokens = toNum(row.inputTokens);
-            const outputTokens = toNum(row.outputTokens);
-            const reasoningTokens = toNum(row.reasoningTokens);
-            const cachedInputTokens = toNum(row.cachedInputTokens);
-            const totalTokens = toNum(row.totalTokens);
-            const invocations = toNum(row.invocations);
-            const modelCalls = toNum(row.modelCalls);
-
+        if (endpointIds.length === 0) {
             return {
-                bucketStart: bucketStart,
-                modelProvider: row.modelProvider || "unknown",
-                modelId: row.modelId || "unknown",
-                inputTokens: inputTokens,
-                outputTokens: outputTokens,
-                reasoningTokens: reasoningTokens,
-                cachedInputTokens: cachedInputTokens,
-                totalTokens: totalTokens,
-                invocations: invocations,
-                modelCalls: modelCalls,
+                ...base,
+                buckets: [],
+                totals: {
+                    inputTokens: 0,
+                    outputTokens: 0,
+                    reasoningTokens: 0,
+                    cachedInputTokens: 0,
+                    cacheWriteTokens: 0,
+                    totalTokens: 0,
+                    invocations: 0,
+                    modelCalls: 0,
+                    runtimeWallMs: 0,
+                    agentSandboxCpuUsec: 0,
+                    toolSandboxCpuUsec: 0,
+                },
             };
-        });
+        }
 
-        const totals = buckets.reduce(
-            (acc, b) => {
-                acc.inputTokens += b.inputTokens;
-                acc.outputTokens += b.outputTokens;
-                acc.reasoningTokens += b.reasoningTokens;
-                acc.cachedInputTokens += b.cachedInputTokens;
-                acc.totalTokens += b.totalTokens;
-                acc.invocations += b.invocations;
-                acc.modelCalls += b.modelCalls;
-
-                return acc;
-            },
-            {
-                inputTokens: 0,
-                outputTokens: 0,
-                reasoningTokens: 0,
-                cachedInputTokens: 0,
-                totalTokens: 0,
-                invocations: 0,
-                modelCalls: 0,
-            },
+        const batches = await Promise.all(
+            endpointIds.map((endpointId) =>
+                ctx.db
+                    .query("usageRollups")
+                    .withIndex("by_endpointId_and_bucketStart", (q) =>
+                        q.eq("endpointId", endpointId).gte("bucketStart", startMs),
+                    )
+                    .collect(),
+            ),
         );
 
-        return {
-            range: range,
-            binSeconds: cfg.binSeconds,
-            startTimeMs: startMs,
-            endTimeMs: nowMs,
-            buckets: buckets,
-            totals: totals,
-        };
+        const { buckets, totals } = aggregateUsage(batches.flat(), cfg.binSeconds);
+
+        return { ...base, buckets: buckets, totals: totals };
     },
 });
 
-function toNum(value: string | undefined): number {
-    if (!value) return 0;
-    const n = Number(value);
-
-    return Number.isFinite(n) ? n : 0;
-}
-
-function boundedNumber(value: number | undefined, fallback: number, min: number, max: number): number {
-    if (typeof value !== "number" || !Number.isFinite(value)) return fallback;
-
-    return Math.min(max, Math.max(min, Math.floor(value)));
-}
-
 /**
- * Parse the `bucketStart` value returned by Insights `bin()`, which is a UTC
- * timestamp string like `"2026-05-21 14:00:00.000"`.
- * @returns epoch milliseconds.
+ * Placeholder for deep/cold log search beyond the hot window. The realtime hot
+ * path covers ~48h; older logs are durable in Loki and queried through Grafana.
+ * Wire a Grafana datasource-proxy fetch here when product needs in-app history.
  */
-function parseBucketTimestamp(value: string | undefined): number {
-    if (!value) return 0;
-    // Insights returns "YYYY-MM-DD HH:mm:ss.SSS" in UTC.
-    const iso = value.includes("T") ? value : value.replace(" ", "T") + "Z";
-    const ms = Date.parse(iso);
-
-    return Number.isFinite(ms) ? ms : 0;
-}
+export const searchHistory = action({
+    args: {
+        projectId: v.id("projects"),
+        environmentId: v.optional(v.id("environments")),
+        query: v.optional(v.string()),
+    },
+    returns: v.array(v.any()),
+    handler: async () => {
+        return [];
+    },
+});

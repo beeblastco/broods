@@ -1,6 +1,7 @@
 # CI for community / OSS builds (PRs + non-main pushes).
-# Validates the core SST app workspace — DynamoDB path only.
-# SaaS validation runs in deploy.yaml on main.
+# Validates the core SST app (DynamoDB path), SDK/Convex types, gateway, and
+# dashboard before branch deployment workflows are allowed to become the first
+# place cross-workspace failures appear.
 
 name: CI
 
@@ -51,3 +52,36 @@ jobs:
 
       - name: Build Lambda binaries
         run: bun run build
+
+  app-surfaces:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    env:
+      NEXT_PUBLIC_CONVEX_URL: ${{ vars.NEXT_PUBLIC_CONVEX_URL || 'https://example.convex.cloud' }}
+      NEXT_PUBLIC_WORKOS_REDIRECT_URI: ${{ vars.NEXT_PUBLIC_WORKOS_REDIRECT_URI || 'http://localhost:3000/auth/callback' }}
+      NEXT_PUBLIC_FILTHY_PANTY_BASE_URL: https://app.beeblast.co
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile --ignore-scripts
+
+      - name: Check gateway
+        run: bun run --filter @filthy-panty/gateway check
+
+      - name: Test gateway
+        run: bun run --filter @filthy-panty/gateway test
+
+      - name: Lint dashboard
+        run: bun run --filter @filthy-panty/dashboard lint
+
+      - name: Test dashboard
+        run: bun run --filter @filthy-panty/dashboard test
+
+      - name: Build dashboard
+        run: bun run --filter @filthy-panty/dashboard build

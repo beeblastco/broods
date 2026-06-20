@@ -6,18 +6,20 @@ import { Button } from "@/app/components/ui/button";
 import { cn } from "@/app/lib/utils";
 import { api } from "@filthy-panty/convex/_generated/api";
 import type { Doc, Id } from "@filthy-panty/convex/_generated/dataModel";
-import { useQuery } from "convex/react";
+import { useMutation, useQuery } from "convex/react";
 import Link from "next/link";
 import { useParams, useSearchParams } from "next/navigation";
+import { useCallback, useState } from "react";
 import { BillingPanel } from "./components/BillingPanel";
 import { MonitoringPanel } from "./components/MonitoringPanel";
+import { ObservabilityKeyPrompt } from "./components/ObservabilityKeyPrompt";
 import { TokensUsagePanel } from "./components/TokensUsagePanel";
 import { TracingPanel } from "./components/TracingPanel";
 
 const TABS = [
   { id: "monitoring", label: "Monitoring" },
   { id: "tracing", label: "Tracing" },
-  { id: "tokens", label: "Tokens Usage" },
+  { id: "usage", label: "Usage" },
   { id: "billing", label: "Billing & Plan" },
 ] as const;
 
@@ -51,6 +53,61 @@ export default function DashboardPage() {
     null;
   const activeEnvId = activeEnv?._id ?? null;
 
+  // Fetch the active deployment to get projectSlug, environmentSlug, and endpointId
+  // for the observability WS and session-storage API key lookup.
+  const activeDeployment = useQuery(
+    api.agentDeployments.getForEnvironment,
+    activeEnvId ? { projectId: projectId, environmentId: activeEnvId } : "skip",
+  );
+
+  const ensureKey = useMutation(api.agentDeployments.ensureForEnvironment);
+  // A key just minted in this view, scoped to its endpoint so switching
+  // environments never serves the wrong environment's key.
+  const [generated, setGenerated] = useState<{ endpointId: string; key: string } | null>(null);
+  const [generatingKey, setGeneratingKey] = useState(false);
+  // Scoped to the env it occurred in so a stale error never leaks onto another
+  // environment after switching.
+  const [keyError, setKeyError] = useState<{ envId: string; msg: string } | null>(null);
+
+  // The key is stored encrypted at rest, so the owner recovers it here without
+  // re-minting — logs/traces just stream. Null only when the environment has no
+  // deployment yet (the prompt then mints one).
+  const revealedKey = useQuery(
+    api.agentDeployments.revealKeyForEnvironment,
+    activeEnvId ? { projectId: projectId, environmentId: activeEnvId } : "skip",
+  );
+  const observabilityApiKey =
+    (generated && generated.endpointId === activeDeployment?.endpointId ? generated.key : undefined) ??
+    revealedKey;
+  const currentKeyError = keyError && keyError.envId === activeEnvId ? keyError.msg : null;
+
+  // Mint the environment's runtime key from the dashboard so a dashboard-first user
+  // (project created here, never through the CLI) can stream logs/traces. `ensure`
+  // creates one on first call and recovers it thereafter.
+  const generateViewingKey = useCallback(
+    async () => {
+      if (!activeEnvId) return;
+      setGeneratingKey(true);
+      setKeyError(null);
+      try {
+        const result = await ensureKey({ projectId: projectId, environmentId: activeEnvId });
+        if (result.rawApiKey) {
+          setGenerated({ endpointId: result.endpointId, key: result.rawApiKey });
+        } else {
+          setKeyError({ envId: activeEnvId, msg: "Couldn't load the key — try again." });
+        }
+      } catch (err) {
+        setKeyError({ envId: activeEnvId, msg: err instanceof Error ? err.message : "Failed to generate key" });
+      } finally {
+        setGeneratingKey(false);
+      }
+    },
+    [activeEnvId, projectId, ensureKey],
+  );
+
+  const projectSlug = activeDeployment?.projectSlug;
+  const environmentSlug = activeDeployment?.environmentSlug;
+
   if (project === undefined) {
     return (
       <div className="flex h-full items-center justify-center">
@@ -73,23 +130,58 @@ export default function DashboardPage() {
   // more horizontal room for charts, tables, and dense log rows.
   const contentMaxWidth = activeTab === "billing" ? "max-w-2xl" : "max-w-6xl";
 
+  // While the reveal query is still resolving, hold a quiet loader instead of
+  // flashing the "generate a key" prompt — the prompt is only the true-absence state.
+  const keyResolving = Boolean(activeEnvId) && revealedKey === undefined && !observabilityApiKey;
+  const observabilityFallback = keyResolving ? (
+    <div className="flex h-full min-h-64 items-center justify-center">
+      <p className="text-sm text-muted-foreground">Loading…</p>
+    </div>
+  ) : (
+    <ObservabilityKeyPrompt
+      generating={generatingKey}
+      error={currentKeyError}
+      onGenerate={generateViewingKey}
+    />
+  );
+
   const renderPanel = () => {
     switch (activeTab) {
       case "monitoring":
-        return (
-          <MonitoringPanel projectId={projectId} environmentId={activeEnvId} />
+        return observabilityApiKey ? (
+          <MonitoringPanel
+            projectSlug={projectSlug}
+            environmentSlug={environmentSlug}
+            apiKey={observabilityApiKey}
+          />
+        ) : (
+          observabilityFallback
         );
       case "tracing":
-        return <TracingPanel />;
-      case "tokens":
+        return observabilityApiKey ? (
+          <TracingPanel
+            projectSlug={projectSlug}
+            environmentSlug={environmentSlug}
+            apiKey={observabilityApiKey}
+          />
+        ) : (
+          observabilityFallback
+        );
+      case "usage":
         return (
           <TokensUsagePanel projectId={projectId} environmentId={activeEnvId} />
         );
       case "billing":
         return <BillingPanel projectId={projectId} />;
       default:
-        return (
-          <MonitoringPanel projectId={projectId} environmentId={activeEnvId} />
+        return observabilityApiKey ? (
+          <MonitoringPanel
+            projectSlug={projectSlug}
+            environmentSlug={environmentSlug}
+            apiKey={observabilityApiKey}
+          />
+        ) : (
+          observabilityFallback
         );
     }
   };

@@ -228,8 +228,8 @@ export const syncManifestBySecretHash = internalMutation({
 
 /**
  * Ensure the synced environment has a runtime API key (`fp_agent_…`) so the CLI
- * can write `FILTHY_PANTY_API_KEY` into `.env.local`. Returns the plaintext only
- * when freshly minted (reveal-once); otherwise just the masked hint/endpoint.
+ * can write `FILTHY_PANTY_API_KEY` into `.env.local`. Returns the stored plaintext
+ * so reconnecting clients do not need to rotate the key.
  */
 export const ensureRuntimeKeyBySecretHash = internalMutation({
     args: {
@@ -244,7 +244,7 @@ export const ensureRuntimeKeyBySecretHash = internalMutation({
         projectSlug: v.string(),
         environmentSlug: v.string(),
         keyHint: v.string(),
-        apiKey: v.union(v.string(), v.null()),
+        apiKey: v.string(),
     })),
     handler: async (ctx, args) => {
         const account = await accountFromSecretHash(ctx, args.secretHash);

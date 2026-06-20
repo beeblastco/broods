@@ -47,7 +47,7 @@ export function setStorageForTests(provider: StorageProvider | null): void {
   cached = provider;
 }
 
-export type { StorageProvider } from "./types.ts";
+export type { StorageProvider, UsageTaskInput, UsageStore } from "./types.ts";
 export { getDedupeStore } from "./dedupe.ts";
 export {
   applyCronPatch,

@@ -34,7 +34,9 @@ export const environmentsFields = {
     /** Semantic environment role. Optional for legacy rows created before roles existed. */
     kind: v.optional(v.union(v.literal("development"), v.literal("production"), v.literal("custom"))),
     /** Lambda deploy region for promoted/deployable environments. */
-    deploymentRegion: v.optional(v.union(v.literal("ap-southeast-1"), v.literal("eu-central-1"), v.literal("us-east-1"))),
+    deploymentRegion: v.optional(
+        v.union(v.literal("ap-southeast-1"), v.literal("eu-central-1"), v.literal("us-east-1")),
+    ),
     isDefault: v.boolean(),
     updatedAt: v.number(),
 };
@@ -100,8 +102,9 @@ export const canvasLayoutsFields = {
 /**
  * Project + environment scoped runtime API key (`fp_agent_…`). One key per
  * environment invokes ANY deployed agent in it; the agent is selected per request
- * by id. Only the SHA-256 hash is stored; the plaintext is shown once at creation
- * or rotation.
+ * by id. The SHA-256 hash authenticates runtime calls; the plaintext is also kept
+ * AES-GCM encrypted at rest so the owner can recover it for dashboard streaming
+ * and CLI reconnect without rotating.
  */
 export const agentDeploymentsFields = {
     authId: v.string(),
@@ -112,8 +115,12 @@ export const agentDeploymentsFields = {
     endpointId: v.string(),
     projectSlug: v.string(),
     environmentSlug: v.string(),
-    apiKeyHash: v.optional(v.string()),
-    keyHint: v.optional(v.string()),
+    apiKeyHash: v.string(),
+    keyHint: v.string(),
+    // AES-GCM blob of the plaintext key (owner-recoverable without rotating).
+    apiKeyCiphertext: v.string(),
+    apiKeyIv: v.string(),
+    apiKeyTag: v.string(),
     updatedAt: v.number(),
 };
 
@@ -360,12 +367,7 @@ export const conversationsFields = {
 export const messagesFields = {
     conversationId: v.id("conversations"),
     accountId: v.id("accounts"),
-    role: v.union(
-        v.literal("system"),
-        v.literal("user"),
-        v.literal("assistant"),
-        v.literal("tool"),
-    ),
+    role: v.union(v.literal("system"), v.literal("user"), v.literal("assistant"), v.literal("tool")),
     content: v.string(),
     metadata: v.optional(v.any()),
     createdAt: v.number(),
@@ -406,12 +408,7 @@ export const workspaceFilesFields = {
 export const asyncResultsFields = {
     accountId: v.id("accounts"),
     eventId: v.string(),
-    status: v.union(
-        v.literal("pending"),
-        v.literal("running"),
-        v.literal("completed"),
-        v.literal("failed"),
-    ),
+    status: v.union(v.literal("pending"), v.literal("running"), v.literal("completed"), v.literal("failed")),
     result: v.optional(v.any()),
     error: v.optional(v.string()),
     createdAt: v.number(),
@@ -438,13 +435,7 @@ export const cronsFields = {
     schedulerName: v.string(),
     schedulerGroupName: v.string(),
     lastInvokedAt: v.optional(v.number()),
-    lastStatus: v.optional(
-        v.union(
-            v.literal("started"),
-            v.literal("completed"),
-            v.literal("failed"),
-        ),
-    ),
+    lastStatus: v.optional(v.union(v.literal("started"), v.literal("completed"), v.literal("failed"))),
     lastError: v.optional(v.string()),
     createdAt: v.number(),
     updatedAt: v.number(),
@@ -455,21 +446,106 @@ export const cronRunsFields = {
     cronId: v.id("crons"),
     eventId: v.string(),
     conversationKey: v.string(),
-    status: v.union(
-        v.literal("started"),
-        v.literal("completed"),
-        v.literal("failed"),
-    ),
+    status: v.union(v.literal("started"), v.literal("completed"), v.literal("failed")),
     result: v.optional(v.any()),
     error: v.optional(v.string()),
     startedAt: v.number(),
     completedAt: v.optional(v.number()),
 };
 
+/**
+ * Per-finished-task usage row. Written once per agent task at completion, giving
+ * the dashboard a line-item token/compute cost per task. Indexes allow scoping to
+ * a specific deployment (`endpointId`) or to the whole account. Pricing is
+ * computed at render from a hardcoded shared pricing table — only raw counts are
+ * stored here.
+ */
+export const usageTasksFields = {
+    accountId: v.id("accounts"),
+    /** Per-deployment id (matches agentDeployments.endpointId); the dashboard join key. */
+    endpointId: v.string(),
+    agentId: v.string(),
+    conversationKey: v.string(),
+    /** Unique task id (= session.eventId) for idempotency. */
+    taskId: v.string(),
+    modelProvider: v.string(),
+    modelId: v.string(),
+    /** Epoch ms when the task finished. */
+    finishedAt: v.number(),
+    /** Wall-clock duration of the task in ms. */
+    durationMs: v.number(),
+    status: v.union(v.literal("completed"), v.literal("failed")),
+    // Token counts — raw only; price computed in the UI.
+    inputTokens: v.number(),
+    outputTokens: v.number(),
+    reasoningTokens: v.number(),
+    /** Cache-read tokens (cached input). */
+    cachedInputTokens: v.number(),
+    /** Cache-write tokens (cache creation). */
+    cacheWriteTokens: v.number(),
+    totalTokens: v.number(),
+    /** Harness runtime backend (currently always "lambda"). */
+    runtimeKind: v.string(),
+    /** Harness runtime wall-clock ms (GB-seconds proxy when multiplied by memory). */
+    runtimeWallMs: v.number(),
+    /** Harness runtime memory size in MB (from AWS_LAMBDA_FUNCTION_MEMORY_SIZE). */
+    runtimeMemoryMb: v.number(),
+    /**
+     * CPU consumed in sandboxes during the task, one entry per sandbox context:
+     * the agent's own sandbox (role "agent") and any per-tool sandbox (role
+     * "tool"). cpuUsec is recorded only for instrumented types ("kubernetes");
+     * third-party providers are typed "other" and not metered.
+     */
+    sandboxUsage: v.array(
+        v.object({
+            type: v.string(),
+            role: v.union(v.literal("agent"), v.literal("tool")),
+            toolName: v.optional(v.string()),
+            cpuUsec: v.number(),
+        }),
+    ),
+    /** Number of model steps (model.step.finished events). */
+    stepCount: v.number(),
+    /** Number of tool calls across all steps. */
+    toolCallCount: v.number(),
+};
+
+/**
+ * Pre-aggregated token usage per (deployment, time bucket, model), upserted by
+ * the harness so the dashboard usage panel streams live without scanning logs.
+ * Stored at a fixed 5-minute base bin; queries re-group it into the requested
+ * range. Buckets are sparse (only active windows exist), so row count tracks
+ * real activity, not wall-clock time.
+ */
+export const usageRollupsFields = {
+    accountId: v.id("accounts"),
+    endpointId: v.string(),
+    /** Epoch ms floored to the 5-minute base bin. */
+    bucketStart: v.number(),
+    modelProvider: v.string(),
+    modelId: v.string(),
+    inputTokens: v.number(),
+    outputTokens: v.number(),
+    reasoningTokens: v.number(),
+    cachedInputTokens: v.number(),
+    /** Cache-write tokens (cache creation) folded into this bucket. */
+    cacheWriteTokens: v.number(),
+    totalTokens: v.number(),
+    /** Count of model.invocation.finished (agent tasks) in this bucket. */
+    invocations: v.number(),
+    /** Count of model.step.finished (individual model calls) in this bucket. */
+    modelCalls: v.number(),
+    /** Harness runtime wall-clock ms folded into this bucket. */
+    runtimeWallMs: v.number(),
+    /** Agent-sandbox CPU usage_usec folded into this bucket. */
+    agentSandboxCpuUsec: v.number(),
+    /** Tool-sandbox CPU usage_usec (user-uploaded tools) folded into this bucket. */
+    toolSandboxCpuUsec: v.number(),
+    updatedAt: v.number(),
+};
+
 export default defineSchema({
-    users: defineTable(usersFields)
-        .index("by_authId", ["authId"])
-        .index("by_accountHandle", ["accountHandle"]),
+    users: defineTable(usersFields).index("by_authId", ["authId"]).index("by_accountHandle", ["accountHandle"]),
     projects: defineTable(projectsFields)
         .index("by_authId", ["authId"])
         .index("by_authId_and_slug", ["authId", "slug"])
@@ -481,21 +557,21 @@ export default defineSchema({
         .index("by_authId", ["authId"])
         .index("by_projectId_and_environmentId", ["projectId", "environmentId"])
         .index("by_agentId", ["agentId"]),
-    agentRuntimeSecrets: defineTable(agentRuntimeSecretsFields)
-        .index("by_agentConfigId", ["agentConfigId"]),
-    canvasLayouts: defineTable(canvasLayoutsFields)
-        .index("by_projectId_and_environmentId", ["projectId", "environmentId"]),
+    agentRuntimeSecrets: defineTable(agentRuntimeSecretsFields).index("by_agentConfigId", ["agentConfigId"]),
+    canvasLayouts: defineTable(canvasLayoutsFields).index("by_projectId_and_environmentId", [
+        "projectId",
+        "environmentId",
+    ]),
     agentDeployments: defineTable(agentDeploymentsFields)
         .index("by_projectId_and_environmentId", ["projectId", "environmentId"])
         .index("by_projectId_and_environmentId_and_status", ["projectId", "environmentId", "status"])
         .index("by_apiKeyHash", ["apiKeyHash"])
         .index("by_authId", ["authId"]),
-    toolServices: defineTable(toolServicesFields)
-        .index("by_projectId_environmentId_and_nodeId", [
-            "projectId",
-            "environmentId",
-            "nodeId",
-        ]),
+    toolServices: defineTable(toolServicesFields).index("by_projectId_environmentId_and_nodeId", [
+        "projectId",
+        "environmentId",
+        "nodeId",
+    ]),
     deployKeys: defineTable(deployKeysFields)
         .index("by_keyHash", ["keyHash"])
         .index("by_projectId_and_environmentId", ["projectId", "environmentId"]),
@@ -510,16 +586,12 @@ export default defineSchema({
         .index("by_projectId_and_environmentId", ["projectId", "environmentId"])
         .index("by_environmentId_kind_and_name", ["environmentId", "kind", "name"])
         .index("by_accountId", ["accountId"]),
-    orgs: defineTable(orgsFields)
-        .index("by_slug", ["slug"])
-        .index("by_ownerAuthId", ["ownerAuthId"]),
+    orgs: defineTable(orgsFields).index("by_slug", ["slug"]).index("by_ownerAuthId", ["ownerAuthId"]),
     orgMembers: defineTable(orgMembersFields)
         .index("by_orgId", ["orgId"])
         .index("by_userId", ["userId"])
         .index("by_orgId_and_userId", ["orgId", "userId"]),
-    accounts: defineTable(accountsFields)
-        .index("by_orgId", ["orgId"])
-        .index("by_secretHash", ["secretHash"]),
+    accounts: defineTable(accountsFields).index("by_orgId", ["orgId"]).index("by_secretHash", ["secretHash"]),
     agents: defineTable(agentsFields).index("by_accountId", ["accountId"]),
     accountTools: defineTable(accountToolsFields)
         .index("by_accountId", ["accountId"])
@@ -549,14 +621,28 @@ export default defineSchema({
         .index("by_projectId_and_nodeId", ["projectId", "nodeId"])
         .index("by_projectId_nodeId_and_path", ["projectId", "nodeId", "path"])
         .index("by_authId", ["authId"]),
-    asyncResults: defineTable(asyncResultsFields)
-        .index("by_accountId", ["accountId"])
-        .index("by_eventId", ["eventId"]),
+    asyncResults: defineTable(asyncResultsFields).index("by_accountId", ["accountId"]).index("by_eventId", ["eventId"]),
     crons: defineTable(cronsFields)
         .index("by_accountId", ["accountId"])
         .index("by_accountId_and_agentId", ["accountId", "agentId"])
         .index("by_accountId_and_status", ["accountId", "status"])
         .index("by_schedulerName", ["schedulerName"]),
-    cronRuns: defineTable(cronRunsFields)
-        .index("by_accountId_and_cronId_and_startedAt", ["accountId", "cronId", "startedAt"]),
+    cronRuns: defineTable(cronRunsFields).index("by_accountId_and_cronId_and_startedAt", [
+        "accountId",
+        "cronId",
+        "startedAt",
+    ]),
+    usageTasks: defineTable(usageTasksFields)
+        .index("by_endpointId_and_finishedAt", ["endpointId", "finishedAt"])
+        .index("by_accountId_and_finishedAt", ["accountId", "finishedAt"])
+        .index("by_accountId_and_taskId", ["accountId", "taskId"]),
+    usageRollups: defineTable(usageRollupsFields)
+        .index("by_endpointId_and_bucketStart", ["endpointId", "bucketStart"])
+        .index("by_accountId_endpointId_bucketStart_modelProvider_modelId", [
+            "accountId",
+            "endpointId",
+            "bucketStart",
+            "modelProvider",
+            "modelId",
+        ]),
 });

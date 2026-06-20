@@ -17,9 +17,8 @@ export interface RemoteManifestResponse {
   /** Non-fatal deploy advisories (e.g. referenced-but-unset env vars). */
   warnings?: { missingEnv?: string[] };
   /**
-   * The environment's runtime API key context. `apiKey` (plaintext) is present
-   * only the first time the key is minted (or after a rotate); later deploys
-   * carry just the masked `keyHint`. Used to write `FILTHY_PANTY_API_KEY` locally.
+   * The environment's runtime API key context. Deployments include the plaintext
+   * `apiKey` so the CLI can write `FILTHY_PANTY_API_KEY` locally.
    */
   deployment?: {
     accountId: string;
@@ -27,7 +26,7 @@ export interface RemoteManifestResponse {
     projectSlug: string;
     environmentSlug: string;
     keyHint: string;
-    apiKey: string | null;
+    apiKey: string;
   } | null;
 }
 
@@ -55,17 +54,6 @@ export interface CliOnboardingContext {
 export interface CliEnvVar {
   name: string;
   updatedAt: number;
-}
-
-/** A single runtime/deploy log line as returned by the CLI logs endpoint. */
-export interface CliLogEntry {
-  timestamp: number;
-  message: string;
-  level: "INFO" | "WARN" | "ERROR" | "DEBUG";
-  logGroup: string;
-  logStream?: string;
-  functionName: string;
-  requestId?: string;
 }
 
 export type DiffOperation = "create" | "update" | "delete" | "rename";
@@ -105,6 +93,22 @@ export class FilthyPantySyncClient {
     return await response.json() as RemoteManifestResponse;
   }
 
+  /**
+   * Recovers the environment's runtime API key so the CLI can reconnect to a
+   * dashboard-created project without redeploying. Returns null when the project/
+   * environment is unknown.
+   */
+  async getRuntimeKey(project: string, environment: string): Promise<{ apiKey: string; keyHint: string } | null> {
+    const response = await this.request(project, environment, "/runtime-key", { method: "GET" });
+    if (response.status === 404) return null;
+    await assertOk(response, "Fetch runtime key failed");
+    const payload = await response.json() as { apiKey?: string; keyHint?: string };
+
+    if (!payload.apiKey) throw new Error("Fetch runtime key failed: response omitted apiKey");
+
+    return { apiKey: payload.apiKey, keyHint: payload.keyHint ?? "" };
+  }
+
   async setEnv(project: string, environment: string, name: string, value: string): Promise<void> {
     const response = await this.request(project, environment, `/env/${encodeURIComponent(name)}`, {
       method: "PUT",
@@ -141,21 +145,6 @@ export class FilthyPantySyncClient {
       method: "DELETE",
     });
     await assertOk(response, "Remove environment variable failed");
-  }
-
-  async logs(
-    project: string,
-    environment: string,
-    options: { limit?: number; errorOnly?: boolean; lookbackMs?: number } = {},
-  ): Promise<{ logs: CliLogEntry[] }> {
-    const params = new URLSearchParams();
-    if (options.limit !== undefined) params.set("limit", String(options.limit));
-    if (options.errorOnly !== undefined) params.set("errorOnly", options.errorOnly ? "1" : "0");
-    if (options.lookbackMs !== undefined) params.set("lookbackMs", String(options.lookbackMs));
-    const suffix = params.size > 0 ? `/logs?${params}` : "/logs";
-    const response = await this.request(project, environment, suffix, { method: "GET" });
-    await assertOk(response, "Fetch logs failed");
-    return await response.json() as { logs: CliLogEntry[] };
   }
 
   async getOnboarding(): Promise<CliOnboardingContext> {

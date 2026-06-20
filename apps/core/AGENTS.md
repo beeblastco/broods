@@ -6,7 +6,7 @@ Paths in this file are relative to `apps/core/` unless written with `../../`. If
 
 Dependent workspaces (in this monorepo):
 
-- `../../packages/convex` (`@filthy-panty/convex`): shared Convex backend. Core's storage adapter at `functions/_shared/storage/convex/` reads it; convex mode is active on the `production` stage only (`dev` uses DynamoDB). Read `../../packages/convex/AGENTS.md` before changing Convex files.
+- `../../packages/convex` (`@filthy-panty/convex`): shared Convex backend. Core's storage adapter at `functions/_shared/storage/convex/` reads it; convex mode is active on **any stage that supplies both `CONVEX_URL` and `CONVEX_DEPLOY_KEY`** (production always does; dev does too since CI injects those secrets). Read `../../packages/convex/AGENTS.md` before changing Convex files.
 - `../../packages/filthy-panty` (`filthy-panty`): CLI + SDK npm package that calls core's deployed Function URLs. Update its types/client when the public API or config shape changes.
 - `../../packages/demos`: runnable demo folders against the deployed API, importing the SDK. Keep them in sync with config changes.
 - `../../apps/dashboard` (`@filthy-panty/dashboard`): Next.js dashboard sharing the Convex backend. Has its own AGENTS.md — read it before dashboard work.

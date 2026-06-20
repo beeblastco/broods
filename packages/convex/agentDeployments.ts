@@ -3,15 +3,16 @@
  *
  * One key per environment invokes any deployed agent in it; the agent is chosen
  * per request by id. The dashboard surfaces the key/URLs; the CLI mints it on
- * `deploy`. Only the SHA-256 hash is stored — the plaintext is returned once at
- * creation or rotation. The runtime path resolves it in `core` via
- * `getByApiKeyHash`.
+ * `deploy`. The SHA-256 hash authenticates runtime calls (`getByApiKeyHash` in
+ * `core`); the plaintext is also stored AES-GCM encrypted so the owner can
+ * recover it for dashboard streaming and CLI reconnect without rotating.
  */
 
 import { v } from "convex/values";
 import type { Id } from "./_generated/dataModel";
 import { internalQuery, mutation, query, type MutationCtx } from "./_generated/server";
 import { authKit } from "./auth";
+import { decryptAgentConfigBlob, encryptAgentConfigBlob } from "./model/agentConfigCodec";
 import { getOwnedEnvironment } from "./model/ownership/environment";
 import { getProjectForRole } from "./model/ownership/project";
 
@@ -44,13 +45,47 @@ function endpointIdForEnvironment(environmentId: Id<"environments">): string {
     return `env-${environmentId.slice(-8)}`;
 }
 
+/** Secret for AES-GCM encrypting the runtime key at rest (shared with env vars). */
+function encryptionSecret(): string {
+    const secret = process.env.ACCOUNT_CONFIG_ENCRYPTION_SECRET;
+    if (!secret) {
+        throw new Error("ACCOUNT_CONFIG_ENCRYPTION_SECRET is required to store runtime API keys");
+    }
+
+    return secret;
+}
+
+/** Encrypt a plaintext key into the three at-rest blob fields stored on the row. */
+async function encryptApiKey(rawApiKey: string) {
+    const blob = await encryptAgentConfigBlob({ value: rawApiKey }, encryptionSecret());
+
+    return { apiKeyCiphertext: blob.ciphertext, apiKeyIv: blob.iv, apiKeyTag: blob.tag };
+}
+
+/** Decrypt a deployment's stored runtime key. */
+async function decryptApiKey(deployment: {
+    apiKeyCiphertext: string;
+    apiKeyIv: string;
+    apiKeyTag: string;
+}): Promise<string> {
+    const decoded = await decryptAgentConfigBlob(
+        { ciphertext: deployment.apiKeyCiphertext, iv: deployment.apiKeyIv, tag: deployment.apiKeyTag },
+        encryptionSecret(),
+    );
+    const value = (decoded as { value?: unknown } | null)?.value;
+
+    if (typeof value !== "string") throw new Error("Stored runtime API key is invalid");
+
+    return value;
+}
+
 /** Public (hash-free) view of an environment deployment for the dashboard. */
 const environmentDeploymentView = v.object({
     _id: v.id("agentDeployments"),
     endpointId: v.string(),
     projectSlug: v.string(),
     environmentSlug: v.string(),
-    keyHint: v.optional(v.string()),
+    keyHint: v.string(),
     updatedAt: v.number(),
 });
 
@@ -60,14 +95,14 @@ type EnsureResult = {
     projectSlug: string;
     environmentSlug: string;
     keyHint: string;
-    /** Plaintext key — present only when a key was just created or rotated. */
-    rawApiKey: string | null;
+    /** Plaintext key: freshly minted, or recovered from the stored blob. */
+    rawApiKey: string;
 };
 
 /**
  * Find the environment's active deployment, creating one (with a fresh key) when
  * absent. When `rotate` is true an existing key is regenerated. Returns the raw
- * key only when it was just minted, mirroring the reveal-once contract.
+ * key whenever it can — minted now, or decrypted from the at-rest blob.
  */
 export async function ensureEnvironmentDeployment(
     ctx: MutationCtx,
@@ -90,7 +125,8 @@ export async function ensureEnvironmentDeployment(
         .first();
 
     if (existing && args.rotate !== true) {
-        // Keep slugs fresh (project/environment can be renamed) but reuse the key.
+        // Keep slugs fresh (project/environment can be renamed) but reuse the key,
+        // recovering its plaintext from the stored blob.
         if (existing.projectSlug !== args.projectSlug || existing.environmentSlug !== args.environmentSlug) {
             await ctx.db.patch(existing._id, {
                 projectSlug: args.projectSlug,
@@ -104,20 +140,22 @@ export async function ensureEnvironmentDeployment(
             endpointId: existing.endpointId,
             projectSlug: args.projectSlug,
             environmentSlug: args.environmentSlug,
-            keyHint: existing.keyHint ?? "",
-            rawApiKey: null,
+            keyHint: existing.keyHint,
+            rawApiKey: await decryptApiKey(existing),
         };
     }
 
     const rawApiKey = generateDeploymentKey();
     const apiKeyHash = await sha256Hex(rawApiKey);
     const keyHint = deploymentKeyHint(rawApiKey);
+    const encryptedKey = await encryptApiKey(rawApiKey);
     const now = Date.now();
 
     if (existing) {
         await ctx.db.patch(existing._id, {
             apiKeyHash: apiKeyHash,
             keyHint: keyHint,
+            ...encryptedKey,
             projectSlug: args.projectSlug,
             environmentSlug: args.environmentSlug,
             updatedAt: now,
@@ -144,6 +182,7 @@ export async function ensureEnvironmentDeployment(
         environmentSlug: args.environmentSlug,
         apiKeyHash: apiKeyHash,
         keyHint: keyHint,
+        ...encryptedKey,
         updatedAt: now,
     });
 
@@ -216,16 +255,44 @@ export const getForEnvironment = query({
     },
 });
 
+/**
+ * Owner-only: decrypts the environment's stored runtime key so the dashboard can
+ * stream logs/traces without re-minting. Returns null when the environment has no
+ * deployment yet. Reactive by design, so a freshly generated key appears without
+ * a reload.
+ */
+export const revealKeyForEnvironment = query({
+    args: { projectId: v.id("projects"), environmentId: v.id("environments") },
+    returns: v.union(v.string(), v.null()),
+    handler: async (ctx, { projectId, environmentId }) => {
+        const authUser = await authKit.getAuthUser(ctx);
+        if (!authUser) throw new Error("User not found or not authenticated");
+
+        const environment = await getOwnedEnvironment(ctx, authUser.id, environmentId);
+        if (!environment || environment.projectId !== projectId) return null;
+
+        const deployment = await ctx.db
+            .query("agentDeployments")
+            .withIndex("by_projectId_and_environmentId_and_status", (q) =>
+                q.eq("projectId", projectId).eq("environmentId", environmentId).eq("status", "active"),
+            )
+            .first();
+        if (!deployment) return null;
+
+        return decryptApiKey(deployment);
+    },
+});
+
 const ensureReturn = v.object({
     _id: v.id("agentDeployments"),
     endpointId: v.string(),
     projectSlug: v.string(),
     environmentSlug: v.string(),
     keyHint: v.string(),
-    rawApiKey: v.union(v.string(), v.null()),
+    rawApiKey: v.string(),
 });
 
-/** Ensure the environment has a runtime key, creating one on first call. */
+/** Ensure the environment has a recoverable runtime key, creating one on first call. */
 export const ensureForEnvironment = mutation({
     args: { projectId: v.id("projects"), environmentId: v.id("environments") },
     returns: ensureReturn,
@@ -250,8 +317,8 @@ export const ensureForEnvironment = mutation({
 });
 
 /**
- * Regenerate the environment's runtime key, returning the new plaintext once. If
- * the environment has no key yet this mints the first one (same as
+ * Regenerate the environment's runtime key and return the new plaintext. If the
+ * environment has no key yet this mints the first one (same as
  * `ensureForEnvironment`), so a rotate is always safe to call.
  */
 export const rotate = mutation({

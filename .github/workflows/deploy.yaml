@@ -123,6 +123,10 @@ jobs:
       SANDBOX_IMAGE_READY_PRODUCTION: ${{ vars.SANDBOX_IMAGE_READY_PRODUCTION || 'false' }}
       NATS_URL: ${{ secrets.NATS_URL }}
       NATS_TOKEN: ${{ secrets.NATS_TOKEN }}
+      # Durable Lambda logs/traces. The endpoint is non-secret; the Basic auth
+      # header must remain an environment/repository secret.
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${{ vars.OTEL_EXPORTER_OTLP_ENDPOINT || 'https://otel.beeblast.co' }}
+      OTEL_EXPORTER_OTLP_HEADERS: ${{ secrets.OTEL_EXPORTER_OTLP_HEADERS }}
       DAYTONA_API_KEY: ${{ secrets.DAYTONA_API_KEY }}
       DAYTONA_ORGANIZATION_ID: ${{ vars.DAYTONA_ORGANIZATION_ID }}
       DAYTONA_API_URL: ${{ vars.DAYTONA_API_URL }}
@@ -174,6 +178,11 @@ jobs:
 
           if [[ "${ENABLE_WEBSOCKET:-false}" == "true" && -z "${NATS_URL:-}" ]]; then
             echo "NATS_URL must be set when ENABLE_WEBSOCKET=true" >&2
+            exit 1
+          fi
+
+          if [[ -z "${OTEL_EXPORTER_OTLP_ENDPOINT:-}" || -z "${OTEL_EXPORTER_OTLP_HEADERS:-}" ]]; then
+            echo "OTEL_EXPORTER_OTLP_ENDPOINT and OTEL_EXPORTER_OTLP_HEADERS are required for durable observability" >&2
             exit 1
           fi
 

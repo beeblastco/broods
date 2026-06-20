@@ -124,6 +124,8 @@ export const myAgent = defineAgent({
 
 When `publicAccess` is not set, a public-key request for that agent is refused with HTTP `403` (`{"error": "...", "code": "public_access_disabled"}`). Internal callers (account/admin secret), channel webhooks, and cron runs are never gated by this flag, so a private agent stays reachable through an internal endpoint or a channel webhook. The dashboard's agent **Public API** panel shows the toggle and hides the endpoint URLs while access is off.
 
+The environment runtime key is encrypted at rest and recoverable by the owning user. The dashboard loads it automatically for Monitoring and Tracing, while `filthy-panty login` or `filthy-panty deploy` writes it to `FILTHY_PANTY_API_KEY` in `.env.local`. Dashboard and CLI sessions reuse the stored key without rotating it.
+
 > Bringing your own custom domain to replace the generated endpoint URL is tracked as a future enhancement.
 
 Inspect and test agents from the CLI:

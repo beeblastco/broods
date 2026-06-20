@@ -41,6 +41,7 @@ import {
   normalizeUpdateAccountToolInput,
   type AccountToolRecord,
 } from "../account-tools.ts";
+import { usage } from "./usage.ts";
 
 // ConvexHttpClient's typed `query`/`mutation` only accept public function
 // refs; the backend package exposes internalQuery / internalMutation, so we
@@ -704,4 +705,5 @@ export const convexStorageProvider: StorageProvider = {
   sandboxConfigs,
   workspaceConfigs,
   accountTools,
+  usage,
 };

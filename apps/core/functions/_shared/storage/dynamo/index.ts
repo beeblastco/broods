@@ -10,6 +10,7 @@ import { dynamoAccountStore } from "./accounts.ts";
 import { dynamoAgentStore } from "./agents.ts";
 import { dynamoCronStore } from "./cron.ts";
 import { dynamoSandboxConfigStore } from "./sandbox-configs.ts";
+import { dynamoUsageStore } from "./usage.ts";
 import { dynamoWorkspaceConfigStore } from "./workspace-configs.ts";
 
 export const dynamoStorageProvider: StorageProvider = {
@@ -25,6 +26,7 @@ export const dynamoStorageProvider: StorageProvider = {
   sandboxConfigs: dynamoSandboxConfigStore,
   workspaceConfigs: dynamoWorkspaceConfigStore,
   accountTools: dynamoAccountToolStore,
+  usage: dynamoUsageStore,
 };
 
 export {
@@ -33,5 +35,6 @@ export {
   dynamoAgentStore,
   dynamoCronStore,
   dynamoSandboxConfigStore,
+  dynamoUsageStore,
   dynamoWorkspaceConfigStore,
 };

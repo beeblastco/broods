@@ -569,9 +569,7 @@ export function DetailsTab({
                                 </div>
                             ) : (
                                 <p className="rounded-md border border-border bg-muted/40 px-2.5 py-2 text-xs text-muted-foreground">
-                                    {activeDeployment.keyHint ? `${activeDeployment.keyHint} \u2014 ` : ""}
-                                    the full key is shown only once. Rotate to mint a fresh one you can copy here, or run
-                                    <code> filthy-panty deploy --rotate-key</code>.
+                                    Loading the encrypted runtime key…
                                 </p>
                             )}
                         </div>

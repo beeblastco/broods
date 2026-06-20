@@ -90,6 +90,8 @@ interface ExecResult {
   timedOut?: boolean;
 }
 
+const podCpuLocks = new Map<string, Promise<void>>();
+
 export class KubernetesSandboxExecutor implements SandboxExecutor {
   readonly #config: SandboxExecutorConfig;
   // Clients are initialized lazily: the kubeconfig may have to be fetched from SSM
@@ -120,20 +122,37 @@ export class KubernetesSandboxExecutor implements SandboxExecutor {
   async run(request: SandboxRunRequest): Promise<SandboxRunResult> {
     const startedAt = Date.now();
     return this.#withSandbox(request, async (pod) => {
-      const result = await this.#execInPod(pod, this.#wrapShell(request, request.code), request.timeoutSeconds);
-      const stdout = truncateText(result.stdout, request.outputLimitBytes);
-      const stderr = truncateText(result.stderr, request.outputLimitBytes);
-      return {
-        ok: result.exitCode === 0,
-        runtime: request.runtime ?? "bash",
-        exitCode: result.exitCode,
-        stdout: stdout.value,
-        stderr: stderr.value,
-        durationMs: Date.now() - startedAt,
-        timedOut: result.timedOut === true,
-        truncated: stdout.truncated || stderr.truncated,
-        provider: "kubernetes",
-      };
+      const podKey = `${pod.metadata?.namespace ?? ""}/${pod.metadata?.name ?? ""}`;
+      const previous = podCpuLocks.get(podKey) ?? Promise.resolve();
+      let release!: () => void;
+      const current = new Promise<void>((resolve) => { release = resolve; });
+      const queued = previous.then(() => current);
+      podCpuLocks.set(podKey, queued);
+      await previous;
+      try {
+        const before = await this.#readCpuUsec(pod);
+        const result = await this.#execInPod(pod, this.#wrapShell(request, request.code), request.timeoutSeconds);
+        const after = await this.#readCpuUsec(pod);
+        const cpuUsec = before !== undefined && after !== undefined && after > before ? after - before : undefined;
+        const stdout = truncateText(result.stdout, request.outputLimitBytes);
+        const stderr = truncateText(result.stderr, request.outputLimitBytes);
+
+        return {
+          ok: result.exitCode === 0,
+          runtime: request.runtime ?? "bash",
+          exitCode: result.exitCode,
+          stdout: stdout.value,
+          stderr: stderr.value,
+          durationMs: Date.now() - startedAt,
+          timedOut: result.timedOut === true,
+          truncated: stdout.truncated || stderr.truncated,
+          provider: "kubernetes",
+          ...(cpuUsec !== undefined ? { cpuUsec } : {}),
+        };
+      } finally {
+        release();
+        if (podCpuLocks.get(podKey) === queued) podCpuLocks.delete(podKey);
+      }
     });
   }
 
@@ -153,16 +172,33 @@ export class KubernetesSandboxExecutor implements SandboxExecutor {
     request: { namespace?: string; reservationKey?: string },
     command: string[],
     opts: { stdin?: Readable; timeoutSeconds?: number; outputLimitBytes?: number; onStdout?: (chunk: string) => void } = {},
-  ): Promise<{ stdout: string; stderr: string; exitCode: number | null; timedOut?: boolean }> {
+  ): Promise<{ stdout: string; stderr: string; exitCode: number | null; timedOut?: boolean; cpuUsec?: number }> {
     const pod = await this.#resumeForJob(request);
-    const result = await this.#execInPod(pod, command, opts.timeoutSeconds ?? 60, opts.stdin, opts.onStdout);
-    const limit = opts.outputLimitBytes;
-    return {
-      stdout: limit ? truncateText(result.stdout, limit).value : result.stdout,
-      stderr: limit ? truncateText(result.stderr, limit).value : result.stderr,
-      exitCode: result.exitCode,
-      ...(result.timedOut ? { timedOut: true } : {}),
-    };
+    const podKey = `${pod.metadata?.namespace ?? ""}/${pod.metadata?.name ?? ""}`;
+    const previous = podCpuLocks.get(podKey) ?? Promise.resolve();
+    let release!: () => void;
+    const current = new Promise<void>((resolve) => { release = resolve; });
+    const queued = previous.then(() => current);
+    podCpuLocks.set(podKey, queued);
+    await previous;
+    try {
+      const before = await this.#readCpuUsec(pod);
+      const result = await this.#execInPod(pod, command, opts.timeoutSeconds ?? 60, opts.stdin, opts.onStdout);
+      const after = await this.#readCpuUsec(pod);
+      const cpuUsec = before !== undefined && after !== undefined && after > before ? after - before : undefined;
+      const limit = opts.outputLimitBytes;
+
+      return {
+        stdout: limit ? truncateText(result.stdout, limit).value : result.stdout,
+        stderr: limit ? truncateText(result.stderr, limit).value : result.stderr,
+        exitCode: result.exitCode,
+        ...(result.timedOut ? { timedOut: true } : {}),
+        ...(cpuUsec !== undefined ? { cpuUsec } : {}),
+      };
+    } finally {
+      release();
+      if (podCpuLocks.get(podKey) === queued) podCpuLocks.delete(podKey);
+    }
   }
 
   async runBackground(request: SandboxRunRequest): Promise<SandboxJobHandle> {
@@ -577,7 +613,19 @@ export class KubernetesSandboxExecutor implements SandboxExecutor {
   }
 
   #wrapShell(request: { workspaceRoot?: string; namespace?: string }, shell: string): string[] {
-    return ["bash", "-lc", `cd ${shellQuote(requiredWorkspacePath(request, "/mnt/workspaces"))}; ${shell}`];
+    const workdir = shellQuote(requiredWorkspacePath(request, "/mnt/workspaces"));
+    return ["bash", "-lc", `cd ${workdir}; ${shell}`];
+  }
+
+  async #readCpuUsec(pod: V1Pod): Promise<number | undefined> {
+    const result = await this.#execInPod(
+      pod,
+      ["bash", "-lc", "grep -m1 '^usage_usec ' /sys/fs/cgroup/cpu.stat 2>/dev/null | awk '{print $2}'"],
+      10,
+    );
+    const value = Number(result.stdout.trim());
+
+    return result.exitCode === 0 && Number.isFinite(value) && value >= 0 ? value : undefined;
   }
 
   async #execOrThrow(pod: V1Pod, command: string[]): Promise<void> {

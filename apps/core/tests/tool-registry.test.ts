@@ -496,6 +496,7 @@ function storageWithAccountTool(accountTool: AccountToolRecord): StorageProvider
       remove: mock() as never,
       removeAllForAccount: mock() as never,
     },
+    usage: { async recordTask() {} },
   } as StorageProvider;
 }
 

@@ -152,6 +152,15 @@ export class Session {
     // originating chat channel or WebSocket connection; absent for plain
     // direct/async API turns, which fall back to status polling.
     public readonly delivery?: AsyncToolDelivery,
+    // Per-deployment id from the runtime key that authorized this turn. Present
+    // for direct-API (deployment-key) traffic; absent for channel/cron paths.
+    // Used to scope realtime telemetry to the dashboard's deployment view.
+    public readonly endpointId?: string,
+    // Project and environment slugs from the runtime key scope. Present for
+    // deployment-key traffic; absent for channel/cron paths. Used to build
+    // NATS observability subjects (tracesSubject, logsSubject) for live streaming.
+    public readonly projectSlug?: string,
+    public readonly environmentSlug?: string,
   ) { }
 
   async claim(): Promise<boolean> {

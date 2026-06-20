@@ -6,6 +6,10 @@
  * Method names mirror the Convex submodule (getById, getBySecretHash, create,
  * update, remove, list) rather than DDB primitives. Records are re-exported
  * from the existing _shared/ modules — do not duplicate.
+ *
+ * Usage metering: see UsageTaskInput / UsageStore below. The active provider
+ * writes one row per finished task. Convex uses full endpoint/project/env
+ * scope; DynamoDB uses coarser account+agent scope.
  */
 
 import type {
@@ -67,6 +71,69 @@ export type {
   CreateAccountToolInput,
   UpdateAccountToolInput,
 };
+
+/**
+ * Raw counts for one finished agent task. No dollar amounts — pricing is
+ * computed at render time from a shared hardcoded table (plan §6d, §10a).
+ *
+ * endpointId / project / environment are optional: the Convex adapter uses
+ * them for full per-env scope; the DynamoDB adapter ignores them (coarser
+ * account+agent scope per plan §8d decision).
+ */
+export interface UsageTaskInput {
+  accountId: string;
+  /** Convex endpoint identifier — undefined in DynamoDB mode. */
+  endpointId?: string;
+  /** Deployment project slug — undefined in DynamoDB mode. */
+  project?: string;
+  /** Deployment environment slug — undefined in DynamoDB mode. */
+  environment?: string;
+  agentId: string;
+  conversationKey: string;
+  /** Equals session.eventId — unique per finished task. */
+  taskId: string;
+  modelProvider: string;
+  modelId: string;
+  /** Unix epoch ms when the task finished. */
+  finishedAt: number;
+  /** Wall-clock duration of the full task invocation in ms. */
+  durationMs: number;
+  status: "completed" | "failed";
+  /** Prompt (non-cached) input tokens. */
+  inputTokens: number;
+  /** Completion tokens generated. */
+  outputTokens: number;
+  /** Thinking / reasoning tokens (Anthropic extended thinking). */
+  reasoningTokens: number;
+  /** Cache-read input tokens (served from an existing cache entry). */
+  cachedInputTokens: number;
+  /** Cache-write tokens (tokens that created a new cache entry). */
+  cacheWriteTokens: number;
+  /** Total tokens across all dimensions (provider definition). */
+  totalTokens: number;
+  /** Harness runtime backend (currently always "lambda"). */
+  runtimeKind: string;
+  /** Harness runtime wall-clock ms (durationMs × memoryMb proxy). */
+  runtimeWallMs: number;
+  /** Harness runtime memory size in MB (AWS_LAMBDA_FUNCTION_MEMORY_SIZE). */
+  runtimeMemoryMb: number;
+  /** CPU per sandbox context; cgroup cpu.stat delta, recorded for kubernetes only. */
+  sandboxUsage: SandboxUsageEntry[];
+  /** Number of model steps executed in this task. */
+  stepCount: number;
+  /** Number of tool calls made across all steps. */
+  toolCallCount: number;
+}
+
+/** One sandbox's CPU within a task: the agent's own sandbox or a per-tool sandbox. */
+export interface SandboxUsageEntry {
+  /** Sandbox provider type: "kubernetes" (metered) or "other" (third-party, unmetered). */
+  type: string;
+  role: "agent" | "tool";
+  /** The custom tool that ran, when role is "tool". */
+  toolName?: string;
+  cpuUsec: number;
+}
 
 /** Account CRUD + secret-hash lookup. */
 export interface AccountStore {
@@ -174,6 +241,15 @@ export interface AccountToolStore {
   removeAllForAccount(accountId: string): Promise<number>;
 }
 
+/**
+ * Writes per-task usage counts. The active storage provider implements this;
+ * it inserts one raw-count row per finished task and folds into a rollup
+ * bucket (Convex: 5-min usageRollups; DynamoDB: ADD-atomic rollup item).
+ */
+export interface UsageStore {
+  recordTask(input: UsageTaskInput): Promise<void>;
+}
+
 export interface StorageProvider {
   readonly kind: "dynamodb" | "convex";
   accounts: AccountStore;
@@ -183,4 +259,5 @@ export interface StorageProvider {
   sandboxConfigs: SandboxConfigStore;
   workspaceConfigs: WorkspaceConfigStore;
   accountTools: AccountToolStore;
+  usage: UsageStore;
 }

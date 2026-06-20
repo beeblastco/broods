@@ -928,7 +928,7 @@ async function prepareDirectTurn(event: DirectInboundEvent): Promise<DirectTurn 
       publicConversationKey: event.publicConversationKey,
     }
     : undefined;
-  const session = new Session(event.eventId, event.conversationKey, event.accountId, event.agentId, event.agentConfig, delivery);
+  const session = new Session(event.eventId, event.conversationKey, event.accountId, event.agentId, event.agentConfig, delivery, event.endpointId, event.projectSlug, event.environmentSlug);
   if (!(await claimSession(session))) {
     return null;
   }

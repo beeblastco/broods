@@ -25,6 +25,7 @@ import type * as cliTypes from "../cliTypes.js";
 import type * as conversations from "../conversations.js";
 import type * as cron from "../cron.js";
 import type * as cronPublic from "../cronPublic.js";
+import type * as crons from "../crons.js";
 import type * as deployKeys from "../deployKeys.js";
 import type * as environment from "../environment.js";
 import type * as environmentVariables from "../environmentVariables.js";
@@ -42,6 +43,7 @@ import type * as model_ownership_environment from "../model/ownership/environmen
 import type * as model_ownership_org from "../model/ownership/org.js";
 import type * as model_ownership_project from "../model/ownership/project.js";
 import type * as model_sandboxConfigSync from "../model/sandboxConfigSync.js";
+import type * as modelPricing from "../modelPricing.js";
 import type * as org from "../org.js";
 import type * as orgLifecycle from "../orgLifecycle.js";
 import type * as orgMembers from "../orgMembers.js";
@@ -51,6 +53,7 @@ import type * as skills from "../skills.js";
 import type * as skillsPublic from "../skillsPublic.js";
 import type * as stripe from "../stripe.js";
 import type * as toolService from "../toolService.js";
+import type * as usage from "../usage.js";
 import type * as user from "../user.js";
 import type * as webhooks from "../webhooks.js";
 import type * as workspaceConfigs from "../workspaceConfigs.js";
@@ -81,6 +84,7 @@ declare const fullApi: ApiFromModules<{
   conversations: typeof conversations;
   cron: typeof cron;
   cronPublic: typeof cronPublic;
+  crons: typeof crons;
   deployKeys: typeof deployKeys;
   environment: typeof environment;
   environmentVariables: typeof environmentVariables;
@@ -98,6 +102,7 @@ declare const fullApi: ApiFromModules<{
   "model/ownership/org": typeof model_ownership_org;
   "model/ownership/project": typeof model_ownership_project;
   "model/sandboxConfigSync": typeof model_sandboxConfigSync;
+  modelPricing: typeof modelPricing;
   org: typeof org;
   orgLifecycle: typeof orgLifecycle;
   orgMembers: typeof orgMembers;
@@ -107,6 +112,7 @@ declare const fullApi: ApiFromModules<{
   skillsPublic: typeof skillsPublic;
   stripe: typeof stripe;
   toolService: typeof toolService;
+  usage: typeof usage;
   user: typeof user;
   webhooks: typeof webhooks;
   workspaceConfigs: typeof workspaceConfigs;
