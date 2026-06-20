@@ -43,6 +43,11 @@ export const analysisAgent = defineAgent({
     model: {
       provider: "minimax",
       modelId: "MiniMax-M3",
+      providerOptions: {
+        anthropic: {
+          thinking: { type: 'enabled', budgetTokens: 12000 },
+        },
+      },
     },
     agent: {
       system: [
