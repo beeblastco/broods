@@ -38,6 +38,12 @@ export const agent = defineAgent({
     model: {
       provider: "minimax", 
       modelId: "MiniMax-M3",
+      providerOptions: {
+        // Only work with anthropic thinking setting
+        anthropic: {
+          thinking: { type: 'enabled', budgetTokens: 12000 },
+        }
+      },
     },
     agent: {
       system: "You are a helpful assistant.",
