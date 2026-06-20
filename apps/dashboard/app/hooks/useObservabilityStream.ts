@@ -40,6 +40,7 @@ interface UseObservabilityStreamResult<T> {
   entries: T[];
   status: ObservabilityStreamStatus;
   error: string | null;
+  refresh: () => void;
 }
 
 const RECONNECT_DELAY_MS = 3_000;
@@ -163,16 +164,14 @@ export function useObservabilityStream(
       }
 
       if (msg.type === "backfill") {
-        // Splice backfill entries at the beginning (oldest first).
         setEntries((prev) => {
           const incoming = msg.entries as (ObservabilityLogEntry | ObservabilitySpanRow)[];
-          // Deduplicate: skip any entry whose identity key already exists.
-          const existingKeys = new Set(prev.map(entryKey));
-          const novel = incoming.filter((e) => !existingKeys.has(entryKey(e)));
-          const combined = [...novel, ...prev];
+          const merged = new Map(prev.map((entry) => [entryKey(entry), entry]));
+          for (const entry of incoming) merged.set(entryKey(entry), entry);
+          const combined = [...merged.values()].sort((a, b) => entryTime(b) - entryTime(a));
 
           return combined.length > MAX_ENTRIES
-            ? combined.slice(combined.length - MAX_ENTRIES)
+            ? combined.slice(0, MAX_ENTRIES)
             : combined;
         });
 
@@ -183,10 +182,13 @@ export function useObservabilityStream(
         const entry = msg.entry;
         setEntries((prev) => {
           const key = entryKey(entry);
-          if (prev.some((e) => entryKey(e) === key)) return prev;
-          const next = [...prev, entry];
+          const existingIndex = prev.findIndex((candidate) => entryKey(candidate) === key);
+          const next = existingIndex === -1
+            ? [entry, ...prev]
+            : prev.map((candidate, index) => index === existingIndex ? entry : candidate);
+          next.sort((a, b) => entryTime(b) - entryTime(a));
 
-          return next.length > MAX_ENTRIES ? next.slice(next.length - MAX_ENTRIES) : next;
+          return next.length > MAX_ENTRIES ? next.slice(0, MAX_ENTRIES) : next;
         });
 
         return;
@@ -262,10 +264,15 @@ export function useObservabilityStream(
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectSlug, environmentSlug, apiKey, stream]);
 
+  const refresh = useCallback(() => {
+    if (projectSlug && environmentSlug && apiKey) connect();
+  }, [projectSlug, environmentSlug, apiKey, connect]);
+
   return {
     entries: entries,
     status: status,
     error: error,
+    refresh: refresh,
   };
 }
 
@@ -276,4 +283,8 @@ function entryKey(entry: ObservabilityLogEntry | ObservabilitySpanRow): string {
     return `span:${entry.traceId}:${entry.spanId}`;
   }
   return `log:${entry.ts}:${entry.eventType}:${entry.message.slice(0, 80)}`;
+}
+
+function entryTime(entry: ObservabilityLogEntry | ObservabilitySpanRow): number {
+  return "spanId" in entry ? entry.startTimeMs : entry.ts;
 }

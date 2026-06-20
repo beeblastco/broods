@@ -1,10 +1,6 @@
 "use client";
 
-/**
- * Tracing panel: expandable list of agent task spans streamed live from the
- * gateway observability WS. Each ObservabilitySpanRow where kind === "task"
- * is one root agent task; child model.step and tool.call spans are grouped under it.
- */
+/** Tracing panel: searchable task timelines with model and tool span details. */
 import { Section } from "@/app/components/Section";
 import { cn } from "@/app/lib/utils";
 import {
@@ -12,14 +8,13 @@ import {
   type ObservabilitySpanRow,
 } from "@/app/hooks/useObservabilityStream";
 import {
-  Activity,
   CheckCircle,
   ChevronDown,
   ChevronRight,
+  LoaderCircle,
   RefreshCw,
-  Wifi,
+  Search,
   XCircle,
-  Zap,
 } from "lucide-react";
 import { useMemo, useState } from "react";
 
@@ -28,6 +23,16 @@ interface Props {
   environmentSlug: string | undefined;
   apiKey: string | undefined;
 }
+
+const DETAIL_ATTRIBUTES = [
+  "model.input",
+  "model.reasoning",
+  "model.response",
+  "model.tool_calls",
+  "model.tool_results",
+  "tool.input",
+  "tool.output",
+] as const;
 
 function formatDuration(ms: number): string {
   if (ms >= 1000) return `${(ms / 1000).toFixed(2)}s`;
@@ -44,57 +49,133 @@ function formatTime(ms: number): string {
   });
 }
 
-/** Group spans into a tree: root task span + its children indexed by traceId. */
+function displayAttribute(value: unknown): string {
+  if (typeof value !== "string") return JSON.stringify(value, null, 2);
+  const trimmed = value.trim();
+  if (!trimmed) return "";
+  if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
+    try {
+      return JSON.stringify(JSON.parse(trimmed), null, 2);
+    } catch {
+      return value;
+    }
+  }
+
+  return value;
+}
+
+/** Group spans into task trees, newest task first. */
 function groupSpans(spans: ObservabilitySpanRow[]): Array<{
   root: ObservabilitySpanRow;
   children: ObservabilitySpanRow[];
 }> {
-  const tasks = spans.filter((s) => s.kind === "task");
+  const tasks = spans.filter((span) => span.kind === "task");
   const childrenByTrace = new Map<string, ObservabilitySpanRow[]>();
 
   for (const span of spans) {
-    if (span.kind !== "task") {
-      const list = childrenByTrace.get(span.traceId) ?? [];
-      list.push(span);
-      childrenByTrace.set(span.traceId, list);
-    }
+    if (span.kind === "task") continue;
+    const children = childrenByTrace.get(span.traceId) ?? [];
+    children.push(span);
+    childrenByTrace.set(span.traceId, children);
   }
 
   return tasks
     .map((root) => ({
       root: root,
       children: (childrenByTrace.get(root.traceId) ?? []).sort(
-        (a, b) => a.startTimeMs - b.startTimeMs,
+        (left, right) => left.startTimeMs - right.startTimeMs,
       ),
     }))
-    .sort((a, b) => b.root.startTimeMs - a.root.startTimeMs);
+    .sort((left, right) => right.root.startTimeMs - left.root.startTimeMs);
 }
 
-function SpanStatusIcon({ status }: { status: "ok" | "error" }) {
+function SpanStatusIcon({ status }: { status: ObservabilitySpanRow["status"] }) {
+  if (status === "running") {
+    return <LoaderCircle className="size-3.5 shrink-0 animate-spin text-sky-400" />;
+  }
   if (status === "error") {
-    return <XCircle className="size-3.5 text-red-400 shrink-0" />;
+    return <XCircle className="size-3.5 shrink-0 text-red-400" />;
   }
 
-  return <CheckCircle className="size-3.5 text-green-500 shrink-0" />;
+  return <CheckCircle className="size-3.5 shrink-0 text-green-500" />;
+}
+
+function spanLabel(span: ObservabilitySpanRow): string {
+  if (span.kind === "tool.call") {
+    const toolName = span.attributes?.["tool.name"];
+    return typeof toolName === "string" ? `Tool: ${toolName}` : "Tool call";
+  }
+  const stepNumber = span.attributes?.["agent.step_number"];
+  return typeof stepNumber === "number" ? `Model step ${stepNumber + 1}` : span.name;
+}
+
+function SpanDetails({ span }: { span: ObservabilitySpanRow }) {
+  const attributes = span.attributes ?? {};
+  const details = DETAIL_ATTRIBUTES.flatMap((key) => {
+    const value = displayAttribute(attributes[key]);
+
+    return value ? [{ key: key, value: value }] : [];
+  });
+  const metadata = Object.entries(attributes).filter(
+    ([key]) => !DETAIL_ATTRIBUTES.includes(key as (typeof DETAIL_ATTRIBUTES)[number]),
+  );
+
+  return (
+    <div className="grid gap-3 border-t border-border/30 bg-background/60 px-4 py-3">
+      {span.error && (
+        <div className="rounded border border-red-500/20 bg-red-950/20 p-2 text-xs text-red-400">
+          {span.error}
+        </div>
+      )}
+      {details.map(({ key, value }) => (
+        <div key={key} className="grid gap-1">
+          <div className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+            {key.replaceAll(".", " ")}
+          </div>
+          <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-words rounded border border-border bg-card p-3 text-[11px] leading-relaxed text-foreground/90">
+            {value}
+          </pre>
+        </div>
+      ))}
+      {metadata.length > 0 && (
+        <div className="grid gap-x-4 gap-y-1 text-[10px] font-mono text-muted-foreground sm:grid-cols-2">
+          {metadata.map(([key, value]) => (
+            <div key={key} className="flex min-w-0 justify-between gap-3">
+              <span className="truncate">{key}</span>
+              <span className="max-w-[60%] truncate text-foreground/70" title={String(value)}>
+                {String(value)}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
 }
 
 function ChildSpanRow({ span }: { span: ObservabilitySpanRow }) {
-  const indent = span.kind === "tool.call" ? "pl-8" : "pl-4";
+  const [expanded, setExpanded] = useState(false);
 
   return (
-    <div
-      className={cn(
-        "flex items-center gap-2 py-1 text-[11px] font-mono text-muted-foreground border-b border-border/30 last:border-0",
-        indent,
-      )}
-    >
-      <SpanStatusIcon status={span.status} />
-      <span className="flex-1 truncate" title={span.name}>
-        {span.name}
-      </span>
-      <span className="tabular-nums text-muted-foreground/60 shrink-0">
-        {formatDuration(span.durationMs)}
-      </span>
+    <div className="border-b border-border/30 last:border-0">
+      <button
+        type="button"
+        onClick={() => setExpanded((current) => !current)}
+        className="flex w-full cursor-pointer items-center gap-2 px-4 py-2 text-left font-mono text-[11px] text-muted-foreground transition-colors hover:bg-accent/20"
+      >
+        {expanded ? <ChevronDown className="size-3" /> : <ChevronRight className="size-3" />}
+        <SpanStatusIcon status={span.status} />
+        <span className="flex-1 truncate" title={spanLabel(span)}>
+          {spanLabel(span)}
+        </span>
+        <span className="rounded bg-muted/50 px-1.5 py-0.5 text-[9px] uppercase tracking-wide">
+          {span.kind}
+        </span>
+        <span className="shrink-0 tabular-nums text-muted-foreground/60">
+          {span.status === "running" ? "Running" : formatDuration(span.durationMs)}
+        </span>
+      </button>
+      {expanded && <SpanDetails span={span} />}
     </div>
   );
 }
@@ -110,65 +191,55 @@ function TaskRow({
   isExpanded: boolean;
   onToggle: () => void;
 }) {
-  const tokenCount =
-    typeof root.attributes?.["llm.token.total"] === "number"
-      ? root.attributes["llm.token.total"]
-      : null;
+  const taskId = root.attributes?.["task.id"];
+  const taskLabel = typeof taskId === "string" ? taskId : root.traceId;
 
   return (
     <div className="border-b border-border/40 last:border-0">
-      <div
+      <button
+        type="button"
         onClick={onToggle}
         className={cn(
-          "flex items-center gap-3 px-3 py-2.5 cursor-pointer hover:bg-accent/20 transition-colors",
+          "grid w-full cursor-pointer grid-cols-[minmax(0,1fr)_100px_90px_80px] items-center gap-3 px-3 py-2.5 text-left transition-colors hover:bg-accent/20",
           isExpanded && "bg-accent/30",
         )}
       >
-        {isExpanded ? (
-          <ChevronDown className="size-3.5 text-muted-foreground shrink-0" />
-        ) : (
-          <ChevronRight className="size-3.5 text-muted-foreground shrink-0" />
-        )}
-        <SpanStatusIcon status={root.status} />
-        <span className="flex-1 text-xs font-mono truncate" title={root.name}>
-          {root.name}
-        </span>
-        {tokenCount !== null && (
-          <span className="inline-flex items-center gap-1 text-[10px] text-muted-foreground/70 shrink-0">
-            <Zap className="size-3" />
-            {tokenCount.toLocaleString()}
+        <span className="flex min-w-0 items-center gap-2">
+          {isExpanded ? (
+            <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" />
+          ) : (
+            <ChevronRight className="size-3.5 shrink-0 text-muted-foreground" />
+          )}
+          <SpanStatusIcon status={root.status} />
+          <span className="min-w-0">
+            <span className="block truncate text-xs font-mono" title={taskLabel}>
+              {taskLabel}
+            </span>
+            <span className="block truncate text-[10px] text-muted-foreground">
+              {root.agentId ?? "Unknown agent"} · {root.conversationKey ?? "No conversation"}
+            </span>
           </span>
-        )}
-        <span className="text-xs tabular-nums text-muted-foreground/70 shrink-0">
-          {formatDuration(root.durationMs)}
         </span>
-        <span className="text-[10px] tabular-nums text-muted-foreground/50 shrink-0">
+        <span className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+          {root.status}
+        </span>
+        <span className="text-xs tabular-nums text-muted-foreground/70">
+          {root.status === "running" ? "Running" : formatDuration(root.durationMs)}
+        </span>
+        <span className="text-[10px] tabular-nums text-muted-foreground/50">
           {formatTime(root.startTimeMs)}
         </span>
-      </div>
+      </button>
       {isExpanded && (
-        <div className="bg-background/40 border-t border-border/30">
-          {root.error && (
-            <div className="px-4 py-2 text-xs text-red-400 bg-red-950/20 border-b border-border/30">
-              {root.error}
-            </div>
-          )}
-          {root.traceId && (
-            <div className="px-4 py-1.5 text-[10px] text-muted-foreground/60 font-mono border-b border-border/30">
-              trace: {root.traceId}
-            </div>
-          )}
-          {childSpans.length > 0 ? (
-            <div className="px-3 py-1">
-              {childSpans.map((child) => (
-                <ChildSpanRow key={`${child.traceId}:${child.spanId}`} span={child} />
-              ))}
-            </div>
-          ) : (
-            <div className="px-4 py-2 text-xs text-muted-foreground/50">
-              No child spans recorded.
-            </div>
-          )}
+        <div className="border-t border-border/30 bg-background/40">
+          <div className="grid gap-1 border-b border-border/30 px-4 py-2 text-[10px] font-mono text-muted-foreground sm:grid-cols-2">
+            <span>trace: {root.traceId}</span>
+            <span className="truncate">agent: {root.agentId ?? "unknown"}</span>
+          </div>
+          <SpanDetails span={root} />
+          {childSpans.map((child) => (
+            <ChildSpanRow key={`${child.traceId}:${child.spanId}`} span={child} />
+          ))}
         </div>
       )}
     </div>
@@ -177,46 +248,74 @@ function TaskRow({
 
 export function TracingPanel({ projectSlug, environmentSlug, apiKey }: Props) {
   const [expandedTraceId, setExpandedTraceId] = useState<string | null>(null);
+  const [filter, setFilter] = useState("");
 
-  const { entries, status, error } = useObservabilityStream({
+  const { entries, status, error, refresh } = useObservabilityStream({
     stream: "traces",
     projectSlug: projectSlug,
     environmentSlug: environmentSlug,
     apiKey: apiKey,
-    backfill: 50,
+    backfill: 100,
   });
 
-  const isConnecting = status === "connecting";
-  const isLive = status === "live";
+  const groups = useMemo(() => {
+    const allGroups = groupSpans(entries);
+    const needle = filter.trim().toLowerCase();
+    if (!needle) return allGroups;
 
-  const groups = useMemo(() => groupSpans(entries), [entries]);
+    return allGroups.filter(({ root, children }) =>
+      [root, ...children].some((span) =>
+        [
+          span.name,
+          span.kind,
+          span.status,
+          span.traceId,
+          span.agentId ?? "",
+          span.conversationKey ?? "",
+          JSON.stringify(span.attributes ?? {}),
+        ].some((value) => value.toLowerCase().includes(needle)),
+      ),
+    );
+  }, [entries, filter]);
 
   return (
     <div className="grid gap-8">
-      <Section description="Agent task traces streamed live from the gateway observability WS. Each row is one task request.">
-        <div className="flex items-center justify-end mb-3">
-          <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
-            {status === "error" ? (
-              <XCircle className="size-3.5 text-destructive" />
-            ) : isConnecting ? (
-              <RefreshCw className="size-3.5 animate-spin" />
-            ) : isLive ? (
-              <Wifi className="size-3.5 text-green-500" />
-            ) : (
-              <RefreshCw className="size-3.5" />
+      <Section description="Task timelines with model input, reasoning, responses, tool calls, and tool results.">
+        <div className="mb-3 flex items-center justify-between gap-3">
+          <div className="relative w-full max-w-md">
+            <Search className="absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+            <input
+              type="text"
+              value={filter}
+              onChange={(event) => setFilter(event.target.value)}
+              placeholder={`Search ${groups.length} task${groups.length === 1 ? "" : "s"}…`}
+              className="w-full rounded-md border border-border bg-card py-1.5 pl-8 pr-3 text-xs placeholder:text-muted-foreground/60 focus:outline-none focus:ring-1 focus:ring-ring"
+            />
+          </div>
+          <button
+            type="button"
+            onClick={refresh}
+            disabled={status === "idle"}
+            aria-label="Refresh durable traces"
+            title={error ?? "Refresh from Tempo"}
+            className={cn(
+              "cursor-pointer rounded-md border border-border bg-card p-2 text-muted-foreground transition-colors hover:text-foreground",
+              status === "idle" && "cursor-not-allowed opacity-50",
+              status === "error" && "text-destructive",
             )}
-            {status === "error"
-              ? error ?? "Disconnected"
-              : isConnecting
-                ? "Connecting…"
-                : isLive
-                  ? "Live"
-                  : "Waiting for credentials…"}
-          </span>
+          >
+            <RefreshCw className={cn("size-3.5", status === "connecting" && "animate-spin")} />
+          </button>
         </div>
 
-        <div className="rounded-lg border border-border bg-card overflow-hidden">
-          <div className="max-h-[700px] overflow-auto">
+        <div className="overflow-hidden rounded-lg border border-border bg-card">
+          <div className="grid grid-cols-[minmax(0,1fr)_100px_90px_80px] gap-3 border-b border-border px-3 py-2 text-[10px] uppercase tracking-wide text-muted-foreground/80">
+            <span>Task</span>
+            <span>Status</span>
+            <span>Duration</span>
+            <span>Started</span>
+          </div>
+          <div className="min-h-32 max-h-[700px] overflow-auto">
             {groups.map(({ root, children }) => (
               <TaskRow
                 key={root.traceId}
@@ -224,18 +323,10 @@ export function TracingPanel({ projectSlug, environmentSlug, apiKey }: Props) {
                 childSpans={children}
                 isExpanded={expandedTraceId === root.traceId}
                 onToggle={() =>
-                  setExpandedTraceId((cur) =>
-                    cur === root.traceId ? null : root.traceId,
-                  )
+                  setExpandedTraceId((current) => current === root.traceId ? null : root.traceId)
                 }
               />
             ))}
-            {groups.length === 0 && (
-              <div className="flex items-center justify-center gap-2 px-4 py-10 text-xs text-muted-foreground/60">
-                <Activity className="size-4" />
-                {isLive ? "Listening for task traces…" : "Connecting to the trace stream…"}
-              </div>
-            )}
           </div>
         </div>
       </Section>

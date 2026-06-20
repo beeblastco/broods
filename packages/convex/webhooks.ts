@@ -14,6 +14,7 @@ import { authKit } from "./auth";
 import { ensureAgentsRowForConfig, pushEncryptedConfigToAgentRow } from "./model/agentSync";
 import { getOwnedEnvironment } from "./model/ownership/environment";
 import { getOwnedProject } from "./model/ownership/project";
+import { scheduleServiceLog } from "./observability";
 
 /** One outbound webhook configured on an agent (URL/secret usually resolve from env vars). */
 const webhookRow = v.object({
@@ -123,6 +124,25 @@ async function requireUser(ctx: MutationCtx): Promise<{ id: string }> {
     return user;
 }
 
+async function scheduleWebhookLog(
+    ctx: MutationCtx,
+    agentConfigId: Id<"agentConfigs">,
+    eventType: string,
+    message: string,
+    data?: Record<string, unknown>,
+): Promise<void> {
+    const config = await ctx.db.get(agentConfigId);
+    if (!config) return;
+    await scheduleServiceLog(ctx, {
+        projectId: config.projectId,
+        environmentId: config.environmentId,
+        eventType: eventType,
+        message: message,
+        agentId: config.agentId,
+        data: { agentConfigId: agentConfigId, ...data },
+    });
+}
+
 /**
  * Append a new outbound webhook to an agent.
  * @returns null
@@ -147,6 +167,10 @@ export const addAgentWebhook = mutation({
                 events: events ?? [],
             },
         ]);
+        await scheduleWebhookLog(ctx, agentConfigId, "service.webhook.created", "Agent webhook created", {
+            events: events ?? [],
+            enabled: enabled !== false,
+        });
 
         return null;
     },
@@ -168,6 +192,10 @@ export const setAgentWebhookEnabled = mutation({
         await mutateAgentWebhooks(ctx, user.id, agentConfigId, (webhooks) =>
             webhooks.map((webhook, i) => (i === index ? { ...webhook, enabled: enabled } : webhook)),
         );
+        await scheduleWebhookLog(ctx, agentConfigId, "service.webhook.updated", "Agent webhook updated", {
+            index: index,
+            enabled: enabled,
+        });
 
         return null;
     },
@@ -188,6 +216,9 @@ export const removeAgentWebhook = mutation({
         await mutateAgentWebhooks(ctx, user.id, agentConfigId, (webhooks) =>
             webhooks.filter((_, i) => i !== index),
         );
+        await scheduleWebhookLog(ctx, agentConfigId, "service.webhook.deleted", "Agent webhook deleted", {
+            index: index,
+        });
 
         return null;
     },

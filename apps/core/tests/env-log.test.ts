@@ -151,17 +151,23 @@ describe("logging helpers", () => {
         level: "INFO",
         message: "started",
         requestId: "req-1",
+        service: "filthy-panty-core",
+        "service.name": "filthy-panty-core",
       },
       {
         time: FIXED_TIME,
         level: "WARN",
         message: "retrying",
+        service: "filthy-panty-core",
+        "service.name": "filthy-panty-core",
       },
       {
         time: FIXED_TIME,
         level: "ERROR",
         message: "failed",
         code: 500,
+        service: "filthy-panty-core",
+        "service.name": "filthy-panty-core",
       },
     ]);
   });

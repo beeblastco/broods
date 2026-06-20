@@ -15,6 +15,7 @@ import {
   userModelMessageSchema,
 } from "ai";
 import type { LambdaFunctionURLEvent } from "aws-lambda";
+import { context as otelContextApi } from "@opentelemetry/api";
 import { resolveBearerAuth, type AuthContext } from "../_shared/auth.ts";
 import {
   applyRunOverrides,
@@ -45,7 +46,12 @@ import {
   jsonResponse,
   normalizeHeaders,
 } from "../_shared/http.ts";
-import { logError, logInfo, logWarn } from "../_shared/log.ts";
+import { collectSecretValues, logError, logInfo, logWarn } from "../_shared/log.ts";
+import {
+  getObservabilityContext,
+  mintTraceId,
+  setObservabilityContext,
+} from "../_shared/otel.ts";
 import { createPancakeChannel } from "../_shared/pancake-channel.ts";
 import type { LambdaResponse } from "../_shared/runtime.ts";
 import { createSlackChannel } from "../_shared/slack-channel.ts";
@@ -60,6 +66,7 @@ import {
   scopedDirectEventId,
 } from "../_shared/runtime-keys.ts";
 import type { ConversationIngressEvent } from "./session.ts";
+import type { AgentDeploymentRecord } from "../_shared/storage/types.ts";
 
 type DirectIngressEvent =
   | UserModelMessage
@@ -127,6 +134,9 @@ export interface ChannelInboundEvent {
   accountId?: string;
   agentId?: string;
   agentConfig?: AgentConfig;
+  endpointId?: string;
+  projectSlug?: string;
+  environmentSlug?: string;
   eventId: string;
   conversationKey: string;
   content: UserContent;
@@ -154,6 +164,7 @@ export interface IntegrationRoutingOptions {
   authResolver?: (headers: Record<string, string>) => Promise<AuthContext | null>;
   accountLoader?: (accountId: string) => Promise<AccountRecord | null>;
   agentLoader?: (accountId: string, agentId: string) => Promise<AgentRecord | null>;
+  deploymentLoader?: (accountId: string, agentId: string) => Promise<AgentDeploymentRecord | null>;
   directApiEnabled?: boolean;
 }
 
@@ -169,6 +180,8 @@ export function createIncomingEventRouter(options: IntegrationRoutingOptions = {
   const authResolver = options.authResolver ?? resolveBearerAuth;
   const accountLoader = options.accountLoader ?? ((accountId: string) => getStorage().accounts.getById(accountId));
   const agentLoader = options.agentLoader ?? ((accountId: string, agentId: string) => getStorage().agents.getById(accountId, agentId));
+  const deploymentLoader = options.deploymentLoader ?? ((accountId: string, agentId: string) =>
+    getStorage().agentDeployments.getByAgentId?.(accountId, agentId) ?? Promise.resolve(null));
   const directApiEnabled = options.directApiEnabled ?? true;
 
   return async (
@@ -178,6 +191,7 @@ export function createIncomingEventRouter(options: IntegrationRoutingOptions = {
     authResolver,
     accountLoader,
     agentLoader,
+    deploymentLoader,
     directApiEnabled,
   });
 }
@@ -186,6 +200,7 @@ interface LambdaUrlRoutingContext {
   authResolver(headers: Record<string, string>): Promise<AuthContext | null>;
   accountLoader(accountId: string): Promise<AccountRecord | null>;
   agentLoader(accountId: string, agentId: string): Promise<AgentRecord | null>;
+  deploymentLoader(accountId: string, agentId: string): Promise<AgentDeploymentRecord | null>;
   directApiEnabled: boolean;
 }
 
@@ -356,7 +371,9 @@ async function handleLambdaUrlEvent(
       return integrationNotConfigured(isConfigured ? `Webhook ${channelName}` : channelName);
     }
 
-    return handleChannelWebhook(accountChannel, request, handlers, account, agent);
+    const deployment = await context.deploymentLoader(account.accountId, agent.agentId);
+
+    return handleChannelWebhook(accountChannel, request, handlers, account, agent, deployment);
   }
 
   if (!context.directApiEnabled && (event.rawPath === "/" || isAsyncPath(event.rawPath))) {
@@ -468,7 +485,23 @@ async function handleChannelWebhook(
   handlers: IntegrationHandlers,
   account: AccountRecord,
   agent: AgentRecord,
+  deployment: AgentDeploymentRecord | null,
 ): Promise<LambdaResponse> {
+  const previousObservabilityContext = getObservabilityContext();
+  if (deployment) {
+    setObservabilityContext({
+      accountId: account.accountId,
+      project: deployment.projectSlug,
+      environment: deployment.environmentSlug,
+      endpointId: deployment.endpointId,
+      agentId: agent.agentId,
+      conversationKey: `webhook:${adapter.name}:${agent.agentId}`,
+      traceId: mintTraceId(),
+      otelContext: otelContextApi.active(),
+      secretValues: collectSecretValues(agent.config),
+    });
+  }
+
   try {
     logInfo("Channel webhook received", {
       channel: adapter.name,
@@ -529,8 +562,9 @@ async function handleChannelWebhook(
       return toLambdaResponse(parsed.response ?? { statusCode: 200 });
     }
 
-    // Else webhook contains a real user message.
-    // Send the webhook ACK immediately then use afterResponse to conitnue into normal channle processing
+    // The promise is deferred by one microtask so this request's scoped context
+    // is restored in finally before background channel processing establishes
+    // its own context.
     const { message, ack } = parsed;
     const channel = adapter.actions(message);
     const response = ack ?? { statusCode: 200 };
@@ -547,20 +581,29 @@ async function handleChannelWebhook(
       statusCode: response.statusCode,
       headers: response.headers,
       body: response.body ?? "",
-      afterResponse: processChannelMessage(
-        {
-          eventId: accountAgentScopedKey(account.accountId, agent.agentId, message.eventId),
-          conversationKey: accountAgentScopedKey(account.accountId, agent.agentId, message.conversationKey),
-          content: message.content,
-          events: [{ role: "user", content: message.content }],
-          channelName: message.channelName,
-          source: message.source,
-          channel: channel,
-          accountId: account.accountId,
-          agentId: agent.agentId,
-          agentConfig: toChannelRuntimeAgentConfig(agent.config, message.channelName),
-        },
-        handlers,
+      afterResponse: Promise.resolve().then(() =>
+        processChannelMessage(
+          {
+            eventId: accountAgentScopedKey(account.accountId, agent.agentId, message.eventId),
+            conversationKey: accountAgentScopedKey(account.accountId, agent.agentId, message.conversationKey),
+            content: message.content,
+            events: [{ role: "user", content: message.content }],
+            channelName: message.channelName,
+            source: message.source,
+            channel: channel,
+            accountId: account.accountId,
+            agentId: agent.agentId,
+            agentConfig: toChannelRuntimeAgentConfig(agent.config, message.channelName),
+            ...(deployment
+              ? {
+                endpointId: deployment.endpointId,
+                projectSlug: deployment.projectSlug,
+                environmentSlug: deployment.environmentSlug,
+              }
+              : {}),
+          },
+          handlers,
+        )
       ),
     };
   } catch (err) {
@@ -570,6 +613,10 @@ async function handleChannelWebhook(
     });
 
     return errorResponse(500, "Internal server error");
+  } finally {
+    if (deployment) {
+      setObservabilityContext(previousObservabilityContext);
+    }
   }
 }
 
@@ -577,6 +624,28 @@ async function processChannelMessage(
   event: ChannelInboundEvent,
   handlers: IntegrationHandlers,
 ): Promise<void> {
+  const previousObservabilityContext = getObservabilityContext();
+  const hasDeploymentScope = Boolean(
+    event.accountId &&
+    event.agentId &&
+    event.endpointId &&
+    event.projectSlug &&
+    event.environmentSlug,
+  );
+  if (hasDeploymentScope) {
+    setObservabilityContext({
+      accountId: event.accountId!,
+      project: event.projectSlug!,
+      environment: event.environmentSlug!,
+      endpointId: event.endpointId!,
+      agentId: event.agentId!,
+      conversationKey: event.conversationKey,
+      traceId: mintTraceId(),
+      otelContext: otelContextApi.active(),
+      secretValues: collectSecretValues(event.agentConfig),
+    });
+  }
+
   try {
     logInfo("Channel message processing started", {
       channel: event.channelName,
@@ -615,6 +684,10 @@ async function processChannelMessage(
         error: sendErr instanceof Error ? sendErr.message : String(sendErr),
       });
     });
+  } finally {
+    if (hasDeploymentScope) {
+      setObservabilityContext(previousObservabilityContext);
+    }
   }
 }
 

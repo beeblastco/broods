@@ -677,23 +677,56 @@ async function fetchLokiBackfill(
   for (const stream of result) {
     for (const [nsStr, line] of stream.values) {
       const tsMs = Math.floor(Number(nsStr) / 1_000_000);
-      const parsed = parseJson(line);
-      if (parsed && typeof parsed === "object") {
-        entries.push(parsed as ObservabilityLogEntry);
-      } else {
-        entries.push({
-          ts: tsMs,
-          level: "INFO",
-          eventType: "log",
-          message: line,
-          accountId: scope.accountId,
-        });
-      }
+      entries.push(lokiLogEntry(stream.stream, line, tsMs, scope.accountId));
     }
   }
 
   // Return chronological order (Loki returns newest-first with direction=backward).
   return entries.reverse();
+}
+
+/** Rehydrate one Loki OTLP line with the structured metadata returned beside it. */
+export function lokiLogEntry(
+  metadata: Record<string, string>,
+  line: string,
+  fallbackTs: number,
+  fallbackAccountId: string,
+): ObservabilityLogEntry {
+  const parsed = parseJson(line);
+  const record = parsed && typeof parsed === "object"
+    ? parsed as Record<string, unknown>
+    : {};
+  const rawLevel = record.level ?? metadata.level ?? metadata.severity_text ?? metadata.detected_level;
+  const level = rawLevel === "DEBUG" || rawLevel === "WARN" || rawLevel === "ERROR"
+    ? rawLevel
+    : "INFO";
+  const parsedTime = typeof record.ts === "number"
+    ? record.ts
+    : typeof record.time === "string"
+      ? Date.parse(record.time)
+      : Number.NaN;
+
+  return {
+    ts: Number.isFinite(parsedTime) ? parsedTime : fallbackTs,
+    level,
+    eventType: stringValue(record.eventType, metadata.eventType, "log"),
+    message: stringValue(record.message, metadata.message, line),
+    traceId: optionalString(record.traceId, metadata.traceId, metadata.trace_id),
+    accountId: optionalString(record.accountId, metadata.accountId, metadata.account_id) ?? fallbackAccountId,
+    endpointId: optionalString(record.endpointId, metadata.endpointId, metadata.endpoint_id),
+    agentId: optionalString(record.agentId, metadata.agentId, metadata.agent_id),
+    conversationKey: optionalString(record.conversationKey, metadata.conversationKey, metadata.conversation_key),
+    service: optionalString(record.service, metadata.service, metadata.service_name),
+    data: Object.keys(record).length > 0 ? record : metadata,
+  };
+}
+
+function optionalString(...values: unknown[]): string | undefined {
+  return values.find((value): value is string => typeof value === "string" && value.length > 0);
+}
+
+function stringValue(...values: unknown[]): string {
+  return optionalString(...values) ?? "";
 }
 
 // Tag filters are built only from server-validated scope.
@@ -703,8 +736,12 @@ async function fetchTempoBackfill(
   limit: number,
 ): Promise<ObservabilitySpanRow[]> {
   const url = new URL(`${tempoUrl}/api/search`);
+  const end = Math.floor(Date.now() / 1_000);
+  const start = end - 90 * 24 * 60 * 60;
   url.searchParams.set("tags", `account_id=${scope.accountId} project=${scope.projectSlug} environment=${scope.environmentSlug}`);
   url.searchParams.set("limit", String(limit));
+  url.searchParams.set("start", String(start));
+  url.searchParams.set("end", String(end));
 
   const response = await fetch(url.toString(), { signal: AbortSignal.timeout(5_000) });
   if (!response.ok) throw new Error(`Tempo search failed with HTTP ${response.status}`);
@@ -720,7 +757,7 @@ async function fetchTempoBackfill(
   };
 
   const traces = body?.traces ?? [];
-  const rows = await Promise.all(traces.map(async (traceSummary) => {
+  const rows = await Promise.allSettled(traces.map(async (traceSummary) => {
     const detailResponse = await fetch(
       `${tempoUrl}/api/traces/${encodeURIComponent(traceSummary.traceID)}`,
       { signal: AbortSignal.timeout(5_000) },
@@ -730,7 +767,9 @@ async function fetchTempoBackfill(
     return tempoTraceRowsFromResponse(await detailResponse.json(), traceSummary.traceID);
   }));
 
-  return rows.flat().sort((a, b) => b.startTimeMs - a.startTimeMs);
+  return rows
+    .flatMap((result) => result.status === "fulfilled" ? result.value : [])
+    .sort((a, b) => b.startTimeMs - a.startTimeMs);
 }
 
 type OtelValue = {

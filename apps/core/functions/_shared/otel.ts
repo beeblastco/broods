@@ -10,6 +10,7 @@ import { BasicTracerProvider, BatchSpanProcessor, RandomIdGenerator } from "@ope
 import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-proto";
 import { LoggerProvider, BatchLogRecordProcessor } from "@opentelemetry/sdk-logs";
 import { OTLPLogExporter } from "@opentelemetry/exporter-logs-otlp-proto";
+import { resourceFromAttributes } from "@opentelemetry/resources";
 
 export interface ObservabilityContext {
   accountId: string;
@@ -77,7 +78,12 @@ export function initOtel(): void {
       headers: headers,
       timeoutMillis: 5000,
     });
+    const resource = resourceFromAttributes({
+      "service.name": process.env.AWS_LAMBDA_FUNCTION_NAME ?? "filthy-panty-core",
+      "service.namespace": "beeblast",
+    });
     const tracerProvider = new BasicTracerProvider({
+      resource,
       spanProcessors: [new BatchSpanProcessor(traceExporter)],
     });
     trace.setGlobalTracerProvider(tracerProvider);
@@ -89,6 +95,7 @@ export function initOtel(): void {
       timeoutMillis: 5000,
     });
     const loggerProvider = new LoggerProvider({
+      resource,
       processors: [new BatchLogRecordProcessor(logExporter)],
     });
     logs.setGlobalLoggerProvider(loggerProvider);

@@ -9,6 +9,7 @@
  */
 
 import { v } from "convex/values";
+import { scheduleServiceLog } from "./observability";
 import type { Id } from "./_generated/dataModel";
 import { internalQuery, mutation, query, type MutationCtx } from "./_generated/server";
 import { authKit } from "./auth";
@@ -311,6 +312,13 @@ export const ensureForEnvironment = mutation({
             projectSlug: context.projectSlug,
             environmentSlug: context.environmentSlug,
         });
+        await scheduleServiceLog(ctx, {
+            projectId: projectId,
+            environmentId: environmentId,
+            eventType: "service.deployment.ready",
+            message: "Environment runtime deployment is ready",
+            data: { endpointId: result.endpointId },
+        });
 
         return toEnsureReturn(result);
     },
@@ -340,6 +348,13 @@ export const rotate = mutation({
             environmentSlug: context.environmentSlug,
             rotate: true,
         });
+        await scheduleServiceLog(ctx, {
+            projectId: projectId,
+            environmentId: environmentId,
+            eventType: "service.deployment.key.rotated",
+            message: "Environment runtime key rotated",
+            data: { endpointId: result.endpointId },
+        });
 
         return toEnsureReturn(result);
     },
@@ -366,6 +381,53 @@ export const getByApiKeyHash = internalQuery({
 
         const account = await ctx.db.get(deployment.accountId);
         if (!account || account.status !== "active") return null;
+
+        return {
+            accountId: deployment.accountId,
+            endpointId: deployment.endpointId,
+            projectSlug: deployment.projectSlug,
+            environmentSlug: deployment.environmentSlug,
+        };
+    },
+});
+
+/** Resolve the active environment deployment linked to one runtime agent. */
+export const getByAgentId = internalQuery({
+    args: {
+        accountId: v.id("accounts"),
+        agentId: v.string(),
+    },
+    returns: v.union(
+        v.object({
+            accountId: v.id("accounts"),
+            endpointId: v.string(),
+            projectSlug: v.string(),
+            environmentSlug: v.string(),
+        }),
+        v.null(),
+    ),
+    handler: async (ctx, args) => {
+        const runtimeAgentId = ctx.db.normalizeId("agents", args.agentId);
+        if (!runtimeAgentId) return null;
+        const runtimeAgent = await ctx.db.get(runtimeAgentId);
+        if (!runtimeAgent || runtimeAgent.accountId !== args.accountId) return null;
+
+        const config = await ctx.db
+            .query("agentConfigs")
+            .withIndex("by_agentId", (q) => q.eq("agentId", args.agentId))
+            .unique();
+        if (!config) return null;
+
+        const deployment = await ctx.db
+            .query("agentDeployments")
+            .withIndex("by_projectId_and_environmentId_and_status", (q) =>
+                q
+                    .eq("projectId", config.projectId)
+                    .eq("environmentId", config.environmentId)
+                    .eq("status", "active"),
+            )
+            .unique();
+        if (!deployment || deployment.accountId !== args.accountId) return null;
 
         return {
             accountId: deployment.accountId,

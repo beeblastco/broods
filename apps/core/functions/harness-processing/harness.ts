@@ -22,7 +22,7 @@ import {
   type Span,
 } from "@opentelemetry/api";
 import type { AgentConfig } from "../_shared/storage/index.ts";
-import { collectSecretValues, logError, logInfo, redactSensitiveText } from "../_shared/log.ts";
+import { collectSecretValues, logError, logInfo, redact, redactSensitiveText } from "../_shared/log.ts";
 import { recordUsageTask } from "../_shared/telemetry.ts";
 import { extractCacheWriteTokens } from "./usage-metering.ts";
 import {
@@ -52,27 +52,29 @@ import type { RunSubagentDispatch } from "./tools/run-subagent.tool.ts";
 
 // Default max agent iterations to prevent looping or too long execution.
 const MAX_AGENT_ITERATIONS = 30;
+const MAX_TRACE_ATTRIBUTE_CHARS = 12_000;
 
 const SPAN_ENCODER = new TextEncoder();
 
 type TrackedSpan = {
   otelSpan: Span;
   otelContext: OtelContext;
+  name: "model.step" | "tool.call";
   traceId: string;
   spanId: string;
   parentSpanId?: string;
   startTimeMs: number;
+  attributes: Record<string, string | number | boolean>;
 };
 
-/** Publish a finished span to the live traces subject. Best-effort, non-blocking. */
+/** Publish a span update to the live traces subject. Best-effort, non-blocking. */
 function publishSpan(row: ObservabilitySpanRow): void {
   const connPromise = getObservabilityNatsConn();
   if (!connPromise) return;
 
   const ctx = getObservabilityContext();
-  // Skip non-deployment scopes (channel/cron have empty project/env/endpoint):
-  // no Tracing tab subscribes them, so the publish would be wasted. Tempo still
-  // gets the span via the OTLP exporter.
+  // Skip traffic that cannot be resolved to a deployment. No dashboard trace
+  // subscription exists for that scope; Tempo still receives the OTel span.
   if (!ctx || !ctx.endpointId || !ctx.project || !ctx.environment) return;
 
   const subject = tracesSubject(ctx.accountId, ctx.project, ctx.environment, ctx.endpointId);
@@ -173,11 +175,54 @@ export async function runAgentLoop(
   const traceId = /[^0]/.test(otelSpanCtx.traceId) ? otelSpanCtx.traceId : mintTraceId();
   const rootSpanId = /[^0]/.test(otelSpanCtx.spanId) ? otelSpanCtx.spanId : mintSpanId();
   const rootOtelContext = otelTraceApi.setSpan(otelContextApi.active(), otelRootSpan);
+  const parentObservabilityContext = getObservabilityContext();
   setObservabilityContext({
     ...observabilityScope,
     traceId,
     otelContext: rootOtelContext,
     secretValues: collectSecretValues([agentConfig, statelessSandbox, resolvedWorkspaces]),
+  });
+
+  const traceAttribute = (value: unknown): string => {
+    const safeValue = redact(value, getObservabilityContext()?.secretValues ?? []);
+    let serialized: string;
+    try {
+      serialized = safeValue === undefined
+        ? ""
+        : typeof safeValue === "string"
+          ? safeValue
+          : JSON.stringify(safeValue);
+    } catch {
+      serialized = String(safeValue);
+    }
+    if (serialized.length <= MAX_TRACE_ATTRIBUTE_CHARS) return serialized;
+
+    return `${serialized.slice(0, MAX_TRACE_ATTRIBUTE_CHARS)}...[truncated]`;
+  };
+
+  const rootRunningAttributes = {
+    "task.id": session.eventId,
+    "task.state": "running",
+    "task.delivery": session.delivery?.kind ?? "direct",
+    "agent.message_count": turnContext.messages.length,
+    "model.provider": configuredModel.providerName,
+    "model.id": agentConfig.model?.modelId ?? "unknown",
+    "model.input": traceAttribute(turnContext.messages),
+  };
+  otelRootSpan.setAttributes(rootRunningAttributes);
+  publishSpan({
+    traceId,
+    spanId: rootSpanId,
+    name: "agent.task",
+    kind: "task",
+    startTimeMs: runStartedAt,
+    endTimeMs: runStartedAt,
+    durationMs: 0,
+    status: "running",
+    endpointId: session.endpointId,
+    agentId: session.agentId,
+    conversationKey: session.conversationKey,
+    attributes: rootRunningAttributes,
   });
 
   const tools = {
@@ -216,7 +261,7 @@ export async function runAgentLoop(
   const stepSpans = new Map<number, TrackedSpan>();
   const toolSpans = new Map<string, TrackedSpan>();
   const startTrackedSpan = (
-    name: string,
+    name: "model.step" | "tool.call",
     startTimeMs: number,
     parentContext: OtelContext,
     parentSpanId: string,
@@ -234,10 +279,12 @@ export async function runAgentLoop(
     return {
       otelSpan,
       otelContext: otelTraceApi.setSpan(parentContext, otelSpan),
+      name,
       traceId: /[^0]/.test(spanContext.traceId) ? spanContext.traceId : traceId,
       spanId: /[^0]/.test(spanContext.spanId) ? spanContext.spanId : mintSpanId(),
       parentSpanId,
       startTimeMs,
+      attributes,
     };
   };
 
@@ -286,6 +333,25 @@ export async function runAgentLoop(
         tracked.otelSpan.setStatus({ code: SpanStatusCode.ERROR, message: sanitizedError?.message });
       }
       tracked.otelSpan.end(endTimeMs);
+      publishSpan({
+        traceId: tracked.traceId,
+        spanId: tracked.spanId,
+        parentSpanId: tracked.parentSpanId,
+        name: tracked.name,
+        kind: tracked.name,
+        startTimeMs: tracked.startTimeMs,
+        endTimeMs,
+        durationMs: Math.max(0, endTimeMs - tracked.startTimeMs),
+        status: status === "completed" ? "ok" : "error",
+        endpointId: session.endpointId,
+        agentId: session.agentId,
+        conversationKey: session.conversationKey,
+        attributes: {
+          ...tracked.attributes,
+          [tracked.name === "model.step" ? "step.state" : "tool.state"]: status,
+        },
+        ...(sanitizedError ? { error: sanitizedError.message } : {}),
+      });
     }
     toolSpans.clear();
     stepSpans.clear();
@@ -302,6 +368,8 @@ export async function runAgentLoop(
       agentId: session.agentId,
       conversationKey: session.conversationKey,
       attributes: {
+        ...rootRunningAttributes,
+        "task.state": status,
         "agent.step_count": stepCount,
         "agent.tool_call_count": toolCallCount,
         "agent.model_provider": configuredModel.providerName,
@@ -359,7 +427,7 @@ export async function runAgentLoop(
     } finally {
       // Lambda execution environments are reused, so never retain one task's
       // tenant, trace, or secret values after its exporters have flushed.
-      setObservabilityContext(null);
+      setObservabilityContext(parentObservabilityContext);
     }
   };
 
@@ -400,16 +468,37 @@ export async function runAgentLoop(
         system: refreshed.system,
       };
     },
-    experimental_onStepStart: async ({ stepNumber }) => {
+    experimental_onStepStart: async ({ stepNumber, messages }) => {
       const now = Date.now();
       stepStartedAt.set(stepNumber, now);
-      stepSpans.set(stepNumber, startTrackedSpan(
+      const attributes = {
+        "agent.step_number": stepNumber,
+        "step.state": "running",
+        "model.input": traceAttribute(messages),
+      };
+      const tracked = startTrackedSpan(
         "model.step",
         now,
         rootOtelContext,
         rootSpanId,
-        { "agent.step_number": stepNumber },
-      ));
+        attributes,
+      );
+      stepSpans.set(stepNumber, tracked);
+      publishSpan({
+        traceId: tracked.traceId,
+        spanId: tracked.spanId,
+        parentSpanId: tracked.parentSpanId,
+        name: "model.step",
+        kind: "model.step",
+        startTimeMs: now,
+        endTimeMs: now,
+        durationMs: 0,
+        status: "running",
+        endpointId: session.endpointId,
+        agentId: session.agentId,
+        conversationKey: session.conversationKey,
+        attributes,
+      });
     },
     experimental_onToolCallStart: async ({ stepNumber, toolCall }) => {
       const now = Date.now();
@@ -417,24 +506,43 @@ export async function runAgentLoop(
         stepStartedAt.set(stepNumber, now);
       }
       const parent = stepNumber !== undefined ? stepSpans.get(stepNumber) : undefined;
-      toolSpans.set(toolCall.toolCallId, startTrackedSpan(
+      const attributes = {
+        "tool.name": toolCall.toolName,
+        "tool.call_id": toolCall.toolCallId,
+        "tool.state": "running",
+        "tool.input": traceAttribute(toolCall.input),
+        ...(stepNumber !== undefined ? { "agent.step_number": stepNumber } : {}),
+      };
+      const tracked = startTrackedSpan(
         "tool.call",
         now,
         parent?.otelContext ?? rootOtelContext,
         parent?.spanId ?? rootSpanId,
-        {
-          "tool.name": toolCall.toolName,
-          "tool.call_id": toolCall.toolCallId,
-          ...(stepNumber !== undefined ? { "agent.step_number": stepNumber } : {}),
-        },
-      ));
+        attributes,
+      );
+      toolSpans.set(toolCall.toolCallId, tracked);
+      publishSpan({
+        traceId: tracked.traceId,
+        spanId: tracked.spanId,
+        parentSpanId: tracked.parentSpanId,
+        name: "tool.call",
+        kind: "tool.call",
+        startTimeMs: now,
+        endTimeMs: now,
+        durationMs: 0,
+        status: "running",
+        endpointId: session.endpointId,
+        agentId: session.agentId,
+        conversationKey: session.conversationKey,
+        attributes,
+      });
       recordToolCallSummary(toolCallSummaries, toolCall, { stepNumber });
       await lifecycle.emit("tool.call.started", {
         stepNumber: stepNumber,
         toolCall: toLifecycleValue(toolCall),
       });
     },
-    experimental_onToolCallFinish: async ({ stepNumber, toolCall, durationMs, success, error }) => {
+    experimental_onToolCallFinish: async ({ stepNumber, toolCall, durationMs, success, output, error }) => {
       // Close the tool.call span.
       const toolEndMs = Date.now();
       const tracked = toolSpans.get(toolCall.toolCallId) ?? startTrackedSpan(
@@ -452,6 +560,9 @@ export async function runAgentLoop(
       tracked.otelSpan.setAttributes({
         "tool.duration_ms": toolDurationMs,
         "tool.success": success,
+        "tool.state": success ? "completed" : "failed",
+        "tool.input": traceAttribute(toolCall.input),
+        ...(success ? { "tool.output": traceAttribute(output) } : {}),
       });
       if (success) {
         tracked.otelSpan.setStatus({ code: SpanStatusCode.OK });
@@ -477,6 +588,9 @@ export async function runAgentLoop(
         attributes: {
           "tool.name": toolCall.toolName,
           "tool.call_id": toolCall.toolCallId,
+          "tool.state": success ? "completed" : "failed",
+          "tool.input": traceAttribute(toolCall.input),
+          ...(success ? { "tool.output": traceAttribute(output) } : {}),
           ...(stepNumber !== undefined ? { "agent.step_number": stepNumber } : {}),
         },
         ...(errorText ? { error: errorText } : {}),
@@ -522,6 +636,8 @@ export async function runAgentLoop(
       warnings,
       response,
       providerMetadata,
+      text,
+      reasoningText,
     }) => {
       const startedAt = stepStartedAt.get(stepNumber);
       const durationMs = startedAt === undefined ? undefined : Date.now() - startedAt;
@@ -574,9 +690,15 @@ export async function runAgentLoop(
       if (tracked) {
         const stepEndMs = Date.now();
         const attributes = {
+          ...tracked.attributes,
           "agent.step_number": stepNumber,
+          "step.state": "completed",
           "model.finish_reason": finishReason,
           "agent.tool_call_count": toolCalls.length,
+          "model.response": traceAttribute(text),
+          "model.reasoning": traceAttribute(reasoningText ?? ""),
+          "model.tool_calls": traceAttribute(toolCalls),
+          "model.tool_results": traceAttribute(toolResults),
         };
         tracked.otelSpan.setAttributes(attributes);
         tracked.otelSpan.setStatus({ code: SpanStatusCode.OK });

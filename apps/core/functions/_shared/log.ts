@@ -220,6 +220,7 @@ function emit(
 ): void {
   const ctx = getObservabilityContext();
   const ts = Date.now();
+  const service = process.env.AWS_LAMBDA_FUNCTION_NAME ?? "filthy-panty-core";
   const secretValues = [...sensitiveEnvValues(), ...(ctx?.secretValues ?? [])];
 
   // Build the full structured entry, then redact the message and data payload.
@@ -230,6 +231,8 @@ function emit(
     time: new Date(ts).toISOString(),
     level,
     message: redactedMessage,
+    service,
+    "service.name": service,
     ...(ctx ? { traceId: ctx.traceId, accountId: ctx.accountId, endpointId: ctx.endpointId } : {}),
   };
 
@@ -249,6 +252,7 @@ function emit(
       traceId: ctx.traceId,
       accountId: ctx.accountId,
       endpointId: ctx.endpointId,
+      service,
       agentId: ctx.agentId,
       conversationKey: ctx.conversationKey,
       data: redactedData,

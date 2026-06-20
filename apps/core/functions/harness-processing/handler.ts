@@ -664,6 +664,9 @@ async function handleChannelRequest(event: ChannelInboundEvent, context?: Lambda
     // A background job launched from this turn delivers its result back to the
     // same chat (rebuilt from {channelName, source} when it settles later).
     { kind: "channel", channelName: event.channelName, source: event.source },
+    event.endpointId,
+    event.projectSlug,
+    event.environmentSlug,
   );
   logInfo("Channel session received", {
     channel: event.channelName,
@@ -1149,6 +1152,7 @@ async function createCronDirectEvent(job: CronRecord): Promise<DirectInboundEven
   if (!agent || agent.status !== "active") {
     throw new Error(`Agent not found: ${job.agentId}`);
   }
+  const deployment = await getStorage().agentDeployments.getByAgentId?.(job.accountId, job.agentId);
 
   const publicEventId = `${job.cronId}-${crypto.randomUUID()}`;
   const publicConversationKey = job.conversationKey ?? `cron:${job.cronId}`;
@@ -1161,6 +1165,13 @@ async function createCronDirectEvent(job: CronRecord): Promise<DirectInboundEven
     conversationKey: scopedDirectConversationKey(job.accountId, job.agentId, publicConversationKey),
     publicConversationKey,
     events: job.events as DirectInboundEvent["events"],
+    ...(deployment
+      ? {
+        endpointId: deployment.endpointId,
+        projectSlug: deployment.projectSlug,
+        environmentSlug: deployment.environmentSlug,
+      }
+      : {}),
   } satisfies DirectInboundEvent;
 }
 

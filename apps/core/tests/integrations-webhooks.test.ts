@@ -5,6 +5,10 @@ import {
   type ChannelInboundEvent,
   type DirectInboundEvent,
 } from "../functions/harness-processing/integrations.ts";
+import {
+  getObservabilityContext,
+  setObservabilityContext,
+} from "../functions/_shared/otel.ts";
 
 const TEST_ACCOUNT = {
   accountId: "acct_test",
@@ -100,6 +104,7 @@ const ORIGINAL_FETCH = globalThis.fetch;
 describe("account webhook ingress", () => {
   afterEach(() => {
     globalThis.fetch = ORIGINAL_FETCH;
+    setObservabilityContext(null);
   });
 
   it("returns 404 for unknown accounts", async () => {
@@ -163,10 +168,18 @@ describe("account webhook ingress", () => {
     const routeIncomingEvent = createIncomingEventRouter({
       accountLoader: async () => TEST_ACCOUNT,
       agentLoader: async () => TEST_AGENT,
+      deploymentLoader: async () => ({
+        accountId: "acct_test",
+        endpointId: "endpoint-development",
+        projectSlug: "project-one",
+        environmentSlug: "development",
+      }),
     });
+    let processingScope: ReturnType<typeof getObservabilityContext> = null;
 
     const response = await routeIncomingEvent(createTelegramEvent(), createHandlers({
       handleChannelRequest: async (event) => {
+        processingScope = getObservabilityContext();
         handledEvents.push(event);
       },
     }));
@@ -176,6 +189,13 @@ describe("account webhook ingress", () => {
 
     await response.afterResponse;
 
+    expect(processingScope).toMatchObject({
+      accountId: "acct_test",
+      endpointId: "endpoint-development",
+      project: "project-one",
+      environment: "development",
+    });
+    expect(getObservabilityContext()).toBeNull();
     expect(handledEvents).toHaveLength(1);
     expect(handledEvents[0]).toMatchObject({
       accountId: "acct_test",
@@ -194,6 +214,9 @@ describe("account webhook ingress", () => {
       content: "hello",
       events: [{ role: "user", content: "hello" }],
       channelName: "telegram",
+      endpointId: "endpoint-development",
+      projectSlug: "project-one",
+      environmentSlug: "development",
     });
   });
 

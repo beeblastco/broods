@@ -18,6 +18,7 @@ export type ObservabilityLogEntry = {
   traceId?: string;
   accountId?: string;
   endpointId?: string;
+  service?: string;
   agentId?: string;
   conversationKey?: string;
   // Already redacted at the log.ts boundary.
@@ -35,7 +36,7 @@ export type ObservabilitySpanRow = {
   startTimeMs: number;
   endTimeMs: number;
   durationMs: number;
-  status: "ok" | "error";
+  status: "running" | "ok" | "error";
   endpointId?: string;
   agentId?: string;
   conversationKey?: string;

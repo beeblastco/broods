@@ -7,7 +7,7 @@ import {
   useObservabilityStream,
   type ObservabilityLogEntry,
 } from "@/app/hooks/useObservabilityStream";
-import { AlertTriangle, RefreshCw, Search, Server, Wifi, XCircle } from "lucide-react";
+import { AlertTriangle, RefreshCw, Search } from "lucide-react";
 import { useMemo, useState } from "react";
 
 interface Props {
@@ -114,7 +114,11 @@ function LogRow({
           className="px-3 py-1.5 whitespace-nowrap text-muted-foreground/80 max-w-[200px] truncate"
           title={entry.endpointId}
         >
-          {entry.endpointId ? shortFunctionName(entry.endpointId) : entry.agentId ?? "—"}
+          {entry.service
+            ? shortFunctionName(entry.service)
+            : entry.endpointId
+              ? shortFunctionName(entry.endpointId)
+              : entry.agentId ?? "—"}
         </td>
         <td className="px-3 py-1.5 text-foreground/90 max-w-0 truncate">
           {(parsed.eventType ?? entry.eventType) && (
@@ -162,7 +166,7 @@ export function MonitoringPanel({ projectSlug, environmentSlug, apiKey }: Props)
   const [expandedIndex, setExpandedIndex] = useState<number | null>(null);
   const [filter, setFilter] = useState("");
 
-  const { entries, status, error } = useObservabilityStream({
+  const { entries, status, error, refresh } = useObservabilityStream({
     stream: "logs",
     projectSlug: projectSlug,
     environmentSlug: environmentSlug,
@@ -171,7 +175,6 @@ export function MonitoringPanel({ projectSlug, environmentSlug, apiKey }: Props)
   });
 
   const isConnecting = status === "connecting";
-  const isLive = status === "live";
 
   const filtered = useMemo(() => {
     if (!filter.trim()) return entries;
@@ -181,13 +184,14 @@ export function MonitoringPanel({ projectSlug, environmentSlug, apiKey }: Props)
       (e) =>
         e.message.toLowerCase().includes(needle) ||
         (e.endpointId ?? "").toLowerCase().includes(needle) ||
+        (e.service ?? "").toLowerCase().includes(needle) ||
         e.eventType.toLowerCase().includes(needle),
     );
   }, [entries, filter]);
 
   return (
     <div className="grid gap-8">
-      <Section description="Live log stream from the agent harness, via the gateway observability WS.">
+      <Section description="Project service logs from channel ingress, agent execution, tools, and runtime services.">
         <div className="flex items-center justify-between gap-3 mb-3 flex-wrap">
           <div className="flex items-center gap-2 flex-1 min-w-[240px]">
             <div className="relative flex-1 max-w-md">
@@ -201,24 +205,20 @@ export function MonitoringPanel({ projectSlug, environmentSlug, apiKey }: Props)
               />
             </div>
           </div>
-          <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
-            {status === "error" ? (
-              <XCircle className="size-3.5 text-destructive" />
-            ) : isConnecting ? (
-              <RefreshCw className="size-3.5 animate-spin" />
-            ) : isLive ? (
-              <Wifi className="size-3.5 text-green-500" />
-            ) : (
-              <RefreshCw className="size-3.5" />
+          <button
+            type="button"
+            onClick={refresh}
+            disabled={status === "idle"}
+            aria-label="Refresh durable logs"
+            title={error ?? "Refresh from Loki"}
+            className={cn(
+              "cursor-pointer rounded-md border border-border bg-card p-2 text-muted-foreground transition-colors hover:text-foreground",
+              status === "idle" && "cursor-not-allowed opacity-50",
+              status === "error" && "text-destructive",
             )}
-            {status === "error"
-              ? error ?? "Disconnected"
-              : isConnecting
-                ? "Connecting…"
-                : isLive
-                  ? "Live"
-                  : "Waiting for credentials…"}
-          </span>
+          >
+            <RefreshCw className={cn("size-3.5", isConnecting && "animate-spin")} />
+          </button>
         </div>
 
         <div className="rounded-lg border border-border bg-card overflow-hidden">
@@ -249,18 +249,13 @@ export function MonitoringPanel({ projectSlug, environmentSlug, apiKey }: Props)
                     }
                   />
                 ))}
+                {filtered.length === 0 && (
+                  <tr aria-hidden="true">
+                    <td colSpan={4} className="h-32" />
+                  </tr>
+                )}
               </tbody>
             </table>
-            {filtered.length === 0 && (
-              <div className="flex items-center justify-center gap-2 px-4 py-10 text-xs text-muted-foreground/60">
-                <Server className="size-4" />
-                {entries.length === 0
-                  ? isLive
-                    ? "Listening for logs…"
-                    : "Connecting to the log stream…"
-                  : `No logs match “${filter}”.`}
-              </div>
-            )}
           </div>
         </div>
       </Section>

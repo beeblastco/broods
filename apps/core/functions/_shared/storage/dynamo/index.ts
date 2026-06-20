@@ -21,6 +21,9 @@ export const dynamoStorageProvider: StorageProvider = {
     async getByApiKeyHash() {
       return null;
     },
+    async getByAgentId() {
+      return null;
+    },
   },
   crons: dynamoCronStore,
   sandboxConfigs: dynamoSandboxConfigStore,

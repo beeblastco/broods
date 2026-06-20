@@ -5,6 +5,7 @@ import {
   normalizedCoreBaseUrls,
   resolveObservabilityScope,
   tempoTraceRowsFromResponse,
+  lokiLogEntry,
   websocketMessageForNatsData,
 } from "../src/index.ts";
 import {
@@ -136,6 +137,33 @@ test("bounds observability backfill requests", () => {
     backfill: MAX_OBSERVABILITY_BACKFILL + 1,
   })).toBe(false);
   expect(isObservabilityClientMessage({ type: "subscribe", stream: "logs", backfill: Number.POSITIVE_INFINITY })).toBe(false);
+});
+
+test("rehydrates Loki OTLP metadata for durable log history", () => {
+  expect(lokiLogEntry({
+    account_id: "acct-1",
+    endpoint_id: "endpoint-1",
+    agent_id: "agent-1",
+    conversation_key: "conversation-1",
+    eventType: "service.agent.config.updated",
+    level: "INFO",
+    service_name: "filthy-panty-account-manage",
+    trace_id: "trace-1",
+    changedFields: "[\"modelId\"]",
+  }, "Agent configuration updated", 1_700_000_000_000, "fallback"))
+    .toMatchObject({
+      ts: 1_700_000_000_000,
+      level: "INFO",
+      eventType: "service.agent.config.updated",
+      message: "Agent configuration updated",
+      traceId: "trace-1",
+      accountId: "acct-1",
+      endpointId: "endpoint-1",
+      agentId: "agent-1",
+      conversationKey: "conversation-1",
+      service: "filthy-panty-account-manage",
+      data: { changedFields: "[\"modelId\"]" },
+    });
 });
 
 test("reconstructs full Tempo span trees with tenant attributes and errors", () => {

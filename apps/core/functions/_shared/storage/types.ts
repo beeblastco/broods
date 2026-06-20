@@ -171,6 +171,8 @@ export interface AgentDeploymentRecord {
  */
 export interface AgentDeploymentStore {
   getByApiKeyHash(apiKeyHash: string): Promise<AgentDeploymentRecord | null>;
+  /** Resolve the environment deployment containing one linked runtime agent. */
+  getByAgentId?(accountId: string, agentId: string): Promise<AgentDeploymentRecord | null>;
 }
 
 /** Account-scoped cron job schedules. */

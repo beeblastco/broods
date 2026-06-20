@@ -44,6 +44,7 @@ import type * as model_ownership_org from "../model/ownership/org.js";
 import type * as model_ownership_project from "../model/ownership/project.js";
 import type * as model_sandboxConfigSync from "../model/sandboxConfigSync.js";
 import type * as modelPricing from "../modelPricing.js";
+import type * as observability from "../observability.js";
 import type * as org from "../org.js";
 import type * as orgLifecycle from "../orgLifecycle.js";
 import type * as orgMembers from "../orgMembers.js";
@@ -103,6 +104,7 @@ declare const fullApi: ApiFromModules<{
   "model/ownership/project": typeof model_ownership_project;
   "model/sandboxConfigSync": typeof model_sandboxConfigSync;
   modelPricing: typeof modelPricing;
+  observability: typeof observability;
   org: typeof org;
   orgLifecycle: typeof orgLifecycle;
   orgMembers: typeof orgMembers;

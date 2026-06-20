@@ -6,6 +6,7 @@ import { v } from "convex/values";
 import type { Id } from "./_generated/dataModel";
 import { mutation, query } from "./_generated/server";
 import { ensureAgentsRowForConfig, pushEncryptedConfigToAgentRow, syncAgentRowFields } from "./model/agentSync";
+import { scheduleServiceLog } from "./observability";
 import { authKit } from "./auth";
 import { getOwnedEnvironment } from "./model/ownership/environment";
 import { getOwnedProject } from "./model/ownership/project";
@@ -164,6 +165,15 @@ export const create = mutation({
         // provisioned with a filthy-panty account.
         await ensureAgentsRowForConfig(ctx, configId, authUser.id);
         await pushEncryptedConfigToAgentRow(ctx, configId);
+        const created = await ctx.db.get(configId);
+        await scheduleServiceLog(ctx, {
+            projectId: projectId,
+            environmentId: environmentId,
+            eventType: "service.agent.created",
+            message: "Agent configuration created",
+            agentId: created?.agentId,
+            data: { configId: configId, name: trimmedName },
+        });
 
         return configId;
     },
@@ -229,6 +239,15 @@ export const update = mutation({
             description: updates.description,
         });
         await pushEncryptedConfigToAgentRow(ctx, configId);
+        const updated = await ctx.db.get(configId);
+        await scheduleServiceLog(ctx, {
+            projectId: existing.projectId,
+            environmentId: existing.environmentId,
+            eventType: "service.agent.config.updated",
+            message: "Agent configuration updated",
+            agentId: updated?.agentId,
+            data: { configId: configId, changedFields: Object.keys(patch).sort() },
+        });
 
         return configId;
     },
@@ -383,6 +402,14 @@ export const remove = mutation({
             }
         }
 
+        await scheduleServiceLog(ctx, {
+            projectId: existing.projectId,
+            environmentId: existing.environmentId,
+            eventType: "service.agent.deleted",
+            message: "Agent configuration deleted",
+            agentId: existing.agentId,
+            data: { configId: configId, name: existing.name },
+        });
         await ctx.db.delete(configId);
 
         return configId;

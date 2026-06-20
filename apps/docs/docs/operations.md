@@ -126,6 +126,8 @@ When `publicAccess` is not set, a public-key request for that agent is refused w
 
 The environment runtime key is encrypted at rest and recoverable by the owning user. The dashboard loads it automatically for Monitoring and Tracing, while `filthy-panty login` or `filthy-panty deploy` writes it to `FILTHY_PANTY_API_KEY` in `.env.local`. Dashboard and CLI sessions reuse the stored key without rotating it.
 
+Monitoring combines Loki history with the live NATS tail and displays newest events first. Channel webhooks and account-management operations resolve the same environment scope as direct agent calls, while dashboard configuration mutations emit scoped service audit events through the account-management service. Tracing shows active and completed tasks with model input, reasoning, response, tool input, and tool output details; the refresh control reloads durable history from Tempo.
+
 > Bringing your own custom domain to replace the generated endpoint URL is tracked as a future enhancement.
 
 Inspect and test agents from the CLI:

@@ -308,6 +308,13 @@ const agentDeployments: AgentDeploymentStore = {
     }) as AgentDeploymentRecord | null;
     return doc;
   },
+  async getByAgentId(accountId, agentId) {
+    const doc = await getConvexClient().query(internal.agentDeployments.getByAgentId, {
+      accountId: accountId as any,
+      agentId: agentId,
+    }) as AgentDeploymentRecord | null;
+    return doc;
+  },
 };
 
 const crons: CronStore = {
