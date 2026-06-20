@@ -148,6 +148,10 @@ export const handle = httpAction(async (ctx, req) => {
                 project: route.project,
                 environment: route.environment,
                 rotate: body.rotateRuntimeKey === true,
+                auditSync: {
+                    resourceCount: originalManifest.resources.length,
+                    prune: body.prune === true,
+                },
             });
 
             // `refreshed` is re-read from the DB and carries no warnings, so merge

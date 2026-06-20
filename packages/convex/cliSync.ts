@@ -10,6 +10,7 @@ import type { Doc, Id } from "./_generated/dataModel";
 import type { CliManifestResource, GeneratedIds } from "./cliTypes";
 import { internalMutation, internalQuery, type MutationCtx, type QueryCtx } from "./_generated/server";
 import { ensureEnvironmentDeployment } from "./agentDeployments";
+import { scheduleServiceLog } from "./observability";
 import {
     ensureAgentsRowForConfig,
     pushEncryptedConfigToAgentRow,
@@ -237,6 +238,10 @@ export const ensureRuntimeKeyBySecretHash = internalMutation({
         project: v.string(),
         environment: v.string(),
         rotate: v.optional(v.boolean()),
+        auditSync: v.optional(v.object({
+            resourceCount: v.number(),
+            prune: v.boolean(),
+        })),
     },
     returns: v.union(v.null(), v.object({
         accountId: v.id("accounts"),
@@ -261,6 +266,18 @@ export const ensureRuntimeKeyBySecretHash = internalMutation({
             environmentSlug: environmentDoc.name.toLowerCase(),
             rotate: args.rotate === true,
         });
+        if (args.auditSync) {
+            await scheduleServiceLog(ctx, {
+                projectId: projectDoc._id,
+                environmentId: environmentDoc._id,
+                eventType: "service.manifest.synced",
+                message: "CLI manifest synchronized",
+                data: {
+                    resourceCount: args.auditSync.resourceCount,
+                    prune: args.auditSync.prune,
+                },
+            });
+        }
 
         return {
             accountId: account._id,
