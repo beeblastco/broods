@@ -112,6 +112,34 @@ export async function connectNats(options: {
   return connection as unknown as NatsConnection;
 }
 
+// Shared memoized connection for observability publishes (logs + spans), used by
+// both log.ts and harness.ts. Returns null when NATS is unconfigured.
+let _obsNatsConn: NatsConnection | null = null;
+let _obsNatsConnPromise: Promise<NatsConnection> | null = null;
+
+export function getObservabilityNatsConn(): Promise<NatsConnection> | null {
+  const url = process.env.NATS_URL?.trim();
+  if (!url) return null;
+  const token = process.env.NATS_TOKEN?.trim() || undefined;
+
+  if (_obsNatsConn) return Promise.resolve(_obsNatsConn);
+  if (_obsNatsConnPromise) return _obsNatsConnPromise;
+
+  _obsNatsConnPromise = connectNats({ servers: url, token: token, timeout: 3000 })
+    .then((c) => {
+      _obsNatsConn = c;
+      _obsNatsConnPromise = null;
+
+      return c;
+    })
+    .catch((err) => {
+      _obsNatsConnPromise = null;
+      throw err;
+    });
+
+  return _obsNatsConnPromise;
+}
+
 export class LiveNatsPublisher implements NatsPublisher {
   private connectionPromise: Promise<NatsConnection> | null = null;
   private streamReady: Promise<void> | null = null;
@@ -329,4 +357,35 @@ export function streamResponseSubject(accountId: string, agentId: string, conver
 // client recomputes the same token from its conversationKey.
 export function subjectToken(value: string): string {
   return Buffer.from(value, "utf8").toString("base64url");
+}
+
+// Observability subjects: v1.<accountId>.<project>.<subjectToken(env)>.{logs|traces}.<endpointId>.
+// The env segment is base64url-encoded since environment names are free text; the
+// gateway reconstructs it from the token scope rather than parsing the subject.
+
+export function logsSubject(
+  accountId: string,
+  project: string,
+  env: string,
+  endpointId: string,
+): string {
+  return `v1.${accountId}.${project}.${subjectToken(env)}.logs.${endpointId}`;
+}
+
+export function tracesSubject(
+  accountId: string,
+  project: string,
+  env: string,
+  endpointId: string,
+): string {
+  return `v1.${accountId}.${project}.${subjectToken(env)}.traces.${endpointId}`;
+}
+
+// Wildcards cover all endpoints in a project/environment (dashboard tab / CLI `dev` scope).
+export function logsSubjectWildcard(accountId: string, project: string, env: string): string {
+  return `v1.${accountId}.${project}.${subjectToken(env)}.logs.>`;
+}
+
+export function tracesSubjectWildcard(accountId: string, project: string, env: string): string {
+  return `v1.${accountId}.${project}.${subjectToken(env)}.traces.>`;
 }

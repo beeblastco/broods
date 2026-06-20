@@ -1,24 +1,20 @@
 "use client";
 
-/** Monitoring panel: Vercel-style dense table of ERROR-level CloudWatch logs. */
+/** Monitoring panel: dense log table streamed live from the gateway observability WS. */
 import { Section } from "@/app/components/Section";
-import { Button } from "@/app/components/ui/button";
-import { toErrorMessage } from "@/app/lib/errors";
 import { cn } from "@/app/lib/utils";
-import { api } from "@filthy-panty/convex/_generated/api";
-import type { Id } from "@filthy-panty/convex/_generated/dataModel";
-import { useAction } from "convex/react";
-import type { FunctionReturnType } from "convex/server";
-import { AlertTriangle, RefreshCw, Search, Server } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  useObservabilityStream,
+  type ObservabilityLogEntry,
+} from "@/app/hooks/useObservabilityStream";
+import { AlertTriangle, RefreshCw, Search, Server, Wifi, XCircle } from "lucide-react";
+import { useMemo, useState } from "react";
 
 interface Props {
-  projectId: Id<"projects">;
-  /** Active environment to scope logs to, or null for the whole project. */
-  environmentId: Id<"environments"> | null;
+  projectSlug: string | undefined;
+  environmentSlug: string | undefined;
+  apiKey: string | undefined;
 }
-
-type LogEntry = FunctionReturnType<typeof api.logs.fetchForProject>[number];
 
 function formatDateTime(ms: number): { date: string; time: string } {
   const d = new Date(ms);
@@ -31,15 +27,14 @@ function formatDateTime(ms: number): { date: string; time: string } {
     second: "2-digit",
     hour12: false,
   });
-  // Append milliseconds for parity with the Vercel logs view.
   const ms3 = String(d.getMilliseconds()).padStart(3, "0");
-  return { date, time: `${time}.${ms3.slice(0, 2)}` };
+
+  return { date: date, time: `${time}.${ms3.slice(0, 2)}` };
 }
 
 /**
  * Best-effort prettifier: if the message starts with a JSON object/array,
  * parse and re-stringify with indentation. Falls back to the raw string.
- * Extracts a short summary (the `message`/`error`/`eventType` field if present).
  */
 function parseLogMessage(raw: string): {
   summary: string;
@@ -58,11 +53,13 @@ function parseLogMessage(raw: string): {
         trimmed.slice(0, 200);
       const eventType =
         typeof parsed?.eventType === "string" ? parsed.eventType : undefined;
-      return { summary, pretty, eventType };
+
+      return { summary: summary, pretty: pretty, eventType: eventType };
     } catch {
       // fall through
     }
   }
+
   return { summary: trimmed.slice(0, 200), pretty: trimmed };
 }
 
@@ -73,17 +70,24 @@ function shortFunctionName(name: string): string {
     .replace(/^filthy-panty-/, "");
 }
 
+function levelColor(level: ObservabilityLogEntry["level"]): string {
+  if (level === "ERROR") return "text-red-400";
+  if (level === "WARN") return "text-yellow-400";
+
+  return "text-muted-foreground";
+}
+
 function LogRow({
   entry,
   isExpanded,
   onToggle,
 }: {
-  entry: LogEntry;
+  entry: ObservabilityLogEntry;
   isExpanded: boolean;
   onToggle: () => void;
 }) {
   const parsed = useMemo(() => parseLogMessage(entry.message), [entry.message]);
-  const { date, time } = formatDateTime(entry.timestamp);
+  const { date, time } = formatDateTime(entry.ts);
 
   return (
     <>
@@ -99,21 +103,23 @@ function LogRow({
           {time}
         </td>
         <td className="px-3 py-1.5 whitespace-nowrap">
-          <span className="inline-flex items-center gap-1 text-red-400">
-            <AlertTriangle className="size-3" />
+          <span className={cn("inline-flex items-center gap-1", levelColor(entry.level))}>
+            {(entry.level === "ERROR" || entry.level === "WARN") && (
+              <AlertTriangle className="size-3" />
+            )}
             {entry.level}
           </span>
         </td>
         <td
           className="px-3 py-1.5 whitespace-nowrap text-muted-foreground/80 max-w-[200px] truncate"
-          title={entry.functionName}
+          title={entry.endpointId}
         >
-          {shortFunctionName(entry.functionName)}
+          {entry.endpointId ? shortFunctionName(entry.endpointId) : entry.agentId ?? "—"}
         </td>
         <td className="px-3 py-1.5 text-foreground/90 max-w-0 truncate">
-          {parsed.eventType && (
+          {(parsed.eventType ?? entry.eventType) && (
             <span className="text-[10px] uppercase tracking-wide text-muted-foreground mr-2 rounded bg-muted/40 px-1.5 py-0.5">
-              {parsed.eventType}
+              {parsed.eventType ?? entry.eventType}
             </span>
           )}
           {parsed.summary}
@@ -123,13 +129,25 @@ function LogRow({
         <tr className="border-b border-border/40 bg-background/40">
           <td colSpan={4} className="px-3 py-3">
             <div className="flex flex-col gap-2">
-              <div
-                className="text-[10px] text-muted-foreground/70 break-all"
-                title={entry.functionName}
+              {entry.traceId && (
+                <div className="text-[10px] text-muted-foreground/70 font-mono">
+                  trace: {entry.traceId}
+                </div>
+              )}
+              {entry.endpointId && (
+                <div
+                  className="text-[10px] text-muted-foreground/70 break-all"
+                  title={entry.endpointId}
+                >
+                  {entry.endpointId}
+                </div>
+              )}
+              <pre
+                className={cn(
+                  "whitespace-pre-wrap break-words leading-relaxed bg-background/60 border border-border rounded p-3 max-h-[500px] overflow-auto text-xs",
+                  levelColor(entry.level),
+                )}
               >
-                {entry.functionName}
-              </div>
-              <pre className="whitespace-pre-wrap break-words text-red-400 leading-relaxed bg-background/60 border border-border rounded p-3 max-h-[500px] overflow-auto text-xs">
                 {parsed.pretty}
               </pre>
             </div>
@@ -140,60 +158,36 @@ function LogRow({
   );
 }
 
-export function MonitoringPanel({ projectId, environmentId }: Props) {
-  const [isFetching, setIsFetching] = useState(false);
-  const [fetchError, setFetchError] = useState<string | null>(null);
-  const [logEntries, setLogEntries] = useState<LogEntry[] | null>(null);
+export function MonitoringPanel({ projectSlug, environmentSlug, apiKey }: Props) {
   const [expandedIndex, setExpandedIndex] = useState<number | null>(null);
   const [filter, setFilter] = useState("");
 
-  const fetchForProject = useAction(api.logs.fetchForProject);
+  const { entries, status, error } = useObservabilityStream({
+    stream: "logs",
+    projectSlug: projectSlug,
+    environmentSlug: environmentSlug,
+    apiKey: apiKey,
+    backfill: 200,
+  });
 
-  const handleRefresh = useCallback(async () => {
-    setIsFetching(true);
-    setFetchError(null);
-    try {
-      const logs = await fetchForProject({
-        projectId: projectId,
-        environmentId: environmentId ?? undefined,
-        errorOnly: true,
-      });
-      setLogEntries(logs);
-    } catch (err) {
-      setFetchError(toErrorMessage(err));
-    } finally {
-      setIsFetching(false);
-    }
-  }, [fetchForProject, projectId, environmentId]);
-
-  useEffect(() => {
-    let active = true;
-    // Defer past the synchronous effect tick so the loading-state update in
-    // handleRefresh isn't a cascading render, and drop it after unmount.
-    void Promise.resolve().then(() => {
-      if (active) handleRefresh();
-    });
-
-    return () => {
-      active = false;
-    };
-  }, [handleRefresh]);
+  const isConnecting = status === "connecting";
+  const isLive = status === "live";
 
   const filtered = useMemo(() => {
-    if (!logEntries) return [];
-    if (!filter.trim()) return logEntries;
+    if (!filter.trim()) return entries;
     const needle = filter.toLowerCase();
-    return logEntries.filter(
+
+    return entries.filter(
       (e) =>
         e.message.toLowerCase().includes(needle) ||
-        e.functionName.toLowerCase().includes(needle),
+        (e.endpointId ?? "").toLowerCase().includes(needle) ||
+        e.eventType.toLowerCase().includes(needle),
     );
-  }, [logEntries, filter]);
+  }, [entries, filter]);
 
   return (
     <div className="grid gap-8">
-      <Section description="Live ERROR-level log stream queried directly from AWS CloudWatch.">
-        {/* Toolbar */}
+      <Section description="Live log stream from the agent harness, via the gateway observability WS.">
         <div className="flex items-center justify-between gap-3 mb-3 flex-wrap">
           <div className="flex items-center gap-2 flex-1 min-w-[240px]">
             <div className="relative flex-1 max-w-md">
@@ -202,84 +196,73 @@ export function MonitoringPanel({ projectId, environmentId }: Props) {
                 type="text"
                 value={filter}
                 onChange={(e) => setFilter(e.target.value)}
-                placeholder={`Search ${logEntries?.length ?? 0} log${logEntries?.length === 1 ? "" : "s"}…`}
+                placeholder={`Search ${entries.length} log${entries.length === 1 ? "" : "s"}…`}
                 className="w-full rounded-md border border-border bg-card pl-8 pr-3 py-1.5 text-xs placeholder:text-muted-foreground/60 focus:outline-none focus:ring-1 focus:ring-ring"
               />
             </div>
           </div>
-          <Button
-            size="sm"
-            variant="outline"
-            className="cursor-pointer gap-1.5"
-            onClick={handleRefresh}
-            disabled={isFetching}
-          >
-            <RefreshCw
-              className={`size-3.5 ${isFetching ? "animate-spin" : ""}`}
-            />
-            {isFetching ? "Fetching…" : "Refresh"}
-          </Button>
+          <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
+            {status === "error" ? (
+              <XCircle className="size-3.5 text-destructive" />
+            ) : isConnecting ? (
+              <RefreshCw className="size-3.5 animate-spin" />
+            ) : isLive ? (
+              <Wifi className="size-3.5 text-green-500" />
+            ) : (
+              <RefreshCw className="size-3.5" />
+            )}
+            {status === "error"
+              ? error ?? "Disconnected"
+              : isConnecting
+                ? "Connecting…"
+                : isLive
+                  ? "Live"
+                  : "Waiting for credentials…"}
+          </span>
         </div>
 
-        {fetchError && (
-          <p className="mb-3 text-sm text-destructive">{fetchError}</p>
-        )}
-
-        {logEntries === null && !isFetching && (
-          <div className="rounded-lg border border-border bg-card px-4 py-6 text-center">
-            <p className="text-sm text-muted-foreground">No logs loaded yet.</p>
+        <div className="rounded-lg border border-border bg-card overflow-hidden">
+          <div className="max-h-[700px] overflow-auto">
+            <table className="w-full text-xs font-mono table-fixed">
+              <colgroup>
+                <col className="w-[170px]" />
+                <col className="w-[80px]" />
+                <col className="w-[200px]" />
+                <col />
+              </colgroup>
+              <thead className="sticky top-0 bg-card/95 backdrop-blur border-b border-border z-10">
+                <tr className="text-left text-muted-foreground/80 text-[10px] uppercase tracking-wide">
+                  <th className="px-3 py-2 font-medium">Time</th>
+                  <th className="px-3 py-2 font-medium">Level</th>
+                  <th className="px-3 py-2 font-medium">Function</th>
+                  <th className="px-3 py-2 font-medium">Message</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filtered.map((entry, i) => (
+                  <LogRow
+                    key={`${entry.ts}-${i}`}
+                    entry={entry}
+                    isExpanded={expandedIndex === i}
+                    onToggle={() =>
+                      setExpandedIndex((cur) => (cur === i ? null : i))
+                    }
+                  />
+                ))}
+              </tbody>
+            </table>
+            {filtered.length === 0 && (
+              <div className="flex items-center justify-center gap-2 px-4 py-10 text-xs text-muted-foreground/60">
+                <Server className="size-4" />
+                {entries.length === 0
+                  ? isLive
+                    ? "Listening for logs…"
+                    : "Connecting to the log stream…"
+                  : `No logs match “${filter}”.`}
+              </div>
+            )}
           </div>
-        )}
-
-        {logEntries !== null && logEntries.length === 0 && (
-          <div className="rounded-lg border border-border bg-card px-4 py-8 text-center">
-            <Server className="size-8 mx-auto mb-2 text-muted-foreground" />
-            <p className="text-sm text-muted-foreground">No errors found.</p>
-            <p className="text-xs text-muted-foreground mt-1">
-              All deployments are running cleanly in the selected window.
-            </p>
-          </div>
-        )}
-
-        {logEntries !== null && logEntries.length > 0 && (
-          <div className="rounded-lg border border-border bg-card overflow-hidden">
-            <div className="max-h-[700px] overflow-auto">
-              <table className="w-full text-xs font-mono table-fixed">
-                <colgroup>
-                  <col className="w-[170px]" />
-                  <col className="w-[80px]" />
-                  <col className="w-[200px]" />
-                  <col />
-                </colgroup>
-                <thead className="sticky top-0 bg-card/95 backdrop-blur border-b border-border z-10">
-                  <tr className="text-left text-muted-foreground/80 text-[10px] uppercase tracking-wide">
-                    <th className="px-3 py-2 font-medium">Time</th>
-                    <th className="px-3 py-2 font-medium">Level</th>
-                    <th className="px-3 py-2 font-medium">Function</th>
-                    <th className="px-3 py-2 font-medium">Message</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {filtered.map((entry, i) => (
-                    <LogRow
-                      key={`${entry.timestamp}-${i}`}
-                      entry={entry}
-                      isExpanded={expandedIndex === i}
-                      onToggle={() =>
-                        setExpandedIndex((cur) => (cur === i ? null : i))
-                      }
-                    />
-                  ))}
-                </tbody>
-              </table>
-              {filtered.length === 0 && (
-                <div className="px-4 py-8 text-center text-xs text-muted-foreground">
-                  No logs match &ldquo;{filter}&rdquo;.
-                </div>
-              )}
-            </div>
-          </div>
-        )}
+        </div>
       </Section>
     </div>
   );

@@ -1,5 +1,16 @@
 import { expect, test } from "bun:test";
-import { buildCoreRunBody, gatewayLimitsFromEnv, websocketMessageForNatsData } from "../src/index.ts";
+import {
+  buildCoreRunBody,
+  gatewayLimitsFromEnv,
+  normalizedCoreBaseUrls,
+  resolveObservabilityScope,
+  tempoTraceRowsFromResponse,
+  websocketMessageForNatsData,
+} from "../src/index.ts";
+import {
+  isObservabilityClientMessage,
+  MAX_OBSERVABILITY_BACKFILL,
+} from "../../../packages/filthy-panty/src/observability-contracts.ts";
 
 test("builds the core direct API body from a websocket execute message", () => {
   const body = buildCoreRunBody({
@@ -82,4 +93,97 @@ test("caps gateway idle timeout at Bun's supported maximum", () => {
   expect(gatewayLimitsFromEnv({
     GATEWAY_IDLE_TIMEOUT_SECONDS: "300",
   }).idleTimeoutSeconds).toBe(255);
+});
+
+test("normalizes and de-duplicates unified gateway core upstreams", () => {
+  expect(normalizedCoreBaseUrls([
+    "https://dev-core.example.com/",
+    "https://prod-core.example.com",
+    "https://dev-core.example.com",
+  ])).toEqual([
+    "https://dev-core.example.com",
+    "https://prod-core.example.com",
+  ]);
+  expect(() => normalizedCoreBaseUrls(["", "  "])).toThrow("Gateway requires");
+});
+
+test("routes a runtime key to the matching core upstream", async () => {
+  const calls: string[] = [];
+  const resolved = await resolveObservabilityScope("runtime-key", ["https://dev.example", "https://prod.example"],
+    async (input) => {
+      calls.push(String(input));
+      if (String(input).startsWith("https://dev.example")) return new Response("unauthorized", { status: 401 });
+      return Response.json({
+        accountId: "account-1",
+        projectSlug: "project",
+        environmentSlug: "production",
+        endpointIds: ["endpoint-1"],
+      });
+    });
+
+  expect(calls).toHaveLength(2);
+  expect(resolved).toMatchObject({
+    coreBaseUrl: "https://prod.example",
+    scope: { environmentSlug: "production" },
+  });
+});
+
+test("bounds observability backfill requests", () => {
+  expect(isObservabilityClientMessage({ type: "subscribe", stream: "logs", backfill: 100 })).toBe(true);
+  expect(isObservabilityClientMessage({
+    type: "subscribe",
+    stream: "logs",
+    backfill: MAX_OBSERVABILITY_BACKFILL + 1,
+  })).toBe(false);
+  expect(isObservabilityClientMessage({ type: "subscribe", stream: "logs", backfill: Number.POSITIVE_INFINITY })).toBe(false);
+});
+
+test("reconstructs full Tempo span trees with tenant attributes and errors", () => {
+  const rows = tempoTraceRowsFromResponse({
+    batches: [{
+      resource: { attributes: [
+        { key: "account_id", value: { stringValue: "acct-1" } },
+        { key: "endpoint_id", value: { stringValue: "endpoint-1" } },
+      ] },
+      scopeSpans: [{ spans: [
+        {
+          traceId: "trace-1",
+          spanId: "root-1",
+          name: "agent.task",
+          startTimeUnixNano: "1000000000",
+          endTimeUnixNano: "3000000000",
+          attributes: [{ key: "agent_id", value: { stringValue: "agent-1" } }],
+          status: { code: 1 },
+        },
+        {
+          traceId: "trace-1",
+          spanId: "tool-1",
+          parentSpanId: "root-1",
+          name: "tool.call",
+          startTimeUnixNano: "1500000000",
+          endTimeUnixNano: "2000000000",
+          status: { code: 2, message: "tool failed" },
+        },
+      ] }],
+    }],
+  });
+
+  expect(rows).toHaveLength(2);
+  expect(rows[0]).toMatchObject({
+    traceId: "trace-1",
+    spanId: "root-1",
+    kind: "task",
+    endpointId: "endpoint-1",
+    agentId: "agent-1",
+    durationMs: 2_000,
+    status: "ok",
+  });
+  expect(rows[1]).toMatchObject({
+    spanId: "tool-1",
+    parentSpanId: "root-1",
+    kind: "tool.call",
+    durationMs: 500,
+    status: "error",
+    error: "tool failed",
+  });
 });

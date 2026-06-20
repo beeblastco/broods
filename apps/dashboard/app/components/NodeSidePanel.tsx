@@ -49,10 +49,6 @@ import {
   isRuntimeVariable,
   type RuntimeVariable,
 } from "@/app/lib/runtimeVariables";
-import {
-  getRememberedDeploymentApiKey,
-  rememberDeploymentCredential,
-} from "@/app/lib/deploymentCredentials";
 import { includesSkillRef } from "@/app/lib/skillRefs";
 import { api } from "@filthy-panty/convex/_generated/api";
 import type { Id } from "@filthy-panty/convex/_generated/dataModel";
@@ -284,6 +280,12 @@ export const NodeSidePanel = memo(function NodeSidePanel({
         ? { projectId: projectId, environmentId: environmentId }
         : "skip",
     ) ?? undefined;
+  const revealedDeploymentApiKey = useQuery(
+    api.agentDeployments.revealKeyForEnvironment,
+    isAgent && projectId && environmentId
+      ? { projectId: projectId, environmentId: environmentId }
+      : "skip",
+  );
 
   const toolService = useQuery(
     api.toolService.getByNode,
@@ -331,16 +333,17 @@ export const NodeSidePanel = memo(function NodeSidePanel({
     setActiveTab("details");
   }
 
-  // Restore the remembered deployment key when the active deployment changes.
+  // Clear a freshly generated key when the active deployment changes. The
+  // authoritative stored key is recovered reactively from Convex below.
   const deploymentKeySync = activeDeployment?.endpointId ?? "";
   const [syncedDeploymentKey, setSyncedDeploymentKey] =
     useState(deploymentKeySync);
   if (deploymentKeySync !== syncedDeploymentKey) {
     setSyncedDeploymentKey(deploymentKeySync);
-    setDeploymentApiKey(
-      getRememberedDeploymentApiKey(activeDeployment?.endpointId),
-    );
+    setDeploymentApiKey(undefined);
   }
+  const resolvedDeploymentApiKey =
+    deploymentApiKey ?? revealedDeploymentApiKey ?? undefined;
 
   // Jump to the settings tab when the parent bumps the delete-request token.
   const [prevDeleteToken, setPrevDeleteToken] = useState(deleteRequestToken);
@@ -622,12 +625,6 @@ export const NodeSidePanel = memo(function NodeSidePanel({
           ? await rotateDeployment({ projectId: projectId, environmentId: environmentId })
           : await ensureDeployment({ projectId: projectId, environmentId: environmentId });
         if (result?.rawApiKey) {
-          rememberDeploymentCredential({
-            endpointId: result.endpointId,
-            apiKey: result.rawApiKey,
-            projectSlug: result.projectSlug,
-            environmentSlug: result.environmentSlug,
-          });
           setDeploymentApiKey(result.rawApiKey);
         }
       } finally {
@@ -840,7 +837,7 @@ export const NodeSidePanel = memo(function NodeSidePanel({
                 key={`${agentConfigId ?? "agent-details"}-${selectedProvider}-${agentConfig?.modelId ?? ""}`}
                 agentConfig={agentConfig}
                 activeDeployment={activeDeployment}
-                deploymentApiKey={deploymentApiKey}
+                deploymentApiKey={resolvedDeploymentApiKey}
                 editName={editName}
                 setEditName={setEditName}
                 onSaveName={handleSaveName}
@@ -1002,7 +999,7 @@ export const NodeSidePanel = memo(function NodeSidePanel({
               {isAgent ? (
                 <TestTab
                   activeDeployment={activeDeployment}
-                  deploymentApiKey={deploymentApiKey}
+                  deploymentApiKey={resolvedDeploymentApiKey}
                   agentId={agentConfigId ?? ""}
                   nodeColor={nodeData?.properties?.color}
                 />

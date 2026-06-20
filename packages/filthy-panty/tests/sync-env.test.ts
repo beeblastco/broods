@@ -36,6 +36,26 @@ test("listEnv returns an empty array when the payload omits variables", async ()
   expect(await client.listEnv("demo-app", "development")).toEqual([]);
 });
 
+test("getRuntimeKey recovers the environment runtime key", async () => {
+  const { client, calls } = clientWith(() =>
+    new Response(JSON.stringify({ apiKey: "fp_agent_secret", keyHint: "fp_agent_…cret" })),
+  );
+
+  const key = await client.getRuntimeKey("demo-app", "development");
+
+  expect(key).toEqual({ apiKey: "fp_agent_secret", keyHint: "fp_agent_…cret" });
+  expect(calls[0]).toEqual({
+    url: "https://dashboard.example.com/api/cli/projects/demo-app/environments/development/runtime-key",
+    method: "GET",
+  });
+});
+
+test("getRuntimeKey returns null when the environment is unknown", async () => {
+  const { client } = clientWith(() => new Response("not found", { status: 404 }));
+
+  expect(await client.getRuntimeKey("missing", "development")).toBeNull();
+});
+
 test("getEnv GETs the named env var and returns its value", async () => {
   const { client, calls } = clientWith(() => new Response(JSON.stringify({ value: "sk-secret" })));
 

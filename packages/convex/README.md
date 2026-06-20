@@ -27,6 +27,9 @@ blobs — core encrypts before writing; the dashboard never reads the plaintext.
 Environment variables are the exception: their values can be revealed on demand
 by the environment owner (`environmentVariables.reveal` / CLI `env get`), and
 each reveal is recorded in the `environmentVariableReveals` audit table.
+Environment runtime API keys are also stored AES-GCM encrypted alongside their
+authentication hash. Owners can recover them through the dashboard or CLI login
+without rotating.
 
 ## Functions
 

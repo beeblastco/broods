@@ -70,6 +70,13 @@ export interface DirectInboundEvent {
   accountId: string;
   agentId: string;
   agentConfig: AgentConfig;
+  // Per-deployment id from the runtime key, when the request authenticated with a
+  // deployment key. Scopes realtime telemetry to the dashboard's deployment view.
+  endpointId?: string;
+  // Project and environment slugs from the runtime key scope, forwarded to the
+  // harness so it can build NATS observability subjects for live streaming.
+  projectSlug?: string;
+  environmentSlug?: string;
   eventId: string;
   asyncResultEventId?: string;
   publicEventId: string;
@@ -359,6 +366,23 @@ async function handleLambdaUrlEvent(
   const publicEndpoint = parsePublicEndpointPath(event.rawPath);
   const auth = await context.authResolver(request.headers);
 
+  // Scope resolution for the realtime observability gateway. The gateway calls
+  // this server-side with the client's runtime key to learn which NATS subjects
+  // and Loki/Tempo labels it may stream. Scope comes from the key, never the
+  // client, so a deployment key is required and the response is its own scope.
+  if (isObservabilityScopePath(event.rawPath)) {
+    if (auth?.kind !== "deployment") {
+      return unauthorizedResponse();
+    }
+
+    return jsonResponse(200, {
+      accountId: auth.account.accountId,
+      projectSlug: auth.projectSlug,
+      environmentSlug: auth.environmentSlug,
+      endpointIds: [auth.endpointId],
+    });
+  }
+
   // A project+environment runtime key works on both the root direct API and the
   // scoped /v1/{project}/agents/{environment}/{endpointId} URL the dashboard
   // advertises. When the scoped path is present it must match the key's
@@ -388,11 +412,19 @@ async function handleLambdaUrlEvent(
 
         return handlers.handleAsyncRequest({
           ...parsed,
+          endpointId: auth.endpointId,
+          projectSlug: auth.projectSlug,
+          environmentSlug: auth.environmentSlug,
           statusUrl: buildStatusUrl(event, parsed.publicEventId, parsed.agentId),
         });
       }
 
-      return handlers.handleDirectRequest(parsed);
+      return handlers.handleDirectRequest({
+        ...parsed,
+        endpointId: auth.endpointId,
+        projectSlug: auth.projectSlug,
+        environmentSlug: auth.environmentSlug,
+      });
     } catch (err) {
       return badRequestResponse(err);
     }
@@ -917,6 +949,11 @@ function parseSandboxJobCompletionPayload(
     ...(record.response !== undefined ? { response: record.response } : {}),
     ...(typeof record.error === "string" ? { error: record.error } : {}),
   };
+}
+
+function isObservabilityScopePath(rawPath: string): boolean {
+  return rawPath === "/v1/internal/observability-scope" ||
+    rawPath === "/internal/observability-scope";
 }
 
 function unauthorizedResponse(): LambdaResponse {

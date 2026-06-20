@@ -18,7 +18,7 @@ import {
 import { logWarn } from "../../_shared/log.ts";
 import type { Session } from "../session.ts";
 import type { ResolvedWorkspace } from "../../_shared/workspaces.ts";
-import type { SandboxExecutorConfig } from "../sandbox/types.ts";
+import type { SandboxCpuSample, SandboxExecutorConfig } from "../sandbox/types.ts";
 import type { AsyncToolModeMap, AsyncToolSource, RunAsyncToolDispatch } from "../async-tools.ts";
 import bashTool from "./bash.tool.ts";
 import readTool from "./read.tool.ts";
@@ -57,6 +57,9 @@ export interface ToolContext {
   session?: Session;
   dispatchSubagents?: RunSubagentDispatch;
   dispatchAsyncTools?: RunAsyncToolDispatch;
+  // Reports each sandbox exec's CPU so the harness attributes usage per sandbox
+  // (agent bash/fs => role "agent"; uploaded custom tools => role "tool").
+  onSandboxCpu?: (sample: SandboxCpuSample) => void;
 }
 
 type ToolFactory = (context: ToolContext) => ToolSet;
@@ -125,6 +128,7 @@ export async function createTools(context: Omit<ToolContext, "config">, agentCon
           ? { statelessSandbox, statelessPermissionMode: context.statelessPermissionMode ?? "ask" }
           : {}),
         ...(backgroundContext ? { background: backgroundContext } : {}),
+        ...(context.onSandboxCpu ? { onSandboxCpu: context.onSandboxCpu } : {}),
       }
     ));
   }
@@ -139,11 +143,12 @@ export async function createTools(context: Omit<ToolContext, "config">, agentCon
   // write/edit/grep: require a sandbox at execution time. Pass the full workspace
   // list to preserve default-workspace semantics; read-only selections fail clearly.
   if (sandboxWorkspaces.length > 0) {
+    const fsContext = { workspaces, ...(context.onSandboxCpu ? { onSandboxCpu: context.onSandboxCpu } : {}) };
     Object.assign(
       sandboxTools,
-      writeTool({ workspaces }),
-      editTool({ workspaces }),
-      grepTool({ workspaces }),
+      writeTool(fsContext),
+      editTool(fsContext),
+      grepTool(fsContext),
     );
   }
   Object.assign(tools, sandboxTools);

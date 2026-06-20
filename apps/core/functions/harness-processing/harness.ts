@@ -14,8 +14,28 @@ import {
   type ToolApprovalRequestOutput,
   type ToolSet,
 } from "ai";
+import {
+  context as otelContextApi,
+  SpanStatusCode,
+  trace as otelTraceApi,
+  type Context as OtelContext,
+  type Span,
+} from "@opentelemetry/api";
 import type { AgentConfig } from "../_shared/storage/index.ts";
-import { logError, logInfo } from "../_shared/log.ts";
+import { collectSecretValues, logError, logInfo, redactSensitiveText } from "../_shared/log.ts";
+import { recordUsageTask } from "../_shared/telemetry.ts";
+import { extractCacheWriteTokens } from "./usage-metering.ts";
+import {
+  getTracer,
+  forceFlushOtel,
+  mintTraceId,
+  mintSpanId,
+  observabilityAttributes,
+  setObservabilityContext,
+  getObservabilityContext,
+} from "../_shared/otel.ts";
+import type { ObservabilitySpanRow } from "../../../../packages/filthy-panty/src/observability-contracts.ts";
+import { tracesSubject, getObservabilityNatsConn } from "../_shared/nats.ts";
 import {
   modelOutputFromModelConfig,
   modelSettingsFromModelConfig,
@@ -27,10 +47,43 @@ import type { Session, TurnContextSnapshot } from "./session.ts";
 import type { RunAsyncToolDispatch } from "./async-tools.ts";
 import { createAgentLifecycleEmitter, toLifecycleValue } from "./lifecycle.ts";
 import { createTools } from "./tools/index.ts";
+import type { SandboxCpuSample } from "./sandbox/types.ts";
 import type { RunSubagentDispatch } from "./tools/run-subagent.tool.ts";
 
 // Default max agent iterations to prevent looping or too long execution.
 const MAX_AGENT_ITERATIONS = 30;
+
+const SPAN_ENCODER = new TextEncoder();
+
+type TrackedSpan = {
+  otelSpan: Span;
+  otelContext: OtelContext;
+  traceId: string;
+  spanId: string;
+  parentSpanId?: string;
+  startTimeMs: number;
+};
+
+/** Publish a finished span to the live traces subject. Best-effort, non-blocking. */
+function publishSpan(row: ObservabilitySpanRow): void {
+  const connPromise = getObservabilityNatsConn();
+  if (!connPromise) return;
+
+  const ctx = getObservabilityContext();
+  // Skip non-deployment scopes (channel/cron have empty project/env/endpoint):
+  // no Tracing tab subscribes them, so the publish would be wasted. Tempo still
+  // gets the span via the OTLP exporter.
+  if (!ctx || !ctx.endpointId || !ctx.project || !ctx.environment) return;
+
+  const subject = tracesSubject(ctx.accountId, ctx.project, ctx.environment, ctx.endpointId);
+  connPromise
+    .then((conn) => {
+      conn.publish(subject, SPAN_ENCODER.encode(JSON.stringify(row)));
+    })
+    .catch(() => {
+      // Best-effort: NATS hiccup must not affect the run.
+    });
+}
 
 type ApprovalRequestOutput = ToolApprovalRequestOutput<ToolSet>;
 type ApprovalToolCall = ApprovalRequestOutput["toolCall"];
@@ -73,17 +126,72 @@ export async function runAgentLoop(
   const configuredModel = resolveConfiguredModel(agentConfig);
   const lifecycle = createAgentLifecycleEmitter(session, agentConfig);
 
+  // Task-scoped usage accumulators — written by hooks/callbacks, read at finalize.
+  let taskCacheWriteTokens = 0;
+  // Accumulate sandbox CPU per (type, role, tool); each bucket becomes one
+  // sandboxUsage row at finalize. CPU only arrives for kubernetes execs.
+  const sandboxUsageByKey = new Map<string, SandboxCpuSample>();
+  const recordSandboxCpu = (sample: SandboxCpuSample): void => {
+    if (!(sample.cpuUsec > 0)) return;
+    const key = `${sample.type}|${sample.role}|${sample.toolName ?? ""}`;
+    const existing = sandboxUsageByKey.get(key);
+    if (existing) {
+      existing.cpuUsec += sample.cpuUsec;
+    } else {
+      sandboxUsageByKey.set(key, {
+        type: sample.type,
+        role: sample.role,
+        ...(sample.toolName ? { toolName: sample.toolName } : {}),
+        cpuUsec: sample.cpuUsec,
+      });
+    }
+  };
+
+  // Start the durable root span (agent.task) up front so the same trace id is
+  // stamped on every log line and NATS span row AND exported to Tempo — that shared
+  // id links logs<->traces in Grafana. When OTel is not initialised the tracer is a
+  // noop and its context is all-zero, so fall back to freshly minted ids for the
+  // live/NATS path. project/environment come from the auth scope on the session's
+  // endpointId; empty for non-deployment (channel/cron).
+  const runStartedAt = Date.now();
+  const observabilityScope = {
+    accountId: session.accountId ?? "",
+    project: session.projectSlug ?? "",
+    environment: session.environmentSlug ?? "",
+    endpointId: session.endpointId ?? "",
+    agentId: session.agentId ?? "",
+    conversationKey: session.conversationKey,
+  };
+  const resolvedWorkspaces = session.resolvedWorkspaces();
+  const statelessSandbox = session.statelessSandbox();
+  const tracer = getTracer();
+  const otelRootSpan = tracer.startSpan("agent.task", {
+    startTime: runStartedAt,
+    attributes: observabilityAttributes(observabilityScope),
+  });
+  const otelSpanCtx = otelRootSpan.spanContext();
+  const traceId = /[^0]/.test(otelSpanCtx.traceId) ? otelSpanCtx.traceId : mintTraceId();
+  const rootSpanId = /[^0]/.test(otelSpanCtx.spanId) ? otelSpanCtx.spanId : mintSpanId();
+  const rootOtelContext = otelTraceApi.setSpan(otelContextApi.active(), otelRootSpan);
+  setObservabilityContext({
+    ...observabilityScope,
+    traceId,
+    otelContext: rootOtelContext,
+    secretValues: collectSecretValues([agentConfig, statelessSandbox, resolvedWorkspaces]),
+  });
+
   const tools = {
     ...await createTools({
       accountId: session.accountId,
       conversationKey: session.conversationKey,
-      workspaces: session.resolvedWorkspaces(),
-      statelessSandbox: session.statelessSandbox(),
+      workspaces: resolvedWorkspaces,
+      statelessSandbox: statelessSandbox,
       statelessPermissionMode: session.statelessPermissionMode(),
       modelProviderName: configuredModel.providerName,
       modelProvider: configuredModel.provider,
       session: session,
       dispatchAsyncTools: options.dispatchAsyncTools,
+      onSandboxCpu: recordSandboxCpu,
       // The handler owns subagent lifecycle, so the loop only forwards the
       // dispatcher into the tool registry for this one model run. Ephemeral
       // system messages are request-local, so pass the current turn copy into
@@ -103,8 +211,37 @@ export async function runAgentLoop(
   let approvalSummaries: ToolApprovalSummary[] = [];
   let finalResponse: JSONValue | undefined;
 
+  // Child OTel spans remain open until the corresponding AI SDK finish hook.
+  // Their real OTel IDs are reused in the live NATS trace rows.
+  const stepSpans = new Map<number, TrackedSpan>();
+  const toolSpans = new Map<string, TrackedSpan>();
+  const startTrackedSpan = (
+    name: string,
+    startTimeMs: number,
+    parentContext: OtelContext,
+    parentSpanId: string,
+    attributes: Record<string, string | number | boolean>,
+  ): TrackedSpan => {
+    const otelSpan = tracer.startSpan(name, {
+      startTime: startTimeMs,
+      attributes: {
+        ...observabilityAttributes(observabilityScope),
+        ...attributes,
+      },
+    }, parentContext);
+    const spanContext = otelSpan.spanContext();
+
+    return {
+      otelSpan,
+      otelContext: otelTraceApi.setSpan(parentContext, otelSpan),
+      traceId: /[^0]/.test(spanContext.traceId) ? spanContext.traceId : traceId,
+      spanId: /[^0]/.test(spanContext.spanId) ? spanContext.spanId : mintSpanId(),
+      parentSpanId,
+      startTimeMs,
+    };
+  };
+
   // Log context
-  const runStartedAt = Date.now();
   const stepStartedAt = new Map<number, number>();
   const toolCallSummaries = new Map<string, ToolCallSummary>();
   const logContext = {
@@ -114,6 +251,116 @@ export async function runAgentLoop(
     eventId: session.eventId,
     modelProvider: configuredModel.providerName,
     modelId: agentConfig.model?.modelId,
+  };
+
+  // Finalize-once guard: usage is written exactly once per task and the root OTel
+  // span is ended once. Finalization happens after terminal logs/replies so those
+  // records retain tenant/trace context, then explicitly flushes before Lambda can
+  // freeze the process.
+  let usageFinalized = false;
+  let finishObserved = false;
+  let taskUsage: unknown;
+  let taskStepCount = 0;
+  let terminalError: Error | undefined;
+  const finalizeUsage = async (
+    status: "completed" | "failed",
+    usage: unknown,
+    stepCount: number,
+    toolCallCount: number,
+    durationMs: number,
+    error?: Error,
+  ): Promise<void> => {
+    if (usageFinalized) return;
+    usageFinalized = true;
+
+    const context = getObservabilityContext();
+    const sanitizedError = error
+      ? new Error(redactSensitiveText(error.message, context?.secretValues))
+      : undefined;
+
+    // Close the root OTel span. Published live via NATS and exported durably
+    // via the OTLP exporter registered in otel.ts.
+    const endTimeMs = runStartedAt + durationMs;
+    for (const tracked of [...toolSpans.values(), ...stepSpans.values()]) {
+      if (status === "failed") {
+        tracked.otelSpan.setStatus({ code: SpanStatusCode.ERROR, message: sanitizedError?.message });
+      }
+      tracked.otelSpan.end(endTimeMs);
+    }
+    toolSpans.clear();
+    stepSpans.clear();
+    const rootSpanRow: ObservabilitySpanRow = {
+      traceId,
+      spanId: rootSpanId,
+      name: "agent.task",
+      kind: "task",
+      startTimeMs: runStartedAt,
+      endTimeMs,
+      durationMs,
+      status: status === "completed" ? "ok" : "error",
+      endpointId: session.endpointId,
+      agentId: session.agentId,
+      conversationKey: session.conversationKey,
+      attributes: {
+        "agent.step_count": stepCount,
+        "agent.tool_call_count": toolCallCount,
+        "agent.model_provider": configuredModel.providerName,
+        "agent.model_id": agentConfig.model?.modelId,
+      },
+      ...(sanitizedError ? { error: sanitizedError.message } : {}),
+    };
+
+    // End the root OTel span (durable Tempo export).
+    try {
+      otelRootSpan.setAttributes(
+        rootSpanRow.attributes as Record<string, string | number | boolean | undefined>,
+      );
+      if (status === "failed") {
+        if (sanitizedError) otelRootSpan.recordException(sanitizedError);
+        otelRootSpan.setStatus({ code: SpanStatusCode.ERROR, message: sanitizedError?.message });
+      } else {
+        otelRootSpan.setStatus({ code: SpanStatusCode.OK });
+      }
+      otelRootSpan.end(endTimeMs);
+    } catch {
+      // Best-effort: never fail the agent path.
+    }
+
+    // Live publish via NATS.
+    publishSpan(rootSpanRow);
+
+    const u = (usage ?? {}) as Record<string, number | undefined>;
+    try {
+      await recordUsageTask({
+        accountId: session.accountId ?? "",
+        endpointId: session.endpointId,
+        agentId: session.agentId ?? "unknown",
+        conversationKey: session.conversationKey,
+        taskId: session.eventId,
+        modelProvider: configuredModel.providerName ?? "unknown",
+        modelId: agentConfig.model?.modelId ?? "unknown",
+        finishedAt: endTimeMs,
+        durationMs,
+        status,
+        inputTokens: u.inputTokens ?? 0,
+        outputTokens: u.outputTokens ?? 0,
+        reasoningTokens: u.reasoningTokens ?? 0,
+        cachedInputTokens: u.cachedInputTokens ?? 0,
+        cacheWriteTokens: taskCacheWriteTokens,
+        totalTokens: u.totalTokens ?? 0,
+        runtimeKind: "lambda",
+        runtimeWallMs: durationMs,
+        runtimeMemoryMb: parseInt(process.env.AWS_LAMBDA_FUNCTION_MEMORY_SIZE ?? "0", 10),
+        sandboxUsage: [...sandboxUsageByKey.values()],
+        stepCount,
+        toolCallCount,
+      });
+      await forceFlushOtel();
+    } finally {
+      // Lambda execution environments are reused, so never retain one task's
+      // tenant, trace, or secret values after its exporters have flushed.
+      setObservabilityContext(null);
+    }
   };
 
   await lifecycle.emit("agent.started", {
@@ -154,12 +401,33 @@ export async function runAgentLoop(
       };
     },
     experimental_onStepStart: async ({ stepNumber }) => {
-      stepStartedAt.set(stepNumber, Date.now());
+      const now = Date.now();
+      stepStartedAt.set(stepNumber, now);
+      stepSpans.set(stepNumber, startTrackedSpan(
+        "model.step",
+        now,
+        rootOtelContext,
+        rootSpanId,
+        { "agent.step_number": stepNumber },
+      ));
     },
     experimental_onToolCallStart: async ({ stepNumber, toolCall }) => {
+      const now = Date.now();
       if (stepNumber !== undefined && !stepStartedAt.has(stepNumber)) {
-        stepStartedAt.set(stepNumber, Date.now());
+        stepStartedAt.set(stepNumber, now);
       }
+      const parent = stepNumber !== undefined ? stepSpans.get(stepNumber) : undefined;
+      toolSpans.set(toolCall.toolCallId, startTrackedSpan(
+        "tool.call",
+        now,
+        parent?.otelContext ?? rootOtelContext,
+        parent?.spanId ?? rootSpanId,
+        {
+          "tool.name": toolCall.toolName,
+          "tool.call_id": toolCall.toolCallId,
+          ...(stepNumber !== undefined ? { "agent.step_number": stepNumber } : {}),
+        },
+      ));
       recordToolCallSummary(toolCallSummaries, toolCall, { stepNumber });
       await lifecycle.emit("tool.call.started", {
         stepNumber: stepNumber,
@@ -167,6 +435,55 @@ export async function runAgentLoop(
       });
     },
     experimental_onToolCallFinish: async ({ stepNumber, toolCall, durationMs, success, error }) => {
+      // Close the tool.call span.
+      const toolEndMs = Date.now();
+      const tracked = toolSpans.get(toolCall.toolCallId) ?? startTrackedSpan(
+        "tool.call",
+        toolEndMs - (durationMs ?? 0),
+        rootOtelContext,
+        rootSpanId,
+        { "tool.name": toolCall.toolName, "tool.call_id": toolCall.toolCallId },
+      );
+      const toolDurationMs = toolEndMs - tracked.startTimeMs;
+      const errorText = success ? undefined : redactSensitiveText(
+        errorMessage(error),
+        getObservabilityContext()?.secretValues,
+      );
+      tracked.otelSpan.setAttributes({
+        "tool.duration_ms": toolDurationMs,
+        "tool.success": success,
+      });
+      if (success) {
+        tracked.otelSpan.setStatus({ code: SpanStatusCode.OK });
+      } else {
+        const spanError = new Error(errorText);
+        tracked.otelSpan.recordException(spanError);
+        tracked.otelSpan.setStatus({ code: SpanStatusCode.ERROR, message: errorText });
+      }
+      tracked.otelSpan.end(toolEndMs);
+      const toolSpanRow: ObservabilitySpanRow = {
+        traceId: tracked.traceId,
+        spanId: tracked.spanId,
+        parentSpanId: tracked.parentSpanId,
+        name: "tool.call",
+        kind: "tool.call",
+        startTimeMs: tracked.startTimeMs,
+        endTimeMs: toolEndMs,
+        durationMs: toolDurationMs,
+        status: success ? "ok" : "error",
+        endpointId: session.endpointId,
+        agentId: session.agentId,
+        conversationKey: session.conversationKey,
+        attributes: {
+          "tool.name": toolCall.toolName,
+          "tool.call_id": toolCall.toolCallId,
+          ...(stepNumber !== undefined ? { "agent.step_number": stepNumber } : {}),
+        },
+        ...(errorText ? { error: errorText } : {}),
+      };
+      publishSpan(toolSpanRow);
+      toolSpans.delete(toolCall.toolCallId);
+
       recordToolCallSummary(toolCallSummaries, toolCall, { stepNumber, durationMs, success });
       await lifecycle.emit("tool.call.finished", {
         stepNumber: stepNumber,
@@ -213,6 +530,11 @@ export async function runAgentLoop(
         recordToolCallSummary(toolCallSummaries, toolCall, { stepNumber });
       }
 
+      // providerMetadata is typed as ProviderMetadata (Record<string, Record<string, unknown>>)
+      // by the AI SDK; cast to the shape extractCacheWriteTokens expects.
+      const meta = providerMetadata as Record<string, unknown> | undefined;
+      taskCacheWriteTokens += extractCacheWriteTokens(configuredModel.providerName, meta);
+
       await lifecycle.emit("agent.step.finished", {
         stepNumber: stepNumber,
         finishReason: finishReason,
@@ -244,12 +566,45 @@ export async function runAgentLoop(
         },
         providerMetadata,
       });
+
+      // Publish the model.step span (tree: agent.task -> model.step -> tool.call).
+      // Tool spans reference this stepSpanId as their parent; without it they
+      // would be orphaned in the trace view.
+      const tracked = stepSpans.get(stepNumber);
+      if (tracked) {
+        const stepEndMs = Date.now();
+        const attributes = {
+          "agent.step_number": stepNumber,
+          "model.finish_reason": finishReason,
+          "agent.tool_call_count": toolCalls.length,
+        };
+        tracked.otelSpan.setAttributes(attributes);
+        tracked.otelSpan.setStatus({ code: SpanStatusCode.OK });
+        tracked.otelSpan.end(stepEndMs);
+        publishSpan({
+          traceId: tracked.traceId,
+          spanId: tracked.spanId,
+          parentSpanId: tracked.parentSpanId,
+          name: "model.step",
+          kind: "model.step",
+          startTimeMs: tracked.startTimeMs,
+          endTimeMs: stepEndMs,
+          durationMs: stepEndMs - tracked.startTimeMs,
+          status: "ok",
+          endpointId: session.endpointId,
+          agentId: session.agentId,
+          conversationKey: session.conversationKey,
+          attributes,
+        });
+      }
+      stepSpans.delete(stepNumber);
     },
     onError: async ({ error }) => {
       const errorText = errorMessage(error);
       const tools = summarizeToolsUsed(toolCallSummaries);
       didFail = true;
       failureText = errorText;
+      terminalError = error instanceof Error ? error : new Error(errorText);
       logError("Agent loop failed", {
         eventType: "model.invocation.failed",
         ...logContext,
@@ -286,6 +641,9 @@ export async function runAgentLoop(
       const finalText = text.trim();
       const stepCount = steps.length;
       const toolCallCount = toolCalls.length;
+      finishObserved = true;
+      taskUsage = totalUsage ?? usage;
+      taskStepCount = stepCount;
       const approvalRequests = extractApprovalRequests(steps);
       const approvals = approvalRequests.map(summarizeApprovalRequest);
       const tools = summarizeToolsUsed(toolCallSummaries);
@@ -350,6 +708,7 @@ export async function runAgentLoop(
           ].join(" ");
           didFail = true;
           failureText = errorText;
+          terminalError = new Error(errorText);
           logError(errorText, {
             eventType: "model.invocation.failed",
             ...logContext,
@@ -392,6 +751,7 @@ export async function runAgentLoop(
         const tools = summarizeToolsUsed(toolCallSummaries);
         didFail = true;
         failureText = errorText;
+        terminalError = err instanceof Error ? err : new Error(errorText);
         logError("Post-generation steps failed", {
           eventType: "model.invocation.failed",
           ...logContext,
@@ -410,11 +770,54 @@ export async function runAgentLoop(
           toolCalls: toLifecycleValue(tools.toolCalls),
         });
         await reply?.onErrorText(errorText).catch(() => { });
+      } finally {
+        await finalizeUsage(
+          didFail ? "failed" : "completed",
+          taskUsage,
+          taskStepCount,
+          toolCallCount,
+          Date.now() - runStartedAt,
+          terminalError,
+        );
       }
     },
   });
 
+  // Wrap consumeStream so finalizeUsage fires in a finally block even when
+  // streamText throws hard (e.g. network failure before any chunk arrives) and
+  // onFinish / onError never run. The idempotent flag inside finalizeUsage
+  // prevents a double-write when the callbacks did run.
+  const originalConsumeStream = stream.consumeStream.bind(stream);
+  const wrappedConsumeStream = async (): Promise<void> => {
+    try {
+      await originalConsumeStream();
+    } catch (error) {
+      didFail = true;
+      const errorText = errorMessage(error);
+      failureText ??= errorText;
+      terminalError ??= error instanceof Error ? error : new Error(errorText);
+      throw error;
+    } finally {
+      if (!usageFinalized) {
+        if (!finishObserved) {
+          didFail = true;
+          terminalError ??= new Error("Model stream ended without a completion callback");
+          failureText ??= terminalError.message;
+        }
+        await finalizeUsage(
+          "failed",
+          taskUsage,
+          taskStepCount,
+          toolCallSummaries.size,
+          Date.now() - runStartedAt,
+          terminalError,
+        );
+      }
+    }
+  };
+
   return Object.assign(stream, {
+    consumeStream: wrappedConsumeStream,
     didFail: () => didFail,
     failureText: () => failureText,
     approvalSummaries: () => approvalSummaries,

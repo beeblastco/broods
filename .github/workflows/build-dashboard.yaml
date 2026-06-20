@@ -71,7 +71,6 @@ jobs:
             ${{ env.IMAGE_NAME }}:${{ github.ref_name }}
             ${{ env.IMAGE_NAME }}:${{ github.sha }}
           build-args: |
-            NEXT_PUBLIC_AGENT_GATEWAY_URL=${{ vars.NEXT_PUBLIC_AGENT_GATEWAY_URL }}
             NEXT_PUBLIC_CONVEX_URL=${{ vars.NEXT_PUBLIC_CONVEX_URL }}
             NEXT_PUBLIC_WORKOS_REDIRECT_URI=${{ vars.NEXT_PUBLIC_WORKOS_REDIRECT_URI }}
             NEXT_PUBLIC_FILTHY_PANTY_BASE_URL=${{ vars.NEXT_PUBLIC_FILTHY_PANTY_BASE_URL || 'https://app.beeblast.co' }}

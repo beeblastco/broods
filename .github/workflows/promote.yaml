@@ -1,7 +1,7 @@
 # One-click promotion: fast-forwards main to dev, then dispatches the main
 # deploy workflows. Pushes made with GITHUB_TOKEN do not fire `on: push`
-# workflows (recursion guard), so deploy.yaml, deploy-convex.yaml, and
-# build-dashboard.yaml are dispatched explicitly after the merge.
+# workflows (recursion guard), so the production workflows are dispatched
+# explicitly in dependency order and each must finish before the next starts.
 
 name: Promote dev to main
 
@@ -46,12 +46,43 @@ jobs:
           git merge --ff-only origin/dev
           git push origin main
           echo "PROMOTED=true" >> "$GITHUB_ENV"
+          echo "PROMOTED_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
 
       - name: Trigger main deploys
         if: env.PROMOTED == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh workflow run deploy.yaml --ref main --repo "$GITHUB_REPOSITORY"
-          gh workflow run deploy-convex.yaml --ref main --repo "$GITHUB_REPOSITORY"
-          gh workflow run build-dashboard.yaml --ref main --repo "$GITHUB_REPOSITORY"
+          set -euo pipefail
+
+          dispatch_and_wait() {
+            local workflow="$1"
+            local dispatched_at run_id
+            dispatched_at=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+            gh workflow run "$workflow" --ref main --repo "$GITHUB_REPOSITORY"
+
+            for _ in $(seq 1 60); do
+              run_id=$(gh api \
+                "repos/$GITHUB_REPOSITORY/actions/workflows/$workflow/runs?branch=main&event=workflow_dispatch&per_page=20" \
+                --jq "[.workflow_runs[] | select(.head_sha == \"$PROMOTED_SHA\" and .created_at >= \"$dispatched_at\")] | .[0].id // empty")
+              if [[ -n "$run_id" ]]; then
+                break
+              fi
+              sleep 2
+            done
+
+            if [[ -z "${run_id:-}" ]]; then
+              echo "Timed out waiting for $workflow to start for $PROMOTED_SHA" >&2
+              return 1
+            fi
+
+            gh run watch "$run_id" --exit-status --repo "$GITHUB_REPOSITORY"
+          }
+
+          # Convex schema/functions first, then the core that calls them. Build
+          # the gateway after core is live, and the dashboard last.
+          dispatch_and_wait deploy-convex.yaml
+          dispatch_and_wait deploy.yaml
+          dispatch_and_wait build-gateway.yaml
+          dispatch_and_wait build-dashboard.yaml

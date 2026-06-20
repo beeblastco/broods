@@ -103,7 +103,7 @@ Usage notes:
             toBase64(new_string ?? ""),
             replace_all === true,
           );
-          const result = await runSandbox(ws.sandbox, ws.namespace, code);
+          const result = await runSandbox(ws.sandbox, ws.namespace, code, { onSandboxCpu: context.onSandboxCpu });
           if (!result.ok) {
             return toolError(`${result.stderr}${result.stdout}`.trim() || "Error: edit failed");
           }

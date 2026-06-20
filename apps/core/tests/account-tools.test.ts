@@ -163,6 +163,7 @@ function inMemoryStorage(): StorageProvider {
         return tools.length;
       },
     },
+    usage: { async recordTask() {} },
   } as StorageProvider;
 }
 

@@ -32,7 +32,9 @@ export const sandboxAssistant = defineAgent({
   name: "sandbox-assistant",
   config: {
     provider: {
-      minimax: { apiKey: env.MINIMAX_API_KEY },
+      minimax: {
+        apiKey: env.MINIMAX_API_KEY,
+      },
     },
     model: {
       provider: "minimax",
@@ -43,5 +45,6 @@ export const sandboxAssistant = defineAgent({
     },
     sandbox: daytonaSandbox,
     workspaces: [notesWorkspace],
+    publicAccess: true,
   },
 });

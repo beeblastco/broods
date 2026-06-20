@@ -14,7 +14,6 @@
         "format": "prettier --write \"**/*.{ts,md,json}\""
     },
     "dependencies": {
-        "@aws-sdk/client-cloudwatch-logs": "^3.1063.0",
         "@convex-dev/stripe": "^0.1.4",
         "@convex-dev/workos-authkit": "^0.2.6",
         "convex": "^1.40.0"

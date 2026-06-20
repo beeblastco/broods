@@ -190,7 +190,7 @@ export function TestTab({
         return (
             <div className="flex flex-1 items-center justify-center p-4">
                 <p className="text-center text-xs text-muted-foreground">
-                    The runtime key is shown only once. Rotate it in Details to reveal a fresh key, then return here to test.
+                    Loading the encrypted runtime key…
                 </p>
             </div>
         );

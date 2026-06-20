@@ -14,9 +14,11 @@ import { collectEnvRefNames, compileProject } from "../manifest.ts";
 import type { CliManifest } from "../contracts.ts";
 import { GENERATED_DIR, PROJECT_DIR, USER_CONFIG_PATH } from "../config.ts";
 import { writeGeneratedFiles } from "../codegen.ts";
-import { type CliLogEntry, type CliOnboardingContext, type CliOnboardingOrg, diffManifests, FilthyPantySyncClient, type RemoteManifestResponse } from "../sync.ts";
-import { FilthyPantyClient } from "../client.ts";
+import { type CliOnboardingContext, type CliOnboardingOrg, diffManifests, FilthyPantySyncClient, type RemoteManifestResponse } from "../sync.ts";
+import { FilthyPantyClient, DEFAULT_CORE_BASE_URL } from "../client.ts";
 import { loadFilthyPantyRuntimeConfig } from "../runtime-config.ts";
+import { subscribeObservabilityLogs } from "../observability-client.ts";
+import type { LogLevel, ObservabilityLogEntry } from "../observability-contracts.ts";
 import { hasFlag, loginWithBrowser, optionValue, promptConfirm, promptSecret, promptSelect, promptText, requireAuth } from "./utils.ts";
 import { printDeploymentTarget, printDiffEntries, printEnvSync, printReadyLine, printWarning } from "./output.ts";
 import { createRenderState, renderStreamPart } from "./render.ts";
@@ -31,17 +33,19 @@ Usage: filthy-panty <command>
 Commands:
   init                 Create a filthypanty/ project shell
   login                Authenticate with WorkOS through the dashboard
-  dev                  Watch resources and sync Development (confirms before deleting);
-                       auto-pushes any env.NAME values found in .env.local to the cloud
-  dev --once           Sync Development a single time and exit (no watch)
+  dev                  Watch + sync Development AND live-tail agent logs (like \`convex dev\`);
+                       confirms before deleting; auto-pushes env.NAME values from .env.local
+  dev --once           Sync Development a single time and exit (no watch, no log stream)
   diff                 Show local desired state vs remote state
-  deploy               Sync Production once; writes FILTHY_PANTY_API_KEY to .env.local on first run
+  deploy               Sync Production once; writes FILTHY_PANTY_API_KEY to .env.local
                        (--prune deletes undeclared remote resources; --rotate-key mints a fresh key)
   env set <name>       Store an encrypted environment variable
   env get <name>       Reveal a variable's value (audited)
   env list             List environment variable names (values stay hidden)
   env rm <name>        Remove an environment variable
-  logs [-f]            Show recent ERROR logs; -f/--follow tails them live (Ctrl+C to stop)
+  stream               Stream live logs for the whole project/environment (Ctrl+C to stop)
+  logs                 Backfill recent logs then live-tail; default 100 lines
+                       (--errors / --level warn filter to WARN+; -n/--limit <n> changes backfill size)
   agent list           List the agents in the current project/environment scope
   agent get <name>     Show an agent's resources (model, sandbox, workspaces, tools, channels)
   run <agent> <prompt> Run an agent once and pretty-stream the result (thinking, tool calls, text)
@@ -52,10 +56,10 @@ Options:
   --env <name>          Target environment override
   --prune               Allow deploy to delete undeclared remote resources
   --rotate-key          Mint a fresh runtime API key on deploy and write it to .env.local
-  -f, --follow          Tail logs live (with \`logs\`)
-  --all                 Include INFO/WARN/DEBUG logs (with \`logs\`)
-  --limit <n>           Max log lines to fetch (with \`logs\`, default 50)
-  --json                Print logs as raw JSON (with \`logs\`)
+  --errors              Show WARN/ERROR only (with \`stream\` and \`logs\`)
+  --level <lvl>         Minimum log level INFO|WARN|ERROR (with \`stream\` and \`logs\`)
+  -n, --limit <n>       Backfill line count (with \`logs\`, default 100)
+  --json                Print logs as raw JSON (with \`logs\`, applies to backfill output)
   --force               Allow init to overwrite starter files`;
 
 async function main(): Promise<void> {
@@ -88,6 +92,9 @@ async function main(): Promise<void> {
       return;
     case "env":
       await envCommand(args);
+      return;
+    case "stream":
+      await streamLogs(args);
       return;
     case "logs":
       await logs(args);
@@ -128,10 +135,12 @@ async function login(args: string[]): Promise<void> {
     runtime.dashboardUrl ??
     DEFAULT_DASHBOARD_URL;
   const auth = await loginWithBrowser(dashboardUrl);
+  const project = optionValue(args, "--project") ?? process.env.FILTHY_PANTY_PROJECT ?? inferProjectName(process.cwd());
+  const environment = optionValue(args, "--env") ?? process.env.FILTHY_PANTY_ENVIRONMENT ?? "development";
   await writeLocalEnvDefaults({
     dashboardUrl: auth.dashboardUrl,
-    project: optionValue(args, "--project") ?? process.env.FILTHY_PANTY_PROJECT ?? inferProjectName(process.cwd()),
-    environment: optionValue(args, "--env") ?? process.env.FILTHY_PANTY_ENVIRONMENT ?? "development",
+    project: project,
+    environment: environment,
     force: false,
   });
   const user = auth.user?.email || auth.user?.name || auth.user?.authId;
@@ -141,6 +150,30 @@ async function login(args: string[]): Promise<void> {
   if (user) console.log(`User: ${user}`);
   if (org) console.log(`Org: ${org}`);
   if (account) console.log(`Account: ${account}`);
+  await writeRuntimeKeyForLogin(auth.dashboardUrl, auth.token, project, environment);
+}
+
+/**
+ * Best-effort: recover the environment's runtime key after login and write it to
+ * .env.local so `dev` can stream right away. Silent when the project/environment
+ * is not deployed yet, because login itself should still succeed.
+ */
+async function writeRuntimeKeyForLogin(
+  dashboardUrl: string,
+  token: string,
+  project: string,
+  environment: string,
+): Promise<void> {
+  try {
+    const client = new FilthyPantySyncClient({ dashboardUrl: dashboardUrl, token: token });
+    const key = await client.getRuntimeKey(project, environment);
+    if (key?.apiKey) {
+      await writeEnvValue("FILTHY_PANTY_API_KEY", key.apiKey);
+      console.log(`Wrote FILTHY_PANTY_API_KEY (${key.keyHint}) to .env.local`);
+    }
+  } catch {
+    // Login must not fail because the key fetch did.
+  }
 }
 
 async function diff(args: string[]): Promise<void> {
@@ -174,9 +207,7 @@ async function deploy(args: string[]): Promise<void> {
 }
 
 /**
- * Persist the environment's runtime API key after a deploy. The plaintext is
- * returned only when the key was just minted (or rotated), so we write it then;
- * otherwise we nudge the operator to rotate if no local key is present.
+ * Persist the environment's recoverable runtime API key after a deploy.
  */
 async function applyDeploymentKey(
   deployment: RemoteManifestResponse["deployment"],
@@ -188,14 +219,6 @@ async function applyDeploymentKey(
     return;
   }
 
-  const path = resolve(process.cwd(), ".env.local");
-  const existing = parseEnv(await readTextIfExists(path));
-  if (!existing.FILTHY_PANTY_API_KEY) {
-    printWarning(
-      `⚠ Runtime key already exists (${deployment.keyHint}) but its secret is only shown once. ` +
-      "Run `filthy-panty deploy --rotate-key` to mint a fresh one and write it to .env.local.",
-    );
-  }
 }
 
 /** Surface non-fatal deploy advisories (e.g. env vars referenced but not set). */
@@ -269,10 +292,53 @@ async function dev(args: string[]): Promise<void> {
     timer = setTimeout(runSync, 150);
   });
 
+  // Like `convex dev`: stream live agent logs alongside the resource watcher so
+  // the developer sees activity while editing. Best-effort — if no runtime API
+  // key is configured yet, it prints a hint and skips without breaking the sync.
+  const logController = new AbortController();
+  void streamDevLogs(args, logController.signal);
+
   process.on("SIGINT", () => {
+    logController.abort();
     watcher.close();
     process.exit(0);
   });
+}
+
+// Live-tail logs during `dev`, mirroring `convex dev`. Best-effort: if the API
+// key or project/env can't be resolved yet, print a hint and return rather than
+// breaking the watch loop.
+async function streamDevLogs(args: string[], signal: AbortSignal): Promise<void> {
+  let creds: { apiKey: string; baseUrl: string };
+  try {
+    creds = resolveObservabilityCredentials();
+  } catch {
+    console.log("· live logs off — set FILTHY_PANTY_API_KEY (run `deploy` first) to stream agent logs here");
+
+    return;
+  }
+
+  let project: string;
+  let environment: string;
+  try {
+    ({ project, environment } = await resolveProjectEnv(args));
+  } catch {
+    return;
+  }
+
+  const minLevel = resolveMinLevel(args);
+  try {
+    for await (const entry of subscribeObservabilityLogs(
+      { baseUrl: creds.baseUrl, apiKey: creds.apiKey, project: project, environment: environment },
+      { backfill: 0, minLevel: minLevel, signal: signal },
+    )) {
+      console.log(formatObservabilityEntry(entry));
+    }
+  } catch (error) {
+    if (!signal.aborted) {
+      console.error(`live logs: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
 }
 
 async function ensureDevOnboarding(args: string[]): Promise<void> {
@@ -688,97 +754,135 @@ async function envCommand(args: string[]): Promise<void> {
   console.log(`Stored ${name} for ${target}`);
 }
 
+// Runtime API key (FILTHY_PANTY_API_KEY, written by `deploy`/`init`) + base URL
+// for the observability gateway. No dashboard login required.
+function resolveObservabilityCredentials(): { apiKey: string; baseUrl: string } {
+  loadFilthyPantyRuntimeConfig();
+  const apiKey = process.env.FILTHY_PANTY_API_KEY ?? "";
+  if (!apiKey) {
+    throw new Error(
+      "FILTHY_PANTY_API_KEY is not set. Run `filthy-panty deploy` first, or set the key in .env.local.",
+    );
+  }
+  const baseUrl =
+    process.env.FILTHY_PANTY_BASE_URL ??
+    process.env.FILTHY_PANTY_HOST ??
+    DEFAULT_CORE_BASE_URL;
+  return { apiKey, baseUrl };
+}
+
+/** Parse --errors / --level <lvl> into a LogLevel (defaults to INFO). */
+function resolveMinLevel(args: string[]): LogLevel | undefined {
+  if (hasFlag(args, "--errors")) return "WARN";
+  const raw = optionValue(args, "--level");
+  if (!raw) return undefined;
+  const upper = raw.toUpperCase();
+  if (upper === "WARN" || upper === "WARNING") return "WARN";
+  if (upper === "ERROR") return "ERROR";
+  if (upper === "INFO") return "INFO";
+  throw new Error(`Unknown log level: ${raw}. Use INFO, WARN, or ERROR.`);
+}
+
+/** Resolve project + environment for observability commands (same as other commands). */
+async function resolveProjectEnv(args: string[]): Promise<{ project: string; environment: string }> {
+  loadFilthyPantyRuntimeConfig();
+  const project =
+    optionValue(args, "--project") ??
+    process.env.FILTHY_PANTY_PROJECT;
+  const environment =
+    optionValue(args, "--env") ??
+    process.env.FILTHY_PANTY_ENVIRONMENT;
+  if (!project) {
+    throw new Error(
+      "Project name is required. Pass --project <name> or set FILTHY_PANTY_PROJECT in .env.local.",
+    );
+  }
+  if (!environment) {
+    throw new Error(
+      "Environment name is required. Pass --env <name> or set FILTHY_PANTY_ENVIRONMENT in .env.local.",
+    );
+  }
+  return { project, environment };
+}
+
+/** Render one ObservabilityLogEntry as `HH:mm:ss.SSS LEVEL eventType message`. */
+function formatObservabilityEntry(entry: ObservabilityLogEntry): string {
+  const time = new Date(entry.ts).toISOString().slice(11, 23);
+  const level = entry.level.padEnd(5);
+  return `${time} ${level} ${entry.eventType} ${entry.message}`;
+}
+
+// `filthy-panty stream` — live tail of the whole project/environment log stream
+// until Ctrl-C, no backfill. Flags are documented in HELP.
+async function streamLogs(args: string[]): Promise<void> {
+  const { apiKey, baseUrl } = resolveObservabilityCredentials();
+  const { project, environment } = await resolveProjectEnv(args);
+  const minLevel = resolveMinLevel(args);
+
+  const controller = new AbortController();
+  const onSigint = (): void => controller.abort();
+  process.on("SIGINT", onSigint);
+
+  console.log(
+    `Streaming live logs for ${project}/${environment}` +
+    (minLevel ? ` [${minLevel}+]` : "") +
+    " — Ctrl+C to stop",
+  );
+
+  try {
+    for await (const entry of subscribeObservabilityLogs(
+      { baseUrl, apiKey, project, environment },
+      { backfill: 0, minLevel, signal: controller.signal },
+    )) {
+      console.log(formatObservabilityEntry(entry));
+    }
+  } catch (error) {
+    if (!controller.signal.aborted) {
+      console.error(error instanceof Error ? error.message : String(error));
+      process.exitCode = 1;
+    }
+  } finally {
+    process.off("SIGINT", onSigint);
+  }
+}
+
+// `filthy-panty logs` — backfill recent lines (Loki) then switch to a live tail
+// until Ctrl-C. Flags are documented in HELP.
 async function logs(args: string[]): Promise<void> {
-  const { manifest, config } = await compileProject({
-    project: optionValue(args, "--project"),
-    environment: optionValue(args, "--env"),
-    command: "dev",
-  });
-  const auth = await requireAuth(optionValue(args, "--dashboard-url") ?? config.dashboardUrl);
-  const client = new FilthyPantySyncClient({ dashboardUrl: auth.dashboardUrl, token: auth.token });
-  const errorOnly = !hasFlag(args, "--all");
+  const { apiKey, baseUrl } = resolveObservabilityCredentials();
+  const { project, environment } = await resolveProjectEnv(args);
+  const minLevel = resolveMinLevel(args);
+  const limit = Number(optionValue(args, "--limit") ?? optionValue(args, "-n") ?? 100);
+  const jsonMode = hasFlag(args, "--json");
 
-  if (hasFlag(args, "--follow") || hasFlag(args, "-f")) {
-    const controller = new AbortController();
-    process.on("SIGINT", () => controller.abort());
-    console.log(`Tailing logs for ${manifest.project}/${manifest.environment} — Ctrl+C to stop`);
-    await tailLogs(client, manifest.project, manifest.environment, { errorOnly: errorOnly, signal: controller.signal });
-    return;
-  }
+  const controller = new AbortController();
+  const onSigint = (): void => controller.abort();
+  process.on("SIGINT", onSigint);
 
-  const limit = Number(optionValue(args, "--limit") ?? 50);
-  const payload = await client.logs(manifest.project, manifest.environment, { limit: limit, errorOnly: errorOnly });
-  if (hasFlag(args, "--json")) {
-    console.log(JSON.stringify(payload.logs, null, 2));
-    return;
-  }
-  const ascending = [...payload.logs].sort((a, b) => a.timestamp - b.timestamp);
-  for (const entry of ascending) console.log(formatLogEntry(entry));
-  if (ascending.length === 0) console.log("No logs in the lookback window.");
-}
+  console.log(
+    `Logs for ${project}/${environment}` +
+    (minLevel ? ` [${minLevel}+]` : "") +
+    ` (backfill ${limit}) — Ctrl+C to stop`,
+  );
 
-/** Render a single log line as `HH:mm:ss.SSS LEVEL message`, mirroring `convex dev`. */
-function formatLogEntry(entry: CliLogEntry): string {
-  const time = new Date(entry.timestamp).toISOString().slice(11, 23);
-  return `${time} ${entry.level.padEnd(5)} ${entry.message}`;
-}
-
-/** Resolve after `ms`, or immediately if `signal` aborts first. */
-function delay(ms: number, signal: AbortSignal): Promise<void> {
-  return new Promise((resolvePromise) => {
-    if (signal.aborted) return resolvePromise();
-    const timer = setTimeout(resolvePromise, ms);
-    signal.addEventListener("abort", () => {
-      clearTimeout(timer);
-      resolvePromise();
-    }, { once: true });
-  });
-}
-
-/**
- * Poll the logs endpoint and print new lines as they arrive, deduping by
- * timestamp+requestId+message, until `signal` aborts. CloudWatch has no push
- * channel, so this is a poll loop over a rolling lookback window — the CLI analog
- * of `convex dev`'s live log tail. The first poll prints the recent window for
- * context; later polls print only previously-unseen lines.
- */
-async function tailLogs(
-  client: FilthyPantySyncClient,
-  project: string,
-  environment: string,
-  options: { errorOnly?: boolean; intervalMs?: number; signal: AbortSignal },
-): Promise<void> {
-  const intervalMs = options.intervalMs ?? 3000;
-  const lookbackMs = Math.max(intervalMs * 4, 30_000);
-  const printed = new Set<string>();
-
-  while (!options.signal.aborted) {
-    try {
-      const { logs } = await client.logs(project, environment, {
-        errorOnly: options.errorOnly,
-        lookbackMs: lookbackMs,
-        limit: 200,
-      });
-      const ascending = [...logs].sort((a, b) => a.timestamp - b.timestamp);
-      for (const entry of ascending) {
-        const key = `${entry.timestamp}|${entry.requestId ?? ""}|${entry.message}`;
-        if (printed.has(key)) continue;
-        printed.add(key);
-        console.log(formatLogEntry(entry));
-      }
-      if (printed.size > 2000) {
-        const cutoff = Date.now() - lookbackMs;
-        for (const key of printed) {
-          const ts = Number(key.slice(0, key.indexOf("|")));
-          if (Number.isFinite(ts) && ts < cutoff) printed.delete(key);
-        }
-      }
-    } catch (error) {
-      if (!options.signal.aborted) {
-        console.error(`log tail: ${error instanceof Error ? error.message : String(error)}`);
+  try {
+    for await (const entry of subscribeObservabilityLogs(
+      { baseUrl, apiKey, project, environment },
+      { backfill: limit, minLevel, signal: controller.signal },
+    )) {
+      if (jsonMode) {
+        console.log(JSON.stringify(entry));
+      } else {
+        console.log(formatObservabilityEntry(entry));
       }
     }
-    await delay(intervalMs, options.signal);
+  } catch (error) {
+    if (!controller.signal.aborted) {
+      console.error(error instanceof Error ? error.message : String(error));
+      process.exitCode = 1;
+    }
+  } finally {
+    process.off("SIGINT", onSigint);
   }
 }
 
