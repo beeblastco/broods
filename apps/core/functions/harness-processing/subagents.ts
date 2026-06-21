@@ -79,19 +79,14 @@ export class SubagentCoordinator {
     parentMessages: ModelMessage[],
     parentEphemeralSystem: SystemModelMessage[] = [],
   ): Promise<RunSubagentDispatchResult> => {
-    // Capture the parent's live trace context now, while the parent's
-    // observability context is still active (this runs synchronously inside the
-    // parent's run_subagent tool call). Each child nests its trace under the
-    // parent task span. Read here, not in the detached child, because concurrent
+    // Capture the parent's trace/task id now, while the parent's observability
+    // context is still active (this runs synchronously inside the parent's
+    // run_subagent tool call). Each child is its own top-level trace that links
+    // back to the parent. Read here, not in the detached child, because concurrent
     // children overwrite the module-global observability context.
     const parentObs = getObservabilityContext();
-    const subagentParent: SubagentParentContext | undefined = parentObs?.rootSpanId
-      ? {
-        traceId: parentObs.traceId,
-        parentSpanId: parentObs.rootSpanId,
-        otelContext: parentObs.otelContext,
-        taskId: this.parentSession.eventId,
-      }
+    const subagentParent: SubagentParentContext | undefined = parentObs?.traceId
+      ? { parentTraceId: parentObs.traceId, parentTaskId: this.parentSession.eventId }
       : undefined;
 
     // Resolve all inputs before launching anything. If one task is invalid,

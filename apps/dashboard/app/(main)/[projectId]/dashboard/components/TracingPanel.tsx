@@ -163,11 +163,12 @@ interface SpanGroup {
 
 /** Group spans into per-task trees keyed by parent span, newest task first. */
 function groupSpans(spans: ObservabilitySpanRow[]): SpanGroup[] {
-  const tasks = spans.filter((span) => span.kind === "task");
+  // Tasks and subagent subtasks are both top-level roots (each its own trace).
+  const tasks = spans.filter((span) => span.kind === "task" || span.kind === "subtask");
   const childrenByTrace = new Map<string, ObservabilitySpanRow[]>();
 
   for (const span of spans) {
-    if (span.kind === "task") continue;
+    if (span.kind === "task" || span.kind === "subtask") continue;
     const children = childrenByTrace.get(span.traceId) ?? [];
     children.push(span);
     childrenByTrace.set(span.traceId, children);
@@ -263,6 +264,7 @@ function TaskDurationBar({
   scaleMaxMs: number;
 }) {
   const live = isTaskRunning(group.root);
+  const barColor = kindBarColor(group.root.kind);
   const widthPct = Math.max(1.5, Math.min(100, (group.taskDurationMs / scaleMaxMs) * 100));
   const title = `${spanLabel(group.root)} · ${formatDuration(group.taskDurationMs)} · started ${formatTime(group.root.startTimeMs)}`;
 
@@ -271,7 +273,7 @@ function TaskDurationBar({
       <div
         className={cn(
           "absolute top-1/2 h-2 -translate-y-1/2 rounded-sm",
-          group.root.status === "error" ? "bg-red-500/70" : live ? cn(kindBarColor("task"), "animate-pulse") : kindBarColor("task"),
+          group.root.status === "error" ? "bg-red-500/70" : live ? cn(barColor, "animate-pulse") : barColor,
         )}
         style={{ width: `${widthPct}%` }}
         title={title}
@@ -445,6 +447,7 @@ function SpanRow({
   scaleMaxMs,
   taskRunning,
   highlighted,
+  onFocusTrace,
 }: {
   span: ObservabilitySpanRow;
   depth: number;
@@ -454,18 +457,21 @@ function SpanRow({
   scaleMaxMs: number;
   taskRunning: boolean;
   highlighted: boolean;
+  onFocusTrace: (traceId: string) => void;
 }) {
-  const isTask = span.kind === "task";
+  // Tasks and subagent subtasks are both roots: own duration bar, anchor id, subtitle.
+  const isRoot = span.kind === "task" || span.kind === "subtask";
   const stale = isStale(span, taskRunning);
+  const parentTraceId = span.kind === "subtask" ? span.attributes?.["parent.trace_id"] : undefined;
 
   return (
     <tr
-      id={isTask ? `task-${span.traceId}` : undefined}
+      id={isRoot ? `task-${span.traceId}` : undefined}
       onClick={onToggle}
       className={cn(
         "cursor-pointer border-b border-border/40 transition-colors hover:bg-accent/20",
         isExpanded && "bg-accent/30",
-        isTask && "font-medium",
+        isRoot && "font-medium",
         highlighted && "bg-sky-500/10 ring-1 ring-inset ring-sky-500/40",
       )}
     >
@@ -484,9 +490,25 @@ function SpanRow({
             <span className="block truncate" title={spanLabel(span)}>
               {spanLabel(span)}
             </span>
-            {isTask && (
+            {isRoot && (
               <span className="block truncate text-[11px] font-normal text-muted-foreground">
                 {span.agentId ?? "Unknown agent"} · {span.conversationKey ?? "No conversation"}
+                {typeof parentTraceId === "string" && parentTraceId && (
+                  <>
+                    {" · "}
+                    <button
+                      type="button"
+                      className="cursor-pointer text-fuchsia-300 hover:underline"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        onFocusTrace(parentTraceId);
+                      }}
+                      title="Jump to the parent task"
+                    >
+                      ↳ from parent
+                    </button>
+                  </>
+                )}
               </span>
             )}
           </span>
@@ -509,7 +531,7 @@ function SpanRow({
         {span.durationMs > 0 ? formatDuration(span.durationMs) : "—"}
       </td>
       <td className="px-3 py-1.5">
-        {isTask ? (
+        {isRoot ? (
           <TaskDurationBar group={group} scaleMaxMs={scaleMaxMs} />
         ) : (
           <TimelineBar
@@ -540,6 +562,7 @@ function renderSpanRows(
   toggle: (key: string) => void,
   focusTraceId: string | null,
   enclosingRootLive: boolean,
+  onFocusTrace: (traceId: string) => void,
 ): ReactNode[] {
   const key = spanKey(span);
   const isExpanded = expanded.has(key);
@@ -558,7 +581,8 @@ function renderSpanRows(
       group={group}
       scaleMaxMs={scaleMaxMs}
       taskRunning={spanRunning}
-      highlighted={span.kind === "task" && span.traceId === focusTraceId}
+      highlighted={isRoot && span.traceId === focusTraceId}
+      onFocusTrace={onFocusTrace}
     />,
   ];
 
@@ -571,7 +595,7 @@ function renderSpanRows(
       </tr>,
     );
     for (const child of children) {
-      rows.push(...renderSpanRows(child, depth + 1, group, scaleMaxMs, expanded, toggle, focusTraceId, childRootLive));
+      rows.push(...renderSpanRows(child, depth + 1, group, scaleMaxMs, expanded, toggle, focusTraceId, childRootLive, onFocusTrace));
     }
   }
 
@@ -684,6 +708,15 @@ export function TracingPanel({ projectSlug, environmentSlug, apiKey }: Props) {
     });
   };
 
+  // Jump to another trace (a subagent's "↳ from parent" link). Reuses the
+  // `?trace=` focus effect above, which expands, pages in, scrolls, and highlights.
+  const focusTrace = (traceId: string) => {
+    focusedRef.current = null; // allow re-focusing even if it was focused before
+    const next = new URLSearchParams(searchParams.toString());
+    next.set("trace", traceId);
+    router.replace(`${pathname}?${next.toString()}`, { scroll: false });
+  };
+
   const clearFilters = () => {
     setFilter("");
     setStatusFilter("all");
@@ -744,7 +777,7 @@ export function TracingPanel({ projectSlug, environmentSlug, apiKey }: Props) {
             </thead>
             <tbody>
               {visibleGroups.flatMap((group) =>
-                renderSpanRows(group.root, 0, group, scaleMaxMs, expanded, toggle, focusTraceId, isTaskRunning(group.root)),
+                renderSpanRows(group.root, 0, group, scaleMaxMs, expanded, toggle, focusTraceId, isTaskRunning(group.root), focusTrace),
               )}
               {groups.length === 0 && (
                 <tr>

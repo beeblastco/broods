@@ -119,14 +119,13 @@ export interface AgentReplyHooks {
   onApprovalRequired?(approvals: ToolApprovalSummary[]): Promise<void>;
 }
 
-// Parent trace context for a subagent run, so its root span joins the parent's
-// trace as a nested "subtask" (same traceId, parented to the parent task span)
-// and streams live under the parent instead of as a separate, after-the-fact trace.
+// Link back to the parent task for a subagent run. The subagent is its OWN
+// top-level trace (so it gets a correctly scaled waterfall and streams live like
+// the main agent); it records the parent's trace/task id as a "subtask" link, not
+// as a nested child, since a subagent usually runs longer than the parent turn.
 export interface SubagentParentContext {
-  traceId: string;
-  parentSpanId: string;
-  otelContext: OtelContext;
-  taskId: string;
+  parentTraceId: string;
+  parentTaskId: string;
 }
 
 // Optional per-run wiring owned by the request handler.
@@ -205,32 +204,25 @@ export async function runAgentLoop(
   };
   const resolvedWorkspaces = session.resolvedWorkspaces();
   const statelessSandbox = session.statelessSandbox();
-  // A subagent run nests under its parent: the root span is a "subtask" in the
-  // parent's trace, parented to the parent task span. A top-level run is a "task".
+  // A subagent run is its own top-level trace, distinguished by kind "subtask" and
+  // linked to the parent via parent.trace_id/parent.task_id attributes (set below).
+  // A normal run is a "task". Both are roots, so each gets its own scaled waterfall.
   const subagentParent = options.subagentParent;
   const rootSpanName = subagentParent ? "agent.subtask" : "agent.task";
   const rootSpanKind: ObservabilitySpanRow["kind"] = subagentParent ? "subtask" : "task";
   const tracer = getTracer();
-  const otelRootSpan = tracer.startSpan(
-    rootSpanName,
-    { startTime: runStartedAt, attributes: observabilityAttributes(observabilityScope) },
-    subagentParent?.otelContext,
-  );
+  const otelRootSpan = tracer.startSpan(rootSpanName, {
+    startTime: runStartedAt,
+    attributes: observabilityAttributes(observabilityScope),
+  });
   const otelSpanCtx = otelRootSpan.spanContext();
-  // A subagent joins the parent's trace. With real OTel the child span already
-  // inherits the parent trace id via the parent context; when OTel is a noop the
-  // ids are all-zero, so fall back to the parent's trace id (or a fresh one).
-  const traceId = /[^0]/.test(otelSpanCtx.traceId)
-    ? otelSpanCtx.traceId
-    : (subagentParent?.traceId ?? mintTraceId());
+  const traceId = /[^0]/.test(otelSpanCtx.traceId) ? otelSpanCtx.traceId : mintTraceId();
   const rootSpanId = /[^0]/.test(otelSpanCtx.spanId) ? otelSpanCtx.spanId : mintSpanId();
-  const rootParentSpanId = subagentParent?.parentSpanId;
   const rootOtelContext = otelTraceApi.setSpan(otelContextApi.active(), otelRootSpan);
   const parentObservabilityContext = getObservabilityContext();
   setObservabilityContext({
     ...observabilityScope,
     traceId,
-    rootSpanId,
     otelContext: rootOtelContext,
     secretValues: collectSecretValues([agentConfig, statelessSandbox, resolvedWorkspaces]),
   });
@@ -260,13 +252,14 @@ export async function runAgentLoop(
     "model.provider": configuredModel.providerName,
     "model.id": agentConfig.model?.modelId ?? "unknown",
     "model.input": traceAttribute(turnContext.messages),
-    ...(subagentParent ? { "parent.task_id": subagentParent.taskId } : {}),
+    ...(subagentParent
+      ? { "parent.task_id": subagentParent.parentTaskId, "parent.trace_id": subagentParent.parentTraceId }
+      : {}),
   };
   otelRootSpan.setAttributes(rootRunningAttributes);
   publishSpan({
     traceId,
     spanId: rootSpanId,
-    ...(rootParentSpanId ? { parentSpanId: rootParentSpanId } : {}),
     name: rootSpanName,
     kind: rootSpanKind,
     startTimeMs: runStartedAt,
@@ -494,7 +487,6 @@ export async function runAgentLoop(
     const rootSpanRow: ObservabilitySpanRow = {
       traceId,
       spanId: rootSpanId,
-      ...(rootParentSpanId ? { parentSpanId: rootParentSpanId } : {}),
       name: rootSpanName,
       kind: rootSpanKind,
       startTimeMs: runStartedAt,
@@ -955,7 +947,6 @@ export async function runAgentLoop(
         publishSpan({
           traceId,
           spanId: rootSpanId,
-          ...(rootParentSpanId ? { parentSpanId: rootParentSpanId } : {}),
           name: rootSpanName,
           kind: rootSpanKind,
           startTimeMs: runStartedAt,
