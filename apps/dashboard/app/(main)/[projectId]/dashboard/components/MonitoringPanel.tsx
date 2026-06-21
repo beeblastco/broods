@@ -150,7 +150,7 @@ function LogRow({
           </span>
         </td>
         <td
-          className="px-3 py-1.5 whitespace-nowrap text-muted-foreground/80 max-w-[200px] truncate"
+          className="px-3 py-1.5 whitespace-nowrap text-muted-foreground/80 max-w-50 truncate"
           title={entry.endpointId}
         >
           {entry.service
@@ -198,7 +198,7 @@ function LogRow({
               )}
               <pre
                 className={cn(
-                  "whitespace-pre-wrap break-words leading-relaxed bg-background/60 border border-border rounded p-3 max-h-[60vh] overflow-auto text-xs",
+                  "whitespace-pre-wrap wrap-break-word leading-relaxed bg-background/60 border border-border rounded p-3 max-h-[60vh] overflow-auto text-xs",
                   levelColor(entry.level),
                 )}
               >
@@ -311,9 +311,9 @@ export function MonitoringPanel({ projectSlug, environmentSlug, apiKey }: Props)
         <div className="min-h-0 flex-1 overflow-auto">
           <table className="w-full text-xs font-mono table-fixed">
             <colgroup>
-              <col className="w-[170px]" />
-              <col className="w-[90px]" />
-              <col className="w-[200px]" />
+              <col className="w-42.5" />
+              <col className="w-22.5" />
+              <col className="w-50" />
               <col />
             </colgroup>
             <thead className="sticky top-0 bg-card/95 backdrop-blur border-b border-border z-10">

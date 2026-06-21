@@ -396,7 +396,7 @@ function SpanDetails({ span, depth }: { span: ObservabilitySpanRow; depth: numbe
                   {value.length.toLocaleString()} chars
                 </span>
               </summary>
-              <pre className="max-h-[50vh] overflow-auto whitespace-pre-wrap break-words px-3 pb-3 text-xs leading-relaxed text-foreground/90">
+              <pre className="max-h-[50vh] overflow-auto whitespace-pre-wrap wrap-break-word px-3 pb-3 text-xs leading-relaxed text-foreground/90">
                 {value}
               </pre>
             </details>
@@ -670,7 +670,7 @@ export function TracingPanel({ projectSlug, environmentSlug, apiKey }: Props) {
   return (
     <div className="flex h-full min-h-0 flex-col gap-3">
       <p className="shrink-0 text-xs text-muted-foreground">
-        Each task bar is scaled by total duration so longer tasks read as longer bars. Expand a task for the per-step waterfall (positioned in time); model step bars show time to first token (lighter) then streaming. Streaming counts only model token generation — tool execution is shown separately as &ldquo;tool wait&rdquo; and as the child tool spans. Expand a span, then open a section to inspect its input, reasoning, or output.
+        Each task bar is scaled by total duration so longer tasks read as longer bars. Expand a task for the per-step waterfall (positioned in time); model step bars show time to first token (lighter) then streaming. Streaming counts only model token generation. Tool execution is shown separately as &ldquo;tool wait&rdquo; and as the child tool spans. Expand a span, then open a section to inspect its input, reasoning, or output.
       </p>
 
       <ObservabilityToolbar
@@ -698,11 +698,11 @@ export function TracingPanel({ projectSlug, environmentSlug, apiKey }: Props) {
         <div className="min-h-0 flex-1 overflow-auto">
           <table className="w-full text-xs font-mono table-fixed">
             <colgroup>
-              <col className="w-[148px]" />
+              <col className="w-37" />
               <col className="w-[26%]" />
-              <col className="w-[84px]" />
-              <col className="w-[72px]" />
-              <col className="w-[72px]" />
+              <col className="w-21" />
+              <col className="w-18" />
+              <col className="w-18" />
               <col />
             </colgroup>
             <thead className="sticky top-0 z-10 border-b border-border bg-card/95 backdrop-blur">
