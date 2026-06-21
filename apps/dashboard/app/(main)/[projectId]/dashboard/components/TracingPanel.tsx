@@ -60,6 +60,18 @@ function formatTime(ms: number): string {
   });
 }
 
+/** Date + time for the "Started" column so a task is locatable across days, not just within the hour. */
+function formatDateTime(ms: number): string {
+  return new Date(ms).toLocaleString([], {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  });
+}
+
 /** Parse a datetime-local input value into epoch ms, or null when empty/invalid. */
 function toEpochMs(value: string): number | null {
   if (!value) return null;
@@ -440,6 +452,9 @@ function SpanRow({
         highlighted && "bg-sky-500/10 ring-1 ring-inset ring-sky-500/40",
       )}
     >
+      <td className="px-3 py-1.5 whitespace-nowrap tabular-nums text-muted-foreground/80" title={new Date(span.startTimeMs).toLocaleString()}>
+        {formatDateTime(span.startTimeMs)}
+      </td>
       <td className="py-1.5 pr-3" style={{ paddingLeft: depth * 18 + 12 }}>
         <span className="flex min-w-0 items-center gap-2">
           {isExpanded ? (
@@ -475,9 +490,6 @@ function SpanRow({
       </td>
       <td className="px-3 py-1.5 whitespace-nowrap tabular-nums text-muted-foreground/80">
         {span.durationMs > 0 ? formatDuration(span.durationMs) : "—"}
-      </td>
-      <td className="px-3 py-1.5 whitespace-nowrap tabular-nums text-muted-foreground/80" title={new Date(span.startTimeMs).toLocaleString()}>
-        {formatTime(span.startTimeMs)}
       </td>
       <td className="px-3 py-1.5">
         {isTask ? (
@@ -597,25 +609,10 @@ export function TracingPanel({ projectSlug, environmentSlug, apiKey }: Props) {
     [groups],
   );
 
-  // Auto-expand each running task once so its steps stream into view without a
-  // click; recorded so a manual collapse is not fought on the next live update.
-  const autoExpandedRef = useRef<Set<string>>(new Set());
-  useEffect(() => {
-    const toExpand: string[] = [];
-    for (const group of groups) {
-      const key = spanKey(group.root);
-      if (group.root.status === "running" && !autoExpandedRef.current.has(key)) {
-        autoExpandedRef.current.add(key);
-        toExpand.push(key);
-      }
-    }
-    if (toExpand.length > 0) {
-      // Reacting to newly-streamed running tasks (external data) by revealing
-      // their step tree — external-system synchronization, like the stream hook.
-      // eslint-disable-next-line react-hooks/set-state-in-effect
-      setExpanded((current) => new Set([...current, ...toExpand]));
-    }
-  }, [groups]);
+  // New tasks (including running ones) arrive collapsed — the row already shows
+  // live status and a pulsing bar, and a tree that pops open on every new task is
+  // noisy. The user opens a task to watch its steps. (The log "View trace"
+  // click-through below still expands its one target on demand.)
 
   // Reset paging when the filters change so "Load more" starts from the top —
   // render-time adjustment, not an effect.
@@ -701,20 +698,20 @@ export function TracingPanel({ projectSlug, environmentSlug, apiKey }: Props) {
         <div className="min-h-0 flex-1 overflow-auto">
           <table className="w-full text-xs font-mono table-fixed">
             <colgroup>
-              <col className="w-[28%]" />
+              <col className="w-[148px]" />
+              <col className="w-[26%]" />
               <col className="w-[84px]" />
               <col className="w-[72px]" />
               <col className="w-[72px]" />
-              <col className="w-[84px]" />
               <col />
             </colgroup>
             <thead className="sticky top-0 z-10 border-b border-border bg-card/95 backdrop-blur">
               <tr className="text-left text-[11px] uppercase tracking-wide text-muted-foreground/80">
+                <th className="px-3 py-2 font-medium">Started</th>
                 <th className="px-3 py-2 font-medium">Task / Span</th>
                 <th className="px-3 py-2 font-medium">Kind</th>
                 <th className="px-3 py-2 font-medium">Status</th>
                 <th className="px-3 py-2 font-medium">Duration</th>
-                <th className="px-3 py-2 font-medium">Started</th>
                 <th className="px-3 py-2 font-medium">Timeline</th>
               </tr>
             </thead>

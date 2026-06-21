@@ -66,6 +66,11 @@ function numericAttribute(span: ObservabilitySpanRow, key: string): number {
   return typeof value === "number" ? value : 0;
 }
 
+// A turn can't outlive the Lambda (15-min ceiling). A task still "running" past
+// this never reported its terminal span (crash/freeze), so excluding it keeps a
+// dead task from inflating the live total forever.
+const STALE_RUNNING_TASK_MS = 20 * 60 * 1000;
+
 /**
  * In-progress token totals taken straight off the live trace stream: Convex usage
  * is only written when a task finalizes, so a long run would otherwise show
@@ -74,8 +79,11 @@ function numericAttribute(span: ObservabilitySpanRow, key: string): number {
  * carries it, so the live overlay hands off cleanly without double counting.
  */
 function liveTokensFromTraces(spans: ObservabilitySpanRow[]): LiveTokens {
+  const freshAfter = Date.now() - STALE_RUNNING_TASK_MS;
   const runningTraces = new Set(
-    spans.filter((span) => span.kind === "task" && span.status === "running").map((span) => span.traceId),
+    spans
+      .filter((span) => span.kind === "task" && span.status === "running" && span.startTimeMs >= freshAfter)
+      .map((span) => span.traceId),
   );
   if (runningTraces.size === 0) return EMPTY_LIVE_TOKENS;
   const totals = { ...EMPTY_LIVE_TOKENS };
@@ -605,7 +613,7 @@ function InvocationsChart({ bins, binSeconds }: InvocationsChartProps) {
 /** Single labelled compute metric with a colour swatch. */
 function ComputeTile({ label, value, color }: { label: string; value: string; color: string }) {
   return (
-    <div className="rounded-lg border border-border bg-card px-3 py-2.5">
+    <div className="rounded-lg px-3 py-2.5">
       <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
         <span className="size-2.5 rounded-sm" style={{ backgroundColor: color }} />
         {label}
@@ -795,7 +803,7 @@ export function TokensUsagePanel({ projectId, environmentId, projectSlug, enviro
 
       <Section title="By model & provider" description="Per-(provider, model) totals over the selected window.">
         <div className="rounded-lg border border-border bg-card overflow-x-auto">
-          <table className="w-full min-w-[680px] text-xs">
+          <table className="w-full min-w-170 text-xs">
             <thead>
               <tr className="text-left text-muted-foreground border-b border-border">
                 <th className="px-3 py-2 font-medium whitespace-nowrap">Provider</th>

@@ -7,6 +7,7 @@ import {
   DeleteItemCommand,
   PutItemCommand,
   QueryCommand,
+  UpdateItemCommand,
   type AttributeValue,
   type QueryCommandOutput,
 } from "@aws-sdk/client-dynamodb";
@@ -248,6 +249,57 @@ export class Session {
 
       throw err;
     }
+  }
+
+  /**
+   * Buffer ingress events for a conversation whose turn is already in progress so
+   * the lease holder can answer them after its current reply, instead of dropping
+   * them. Stored as a JSON-encoded list under a per-conversation key; the atomic
+   * `list_append` lets concurrent webhooks queue without clobbering each other.
+   */
+  async enqueuePendingIngress(events: ConversationIngressEvent[]): Promise<void> {
+    if (events.length === 0) {
+      return;
+    }
+    const ttl = Math.floor(Date.now() / 1000) + CONVERSATION_LEASE_TTL_SECONDS;
+    await dynamo.send(new UpdateItemCommand({
+      TableName: PROCESSED_EVENTS_TABLE_NAME,
+      Key: { eventId: { S: this.pendingIngressKey() } },
+      UpdateExpression: "SET queued = list_append(if_not_exists(queued, :empty), :events), expiresAt = :ttl",
+      ExpressionAttributeValues: {
+        ":events": { L: events.map((event) => ({ S: JSON.stringify(event) })) },
+        ":empty": { L: [] },
+        ":ttl": { N: String(ttl) },
+      },
+    }));
+  }
+
+  /**
+   * Atomically remove and return every buffered ingress event for this
+   * conversation. The delete-with-ALL_OLD is a single op, so a webhook enqueuing
+   * concurrently either lands in this batch or in the next item (picked up on the
+   * next drain) — nothing is lost or double-read.
+   */
+  async takePendingIngress(): Promise<ConversationIngressEvent[]> {
+    const result = await dynamo.send(new DeleteItemCommand({
+      TableName: PROCESSED_EVENTS_TABLE_NAME,
+      Key: { eventId: { S: this.pendingIngressKey() } },
+      ReturnValues: "ALL_OLD",
+    }));
+    const queued = result.Attributes?.queued?.L ?? [];
+    const events: ConversationIngressEvent[] = [];
+    for (const item of queued) {
+      if (typeof item.S !== "string") {
+        continue;
+      }
+      try {
+        events.push(JSON.parse(item.S) as ConversationIngressEvent);
+      } catch {
+        // Skip a malformed entry rather than failing the whole drain.
+      }
+    }
+
+    return events;
   }
 
   async appendIngressEvents(events: ConversationIngressEvent[]): Promise<SystemModelMessage[]> {
@@ -577,6 +629,11 @@ export class Session {
 
   private conversationLeaseKey(): string {
     return conversationLeaseKey(this.conversationKey);
+  }
+
+  /** Key for the per-conversation buffer of messages queued while a turn ran. */
+  private pendingIngressKey(): string {
+    return `pending:${conversationLeaseKey(this.conversationKey)}`;
   }
 
   // Namespace of the default (first) workspace, used for memory/skill staging

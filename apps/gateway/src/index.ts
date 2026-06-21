@@ -646,6 +646,11 @@ async function sendBackfill(
   }
 }
 
+// Loki query lookback for reload backfill — wide enough that a return after a
+// long pause still shows retained history (the live JetStream replay only covers
+// the recent window). Mirrors the Tempo trace search window.
+const LOKI_BACKFILL_WINDOW_MS = 90 * 24 * 60 * 60 * 1000;
+
 // Selectors are built only from server-validated scope, never raw client input.
 async function fetchLokiBackfill(
   lokiUrl: string,
@@ -657,6 +662,12 @@ async function fetchLokiBackfill(
   url.searchParams.set("query", selector);
   url.searchParams.set("limit", String(limit));
   url.searchParams.set("direction", "backward");
+  // Without an explicit range Loki only looks back 1 hour, so a reload after a
+  // pause would drop every older log even though it is still retained. Span a
+  // wide window (matching the Tempo trace backfill) and let `limit` + backward
+  // direction return the most recent entries.
+  url.searchParams.set("start", new Date(Date.now() - LOKI_BACKFILL_WINDOW_MS).toISOString());
+  url.searchParams.set("end", new Date().toISOString());
 
   const response = await fetch(url.toString(), { signal: AbortSignal.timeout(5_000) });
   if (!response.ok) throw new Error(`Loki query failed with HTTP ${response.status}`);

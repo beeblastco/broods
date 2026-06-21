@@ -91,6 +91,7 @@ flowchart LR
 
 - `claim()` deduplicates an inbound event in `ProcessedEvents`.
 - `acquireConversationLease()` serializes work per conversation.
+- `enqueuePendingIngress()` / `takePendingIngress()` buffer channel messages that arrive while a turn is already running, so the lease holder drains and answers them **in order after** its current reply instead of dropping them. Applies to every channel (they all route through `handleChannelRequest`).
 - `appendIngressEvents()` persists incoming user, assistant, tool, and persisted system messages.
 - `createTurnContext()` loads conversation entries, builds system prompt parts, runs compaction when configured, and prunes model-visible messages.
 - `resolvedWorkspaces()` (backed by `resolveAgentRuntime()` in

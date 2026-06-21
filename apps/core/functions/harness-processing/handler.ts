@@ -34,7 +34,7 @@ import {
   type SandboxJobCompletionInboundEvent,
   type StatusInboundEvent,
 } from "./integrations.ts";
-import { Session } from "./session.ts";
+import { Session, type ConversationIngressEvent } from "./session.ts";
 import {
   createPendingAsyncAgentResult,
   getAsyncAgentResult,
@@ -714,39 +714,75 @@ async function handleChannelRequest(event: ChannelInboundEvent, context?: Lambda
     return;
   }
 
-  try {
-    await session.appendIngressEvents(event.events);
-    logInfo("Channel ingress events persisted", {
-      channel: event.channelName,
-      accountId: event.accountId,
-      agentId: event.agentId,
-      eventId: session.eventId,
-      conversationKey: session.conversationKey,
-      eventCount: event.events.length,
-    });
-  } catch (err) {
-    logError("Channel request pre-processing failed", {
-      eventId: session.eventId,
-      conversationKey: session.conversationKey,
-      error: err instanceof Error ? err.message : String(err),
-    });
-    await session.release().catch(() => { });
-    throw err;
-  }
-
-  if (!(await session.acquireConversationLease())) {
-    logInfo("Conversation already processing; event queued", {
-      conversationKey: session.conversationKey,
-      eventId: session.eventId,
-    });
-    return;
+  // Acquire the conversation lease before writing this message to history. If a
+  // turn is already running for this conversation, buffer the message so the lease
+  // holder answers it after its current reply (in order) instead of dropping it.
+  // The typing/reaction ack already fired upstream, so the user still sees that
+  // the message was received. This applies to every channel, since all channel
+  // webhooks funnel through here.
+  let ownEvents: ConversationIngressEvent[] = event.events;
+  let leaseAcquired = await session.acquireConversationLease();
+  if (!leaseAcquired) {
+    await session.enqueuePendingIngress(ownEvents);
+    // The holder may have released right after our first attempt; retry once so a
+    // message queued at that boundary is drained now, not stranded until the next
+    // inbound message.
+    leaseAcquired = await session.acquireConversationLease();
+    if (!leaseAcquired) {
+      logInfo("Conversation busy; channel message queued for drain", {
+        conversationKey: session.conversationKey,
+        eventId: session.eventId,
+      });
+      return;
+    }
+    // We are the drainer now; this message lives in the pending buffer and is
+    // picked up by takePendingIngress in the loop below.
+    ownEvents = [];
   }
 
   try {
+    // Run turns until history has no runnable input and no queued follow-ups
+    // remain. A message that arrives mid-turn is buffered (above) and appended
+    // here — after the in-flight reply — so a fast follow-up is answered in order.
+    let incoming: ConversationIngressEvent[] = ownEvents;
     while (true) {
+      if (incoming.length > 0) {
+        try {
+          await session.appendIngressEvents(incoming);
+          logInfo("Channel ingress events persisted", {
+            channel: event.channelName,
+            accountId: event.accountId,
+            agentId: event.agentId,
+            eventId: session.eventId,
+            conversationKey: session.conversationKey,
+            eventCount: incoming.length,
+          });
+        } catch (err) {
+          logError("Channel request pre-processing failed", {
+            eventId: session.eventId,
+            conversationKey: session.conversationKey,
+            error: err instanceof Error ? err.message : String(err),
+          });
+          await session.release().catch(() => { });
+          throw err;
+        }
+        incoming = [];
+      }
+
       const turnContext = await session.createTurnContext();
       if (!isRunnableModelInput(turnContext.messages.at(-1))) {
-        return;
+        // History is fully answered — drain anything queued during the reply.
+        incoming = await session.takePendingIngress();
+        if (incoming.length === 0) {
+          break;
+        }
+        logInfo("Draining channel messages queued during the previous turn", {
+          channel: event.channelName,
+          conversationKey: session.conversationKey,
+          eventId: session.eventId,
+          queuedCount: incoming.length,
+        });
+        continue;
       }
 
       // Per-channel reply streaming. When configured, the reply streams into the
@@ -887,7 +923,9 @@ async function handleChannelRequest(event: ChannelInboundEvent, context?: Lambda
           conversationKey: session.conversationKey,
           error: result.failureText ?? AGENT_PROCESSING_FAILED,
         });
-        return;
+        // A failed turn ends the drain: leave any queued follow-ups in the buffer
+        // for the next inbound message rather than replaying a broken conversation.
+        break;
       }
     }
   } finally {
