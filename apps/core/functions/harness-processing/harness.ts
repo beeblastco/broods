@@ -119,10 +119,22 @@ export interface AgentReplyHooks {
   onApprovalRequired?(approvals: ToolApprovalSummary[]): Promise<void>;
 }
 
+// Parent trace context for a subagent run, so its root span joins the parent's
+// trace as a nested "subtask" (same traceId, parented to the parent task span)
+// and streams live under the parent instead of as a separate, after-the-fact trace.
+export interface SubagentParentContext {
+  traceId: string;
+  parentSpanId: string;
+  otelContext: OtelContext;
+  taskId: string;
+}
+
 // Optional per-run wiring owned by the request handler.
 export interface AgentLoopOptions {
   dispatchSubagents?: RunSubagentDispatch;
   dispatchAsyncTools?: RunAsyncToolDispatch;
+  // Present when this run is a subagent; nests its trace under the parent.
+  subagentParent?: SubagentParentContext;
 }
 
 export async function runAgentLoop(
@@ -158,6 +170,23 @@ export async function runAgentLoop(
       });
     }
   };
+  // Accumulated sandbox CPU split by role (agent's own sandbox vs uploaded tool
+  // sandboxes), so the dashboard can stream the Compute chart live off the running
+  // root span instead of waiting for the finalize write. Empty until a kubernetes
+  // exec reports CPU.
+  const sandboxCpuRoleAttributes = (): Record<string, number> => {
+    let agent = 0;
+    let tool = 0;
+    for (const sample of sandboxUsageByKey.values()) {
+      if (sample.role === "agent") agent += sample.cpuUsec;
+      else if (sample.role === "tool") tool += sample.cpuUsec;
+    }
+
+    return {
+      ...(agent > 0 ? { "sandbox.cpu_usec.role.agent": agent } : {}),
+      ...(tool > 0 ? { "sandbox.cpu_usec.role.tool": tool } : {}),
+    };
+  };
 
   // Start the durable root span (agent.task) up front so the same trace id is
   // stamped on every log line and NATS span row AND exported to Tempo — that shared
@@ -176,19 +205,32 @@ export async function runAgentLoop(
   };
   const resolvedWorkspaces = session.resolvedWorkspaces();
   const statelessSandbox = session.statelessSandbox();
+  // A subagent run nests under its parent: the root span is a "subtask" in the
+  // parent's trace, parented to the parent task span. A top-level run is a "task".
+  const subagentParent = options.subagentParent;
+  const rootSpanName = subagentParent ? "agent.subtask" : "agent.task";
+  const rootSpanKind: ObservabilitySpanRow["kind"] = subagentParent ? "subtask" : "task";
   const tracer = getTracer();
-  const otelRootSpan = tracer.startSpan("agent.task", {
-    startTime: runStartedAt,
-    attributes: observabilityAttributes(observabilityScope),
-  });
+  const otelRootSpan = tracer.startSpan(
+    rootSpanName,
+    { startTime: runStartedAt, attributes: observabilityAttributes(observabilityScope) },
+    subagentParent?.otelContext,
+  );
   const otelSpanCtx = otelRootSpan.spanContext();
-  const traceId = /[^0]/.test(otelSpanCtx.traceId) ? otelSpanCtx.traceId : mintTraceId();
+  // A subagent joins the parent's trace. With real OTel the child span already
+  // inherits the parent trace id via the parent context; when OTel is a noop the
+  // ids are all-zero, so fall back to the parent's trace id (or a fresh one).
+  const traceId = /[^0]/.test(otelSpanCtx.traceId)
+    ? otelSpanCtx.traceId
+    : (subagentParent?.traceId ?? mintTraceId());
   const rootSpanId = /[^0]/.test(otelSpanCtx.spanId) ? otelSpanCtx.spanId : mintSpanId();
+  const rootParentSpanId = subagentParent?.parentSpanId;
   const rootOtelContext = otelTraceApi.setSpan(otelContextApi.active(), otelRootSpan);
   const parentObservabilityContext = getObservabilityContext();
   setObservabilityContext({
     ...observabilityScope,
     traceId,
+    rootSpanId,
     otelContext: rootOtelContext,
     secretValues: collectSecretValues([agentConfig, statelessSandbox, resolvedWorkspaces]),
   });
@@ -218,13 +260,15 @@ export async function runAgentLoop(
     "model.provider": configuredModel.providerName,
     "model.id": agentConfig.model?.modelId ?? "unknown",
     "model.input": traceAttribute(turnContext.messages),
+    ...(subagentParent ? { "parent.task_id": subagentParent.taskId } : {}),
   };
   otelRootSpan.setAttributes(rootRunningAttributes);
   publishSpan({
     traceId,
     spanId: rootSpanId,
-    name: "agent.task",
-    kind: "task",
+    ...(rootParentSpanId ? { parentSpanId: rootParentSpanId } : {}),
+    name: rootSpanName,
+    kind: rootSpanKind,
     startTimeMs: runStartedAt,
     endTimeMs: runStartedAt,
     durationMs: 0,
@@ -450,8 +494,9 @@ export async function runAgentLoop(
     const rootSpanRow: ObservabilitySpanRow = {
       traceId,
       spanId: rootSpanId,
-      name: "agent.task",
-      kind: "task",
+      ...(rootParentSpanId ? { parentSpanId: rootParentSpanId } : {}),
+      name: rootSpanName,
+      kind: rootSpanKind,
       startTimeMs: runStartedAt,
       endTimeMs,
       durationMs,
@@ -899,6 +944,28 @@ export async function runAgentLoop(
           agentId: session.agentId,
           conversationKey: session.conversationKey,
           attributes,
+        });
+      }
+      // Re-publish the running root span with the sandbox CPU accumulated so far so
+      // the dashboard's Compute chart streams live, not only at finalize. Skipped
+      // until a kubernetes exec actually reports CPU (keeps NATS traffic minimal).
+      const liveRoleCpu = sandboxCpuRoleAttributes();
+      if (Object.keys(liveRoleCpu).length > 0) {
+        const now = Date.now();
+        publishSpan({
+          traceId,
+          spanId: rootSpanId,
+          ...(rootParentSpanId ? { parentSpanId: rootParentSpanId } : {}),
+          name: rootSpanName,
+          kind: rootSpanKind,
+          startTimeMs: runStartedAt,
+          endTimeMs: now,
+          durationMs: now - runStartedAt,
+          status: "running",
+          endpointId: session.endpointId,
+          agentId: session.agentId,
+          conversationKey: session.conversationKey,
+          attributes: { ...rootRunningAttributes, ...liveRoleCpu },
         });
       }
       if (textStartedSteps.has(stepNumber)) {

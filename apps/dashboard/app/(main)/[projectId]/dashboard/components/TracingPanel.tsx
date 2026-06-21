@@ -105,6 +105,16 @@ function spanKey(span: ObservabilitySpanRow): string {
   return `${span.traceId}:${span.spanId}`;
 }
 
+// A turn can't outlive the Lambda (~15-min ceiling). A root task/subtask still
+// "running" past this never reported its terminal span (crash/freeze or a lost
+// publish), so we treat it as finished — otherwise the spinner spins forever.
+const TASK_MAX_RUNTIME_MS = 16 * 60 * 1000;
+
+/** Whether a root task/subtask is genuinely still running (bounded by freshness). */
+function isTaskRunning(root: ObservabilitySpanRow): boolean {
+  return root.status === "running" && Date.now() - root.startTimeMs < TASK_MAX_RUNTIME_MS;
+}
+
 /** A live "running" span under a task that already finished never reported its end. */
 function isStale(span: ObservabilitySpanRow, taskRunning: boolean): boolean {
   return span.status === "running" && !taskRunning;
@@ -121,6 +131,7 @@ function statusColor(status: ObservabilitySpanRow["status"]): string {
 /** Pill style per span kind so the hierarchy reads at a glance. */
 function kindBadge(kind: ObservabilitySpanRow["kind"]): string {
   if (kind === "task") return "bg-violet-500/15 text-violet-300";
+  if (kind === "subtask") return "bg-fuchsia-500/15 text-fuchsia-300";
   if (kind === "model.step") return "bg-sky-500/15 text-sky-300";
   if (kind === "phase") return "bg-teal-500/15 text-teal-300";
 
@@ -130,6 +141,7 @@ function kindBadge(kind: ObservabilitySpanRow["kind"]): string {
 /** Solid waterfall-bar fill per kind; mirrors the badge hues. */
 function kindBarColor(kind: ObservabilitySpanRow["kind"]): string {
   if (kind === "task") return "bg-violet-500/70";
+  if (kind === "subtask") return "bg-fuchsia-500/70";
   if (kind === "model.step") return "bg-sky-500/70";
   if (kind === "phase") return "bg-teal-500/70";
 
@@ -181,7 +193,7 @@ function groupSpans(spans: ObservabilitySpanRow[]): SpanGroup[] {
       }
 
       const allSpans = [root, ...children];
-      const taskRunning = root.status === "running";
+      const taskRunning = isTaskRunning(root);
       const windowStart = Math.min(...allSpans.map((span) => span.startTimeMs));
       const windowEnd = Math.max(
         ...allSpans.map((span) =>
@@ -229,6 +241,11 @@ function spanLabel(span: ObservabilitySpanRow): string {
 
     return typeof label === "string" ? label : span.name;
   }
+  if (span.kind === "subtask") {
+    const agentId = span.attributes?.["agent.id"] ?? span.agentId;
+
+    return typeof agentId === "string" ? `Subagent: ${agentId}` : "Subagent task";
+  }
   const taskId = span.attributes?.["task.id"];
 
   return typeof taskId === "string" ? taskId : span.traceId;
@@ -245,7 +262,7 @@ function TaskDurationBar({
   group: SpanGroup;
   scaleMaxMs: number;
 }) {
-  const live = group.root.status === "running";
+  const live = isTaskRunning(group.root);
   const widthPct = Math.max(1.5, Math.min(100, (group.taskDurationMs / scaleMaxMs) * 100));
   const title = `${spanLabel(group.root)} · ${formatDuration(group.taskDurationMs)} · started ${formatTime(group.root.startTimeMs)}`;
 
@@ -520,7 +537,7 @@ function renderSpanRows(
   const key = spanKey(span);
   const isExpanded = expanded.has(key);
   const children = group.childrenByParent.get(span.spanId) ?? [];
-  const taskRunning = group.root.status === "running";
+  const taskRunning = isTaskRunning(group.root);
   const rows: ReactNode[] = [
     <SpanRow
       key={`row:${key}`}

@@ -25,15 +25,17 @@ export type ObservabilityLogEntry = {
   data?: unknown;
 };
 
-// Root span kind is "task" (one per invocation); children are "model.step",
-// "tool.call", and "phase" (timeline phases like cold start, context prepare,
-// and compaction). All spans in one task share the same traceId.
+// Root span kind is "task" (one per top-level invocation); a "subtask" is a
+// subagent's root span, nested under its parent task (same traceId, parentSpanId
+// = the parent task span). Children are "model.step", "tool.call", and "phase"
+// (timeline phases like cold start, context prepare, and compaction). All spans
+// in one task tree share the same traceId.
 export type ObservabilitySpanRow = {
   traceId: string;
   spanId: string;
   parentSpanId?: string;
   name: string;
-  kind: "task" | "model.step" | "tool.call" | "phase";
+  kind: "task" | "subtask" | "model.step" | "tool.call" | "phase";
   startTimeMs: number;
   endTimeMs: number;
   durationMs: number;

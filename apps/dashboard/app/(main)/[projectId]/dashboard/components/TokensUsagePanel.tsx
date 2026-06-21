@@ -46,18 +46,30 @@ interface Props {
   apiKey?: string | undefined;
 }
 
-interface LiveTokens {
+// In-progress totals taken straight off the live trace stream. Tokens, task/model
+// counts, and sandbox CPU are folded into the latest chart bin + headline tiles so
+// a run in flight grows live instead of showing nothing until it finalizes.
+interface LiveOverlay {
   inputTokens: number;
   outputTokens: number;
   reasoningTokens: number;
   cachedInputTokens: number;
+  // Running roots (tasks + subagent subtasks) and the model steps beneath them.
+  invocations: number;
+  modelCalls: number;
+  agentSandboxCpuUsec: number;
+  toolSandboxCpuUsec: number;
 }
 
-const EMPTY_LIVE_TOKENS: LiveTokens = {
+const EMPTY_LIVE_OVERLAY: LiveOverlay = {
   inputTokens: 0,
   outputTokens: 0,
   reasoningTokens: 0,
   cachedInputTokens: 0,
+  invocations: 0,
+  modelCalls: 0,
+  agentSandboxCpuUsec: 0,
+  toolSandboxCpuUsec: 0,
 };
 
 function numericAttribute(span: ObservabilitySpanRow, key: string): number {
@@ -72,23 +84,33 @@ function numericAttribute(span: ObservabilitySpanRow, key: string): number {
 const STALE_RUNNING_TASK_MS = 20 * 60 * 1000;
 
 /**
- * In-progress token totals taken straight off the live trace stream: Convex usage
- * is only written when a task finalizes, so a long run would otherwise show
- * nothing until it ends. We sum the per-step tokens on model.step spans whose root
- * task is still "running" — once the task finalizes it leaves this set and Convex
- * carries it, so the live overlay hands off cleanly without double counting.
+ * In-progress overlay taken straight off the live trace stream: Convex usage is
+ * only written when a task finalizes, so a long run would otherwise show nothing
+ * until it ends. Each model step is scoped to its own root span (a task OR a
+ * subagent subtask, which share the parent's traceId) so a finished subtask stops
+ * counting the moment its usage row lands in Convex — no double counting. Sandbox
+ * CPU is read off the running roots, which the harness re-publishes with live
+ * role-split CPU on each step.
  */
-function liveTokensFromTraces(spans: ObservabilitySpanRow[]): LiveTokens {
+function liveOverlayFromTraces(spans: ObservabilitySpanRow[]): LiveOverlay {
   const freshAfter = Date.now() - STALE_RUNNING_TASK_MS;
-  const runningTraces = new Set(
-    spans
-      .filter((span) => span.kind === "task" && span.status === "running" && span.startTimeMs >= freshAfter)
-      .map((span) => span.traceId),
+  const runningRoots = spans.filter(
+    (span) =>
+      (span.kind === "task" || span.kind === "subtask") &&
+      span.status === "running" &&
+      span.startTimeMs >= freshAfter,
   );
-  if (runningTraces.size === 0) return EMPTY_LIVE_TOKENS;
-  const totals = { ...EMPTY_LIVE_TOKENS };
+  if (runningRoots.length === 0) return EMPTY_LIVE_OVERLAY;
+  const runningRootSpanIds = new Set(runningRoots.map((root) => root.spanId));
+  const totals = { ...EMPTY_LIVE_OVERLAY };
+  totals.invocations = runningRoots.length;
+  for (const root of runningRoots) {
+    totals.agentSandboxCpuUsec += numericAttribute(root, "sandbox.cpu_usec.role.agent");
+    totals.toolSandboxCpuUsec += numericAttribute(root, "sandbox.cpu_usec.role.tool");
+  }
   for (const span of spans) {
-    if (span.kind !== "model.step" || !runningTraces.has(span.traceId)) continue;
+    if (span.kind !== "model.step" || !span.parentSpanId || !runningRootSpanIds.has(span.parentSpanId)) continue;
+    totals.modelCalls += 1;
     totals.inputTokens += numericAttribute(span, "model.input_tokens");
     totals.outputTokens += numericAttribute(span, "model.output_tokens");
     totals.reasoningTokens += numericAttribute(span, "model.reasoning_tokens");
@@ -645,9 +667,8 @@ export function TokensUsagePanel({ projectId, environmentId, projectSlug, enviro
     apiKey: apiKey,
     backfill: 30,
   });
-  const liveTokens = useMemo(() => liveTokensFromTraces(liveSpans), [liveSpans]);
-  const isStreamingLive =
-    liveTokens.inputTokens + liveTokens.outputTokens + liveTokens.reasoningTokens > 0;
+  const liveOverlay = useMemo(() => liveOverlayFromTraces(liveSpans), [liveSpans]);
+  const isStreamingLive = liveOverlay.invocations > 0;
 
   // Always span the window with zero-filled bins — even before the first query
   // resolves — so the user sees a live, empty grid rather than a "no data" card.
@@ -655,21 +676,26 @@ export function TokensUsagePanel({ projectId, environmentId, projectSlug, enviro
   const bins = useMemo(() => {
     const merged = stats ? mergeByBucket(stats.buckets) : [];
     const filled = fillBucketsAcrossRange(merged, binSeconds, RANGE_SECONDS[range]);
-    // Fold in-progress tokens into the most recent bin so its bar grows live.
-    if (filled.length > 0 && (liveTokens.inputTokens + liveTokens.outputTokens + liveTokens.reasoningTokens + liveTokens.cachedInputTokens) > 0) {
+    // Fold in-progress tokens, task/model counts, and sandbox CPU into the most
+    // recent bin so every chart (tokens, tasks & model calls, compute) grows live.
+    if (filled.length > 0 && liveOverlay.invocations > 0) {
       const last = filled[filled.length - 1];
       filled[filled.length - 1] = {
         ...last,
-        inputTokens: last.inputTokens + liveTokens.inputTokens,
-        outputTokens: last.outputTokens + liveTokens.outputTokens,
-        reasoningTokens: last.reasoningTokens + liveTokens.reasoningTokens,
-        cachedInputTokens: last.cachedInputTokens + liveTokens.cachedInputTokens,
-        totalTokens: last.totalTokens + liveTokens.inputTokens + liveTokens.outputTokens + liveTokens.reasoningTokens,
+        inputTokens: last.inputTokens + liveOverlay.inputTokens,
+        outputTokens: last.outputTokens + liveOverlay.outputTokens,
+        reasoningTokens: last.reasoningTokens + liveOverlay.reasoningTokens,
+        cachedInputTokens: last.cachedInputTokens + liveOverlay.cachedInputTokens,
+        totalTokens: last.totalTokens + liveOverlay.inputTokens + liveOverlay.outputTokens + liveOverlay.reasoningTokens,
+        invocations: last.invocations + liveOverlay.invocations,
+        modelCalls: last.modelCalls + liveOverlay.modelCalls,
+        agentSandboxCpuUsec: last.agentSandboxCpuUsec + liveOverlay.agentSandboxCpuUsec,
+        toolSandboxCpuUsec: last.toolSandboxCpuUsec + liveOverlay.toolSandboxCpuUsec,
       };
     }
 
     return filled;
-  }, [stats, binSeconds, range, liveTokens]);
+  }, [stats, binSeconds, range, liveOverlay]);
   const byModel = useMemo(() => (stats ? aggregateByModel(stats.buckets) : []), [stats]);
   const pricedByModel = useMemo(
     () =>
@@ -715,7 +741,7 @@ export function TokensUsagePanel({ projectId, environmentId, projectSlug, enviro
           <ComputeTile label="Estimated token cost" value={formatUsd(estimatedCost)} color="#34d399" />
           <ComputeTile
             label="Cache read"
-            value={formatNumber((stats?.totals.cachedInputTokens ?? 0) + liveTokens.cachedInputTokens)}
+            value={formatNumber((stats?.totals.cachedInputTokens ?? 0) + liveOverlay.cachedInputTokens)}
             color="#fbbf24"
           />
           <ComputeTile label="Cache write" value={formatNumber(stats?.totals.cacheWriteTokens ?? 0)} color="#fb7185" />
@@ -772,12 +798,12 @@ export function TokensUsagePanel({ projectId, environmentId, projectSlug, enviro
           <ComputeTile label="Runtime" value={formatMs(compute?.runtimeWallMs ?? 0)} color="#818cf8" />
           <ComputeTile
             label="Agent sandbox CPU"
-            value={formatCpuUsec(compute?.agentSandboxCpuUsec ?? 0)}
+            value={formatCpuUsec((compute?.agentSandboxCpuUsec ?? 0) + liveOverlay.agentSandboxCpuUsec)}
             color="#2dd4bf"
           />
           <ComputeTile
             label="Tool sandbox CPU"
-            value={formatCpuUsec(compute?.toolSandboxCpuUsec ?? 0)}
+            value={formatCpuUsec((compute?.toolSandboxCpuUsec ?? 0) + liveOverlay.toolSandboxCpuUsec)}
             color="#fb923c"
           />
         </div>

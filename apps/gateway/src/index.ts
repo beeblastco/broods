@@ -895,7 +895,9 @@ export function tempoTraceRowsFromResponse(payload: unknown, fallbackTraceId = "
               ? "tool.call"
               : name.startsWith("phase.")
                 ? "phase"
-                : "task",
+                : name === "agent.subtask"
+                  ? "subtask"
+                  : "task",
           startTimeMs,
           endTimeMs,
           durationMs: Math.max(0, endTimeMs - startTimeMs),

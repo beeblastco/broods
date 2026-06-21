@@ -20,6 +20,12 @@ export interface ObservabilityContext {
   agentId: string;
   conversationKey: string;
   traceId: string;
+  /**
+   * Span id of the root task span, set by the agent loop. Used to parent a
+   * subagent's subtask span under the parent task. Absent for non-agent contexts
+   * (account-manage, webhook normalization) that have no root span.
+   */
+  rootSpanId?: string;
   /** OTel context containing the active root task span for log correlation. */
   otelContext: Context;
   /** Plaintext values that must be removed from every emitted log string. */
