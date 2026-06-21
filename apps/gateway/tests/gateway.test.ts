@@ -4,6 +4,7 @@ import {
   gatewayLimitsFromEnv,
   mapWithConcurrency,
   normalizedCoreBaseUrls,
+  normalizeOtelId,
   resolveObservabilityScope,
   tempoTraceRowsFromResponse,
   lokiLogEntry,
@@ -214,6 +215,50 @@ test("reconstructs full Tempo span trees with tenant attributes and errors", () 
     durationMs: 500,
     status: "error",
     error: "tool failed",
+  });
+});
+
+test("normalizes base64 Tempo ids to hex so backfill keys match live spans", () => {
+  // 16-byte trace id and 8-byte span id, hex then base64-encoded.
+  const traceHex = "2e4a86cf02516e0768dff2a96ae9eb12";
+  const spanHex = "5bb16b70ae735d82";
+  const traceB64 = Buffer.from(traceHex, "hex").toString("base64");
+  const spanB64 = Buffer.from(spanHex, "hex").toString("base64");
+
+  expect(normalizeOtelId(traceB64, 16)).toBe(traceHex);
+  expect(normalizeOtelId(spanB64, 8)).toBe(spanHex);
+  // Already-hex ids pass through unchanged; unknown fixtures are left alone.
+  expect(normalizeOtelId(traceHex, 16)).toBe(traceHex);
+  expect(normalizeOtelId("trace-1", 16)).toBe("trace-1");
+  expect(normalizeOtelId("root-1", 8)).toBe("root-1");
+});
+
+test("reconstructs Tempo span trees from base64-encoded ids", () => {
+  const rootHex = "1111111111111111";
+  const childHex = "2222222222222222";
+  const traceHex = "33333333333333333333333333333333";
+  const rows = tempoTraceRowsFromResponse({
+    batches: [{
+      resource: { attributes: [] },
+      scopeSpans: [{ spans: [
+        {
+          traceId: Buffer.from(traceHex, "hex").toString("base64"),
+          spanId: Buffer.from(childHex, "hex").toString("base64"),
+          parentSpanId: Buffer.from(rootHex, "hex").toString("base64"),
+          name: "tool.call",
+          startTimeUnixNano: "1000000000",
+          endTimeUnixNano: "1500000000",
+          status: { code: 1 },
+        },
+      ] }],
+    }],
+  });
+
+  expect(rows[0]).toMatchObject({
+    traceId: traceHex,
+    spanId: childHex,
+    parentSpanId: rootHex,
+    kind: "tool.call",
   });
 });
 

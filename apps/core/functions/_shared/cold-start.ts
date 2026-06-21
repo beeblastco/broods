@@ -8,6 +8,12 @@
 // Process spawn approximated from uptime at module load (during INIT).
 const PROCESS_START_MS = Date.now() - Math.round(process.uptime() * 1000);
 
+// Upper bound on a real init window. AWS caps the INIT phase well under this; a
+// larger gap means the container initialized, then idled in the pool before its
+// first request (e.g. provisioned concurrency). That idle is not this request's
+// latency, so clamp it — otherwise the cold-start span balloons the whole trace.
+const MAX_COLD_START_MS = 60_000;
+
 let coldStartWindow: { startMs: number; endMs: number } | undefined;
 let coldStartConsumed = false;
 
@@ -29,8 +35,13 @@ export function consumeColdStart(): { startMs: number; durationMs: number } | nu
   }
   coldStartConsumed = true;
 
+  const rawDurationMs = Math.max(0, coldStartWindow.endMs - coldStartWindow.startMs);
+  const durationMs = Math.min(rawDurationMs, MAX_COLD_START_MS);
+
+  // Anchor the (possibly clamped) window to the handler entry so the span never
+  // starts before the request and inflate the trace duration.
   return {
-    startMs: coldStartWindow.startMs,
-    durationMs: Math.max(0, coldStartWindow.endMs - coldStartWindow.startMs),
+    startMs: coldStartWindow.endMs - durationMs,
+    durationMs: durationMs,
   };
 }

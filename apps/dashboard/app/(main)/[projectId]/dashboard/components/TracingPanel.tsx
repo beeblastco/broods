@@ -1,6 +1,6 @@
 "use client";
 
-/** Tracing panel: full-height task timelines with an indented span tree and model/tool span details. */
+/** Tracing panel: full-height task timelines with an indented span tree, a waterfall bar column, and model/tool span details. */
 import { Badge } from "@/app/components/ui/badge";
 import { cn } from "@/app/lib/utils";
 import {
@@ -12,6 +12,7 @@ import {
   ChevronDown,
   ChevronRight,
   LoaderCircle,
+  MinusCircle,
   XCircle,
 } from "lucide-react";
 import { useMemo, useState, type ReactNode } from "react";
@@ -80,8 +81,19 @@ function displayAttribute(value: unknown): string {
   return value;
 }
 
+function numericAttribute(span: ObservabilitySpanRow, key: string): number | undefined {
+  const value = span.attributes?.[key];
+
+  return typeof value === "number" ? value : undefined;
+}
+
 function spanKey(span: ObservabilitySpanRow): string {
   return `${span.traceId}:${span.spanId}`;
+}
+
+/** A live "running" span under a task that already finished never reported its end. */
+function isStale(span: ObservabilitySpanRow, taskRunning: boolean): boolean {
+  return span.status === "running" && !taskRunning;
 }
 
 /** Text color per span status — shared cue with the logs panel. */
@@ -101,9 +113,22 @@ function kindBadge(kind: ObservabilitySpanRow["kind"]): string {
   return "bg-amber-500/15 text-amber-300";
 }
 
+/** Solid waterfall-bar fill per kind; mirrors the badge hues. */
+function kindBarColor(kind: ObservabilitySpanRow["kind"]): string {
+  if (kind === "task") return "bg-violet-500/70";
+  if (kind === "model.step") return "bg-sky-500/70";
+  if (kind === "phase") return "bg-teal-500/70";
+
+  return "bg-amber-500/70";
+}
+
 interface SpanGroup {
   root: ObservabilitySpanRow;
   childrenByParent: Map<string, ObservabilitySpanRow[]>;
+  // Absolute time window the waterfall bars are scaled against (covers spans like
+  // cold start that begin before the root task span).
+  windowStart: number;
+  windowSpan: number;
 }
 
 /** Group spans into per-task trees keyed by parent span, newest task first. */
@@ -137,16 +162,33 @@ function groupSpans(spans: ObservabilitySpanRow[]): SpanGroup[] {
         siblings.sort((left, right) => left.startTimeMs - right.startTimeMs);
       }
 
-      return { root: root, childrenByParent: childrenByParent };
+      const allSpans = [root, ...children];
+      const taskRunning = root.status === "running";
+      const windowStart = Math.min(...allSpans.map((span) => span.startTimeMs));
+      const windowEnd = Math.max(
+        ...allSpans.map((span) =>
+          isStale(span, taskRunning) ? span.startTimeMs : span.endTimeMs,
+        ),
+      );
+
+      return {
+        root: root,
+        childrenByParent: childrenByParent,
+        windowStart: windowStart,
+        windowSpan: Math.max(1, windowEnd - windowStart),
+      };
     })
     .sort((left, right) => right.root.startTimeMs - left.root.startTimeMs);
 }
 
-function SpanStatusIcon({ status }: { status: ObservabilitySpanRow["status"] }) {
-  if (status === "running") {
+function SpanStatusIcon({ span, taskRunning }: { span: ObservabilitySpanRow; taskRunning: boolean }) {
+  if (isStale(span, taskRunning)) {
+    return <MinusCircle className="size-3.5 shrink-0 text-muted-foreground/50" />;
+  }
+  if (span.status === "running") {
     return <LoaderCircle className="size-3.5 shrink-0 animate-spin text-sky-400" />;
   }
-  if (status === "error") {
+  if (span.status === "error") {
     return <XCircle className="size-3.5 shrink-0 text-red-400" />;
   }
 
@@ -174,8 +216,63 @@ function spanLabel(span: ObservabilitySpanRow): string {
   return typeof taskId === "string" ? taskId : span.traceId;
 }
 
+/**
+ * One waterfall bar positioned within the task's time window. Model steps split
+ * into a muted invoke-wait (time-to-first-token) segment and a solid streaming
+ * segment so a slow step shows where the time went.
+ */
+function TimelineBar({
+  span,
+  windowStart,
+  windowSpan,
+  taskRunning,
+}: {
+  span: ObservabilitySpanRow;
+  windowStart: number;
+  windowSpan: number;
+  taskRunning: boolean;
+}) {
+  const stale = isStale(span, taskRunning);
+  const live = span.status === "running" && taskRunning;
+  const end = live ? windowStart + windowSpan : Math.max(span.endTimeMs, span.startTimeMs);
+  const leftPct = Math.min(100, Math.max(0, ((span.startTimeMs - windowStart) / windowSpan) * 100));
+  const widthPct = Math.max(0.75, Math.min(((end - span.startTimeMs) / windowSpan) * 100, 100 - leftPct));
+
+  const ttftMs = numericAttribute(span, "model.ttft_ms");
+  const ttftFrac = ttftMs !== undefined && span.durationMs > 0 ? Math.min(1, ttftMs / span.durationMs) : 0;
+  const title = `${spanLabel(span)} · ${formatDuration(span.durationMs)} · started ${formatTime(span.startTimeMs)}${
+    ttftMs !== undefined ? ` · invoke wait ${formatDuration(ttftMs)}` : ""
+  }`;
+
+  return (
+    <div className="relative h-4 w-full">
+      <div
+        className="absolute top-1/2 flex h-2 -translate-y-1/2 overflow-hidden rounded-sm"
+        style={{ left: `${leftPct}%`, width: `${widthPct}%` }}
+        title={title}
+      >
+        {ttftFrac > 0 && (
+          <div className="h-full shrink-0 bg-sky-500/25" style={{ width: `${ttftFrac * 100}%` }} />
+        )}
+        <div
+          className={cn(
+            "h-full flex-1",
+            stale
+              ? "bg-muted-foreground/25"
+              : live
+                ? cn(kindBarColor(span.kind), "animate-pulse")
+                : kindBarColor(span.kind),
+          )}
+        />
+      </div>
+    </div>
+  );
+}
+
 function SpanDetails({ span, depth }: { span: ObservabilitySpanRow; depth: number }) {
   const attributes = span.attributes ?? {};
+  const ttftMs = numericAttribute(span, "model.ttft_ms");
+  const streamMs = numericAttribute(span, "model.stream_ms");
   const details = DETAIL_ATTRIBUTES.flatMap((key) => {
     const value = displayAttribute(attributes[key]);
 
@@ -193,6 +290,18 @@ function SpanDetails({ span, depth }: { span: ObservabilitySpanRow; depth: numbe
       {span.kind === "task" && (
         <div className="text-[11px] font-mono text-muted-foreground/70">
           trace: {span.traceId} · agent: {span.agentId ?? "unknown"} · {span.conversationKey ?? "no conversation"}
+        </div>
+      )}
+      {span.kind === "model.step" && ttftMs !== undefined && (
+        <div className="flex flex-wrap gap-4 text-[11px] font-mono text-muted-foreground">
+          <span>
+            invoke wait <span className="text-sky-300">{formatDuration(ttftMs)}</span>
+          </span>
+          {streamMs !== undefined && (
+            <span>
+              streaming <span className="text-sky-300">{formatDuration(streamMs)}</span>
+            </span>
+          )}
         </div>
       )}
       {span.error && (
@@ -232,14 +341,21 @@ function SpanRow({
   hasChildren,
   isExpanded,
   onToggle,
+  windowStart,
+  windowSpan,
+  taskRunning,
 }: {
   span: ObservabilitySpanRow;
   depth: number;
   hasChildren: boolean;
   isExpanded: boolean;
   onToggle: () => void;
+  windowStart: number;
+  windowSpan: number;
+  taskRunning: boolean;
 }) {
   const isTask = span.kind === "task";
+  const stale = isStale(span, taskRunning);
 
   return (
     <tr
@@ -257,7 +373,7 @@ function SpanRow({
           ) : (
             <ChevronRight className="size-3.5 shrink-0 text-muted-foreground" />
           )}
-          <SpanStatusIcon status={span.status} />
+          <SpanStatusIcon span={span} taskRunning={taskRunning} />
           <span className="min-w-0">
             <span className="block truncate" title={spanLabel(span)}>
               {spanLabel(span)}
@@ -275,14 +391,24 @@ function SpanRow({
           {span.kind}
         </Badge>
       </td>
-      <td className={cn("px-3 py-1.5 whitespace-nowrap font-medium", statusColor(span.status))}>
-        {span.status}
+      <td
+        className={cn(
+          "px-3 py-1.5 whitespace-nowrap font-medium",
+          stale ? "text-muted-foreground/60" : statusColor(span.status),
+        )}
+      >
+        {stale ? "ended" : span.status}
       </td>
       <td className="px-3 py-1.5 whitespace-nowrap tabular-nums text-muted-foreground/80">
-        {span.status === "running" && !hasChildren ? "—" : formatDuration(span.durationMs)}
+        {span.durationMs > 0 ? formatDuration(span.durationMs) : "—"}
       </td>
-      <td className="px-3 py-1.5 whitespace-nowrap tabular-nums text-muted-foreground/60">
-        {formatTime(span.startTimeMs)}
+      <td className="px-3 py-1.5">
+        <TimelineBar
+          span={span}
+          windowStart={windowStart}
+          windowSpan={windowSpan}
+          taskRunning={taskRunning}
+        />
       </td>
     </tr>
   );
@@ -292,13 +418,14 @@ function SpanRow({
 function renderSpanRows(
   span: ObservabilitySpanRow,
   depth: number,
-  childrenByParent: Map<string, ObservabilitySpanRow[]>,
+  group: SpanGroup,
   expanded: Set<string>,
   toggle: (key: string) => void,
 ): ReactNode[] {
   const key = spanKey(span);
   const isExpanded = expanded.has(key);
-  const children = childrenByParent.get(span.spanId) ?? [];
+  const children = group.childrenByParent.get(span.spanId) ?? [];
+  const taskRunning = group.root.status === "running";
   const rows: ReactNode[] = [
     <SpanRow
       key={`row:${key}`}
@@ -307,6 +434,9 @@ function renderSpanRows(
       hasChildren={children.length > 0}
       isExpanded={isExpanded}
       onToggle={() => toggle(key)}
+      windowStart={group.windowStart}
+      windowSpan={group.windowSpan}
+      taskRunning={taskRunning}
     />,
   ];
 
@@ -319,7 +449,7 @@ function renderSpanRows(
       </tr>,
     );
     for (const child of children) {
-      rows.push(...renderSpanRows(child, depth + 1, childrenByParent, expanded, toggle));
+      rows.push(...renderSpanRows(child, depth + 1, group, expanded, toggle));
     }
   }
 
@@ -395,7 +525,7 @@ export function TracingPanel({ projectSlug, environmentSlug, apiKey }: Props) {
   return (
     <div className="flex h-full min-h-0 flex-col gap-3">
       <p className="shrink-0 text-xs text-muted-foreground">
-        Task timelines with model input, reasoning, responses, tool calls, and tool results. Expand a task to walk its step tree.
+        Task timelines with model input, reasoning, responses, tool calls, and tool results. Expand a task to walk its step tree; each model step bar shows invoke wait (lighter) then streaming.
       </p>
 
       <ObservabilityToolbar
@@ -423,11 +553,11 @@ export function TracingPanel({ projectSlug, environmentSlug, apiKey }: Props) {
         <div className="min-h-0 flex-1 overflow-auto">
           <table className="w-full text-xs font-mono table-fixed">
             <colgroup>
+              <col className="w-[30%]" />
+              <col className="w-[84px]" />
+              <col className="w-[76px]" />
+              <col className="w-[76px]" />
               <col />
-              <col className="w-[110px]" />
-              <col className="w-[90px]" />
-              <col className="w-[90px]" />
-              <col className="w-[90px]" />
             </colgroup>
             <thead className="sticky top-0 z-10 border-b border-border bg-card/95 backdrop-blur">
               <tr className="text-left text-[11px] uppercase tracking-wide text-muted-foreground/80">
@@ -435,12 +565,12 @@ export function TracingPanel({ projectSlug, environmentSlug, apiKey }: Props) {
                 <th className="px-3 py-2 font-medium">Kind</th>
                 <th className="px-3 py-2 font-medium">Status</th>
                 <th className="px-3 py-2 font-medium">Duration</th>
-                <th className="px-3 py-2 font-medium">Started</th>
+                <th className="px-3 py-2 font-medium">Timeline</th>
               </tr>
             </thead>
             <tbody>
               {groups.flatMap((group) =>
-                renderSpanRows(group.root, 0, group.childrenByParent, expanded, toggle),
+                renderSpanRows(group.root, 0, group, expanded, toggle),
               )}
               {groups.length === 0 && (
                 <tr>

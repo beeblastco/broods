@@ -22,7 +22,7 @@ import {
   type Span,
 } from "@opentelemetry/api";
 import type { AgentConfig } from "../_shared/storage/index.ts";
-import { collectSecretValues, logError, logInfo, redact, redactSensitiveText } from "../_shared/log.ts";
+import { collectSecretValues, logDebug, logError, logInfo, redact, redactSensitiveText } from "../_shared/log.ts";
 import { recordUsageTask } from "../_shared/telemetry.ts";
 import { extractCacheWriteTokens } from "./usage-metering.ts";
 import {
@@ -343,6 +343,10 @@ export async function runAgentLoop(
   // after each step start is attributed to the active step to split a model.step
   // into "invoke" (wait, step start -> first token) and "stream" (first token -> end).
   const firstChunkAt = new Map<number, number>();
+  // First text / reasoning chunk per step, for DEBUG lifecycle logs (Loki only;
+  // DEBUG is excluded from the live INFO stream so it never spams the dashboard).
+  const textStartedSteps = new Set<number>();
+  const reasoningStartedSteps = new Set<number>();
   let activeStepNumber: number | undefined;
   const toolCallSummaries = new Map<string, ToolCallSummary>();
   const logContext = {
@@ -526,14 +530,26 @@ export async function runAgentLoop(
       // First chunk of the active step marks the model's time-to-first-token.
       // Synchronous and cheap; onChunk pauses the stream until it returns.
       if (chunk.type === "raw") return;
-      if (activeStepNumber !== undefined && !firstChunkAt.has(activeStepNumber)) {
-        firstChunkAt.set(activeStepNumber, Date.now());
+      const step = activeStepNumber;
+      if (step === undefined) return;
+      if (!firstChunkAt.has(step)) firstChunkAt.set(step, Date.now());
+      if (chunk.type === "text-delta" && !textStartedSteps.has(step)) {
+        textStartedSteps.add(step);
+        logDebug("Model text started", { eventType: "model.text.started", ...logContext, stepNumber: step });
+      } else if (chunk.type === "reasoning-delta" && !reasoningStartedSteps.has(step)) {
+        reasoningStartedSteps.add(step);
+        logDebug("Model thinking started", { eventType: "model.thinking.started", ...logContext, stepNumber: step });
       }
     },
     experimental_onStepStart: async ({ stepNumber, messages }) => {
       const now = Date.now();
       stepStartedAt.set(stepNumber, now);
       activeStepNumber = stepNumber;
+      logDebug("Agent loop step started", {
+        eventType: "model.step.started",
+        ...logContext,
+        stepNumber: stepNumber,
+      });
       const attributes = {
         "agent.step_number": stepNumber,
         "step.state": "running",
@@ -565,6 +581,13 @@ export async function runAgentLoop(
     },
     experimental_onToolCallStart: async ({ stepNumber, toolCall }) => {
       const now = Date.now();
+      logDebug("Tool call started", {
+        eventType: "tool.call.started",
+        ...logContext,
+        stepNumber: stepNumber,
+        toolName: toolCall.toolName,
+        toolCallId: toolCall.toolCallId,
+      });
       if (stepNumber !== undefined && !stepStartedAt.has(stepNumber)) {
         stepStartedAt.set(stepNumber, now);
       }
@@ -790,8 +813,26 @@ export async function runAgentLoop(
           attributes,
         });
       }
+      if (textStartedSteps.has(stepNumber)) {
+        logDebug("Model text ended", {
+          eventType: "model.text.ended",
+          ...logContext,
+          stepNumber: stepNumber,
+          length: text.length,
+        });
+      }
+      if (reasoningStartedSteps.has(stepNumber)) {
+        logDebug("Model thinking ended", {
+          eventType: "model.thinking.ended",
+          ...logContext,
+          stepNumber: stepNumber,
+          length: (reasoningText ?? "").length,
+        });
+      }
       stepSpans.delete(stepNumber);
       firstChunkAt.delete(stepNumber);
+      textStartedSteps.delete(stepNumber);
+      reasoningStartedSteps.delete(stepNumber);
       if (activeStepNumber === stepNumber) {
         activeStepNumber = undefined;
       }

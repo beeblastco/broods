@@ -822,6 +822,26 @@ function otelAttributes(attributes: OtelAttribute[] | undefined): Record<string,
   return result;
 }
 
+/**
+ * Normalize an OTLP trace/span id to lowercase hex. Tempo's OTLP-JSON encodes
+ * ids as base64 bytes, but the live NATS path emits lowercase hex — without this
+ * the dashboard keys the backfilled and live copies of the same span differently
+ * and renders duplicates on reload. Returns already-hex ids and unknown strings
+ * (e.g. test fixtures) untouched; only base64 of the exact byte length converts.
+ */
+export function normalizeOtelId(value: unknown, byteLength: number): string {
+  if (typeof value !== "string" || value.length === 0) return "";
+  if (value.length === byteLength * 2 && /^[0-9a-f]+$/.test(value)) return value;
+  try {
+    const bytes = Buffer.from(value.replace(/-/g, "+").replace(/_/g, "/"), "base64");
+    if (bytes.length === byteLength) return bytes.toString("hex");
+  } catch {
+    // Not base64 — fall through and leave the original value.
+  }
+
+  return value;
+}
+
 /** Convert Tempo's OTLP trace-detail response into the dashboard's full span tree. */
 export function tempoTraceRowsFromResponse(payload: unknown, fallbackTraceId = ""): ObservabilitySpanRow[] {
   const batches = (payload as {
@@ -839,8 +859,9 @@ export function tempoTraceRowsFromResponse(payload: unknown, fallbackTraceId = "
     for (const group of groups) {
       for (const raw of group.spans ?? []) {
         const attributes = { ...resourceAttributes, ...otelAttributes(raw.attributes as OtelAttribute[] | undefined) };
-        const traceId = typeof raw.traceId === "string" ? raw.traceId : fallbackTraceId;
-        const spanId = typeof raw.spanId === "string" ? raw.spanId : "";
+        const traceId = normalizeOtelId(raw.traceId, 16) || fallbackTraceId;
+        const spanId = normalizeOtelId(raw.spanId, 8);
+        const parentSpanId = normalizeOtelId(raw.parentSpanId, 8);
         if (!traceId || !spanId) continue;
         const startTimeMs = Math.floor(Number(raw.startTimeUnixNano ?? 0) / 1_000_000);
         const endTimeMs = Math.floor(Number(raw.endTimeUnixNano ?? raw.startTimeUnixNano ?? 0) / 1_000_000);
@@ -850,7 +871,7 @@ export function tempoTraceRowsFromResponse(payload: unknown, fallbackTraceId = "
         rows.push({
           traceId,
           spanId,
-          ...(typeof raw.parentSpanId === "string" && raw.parentSpanId ? { parentSpanId: raw.parentSpanId } : {}),
+          ...(parentSpanId ? { parentSpanId } : {}),
           name,
           kind: name === "model.step"
             ? "model.step"

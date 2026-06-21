@@ -1008,6 +1008,7 @@ describe("runAgentLoop", () => {
     const logs = lines.map((line) => JSON.parse(line));
     expect(logs.map((log) => log.eventType).filter(Boolean)).toEqual([
       "model.invocation.started",
+      "model.step.started",
       "model.step.finished",
       "model.invocation.finished",
     ]);
