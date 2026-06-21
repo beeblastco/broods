@@ -33,6 +33,9 @@ const DEFAULT_EDIT_MAX_CHARS = 3500;
 // draft (maxLines 8).
 const PROGRESS_MAX_LINES = 8;
 const PROGRESS_HEADER = "⏳ Working…";
+// The reasoning preview is a single replaceable line (openclaw keeps it compact
+// instead of appending noise). Show the most recent slice of the live thought.
+const PROGRESS_REASONING_MAX_CHARS = 200;
 
 export interface ChannelStreamWriter {
   // Feed the next assistant text delta. Flushes to the channel on its own cadence.
@@ -40,6 +43,10 @@ export interface ChannelStreamWriter {
   // Feed a tool-activity label (progress mode only; no-op otherwise). Present only
   // on writers that render a status preview.
   progress?(label: string): Promise<void>;
+  // Feed the next reasoning/thinking delta (progress mode only; no-op otherwise).
+  // Rendered as one compact, replaceable line so the live thought stays visible
+  // without flooding the preview.
+  reasoning?(delta: string): Promise<void>;
   // Flush text completed by the current model step. Chunk mode sends one
   // message per completed step even when the model did not emit a paragraph.
   stepFinish?(): Promise<void>;
@@ -148,30 +155,57 @@ function editWriter(actions: ChannelActions, throttleMs: number, maxChars: numbe
   };
 }
 
-// Show a live status preview while the model works, append tool activity, then swap
-// the same message for the final answer. The first text delta posts the header so a
-// turn without tool calls still visibly remains in progress.
+// Show a live preview that streams reasoning, tool activity, AND the answer text as
+// the model works, then swap the same message for the final answer in place. Layout
+// (openclaw's progress draft): header, one replaceable reasoning line, the latest
+// tool-activity lines, then a blank line and the streamed answer so far.
 function progressWriter(actions: ChannelActions, throttleMs: number, maxChars: number): ChannelStreamWriter {
   const editor = messageEditor(actions, throttleMs, maxChars);
-  const lines: string[] = [];
+  const toolLines: string[] = [];
+  let reasoningText = "";
+  let answerText = "";
   let started = false;
-  const render = (): string => [PROGRESS_HEADER, ...lines.slice(-PROGRESS_MAX_LINES)].join("\n");
+
+  const render = (): string => {
+    const head: string[] = [PROGRESS_HEADER];
+    if (reasoningText.trim()) {
+      const compact = reasoningText.replace(/\s+/g, " ").trim();
+      const slice = compact.length > PROGRESS_REASONING_MAX_CHARS
+        ? `…${compact.slice(-PROGRESS_REASONING_MAX_CHARS)}`
+        : compact;
+      head.push(`💭 ${slice}`);
+    }
+    head.push(...toolLines.slice(-PROGRESS_MAX_LINES));
+    const preview = head.join("\n");
+    const answer = answerText.trim();
+
+    return answer ? `${preview}\n\n${answer}` : preview;
+  };
+
   return {
-    push: async () => {
-      if (started) return;
+    push: async (delta) => {
       started = true;
+      answerText += delta;
+      await editor.update(render());
+    },
+    reasoning: async (delta) => {
+      started = true;
+      reasoningText += delta;
       await editor.update(render());
     },
     progress: async (label) => {
       started = true;
-      lines.push(`• ${label}`);
+      toolLines.push(`• ${label}`);
       await editor.update(render());
     },
     finish: async (finalText) => {
-      // Replace the status preview with the final answer; if the turn produced no
-      // text answer, leave the last status visible.
-      const answer = typeof finalText === "string" && finalText.trim() ? finalText : undefined;
-      await editor.finalize(answer ?? (lines.length ? render() : undefined));
+      // Replace the whole preview with the final answer in place. Prefer the
+      // authoritative final text, else the streamed answer; if the turn produced no
+      // text at all, leave the last preview visible.
+      const answer = typeof finalText === "string" && finalText.trim()
+        ? finalText
+        : answerText.trim() || undefined;
+      await editor.finalize(answer ?? (started ? render() : undefined));
     },
   };
 }

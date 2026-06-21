@@ -818,6 +818,16 @@ async function handleChannelRequest(event: ChannelInboundEvent, context?: Lambda
                 streamWarn("push")(error);
               }
             },
+            onReasoningDelta: async (delta) => {
+              const w = ensureWriter();
+              if (!w.reasoning) return; // only progress mode renders reasoning
+              try {
+                await w.reasoning(delta);
+                streamed = true;
+              } catch (error) {
+                streamWarn("reasoning")(error);
+              }
+            },
             onToolCall: async (toolName, input) => {
               const w = ensureWriter();
               if (!w.progress) return; // only progress mode renders tool activity
@@ -1303,6 +1313,9 @@ async function runAgentLoopUntilSubagentsIdle(
     // When present, assistant text deltas are forwarded live (used to stream a
     // reply into a chat channel). Absent => the stream is just drained.
     onTextDelta?(delta: string): Promise<void>;
+    // When present, reasoning/thinking deltas are forwarded live (used by
+    // progress-mode channel streaming to show the model's live thought).
+    onReasoningDelta?(delta: string): Promise<void>;
     // When present, each tool call's name is forwarded live (used by progress-mode
     // channel streaming to render a tool-activity preview).
     onToolCall?(toolName: string, input: unknown): Promise<void>;
@@ -1319,7 +1332,7 @@ async function runAgentLoopUntilSubagentsIdle(
     asyncToolCoordinator: asyncToolCoordinator,
     initialTurnContext: initialTurnContext,
     agentConfig: agentConfig,
-    consumeStream: (reply.onTextDelta || reply.onToolCall || reply.onStepFinish)
+    consumeStream: (reply.onTextDelta || reply.onReasoningDelta || reply.onToolCall || reply.onStepFinish)
       ? async (stream) => {
           const reader = stream.fullStream.getReader();
           while (true) {
@@ -1327,6 +1340,8 @@ async function runAgentLoopUntilSubagentsIdle(
             if (done) break;
             if (part.type === "text-delta") {
               await reply.onTextDelta?.(part.text);
+            } else if (part.type === "reasoning-delta") {
+              await reply.onReasoningDelta?.(part.text);
             } else if (part.type === "tool-call") {
               await reply.onToolCall?.(part.toolName, part.input);
             } else if (part.type === "finish-step") {
