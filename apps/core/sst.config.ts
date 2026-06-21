@@ -1070,7 +1070,13 @@ export default $config({
             ]
           : []),
         {
-          actions: ["dynamodb:BatchWriteItem", "dynamodb:Query", "dynamodb:PutItem", "dynamodb:DeleteItem"],
+          actions: [
+            "dynamodb:BatchWriteItem",
+            "dynamodb:Query",
+            "dynamodb:PutItem",
+            "dynamodb:UpdateItem",
+            "dynamodb:DeleteItem",
+          ],
           resources: [conversationsTable.arn, processedEventsTable.arn],
         },
         {
