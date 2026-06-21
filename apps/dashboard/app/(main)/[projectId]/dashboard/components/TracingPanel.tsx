@@ -9,7 +9,7 @@ import {
 } from "@/app/hooks/useObservabilityStream";
 import { ChevronDown, ChevronRight, LoaderCircle } from "lucide-react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { ObservabilityToolbar, type ToolbarFilterOption } from "./ObservabilityToolbar";
 
 interface Props {
@@ -677,11 +677,15 @@ export function TracingPanel({ projectSlug, environmentSlug, apiKey }: Props) {
   // Arriving from a log's "View trace": expand that trace, page it into view,
   // scroll to it, then drop the param so a manual collapse is not re-fought.
   const focusedRef = useRef<string | null>(null);
+  // Bumped by focusTrace to force a re-focus of the same trace (the ref dedup
+  // below would otherwise swallow a repeat click on the same "↳ from parent" link).
+  const [refocusNonce, setRefocusNonce] = useState(0);
   useEffect(() => {
-    if (!focusTraceId || focusedRef.current === focusTraceId) return;
+    const focusKey = focusTraceId ? `${focusTraceId}:${refocusNonce}` : null;
+    if (!focusKey || focusedRef.current === focusKey) return;
     const index = groups.findIndex((group) => group.root.traceId === focusTraceId);
     if (index === -1) return;
-    focusedRef.current = focusTraceId;
+    focusedRef.current = focusKey;
     const rootKey = `${focusTraceId}:${groups[index].root.spanId}`;
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setExpanded((current) => new Set([...current, rootKey]));
@@ -693,7 +697,7 @@ export function TracingPanel({ projectSlug, environmentSlug, apiKey }: Props) {
     const next = new URLSearchParams(searchParams.toString());
     next.delete("trace");
     router.replace(`${pathname}?${next.toString()}`, { scroll: false });
-  }, [focusTraceId, groups, visibleCount, searchParams, pathname, router]);
+  }, [focusTraceId, refocusNonce, groups, visibleCount, searchParams, pathname, router]);
 
   const toggle = (key: string) => {
     setExpanded((current) => {
@@ -710,12 +714,16 @@ export function TracingPanel({ projectSlug, environmentSlug, apiKey }: Props) {
 
   // Jump to another trace (a subagent's "↳ from parent" link). Reuses the
   // `?trace=` focus effect above, which expands, pages in, scrolls, and highlights.
-  const focusTrace = (traceId: string) => {
-    focusedRef.current = null; // allow re-focusing even if it was focused before
-    const next = new URLSearchParams(searchParams.toString());
-    next.set("trace", traceId);
-    router.replace(`${pathname}?${next.toString()}`, { scroll: false });
-  };
+  // Bumps the nonce (not the ref) so re-clicking the same link re-focuses.
+  const focusTrace = useCallback(
+    (traceId: string) => {
+      setRefocusNonce((nonce) => nonce + 1);
+      const next = new URLSearchParams(searchParams.toString());
+      next.set("trace", traceId);
+      router.replace(`${pathname}?${next.toString()}`, { scroll: false });
+    },
+    [searchParams, pathname, router],
+  );
 
   const clearFilters = () => {
     setFilter("");
