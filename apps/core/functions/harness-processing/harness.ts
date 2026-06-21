@@ -413,6 +413,16 @@ export async function runAgentLoop(
     }
     toolSpans.clear();
     stepSpans.clear();
+    // Task totals on the root span: token usage and sandbox CPU split per provider
+    // so the dashboard reads final usage straight off the trace stream.
+    const totals = (usage ?? {}) as Record<string, number | undefined>;
+    const cpuUsecByType = new Map<string, number>();
+    for (const sample of sandboxUsageByKey.values()) {
+      cpuUsecByType.set(sample.type, (cpuUsecByType.get(sample.type) ?? 0) + sample.cpuUsec);
+    }
+    const sandboxCpuAttributes = Object.fromEntries(
+      [...cpuUsecByType.entries()].map(([type, cpuUsec]) => [`sandbox.cpu_usec.${type}`, cpuUsec]),
+    );
     const rootSpanRow: ObservabilitySpanRow = {
       traceId,
       spanId: rootSpanId,
@@ -432,6 +442,12 @@ export async function runAgentLoop(
         "agent.tool_call_count": toolCallCount,
         "agent.model_provider": configuredModel.providerName,
         "agent.model_id": agentConfig.model?.modelId,
+        "usage.input_tokens": totals.inputTokens ?? 0,
+        "usage.output_tokens": totals.outputTokens ?? 0,
+        "usage.reasoning_tokens": totals.reasoningTokens ?? 0,
+        "usage.cached_input_tokens": totals.cachedInputTokens ?? 0,
+        "usage.total_tokens": totals.totalTokens ?? 0,
+        ...sandboxCpuAttributes,
       },
       ...(sanitizedError ? { error: sanitizedError.message } : {}),
     };
@@ -781,6 +797,8 @@ export async function runAgentLoop(
         const firstTokenMs = firstChunkAt.get(stepNumber);
         const ttftMs = firstTokenMs !== undefined ? Math.max(0, firstTokenMs - tracked.startTimeMs) : undefined;
         const streamMs = firstTokenMs !== undefined ? Math.max(0, stepEndMs - firstTokenMs) : undefined;
+        // Per-step token usage on the span so the dashboard can accumulate live
+        // usage straight off the trace stream (no separate usage channel).
         const attributes = {
           ...tracked.attributes,
           "agent.step_number": stepNumber,
@@ -789,6 +807,11 @@ export async function runAgentLoop(
           "agent.tool_call_count": toolCalls.length,
           ...(ttftMs !== undefined ? { "model.ttft_ms": ttftMs } : {}),
           ...(streamMs !== undefined ? { "model.stream_ms": streamMs } : {}),
+          "model.input_tokens": usage.inputTokens ?? 0,
+          "model.output_tokens": usage.outputTokens ?? 0,
+          "model.reasoning_tokens": usage.reasoningTokens ?? 0,
+          "model.cached_input_tokens": usage.cachedInputTokens ?? 0,
+          "model.total_tokens": usage.totalTokens ?? 0,
           "model.response": traceAttribute(text),
           "model.reasoning": traceAttribute(reasoningText ?? ""),
           "model.tool_calls": traceAttribute(toolCalls),

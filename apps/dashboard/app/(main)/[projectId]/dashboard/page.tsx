@@ -11,6 +11,7 @@ import Link from "next/link";
 import { useParams, useSearchParams } from "next/navigation";
 import { useCallback, useState } from "react";
 import { BillingPanel } from "./components/BillingPanel";
+import { LiveUsagePanel } from "./components/LiveUsagePanel";
 import { MonitoringPanel } from "./components/MonitoringPanel";
 import { ObservabilityKeyPrompt } from "./components/ObservabilityKeyPrompt";
 import { TokensUsagePanel } from "./components/TokensUsagePanel";
@@ -174,7 +175,16 @@ export default function DashboardPage() {
         );
       case "usage":
         return (
-          <TokensUsagePanel projectId={projectId} environmentId={activeEnvId} />
+          <div className="flex flex-col gap-6">
+            {observabilityApiKey && (
+              <LiveUsagePanel
+                projectSlug={projectSlug}
+                environmentSlug={environmentSlug}
+                apiKey={observabilityApiKey}
+              />
+            )}
+            <TokensUsagePanel projectId={projectId} environmentId={activeEnvId} />
+          </div>
         );
       case "billing":
         return <BillingPanel projectId={projectId} />;
