@@ -15,7 +15,8 @@ import {
   MinusCircle,
   XCircle,
 } from "lucide-react";
-import { useMemo, useState, type ReactNode } from "react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { ObservabilityToolbar, type ToolbarFilterOption } from "./ObservabilityToolbar";
 
 interface Props {
@@ -23,6 +24,9 @@ interface Props {
   environmentSlug: string | undefined;
   apiKey: string | undefined;
 }
+
+// Task groups rendered before the "Load more" pager.
+const PAGE_SIZE = 50;
 
 type StatusFilter = "all" | ObservabilitySpanRow["status"];
 
@@ -129,6 +133,10 @@ interface SpanGroup {
   // cold start that begin before the root task span).
   windowStart: number;
   windowSpan: number;
+  // Effective task duration used to size the top-level bar on a scale shared
+  // across tasks, so a longer task always reads as a longer bar. Running tasks
+  // fall back to elapsed window so their bar grows as steps stream in.
+  taskDurationMs: number;
 }
 
 /** Group spans into per-task trees keyed by parent span, newest task first. */
@@ -171,11 +179,14 @@ function groupSpans(spans: ObservabilitySpanRow[]): SpanGroup[] {
         ),
       );
 
+      const windowSpan = Math.max(1, windowEnd - windowStart);
+
       return {
         root: root,
         childrenByParent: childrenByParent,
         windowStart: windowStart,
-        windowSpan: Math.max(1, windowEnd - windowStart),
+        windowSpan: windowSpan,
+        taskDurationMs: Math.max(root.durationMs, taskRunning ? windowEnd - root.startTimeMs : 0, 1),
       };
     })
     .sort((left, right) => right.root.startTimeMs - left.root.startTimeMs);
@@ -217,9 +228,39 @@ function spanLabel(span: ObservabilitySpanRow): string {
 }
 
 /**
+ * The top-level task bar, sized on a scale shared across all visible tasks so a
+ * longer task always reads as a longer bar (the familiar trace-list convention).
+ */
+function TaskDurationBar({
+  group,
+  scaleMaxMs,
+}: {
+  group: SpanGroup;
+  scaleMaxMs: number;
+}) {
+  const live = group.root.status === "running";
+  const widthPct = Math.max(1.5, Math.min(100, (group.taskDurationMs / scaleMaxMs) * 100));
+  const title = `${spanLabel(group.root)} · ${formatDuration(group.taskDurationMs)} · started ${formatTime(group.root.startTimeMs)}`;
+
+  return (
+    <div className="relative h-4 w-full">
+      <div
+        className={cn(
+          "absolute top-1/2 h-2 -translate-y-1/2 rounded-sm",
+          group.root.status === "error" ? "bg-red-500/70" : live ? cn(kindBarColor("task"), "animate-pulse") : kindBarColor("task"),
+        )}
+        style={{ width: `${widthPct}%` }}
+        title={title}
+      />
+    </div>
+  );
+}
+
+/**
  * One waterfall bar positioned within the task's time window. Model steps split
  * into a muted invoke-wait (time-to-first-token) segment and a solid streaming
- * segment so a slow step shows where the time went.
+ * segment so a slow step shows where the time went. A faint track behind the bar
+ * marks the full task window so each child reads against the whole span.
  */
 function TimelineBar({
   span,
@@ -246,6 +287,7 @@ function TimelineBar({
 
   return (
     <div className="relative h-4 w-full">
+      <div className="absolute inset-x-0 top-1/2 h-px -translate-y-1/2 bg-border/60" />
       <div
         className="absolute top-1/2 flex h-2 -translate-y-1/2 overflow-hidden rounded-sm"
         style={{ left: `${leftPct}%`, width: `${widthPct}%` }}
@@ -310,14 +352,18 @@ function SpanDetails({ span, depth }: { span: ObservabilitySpanRow; depth: numbe
         </div>
       )}
       {details.map(({ key, value }) => (
-        <div key={key} className="grid gap-1">
-          <div className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-            {key.replaceAll(".", " ")}
-          </div>
-          <pre className="max-h-[50vh] overflow-auto whitespace-pre-wrap break-words rounded border border-border bg-card p-3 text-xs leading-relaxed text-foreground/90">
+        <details key={key} className="group/detail grid gap-1 rounded border border-border/70 bg-card/40">
+          <summary className="flex cursor-pointer list-none items-center gap-2 px-2.5 py-1.5 text-[11px] font-medium uppercase tracking-wide text-muted-foreground transition-colors hover:text-foreground">
+            <ChevronRight className="size-3 shrink-0 transition-transform group-open/detail:rotate-90" />
+            <span className="flex-1">{key.replaceAll(".", " ")}</span>
+            <span className="font-mono text-[10px] normal-case text-muted-foreground/60">
+              {value.length.toLocaleString()} chars
+            </span>
+          </summary>
+          <pre className="mx-2.5 mb-2.5 max-h-[50vh] overflow-auto whitespace-pre-wrap break-words rounded border border-border bg-card p-3 text-xs leading-relaxed text-foreground/90">
             {value}
           </pre>
-        </div>
+        </details>
       ))}
       {metadata.length > 0 && (
         <div className="grid gap-x-4 gap-y-1 text-[11px] font-mono text-muted-foreground sm:grid-cols-2">
@@ -338,32 +384,34 @@ function SpanDetails({ span, depth }: { span: ObservabilitySpanRow; depth: numbe
 function SpanRow({
   span,
   depth,
-  hasChildren,
   isExpanded,
   onToggle,
-  windowStart,
-  windowSpan,
+  group,
+  scaleMaxMs,
   taskRunning,
+  highlighted,
 }: {
   span: ObservabilitySpanRow;
   depth: number;
-  hasChildren: boolean;
   isExpanded: boolean;
   onToggle: () => void;
-  windowStart: number;
-  windowSpan: number;
+  group: SpanGroup;
+  scaleMaxMs: number;
   taskRunning: boolean;
+  highlighted: boolean;
 }) {
   const isTask = span.kind === "task";
   const stale = isStale(span, taskRunning);
 
   return (
     <tr
+      id={isTask ? `task-${span.traceId}` : undefined}
       onClick={onToggle}
       className={cn(
         "cursor-pointer border-b border-border/40 transition-colors hover:bg-accent/20",
         isExpanded && "bg-accent/30",
         isTask && "font-medium",
+        highlighted && "bg-sky-500/10 ring-1 ring-inset ring-sky-500/40",
       )}
     >
       <td className="py-1.5 pr-3" style={{ paddingLeft: depth * 18 + 12 }}>
@@ -403,12 +451,16 @@ function SpanRow({
         {span.durationMs > 0 ? formatDuration(span.durationMs) : "—"}
       </td>
       <td className="px-3 py-1.5">
-        <TimelineBar
-          span={span}
-          windowStart={windowStart}
-          windowSpan={windowSpan}
-          taskRunning={taskRunning}
-        />
+        {isTask ? (
+          <TaskDurationBar group={group} scaleMaxMs={scaleMaxMs} />
+        ) : (
+          <TimelineBar
+            span={span}
+            windowStart={group.windowStart}
+            windowSpan={group.windowSpan}
+            taskRunning={taskRunning}
+          />
+        )}
       </td>
     </tr>
   );
@@ -419,8 +471,10 @@ function renderSpanRows(
   span: ObservabilitySpanRow,
   depth: number,
   group: SpanGroup,
+  scaleMaxMs: number,
   expanded: Set<string>,
   toggle: (key: string) => void,
+  focusTraceId: string | null,
 ): ReactNode[] {
   const key = spanKey(span);
   const isExpanded = expanded.has(key);
@@ -431,12 +485,12 @@ function renderSpanRows(
       key={`row:${key}`}
       span={span}
       depth={depth}
-      hasChildren={children.length > 0}
       isExpanded={isExpanded}
       onToggle={() => toggle(key)}
-      windowStart={group.windowStart}
-      windowSpan={group.windowSpan}
+      group={group}
+      scaleMaxMs={scaleMaxMs}
       taskRunning={taskRunning}
+      highlighted={span.kind === "task" && span.traceId === focusTraceId}
     />,
   ];
 
@@ -449,7 +503,7 @@ function renderSpanRows(
       </tr>,
     );
     for (const child of children) {
-      rows.push(...renderSpanRows(child, depth + 1, group, expanded, toggle));
+      rows.push(...renderSpanRows(child, depth + 1, group, scaleMaxMs, expanded, toggle, focusTraceId));
     }
   }
 
@@ -457,11 +511,16 @@ function renderSpanRows(
 }
 
 export function TracingPanel({ projectSlug, environmentSlug, apiKey }: Props) {
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const focusTraceId = searchParams.get("trace");
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [filter, setFilter] = useState("");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [fromTime, setFromTime] = useState("");
   const [toTime, setToTime] = useState("");
+  const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
 
   const { entries, status, error, refresh } = useObservabilityStream({
     stream: "traces",
@@ -502,6 +561,63 @@ export function TracingPanel({ projectSlug, environmentSlug, apiKey }: Props) {
     });
   }, [entries, filter, statusFilter, fromMs, toMs]);
 
+  // Shared duration scale for the top-level task bars so bar length is
+  // comparable across tasks (longest visible task fills the column).
+  const scaleMaxMs = useMemo(
+    () => Math.max(1, ...groups.map((group) => group.taskDurationMs)),
+    [groups],
+  );
+
+  // Auto-expand each running task once so its steps stream into view without a
+  // click; recorded so a manual collapse is not fought on the next live update.
+  const autoExpandedRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    const toExpand: string[] = [];
+    for (const group of groups) {
+      const key = spanKey(group.root);
+      if (group.root.status === "running" && !autoExpandedRef.current.has(key)) {
+        autoExpandedRef.current.add(key);
+        toExpand.push(key);
+      }
+    }
+    if (toExpand.length > 0) {
+      // Reacting to newly-streamed running tasks (external data) by revealing
+      // their step tree — external-system synchronization, like the stream hook.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setExpanded((current) => new Set([...current, ...toExpand]));
+    }
+  }, [groups]);
+
+  // Reset paging when the filters change so "Load more" starts from the top —
+  // render-time adjustment, not an effect.
+  const filterSignature = `${filter}|${statusFilter}|${fromMs}|${toMs}`;
+  const [prevFilterSignature, setPrevFilterSignature] = useState(filterSignature);
+  if (filterSignature !== prevFilterSignature) {
+    setPrevFilterSignature(filterSignature);
+    setVisibleCount(PAGE_SIZE);
+  }
+
+  // Arriving from a log's "View trace": expand that trace, page it into view,
+  // scroll to it, then drop the param so a manual collapse is not re-fought.
+  const focusedRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!focusTraceId || focusedRef.current === focusTraceId) return;
+    const index = groups.findIndex((group) => group.root.traceId === focusTraceId);
+    if (index === -1) return;
+    focusedRef.current = focusTraceId;
+    const rootKey = `${focusTraceId}:${groups[index].root.spanId}`;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setExpanded((current) => new Set([...current, rootKey]));
+    if (index >= visibleCount) {
+      setVisibleCount(index + 1);
+    }
+    const target = document.getElementById(`task-${focusTraceId}`);
+    target?.scrollIntoView({ block: "center" });
+    const next = new URLSearchParams(searchParams.toString());
+    next.delete("trace");
+    router.replace(`${pathname}?${next.toString()}`, { scroll: false });
+  }, [focusTraceId, groups, visibleCount, searchParams, pathname, router]);
+
   const toggle = (key: string) => {
     setExpanded((current) => {
       const next = new Set(current);
@@ -522,10 +638,13 @@ export function TracingPanel({ projectSlug, environmentSlug, apiKey }: Props) {
     setToTime("");
   };
 
+  const visibleGroups = groups.slice(0, visibleCount);
+  const remaining = groups.length - visibleGroups.length;
+
   return (
     <div className="flex h-full min-h-0 flex-col gap-3">
       <p className="shrink-0 text-xs text-muted-foreground">
-        Task timelines with model input, reasoning, responses, tool calls, and tool results. Expand a task to walk its step tree; each model step bar shows invoke wait (lighter) then streaming.
+        Each task bar is scaled by total duration so longer tasks read as longer bars. Expand a task for the per-step waterfall (positioned in time); model step bars show invoke wait (lighter) then streaming. Expand a span, then open a section to inspect its input, reasoning, or output.
       </p>
 
       <ObservabilityToolbar
@@ -569,8 +688,8 @@ export function TracingPanel({ projectSlug, environmentSlug, apiKey }: Props) {
               </tr>
             </thead>
             <tbody>
-              {groups.flatMap((group) =>
-                renderSpanRows(group.root, 0, group, expanded, toggle),
+              {visibleGroups.flatMap((group) =>
+                renderSpanRows(group.root, 0, group, scaleMaxMs, expanded, toggle, focusTraceId),
               )}
               {groups.length === 0 && (
                 <tr>
@@ -581,6 +700,17 @@ export function TracingPanel({ projectSlug, environmentSlug, apiKey }: Props) {
               )}
             </tbody>
           </table>
+          {remaining > 0 && (
+            <div className="border-t border-border/40 bg-card/60 p-2 text-center">
+              <button
+                type="button"
+                onClick={() => setVisibleCount((count) => count + PAGE_SIZE)}
+                className="cursor-pointer rounded-md px-3 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-accent/40 hover:text-foreground"
+              >
+                Load {Math.min(PAGE_SIZE, remaining)} more · {remaining.toLocaleString()} older task{remaining === 1 ? "" : "s"}
+              </button>
+            </div>
+          )}
         </div>
       </div>
     </div>

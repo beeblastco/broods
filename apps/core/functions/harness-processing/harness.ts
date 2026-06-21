@@ -263,7 +263,7 @@ export async function runAgentLoop(
   // Cold start is charged to the first run in this execution environment; later
   // (warm) runs consume nothing. Context prepare and compaction come from the
   // turn context the handler assembled before this loop began.
-  const coldStart = consumeColdStart();
+  const coldStart = consumeColdStart(runStartedAt);
   if (coldStart) {
     emitPhaseSpan("phase.cold_start", "Cold start", coldStart.startMs, coldStart.startMs + coldStart.durationMs);
   }

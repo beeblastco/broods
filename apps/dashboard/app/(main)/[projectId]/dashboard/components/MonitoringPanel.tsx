@@ -7,7 +7,8 @@ import {
   useObservabilityStream,
   type ObservabilityLogEntry,
 } from "@/app/hooks/useObservabilityStream";
-import { AlertTriangle } from "lucide-react";
+import { AlertTriangle, ArrowUpRight } from "lucide-react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useMemo, useState } from "react";
 import { ObservabilityToolbar, type ToolbarFilterOption } from "./ObservabilityToolbar";
 
@@ -18,6 +19,10 @@ interface Props {
 }
 
 type LevelFilter = "all" | ObservabilityLogEntry["level"];
+
+// Rows rendered before the "Load more" pager; keeps the DOM bounded even when the
+// live buffer holds thousands of entries.
+const PAGE_SIZE = 100;
 
 const LEVEL_FILTER_OPTIONS: ToolbarFilterOption[] = [
   { value: "all", label: "All levels" },
@@ -111,10 +116,12 @@ function LogRow({
   entry,
   isExpanded,
   onToggle,
+  onViewTrace,
 }: {
   entry: ObservabilityLogEntry;
   isExpanded: boolean;
   onToggle: () => void;
+  onViewTrace: (traceId: string) => void;
 }) {
   const parsed = useMemo(() => parseLogMessage(entry.message), [entry.message]);
   const { date, time } = formatDateTime(entry.ts);
@@ -166,8 +173,19 @@ function LogRow({
           <td colSpan={4} className="px-3 py-3">
             <div className="flex flex-col gap-2">
               {entry.traceId && (
-                <div className="text-[11px] text-muted-foreground/70 font-mono">
-                  trace: {entry.traceId}
+                <div className="flex items-center gap-2 text-[11px] font-mono text-muted-foreground/70">
+                  <span>trace: {entry.traceId}</span>
+                  <button
+                    type="button"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      onViewTrace(entry.traceId!);
+                    }}
+                    className="inline-flex cursor-pointer items-center gap-1 rounded border border-border/70 bg-card px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-sky-300 transition-colors hover:border-sky-500/40 hover:text-sky-200"
+                  >
+                    View trace
+                    <ArrowUpRight className="size-3" />
+                  </button>
                 </div>
               )}
               {entry.endpointId && (
@@ -195,11 +213,23 @@ function LogRow({
 }
 
 export function MonitoringPanel({ projectSlug, environmentSlug, apiKey }: Props) {
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
   const [expandedIndex, setExpandedIndex] = useState<number | null>(null);
   const [filter, setFilter] = useState("");
   const [level, setLevel] = useState<LevelFilter>("all");
   const [fromTime, setFromTime] = useState("");
   const [toTime, setToTime] = useState("");
+  const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
+
+  // Switch to the Tracing tab focused on a log's trace, preserving env/other params.
+  const viewTrace = (traceId: string) => {
+    const next = new URLSearchParams(searchParams.toString());
+    next.set("tab", "tracing");
+    next.set("trace", traceId);
+    router.push(`${pathname}?${next.toString()}`);
+  };
 
   const { entries, status, error, refresh } = useObservabilityStream({
     stream: "logs",
@@ -230,6 +260,18 @@ export function MonitoringPanel({ projectSlug, environmentSlug, apiKey }: Props)
       );
     });
   }, [entries, filter, level, fromMs, toMs]);
+
+  // Reset paging whenever the filters change so "Load more" always starts from
+  // the top of the current view — render-time adjustment, not an effect.
+  const filterSignature = `${filter}|${level}|${fromMs}|${toMs}`;
+  const [prevFilterSignature, setPrevFilterSignature] = useState(filterSignature);
+  if (filterSignature !== prevFilterSignature) {
+    setPrevFilterSignature(filterSignature);
+    setVisibleCount(PAGE_SIZE);
+  }
+
+  const visible = filtered.slice(0, visibleCount);
+  const remaining = filtered.length - visible.length;
 
   const clearFilters = () => {
     setFilter("");
@@ -283,7 +325,7 @@ export function MonitoringPanel({ projectSlug, environmentSlug, apiKey }: Props)
               </tr>
             </thead>
             <tbody>
-              {filtered.map((entry, i) => (
+              {visible.map((entry, i) => (
                 <LogRow
                   key={`${entry.ts}-${i}`}
                   entry={entry}
@@ -291,6 +333,7 @@ export function MonitoringPanel({ projectSlug, environmentSlug, apiKey }: Props)
                   onToggle={() =>
                     setExpandedIndex((cur) => (cur === i ? null : i))
                   }
+                  onViewTrace={viewTrace}
                 />
               ))}
               {filtered.length === 0 && (
@@ -302,6 +345,17 @@ export function MonitoringPanel({ projectSlug, environmentSlug, apiKey }: Props)
               )}
             </tbody>
           </table>
+          {remaining > 0 && (
+            <div className="border-t border-border/40 bg-card/60 p-2 text-center">
+              <button
+                type="button"
+                onClick={() => setVisibleCount((count) => count + PAGE_SIZE)}
+                className="cursor-pointer rounded-md px-3 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-accent/40 hover:text-foreground"
+              >
+                Load {Math.min(PAGE_SIZE, remaining)} more · {remaining.toLocaleString()} older
+              </button>
+            </div>
+          )}
         </div>
       </div>
     </div>

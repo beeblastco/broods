@@ -28,6 +28,10 @@ interface SandboxResponse {
   stdout: string;
   stderr: string;
   truncated?: boolean;
+  // Microseconds of CPU consumed by the sandboxed process, when the lambda-sandbox
+  // image measures it (getrusage on the spawned runtime). Absent on images that do
+  // not yet report it; the CPU sample is simply skipped until they do.
+  cpu_usec?: number;
 }
 
 const textEncoder = new TextEncoder();
@@ -85,6 +89,9 @@ export class LambdaSandboxExecutor implements SandboxExecutor {
       timedOut: response.timed_out,
       truncated: response.truncated === true || stdout.truncated || stderr.truncated,
       provider: "lambda",
+      ...(typeof response.cpu_usec === "number" && response.cpu_usec > 0
+        ? { cpuUsec: response.cpu_usec }
+        : {}),
     };
   }
 

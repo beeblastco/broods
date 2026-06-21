@@ -472,9 +472,15 @@ function sendAgentTest(socket: Bun.ServerWebSocket<AgentTestGatewayData>, payloa
   socket.send(JSON.stringify(payload));
 }
 
-/** Send an observability protocol message. */
+/** Send an observability protocol message. Best-effort: a closing or
+ * backpressured socket must never throw into the NATS relay loop. */
 function sendObs(socket: Bun.ServerWebSocket<ObservabilityGatewayData>, payload: ObservabilityServerMessage): void {
-  socket.send(JSON.stringify(payload));
+  if (socket.readyState !== WebSocket.OPEN) return;
+  try {
+    socket.send(JSON.stringify(payload));
+  } catch {
+    // Transport closed mid-send — drop this message; the relay keeps running.
+  }
 }
 
 // Short alias used throughout runCoreStream.
@@ -936,19 +942,26 @@ async function relayNatsMessages(
 ): Promise<void> {
   try {
     for await (const msg of sub) {
-      const text = decoder.decode(msg.data);
-      const parsed = parseJson(text);
-      if (!parsed || typeof parsed !== "object") continue;
+      // Per-message guard: a single malformed payload or a transient send error
+      // must not break the for-await loop and silently kill the live stream for
+      // the rest of the run. Skip the bad message and keep relaying.
+      try {
+        const text = decoder.decode(msg.data);
+        const parsed = parseJson(text);
+        if (!parsed || typeof parsed !== "object") continue;
 
-      if (stream === "logs") {
-        const entry = parsed as ObservabilityLogEntry;
-        const entryLevel = (entry.level as string) as LogLevel;
-        if (LOG_LEVEL_ORDER[entryLevel] === undefined) continue;
-        if (LOG_LEVEL_ORDER[entryLevel] < LOG_LEVEL_ORDER[state.logsMinLevel]) continue;
-        sendObs(socket, { type: "log", entry });
-      } else {
-        const entry = parsed as ObservabilitySpanRow;
-        sendObs(socket, { type: "span", entry });
+        if (stream === "logs") {
+          const entry = parsed as ObservabilityLogEntry;
+          const entryLevel = (entry.level as string) as LogLevel;
+          if (LOG_LEVEL_ORDER[entryLevel] === undefined) continue;
+          if (LOG_LEVEL_ORDER[entryLevel] < LOG_LEVEL_ORDER[state.logsMinLevel]) continue;
+          sendObs(socket, { type: "log", entry });
+        } else {
+          const entry = parsed as ObservabilitySpanRow;
+          sendObs(socket, { type: "span", entry });
+        }
+      } catch {
+        // Malformed message or transient send failure — drop it and continue.
       }
     }
   } catch {

@@ -493,8 +493,9 @@ export const usageTasksFields = {
     /**
      * CPU consumed in sandboxes during the task, one entry per sandbox context:
      * the agent's own sandbox (role "agent") and any per-tool sandbox (role
-     * "tool"). cpuUsec is recorded only for instrumented types ("kubernetes");
-     * third-party providers are typed "other" and not metered.
+     * "tool"), tagged by provider `type` ("kubernetes", "lambda", …). cpuUsec is
+     * recorded for instrumented providers (kubernetes via cgroup, lambda via the
+     * sandbox image's getrusage report); providers that do not report it store 0.
      */
     sandboxUsage: v.array(
         v.object({

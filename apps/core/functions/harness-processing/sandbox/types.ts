@@ -109,9 +109,10 @@ export interface SandboxRunResult {
   timedOut?: boolean;
   truncated?: boolean;
   provider: SandboxProvider;
-  /** CPU time consumed by this exec in microseconds (cgroup cpu.stat delta).
-   *  Present only for kubernetes provider runs that successfully read cgroup v2
-   *  cpu.stat. Absent (undefined) for all other providers and on read failure. */
+  /** CPU time consumed by this exec in microseconds. Sourced from the cgroup v2
+   *  cpu.stat delta on kubernetes and from the lambda-sandbox image's getrusage
+   *  report on lambda. Absent (undefined) for providers that do not report it and
+   *  on read failure. */
   cpuUsec?: number;
 }
 

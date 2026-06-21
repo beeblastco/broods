@@ -27,13 +27,24 @@ export function markHandlerEntry(now: number): void {
 
 /**
  * Read and clear the cold-start window so the first agent run can emit it as a
- * single phase span. Returns null on warm runs and after the first consumption.
+ * single phase span. `runStartedMs` is when the agent loop began; it gates the
+ * window so a warm container that was born long ago (e.g. it first handled a
+ * webhook ack, then ran this loop minutes later) never stamps a stale init
+ * window onto this request's trace. Returns null on warm runs, on runs that
+ * began too long after process start, and after the first consumption.
  */
-export function consumeColdStart(): { startMs: number; durationMs: number } | null {
+export function consumeColdStart(runStartedMs: number): { startMs: number; durationMs: number } | null {
   if (coldStartConsumed || !coldStartWindow) {
     return null;
   }
   coldStartConsumed = true;
+
+  // A run that begins well after process start did not pay the init cost as part
+  // of its own latency. Attributing it here would anchor the span minutes before
+  // the request and balloon the whole trace window — drop it instead.
+  if (runStartedMs - PROCESS_START_MS > MAX_COLD_START_MS) {
+    return null;
+  }
 
   const rawDurationMs = Math.max(0, coldStartWindow.endMs - coldStartWindow.startMs);
   const durationMs = Math.min(rawDurationMs, MAX_COLD_START_MS);
