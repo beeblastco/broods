@@ -524,7 +524,13 @@ function SpanRow({
   );
 }
 
-/** Recursively render a span row, its detail block, and its children when expanded. */
+/**
+ * Recursively render a span row, its detail block, and its children when expanded.
+ * `enclosingRootLive` is whether the nearest enclosing root run is live. A subagent
+ * subtask is itself a root: it runs independently (the parent task pass can finalize
+ * while the subagent is still working), so it is judged by its own freshness, and its
+ * descendants inherit the subtask's liveness — not the parent task's.
+ */
 function renderSpanRows(
   span: ObservabilitySpanRow,
   depth: number,
@@ -533,11 +539,15 @@ function renderSpanRows(
   expanded: Set<string>,
   toggle: (key: string) => void,
   focusTraceId: string | null,
+  enclosingRootLive: boolean,
 ): ReactNode[] {
   const key = spanKey(span);
   const isExpanded = expanded.has(key);
   const children = group.childrenByParent.get(span.spanId) ?? [];
-  const taskRunning = isTaskRunning(group.root);
+  const isRoot = span.kind === "task" || span.kind === "subtask";
+  // A root is judged on its own freshness; a child on its enclosing root's liveness.
+  const spanRunning = isRoot ? isTaskRunning(span) : enclosingRootLive;
+  const childRootLive = isRoot ? isTaskRunning(span) : enclosingRootLive;
   const rows: ReactNode[] = [
     <SpanRow
       key={`row:${key}`}
@@ -547,7 +557,7 @@ function renderSpanRows(
       onToggle={() => toggle(key)}
       group={group}
       scaleMaxMs={scaleMaxMs}
-      taskRunning={taskRunning}
+      taskRunning={spanRunning}
       highlighted={span.kind === "task" && span.traceId === focusTraceId}
     />,
   ];
@@ -561,7 +571,7 @@ function renderSpanRows(
       </tr>,
     );
     for (const child of children) {
-      rows.push(...renderSpanRows(child, depth + 1, group, scaleMaxMs, expanded, toggle, focusTraceId));
+      rows.push(...renderSpanRows(child, depth + 1, group, scaleMaxMs, expanded, toggle, focusTraceId, childRootLive));
     }
   }
 
@@ -734,7 +744,7 @@ export function TracingPanel({ projectSlug, environmentSlug, apiKey }: Props) {
             </thead>
             <tbody>
               {visibleGroups.flatMap((group) =>
-                renderSpanRows(group.root, 0, group, scaleMaxMs, expanded, toggle, focusTraceId),
+                renderSpanRows(group.root, 0, group, scaleMaxMs, expanded, toggle, focusTraceId, isTaskRunning(group.root)),
               )}
               {groups.length === 0 && (
                 <tr>
