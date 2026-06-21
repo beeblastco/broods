@@ -63,8 +63,6 @@ type ObservabilitySocketState = {
   logsSub: NatsSubscription | null;
   tracesSub: NatsSubscription | null;
   logsMinLevel: LogLevel;
-  logsBuffer: ObservabilityLogEntry[] | null;
-  tracesBuffer: ObservabilitySpanRow[] | null;
 };
 
 type GatewayServerOptions = {
@@ -204,8 +202,6 @@ export function createGatewayServer(options: GatewayServerOptions): Bun.Server<G
             logsSub: null,
             tracesSub: null,
             logsMinLevel: "INFO",
-            logsBuffer: null,
-            tracesBuffer: null,
           });
         }
       },
@@ -601,30 +597,23 @@ async function handleObservabilitySubscribe(
   // Update minLevel for live filtering (logs only).
   if (stream === "logs") {
     state.logsMinLevel = minLevel;
-    state.logsBuffer = typeof backfill === "number" && backfill > 0 ? [] : null;
-  } else {
-    state.tracesBuffer = typeof backfill === "number" && backfill > 0 ? [] : null;
   }
 
-  // Subscribe first so events emitted during the durable query cannot fall into
-  // a backfill/live handoff gap. Clients de-duplicate any overlap.
+  // Subscribe and relay live events immediately. The durable backfill runs in the
+  // background below so a slow Tempo/Loki query can never hold back live spans —
+  // historical entries merge in when they land and clients de-duplicate overlap.
   const live = await startLiveSubscription(socket, scope, stream, state);
   if (!live) {
     sendObs(socket, { type: "error", error: "Live observability transport is unavailable." });
     return;
   }
 
-  if (typeof backfill === "number" && backfill > 0) {
-    const backfilled = await sendBackfill(socket, scope, stream, backfill);
-    if (!backfilled) {
-      cleanupObservabilityStream(socket, stream);
-      sendObs(socket, { type: "error", error: `Durable ${stream} backfill is unavailable.` });
-      return;
-    }
-    flushLiveBuffer(socket, stream, state);
-  }
-
   sendObs(socket, { type: "ready" });
+
+  // Best-effort durable history — never blocks live and never errors the stream.
+  if (typeof backfill === "number" && backfill > 0) {
+    void sendBackfill(socket, scope, stream, backfill);
+  }
 }
 
 /** Query Loki or Tempo and send a backfill message. Best-effort — skip on missing env. */
@@ -757,7 +746,10 @@ async function fetchTempoBackfill(
   };
 
   const traces = body?.traces ?? [];
-  const rows = await Promise.allSettled(traces.map(async (traceSummary) => {
+  // Bounded concurrency: firing one detail request per trace all at once
+  // overwhelms Tempo and trips the 5s timeouts; a small pool keeps the
+  // per-trace fan-out reliable.
+  const rows = await mapWithConcurrency(traces, TEMPO_DETAIL_CONCURRENCY, async (traceSummary) => {
     const detailResponse = await fetch(
       `${tempoUrl}/api/traces/${encodeURIComponent(traceSummary.traceID)}`,
       { signal: AbortSignal.timeout(5_000) },
@@ -765,11 +757,39 @@ async function fetchTempoBackfill(
     if (!detailResponse.ok) throw new Error(`Tempo trace query failed with HTTP ${detailResponse.status}`);
 
     return tempoTraceRowsFromResponse(await detailResponse.json(), traceSummary.traceID);
-  }));
+  });
 
   return rows
     .flatMap((result) => result.status === "fulfilled" ? result.value : [])
     .sort((a, b) => b.startTimeMs - a.startTimeMs);
+}
+
+const TEMPO_DETAIL_CONCURRENCY = 6;
+
+/** Run an async mapper over items with a bounded number of concurrent workers. */
+export async function mapWithConcurrency<T, R>(
+  items: T[],
+  limit: number,
+  mapper: (item: T) => Promise<R>,
+): Promise<PromiseSettledResult<R>[]> {
+  const results: PromiseSettledResult<R>[] = new Array(items.length);
+  let cursor = 0;
+  const worker = async (): Promise<void> => {
+    while (cursor < items.length) {
+      const index = cursor;
+      cursor += 1;
+      try {
+        results[index] = { status: "fulfilled", value: await mapper(items[index]) };
+      } catch (reason) {
+        results[index] = { status: "rejected", reason: reason };
+      }
+    }
+  };
+  await Promise.all(
+    Array.from({ length: Math.min(limit, items.length) }, () => worker()),
+  );
+
+  return results;
 }
 
 type OtelValue = {
@@ -832,7 +852,13 @@ export function tempoTraceRowsFromResponse(payload: unknown, fallbackTraceId = "
           spanId,
           ...(typeof raw.parentSpanId === "string" && raw.parentSpanId ? { parentSpanId: raw.parentSpanId } : {}),
           name,
-          kind: name === "model.step" ? "model.step" : name === "tool.call" ? "tool.call" : "task",
+          kind: name === "model.step"
+            ? "model.step"
+            : name === "tool.call"
+              ? "tool.call"
+              : name.startsWith("phase.")
+                ? "phase"
+                : "task",
           startTimeMs,
           endTimeMs,
           durationMs: Math.max(0, endTimeMs - startTimeMs),
@@ -898,39 +924,15 @@ async function relayNatsMessages(
         const entryLevel = (entry.level as string) as LogLevel;
         if (LOG_LEVEL_ORDER[entryLevel] === undefined) continue;
         if (LOG_LEVEL_ORDER[entryLevel] < LOG_LEVEL_ORDER[state.logsMinLevel]) continue;
-        if (state.logsBuffer) {
-          state.logsBuffer.push(entry);
-          continue;
-        }
         sendObs(socket, { type: "log", entry });
       } else {
         const entry = parsed as ObservabilitySpanRow;
-        if (state.tracesBuffer) {
-          state.tracesBuffer.push(entry);
-          continue;
-        }
         sendObs(socket, { type: "span", entry });
       }
     }
   } catch {
     // Iterator closed (unsubscribe or socket close) — silent exit.
   }
-}
-
-function flushLiveBuffer(
-  socket: Bun.ServerWebSocket<ObservabilityGatewayData>,
-  stream: "logs" | "traces",
-  state: ObservabilitySocketState,
-): void {
-  if (stream === "logs") {
-    const buffered = state.logsBuffer ?? [];
-    state.logsBuffer = null;
-    for (const entry of buffered) sendObs(socket, { type: "log", entry });
-    return;
-  }
-  const buffered = state.tracesBuffer ?? [];
-  state.tracesBuffer = null;
-  for (const entry of buffered) sendObs(socket, { type: "span", entry });
 }
 
 /** Tear down the NATS subscription for one stream. */
@@ -940,8 +942,6 @@ function cleanupObservabilityStream(
 ): void {
   const state = obsState.get(socket as Bun.ServerWebSocket<GatewayData>);
   if (!state) return;
-  if (stream === "logs") state.logsBuffer = null;
-  else state.tracesBuffer = null;
   if (stream === "logs" && state.logsSub) {
     state.logsSub.unsubscribe();
     state.logsSub = null;

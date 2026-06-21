@@ -36,6 +36,7 @@ import {
 } from "../_shared/otel.ts";
 import type { ObservabilitySpanRow } from "../../../../packages/filthy-panty/src/observability-contracts.ts";
 import { tracesSubject, getObservabilityNatsConn } from "../_shared/nats.ts";
+import { consumeColdStart } from "../_shared/cold-start.ts";
 import {
   modelOutputFromModelConfig,
   modelSettingsFromModelConfig,
@@ -225,6 +226,54 @@ export async function runAgentLoop(
     attributes: rootRunningAttributes,
   });
 
+  // Emit a closed child phase span under the root task. Used for the timeline
+  // phases that wrap the model loop (cold start, context prepare, compaction) so
+  // a slow turn can be attributed to non-model work. Best-effort: telemetry must
+  // never break the run, and a noop tracer/unscoped run simply emits nothing.
+  const emitPhaseSpan = (phaseName: string, label: string, startMs: number, endMs: number): void => {
+    try {
+      const durationMs = Math.max(0, endMs - startMs);
+      const attributes = { "phase.name": label, "phase.duration_ms": durationMs };
+      const phaseSpan = tracer.startSpan(phaseName, {
+        startTime: startMs,
+        attributes: { ...observabilityAttributes(observabilityScope), ...attributes },
+      }, rootOtelContext);
+      const spanContext = phaseSpan.spanContext();
+      phaseSpan.end(endMs);
+      publishSpan({
+        traceId: /[^0]/.test(spanContext.traceId) ? spanContext.traceId : traceId,
+        spanId: /[^0]/.test(spanContext.spanId) ? spanContext.spanId : mintSpanId(),
+        parentSpanId: rootSpanId,
+        name: phaseName,
+        kind: "phase",
+        startTimeMs: startMs,
+        endTimeMs: endMs,
+        durationMs,
+        status: "ok",
+        endpointId: session.endpointId,
+        agentId: session.agentId,
+        conversationKey: session.conversationKey,
+        attributes,
+      });
+    } catch {
+      // Best-effort: a telemetry failure must not affect the run.
+    }
+  };
+
+  // Cold start is charged to the first run in this execution environment; later
+  // (warm) runs consume nothing. Context prepare and compaction come from the
+  // turn context the handler assembled before this loop began.
+  const coldStart = consumeColdStart();
+  if (coldStart) {
+    emitPhaseSpan("phase.cold_start", "Cold start", coldStart.startMs, coldStart.startMs + coldStart.durationMs);
+  }
+  if (turnContext.timings) {
+    emitPhaseSpan("phase.context_prepare", "Context prepare", turnContext.timings.prepareStartedMs, turnContext.timings.prepareEndedMs);
+    if (turnContext.timings.compaction) {
+      emitPhaseSpan("phase.compaction", "Compaction", turnContext.timings.compaction.startedMs, turnContext.timings.compaction.endedMs);
+    }
+  }
+
   const tools = {
     ...await createTools({
       accountId: session.accountId,
@@ -290,6 +339,11 @@ export async function runAgentLoop(
 
   // Log context
   const stepStartedAt = new Map<number, number>();
+  // Time-to-first-token per step. onChunk has no step number, so the first chunk
+  // after each step start is attributed to the active step to split a model.step
+  // into "invoke" (wait, step start -> first token) and "stream" (first token -> end).
+  const firstChunkAt = new Map<number, number>();
+  let activeStepNumber: number | undefined;
   const toolCallSummaries = new Map<string, ToolCallSummary>();
   const logContext = {
     accountId: session.accountId,
@@ -468,9 +522,18 @@ export async function runAgentLoop(
         system: refreshed.system,
       };
     },
+    onChunk: ({ chunk }) => {
+      // First chunk of the active step marks the model's time-to-first-token.
+      // Synchronous and cheap; onChunk pauses the stream until it returns.
+      if (chunk.type === "raw") return;
+      if (activeStepNumber !== undefined && !firstChunkAt.has(activeStepNumber)) {
+        firstChunkAt.set(activeStepNumber, Date.now());
+      }
+    },
     experimental_onStepStart: async ({ stepNumber, messages }) => {
       const now = Date.now();
       stepStartedAt.set(stepNumber, now);
+      activeStepNumber = stepNumber;
       const attributes = {
         "agent.step_number": stepNumber,
         "step.state": "running",
@@ -689,12 +752,20 @@ export async function runAgentLoop(
       const tracked = stepSpans.get(stepNumber);
       if (tracked) {
         const stepEndMs = Date.now();
+        // Split the step into invoke-wait (model.ttft_ms) and streaming
+        // (model.stream_ms) so a slow step shows whether the model was slow to
+        // start or slow to stream. Absent when no chunk was observed.
+        const firstTokenMs = firstChunkAt.get(stepNumber);
+        const ttftMs = firstTokenMs !== undefined ? Math.max(0, firstTokenMs - tracked.startTimeMs) : undefined;
+        const streamMs = firstTokenMs !== undefined ? Math.max(0, stepEndMs - firstTokenMs) : undefined;
         const attributes = {
           ...tracked.attributes,
           "agent.step_number": stepNumber,
           "step.state": "completed",
           "model.finish_reason": finishReason,
           "agent.tool_call_count": toolCalls.length,
+          ...(ttftMs !== undefined ? { "model.ttft_ms": ttftMs } : {}),
+          ...(streamMs !== undefined ? { "model.stream_ms": streamMs } : {}),
           "model.response": traceAttribute(text),
           "model.reasoning": traceAttribute(reasoningText ?? ""),
           "model.tool_calls": traceAttribute(toolCalls),
@@ -720,6 +791,10 @@ export async function runAgentLoop(
         });
       }
       stepSpans.delete(stepNumber);
+      firstChunkAt.delete(stepNumber);
+      if (activeStepNumber === stepNumber) {
+        activeStepNumber = undefined;
+      }
     },
     onError: async ({ error }) => {
       const errorText = errorMessage(error);

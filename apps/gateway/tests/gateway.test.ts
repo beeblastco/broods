@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import {
   buildCoreRunBody,
   gatewayLimitsFromEnv,
+  mapWithConcurrency,
   normalizedCoreBaseUrls,
   resolveObservabilityScope,
   tempoTraceRowsFromResponse,
@@ -214,4 +215,57 @@ test("reconstructs full Tempo span trees with tenant attributes and errors", () 
     status: "error",
     error: "tool failed",
   });
+});
+
+test("maps phase span names to the phase kind on Tempo backfill", () => {
+  const rows = tempoTraceRowsFromResponse({
+    batches: [{
+      resource: { attributes: [] },
+      scopeSpans: [{ spans: [
+        {
+          traceId: "trace-1",
+          spanId: "phase-1",
+          parentSpanId: "root-1",
+          name: "phase.cold_start",
+          startTimeUnixNano: "1000000000",
+          endTimeUnixNano: "1500000000",
+          attributes: [{ key: "phase.name", value: { stringValue: "Cold start" } }],
+          status: { code: 1 },
+        },
+      ] }],
+    }],
+  });
+
+  expect(rows).toHaveLength(1);
+  expect(rows[0]).toMatchObject({
+    spanId: "phase-1",
+    parentSpanId: "root-1",
+    kind: "phase",
+    durationMs: 500,
+    status: "ok",
+    attributes: { "phase.name": "Cold start" },
+  });
+});
+
+test("maps with bounded concurrency, preserves order, and isolates failures", async () => {
+  let active = 0;
+  let peak = 0;
+  const results = await mapWithConcurrency([1, 2, 3, 4, 5], 2, async (n) => {
+    active += 1;
+    peak = Math.max(peak, active);
+    await Promise.resolve();
+    active -= 1;
+    if (n === 3) throw new Error("boom");
+
+    return n * 10;
+  });
+
+  expect(peak).toBeLessThanOrEqual(2);
+  expect(results.map((r) => (r.status === "fulfilled" ? r.value : r.reason.message))).toEqual([
+    10,
+    20,
+    "boom",
+    40,
+    50,
+  ]);
 });

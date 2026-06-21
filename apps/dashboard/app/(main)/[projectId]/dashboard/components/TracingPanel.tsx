@@ -1,7 +1,7 @@
 "use client";
 
-/** Tracing panel: searchable task timelines with model and tool span details. */
-import { Section } from "@/app/components/Section";
+/** Tracing panel: full-height task timelines with an indented span tree and model/tool span details. */
+import { Badge } from "@/app/components/ui/badge";
 import { cn } from "@/app/lib/utils";
 import {
   useObservabilityStream,
@@ -12,17 +12,25 @@ import {
   ChevronDown,
   ChevronRight,
   LoaderCircle,
-  RefreshCw,
-  Search,
   XCircle,
 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useMemo, useState, type ReactNode } from "react";
+import { ObservabilityToolbar, type ToolbarFilterOption } from "./ObservabilityToolbar";
 
 interface Props {
   projectSlug: string | undefined;
   environmentSlug: string | undefined;
   apiKey: string | undefined;
 }
+
+type StatusFilter = "all" | ObservabilitySpanRow["status"];
+
+const STATUS_FILTER_OPTIONS: ToolbarFilterOption[] = [
+  { value: "all", label: "All statuses" },
+  { value: "running", label: "running" },
+  { value: "ok", label: "ok" },
+  { value: "error", label: "error" },
+];
 
 const DETAIL_ATTRIBUTES = [
   "model.input",
@@ -49,6 +57,14 @@ function formatTime(ms: number): string {
   });
 }
 
+/** Parse a datetime-local input value into epoch ms, or null when empty/invalid. */
+function toEpochMs(value: string): number | null {
+  if (!value) return null;
+  const ms = new Date(value).getTime();
+
+  return Number.isFinite(ms) ? ms : null;
+}
+
 function displayAttribute(value: unknown): string {
   if (typeof value !== "string") return JSON.stringify(value, null, 2);
   const trimmed = value.trim();
@@ -64,11 +80,34 @@ function displayAttribute(value: unknown): string {
   return value;
 }
 
-/** Group spans into task trees, newest task first. */
-function groupSpans(spans: ObservabilitySpanRow[]): Array<{
+function spanKey(span: ObservabilitySpanRow): string {
+  return `${span.traceId}:${span.spanId}`;
+}
+
+/** Text color per span status — shared cue with the logs panel. */
+function statusColor(status: ObservabilitySpanRow["status"]): string {
+  if (status === "running") return "text-sky-400";
+  if (status === "error") return "text-red-400";
+
+  return "text-emerald-400";
+}
+
+/** Pill style per span kind so the hierarchy reads at a glance. */
+function kindBadge(kind: ObservabilitySpanRow["kind"]): string {
+  if (kind === "task") return "bg-violet-500/15 text-violet-300";
+  if (kind === "model.step") return "bg-sky-500/15 text-sky-300";
+  if (kind === "phase") return "bg-teal-500/15 text-teal-300";
+
+  return "bg-amber-500/15 text-amber-300";
+}
+
+interface SpanGroup {
   root: ObservabilitySpanRow;
-  children: ObservabilitySpanRow[];
-}> {
+  childrenByParent: Map<string, ObservabilitySpanRow[]>;
+}
+
+/** Group spans into per-task trees keyed by parent span, newest task first. */
+function groupSpans(spans: ObservabilitySpanRow[]): SpanGroup[] {
   const tasks = spans.filter((span) => span.kind === "task");
   const childrenByTrace = new Map<string, ObservabilitySpanRow[]>();
 
@@ -80,12 +119,26 @@ function groupSpans(spans: ObservabilitySpanRow[]): Array<{
   }
 
   return tasks
-    .map((root) => ({
-      root: root,
-      children: (childrenByTrace.get(root.traceId) ?? []).sort(
-        (left, right) => left.startTimeMs - right.startTimeMs,
-      ),
-    }))
+    .map((root) => {
+      const children = childrenByTrace.get(root.traceId) ?? [];
+      const spanIds = new Set([root.spanId, ...children.map((child) => child.spanId)]);
+      const childrenByParent = new Map<string, ObservabilitySpanRow[]>();
+      for (const child of children) {
+        // Re-parent orphans (a parent that never arrived) onto the root so they
+        // still render instead of disappearing.
+        const parentId = child.parentSpanId && spanIds.has(child.parentSpanId)
+          ? child.parentSpanId
+          : root.spanId;
+        const siblings = childrenByParent.get(parentId) ?? [];
+        siblings.push(child);
+        childrenByParent.set(parentId, siblings);
+      }
+      for (const siblings of childrenByParent.values()) {
+        siblings.sort((left, right) => left.startTimeMs - right.startTimeMs);
+      }
+
+      return { root: root, childrenByParent: childrenByParent };
+    })
     .sort((left, right) => right.root.startTimeMs - left.root.startTimeMs);
 }
 
@@ -97,19 +150,31 @@ function SpanStatusIcon({ status }: { status: ObservabilitySpanRow["status"] }) 
     return <XCircle className="size-3.5 shrink-0 text-red-400" />;
   }
 
-  return <CheckCircle className="size-3.5 shrink-0 text-green-500" />;
+  return <CheckCircle className="size-3.5 shrink-0 text-emerald-400" />;
 }
 
 function spanLabel(span: ObservabilitySpanRow): string {
   if (span.kind === "tool.call") {
     const toolName = span.attributes?.["tool.name"];
+
     return typeof toolName === "string" ? `Tool: ${toolName}` : "Tool call";
   }
-  const stepNumber = span.attributes?.["agent.step_number"];
-  return typeof stepNumber === "number" ? `Model step ${stepNumber + 1}` : span.name;
+  if (span.kind === "model.step") {
+    const stepNumber = span.attributes?.["agent.step_number"];
+
+    return typeof stepNumber === "number" ? `Model step ${stepNumber + 1}` : "Model step";
+  }
+  if (span.kind === "phase") {
+    const label = span.attributes?.["phase.name"];
+
+    return typeof label === "string" ? label : span.name;
+  }
+  const taskId = span.attributes?.["task.id"];
+
+  return typeof taskId === "string" ? taskId : span.traceId;
 }
 
-function SpanDetails({ span }: { span: ObservabilitySpanRow }) {
+function SpanDetails({ span, depth }: { span: ObservabilitySpanRow; depth: number }) {
   const attributes = span.attributes ?? {};
   const details = DETAIL_ATTRIBUTES.flatMap((key) => {
     const value = displayAttribute(attributes[key]);
@@ -121,7 +186,15 @@ function SpanDetails({ span }: { span: ObservabilitySpanRow }) {
   );
 
   return (
-    <div className="grid gap-3 border-t border-border/30 bg-background/60 px-4 py-3">
+    <div
+      className="grid gap-3 border-l-2 border-border/50 bg-background/50 py-3 pr-4"
+      style={{ paddingLeft: depth * 18 + 28 }}
+    >
+      {span.kind === "task" && (
+        <div className="text-[11px] font-mono text-muted-foreground/70">
+          trace: {span.traceId} · agent: {span.agentId ?? "unknown"} · {span.conversationKey ?? "no conversation"}
+        </div>
+      )}
       {span.error && (
         <div className="rounded border border-red-500/20 bg-red-950/20 p-2 text-xs text-red-400">
           {span.error}
@@ -129,16 +202,16 @@ function SpanDetails({ span }: { span: ObservabilitySpanRow }) {
       )}
       {details.map(({ key, value }) => (
         <div key={key} className="grid gap-1">
-          <div className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+          <div className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
             {key.replaceAll(".", " ")}
           </div>
-          <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-words rounded border border-border bg-card p-3 text-[11px] leading-relaxed text-foreground/90">
+          <pre className="max-h-[50vh] overflow-auto whitespace-pre-wrap break-words rounded border border-border bg-card p-3 text-xs leading-relaxed text-foreground/90">
             {value}
           </pre>
         </div>
       ))}
       {metadata.length > 0 && (
-        <div className="grid gap-x-4 gap-y-1 text-[10px] font-mono text-muted-foreground sm:grid-cols-2">
+        <div className="grid gap-x-4 gap-y-1 text-[11px] font-mono text-muted-foreground sm:grid-cols-2">
           {metadata.map(([key, value]) => (
             <div key={key} className="flex min-w-0 justify-between gap-3">
               <span className="truncate">{key}</span>
@@ -153,102 +226,112 @@ function SpanDetails({ span }: { span: ObservabilitySpanRow }) {
   );
 }
 
-function ChildSpanRow({ span }: { span: ObservabilitySpanRow }) {
-  const [expanded, setExpanded] = useState(false);
-
-  return (
-    <div className="border-b border-border/30 last:border-0">
-      <button
-        type="button"
-        onClick={() => setExpanded((current) => !current)}
-        className="flex w-full cursor-pointer items-center gap-2 px-4 py-2 text-left font-mono text-[11px] text-muted-foreground transition-colors hover:bg-accent/20"
-      >
-        {expanded ? <ChevronDown className="size-3" /> : <ChevronRight className="size-3" />}
-        <SpanStatusIcon status={span.status} />
-        <span className="flex-1 truncate" title={spanLabel(span)}>
-          {spanLabel(span)}
-        </span>
-        <span className="rounded bg-muted/50 px-1.5 py-0.5 text-[9px] uppercase tracking-wide">
-          {span.kind}
-        </span>
-        <span className="shrink-0 tabular-nums text-muted-foreground/60">
-          {span.status === "running" ? "Running" : formatDuration(span.durationMs)}
-        </span>
-      </button>
-      {expanded && <SpanDetails span={span} />}
-    </div>
-  );
-}
-
-function TaskRow({
-  root,
-  childSpans,
+function SpanRow({
+  span,
+  depth,
+  hasChildren,
   isExpanded,
   onToggle,
 }: {
-  root: ObservabilitySpanRow;
-  childSpans: ObservabilitySpanRow[];
+  span: ObservabilitySpanRow;
+  depth: number;
+  hasChildren: boolean;
   isExpanded: boolean;
   onToggle: () => void;
 }) {
-  const taskId = root.attributes?.["task.id"];
-  const taskLabel = typeof taskId === "string" ? taskId : root.traceId;
+  const isTask = span.kind === "task";
 
   return (
-    <div className="border-b border-border/40 last:border-0">
-      <button
-        type="button"
-        onClick={onToggle}
-        className={cn(
-          "grid w-full cursor-pointer grid-cols-[minmax(0,1fr)_100px_90px_80px] items-center gap-3 px-3 py-2.5 text-left transition-colors hover:bg-accent/20",
-          isExpanded && "bg-accent/30",
-        )}
-      >
+    <tr
+      onClick={onToggle}
+      className={cn(
+        "cursor-pointer border-b border-border/40 transition-colors hover:bg-accent/20",
+        isExpanded && "bg-accent/30",
+        isTask && "font-medium",
+      )}
+    >
+      <td className="py-1.5 pr-3" style={{ paddingLeft: depth * 18 + 12 }}>
         <span className="flex min-w-0 items-center gap-2">
           {isExpanded ? (
             <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" />
           ) : (
             <ChevronRight className="size-3.5 shrink-0 text-muted-foreground" />
           )}
-          <SpanStatusIcon status={root.status} />
+          <SpanStatusIcon status={span.status} />
           <span className="min-w-0">
-            <span className="block truncate text-xs font-mono" title={taskLabel}>
-              {taskLabel}
+            <span className="block truncate" title={spanLabel(span)}>
+              {spanLabel(span)}
             </span>
-            <span className="block truncate text-[10px] text-muted-foreground">
-              {root.agentId ?? "Unknown agent"} · {root.conversationKey ?? "No conversation"}
-            </span>
+            {isTask && (
+              <span className="block truncate text-[11px] font-normal text-muted-foreground">
+                {span.agentId ?? "Unknown agent"} · {span.conversationKey ?? "No conversation"}
+              </span>
+            )}
           </span>
         </span>
-        <span className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
-          {root.status}
-        </span>
-        <span className="text-xs tabular-nums text-muted-foreground/70">
-          {root.status === "running" ? "Running" : formatDuration(root.durationMs)}
-        </span>
-        <span className="text-[10px] tabular-nums text-muted-foreground/50">
-          {formatTime(root.startTimeMs)}
-        </span>
-      </button>
-      {isExpanded && (
-        <div className="border-t border-border/30 bg-background/40">
-          <div className="grid gap-1 border-b border-border/30 px-4 py-2 text-[10px] font-mono text-muted-foreground sm:grid-cols-2">
-            <span>trace: {root.traceId}</span>
-            <span className="truncate">agent: {root.agentId ?? "unknown"}</span>
-          </div>
-          <SpanDetails span={root} />
-          {childSpans.map((child) => (
-            <ChildSpanRow key={`${child.traceId}:${child.spanId}`} span={child} />
-          ))}
-        </div>
-      )}
-    </div>
+      </td>
+      <td className="px-3 py-1.5 whitespace-nowrap">
+        <Badge className={cn("px-1.5 py-0 text-[10px] uppercase tracking-wide", kindBadge(span.kind))}>
+          {span.kind}
+        </Badge>
+      </td>
+      <td className={cn("px-3 py-1.5 whitespace-nowrap font-medium", statusColor(span.status))}>
+        {span.status}
+      </td>
+      <td className="px-3 py-1.5 whitespace-nowrap tabular-nums text-muted-foreground/80">
+        {span.status === "running" && !hasChildren ? "—" : formatDuration(span.durationMs)}
+      </td>
+      <td className="px-3 py-1.5 whitespace-nowrap tabular-nums text-muted-foreground/60">
+        {formatTime(span.startTimeMs)}
+      </td>
+    </tr>
   );
 }
 
+/** Recursively render a span row, its detail block, and its children when expanded. */
+function renderSpanRows(
+  span: ObservabilitySpanRow,
+  depth: number,
+  childrenByParent: Map<string, ObservabilitySpanRow[]>,
+  expanded: Set<string>,
+  toggle: (key: string) => void,
+): ReactNode[] {
+  const key = spanKey(span);
+  const isExpanded = expanded.has(key);
+  const children = childrenByParent.get(span.spanId) ?? [];
+  const rows: ReactNode[] = [
+    <SpanRow
+      key={`row:${key}`}
+      span={span}
+      depth={depth}
+      hasChildren={children.length > 0}
+      isExpanded={isExpanded}
+      onToggle={() => toggle(key)}
+    />,
+  ];
+
+  if (isExpanded) {
+    rows.push(
+      <tr key={`detail:${key}`} className="border-b border-border/40 bg-background/30">
+        <td colSpan={5} className="p-0">
+          <SpanDetails span={span} depth={depth} />
+        </td>
+      </tr>,
+    );
+    for (const child of children) {
+      rows.push(...renderSpanRows(child, depth + 1, childrenByParent, expanded, toggle));
+    }
+  }
+
+  return rows;
+}
+
 export function TracingPanel({ projectSlug, environmentSlug, apiKey }: Props) {
-  const [expandedTraceId, setExpandedTraceId] = useState<string | null>(null);
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [filter, setFilter] = useState("");
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
+  const [fromTime, setFromTime] = useState("");
+  const [toTime, setToTime] = useState("");
 
   const { entries, status, error, refresh } = useObservabilityStream({
     stream: "traces",
@@ -258,13 +341,24 @@ export function TracingPanel({ projectSlug, environmentSlug, apiKey }: Props) {
     backfill: 100,
   });
 
+  const fromMs = toEpochMs(fromTime);
+  const toMs = toEpochMs(toTime);
+  const hasFilters = filter.trim() !== "" || statusFilter !== "all" || fromMs !== null || toMs !== null;
+
   const groups = useMemo(() => {
     const allGroups = groupSpans(entries);
     const needle = filter.trim().toLowerCase();
-    if (!needle) return allGroups;
 
-    return allGroups.filter(({ root, children }) =>
-      [root, ...children].some((span) =>
+    return allGroups.filter((group) => {
+      const { root, childrenByParent } = group;
+      if (statusFilter !== "all" && root.status !== statusFilter) return false;
+      if (fromMs !== null && root.startTimeMs < fromMs) return false;
+      if (toMs !== null && root.startTimeMs > toMs) return false;
+      if (!needle) return true;
+
+      const allSpans = [root, ...[...childrenByParent.values()].flat()];
+
+      return allSpans.some((span) =>
         [
           span.name,
           span.kind,
@@ -274,62 +368,91 @@ export function TracingPanel({ projectSlug, environmentSlug, apiKey }: Props) {
           span.conversationKey ?? "",
           JSON.stringify(span.attributes ?? {}),
         ].some((value) => value.toLowerCase().includes(needle)),
-      ),
-    );
-  }, [entries, filter]);
+      );
+    });
+  }, [entries, filter, statusFilter, fromMs, toMs]);
+
+  const toggle = (key: string) => {
+    setExpanded((current) => {
+      const next = new Set(current);
+      if (next.has(key)) {
+        next.delete(key);
+      } else {
+        next.add(key);
+      }
+
+      return next;
+    });
+  };
+
+  const clearFilters = () => {
+    setFilter("");
+    setStatusFilter("all");
+    setFromTime("");
+    setToTime("");
+  };
 
   return (
-    <div className="grid gap-8">
-      <Section description="Task timelines with model input, reasoning, responses, tool calls, and tool results.">
-        <div className="mb-3 flex items-center justify-between gap-3">
-          <div className="relative w-full max-w-md">
-            <Search className="absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
-            <input
-              type="text"
-              value={filter}
-              onChange={(event) => setFilter(event.target.value)}
-              placeholder={`Search ${groups.length} task${groups.length === 1 ? "" : "s"}…`}
-              className="w-full rounded-md border border-border bg-card py-1.5 pl-8 pr-3 text-xs placeholder:text-muted-foreground/60 focus:outline-none focus:ring-1 focus:ring-ring"
-            />
-          </div>
-          <button
-            type="button"
-            onClick={refresh}
-            disabled={status === "idle"}
-            aria-label="Refresh durable traces"
-            title={error ?? "Refresh from Tempo"}
-            className={cn(
-              "cursor-pointer rounded-md border border-border bg-card p-2 text-muted-foreground transition-colors hover:text-foreground",
-              status === "idle" && "cursor-not-allowed opacity-50",
-              status === "error" && "text-destructive",
-            )}
-          >
-            <RefreshCw className={cn("size-3.5", status === "connecting" && "animate-spin")} />
-          </button>
-        </div>
+    <div className="flex h-full min-h-0 flex-col gap-3">
+      <p className="shrink-0 text-xs text-muted-foreground">
+        Task timelines with model input, reasoning, responses, tool calls, and tool results. Expand a task to walk its step tree.
+      </p>
 
-        <div className="overflow-hidden rounded-lg border border-border bg-card">
-          <div className="grid grid-cols-[minmax(0,1fr)_100px_90px_80px] gap-3 border-b border-border px-3 py-2 text-[10px] uppercase tracking-wide text-muted-foreground/80">
-            <span>Task</span>
-            <span>Status</span>
-            <span>Duration</span>
-            <span>Started</span>
-          </div>
-          <div className="min-h-32 max-h-[700px] overflow-auto">
-            {groups.map(({ root, children }) => (
-              <TaskRow
-                key={root.traceId}
-                root={root}
-                childSpans={children}
-                isExpanded={expandedTraceId === root.traceId}
-                onToggle={() =>
-                  setExpandedTraceId((current) => current === root.traceId ? null : root.traceId)
-                }
-              />
-            ))}
-          </div>
+      <ObservabilityToolbar
+        search={filter}
+        onSearchChange={setFilter}
+        searchPlaceholder={`Search ${groups.length} task${groups.length === 1 ? "" : "s"}…`}
+        filterAriaLabel="Filter by status"
+        filterValue={statusFilter}
+        filterOptions={STATUS_FILTER_OPTIONS}
+        onFilterChange={(value) => setStatusFilter(value as StatusFilter)}
+        fromTime={fromTime}
+        onFromTimeChange={setFromTime}
+        toTime={toTime}
+        onToTimeChange={setToTime}
+        hasFilters={hasFilters}
+        onClear={clearFilters}
+        onRefresh={refresh}
+        refreshDisabled={status === "idle"}
+        refreshSpinning={status === "connecting"}
+        refreshTitle={error ?? "Refresh from Tempo"}
+        isError={status === "error"}
+      />
+
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg border border-border bg-card">
+        <div className="min-h-0 flex-1 overflow-auto">
+          <table className="w-full text-xs font-mono table-fixed">
+            <colgroup>
+              <col />
+              <col className="w-[110px]" />
+              <col className="w-[90px]" />
+              <col className="w-[90px]" />
+              <col className="w-[90px]" />
+            </colgroup>
+            <thead className="sticky top-0 z-10 border-b border-border bg-card/95 backdrop-blur">
+              <tr className="text-left text-[11px] uppercase tracking-wide text-muted-foreground/80">
+                <th className="px-3 py-2 font-medium">Task / Span</th>
+                <th className="px-3 py-2 font-medium">Kind</th>
+                <th className="px-3 py-2 font-medium">Status</th>
+                <th className="px-3 py-2 font-medium">Duration</th>
+                <th className="px-3 py-2 font-medium">Started</th>
+              </tr>
+            </thead>
+            <tbody>
+              {groups.flatMap((group) =>
+                renderSpanRows(group.root, 0, group.childrenByParent, expanded, toggle),
+              )}
+              {groups.length === 0 && (
+                <tr>
+                  <td colSpan={5} className="h-32 text-center text-xs text-muted-foreground/60">
+                    {entries.length === 0 ? "Waiting for traces…" : "No tasks match the current filters."}
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
         </div>
-      </Section>
+      </div>
     </div>
   );
 }

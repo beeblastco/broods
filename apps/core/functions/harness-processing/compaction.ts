@@ -51,6 +51,7 @@ export async function compactSessionContext(input: CompactionInput): Promise<Sys
 
   const configuredModel = resolveConfiguredModel(input.agentConfig);
   const providerOptions = providerOptionsFromModelConfig(input.agentConfig);
+  const startedAt = Date.now();
   const result = await generateText({
     ...modelSettingsFromModelConfig(input.agentConfig),
     model: configuredModel.model,
@@ -68,6 +69,7 @@ export async function compactSessionContext(input: CompactionInput): Promise<Sys
     messageCount: messages.length,
     compactedMessageCount: compactableContext.length,
     maxContextLength,
+    durationMs: Date.now() - startedAt,
   });
 
   return summary;

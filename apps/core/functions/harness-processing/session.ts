@@ -74,6 +74,17 @@ export interface TurnContextSnapshot {
   ephemeralSystem: SystemModelMessage[];
   // Cursor-backed system context that prepareStep can refresh incrementally mid-run.
   systemContextSnapshot: SystemContextSnapshot;
+  // Wall-clock windows for the work that precedes the model run, so the harness
+  // can surface them as trace phase spans. Absent for in-memory ephemeral turns.
+  timings?: TurnContextTimings;
+}
+
+export interface TurnContextTimings {
+  // Whole createTurnContext span (load + project + system prompt + prune).
+  prepareStartedMs: number;
+  prepareEndedMs: number;
+  // Present only when compaction actually produced a summary this turn.
+  compaction?: { startedMs: number; endedMs: number };
 }
 
 export interface SystemContextSnapshot {
@@ -282,6 +293,7 @@ export class Session {
   }
 
   async createTurnContext(ephemeralSystem: SystemModelMessage[] = []): Promise<TurnContextSnapshot> {
+    const prepareStartedMs = Date.now();
     await this.ensureResolvedRuntime();
     const entries = await this.loadConversationEntries();
     const activeEntries = projectActiveConversationEntries(entries);
@@ -292,6 +304,7 @@ export class Session {
     let messages = projectEntriesToMessages(activeEntries);
     const system = await this.buildSystemPromptParts(systemContextSnapshot.messages, ephemeralSystem);
 
+    const compactionStartedMs = Date.now();
     const compactionSummary = await compactSessionContext({
       conversationKey: this.conversationKey,
       system,
@@ -305,6 +318,7 @@ export class Session {
       });
       return null;
     });
+    const compactionEndedMs = Date.now();
 
     if (compactionSummary) {
       const [summaryCursor] = await this.persistModelMessages([compactionSummary]);
@@ -321,12 +335,30 @@ export class Session {
         system: await this.buildSystemPromptParts(compactedSystemContextSnapshot.messages, ephemeralSystem),
         ephemeralSystem: ephemeralSystem,
         systemContextSnapshot: compactedSystemContextSnapshot,
+        timings: {
+          prepareStartedMs,
+          prepareEndedMs: Date.now(),
+          compaction: { startedMs: compactionStartedMs, endedMs: compactionEndedMs },
+        },
       };
     }
 
+    const prunedMessageCount = messages.length;
     messages = pruneSessionMessages(messages, this.agentConfig);
+    logInfo("Session context pruned", {
+      conversationKey: this.conversationKey,
+      eventId: this.eventId,
+      beforeCount: prunedMessageCount,
+      afterCount: messages.length,
+    });
 
-    return { messages, system, ephemeralSystem, systemContextSnapshot };
+    return {
+      messages,
+      system,
+      ephemeralSystem,
+      systemContextSnapshot,
+      timings: { prepareStartedMs, prepareEndedMs: Date.now() },
+    };
   }
 
   async createEphemeralTurnContext(

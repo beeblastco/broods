@@ -126,9 +126,14 @@ export default function DashboardPage() {
 
   const tab = TABS.find((t) => t.id === activeTab);
   const activeLabel = tab?.label ?? "";
-  // Billing matches the narrow Settings page width; the analytics tabs need
-  // more horizontal room for charts, tables, and dense log rows.
-  const contentMaxWidth = activeTab === "billing" ? "max-w-2xl" : "max-w-6xl";
+  // Monitoring and tracing are dense, scroll-internally panels that should fill
+  // the viewport width and height; billing stays narrow; usage keeps the chart width.
+  const isObservabilityTab = activeTab === "monitoring" || activeTab === "tracing";
+  const contentMaxWidth = activeTab === "billing"
+    ? "max-w-2xl"
+    : isObservabilityTab
+      ? "max-w-none"
+      : "max-w-6xl";
 
   // While the reveal query is still resolving, hold a quiet loader instead of
   // flashing the "generate a key" prompt — the prompt is only the true-absence state.
@@ -213,8 +218,14 @@ export default function DashboardPage() {
         </nav>
       </aside>
 
-      {/* Content area */}
-      <div className="flex flex-1 flex-col overflow-auto">
+      {/* Content area — observability tabs own their internal scroll and fill
+          the height; other tabs scroll the whole column. */}
+      <div
+        className={cn(
+          "flex flex-1 flex-col",
+          isObservabilityTab ? "overflow-hidden" : "overflow-auto",
+        )}
+      >
         {/* Page title — aligned with sidebar header height */}
         <div
           className={cn(
@@ -226,7 +237,13 @@ export default function DashboardPage() {
             {activeLabel}
           </h2>
         </div>
-        <div className={cn("mx-auto w-full px-8 pb-12", contentMaxWidth)}>
+        <div
+          className={cn(
+            "mx-auto w-full px-8",
+            contentMaxWidth,
+            isObservabilityTab ? "flex min-h-0 flex-1 flex-col pb-6" : "pb-12",
+          )}
+        >
           {renderPanel()}
         </div>
       </div>

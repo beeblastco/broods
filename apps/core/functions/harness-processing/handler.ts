@@ -7,6 +7,7 @@ import { InvokeCommand, LambdaClient } from "@aws-sdk/client-lambda";
 import type { ToolModelMessage, JSONValue, UserModelMessage } from "ai";
 import type { LambdaFunctionURLEvent } from "aws-lambda";
 import { timingSafeStringEqual } from "../_shared/auth.ts";
+import { markHandlerEntry } from "../_shared/cold-start.ts";
 import { formatChannelErrorText } from "../_shared/channels.ts";
 import { createChannelStreamWriter, type ChannelStreamMode, type ChannelStreamWriter } from "../_shared/channel-streaming.ts";
 import { executeCommand } from "../_shared/commands.ts";
@@ -107,6 +108,10 @@ export async function handler(
   event: LambdaFunctionURLEvent | AsyncWorkerInvocation | NatsWorkerInvocation | CronInvocation,
   context?: LambdaInvocation,
 ): Promise<LambdaResponse> {
+  // First entry in this execution environment marks the end of the cold-start
+  // init window so the first agent run can surface it as a phase span.
+  markHandlerEntry(Date.now());
+
   if (isAsyncWorkerInvocation(event)) {
     await handleAsyncWorkerRequest(event.event, context);
     return { statusCode: 204 };

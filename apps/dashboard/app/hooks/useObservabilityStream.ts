@@ -48,6 +48,12 @@ const RECONNECT_DELAY_MS = 3_000;
 // unbounded and the per-message dedup scan stays bounded.
 const MAX_ENTRIES = 2_000;
 
+// Module-level cache keyed by the connection key (stream + scope). Switching
+// dashboard tabs unmounts the panel; on remount we seed from this cache so the
+// last entries paint instantly while the socket reconnects and refreshes in the
+// background — no re-spinner and no waiting on the slow durable backfill.
+const STREAM_CACHE = new Map<string, (ObservabilityLogEntry | ObservabilitySpanRow)[]>();
+
 export function useObservabilityStream(
   options: UseObservabilityStreamOptions & { stream: "logs" },
 ): UseObservabilityStreamResult<ObservabilityLogEntry>;
@@ -59,20 +65,31 @@ export function useObservabilityStream(
 ): UseObservabilityStreamResult<ObservabilityLogEntry | ObservabilitySpanRow> {
   const { stream, projectSlug, environmentSlug, apiKey, backfill = 0, minLevel } = options;
 
-  const [entries, setEntries] = useState<(ObservabilityLogEntry | ObservabilitySpanRow)[]>([]);
+  // Cache key for this stream + scope; entries are seeded from / written back to
+  // STREAM_CACHE so remounts (tab switches) are instant.
+  const connKey = `${stream}|${projectSlug ?? ""}|${environmentSlug ?? ""}|${apiKey ?? ""}`;
+
+  const [entries, setEntries] = useState<(ObservabilityLogEntry | ObservabilitySpanRow)[]>(
+    () => STREAM_CACHE.get(connKey) ?? [],
+  );
   const [status, setStatus] = useState<ObservabilityStreamStatus>("idle");
   const [error, setError] = useState<string | null>(null);
 
-  // Reset the list when the connection target changes (e.g. switching environment)
-  // so one env's entries never bleed into the next — React's render-time
+  // Seed from cache when the connection target changes (e.g. switching
+  // environment) so one env's entries never bleed into the next while still
+  // painting instantly if we've seen this scope before — React's render-time
   // "adjust state when a prop changes" pattern, not an effect.
-  const connKey = `${stream}|${projectSlug ?? ""}|${environmentSlug ?? ""}|${apiKey ?? ""}`;
   const [prevConnKey, setPrevConnKey] = useState(connKey);
   if (connKey !== prevConnKey) {
     setPrevConnKey(connKey);
-    setEntries([]);
+    setEntries(STREAM_CACHE.get(connKey) ?? []);
     setError(null);
   }
+
+  // Persist the latest list so the next mount with the same scope can seed from it.
+  useEffect(() => {
+    STREAM_CACHE.set(connKey, entries);
+  }, [connKey, entries]);
 
   // Refs so the effect closure captures stable references.
   const socketRef = useRef<WebSocket | null>(null);
