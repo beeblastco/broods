@@ -1176,10 +1176,31 @@ export async function runAgentLoop(
     },
   });
 
+  // Guarantee finalizeUsage runs even when onFinish/onError never fire. The AI SDK
+  // skips onFinish when a run errors before any step completes (e.g. a usage-limit
+  // error on the first model call) — only onError fires — so a caller that drains
+  // the stream by reading fullStream directly would never finalize and the task
+  // span would spin "running" forever. Idempotent via usageFinalized.
+  const ensureFinalized = async (): Promise<void> => {
+    if (usageFinalized) return;
+    if (!finishObserved) {
+      didFail = true;
+      terminalError ??= new Error("Model stream ended without a completion callback");
+      failureText ??= terminalError.message;
+    }
+    await finalizeUsage(
+      "failed",
+      taskUsage,
+      taskStepCount,
+      toolCallSummaries.size,
+      Date.now() - runStartedAt,
+      terminalError,
+    );
+  };
+
   // Wrap consumeStream so finalizeUsage fires in a finally block even when
   // streamText throws hard (e.g. network failure before any chunk arrives) and
-  // onFinish / onError never run. The idempotent flag inside finalizeUsage
-  // prevents a double-write when the callbacks did run.
+  // onFinish / onError never run.
   const originalConsumeStream = stream.consumeStream.bind(stream);
   const wrappedConsumeStream = async (): Promise<void> => {
     try {
@@ -1191,26 +1212,15 @@ export async function runAgentLoop(
       terminalError ??= error instanceof Error ? error : new Error(errorText);
       throw error;
     } finally {
-      if (!usageFinalized) {
-        if (!finishObserved) {
-          didFail = true;
-          terminalError ??= new Error("Model stream ended without a completion callback");
-          failureText ??= terminalError.message;
-        }
-        await finalizeUsage(
-          "failed",
-          taskUsage,
-          taskStepCount,
-          toolCallSummaries.size,
-          Date.now() - runStartedAt,
-          terminalError,
-        );
-      }
+      await ensureFinalized();
     }
   };
 
   return Object.assign(stream, {
     consumeStream: wrappedConsumeStream,
+    // Callers that drain the stream themselves (channel progress streaming reads
+    // fullStream directly) must call this in a finally to guarantee finalization.
+    ensureFinalized,
     didFail: () => didFail,
     failureText: () => failureText,
     approvalSummaries: () => approvalSummaries,

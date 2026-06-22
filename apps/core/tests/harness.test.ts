@@ -23,7 +23,7 @@ const gatewayModelMock = mock((modelId: string) => ({ provider: "gateway", model
 const createGatewayMock = mock((_options: unknown) => gatewayModelMock);
 const minimaxModelMock = mock((modelId: string) => ({ provider: "minimax", modelId }));
 const createMinimaxMock = mock((_options: unknown) => minimaxModelMock);
-let streamTextScenario: "empty" | "error-then-empty" | "hard-throw" | "approval-request" | "structured-output" | "tool-run" = "empty";
+let streamTextScenario: "empty" | "error-then-empty" | "error-no-finish" | "hard-throw" | "approval-request" | "structured-output" | "tool-run" = "empty";
 
 const streamTextMock = mock((options: {
   experimental_onStepStart?: (args: {
@@ -108,6 +108,16 @@ const streamTextMock = mock((options: {
       if (streamTextScenario === "error-then-empty") {
         await options.onError({ error: new Error("provider failed") });
         controller.enqueue({ type: "error", error: new Error("provider failed") });
+      }
+
+      if (streamTextScenario === "error-no-finish") {
+        // Mimic the real AI SDK: a run that errors before any step completes (a
+        // usage-limit error on the first model call) fires onError but SKIPS
+        // onFinish, so a fullStream-draining caller never finalizes on its own.
+        await options.onError({ error: new Error("provider failed") });
+        controller.enqueue({ type: "error", error: new Error("provider failed") });
+        controller.close();
+        return;
       }
 
       if (streamTextScenario === "approval-request") {
@@ -561,6 +571,73 @@ describe("runAgentLoop", () => {
     expect(stream.didFail()).toBe(true);
     expect(stream.failureText()).toBe("stream transport failed");
     expect(usageWrites[0]?.input?.TransactItems?.[0]?.Put?.Item?.status?.S).toBe("failed");
+  });
+
+  it("finalizes via ensureFinalized when a caller drains fullStream and onFinish never fires", async () => {
+    // The channel progress streamer reads fullStream directly instead of calling
+    // consumeStream. When the model errors before any step completes (a usage-limit
+    // error on the first call), the AI SDK fires onError but skips onFinish, so the
+    // task would never finalize and its trace span would spin "running" forever.
+    // ensureFinalized() is the safety net that path must call.
+    streamTextScenario = "error-no-finish";
+    installHarnessEnv();
+    process.env.USAGE_TABLE_NAME = "usage-test";
+    const usageWrites: Array<{
+      input?: { TransactItems?: Array<{ Put?: { Item?: Record<string, { S?: string }> } }> };
+    }> = [];
+    dynamo.send = mock(async (command: {
+      input?: { TransactItems?: Array<{ Put?: { Item?: Record<string, { S?: string }> } }> };
+    }) => {
+      usageWrites.push(command);
+      return {};
+    }) as never;
+    const { runAgentLoop } = await import("../functions/harness-processing/harness.ts");
+    const onErrorText = mock(async () => { });
+
+    const stream = await runAgentLoop({
+      conversationKey: "direct:conversation",
+      eventId: "direct-event",
+      filesystemNamespace: () => "fs-test",
+      resolvedWorkspaces: () => [],
+      statelessSandbox: () => undefined,
+      statelessPermissionMode: () => "ask",
+      persistModelMessages: async () => [],
+      loadRefreshedSystemPromptParts: async () => ({
+        systemContextSnapshot: { cursor: null, messages: [] },
+        system: [],
+      }),
+    } as never, {
+      messages: [{ role: "user", content: "hello" }],
+      system: [],
+      ephemeralSystem: [],
+      systemContextSnapshot: { cursor: null, messages: [] },
+    }, {
+      provider: { google: { apiKey: "google-key" } },
+      model: { provider: "google", modelId: "gemini-test" },
+    }, {
+      onFinalText: async () => { },
+      onErrorText,
+    });
+
+    // Drain fullStream the way the channel streamer does (no consumeStream call).
+    const reader = stream.fullStream.getReader();
+    while (true) {
+      const { done } = await reader.read();
+      if (done) break;
+    }
+
+    // onError ran during the drain, but nothing has finalized the task yet.
+    expect(onErrorText).toHaveBeenCalledWith("provider failed");
+    expect(usageWrites).toHaveLength(0);
+
+    await stream.ensureFinalized();
+
+    expect(stream.didFail()).toBe(true);
+    expect(usageWrites[0]?.input?.TransactItems?.[0]?.Put?.Item?.status?.S).toBe("failed");
+
+    // Idempotent: a second call (and any later consumeStream) writes nothing more.
+    await stream.ensureFinalized();
+    expect(usageWrites).toHaveLength(1);
   });
 
   it("treats tool approval requests as pending work instead of empty responses", async () => {

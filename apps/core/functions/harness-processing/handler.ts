@@ -1343,19 +1343,26 @@ async function runAgentLoopUntilSubagentsIdle(
     agentConfig: agentConfig,
     consumeStream: (reply.onTextDelta || reply.onReasoningDelta || reply.onToolCall || reply.onStepFinish)
       ? async (stream) => {
-          const reader = stream.fullStream.getReader();
-          while (true) {
-            const { done, value: part } = await reader.read();
-            if (done) break;
-            if (part.type === "text-delta") {
-              await reply.onTextDelta?.(part.text);
-            } else if (part.type === "reasoning-delta") {
-              await reply.onReasoningDelta?.(part.text);
-            } else if (part.type === "tool-call") {
-              await reply.onToolCall?.(part.toolName, part.input);
-            } else if (part.type === "finish-step") {
-              await reply.onStepFinish?.();
+          try {
+            const reader = stream.fullStream.getReader();
+            while (true) {
+              const { done, value: part } = await reader.read();
+              if (done) break;
+              if (part.type === "text-delta") {
+                await reply.onTextDelta?.(part.text);
+              } else if (part.type === "reasoning-delta") {
+                await reply.onReasoningDelta?.(part.text);
+              } else if (part.type === "tool-call") {
+                await reply.onToolCall?.(part.toolName, part.input);
+              } else if (part.type === "finish-step") {
+                await reply.onStepFinish?.();
+              }
             }
+          } finally {
+            // Reading fullStream drives the model callbacks, but the AI SDK skips
+            // onFinish when the run errors before any step completes (usage-limit on
+            // the first call), so the task span would never close. Guarantee it.
+            await stream.ensureFinalized();
           }
         }
       : async (stream) => {
@@ -1439,6 +1446,17 @@ async function runParentContinuationLoop(options: {
       };
     }
     if (stream.didFail()) {
+      // A failed parent pass may have already dispatched subagents in an earlier
+      // step that are still running in the background. Wait for them to settle
+      // before returning so each child finalizes — publishing AND flushing its
+      // terminal span. Otherwise the abandoned children spin "running" forever in
+      // the dashboard: their running span was stored durably, but the Lambda froze
+      // before the terminal one was ever flushed. Bounded by the same deadline
+      // budget as the success path.
+      if (options.subagentCoordinator.pendingCount > 0) {
+        await options.subagentCoordinator.waitForIdle({ onHeartbeat: options.onHeartbeat });
+      }
+
       return {
         didFail: true,
         failureText: stream.failureText(),
