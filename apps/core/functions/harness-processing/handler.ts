@@ -790,7 +790,8 @@ async function handleChannelRequest(event: ChannelInboundEvent, context?: Lambda
       // final message is the writer's last flush, so onFinalText only sends directly
       // when nothing was streamed (e.g. a structured/object final or a tool-only
       // turn). The writer decides what each event does: edit/chunk consume text and
-      // ignore tool calls; progress consumes tool calls and ignores text.
+      // ignore tool calls; progress shows tool/reasoning status and streams the
+      // answer text into the same live preview.
       const streamMode = channelStreamMode(event.agentConfig, event.channelName);
       let writer: ChannelStreamWriter | undefined;
       let streamed = false;
