@@ -83,5 +83,26 @@ export function isOpenAllowList(raw: string | undefined): boolean {
 }
 
 export function formatChannelErrorText(error: string): string {
-  return `Error: ${error}`;
+  return `⚠️ ${simplifyErrorText(error)}`;
+}
+
+// Provider/runtime errors reach the chat raw and ugly ("Failed after 3 attempts.
+// Last error: Token Plan usage limit reached … (2056)"). Strip the retry wrapper
+// and map the common conditions to one short, actionable line; otherwise pass the
+// cleaned message through so unexpected errors are still legible.
+function simplifyErrorText(raw: string): string {
+  const afterRetry = raw.match(/Last error:\s*(.+)$/is);
+  let message = (afterRetry?.[1] ?? raw).trim();
+  if (/usage limit|quota|insufficient.*credit|purchase credits|upgrade your (token )?plan/i.test(message)) {
+    return "Usage limit reached — add credits or upgrade your plan, then try again.";
+  }
+  if (/rate.?limit|\b429\b|too many requests/i.test(message)) {
+    return "The model is busy right now — please try again in a moment.";
+  }
+  if (/timed? ?out|etimedout|econnreset|network/i.test(message)) {
+    return "The request timed out — please try again.";
+  }
+  message = message.replace(/\s*\(\d{3,}\)\s*$/, "").trim(); // drop trailing provider codes like (2056)
+
+  return message || "Something went wrong while generating a reply — please try again.";
 }

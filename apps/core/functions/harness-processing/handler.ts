@@ -895,6 +895,14 @@ async function handleChannelRequest(event: ChannelInboundEvent, context?: Lambda
             conversationKey: session.conversationKey,
             textLength: text.length,
           });
+          // A live preview is mid-stream: turn it into the error in place so no
+          // "Working…" draft is left dangling above the error message.
+          if (writer && streamed && !finished) {
+            finished = true;
+            await writer.finish(text).catch(streamWarn("error finish"));
+
+            return;
+          }
           await event.channel.sendText(text);
           logInfo("Channel error reply sent", {
             channel: event.channelName,

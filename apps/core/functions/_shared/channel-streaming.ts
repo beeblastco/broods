@@ -37,7 +37,7 @@ const PROGRESS_MAX_LINES = 8;
 const PROGRESS_HEADER = "⏳ Working…";
 // The reasoning preview is a single replaceable line (openclaw keeps it compact
 // instead of appending noise). Show the most recent slice of the live thought.
-const PROGRESS_REASONING_MAX_CHARS = 200;
+const PROGRESS_REASONING_MAX_CHARS = 160;
 
 export interface ChannelStreamWriter {
   // Feed the next assistant text delta. Flushes to the channel on its own cadence.
@@ -167,16 +167,21 @@ function editWriter(actions: ChannelActions, throttleMs: number, maxChars: numbe
 function progressWriter(actions: ChannelActions, throttleMs: number, maxChars: number): ChannelStreamWriter {
   const editor = messageEditor(actions, throttleMs, maxChars);
   let answer = "";
+  let lastText = ""; // most recent answer text block, kept across tool steps
   let reasoning = "";
   const tools: string[] = [];
   let showingAnswer = false; // once the answer streams it owns the preview
   let reasoningStale = false; // the next reasoning delta starts a new step's thought
 
-  // Collapse the live thought to one compact, replaceable line (newest slice wins).
+  // Collapse the live thought to one compact, replaceable line (newest slice wins),
+  // cut at a word boundary so it never starts mid-word ("…ion later").
   const compactReasoning = (): string => {
     const text = reasoning.replace(/\s+/g, " ").trim();
+    if (text.length <= PROGRESS_REASONING_MAX_CHARS) return text;
+    const tail = text.slice(-PROGRESS_REASONING_MAX_CHARS);
+    const space = tail.indexOf(" ");
 
-    return text.length > PROGRESS_REASONING_MAX_CHARS ? `…${text.slice(-PROGRESS_REASONING_MAX_CHARS)}` : text;
+    return `…${space >= 0 && space < 24 ? tail.slice(space + 1) : tail}`;
   };
 
   const statusView = (): string => {
@@ -190,6 +195,7 @@ function progressWriter(actions: ChannelActions, throttleMs: number, maxChars: n
   return {
     push: async (delta) => {
       answer += delta;
+      lastText = answer;
       showingAnswer = true;
       await editor.update(answer.trim());
     },
@@ -209,9 +215,12 @@ function progressWriter(actions: ChannelActions, throttleMs: number, maxChars: n
       await editor.update(statusView());
     },
     finish: async (finalText) => {
+      // Authoritative final wins; otherwise show the model's latest narration text
+      // (a turn that paused for async subagents never gets a final), falling back to
+      // the work status only when the turn produced no text at all.
       const final = typeof finalText === "string" && finalText.trim()
         ? finalText
-        : (answer.trim() || (tools.length ? statusView() : undefined));
+        : (lastText.trim() || (tools.length ? statusView() : undefined));
       await editor.finalize(final);
     },
   };

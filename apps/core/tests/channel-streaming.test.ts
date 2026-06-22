@@ -105,6 +105,22 @@ describe("createChannelStreamWriter", () => {
     expect(calls.at(-1)).toEqual(["editMessage", "m1", "ZeroFS is a filesystem."]);
   });
 
+  it("progress mode finalizes a paused turn to the model's narration, not the work status", async () => {
+    const { actions, calls } = recordingActions(true);
+    const writer = createChannelStreamWriter(actions, "progress", 0);
+
+    // The model narrates, then dispatches an async subagent and the turn pauses, so
+    // finish() runs with no authoritative final text (onFinalText never fired).
+    await writer.reasoning!("let me delegate");
+    await writer.push("I'll wait for the subagents to finish.");
+    await writer.progress!("run_subagent: research");
+    await writer.finish();
+
+    // The preview lands on the narration, not a stuck "Working…" status.
+    expect(calls.filter(([op]) => op === "beginMessage").length).toBe(1);
+    expect(calls.at(-1)).toEqual(["editMessage", "m1", "I'll wait for the subagents to finish."]);
+  });
+
   it("progress mode drops back to the status when a new tool runs after text", async () => {
     const { actions, calls } = recordingActions(true);
     const writer = createChannelStreamWriter(actions, "progress", 0);
