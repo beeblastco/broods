@@ -92,6 +92,11 @@ const sidebars: SidebarsConfig = {
                   id: 'workspace/sandbox/kubernetes',
                   label: 'Kubernetes',
                 },
+                {
+                  type: 'doc',
+                  id: 'workspace/sandbox/vercel',
+                  label: 'Vercel',
+                },
               ],
             },
           ],
@@ -179,6 +184,11 @@ const sidebars: SidebarsConfig = {
           type: 'doc',
           id: 'ci-cd',
           label: 'CI/CD',
+        },
+        {
+          type: 'doc',
+          id: 'operations',
+          label: 'Operations',
         },
       ],
     },

@@ -765,6 +765,12 @@ export default $config({
       },
       {
         retainOnDelete: isProduction,
+        // The repo name is intentionally not PROJECT_NAME-scoped (the external lambda-sanbdox
+        // CI pushes `latest-arm64` to this exact name, and SANDBOX_IMAGE_READY relies on that
+        // image existing). The pre-rename `filthy-panty` stack already created it, so the fresh
+        // `broods` Pulumi state must ADOPT the existing repo instead of recreating it (which
+        // 400s with RepositoryAlreadyExists). Import is a no-op once the repo is in state.
+        import: sandboxImageRepoName,
       },
     );
 

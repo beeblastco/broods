@@ -11,6 +11,8 @@ This guide uses the **managed service** at `gateway.broods.app`. If you prefer t
 - [Bun](https://bun.sh/) 1.2+ (the CLI and SDK are built on Bun)
 - A free [Broods dashboard](https://dashboard.broods.app) account
 
+When you create your account or log in for the first time, Broods automatically provisions your API access. A one-time banner displays your account API secret (`fp_acct_...`) — copy it immediately, as it is shown only once. You can rotate it later under **Org Settings → API Access**.
+
 ## 1. Install the CLI & SDK
 
 ```bash
