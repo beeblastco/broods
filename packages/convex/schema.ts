@@ -125,7 +125,7 @@ export const agentDeploymentsFields = {
 };
 
 /**
- * Project + environment scoped CLI/API deploy key. Authorizes the `beeblast`
+ * Project + environment scoped CLI/API deploy key. Authorizes the `broods`
  * CLI against exactly one project/environment, unlike the org Bearer secret
  * which grants the whole account. Only the SHA-256 hash is stored.
  */
