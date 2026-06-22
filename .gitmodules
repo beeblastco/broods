@@ -1,0 +1,3 @@
+[submodule "filesystem-proxy"]
+	path = filesystem-proxy
+	url = https://github.com/beeblastco/filesystem-proxy.git
