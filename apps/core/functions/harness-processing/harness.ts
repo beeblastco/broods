@@ -74,17 +74,21 @@ type TrackedSpan = {
 };
 
 /** Publish a span update to the live traces subject. Best-effort, non-blocking. */
-function publishSpan(row: ObservabilitySpanRow): void {
+// Returns once the span's bytes have been handed to the NATS client; callers that
+// must guarantee delivery before the container freezes (the terminal span) await
+// this and then flushObservabilityNats(). Running/intermediate spans ignore it.
+function publishSpan(row: ObservabilitySpanRow): Promise<void> {
   const connPromise = getObservabilityNatsConn();
-  if (!connPromise) return;
+  if (!connPromise) return Promise.resolve();
 
   const ctx = getObservabilityContext();
   // Skip traffic that cannot be resolved to a deployment. No dashboard trace
   // subscription exists for that scope; Tempo still receives the OTel span.
-  if (!ctx || !ctx.endpointId || !ctx.project || !ctx.environment) return;
+  if (!ctx || !ctx.endpointId || !ctx.project || !ctx.environment) return Promise.resolve();
 
   const subject = tracesSubject(ctx.accountId, ctx.project, ctx.environment, ctx.endpointId);
-  connPromise
+
+  return connPromise
     .then(async (conn) => {
       // Ensure the durable stream exists so even the first span of a cold
       // container is captured for replay; memoized, so this is ~free after the
@@ -529,8 +533,10 @@ export async function runAgentLoop(
       // Best-effort: never fail the agent path.
     }
 
-    // Live publish via NATS.
-    publishSpan(rootSpanRow);
+    // Live publish via NATS. Awaited below before the flush so the terminal span's
+    // bytes are queued and drained to the durable stream — otherwise a fresh
+    // dashboard load can keep a stale "running" copy of an already-finished task.
+    const rootPublished = publishSpan(rootSpanRow);
 
     const u = (usage ?? {}) as Record<string, number | undefined>;
     try {
@@ -558,9 +564,11 @@ export async function runAgentLoop(
         stepCount,
         toolCallCount,
       });
-      // Flush the OTLP exporters (Tempo/Loki) AND the live NATS connection so the
-      // durable OBSERVABILITY stream captures every span/log before the container
-      // freezes — otherwise a fire-and-forget publish in flight at return is lost.
+      // Ensure the terminal span's publish has been issued, then flush the OTLP
+      // exporters (Tempo/Loki) AND the live NATS connection so the durable
+      // OBSERVABILITY stream captures every span/log before the container freezes —
+      // otherwise a publish still in flight at return is lost.
+      await rootPublished;
       await Promise.allSettled([forceFlushOtel(), flushObservabilityNats()]);
     } finally {
       // Lambda execution environments are reused, so never retain one task's
@@ -943,15 +951,16 @@ export async function runAgentLoop(
       // until a kubernetes exec actually reports CPU (keeps NATS traffic minimal).
       const liveRoleCpu = sandboxCpuRoleAttributes();
       if (Object.keys(liveRoleCpu).length > 0) {
-        const now = Date.now();
+        // A running span has no known end — keep end == start (like the initial
+        // running publish) so a stale fresh-load copy never shows a fake duration.
         publishSpan({
           traceId,
           spanId: rootSpanId,
           name: rootSpanName,
           kind: rootSpanKind,
           startTimeMs: runStartedAt,
-          endTimeMs: now,
-          durationMs: now - runStartedAt,
+          endTimeMs: runStartedAt,
+          durationMs: 0,
           status: "running",
           endpointId: session.endpointId,
           agentId: session.agentId,
