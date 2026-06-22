@@ -1,4 +1,10 @@
 import { defineAgent, defineSandbox, defineWorkspace, defineTelegramChannel, env } from "filthy-panty";
+import fs from "fs";
+import path from "path";
+
+const __dirname = new URL(".", import.meta.url).pathname;
+const mainInstructions = fs.readFileSync(path.join(__dirname, "main_instruction.md"), "utf-8").trim();
+const researchInstructions = fs.readFileSync(path.join(__dirname, "research_instruction.md"), "utf-8").trim();
 
 export const telegram = defineTelegramChannel({
   botToken: env.TELEGRAM_BOT_TOKEN,
@@ -27,26 +33,25 @@ export const personalWorkspace = defineWorkspace({
   },
 })
 
-export const agent = defineAgent({
-  name: "telegram-channel-agent",
+export const researchSpecialist = defineAgent({
+  name: "research-specialist",
   config: {
-    provider: { 
-      minimax: { 
+    provider: {
+      minimax: {
         apiKey: env.MINIMAX_API_KEY,
-      } 
+      }
     },
     model: {
-      provider: "minimax", 
+      provider: "minimax",
       modelId: "MiniMax-M3",
       providerOptions: {
-        // Only work with anthropic thinking setting
         anthropic: {
           thinking: { type: 'enabled', budgetTokens: 12000 },
         }
       },
     },
     agent: {
-      system: "You are a helpful assistant.",
+      system: researchInstructions,
     },
     tools: {
       tavilySearch: {
@@ -57,6 +62,36 @@ export const agent = defineAgent({
         maxResults: 5,
         topic: "news",
       },
+    },
+    workspaces: [
+      { workspace: personalWorkspace, sandbox: lambdaSandbox }
+    ],
+  },
+})
+
+export const agent = defineAgent({
+  name: "telegram-channel-agent",
+  config: {
+    provider: {
+      minimax: {
+        apiKey: env.MINIMAX_API_KEY,
+      }
+    },
+    model: {
+      provider: "minimax",
+      modelId: "MiniMax-M3",
+      providerOptions: {
+        anthropic: {
+          thinking: { type: 'enabled', budgetTokens: 12000 },
+        }
+      },
+    },
+    agent: {
+      system: mainInstructions,
+    },
+    subagent: {
+      enabled: true,
+      allowed: [researchSpecialist],
     },
     channels: [telegram],
     workspaces: [
