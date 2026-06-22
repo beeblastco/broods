@@ -4,20 +4,35 @@ Telegram integration allows your agent to interact with users via Telegram bots.
 
 ## Configuration
 
-To enable Telegram, include the following in your agent configuration:
+Define a Telegram channel with `defineTelegramChannel` and attach it to an agent:
 
-```json
-{
-  "channels": {
-    "telegram": {
-      "botToken": "your-bot-token",
-      "webhookSecret": "your-webhook-secret",
-      "allowedChatIds": [123456789, 987654321],
-      "reactionEmoji": "👀",
-      "streaming": { "mode": "edit" }
-    }
-  }
-}
+```ts title="filthypanty/index.ts"
+import {
+  defineAgent,
+  defineTelegramChannel,
+  env,
+} from "filthy-panty";
+
+export const telegram = defineTelegramChannel({
+  botToken: env.TELEGRAM_BOT_TOKEN,
+  webhookSecret: env.TELEGRAM_WEBHOOK_SECRET,
+  allowedChatIds: [123456789, 987654321],
+  reactionEmoji: "👀",
+  streaming: { mode: "edit" },
+});
+
+export const myAgent = defineAgent({
+  name: "my-agent",
+  config: {
+    channels: [telegram],
+  },
+});
+```
+
+After `filthy-panty dev` or `filthy-panty deploy`, the CLI prints the webhook URL to register with Telegram:
+
+```text
+Channel telegram (telegram): https://app.beeblast.co/webhooks/acct_.../agent_.../telegram
 ```
 
 - `botToken`: Provided by BotFather.

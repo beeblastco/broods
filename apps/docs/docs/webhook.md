@@ -12,37 +12,44 @@ flowchart LR
 
 Check out the [webhook example](https://github.com/beeblastco/filthy-panty/tree/dev/packages/demos/webhook) for setup and usage. Lifecycle webhooks remain declarative HTTPS delivery; they do not upload or execute user hook code.
 
-## Agent Config
+## Code-First Configuration
 
-Configure lifecycle delivery in the encrypted agent config. An agent can register **several** webhooks — `hooks.webhooks` is an array, so events can fan out to multiple of your services:
+Configure lifecycle webhooks inside `defineAgent`. An agent can register **several** webhooks — `hooks.webhooks` is an array, so events can fan out to multiple services:
 
-```json
-{
-  "hooks": {
-    "webhooks": [
-      {
-        "enabled": true,
-        "url": "https://example.com/agent-events",
-        "secret": "...",
-        "events": [
-          "agent.started",
-          "tool.call.started",
-          "tool.call.finished",
-          "tool.result",
-          "subagent.task.finished",
-          "agent.finished",
-          "agent.failed"
-        ]
-      },
-      {
-        "enabled": true,
-        "url": "https://audit.example.com/agent-events",
-        "secret": "...",
-        "events": ["agent.failed"]
-      }
-    ]
-  }
-}
+```ts title="filthypanty/index.ts"
+import { defineAgent, env } from "filthy-panty";
+
+export const myAgent = defineAgent({
+  name: "my-agent",
+  config: {
+    provider: { openai: { apiKey: env.OPENAI_API_KEY } },
+    model: { provider: "openai", modelId: "gpt-5.5" },
+    hooks: {
+      webhooks: [
+        {
+          enabled: true,
+          url: "https://example.com/agent-events",
+          secret: env.WEBHOOK_SECRET,
+          events: [
+            "agent.started",
+            "tool.call.started",
+            "tool.call.finished",
+            "tool.result",
+            "subagent.task.finished",
+            "agent.finished",
+            "agent.failed",
+          ],
+        },
+        {
+          enabled: true,
+          url: "https://audit.example.com/agent-events",
+          secret: env.AUDIT_WEBHOOK_SECRET,
+          events: ["agent.failed"],
+        },
+      ],
+    },
+  },
+});
 ```
 
 | Field | Type | Description |

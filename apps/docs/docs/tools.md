@@ -188,36 +188,65 @@ For sync direct API callers, approval requests are streamed as SSE and persisted
 
 > TODO: Add channel webhook support for completing tool approval requests when channel-safe approval UX is available.
 
-## Agent Config
+## Code-First Configuration
 
-Use `config.tools` for built-in and uploaded tools:
+Use `config.tools` inside `defineAgent` for built-in tools:
 
-```json
-{
-  "tools": {
-    "tavilySearch": {
-      "enabled": true,
-      "async": true,
-      "needsApproval": true,
-      "apiKey": "...",
-      "maxResults": 5
+```ts title="filthypanty/index.ts"
+import { defineAgent, env } from "filthy-panty";
+
+export const myAgent = defineAgent({
+  name: "my-agent",
+  config: {
+    provider: { openai: { apiKey: env.OPENAI_API_KEY } },
+    model: { provider: "openai", modelId: "gpt-5.5" },
+    tools: {
+      tavilySearch: {
+        enabled: true,
+        apiKey: env.TAVILY_API_KEY,
+        searchDepth: "advanced",
+        maxResults: 5,
+      },
+      tavilyExtract: { enabled: true, apiKey: env.TAVILY_API_KEY },
+      googleSearch: { enabled: true },
     },
-    "tavilyExtract": {
-      "enabled": true,
-      "apiKey": "..."
-    },
-    "googleSearch": {
-      "enabled": true
-    },
-    "tool_abc123": {
-      "enabled": true,
-      "async": true,
-      "needsApproval": false,
-      "config": {}
-    }
-  }
-}
+  },
+});
 ```
+
+For uploaded custom tools, use `defineTool` and reference it by name in the agent config:
+
+```ts title="filthypanty/index.ts"
+import { defineAgent, defineTool, env } from "filthy-panty";
+
+export const analyze = defineTool({
+  name: "analyze",
+  config: {
+    path: "tools/analyze.ts",
+    description: "Analyze structured data.",
+    inputSchema: {
+      type: "object",
+      properties: { data: { type: "array" } },
+      required: ["data"],
+    },
+  },
+});
+
+export const myAgent = defineAgent({
+  name: "my-agent",
+  config: {
+    tools: {
+      [analyze.name]: {
+        enabled: true,
+        async: true,
+        needsApproval: false,
+      },
+    },
+  },
+});
+```
+
+The CLI bundles the tool source into ESM, hashes it, and uploads it on sync. Agent references are rewritten to the deployed tool ID automatically.
 
 Omitting a tool disables it. Setting `enabled: false` also disables it. Set `needsApproval: true` when the tool should require the AI SDK approval flow before execution.
 Set `async: true` when a local `execute` tool may take long enough that the parent agent should keep working while the result is produced.
@@ -231,47 +260,56 @@ The full config field reference lives in the [API Reference](/api-reference) und
 
 With the CLI, point `defineTool()` at a TypeScript or JavaScript entrypoint under `filthypanty/`. The CLI bundles it as self-contained Node ESM, rejects source or output over 1 MB, hashes the compiled bundle, and uploads it through manifest sync. Agent references are rewritten to the deployed tool ID.
 
-The raw account-management API does not run a build step. When calling it directly, provide an already-bundled JavaScript module whose default export is a tool definition object or factory:
-
-```ts
+```ts title="filthypanty/tools/my-tool.ts"
 export default {
-  name: "test_async",
-  description: "Test async tool.",
-  inputSchema: { type: "object", properties: {}, additionalProperties: false },
+  name: "my_tool",
+  description: "A custom tool that does something useful.",
+  inputSchema: {
+    type: "object",
+    properties: { query: { type: "string" } },
+    required: ["query"],
+  },
   async execute(ctx, input) {
-    return { type: "text", value: "done" };
+    return { type: "text", value: `Result for ${input.query}` };
   },
 };
 ```
 
-Upload it through account-manage:
+```ts title="filthypanty/index.ts"
+import { defineAgent, defineTool } from "filthy-panty";
+import { api } from "./_generated/api";
 
-```http
-POST /accounts/me/tools
-Authorization: Bearer <account-secret>
-Content-Type: application/json
+export const myTool = defineTool({
+  name: "my_tool",
+  config: {
+    path: "tools/my-tool.ts",
+    description: "A custom tool.",
+    inputSchema: {
+      type: "object",
+      properties: { query: { type: "string" } },
+      required: ["query"],
+    },
+  },
+});
+
+export const myAgent = defineAgent({
+  name: "my-agent",
+  config: {
+    tools: {
+      [myTool.name]: { enabled: true, async: true },
+    },
+  },
+});
 ```
 
-```json
-{
-  "name": "test_async",
-  "description": "Test async tool.",
-  "inputSchema": { "type": "object", "properties": {}, "additionalProperties": false },
-  "bundle": "export default { name: \"test_async\", async execute() { return { type: \"text\", value: \"done\" }; } };",
-  "defaultConfig": {}
-}
-```
+The raw account-management API does not run a build step. When calling it directly, provide an already-bundled JavaScript module. See the [API Reference](/api-reference) `POST /accounts/me/tools` for the raw shape.
 
-Use the returned `toolId` as the `config.tools` key. The model still sees the uploaded `name`.
-
-Tool management endpoints:
+Tool management endpoints (raw API):
 
 - `GET /accounts/me/tools`
 - `GET /accounts/me/tools/{toolId}`
 - `PATCH /accounts/me/tools/{toolId}`
 - `DELETE /accounts/me/tools/{toolId}`
-
-MVP limits: raw API uploads must already be bundled JavaScript, server-side `npm install` is not supported, and shared multi-pod dependency caches are future work. The CLI performs local dependency bundling instead. The platform runs the resulting bundle in a warm sandbox and reuses the bundle cache between calls for the same account/tool.
 
 ## Add a Built-In Tool
 

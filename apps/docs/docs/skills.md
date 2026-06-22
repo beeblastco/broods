@@ -99,39 +99,57 @@ For executable helpers, keep scripts inside the bundle and reference them from `
 
 Enable skills for an agent with `config.skills`:
 
-```json
-{
-  "skills": {
-    "enabled": true,
-    "allowed": ["acct_abc123/support-flow"]
-  }
-}
+```ts title="filthypanty/index.ts"
+import { defineAgent, defineSkill } from "filthy-panty";
+
+export const supportFlow = defineSkill({
+  name: "support-flow",
+  config: { path: "support-flow" },
+});
+
+export const myAgent = defineAgent({
+  name: "my-agent",
+  config: {
+    skills: {
+      enabled: true,
+      allowed: [supportFlow],
+    },
+  },
+});
 ```
 
-The account API accepts three sources:
+With the CLI, place your skill bundle under `filthypanty/` and reference it with `defineSkill`:
 
-| Source | Use when | Required fields |
-| --- | --- | --- |
-| `json` | Creating a single-file skill from API input | `name`, `description`, `content` |
-| `files` | Uploading a bundle with `SKILL.md` and support files | `files[].path`, `files[].contentBase64` |
-| `github` | Importing a skill directory from GitHub | `url` |
-
-Single-file example:
-
-```http
-POST /accounts/me/skills
-Authorization: Bearer <account-secret>
-Content-Type: application/json
+```text
+filthypanty/
+  support-flow/
+    SKILL.md
+    examples/
+      escalation-policy.md
 ```
 
-```json
-{
-  "source": "json",
-  "name": "support-flow",
-  "description": "Handles support triage and escalation decisions.",
-  "content": "# Support Flow\n\nUse this skill when a customer asks for help with a product issue."
-}
+```ts title="filthypanty/index.ts"
+import { defineAgent, defineSkill } from "filthy-panty";
+
+export const supportFlow = defineSkill({
+  name: "support-flow",
+  config: { path: "support-flow" },
+});
+
+export const myAgent = defineAgent({
+  name: "my-agent",
+  config: {
+    skills: {
+      enabled: true,
+      allowed: [supportFlow],
+    },
+  },
+});
 ```
+
+The CLI bundles the folder, validates that `SKILL.md` exists, and uploads it on sync.
+
+The raw account API also accepts `json`, `files`, and `github` sources. See the [API Reference](/api-reference) `POST /accounts/me/skills` for the raw shape.
 
 :::warning GitHub imports
 
@@ -140,8 +158,6 @@ GitHub imports download a skill directory from a public GitHub tree URL. Use thi
 `https://github.com/{owner}/{repo}/tree/{ref}/{path}`
 
 :::
-
-See [`packages/demos/skills.ts`](https://github.com/beeblastco/filthy-panty/blob/dev/packages/demos/skills.ts) for create, list, get, and delete calls.
 
 ## Enable Skills For An Agent
 

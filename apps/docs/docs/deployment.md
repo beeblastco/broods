@@ -1,12 +1,46 @@
 # Deployment
 
+You have two deployment paths:
+
+1. **Managed service** (recommended) — the platform at `app.beeblast.co` handles all infrastructure. You only run `filthy-panty deploy`.
+2. **Self-hosted** — deploy the full serverless stack to your own AWS account with SST.
+
+Both paths use the same CLI and SDK workflow.
+
+---
+
+## Managed Service
+
+The fastest path. No infrastructure to manage.
+
+```bash
+filthy-panty init      # create filthypanty/ project
+filthy-panty login     # authenticate with the dashboard
+filthy-panty dev       # sync to development, watch for changes
+filthy-panty deploy    # sync to production
+```
+
+The CLI handles everything: compiling resources, bundling tools, uploading skills, syncing environment variables, and generating typed runtime references. See [Getting Started](getting-started.md) for the full walkthrough.
+
+---
+
+## Self-Hosted
+
+Deploy the full serverless infrastructure to your own AWS account for complete control.
+
 `sst.config.ts` is the source of truth for infra names, tags, region, Lambda resources, DynamoDB tables, S3 bucket, and SST secrets.
 
-## Local Setup
+### Prerequisites
+
+- [Bun](https://bun.sh/) installed
+- An AWS account with CLI access configured
+- [SST](https://sst.dev/) (installed by `bun install` as a project dependency; commands use `bunx sst`)
+
+### Local Setup
 
 ```bash
 bun install
-cp .env.example .env
+cp apps/core/.env.example apps/core/.env
 ```
 
 Keep `.env` for local SST inputs only:
@@ -31,7 +65,7 @@ bunx sst secret set DaytonaApiKey <daytona-api-key>
 
 Provider and tool API keys are account-specific. Store them in the encrypted agent config under fields such as `config.provider.<provider>.apiKey` and `config.tools.<tool>.apiKey`.
 
-## Build and Deploy
+### Build and Deploy
 
 ```bash
 bun run check
@@ -50,20 +84,29 @@ Deploy outputs include:
 - `filesystemBucketName`, `skillsBucketName`, `toolBundlesBucketName`
 - sandbox Lambda function names and `cronScheduleGroupName`
 
-## Account Setup
+### Using the CLI with Self-Hosted
 
-After deploy, create an account through the account-management Function URL and store the returned `secret`.
+After self-hosted deploy, use the same CLI workflow but point it at your deployment:
+
+```bash
+export FILTHY_PANTY_BASE_URL="https://your-deployment.lambda-url.us-east-1.on.aws"
+filthy-panty init
+filthy-panty login --dashboard-url https://your-dashboard.example.com
+filthy-panty dev
+filthy-panty deploy
+```
+
+### Account Setup (Self-Hosted)
+
+Create an account through the account-management Function URL:
 
 ```bash
 curl -X POST "$ACCOUNT_SERVICE_URL/accounts" \
   -H "Content-Type: application/json" \
-  -d '{
-    "username": "company-a",
-    "description": "Company A account"
-  }'
+  -d '{ "username": "company-a", "description": "Company A account" }'
 ```
 
-Use that account secret for account self-service calls, direct API calls, async requests, and `/status/{eventId}` polling.
+Store the returned `secret` securely.
 
 Provider webhooks use the deployed harness-processing URL:
 

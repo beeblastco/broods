@@ -1,438 +1,167 @@
 # Getting Started
 
-Choose your path to get up and running:
+BeeBlast is a serverless AI agent platform. You define agents, workspaces, sandboxes, skills, and channels as typed TypeScript resources, sync them to the cloud with a CLI, and invoke them over a typed SDK or raw HTTP.
 
-- **Managed service** — create an account and start interacting with agents immediately. No deployment required.
-- **Self-deployed** — deploy the full serverless infrastructure to your own AWS account for complete control.
-
-Both paths converge on the same account and agent APIs. After setup, you can configure agents, enable tools, connect channels, and integrate via the direct API or messaging platforms.
+This guide uses the **managed service** at `app.beeblast.co`. If you prefer to self-host, see [Deployment](deployment.md) first, then return here — the CLI and SDK workflow is identical.
 
 ---
 
-## Path 1: Managed Service
+## Prerequisites
 
-Skip infrastructure. Create an account and start using the platform right away.
+- [Bun](https://bun.sh/) 1.2+ (the CLI and SDK are built on Bun)
+- A free [BeeBlast dashboard](https://dashboard.beeblast.co) account
 
-### 1. Create an Account
-
-Send a POST request to the managed account service:
+## 1. Install the CLI & SDK
 
 ```bash
-curl -X POST "https://<managed-account-service-url>/accounts" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "username": "my-first-account",
-    "description": "My first account"
-  }'
+bun add -g filthy-panty
 ```
 
-The response includes your `accountId` and a one-time `secret`:
+Or with npm:
 
-```json
-{
-  "account": {
-    "accountId": "acct_...",
-    "username": "my-first-account",
-    "description": "My first account"
+```bash
+npm install -g filthy-panty
+```
+
+Or install locally in your project:
+
+```bash
+mkdir my-agent-project && cd my-agent-project
+bun init
+bun add filthy-panty
+```
+
+## 2. Set Your Model Secret
+
+Create `.env.local` with your model provider key so the CLI can auto-sync it on the first run:
+
+```bash
+echo 'OPENAI_API_KEY="sk-..."' >> .env.local
+```
+
+## 3. Start Developing
+
+```bash
+filthy-panty dev
+```
+
+On the first run this does everything for you:
+
+1. **Creates** a `filthypanty/` project shell with a starter agent (same as `filthy-panty init`)
+2. **Opens your browser** to log in via WorkOS if you haven't authenticated yet (same as `filthy-panty login`)
+3. **Auto-pushes** `OPENAI_API_KEY` from `.env.local` to the cloud
+4. **Compiles and syncs** your resources to the `development` environment
+5. **Watches** `filthypanty/` for changes and **live-tails** agent logs
+
+```text
+Created starter filthypanty/
+Deploy target: my-agent-project/development
+  create  agent   my-agent
+  create  sandbox lambda-sandbox
+Synced 2 resources to my-agent-project/development
+Wrote FILTHY_PANTY_API_KEY (fp_env_...) to .env.local
+· live logs — Ctrl+C to stop
+```
+
+The starter agent created in `filthypanty/index.ts`:
+
+```ts title="filthypanty/index.ts"
+import { defineAgent, defineSandbox, env } from "filthy-panty";
+
+export const lambdaSandbox = defineSandbox({
+  name: "lambda-sandbox",
+  config: {
+    provider: "lambda",
+    network: { mode: "deny-all" },
+    permissionMode: "bypass",
+    timeout: 60,
   },
-  "secret": "fp_acct_..."
-}
+});
+
+export const myAgent = defineAgent({
+  name: "my-agent",
+  config: {
+    provider: {
+      openai: { apiKey: env.OPENAI_API_KEY },
+    },
+    model: {
+      provider: "openai",
+      modelId: "gpt-5.5",
+    },
+    agent: {
+      system: "You are a helpful assistant.",
+    },
+    sandbox: lambdaSandbox,
+    publicAccess: true,
+  },
+});
 ```
 
-**Store `secret` securely** — it is not recoverable. If lost, rotate it to get a new one.
+> `filthy-panty init` and `filthy-panty login` are also available as standalone commands if you prefer to run them separately.
 
-### 2. Start Building
-
-You now have everything you need. Skip to [Start Building](#start-building) below to create your first agent and send requests.
-
----
-
-## Path 2: Self-Deployed
-
-Deploy the full infrastructure to your own AWS account.
-
-### Prerequisites
-
-- [Bun](https://bun.sh/) installed
-- An AWS account with CLI access configured
-- [SST](https://sst.dev/) (installed by `bun install` as a project dependency; commands use `bunx sst`)
-
-### 1. Deploy the Infrastructure
-
-Clone the repository and install dependencies:
+## 6. Run Your Agent
 
 ```bash
-bun install
-cp .env.example .env
+filthy-panty run my-agent "Hello, who are you?"
 ```
 
-Set the required SST secrets (fill in `.env` first — `AWS_ACCOUNT_ID`, `PROJECT_NAME`, and `PROJECT_OWNER_EMAIL` have no defaults):
+The CLI streams the response live, showing reasoning, tool calls, and text:
 
-```bash
-bunx sst secret set AdminAccountSecret <long-random-value>
-bunx sst secret set AccountConfigEncryptionSecret <long-random-value>
-bunx sst secret set DaytonaApiKey <daytona-api-key>
+```text
+[thinking] The user is greeting me...
+[text] Hello! I'm a helpful assistant...
 ```
 
-Build and deploy:
+## 7. Programmatic Calls
 
-```bash
-bun run deploy
-```
+Import the generated API references and the SDK client in your application code:
 
-After deploy, note the two Function URLs from the output:
+```ts
+import { FilthyPantyClient } from "filthy-panty";
+import { api } from "./filthypanty/_generated/api";
 
-- `accountServiceUrl` — for account and agent management
-- `agentServiceUrl` — for sending requests to agents
+const client = new FilthyPantyClient();
 
-Set them as environment variables:
+// Sync run
+const result = await client.run(api.agents.myAgent, {
+  input: "What is the capital of France?",
+});
+console.log(result.text);
 
-```bash
-export ACCOUNT_SERVICE_URL=<accountServiceUrl>
-export AGENT_SERVICE_URL=<agentServiceUrl>
-```
-
-### 2. Create an Account
-
-Create your first account on your own deployment:
-
-```bash
-curl -X POST "$ACCOUNT_SERVICE_URL/accounts" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "username": "my-first-account",
-    "description": "My first account"
-  }'
-```
-
-Save the returned `secret`:
-
-```bash
-export ACCOUNT_SECRET=fp_acct_...
-```
-
-### 3. Start Building
-
-You now own the infrastructure. Skip to [Start Building](#start-building) below to create your first agent and send requests.
-
----
-
-## Start Building
-
-This section is the same regardless of which path you chose. You need `ACCOUNT_SERVICE_URL`, `AGENT_SERVICE_URL`, and `ACCOUNT_SECRET` set.
-
-### Create an Agent
-
-Agents hold the model, provider, and tool configuration. Create one with your account secret:
-
-```bash
-curl -X POST "$ACCOUNT_SERVICE_URL/accounts/me/agents" \
-  -H "Authorization: Bearer $ACCOUNT_SECRET" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "name": "assistant",
-    "description": "A general-purpose assistant",
-    "config": {
-      "provider": {
-        "google": { "apiKey": "YOUR_GOOGLE_API_KEY" }
-      },
-      "model": {
-        "provider": "google",
-        "modelId": "gemini-3-flash"
-      },
-      "agent": {
-        "system": "You are a helpful assistant."
-      }
-    }
-  }'
-```
-
-The response includes your `agentId`:
-
-```json
-{
-  "agent": {
-    "accountId": "acct_...",
-    "agentId": "agent_...",
-    "name": "assistant",
-    "description": "A general-purpose assistant"
+// Streaming run
+for await (const part of client.stream(api.agents.myAgent, {
+  input: "Tell me a story.",
+})) {
+  if (part.type === "text-delta") {
+    process.stdout.write(part.text);
   }
 }
+
+// Async run
+const job = await client.runAsync(api.agents.myAgent, {
+  input: "Generate a long report.",
+});
+const status = await job.wait();
+console.log(status.response);
 ```
 
-Save it:
+## 8. Deploy to Production
 
 ```bash
-export AGENT_ID=agent_...
+filthy-panty deploy
 ```
 
-#### Supported Providers
-
-| Provider | Config key | Required fields |
-| --- | --- | --- |
-| Google | `google` | `apiKey` |
-| OpenAI | `openai` | `apiKey` |
-| Bedrock | `bedrock` | `region`, `apiKey` |
-| Gateway | `gateway` | `apiKey` |
-| MiniMax | `minimax` | `apiKey` |
-
-#### Reasoning / thinking tokens
-
-Use standard Vercel AI SDK call settings directly in `config.model`. Provider-specific thinking controls live under `config.model.providerOptions`:
-
-| Provider | Enable thinking with |
-| --- | --- |
-| OpenAI | `providerOptions.openai.reasoningEffort` (`low`/`medium`/`high`) and `providerOptions.openai.reasoningSummary` |
-| Anthropic | `providerOptions.anthropic.thinking` or `providerOptions.anthropic.effort` |
-| Google | `providerOptions.google.thinkingConfig` |
-| MiniMax | `providerOptions.anthropic.thinking` |
-
-MiniMax's default provider is **Anthropic-compatible**, so it uses the Anthropic-style `thinking` config. **MiniMax-M3 thinking is off by default** — without the provider option the model returns no reasoning tokens:
-
-```jsonc
-"model": {
-  "provider": "minimax",
-  "modelId": "MiniMax-M3",
-  "providerOptions": {
-    "anthropic": {
-      "thinking": { "type": "enabled", "budgetTokens": 4096 }
-    }
-  }
-}
-```
-
-Reasoning surfaces in the stream as `reasoning-start` / `reasoning-delta` parts, the same as any other provider.
-
-### Send Your First Request
-
-#### Sync SSE Request
-
-POST to the agent service. The response streams as SSE:
-
-```bash
-curl -X POST "$AGENT_SERVICE_URL" \
-  -H "Authorization: Bearer $ACCOUNT_SECRET" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "agentId": "'"$AGENT_ID"'",
-    "eventId": "req-001",
-    "conversationKey": "my-first-conversation",
-    "events": [
-      {
-        "role": "user",
-        "content": [
-          { "type": "text", "text": "Hello, who are you?" }
-        ]
-      }
-    ]
-  }'
-```
-
-The SSE stream emits `data:`-only lines carrying raw Vercel AI SDK stream chunks (`text-delta`, `tool-call`, `tool-result`, `finish`), with `: waiting…` comment heartbeats during long waits. When the agent finishes, the last data line is the `finish` chunk (followed by a `structured-output` chunk when `config.model.output` is set), then the stream closes:
-
-> The WebSocket transport carries the **same** AI SDK stream parts. Each part is published in a NATS envelope `{ type: "stream", data: <part>, sequence, headers }`; clients read `.data`, which is byte-identical to one SSE event.
-
-```bash
-data: {"type":"finish","finishReason":"stop", ...}
-```
-
-#### Async Request
-
-For long-running requests, use the async endpoint:
-
-```bash
-curl -X POST "$AGENT_SERVICE_URL/async" \
-  -H "Authorization: Bearer $ACCOUNT_SECRET" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "agentId": "'"$AGENT_ID"'",
-    "eventId": "req-002",
-    "conversationKey": "my-first-conversation",
-    "events": [
-      {
-        "role": "user",
-        "content": [
-          { "type": "text", "text": "Tell me a long story." }
-        ]
-      }
-    ]
-  }'
-```
-
-The response includes a `statusUrl` for polling:
-
-```json
-{
-  "statusUrl": "https://.../status/req-002?agentId=agent_..."
-}
-```
-
-Poll the status endpoint (the `agentId` query parameter is required; unknown ids return `404` with `status: not_found`):
-
-```bash
-curl "$AGENT_SERVICE_URL/status/req-002?agentId=$AGENT_ID" \
-  -H "Authorization: Bearer $ACCOUNT_SECRET"
-```
-
-Status responses:
-
-| Status | Meaning |
-| --- | --- |
-| `processing` | Agent is working |
-| `completed` | Finished — includes the response |
-| `failed` | Error occurred |
-| `awaiting_approval` | Tool approval needed |
-
-`events` accepts three kinds of entries: `user` messages, `tool` messages carrying tool-approval responses (only valid while a turn is `awaiting_approval`), and `system` messages with `persist: false` for one-turn ephemeral instructions. Per-request webhook fields (`webhookUrl`, `x-webhook-secret`) are rejected — use `config.hooks.webhook` on the agent instead.
-
-### Per-run Overrides
-
-Optional top-level `system` and `model` fields override config for a **single** invocation (direct, async, and websocket). Nothing persists — model overrides are folded into a copy of the agent config for that run only.
-
-```jsonc
-{
-  "agentId": "agent_...",
-  "eventId": "req-003",
-  "conversationKey": "my-first-conversation",
-  "system": [
-    {
-      "role": "system",
-      "content": "Answer concisely.",
-      "persist": false
-    }
-  ],
-  "model": {
-    "temperature": 0.3,
-    "maxOutputTokens": 4096,
-    "providerOptions": {
-      "openai": {
-        "reasoningEffort": "high",
-        "reasoningSummary": "auto"
-      }
-    }
-  },
-  "events": [ { "role": "user", "content": [ { "type": "text", "text": "Summarize today's plan." } ] } ]
-}
-```
-
-`system` accepts one Vercel AI SDK-style system message event or an array of them. These events are request-local and follow the same ephemeral behavior as direct `events` entries with `persist: false`.
-
-`model` accepts any standard Vercel AI SDK call setting (`temperature`, `topP`, `topK`, `maxOutputTokens`, `frequencyPenalty`, `presencePenalty`, `seed`, `stopSequences`) and provider-specific `providerOptions`, the same shape used by `config.model`. The reserved keys `provider`, `modelId`, `output`, and `apiKey` are rejected so a request cannot swap the model, provider, structured output contract, or credentials.
-
-### Enable Tools (Optional)
-
-Add tools to your agent config:
-
-```bash
-curl -X PATCH "$ACCOUNT_SERVICE_URL/accounts/me/agents/$AGENT_ID" \
-  -H "Authorization: Bearer $ACCOUNT_SECRET" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "config": {
-      "tools": {
-        "googleSearch": { "enabled": true },
-        "tavilySearch": {
-          "enabled": true,
-          "apiKey": "YOUR_TAVILY_API_KEY"
-        }
-      }
-    }
-  }'
-```
-
-Available `config.tools` entries: `tavilySearch`, `tavilyExtract`, `googleSearch`, `handoffs`, and uploaded custom tools (`tool_<id>` keys). `async_status` is registered automatically when async tools or a persistent workspace sandbox are present. See [External Tools](tools.md).
-
-### Set Up a Channel (Optional)
-
-Connect a messaging platform so users can interact with your agent through Telegram, Discord, Slack, GitHub, Facebook Messenger (via Pancake), or Zalo.
-
-#### Example: Telegram
-
-1. Create a bot via [@BotFather](https://t.me/BotFather) and get the `botToken`.
-2. Generate a random `webhookSecret` for webhook verification.
-3. Update your agent config:
-
-```bash
-curl -X PATCH "$ACCOUNT_SERVICE_URL/accounts/me/agents/$AGENT_ID" \
-  -H "Authorization: Bearer $ACCOUNT_SECRET" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "config": {
-      "channels": {
-        "telegram": {
-          "botToken": "YOUR_BOT_TOKEN",
-          "webhookSecret": "YOUR_WEBHOOK_SECRET",
-          "allowedChatIds": [123456789]
-        }
-      }
-    }
-  }'
-```
-
-1. Set the webhook URL in Telegram:
-
-```bash
-curl "https://api.telegram.org/bot<YOUR_BOT_TOKEN>/setWebhook" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "url": "'"$AGENT_SERVICE_URL"'/webhooks/<ACCOUNT_ID>/<AGENT_ID>/telegram",
-    "secret_token": "YOUR_WEBHOOK_SECRET"
-  }'
-```
-
-Users can now message your bot on Telegram and get responses from your agent.
-
-#### Other Channels
-
-| Channel | Required config |
-| --- | --- |
-| Discord | `botToken`, `publicKey` |
-| Slack | `botToken`, `signingSecret` |
-| GitHub | `webhookSecret`, `appId`, `privateKey` |
-| Pancake | `pageId`, `pageAccessToken`, `webhookSecret` |
-| Zalo | `botToken`, `webhookSecret`, `allowedUserIds` |
-
-See [Channels](channels/index.md) for full setup details.
-
-### Run Example Scripts
-
-The repository includes example scripts to probe a live deployment. Each demo has its own folder and `.env.example`:
-
-```bash
-cp packages/demos/stream/.env.example packages/demos/stream/.env
-# fill in the service URLs from the deploy output and your model/tool keys
-
-cd packages/demos/stream && bun index.ts
-```
-
-Each script creates a temporary account, runs the test, and cleans up.
-
-### Define Your Own Agent Config
-
-The agent config is a JSON object that controls everything about how your agent runs. Reference the [API Reference](/api-reference) for the complete `AgentConfig` schema.
-
-Key config sections:
-
-- `provider` — AI SDK provider constructor settings (Google, OpenAI, Bedrock, Gateway, MiniMax)
-- `model` — `streamText` parameters: model ID, temperature, structured output, provider options
-- `agent` — max turns and system prompt
-- `tools` — external tools like Tavily and Google Search
-- `sandbox` / `workspaces` — references to account-scoped sandbox and workspace records
-- `skills` — account-scoped skill bundles
-- `subagent` — parallel subagent dispatch
-- `channels` — Telegram, Discord, Slack, GitHub, Pancake, Zalo
-- `hooks` — lifecycle webhook events
-- `session` — history pruning and compaction
-
----
+This syncs to your `production` environment and writes the production runtime key to `.env.local`.
 
 ## Next Steps
 
-- [API Reference](/api-reference) — Interactive OpenAPI docs for all endpoints
-- [Architecture](architecture.md) — how the platform works under the hood
-- [External Tools](tools.md) — add custom tools for your agents
-- [Skills](skills.md) — add account-scoped instruction bundles and enable the skill panel
-- [Workspace](workspace/index.md) — workspace files, storage, and sandbox execution
-- [Sub Agents](sub-agents.md) — dispatch parallel subagent tasks
-- [Deployment](deployment.md) — SST secrets, deployment, account setup, and live probes
-- [CI/CD](ci-cd.md) — GitHub Actions deployment and integration account setup
+- [Resource Configuration](resources.md) — Full reference for `defineAgent`, `defineSandbox`, `defineWorkspace`, channels, skills, tools, and cron jobs
+- [SDK & Runtime API](sdk.md) — Typed SDK usage, curl equivalents, and WebSocket streaming
+- [Workspace & Sandbox](workspace/index.md) — Persistent files, compute, and permission modes
+- [External Tools](tools.md) — Built-in tools and uploading custom tools
+- [Skills](skills.md) — Instruction bundles and the skill panel
+- [Channels](channels/index.md) — Telegram, Discord, Slack, GitHub, Pancake, and Zalo
+- [Sub Agents](sub-agents.md) — Parallel child agents
+- [Cron Jobs](crons.md) — Scheduled agent runs
+- [Architecture](architecture.md) — How the platform works under the hood
+- [API Reference](/api-reference) — Interactive OpenAPI docs

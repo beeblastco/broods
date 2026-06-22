@@ -24,6 +24,23 @@ const sidebars: SidebarsConfig = {
     },
     {
       type: 'category',
+      label: 'Reference',
+      collapsed: false,
+      items: [
+        {
+          type: 'doc',
+          id: 'resources',
+          label: 'Resources & Config',
+        },
+        {
+          type: 'doc',
+          id: 'sdk',
+          label: 'SDK & API',
+        },
+      ],
+    },
+    {
+      type: 'category',
       label: 'Features',
       collapsed: false,
       items: [

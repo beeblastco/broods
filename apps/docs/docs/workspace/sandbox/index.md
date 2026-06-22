@@ -5,6 +5,44 @@ PATH). It backs the Claude-Code-style tool set (`bash`, `read`, `write`, `edit`,
 `grep`). Every tool compiles down to a single `run` against the selected provider — there
 is no per-runtime routing anymore.
 
+## Code-First Definition
+
+Define sandboxes in `filthypanty/index.ts` and reference them from agents:
+
+```ts
+import { defineSandbox, defineAgent, env } from "filthy-panty";
+
+export const lambdaSandbox = defineSandbox({
+  name: "lambda-sandbox",
+  config: {
+    provider: "lambda",
+    network: { mode: "deny-all" },
+    permissionMode: "ask",
+    timeout: 60,
+  },
+});
+
+export const k8sSandbox = defineSandbox({
+  name: "persistent-k8s",
+  config: {
+    provider: "kubernetes",
+    network: { mode: "allow-all" },
+    permissionMode: "bypass",
+    persistent: true,
+    lifecycle: { idleTimeoutSeconds: 1800 },
+    options: { mountAwsS3Buckets: true },
+  },
+});
+
+export const myAgent = defineAgent({
+  name: "my-agent",
+  config: {
+    sandbox: lambdaSandbox,
+    // ...
+  },
+});
+```
+
 ```mermaid
 flowchart LR
   Agent["Agent loop"] --> Tools["bash / read / write / edit / glob / grep"]

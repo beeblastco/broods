@@ -157,6 +157,36 @@ describe("SubagentCoordinator", () => {
     expect(resumed.resuming).toBe(true);
   });
 
+  it("carries the parent deployment scope into the ephemeral child session", async () => {
+    const { createEphemeralChildSession } = await import("../functions/harness-processing/subagents.ts");
+    const childSession = {
+      accountId: "account_1",
+      agentId: "virtual_subagent_x",
+      conversationKey: "conv-key",
+      eventId: "event-x",
+      endpointId: "env-1d88x06b",
+      projectSlug: "channel-telegram",
+      environmentSlug: "development",
+      filesystemNamespace: () => "ns",
+      resolvedWorkspaces: () => [],
+      statelessSandbox: () => undefined,
+      statelessPermissionMode: () => "ask",
+      loadSkillPrompt: async () => "",
+      createEphemeralTurnContext: async () => ({ system: [] }),
+    } as never;
+
+    const ephemeral = createEphemeralChildSession(childSession, []);
+
+    // Without the deployment scope, runAgentLoop stamps empty project/environment/
+    // endpoint_id on the subtask span: publishSpan early-returns (no live span) AND
+    // the dashboard's project+environment-scoped Tempo backfill never matches it, so
+    // subagents are invisible in tracing and a reload doesn't bring them back.
+    expect(ephemeral.endpointId).toBe("env-1d88x06b");
+    expect(ephemeral.projectSlug).toBe("channel-telegram");
+    expect(ephemeral.environmentSlug).toBe("development");
+    expect(ephemeral.accountId).toBe("account_1");
+  });
+
   it("rejects coordinator-level conversation keys outside persistent mode", async () => {
     const { SubagentCoordinator } = await import("../functions/harness-processing/subagents.ts");
     const coordinator = new SubagentCoordinator({

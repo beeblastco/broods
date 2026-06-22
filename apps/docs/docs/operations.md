@@ -1,8 +1,63 @@
 # Operations
 
-## Configuration
+This page covers both the **managed service** (`app.beeblast.co`) and **self-hosted** operations. Most day-to-day tasks use the CLI; self-hosted operators also manage SST infrastructure.
 
-`sst.config.ts` is the source of truth for infra names, tags, region, Lambda resources, DynamoDB tables, S3 bucket, and SST secrets.
+## CLI Commands
+
+The `filthy-panty` CLI is the primary interface for both paths.
+
+### Development
+
+```bash
+filthy-panty dev              # watch + sync Development + live-tail logs
+filthy-panty dev --once       # sync once and exit (no watch, no logs)
+filthy-panty diff             # show local vs remote diff
+```
+
+### Deployment
+
+```bash
+filthy-panty deploy           # sync Production
+filthy-panty deploy --prune   # delete undeclared remote resources
+filthy-panty deploy --rotate-key  # mint a fresh runtime API key
+```
+
+### Environment Variables
+
+```bash
+filthy-panty env set OPENAI_API_KEY    # store encrypted secret
+filthy-panty env get OPENAI_API_KEY    # reveal value (audited)
+filthy-panty env list                  # list names (values hidden)
+filthy-panty env rm OPENAI_API_KEY     # remove variable
+```
+
+### Observability
+
+```bash
+filthy-panty stream           # live-tail project logs
+filthy-panty logs --limit 100 # backfill + live-tail
+filthy-panty logs --errors    # WARN+ only
+```
+
+### Agents
+
+```bash
+filthy-panty agent list       # list agents (name, public/private, model, deploy status)
+filthy-panty agent get my-agent  # show resolved config
+filthy-panty run my-agent "Hello"  # one-off run with pretty streaming
+```
+
+### Global Options
+
+| Flag | Description |
+| --- | --- |
+| `--dashboard-url <url>` | Override dashboard URL |
+| `--project <name>` | Override project name |
+| `--env <name>` | Override target environment |
+
+## Self-Hosted Configuration
+
+For self-hosted deployments, `sst.config.ts` is the source of truth for infra names, tags, region, Lambda resources, DynamoDB tables, S3 bucket, and SST secrets.
 
 Use `apps/core/.env` for local SST inputs only:
 
@@ -72,37 +127,20 @@ Deploy outputs include:
 - `filesystemBucketName`, `skillsBucketName`, `toolBundlesBucketName`
 - sandbox Lambda function names and `cronScheduleGroupName`
 
-## Post-Deploy Account Setup
+## Post-Deploy Account Setup (Self-Hosted)
 
-Create an account:
+When self-hosting, the CLI still handles tenant configuration. After `filthy-panty deploy` syncs your resources, the CLI prints the agent-scoped webhook URLs. Register them with your channel providers (see the [Channels overview](channels/index.md)).
+
+If you need to create an account manually (e.g. for automated testing), use the admin `AdminAccountSecret`:
 
 ```bash
 curl -X POST "$ACCOUNT_SERVICE_URL/accounts" \
+  -H "Authorization: Bearer $ADMIN_ACCOUNT_SECRET" \
   -H "Content-Type: application/json" \
-  -d '{
-    "username": "company-a",
-    "description": "Company A account"
-  }'
+  -d '{"username": "company-a"}'
 ```
 
-Store the returned `secret`. Use it for:
-
-- `account-manage` self-service calls.
-- `harness-processing` direct API calls.
-- `/async` and `/status/{eventId}` calls.
-
-Create an agent with model, tool, channel, workspace, skills, and optional subagent configuration before sending runtime traffic. Configure provider webhooks with the returned `accountId` and `agentId`:
-
-```text
-{AGENT_SERVICE_URL}/webhooks/{accountId}/{agentId}/telegram
-{AGENT_SERVICE_URL}/webhooks/{accountId}/{agentId}/github
-{AGENT_SERVICE_URL}/webhooks/{accountId}/{agentId}/slack
-{AGENT_SERVICE_URL}/webhooks/{accountId}/{agentId}/discord
-{AGENT_SERVICE_URL}/webhooks/{accountId}/{agentId}/pancake
-{AGENT_SERVICE_URL}/webhooks/{accountId}/{agentId}/zalo
-```
-
-Provider credentials for each channel, plus model/tool settings, live on agent config. Reference the [API Reference](/api-reference) for the supported config shape.
+For day-to-day development, prefer the CLI-managed flow described in [Getting Started](getting-started.md).
 
 ## Channel Setup
 
@@ -141,6 +179,14 @@ filthy-panty run <name> "<prompt>" # one-off run; pretty-streams thinking, tool 
 ```
 
 `run` reaches the agent over the public endpoint, so it needs `publicAccess: true`; otherwise it reports the secured-by-default `403` with guidance to enable it.
+
+For quick health checks, you can also run a one-off probe:
+
+```bash
+filthy-panty run my-agent "ping"
+```
+
+Or verify the harness URL directly:
 
 ## Live Probes
 

@@ -20,7 +20,30 @@ This is the open-source engine behind [BeeBlast](https://github.com/beeblastco).
 
 ---
 
-## Quick Start
+## Quick Start (Managed Service)
+
+The fastest way to run agents is through the BeeBlast CLI and SDK:
+
+```bash
+# 1. Install the CLI (requires Bun)
+bun add -g filthy-panty
+
+# 2. Initialize your project
+mkdir my-agents && cd my-agents
+filthy-panty init
+
+# 3. Log in and set your model key
+filthy-panty login
+filthy-panty env set OPENAI_API_KEY
+
+# 4. Sync to the cloud and run your first agent
+filthy-panty dev
+filthy-panty run my-agent "Hello!"
+```
+
+See the [Getting Started guide](apps/docs/docs/getting-started.md) for the full walkthrough.
+
+## Quick Start (Self-Hosted)
 
 ```bash
 # 1. Clone and install
@@ -37,7 +60,7 @@ bunx sst secret set AccountConfigEncryptionSecret <random-value>
 bun run deploy
 ```
 
-Note the `accountServiceUrl` and `agentServiceUrl` from the deploy output when you deploy locally or on your own cloud. If you're using the BeeBlast hosted version, these are already set for you, then follow the [Getting Started guide](apps/docs/docs/getting-started.md) to create your first account and agent.
+Note the `accountServiceUrl` and `agentServiceUrl` from the deploy output when you deploy locally or on your own cloud. The CLI and SDK workflow is identical for self-hosted deployments — just point `FILTHY_PANTY_HOST` at your Function URL.
 
 ---
 
@@ -72,7 +95,9 @@ See `packages/demos/` for the full list.
 
 ## Documentation
 
-- [Getting Started](apps/docs/docs/getting-started.md) — Create an account and send your first request
+- [Getting Started](apps/docs/docs/getting-started.md) — Install the CLI, define your first agent, and run it in 5 minutes
+- [Resource Configuration](apps/docs/docs/resources.md) — Full reference for `defineAgent`, `defineSandbox`, channels, skills, tools, and cron jobs
+- [SDK & Runtime API](apps/docs/docs/sdk.md) — Typed SDK usage, curl equivalents, and WebSocket streaming
 - [Architecture](apps/docs/docs/architecture.md) — How the platform works
 - [Deployment](apps/docs/docs/deployment.md) — SST, secrets, and CI/CD
 - [API Reference](apps/docs/docs/api-reference/openapi.yaml) — OpenAPI spec

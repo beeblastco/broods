@@ -4,15 +4,32 @@ Subagents let one parent agent dispatch independent work, keep going, and then c
 
 ## Configuration
 
-```json
-{
-  "subagent": {
-    "enabled": true,
-    "allowed": ["agent_..."],
-    "context": "new",
-    "mode": "persistent"
-  }
-}
+```ts title="filthypanty/index.ts"
+import { defineAgent } from "filthy-panty";
+
+export const research = defineAgent({
+  name: "research",
+  description: "Deep research specialist",
+  config: {
+    provider: { openai: { apiKey: env.OPENAI_API_KEY } },
+    model: { provider: "openai", modelId: "o3" },
+    agent: { system: "You are a research specialist." },
+  },
+});
+
+export const myAgent = defineAgent({
+  name: "my-agent",
+  config: {
+    provider: { openai: { apiKey: env.OPENAI_API_KEY } },
+    model: { provider: "openai", modelId: "gpt-5.5" },
+    subagent: {
+      enabled: true,
+      allowed: [research],
+      context: "new",
+      mode: "persistent",
+    },
+  },
+});
 ```
 
 Defaults:

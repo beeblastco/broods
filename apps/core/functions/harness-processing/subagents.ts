@@ -445,12 +445,22 @@ export class SubagentCoordinator {
   }
 }
 
-function createEphemeralChildSession(childSession: Session, system: SystemModelMessage[]): Session {
+export function createEphemeralChildSession(childSession: Session, system: SystemModelMessage[]): Session {
   return {
     accountId: childSession.accountId,
     agentId: childSession.agentId,
     conversationKey: childSession.conversationKey,
     eventId: childSession.eventId,
+    // Carry the deployment scope through to the child run. runAgentLoop reads
+    // these off the session to stamp project/environment/endpoint_id on the
+    // subtask span and to build the live NATS subject. Omitting them (the prior
+    // bug) left subagent spans with only account_id, so publishSpan early-returned
+    // (no live span) AND the dashboard's project+environment-scoped Tempo backfill
+    // never matched them — subagents were invisible in tracing and a reload didn't
+    // bring them back.
+    endpointId: childSession.endpointId,
+    projectSlug: childSession.projectSlug,
+    environmentSlug: childSession.environmentSlug,
     filesystemNamespace: () => childSession.filesystemNamespace(),
     resolvedWorkspaces: () => childSession.resolvedWorkspaces(),
     statelessSandbox: () => childSession.statelessSandbox(),

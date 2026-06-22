@@ -1,6 +1,6 @@
 # Workspace & Sandbox
 
-**Sandbox** (compute) and **workspace** (persistent files) are account-scoped resources. You define each once and reference it from any agent by id.
+**Sandbox** (compute) and **workspace** (persistent files) are account-scoped resources. You define each once in code with `defineSandbox` and `defineWorkspace`, then reference them from any agent.
 
 - A **sandbox** is the compute backend plus a collection of bash and filesystem tools
   (`bash`, `read`, `write`, `edit`, `glob`, `grep`) and a `permissionMode`.
@@ -44,29 +44,51 @@ flowchart LR
   WS -. shared files .- B
 ```
 
-## Config
+## Code-First Configuration
 
-Create the records via the account API, then reference them from the agent:
+Define sandbox and workspace resources in `filthypanty/`, then pass them to an agent:
 
-```jsonc
-// POST /accounts/me/sandboxes
-{ "name": "default", "config": { "provider": "lambda", "network": { "mode": "allow-all" }, "permissionMode": "ask" } }
+```ts title="filthypanty/index.ts"
+import {
+  defineAgent,
+  defineSandbox,
+  defineWorkspace,
+  env,
+} from "filthy-panty";
 
-// POST /accounts/me/workspaces
-// storage.provider: "s3" (default). Provider-native storage such as Vercel Drive
-// is not accepted until it is wired into the workspace mount/read contract.
-{ "name": "notes", "config": { "storage": { "provider": "s3" }, "harness": { "enabled": true } } }
+export const lambdaSandbox = defineSandbox({
+  name: "default",
+  config: {
+    provider: "lambda",
+    network: { mode: "allow-all" },
+    permissionMode: "ask",
+  },
+});
 
-// agent config
-{
-  "sandbox": "sb_xxx",                                 // optional agent-level sandbox id
-  "workspaces": [                                      // optional; name = mount label
-    { "name": "notes", "workspaceId": "ws_aaa" },                     // inherits the agent-level sandbox
-    { "name": "team",  "workspaceId": "ws_bbb", "sandbox": "sb_yyy" }, // per-workspace override
-    { "name": "docs",  "workspaceId": "ws_ccc", "sandbox": null }      // read-only, S3-direct (opt out of the mount)
-  ]
-}
+export const notes = defineWorkspace({
+  name: "notes",
+  config: {
+    storage: { provider: "s3" },
+    harness: { enabled: true },
+  },
+});
+
+export const myAgent = defineAgent({
+  name: "my-agent",
+  config: {
+    provider: { openai: { apiKey: env.OPENAI_API_KEY } },
+    model: { provider: "openai", modelId: "gpt-5.5" },
+    agent: { system: "You are a helpful assistant." },
+    sandbox: lambdaSandbox,
+    workspaces: [
+      notes,                                    // inherit agent sandbox
+      { workspace: notes, sandbox: null },      // read-only, S3-direct
+    ],
+  },
+});
 ```
+
+The CLI compiles these into a manifest, resolves references, and syncs them. You can also create records via the raw account API — see the [API Reference](/api-reference) for `POST /accounts/me/sandboxes` and `POST /accounts/me/workspaces`.
 
 ## Tool surface
 

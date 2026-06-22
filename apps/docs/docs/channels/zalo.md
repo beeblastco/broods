@@ -4,16 +4,27 @@ Zalo integration allows your agent to answer direct text messages through the of
 
 ## Configuration
 
-```json
-{
-  "channels": {
-    "zalo": {
-      "botToken": "your-zalo-bot-token",
-      "webhookSecret": "your-webhook-secret",
-      "allowedUserIds": ["123456789"]
-    }
-  }
-}
+Define a Zalo channel with `defineZaloChannel` and attach it to an agent:
+
+```ts title="filthypanty/index.ts"
+import {
+  defineAgent,
+  defineZaloChannel,
+  env,
+} from "filthy-panty";
+
+export const zalo = defineZaloChannel({
+  botToken: env.ZALO_BOT_TOKEN,
+  webhookSecret: env.ZALO_WEBHOOK_SECRET,
+  allowedUserIds: ["123456789"],
+});
+
+export const myAgent = defineAgent({
+  name: "my-agent",
+  config: {
+    channels: [zalo],
+  },
+});
 ```
 
 - `botToken` (Required): Bot token from Zalo Bot Platform.

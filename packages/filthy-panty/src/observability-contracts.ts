@@ -26,10 +26,12 @@ export type ObservabilityLogEntry = {
 };
 
 // Root span kind is "task" (one per top-level invocation); a "subtask" is a
-// subagent's root span, nested under its parent task (same traceId, parentSpanId
-// = the parent task span). Children are "model.step", "tool.call", and "phase"
-// (timeline phases like cold start, context prepare, and compaction). All spans
-// in one task tree share the same traceId.
+// subagent's root span. A subtask is its OWN top-level trace (its own traceId),
+// linked back to the parent via the parent.trace_id / parent.task_id attributes
+// rather than nested under the parent span — the dashboard renders it as a sibling
+// task row with a jump-to-parent link. Children ("model.step", "tool.call", and
+// "phase" timeline spans like cold start, context prepare, and compaction) share
+// the traceId of the task or subtask they belong to.
 export type ObservabilitySpanRow = {
   traceId: string;
   spanId: string;

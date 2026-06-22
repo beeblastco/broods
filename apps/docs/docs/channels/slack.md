@@ -4,19 +4,28 @@ Slack integration allows your agent to interact with users via Slack.
 
 ## Configuration
 
-To enable Slack, include the following in your agent configuration:
+Define a Slack channel with `defineSlackChannel` and attach it to an agent:
 
-```json
-{
-  "channels": {
-    "slack": {
-      "botToken": "your-bot-token",
-      "signingSecret": "your-signing-secret",
-      "allowedChannelIds": ["channel-id-1"],
-      "streaming": { "mode": "edit" }
-    }
-  }
-}
+```ts title="filthypanty/index.ts"
+import {
+  defineAgent,
+  defineSlackChannel,
+  env,
+} from "filthy-panty";
+
+export const slack = defineSlackChannel({
+  botToken: env.SLACK_BOT_TOKEN,
+  signingSecret: env.SLACK_SIGNING_SECRET,
+  allowedChannelIds: ["channel-id-1"],
+  streaming: { mode: "edit" },
+});
+
+export const myAgent = defineAgent({
+  name: "my-agent",
+  config: {
+    channels: [slack],
+  },
+});
 ```
 
 - `botToken`: Slack Bot User OAuth Token.

@@ -111,16 +111,18 @@ Concretely, the model-facing workspace tools read sandbox-backed workspaces thro
 
 > **Known exception:** `Session.loadMemoryFile` reads `MEMORY.md` through the **S3 API** at the start of each turn. If the agent edited `MEMORY.md` less than ~2 min earlier in the same session, that read can be stale. This is accepted today because memory converges across turns and a sandbox round-trip on every turn is costly; route prompt-time memory reads through a sandbox-backed `read` call if freshness ever becomes a hard requirement.
 
-## Configuration
+## Code-First Configuration
 
-```json
-{
-  "name": "notes",
-  "config": {
-    "storage": { "provider": "s3" },
-    "harness": { "enabled": true }
-  }
-}
+```ts
+import { defineWorkspace } from "filthy-panty";
+
+export const notes = defineWorkspace({
+  name: "notes",
+  config: {
+    storage: { provider: "s3" },
+    harness: { enabled: true },
+  },
+});
 ```
 
 If `storage` is omitted, workspace config normalization fills in `{ "provider": "s3" }`.

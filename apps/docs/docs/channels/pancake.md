@@ -4,22 +4,29 @@ Pancake is an omni-channel customer service and inbox management platform. The P
 
 ## Configuration
 
-To enable the Pancake channel, configure your agent's settings as shown below:
+Define a Pancake channel with `definePancakeChannel` and attach it to an agent:
 
-```json
-{
-  "channels": {
-    "pancake": {
-      "pageId": "your-page-id",
-      "pageAccessToken": "your-page-access-token",
-      "webhookSecret": "a-long-random-value",
-      "senderId": "optional-staff-user-id",
-      "options": {
-        "ignoreTagIds": ["123"]
-      }
-    }
-  }
-}
+```ts title="filthypanty/index.ts"
+import {
+  defineAgent,
+  definePancakeChannel,
+  env,
+} from "filthy-panty";
+
+export const pancake = definePancakeChannel({
+  pageId: env.PANCAKE_PAGE_ID,
+  pageAccessToken: env.PANCAKE_PAGE_ACCESS_TOKEN,
+  webhookSecret: env.PANCAKE_WEBHOOK_SECRET,
+  senderId: env.PANCAKE_SENDER_ID,
+  ignoreTagIds: ["123"],
+});
+
+export const myAgent = defineAgent({
+  name: "my-agent",
+  config: {
+    channels: [pancake],
+  },
+});
 ```
 
 ### Configuration Fields

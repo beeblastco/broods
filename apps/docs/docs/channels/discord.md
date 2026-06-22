@@ -4,19 +4,28 @@ Discord integration allows your agent to interact with users via Discord bots.
 
 ## Configuration
 
-To enable Discord, include the following in your agent configuration:
+Define a Discord channel with `defineDiscordChannel` and attach it to an agent:
 
-```json
-{
-  "channels": {
-    "discord": {
-      "botToken": "your-bot-token",
-      "publicKey": "your-public-key",
-      "allowedGuildIds": ["guild-id-1"],
-      "streaming": { "mode": "edit" }
-    }
-  }
-}
+```ts title="filthypanty/index.ts"
+import {
+  defineAgent,
+  defineDiscordChannel,
+  env,
+} from "filthy-panty";
+
+export const discord = defineDiscordChannel({
+  botToken: env.DISCORD_BOT_TOKEN,
+  publicKey: env.DISCORD_PUBLIC_KEY,
+  allowedGuildIds: ["guild-id-1"],
+  streaming: { mode: "edit" },
+});
+
+export const myAgent = defineAgent({
+  name: "my-agent",
+  config: {
+    channels: [discord],
+  },
+});
 ```
 
 - `botToken`: Discord Bot Token.

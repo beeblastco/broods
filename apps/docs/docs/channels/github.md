@@ -4,19 +4,28 @@ GitHub integration allows your agent to react to GitHub events.
 
 ## Configuration
 
-To enable GitHub, include the following in your agent configuration:
+Define a GitHub channel with `defineGitHubChannel` and attach it to an agent:
 
-```json
-{
-  "channels": {
-    "github": {
-      "webhookSecret": "your-webhook-secret",
-      "appId": "your-app-id",
-      "privateKey": "your-private-key",
-      "allowedRepos": ["owner/repo-1", "owner/repo-2"]
-    }
-  }
-}
+```ts title="filthypanty/index.ts"
+import {
+  defineAgent,
+  defineGitHubChannel,
+  env,
+} from "filthy-panty";
+
+export const github = defineGitHubChannel({
+  webhookSecret: env.GITHUB_WEBHOOK_SECRET,
+  appId: env.GITHUB_APP_ID,
+  privateKey: env.GITHUB_PRIVATE_KEY,
+  allowedRepos: ["owner/repo-1", "owner/repo-2"],
+});
+
+export const myAgent = defineAgent({
+  name: "my-agent",
+  config: {
+    channels: [github],
+  },
+});
 ```
 
 - `webhookSecret`: GitHub Webhook Secret.
