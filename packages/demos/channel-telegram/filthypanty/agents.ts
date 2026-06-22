@@ -37,18 +37,11 @@ export const researchSpecialist = defineAgent({
   name: "research-specialist",
   config: {
     provider: {
-      minimax: {
-        apiKey: env.MINIMAX_API_KEY,
-      }
+      google: { apiKey: env.GOOGLE_API_KEY },
     },
     model: {
-      provider: "minimax",
-      modelId: "MiniMax-M3",
-      providerOptions: {
-        anthropic: {
-          thinking: { type: 'enabled', budgetTokens: 12000 },
-        }
-      },
+      provider: "google",
+      modelId: "gemma-4-31b-it",
     },
     agent: {
       system: researchInstructions,
@@ -73,18 +66,11 @@ export const agent = defineAgent({
   name: "telegram-channel-agent",
   config: {
     provider: {
-      minimax: {
-        apiKey: env.MINIMAX_API_KEY,
-      }
+      google: { apiKey: env.GOOGLE_API_KEY },
     },
     model: {
-      provider: "minimax",
-      modelId: "MiniMax-M3",
-      providerOptions: {
-        anthropic: {
-          thinking: { type: 'enabled', budgetTokens: 12000 },
-        }
-      },
+      provider: "google",
+      modelId: "gemma-4-31b-it",
     },
     agent: {
       system: mainInstructions,
