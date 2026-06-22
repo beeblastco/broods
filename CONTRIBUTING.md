@@ -1,6 +1,6 @@
 # Contributing
 
-Thanks for helping improve filthy-panty. Contributions are welcome — whether it's a bug fix, a new channel, a tool, or a docs improvement.
+Thanks for helping improve broods. Contributions are welcome — whether it's a bug fix, a new channel, a tool, or a docs improvement.
 
 ## Quick Start
 
@@ -59,7 +59,7 @@ bun run demo stream.ts   # run a demo script (loads packages/demos/.env)
 
 - Core is the source of truth for runtime behavior.
 - When public API or config shape changes, sync the OpenAPI spec (`apps/docs/docs/api-reference/openapi.yaml`), relevant docs, demos, and SDK types.
-- Convex `_generated/` is committed on purpose. After schema changes, run `bun run --filter @filthy-panty/convex codegen` and commit the diff.
+- Convex `_generated/` is committed on purpose. After schema changes, run `bun run --filter @broods/convex codegen` and commit the diff.
 - Update docs and diagrams when architecture or behavior changes. Keep docs focused — don't add the same explanation to every file.
 
 ## Security
@@ -74,4 +74,4 @@ bun run demo stream.ts   # run a demo script (loads packages/demos/.env)
 ## Questions?
 
 - [Discord](https://discord.gg/beeblast) — chat with maintainers
-- [GitHub Issues](https://github.com/beeblastco/filthy-panty/issues) — bugs and feature requests
+- [GitHub Issues](https://github.com/beeblastco/broods/issues) — bugs and feature requests

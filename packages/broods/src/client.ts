@@ -4,7 +4,7 @@
  */
 
 import type { TextStreamPart, ToolSet } from "ai";
-import { loadFilthyPantyRuntimeConfig } from "./runtime-config.ts";
+import { loadBroodsRuntimeConfig } from "./runtime-config.ts";
 import { stripTrailingSlash } from "./config.ts";
 import { resolveRunEvents, type AgentRunEventInput, type AgentRunOverrides } from "./run-input.ts";
 import { readSseStream } from "./stream.ts";
@@ -16,7 +16,7 @@ import type {
 } from "./types.ts";
 import type { CreateCronInput, UpdateCronInput } from "./contracts.ts";
 
-export const DEFAULT_CORE_BASE_URL = "https://app.beeblast.co";
+export const DEFAULT_CORE_BASE_URL = "https://gateway.broods.app";
 
 /**
  * Input for a single agent run. The core direct API is event-based (a list of
@@ -85,13 +85,13 @@ export interface ResourceApi {
   readonly tools?: Record<string, unknown>;
 }
 
-export interface FilthyPantyClientOptions {
+export interface BroodsClientOptions {
   /**
-   * Base URL of the core service to call directly. Use `https://app.beeblast.co`
+   * Base URL of the core service to call directly. Use `https://gateway.broods.app`
    * for the hosted service. If you only have a domain, use `host` instead.
    */
   baseUrl?: string;
-  /** Hostname or URL of the core service. `app.beeblast.co` becomes `https://app.beeblast.co`. */
+  /** Hostname or URL of the core service. `gateway.broods.app` becomes `https://gateway.broods.app`. */
   host?: string;
   /** API key used as the Bearer token for direct runtime calls. */
   apiKey?: string;
@@ -109,22 +109,22 @@ export type CreateClientCronInput =
   | CreateCronInput
   | (Omit<CreateCronInput, "agentId"> & { agent: AgentReference | string });
 
-export class FilthyPantyClient {
+export class BroodsClient {
   private readonly baseUrl: string;
   private readonly apiKey?: string;
   private readonly fetchImpl: typeof fetch;
 
-  constructor(options: FilthyPantyClientOptions = {}) {
+  constructor(options: BroodsClientOptions = {}) {
     // Loads package-local .env/.env.local files for Node/Bun callers. Dashboard
     // auth from the returned object is intentionally ignored for runtime calls.
-    loadFilthyPantyRuntimeConfig();
+    loadBroodsRuntimeConfig();
     this.baseUrl = normalizeHttpServiceUrl(options.baseUrl ||
       options.host ||
-      process.env.FILTHY_PANTY_BASE_URL ||
-      process.env.FILTHY_PANTY_HOST ||
+      process.env.BROODS_BASE_URL ||
+      process.env.BROODS_HOST ||
       DEFAULT_CORE_BASE_URL);
     this.apiKey = options.apiKey ||
-      process.env.FILTHY_PANTY_API_KEY ||
+      process.env.BROODS_API_KEY ||
       undefined;
     this.fetchImpl = options.fetch ?? fetch;
   }
@@ -140,7 +140,7 @@ export class FilthyPantyClient {
     if (typeof refOrName === "string") {
       const name = refOrName;
       const id = agentId ?? "";
-      if (!id) throw new Error(`Agent ${name} is missing a generated id. Run filthy-panty deploy first.`);
+      if (!id) throw new Error(`Agent ${name} is missing a generated id. Run broods deploy first.`);
 
       return {
         id: id,
@@ -151,7 +151,7 @@ export class FilthyPantyClient {
     }
 
     const ref = refOrName;
-    if (!ref.id) throw new Error(`Agent ${ref.name} is missing a generated id. Run filthy-panty deploy first.`);
+    if (!ref.id) throw new Error(`Agent ${ref.name} is missing a generated id. Run broods deploy first.`);
 
     return {
       id: ref.id,
@@ -399,9 +399,9 @@ export class FilthyPantyClient {
     }
 
     throw new Error(
-      `FilthyPantyClient streams directly from the core service at ${this.baseUrl}. ` +
+      `BroodsClient streams directly from the core service at ${this.baseUrl}. ` +
       "Provide apiKey. " +
-      "For a self-hosted core service, set host/baseUrl or FILTHY_PANTY_HOST/FILTHY_PANTY_BASE_URL.",
+      "For a self-hosted core service, set host/baseUrl or BROODS_HOST/BROODS_BASE_URL.",
     );
   }
 
@@ -418,8 +418,8 @@ export class FilthyPantyClient {
       });
     } catch (error) {
       throw new Error(
-        `Cannot access the filthy-panty core service at ${targetUrl}. ` +
-        `The SDK uses ${DEFAULT_CORE_BASE_URL} by default; set host/baseUrl or FILTHY_PANTY_HOST/FILTHY_PANTY_BASE_URL ` +
+        `Cannot access the broods core service at ${targetUrl}. ` +
+        `The SDK uses ${DEFAULT_CORE_BASE_URL} by default; set host/baseUrl or BROODS_HOST/BROODS_BASE_URL ` +
         `to your own core service URL if your account uses a custom deployment. ` +
         `Cause: ${error instanceof Error ? error.message : String(error)}`,
       );
@@ -429,7 +429,7 @@ export class FilthyPantyClient {
   private apiKeyHeaders(): Record<string, string> {
     if (!this.apiKey) {
       throw new Error(
-        "FilthyPantyClient requires apiKey or FILTHY_PANTY_API_KEY.",
+        "BroodsClient requires apiKey or BROODS_API_KEY.",
       );
     }
 
@@ -450,7 +450,7 @@ export class FilthyPantyClient {
       });
     } catch (error) {
       throw new Error(
-        `Cannot access the filthy-panty core service at ${targetUrl}. ` +
+        `Cannot access the broods core service at ${targetUrl}. ` +
         `Cause: ${error instanceof Error ? error.message : String(error)}`,
       );
     }
@@ -535,7 +535,7 @@ async function cronErrorDetails(response: Response): Promise<string> {
   const text = await response.text();
   if (text.includes("Request body must include eventId and conversationKey")) {
     return `${text}. Cron job APIs must be served by the configured baseUrl. ` +
-      "Prefer defining stable cron jobs with defineCron(...) in filthypanty/ and syncing with `filthy-panty dev` or `filthy-panty deploy`.";
+      "Prefer defining stable cron jobs with defineCron(...) in broods/ and syncing with `broods dev` or `broods deploy`.";
   }
 
   return text;

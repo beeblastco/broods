@@ -2,20 +2,11 @@
 
 /** Account settings page: profile, preferences, and danger zone. */
 import { AccountPanel } from "@/app/(main)/[projectId]/settings/components/AccountPanel";
+import { DeleteConfirmDialog } from "@/app/components/DeleteConfirmDialog";
 import { Button } from "@/app/components/ui/button";
 import { Section } from "@/app/components/Section";
-import {
-    Dialog,
-    DialogContent,
-    DialogDescription,
-    DialogFooter,
-    DialogHeader,
-    DialogTitle,
-} from "@/app/components/ui/dialog";
-import { Input } from "@/app/components/ui/input";
-import { Label } from "@/app/components/ui/label";
 import { cn } from "@/app/lib/utils";
-import { api } from "@filthy-panty/convex/_generated/api";
+import { api } from "@broods/convex/_generated/api";
 import { useMutation, useQuery } from "convex/react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useState } from "react";
@@ -27,8 +18,6 @@ const TABS: Array<{ id: AccountTab; label: string; danger?: boolean }> = [
     { id: "danger", label: "Danger Zone", danger: true },
 ];
 
-const DELETE_ACCOUNT_PHRASE = "delete my account";
-
 /** Delete account section rendered inside the Danger Zone tab. */
 function AccountDangerPanel() {
     const currentUser = useQuery(api.user.getCurrent);
@@ -36,23 +25,19 @@ function AccountDangerPanel() {
     const router = useRouter();
 
     const [dialogOpen, setDialogOpen] = useState(false);
-    const [phrase, setPhrase] = useState("");
     const [isDeleting, setIsDeleting] = useState(false);
     const [scheduledAt, setScheduledAt] = useState<number | null>(null);
     const [deleteError, setDeleteError] = useState<string | null>(null);
 
     const effectiveDeletionAt = scheduledAt ?? currentUser?.deletionScheduledFor ?? null;
-    const confirmed = phrase.trim().toLowerCase() === DELETE_ACCOUNT_PHRASE;
 
     async function handleDelete() {
-        if (!confirmed) return;
         setIsDeleting(true);
         setDeleteError(null);
         try {
             const result = await requestAccountDeletion({});
             setScheduledAt(result.scheduledFor);
             setDialogOpen(false);
-            setPhrase("");
             router.replace("/auth/sign-in");
         } catch (err) {
             setDeleteError(err instanceof Error ? err.message : "Unable to schedule account deletion.");
@@ -96,7 +81,6 @@ function AccountDangerPanel() {
                                 className="shrink-0 cursor-pointer"
                                 onClick={() => {
                                     setDeleteError(null);
-                                    setPhrase("");
                                     setDialogOpen(true);
                                 }}
                             >
@@ -108,47 +92,15 @@ function AccountDangerPanel() {
                 </div>
             </Section>
 
-            <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-                <DialogContent className="sm:max-w-md">
-                    <DialogHeader>
-                        <DialogTitle className="text-destructive">Delete account</DialogTitle>
-                        <DialogDescription>
-                            This schedules your account for permanent deletion after 7 days. Type{" "}
-                            <span className="font-mono text-foreground">{DELETE_ACCOUNT_PHRASE}</span>{" "}
-                            to continue.
-                        </DialogDescription>
-                    </DialogHeader>
-                    <div className="grid gap-2 py-2">
-                        <Label htmlFor="delete-account-confirmation">Confirmation phrase</Label>
-                        <Input
-                            id="delete-account-confirmation"
-                            value={phrase}
-                            onChange={(e) => setPhrase(e.target.value)}
-                            placeholder={DELETE_ACCOUNT_PHRASE}
-                            autoFocus
-                        />
-                    </div>
-                    <DialogFooter>
-                        <Button
-                            type="button"
-                            variant="ghost"
-                            className="cursor-pointer"
-                            onClick={() => setDialogOpen(false)}
-                        >
-                            Cancel
-                        </Button>
-                        <Button
-                            type="button"
-                            variant="destructive"
-                            className="cursor-pointer disabled:cursor-not-allowed"
-                            disabled={!confirmed || isDeleting}
-                            onClick={handleDelete}
-                        >
-                            {isDeleting ? "Scheduling..." : "Schedule deletion"}
-                        </Button>
-                    </DialogFooter>
-                </DialogContent>
-            </Dialog>
+            <DeleteConfirmDialog
+                open={dialogOpen}
+                onOpenChange={setDialogOpen}
+                resourceName="my account"
+                resourceType="account"
+                critical={true}
+                onConfirm={handleDelete}
+                isDeleting={isDeleting}
+            />
         </>
     );
 }

@@ -1,9 +1,9 @@
 import { expect, test } from "bun:test";
-import { FilthyPantySyncClient } from "../src/sync.ts";
+import { BroodsSyncClient } from "../src/sync.ts";
 
 function clientWith(handler: (url: string, init: RequestInit) => Response) {
   const calls: Array<{ url: string; method: string }> = [];
-  const client = new FilthyPantySyncClient({
+  const client = new BroodsSyncClient({
     dashboardUrl: "https://dashboard.example.com",
     token: "tok",
     fetch: async (input, init) => {

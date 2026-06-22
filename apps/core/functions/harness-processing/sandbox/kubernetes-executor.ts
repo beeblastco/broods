@@ -2,7 +2,7 @@
  * Kubernetes-backed workspace sandbox executor.
  *
  * Runs the agent's bash/node/python inside an agent-sandbox `Sandbox`
- * (agents.x-k8s.io/v1alpha1) pod on the Beeblast k3s cluster. Ephemeral by
+ * (agents.x-k8s.io/v1alpha1) pod on the Broods k3s cluster. Ephemeral by
  * default (create -> wait Ready -> mount-s3 -> exec -> delete); persistent mode
  * reserves one Sandbox per workspace (deterministic name, home PVC, resume by
  * scaling replicas 0->1) and is reclaimed cluster-side by the infra reaper +
@@ -78,10 +78,10 @@ const POD_READY_TIMEOUT_MS = 120_000;
 const POD_POLL_INTERVAL_MS = 500;
 // Reserved-sandbox home volume + the labels/annotations the infra reaper reads.
 const HOME_VOLUME_NAME = "home";
-const LAST_ACTIVITY_ANNOTATION = "beeblast.co/last-activity-at";
-const IDLE_TIMEOUT_ANNOTATION = "beeblast.co/idle-timeout-seconds";
-const MANAGED_LABEL = "beeblast.co/persistent";
-const SANDBOX_NAME_LABEL = "beeblast.co/sandbox-name";
+const LAST_ACTIVITY_ANNOTATION = "broods.app/last-activity-at";
+const IDLE_TIMEOUT_ANNOTATION = "broods.app/idle-timeout-seconds";
+const MANAGED_LABEL = "broods.app/persistent";
+const SANDBOX_NAME_LABEL = "broods.app/sandbox-name";
 
 interface ExecResult {
   stdout: string;

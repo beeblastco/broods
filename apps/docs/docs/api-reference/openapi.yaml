@@ -1,13 +1,13 @@
 openapi: 3.1.0
 info:
-  title: BeeBlast API Reference
+  title: Broods API Reference
   description: |
-    Complete API reference for BeeBlast. Two surfaces:
+    Complete API reference for Broods. Two surfaces:
 
     - **Direct API** — account-authenticated agent runtime endpoint (sync SSE, async jobs, status polling, external tool completion)
     - **Account Management** — tenant configuration (accounts, agents, skills, secrets)
 
-    > **For daily development, use the `filthy-panty` CLI and TypeScript SDK.** The CLI handles tenant configuration (agents, sandboxes, workspaces, skills, crons, tools) automatically via `filthy-panty dev` and `filthy-panty deploy`. You do not need to call these account-management endpoints manually. This reference is for:
+    > **For daily development, use the `broods` CLI and TypeScript SDK.** The CLI handles tenant configuration (agents, sandboxes, workspaces, skills, crons, tools) automatically via `broods dev` and `broods deploy`. You do not need to call these account-management endpoints manually. This reference is for:
     > - Runtime invocation (`/`, `/async`, `/status/{eventId}`) from the TypeScript SDK, curl, or Python client
     > - Advanced integrations that need direct account-management access
     > - Admin operations using `AdminAccountSecret`

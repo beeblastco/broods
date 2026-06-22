@@ -7,7 +7,7 @@
 
 import { Button } from "@/app/components/ui/button";
 import { cn } from "@/app/lib/utils";
-import { api } from "@filthy-panty/convex/_generated/api";
+import { api } from "@broods/convex/_generated/api";
 import { useQuery } from "convex/react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { ApiAccessPanel } from "./components/ApiAccessPanel";

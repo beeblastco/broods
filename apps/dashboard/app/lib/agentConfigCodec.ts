@@ -1,19 +1,19 @@
 /**
  * Codec between the dashboard's flat `agentConfigs` row and the nested
- * filthy-panty `AgentConfig` shape that the Config tab exposes for editing.
+ * broods `AgentConfig` shape that the Config tab exposes for editing.
  *
  * Cherry-coke stores top-level model/runtime settings as columns for fast
  * queries; everything else (workspace, tools, channels, provider settings,
  * hooks, session, skills, subagent) is stashed under `extraConfig`. This
  * file projects both into the unified nested object expected by
- * filthy-panty, and inverts the transform on save.
+ * broods, and inverts the transform on save.
  *
  * Secrets in the nested config can be written as `${ENV_NAME}` placeholders.
  * Use `substituteEnvPlaceholders` to resolve them against the agent's
- * `runtimeVariables` right before pushing the config to filthy-panty.
+ * `runtimeVariables` right before pushing the config to broods.
  */
 
-/** Recognised top-level branches in filthy-panty `AgentConfig`. */
+/** Recognised top-level branches in broods `AgentConfig`. */
 const NESTED_BRANCHES = [
     "agent",
     "model",
@@ -55,7 +55,7 @@ export interface FlatAgentConfig {
     extraConfig?: Record<string, unknown>;
 }
 
-/** Nested filthy-panty `AgentConfig` shape rendered for the Config tab. */
+/** Nested broods `AgentConfig` shape rendered for the Config tab. */
 export type NestedAgentConfig = Record<string, unknown>;
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -105,7 +105,7 @@ function assertNoUnsupportedKeys(value: Record<string, unknown>, keys: readonly 
     }
 }
 
-/** Project a flat dashboard row into the nested filthy-panty shape. */
+/** Project a flat dashboard row into the nested broods shape. */
 export function toNestedAgentConfig(flat: FlatAgentConfig): NestedAgentConfig {
     const extra = isPlainObject(flat.extraConfig) ? flat.extraConfig : {};
 

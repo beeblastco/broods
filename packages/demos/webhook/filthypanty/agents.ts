@@ -1,4 +1,4 @@
-import { defineAgent, env } from "filthy-panty";
+import { defineAgent, env } from "broods";
 
 export const webhookAgent = defineAgent({
   name: "webhook-agent",

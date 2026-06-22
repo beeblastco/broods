@@ -22,7 +22,7 @@ export function getStorage(): StorageProvider {
     const { convexStorageProvider } = require("./convex/index.ts");
     if (!convexStorageProvider) {
       throw new Error(
-        "STORAGE_PROVIDER=convex requires the filthy-panty-convex-adapter submodule. " +
+        "STORAGE_PROVIDER=convex requires the broods-convex-adapter submodule. " +
           "Run `git submodule update --init --recursive` (SaaS deployments only).",
       );
     }

@@ -1,9 +1,9 @@
 /**
- * Authenticated browser bridge for `filthy-panty login`.
+ * Authenticated browser bridge for `broods login`.
  */
 
 import { withAuth } from "@workos-inc/authkit-nextjs";
-import { api } from "@filthy-panty/convex/_generated/api";
+import { api } from "@broods/convex/_generated/api";
 import { ConvexHttpClient } from "convex/browser";
 import { NextRequest, NextResponse } from "next/server";
 
@@ -37,7 +37,7 @@ export async function GET(request: NextRequest): Promise<Response> {
     } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
 
-        return text(`filthy-panty CLI login failed: ${message}`, 500);
+        return text(`broods CLI login failed: ${message}`, 500);
     }
 }
 

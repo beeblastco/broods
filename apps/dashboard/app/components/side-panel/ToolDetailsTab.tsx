@@ -4,8 +4,8 @@
 import { Button } from "@/app/components/ui/button";
 import { Input } from "@/app/components/ui/input";
 import { Switch } from "@/app/components/ui/switch";
-import { api } from "@filthy-panty/convex/_generated/api";
-import type { Id } from "@filthy-panty/convex/_generated/dataModel";
+import { api } from "@broods/convex/_generated/api";
+import type { Id } from "@broods/convex/_generated/dataModel";
 import { toErrorMessage } from "@/app/lib/errors";
 import { applyToolServiceUpsert } from "@/app/lib/toolServiceOptimistic";
 import { useMutation, useQuery } from "convex/react";

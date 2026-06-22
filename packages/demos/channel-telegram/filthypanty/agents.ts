@@ -1,4 +1,4 @@
-import { defineAgent, defineSandbox, defineWorkspace, defineTelegramChannel, env } from "filthy-panty";
+import { defineAgent, defineSandbox, defineWorkspace, defineTelegramChannel, env } from "broods";
 import fs from "fs";
 import path from "path";
 

@@ -200,7 +200,7 @@ export interface CronStore {
  * results, async tool results, dedupe, and signup rate limits — are
  * intentionally NOT part of StorageProvider yet. Two reasons:
  *
- * 1. Cherry-coke's Convex schema doesn't match filthy-panty's DDB schema
+ * 1. Cherry-coke's Convex schema doesn't match broods's DDB schema
  *    for these (conversations use a 1:N model in Convex but a flat
  *    composite-key event table in DDB; asyncToolResult needs a GSI +
  *    dispatch-group fan-in that the unified Convex asyncResults table
@@ -209,7 +209,7 @@ export interface CronStore {
  *    conditional writes) that Convex doesn't expose cleanly.
  *
  * They stay in their current modules under functions/harness-processing/
- * and run against DynamoDB on every stage. When cherry-coke and filthy-panty
+ * and run against DynamoDB on every stage. When cherry-coke and broods
  * agree on a shared schema, lift them into this file and add stores.
  */
 

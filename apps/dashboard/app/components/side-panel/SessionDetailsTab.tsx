@@ -13,7 +13,7 @@ import { readAgentBranch, type FlatAgentConfig } from "@/app/lib/agentConfigCode
 import { Database } from "lucide-react";
 import { useMemo } from "react";
 
-/** filthy-panty default + ceiling for compaction's serialized-character budget. */
+/** broods default + ceiling for compaction's serialized-character budget. */
 const DEFAULT_MAX_CONTEXT_LENGTH = 100_000;
 const MAX_CONTEXT_LENGTH_LIMIT = 500_000;
 

@@ -1,14 +1,14 @@
 /**
- * Example: streaming an uploaded custom tool on the sync SSE path via declarative filthy-panty resources.
+ * Example: streaming an uploaded custom tool on the sync SSE path via declarative broods resources.
  *
  * The tool whose `execute` is an async generator streams preliminary tool-result
  * chunks live over SSE before the final result.
  */
 
-import { FilthyPantyClient } from "filthy-panty";
-import { api } from "./filthypanty/_generated/api";
+import { BroodsClient } from "broods";
+import { api } from "./broods/_generated/api";
 
-const client = new FilthyPantyClient();
+const client = new BroodsClient();
 
 for await (const chunk of client.stream(api.agents.streamingToolAgent, {
   input: "Call the stream_progress tool with steps=5 and tell me the final result.",

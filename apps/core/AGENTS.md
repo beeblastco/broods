@@ -1,16 +1,16 @@
 # apps/core Agent Guide
 
-Scope: this file applies to `apps/core` (`@filthy-panty/core`) — the serverless AI agent harness on AWS (Lambda + Vercel AI SDK + SST) and the future Rust port boundary.
+Scope: this file applies to `apps/core` (`@broods/core`) — the serverless AI agent harness on AWS (Lambda + Vercel AI SDK + SST) and the future Rust port boundary.
 
 Paths in this file are relative to `apps/core/` unless written with `../../`. If you started directly in this folder, also read `../../AGENTS.md` for the monorepo-wide rules.
 
 Dependent workspaces (in this monorepo):
 
-- `../../packages/convex` (`@filthy-panty/convex`): shared Convex backend. Core's storage adapter at `functions/_shared/storage/convex/` reads it; convex mode is active on **any stage that supplies both `CONVEX_URL` and `CONVEX_DEPLOY_KEY`** (production always does; dev does too since CI injects those secrets). Read `../../packages/convex/AGENTS.md` before changing Convex files.
-- `../../packages/filthy-panty` (`filthy-panty`): CLI + SDK npm package that calls core's deployed Function URLs. Update its types/client when the public API or config shape changes.
+- `../../packages/convex` (`@broods/convex`): shared Convex backend. Core's storage adapter at `functions/_shared/storage/convex/` reads it; convex mode is active on **any stage that supplies both `CONVEX_URL` and `CONVEX_DEPLOY_KEY`** (production always does; dev does too since CI injects those secrets). Read `../../packages/convex/AGENTS.md` before changing Convex files.
+- `../../packages/broods` (`broods`): CLI + SDK npm package that calls core's deployed Function URLs. Update its types/client when the public API or config shape changes.
 - `../../packages/demos`: runnable demo folders against the deployed API, importing the SDK. Keep them in sync with config changes.
-- `../../apps/dashboard` (`@filthy-panty/dashboard`): Next.js dashboard sharing the Convex backend. Has its own AGENTS.md — read it before dashboard work.
-- `../../apps/docs` (`@filthy-panty/docs`): Docusaurus docs site. Update docs and diagrams there when core behavior changes.
+- `../../apps/dashboard` (`@broods/dashboard`): Next.js dashboard sharing the Convex backend. Has its own AGENTS.md — read it before dashboard work.
+- `../../apps/docs` (`@broods/docs`): Docusaurus docs site. Update docs and diagrams there when core behavior changes.
 
 Related external repos (siblings of the monorepo checkout):
 
@@ -22,8 +22,8 @@ Local workspace rules:
 - Use Bun from the repo root for install/check/build scripts; run `sst` commands from `apps/core/`.
 - Demos run from their own folder under `packages/demos/<name>/`, which loads that demo's local `.env`.
 - Env files are per-package. Keep the matching `.env.example` files in sync with new env reads, and never commit real values.
-- The core storage adapter reaches the Convex generated API via `require("@filthy-panty/convex/_generated/api")` on purpose — a typed import would drag every backend source into core's stricter typecheck. Keep it a require().
-- `../../packages/convex/_generated/` is committed. After schema changes run `bun run --filter @filthy-panty/convex codegen` and commit the diff. The dashboard image build re-runs `convex deploy`.
+- The core storage adapter reaches the Convex generated API via `require("@broods/convex/_generated/api")` on purpose — a typed import would drag every backend source into core's stricter typecheck. Keep it a require().
+- `../../packages/convex/_generated/` is committed. After schema changes run `bun run --filter @broods/convex codegen` and commit the diff. The dashboard image build re-runs `convex deploy`.
 
 Key rules:
 

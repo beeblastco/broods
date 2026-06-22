@@ -3,12 +3,12 @@
 /**
  * Cron jobs management page. Lists the active org's scheduled agent runs and
  * lets the user create, edit, and remove them. CRUD goes through Convex
- * actions that proxy to filthy-panty's /accounts/me/crons HTTP endpoints
+ * actions that proxy to broods's /accounts/me/crons HTTP endpoints
  * to keep EventBridge Scheduler in sync.
  */
 
 import { Button } from "@/app/components/ui/button";
-import { api } from "@filthy-panty/convex/_generated/api";
+import { api } from "@broods/convex/_generated/api";
 import { useQuery } from "convex/react";
 import { Plus } from "lucide-react";
 import { useState } from "react";
@@ -49,7 +49,7 @@ export default function CronsPage() {
             ) : !account ? (
                 <div className="rounded-lg border border-border bg-card px-4 py-8 text-center">
                     <p className="text-sm text-muted-foreground">
-                        Your organization is not provisioned yet. Provision the filthy-panty
+                        Your organization is not provisioned yet. Provision the broods
                         account in settings before creating cron jobs.
                     </p>
                 </div>

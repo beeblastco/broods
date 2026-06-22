@@ -1,6 +1,6 @@
 /** Optimistic-update helper for `toolService.upsertForNode` writes from the tool tabs. */
-import { api } from "@filthy-panty/convex/_generated/api";
-import type { Id } from "@filthy-panty/convex/_generated/dataModel";
+import { api } from "@broods/convex/_generated/api";
+import type { Id } from "@broods/convex/_generated/dataModel";
 import type { OptimisticLocalStore } from "convex/browser";
 
 type UpsertArgs = {

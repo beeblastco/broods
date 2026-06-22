@@ -1,5 +1,5 @@
 {
-  "name": "@filthy-panty/core",
+  "name": "@broods/core",
   "description": "Serverless multi-account AI agent harness on AWS Lambda — Vercel AI SDK with Google, OpenAI, Bedrock, and Gateway providers + multi-channel integrations (Telegram, Discord, Slack, GitHub, Pancake, Zalo), deployed with SST.",
   "type": "module",
   "private": true,
@@ -47,7 +47,7 @@
     "@convex-dev/stripe": "^0.1.4",
     "@convex-dev/workos-authkit": "^0.2.6",
     "@daytona/sdk": "^0.175.0",
-    "@filthy-panty/convex": "workspace:*",
+    "@broods/convex": "workspace:*",
     "@kubernetes/client-node": "^1.4.0",
     "@pulumi/aws": "7.30.0",
     "@pulumi/pulumi": "3.228.0",

@@ -7,8 +7,8 @@
 import { Badge } from "@/app/components/ui/badge";
 import { Button } from "@/app/components/ui/button";
 import { Section } from "@/app/components/Section";
-import { api } from "@filthy-panty/convex/_generated/api";
-import type { Id } from "@filthy-panty/convex/_generated/dataModel";
+import { api } from "@broods/convex/_generated/api";
+import type { Id } from "@broods/convex/_generated/dataModel";
 import { useAction, useQuery } from "convex/react";
 import { AlertTriangle, ArrowUpRight, CreditCard, ExternalLink } from "lucide-react";
 import { useState } from "react";
@@ -213,7 +213,7 @@ export function BillingPanel({ projectId }: Props) {
                                 {checkoutLoading ? "Loading…" : "Upgrade Now"}
                             </Button>
                             <Button size="sm" variant="ghost" className="cursor-pointer gap-1.5" asChild>
-                                <a href="https://beeblast.co/pricing" target="_blank" rel="noopener noreferrer">
+                                <a href="https://broods.app/pricing" target="_blank" rel="noopener noreferrer">
                                     <ExternalLink className="size-3.5" />
                                     View pricing
                                 </a>

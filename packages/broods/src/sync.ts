@@ -18,7 +18,7 @@ export interface RemoteManifestResponse {
   warnings?: { missingEnv?: string[] };
   /**
    * The environment's runtime API key context. Deployments include the plaintext
-   * `apiKey` so the CLI can write `FILTHY_PANTY_API_KEY` locally.
+   * `apiKey` so the CLI can write `BROODS_API_KEY` locally.
    */
   deployment?: {
     accountId: string;
@@ -65,7 +65,7 @@ export interface DiffEntry {
   previousName?: string;
 }
 
-export class FilthyPantySyncClient {
+export class BroodsSyncClient {
   private readonly dashboardUrl: string;
   private readonly token: string;
   private readonly fetchImpl: typeof fetch;

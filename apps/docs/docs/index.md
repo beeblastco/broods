@@ -1,12 +1,12 @@
 ---
 id: home
-title: BeeBlast Developer Docs
+title: Broods Developer Docs
 slug: /
 ---
 
-# Welcome to BeeBlast
+# Welcome to Broods
 
-BeeBlast is a serverless AI agent platform. Define agents, workspaces, sandboxes, skills, and channels as typed TypeScript resources, sync them to the cloud with a CLI, and invoke them over a typed SDK or raw HTTP.
+Broods is a serverless AI agent platform. Define agents, workspaces, sandboxes, skills, and channels as typed TypeScript resources, sync them to the cloud with a CLI, and invoke them over a typed SDK or raw HTTP.
 
 ## Quick Start
 
@@ -35,4 +35,4 @@ BeeBlast is a serverless AI agent platform. Define agents, workspaces, sandboxes
 ## Need Help?
 
 - [Discord](https://discord.gg/beeblast) — Join our community
-- [GitHub](https://github.com/beeblastco/filthy-panty) — View source code and report issues
+- [GitHub](https://github.com/beeblastco/broods) — View source code and report issues

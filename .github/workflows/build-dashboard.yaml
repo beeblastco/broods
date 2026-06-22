@@ -14,7 +14,7 @@ on:
   workflow_dispatch:
 
 env:
-  IMAGE_NAME: ghcr.io/beeblastco/filthy-panty-dashboard
+  IMAGE_NAME: ghcr.io/beeblastco/broods-dashboard
 
 jobs:
   build:
@@ -73,6 +73,6 @@ jobs:
           build-args: |
             NEXT_PUBLIC_CONVEX_URL=${{ vars.NEXT_PUBLIC_CONVEX_URL }}
             NEXT_PUBLIC_WORKOS_REDIRECT_URI=${{ vars.NEXT_PUBLIC_WORKOS_REDIRECT_URI }}
-            NEXT_PUBLIC_FILTHY_PANTY_BASE_URL=${{ vars.NEXT_PUBLIC_FILTHY_PANTY_BASE_URL || 'https://app.beeblast.co' }}
+            NEXT_PUBLIC_BROODS_BASE_URL=${{ vars.NEXT_PUBLIC_BROODS_BASE_URL || 'https://gateway.broods.app' }}
           cache-from: type=gha
           cache-to: type=gha,mode=max

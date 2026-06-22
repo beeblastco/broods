@@ -6,8 +6,8 @@ import { Button } from "@/app/components/ui/button";
 import { Input } from "@/app/components/ui/input";
 import { Label } from "@/app/components/ui/label";
 import { Textarea } from "@/app/components/ui/textarea";
-import { api } from "@filthy-panty/convex/_generated/api";
-import type { Id } from "@filthy-panty/convex/_generated/dataModel";
+import { api } from "@broods/convex/_generated/api";
+import type { Id } from "@broods/convex/_generated/dataModel";
 import { useMutation, useQuery } from "convex/react";
 import { useState } from "react";
 

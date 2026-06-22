@@ -1,5 +1,5 @@
 /**
- * Proxies filthy-panty CLI requests from the dashboard domain to Convex HTTP routes.
+ * Proxies broods CLI requests from the dashboard domain to Convex HTTP routes.
  */
 
 import type { NextRequest } from "next/server";

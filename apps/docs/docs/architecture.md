@@ -15,7 +15,7 @@ flowchart LR
   end
   subgraph packages
     Cvx["packages/convex<br/>shared Convex backend"]
-    Sdk["packages/filthy-panty<br/>CLI + SDK"]
+    Sdk["packages/broods<br/>CLI + SDK"]
     Demos["packages/demos<br/>runnable scripts"]
   end
 

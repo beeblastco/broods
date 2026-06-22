@@ -4,14 +4,14 @@
  * Reads `.env`/`.env.local` from the target project directory (`cwd`, which is
  * not always the directory the process started in) so a generated client picks
  * up package-local config without wiring up dotenv. Kept zero-dependency and
- * synchronous so the FilthyPantyClient constructor can call it without awaiting.
+ * synchronous so the BroodsClient constructor can call it without awaiting.
  */
 
 import { existsSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { USER_CONFIG_PATH, stripTrailingSlash } from "./config.ts";
 
-export interface FilthyPantyRuntimeConfig {
+export interface BroodsRuntimeConfig {
   dashboardUrl?: string;
   token?: string;
   project?: string;
@@ -20,15 +20,15 @@ export interface FilthyPantyRuntimeConfig {
 
 let loadedEnvForCwd: string | null = null;
 
-export function loadFilthyPantyRuntimeConfig(cwd = process.cwd()): FilthyPantyRuntimeConfig {
+export function loadBroodsRuntimeConfig(cwd = process.cwd()): BroodsRuntimeConfig {
   loadEnvFiles(cwd);
   const stored = readStoredAuthSync();
 
   return {
-    dashboardUrl: process.env.FILTHY_PANTY_DASHBOARD_URL ?? stored?.dashboardUrl,
-    token: process.env.FILTHY_PANTY_TOKEN ?? stored?.token,
-    project: process.env.FILTHY_PANTY_PROJECT,
-    environment: process.env.FILTHY_PANTY_ENVIRONMENT,
+    dashboardUrl: process.env.BROODS_DASHBOARD_URL ?? stored?.dashboardUrl,
+    token: process.env.BROODS_TOKEN ?? stored?.token,
+    project: process.env.BROODS_PROJECT,
+    environment: process.env.BROODS_ENVIRONMENT,
   };
 }
 

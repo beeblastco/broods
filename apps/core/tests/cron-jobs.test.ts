@@ -39,7 +39,7 @@ describe("cron job persistence", () => {
       scheduleExpression: "cron(0 8 * * ? *)",
       timezone: "Europe/Amsterdam",
     }, {
-      schedulerGroupName: "dev-filthy-panty-cron",
+      schedulerGroupName: "dev-broods-cron",
     });
 
     expect(cron.accountId).toBe("acct_test");
@@ -173,7 +173,7 @@ function cronItem(accountId: string, cronId: string): Record<string, AttributeVa
     timezone: { S: "Europe/Amsterdam" },
     status: { S: "active" },
     schedulerName: { S: `${accountId}-${cronId}` },
-    schedulerGroupName: { S: "dev-filthy-panty-cron" },
+    schedulerGroupName: { S: "dev-broods-cron" },
     createdAt: { S: "2026-05-22T00:00:00.000Z" },
     updatedAt: { S: "2026-05-22T00:00:00.000Z" },
   };

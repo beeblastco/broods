@@ -1,4 +1,4 @@
-import { defineAgent, defineZaloChannel, env } from "filthy-panty";
+import { defineAgent, defineZaloChannel, env } from "broods";
 
 export const zalo = defineZaloChannel({
   botToken: env.ZALO_BOT_TOKEN,

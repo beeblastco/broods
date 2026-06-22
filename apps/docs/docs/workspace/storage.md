@@ -114,7 +114,7 @@ Concretely, the model-facing workspace tools read sandbox-backed workspaces thro
 ## Code-First Configuration
 
 ```ts
-import { defineWorkspace } from "filthy-panty";
+import { defineWorkspace } from "broods";
 
 export const notes = defineWorkspace({
   name: "notes",

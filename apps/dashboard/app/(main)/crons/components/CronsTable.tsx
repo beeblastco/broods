@@ -6,19 +6,11 @@
  * CronDialog in edit mode.
  */
 
+import { DeleteConfirmDialog } from "@/app/components/DeleteConfirmDialog";
 import { Badge } from "@/app/components/ui/badge";
 import { Button } from "@/app/components/ui/button";
-import {
-    Dialog,
-    DialogContent,
-    DialogDescription,
-    DialogFooter,
-    DialogHeader,
-    DialogTitle,
-} from "@/app/components/ui/dialog";
-import { Input } from "@/app/components/ui/input";
-import { api } from "@filthy-panty/convex/_generated/api";
-import type { Doc } from "@filthy-panty/convex/_generated/dataModel";
+import { api } from "@broods/convex/_generated/api";
+import type { Doc } from "@broods/convex/_generated/dataModel";
 import { useAction } from "convex/react";
 import { Pencil, Trash2 } from "lucide-react";
 import { useState } from "react";
@@ -56,20 +48,18 @@ export function CronsTable({ crons, agents }: Props) {
 
     const [editing, setEditing] = useState<Doc<"crons"> | null>(null);
     const [deleting, setDeleting] = useState<Doc<"crons"> | null>(null);
-    const [confirmText, setConfirmText] = useState("");
     const [pending, setPending] = useState(false);
     const [error, setError] = useState<string | null>(null);
 
     const agentNameById = new Map(agents.map((a) => [a._id, a.name]));
 
     async function handleDelete() {
-        if (!deleting || confirmText !== deleting.name) return;
+        if (!deleting) return;
         setPending(true);
         setError(null);
         try {
             await remove({ cronId: deleting._id });
             setDeleting(null);
-            setConfirmText("");
         } catch (err) {
             setError(err instanceof Error ? err.message : "Delete failed");
         } finally {
@@ -145,9 +135,8 @@ export function CronsTable({ crons, agents }: Props) {
                                         size="icon-xs"
                                         className="cursor-pointer text-muted-foreground hover:text-destructive"
                                         onClick={() => {
-                                            setDeleting(job);
-                                            setConfirmText("");
                                             setError(null);
+                                            setDeleting(job);
                                         }}
                                     >
                                         <Trash2 className="size-3.5" />
@@ -168,53 +157,21 @@ export function CronsTable({ crons, agents }: Props) {
                 />
             )}
 
-            <Dialog
-                open={deleting !== null}
-                onOpenChange={(open) => {
-                    if (!open) {
-                        setDeleting(null);
-                        setConfirmText("");
-                    }
-                }}
-            >
-                <DialogContent className="sm:max-w-md">
-                    <DialogHeader>
-                        <DialogTitle>Delete cron job?</DialogTitle>
-                        <DialogDescription>
-                            This removes the EventBridge schedule and stops future invocations.
-                            Type{" "}
-                            <code className="font-mono">{deleting?.name}</code> to confirm.
-                        </DialogDescription>
-                    </DialogHeader>
-                    <div className="grid gap-2 py-2">
-                        <Input
-                            value={confirmText}
-                            onChange={(e) => setConfirmText(e.target.value)}
-                            placeholder={deleting?.name ?? ""}
-                            autoComplete="off"
-                        />
-                        {error && <p className="text-xs text-destructive">{error}</p>}
-                    </div>
-                    <DialogFooter>
-                        <Button
-                            variant="outline"
-                            className="cursor-pointer"
-                            onClick={() => setDeleting(null)}
-                            disabled={pending}
-                        >
-                            Cancel
-                        </Button>
-                        <Button
-                            variant="destructive"
-                            className="cursor-pointer disabled:cursor-not-allowed"
-                            disabled={pending || confirmText !== deleting?.name}
-                            onClick={handleDelete}
-                        >
-                            {pending ? "Deleting..." : "Delete"}
-                        </Button>
-                    </DialogFooter>
-                </DialogContent>
-            </Dialog>
+            {error && <p className="mt-2 text-xs text-destructive">{error}</p>}
+
+            {deleting && (
+                <DeleteConfirmDialog
+                    open={deleting !== null}
+                    onOpenChange={(open) => {
+                        if (!open) setDeleting(null);
+                    }}
+                    resourceName={deleting.name}
+                    resourceType="cron job"
+                    critical={false}
+                    onConfirm={handleDelete}
+                    isDeleting={pending}
+                />
+            )}
         </>
     );
 }

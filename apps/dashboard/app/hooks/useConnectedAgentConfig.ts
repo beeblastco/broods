@@ -5,8 +5,8 @@
  * tabs can edit a slice of that agent's nested config (workspace, tools.X,
  * skills.X, workspace.sandbox, etc.).
  */
-import { api } from "@filthy-panty/convex/_generated/api";
-import type { Id } from "@filthy-panty/convex/_generated/dataModel";
+import { api } from "@broods/convex/_generated/api";
+import type { Id } from "@broods/convex/_generated/dataModel";
 import type { AgentProvider } from "@/app/components/side-panel/DetailsTab";
 import { applyAgentConfigUpdate } from "@/app/lib/agentConfigOptimistic";
 import {

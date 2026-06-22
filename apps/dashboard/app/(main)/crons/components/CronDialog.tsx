@@ -3,7 +3,7 @@
 /**
  * Create-or-edit dialog for a single cron job. Validates the schedule
  * expression client-side, then calls cronPublic.create or .update which
- * proxy to filthy-panty for the dual-write to EventBridge + Convex.
+ * proxy to broods for the dual-write to EventBridge + Convex.
  */
 
 import { Button } from "@/app/components/ui/button";
@@ -25,8 +25,8 @@ import {
     SelectValue,
 } from "@/app/components/ui/select";
 import { Textarea } from "@/app/components/ui/textarea";
-import { api } from "@filthy-panty/convex/_generated/api";
-import type { Doc, Id } from "@filthy-panty/convex/_generated/dataModel";
+import { api } from "@broods/convex/_generated/api";
+import type { Doc, Id } from "@broods/convex/_generated/dataModel";
 import { useAction } from "convex/react";
 import { useState } from "react";
 

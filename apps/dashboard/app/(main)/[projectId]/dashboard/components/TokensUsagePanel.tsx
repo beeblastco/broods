@@ -4,9 +4,9 @@
 import { Section } from "@/app/components/Section";
 import { cn } from "@/app/lib/utils";
 import { useObservabilityStream, type ObservabilitySpanRow } from "@/app/hooks/useObservabilityStream";
-import { api } from "@filthy-panty/convex/_generated/api";
-import type { Id } from "@filthy-panty/convex/_generated/dataModel";
-import { estimateModelTokenCost } from "@filthy-panty/convex/modelPricing";
+import { api } from "@broods/convex/_generated/api";
+import type { Id } from "@broods/convex/_generated/dataModel";
+import { estimateModelTokenCost } from "@broods/convex/modelPricing";
 import { useQuery } from "convex/react";
 import type { FunctionReturnType } from "convex/server";
 import { RefreshCw } from "lucide-react";

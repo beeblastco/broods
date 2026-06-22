@@ -9,7 +9,7 @@ import {
     toNestedAgentConfig,
     type FlatAgentConfig,
 } from "@/app/lib/agentConfigCodec";
-import type { Id } from "@filthy-panty/convex/_generated/dataModel";
+import type { Id } from "@broods/convex/_generated/dataModel";
 import { useMemo } from "react";
 
 export function ConfigTab({

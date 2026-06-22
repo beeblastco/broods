@@ -1,9 +1,9 @@
 "use client";
 
 /**
- * Skill file explorer — wraps WorkspaceFilesTab with filthy-panty skill format
+ * Skill file explorer — wraps WorkspaceFilesTab with broods skill format
  * constraints: SKILL.md at root required, text files only, 5 MB per file /
- * 30 MB total. Publish action pushes the files to the filthy-panty account.
+ * 30 MB total. Publish action pushes the files to the broods account.
  */
 import { WorkspaceFilesTab } from "@/app/components/side-panel/WorkspaceFilesTab";
 import { Button } from "@/app/components/ui/button";
@@ -15,8 +15,8 @@ import {
   getSkillsBearerToken,
   setSkillsBearerToken,
 } from "@/app/lib/skillsCredentials";
-import { api } from "@filthy-panty/convex/_generated/api";
-import type { Id } from "@filthy-panty/convex/_generated/dataModel";
+import { api } from "@broods/convex/_generated/api";
+import type { Id } from "@broods/convex/_generated/dataModel";
 import { useAction, useMutation, useQuery } from "convex/react";
 import {
   AlertTriangle,
@@ -100,7 +100,7 @@ function TokenPrompt({
         </button>
       </div>
       <p className="text-[10px] text-muted-foreground">
-        Your filthy-panty Bearer token (starts with <code>fp_acct_</code>).
+        Your broods Bearer token (starts with <code>fp_acct_</code>).
         Saved in session only.
       </p>
       <div className="flex items-center gap-1.5">
@@ -214,7 +214,7 @@ function CreateSkillMdForm({
 // Main component
 // ---------------------------------------------------------------------------
 
-/** Skill file explorer with publish/import against the filthy-panty account-manage API. */
+/** Skill file explorer with publish/import against the broods account-manage API. */
 export function SkillFilesTab({
   projectId,
   nodeId,

@@ -1,11 +1,12 @@
 "use client";
 
 /** Deploy keys panel: scoped CLI tokens that deploy only to the active environment. */
+import { DeleteConfirmDialog } from "@/app/components/DeleteConfirmDialog";
 import { Section } from "@/app/components/Section";
 import { Button } from "@/app/components/ui/button";
 import { Input } from "@/app/components/ui/input";
-import { api } from "@filthy-panty/convex/_generated/api";
-import type { Doc, Id } from "@filthy-panty/convex/_generated/dataModel";
+import { api } from "@broods/convex/_generated/api";
+import type { Doc, Id } from "@broods/convex/_generated/dataModel";
 import { useMutation, useQuery } from "convex/react";
 import { Check, Copy, Plus, Trash2 } from "lucide-react";
 import { useState } from "react";
@@ -32,6 +33,10 @@ export function DeployKeysPanel({ projectId, environmentId }: Props) {
     const [error, setError] = useState<string | null>(null);
     const [revealed, setRevealed] = useState<string | null>(null);
     const [copied, setCopied] = useState(false);
+
+    // Key pending delete confirmation.
+    const [deletingKey, setDeletingKey] = useState<Doc<"deployKeys"> | null>(null);
+    const [isDeletingKey, setIsDeletingKey] = useState(false);
 
     async function handleCreate() {
         if (!name.trim() || busy || !environmentId) return;
@@ -60,6 +65,17 @@ export function DeployKeysPanel({ projectId, environmentId }: Props) {
         setTimeout(() => setCopied(false), 1500);
     }
 
+    async function handleDeleteKey() {
+        if (!deletingKey) return;
+        setIsDeletingKey(true);
+        try {
+            await removeKey({ deployKeyId: deletingKey._id });
+            setDeletingKey(null);
+        } finally {
+            setIsDeletingKey(false);
+        }
+    }
+
     if (!environmentId) {
         return (
             <Section description="Scoped CLI tokens that deploy only to this environment.">
@@ -69,96 +85,112 @@ export function DeployKeysPanel({ projectId, environmentId }: Props) {
     }
 
     return (
-        <Section description="Scoped CLI tokens that deploy only to this environment.">
-            {revealed && (
-                <div className="rounded-md border border-emerald-500/40 bg-emerald-500/5 p-3">
-                    <p className="mb-1 text-xs font-medium text-foreground">
-                        Copy this token now — it won&apos;t be shown again.
-                    </p>
+        <>
+            <Section description="Scoped CLI tokens that deploy only to this environment.">
+                {revealed && (
+                    <div className="rounded-md border border-emerald-500/40 bg-emerald-500/5 p-3">
+                        <p className="mb-1 text-xs font-medium text-foreground">
+                            Copy this token now — it won&apos;t be shown again.
+                        </p>
+                        <div className="flex items-center gap-2">
+                            <code className="flex-1 truncate rounded bg-muted px-2 py-1 font-mono text-xs">
+                                {revealed}
+                            </code>
+                            <Button variant="outline" size="sm" className="cursor-pointer" onClick={copyToken}>
+                                {copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
+                            </Button>
+                            <Button
+                                variant="ghost"
+                                size="sm"
+                                className="cursor-pointer"
+                                onClick={() => setRevealed(null)}
+                            >
+                                Done
+                            </Button>
+                        </div>
+                    </div>
+                )}
+
+                {deployKeys && deployKeys.length === 0 && (
+                    <p className="text-sm text-muted-foreground">No deploy keys yet.</p>
+                )}
+                <div className="grid gap-2">
+                    {deployKeys?.map((key) => (
+                        <div key={key._id} className="flex items-center gap-2">
+                            <span className="flex-1 truncate text-sm font-medium text-foreground">{key.name}</span>
+                            <code className="rounded bg-muted px-2 py-1 font-mono text-xs text-muted-foreground">
+                                {key.keyHint}
+                            </code>
+                            <Button
+                                variant="ghost"
+                                size="icon-xs"
+                                className="cursor-pointer text-muted-foreground hover:text-destructive"
+                                onClick={() => setDeletingKey(key)}
+                            >
+                                <Trash2 className="size-3.5" />
+                            </Button>
+                        </div>
+                    ))}
+                </div>
+
+                {error && <p className="text-xs text-destructive">{error}</p>}
+
+                {adding ? (
                     <div className="flex items-center gap-2">
-                        <code className="flex-1 truncate rounded bg-muted px-2 py-1 font-mono text-xs">
-                            {revealed}
-                        </code>
-                        <Button variant="outline" size="sm" className="cursor-pointer" onClick={copyToken}>
-                            {copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
+                        <Input
+                            value={name}
+                            onChange={(e) => setName(e.target.value)}
+                            placeholder="Key name (e.g. CI staging)"
+                            className="flex-1 text-sm"
+                            autoFocus
+                        />
+                        <Button
+                            size="sm"
+                            className="cursor-pointer disabled:cursor-not-allowed"
+                            disabled={!name.trim() || busy}
+                            onClick={handleCreate}
+                        >
+                            {busy ? "Creating…" : "Create"}
                         </Button>
                         <Button
                             variant="ghost"
                             size="sm"
                             className="cursor-pointer"
-                            onClick={() => setRevealed(null)}
+                            onClick={() => {
+                                setAdding(false);
+                                setName("");
+                                setError(null);
+                            }}
                         >
-                            Done
+                            Cancel
                         </Button>
                     </div>
-                </div>
-            )}
-
-            {deployKeys && deployKeys.length === 0 && (
-                <p className="text-sm text-muted-foreground">No deploy keys yet.</p>
-            )}
-            <div className="grid gap-2">
-                {deployKeys?.map((key) => (
-                    <div key={key._id} className="flex items-center gap-2">
-                        <span className="flex-1 truncate text-sm font-medium text-foreground">{key.name}</span>
-                        <code className="rounded bg-muted px-2 py-1 font-mono text-xs text-muted-foreground">
-                            {key.keyHint}
-                        </code>
-                        <Button
-                            variant="ghost"
-                            size="icon-xs"
-                            className="cursor-pointer text-muted-foreground hover:text-destructive"
-                            onClick={() => removeKey({ deployKeyId: key._id })}
-                        >
-                            <Trash2 className="size-3.5" />
-                        </Button>
-                    </div>
-                ))}
-            </div>
-
-            {error && <p className="text-xs text-destructive">{error}</p>}
-
-            {adding ? (
-                <div className="flex items-center gap-2">
-                    <Input
-                        value={name}
-                        onChange={(e) => setName(e.target.value)}
-                        placeholder="Key name (e.g. CI staging)"
-                        className="flex-1 text-sm"
-                        autoFocus
-                    />
+                ) : (
                     <Button
+                        variant="outline"
                         size="sm"
-                        className="cursor-pointer disabled:cursor-not-allowed"
-                        disabled={!name.trim() || busy}
-                        onClick={handleCreate}
+                        className="w-fit cursor-pointer"
+                        onClick={() => setAdding(true)}
                     >
-                        {busy ? "Creating…" : "Create"}
+                        <Plus className="mr-1 size-3.5" />
+                        New Deploy Key
                     </Button>
-                    <Button
-                        variant="ghost"
-                        size="sm"
-                        className="cursor-pointer"
-                        onClick={() => {
-                            setAdding(false);
-                            setName("");
-                            setError(null);
-                        }}
-                    >
-                        Cancel
-                    </Button>
-                </div>
-            ) : (
-                <Button
-                    variant="outline"
-                    size="sm"
-                    className="w-fit cursor-pointer"
-                    onClick={() => setAdding(true)}
-                >
-                    <Plus className="mr-1 size-3.5" />
-                    New Deploy Key
-                </Button>
+                )}
+            </Section>
+
+            {deletingKey && (
+                <DeleteConfirmDialog
+                    open={deletingKey !== null}
+                    onOpenChange={(open) => {
+                        if (!open) setDeletingKey(null);
+                    }}
+                    resourceName={deletingKey.name}
+                    resourceType="deploy key"
+                    critical={false}
+                    onConfirm={handleDeleteKey}
+                    isDeleting={isDeletingKey}
+                />
             )}
-        </Section>
+        </>
     );
 }

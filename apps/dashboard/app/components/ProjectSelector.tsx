@@ -2,10 +2,10 @@
 
 /** Dropdown selector for switching between user projects with an option to create new ones. */
 import { useCallback, useEffect, useState } from "react";
-import { useQuery } from "convex/react";
+import { useConvexAuth, useQuery } from "convex/react";
 import { useParams, useRouter } from "next/navigation";
-import { api } from "@filthy-panty/convex/_generated/api";
-import type { Doc } from "@filthy-panty/convex/_generated/dataModel";
+import { api } from "@broods/convex/_generated/api";
+import type { Doc } from "@broods/convex/_generated/dataModel";
 import { ChevronDown, Plus, Folder } from "lucide-react";
 import {
   DropdownMenu,
@@ -21,8 +21,12 @@ import { FULL_ROUTE_PREFETCH } from "@/app/lib/prefetch";
 
 /** Dropdown to list, switch, and create projects. */
 export function ProjectSelector() {
-  const projects = useQuery(api.project.list) as Doc<"projects">[] | undefined;
-  const currentUser = useQuery(api.user.getCurrent);
+  const { isLoading, isAuthenticated } = useConvexAuth();
+  const queryArgs = !isLoading && isAuthenticated ? {} : "skip";
+  const projects = useQuery(api.project.list, queryArgs) as
+    | Doc<"projects">[]
+    | undefined;
+  const currentUser = useQuery(api.user.getCurrent, queryArgs);
   const router = useRouter();
   const params = useParams<{ projectId?: string }>();
   const [dialogOpen, setDialogOpen] = useState(false);

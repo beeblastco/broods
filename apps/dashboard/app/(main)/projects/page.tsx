@@ -4,16 +4,20 @@
 import { CreateProjectDialog } from "@/app/components/CreateProjectDialog";
 import { Button } from "@/app/components/ui/button";
 import { FULL_ROUTE_PREFETCH } from "@/app/lib/prefetch";
-import { api } from "@filthy-panty/convex/_generated/api";
-import type { Doc } from "@filthy-panty/convex/_generated/dataModel";
-import { useQuery } from "convex/react";
+import { api } from "@broods/convex/_generated/api";
+import type { Doc } from "@broods/convex/_generated/dataModel";
+import { useConvexAuth, useQuery } from "convex/react";
 import { Folder, Plus } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useCallback, useState } from "react";
 
 /** Full-page grid of the user's projects with create and empty states. */
 export default function ProjectsPage() {
-    const projects = useQuery(api.project.list) as Doc<"projects">[] | undefined;
+    const { isLoading, isAuthenticated } = useConvexAuth();
+    const projects = useQuery(
+        api.project.list,
+        !isLoading && isAuthenticated ? {} : "skip",
+    ) as Doc<"projects">[] | undefined;
     const router = useRouter();
     const [dialogOpen, setDialogOpen] = useState(false);
 

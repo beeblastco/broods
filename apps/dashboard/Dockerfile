@@ -9,16 +9,16 @@ COPY apps/dashboard/package.json ./apps/dashboard/
 COPY apps/docs/package.json ./apps/docs/
 COPY apps/gateway/package.json ./apps/gateway/
 COPY packages/convex/package.json ./packages/convex/
-COPY packages/filthy-panty/package.json ./packages/filthy-panty/
+COPY packages/broods/package.json ./packages/broods/
 RUN bun install --frozen-lockfile --ignore-scripts
 
 FROM oven/bun:1.3.14-alpine AS builder
 WORKDIR /app
 ENV NEXT_TELEMETRY_DISABLED=1
-ARG NEXT_PUBLIC_FILTHY_PANTY_BASE_URL
+ARG NEXT_PUBLIC_BROODS_BASE_URL
 ARG NEXT_PUBLIC_CONVEX_URL
 ARG NEXT_PUBLIC_WORKOS_REDIRECT_URI
-ENV NEXT_PUBLIC_FILTHY_PANTY_BASE_URL=$NEXT_PUBLIC_FILTHY_PANTY_BASE_URL
+ENV NEXT_PUBLIC_BROODS_BASE_URL=$NEXT_PUBLIC_BROODS_BASE_URL
 ENV NEXT_PUBLIC_CONVEX_URL=$NEXT_PUBLIC_CONVEX_URL
 ENV NEXT_PUBLIC_WORKOS_REDIRECT_URI=$NEXT_PUBLIC_WORKOS_REDIRECT_URI
 COPY --from=deps /app/node_modules ./node_modules
@@ -26,7 +26,7 @@ COPY --from=deps /app/apps/dashboard/node_modules ./apps/dashboard/node_modules
 COPY --from=deps /app/packages/convex/node_modules ./packages/convex/node_modules
 COPY package.json bun.lock ./
 COPY packages/convex/ ./packages/convex/
-COPY packages/filthy-panty/ ./packages/filthy-panty/
+COPY packages/broods/ ./packages/broods/
 COPY apps/dashboard/ ./apps/dashboard/
 # Convex is deployed separately by .github/workflows/deploy-convex.yaml; this
 # build only compiles the Next app against the committed _generated/ types and

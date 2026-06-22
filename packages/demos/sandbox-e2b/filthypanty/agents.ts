@@ -1,4 +1,4 @@
-import { defineAgent, defineSandbox, env } from "filthy-panty";
+import { defineAgent, defineSandbox, env } from "broods";
 
 export const e2bSandbox = defineSandbox({
   name: "e2b-sandbox",

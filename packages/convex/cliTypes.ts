@@ -1,6 +1,6 @@
 /**
  * Canonical CLI manifest wire types — the single source of truth shared by the
- * backend (cliSync.ts, cliHttp.ts) and the SDK/CLI (packages/filthy-panty).
+ * backend (cliSync.ts, cliHttp.ts) and the SDK/CLI (packages/broods).
  *
  * This file is intentionally type-only with no runtime imports so the SDK can
  * import it without pulling the Convex server module graph into its typecheck.

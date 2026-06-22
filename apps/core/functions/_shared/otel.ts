@@ -79,7 +79,7 @@ export function initOtel(): void {
       timeoutMillis: 5000,
     });
     const resource = resourceFromAttributes({
-      "service.name": process.env.AWS_LAMBDA_FUNCTION_NAME ?? "filthy-panty-core",
+      "service.name": process.env.AWS_LAMBDA_FUNCTION_NAME ?? "broods-core",
       "service.namespace": "beeblast",
     });
     const tracerProvider = new BasicTracerProvider({
@@ -101,7 +101,7 @@ export function initOtel(): void {
     logs.setGlobalLoggerProvider(loggerProvider);
     _loggerProvider = loggerProvider;
 
-    _tracer = trace.getTracer("filthy-panty-harness");
+    _tracer = trace.getTracer("broods-harness");
   } catch {
     // Best-effort: a failed init leaves the global API noop.
   }
@@ -110,7 +110,7 @@ export function initOtel(): void {
 // Returns a noop tracer if initOtel() has not run.
 export function getTracer(): Tracer {
   if (_tracer) return _tracer;
-  return trace.getTracer("filthy-panty-harness");
+  return trace.getTracer("broods-harness");
 }
 
 /** Tenant attributes shared by logs and spans and consumed by gateway filters. */
@@ -142,7 +142,7 @@ export function emitOtelLog(
 ): void {
   try {
     const ctx = getObservabilityContext();
-    const logger = logs.getLogger("filthy-panty-harness");
+    const logger = logs.getLogger("broods-harness");
     const severityMap: Record<string, SeverityNumber> = {
       DEBUG: SeverityNumber.DEBUG,
       INFO: SeverityNumber.INFO,

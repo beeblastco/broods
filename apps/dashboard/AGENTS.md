@@ -8,9 +8,9 @@ Before any Next.js work, find and read the relevant doc in `node_modules/next/di
 
 ## Monorepo context
 
-This app is `apps/dashboard` in the filthy-panty Bun-workspaces monorepo. If you started directly in this folder, also read `../../AGENTS.md` for the monorepo-wide rules.
+This app is `apps/dashboard` in the broods Bun-workspaces monorepo. If you started directly in this folder, also read `../../AGENTS.md` for the monorepo-wide rules.
 
-The Convex backend lives at `../../packages/convex` (`@filthy-panty/convex`) and is imported here as `@filthy-panty/convex/...` (for example `@filthy-panty/convex/_generated/api`), never via a local `convex/` directory.
+The Convex backend lives at `../../packages/convex` (`@broods/convex`) and is imported here as `@broods/convex/...` (for example `@broods/convex/_generated/api`), never via a local `convex/` directory.
 
 Before changing any Convex backend file under `../../packages/convex`, read `../../packages/convex/AGENTS.md`. That file owns Convex schema, function, auth, codegen, and backend style rules.
 

@@ -1,16 +1,16 @@
 {
-  "name": "@filthy-panty/demo-tool-custom-stream",
+  "name": "@broods/demo-tool-custom-stream",
   "type": "module",
   "private": true,
   "scripts": {
     "check": "tsc --noEmit",
-    "cli:login": "filthy-panty login --dashboard-url https://dashboard.dev.beeblast.co",
-    "dev": "filthy-panty dev --dashboard-url https://dashboard.dev.beeblast.co",
-    "deploy": "filthy-panty deploy --dashboard-url https://dashboard.dev.beeblast.co",
+    "cli:login": "broods login --dashboard-url https://dashboard.dev.beeblast.co",
+    "dev": "broods dev --dashboard-url https://dashboard.dev.beeblast.co",
+    "deploy": "broods deploy --dashboard-url https://dashboard.dev.beeblast.co",
     "start": "bun index.ts"
   },
   "dependencies": {
-    "filthy-panty": "file:../../filthy-panty"
+    "broods": "file:../../broods"
   },
   "devDependencies": {
     "@types/bun": "^1.3.14"

@@ -1,5 +1,5 @@
 /**
- * Cron job CRUD scoped to an account. Mirrors filthy-panty's
+ * Cron job CRUD scoped to an account. Mirrors broods's
  * functions/_shared/cron.ts so the SaaS dashboard can drive the same
  * lifecycle through Convex live queries. The AWS EventBridge Scheduler
  * names are stored here for visibility; the Lambda invokes EBS.

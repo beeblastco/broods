@@ -1,11 +1,11 @@
 {
-  "name": "filthy-panty",
+  "name": "broods",
   "version": "0.1.0",
-  "description": "CLI + TypeScript SDK for the filthy-panty agent platform.",
+  "description": "CLI + TypeScript SDK for the broods agent platform.",
   "type": "module",
   "license": "FSL-1.1-Apache-2.0",
   "bin": {
-    "filthy-panty": "./src/cli/index.ts"
+    "broods": "./src/cli/index.ts"
   },
   "exports": {
     ".": "./src/index.ts"

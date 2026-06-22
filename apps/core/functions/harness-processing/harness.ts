@@ -34,7 +34,7 @@ import {
   setObservabilityContext,
   getObservabilityContext,
 } from "../_shared/otel.ts";
-import type { ObservabilitySpanRow } from "../../../../packages/filthy-panty/src/observability-contracts.ts";
+import type { ObservabilitySpanRow } from "../../../../packages/broods/src/observability-contracts.ts";
 import { tracesSubject, getObservabilityNatsConn, ensureObservabilityStream, flushObservabilityNats } from "../_shared/nats.ts";
 import { consumeColdStart } from "../_shared/cold-start.ts";
 import {

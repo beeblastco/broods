@@ -50,8 +50,8 @@ import {
   type RuntimeVariable,
 } from "@/app/lib/runtimeVariables";
 import { includesSkillRef } from "@/app/lib/skillRefs";
-import { api } from "@filthy-panty/convex/_generated/api";
-import type { Id } from "@filthy-panty/convex/_generated/dataModel";
+import { api } from "@broods/convex/_generated/api";
+import type { Id } from "@broods/convex/_generated/dataModel";
 import { useStore, type Node } from "@xyflow/react";
 import { useMutation, useQuery } from "convex/react";
 import { X } from "lucide-react";
@@ -272,7 +272,7 @@ export const NodeSidePanel = memo(function NodeSidePanel({
 
   // The environment's runtime API key (shared by every agent in it). The agent
   // itself is selected per request by its Agent ID. Created on demand here or on
-  // the first `filthy-panty deploy`.
+  // the first `broods deploy`.
   const activeDeployment =
     useQuery(
       api.agentDeployments.getForEnvironment,
@@ -547,7 +547,7 @@ export const NodeSidePanel = memo(function NodeSidePanel({
     });
   }
 
-  // Resource owned by a filthypanty/ project. Agents read the authoritative
+  // Resource owned by a broods/ project. Agents read the authoritative
   // `managedBy` from their config row; workspaces/sandboxes read it from the live
   // `resourceOwnership` query keyed by the row `_id` (the node's `resourceId`),
   // not the cached `managedBy` on canvas node data which can be stale or missing.
@@ -572,7 +572,7 @@ export const NodeSidePanel = memo(function NodeSidePanel({
       resourceOwnership === undefined);
 
   // Warn when a dashboard-owned node is named the same as a code-managed resource
-  // of the same kind: the next `filthy-panty deploy` resolves by (environment,
+  // of the same kind: the next `broods deploy` resolves by (environment,
   // name) and would adopt + overwrite this resource with the code definition.
   const cliManagedNames = useQuery(
     api.canvas.cliManagedResourceNames,
@@ -784,7 +784,7 @@ export const NodeSidePanel = memo(function NodeSidePanel({
       {isCliManaged && (
         <div className="border-b border-amber-500/30 bg-amber-500/10 px-4 py-2.5">
           <p className="text-sm text-amber-600 dark:text-amber-400">
-            Managed by filthypanty packages, edits sync on deploy, delete is locked.
+            Managed by broods packages, edits sync on deploy, delete is locked.
           </p>
         </div>
       )}

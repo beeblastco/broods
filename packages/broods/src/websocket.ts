@@ -6,7 +6,7 @@
 import { DEFAULT_CORE_BASE_URL, normalizeHttpServiceUrl } from "./client.ts";
 import type { AgentReference } from "./client.ts";
 import { stripTrailingSlash } from "./config.ts";
-import { loadFilthyPantyRuntimeConfig } from "./runtime-config.ts";
+import { loadBroodsRuntimeConfig } from "./runtime-config.ts";
 import { resolveRunEvents, type AgentRunEventInput, type AgentRunOverrides } from "./run-input.ts";
 import type {
   WebSocketClientCancelMessage,
@@ -44,12 +44,12 @@ export interface WebSocketSubscription {
   close(code?: number, reason?: string): void;
 }
 
-export interface FilthyPantyWebSocketClientOptions {
+export interface BroodsWebSocketClientOptions {
   /** Base URL of the core service. Use `https://...`; the client converts it to `wss://...`. */
   baseUrl?: string;
-  /** Hostname or URL of the core service. `app.beeblast.co` becomes `https://app.beeblast.co`. */
+  /** Hostname or URL of the core service. `gateway.broods.app` becomes `https://gateway.broods.app`. */
   host?: string;
-  /** API key used as the WebSocket token. Defaults to FILTHY_PANTY_API_KEY from the environment or local .env files. */
+  /** API key used as the WebSocket token. Defaults to BROODS_API_KEY from the environment or local .env files. */
   apiKey?: string;
   WebSocket?: WebSocketConstructorLike;
   connectTimeoutMs?: number;
@@ -69,24 +69,24 @@ export interface WebSocketLike {
   close(code?: number, reason?: string): void;
 }
 
-export class FilthyPantyWebSocketClient {
+export class BroodsWebSocketClient {
   private readonly baseUrl: string;
   private readonly apiKey: string;
   private readonly WebSocketImpl?: WebSocketConstructorLike;
   private readonly connectTimeoutMs: number;
 
-  constructor(options: FilthyPantyWebSocketClientOptions = {}) {
-    loadFilthyPantyRuntimeConfig();
+  constructor(options: BroodsWebSocketClientOptions = {}) {
+    loadBroodsRuntimeConfig();
     this.baseUrl = normalizeWebSocketServiceUrl(options.baseUrl ||
-      process.env.FILTHY_PANTY_WEBSOCKET_URL ||
+      process.env.BROODS_WEBSOCKET_URL ||
       options.host ||
-      process.env.FILTHY_PANTY_BASE_URL ||
-      process.env.FILTHY_PANTY_HOST ||
+      process.env.BROODS_BASE_URL ||
+      process.env.BROODS_HOST ||
       DEFAULT_CORE_BASE_URL);
     this.apiKey = options.apiKey ||
-      process.env.FILTHY_PANTY_API_KEY ||
+      process.env.BROODS_API_KEY ||
       "";
-    if (!this.apiKey) throw new Error("FilthyPantyWebSocketClient requires apiKey or FILTHY_PANTY_API_KEY.");
+    if (!this.apiKey) throw new Error("BroodsWebSocketClient requires apiKey or BROODS_API_KEY.");
     this.WebSocketImpl = options.WebSocket;
     this.connectTimeoutMs = options.connectTimeoutMs ?? DEFAULT_CONNECT_TIMEOUT_MS;
   }
@@ -246,7 +246,7 @@ export class FilthyPantyWebSocketClient {
   private resolveWebSocket(): WebSocketConstructorLike {
     const WebSocketImpl = this.WebSocketImpl ?? (globalThis as { WebSocket?: WebSocketConstructorLike }).WebSocket;
     if (!WebSocketImpl) {
-      throw new Error("WebSocket is not available. Pass a WebSocket implementation in FilthyPantyWebSocketClient options.");
+      throw new Error("WebSocket is not available. Pass a WebSocket implementation in BroodsWebSocketClient options.");
     }
 
     return WebSocketImpl;
@@ -271,8 +271,8 @@ function resolveEndpointId(input: Pick<WebSocketRunInput, "agent" | "endpointId"
   return endpointId;
 }
 
-export { FilthyPantyWebSocketClient as WebSocketClient };
-export { FilthyPantyWebSocketClient as WebsocketClient };
+export { BroodsWebSocketClient as WebSocketClient };
+export { BroodsWebSocketClient as WebsocketClient };
 export type {
   WebSocketClientCancelMessage,
   WebSocketClientExecuteMessage,
@@ -301,7 +301,7 @@ function webSocketAccessError(baseUrl: string): Error {
   if (LAMBDA_FUNCTION_URL_HOST_RE.test(host)) {
     return new Error(
       `Cannot access the WebSocket service at ${baseUrl}. AWS Lambda Function URLs do not support WebSocket upgrades; ` +
-      "set FILTHY_PANTY_WEBSOCKET_URL or FILTHY_PANTY_HOST to the deployed WebSocket gateway URL instead.",
+      "set BROODS_WEBSOCKET_URL or BROODS_HOST to the deployed WebSocket gateway URL instead.",
     );
   }
 

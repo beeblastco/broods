@@ -6,7 +6,7 @@
  */
 
 import { emitOtelLog, getObservabilityContext } from "./otel.ts";
-import type { ObservabilityLogEntry } from "../../../../packages/filthy-panty/src/observability-contracts.ts";
+import type { ObservabilityLogEntry } from "../../../../packages/broods/src/observability-contracts.ts";
 import { logsSubject, getObservabilityNatsConn, ensureObservabilityStream } from "./nats.ts";
 
 // Keys are matched after normalizing to lowercase with hyphens/underscores
@@ -223,7 +223,7 @@ function emit(
 ): void {
   const ctx = getObservabilityContext();
   const ts = Date.now();
-  const service = process.env.AWS_LAMBDA_FUNCTION_NAME ?? "filthy-panty-core";
+  const service = process.env.AWS_LAMBDA_FUNCTION_NAME ?? "broods-core";
   const secretValues = [...sensitiveEnvValues(), ...(ctx?.secretValues ?? [])];
 
   // Build the full structured entry, then redact the message and data payload.

@@ -1,11 +1,12 @@
 "use client";
 
 /** VSCode-style file explorer for a workspace canvas node with drag-and-drop upload. */
+import { DeleteConfirmDialog } from "@/app/components/DeleteConfirmDialog";
 import { Button } from "@/app/components/ui/button";
 import { Input } from "@/app/components/ui/input";
 import { cn } from "@/app/lib/utils";
-import { api } from "@filthy-panty/convex/_generated/api";
-import type { Id } from "@filthy-panty/convex/_generated/dataModel";
+import { api } from "@broods/convex/_generated/api";
+import type { Id } from "@broods/convex/_generated/dataModel";
 import { useAction, useMutation, useQuery } from "convex/react";
 import {
   ChevronDown,
@@ -47,7 +48,7 @@ type RuntimeFileCacheEntry = {
   cachedAt: number;
 };
 
-const RUNTIME_FILE_CACHE_PREFIX = "filthy-panty.workspace-files.v1";
+const RUNTIME_FILE_CACHE_PREFIX = "broods.workspace-files.v1";
 const runtimeFileCache = new Map<string, RuntimeFileCacheEntry>();
 
 // ---------------------------------------------------------------------------
@@ -477,6 +478,9 @@ export function WorkspaceFilesTab({
   const [isDragOver, setIsDragOver] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Node pending delete confirmation.
+  const [pendingDeleteNode, setPendingDeleteNode] = useState<FileNode | null>(null);
+  const [isDeletingNode, setIsDeletingNode] = useState(false);
   const refreshRequestRef = useRef(0);
   const refreshPromiseRef = useRef<Promise<FileRecord[]> | undefined>(undefined);
   const dragCounter = useRef(0);
@@ -566,7 +570,7 @@ export function WorkspaceFilesTab({
     setRenamingPath(null);
   }, []);
 
-  const handleDelete = useCallback(
+  const executeDelete = useCallback(
     async (node: FileNode) => {
       if (!projectId) return;
       setSelected(null);
@@ -596,7 +600,12 @@ export function WorkspaceFilesTab({
     [applyRuntimeFiles, projectId, workspaceId, nodeId, removeFile, removeFolderMut, removeRuntimePath, refreshRuntimeFiles, runtimeFiles],
   );
 
-  // Keyboard: Delete = delete selected, F2 = rename selected
+  // Opens the delete confirmation dialog for a node (click or keyboard Delete).
+  const handleDelete = useCallback((node: FileNode) => {
+    setPendingDeleteNode(node);
+  }, []);
+
+  // Keyboard: Delete/Backspace = open delete dialog for selected, F2 = rename selected
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (renamingPath) return;
@@ -606,7 +615,7 @@ export function WorkspaceFilesTab({
         document.activeElement?.tagName !== "INPUT"
       ) {
         const match = files?.find((f: FileRecord) => f.path === selected);
-        if (match) void handleDelete(match as FileNode);
+        if (match) setPendingDeleteNode(match as FileNode);
       }
       if (e.key === "F2" && selected) {
         setRenamingPath(selected);
@@ -614,7 +623,7 @@ export function WorkspaceFilesTab({
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [selected, renamingPath, files, handleDelete]);
+  }, [selected, renamingPath, files]);
 
   const toggleFolder = useCallback((path: string) => {
     setExpanded((prev) => {
@@ -970,6 +979,28 @@ export function WorkspaceFilesTab({
             Drop to upload
           </p>
         </div>
+      )}
+
+      {pendingDeleteNode && (
+        <DeleteConfirmDialog
+          open={pendingDeleteNode !== null}
+          onOpenChange={(open) => {
+            if (!open) setPendingDeleteNode(null);
+          }}
+          resourceName={pendingDeleteNode.name}
+          resourceType={pendingDeleteNode.isFolder ? "folder" : "file"}
+          critical={false}
+          onConfirm={async () => {
+            setIsDeletingNode(true);
+            try {
+              await executeDelete(pendingDeleteNode);
+              setPendingDeleteNode(null);
+            } finally {
+              setIsDeletingNode(false);
+            }
+          }}
+          isDeleting={isDeletingNode}
+        />
       )}
     </div>
   );

@@ -1,4 +1,4 @@
-import { defineAgent, env } from "filthy-panty";
+import { defineAgent, env } from "broods";
 
 export const approvalAgent = defineAgent({
   name: "approval-agent",

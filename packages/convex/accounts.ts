@@ -1,5 +1,5 @@
 /**
- * Account CRUD + secret-hash lookup. Called by filthy-panty's
+ * Account CRUD + secret-hash lookup. Called by broods's
  * ConvexStorageProvider (via deploy key) and by the dashboard's org lifecycle.
  */
 

@@ -187,7 +187,7 @@ incantation is needed in agent scripts anymore.
 > unified shared-data layer (an Archil-style elastic POSIX filesystem mountable across
 > sandboxes) that owns durability and conflict resolution in one place, replacing the
 > per-provider mount/flush mechanics. Tracked in
-> [#64](https://github.com/beeblastco/filthy-panty/issues/64).
+> [#64](https://github.com/beeblastco/broods/issues/64).
 
 ### Known limitations
 

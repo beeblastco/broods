@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * Workspace node — represents a standalone filthy-panty workspaceConfig record
+ * Workspace node — represents a standalone broods workspaceConfig record
  * referenced by agent config `workspaces[].workspaceId`.
  */
 import { BaseNode, type BaseNodeData } from "@/app/components/node/BaseNode";

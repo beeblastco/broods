@@ -1,6 +1,6 @@
 "use node";
 /**
- * Public action wrappers for cron CRUD. These proxy to filthy-panty's
+ * Public action wrappers for cron CRUD. These proxy to broods's
  * /accounts/me/crons HTTP endpoints so EventBridge Scheduler stays in
  * sync with Convex. Cherry-coke never touches AWS directly.
  */
@@ -12,11 +12,11 @@ import { action } from "./_generated/server";
 const STATUS_VALIDATOR = v.union(v.literal("active"), v.literal("paused"));
 
 function getServiceEnv(): { url: string; secret: string } {
-    const url = process.env.FILTHY_PANTY_ACCOUNT_MANAGE_URL;
-    const secret = process.env.FILTHY_PANTY_SERVICE_AUTH_SECRET;
+    const url = process.env.BROODS_ACCOUNT_MANAGE_URL;
+    const secret = process.env.BROODS_SERVICE_AUTH_SECRET;
     if (!url || !secret) {
         throw new Error(
-            "FILTHY_PANTY_ACCOUNT_MANAGE_URL or FILTHY_PANTY_SERVICE_AUTH_SECRET missing",
+            "BROODS_ACCOUNT_MANAGE_URL or BROODS_SERVICE_AUTH_SECRET missing",
         );
     }
     return { url: url, secret: secret };
@@ -30,7 +30,7 @@ function headers(accountId: string, secret: string): HeadersInit {
     };
 }
 
-/** Creates a cron job via filthy-panty (HTTP -> EBS + Convex dual-write). */
+/** Creates a cron job via broods (HTTP -> EBS + Convex dual-write). */
 export const create = action({
     args: {
         name: v.string(),
@@ -55,7 +55,7 @@ export const create = action({
         });
         if (!res.ok) {
             throw new Error(
-                `Filthy-panty create cron failed: ${res.status} ${await res.text()}`,
+                `Broods create cron failed: ${res.status} ${await res.text()}`,
             );
         }
         const { cron } = (await res.json()) as { cron: { cronId: string } };
@@ -63,7 +63,7 @@ export const create = action({
     },
 });
 
-/** Updates a cron job via filthy-panty. */
+/** Updates a cron job via broods. */
 export const update = action({
     args: {
         cronId: v.string(),
@@ -90,14 +90,14 @@ export const update = action({
         });
         if (!res.ok) {
             throw new Error(
-                `Filthy-panty update cron failed: ${res.status} ${await res.text()}`,
+                `Broods update cron failed: ${res.status} ${await res.text()}`,
             );
         }
         return null;
     },
 });
 
-/** Removes a cron job via filthy-panty. */
+/** Removes a cron job via broods. */
 export const remove = action({
     args: { cronId: v.string() },
     returns: v.null(),
@@ -112,7 +112,7 @@ export const remove = action({
         });
         if (!res.ok) {
             throw new Error(
-                `Filthy-panty delete cron failed: ${res.status} ${await res.text()}`,
+                `Broods delete cron failed: ${res.status} ${await res.text()}`,
             );
         }
         return null;

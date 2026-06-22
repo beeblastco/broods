@@ -6,12 +6,12 @@ Discord integration allows your agent to interact with users via Discord bots.
 
 Define a Discord channel with `defineDiscordChannel` and attach it to an agent:
 
-```ts title="filthypanty/index.ts"
+```ts title="broods/index.ts"
 import {
   defineAgent,
   defineDiscordChannel,
   env,
-} from "filthy-panty";
+} from "broods";
 
 export const discord = defineDiscordChannel({
   botToken: env.DISCORD_BOT_TOKEN,

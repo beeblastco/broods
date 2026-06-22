@@ -1,16 +1,16 @@
 {
-  "name": "@filthy-panty/demo-channel-github",
+  "name": "@broods/demo-channel-github",
   "type": "module",
   "private": true,
   "scripts": {
     "check": "tsc --noEmit",
-    "cli:login": "filthy-panty login --dashboard-url https://dashboard.dev.beeblast.co",
-    "dev": "filthy-panty dev --dashboard-url https://dashboard.dev.beeblast.co --project channel-github",
-    "diff": "filthy-panty diff --dashboard-url https://dashboard.dev.beeblast.co --project channel-github",
-    "deploy": "filthy-panty deploy --dashboard-url https://dashboard.dev.beeblast.co --project channel-github"
+    "cli:login": "broods login --dashboard-url https://dashboard.dev.beeblast.co",
+    "dev": "broods dev --dashboard-url https://dashboard.dev.beeblast.co --project channel-github",
+    "diff": "broods diff --dashboard-url https://dashboard.dev.beeblast.co --project channel-github",
+    "deploy": "broods deploy --dashboard-url https://dashboard.dev.beeblast.co --project channel-github"
   },
   "dependencies": {
-    "filthy-panty": "file:../../filthy-panty"
+    "broods": "file:../../broods"
   },
   "devDependencies": {
     "@types/bun": "^1.3.14"

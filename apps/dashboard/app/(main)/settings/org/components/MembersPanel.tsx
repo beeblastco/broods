@@ -5,6 +5,7 @@
  * and remove. Reads/writes via api.orgMembers; gated server-side.
  */
 
+import { DeleteConfirmDialog } from "@/app/components/DeleteConfirmDialog";
 import { Section } from "@/app/components/Section";
 import { Avatar, AvatarFallback, AvatarImage } from "@/app/components/ui/avatar";
 import { Badge } from "@/app/components/ui/badge";
@@ -18,8 +19,8 @@ import {
     SelectTrigger,
     SelectValue,
 } from "@/app/components/ui/select";
-import { api } from "@filthy-panty/convex/_generated/api";
-import type { Doc, Id } from "@filthy-panty/convex/_generated/dataModel";
+import { api } from "@broods/convex/_generated/api";
+import type { Doc, Id } from "@broods/convex/_generated/dataModel";
 import { useMutation, useQuery } from "convex/react";
 import { Trash2 } from "lucide-react";
 import { useState } from "react";
@@ -35,6 +36,15 @@ const ROLE_LABEL: Record<Role, string> = {
     owner: "Owner",
     admin: "Admin",
     member: "Member",
+};
+
+type MemberRow = {
+    membershipId: Id<"orgMembers">;
+    name: string;
+    email: string;
+    role: Role;
+    isOwner: boolean;
+    avatarUrl?: string;
 };
 
 export function MembersPanel({ org }: Props) {
@@ -72,6 +82,10 @@ export function MembersPanel({ org }: Props) {
     const [inviteNotice, setInviteNotice] = useState<string | null>(null);
     const [actionError, setActionError] = useState<string | null>(null);
 
+    // Member pending removal confirmation.
+    const [removingMember, setRemovingMember] = useState<MemberRow | null>(null);
+    const [isRemovingMember, setIsRemovingMember] = useState(false);
+
     async function handleInvite() {
         const email = inviteEmail.trim();
         if (!email) return;
@@ -98,121 +112,142 @@ export function MembersPanel({ org }: Props) {
         }
     }
 
-    async function handleRemove(membershipId: Id<"orgMembers">) {
+    async function handleRemoveMember() {
+        if (!removingMember) return;
+        setIsRemovingMember(true);
         setActionError(null);
         try {
-            await remove({ membershipId: membershipId });
+            await remove({ membershipId: removingMember.membershipId });
+            setRemovingMember(null);
         } catch (err) {
             setActionError(err instanceof Error ? err.message : "Remove failed");
+        } finally {
+            setIsRemovingMember(false);
         }
     }
 
     return (
-        <div className="grid gap-10">
-            <Section title="Invite member" description="Add an existing user to this organization by email.">
-                <div className="grid gap-3">
-                    <div className="grid gap-1">
-                        <Label htmlFor="invite-email" className="text-xs text-muted-foreground">Email</Label>
-                        <div className="flex items-center gap-2">
-                            <Input
-                                id="invite-email"
-                                type="email"
-                                placeholder="user@example.com"
-                                value={inviteEmail}
-                                onChange={(e) => setInviteEmail(e.target.value)}
-                                className="flex-1"
-                            />
-                            <Select
-                                value={inviteRole}
-                                onValueChange={(v) => setInviteRole(v as Exclude<Role, "owner">)}
-                            >
-                                <SelectTrigger className="w-28 cursor-pointer">
-                                    <SelectValue />
-                                </SelectTrigger>
-                                <SelectContent>
-                                    <SelectItem value="member" className="cursor-pointer">Member</SelectItem>
-                                    <SelectItem value="admin" className="cursor-pointer">Admin</SelectItem>
-                                </SelectContent>
-                            </Select>
-                            <Button
-                                size="sm"
-                                className="cursor-pointer disabled:cursor-not-allowed"
-                                disabled={inviting || !inviteEmail.trim()}
-                                onClick={handleInvite}
-                            >
-                                {inviting ? "Adding..." : "Add"}
-                            </Button>
-                        </div>
-                        <p className="text-xs text-muted-foreground">
-                            The user must have signed in at least once before they can be added.
-                        </p>
-                        {inviteError && <p className="text-xs text-destructive">{inviteError}</p>}
-                        {inviteNotice && <p className="text-xs text-muted-foreground">{inviteNotice}</p>}
-                    </div>
-                </div>
-            </Section>
-
-            <Section title="Members" description="Owners can manage roles and remove members. The owner cannot be removed.">
-                {members === undefined ? (
-                    <p className="text-sm text-muted-foreground">Loading...</p>
-                ) : members.length === 0 ? (
-                    <p className="text-sm text-muted-foreground">No members yet.</p>
-                ) : (
-                    <div className="grid gap-2">
-                        {members.map((m) => {
-                            const initials = m.name.split(" ").filter(Boolean).map((s) => s[0]).slice(0, 2).join("").toUpperCase();
-
-                            return (
-                                <div
-                                    key={m.membershipId}
-                                    className="flex items-center gap-3 rounded-md border border-border bg-card px-3 py-2"
+        <>
+            <div className="grid gap-10">
+                <Section title="Invite member" description="Add an existing user to this organization by email.">
+                    <div className="grid gap-3">
+                        <div className="grid gap-1">
+                            <Label htmlFor="invite-email" className="text-xs text-muted-foreground">Email</Label>
+                            <div className="flex items-center gap-2">
+                                <Input
+                                    id="invite-email"
+                                    type="email"
+                                    placeholder="user@example.com"
+                                    value={inviteEmail}
+                                    onChange={(e) => setInviteEmail(e.target.value)}
+                                    className="flex-1"
+                                />
+                                <Select
+                                    value={inviteRole}
+                                    onValueChange={(v) => setInviteRole(v as Exclude<Role, "owner">)}
                                 >
-                                    <Avatar size="sm">
-                                        {m.avatarUrl && <AvatarImage src={m.avatarUrl} alt={m.name} />}
-                                        <AvatarFallback className="bg-muted text-[10px] font-medium text-muted-foreground">
-                                            {initials || "?"}
-                                        </AvatarFallback>
-                                    </Avatar>
-                                    <div className="flex-1 min-w-0">
-                                        <p className="truncate text-sm font-medium text-foreground">{m.name}</p>
-                                        <p className="truncate text-xs text-muted-foreground">{m.email}</p>
-                                    </div>
-                                    {m.isOwner ? (
-                                        <Badge variant="secondary" className="text-xs uppercase">
-                                            {ROLE_LABEL.owner}
-                                        </Badge>
-                                    ) : (
-                                        <Select
-                                            value={m.role}
-                                            onValueChange={(v) => handleRoleChange(m.membershipId, v as Role)}
-                                        >
-                                            <SelectTrigger className="w-28 cursor-pointer">
-                                                <SelectValue />
-                                            </SelectTrigger>
-                                            <SelectContent>
-                                                <SelectItem value="member" className="cursor-pointer">Member</SelectItem>
-                                                <SelectItem value="admin" className="cursor-pointer">Admin</SelectItem>
-                                            </SelectContent>
-                                        </Select>
-                                    )}
-                                    {!m.isOwner && (
-                                        <Button
-                                            variant="ghost"
-                                            size="sm"
-                                            className="cursor-pointer text-muted-foreground hover:text-destructive"
-                                            onClick={() => handleRemove(m.membershipId)}
-                                            aria-label="Remove member"
-                                        >
-                                            <Trash2 className="size-3.5" />
-                                        </Button>
-                                    )}
-                                </div>
-                            );
-                        })}
-                        {actionError && <p className="text-xs text-destructive">{actionError}</p>}
+                                    <SelectTrigger className="w-28 cursor-pointer">
+                                        <SelectValue />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        <SelectItem value="member" className="cursor-pointer">Member</SelectItem>
+                                        <SelectItem value="admin" className="cursor-pointer">Admin</SelectItem>
+                                    </SelectContent>
+                                </Select>
+                                <Button
+                                    size="sm"
+                                    className="cursor-pointer disabled:cursor-not-allowed"
+                                    disabled={inviting || !inviteEmail.trim()}
+                                    onClick={handleInvite}
+                                >
+                                    {inviting ? "Adding..." : "Add"}
+                                </Button>
+                            </div>
+                            <p className="text-xs text-muted-foreground">
+                                The user must have signed in at least once before they can be added.
+                            </p>
+                            {inviteError && <p className="text-xs text-destructive">{inviteError}</p>}
+                            {inviteNotice && <p className="text-xs text-muted-foreground">{inviteNotice}</p>}
+                        </div>
                     </div>
-                )}
-            </Section>
-        </div>
+                </Section>
+
+                <Section title="Members" description="Owners can manage roles and remove members. The owner cannot be removed.">
+                    {members === undefined ? (
+                        <p className="text-sm text-muted-foreground">Loading...</p>
+                    ) : members.length === 0 ? (
+                        <p className="text-sm text-muted-foreground">No members yet.</p>
+                    ) : (
+                        <div className="grid gap-2">
+                            {members.map((m) => {
+                                const initials = m.name.split(" ").filter(Boolean).map((s) => s[0]).slice(0, 2).join("").toUpperCase();
+
+                                return (
+                                    <div
+                                        key={m.membershipId}
+                                        className="flex items-center gap-3 rounded-md border border-border bg-card px-3 py-2"
+                                    >
+                                        <Avatar size="sm">
+                                            {m.avatarUrl && <AvatarImage src={m.avatarUrl} alt={m.name} />}
+                                            <AvatarFallback className="bg-muted text-[10px] font-medium text-muted-foreground">
+                                                {initials || "?"}
+                                            </AvatarFallback>
+                                        </Avatar>
+                                        <div className="flex-1 min-w-0">
+                                            <p className="truncate text-sm font-medium text-foreground">{m.name}</p>
+                                            <p className="truncate text-xs text-muted-foreground">{m.email}</p>
+                                        </div>
+                                        {m.isOwner ? (
+                                            <Badge variant="secondary" className="text-xs uppercase">
+                                                {ROLE_LABEL.owner}
+                                            </Badge>
+                                        ) : (
+                                            <Select
+                                                value={m.role}
+                                                onValueChange={(v) => handleRoleChange(m.membershipId, v as Role)}
+                                            >
+                                                <SelectTrigger className="w-28 cursor-pointer">
+                                                    <SelectValue />
+                                                </SelectTrigger>
+                                                <SelectContent>
+                                                    <SelectItem value="member" className="cursor-pointer">Member</SelectItem>
+                                                    <SelectItem value="admin" className="cursor-pointer">Admin</SelectItem>
+                                                </SelectContent>
+                                            </Select>
+                                        )}
+                                        {!m.isOwner && (
+                                            <Button
+                                                variant="ghost"
+                                                size="sm"
+                                                className="cursor-pointer text-muted-foreground hover:text-destructive"
+                                                onClick={() => setRemovingMember(m as MemberRow)}
+                                                aria-label="Remove member"
+                                            >
+                                                <Trash2 className="size-3.5" />
+                                            </Button>
+                                        )}
+                                    </div>
+                                );
+                            })}
+                            {actionError && <p className="text-xs text-destructive">{actionError}</p>}
+                        </div>
+                    )}
+                </Section>
+            </div>
+
+            {removingMember && (
+                <DeleteConfirmDialog
+                    open={removingMember !== null}
+                    onOpenChange={(open) => {
+                        if (!open) setRemovingMember(null);
+                    }}
+                    resourceName={removingMember.name}
+                    resourceType="member"
+                    critical={false}
+                    onConfirm={handleRemoveMember}
+                    isDeleting={isRemovingMember}
+                />
+            )}
+        </>
     );
 }

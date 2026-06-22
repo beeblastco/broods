@@ -1,5 +1,5 @@
 /**
- * Example: E2B sandbox provider (stateless bash) via declarative filthy-panty resources.
+ * Example: E2B sandbox provider (stateless bash) via declarative broods resources.
  *
  * E2B runs each command in an ephemeral template sandbox and does NOT mount the S3
  * workspace, so workspace-backed tools (read/write/edit/glob/grep) are disabled. Reference
@@ -7,11 +7,11 @@
  * installed; `apiKey` can be omitted when `E2B_API_KEY` is set on the harness runtime.
  */
 
-import { FilthyPantyClient } from "filthy-panty";
-import { api } from "./filthypanty/_generated/api";
+import { BroodsClient } from "broods";
+import { api } from "./broods/_generated/api";
 
-// Create a client to connect to the Filthy Panty API.
-const client = new FilthyPantyClient();
+// Create a client to connect to the Broods API.
+const client = new BroodsClient();
 
 // Stream the response from the agent and print it to stdout.
 for await (const chunk of client.stream(api.agents.e2bAgent, {

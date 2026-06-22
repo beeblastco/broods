@@ -1,50 +1,50 @@
 # Operations
 
-This page covers both the **managed service** (`app.beeblast.co`) and **self-hosted** operations. Most day-to-day tasks use the CLI; self-hosted operators also manage SST infrastructure.
+This page covers both the **managed service** (`gateway.broods.app`) and **self-hosted** operations. Most day-to-day tasks use the CLI; self-hosted operators also manage SST infrastructure.
 
 ## CLI Commands
 
-The `filthy-panty` CLI is the primary interface for both paths.
+The `broods` CLI is the primary interface for both paths.
 
 ### Development
 
 ```bash
-filthy-panty dev              # watch + sync Development + live-tail logs
-filthy-panty dev --once       # sync once and exit (no watch, no logs)
-filthy-panty diff             # show local vs remote diff
+broods dev              # watch + sync Development + live-tail logs
+broods dev --once       # sync once and exit (no watch, no logs)
+broods diff             # show local vs remote diff
 ```
 
 ### Deployment
 
 ```bash
-filthy-panty deploy           # sync Production
-filthy-panty deploy --prune   # delete undeclared remote resources
-filthy-panty deploy --rotate-key  # mint a fresh runtime API key
+broods deploy           # sync Production
+broods deploy --prune   # delete undeclared remote resources
+broods deploy --rotate-key  # mint a fresh runtime API key
 ```
 
 ### Environment Variables
 
 ```bash
-filthy-panty env set OPENAI_API_KEY    # store encrypted secret
-filthy-panty env get OPENAI_API_KEY    # reveal value (audited)
-filthy-panty env list                  # list names (values hidden)
-filthy-panty env rm OPENAI_API_KEY     # remove variable
+broods env set OPENAI_API_KEY    # store encrypted secret
+broods env get OPENAI_API_KEY    # reveal value (audited)
+broods env list                  # list names (values hidden)
+broods env rm OPENAI_API_KEY     # remove variable
 ```
 
 ### Observability
 
 ```bash
-filthy-panty stream           # live-tail project logs
-filthy-panty logs --limit 100 # backfill + live-tail
-filthy-panty logs --errors    # WARN+ only
+broods stream           # live-tail project logs
+broods logs --limit 100 # backfill + live-tail
+broods logs --errors    # WARN+ only
 ```
 
 ### Agents
 
 ```bash
-filthy-panty agent list       # list agents (name, public/private, model, deploy status)
-filthy-panty agent get my-agent  # show resolved config
-filthy-panty run my-agent "Hello"  # one-off run with pretty streaming
+broods agent list       # list agents (name, public/private, model, deploy status)
+broods agent get my-agent  # show resolved config
+broods run my-agent "Hello"  # one-off run with pretty streaming
 ```
 
 ### Global Options
@@ -68,7 +68,7 @@ Use `apps/core/.env` for local SST inputs only:
 - `ENABLE_WEBSOCKET` - Set to `true` to enable WebSocket gateway worker invocations.
 - `NATS_URL` - Required when `ENABLE_WEBSOCKET=true`; ignored by the deployed Lambda when WebSocket is disabled. The transport is chosen by scheme: `wss://`/`ws://` (WebSocket, e.g. `wss://nats.beeblast.co` from the out-of-cluster Lambda) or `nats://`/`tls://` (core TCP, for future in-cluster callers).
 - `NATS_TOKEN` - Token-auth credential for the NATS server; optional (omit for an unauthenticated server).
-- `FILTHY_PANTY_WEBSOCKET_URL` - Optional SDK/demo override for WebSocket clients using a non-default or self-hosted gateway. The hosted SDK default is `app.beeblast.co`.
+- `BROODS_WEBSOCKET_URL` - Optional SDK/demo override for WebSocket clients using a non-default or self-hosted gateway. The hosted SDK default is `gateway.broods.app`.
 
 Runtime secrets are SST secrets. Generate your own secret and set
 
@@ -129,7 +129,7 @@ Deploy outputs include:
 
 ## Post-Deploy Account Setup (Self-Hosted)
 
-When self-hosting, the CLI still handles tenant configuration. After `filthy-panty deploy` syncs your resources, the CLI prints the agent-scoped webhook URLs. Register them with your channel providers (see the [Channels overview](channels/index.md)).
+When self-hosting, the CLI still handles tenant configuration. After `broods deploy` syncs your resources, the CLI prints the agent-scoped webhook URLs. Register them with your channel providers (see the [Channels overview](channels/index.md)).
 
 If you need to create an account manually (e.g. for automated testing), use the admin `AdminAccountSecret`:
 
@@ -144,7 +144,7 @@ For day-to-day development, prefer the CLI-managed flow described in [Getting St
 
 ## Channel Setup
 
-Declare channel agents with the CLI SDK and run `filthy-panty dev` or `filthy-panty deploy`. The CLI prints the agent-scoped webhook URL after synchronization. Provider registration remains an explicit operation documented by the matching `packages/demos/channel-*` package; infrastructure deployment does not provision demo channel accounts.
+Declare channel agents with the CLI SDK and run `broods dev` or `broods deploy`. The CLI prints the agent-scoped webhook URL after synchronization. Provider registration remains an explicit operation documented by the matching `packages/demos/channel-*` package; infrastructure deployment does not provision demo channel accounts.
 
 ## Public Access & Agent Commands
 
@@ -162,7 +162,7 @@ export const myAgent = defineAgent({
 
 When `publicAccess` is not set, a public-key request for that agent is refused with HTTP `403` (`{"error": "...", "code": "public_access_disabled"}`). Internal callers (account/admin secret), channel webhooks, and cron runs are never gated by this flag, so a private agent stays reachable through an internal endpoint or a channel webhook. The dashboard's agent **Public API** panel shows the toggle and hides the endpoint URLs while access is off.
 
-The environment runtime key is encrypted at rest and recoverable by the owning user. The dashboard loads it automatically for Monitoring and Tracing, while `filthy-panty login` or `filthy-panty deploy` writes it to `FILTHY_PANTY_API_KEY` in `.env.local`. Dashboard and CLI sessions reuse the stored key without rotating it.
+The environment runtime key is encrypted at rest and recoverable by the owning user. The dashboard loads it automatically for Monitoring and Tracing, while `broods login` or `broods deploy` writes it to `BROODS_API_KEY` in `.env.local`. Dashboard and CLI sessions reuse the stored key without rotating it.
 
 Logs and traces are published once to NATS and captured by a durable `OBSERVABILITY` JetStream stream (bound to the `*.logs.>` / `*.traces.>` subjects). On (re)connect the gateway replays the recent window from that stream and then tails live, so the dashboard shows full-fidelity recent activity even for a run that happened while no tab was open — JetStream replay, not the slower/lossier core subscribe it replaced. Loki (logs) and Tempo (traces) remain the long-term store for history older than the replay window; the refresh control reloads from them. Because Tempo truncates large attributes on ingest, the dashboard prefers the richer/terminal copy of a span when the same span arrives from both sources, so a reload never downgrades a payload.
 
@@ -173,9 +173,9 @@ Tracing shows active and completed tasks with a started-time column, model input
 Inspect and test agents from the CLI:
 
 ```bash
-filthy-panty agent list            # name, public/private, model, deploy status
-filthy-panty agent get <name>      # model, sandbox, workspaces, tools, channels, webhook
-filthy-panty run <name> "<prompt>" # one-off run; pretty-streams thinking, tool calls, results over SSE
+broods agent list            # name, public/private, model, deploy status
+broods agent get <name>      # model, sandbox, workspaces, tools, channels, webhook
+broods run <name> "<prompt>" # one-off run; pretty-streams thinking, tool calls, results over SSE
 ```
 
 `run` reaches the agent over the public endpoint, so it needs `publicAccess: true`; otherwise it reports the secured-by-default `403` with guidance to enable it.
@@ -183,7 +183,7 @@ filthy-panty run <name> "<prompt>" # one-off run; pretty-streams thinking, tool 
 For quick health checks, you can also run a one-off probe:
 
 ```bash
-filthy-panty run my-agent "ping"
+broods run my-agent "ping"
 ```
 
 Or verify the harness URL directly:

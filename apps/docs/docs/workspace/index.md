@@ -46,15 +46,15 @@ flowchart LR
 
 ## Code-First Configuration
 
-Define sandbox and workspace resources in `filthypanty/`, then pass them to an agent:
+Define sandbox and workspace resources in `broods/`, then pass them to an agent:
 
-```ts title="filthypanty/index.ts"
+```ts title="broods/index.ts"
 import {
   defineAgent,
   defineSandbox,
   defineWorkspace,
   env,
-} from "filthy-panty";
+} from "broods";
 
 export const lambdaSandbox = defineSandbox({
   name: "default",

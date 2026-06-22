@@ -3,9 +3,9 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "@filthy-panty/demo-sandbox-workspace-kubernetes",
+      "name": "@broods/demo-sandbox-workspace-kubernetes",
       "dependencies": {
-        "filthy-panty": "file:../../filthy-panty",
+        "broods": "file:../../broods",
       },
       "devDependencies": {
         "@types/bun": "^1.3.14",
@@ -35,7 +35,7 @@
 
     "eventsource-parser": ["eventsource-parser@3.1.0", "", {}, "sha512-kJezFj9YFAMLeORyi7aCLxLbD5/qWMQnoMVlVPyHIll7lgRJCc3JVln9Vgl9nwQi0YkMnhdGTMNn7CkRRAptMg=="],
 
-    "filthy-panty": ["filthy-panty@file:../../filthy-panty", { "dependencies": { "ai": "^6.0.195" }, "devDependencies": { "@types/bun": "^1.3.14" }, "peerDependencies": { "typescript": "^6.0.3" }, "bin": { "filthy-panty": "./src/cli/index.ts" } }],
+    "broods": ["broods@file:../../broods", { "dependencies": { "ai": "^6.0.195" }, "devDependencies": { "@types/bun": "^1.3.14" }, "peerDependencies": { "typescript": "^6.0.3" }, "bin": { "broods": "./src/cli/index.ts" } }],
 
     "json-schema": ["json-schema@0.4.0", "", {}, "sha512-es94M3nTIfsEPisRafak+HDLfHXnKBhV3vU5eqPcS3flIWqcxJWgXHXiey3YrpaNsanY5ei1VoYEbOzijuq9BA=="],
 

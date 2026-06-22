@@ -624,8 +624,8 @@ describe("createSandboxExecutor", () => {
     expect(k8sDeleteNamespacedCustomObjectMock).not.toHaveBeenCalled();
     const body = (k8sCreateNamespacedCustomObjectMock.mock.calls[0]![0] as { body: Record<string, any> }).body;
     expect(body.metadata.name).toMatch(/^fp-p-/);
-    expect(body.metadata.labels).toEqual({ "beeblast.co/persistent": "true" });
-    expect(body.metadata.annotations["beeblast.co/idle-timeout-seconds"]).toBe("1800");
+    expect(body.metadata.labels).toEqual({ "broods.app/persistent": "true" });
+    expect(body.metadata.annotations["broods.app/idle-timeout-seconds"]).toBe("1800");
     expect(body.spec.replicas).toBe(1);
     expect(body.spec.shutdownPolicy).toBe("Delete");
     expect(typeof body.spec.shutdownTime).toBe("string");
@@ -679,7 +679,7 @@ describe("createSandboxExecutor", () => {
     const policy = k8sCreateNamespacedNetworkPolicyMock.mock.calls[0]![0] as {
       body: { spec: { podSelector: { matchLabels: Record<string, string> }; egress: unknown[] } };
     };
-    expect(policy.body.spec.podSelector.matchLabels["beeblast.co/sandbox-name"]).toMatch(/^fp-/);
+    expect(policy.body.spec.podSelector.matchLabels["broods.app/sandbox-name"]).toMatch(/^fp-/);
     expect(policy.body.spec.egress).toEqual([]);
   });
 

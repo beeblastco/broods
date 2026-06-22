@@ -1,4 +1,4 @@
-import { defineAgent, defineSlackChannel, env } from "filthy-panty";
+import { defineAgent, defineSlackChannel, env } from "broods";
 
 export const slack = defineSlackChannel({
   botToken: env.SLACK_BOT_TOKEN,

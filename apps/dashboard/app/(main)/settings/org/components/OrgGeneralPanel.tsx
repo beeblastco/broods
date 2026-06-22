@@ -10,8 +10,8 @@ import { Badge } from "@/app/components/ui/badge";
 import { Button } from "@/app/components/ui/button";
 import { Input } from "@/app/components/ui/input";
 import { Label } from "@/app/components/ui/label";
-import { api } from "@filthy-panty/convex/_generated/api";
-import type { Doc } from "@filthy-panty/convex/_generated/dataModel";
+import { api } from "@broods/convex/_generated/api";
+import type { Doc } from "@broods/convex/_generated/dataModel";
 import { useMutation } from "convex/react";
 import { useState } from "react";
 

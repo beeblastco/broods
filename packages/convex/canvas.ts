@@ -165,7 +165,7 @@ async function assertNoAccountScopedResourceConflict(
  * resource rows. Creates a `managedBy: "dashboard"` row for new nodes and patches
  * existing dashboard-owned rows from the node's edited config, so dashboard adds
  * and edits become real (the runtime resolves these rows by `_id`). Rows owned by
- * a `filthypanty/` project (`managedBy: "cli"`) are left untouched — code is their
+ * a `broods/` project (`managedBy: "cli"`) are left untouched — code is their
  * source of truth and the side panel surfaces them as locked.
  */
 async function materializeRuntimeNodes(
@@ -489,7 +489,7 @@ export const resourceOwnership = query({
  * Names of code-managed (`managedBy: "cli"`) resources in this environment, by
  * kind. The side panel uses this to warn when a dashboard-created agent /
  * workspace / sandbox is named the same as a code-managed one — the next
- * `filthy-panty deploy` would adopt and overwrite that resource with the code
+ * `broods deploy` would adopt and overwrite that resource with the code
  * definition (the CLI resolves by `(environmentId, name)`).
  */
 export const cliManagedResourceNames = query({

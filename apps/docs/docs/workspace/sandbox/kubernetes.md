@@ -1,7 +1,7 @@
 # Kubernetes
 
 Runs the agent's bash/node/python inside an [agent-sandbox](https://github.com/kubernetes-sigs/agent-sandbox)
-`Sandbox` pod on the Beeblast **k3s cluster** — a VM-like runtime (`bash`, `node`, `python3`, `curl`
+`Sandbox` pod on the Broods **k3s cluster** — a VM-like runtime (`bash`, `node`, `python3`, `curl`
 on PATH). Egress follows `config.network` via a per-Sandbox NetworkPolicy: `allow-all` removes the
 policy, `deny-all` (the default when `network` is omitted) blocks all egress, and `restricted`
 allows the listed CIDRs with DNS (port 53) kept open. The workspace is the same shared S3 bucket the
@@ -116,7 +116,7 @@ for private runtime state, not cross-user file sharing. For read-only or multi-u
 access, write artifacts to the S3 workspace and enforce access there.
 
 > The kubeconfig (CA + token) is ~2.7 KB — over Lambda's 4 KB env-var limit. So `sst.config.ts`
-> stores it in an SSM SecureString parameter (`/filthy-panty/<stage>/kubernetes-sandbox-kubeconfig`,
+> stores it in an SSM SecureString parameter (`/broods/<stage>/kubernetes-sandbox-kubeconfig`,
 > value from the `KubernetesSandboxKubeconfig` secret) and passes only the parameter **name** as
 > `KUBERNETES_SANDBOX_KUBECONFIG_SSM`; the executor fetches + caches it at runtime. Set the GitHub
 > secret `KUBERNETES_SANDBOX_KUBECONFIG` (base64 kubeconfig) and deploy — no env-size juggling.

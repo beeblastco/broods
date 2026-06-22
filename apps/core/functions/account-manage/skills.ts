@@ -181,7 +181,7 @@ async function createGitHubSkillFiles(url: unknown): Promise<SkillBundleFile[]> 
   const parsed = parseGitHubSkillUrl(url);
   const response = await fetch(parsed.archiveUrl, {
     headers: {
-      "User-Agent": "filthy-panty-skill-importer",
+      "User-Agent": "broods-skill-importer",
       "Accept": "application/x-gzip",
     },
   });

@@ -1,6 +1,6 @@
-# @filthy-panty/convex
+# @broods/convex
 
-Shared Convex backend for the filthy-panty monorepo, used by two workspaces:
+Shared Convex backend for the broods monorepo, used by two workspaces:
 
 - **`apps/dashboard`** — deploys this package as its Convex project (the
   dashboard Docker image build runs `convex deploy` from this directory) and
@@ -48,7 +48,7 @@ touched. A leaked Convex deploy key cannot trivially cross-tenant.
 ## Workflow
 
 1. Change schema or functions here.
-2. Run `bun run --filter @filthy-panty/convex codegen` (or `bunx convex codegen`
+2. Run `bun run --filter @broods/convex codegen` (or `bunx convex codegen`
    from this directory) and commit the `_generated/` diff — it is committed on
    purpose so core and the dashboard typecheck without codegen.
 3. Deploys happen through the dashboard image build (`convex deploy`); this

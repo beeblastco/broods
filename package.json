@@ -1,6 +1,6 @@
 {
-  "name": "filthy-panty",
-  "description": "Serverless, multi-account AI agent harness built on AWS Lambda and Bun. The open-source engine behind BeeBlast.",
+  "name": "broods",
+  "description": "Serverless, multi-account AI agent harness built on AWS Lambda and Bun. The open-source engine behind Broods.",
   "type": "module",
   "private": true,
   "workspaces": [
@@ -11,14 +11,14 @@
     "webpack": "5.105.0"
   },
   "scripts": {
-    "build": "bun run --filter @filthy-panty/core build",
-    "check": "bun run --filter @filthy-panty/core check && bun run --filter @filthy-panty/convex check && bun run --filter filthy-panty check",
-    "test": "bun run --filter @filthy-panty/core test",
-    "deploy": "bun run --filter @filthy-panty/core deploy",
-    "dashboard": "bun run --filter @filthy-panty/dashboard dev",
-    "dashboard:build": "bun run --filter @filthy-panty/dashboard build",
-    "docs": "bun run --filter @filthy-panty/docs start",
-    "docs:build": "bun run --filter @filthy-panty/docs build"
+    "build": "bun run --filter @broods/core build",
+    "check": "bun run --filter @broods/core check && bun run --filter @broods/convex check && bun run --filter broods check",
+    "test": "bun run --filter @broods/core test",
+    "deploy": "bun run --filter @broods/core deploy",
+    "dashboard": "bun run --filter @broods/dashboard dev",
+    "dashboard:build": "bun run --filter @broods/dashboard build",
+    "docs": "bun run --filter @broods/docs start",
+    "docs:build": "bun run --filter @broods/docs build"
   },
   "devDependencies": {
     "typescript": "^6.0.3"

@@ -6,14 +6,15 @@
  * lists them per agent and lets you add one, toggle it active/inactive, or remove
  * it. Edits write straight to the agent config the harness delivers from.
  */
+import { DeleteConfirmDialog } from "@/app/components/DeleteConfirmDialog";
 import { DitherAvatarSVG } from "@/app/components/DitherAvatar";
 import { Section } from "@/app/components/Section";
 import { Badge } from "@/app/components/ui/badge";
 import { Button } from "@/app/components/ui/button";
 import { Input } from "@/app/components/ui/input";
 import { cn } from "@/app/lib/utils";
-import { api } from "@filthy-panty/convex/_generated/api";
-import type { Id } from "@filthy-panty/convex/_generated/dataModel";
+import { api } from "@broods/convex/_generated/api";
+import type { Id } from "@broods/convex/_generated/dataModel";
 import { useMutation, useQuery } from "convex/react";
 import { Copy, Eye, EyeOff, Plus, Trash2 } from "lucide-react";
 import { useState } from "react";
@@ -37,6 +38,12 @@ type AgentWebhooks = {
     }>;
 };
 
+type PendingWebhookDelete = {
+    agentConfigId: Id<"agentConfigs">;
+    index: number;
+    url: string;
+};
+
 /** Lists each agent's outbound webhooks with add / activate / remove controls. */
 export function WebhooksPanel({ projectId, environmentId }: Props) {
     const agents = useQuery(
@@ -51,6 +58,21 @@ export function WebhooksPanel({ projectId, environmentId }: Props) {
     const [revealed, setRevealed] = useState<string | null>(null);
     const [addingFor, setAddingFor] = useState<Id<"agentConfigs"> | null>(null);
 
+    // Webhook pending delete confirmation.
+    const [deletingWebhook, setDeletingWebhook] = useState<PendingWebhookDelete | null>(null);
+    const [isDeletingWebhook, setIsDeletingWebhook] = useState(false);
+
+    async function handleDeleteWebhook() {
+        if (!deletingWebhook) return;
+        setIsDeletingWebhook(true);
+        try {
+            await removeWebhook({ agentConfigId: deletingWebhook.agentConfigId, index: deletingWebhook.index });
+            setDeletingWebhook(null);
+        } finally {
+            setIsDeletingWebhook(false);
+        }
+    }
+
     if (!environmentId) {
         return (
             <Section description="Outbound event webhooks delivered to your services.">
@@ -60,128 +82,148 @@ export function WebhooksPanel({ projectId, environmentId }: Props) {
     }
 
     return (
-        <Section description="Outbound event webhooks delivered to your services. Each agent can register several — add one, toggle it active/inactive, or remove it. (Webhooks defined in code via the SDK resolve their URL/secret from environment variables.)">
-            {agents && agents.length === 0 && (
-                <p className="text-sm text-muted-foreground">No agents in this environment yet.</p>
-            )}
+        <>
+            <Section description="Outbound event webhooks delivered to your services. Each agent can register several — add one, toggle it active/inactive, or remove it. (Webhooks defined in code via the SDK resolve their URL/secret from environment variables.)">
+                {agents && agents.length === 0 && (
+                    <p className="text-sm text-muted-foreground">No agents in this environment yet.</p>
+                )}
 
-            <div className="grid gap-6">
-                {agents?.map((agent) => (
-                    <div key={agent.agentConfigId} className="grid gap-2">
-                        <div className="flex items-center justify-between gap-2">
-                            <span className="flex min-w-0 items-center gap-2">
-                                <DitherAvatarSVG seed={agent.agentName} size={20} className="shrink-0" />
-                                <span className="truncate text-sm font-medium text-foreground">
-                                    {agent.agentName}
+                <div className="grid gap-6">
+                    {agents?.map((agent) => (
+                        <div key={agent.agentConfigId} className="grid gap-2">
+                            <div className="flex items-center justify-between gap-2">
+                                <span className="flex min-w-0 items-center gap-2">
+                                    <DitherAvatarSVG seed={agent.agentName} size={20} className="shrink-0" />
+                                    <span className="truncate text-sm font-medium text-foreground">
+                                        {agent.agentName}
+                                    </span>
                                 </span>
-                            </span>
-                            <Button
-                                variant="ghost"
-                                size="sm"
-                                className="h-7 shrink-0 cursor-pointer gap-1 px-2 text-xs text-muted-foreground hover:text-foreground"
-                                onClick={() => setAddingFor(addingFor === agent.agentConfigId ? null : agent.agentConfigId)}
-                            >
-                                <Plus className="size-3.5" />
-                                Add webhook
-                            </Button>
-                        </div>
+                                <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    className="h-7 shrink-0 cursor-pointer gap-1 px-2 text-xs text-muted-foreground hover:text-foreground"
+                                    onClick={() => setAddingFor(addingFor === agent.agentConfigId ? null : agent.agentConfigId)}
+                                >
+                                    <Plus className="size-3.5" />
+                                    Add webhook
+                                </Button>
+                            </div>
 
-                        {agent.webhooks.length === 0 && addingFor !== agent.agentConfigId && (
-                            <p className="text-xs text-muted-foreground">No webhooks configured.</p>
-                        )}
+                            {agent.webhooks.length === 0 && addingFor !== agent.agentConfigId && (
+                                <p className="text-xs text-muted-foreground">No webhooks configured.</p>
+                            )}
 
-                        {agent.webhooks.map((webhook) => {
-                            const key = `${agent.agentConfigId}:${webhook.index}`;
+                            {agent.webhooks.map((webhook) => {
+                                const key = `${agent.agentConfigId}:${webhook.index}`;
 
-                            return (
-                                <div key={key} className="grid gap-1.5 border-t border-border/60 pt-2 first:border-t-0 first:pt-0">
-                                    <div className="flex items-center gap-2">
-                                        <span className="min-w-0 flex-1 truncate text-sm text-foreground">
-                                            {webhook.url || "(no URL set)"}
-                                        </span>
-                                        <button
-                                            type="button"
-                                            onClick={() =>
-                                                setEnabled({
-                                                    agentConfigId: agent.agentConfigId,
-                                                    index: webhook.index,
-                                                    enabled: !webhook.enabled,
-                                                })
-                                            }
-                                            className={cn(
-                                                "inline-flex shrink-0 cursor-pointer items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium transition-colors",
-                                                webhook.enabled
-                                                    ? "bg-emerald-500/15 text-emerald-600 hover:bg-emerald-500/25"
-                                                    : "bg-red-500/15 text-red-600 hover:bg-red-500/25",
-                                            )}
-                                            title={webhook.enabled ? "Active — click to disable" : "Inactive — click to enable"}
-                                        >
-                                            <span
+                                return (
+                                    <div key={key} className="grid gap-1.5 border-t border-border/60 pt-2 first:border-t-0 first:pt-0">
+                                        <div className="flex items-center gap-2">
+                                            <span className="min-w-0 flex-1 truncate text-sm text-foreground">
+                                                {webhook.url || "(no URL set)"}
+                                            </span>
+                                            <button
+                                                type="button"
+                                                onClick={() =>
+                                                    setEnabled({
+                                                        agentConfigId: agent.agentConfigId,
+                                                        index: webhook.index,
+                                                        enabled: !webhook.enabled,
+                                                    })
+                                                }
                                                 className={cn(
-                                                    "size-1.5 rounded-full",
-                                                    webhook.enabled ? "bg-emerald-500" : "bg-red-500",
+                                                    "inline-flex shrink-0 cursor-pointer items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium transition-colors",
+                                                    webhook.enabled
+                                                        ? "bg-emerald-500/15 text-emerald-600 hover:bg-emerald-500/25"
+                                                        : "bg-red-500/15 text-red-600 hover:bg-red-500/25",
                                                 )}
-                                            />
-                                            {webhook.enabled ? "Active" : "Inactive"}
-                                        </button>
-                                        <Button
-                                            variant="ghost"
-                                            size="icon-xs"
-                                            className="shrink-0 cursor-pointer text-muted-foreground hover:text-destructive"
-                                            onClick={() =>
-                                                removeWebhook({ agentConfigId: agent.agentConfigId, index: webhook.index })
-                                            }
-                                            title="Remove webhook"
-                                        >
-                                            <Trash2 className="size-3.5" />
-                                        </Button>
-                                    </div>
-
-                                    {webhook.secret && (
-                                        <div className="flex items-center gap-1.5">
-                                            <code className="font-mono text-xs text-muted-foreground">
-                                                {revealed === key ? webhook.secret : "••••••••••••••••"}
-                                            </code>
+                                                title={webhook.enabled ? "Active — click to disable" : "Inactive — click to enable"}
+                                            >
+                                                <span
+                                                    className={cn(
+                                                        "size-1.5 rounded-full",
+                                                        webhook.enabled ? "bg-emerald-500" : "bg-red-500",
+                                                    )}
+                                                />
+                                                {webhook.enabled ? "Active" : "Inactive"}
+                                            </button>
                                             <Button
                                                 variant="ghost"
                                                 size="icon-xs"
-                                                className="cursor-pointer text-muted-foreground hover:text-foreground"
-                                                onClick={() => setRevealed(revealed === key ? null : key)}
+                                                className="shrink-0 cursor-pointer text-muted-foreground hover:text-destructive"
+                                                onClick={() =>
+                                                    setDeletingWebhook({
+                                                        agentConfigId: agent.agentConfigId,
+                                                        index: webhook.index,
+                                                        url: webhook.url ?? "webhook",
+                                                    })
+                                                }
+                                                title="Remove webhook"
                                             >
-                                                {revealed === key ? <EyeOff className="size-3.5" /> : <Eye className="size-3.5" />}
-                                            </Button>
-                                            <Button
-                                                variant="ghost"
-                                                size="icon-xs"
-                                                className="cursor-pointer text-muted-foreground hover:text-foreground"
-                                                onClick={() => navigator.clipboard.writeText(webhook.secret ?? "")}
-                                            >
-                                                <Copy className="size-3.5" />
+                                                <Trash2 className="size-3.5" />
                                             </Button>
                                         </div>
-                                    )}
 
-                                    <div className="flex flex-wrap gap-1">
-                                        {(webhook.events.length > 0 ? webhook.events : ["all events"]).map((event) => (
-                                            <Badge key={event} variant="secondary" className="text-xs">
-                                                {event}
-                                            </Badge>
-                                        ))}
+                                        {webhook.secret && (
+                                            <div className="flex items-center gap-1.5">
+                                                <code className="font-mono text-xs text-muted-foreground">
+                                                    {revealed === key ? webhook.secret : "••••••••••••••••"}
+                                                </code>
+                                                <Button
+                                                    variant="ghost"
+                                                    size="icon-xs"
+                                                    className="cursor-pointer text-muted-foreground hover:text-foreground"
+                                                    onClick={() => setRevealed(revealed === key ? null : key)}
+                                                >
+                                                    {revealed === key ? <EyeOff className="size-3.5" /> : <Eye className="size-3.5" />}
+                                                </Button>
+                                                <Button
+                                                    variant="ghost"
+                                                    size="icon-xs"
+                                                    className="cursor-pointer text-muted-foreground hover:text-foreground"
+                                                    onClick={() => navigator.clipboard.writeText(webhook.secret ?? "")}
+                                                >
+                                                    <Copy className="size-3.5" />
+                                                </Button>
+                                            </div>
+                                        )}
+
+                                        <div className="flex flex-wrap gap-1">
+                                            {(webhook.events.length > 0 ? webhook.events : ["all events"]).map((event) => (
+                                                <Badge key={event} variant="secondary" className="text-xs">
+                                                    {event}
+                                                </Badge>
+                                            ))}
+                                        </div>
                                     </div>
-                                </div>
-                            );
-                        })}
+                                );
+                            })}
 
-                        {addingFor === agent.agentConfigId && (
-                            <AddWebhookForm
-                                agentConfigId={agent.agentConfigId}
-                                onDone={() => setAddingFor(null)}
-                            />
-                        )}
-                    </div>
-                ))}
-            </div>
-        </Section>
+                            {addingFor === agent.agentConfigId && (
+                                <AddWebhookForm
+                                    agentConfigId={agent.agentConfigId}
+                                    onDone={() => setAddingFor(null)}
+                                />
+                            )}
+                        </div>
+                    ))}
+                </div>
+            </Section>
+
+            {deletingWebhook && (
+                <DeleteConfirmDialog
+                    open={deletingWebhook !== null}
+                    onOpenChange={(open) => {
+                        if (!open) setDeletingWebhook(null);
+                    }}
+                    resourceName={deletingWebhook.url}
+                    resourceType="webhook"
+                    critical={false}
+                    onConfirm={handleDeleteWebhook}
+                    isDeleting={isDeletingWebhook}
+                />
+            )}
+        </>
     );
 }
 

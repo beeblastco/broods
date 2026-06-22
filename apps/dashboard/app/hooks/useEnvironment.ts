@@ -7,7 +7,7 @@
  */
 import { useCallback, useTransition } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import type { Id } from "@filthy-panty/convex/_generated/dataModel";
+import type { Id } from "@broods/convex/_generated/dataModel";
 
 /**
  * Returns the current environment ID from the URL and a setter that updates the URL.

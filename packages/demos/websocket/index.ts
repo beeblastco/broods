@@ -2,8 +2,8 @@
  * Example: stream a deployed endpoint over WebSocket.
  */
 
-import { WebsocketClient } from "filthy-panty";
-import { api } from "./filthypanty/_generated/api";
+import { WebsocketClient } from "broods";
+import { api } from "./broods/_generated/api";
 
 const client = new WebsocketClient();
 

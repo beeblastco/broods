@@ -5,7 +5,7 @@
  *
  * Read paths (the auth path + harness reads) are fully implemented.
  * Account-create / rotate-secret are owned by the cherry-coke side
- * (orgLifecycle) and intentionally throw here — filthy-panty does not
+ * (orgLifecycle) and intentionally throw here — broods does not
  * create accounts in SaaS mode. Agent + cron writes are wired so
  * the harness can persist normally.
  */
@@ -50,7 +50,7 @@ import { usage } from "./usage.ts";
 // package's typecheck program — its sources are checked by their own
 // tsconfig — while Bun still resolves and bundles the module statically.
 // eslint-disable-next-line @typescript-eslint/no-require-imports
-const internal: any = require("@filthy-panty/convex/_generated/api").internal;
+const internal: any = require("@broods/convex/_generated/api").internal;
 import type {
   AccountRecord,
   AgentDeploymentRecord,

@@ -1,21 +1,12 @@
 "use client";
 
-/** Danger panel: delete the active environment or the entire project, each behind a confirmation. */
+/** Danger panel: delete the active environment or the entire project, each behind a typed confirmation. */
+import { DeleteConfirmDialog } from "@/app/components/DeleteConfirmDialog";
 import { Section } from "@/app/components/Section";
 import { useEnvironment } from "@/app/hooks/useEnvironment";
 import { Button } from "@/app/components/ui/button";
-import {
-    Dialog,
-    DialogContent,
-    DialogDescription,
-    DialogFooter,
-    DialogHeader,
-    DialogTitle,
-} from "@/app/components/ui/dialog";
-import { Input } from "@/app/components/ui/input";
-import { Label } from "@/app/components/ui/label";
-import { api } from "@filthy-panty/convex/_generated/api";
-import type { Doc, Id } from "@filthy-panty/convex/_generated/dataModel";
+import { api } from "@broods/convex/_generated/api";
+import type { Doc, Id } from "@broods/convex/_generated/dataModel";
 import { useMutation, useQuery } from "convex/react";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
@@ -37,10 +28,9 @@ export function DangerPanel({ projectId, environmentId }: Props) {
     const { setEnvironmentId } = useEnvironment();
     const router = useRouter();
 
-    const [dialogOpen, setDialogOpen] = useState(false);
-    const [confirmName, setConfirmName] = useState("");
-    const [isDeleting, setIsDeleting] = useState(false);
-    const [deleteError, setDeleteError] = useState<string | null>(null);
+    const [projectDialogOpen, setProjectDialogOpen] = useState(false);
+    const [isDeletingProject, setIsDeletingProject] = useState(false);
+    const [projectDeleteError, setProjectDeleteError] = useState<string | null>(null);
 
     const [envDialogOpen, setEnvDialogOpen] = useState(false);
     const [isDeletingEnv, setIsDeletingEnv] = useState(false);
@@ -50,20 +40,16 @@ export function DangerPanel({ projectId, environmentId }: Props) {
     const defaultEnv = environments?.find((env) => env.isDefault) ?? null;
     const canDeleteEnv = Boolean(activeEnv && !activeEnv.isDefault);
 
-    const expectedPhrase = project?.name ?? "";
-    const confirmed = confirmName.trim() === expectedPhrase;
-
     async function handleDeleteProject() {
-        if (!confirmed) return;
-        setIsDeleting(true);
-        setDeleteError(null);
+        setIsDeletingProject(true);
+        setProjectDeleteError(null);
         try {
             await removeProject({ projectId: projectId });
-            // Land on the project gallery rather than auto-opening/recreating a project.
+            setProjectDialogOpen(false);
             router.replace("/projects");
         } catch (err) {
-            setDeleteError(err instanceof Error ? err.message : "Failed to delete project.");
-            setIsDeleting(false);
+            setProjectDeleteError(err instanceof Error ? err.message : "Failed to delete project.");
+            setIsDeletingProject(false);
         }
     }
 
@@ -73,7 +59,6 @@ export function DangerPanel({ projectId, environmentId }: Props) {
         setEnvDeleteError(null);
         try {
             await removeEnvironment({ environmentId: activeEnv._id });
-            // Return to the default environment after deleting the active one.
             setEnvironmentId(defaultEnv ? defaultEnv._id : null);
             setEnvDialogOpen(false);
         } catch (err) {
@@ -135,92 +120,40 @@ export function DangerPanel({ projectId, environmentId }: Props) {
                             size="sm"
                             className="shrink-0 cursor-pointer"
                             onClick={() => {
-                                setDeleteError(null);
-                                setConfirmName("");
-                                setDialogOpen(true);
+                                setProjectDeleteError(null);
+                                setProjectDialogOpen(true);
                             }}
                         >
                             Delete Project
                         </Button>
                     </div>
-                    {deleteError && <p className="text-sm text-destructive">{deleteError}</p>}
+                    {projectDeleteError && <p className="text-sm text-destructive">{projectDeleteError}</p>}
                 </Section>
             </div>
 
-            <Dialog open={envDialogOpen} onOpenChange={setEnvDialogOpen}>
-                <DialogContent className="sm:max-w-sm">
-                    <DialogHeader>
-                        <DialogTitle>Delete environment?</DialogTitle>
-                        <DialogDescription>
-                            {activeEnv
-                                ? `This permanently deletes "${activeEnv.name}" and all of its agents, services, variables, deploy keys, and webhooks. This cannot be undone.`
-                                : ""}
-                        </DialogDescription>
-                    </DialogHeader>
-                    <DialogFooter>
-                        <Button
-                            type="button"
-                            variant="ghost"
-                            className="cursor-pointer"
-                            onClick={() => setEnvDialogOpen(false)}
-                            disabled={isDeletingEnv}
-                        >
-                            Cancel
-                        </Button>
-                        <Button
-                            type="button"
-                            variant="destructive"
-                            className="cursor-pointer disabled:cursor-not-allowed"
-                            onClick={handleDeleteEnvironment}
-                            disabled={isDeletingEnv}
-                        >
-                            {isDeletingEnv ? "Deleting…" : "Delete environment"}
-                        </Button>
-                    </DialogFooter>
-                </DialogContent>
-            </Dialog>
+            {activeEnv && (
+                <DeleteConfirmDialog
+                    open={envDialogOpen}
+                    onOpenChange={setEnvDialogOpen}
+                    resourceName={activeEnv.name}
+                    resourceType="environment"
+                    critical={true}
+                    onConfirm={handleDeleteEnvironment}
+                    isDeleting={isDeletingEnv}
+                />
+            )}
 
-            <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-                <DialogContent className="sm:max-w-md">
-                    <DialogHeader>
-                        <DialogTitle className="text-destructive">Delete project</DialogTitle>
-                        <DialogDescription>
-                            This action cannot be undone. Type{" "}
-                            <span className="font-mono text-foreground">{expectedPhrase}</span>{" "}
-                            to confirm.
-                        </DialogDescription>
-                    </DialogHeader>
-                    <div className="grid gap-2 py-2">
-                        <Label htmlFor="delete-project-confirmation">Project name</Label>
-                        <Input
-                            id="delete-project-confirmation"
-                            value={confirmName}
-                            onChange={(e) => setConfirmName(e.target.value)}
-                            placeholder={expectedPhrase}
-                            autoFocus
-                        />
-                    </div>
-                    <DialogFooter>
-                        <Button
-                            type="button"
-                            variant="ghost"
-                            className="cursor-pointer"
-                            onClick={() => setDialogOpen(false)}
-                        >
-                            Cancel
-                        </Button>
-                        <Button
-                            type="button"
-                            variant="destructive"
-                            className="cursor-pointer disabled:cursor-not-allowed"
-                            disabled={!confirmed || isDeleting}
-                            onClick={handleDeleteProject}
-                        >
-                            {isDeleting ? "Deleting..." : "Delete project"}
-                        </Button>
-                    </DialogFooter>
-                </DialogContent>
-            </Dialog>
+            {project && (
+                <DeleteConfirmDialog
+                    open={projectDialogOpen}
+                    onOpenChange={setProjectDialogOpen}
+                    resourceName={project.name}
+                    resourceType="project"
+                    critical={true}
+                    onConfirm={handleDeleteProject}
+                    isDeleting={isDeletingProject}
+                />
+            )}
         </>
     );
 }

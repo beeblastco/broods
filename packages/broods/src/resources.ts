@@ -1,5 +1,5 @@
 /**
- * Resource definition helpers for the code-first `filthypanty/` project folder.
+ * Resource definition helpers for the code-first `broods/` project folder.
  *
  * Layout: markers, then types (env refs, project config, resource primitives,
  * per-kind config surfaces, per-kind resource aliases), then the env runtime
@@ -19,9 +19,9 @@ import type {
   WorkspaceConfig,
 } from "./contracts.ts";
 
-const RESOURCE_MARKER = Symbol.for("filthy-panty.resource");
-const CONFIG_MARKER = Symbol.for("filthy-panty.config");
-const CHANNEL_MARKER = Symbol.for("filthy-panty.channel");
+const RESOURCE_MARKER = Symbol.for("broods.resource");
+const CONFIG_MARKER = Symbol.for("broods.config");
+const CHANNEL_MARKER = Symbol.for("broods.channel");
 
 export interface EnvRef<Name extends string = string> {
   readonly __beeblastEnv: true;
@@ -41,7 +41,7 @@ export type EnvRefString<T> =
   T extends object ? { [Key in keyof T]: EnvRefString<T[Key]> } :
   T;
 
-export interface FilthyPantyProjectConfig {
+export interface BroodsProjectConfig {
   project?: string;
   environments?: {
     dev?: string;
@@ -51,9 +51,9 @@ export interface FilthyPantyProjectConfig {
   dashboardUrl?: string;
 }
 
-export interface FilthyPantyConfigDefinition {
+export interface BroodsConfigDefinition {
   readonly [CONFIG_MARKER]: true;
-  readonly config: FilthyPantyProjectConfig;
+  readonly config: BroodsProjectConfig;
 }
 
 export type ResourceKind = "agent" | "workspace" | "sandbox" | "cron" | "skill" | "tool";
@@ -89,7 +89,7 @@ export type SandboxDefinitionConfig = Omit<SandboxConfig, "envVars"> & {
 export interface SkillDefinitionConfig {
   /**
    * Folder containing SKILL.md plus optional scripts/assets. Relative paths are
-   * resolved from the `filthypanty/` project directory.
+   * resolved from the `broods/` project directory.
    */
   path: string;
 }
@@ -97,7 +97,7 @@ export interface SkillDefinitionConfig {
 export interface ToolDefinitionConfig {
   /**
    * JavaScript module file exporting the custom tool bundle. Relative paths are
-   * resolved from the `filthypanty/` project directory.
+   * resolved from the `broods/` project directory.
    */
   path: string;
   description: string;
@@ -249,7 +249,7 @@ export type AnyResource =
 
 /**
  * References an account/environment variable resolved on the SERVER at runtime —
- * set it with `filthy-panty env set <NAME>` or in the dashboard (the Convex-style
+ * set it with `broods env set <NAME>` or in the dashboard (the Convex-style
  * `convex env set` model). It is a deferred reference, never read from your local
  * environment and never baked into the deployed config. Use either form:
  *
@@ -335,7 +335,7 @@ export function defineZaloChannel(config: ZaloChannelInput): ZaloChannelDefiniti
   return defineChannel("zalo", config);
 }
 
-export function defineFilthyPanty(config: FilthyPantyProjectConfig): FilthyPantyConfigDefinition {
+export function defineBroods(config: BroodsProjectConfig): BroodsConfigDefinition {
   return { [CONFIG_MARKER]: true, config };
 }
 
@@ -383,6 +383,6 @@ export function isChannelDefinition(value: unknown): value is AnyChannelDefiniti
   return Boolean(value && typeof value === "object" && (value as { [CHANNEL_MARKER]?: boolean })[CHANNEL_MARKER]);
 }
 
-export function isFilthyPantyConfig(value: unknown): value is FilthyPantyConfigDefinition {
+export function isBroodsConfig(value: unknown): value is BroodsConfigDefinition {
   return Boolean(value && typeof value === "object" && (value as { [CONFIG_MARKER]?: boolean })[CONFIG_MARKER]);
 }

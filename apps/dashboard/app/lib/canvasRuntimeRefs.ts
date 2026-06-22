@@ -1,15 +1,15 @@
 /**
- * Derives filthy-panty AgentConfig sandbox/workspace references from canvas
+ * Derives broods AgentConfig sandbox/workspace references from canvas
  * runtime-resource nodes and edges.
  */
 import type { BaseNodeData } from "@/app/components/node/BaseNode";
-import type { Id } from "@filthy-panty/convex/_generated/dataModel";
+import type { Id } from "@broods/convex/_generated/dataModel";
 import type { Edge, Node } from "@xyflow/react";
 
-/** Canvas node types that participate in filthy-panty runtime reference projection. */
+/** Canvas node types that participate in broods runtime reference projection. */
 export type RuntimeNodeType = "agent" | "workspace" | "sandbox";
 
-/** A single filthy-panty AgentWorkspaceRef emitted from the canvas graph. */
+/** A single broods AgentWorkspaceRef emitted from the canvas graph. */
 export type WorkspaceRef = {
     name: string;
     workspaceId: string;
@@ -50,7 +50,7 @@ export function defaultRuntimeNodeData(type: string, label: string, id: string):
 }
 
 /**
- * Effective-sandbox state for a workspace, resolved from the filthy-panty cascade
+ * Effective-sandbox state for a workspace, resolved from the broods cascade
  * `ws.sandbox (override) ?? config.sandbox (inherited) ?? none (read-only)`.
  */
 export type WorkspaceSandboxState =

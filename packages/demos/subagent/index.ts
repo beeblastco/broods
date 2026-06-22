@@ -1,12 +1,12 @@
 /**
- * Example: subagent dispatch via declarative filthy-panty resources.
+ * Example: subagent dispatch via declarative broods resources.
  */
 
-import { FilthyPantyClient } from "filthy-panty";
-import { api } from "./filthypanty/_generated/api";
+import { BroodsClient } from "broods";
+import { api } from "./broods/_generated/api";
 
-// Create a client to connect to the Filthy Panty API.
-const client = new FilthyPantyClient();
+// Create a client to connect to the Broods API.
+const client = new BroodsClient();
 
 // Stream the response from the parent agent and print it to stdout.
 for await (const chunk of client.stream(api.agents.parent, {

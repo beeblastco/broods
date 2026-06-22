@@ -1,14 +1,14 @@
 /**
- * Keeps the filthy-panty `agents` row in sync with the dashboard's `agentConfigs`.
+ * Keeps the broods `agents` row in sync with the dashboard's `agentConfigs`.
  *
- * Filthy-panty's harness queries `agents` (not `agentConfigs`) when invoking
+ * Broods's harness queries `agents` (not `agentConfigs`) when invoking
  * an agent. Cherry-coke owns the canvas-side `agentConfigs` row; this helper
  * provisions the matching `agents` row in the same Convex transaction and
  * records its `_id` back on `agentConfigs.agentId` so the side panel's
- * "Agent ID" row surfaces a value filthy-panty actually accepts.
+ * "Agent ID" row surfaces a value broods actually accepts.
  *
  * The encrypted `AgentConfig` blob (model/provider/workspace/tools) requires
- * ACCOUNT_CONFIG_ENCRYPTION_SECRET to match filthy-panty's runtime secret.
+ * ACCOUNT_CONFIG_ENCRYPTION_SECRET to match broods's runtime secret.
  */
 
 import type { Doc, Id } from "../_generated/dataModel";
@@ -24,7 +24,7 @@ import { loadAgentRuntimeSecrets, saveAgentRuntimeSecrets } from "./agentRuntime
 import { getActiveOrgForUser } from "./ownership/org";
 
 /**
- * Returns the filthy-panty account that owns the caller's active org, or
+ * Returns the broods account that owns the caller's active org, or
  * null if the user has no active org or the org is not yet provisioned.
  */
 export async function resolveActiveAccountForAuthId(
@@ -87,13 +87,13 @@ export async function ensureAgentsRowForConfig(
 }
 
 /**
- * Builds the nested filthy-panty `AgentConfig` from the flat row, substitutes
+ * Builds the nested broods `AgentConfig` from the flat row, substitutes
  * `${ENV}` placeholders from `runtimeVariables`, encrypts with the shared
  * AES-256-GCM secret, and writes the result onto the linked `agents` row.
  *
  * Silently no-ops when the `agentConfigs` row has no linked `agentId`
  *      (`ensureAgentsRowForConfig` hasn't run yet, e.g. because the org is
- *      not provisioned with a filthy-panty account).
+ *      not provisioned with a broods account).
  * Throws when a linked core agent exists but the shared encryption secret is
  * missing, because otherwise the runtime would keep stale or empty config.
  */

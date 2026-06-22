@@ -6,9 +6,9 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 
-export const PROJECT_DIR = "filthypanty";
+export const PROJECT_DIR = "broods";
 export const GENERATED_DIR = "_generated";
-export const USER_CONFIG_PATH = join(homedir(), ".filthy-panty", "config.json");
+export const USER_CONFIG_PATH = join(homedir(), ".broods", "config.json");
 
 export interface StoredAuthConfig {
   dashboardUrl: string;
@@ -31,8 +31,8 @@ export interface StoredAuthConfig {
 }
 
 export async function readStoredAuth(): Promise<StoredAuthConfig | null> {
-  const envToken = process.env.FILTHY_PANTY_TOKEN;
-  const envUrl = process.env.FILTHY_PANTY_DASHBOARD_URL;
+  const envToken = process.env.BROODS_TOKEN;
+  const envUrl = process.env.BROODS_DASHBOARD_URL;
   if (envToken && envUrl) {
     return {
       dashboardUrl: envUrl,

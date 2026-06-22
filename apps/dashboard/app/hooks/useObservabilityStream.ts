@@ -13,7 +13,7 @@ import type {
   ObservabilityClientMessage,
   ObservabilityServerMessage,
   LogLevel,
-} from "../../../../packages/filthy-panty/src/observability-contracts";
+} from "../../../../packages/broods/src/observability-contracts";
 import { resolveCoreEndpoint } from "@/app/lib/coreEndpoint";
 
 // Re-export for consumers.

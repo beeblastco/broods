@@ -271,7 +271,7 @@ function vercelCreateOptions(
     timeout: (persistent ? lifecycle.idleTimeoutSeconds : request.timeoutSeconds) * 1000,
     networkPolicy: vercelNetworkPolicy(config),
     env: { ...stringRecord(config.envVars), ...(request.envVars ?? {}) },
-    tags: { app: "filthy-panty", provider: "vercel" },
+    tags: { app: "broods", provider: "vercel" },
   };
 }
 

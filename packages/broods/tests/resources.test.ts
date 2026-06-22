@@ -3,7 +3,7 @@ import { mkdtemp, readFile, rm, writeFile, mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { writeGeneratedFiles } from "../src/codegen.ts";
-import { loadFilthyPantyRuntimeConfig } from "../src/runtime-config.ts";
+import { loadBroodsRuntimeConfig } from "../src/runtime-config.ts";
 import { collectEnvRefNames, compileProject } from "../src/manifest.ts";
 import { diffManifests } from "../src/sync.ts";
 
@@ -18,10 +18,10 @@ afterEach(async () => {
     await rm(dir, { recursive: true, force: true });
   }
   tempDirs = [];
-  delete process.env.FILTHY_PANTY_DASHBOARD_URL;
-  delete process.env.FILTHY_PANTY_TOKEN;
-  delete process.env.FILTHY_PANTY_PROJECT;
-  delete process.env.FILTHY_PANTY_ENVIRONMENT;
+  delete process.env.BROODS_DASHBOARD_URL;
+  delete process.env.BROODS_TOKEN;
+  delete process.env.BROODS_PROJECT;
+  delete process.env.BROODS_ENVIRONMENT;
 });
 
 test("compileProject maps workspace resources and env refs to the SaaS manifest shape", async () => {
@@ -356,9 +356,9 @@ export const support = defineAgent({
   config: { channels: [github], tools: { [helper.name]: { enabled: true, needsApproval: false } } },
 });
 `);
-  await mkdir(join(cwd, "filthypanty", "tools"), { recursive: true });
+  await mkdir(join(cwd, "broods", "tools"), { recursive: true });
   await writeFile(
-    join(cwd, "filthypanty", "tools", "helper.ts"),
+    join(cwd, "broods", "tools", "helper.ts"),
     "export default { execute: async (_ctx: unknown, input: { value?: string }) => ({ ok: true, value: input.value }) };\n",
   );
 
@@ -431,7 +431,7 @@ export const support = defineAgent({
 
   const { manifest } = await compileProject({ cwd: cwd, command: "dev" });
 
-  expect(manifest.project).toStartWith("filthy-panty-test-");
+  expect(manifest.project).toStartWith("broods-test-");
   expect(manifest.environment).toBe("development");
 });
 
@@ -491,7 +491,7 @@ export const myAgent = defineAgent({
     tools: {},
   }, cwd, resourceAliases);
 
-  const api = await readFile(join(cwd, "filthypanty", "_generated", "api.ts"), "utf8");
+  const api = await readFile(join(cwd, "broods", "_generated", "api.ts"), "utf8");
 
   expect(api).toContain('myAgent: { kind: "agent", name: "my-agent", id: ids.agents["my-agent"]');
   expect(api).not.toContain('"my-agent": { kind: "agent"');
@@ -537,7 +537,7 @@ export const oneMinuteCron = defineCron({
     tools: {},
   }, cwd, resourceAliases);
 
-  const api = await readFile(join(cwd, "filthypanty", "_generated", "api.ts"), "utf8");
+  const api = await readFile(join(cwd, "broods", "_generated", "api.ts"), "utf8");
 
   // Renamed namespace + export-name keys pointing at the unchanged ids contract.
   expect(api).toContain('crons: {');
@@ -561,8 +561,8 @@ export const support = defineAgent({
 });
 `);
   await writeFile(join(cwd, ".env.local"), [
-    "FILTHY_PANTY_PROJECT=env-file-project",
-    "FILTHY_PANTY_ENVIRONMENT=staging",
+    "BROODS_PROJECT=env-file-project",
+    "BROODS_ENVIRONMENT=staging",
     "",
   ].join("\n"));
 
@@ -601,7 +601,7 @@ export const support = defineAgent({
 });
 `);
   await writeFile(join(cwd, ".env.local"), [
-    "FILTHY_PANTY_ENVIRONMENT=development",
+    "BROODS_ENVIRONMENT=development",
     "",
   ].join("\n"));
 
@@ -616,9 +616,9 @@ export const support = defineAgent({
 
 test("compileProject maps workspace overrides, subagents, skills, and tools", async () => {
   const cwd = await fixtureProject(`
-import { defineFilthyPanty } from "${RESOURCES_MODULE}";
+import { defineBroods } from "${RESOURCES_MODULE}";
 
-export default defineFilthyPanty({ project: "typed-app" });
+export default defineBroods({ project: "typed-app" });
 `, `
 import { defineAgent, defineSkill, defineTool, defineWorkspace, defineSandbox } from "${RESOURCES_MODULE}";
 
@@ -660,16 +660,16 @@ export const support = defineAgent({
   },
 });
 `);
-  await mkdir(join(cwd, "filthypanty", "skills", "greeting-skill"), { recursive: true });
-  await writeFile(join(cwd, "filthypanty", "skills", "greeting-skill", "SKILL.md"), `---
+  await mkdir(join(cwd, "broods", "skills", "greeting-skill"), { recursive: true });
+  await writeFile(join(cwd, "broods", "skills", "greeting-skill", "SKILL.md"), `---
 name: greeting-skill
 description: Says hello.
 ---
 
 # Greeting
 `);
-  await mkdir(join(cwd, "filthypanty", "tools"), { recursive: true });
-  await writeFile(join(cwd, "filthypanty", "tools", "stream_progress.mjs"), "export default { name: 'stream_progress' };\n");
+  await mkdir(join(cwd, "broods", "tools"), { recursive: true });
+  await writeFile(join(cwd, "broods", "tools", "stream_progress.mjs"), "export default { name: 'stream_progress' };\n");
 
   const { manifest } = await compileProject({ cwd: cwd, command: "dev" });
   const support = manifest.resources.find((resource) => resource.kind === "agent" && resource.name === "support");
@@ -704,7 +704,7 @@ description: Says hello.
   expect(typeof (tool?.config as Record<string, unknown>).sha256).toBe("string");
 });
 
-test("compileProject rejects skill and tool paths outside filthypanty project root", async () => {
+test("compileProject rejects skill and tool paths outside broods project root", async () => {
   const cwd = await fixtureProject("", `
 import { defineSkill, defineTool } from "${RESOURCES_MODULE}";
 
@@ -723,7 +723,7 @@ export const escapedTool = defineTool({
 });
 `);
 
-  await expect(compileProject({ cwd: cwd, command: "dev" })).rejects.toThrow("must stay inside filthypanty/");
+  await expect(compileProject({ cwd: cwd, command: "dev" })).rejects.toThrow("must stay inside broods/");
 });
 
 test("compileProject skips hidden and secret-looking files from skill bundles", async () => {
@@ -735,7 +735,7 @@ export const docs = defineSkill({
   config: { path: "skills/safe-skill" },
 });
 `);
-  const skillRoot = join(cwd, "filthypanty", "skills", "safe-skill");
+  const skillRoot = join(cwd, "broods", "skills", "safe-skill");
   await mkdir(join(skillRoot, ".cache"), { recursive: true });
   await writeFile(join(skillRoot, "SKILL.md"), "# Safe\n");
   await writeFile(join(skillRoot, "notes.txt"), "ok\n");
@@ -763,8 +763,8 @@ export const hiddenTool = defineTool({
   },
 });
 `);
-  await mkdir(join(cwd, "filthypanty", ".secret"), { recursive: true });
-  await writeFile(join(cwd, "filthypanty", ".secret", "tool.mjs"), "export default {};\n");
+  await mkdir(join(cwd, "broods", ".secret"), { recursive: true });
+  await writeFile(join(cwd, "broods", ".secret", "tool.mjs"), "export default {};\n");
 
   await expect(compileProject({ cwd: cwd, command: "dev" })).rejects.toThrow("looks like a hidden file or secret");
 });
@@ -878,16 +878,16 @@ test("writeGeneratedFiles creates Convex-style typed resource references", async
     tools: {},
   }, cwd);
 
-  const api = await readFile(join(cwd, "filthypanty", "_generated", "api.ts"), "utf8");
-  const ids = await readFile(join(cwd, "filthypanty", "_generated", "ids.ts"), "utf8");
-  const dataModel = await readFile(join(cwd, "filthypanty", "_generated", "dataModel.ts"), "utf8");
+  const api = await readFile(join(cwd, "broods", "_generated", "api.ts"), "utf8");
+  const ids = await readFile(join(cwd, "broods", "_generated", "ids.ts"), "utf8");
+  const dataModel = await readFile(join(cwd, "broods", "_generated", "dataModel.ts"), "utf8");
 
   expect(api).toContain('export const api = {');
   expect(api).toContain('support: { kind: "agent", name: "support", id: ids.agents["support"], project: "typed-app", environment: "development" }');
   expect(ids).toContain('"support": "agent_123"');
   expect(dataModel).toContain("AgentReference");
-  expect(api).not.toContain("new FilthyPantyClient");
-  await expect(readFile(join(cwd, "filthypanty", "_generated", "client.ts"), "utf8")).rejects.toThrow();
+  expect(api).not.toContain("new BroodsClient");
+  await expect(readFile(join(cwd, "broods", "_generated", "client.ts"), "utf8")).rejects.toThrow();
 });
 
 test("writeGeneratedFiles emits typed channel references with authoritative webhook paths", async () => {
@@ -906,7 +906,7 @@ export const support = defineAgent({ name: "support", config: { channels: [githu
     environmentSlug: "development",
   }, channels);
 
-  const api = await readFile(join(cwd, "filthypanty", "_generated", "api.ts"), "utf8");
+  const api = await readFile(join(cwd, "broods", "_generated", "api.ts"), "utf8");
   expect(api).toContain('github: { kind: "channel", type: "github"');
   expect(api).toContain('webhookPath: "/webhooks/account%2F123/agent%2F123/github"');
 });
@@ -933,8 +933,8 @@ export const myAgent = defineAgent({
     tools: {},
   }, cwd, resourceAliases);
 
-  const api = await readFile(join(cwd, "filthypanty", "_generated", "api.ts"), "utf8");
-  const ids = await readFile(join(cwd, "filthypanty", "_generated", "ids.ts"), "utf8");
+  const api = await readFile(join(cwd, "broods", "_generated", "api.ts"), "utf8");
+  const ids = await readFile(join(cwd, "broods", "_generated", "ids.ts"), "utf8");
 
   expect(api).toContain("myAgent");
   expect(api).not.toContain("remote-only");
@@ -944,17 +944,17 @@ export const myAgent = defineAgent({
 });
 
 test("runtime config loads .env.local without manual client wiring", async () => {
-  const cwd = await mkdtemp(join(tmpdir(), "filthy-panty-env-test-"));
+  const cwd = await mkdtemp(join(tmpdir(), "broods-env-test-"));
   tempDirs.push(cwd);
   await writeFile(join(cwd, ".env.local"), [
-    "FILTHY_PANTY_DASHBOARD_URL=https://dashboard.dev.beeblast.co",
-    "FILTHY_PANTY_TOKEN=fp_cli_test",
-    "FILTHY_PANTY_PROJECT=sandbox-stateless",
-    "FILTHY_PANTY_ENVIRONMENT=development",
+    "BROODS_DASHBOARD_URL=https://dashboard.dev.beeblast.co",
+    "BROODS_TOKEN=fp_cli_test",
+    "BROODS_PROJECT=sandbox-stateless",
+    "BROODS_ENVIRONMENT=development",
     "",
   ].join("\n"));
 
-  const config = loadFilthyPantyRuntimeConfig(cwd);
+  const config = loadBroodsRuntimeConfig(cwd);
 
   expect(config).toEqual({
     dashboardUrl: "https://dashboard.dev.beeblast.co",
@@ -965,14 +965,14 @@ test("runtime config loads .env.local without manual client wiring", async () =>
 });
 
 async function fixtureProject(configSource?: string, resourcesSource?: string): Promise<string> {
-  const cwd = await mkdtemp(join(tmpdir(), "filthy-panty-test-"));
+  const cwd = await mkdtemp(join(tmpdir(), "broods-test-"));
   tempDirs.push(cwd);
-  const projectDir = join(cwd, "filthypanty");
+  const projectDir = join(cwd, "broods");
   await mkdir(projectDir, { recursive: true });
-  await writeFile(join(projectDir, "filthy-panty.config.ts"), configSource ?? `
-import { defineFilthyPanty } from "${RESOURCES_MODULE}";
+  await writeFile(join(projectDir, "broods.config.ts"), configSource ?? `
+import { defineBroods } from "${RESOURCES_MODULE}";
 
-export default defineFilthyPanty({
+export default defineBroods({
   project: "typed-app",
   environments: { dev: "development", deploy: "production" },
 });

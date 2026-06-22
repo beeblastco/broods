@@ -1,12 +1,12 @@
 {
-  "name": "@filthy-panty/demo-channel-discord", "type": "module", "private": true,
+  "name": "@broods/demo-channel-discord", "type": "module", "private": true,
   "scripts": {
     "check": "tsc --noEmit",
-    "dev": "filthy-panty dev --dashboard-url https://dashboard.dev.beeblast.co --project channel-discord",
-    "diff": "filthy-panty diff --dashboard-url https://dashboard.dev.beeblast.co --project channel-discord",
-    "deploy": "filthy-panty deploy --dashboard-url https://dashboard.dev.beeblast.co --project channel-discord",
+    "dev": "broods dev --dashboard-url https://dashboard.dev.beeblast.co --project channel-discord",
+    "diff": "broods diff --dashboard-url https://dashboard.dev.beeblast.co --project channel-discord",
+    "deploy": "broods deploy --dashboard-url https://dashboard.dev.beeblast.co --project channel-discord",
     "register": "bun register.ts"
   },
-  "dependencies": { "filthy-panty": "file:../../filthy-panty" },
+  "dependencies": { "broods": "file:../../broods" },
   "devDependencies": { "@types/bun": "^1.3.14" }
 }

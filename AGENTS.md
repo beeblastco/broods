@@ -1,14 +1,14 @@
-# filthy-panty Monorepo Guide
+# broods Monorepo Guide
 
-This is a Bun workspaces monorepo for BeeBlast / filthy-panty.
+This is a Bun workspaces monorepo for Broods / broods.
 
 ## Workspace Map
 
-- `apps/core` (`@filthy-panty/core`): SST app for the serverless agent harness on AWS Lambda. It owns account management, agent execution, channel webhooks, tools, skills, sandboxes, workspaces, async/status flows, SSE, and deployment. Read `apps/core/AGENTS.md` before changing it.
-- `apps/dashboard` (`@filthy-panty/dashboard`): Next.js 16 dashboard UI for operating the core application through the shared Convex backend. Read `apps/dashboard/AGENTS.md` before changing it.
-- `apps/docs` (`@filthy-panty/docs`): Docusaurus docs for the core, public API, and whole application architecture. Update it when core behavior, public config, API shape, diagrams, or workflows change.
-- `packages/convex` (`@filthy-panty/convex`): shared Convex backend used by the dashboard and read by core in production. Read `packages/convex/AGENTS.md` before changing Convex schema, functions, auth, or generated files.
-- `packages/filthy-panty` (`filthy-panty`): CLI + TypeScript client SDK package. This is not finished yet; the CLI is currently a scaffold and the SDK is a thin HTTP/SSE client.
+- `apps/core` (`@broods/core`): SST app for the serverless agent harness on AWS Lambda. It owns account management, agent execution, channel webhooks, tools, skills, sandboxes, workspaces, async/status flows, SSE, and deployment. Read `apps/core/AGENTS.md` before changing it.
+- `apps/dashboard` (`@broods/dashboard`): Next.js 16 dashboard UI for operating the core application through the shared Convex backend. Read `apps/dashboard/AGENTS.md` before changing it.
+- `apps/docs` (`@broods/docs`): Docusaurus docs for the core, public API, and whole application architecture. Update it when core behavior, public config, API shape, diagrams, or workflows change.
+- `packages/convex` (`@broods/convex`): shared Convex backend used by the dashboard and read by core in production. Read `packages/convex/AGENTS.md` before changing Convex schema, functions, auth, or generated files.
+- `packages/broods` (`broods`): CLI + TypeScript client SDK package. This is not finished yet; the CLI is currently a scaffold and the SDK is a thin HTTP/SSE client.
 - `packages/demos`: runnable demo folders using the SDK against a deployed core API. This is not a workspace package; keep demos aligned with public API/config changes.
 
 ## How To Work Here
@@ -29,8 +29,8 @@ This is a Bun workspaces monorepo for BeeBlast / filthy-panty.
 ## Cross-Workspace Notes
 
 - Core is the source of truth for runtime behavior.
-- Dashboard is the user interface for configuring and operating the core application. It imports Convex via `@filthy-panty/convex/...`, not a local `convex/` folder.
+- Dashboard is the user interface for configuring and operating the core application. It imports Convex via `@broods/convex/...`, not a local `convex/` folder.
 - Docs explain both the core and the full application architecture. Prefer focused updates in the right doc, and update Mermaid diagrams when architecture changes.
-- Convex `_generated/` is committed on purpose. After schema/function changes, run `bun run --filter @filthy-panty/convex codegen` and commit generated diffs.
+- Convex `_generated/` is committed on purpose. After schema/function changes, run `bun run --filter @broods/convex codegen` and commit generated diffs.
 - React versions are aligned per app package. Do not add React to the root package.
 - When public API or config shape changes, sync `apps/docs/docs/api-reference/openapi.yaml`, relevant docs, demos, SDK types/client code, and focused tests.

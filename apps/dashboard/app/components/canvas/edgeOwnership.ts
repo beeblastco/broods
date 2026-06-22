@@ -1,5 +1,5 @@
 /**
- * An edge synced from a `filthypanty/` project connects two code-managed nodes,
+ * An edge synced from a `broods/` project connects two code-managed nodes,
  * encoded by a `cli-` endpoint in its id. The CLI owns these connections (it
  * recreates them on every deploy), so the dashboard locks them: no delete, no
  * reconnect, no hover-to-delete affordance.

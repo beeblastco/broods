@@ -1,16 +1,16 @@
 /**
- * Example: webhook subscription flow via declarative filthy-panty resources.
+ * Example: webhook subscription flow via declarative broods resources.
  *
  * Creates a pre-deployed agent with webhook events configured.
  * Lifecycle events are delivered to the mock webhook endpoint.
  * Check CloudWatch Logs for the mock-webhook-subscribe Lambda to see received events.
  */
 
-import { FilthyPantyClient } from "filthy-panty";
-import { api } from "./filthypanty/_generated/api";
+import { BroodsClient } from "broods";
+import { api } from "./broods/_generated/api";
 
-// Create a client to connect to the Filthy Panty API.
-const client = new FilthyPantyClient();
+// Create a client to connect to the Broods API.
+const client = new BroodsClient();
 
 // Stream the response from the agent and print it to stdout.
 for await (const chunk of client.stream(api.agents.webhookAgent, {

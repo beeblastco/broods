@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * Org API access panel: provision a filthy-panty account for the org, show
+ * Org API access panel: provision a broods account for the org, show
  * its accountId + base URL, and rotate the Bearer secret. The plaintext is
  * shown exactly once after provision/rotate because only the hash is stored.
  */
@@ -18,8 +18,8 @@ import {
 } from "@/app/components/ui/dialog";
 import { Input } from "@/app/components/ui/input";
 import { Label } from "@/app/components/ui/label";
-import { api } from "@filthy-panty/convex/_generated/api";
-import type { Doc } from "@filthy-panty/convex/_generated/dataModel";
+import { api } from "@broods/convex/_generated/api";
+import type { Doc } from "@broods/convex/_generated/dataModel";
 import { useAction, useQuery } from "convex/react";
 import { Copy, Eye, EyeOff, RefreshCw } from "lucide-react";
 import { useState } from "react";
@@ -43,7 +43,7 @@ export function ApiAccessPanel({ org }: Props) {
     const [error, setError] = useState<string | null>(null);
     const [copied, setCopied] = useState<string | null>(null);
 
-    const harnessUrl = process.env.NEXT_PUBLIC_FILTHY_PANTY_HARNESS_URL ?? "(set FILTHY_PANTY_HARNESS_URL)";
+    const harnessUrl = process.env.NEXT_PUBLIC_BROODS_HARNESS_URL ?? "(set BROODS_HARNESS_URL)";
 
     async function handleProvision() {
         setPending(true);
@@ -82,7 +82,7 @@ export function ApiAccessPanel({ org }: Props) {
 
     if (account === undefined) {
         return (
-            <Section title="API Access" description="Filthy-panty service credentials for this org.">
+            <Section title="API Access" description="Broods service credentials for this org.">
                 <p className="text-sm text-muted-foreground">Loading...</p>
             </Section>
         );
@@ -90,10 +90,10 @@ export function ApiAccessPanel({ org }: Props) {
 
     if (account === null) {
         return (
-            <Section title="API Access" description="Filthy-panty service credentials for this org.">
+            <Section title="API Access" description="Broods service credentials for this org.">
                 <div className="rounded-lg border border-border bg-card px-4 py-6">
                     <p className="text-sm text-foreground">
-                        This organization is not yet provisioned with a filthy-panty account.
+                        This organization is not yet provisioned with a broods account.
                     </p>
                     <p className="mt-1 text-xs text-muted-foreground">
                         Provisioning creates the backend tenant and issues a one-time Bearer
@@ -108,7 +108,7 @@ export function ApiAccessPanel({ org }: Props) {
                         disabled={pending}
                         onClick={handleProvision}
                     >
-                        {pending ? "Provisioning..." : "Provision filthy-panty account"}
+                        {pending ? "Provisioning..." : "Provision broods account"}
                     </Button>
                 </div>
 
@@ -126,7 +126,7 @@ export function ApiAccessPanel({ org }: Props) {
     }
 
     return (
-        <Section title="API Access" description="Filthy-panty service credentials for this org.">
+        <Section title="API Access" description="Broods service credentials for this org.">
             <div className="grid gap-4">
                 <div className="grid gap-1">
                     <Label className="text-xs text-muted-foreground">Account ID</Label>

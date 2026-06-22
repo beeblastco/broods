@@ -5,9 +5,9 @@
  * and Google bill for cache creation; OpenAI does not break it out.
  */
 
-import { canonicalModelProvider, PROVIDER_CACHE_WRITE_FIELDS } from "@filthy-panty/convex/modelPricing";
+import { canonicalModelProvider, PROVIDER_CACHE_WRITE_FIELDS } from "@broods/convex/modelPricing";
 
-export { PROVIDER_CACHE_WRITE_FIELDS } from "@filthy-panty/convex/modelPricing";
+export { PROVIDER_CACHE_WRITE_FIELDS } from "@broods/convex/modelPricing";
 
 // Cache-write tokens for one step; 0 when the provider doesn't break them out,
 // the field is absent, or metadata is missing. Never throws.

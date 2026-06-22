@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * Workspace card Details tab — mirrors filthy-panty's nested AgentWorkspaceConfig
+ * Workspace card Details tab — mirrors broods's nested AgentWorkspaceConfig
  * (enabled / needsApproval / namespace / harness / workspaces / storage / sandbox).
  * Every control auto-saves through the connected agent's `extraConfig.workspace.*`
  * slice; each feature is a single toggle (no redundant "enabled" row) and reveals

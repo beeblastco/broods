@@ -1,13 +1,13 @@
 /**
- * Example: workspace sandbox execution on the Beeblast k3s cluster via the
- * `kubernetes` provider (agent-sandbox runtime pods) using declarative filthy-panty resources.
+ * Example: workspace sandbox execution on the Broods k3s cluster via the
+ * `kubernetes` provider (agent-sandbox runtime pods) using declarative broods resources.
  */
 
-import { FilthyPantyClient } from "filthy-panty";
-import { api } from "./filthypanty/_generated/api";
+import { BroodsClient } from "broods";
+import { api } from "./broods/_generated/api";
 
-// Create a client to connect to the Filthy Panty API.
-const client = new FilthyPantyClient();
+// Create a client to connect to the Broods API.
+const client = new BroodsClient();
 
 for await (const chunk of client.stream(api.agents.analysisAgent, {
   input: [

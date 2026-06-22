@@ -19,7 +19,7 @@ import {
 } from "@/app/lib/skillsCredentials";
 import { readAgentBranch, type FlatAgentConfig } from "@/app/lib/agentConfigCodec";
 import { includesSkillRef, withoutSkillRef } from "@/app/lib/skillRefs";
-import { api } from "@filthy-panty/convex/_generated/api";
+import { api } from "@broods/convex/_generated/api";
 import { useAction } from "convex/react";
 import { Eye, EyeOff, FolderOpen, GitBranch, Loader2, RotateCcw, Sparkles } from "lucide-react";
 import { useMemo, useState } from "react";
@@ -148,7 +148,7 @@ function GithubForm({
             <div className="flex flex-col gap-1.5">
                 <SectionHeader>Account token</SectionHeader>
                 <p className="text-[11px] text-muted-foreground">
-                    Your filthy-panty Bearer token (starts with <code className="rounded bg-muted px-1">fp_acct_</code>). Saved in session only.
+                    Your broods Bearer token (starts with <code className="rounded bg-muted px-1">fp_acct_</code>). Saved in session only.
                 </p>
                 <TokenInput value={token} onChange={setToken} />
             </div>
@@ -267,7 +267,7 @@ function JsonForm({
             <div className="flex flex-col gap-1.5">
                 <SectionHeader>Account token</SectionHeader>
                 <p className="text-[11px] text-muted-foreground">
-                    Your filthy-panty Bearer token. Saved in session only.
+                    Your broods Bearer token. Saved in session only.
                 </p>
                 <TokenInput value={token} onChange={setToken} />
             </div>
@@ -386,13 +386,13 @@ export function SkillDetailsTab({
                     <SourceCard
                         icon={<FolderOpen className="size-4" />}
                         title="Upload files"
-                        description="Upload and manage skill files locally, then publish to your filthy-panty account."
+                        description="Upload and manage skill files locally, then publish to your broods account."
                         onClick={() => setSource("files")}
                     />
                     <SourceCard
                         icon={<GitBranch className="size-4" />}
                         title="GitHub repository"
-                        description="Import directly from a GitHub repository URL. filthy-panty fetches and stores the files."
+                        description="Import directly from a GitHub repository URL. broods fetches and stores the files."
                         onClick={() => setSource("github")}
                     />
                     <SourceCard

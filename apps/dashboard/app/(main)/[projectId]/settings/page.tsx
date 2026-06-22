@@ -4,8 +4,8 @@
 import { useEnvironment } from "@/app/hooks/useEnvironment";
 import { Button } from "@/app/components/ui/button";
 import { cn } from "@/app/lib/utils";
-import { api } from "@filthy-panty/convex/_generated/api";
-import type { Doc, Id } from "@filthy-panty/convex/_generated/dataModel";
+import { api } from "@broods/convex/_generated/api";
+import type { Doc, Id } from "@broods/convex/_generated/dataModel";
 import { useQuery } from "convex/react";
 import Link from "next/link";
 import { useParams, useSearchParams } from "next/navigation";

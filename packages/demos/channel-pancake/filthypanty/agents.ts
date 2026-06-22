@@ -1,4 +1,4 @@
-import { defineAgent, definePancakeChannel, env } from "filthy-panty";
+import { defineAgent, definePancakeChannel, env } from "broods";
 
 // Pancake channel supports an optional `ignoreTagIds` parameter which allows you to specify a list of tag IDs. 
 // If a message contains any of these tags, the agent will ignore the message and not respond to it. 

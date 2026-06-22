@@ -4,8 +4,8 @@ Subagents let one parent agent dispatch independent work, keep going, and then c
 
 ## Configuration
 
-```ts title="filthypanty/index.ts"
-import { defineAgent } from "filthy-panty";
+```ts title="broods/index.ts"
+import { defineAgent } from "broods";
 
 export const research = defineAgent({
   name: "research",

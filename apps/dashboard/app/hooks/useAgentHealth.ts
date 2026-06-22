@@ -4,7 +4,7 @@
  * Derives agent health status from core service reachability.
  * Uses a shared module-level cache so multiple agent nodes don't duplicate health requests.
  */
-import type { Id } from "@filthy-panty/convex/_generated/dataModel";
+import type { Id } from "@broods/convex/_generated/dataModel";
 import { useEffect, useState } from "react";
 
 /** Possible agent health statuses for display. */
@@ -48,7 +48,7 @@ async function checkServiceHealth(): Promise<boolean> {
 
     if (pendingCheck) return pendingCheck;
 
-    const coreUrl = (process.env.NEXT_PUBLIC_FILTHY_PANTY_BASE_URL || "https://app.beeblast.co").replace(/\/+$/, "");
+    const coreUrl = (process.env.NEXT_PUBLIC_BROODS_BASE_URL || "https://gateway.broods.app").replace(/\/+$/, "");
 
     pendingCheck = fetchHealthWithTimeout(coreUrl, 5000)
         .then((res) => {

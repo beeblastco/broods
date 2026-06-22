@@ -1,8 +1,9 @@
 "use client";
 
 /** Home route that ensures the caller has an org, then opens their default project (auto-created on first login). */
-import { api } from "@filthy-panty/convex/_generated/api";
-import { useConvex, useMutation, useQuery } from "convex/react";
+import { publishOnboardingSecret } from "@/app/lib/onboardingSecret";
+import { api } from "@broods/convex/_generated/api";
+import { useAction, useConvex, useMutation, useQuery } from "convex/react";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 
@@ -12,6 +13,7 @@ export default function HomePage() {
     const convex = useConvex();
     const getOrCreateOrg = useMutation(api.org.getOrCreate);
     const getOrCreateDefault = useMutation(api.project.getOrCreateDefault);
+    const provision = useAction(api.orgLifecycle.provision);
     const currentUser = useQuery(api.user.getCurrent);
     const bootstrapped = useRef(false);
     const [error, setError] = useState<string | null>(null);
@@ -23,9 +25,22 @@ export default function HomePage() {
         bootstrapped.current = true;
         (async () => {
             try {
-                await getOrCreateOrg({});
+                const orgId = await getOrCreateOrg({});
 
-                // A `filthy-panty` deep link (?project=&env=) jumps straight to that
+                // On first login (brand-new org with no backend account), auto-provision
+                // and surface the one-time secret in a dismissible banner. `provision`
+                // throws if an account already exists, which we treat as already-provisioned.
+                const account = await convex.query(api.org.getActiveAccount, {});
+                if (account === null) {
+                    try {
+                        const result = await provision({ orgId: orgId });
+                        publishOnboardingSecret(result.secret);
+                    } catch (provisionErr) {
+                        console.warn("Auto-provision skipped:", provisionErr);
+                    }
+                }
+
+                // A `broods` deep link (?project=&env=) jumps straight to that
                 // project's architecture view with the same environment selected.
                 const params = new URLSearchParams(window.location.search);
                 const project = params.get("project");
@@ -52,7 +67,7 @@ export default function HomePage() {
                 bootstrapped.current = false;
             }
         })();
-    }, [currentUser, convex, getOrCreateOrg, getOrCreateDefault, router]);
+    }, [currentUser, convex, getOrCreateOrg, getOrCreateDefault, provision, router]);
 
     return (
         <div className="flex h-full w-full items-center justify-center bg-background">

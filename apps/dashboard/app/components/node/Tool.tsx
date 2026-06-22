@@ -1,8 +1,8 @@
 "use client";
 
 import { BaseNode, type BaseNodeData } from "@/app/components/node/BaseNode";
-import { api } from "@filthy-panty/convex/_generated/api";
-import type { Id } from "@filthy-panty/convex/_generated/dataModel";
+import { api } from "@broods/convex/_generated/api";
+import type { Id } from "@broods/convex/_generated/dataModel";
 import { useEnvironment } from "@/app/hooks/useEnvironment";
 import { useQuery } from "convex/react";
 import { useParams } from "next/navigation";

@@ -1,4 +1,4 @@
-import { defineAgent, defineDiscordChannel, env } from "filthy-panty";
+import { defineAgent, defineDiscordChannel, env } from "broods";
 
 export const discord = defineDiscordChannel({
   botToken: env.DISCORD_BOT_TOKEN,

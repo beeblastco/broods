@@ -60,7 +60,7 @@ jobs:
     env:
       NEXT_PUBLIC_CONVEX_URL: ${{ vars.NEXT_PUBLIC_CONVEX_URL || 'https://example.convex.cloud' }}
       NEXT_PUBLIC_WORKOS_REDIRECT_URI: ${{ vars.NEXT_PUBLIC_WORKOS_REDIRECT_URI || 'http://localhost:3000/auth/callback' }}
-      NEXT_PUBLIC_FILTHY_PANTY_BASE_URL: https://app.beeblast.co
+      NEXT_PUBLIC_BROODS_BASE_URL: https://gateway.broods.app
     steps:
       - name: Checkout repository
         uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
@@ -72,16 +72,16 @@ jobs:
         run: bun install --frozen-lockfile --ignore-scripts
 
       - name: Check gateway
-        run: bun run --filter @filthy-panty/gateway check
+        run: bun run --filter @broods/gateway check
 
       - name: Test gateway
-        run: bun run --filter @filthy-panty/gateway test
+        run: bun run --filter @broods/gateway test
 
       - name: Lint dashboard
-        run: bun run --filter @filthy-panty/dashboard lint
+        run: bun run --filter @broods/dashboard lint
 
       - name: Test dashboard
-        run: bun run --filter @filthy-panty/dashboard test
+        run: bun run --filter @broods/dashboard test
 
       - name: Build dashboard
-        run: bun run --filter @filthy-panty/dashboard build
+        run: bun run --filter @broods/dashboard build

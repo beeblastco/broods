@@ -2,7 +2,7 @@
 
 You have two deployment paths:
 
-1. **Managed service** (recommended) — the platform at `app.beeblast.co` handles all infrastructure. You only run `filthy-panty deploy`.
+1. **Managed service** (recommended) — the platform at `gateway.broods.app` handles all infrastructure. You only run `broods deploy`.
 2. **Self-hosted** — deploy the full serverless stack to your own AWS account with SST.
 
 Both paths use the same CLI and SDK workflow.
@@ -14,10 +14,10 @@ Both paths use the same CLI and SDK workflow.
 The fastest path. No infrastructure to manage.
 
 ```bash
-filthy-panty init      # create filthypanty/ project
-filthy-panty login     # authenticate with the dashboard
-filthy-panty dev       # sync to development, watch for changes
-filthy-panty deploy    # sync to production
+broods init      # create broods/ project
+broods login     # authenticate with the dashboard
+broods dev       # sync to development, watch for changes
+broods deploy    # sync to production
 ```
 
 The CLI handles everything: compiling resources, bundling tools, uploading skills, syncing environment variables, and generating typed runtime references. See [Getting Started](getting-started.md) for the full walkthrough.
@@ -89,11 +89,11 @@ Deploy outputs include:
 After self-hosted deploy, use the same CLI workflow but point it at your deployment:
 
 ```bash
-export FILTHY_PANTY_BASE_URL="https://your-deployment.lambda-url.us-east-1.on.aws"
-filthy-panty init
-filthy-panty login --dashboard-url https://your-dashboard.example.com
-filthy-panty dev
-filthy-panty deploy
+export BROODS_BASE_URL="https://your-deployment.lambda-url.us-east-1.on.aws"
+broods init
+broods login --dashboard-url https://your-dashboard.example.com
+broods dev
+broods deploy
 ```
 
 ### Account Setup (Self-Hosted)

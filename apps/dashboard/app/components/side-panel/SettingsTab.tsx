@@ -3,16 +3,7 @@
 /** Settings tab with danger zone for node deletion. */
 import { useState } from "react";
 import { Button } from "@/app/components/ui/button";
-import { Input } from "@/app/components/ui/input";
-import { Label } from "@/app/components/ui/label";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/app/components/ui/dialog";
+import { DeleteConfirmDialog } from "@/app/components/DeleteConfirmDialog";
 
 type NodeType =
   | "agent"
@@ -81,17 +72,15 @@ export function SettingsTab({
   nodeName: string;
   openDeleteDialogToken: number;
   onDelete: () => Promise<void>;
-  /** When true, this resource is owned by a filthypanty/ project: delete is locked. */
+  /** When true, this resource is owned by a broods/ project: delete is locked. */
   managedByCode?: boolean;
   /** Blocks delete while ownership is unknown or code owns the resource. */
   deleteLocked?: boolean;
 }) {
   const [deleteOpen, setDeleteOpen] = useState(false);
-  const [confirmPhrase, setConfirmPhrase] = useState("");
   const [isDeleting, setIsDeleting] = useState(false);
   const [prevDeleteToken, setPrevDeleteToken] = useState(openDeleteDialogToken);
 
-  const deletePhrase = `delete ${nodeName}`;
   const descriptions = DELETE_DESCRIPTIONS[nodeType];
   const typeLabel = NODE_TYPE_LABELS[nodeType];
 
@@ -101,17 +90,14 @@ export function SettingsTab({
   if (openDeleteDialogToken !== prevDeleteToken) {
     setPrevDeleteToken(openDeleteDialogToken);
     if (openDeleteDialogToken > 0 && !deleteLocked) {
-      setConfirmPhrase("");
       setDeleteOpen(true);
     }
   }
   if (deleteOpen && deleteLocked) {
     setDeleteOpen(false);
-    setConfirmPhrase("");
   }
 
   async function handleDelete() {
-    if (confirmPhrase !== deletePhrase) return;
     setIsDeleting(true);
     try {
       await onDelete();
@@ -136,10 +122,10 @@ export function SettingsTab({
                   {managedByCode ? (
                     <>
                       Managed by code in{" "}
-                      <span className="font-mono">filthypanty/</span>. Delete it
+                      <span className="font-mono">broods/</span>. Delete it
                       from your code, then run{" "}
                       <span className="font-mono">
-                        filthy-panty deploy --prune
+                        broods deploy --prune
                       </span>.
                     </>
                   ) : (
@@ -172,11 +158,8 @@ export function SettingsTab({
               <Button
                 variant="destructive"
                 size="sm"
-                className="shrink-0 text-xs"
-                onClick={() => {
-                  setConfirmPhrase("");
-                  setDeleteOpen(true);
-                }}
+                className="shrink-0 text-xs cursor-pointer"
+                onClick={() => setDeleteOpen(true)}
               >
                 Delete
               </Button>
@@ -185,67 +168,15 @@ export function SettingsTab({
         )}
       </div>
 
-      {/* Delete confirmation dialog */}
-      <Dialog
+      <DeleteConfirmDialog
         open={deleteOpen}
-        onOpenChange={(open) => {
-          if (!open) {
-            setDeleteOpen(false);
-            setConfirmPhrase("");
-          }
-        }}
-      >
-        <DialogContent className="sm:max-w-sm">
-          <DialogHeader>
-            <DialogTitle>Delete {typeLabel}</DialogTitle>
-            <DialogDescription asChild>
-              <div className="grid gap-3 text-sm text-muted-foreground">
-                <p>
-                  This will permanently delete{" "}
-                  <span className="font-semibold text-foreground">
-                    {nodeName}
-                  </span>{" "}
-                  and cannot be undone.
-                </p>
-                <p>{descriptions.detail}</p>
-              </div>
-            </DialogDescription>
-          </DialogHeader>
-          <div className="grid gap-3 py-2">
-            <Label htmlFor="confirm-delete-node" className="grid gap-1">
-              <span>Type the following to confirm</span>
-              <span className="font-mono font-medium text-foreground break-all">
-                {deletePhrase}
-              </span>
-            </Label>
-            <Input
-              id="confirm-delete-node"
-              value={confirmPhrase}
-              onChange={(e) => setConfirmPhrase(e.target.value)}
-              placeholder={deletePhrase}
-              autoFocus
-            />
-          </div>
-          <DialogFooter>
-            <Button
-              variant="ghost"
-              onClick={() => {
-                setDeleteOpen(false);
-                setConfirmPhrase("");
-              }}
-            >
-              Cancel
-            </Button>
-            <Button
-              variant="destructive"
-              disabled={confirmPhrase !== deletePhrase || isDeleting}
-              onClick={handleDelete}
-            >
-              {isDeleting ? "Deleting…" : "Delete"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+        onOpenChange={setDeleteOpen}
+        resourceName={nodeName}
+        resourceType={typeLabel}
+        critical={false}
+        onConfirm={handleDelete}
+        isDeleting={isDeleting}
+      />
     </>
   );
 }

@@ -3,8 +3,8 @@
 /** Tool test tab for executing the saved tool source code with custom JSON input. */
 import { Button } from "@/app/components/ui/button";
 import { Textarea } from "@/app/components/ui/textarea";
-import { api } from "@filthy-panty/convex/_generated/api";
-import type { Id } from "@filthy-panty/convex/_generated/dataModel";
+import { api } from "@broods/convex/_generated/api";
+import type { Id } from "@broods/convex/_generated/dataModel";
 import { toErrorMessage } from "@/app/lib/errors";
 import { useAction, useQuery } from "convex/react";
 import { Loader2, Play } from "lucide-react";

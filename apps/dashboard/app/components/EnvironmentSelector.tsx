@@ -4,8 +4,8 @@
 import { useEffect, useState } from "react";
 import { useMutation, useQuery } from "convex/react";
 import { useParams } from "next/navigation";
-import { api } from "@filthy-panty/convex/_generated/api";
-import type { Doc, Id } from "@filthy-panty/convex/_generated/dataModel";
+import { api } from "@broods/convex/_generated/api";
+import type { Doc, Id } from "@broods/convex/_generated/dataModel";
 import { useEnvironment } from "@/app/hooks/useEnvironment";
 import { ChevronDown, Circle, Copy, Plus } from "lucide-react";
 import {

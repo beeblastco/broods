@@ -7,10 +7,10 @@ is no per-runtime routing anymore.
 
 ## Code-First Definition
 
-Define sandboxes in `filthypanty/index.ts` and reference them from agents:
+Define sandboxes in `broods/index.ts` and reference them from agents:
 
 ```ts
-import { defineSandbox, defineAgent, env } from "filthy-panty";
+import { defineSandbox, defineAgent, env } from "broods";
 
 export const lambdaSandbox = defineSandbox({
   name: "lambda-sandbox",

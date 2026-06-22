@@ -12,7 +12,7 @@ import { Button } from "@/app/components/ui/button";
 import { Input } from "@/app/components/ui/input";
 import { Label } from "@/app/components/ui/label";
 import { Separator } from "@/app/components/ui/separator";
-import { api } from "@filthy-panty/convex/_generated/api";
+import { api } from "@broods/convex/_generated/api";
 import type { ConfiguredPlanTier, PlanTier } from "@/app/lib/pricing";
 import {
   isMaxPlan,

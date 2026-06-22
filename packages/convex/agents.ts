@@ -18,7 +18,7 @@ const agentDoc = v.object({
 });
 
 /**
- * Look up an agent by the public string `agentId` used in the filthy-panty
+ * Look up an agent by the public string `agentId` used in the broods
  * HTTP contract. The validator accepts `v.string()` (not `v.id("agents")`)
  * so unknown / non-Convex-id values resolve to `null` (= "agent not found")
  * instead of throwing an ArgumentValidationError at the adapter boundary.

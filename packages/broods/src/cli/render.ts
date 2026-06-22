@@ -1,5 +1,5 @@
 /**
- * Pretty terminal rendering for a streamed agent run (`filthy-panty run`).
+ * Pretty terminal rendering for a streamed agent run (`broods run`).
  * Switches over the full Vercel AI SDK `TextStreamPart` union: reasoning, text,
  * streamed tool input, tool calls/results/errors, approvals, sources, files, and
  * lifecycle/usage parts. Section boundaries come from the SDK's own

@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 /**
- * CLI entry point for code-first filthy-panty resources.
+ * CLI entry point for code-first broods resources.
  */
 
 import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
@@ -14,9 +14,9 @@ import { collectEnvRefNames, compileProject } from "../manifest.ts";
 import type { CliManifest } from "../contracts.ts";
 import { GENERATED_DIR, PROJECT_DIR, USER_CONFIG_PATH } from "../config.ts";
 import { writeGeneratedFiles } from "../codegen.ts";
-import { type CliOnboardingContext, type CliOnboardingOrg, diffManifests, FilthyPantySyncClient, type RemoteManifestResponse } from "../sync.ts";
-import { FilthyPantyClient, DEFAULT_CORE_BASE_URL } from "../client.ts";
-import { loadFilthyPantyRuntimeConfig } from "../runtime-config.ts";
+import { type CliOnboardingContext, type CliOnboardingOrg, diffManifests, BroodsSyncClient, type RemoteManifestResponse } from "../sync.ts";
+import { BroodsClient, DEFAULT_CORE_BASE_URL } from "../client.ts";
+import { loadBroodsRuntimeConfig } from "../runtime-config.ts";
 import { subscribeObservabilityLogs } from "../observability-client.ts";
 import type { LogLevel, ObservabilityLogEntry } from "../observability-contracts.ts";
 import { hasFlag, loginWithBrowser, optionValue, promptConfirm, promptSecret, promptSelect, promptText, requireAuth } from "./utils.ts";
@@ -24,20 +24,20 @@ import { printDeploymentTarget, printDiffEntries, printEnvSync, printReadyLine, 
 import { createRenderState, renderStreamPart } from "./render.ts";
 
 const VERSION = "0.1.0";
-const DEFAULT_DASHBOARD_URL = "https://dashboard.beeblast.co";
+const DEFAULT_DASHBOARD_URL = "https://dashboard.broods.app";
 
-const HELP = `filthy-panty v${VERSION}
+const HELP = `broods v${VERSION}
 
-Usage: filthy-panty <command>
+Usage: broods <command>
 
 Commands:
-  init                 Create a filthypanty/ project shell
+  init                 Create a broods/ project shell
   login                Authenticate with WorkOS through the dashboard
   dev                  Watch + sync Development AND live-tail agent logs (like \`convex dev\`);
                        confirms before deleting; auto-pushes env.NAME values from .env.local
   dev --once           Sync Development a single time and exit (no watch, no log stream)
   diff                 Show local desired state vs remote state
-  deploy               Sync Production once; writes FILTHY_PANTY_API_KEY to .env.local
+  deploy               Sync Production once; writes BROODS_API_KEY to .env.local
                        (--prune deletes undeclared remote resources; --rotate-key mints a fresh key)
   env set <name>       Store an encrypted environment variable
   env get <name>       Reveal a variable's value (audited)
@@ -127,16 +127,16 @@ async function init(args: string[]): Promise<void> {
 
 async function login(args: string[]): Promise<void> {
   if (hasFlag(args, "--help") || hasFlag(args, "-h")) {
-    console.log("Usage: filthy-panty login [--dashboard-url <url>]");
+    console.log("Usage: broods login [--dashboard-url <url>]");
     return;
   }
-  const runtime = loadFilthyPantyRuntimeConfig();
+  const runtime = loadBroodsRuntimeConfig();
   const dashboardUrl = optionValue(args, "--dashboard-url") ??
     runtime.dashboardUrl ??
     DEFAULT_DASHBOARD_URL;
   const auth = await loginWithBrowser(dashboardUrl);
-  const project = optionValue(args, "--project") ?? process.env.FILTHY_PANTY_PROJECT ?? inferProjectName(process.cwd());
-  const environment = optionValue(args, "--env") ?? process.env.FILTHY_PANTY_ENVIRONMENT ?? "development";
+  const project = optionValue(args, "--project") ?? process.env.BROODS_PROJECT ?? inferProjectName(process.cwd());
+  const environment = optionValue(args, "--env") ?? process.env.BROODS_ENVIRONMENT ?? "development";
   await writeLocalEnvDefaults({
     dashboardUrl: auth.dashboardUrl,
     project: project,
@@ -165,11 +165,11 @@ async function writeRuntimeKeyForLogin(
   environment: string,
 ): Promise<void> {
   try {
-    const client = new FilthyPantySyncClient({ dashboardUrl: dashboardUrl, token: token });
+    const client = new BroodsSyncClient({ dashboardUrl: dashboardUrl, token: token });
     const key = await client.getRuntimeKey(project, environment);
     if (key?.apiKey) {
-      await writeEnvValue("FILTHY_PANTY_API_KEY", key.apiKey);
-      console.log(`Wrote FILTHY_PANTY_API_KEY (${key.keyHint}) to .env.local`);
+      await writeEnvValue("BROODS_API_KEY", key.apiKey);
+      console.log(`Wrote BROODS_API_KEY (${key.keyHint}) to .env.local`);
     }
   } catch {
     // Login must not fail because the key fetch did.
@@ -183,7 +183,7 @@ async function diff(args: string[]): Promise<void> {
     command: "dev",
   });
   const auth = await requireAuth(optionValue(args, "--dashboard-url") ?? config.dashboardUrl);
-  const client = new FilthyPantySyncClient({ dashboardUrl: auth.dashboardUrl, token: auth.token });
+  const client = new BroodsSyncClient({ dashboardUrl: auth.dashboardUrl, token: auth.token });
   const remote = await client.getManifest(manifest.project, manifest.environment);
   printDiffEntries(diffManifests(manifest, remote?.manifest ?? null));
 }
@@ -196,7 +196,7 @@ async function deploy(args: string[]): Promise<void> {
     useRuntimeEnvironment: false,
   });
   const auth = await requireAuth(optionValue(args, "--dashboard-url") ?? config.dashboardUrl);
-  const client = new FilthyPantySyncClient({ dashboardUrl: auth.dashboardUrl, token: auth.token });
+  const client = new BroodsSyncClient({ dashboardUrl: auth.dashboardUrl, token: auth.token });
   const result = await client.putManifest(manifest, hasFlag(args, "--prune"), hasFlag(args, "--rotate-key"));
   await writeGeneratedFiles(manifest, result.ids, process.cwd(), resourceAliases, result.deployment, channels);
   await ensureGitIgnore();
@@ -214,8 +214,8 @@ async function applyDeploymentKey(
 ): Promise<void> {
   if (!deployment) return;
   if (deployment.apiKey) {
-    await writeEnvValue("FILTHY_PANTY_API_KEY", deployment.apiKey);
-    console.log(`Wrote FILTHY_PANTY_API_KEY (${deployment.keyHint}) to .env.local`);
+    await writeEnvValue("BROODS_API_KEY", deployment.apiKey);
+    console.log(`Wrote BROODS_API_KEY (${deployment.keyHint}) to .env.local`);
     return;
   }
 
@@ -228,14 +228,14 @@ function printSyncWarnings(result: RemoteManifestResponse): void {
   printWarning(
     `⚠ ${missing.length} env var(s) referenced in agent config but not set: ${missing.join(", ")}`,
   );
-  for (const name of missing) console.log(`    filthy-panty env set ${name}`);
+  for (const name of missing) console.log(`    broods env set ${name}`);
 }
 
 async function dev(args: string[]): Promise<void> {
   await ensureDevOnboarding(args);
 
   if (hasFlag(args, "--once")) {
-    if (!process.env.FILTHY_PANTY_SUPPRESS_DEV_TARGET) {
+    if (!process.env.BROODS_SUPPRESS_DEV_TARGET) {
       await printDevTarget(args);
     }
     const start = performance.now();
@@ -249,11 +249,11 @@ async function dev(args: string[]): Promise<void> {
   // recompiling the file content captured at startup and never see edits. The
   // child shares a declined-deletes file so a removed resource is not re-prompted
   // on every later save.
-  const declinedFile = join(tmpdir(), `filthy-panty-declined-${process.pid}.txt`);
+  const declinedFile = join(tmpdir(), `broods-declined-${process.pid}.txt`);
   const childEnv = {
     ...process.env,
-    FILTHY_PANTY_DECLINED_FILE: declinedFile,
-    FILTHY_PANTY_SUPPRESS_DEV_TARGET: "1",
+    BROODS_DECLINED_FILE: declinedFile,
+    BROODS_SUPPRESS_DEV_TARGET: "1",
   };
 
   await printDevTarget(args);
@@ -313,7 +313,7 @@ async function streamDevLogs(args: string[], signal: AbortSignal): Promise<void>
   try {
     creds = resolveObservabilityCredentials();
   } catch {
-    console.log("· live logs off — set FILTHY_PANTY_API_KEY (run `deploy` first) to stream agent logs here");
+    console.log("· live logs off — set BROODS_API_KEY (run `deploy` first) to stream agent logs here");
 
     return;
   }
@@ -364,28 +364,28 @@ async function ensureLocalDevDefaults(args: string[]): Promise<void> {
   const current = await readTextIfExists(path);
   const values = parseEnv(current);
   const missing = [
-    "FILTHY_PANTY_DASHBOARD_URL",
-    "FILTHY_PANTY_PROJECT",
-    "FILTHY_PANTY_ENVIRONMENT",
+    "BROODS_DASHBOARD_URL",
+    "BROODS_PROJECT",
+    "BROODS_ENVIRONMENT",
   ].filter((key) => values[key] === undefined);
   if (missing.length === 0) return;
-  const needsProject = values.FILTHY_PANTY_PROJECT === undefined;
-  const needsEnvironment = values.FILTHY_PANTY_ENVIRONMENT === undefined;
+  const needsProject = values.BROODS_PROJECT === undefined;
+  const needsEnvironment = values.BROODS_ENVIRONMENT === undefined;
 
-  const runtime = loadFilthyPantyRuntimeConfig();
+  const runtime = loadBroodsRuntimeConfig();
   const dashboardUrl = optionValue(args, "--dashboard-url") ??
     runtime.dashboardUrl ??
     DEFAULT_DASHBOARD_URL;
   let project = optionValue(args, "--project") ??
-    process.env.FILTHY_PANTY_PROJECT ??
+    process.env.BROODS_PROJECT ??
     inferProjectName(process.cwd());
   let environment = optionValue(args, "--env") ??
-    process.env.FILTHY_PANTY_ENVIRONMENT ??
+    process.env.BROODS_ENVIRONMENT ??
     "development";
 
   if (process.stdin.isTTY && needsProject) {
     const auth = await requireAuthOrLogin(dashboardUrl);
-    const client = new FilthyPantySyncClient({ dashboardUrl: auth.dashboardUrl, token: auth.token });
+    const client = new BroodsSyncClient({ dashboardUrl: auth.dashboardUrl, token: auth.token });
     const context = await getOnboardingContextOrFallback(client, auth);
     const selectableOrgs = context.orgs.filter((org) => org.accountStatus === "active");
     if (selectableOrgs.length === 0) {
@@ -428,7 +428,7 @@ async function requireAuthOrLogin(dashboardUrl: string) {
 }
 
 async function getOnboardingContextOrFallback(
-  client: FilthyPantySyncClient,
+  client: BroodsSyncClient,
   auth: Awaited<ReturnType<typeof requireAuthOrLogin>>,
 ): Promise<CliOnboardingContext> {
   try {
@@ -496,7 +496,7 @@ function runSyncChild(args: string[], env: NodeJS.ProcessEnv): Promise<void> {
  * interactively before pruning, so an edit-in-progress never silently destroys
  * an agent's history or a workspace's files — and a slow answer never blocks the
  * non-destructive sync. Declined deletes are remembered (across watch child
- * processes via `FILTHY_PANTY_DECLINED_FILE`) so they are not re-prompted.
+ * processes via `BROODS_DECLINED_FILE`) so they are not re-prompted.
  */
 async function syncDev(args: string[]): Promise<RemoteManifestResponse> {
   const { manifest, config, resourceAliases, channels } = await compileProject({
@@ -505,7 +505,7 @@ async function syncDev(args: string[]): Promise<RemoteManifestResponse> {
     command: "dev",
   });
   const auth = await requireAuth(optionValue(args, "--dashboard-url") ?? config.dashboardUrl);
-  const client = new FilthyPantySyncClient({ dashboardUrl: auth.dashboardUrl, token: auth.token });
+  const client = new BroodsSyncClient({ dashboardUrl: auth.dashboardUrl, token: auth.token });
   const remote = await client.getManifest(manifest.project, manifest.environment);
   const diff = diffManifests(manifest, remote?.manifest ?? null);
   printDiffEntries(diff.filter((entry) => entry.operation !== "delete"));
@@ -556,7 +556,7 @@ function printChannelEndpoints(
 ): void {
   const deployment = result.deployment;
   if (!deployment || channels.length === 0) return;
-  const client = new FilthyPantyClient();
+  const client = new BroodsClient();
   for (const channel of channels) {
     const agentId = result.ids.agents[channel.agentName];
     if (!agentId) continue;
@@ -580,15 +580,15 @@ function printChannelEndpoints(
  * automatically so the dashboard never needs a manual step for local secrets.
  *
  * Deliberately one-way and set-only: only manifest-referenced names are pushed
- * (never `FILTHY_PANTY_*` control vars or unrelated `.env.local` keys), values
+ * (never `BROODS_*` control vars or unrelated `.env.local` keys), values
  * are never read back (the backend stores them encrypted/write-only), and
  * removing a var locally never deletes it remotely. `deploy` is left untouched
- * so production secrets stay an explicit `filthy-panty env set`.
+ * so production secrets stay an explicit `broods env set`.
  */
-async function syncLocalEnvVars(client: FilthyPantySyncClient, manifest: CliManifest): Promise<void> {
+async function syncLocalEnvVars(client: BroodsSyncClient, manifest: CliManifest): Promise<void> {
   const present = collectEnvRefNames(manifest).filter((name) => {
     const value = process.env[name];
-    return !name.startsWith("FILTHY_PANTY_") && value !== undefined && value !== "";
+    return !name.startsWith("BROODS_") && value !== undefined && value !== "";
   });
   if (present.length === 0) return;
 
@@ -677,7 +677,7 @@ async function printDevTarget(args: string[]): Promise<void> {
 
 /** Reads the delete keys already declined this watch session, if any. */
 async function loadDeclinedDeletes(): Promise<Set<string>> {
-  const path = process.env.FILTHY_PANTY_DECLINED_FILE;
+  const path = process.env.BROODS_DECLINED_FILE;
   if (!path) return new Set();
   const text = await readTextIfExists(path);
 
@@ -686,14 +686,14 @@ async function loadDeclinedDeletes(): Promise<Set<string>> {
 
 /** Appends declined delete keys so later watch syncs do not re-prompt for them. */
 async function rememberDeclinedDeletes(keys: string[]): Promise<void> {
-  const path = process.env.FILTHY_PANTY_DECLINED_FILE;
+  const path = process.env.BROODS_DECLINED_FILE;
   if (!path || keys.length === 0) return;
   await writeFile(path, `${keys.join("\n")}\n`, { flag: "a" });
 }
 
 /** Resets declined deletes after a prune so re-added-then-removed resources prompt again. */
 async function clearDeclinedDeletes(): Promise<void> {
-  const path = process.env.FILTHY_PANTY_DECLINED_FILE;
+  const path = process.env.BROODS_DECLINED_FILE;
   if (!path) return;
   await writeFile(path, "", "utf8");
 }
@@ -706,7 +706,7 @@ async function envCommand(args: string[]): Promise<void> {
   const isGet = subcommand === "get";
   const needsName = subcommand === "set" || isRemove || isGet;
   if ((needsName && !name) || (!isList && !needsName)) {
-    throw new Error("Usage: filthy-panty env <set|get|list|rm> [name]");
+    throw new Error("Usage: broods env <set|get|list|rm> [name]");
   }
 
   const { manifest, config } = await compileProject({
@@ -715,7 +715,7 @@ async function envCommand(args: string[]): Promise<void> {
     command: "dev",
   });
   const auth = await requireAuth(optionValue(args, "--dashboard-url") ?? config.dashboardUrl);
-  const client = new FilthyPantySyncClient({ dashboardUrl: auth.dashboardUrl, token: auth.token });
+  const client = new BroodsSyncClient({ dashboardUrl: auth.dashboardUrl, token: auth.token });
   const target = `${manifest.project}/${manifest.environment}`;
 
   if (isList) {
@@ -754,19 +754,19 @@ async function envCommand(args: string[]): Promise<void> {
   console.log(`Stored ${name} for ${target}`);
 }
 
-// Runtime API key (FILTHY_PANTY_API_KEY, written by `deploy`/`init`) + base URL
+// Runtime API key (BROODS_API_KEY, written by `deploy`/`init`) + base URL
 // for the observability gateway. No dashboard login required.
 function resolveObservabilityCredentials(): { apiKey: string; baseUrl: string } {
-  loadFilthyPantyRuntimeConfig();
-  const apiKey = process.env.FILTHY_PANTY_API_KEY ?? "";
+  loadBroodsRuntimeConfig();
+  const apiKey = process.env.BROODS_API_KEY ?? "";
   if (!apiKey) {
     throw new Error(
-      "FILTHY_PANTY_API_KEY is not set. Run `filthy-panty deploy` first, or set the key in .env.local.",
+      "BROODS_API_KEY is not set. Run `broods deploy` first, or set the key in .env.local.",
     );
   }
   const baseUrl =
-    process.env.FILTHY_PANTY_BASE_URL ??
-    process.env.FILTHY_PANTY_HOST ??
+    process.env.BROODS_BASE_URL ??
+    process.env.BROODS_HOST ??
     DEFAULT_CORE_BASE_URL;
   return { apiKey, baseUrl };
 }
@@ -785,21 +785,21 @@ function resolveMinLevel(args: string[]): LogLevel | undefined {
 
 /** Resolve project + environment for observability commands (same as other commands). */
 async function resolveProjectEnv(args: string[]): Promise<{ project: string; environment: string }> {
-  loadFilthyPantyRuntimeConfig();
+  loadBroodsRuntimeConfig();
   const project =
     optionValue(args, "--project") ??
-    process.env.FILTHY_PANTY_PROJECT;
+    process.env.BROODS_PROJECT;
   const environment =
     optionValue(args, "--env") ??
-    process.env.FILTHY_PANTY_ENVIRONMENT;
+    process.env.BROODS_ENVIRONMENT;
   if (!project) {
     throw new Error(
-      "Project name is required. Pass --project <name> or set FILTHY_PANTY_PROJECT in .env.local.",
+      "Project name is required. Pass --project <name> or set BROODS_PROJECT in .env.local.",
     );
   }
   if (!environment) {
     throw new Error(
-      "Environment name is required. Pass --env <name> or set FILTHY_PANTY_ENVIRONMENT in .env.local.",
+      "Environment name is required. Pass --env <name> or set BROODS_ENVIRONMENT in .env.local.",
     );
   }
   return { project, environment };
@@ -812,7 +812,7 @@ function formatObservabilityEntry(entry: ObservabilityLogEntry): string {
   return `${time} ${level} ${entry.eventType} ${entry.message}`;
 }
 
-// `filthy-panty stream` — live tail of the whole project/environment log stream
+// `broods stream` — live tail of the whole project/environment log stream
 // until Ctrl-C, no backfill. Flags are documented in HELP.
 async function streamLogs(args: string[]): Promise<void> {
   const { apiKey, baseUrl } = resolveObservabilityCredentials();
@@ -846,7 +846,7 @@ async function streamLogs(args: string[]): Promise<void> {
   }
 }
 
-// `filthy-panty logs` — backfill recent lines (Loki) then switch to a live tail
+// `broods logs` — backfill recent lines (Loki) then switch to a live tail
 // until Ctrl-C. Flags are documented in HELP.
 async function logs(args: string[]): Promise<void> {
   const { apiKey, baseUrl } = resolveObservabilityCredentials();
@@ -902,7 +902,7 @@ async function agentCommand(args: string[]): Promise<void> {
     await agentGet(args[1], args);
     return;
   }
-  throw new Error("Usage: filthy-panty agent <list|get> [name]");
+  throw new Error("Usage: broods agent <list|get> [name]");
 }
 
 /** Compile the local manifest and pair each agent with its remote deploy id. */
@@ -916,7 +916,7 @@ async function loadAgentsWithIds(args: string[]): Promise<{
     command: "dev",
   });
   const auth = await requireAuth(optionValue(args, "--dashboard-url") ?? config.dashboardUrl);
-  const remote = await new FilthyPantySyncClient({ dashboardUrl: auth.dashboardUrl, token: auth.token })
+  const remote = await new BroodsSyncClient({ dashboardUrl: auth.dashboardUrl, token: auth.token })
     .getManifest(manifest.project, manifest.environment);
   const agents = manifest.resources
     .filter((resource) => resource.kind === "agent")
@@ -945,7 +945,7 @@ async function agentList(args: string[]): Promise<void> {
 }
 
 async function agentGet(name: string | undefined, args: string[]): Promise<void> {
-  if (!name) throw new Error("Usage: filthy-panty agent get <name>");
+  if (!name) throw new Error("Usage: broods agent get <name>");
   const { manifest, agents } = await loadAgentsWithIds(args);
   const agent = agents.find((entry) => entry.name === name);
   if (!agent) throw new Error(`Unknown local agent: ${name}`);
@@ -1002,7 +1002,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 async function run(args: string[]): Promise<void> {
   const [agentName, ...promptParts] = args.filter((arg) => !arg.startsWith("--"));
   if (!agentName || promptParts.length === 0) {
-    throw new Error("Usage: filthy-panty run <agent> <prompt>");
+    throw new Error("Usage: broods run <agent> <prompt>");
   }
   const { manifest, config } = await compileProject({
     project: optionValue(args, "--project"),
@@ -1012,10 +1012,10 @@ async function run(args: string[]): Promise<void> {
   const auth = await requireAuth(optionValue(args, "--dashboard-url") ?? config.dashboardUrl);
   const agent = manifest.resources.find((resource) => resource.kind === "agent" && resource.name === agentName);
   if (!agent) throw new Error(`Unknown local agent: ${agentName}`);
-  const remote = await new FilthyPantySyncClient({ dashboardUrl: auth.dashboardUrl, token: auth.token })
+  const remote = await new BroodsSyncClient({ dashboardUrl: auth.dashboardUrl, token: auth.token })
     .getManifest(manifest.project, manifest.environment);
   const agentId = remote?.ids.agents[agentName];
-  if (!agentId) throw new Error(`Agent ${agentName} is not deployed. Run filthy-panty deploy first.`);
+  if (!agentId) throw new Error(`Agent ${agentName} is not deployed. Run broods deploy first.`);
 
   // `run` reaches the agent over the public SSE endpoint, which is off by
   // default (issue #65). Warn early if the local config has not opted in; the
@@ -1027,7 +1027,7 @@ async function run(args: string[]): Promise<void> {
     );
   }
 
-  const client = new FilthyPantyClient();
+  const client = new BroodsClient();
   const state = createRenderState();
   try {
     for await (const part of client.stream({
@@ -1082,12 +1082,12 @@ async function writeLocalEnvDefaults(options: {
   const current = await readTextIfExists(path);
   const values = parseEnv(current);
   const nextValues = {
-    FILTHY_PANTY_DASHBOARD_URL: options.dashboardUrl,
-    FILTHY_PANTY_PROJECT: options.project,
-    FILTHY_PANTY_ENVIRONMENT: options.environment,
+    BROODS_DASHBOARD_URL: options.dashboardUrl,
+    BROODS_PROJECT: options.project,
+    BROODS_ENVIRONMENT: options.environment,
   };
   const lines = current ? current.replace(/\n?$/, "\n").split(/\n/) : [
-    "# Local filthy-panty CLI settings. Tokens are stored outside the repo.",
+    "# Local broods CLI settings. Tokens are stored outside the repo.",
   ];
   let changed = false;
 
@@ -1111,7 +1111,7 @@ async function writeEnvValue(key: string, value: string): Promise<void> {
   const current = await readTextIfExists(path);
   const lines = current
     ? current.replace(/\n?$/, "\n").split(/\n/)
-    : ["# Local filthy-panty CLI settings. Tokens are stored outside the repo."];
+    : ["# Local broods CLI settings. Tokens are stored outside the repo."];
   const index = lines.findIndex((line) => line.trim().startsWith(`${key}=`));
   if (index >= 0) lines[index] = `${key}=${quoteEnv(value)}`;
   else lines.push(`${key}=${quoteEnv(value)}`);
@@ -1151,7 +1151,7 @@ function inferProjectName(cwd: string): string {
     .replace(/^@/, "")
     .replace(/\//g, "-")
     .replace(/[^A-Za-z0-9_-]+/g, "-")
-    .replace(/^-+|-+$/g, "") || "filthy-panty-app";
+    .replace(/^-+|-+$/g, "") || "broods-app";
 }
 
 async function sourceSignature(): Promise<string> {
@@ -1187,7 +1187,7 @@ function isGeneratedPath(path: string): boolean {
 }
 
 function starterAgent(): string {
-  return `import { defineAgent, defineSandbox, env } from "filthy-panty";\n\n` +
+  return `import { defineAgent, defineSandbox, env } from "broods";\n\n` +
     `// A Lambda sandbox: a fresh, ephemeral bash environment created per run.\n` +
     `export const lambdaSandbox = defineSandbox({\n` +
     `  name: "lambda-sandbox",\n` +
@@ -1213,7 +1213,7 @@ function starterAgent(): string {
     `    },\n` +
     `    sandbox: lambdaSandbox,\n` +
     `    // Expose the public runtime endpoint (SSE/WebSocket) so the API key and\n` +
-    `    // \`filthy-panty run\` can reach this agent. Off by default — secured: a\n` +
+    `    // \`broods run\` can reach this agent. Off by default — secured: a\n` +
     `    // private agent is only reachable via internal endpoints or channel webhooks.\n` +
     `    publicAccess: true,\n` +
     `  },\n` +

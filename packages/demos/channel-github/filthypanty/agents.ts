@@ -1,10 +1,10 @@
-import { defineAgent, defineGitHubChannel, env } from "filthy-panty";
+import { defineAgent, defineGitHubChannel, env } from "broods";
 
 export const github = defineGitHubChannel({
   appId: env.GITHUB_APP_ID,
   privateKey: env.GITHUB_PRIVATE_KEY,
   webhookSecret: env.GITHUB_WEBHOOK_SECRET,
-  allowedRepos: ["beeblastco/filthy-panty"],
+  allowedRepos: ["beeblastco/broods"],
 });
 
 export const agent = defineAgent({

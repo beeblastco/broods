@@ -1,4 +1,4 @@
-import { defineAgent, defineCron, env } from "filthy-panty";
+import { defineAgent, defineCron, env } from "broods";
 
 export const cron = defineAgent({
   name: "cron-agent",

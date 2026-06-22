@@ -1,13 +1,13 @@
 {
-  "name": "@filthy-panty/dashboard",
-  "description": "BeeBlast dashboard frontend.",
+  "name": "@broods/dashboard",
+  "description": "Broods dashboard frontend.",
   "version": "0.1.0",
   "private": true,
   "repository": {
     "type": "git",
-    "url": "https://github.com/beeblastco/filthy-panty.git"
+    "url": "https://github.com/beeblastco/broods.git"
   },
-  "homepage": "https://github.com/beeblastco/filthy-panty",
+  "homepage": "https://github.com/beeblastco/broods",
   "scripts": {
     "dev": "next dev",
     "build": "next build",
@@ -40,7 +40,7 @@
     "tailwind-merge": "^3.6.0",
     "unique-names-generator": "^4.7.1",
     "zod": "^4.4.3",
-    "@filthy-panty/convex": "workspace:*"
+    "@broods/convex": "workspace:*"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4.3.0",

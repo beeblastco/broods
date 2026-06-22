@@ -25,9 +25,10 @@ import {
 } from "@/app/components/ui/dropdown-menu";
 import { Input } from "@/app/components/ui/input";
 import { Label } from "@/app/components/ui/label";
-import { api } from "@filthy-panty/convex/_generated/api";
-import type { Id } from "@filthy-panty/convex/_generated/dataModel";
-import { useConvexAuth, useMutation, useQuery } from "convex/react";
+import { publishOnboardingSecret } from "@/app/lib/onboardingSecret";
+import { api } from "@broods/convex/_generated/api";
+import type { Id } from "@broods/convex/_generated/dataModel";
+import { useAction, useConvexAuth, useMutation, useQuery } from "convex/react";
 import { Building2, Check, ChevronDown, Plus, Settings } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
@@ -40,6 +41,7 @@ export function OrgSwitcher() {
   const active = useQuery(api.org.getActive, orgQueryArgs);
   const setActive = useMutation(api.org.setActive);
   const createOrg = useMutation(api.org.create);
+  const provision = useAction(api.orgLifecycle.provision);
 
   const [createOpen, setCreateOpen] = useState(false);
   const [newName, setNewName] = useState("");
@@ -64,6 +66,16 @@ export function OrgSwitcher() {
     try {
       const orgId = await createOrg({ name: name });
       await setActive({ orgId: orgId });
+
+      // Auto-provision the new org's backend account and surface its one-time
+      // secret. `provision` throws if already provisioned, which we ignore.
+      try {
+        const result = await provision({ orgId: orgId });
+        publishOnboardingSecret(result.secret);
+      } catch (provisionErr) {
+        console.warn("Auto-provision skipped:", provisionErr);
+      }
+
       setCreateOpen(false);
       setNewName("");
       router.refresh();

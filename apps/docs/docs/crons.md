@@ -31,8 +31,8 @@ This keeps the add-on small. Developers who need custom workflow code can deploy
 
 Define cron jobs as resources alongside your agents:
 
-```ts title="filthypanty/index.ts"
-import { defineAgent, defineCron } from "filthy-panty";
+```ts title="broods/index.ts"
+import { defineAgent, defineCron } from "broods";
 
 export const maintainer = defineAgent({
   name: "maintainer",
@@ -121,13 +121,13 @@ List jobs with `GET /accounts/me/crons` or fetch one with `GET /accounts/me/cron
 
 ## SDK and Dynamic Creation
 
-Cron jobs are not limited to declarative `defineCron` resources synced by `filthy-panty dev` — clients can create, update, and delete them at runtime through the SDK, which calls the same account API (so EventBridge Scheduler stays in sync):
+Cron jobs are not limited to declarative `defineCron` resources synced by `broods dev` — clients can create, update, and delete them at runtime through the SDK, which calls the same account API (so EventBridge Scheduler stays in sync):
 
 ```ts
-import { FilthyPantyClient } from "filthy-panty";
-import { api } from "./filthypanty/_generated/api";
+import { BroodsClient } from "broods";
+import { api } from "./broods/_generated/api";
 
-const client = new FilthyPantyClient();
+const client = new BroodsClient();
 
 await client.createCron({
   name: "Weekly digest",

@@ -6,12 +6,12 @@ Slack integration allows your agent to interact with users via Slack.
 
 Define a Slack channel with `defineSlackChannel` and attach it to an agent:
 
-```ts title="filthypanty/index.ts"
+```ts title="broods/index.ts"
 import {
   defineAgent,
   defineSlackChannel,
   env,
-} from "filthy-panty";
+} from "broods";
 
 export const slack = defineSlackChannel({
   botToken: env.SLACK_BOT_TOKEN,

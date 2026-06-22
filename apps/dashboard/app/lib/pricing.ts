@@ -27,7 +27,7 @@ export const MAX_PLAN: PlanTier = "pro";
 
 /** External URL for plan upgrades or plan information. */
 export const UPGRADE_URL =
-  process.env.NEXT_PUBLIC_UPGRADE_URL ?? "https://github.com/beeblastco/filthy-panty";
+  process.env.NEXT_PUBLIC_UPGRADE_URL ?? "https://github.com/beeblastco/broods";
 
 /** Tier metadata keyed by plan identifier. */
 export const PLAN_CONFIGS: Record<ConfiguredPlanTier, PlanConfig> = {

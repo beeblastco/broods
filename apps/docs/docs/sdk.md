@@ -5,39 +5,39 @@ title: SDK & Runtime API
 
 # SDK & Runtime API
 
-The `filthy-panty` package exposes a typed TypeScript SDK for invoking agents at runtime. You can also call the HTTP endpoints directly with `curl` or any HTTP client. A Python SDK is planned for a future release.
+The `broods` package exposes a typed TypeScript SDK for invoking agents at runtime. You can also call the HTTP endpoints directly with `curl` or any HTTP client. A Python SDK is planned for a future release.
 
 ## Installation
 
 ```bash
-npm install filthy-panty
+npm install broods
 # or
-bun add filthy-panty
+bun add broods
 ```
 
 ## Authentication
 
-Runtime calls use the **environment runtime API key** (not your dashboard login token). After your first `filthy-panty deploy`, the CLI writes `FILTHY_PANTY_API_KEY` to `.env.local`. The SDK loads it automatically, or you can pass it explicitly:
+Runtime calls use the **environment runtime API key** (not your dashboard login token). After your first `broods deploy`, the CLI writes `BROODS_API_KEY` to `.env.local`. The SDK loads it automatically, or you can pass it explicitly:
 
 ```ts
-import { FilthyPantyClient } from "filthy-panty";
+import { BroodsClient } from "broods";
 
-const client = new FilthyPantyClient();
-// Loads FILTHY_PANTY_API_KEY from .env.local automatically
+const client = new BroodsClient();
+// Loads BROODS_API_KEY from .env.local automatically
 ```
 
 Or explicitly:
 
 ```ts
-const client = new FilthyPantyClient({
-  apiKey: process.env.FILTHY_PANTY_API_KEY,
+const client = new BroodsClient({
+  apiKey: process.env.BROODS_API_KEY,
 });
 ```
 
 For self-hosted deployments, point the client at your own core service:
 
 ```ts
-const client = new FilthyPantyClient({
+const client = new BroodsClient({
   baseUrl: "https://your-deployment.lambda-url.us-east-1.on.aws",
   apiKey: "fp_env_...",
 });
@@ -48,9 +48,9 @@ const client = new FilthyPantyClient({
 ### Sync Run (accumulate text)
 
 ```ts
-import { api } from "./filthypanty/_generated/api";
+import { api } from "./broods/_generated/api";
 
-const client = new FilthyPantyClient();
+const client = new BroodsClient();
 const result = await client.run(api.agents.myAgent, {
   input: "Hello, who are you?",
 });
@@ -62,8 +62,8 @@ console.log(result.text);
 **Curl equivalent:**
 
 ```bash
-curl -X POST "https://app.beeblast.co" \
-  -H "Authorization: Bearer $FILTHY_PANTY_API_KEY" \
+curl -X POST "https://gateway.broods.app" \
+  -H "Authorization: Bearer $BROODS_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
     "agentId": "agent_...",
@@ -96,8 +96,8 @@ for await (const part of client.stream(api.agents.myAgent, {
 **Curl equivalent:**
 
 ```bash
-curl -X POST "https://app.beeblast.co" \
-  -H "Authorization: Bearer $FILTHY_PANTY_API_KEY" \
+curl -X POST "https://gateway.broods.app" \
+  -H "Authorization: Bearer $BROODS_API_KEY" \
   -H "Content-Type: application/json" \
   -H "Accept: text/event-stream" \
   -d '{
@@ -136,8 +136,8 @@ if (status.status === "completed") {
 
 ```bash
 # Start async job
-curl -X POST "https://app.beeblast.co/async" \
-  -H "Authorization: Bearer $FILTHY_PANTY_API_KEY" \
+curl -X POST "https://gateway.broods.app/async" \
+  -H "Authorization: Bearer $BROODS_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
     "agentId": "agent_...",
@@ -149,8 +149,8 @@ curl -X POST "https://app.beeblast.co/async" \
   }'
 
 # Poll status
-curl "https://app.beeblast.co/status/req-003?agentId=agent_..." \
-  -H "Authorization: Bearer $FILTHY_PANTY_API_KEY"
+curl "https://gateway.broods.app/status/req-003?agentId=agent_..." \
+  -H "Authorization: Bearer $BROODS_API_KEY"
 ```
 
 ### Full-Fidelity Events
@@ -229,7 +229,7 @@ A Python SDK is on the roadmap. Until then, use the HTTP endpoints directly:
 import requests
 
 response = requests.post(
-    "https://app.beeblast.co",
+    "https://gateway.broods.app",
     headers={
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
@@ -256,11 +256,11 @@ for line in response.iter_lines():
 For browser or persistent-connection clients, use the WebSocket gateway instead of SSE:
 
 ```ts
-import { WebSocketClient } from "filthy-panty";
-import { api } from "./filthypanty/_generated/api";
+import { WebSocketClient } from "broods";
+import { api } from "./broods/_generated/api";
 
 const wsClient = new WebSocketClient({
-  baseUrl: "https://app.beeblast.co",
+  baseUrl: "https://gateway.broods.app",
   apiKey: "fp_env_...",
 });
 
@@ -310,17 +310,17 @@ The CLI includes runtime helpers that do not require writing code:
 
 ```bash
 # Run an agent once and pretty-print the result
-filthy-panty run my-agent "What is the capital of France?"
+broods run my-agent "What is the capital of France?"
 
 # Stream live logs for the whole project
-filthy-panty stream
+broods stream
 
 # Backfill recent logs then live-tail
-filthy-panty logs --limit 100
+broods logs --limit 100
 
 # List deployed agents
-filthy-panty agent list
+broods agent list
 
 # Show one agent's resolved config
-filthy-panty agent get my-agent
+broods agent get my-agent
 ```

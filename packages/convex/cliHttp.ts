@@ -1,5 +1,5 @@
 /**
- * HTTP handlers for the `beeblast` CLI.
+ * HTTP handlers for the `broods` CLI.
  *
  * Routes authenticate with the org Bearer secret and delegate writes to
  * `cliSync` so the CLI can sync desired-state manifests without browser auth.
@@ -47,7 +47,7 @@ export const handle = httpAction(async (ctx, req) => {
 
         // Resolve the token to an account secret hash, enforcing deploy-key scope
         // against the route's project/environment. `scoped` keys can't forward to
-        // filthy-panty's cron API (which only knows the org secret), so cron sync
+        // broods's cron API (which only knows the org secret), so cron sync
         // is skipped for them — `forwardToken` is null in that case.
         const resolved = await ctx.runQuery(internal.cliSync.resolveCliAuth, {
             tokenHash: auth.secretHash,
@@ -81,13 +81,13 @@ export const handle = httpAction(async (ctx, req) => {
 
         if (route.kind === "logs" && req.method === "GET") {
             // Logs now stream via the gateway (NATS live tail + Loki backfill).
-            // Use wss://app.beeblast.co/v1/<project>/<env>/observability/ws instead.
+            // Use wss://gateway.broods.app/v1/<project>/<env>/observability/ws instead.
             return json({ error: "Log streaming has moved to the gateway observability WebSocket" }, 410);
         }
 
         if (route.kind === "runtimeKey" && req.method === "GET") {
             // Reconnect path: recover the existing runtime key (minting one if the
-            // environment has none yet) so the CLI can write FILTHY_PANTY_API_KEY
+            // environment has none yet) so the CLI can write BROODS_API_KEY
             // without a redeploy.
             const deployment = await ctx.runMutation(internal.cliSync.ensureRuntimeKeyBySecretHash, {
                 secretHash: secretHash,
@@ -142,7 +142,7 @@ export const handle = httpAction(async (ctx, req) => {
             });
 
             // Ensure the environment has a recoverable runtime API key so the CLI
-            // can write FILTHY_PANTY_API_KEY locally on first or later deploys.
+            // can write BROODS_API_KEY locally on first or later deploys.
             const deployment = await ctx.runMutation(internal.cliSync.ensureRuntimeKeyBySecretHash, {
                 secretHash: secretHash,
                 project: route.project,
@@ -219,7 +219,7 @@ export const handle = httpAction(async (ctx, req) => {
 
         if (route.kind === "resource" && req.method === "DELETE") {
             if (route.resourceKind === "cron") {
-                // Scoped deploy keys can't manage filthy-panty cron jobs; no-op for them.
+                // Scoped deploy keys can't manage broods cron jobs; no-op for them.
                 if (forwardToken) await deleteCronByName(forwardToken, route.name);
                 else await deleteCronByNameWithServiceToken(accountId, route.name);
             } else {
@@ -700,8 +700,8 @@ async function deleteCronByName(token: string, name: string): Promise<void> {
 }
 
 async function accountManageFetch(token: string, path: string, init: RequestInit): Promise<Response> {
-    const baseUrl = process.env.FILTHY_PANTY_ACCOUNT_MANAGE_URL;
-    if (!baseUrl) throw new Error("FILTHY_PANTY_ACCOUNT_MANAGE_URL is required to sync cron jobs");
+    const baseUrl = process.env.BROODS_ACCOUNT_MANAGE_URL;
+    if (!baseUrl) throw new Error("BROODS_ACCOUNT_MANAGE_URL is required to sync cron jobs");
     const response = await fetch(`${baseUrl.replace(/\/$/, "")}${path}`, {
         ...init,
         headers: {
@@ -711,17 +711,17 @@ async function accountManageFetch(token: string, path: string, init: RequestInit
         },
     });
     if (!response.ok) {
-        throw new Error(`BeeBlast account-manage cron sync failed: ${response.status} ${await response.text()}`);
+        throw new Error(`Broods account-manage cron sync failed: ${response.status} ${await response.text()}`);
     }
 
     return response;
 }
 
 async function accountManageFetchWithServiceToken(accountId: string, path: string, init: RequestInit): Promise<Response> {
-    const baseUrl = process.env.FILTHY_PANTY_ACCOUNT_MANAGE_URL;
-    const token = process.env.FILTHY_PANTY_SERVICE_AUTH_SECRET;
+    const baseUrl = process.env.BROODS_ACCOUNT_MANAGE_URL;
+    const token = process.env.BROODS_SERVICE_AUTH_SECRET;
     if (!baseUrl || !token) {
-        throw new Error("FILTHY_PANTY_ACCOUNT_MANAGE_URL and FILTHY_PANTY_SERVICE_AUTH_SECRET are required");
+        throw new Error("BROODS_ACCOUNT_MANAGE_URL and BROODS_SERVICE_AUTH_SECRET are required");
     }
     const response = await fetch(`${baseUrl.replace(/\/$/, "")}${path}`, {
         ...init,
@@ -733,7 +733,7 @@ async function accountManageFetchWithServiceToken(accountId: string, path: strin
         },
     });
     if (!response.ok) {
-        throw new Error(`BeeBlast account-manage service call failed: ${response.status} ${await response.text()}`);
+        throw new Error(`Broods account-manage service call failed: ${response.status} ${await response.text()}`);
     }
 
     return response;

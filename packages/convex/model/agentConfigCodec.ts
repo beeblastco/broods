@@ -6,7 +6,7 @@
  *
  * The encryption helper at the bottom uses Web Crypto (`crypto.subtle`)
  * because Convex mutations run in a V8 isolate without `node:crypto`.
- * Output shape matches filthy-panty's `EncryptedAgentConfig` so the
+ * Output shape matches broods's `EncryptedAgentConfig` so the
  * harness can decrypt with `decodeStoredAgentConfig`.
  */
 
@@ -81,7 +81,7 @@ function assertNoUnsupportedKeys(value: Record<string, unknown>, keys: readonly 
     }
 }
 
-/** Project a flat dashboard row into the nested filthy-panty shape. */
+/** Project a flat dashboard row into the nested broods shape. */
 export function toNestedAgentConfig(flat: FlatAgentConfig): NestedAgentConfig {
     const extra = isPlainObject(flat.extraConfig) ? flat.extraConfig : {};
 
@@ -164,7 +164,7 @@ export function substituteEnvPlaceholders<T>(
 
 /**
  * Inverse of {@link toNestedAgentConfig}. Pulls known fields back out of a
- * nested filthy-panty AgentConfig so the canvas's flat `agentConfigs` row
+ * nested broods AgentConfig so the canvas's flat `agentConfigs` row
  * can mirror what the API caller wrote. Anything we don't have a flat
  * column for is preserved in `extraConfig`.
  */
@@ -304,7 +304,7 @@ export async function decryptAgentConfigBlob(
 
 /**
  * AES-256-GCM encrypt the JSON-serialised config with a key derived from
- * SHA-256(secret). Matches filthy-panty's `encryptAgentConfig` so the harness
+ * SHA-256(secret). Matches broods's `encryptAgentConfig` so the harness
  * can decrypt with `decodeStoredAgentConfig` from the convex storage adapter.
  */
 export async function encryptAgentConfigBlob(

@@ -40,7 +40,7 @@ Fixed the immediate state by running (already done this session):
 
 ## Changes made (uncommitted) — file by file
 
-### 1. SDK surfaces stream errors — `packages/filthy-panty/src/client.ts`
+### 1. SDK surfaces stream errors — `packages/broods/src/client.ts`
 
 - In `stream()`, parse each SSE part; if `part.type === "error"`, **throw**
   `Agent run failed: <formatStreamError(part.error)>` instead of yielding/swallowing.
@@ -62,18 +62,18 @@ Fixed the immediate state by running (already done this session):
 - `packages/convex/cliHttp.ts`: the manifest `PUT` handler returns `refreshed` (re-read from DB,
   which has NO warnings), so I merge warnings back in:
   `return json({ ...(refreshed ?? {...}), warnings: result.warnings })`.
-- `packages/filthy-panty/src/sync.ts`: `RemoteManifestResponse.warnings?: { missingEnv?: string[] }`.
-- `packages/filthy-panty/src/cli/index.ts`: `printSyncWarnings(result)` prints
-  `⚠ N env var(s) referenced in agent config but not set: ...` plus a `filthy-panty env set <NAME>`
+- `packages/broods/src/sync.ts`: `RemoteManifestResponse.warnings?: { missingEnv?: string[] }`.
+- `packages/broods/src/cli/index.ts`: `printSyncWarnings(result)` prints
+  `⚠ N env var(s) referenced in agent config but not set: ...` plus a `broods env set <NAME>`
   line per var. Called in both `deploy()` and `syncDev()`.
-- **Ran `bun run --filter @filthy-panty/convex codegen`** (it pushed functions to the dev deployment
+- **Ran `bun run --filter @broods/convex codegen`** (it pushed functions to the dev deployment
   during typegen). Generated diffs are part of the working tree.
 - ⚠️ **Verification gap:** the live warning did NOT fire when tested, because the dashboard proxy
   hits the **deployed** Convex functions (old code). Logic is correct + typechecks; it will work once
   Convex is properly deployed (per repo rule, Convex deploys via the dashboard image build —
   do not deploy unprompted). Verified by code inspection only.
 
-### 3. CLI logs (polling baseline) — `packages/filthy-panty/src/cli/index.ts` + `sync.ts`
+### 3. CLI logs (polling baseline) — `packages/broods/src/cli/index.ts` + `sync.ts`
 
 - `sync.ts`: `logs()` now takes `lookbackMs`, returns typed `{ logs: CliLogEntry[] }`; exported
   `CliLogEntry` interface (timestamp/message/level/logGroup/logStream/functionName/requestId).
@@ -91,9 +91,9 @@ Fixed the immediate state by running (already done this session):
 
 ### 4. Pre-existing (from earlier in session, still uncommitted)
 
-- `packages/filthy-panty/src/resources.ts`: `env` is a Proxy supporting BOTH `env.NAME` and
+- `packages/broods/src/resources.ts`: `env` is a Proxy supporting BOTH `env.NAME` and
   `env("NAME")` (the `EnvAccessor` interface with `readonly [name: string]: EnvRef`).
-- `packages/demos/sandbox-stateless/filthypanty/agents.ts`: uses `env.MINIMAX_API_KEY`.
+- `packages/demos/sandbox-stateless/broods/agents.ts`: uses `env.MINIMAX_API_KEY`.
 - `packages/demos/sandbox-stateless/index.ts`: demo runner (unchanged logic; only prints `text-delta`
   — now safe because the SDK throws on errors).
 
@@ -114,7 +114,7 @@ client.ts    35 ++   |  resources.ts  4 ++   |  sync.ts        22 ++
 - Logs come from **CloudWatch** via `packages/convex/logs.ts`:
   - `fetchForCli` (internalAction) and `fetchForProject` (action) both call `FilterLogEventsCommand`
     on `/aws/lambda/<fn>` log groups — **on-demand pull, NOT reactive.**
-  - The harness log group comes from Convex env `FILTHY_PANTY_HARNESS_LOG_GROUP`.
+  - The harness log group comes from Convex env `BROODS_HARNESS_LOG_GROUP`.
 - **The dashboard ALSO polls** — `MonitoringPanel.tsx` uses `useAction(api.logs.fetchForProject)` on a
   timer. There is **no reactive `logEvents` table** anywhere (confirmed via schema grep).
 - CLI → dashboard `/api/cli/[...path]` (transparent proxy) → Convex `cliHttp.ts` HTTP actions.
@@ -170,6 +170,6 @@ should switch off polling too), then re-pose A–D and proceed with their pick.
 ```text
 bun run check                                   # core + convex + SDK typecheck (currently green)
 cd packages/demos/sandbox-stateless && bun index.ts          # demo (works; key is set)
-bun ../../filthy-panty/src/cli/index.ts logs --limit 8       # pretty logs
-bun ../../filthy-panty/src/cli/index.ts logs -f              # live tail (Ctrl+C)
+bun ../../broods/src/cli/index.ts logs --limit 8       # pretty logs
+bun ../../broods/src/cli/index.ts logs -f              # live tail (Ctrl+C)
 ```

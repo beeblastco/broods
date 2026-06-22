@@ -64,7 +64,7 @@ export const agentConfigsFields = {
     searchToolConfig: v.optional(v.any()),
     runtimeVariables: v.optional(v.array(v.object({ key: v.string(), value: v.string() }))),
     /**
-     * Filthy-panty AgentConfig branches that don't live as flat columns:
+     * Broods AgentConfig branches that don't live as flat columns:
      * `agent`, `workspace`, `session`, `hooks`, `channels`, `tools`, `skills`,
      * `subagent`, and `provider` settings. Stored verbatim so the Config tab
      * can edit the full nested shape. Secrets should be expressed as
@@ -72,7 +72,7 @@ export const agentConfigsFields = {
      */
     extraConfig: v.optional(v.any()),
     /**
-     * Ownership marker. `"cli"` means a `filthypanty/` project is the source of
+     * Ownership marker. `"cli"` means a `broods/` project is the source of
      * truth: the dashboard may still edit it, but those edits are overwritten on
      * the next CLI sync and deleting it from the dashboard is blocked. Unset (or
      * `"dashboard"`) means the dashboard owns it and the CLI never prunes it. The
@@ -209,7 +209,7 @@ export const accountToolsFields = {
 };
 
 /**
- * Cherry-coke SaaS workspace. Owns the per-tenant filthy-panty `accounts`
+ * Cherry-coke SaaS workspace. Owns the per-tenant broods `accounts`
  * row; `orgId` on `accounts` points back to one of these.
  */
 export const orgsFields = {
@@ -230,7 +230,7 @@ export const orgMembersFields = {
     createdAt: v.number(),
 };
 
-/** Tenant root for filthy-panty. One row per dashboard org. The doc id IS the accountId. */
+/** Tenant root for broods. One row per dashboard org. The doc id IS the accountId. */
 export const accountsFields = {
     orgId: v.string(),
     username: v.string(),
@@ -256,7 +256,7 @@ export const agentsFields = {
 /**
  * Account-scoped sandbox config (compute backend + permission mode), referenced
  * by agents via the encrypted agent config. Stored encrypted at rest like agents
- * because `envVars`/`options` may carry provider secrets — filthy-panty (the
+ * because `envVars`/`options` may carry provider secrets — broods (the
  * source of truth for this shared SaaS table) encrypts before writing, so
  * the dashboard only ever persists the opaque blob.
  */
@@ -345,7 +345,7 @@ export const environmentVariableRevealsFields = {
     revealedByAuthId: v.optional(v.string()),
     /** Account that revealed it through a CLI deploy token (when source is "cli"). */
     revealedByAccountId: v.optional(v.id("accounts")),
-    /** CLI token row used for the reveal, when authenticated by `filthy-panty login`. */
+    /** CLI token row used for the reveal, when authenticated by `broods login`. */
     revealedByCliTokenId: v.optional(v.id("cliTokens")),
     /** WorkOS authId attached to the CLI token used for the reveal. */
     revealedByCliAuthId: v.optional(v.string()),
@@ -416,11 +416,11 @@ export const asyncResultsFields = {
 };
 
 /**
- * Per-account scheduled agent runs. Mirrors filthy-panty's CronRecord
+ * Per-account scheduled agent runs. Mirrors broods's CronRecord
  * (functions/_shared/cron.ts) so the SaaS dashboard can manage them
  * directly via Convex live queries. The schedulerName / schedulerGroupName
  * are still the AWS EventBridge Scheduler identifiers — Convex stores them
- * for visibility but filthy-panty Lambda is what actually invokes EBS.
+ * for visibility but broods Lambda is what actually invokes EBS.
  */
 export const cronsFields = {
     accountId: v.id("accounts"),

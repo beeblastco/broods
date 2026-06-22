@@ -1,6 +1,6 @@
 "use node";
 /**
- * Provision and rotate the per-org filthy-panty Bearer secret. The plaintext
+ * Provision and rotate the per-org broods Bearer secret. The plaintext
  * is returned to the caller exactly once at provisioning or rotation time;
  * only the SHA-256 hash is stored in the `accounts` row.
  */

@@ -1,9 +1,9 @@
 "use node";
 /**
- * Public skill actions that call the filthy-panty account-manage API.
+ * Public skill actions that call the broods account-manage API.
  * Runs in Node.js runtime for Buffer / crypto access.
  * The caller supplies their account Bearer token; this action hashes it to
- * verify ownership before forwarding files to filthy-panty.
+ * verify ownership before forwarding files to broods.
  */
 
 import { createHash } from "node:crypto";
@@ -16,8 +16,8 @@ const MAX_FILE_BYTES = 5 * 1024 * 1024;
 const MAX_BUNDLE_BYTES = 30 * 1024 * 1024;
 
 function accountManageUrl(): string {
-    const url = process.env.FILTHY_PANTY_ACCOUNT_MANAGE_URL;
-    if (!url) throw new Error("FILTHY_PANTY_ACCOUNT_MANAGE_URL is not configured");
+    const url = process.env.BROODS_ACCOUNT_MANAGE_URL;
+    if (!url) throw new Error("BROODS_ACCOUNT_MANAGE_URL is not configured");
     return url.replace(/\/$/, "");
 }
 
@@ -27,10 +27,10 @@ function hashToken(token: string): string {
 }
 
 /**
- * Package all workspaceFiles for a skill node and publish them to filthy-panty.
+ * Package all workspaceFiles for a skill node and publish them to broods.
  * @param projectId owning project
  * @param nodeId canvas skill node ID
- * @param bearerToken the caller's filthy-panty account Bearer token
+ * @param bearerToken the caller's broods account Bearer token
  * @returns published skill metadata (name, description, sizeBytes)
  */
 export const publishSkill = action({
@@ -99,7 +99,7 @@ export const publishSkill = action({
             });
         }
 
-        // POST to filthy-panty
+        // POST to broods
         const response = await fetch(`${accountManageUrl()}/accounts/me/skills`, {
             method: "POST",
             headers: {
@@ -125,9 +125,9 @@ export const publishSkill = action({
 });
 
 /**
- * Create a skill in filthy-panty directly from a GitHub repository URL.
- * filthy-panty fetches and extracts the repository; no local file management needed.
- * @param bearerToken the caller's filthy-panty account Bearer token
+ * Create a skill in broods directly from a GitHub repository URL.
+ * broods fetches and extracts the repository; no local file management needed.
+ * @param bearerToken the caller's broods account Bearer token
  * @param githubUrl GitHub tree URL (https://github.com/{owner}/{repo}/tree/{ref}/{path})
  * @returns created skill metadata including the path to use as skill reference
  */
@@ -164,9 +164,9 @@ export const createFromGithub = action({
 });
 
 /**
- * Create a simple skill in filthy-panty from name, description, and markdown content.
- * filthy-panty generates the SKILL.md; no local file management needed.
- * @param bearerToken the caller's filthy-panty account Bearer token
+ * Create a simple skill in broods from name, description, and markdown content.
+ * broods generates the SKILL.md; no local file management needed.
+ * @param bearerToken the caller's broods account Bearer token
  * @param name skill name (lowercase letters, numbers, hyphens, max 64 chars)
  * @param description short description (max 1024 chars)
  * @param content markdown skill instructions
@@ -207,12 +207,12 @@ export const createFromJson = action({
 });
 
 /**
- * Import an existing skill from filthy-panty and store its files in workspaceFiles.
+ * Import an existing skill from broods and store its files in workspaceFiles.
  * Existing files for this nodeId are cleared before import.
  * @param projectId owning project
  * @param nodeId canvas skill node ID
- * @param skillName the filthy-panty skill name (without accountId prefix)
- * @param bearerToken the caller's filthy-panty account Bearer token
+ * @param skillName the broods skill name (without accountId prefix)
+ * @param bearerToken the caller's broods account Bearer token
  * @returns imported skill metadata
  */
 export const importSkill = action({
@@ -236,7 +236,7 @@ export const importSkill = action({
             throw new Error("Project not found.");
         }
 
-        // Fetch skill from filthy-panty
+        // Fetch skill from broods
         const response = await fetch(
             `${accountManageUrl()}/accounts/me/skills/${encodeURIComponent(skillName)}`,
             { headers: { "Authorization": `Bearer ${bearerToken}` } },

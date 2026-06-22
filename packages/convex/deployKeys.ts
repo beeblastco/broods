@@ -1,5 +1,5 @@
 /**
- * Project + environment scoped deploy keys for the `beeblast` CLI. Unlike the org
+ * Project + environment scoped deploy keys for the `broods` CLI. Unlike the org
  * Bearer secret (Settings → API Access), a deploy key authorizes only one
  * project/environment. The plaintext token is returned once at creation; only its
  * SHA-256 hash is stored.

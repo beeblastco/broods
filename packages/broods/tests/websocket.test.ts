@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
-  FilthyPantyWebSocketClient,
+  BroodsWebSocketClient,
   WebsocketClient,
   toWebSocketBaseUrl,
   type WebSocketServerMessage,
@@ -43,18 +43,18 @@ class FakeWebSocket implements WebSocketLike {
 
 afterEach(() => {
   FakeWebSocket.instances = [];
-  delete process.env.FILTHY_PANTY_DASHBOARD_URL;
-  delete process.env.FILTHY_PANTY_TOKEN;
-  delete process.env.FILTHY_PANTY_PROJECT;
-  delete process.env.FILTHY_PANTY_ENVIRONMENT;
-  delete process.env.FILTHY_PANTY_BASE_URL;
-  delete process.env.FILTHY_PANTY_HOST;
-  delete process.env.FILTHY_PANTY_API_KEY;
-  delete process.env.FILTHY_PANTY_WEBSOCKET_URL;
+  delete process.env.BROODS_DASHBOARD_URL;
+  delete process.env.BROODS_TOKEN;
+  delete process.env.BROODS_PROJECT;
+  delete process.env.BROODS_ENVIRONMENT;
+  delete process.env.BROODS_BASE_URL;
+  delete process.env.BROODS_HOST;
+  delete process.env.BROODS_API_KEY;
+  delete process.env.BROODS_WEBSOCKET_URL;
 });
 
 test("websocket client accepts host as a shorthand for the core service URL", () => {
-  const client = new FilthyPantyWebSocketClient({
+  const client = new BroodsWebSocketClient({
     host: "app.example",
     apiKey: "test-key",
     WebSocket: FakeWebSocket,
@@ -71,12 +71,12 @@ test("websocket URL normalization accepts https and wss service URLs", () => {
 });
 
 test("exports WebsocketClient as an alias", () => {
-  expect(WebsocketClient).toBe(FilthyPantyWebSocketClient);
+  expect(WebsocketClient).toBe(BroodsWebSocketClient);
 });
 
 test("websocket client reads apiKey from the shared SDK environment variable", () => {
-  process.env.FILTHY_PANTY_API_KEY = "env-key";
-  const client = new FilthyPantyWebSocketClient({
+  process.env.BROODS_API_KEY = "env-key";
+  const client = new BroodsWebSocketClient({
     host: "app.example",
     WebSocket: FakeWebSocket,
   });
@@ -88,13 +88,13 @@ test("websocket client reads apiKey from the shared SDK environment variable", (
 
 test("websocket client reads apiKey from package-local .env.local", () => {
   const originalCwd = process.cwd();
-  const tempDir = mkdtempSync(join(tmpdir(), "filthy-panty-websocket-"));
-  delete process.env.FILTHY_PANTY_API_KEY;
-  writeFileSync(join(tempDir, ".env.local"), "FILTHY_PANTY_API_KEY=local-env-key\n");
+  const tempDir = mkdtempSync(join(tmpdir(), "broods-websocket-"));
+  delete process.env.BROODS_API_KEY;
+  writeFileSync(join(tempDir, ".env.local"), "BROODS_API_KEY=local-env-key\n");
   process.chdir(tempDir);
 
   try {
-    const client = new FilthyPantyWebSocketClient({
+    const client = new BroodsWebSocketClient({
       host: "app.example",
       WebSocket: FakeWebSocket,
     });
@@ -105,22 +105,22 @@ test("websocket client reads apiKey from package-local .env.local", () => {
   } finally {
     process.chdir(originalCwd);
     rmSync(tempDir, { recursive: true, force: true });
-    delete process.env.FILTHY_PANTY_API_KEY;
+    delete process.env.BROODS_API_KEY;
   }
 });
 
 test("websocket client can be constructed without options", () => {
-  process.env.FILTHY_PANTY_API_KEY = "env-key";
-  const client = new FilthyPantyWebSocketClient();
+  process.env.BROODS_API_KEY = "env-key";
+  const client = new BroodsWebSocketClient();
 
   expect(client.buildUrl({ endpointId: "agent_1" })).toBe(
-    "wss://app.beeblast.co/v1/agents/agent_1/ws?token=env-key",
+    "wss://gateway.broods.app/v1/agents/agent_1/ws?token=env-key",
   );
 });
 
 test("websocket client lets the gateway URL override an HTTP core host", () => {
-  process.env.FILTHY_PANTY_WEBSOCKET_URL = "wss://ws.example";
-  const client = new FilthyPantyWebSocketClient({
+  process.env.BROODS_WEBSOCKET_URL = "wss://ws.example";
+  const client = new BroodsWebSocketClient({
     host: "neqw2f4jkhicsoyybmb5lckebm0fsrgb.lambda-url.eu-central-1.on.aws",
     apiKey: "test-key",
     WebSocket: FakeWebSocket,
@@ -139,7 +139,7 @@ test("websocket client explains Lambda Function URL upgrade failures", async () 
     }
   }
   let error: Error | undefined;
-  const client = new FilthyPantyWebSocketClient({
+  const client = new BroodsWebSocketClient({
     host: "https://neqw2f4jkhicsoyybmb5lckebm0fsrgb.lambda-url.eu-central-1.on.aws",
     apiKey: "test-key",
     WebSocket: FailingWebSocket,
@@ -162,7 +162,7 @@ test("websocket client explains Lambda Function URL upgrade failures", async () 
 test("websocket client subscribes to the core service and forwards server messages", async () => {
   const messages: WebSocketServerMessage[] = [];
   let done = false;
-  const client = new FilthyPantyWebSocketClient({
+  const client = new BroodsWebSocketClient({
     baseUrl: "https://app.example",
     apiKey: "test-key",
     WebSocket: FakeWebSocket,
@@ -223,7 +223,7 @@ test("websocket client subscribes to the core service and forwards server messag
 });
 
 test("websocket client can build scoped URLs from generated agent references", async () => {
-  const client = new FilthyPantyWebSocketClient({
+  const client = new BroodsWebSocketClient({
     baseUrl: "https://app.example",
     apiKey: "test-key",
     WebSocket: FakeWebSocket,

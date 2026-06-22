@@ -1,12 +1,12 @@
 /**
- * Example: one agent with two named S3-backed workspaces via declarative filthy-panty resources.
+ * Example: one agent with two named S3-backed workspaces via declarative broods resources.
  */
 
-import { FilthyPantyClient } from "filthy-panty";
-import { api } from "./filthypanty/_generated/api";
+import { BroodsClient } from "broods";
+import { api } from "./broods/_generated/api";
 
-// Create a client to connect to the Filthy Panty API.
-const client = new FilthyPantyClient();
+// Create a client to connect to the Broods API.
+const client = new BroodsClient();
 
 async function runAgent(label: string, input: string): Promise<void> {
   console.log(`\n[${label}]\n`);

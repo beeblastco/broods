@@ -1,7 +1,7 @@
 "use client";
 
 /** Architecture page — renders the canvas for the current project. */
-import type { Id } from "@filthy-panty/convex/_generated/dataModel";
+import type { Id } from "@broods/convex/_generated/dataModel";
 import dynamic from "next/dynamic";
 import { use } from "react";
 

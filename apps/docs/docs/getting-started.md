@@ -1,26 +1,26 @@
 # Getting Started
 
-BeeBlast is a serverless AI agent platform. You define agents, workspaces, sandboxes, skills, and channels as typed TypeScript resources, sync them to the cloud with a CLI, and invoke them over a typed SDK or raw HTTP.
+Broods is a serverless AI agent platform. You define agents, workspaces, sandboxes, skills, and channels as typed TypeScript resources, sync them to the cloud with a CLI, and invoke them over a typed SDK or raw HTTP.
 
-This guide uses the **managed service** at `app.beeblast.co`. If you prefer to self-host, see [Deployment](deployment.md) first, then return here — the CLI and SDK workflow is identical.
+This guide uses the **managed service** at `gateway.broods.app`. If you prefer to self-host, see [Deployment](deployment.md) first, then return here — the CLI and SDK workflow is identical.
 
 ---
 
 ## Prerequisites
 
 - [Bun](https://bun.sh/) 1.2+ (the CLI and SDK are built on Bun)
-- A free [BeeBlast dashboard](https://dashboard.beeblast.co) account
+- A free [Broods dashboard](https://dashboard.broods.app) account
 
 ## 1. Install the CLI & SDK
 
 ```bash
-bun add -g filthy-panty
+bun add -g broods
 ```
 
 Or with npm:
 
 ```bash
-npm install -g filthy-panty
+npm install -g broods
 ```
 
 Or install locally in your project:
@@ -28,7 +28,7 @@ Or install locally in your project:
 ```bash
 mkdir my-agent-project && cd my-agent-project
 bun init
-bun add filthy-panty
+bun add broods
 ```
 
 ## 2. Set Your Model Secret
@@ -42,31 +42,31 @@ echo 'OPENAI_API_KEY="sk-..."' >> .env.local
 ## 3. Start Developing
 
 ```bash
-filthy-panty dev
+broods dev
 ```
 
 On the first run this does everything for you:
 
-1. **Creates** a `filthypanty/` project shell with a starter agent (same as `filthy-panty init`)
-2. **Opens your browser** to log in via WorkOS if you haven't authenticated yet (same as `filthy-panty login`)
+1. **Creates** a `broods/` project shell with a starter agent (same as `broods init`)
+2. **Opens your browser** to log in via WorkOS if you haven't authenticated yet (same as `broods login`)
 3. **Auto-pushes** `OPENAI_API_KEY` from `.env.local` to the cloud
 4. **Compiles and syncs** your resources to the `development` environment
-5. **Watches** `filthypanty/` for changes and **live-tails** agent logs
+5. **Watches** `broods/` for changes and **live-tails** agent logs
 
 ```text
-Created starter filthypanty/
+Created starter broods/
 Deploy target: my-agent-project/development
   create  agent   my-agent
   create  sandbox lambda-sandbox
 Synced 2 resources to my-agent-project/development
-Wrote FILTHY_PANTY_API_KEY (fp_env_...) to .env.local
+Wrote BROODS_API_KEY (fp_env_...) to .env.local
 · live logs — Ctrl+C to stop
 ```
 
-The starter agent created in `filthypanty/index.ts`:
+The starter agent created in `broods/index.ts`:
 
-```ts title="filthypanty/index.ts"
-import { defineAgent, defineSandbox, env } from "filthy-panty";
+```ts title="broods/index.ts"
+import { defineAgent, defineSandbox, env } from "broods";
 
 export const lambdaSandbox = defineSandbox({
   name: "lambda-sandbox",
@@ -97,12 +97,12 @@ export const myAgent = defineAgent({
 });
 ```
 
-> `filthy-panty init` and `filthy-panty login` are also available as standalone commands if you prefer to run them separately.
+> `broods init` and `broods login` are also available as standalone commands if you prefer to run them separately.
 
 ## 6. Run Your Agent
 
 ```bash
-filthy-panty run my-agent "Hello, who are you?"
+broods run my-agent "Hello, who are you?"
 ```
 
 The CLI streams the response live, showing reasoning, tool calls, and text:
@@ -117,10 +117,10 @@ The CLI streams the response live, showing reasoning, tool calls, and text:
 Import the generated API references and the SDK client in your application code:
 
 ```ts
-import { FilthyPantyClient } from "filthy-panty";
-import { api } from "./filthypanty/_generated/api";
+import { BroodsClient } from "broods";
+import { api } from "./broods/_generated/api";
 
-const client = new FilthyPantyClient();
+const client = new BroodsClient();
 
 // Sync run
 const result = await client.run(api.agents.myAgent, {
@@ -148,7 +148,7 @@ console.log(status.response);
 ## 8. Deploy to Production
 
 ```bash
-filthy-panty deploy
+broods deploy
 ```
 
 This syncs to your `production` environment and writes the production runtime key to `.env.local`.

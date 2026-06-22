@@ -56,8 +56,8 @@ export const emitServiceLog = internalAction({
     },
     returns: v.null(),
     handler: async (_ctx, args) => {
-        const baseUrl = process.env.FILTHY_PANTY_ACCOUNT_MANAGE_URL?.replace(/\/+$/, "");
-        const serviceSecret = process.env.FILTHY_PANTY_SERVICE_AUTH_SECRET;
+        const baseUrl = process.env.BROODS_ACCOUNT_MANAGE_URL?.replace(/\/+$/, "");
+        const serviceSecret = process.env.BROODS_SERVICE_AUTH_SECRET;
         if (!baseUrl || !serviceSecret) return null;
 
         const response = await fetch(`${baseUrl}/v1/internal/observability-log`, {

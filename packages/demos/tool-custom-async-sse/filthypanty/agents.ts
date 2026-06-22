@@ -1,4 +1,4 @@
-import { defineAgent, defineTool, env } from "filthy-panty";
+import { defineAgent, defineTool, env } from "broods";
 
 export const testAsyncTool = defineTool({
   name: "test_async",

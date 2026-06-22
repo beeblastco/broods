@@ -1,4 +1,4 @@
-import { defineAgent, defineSkill, env } from "filthy-panty";
+import { defineAgent, defineSkill, env } from "broods";
 
 export const greetingSkill = defineSkill({
   name: "greeting-skill",

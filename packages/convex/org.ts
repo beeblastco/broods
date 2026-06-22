@@ -40,7 +40,7 @@ async function uniqueOrgSlug(
 }
 
 /**
- * Returns the active org's filthy-panty account id + status for the caller, or
+ * Returns the active org's broods account id + status for the caller, or
  * null when the user has no active org or it has not been provisioned yet.
  */
 export const getActiveAccount = query({
@@ -200,7 +200,7 @@ export const list = query({
 /**
  * Returns the caller's active org id, creating a default "My Workspace" org
  * with an owner membership if the user does not yet belong to any. The
- * filthy-panty `accounts` row is still provisioned on-demand by `orgLifecycle:provision`.
+ * broods `accounts` row is still provisioned on-demand by `orgLifecycle:provision`.
  */
 export const getOrCreate = mutation({
     args: {},
@@ -248,8 +248,10 @@ export const getOrCreate = mutation({
 });
 
 /**
- * Creates an org owned by the caller and inserts an owner membership row. The
- * matching backend `accounts` row is provisioned by `orgLifecycle:provision`.
+ * Creates an org owned by the caller, inserts an owner membership row, and sets
+ * it as the caller's active org (defense in depth, so create alone activates it
+ * without relying on the UI calling setActive). The matching backend `accounts`
+ * row is provisioned by `orgLifecycle:provision`.
  */
 export const create = mutation({
     args: {
@@ -296,6 +298,8 @@ export const create = mutation({
             role: "owner",
             createdAt: now,
         });
+
+        await ctx.db.patch(user._id, { activeOrgId: orgId });
 
         return orgId;
     },

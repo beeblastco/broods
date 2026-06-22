@@ -218,29 +218,29 @@ jobs:
       - name: Deploy SST app
         working-directory: apps/core
         env:
-          SST_SECRET_GoogleApiKey: ${{ secrets.SST_SECRET_GOOGLEAPIKEY }}
-          SST_SECRET_TavilyApiKey: ${{ secrets.SST_SECRET_TAVILYAPIKEY }}
-          SST_SECRET_AdminAccountSecret: ${{ secrets.SST_SECRET_ADMINACCOUNTSECRET }}
-          SST_SECRET_AccountConfigEncryptionSecret: ${{ secrets.SST_SECRET_ACCOUNTCONFIGENCRYPTIONSECRET }}
-          SST_SECRET_DaytonaApiKey: ${{ secrets.DAYTONA_API_KEY }}
-          # Optional: base64 kubeconfig for the kubernetes sandbox provider. Not in the
-          # required-secrets loop below, so stages that don't use it still deploy.
-          SST_SECRET_KubernetesSandboxKubeconfig: ${{ secrets.KUBERNETES_SANDBOX_KUBECONFIG }}
+          # Plain env vars read directly by sst.config.ts (no SST secret store).
+          # The `|| secrets.SST_SECRET_*` fallback preserves the existing secret
+          # values so encrypted Convex data (account config / sandbox creds) stays
+          # decryptable whether or not the clean-named secrets have been created.
+          ADMIN_ACCOUNT_SECRET: ${{ secrets.ADMIN_ACCOUNT_SECRET || secrets.SST_SECRET_ADMINACCOUNTSECRET }}
+          ACCOUNT_CONFIG_ENCRYPTION_SECRET: ${{ secrets.ACCOUNT_CONFIG_ENCRYPTION_SECRET || secrets.SST_SECRET_ACCOUNTCONFIGENCRYPTIONSECRET }}
+          # Optional trusted server-side caller token; empty default keeps deploys working.
+          SERVICE_AUTH_SECRET: ${{ secrets.SERVICE_AUTH_SECRET }}
+          DAYTONA_API_KEY: ${{ secrets.DAYTONA_API_KEY }}
+          # Optional: base64 kubeconfig for the kubernetes sandbox provider.
+          KUBERNETES_SANDBOX_KUBECONFIG: ${{ secrets.KUBERNETES_SANDBOX_KUBECONFIG }}
           MOCK_WEBHOOK_SECRET: ${{ secrets.MOCK_WEBHOOK_SECRET }}
         shell: bash
         run: |
           set -euo pipefail
 
           for name in \
-            SST_SECRET_GoogleApiKey \
-            SST_SECRET_TavilyApiKey \
-            SST_SECRET_AdminAccountSecret \
-            SST_SECRET_AccountConfigEncryptionSecret \
-            SST_SECRET_DaytonaApiKey \
+            ADMIN_ACCOUNT_SECRET \
+            ACCOUNT_CONFIG_ENCRYPTION_SECRET \
             MOCK_WEBHOOK_SECRET
           do
             if [[ -z "${!name:-}" ]]; then
-              echo "Missing required repository secret: $name" >&2
+              echo "Missing required environment value: $name" >&2
               exit 1
             fi
           done

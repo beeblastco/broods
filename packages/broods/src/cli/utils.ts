@@ -7,7 +7,7 @@ import { spawn } from "node:child_process";
 import { createInterface } from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
 import { readStoredAuth, stripTrailingSlash, writeStoredAuth, type StoredAuthConfig } from "../config.ts";
-import { loadFilthyPantyRuntimeConfig } from "../runtime-config.ts";
+import { loadBroodsRuntimeConfig } from "../runtime-config.ts";
 
 const LOGIN_TIMEOUT_MS = 3 * 60 * 1000;
 
@@ -21,10 +21,10 @@ export function hasFlag(args: string[], name: string): boolean {
 }
 
 export async function requireAuth(dashboardUrl?: string): Promise<StoredAuthConfig> {
-  loadFilthyPantyRuntimeConfig();
+  loadBroodsRuntimeConfig();
   const auth = await readStoredAuth();
   if (!auth) {
-    throw new Error("Run `filthy-panty login` first, or set FILTHY_PANTY_TOKEN and FILTHY_PANTY_DASHBOARD_URL.");
+    throw new Error("Run `broods login` first, or set BROODS_TOKEN and BROODS_DASHBOARD_URL.");
   }
   return dashboardUrl ? { ...auth, dashboardUrl: dashboardUrl } : auth;
 }
@@ -169,10 +169,10 @@ function waitForCallback(expectedState: string): Promise<{
         const state = url.searchParams.get("state");
         const code = url.searchParams.get("code");
         if (state !== expectedState || !code) {
-          res.writeHead(400).end("Invalid filthy-panty login callback.");
+          res.writeHead(400).end("Invalid broods login callback.");
           return;
         }
-        res.writeHead(200, { "Content-Type": "text/plain" }).end("filthy-panty CLI login complete. You can close this tab.");
+        res.writeHead(200, { "Content-Type": "text/plain" }).end("broods CLI login complete. You can close this tab.");
         callbackResolve(code);
       } catch (error) {
         callbackReject(error);
@@ -188,7 +188,7 @@ function waitForCallback(expectedState: string): Promise<{
 
     const requestedPort = callbackPort();
     server.on("error", (error: NodeJS.ErrnoException) => {
-      if (!process.env.FILTHY_PANTY_LOGIN_PORT && requestedPort !== 0 && error.code === "EADDRINUSE") {
+      if (!process.env.BROODS_LOGIN_PORT && requestedPort !== 0 && error.code === "EADDRINUSE") {
         server.listen(0, "127.0.0.1");
         return;
       }
@@ -240,11 +240,11 @@ async function waitWithTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
 }
 
 function callbackPort(): number {
-  const raw = process.env.FILTHY_PANTY_LOGIN_PORT;
+  const raw = process.env.BROODS_LOGIN_PORT;
   if (raw) {
     const port = Number(raw);
     if (Number.isInteger(port) && port > 0 && port < 65536) return port;
-    throw new Error("FILTHY_PANTY_LOGIN_PORT must be a TCP port number");
+    throw new Error("BROODS_LOGIN_PORT must be a TCP port number");
   }
 
   return 18987;

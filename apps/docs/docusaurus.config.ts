@@ -1,5 +1,5 @@
 /**
- * Docusaurus configuration for BeeBlast documentation.
+ * Docusaurus configuration for Broods documentation.
  */
 
 import type * as Preset from '@docusaurus/preset-classic';
@@ -11,7 +11,7 @@ import { fileURLToPath } from 'url';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const config: Config = {
-  title: 'BeeBlast Developer Docs',
+  title: 'Broods Developer Docs',
   favicon: 'img/favicon.ico',
 
   url: 'https://docs.beeblast.co',
@@ -96,13 +96,13 @@ const config: Config = {
     navbar: {
       title: 'Docs',
       logo: {
-        alt: 'BeeBlast Logo',
+        alt: 'Broods Logo',
         src: 'img/light-full.svg',
         srcDark: 'img/dark-full.svg',
       },
       items: [
         {
-          href: 'https://dashboard.beeblast.co/',
+          href: 'https://dashboard.broods.app/',
           label: 'Dashboard',
           position: 'right',
         },
@@ -112,7 +112,7 @@ const config: Config = {
           position: 'right',
         },
         {
-          href: 'https://github.com/beeblastco/filthy-panty',
+          href: 'https://github.com/beeblastco/broods',
           label: 'GitHub',
           position: 'right',
         },

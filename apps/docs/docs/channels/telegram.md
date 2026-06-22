@@ -6,12 +6,12 @@ Telegram integration allows your agent to interact with users via Telegram bots.
 
 Define a Telegram channel with `defineTelegramChannel` and attach it to an agent:
 
-```ts title="filthypanty/index.ts"
+```ts title="broods/index.ts"
 import {
   defineAgent,
   defineTelegramChannel,
   env,
-} from "filthy-panty";
+} from "broods";
 
 export const telegram = defineTelegramChannel({
   botToken: env.TELEGRAM_BOT_TOKEN,
@@ -29,10 +29,10 @@ export const myAgent = defineAgent({
 });
 ```
 
-After `filthy-panty dev` or `filthy-panty deploy`, the CLI prints the webhook URL to register with Telegram:
+After `broods dev` or `broods deploy`, the CLI prints the webhook URL to register with Telegram:
 
 ```text
-Channel telegram (telegram): https://app.beeblast.co/webhooks/acct_.../agent_.../telegram
+Channel telegram (telegram): https://gateway.broods.app/webhooks/acct_.../agent_.../telegram
 ```
 
 - `botToken`: Provided by BotFather.

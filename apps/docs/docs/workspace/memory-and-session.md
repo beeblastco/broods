@@ -49,10 +49,10 @@ flowchart LR
   B --> Files
 ```
 
-Create a workspace in `filthypanty/index.ts`, then reference it from the agent:
+Create a workspace in `broods/index.ts`, then reference it from the agent:
 
 ```ts
-import { defineWorkspace, defineAgent, defineSandbox } from "filthy-panty";
+import { defineWorkspace, defineAgent, defineSandbox } from "broods";
 
 export const notes = defineWorkspace({
   name: "notes",
@@ -75,7 +75,7 @@ Agents can expose multiple named workspaces. The first entry is the default when
 omits the optional `workspace` argument:
 
 ```ts
-import { defineWorkspace, defineAgent, defineSandbox } from "filthy-panty";
+import { defineWorkspace, defineAgent, defineSandbox } from "broods";
 
 export const personal = defineWorkspace({ name: "personal", config: { storage: { provider: "s3" } } });
 export const team = defineWorkspace({ name: "team", config: { storage: { provider: "s3" } } });
@@ -109,7 +109,7 @@ flowchart LR
 
 ## Runtime Behavior
 
-[`Session`](https://github.com/beeblastco/filthy-panty/blob/dev/apps/core/functions/harness-processing/session.ts) owns the runtime path:
+[`Session`](https://github.com/beeblastco/broods/blob/dev/apps/core/functions/harness-processing/session.ts) owns the runtime path:
 
 - `claim()` deduplicates an inbound event in `ProcessedEvents`.
 - `acquireConversationLease()` serializes work per conversation.
@@ -122,14 +122,14 @@ flowchart LR
   `normalizeFilesystemNamespace()`.
 - `filesystemNamespace()` returns the default workspace namespace for existing single-workspace callers.
 
-The namespace helper is in [`functions/_shared/runtime-keys.ts`](https://github.com/beeblastco/filthy-panty/blob/dev/apps/core/functions/_shared/runtime-keys.ts). The config interface and validation live in [`functions/_shared/storage/agent-config.ts`](https://github.com/beeblastco/filthy-panty/blob/dev/apps/core/functions/_shared/storage/agent-config.ts).
+The namespace helper is in [`functions/_shared/runtime-keys.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/functions/_shared/runtime-keys.ts). The config interface and validation live in [`functions/_shared/storage/agent-config.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/functions/_shared/storage/agent-config.ts).
 
 ## Configure It
 
 Create a workspace with automatic `MEMORY.md` loading and default MEMORY/TASKS harness instructions:
 
 ```ts
-import { defineWorkspace } from "filthy-panty";
+import { defineWorkspace } from "broods";
 
 export const notes = defineWorkspace({
   name: "notes",

@@ -1,6 +1,6 @@
 # Demos
 
-Small runnable examples for the declarative `filthy-panty` SDK and deployed service.
+Small runnable examples for the declarative `broods` SDK and deployed service.
 
 Run demos from their own folder:
 
@@ -10,10 +10,10 @@ bun run start
 ```
 
 Use `.env.local` for local runtime settings. SDK clients automatically read the
-runtime key from `FILTHY_PANTY_API_KEY`, which `bun run dev`/`bun run deploy`
+runtime key from `BROODS_API_KEY`, which `bun run dev`/`bun run deploy`
 writes for the selected environment.
-The WebSocket demo uses the SDK default runtime host, `app.beeblast.co`; only
-set `FILTHY_PANTY_WEBSOCKET_URL` for a non-default or self-hosted gateway.
+The WebSocket demo uses the SDK default runtime host, `gateway.broods.app`; only
+set `BROODS_WEBSOCKET_URL` for a non-default or self-hosted gateway.
 
 - `basic-stream`: stream an agent over SSE.
 - `basic-async`: start `/async`, then poll by the returned status id.

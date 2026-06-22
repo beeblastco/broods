@@ -6,12 +6,12 @@ Pancake is an omni-channel customer service and inbox management platform. The P
 
 Define a Pancake channel with `definePancakeChannel` and attach it to an agent:
 
-```ts title="filthypanty/index.ts"
+```ts title="broods/index.ts"
 import {
   defineAgent,
   definePancakeChannel,
   env,
-} from "filthy-panty";
+} from "broods";
 
 export const pancake = definePancakeChannel({
   pageId: env.PANCAKE_PAGE_ID,

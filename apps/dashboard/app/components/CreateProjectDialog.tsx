@@ -4,7 +4,7 @@
 import { useEffect, useState } from "react";
 import { useMutation } from "convex/react";
 import { useRouter } from "next/navigation";
-import { api } from "@filthy-panty/convex/_generated/api";
+import { api } from "@broods/convex/_generated/api";
 import { Button } from "@/app/components/ui/button";
 import { Input } from "@/app/components/ui/input";
 import { Label } from "@/app/components/ui/label";

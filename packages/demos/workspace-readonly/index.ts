@@ -1,13 +1,13 @@
 /**
  * Example: one shared workspace, three agents — a writer (sandbox) plus two read-only
- * readers that differ only in HOW they read via declarative filthy-panty resources.
+ * readers that differ only in HOW they read via declarative broods resources.
  */
 
-import { FilthyPantyClient } from "filthy-panty";
-import { api } from "./filthypanty/_generated/api";
+import { BroodsClient } from "broods";
+import { api } from "./broods/_generated/api";
 
-// Create a client to connect to the Filthy Panty API.
-const client = new FilthyPantyClient();
+// Create a client to connect to the Broods API.
+const client = new BroodsClient();
 
 async function runAgent(label: string, agentRef: any, input: string): Promise<void> {
   console.log(`\n[${label}]\n`);

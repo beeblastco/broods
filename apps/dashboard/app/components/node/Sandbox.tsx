@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * Sandbox node representing a standalone filthy-panty sandboxConfig record.
+ * Sandbox node representing a standalone broods sandboxConfig record.
  */
 import { BaseNode, type BaseNodeData } from "@/app/components/node/BaseNode";
 import type { NodeProps } from "@xyflow/react";

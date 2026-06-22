@@ -13,7 +13,7 @@ import {
 import {
   isObservabilityClientMessage,
   MAX_OBSERVABILITY_BACKFILL,
-} from "../../../packages/filthy-panty/src/observability-contracts.ts";
+} from "../../../packages/broods/src/observability-contracts.ts";
 
 test("builds the core direct API body from a websocket execute message", () => {
   const body = buildCoreRunBody({
@@ -149,7 +149,7 @@ test("rehydrates Loki OTLP metadata for durable log history", () => {
     conversation_key: "conversation-1",
     eventType: "service.agent.config.updated",
     level: "INFO",
-    service_name: "filthy-panty-account-manage",
+    service_name: "broods-account-manage",
     trace_id: "trace-1",
     changedFields: "[\"modelId\"]",
   }, "Agent configuration updated", 1_700_000_000_000, "fallback"))
@@ -163,7 +163,7 @@ test("rehydrates Loki OTLP metadata for durable log history", () => {
       endpointId: "endpoint-1",
       agentId: "agent-1",
       conversationKey: "conversation-1",
-      service: "filthy-panty-account-manage",
+      service: "broods-account-manage",
       data: { changedFields: "[\"modelId\"]" },
     });
 });

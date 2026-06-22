@@ -6,12 +6,12 @@ GitHub integration allows your agent to react to GitHub events.
 
 Define a GitHub channel with `defineGitHubChannel` and attach it to an agent:
 
-```ts title="filthypanty/index.ts"
+```ts title="broods/index.ts"
 import {
   defineAgent,
   defineGitHubChannel,
   env,
-} from "filthy-panty";
+} from "broods";
 
 export const github = defineGitHubChannel({
   webhookSecret: env.GITHUB_WEBHOOK_SECRET,

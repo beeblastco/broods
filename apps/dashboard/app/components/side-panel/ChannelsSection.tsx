@@ -2,14 +2,15 @@
 
 /**
  * Agent Details-tab channels editor. Channels are inbound webhook triggers the agent replies
- * to; this renders a schema-driven form for the six filthy-panty channel kinds so adding a
+ * to; this renders a schema-driven form for the six broods channel kinds so adding a
  * field/kind is a data change, not new UI. Secrets accept `${ENV}` placeholders.
  */
+import { DeleteConfirmDialog } from "@/app/components/DeleteConfirmDialog";
 import { SectionHeader } from "@/app/components/side-panel/SectionHeader";
 import { Button } from "@/app/components/ui/button";
 import { Input } from "@/app/components/ui/input";
 import { readAgentBranch, type FlatAgentConfig } from "@/app/lib/agentConfigCodec";
-import type { Doc } from "@filthy-panty/convex/_generated/dataModel";
+import type { Doc } from "@broods/convex/_generated/dataModel";
 import { Eye, EyeOff, Plus, Trash2 } from "lucide-react";
 import { useMemo, useState } from "react";
 
@@ -28,7 +29,7 @@ type ChannelField = {
 
 type ChannelKind = { kind: string; label: string; fields: ChannelField[] };
 
-/** The six filthy-panty channel kinds and their config fields (source of truth: agent-config.ts). */
+/** The six broods channel kinds and their config fields (source of truth: agent-config.ts). */
 const CHANNELS: ChannelKind[] = [
     {
         kind: "telegram",
@@ -183,6 +184,10 @@ export function ChannelsSection({
     const configured = CHANNELS.filter((c) => channels[c.kind] !== undefined);
     const available = CHANNELS.filter((c) => channels[c.kind] === undefined);
 
+    // Channel kind pending delete confirmation.
+    const [deletingChannel, setDeletingChannel] = useState<ChannelKind | null>(null);
+    const [isDeletingChannel, setIsDeletingChannel] = useState(false);
+
     /** Commit a single field edit for a channel kind. */
     function commitField(kind: string, field: ChannelField, raw: string) {
         const current = (channels[kind] as ChannelConfig | undefined) ?? {};
@@ -190,75 +195,102 @@ export function ChannelsSection({
         void onUpdateChannel(kind, next);
     }
 
+    async function handleDeleteChannel() {
+        if (!deletingChannel) return;
+        setIsDeletingChannel(true);
+        try {
+            await onUpdateChannel(deletingChannel.kind, null);
+            setDeletingChannel(null);
+        } finally {
+            setIsDeletingChannel(false);
+        }
+    }
+
     return (
-        <div className="flex flex-col gap-3">
-            <SectionHeader>Channels</SectionHeader>
-            <p className="text-[11px] text-muted-foreground">
-                Inbound triggers the agent replies on. Secrets accept <code className="rounded bg-muted px-1">${"{ENV}"}</code> placeholders.
-            </p>
+        <>
+            <div className="flex flex-col gap-3">
+                <SectionHeader>Channels</SectionHeader>
+                <p className="text-[11px] text-muted-foreground">
+                    Inbound triggers the agent replies on. Secrets accept <code className="rounded bg-muted px-1">${"{ENV}"}</code> placeholders.
+                </p>
 
-            {configured.map((channel) => (
-                <div key={channel.kind} className="flex flex-col gap-2 rounded-lg border border-border bg-card p-3">
-                    <div className="flex items-center justify-between">
-                        <span className="text-xs font-medium text-foreground">{channel.label}</span>
-                        <button
-                            className="flex cursor-pointer items-center gap-1 text-[11px] text-muted-foreground hover:text-destructive"
-                            onClick={() => void onUpdateChannel(channel.kind, null)}
-                            title={`Remove ${channel.label}`}
-                        >
-                            <Trash2 className="size-3" />
-                            Remove
-                        </button>
+                {configured.map((channel) => (
+                    <div key={channel.kind} className="flex flex-col gap-2 rounded-lg border border-border bg-card p-3">
+                        <div className="flex items-center justify-between">
+                            <span className="text-xs font-medium text-foreground">{channel.label}</span>
+                            <button
+                                className="flex cursor-pointer items-center gap-1 text-[11px] text-muted-foreground hover:text-destructive"
+                                onClick={() => setDeletingChannel(channel)}
+                                title={`Remove ${channel.label}`}
+                            >
+                                <Trash2 className="size-3" />
+                                Remove
+                            </button>
+                        </div>
+                        {channel.fields.map((field) => {
+                            const stored = formatFieldValue(readAt((channels[channel.kind] as ChannelConfig) ?? {}, field.path ?? [field.key]));
+
+                            return (
+                                <div key={field.key} className="flex flex-col gap-1">
+                                    <span className="text-[11px] text-muted-foreground">
+                                        {field.label}
+                                        {field.required && <span className="text-destructive"> *</span>}
+                                    </span>
+                                    {field.type === "secret" ? (
+                                        <SecretField
+                                            defaultValue={stored}
+                                            placeholder={field.placeholder}
+                                            onCommit={(v) => commitField(channel.kind, field, v)}
+                                        />
+                                    ) : (
+                                        <Input
+                                            defaultValue={stored}
+                                            key={stored}
+                                            placeholder={field.placeholder}
+                                            className="h-7 text-[11px]"
+                                            onBlur={(e) => commitField(channel.kind, field, e.target.value)}
+                                            onKeyDown={(e) => {
+                                                if (e.key === "Enter") commitField(channel.kind, field, (e.target as HTMLInputElement).value);
+                                            }}
+                                        />
+                                    )}
+                                </div>
+                            );
+                        })}
                     </div>
-                    {channel.fields.map((field) => {
-                        const stored = formatFieldValue(readAt((channels[channel.kind] as ChannelConfig) ?? {}, field.path ?? [field.key]));
+                ))}
 
-                        return (
-                            <div key={field.key} className="flex flex-col gap-1">
-                                <span className="text-[11px] text-muted-foreground">
-                                    {field.label}
-                                    {field.required && <span className="text-destructive"> *</span>}
-                                </span>
-                                {field.type === "secret" ? (
-                                    <SecretField
-                                        defaultValue={stored}
-                                        placeholder={field.placeholder}
-                                        onCommit={(v) => commitField(channel.kind, field, v)}
-                                    />
-                                ) : (
-                                    <Input
-                                        defaultValue={stored}
-                                        key={stored}
-                                        placeholder={field.placeholder}
-                                        className="h-7 text-[11px]"
-                                        onBlur={(e) => commitField(channel.kind, field, e.target.value)}
-                                        onKeyDown={(e) => {
-                                            if (e.key === "Enter") commitField(channel.kind, field, (e.target as HTMLInputElement).value);
-                                        }}
-                                    />
-                                )}
-                            </div>
-                        );
-                    })}
-                </div>
-            ))}
+                {available.length > 0 && (
+                    <div className="flex flex-wrap gap-1.5">
+                        {available.map((channel) => (
+                            <Button
+                                key={channel.kind}
+                                size="sm"
+                                variant="outline"
+                                className="h-7 cursor-pointer gap-1 text-[11px]"
+                                onClick={() => void onUpdateChannel(channel.kind, {})}
+                            >
+                                <Plus className="size-3" />
+                                {channel.label}
+                            </Button>
+                        ))}
+                    </div>
+                )}
+            </div>
 
-            {available.length > 0 && (
-                <div className="flex flex-wrap gap-1.5">
-                    {available.map((channel) => (
-                        <Button
-                            key={channel.kind}
-                            size="sm"
-                            variant="outline"
-                            className="h-7 cursor-pointer gap-1 text-[11px]"
-                            onClick={() => void onUpdateChannel(channel.kind, {})}
-                        >
-                            <Plus className="size-3" />
-                            {channel.label}
-                        </Button>
-                    ))}
-                </div>
+            {deletingChannel && (
+                <DeleteConfirmDialog
+                    open={deletingChannel !== null}
+                    onOpenChange={(open) => {
+                        if (!open) setDeletingChannel(null);
+                    }}
+                    resourceName={deletingChannel.kind}
+                    resourceType="channel"
+                    critical={false}
+                    onConfirm={handleDeleteChannel}
+                    isDeleting={isDeletingChannel}
+                />
             )}
-        </div>
+        </>
     );
 }

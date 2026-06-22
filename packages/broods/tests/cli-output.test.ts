@@ -11,7 +11,7 @@ import {
 } from "../src/cli/output.ts";
 
 test("init writes gitignore entries for generated folders", async () => {
-  const cwd = await mkdtemp(join(tmpdir(), "filthy-panty-cli-init-"));
+  const cwd = await mkdtemp(join(tmpdir(), "broods-cli-init-"));
   try {
     const proc = Bun.spawn({
       cmd: [process.execPath, new URL("../src/cli/index.ts", import.meta.url).pathname, "init", "--force"],
@@ -20,7 +20,7 @@ test("init writes gitignore entries for generated folders", async () => {
       stderr: "pipe",
       env: {
         ...process.env,
-        FILTHY_PANTY_DASHBOARD_URL: "https://dashboard.example",
+        BROODS_DASHBOARD_URL: "https://dashboard.example",
       },
     });
     const exitCode = await proc.exited;
@@ -28,7 +28,7 @@ test("init writes gitignore entries for generated folders", async () => {
       throw new Error(await new Response(proc.stderr).text());
     }
 
-    const gitignore = await readFile(join(cwd, "filthypanty", ".gitignore"), "utf8");
+    const gitignore = await readFile(join(cwd, "broods", ".gitignore"), "utf8");
 
     expect(gitignore).toBe("_generated\n.cache\n");
   } finally {

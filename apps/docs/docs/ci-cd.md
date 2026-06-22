@@ -28,4 +28,4 @@ And these repository variables: `AWS_REGION`, `AWS_ROLE_ARN`, `AWS_ACCOUNT_ID`, 
 
 ## Channel Setup
 
-Infrastructure deploys no longer create demo accounts or register provider webhooks. Channel agents are declared with the CLI SDK and synchronized independently through `filthy-panty dev` or `filthy-panty deploy`. See the runnable `packages/demos/channel-*` packages for provider-specific setup and optional registration commands.
+Infrastructure deploys no longer create demo accounts or register provider webhooks. Channel agents are declared with the CLI SDK and synchronized independently through `broods dev` or `broods deploy`. See the runnable `packages/demos/channel-*` packages for provider-specific setup and optional registration commands.

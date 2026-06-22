@@ -12,7 +12,7 @@ import { Textarea } from "@/app/components/ui/textarea";
 import { readAgentBranch, readModelReasoning, type FlatAgentConfig } from "@/app/lib/agentConfigCodec";
 import { resolveCoreEndpoint } from "@/app/lib/coreEndpoint";
 import { isRecord } from "@/app/lib/utils";
-import type { Doc, Id } from "@filthy-panty/convex/_generated/dataModel";
+import type { Doc, Id } from "@broods/convex/_generated/dataModel";
 import { Check, Copy, Eye, EyeOff, KeyRound, RefreshCw, Wifi } from "lucide-react";
 import { useRef, useState } from "react";
 
@@ -450,7 +450,7 @@ export function DetailsTab({
                             No runtime API key yet
                         </span>
                         <p className="text-[11px] text-muted-foreground">
-                            Generate the environment&apos;s key to reveal the endpoint URLs. <code>filthy-panty deploy</code> also mints it automatically.
+                            Generate the environment&apos;s key to reveal the endpoint URLs. <code>broods deploy</code> also mints it automatically.
                         </p>
                         <Button
                             size="sm"

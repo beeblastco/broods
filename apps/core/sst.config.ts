@@ -35,12 +35,23 @@ const CONVEX_DEPLOY_KEY = process.env.CONVEX_DEPLOY_KEY?.trim();
 const DAYTONA_ORGANIZATION_ID = process.env.DAYTONA_ORGANIZATION_ID?.trim();
 const DAYTONA_API_URL = process.env.DAYTONA_API_URL?.trim();
 const DAYTONA_TARGET = process.env.DAYTONA_TARGET?.trim();
-// kubernetes sandbox provider (agent-sandbox on the Beeblast k3s cluster). Non-secret
-// knobs; the kubeconfig is an sst.Secret. See docs/workspace/sandbox/kubernetes.md.
+// kubernetes sandbox provider (agent-sandbox on the Broods k3s cluster). Non-secret
+// knobs; the kubeconfig is a CI-injected env var (KUBERNETES_SANDBOX_KUBECONFIG),
+// stored in SSM at runtime. See docs/workspace/sandbox/kubernetes.md.
 const KUBERNETES_SANDBOX_NAMESPACE = process.env.KUBERNETES_SANDBOX_NAMESPACE?.trim();
 const KUBERNETES_SANDBOX_IMAGE = process.env.KUBERNETES_SANDBOX_IMAGE?.trim();
 const KUBERNETES_SANDBOX_SERVICE_ACCOUNT = process.env.KUBERNETES_SANDBOX_SERVICE_ACCOUNT?.trim();
 const KUBERNETES_SANDBOX_IMAGE_PULL_SECRETS = process.env.KUBERNETES_SANDBOX_IMAGE_PULL_SECRETS?.trim();
+// Secrets formerly held in the SST secret store are now plain environment
+// variables injected by CI from GitHub Actions secrets (see deploy.yaml). No
+// `sst.Secret` indirection. Required ones use `!` (CI validates they are set
+// before deploy); optional provider creds default to empty so stages that do
+// not use them still deploy.
+const ADMIN_ACCOUNT_SECRET = process.env.ADMIN_ACCOUNT_SECRET!;
+const ACCOUNT_CONFIG_ENCRYPTION_SECRET = process.env.ACCOUNT_CONFIG_ENCRYPTION_SECRET!;
+const SERVICE_AUTH_SECRET = process.env.SERVICE_AUTH_SECRET ?? "";
+const DAYTONA_API_KEY = process.env.DAYTONA_API_KEY ?? "";
+const KUBERNETES_SANDBOX_KUBECONFIG = process.env.KUBERNETES_SANDBOX_KUBECONFIG?.trim() ?? "";
 
 if (ENABLE_WEBSOCKET && !NATS_URL) {
   throw new Error("NATS_URL must be set when ENABLE_WEBSOCKET=true");
@@ -232,30 +243,23 @@ export default $config({
       cronSchedules: resourceName("cron-schedules", stage, region),
       harnessProcessing: resourceName("harness-processing", stage, region),
       accountManage: resourceName("account-manage", stage, region),
-      memory: resourceName("memory", stage, region),
+      filesystem: resourceName("filesystem", stage, region),
       skills: resourceName("skills", stage, region),
       toolBundles: resourceName("tool-bundles", stage, region),
     };
 
-    const adminAccountSecret = new sst.Secret("AdminAccountSecret");
-    const accountConfigEncryptionSecret = new sst.Secret("AccountConfigEncryptionSecret");
-    // Shared token for trusted server-side callers (the dashboard's Convex run/sync
-    // proxy) that act on behalf of an account via the X-Account-Id header. Optional:
-    // the empty default keeps deploys working for stages that only use the public
-    // account-secret API; set a real value per stage to enable the service-token path.
-    const serviceAuthSecret = new sst.Secret("ServiceAuthSecret", "");
-    const daytonaApiKey = new sst.Secret("DaytonaApiKey");
-    // Base64 kubeconfig (SA bearer token) for the kubernetes sandbox provider. Optional:
-    // the placeholder keeps deploys working for stages that don't use this provider.
-    const kubernetesSandboxKubeconfig = new sst.Secret("KubernetesSandboxKubeconfig", "");
+    // ADMIN_ACCOUNT_SECRET, ACCOUNT_CONFIG_ENCRYPTION_SECRET, SERVICE_AUTH_SECRET,
+    // DAYTONA_API_KEY, and KUBERNETES_SANDBOX_KUBECONFIG are read from the
+    // environment above (CI-injected) — no `sst.Secret` resources.
+    //
     // The kubeconfig (CA + token) is ~2.7KB — too big for a Lambda env var alongside
     // everything else (4KB hard limit). Store it in SSM and let the harness fetch it at
     // runtime; only the parameter name goes in the env. SecureString can't be empty, so
     // unset stages get a "unset" placeholder.
     const kubernetesSandboxKubeconfigParam = new aws.ssm.Parameter("KubernetesSandboxKubeconfigParam", {
-      name: `/filthy-panty/${stage}/kubernetes-sandbox-kubeconfig`,
+      name: `/broods/${stage}/kubernetes-sandbox-kubeconfig`,
       type: "SecureString",
-      value: kubernetesSandboxKubeconfig.value.apply((v) => (v && v.length > 0 ? v : "unset")),
+      value: KUBERNETES_SANDBOX_KUBECONFIG.length > 0 ? KUBERNETES_SANDBOX_KUBECONFIG : "unset",
     });
 
     // accounts / agents / crons DDB tables are skipped on production —
@@ -469,15 +473,15 @@ export default $config({
         },
       },
     });
-    const filesystemBucketArn = `arn:aws:s3:::${names.memory}`;
+    const filesystemBucketArn = `arn:aws:s3:::${names.filesystem}`;
     const skillsBucketArn = `arn:aws:s3:::${names.skills}`;
     const toolBundlesBucketArn = `arn:aws:s3:::${names.toolBundles}`;
-    const filesystemBucket = new sst.aws.Bucket("Memory", {
+    const filesystemBucket = new sst.aws.Bucket("Filesystem", {
       versioning: true,
       policy: [denyUnlessProjectPrincipal(stage, region)],
       transform: {
         bucket: {
-          bucket: names.memory,
+          bucket: names.filesystem,
         },
         publicAccessBlock: {
           blockPublicAcls: true,
@@ -980,9 +984,9 @@ export default $config({
         ...(workspaceConfigsTable ? { WORKSPACE_CONFIGS_TABLE_NAME: workspaceConfigsTable.name } : {}),
         ...(accountToolsTable ? { ACCOUNT_TOOLS_TABLE_NAME: accountToolsTable.name } : {}),
         ACCOUNT_SECRET_INDEX_NAME: "SecretHashIndex",
-        ACCOUNT_CONFIG_ENCRYPTION_SECRET: accountConfigEncryptionSecret.value,
-        SERVICE_AUTH_SECRET: serviceAuthSecret.value,
-        FILESYSTEM_BUCKET_NAME: names.memory,
+        ACCOUNT_CONFIG_ENCRYPTION_SECRET,
+        SERVICE_AUTH_SECRET,
+        FILESYSTEM_BUCKET_NAME: names.filesystem,
         SKILLS_BUCKET_NAME: names.skills,
         TOOL_BUNDLES_BUCKET_NAME: names.toolBundles,
         ENABLE_DIRECT_API: ENABLE_DIRECT_API ? "true" : "false",
@@ -997,7 +1001,7 @@ export default $config({
         ...(OTEL_EXPORTER_OTLP_ENDPOINT ? { OTEL_EXPORTER_OTLP_ENDPOINT } : {}),
         ...(OTEL_EXPORTER_OTLP_HEADERS ? { OTEL_EXPORTER_OTLP_HEADERS } : {}),
         ...(usageTable ? { USAGE_TABLE_NAME: usageTable.name } : {}),
-        DAYTONA_API_KEY: daytonaApiKey.value,
+        DAYTONA_API_KEY,
         SANDBOX_MOUNT_ROLE_ARN: sandboxS3MountRole.arn,
         ...(DAYTONA_ORGANIZATION_ID ? { DAYTONA_ORGANIZATION_ID } : {}),
         ...(DAYTONA_API_URL ? { DAYTONA_API_URL } : {}),
@@ -1211,14 +1215,14 @@ export default $config({
         ASYNC_AGENT_RESULT_TABLE_NAME: asyncAgentResultTable.name,
         ASYNC_TOOL_RESULT_TABLE_NAME: asyncToolResultTable.name,
         PERSISTENT_SANDBOX_INSTANCE_TABLE_NAME: persistentSandboxInstanceTable.name,
-        FILESYSTEM_BUCKET_NAME: names.memory,
+        FILESYSTEM_BUCKET_NAME: names.filesystem,
         SKILLS_BUCKET_NAME: names.skills,
         TOOL_BUNDLES_BUCKET_NAME: names.toolBundles,
         ACCOUNT_SIGNUP_RATE_LIMIT_TABLE_NAME: accountSignupRateLimitTable.name,
         ACCOUNT_SIGNUP_RATE_LIMIT_PER_HOUR: "5",
-        ADMIN_ACCOUNT_SECRET: adminAccountSecret.value,
-        ACCOUNT_CONFIG_ENCRYPTION_SECRET: accountConfigEncryptionSecret.value,
-        SERVICE_AUTH_SECRET: serviceAuthSecret.value,
+        ADMIN_ACCOUNT_SECRET,
+        ACCOUNT_CONFIG_ENCRYPTION_SECRET,
+        SERVICE_AUTH_SECRET,
         ...(NATS_URL ? { NATS_URL } : {}),
         ...(NATS_TOKEN ? { NATS_TOKEN } : {}),
         ...(OTEL_EXPORTER_OTLP_ENDPOINT ? { OTEL_EXPORTER_OTLP_ENDPOINT } : {}),

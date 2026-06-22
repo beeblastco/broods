@@ -3,7 +3,7 @@
 /**
  * Tool configuration tab: edits the tool's executor source code AND the
  * `tools.<nodeLabel>` slice of the connected agent (enabled, needsApproval,
- * async, execution, env, tool-specific options) per filthy-panty AgentToolConfig.
+ * async, execution, env, tool-specific options) per broods AgentToolConfig.
  */
 import { BranchEditor } from "@/app/components/side-panel/BranchEditor";
 import { Button } from "@/app/components/ui/button";
@@ -14,8 +14,8 @@ import {
   toNestedAgentConfig,
   type FlatAgentConfig,
 } from "@/app/lib/agentConfigCodec";
-import { api } from "@filthy-panty/convex/_generated/api";
-import type { Id } from "@filthy-panty/convex/_generated/dataModel";
+import { api } from "@broods/convex/_generated/api";
+import type { Id } from "@broods/convex/_generated/dataModel";
 import { toErrorMessage } from "@/app/lib/errors";
 import { applyToolServiceUpsert } from "@/app/lib/toolServiceOptimistic";
 import { useMutation, useQuery } from "convex/react";

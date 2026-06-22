@@ -91,7 +91,7 @@ function parseLogMessage(raw: string): {
 function shortFunctionName(name: string): string {
   return name
     .replace(/-ap-[a-z]+-\d+-\d{6,}$/i, "")
-    .replace(/^filthy-panty-/, "");
+    .replace(/^broods-/, "");
 }
 
 /** Text color per log level — INFO is now distinctly colored, not muted. */

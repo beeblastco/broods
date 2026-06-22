@@ -2,21 +2,21 @@ import { afterEach, expect, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { DEFAULT_CORE_BASE_URL, FilthyPantyClient } from "../src/client.ts";
+import { DEFAULT_CORE_BASE_URL, BroodsClient } from "../src/client.ts";
 
 afterEach(() => {
-  delete process.env.FILTHY_PANTY_DASHBOARD_URL;
-  delete process.env.FILTHY_PANTY_TOKEN;
-  delete process.env.FILTHY_PANTY_PROJECT;
-  delete process.env.FILTHY_PANTY_ENVIRONMENT;
-  delete process.env.FILTHY_PANTY_BASE_URL;
-  delete process.env.FILTHY_PANTY_HOST;
-  delete process.env.FILTHY_PANTY_API_KEY;
+  delete process.env.BROODS_DASHBOARD_URL;
+  delete process.env.BROODS_TOKEN;
+  delete process.env.BROODS_PROJECT;
+  delete process.env.BROODS_ENVIRONMENT;
+  delete process.env.BROODS_BASE_URL;
+  delete process.env.BROODS_HOST;
+  delete process.env.BROODS_API_KEY;
 });
 
 test("client streams directly from core with apiKey auth", async () => {
   const urls: string[] = [];
-  const client = new FilthyPantyClient({
+  const client = new BroodsClient({
     apiKey: "test-key",
     fetch: async (input, init) => {
       urls.push(String(input));
@@ -46,7 +46,7 @@ test("client streams directly from core with apiKey auth", async () => {
 
 test("client accepts host as a shorthand for https baseUrl", async () => {
   const urls: string[] = [];
-  const client = new FilthyPantyClient({
+  const client = new BroodsClient({
     host: "core.example",
     apiKey: "test-key",
     fetch: async (input) => {
@@ -65,7 +65,7 @@ test("client accepts host as a shorthand for https baseUrl", async () => {
 });
 
 test("client resolves generated channel webhook paths against its configured host", () => {
-  const client = new FilthyPantyClient({ host: "hooks.example.com" });
+  const client = new BroodsClient({ host: "hooks.example.com" });
   expect(client.channelWebhookUrl({
     kind: "channel",
     type: "github",
@@ -77,9 +77,9 @@ test("client resolves generated channel webhook paths against its configured hos
 });
 
 test("client reads apiKey from the shared SDK environment variable", async () => {
-  process.env.FILTHY_PANTY_API_KEY = "env-key";
+  process.env.BROODS_API_KEY = "env-key";
   const headers: HeadersInit[] = [];
-  const client = new FilthyPantyClient({
+  const client = new BroodsClient({
     fetch: async (_input, init) => {
       headers.push(init?.headers ?? {});
 
@@ -99,14 +99,14 @@ test("client reads apiKey from the shared SDK environment variable", async () =>
 
 test("client reads apiKey from package-local .env.local", async () => {
   const originalCwd = process.cwd();
-  const tempDir = mkdtempSync(join(tmpdir(), "filthy-panty-client-"));
-  delete process.env.FILTHY_PANTY_API_KEY;
-  writeFileSync(join(tempDir, ".env.local"), "FILTHY_PANTY_API_KEY=local-env-key\n");
+  const tempDir = mkdtempSync(join(tmpdir(), "broods-client-"));
+  delete process.env.BROODS_API_KEY;
+  writeFileSync(join(tempDir, ".env.local"), "BROODS_API_KEY=local-env-key\n");
   process.chdir(tempDir);
 
   try {
     const headers: HeadersInit[] = [];
-    const client = new FilthyPantyClient({
+    const client = new BroodsClient({
       fetch: async (_input, init) => {
         headers.push(init?.headers ?? {});
 
@@ -125,13 +125,13 @@ test("client reads apiKey from package-local .env.local", async () => {
   } finally {
     process.chdir(originalCwd);
     rmSync(tempDir, { recursive: true, force: true });
-    delete process.env.FILTHY_PANTY_API_KEY;
+    delete process.env.BROODS_API_KEY;
   }
 });
 
 test("client starts async runs and exposes status id for polling", async () => {
   const calls: Array<{ url: string; method?: string; body?: unknown }> = [];
-  const client = new FilthyPantyClient({
+  const client = new BroodsClient({
     baseUrl: "https://core.example",
     apiKey: "runtime-key",
     fetch: async (input, init) => {
@@ -177,7 +177,7 @@ test("client starts async runs and exposes status id for polling", async () => {
 
 test("client passes typed run overrides through async run bodies", async () => {
   const bodies: unknown[] = [];
-  const client = new FilthyPantyClient({
+  const client = new BroodsClient({
     baseUrl: "https://core.example",
     apiKey: "runtime-key",
     fetch: async (_input, init) => {
@@ -227,7 +227,7 @@ test("client passes typed run overrides through async run bodies", async () => {
 
 test("client defaults async conversation key to the generated event id", async () => {
   const bodies: unknown[] = [];
-  const client = new FilthyPantyClient({
+  const client = new BroodsClient({
     baseUrl: "https://core.example",
     apiKey: "runtime-key",
     fetch: async (_input, init) => {
@@ -251,7 +251,7 @@ test("client defaults async conversation key to the generated event id", async (
 });
 
 test("client rejects misrouted async SSE responses without dumping stream internals", async () => {
-  const client = new FilthyPantyClient({
+  const client = new BroodsClient({
     baseUrl: "https://core.example",
     apiKey: "runtime-key",
     fetch: async () =>
@@ -278,7 +278,7 @@ test("client rejects misrouted async SSE responses without dumping stream intern
 
 test("client polls async status by status id when agentId is provided", async () => {
   const urls: string[] = [];
-  const client = new FilthyPantyClient({
+  const client = new BroodsClient({
     baseUrl: "https://core.example",
     apiKey: "runtime-key",
     fetch: async (input) => {
@@ -295,7 +295,7 @@ test("client polls async status by status id when agentId is provided", async ()
 
 test("client creates cron jobs using agent references", async () => {
   const requests: Array<{ url: string; body?: unknown }> = [];
-  const client = new FilthyPantyClient({
+  const client = new BroodsClient({
     baseUrl: "https://core.example",
     apiKey: "runtime-key",
     fetch: async (input, init) => {
@@ -346,7 +346,7 @@ test("client creates cron jobs using agent references", async () => {
 
 test("client sends cron job APIs to the configured base URL", async () => {
   const urls: string[] = [];
-  const client = new FilthyPantyClient({
+  const client = new BroodsClient({
     baseUrl: "https://app.example",
     apiKey: "runtime-key",
     fetch: async (input) => {
@@ -367,7 +367,7 @@ test("client sends cron job APIs to the configured base URL", async () => {
 });
 
 test("client explains cron job calls routed to the runtime harness", async () => {
-  const client = new FilthyPantyClient({
+  const client = new BroodsClient({
     baseUrl: "https://runtime.example",
     apiKey: "runtime-key",
     fetch: async () =>

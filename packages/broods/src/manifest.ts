@@ -1,5 +1,5 @@
 /**
- * Compiles `filthypanty/` TypeScript resources into the SaaS CLI manifest.
+ * Compiles `broods/` TypeScript resources into the SaaS CLI manifest.
  */
 
 import { pathToFileURL } from "node:url";
@@ -8,15 +8,15 @@ import { readdir, readFile } from "node:fs/promises";
 import { basename, isAbsolute, join, relative, resolve } from "node:path";
 import type { CliManifest, CliManifestResource } from "./contracts.ts";
 import { GENERATED_DIR, PROJECT_DIR } from "./config.ts";
-import { loadFilthyPantyRuntimeConfig } from "./runtime-config.ts";
+import { loadBroodsRuntimeConfig } from "./runtime-config.ts";
 import {
   isChannelDefinition,
-  isFilthyPantyConfig,
+  isBroodsConfig,
   isResource,
   type AnyChannelDefinition,
   type AnyResource,
-  type FilthyPantyConfigDefinition,
-  type FilthyPantyProjectConfig,
+  type BroodsConfigDefinition,
+  type BroodsProjectConfig,
   type SandboxResource,
 } from "./resources.ts";
 
@@ -29,7 +29,7 @@ export interface CompileOptions {
 }
 
 export interface CompiledProject {
-  config: FilthyPantyProjectConfig;
+  config: BroodsProjectConfig;
   manifest: CliManifest;
   resources: AnyResource[];
   resourceAliases: ResourceAliases;
@@ -66,7 +66,7 @@ const UNSAFE_BUNDLE_FILE_NAMES = [
 
 export async function compileProject(options: CompileOptions = {}): Promise<CompiledProject> {
   const cwd = options.cwd ?? process.cwd();
-  loadFilthyPantyRuntimeConfig(cwd);
+  loadBroodsRuntimeConfig(cwd);
   const root = resolve(cwd, PROJECT_DIR);
   const files = await listTypeScriptFiles(root);
   const exports = await loadExports(files);
@@ -83,7 +83,7 @@ export async function compileProject(options: CompileOptions = {}): Promise<Comp
   const resourceAliases = aliasesForResources(resourceExports);
   const environment = resolveEnvironment(
     config,
-    options.environment ?? (options.useRuntimeEnvironment === false ? undefined : process.env.FILTHY_PANTY_ENVIRONMENT),
+    options.environment ?? (options.useRuntimeEnvironment === false ? undefined : process.env.BROODS_ENVIRONMENT),
     options.command ?? "dev",
   );
   const manifestResources = (await Promise.all(resources.map((resource) => toManifestResource(resource, root)))).sort((a, b) =>
@@ -134,7 +134,7 @@ export function collectEnvRefNames(manifest: CliManifest): string[] {
 }
 
 function resolveEnvironment(
-  config: FilthyPantyProjectConfig,
+  config: BroodsProjectConfig,
   explicit: string | undefined,
   command: "dev" | "deploy",
 ): string {
@@ -178,17 +178,17 @@ async function findConfig(
   exports: ExportedValue[],
   cwd: string,
   explicitProject: string | undefined,
-): Promise<FilthyPantyProjectConfig> {
-  const config = exports.find((entry): entry is ExportedValue & { value: FilthyPantyConfigDefinition } =>
-    isFilthyPantyConfig(entry.value)
+): Promise<BroodsProjectConfig> {
+  const config = exports.find((entry): entry is ExportedValue & { value: BroodsConfigDefinition } =>
+    isBroodsConfig(entry.value)
   )?.value;
   const configValue = config?.config ?? {};
   const project = explicitProject ??
-    process.env.FILTHY_PANTY_PROJECT ??
+    process.env.BROODS_PROJECT ??
     configValue.project ??
     normalizeProjectName(basename(resolve(cwd)));
   if (!project.trim()) {
-    throw new Error("Project name is required. Pass --project <name> or set FILTHY_PANTY_PROJECT.");
+    throw new Error("Project name is required. Pass --project <name> or set BROODS_PROJECT.");
   }
 
   return {
@@ -253,7 +253,7 @@ function assertKnownConfigKeys(resource: AnyResource): void {
 
 /**
  * Runtime validation for code-first workspace storage. TypeScript catches this
- * when callers typecheck, but `filthy-panty dev/deploy` must also fail before
+ * when callers typecheck, but `broods dev/deploy` must also fail before
  * upload because the CLI loads resource modules directly with Bun.
  */
 function assertSupportedWorkspaceStorage(resource: AnyResource): void {

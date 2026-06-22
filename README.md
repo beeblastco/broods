@@ -1,4 +1,4 @@
-# filthy-panty
+# broods
 
 [![License: FSL-1.1-Apache-2.0](https://img.shields.io/badge/License-FSL--1.1--Apache--2.0-blue.svg)](LICENSE.md)
 [![Bun](https://img.shields.io/badge/runtime-Bun-000000?logo=bun)](https://bun.sh/)
@@ -6,7 +6,7 @@
 
 A serverless, multi-account AI agent harness built on AWS Lambda and Bun. Configure agents, connect them to Telegram, Discord, Slack, GitHub, and more, and run them with your own model keys.
 
-This is the open-source engine behind [BeeBlast](https://github.com/beeblastco). The entire stack is self-hostable — you own your data, your AWS account, and your API keys.
+This is the open-source engine behind [Broods](https://github.com/beeblastco). The entire stack is self-hostable — you own your data, your AWS account, and your API keys.
 
 ---
 
@@ -22,23 +22,23 @@ This is the open-source engine behind [BeeBlast](https://github.com/beeblastco).
 
 ## Quick Start (Managed Service)
 
-The fastest way to run agents is through the BeeBlast CLI and SDK:
+The fastest way to run agents is through the Broods CLI and SDK:
 
 ```bash
 # 1. Install the CLI (requires Bun)
-bun add -g filthy-panty
+bun add -g broods
 
 # 2. Initialize your project
 mkdir my-agents && cd my-agents
-filthy-panty init
+broods init
 
 # 3. Log in and set your model key
-filthy-panty login
-filthy-panty env set OPENAI_API_KEY
+broods login
+broods env set OPENAI_API_KEY
 
 # 4. Sync to the cloud and run your first agent
-filthy-panty dev
-filthy-panty run my-agent "Hello!"
+broods dev
+broods run my-agent "Hello!"
 ```
 
 See the [Getting Started guide](apps/docs/docs/getting-started.md) for the full walkthrough.
@@ -60,7 +60,7 @@ bunx sst secret set AccountConfigEncryptionSecret <random-value>
 bun run deploy
 ```
 
-Note the `accountServiceUrl` and `agentServiceUrl` from the deploy output when you deploy locally or on your own cloud. The CLI and SDK workflow is identical for self-hosted deployments — just point `FILTHY_PANTY_HOST` at your Function URL.
+Note the `accountServiceUrl` and `agentServiceUrl` from the deploy output when you deploy locally or on your own cloud. The CLI and SDK workflow is identical for self-hosted deployments — just point `BROODS_HOST` at your Function URL.
 
 ---
 
@@ -73,7 +73,7 @@ apps/
   docs/         # Docusaurus docs
 packages/
   convex/       # Shared Convex backend
-  filthy-panty/ # CLI + TypeScript SDK
+  broods/ # CLI + TypeScript SDK
   demos/        # Runnable demo scripts
 ```
 
@@ -128,7 +128,7 @@ CI runs on every PR via `.github/workflows/ci.yaml`.
 ## Community
 
 - [Discord](https://discord.gg/beeblast) — Chat with contributors
-- [GitHub Issues](https://github.com/beeblastco/filthy-panty/issues) — Bugs and feature requests
+- [GitHub Issues](https://github.com/beeblastco/broods/issues) — Bugs and feature requests
 
 ---
 

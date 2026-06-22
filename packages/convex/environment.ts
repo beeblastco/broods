@@ -58,7 +58,7 @@ function asRecord(value: unknown): Record<string, unknown> {
 
 /**
  * Deep-copies every resource scoped to `sourceEnvironmentId` into `targetEnvironmentId`:
- * agent configs (each with a fresh filthy-panty `agents` row), the canvas layout
+ * agent configs (each with a fresh broods `agents` row), the canvas layout
  * (remapping node references to the cloned configs), tool services, and env vars.
  * Subagent allow-lists are remapped onto the cloned agents so agent→agent calls stay
  * within the new environment.
@@ -175,7 +175,7 @@ async function duplicateEnvironmentContents(
 
 /**
  * Cascade-deletes every resource scoped to an environment: agent configs (plus their
- * deployments and linked filthy-panty `agents` rows), the canvas layout, tool
+ * deployments and linked broods `agents` rows), the canvas layout, tool
  * services, env vars, and deploy keys.
  */
 export async function deleteEnvironmentContents(

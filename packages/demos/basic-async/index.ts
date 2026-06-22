@@ -2,10 +2,10 @@
  * Example: start an async run and poll its status via the SDK.
  */
 
-import { FilthyPantyClient } from "filthy-panty";
-import { api } from "./filthypanty/_generated/api";
+import { BroodsClient } from "broods";
+import { api } from "./broods/_generated/api";
 
-const client = new FilthyPantyClient();
+const client = new BroodsClient();
 
 const run = await client.runAsync(api.agents.search, {
   input: "Search the web for the latest weather in Hanoi.",

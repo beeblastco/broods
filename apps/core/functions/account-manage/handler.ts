@@ -144,7 +144,7 @@ export async function handler(event: LambdaFunctionURLEvent): Promise<LambdaResp
         const selfSkillCollection = rawPath === "/accounts/me/skills";
         const selfSkillMatch = rawPath.match(/^\/accounts\/me\/skills\/([^/]+)$/);
         if (selfSkillCollection || selfSkillMatch?.[1]) {
-            // The Convex CLI sync (`filthy-panty dev`) pushes skill manifests with the
+            // The Convex CLI sync (`broods dev`) pushes skill manifests with the
             // account-scoped service token. Deployment runtime keys are intentionally
             // excluded: they can run agents, not mutate account skill bundles.
             const account = requireAccountAuth(auth, { allowServiceToken: true });

@@ -7,12 +7,12 @@
  *   observability  /v1/<project>/<env>/observability/ws
  */
 
-import { resolveRunEvents } from "../../../packages/filthy-panty/src/run-input.ts";
+import { resolveRunEvents } from "../../../packages/broods/src/run-input.ts";
 import type {
   WebSocketClientExecuteMessage,
   WebSocketClientMessage,
   WebSocketServerMessage,
-} from "../../../packages/filthy-panty/src/websocket-contracts.ts";
+} from "../../../packages/broods/src/websocket-contracts.ts";
 import {
   isObservabilityClientMessage,
   type ObservabilityClientMessage,
@@ -20,7 +20,7 @@ import {
   type ObservabilityServerMessage,
   type ObservabilitySpanRow,
   type LogLevel,
-} from "../../../packages/filthy-panty/src/observability-contracts.ts";
+} from "../../../packages/broods/src/observability-contracts.ts";
 import {
   connectNats,
   readConversationStream,
@@ -506,7 +506,7 @@ function json(payload: Record<string, unknown>, init: ResponseInit = {}): Respon
 function normalizeBaseUrl(value: string): string {
   const trimmed = value.trim().replace(/\/+$/, "");
   if (!trimmed) {
-    throw new Error("Gateway requires FILTHY_PANTY_CORE_URLS");
+    throw new Error("Gateway requires BROODS_CORE_URLS");
   }
 
   return /^[A-Za-z][A-Za-z0-9+.-]*:\/\//.test(trimmed) ? trimmed : `https://${trimmed}`;
@@ -515,7 +515,7 @@ function normalizeBaseUrl(value: string): string {
 /** Normalize, de-duplicate, and require at least one core upstream URL. */
 export function normalizedCoreBaseUrls(values: string[]): string[] {
   const urls = [...new Set(values.map((value) => value.trim()).filter(Boolean).map(normalizeBaseUrl))];
-  if (urls.length === 0) throw new Error("Gateway requires FILTHY_PANTY_CORE_URLS");
+  if (urls.length === 0) throw new Error("Gateway requires BROODS_CORE_URLS");
 
   return urls;
 }
@@ -1068,7 +1068,7 @@ function positiveInt(value: string | undefined, fallback: number): number {
 }
 
 if (import.meta.main) {
-  const configuredCoreUrls = process.env.FILTHY_PANTY_CORE_URLS?.split(",") ?? [];
+  const configuredCoreUrls = process.env.BROODS_CORE_URLS?.split(",") ?? [];
   const server = createGatewayServer({ coreBaseUrls: configuredCoreUrls });
   process.stdout.write(`gateway listening on ${server.hostname}:${server.port}\n`);
 }
