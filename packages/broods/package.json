@@ -1,9 +1,9 @@
 {
   "name": "broods",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "CLI + TypeScript SDK for the broods agent platform.",
   "type": "module",
-  "license": "FSL-1.1-Apache-2.0",
+  "license": "MIT",
   "homepage": "https://github.com/beeblastco/broods#readme",
   "repository": {
     "type": "git",

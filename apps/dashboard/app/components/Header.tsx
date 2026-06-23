@@ -32,9 +32,9 @@ export function Header() {
                     className="hover:opacity-80 transition-opacity cursor-pointer"
                 >
                     {resolvedTheme === "dark" ? (
-                        <Image src="/assets/logo/dark-full.svg" alt="Logo" width={277} height={64} className="h-7 w-auto" />
+                        <Image src="/assets/logo/dark-broods-full.svg" alt="Broods" width={232} height={64} className="h-7 w-auto" />
                     ) : (
-                        <Image src="/assets/logo/light-full.svg" alt="Logo" width={278} height={64} className="h-7 w-auto" />
+                        <Image src="/assets/logo/light-broods-full.svg" alt="Broods" width={232} height={64} className="h-7 w-auto" />
                     )}
                 </Link>
 

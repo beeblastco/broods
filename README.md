@@ -134,4 +134,5 @@ CI runs on every PR via `.github/workflows/ci.yaml`.
 
 ## License
 
-[FSL-1.1-Apache-2.0](LICENSE.md)
+Core server and application code is licensed under [FSL-1.1-Apache-2.0](LICENSE.md).
+The `broods` npm package in `packages/broods` is licensed separately under MIT.

@@ -38,4 +38,9 @@ Runtime calls use an environment runtime API key. After `broods deploy`, the CLI
 writes `BROODS_API_KEY` to `.env.local`; the SDK also accepts `apiKey`,
 `BROODS_API_KEY`, `baseUrl`, and `BROODS_BASE_URL`.
 
+## License
+
+The `broods` npm package, including the CLI and TypeScript client SDK, is MIT
+licensed. The core server code in the monorepo is licensed separately.
+
 Documentation: https://github.com/beeblastco/broods/tree/dev/apps/docs/docs

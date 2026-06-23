@@ -12,7 +12,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const config: Config = {
   title: 'Broods Developer Docs',
-  favicon: 'img/favicon.ico',
+  favicon: 'img/broods-favicon.ico',
 
   url: 'https://docs.beeblast.co',
   baseUrl: '/',
@@ -97,8 +97,8 @@ const config: Config = {
       title: 'Docs',
       logo: {
         alt: 'Broods Logo',
-        src: 'img/light-full.svg',
-        srcDark: 'img/dark-full.svg',
+        src: 'img/light-broods-full.svg',
+        srcDark: 'img/dark-broods-full.svg',
       },
       items: [
         {

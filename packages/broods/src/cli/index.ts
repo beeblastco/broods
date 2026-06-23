@@ -22,8 +22,9 @@ import type { LogLevel, ObservabilityLogEntry } from "../observability-contracts
 import { hasFlag, loginWithBrowser, optionValue, promptConfirm, promptSecret, promptSelect, promptText, requireAuth } from "./utils.ts";
 import { printDeploymentTarget, printDiffEntries, printEnvSync, printReadyLine, printWarning } from "./output.ts";
 import { createRenderState, renderStreamPart } from "./render.ts";
+import packageJson from "../../package.json" with { type: "json" };
 
-const VERSION = "0.1.0";
+const VERSION = packageJson.version;
 const DEFAULT_DASHBOARD_URL = "https://dashboard.broods.app";
 
 const HELP = `broods v${VERSION}
