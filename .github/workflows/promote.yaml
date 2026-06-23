@@ -81,8 +81,9 @@ jobs:
           }
 
           # Convex schema/functions first, then the core that calls them. Build
-          # the gateway after core is live, and the dashboard last.
+          # the gateway after core is live, then dashboard, then publish the SDK.
           dispatch_and_wait deploy-convex.yaml
           dispatch_and_wait deploy.yaml
           dispatch_and_wait build-gateway.yaml
           dispatch_and_wait build-dashboard.yaml
+          dispatch_and_wait publish-npm.yaml

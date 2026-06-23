@@ -9,6 +9,7 @@ on:
       - 'package.json'
       - 'bun.lock'
       - '.github/workflows/publish-npm.yaml'
+  workflow_dispatch:
 
 concurrency:
   group: publish-npm-${{ github.ref_name }}
@@ -16,6 +17,7 @@ concurrency:
 
 jobs:
   publish:
+    if: ${{ github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.actor == 'github-actions[bot]') }}
     runs-on: ubuntu-24.04
     permissions:
       contents: read
