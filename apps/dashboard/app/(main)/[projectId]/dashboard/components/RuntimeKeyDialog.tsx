@@ -12,8 +12,7 @@ import {
 import { Input } from "@/app/components/ui/input";
 import { Label } from "@/app/components/ui/label";
 import { Check, Copy, Eye, EyeOff, KeyRound } from "lucide-react";
-import { useState } from "react";
-import { Streamdown } from "streamdown";
+import { type ReactNode, useState } from "react";
 
 interface DialogProps {
     open: boolean;
@@ -41,22 +40,76 @@ const WS_SNIPPET = [
     `}`,
 ].join("\n");
 
-// Shiki-highlighted (github-dark / github-light) code blocks via Streamdown, minus
-// its download button, with prose margins reset so they sit flush in our sections.
-const CODE_CLASS =
-    "text-sm [&>*]:my-0 [&_pre]:!my-0 [&_[data-streamdown=code-block]]:!my-0 " +
-    "[&_[data-streamdown=code-block-download-button]]:hidden " +
-    "[&_pre]:text-[12px] [&_pre]:leading-relaxed [&_code]:text-[12px]";
+// VSCode Dark+ token palette, applied by a tiny tokenizer below so the snippets
+// read like an editor without pulling in a full highlighter dependency.
+const COLOR = {
+    comment: "text-[#6a9955]",
+    string: "text-[#ce9178]",
+    keyword: "text-[#569cd6]",
+    func: "text-[#dcdcaa]",
+    number: "text-[#b5cea8]",
+    variable: "text-[#9cdcfe]",
+};
 
-/** Renders a single fenced code block with VSCode-style syntax highlighting. */
-function CodeBlock({ code, language }: { code: string; language: string }) {
+const TS_RE =
+    /(\/\/[^\n]*)|("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|`(?:[^`\\]|\\.)*`)|\b(import|from|const|let|var|new|for|await|of|if|else|return|async|function|true|false|null)\b|([A-Za-z_$][\w$]*)(?=\s*\()|(\b\d+(?:\.\d+)?\b)/g;
+const BASH_RE = /(#[^\n]*)|("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*')|\b([A-Z_][A-Z0-9_]*)(?==)/g;
+
+/** Split code into colored spans using a per-language regex; unmatched text keeps the default color. */
+function highlight(code: string, lang: "ts" | "bash"): ReactNode[] {
+    const re = lang === "bash" ? BASH_RE : TS_RE;
+    re.lastIndex = 0;
+    const out: ReactNode[] = [];
+    let last = 0;
+    let key = 0;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(code)) !== null) {
+        if (m.index > last) out.push(code.slice(last, m.index));
+        const cls =
+            lang === "bash"
+                ? m[1] ? COLOR.comment : m[2] ? COLOR.string : COLOR.variable
+                : m[1] ? COLOR.comment : m[2] ? COLOR.string : m[3] ? COLOR.keyword : m[4] ? COLOR.func : COLOR.number;
+        out.push(
+            <span key={key++} className={cls}>
+                {m[0]}
+            </span>,
+        );
+        last = m.index + m[0].length;
+    }
+    if (last < code.length) out.push(code.slice(last));
+
+    return out;
+}
+
+/** A compact, syntax-highlighted code block with a corner copy button. */
+function CodeBlock({ code, lang }: { code: string; lang: "ts" | "bash" }) {
+    const [copied, setCopied] = useState(false);
+
+    function copy() {
+        navigator.clipboard.writeText(code);
+        setCopied(true);
+        setTimeout(() => setCopied(false), 1500);
+    }
+
     return (
-        <Streamdown className={CODE_CLASS}>{`\`\`\`${language}\n${code}\n\`\`\``}</Streamdown>
+        <div className="relative">
+            <pre className="overflow-x-auto rounded-md border border-border bg-[#1e1e1e] px-4 py-3 font-mono text-[12px] leading-relaxed text-[#d4d4d4]">
+                <code>{highlight(code, lang)}</code>
+            </pre>
+            <button
+                type="button"
+                onClick={copy}
+                title="Copy"
+                className="absolute right-2 top-2 flex size-7 cursor-pointer items-center justify-center rounded-md border border-white/10 bg-white/5 text-white/70 transition-colors hover:bg-white/10 hover:text-white"
+            >
+                {copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
+            </button>
+        </div>
     );
 }
 
 /** Inline `<code>` styling for prose mentions of env vars and hosts. */
-function Mono({ children }: { children: React.ReactNode }) {
+function Mono({ children }: { children: ReactNode }) {
     return (
         <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-[11px] text-foreground">{children}</code>
     );
@@ -117,7 +170,7 @@ export function RuntimeKeyView({ apiKey }: { apiKey: string }) {
                     The SDK reads <Mono>BROODS_API_KEY</Mono> by default — copy this into your{" "}
                     <Mono>.env.local</Mono> or <Mono>.env</Mono> file.
                 </p>
-                <CodeBlock code={envLine} language="bash" />
+                <CodeBlock code={envLine} lang="bash" />
             </section>
 
             {/* Stream over WebSocket */}
@@ -127,7 +180,7 @@ export function RuntimeKeyView({ apiKey }: { apiKey: string }) {
                     WebSocket streaming gives the lowest latency and a bidirectional connection — the best experience
                     for live agent runs.
                 </p>
-                <CodeBlock code={WS_SNIPPET} language="ts" />
+                <CodeBlock code={WS_SNIPPET} lang="ts" />
                 <p className="text-xs leading-relaxed text-muted-foreground">
                     Calls go to <Mono>gateway.broods.app</Mono> by default; override with <Mono>BROODS_BASE_URL</Mono>{" "}
                     for a self-hosted core.
