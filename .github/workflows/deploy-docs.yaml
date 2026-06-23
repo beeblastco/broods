@@ -15,6 +15,11 @@ concurrency:
 jobs:
   deploy:
     runs-on: ubuntu-24.04
+    # The shared AWS OIDC role trusts the `environment:` subject claim; the
+    # branch-ref claim broke after the filthy-panty -> broods repo rename, so
+    # scope this to production like the core deploy does. The production
+    # environment has no branch restriction, so dispatching from dev is allowed.
+    environment: production
     permissions:
       contents: read
       id-token: write
