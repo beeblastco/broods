@@ -5,6 +5,7 @@
 
 import { v } from "convex/values";
 import { internalMutation, internalQuery } from "./_generated/server";
+import { deleteAccountContents } from "./model/cascade";
 import { accountsFields } from "./schema";
 
 const accountDoc = v.object({
@@ -127,27 +128,7 @@ export const remove = internalMutation({
             return null;
         }
 
-        const tables = [
-            "agents",
-            "sandboxConfigs",
-            "workspaceConfigs",
-            "conversations",
-            "messages",
-            "skills",
-            "asyncResults",
-            "crons",
-        ] as const;
-        for (const table of tables) {
-            const docs = await ctx.db
-                .query(table)
-                .withIndex("by_accountId", (q) => q.eq("accountId", accountId))
-                .collect();
-            for (const doc of docs) {
-                await ctx.db.delete(doc._id);
-            }
-        }
-
-        await ctx.db.delete(accountId);
+        await deleteAccountContents(ctx, accountId);
 
         return null;
     },

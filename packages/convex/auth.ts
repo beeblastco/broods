@@ -5,6 +5,7 @@
 import { AuthKit } from "@convex-dev/workos-authkit";
 import { components, internal } from "./_generated/api";
 import type { DataModel } from "./_generated/dataModel";
+import { purgeUser } from "./model/cascade";
 
 export const authKit: AuthKit<DataModel> = new AuthKit<DataModel>(components.workOSAuthKit, {
     authFunctions: internal.auth,
@@ -71,7 +72,10 @@ export const { authKitEvent } = authKit.events({
             console.warn(`User not found for deletion: ${event.data.id}`);
             return;
         }
-        await ctx.db.delete(user._id);
+        // Full cascade: purge orgs the user solely owns (account, projects,
+        // environments, keys, files), drop their other memberships, then delete
+        // the user. Previously only the user row was removed, orphaning everything.
+        await purgeUser(ctx, user);
     },
     "session.created": async () => { },
     "session.revoked": async () => { },

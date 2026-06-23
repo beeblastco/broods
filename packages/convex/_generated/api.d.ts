@@ -38,6 +38,7 @@ import type * as migrations from "../migrations.js";
 import type * as model_agentConfigCodec from "../model/agentConfigCodec.js";
 import type * as model_agentRuntimeSecrets from "../model/agentRuntimeSecrets.js";
 import type * as model_agentSync from "../model/agentSync.js";
+import type * as model_cascade from "../model/cascade.js";
 import type * as model_environmentValues from "../model/environmentValues.js";
 import type * as model_ownership_environment from "../model/ownership/environment.js";
 import type * as model_ownership_org from "../model/ownership/org.js";
@@ -98,6 +99,7 @@ declare const fullApi: ApiFromModules<{
   "model/agentConfigCodec": typeof model_agentConfigCodec;
   "model/agentRuntimeSecrets": typeof model_agentRuntimeSecrets;
   "model/agentSync": typeof model_agentSync;
+  "model/cascade": typeof model_cascade;
   "model/environmentValues": typeof model_environmentValues;
   "model/ownership/environment": typeof model_ownership_environment;
   "model/ownership/org": typeof model_ownership_org;

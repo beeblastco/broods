@@ -8,7 +8,7 @@ import type { DataModel } from "./_generated/dataModel";
 import { mutation, query } from "./_generated/server";
 import { authKit } from "./auth";
 import { uniqueProjectSlug } from "./lib/slug";
-import { deleteEnvironmentContents } from "./environment";
+import { purgeProject } from "./model/cascade";
 import { getActiveOrgForUser } from "./model/ownership/org";
 import { getOwnedProject, getProjectForRole } from "./model/ownership/project";
 import { projectsFields } from "./schema";
@@ -329,28 +329,7 @@ export const remove = mutation({
         const project = await getProjectForRole(ctx, authUser.id, projectId, "admin");
         if (!project) throw new Error("Project not found.");
 
-        const environments = await ctx.db
-            .query("environments")
-            .withIndex("by_projectId", (q) => q.eq("projectId", projectId))
-            .collect();
-
-        for (const env of environments) {
-            await deleteEnvironmentContents(ctx, env);
-            await ctx.db.delete(env._id);
-        }
-
-        const workspaceFiles = await ctx.db
-            .query("workspaceFiles")
-            .withIndex("by_projectId_and_nodeId", (q) => q.eq("projectId", projectId))
-            .collect();
-        for (const file of workspaceFiles) {
-            if (file.storageId) {
-                await ctx.storage.delete(file.storageId);
-            }
-            await ctx.db.delete(file._id);
-        }
-
-        await ctx.db.delete(projectId);
+        await purgeProject(ctx, projectId);
 
         return projectId;
     },

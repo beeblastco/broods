@@ -6,6 +6,7 @@ import { v } from "convex/values";
 import type { MutationCtx } from "./_generated/server";
 import { mutation, query } from "./_generated/server";
 import { authKit } from "./auth";
+import { purgeOrg } from "./model/cascade";
 import { slugifyName } from "./lib/slug";
 import {
     getActiveOrgForUser,
@@ -405,43 +406,8 @@ export const remove = mutation({
 
         await requireOrgMember(ctx, orgId, user._id, "owner");
 
-        const account = await ctx.db
-            .query("accounts")
-            .withIndex("by_orgId", (q) => q.eq("orgId", orgId))
-            .unique();
-        if (account) {
-            // Cascade-delete using the same logic as backend/accounts:remove.
-            for (const table of [
-                "agents",
-                "sandboxConfigs",
-                "workspaceConfigs",
-                "conversations",
-                "messages",
-                "skills",
-                "asyncResults",
-            ] as const) {
-                const rows = await ctx.db
-                    .query(table)
-                    .withIndex("by_accountId", (q) =>
-                        q.eq("accountId", account._id),
-                    )
-                    .collect();
-                for (const row of rows) {
-                    await ctx.db.delete(row._id);
-                }
-            }
-            await ctx.db.delete(account._id);
-        }
-
-        const memberships = await ctx.db
-            .query("orgMembers")
-            .withIndex("by_orgId", (q) => q.eq("orgId", orgId))
-            .collect();
-        for (const membership of memberships) {
-            await ctx.db.delete(membership._id);
-        }
-
-        await ctx.db.delete(orgId);
+        // Full cascade: projects (+ environments/keys/files), account, memberships.
+        await purgeOrg(ctx, orgId);
 
         return null;
     },

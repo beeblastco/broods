@@ -199,6 +199,14 @@ export async function deleteEnvironmentContents(
             }
         }
 
+        // Runtime secrets are keyed to the agent config, so they orphan unless
+        // deleted alongside it.
+        const runtimeSecrets = await ctx.db
+            .query("agentRuntimeSecrets")
+            .withIndex("by_agentConfigId", (q) => q.eq("agentConfigId", config._id))
+            .collect();
+        for (const secret of runtimeSecrets) await ctx.db.delete(secret._id);
+
         await ctx.db.delete(config._id);
     }
 
@@ -244,6 +252,13 @@ export async function deleteEnvironmentContents(
         )
         .collect();
     for (const deployKey of deployKeys) await ctx.db.delete(deployKey._id);
+
+    // Audit rows for env-var reveals are scoped to the environment.
+    const reveals = await ctx.db
+        .query("environmentVariableReveals")
+        .withIndex("by_environmentId", (q) => q.eq("environmentId", environmentId))
+        .collect();
+    for (const reveal of reveals) await ctx.db.delete(reveal._id);
 }
 
 /** Returns true when an environment already has user/configuration content. */
