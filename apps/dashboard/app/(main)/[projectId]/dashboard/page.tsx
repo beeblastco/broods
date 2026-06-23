@@ -63,6 +63,7 @@ export default function DashboardPage() {
   );
 
   const ensureKey = useMutation(api.agentDeployments.ensureForEnvironment);
+  const rotateKey = useMutation(api.agentDeployments.rotate);
   // A key just minted in this view, scoped to its endpoint so switching
   // environments never serves the wrong environment's key.
   const [generated, setGenerated] = useState<{ endpointId: string; key: string } | null>(null);
@@ -112,6 +113,20 @@ export default function DashboardPage() {
       }
     },
     [activeEnvId, projectId, ensureKey],
+  );
+
+  // Rotate the environment's runtime key, surfacing the new plaintext immediately
+  // through the same `generated` channel the mint flow uses. Rethrows so the
+  // Rotate control can show the failure inline.
+  const rotateViewingKey = useCallback(
+    async () => {
+      if (!activeEnvId) return;
+      const result = await rotateKey({ projectId: projectId, environmentId: activeEnvId });
+      if (result.rawApiKey) {
+        setGenerated({ endpointId: result.endpointId, key: result.rawApiKey });
+      }
+    },
+    [activeEnvId, projectId, rotateKey],
   );
 
   const projectSlug = activeDeployment?.projectSlug;
@@ -195,7 +210,7 @@ export default function DashboardPage() {
         return <BillingPanel projectId={projectId} />;
       case "api-key":
         return observabilityApiKey ? (
-          <RuntimeKeyView apiKey={observabilityApiKey} />
+          <RuntimeKeyView apiKey={observabilityApiKey} onRotate={rotateViewingKey} />
         ) : (
           observabilityFallback
         );

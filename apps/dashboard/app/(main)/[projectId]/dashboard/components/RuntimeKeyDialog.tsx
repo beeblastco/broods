@@ -11,7 +11,8 @@ import {
 } from "@/app/components/ui/dialog";
 import { Input } from "@/app/components/ui/input";
 import { Label } from "@/app/components/ui/label";
-import { Check, Copy, Eye, EyeOff, KeyRound } from "lucide-react";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/app/components/ui/tabs";
+import { Check, Copy, Eye, EyeOff, KeyRound, Loader2, RefreshCw } from "lucide-react";
 import { type ReactNode, useState } from "react";
 
 interface DialogProps {
@@ -23,7 +24,23 @@ interface DialogProps {
     justCreated?: boolean;
 }
 
-/** WebSocket streaming example — recommended for the best, lowest-latency experience. */
+/** Default SSE streaming example — plain HTTP, works everywhere. */
+const SSE_SNIPPET = [
+    `import { BroodsClient } from "broods";`,
+    `import { api } from "./broods/_generated/api";`,
+    ``,
+    `// Reads BROODS_API_KEY from your .env automatically.`,
+    `const client = new BroodsClient();`,
+    ``,
+    `// Default transport: server-sent events over plain HTTP.`,
+    `for await (const chunk of client.stream(api.agents.yourAgent, {`,
+    `  input: "Hello from the SDK!",`,
+    `})) {`,
+    `  if (chunk.type === "text-delta") process.stdout.write(chunk.text);`,
+    `}`,
+].join("\n");
+
+/** WebSocket streaming example — opt-in upgrade for the lowest-latency, bidirectional experience. */
 const WS_SNIPPET = [
     `import { WebsocketClient } from "broods";`,
     `import { api } from "./broods/_generated/api";`,
@@ -31,7 +48,7 @@ const WS_SNIPPET = [
     `// Reads BROODS_API_KEY from your .env automatically.`,
     `const client = new WebsocketClient();`,
     ``,
-    `// Stream tokens live — lowest latency, fully bidirectional.`,
+    `// Opt-in transport: a full-duplex WebSocket connection.`,
     `for await (const message of client.stream({`,
     `  agent: api.agents.yourAgent,`,
     `  input: "Hello from the SDK!",`,
@@ -108,6 +125,67 @@ function CodeBlock({ code, lang, copyText }: { code: string; lang: "ts" | "bash"
     );
 }
 
+/** Rotate control with an inline confirm step — rotating invalidates the current key. */
+function RotateButton({ onRotate }: { onRotate: () => Promise<void> }) {
+    const [confirming, setConfirming] = useState(false);
+    const [rotating, setRotating] = useState(false);
+    const [error, setError] = useState<string | null>(null);
+
+    async function run() {
+        setRotating(true);
+        setError(null);
+        try {
+            await onRotate();
+            setConfirming(false);
+        } catch (e) {
+            setError(e instanceof Error ? e.message : "Failed to rotate key");
+        } finally {
+            setRotating(false);
+        }
+    }
+
+    if (confirming) {
+        return (
+            <div className="flex items-center gap-2">
+                <span className="text-xs text-muted-foreground">Invalidate the current key?</span>
+                <Button
+                    variant="destructive"
+                    size="sm"
+                    className="h-7 cursor-pointer"
+                    disabled={rotating}
+                    onClick={run}
+                >
+                    {rotating ? <Loader2 className="size-3.5 animate-spin" /> : "Rotate"}
+                </Button>
+                <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-7 cursor-pointer"
+                    disabled={rotating}
+                    onClick={() => setConfirming(false)}
+                >
+                    Cancel
+                </Button>
+            </div>
+        );
+    }
+
+    return (
+        <div className="flex flex-col items-end gap-1">
+            <Button
+                variant="outline"
+                size="sm"
+                className="h-7 cursor-pointer text-muted-foreground"
+                onClick={() => setConfirming(true)}
+            >
+                <RefreshCw className="size-3.5" />
+                <span className="ml-1">Rotate</span>
+            </Button>
+            {error ? <span className="text-xs text-destructive">{error}</span> : null}
+        </div>
+    );
+}
+
 /** Inline `<code>` styling for prose mentions of env vars and hosts. */
 function Mono({ children }: { children: ReactNode }) {
     return (
@@ -115,8 +193,8 @@ function Mono({ children }: { children: ReactNode }) {
     );
 }
 
-/** The reusable runtime-key body: the secret, its .env line, and the WebSocket SDK example. */
-export function RuntimeKeyView({ apiKey }: { apiKey: string }) {
+/** The reusable runtime-key body: the secret, its .env line, and the streaming SDK examples. `onRotate` adds a rotate control. */
+export function RuntimeKeyView({ apiKey, onRotate }: { apiKey: string; onRotate?: () => Promise<void> }) {
     const [showKey, setShowKey] = useState(false);
     const [copied, setCopied] = useState(false);
     const maskedKey = "•".repeat(Math.min(apiKey.length, 44));
@@ -135,7 +213,10 @@ export function RuntimeKeyView({ apiKey }: { apiKey: string }) {
         <div className="grid gap-6">
             {/* The key itself */}
             <section className="grid gap-2">
-                <Label className="text-sm font-medium text-foreground">API key</Label>
+                <div className="flex min-h-7 items-center justify-between gap-2">
+                    <Label className="text-sm font-medium text-foreground">API key</Label>
+                    {onRotate ? <RotateButton onRotate={onRotate} /> : null}
+                </div>
                 <div className="flex items-center gap-2">
                     <Input
                         readOnly
@@ -177,14 +258,35 @@ export function RuntimeKeyView({ apiKey }: { apiKey: string }) {
                 <CodeBlock code={envDisplay} copyText={envReal} lang="bash" />
             </section>
 
-            {/* Stream over WebSocket */}
+            {/* Stream the response — SSE by default, WebSocket as an opt-in upgrade */}
             <section className="grid gap-2">
-                <Label className="text-sm font-medium text-foreground">Stream over WebSocket</Label>
+                <Label className="text-sm font-medium text-foreground">Stream the response</Label>
                 <p className="text-xs leading-relaxed text-muted-foreground">
-                    WebSocket streaming gives the lowest latency and a bidirectional connection — the best experience
-                    for live agent runs.
+                    The SDK streams over <Mono>SSE</Mono> by default — plain HTTP that works through any proxy with
+                    zero setup. For the lowest latency and a full-duplex channel, opt into the WebSocket client.
                 </p>
-                <CodeBlock code={WS_SNIPPET} lang="ts" />
+                <Tabs defaultValue="sse" className="mt-1 gap-2">
+                    <TabsList>
+                        <TabsTrigger value="sse" className="cursor-pointer">
+                            SSE · default
+                        </TabsTrigger>
+                        <TabsTrigger value="ws" className="cursor-pointer">
+                            WebSocket
+                        </TabsTrigger>
+                    </TabsList>
+                    <TabsContent value="sse" className="grid gap-2">
+                        <CodeBlock code={SSE_SNIPPET} lang="ts" />
+                        <p className="text-xs leading-relaxed text-muted-foreground">
+                            Best for simple request/response runs — no connection to manage, reconnects for free.
+                        </p>
+                    </TabsContent>
+                    <TabsContent value="ws" className="grid gap-2">
+                        <CodeBlock code={WS_SNIPPET} lang="ts" />
+                        <p className="text-xs leading-relaxed text-muted-foreground">
+                            Best for live, interactive runs — full-duplex, lowest latency, cancel mid-stream.
+                        </p>
+                    </TabsContent>
+                </Tabs>
                 <p className="text-xs leading-relaxed text-muted-foreground">
                     Calls go to <Mono>gateway.broods.app</Mono> by default; override with <Mono>BROODS_BASE_URL</Mono>{" "}
                     for a self-hosted core.
