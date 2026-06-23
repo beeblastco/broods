@@ -920,6 +920,7 @@ export default $config({
     // repo, then re-deploy once the image exists). See docs/workspace/sandbox/lambda.md.
     const sandboxImageRepoName = `beeblast-lambda-sandbox-${AWS_ACCOUNT_ID}-${region}`;
     const sandboxImageRepoExists = ecrRepositoryExists(sandboxImageRepoName, region);
+    const sandboxImageRepoShouldImport = SANDBOX_IMAGE_READY || sandboxImageRepoExists;
     const sandboxEcr = new aws.ecr.Repository(
       "SandboxImage",
       {
@@ -931,9 +932,10 @@ export default $config({
       {
         retainOnDelete: isProduction,
         // The repo name is intentionally not PROJECT_NAME-scoped (the external lambda-sanbdox
-        // CI pushes `latest-arm64` to this exact name). Adopt a pre-existing repo when one is
-        // already present; otherwise let the first regional deploy create the empty repo.
-        ...(sandboxImageRepoExists ? { import: sandboxImageRepoName } : {}),
+        // CI pushes `latest-arm64` to this exact name). When SANDBOX_IMAGE_READY is true,
+        // the deploy workflow has already ensured the regional repo exists, so import it
+        // even if the local describe probe cannot run from inside SST config evaluation.
+        ...(sandboxImageRepoShouldImport ? { import: sandboxImageRepoName } : {}),
       },
     );
 
