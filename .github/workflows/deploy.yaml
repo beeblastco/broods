@@ -112,16 +112,17 @@ jobs:
       ENABLE_DIRECT_API: ${{ vars.ENABLE_DIRECT_API || 'false' }}
       ENABLE_WEBSOCKET: ${{ vars.ENABLE_WEBSOCKET || 'false' }}
       # Create the image-based sandbox Lambdas only after the arm64 image is in a target's
-      # regional ECR repo. Leave a target's flag unset for its region's first deploy
-      # (creates the empty repo, functions skipped), then set it to 'true' once
-      # lambda-sanbdox CI has mirrored the image. Dev falls back to the legacy repo-wide
-      # SANDBOX_IMAGE_READY for backward compatibility.
+      # regional ECR repo. When a target's flag is true but the image is missing, this
+      # workflow bootstraps the region by running one repo-only SST deploy, mirroring the
+      # source image, then running the final deploy with sandbox functions enabled.
+      # Dev falls back to the legacy repo-wide SANDBOX_IMAGE_READY for backward compatibility.
       # See docs/workspace/sandbox/lambda.md.
       SANDBOX_IMAGE_READY_DEV: ${{ vars.SANDBOX_IMAGE_READY_DEV || vars.SANDBOX_IMAGE_READY || 'false' }}
       SANDBOX_IMAGE_READY_PRODUCTION: ${{ vars.SANDBOX_IMAGE_READY_PRODUCTION || 'false' }}
       SANDBOX_IMAGE_READY_PRODUCTION_US_EAST_1: ${{ vars.SANDBOX_IMAGE_READY_PRODUCTION_US_EAST_1 || vars.SANDBOX_IMAGE_READY_PRODUCTION || 'false' }}
       SANDBOX_IMAGE_READY_PRODUCTION_EU_WEST_1: ${{ vars.SANDBOX_IMAGE_READY_PRODUCTION_EU_WEST_1 || vars.SANDBOX_IMAGE_READY_PRODUCTION || 'false' }}
       SANDBOX_IMAGE_READY_PRODUCTION_AP_SOUTHEAST_1: ${{ vars.SANDBOX_IMAGE_READY_PRODUCTION_AP_SOUTHEAST_1 || vars.SANDBOX_IMAGE_READY_PRODUCTION || 'false' }}
+      SANDBOX_IMAGE_SOURCE_REGION: ${{ vars.SANDBOX_IMAGE_SOURCE_REGION || 'ap-southeast-1' }}
       NATS_URL: ${{ secrets.NATS_URL }}
       NATS_TOKEN: ${{ secrets.NATS_TOKEN }}
       # Durable Lambda logs/traces. The endpoint is non-secret; the Basic auth
@@ -231,6 +232,9 @@ jobs:
       - name: Build Lambda binaries
         run: bun run build
 
+      - name: Setup crane
+        uses: imjasonh/setup-crane@v0.4
+
       - name: Clear stale SST deploy lock
         shell: bash
         working-directory: apps/core
@@ -263,6 +267,71 @@ jobs:
         run: |
           set -euo pipefail
 
+          deploy_target() {
+            local target_stage="$1"
+            local target_region="$2"
+            local sandbox_ready="$3"
+
+            for attempt in 1 2 3; do
+              echo "Deploy $target_stage in $target_region attempt $attempt/3 (SANDBOX_IMAGE_READY=$sandbox_ready)"
+              if AWS_REGION="$target_region" \
+                AWS_DEFAULT_REGION="$target_region" \
+                SST_STAGE="$target_stage" \
+                SANDBOX_IMAGE_READY="$sandbox_ready" \
+                bunx sst deploy --stage "$target_stage" --print-logs; then
+                return 0
+              fi
+              if [[ "$attempt" == "3" ]]; then
+                echo "Deploy failed for $target_stage in $target_region" >&2
+                return 1
+              fi
+              echo "Deploy failed, retrying in 15s..."
+              sleep 15
+            done
+          }
+
+          ecr_login() {
+            local region="$1"
+            aws ecr get-login-password --region "$region" \
+              | crane auth login "${AWS_ACCOUNT_ID}.dkr.ecr.${region}.amazonaws.com" -u AWS --password-stdin
+          }
+
+          ensure_sandbox_image() {
+            local target_stage="$1"
+            local target_region="$2"
+            local target_repo="beeblast-lambda-sandbox-${AWS_ACCOUNT_ID}-${target_region}"
+            local source_region="${SANDBOX_IMAGE_SOURCE_REGION:-ap-southeast-1}"
+            local source_repo="beeblast-lambda-sandbox-${AWS_ACCOUNT_ID}-${source_region}"
+            local source_image="${AWS_ACCOUNT_ID}.dkr.ecr.${source_region}.amazonaws.com/${source_repo}:latest-arm64"
+            local target_image="${AWS_ACCOUNT_ID}.dkr.ecr.${target_region}.amazonaws.com/${target_repo}:latest-arm64"
+
+            if aws ecr describe-images \
+              --region "$target_region" \
+              --repository-name "$target_repo" \
+              --image-ids imageTag=latest-arm64 >/dev/null 2>&1; then
+              echo "Sandbox image already exists for $target_stage in $target_region"
+              return 0
+            fi
+
+            echo "Sandbox image missing for $target_stage in $target_region; bootstrapping ECR repo through SST"
+            deploy_target "$target_stage" "$target_region" "false"
+
+            if ! aws ecr describe-images \
+              --region "$source_region" \
+              --repository-name "$source_repo" \
+              --image-ids imageTag=latest-arm64 >/dev/null; then
+              echo "Source sandbox image is missing: $source_image" >&2
+              exit 1
+            fi
+
+            ecr_login "$source_region"
+            if [[ "$target_region" != "$source_region" ]]; then
+              ecr_login "$target_region"
+            fi
+            echo "Mirroring sandbox image from $source_region to $target_region"
+            crane copy "$source_image" "$target_image"
+          }
+
           for name in \
             ADMIN_ACCOUNT_SECRET \
             ACCOUNT_CONFIG_ENCRYPTION_SECRET \
@@ -279,20 +348,9 @@ jobs:
               continue
             fi
 
-            for attempt in 1 2 3; do
-              echo "Deploy $target_stage in $target_region attempt $attempt/3"
-              if AWS_REGION="$target_region" \
-                AWS_DEFAULT_REGION="$target_region" \
-                SST_STAGE="$target_stage" \
-                SANDBOX_IMAGE_READY="$target_sandbox_ready" \
-                bunx sst deploy --stage "$target_stage" --print-logs; then
-                break
-              fi
-              if [[ "$attempt" == "3" ]]; then
-                echo "Deploy failed for $target_stage in $target_region" >&2
-                exit 1
-              fi
-              echo "Deploy failed, retrying in 15s..."
-              sleep 15
-            done
+            if [[ "${target_sandbox_ready,,}" == "true" ]]; then
+              ensure_sandbox_image "$target_stage" "$target_region"
+            fi
+
+            deploy_target "$target_stage" "$target_region" "$target_sandbox_ready"
           done <<< "$DEPLOY_TARGETS"

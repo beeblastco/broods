@@ -27,8 +27,9 @@ The same image is deployed across two axes; the harness auto-selects one per run
 Lambda can only pull a **private** ECR image **in the function's own region** — public
 ECR and cross-region are rejected. So the repo is region-scoped and **owned by this app**
 (`sst.config.ts` creates `aws.ecr.Repository` `beeblast-lambda-sandbox-<account>-<region>`),
-not the infra repo. The `latest-arm64` image is built and pushed by the
-[`lambda-sandbox custom image`](https://github.com/beeblastco/lambda-sanbdox) CI.
+not the infra repo. The `latest-arm64` image is built by the
+[`lambda-sandbox custom image`](https://github.com/beeblastco/lambda-sanbdox) CI and mirrored
+by the Broods deploy workflow when a target region needs it.
 
 ```text
 sst deploy ──creates──▶ ECR repo (per region)  ◀──pushes── lambda-sandbox CI
@@ -37,15 +38,17 @@ sst deploy ──creates──▶ ECR repo (per region)  ◀──pushes── l
                     4 sandbox Lambda functions
 ```
 
-- **Multi-region:** every region you deploy to needs its own repo + pushed image. The CI
-  mirrors the image to each region in `ECR_REGIONS` and **skips (with a warning) any region
-  whose repo doesn't exist yet**.
-- **Bootstrap a region (two passes), gated by `SANDBOX_IMAGE_READY`:** the 4 functions are
-  created only when this flag is `true`. Without it the first `sst deploy` creates the empty
-  repo and **succeeds** (functions skipped, deploy not blocked) → lambda-sanbdox CI mirrors the
-  image into the now-existing repo → re-deploy with the flag `true` and the functions create.
-  Harness env/IAM always carry the deterministic function names/ARNs, so flipping the flag is
-  the only change needed on the second pass.
+- **Multi-region:** every region you deploy to needs its own repo + pushed image. When a
+  target's sandbox flag is `true`, `.github/workflows/deploy.yaml` checks for the regional
+  `latest-arm64` tag. If it is missing, CI runs one repo-only SST deploy with
+  `SANDBOX_IMAGE_READY=false`, copies the source image from `SANDBOX_IMAGE_SOURCE_REGION`
+  (default `ap-southeast-1`) with `crane`, then runs the final deploy with the sandbox
+  functions enabled.
+- **Bootstrap remains gated by `SANDBOX_IMAGE_READY`:** the 4 functions are created only when
+  this flag is `true`. The CI bootstrap path keeps a brand-new region deployable without local
+  AWS commands, while preserving the repo-only first pass that lets SST own the ECR repository.
+  Harness env/IAM always carry the deterministic function names/ARNs, so the second pass creates
+  the same function names.
 - **The flag is per-stage/region in `deploy.yaml`**, because each region bootstraps
   independently. The resolve step picks `SANDBOX_IMAGE_READY_DEV` (falling back to the
   legacy repo-wide `SANDBOX_IMAGE_READY`) for `dev`, and
