@@ -169,7 +169,7 @@ describe("account management HTTP handler", () => {
     process.env.SERVICE_AUTH_SECRET = "service-secret";
     process.env.CRONS_TABLE_NAME = "crons";
     process.env.CRON_SCHEDULER_ROLE_ARN = "arn:aws:iam::123456789012:role/scheduler";
-    process.env.CRON_SCHEDULER_TARGET_FUNCTION_ARN = "arn:aws:lambda:eu-central-1:123456789012:function:harness";
+    process.env.CRON_SCHEDULER_TARGET_FUNCTION_ARN = "arn:aws:lambda:us-east-1:123456789012:function:harness";
     process.env.CRON_SCHEDULER_GROUP_NAME = "cron-group";
     setStorageForTests(createFakeStorage({
       agents: {
@@ -212,7 +212,7 @@ describe("account management HTTP handler", () => {
   it("allows deployment runtime keys on self cron routes", async () => {
     process.env.CRONS_TABLE_NAME = "crons";
     process.env.CRON_SCHEDULER_ROLE_ARN = "arn:aws:iam::123456789012:role/scheduler";
-    process.env.CRON_SCHEDULER_TARGET_FUNCTION_ARN = "arn:aws:lambda:eu-central-1:123456789012:function:harness";
+    process.env.CRON_SCHEDULER_TARGET_FUNCTION_ARN = "arn:aws:lambda:us-east-1:123456789012:function:harness";
     process.env.CRON_SCHEDULER_GROUP_NAME = "cron-group";
     setStorageForTests(createFakeStorage({
       crons: {
@@ -268,7 +268,7 @@ describe("account management HTTP handler", () => {
     process.env.ADMIN_ACCOUNT_SECRET = "admin-secret";
     process.env.CRONS_TABLE_NAME = "crons";
     process.env.CRON_SCHEDULER_ROLE_ARN = "arn:aws:iam::123456789012:role/scheduler";
-    process.env.CRON_SCHEDULER_TARGET_FUNCTION_ARN = "arn:aws:lambda:eu-central-1:123456789012:function:harness";
+    process.env.CRON_SCHEDULER_TARGET_FUNCTION_ARN = "arn:aws:lambda:us-east-1:123456789012:function:harness";
     process.env.CRON_SCHEDULER_GROUP_NAME = "cron-group";
     setStorageForTests(createFakeStorage({
       agents: {

@@ -6,8 +6,8 @@ Deploys run on push to two branches, plus manual `workflow_dispatch` with a stag
 
 | Branch | Stage | Notes |
 | --- | --- | --- |
-| `dev` | `dev` | re-runs validation before deploying; DynamoDB storage |
-| `main` | `production` | skips re-validation; Convex storage |
+| `dev` | `dev` in `us-east-1` by default | re-runs validation before deploying; DynamoDB or dev Convex storage |
+| `main` | `production-us-east-1`, `production-eu-west-1`, `production-ap-southeast-1` | skips re-validation; all regions use the production Convex deployment |
 
 A separate workflow (`deploy-docs.yaml`) builds the Docusaurus site on `main` pushes touching docs and syncs it to S3 + CloudFront (vars `DOCS_S3_BUCKET`, `DOCS_DOMAIN`).
 
@@ -29,7 +29,10 @@ The deploy step hard-fails without these repository secrets:
 
 `KUBERNETES_SANDBOX_KUBECONFIG` is optional (enables the Kubernetes sandbox provider).
 
-And these repository variables: `AWS_REGION`, `AWS_ROLE_ARN`, `AWS_ACCOUNT_ID`, `PROJECT_NAME`, `PROJECT_OWNER_EMAIL`.
+And these repository variables: `AWS_ROLE_ARN`, `AWS_ACCOUNT_ID`, `PROJECT_NAME`, `PROJECT_OWNER_EMAIL`.
+`DEV_AWS_REGION` controls the dev stack and defaults to `us-east-1`. Production deploys globally
+to `us-east-1`, `eu-west-1` (Ireland), and `ap-southeast-1` (Singapore). The production
+Convex database remains in `eu-west-1`.
 
 The npm publish workflow must be configured as a Trusted Publisher for the npm package `broods`. Use GitHub Actions with organization/user `beeblastco`, repository `broods`, workflow filename `publish-npm.yaml`, and allowed action `npm publish`. Do not commit `.npmrc` files or npm tokens; Trusted Publishing does not require `NPM_TOKEN`.
 

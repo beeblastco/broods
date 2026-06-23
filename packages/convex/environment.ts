@@ -12,7 +12,7 @@ import { getOwnedEnvironment } from "./model/ownership/environment";
 import { getOwnedProject, getProjectForRole } from "./model/ownership/project";
 import { environmentsFields } from "./schema";
 
-const deploymentRegion = v.union(v.literal("ap-southeast-1"), v.literal("eu-central-1"), v.literal("us-east-1"));
+const deploymentRegion = v.union(v.literal("ap-southeast-1"), v.literal("eu-west-1"), v.literal("us-east-1"));
 
 const environmentDoc = v.object({
     ...environmentsFields,

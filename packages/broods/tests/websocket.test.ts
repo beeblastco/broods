@@ -121,7 +121,7 @@ test("websocket client can be constructed without options", () => {
 test("websocket client lets the gateway URL override an HTTP core host", () => {
   process.env.BROODS_WEBSOCKET_URL = "wss://ws.example";
   const client = new BroodsWebSocketClient({
-    host: "neqw2f4jkhicsoyybmb5lckebm0fsrgb.lambda-url.eu-central-1.on.aws",
+    host: "neqw2f4jkhicsoyybmb5lckebm0fsrgb.lambda-url.eu-west-1.on.aws",
     apiKey: "test-key",
     WebSocket: FakeWebSocket,
   });
@@ -140,7 +140,7 @@ test("websocket client explains Lambda Function URL upgrade failures", async () 
   }
   let error: Error | undefined;
   const client = new BroodsWebSocketClient({
-    host: "https://neqw2f4jkhicsoyybmb5lckebm0fsrgb.lambda-url.eu-central-1.on.aws",
+    host: "https://neqw2f4jkhicsoyybmb5lckebm0fsrgb.lambda-url.eu-west-1.on.aws",
     apiKey: "test-key",
     WebSocket: FailingWebSocket,
   });

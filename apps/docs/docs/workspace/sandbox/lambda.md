@@ -46,12 +46,40 @@ sst deploy ──creates──▶ ECR repo (per region)  ◀──pushes── l
   image into the now-existing repo → re-deploy with the flag `true` and the functions create.
   Harness env/IAM always carry the deterministic function names/ARNs, so flipping the flag is
   the only change needed on the second pass.
-- **The flag is per-stage in `deploy.yaml`**, because `dev` and `production` deploy to
-  different regions that bootstrap independently. The resolve step picks
-  `SANDBOX_IMAGE_READY_DEV` (falls back to the legacy repo-wide `SANDBOX_IMAGE_READY`) for
-  `dev` and `SANDBOX_IMAGE_READY_PRODUCTION` (default `false`) for `production`. So a region
-  whose image isn't mirrored yet can keep its flag `false` while the other stays `true` —
-  setting one global flag `true` would otherwise break the unbootstrapped region's deploy.
+- **The flag is per-stage/region in `deploy.yaml`**, because each region bootstraps
+  independently. The resolve step picks `SANDBOX_IMAGE_READY_DEV` (falling back to the
+  legacy repo-wide `SANDBOX_IMAGE_READY`) for `dev`, and
+  `SANDBOX_IMAGE_READY_PRODUCTION_{US_EAST_1,EU_WEST_1,AP_SOUTHEAST_1}` for the three
+  production targets. A region whose image is not mirrored yet can keep its flag `false`
+  while another stays `true`.
+
+## Lambda MicroVM prerequisites
+
+The SST stack also creates the AWS Lambda MicroVM prerequisites in the same region as the
+core stack:
+
+- `microvmArtifactsBucketName` — account-regional S3 bucket for zipped MicroVM image
+  artifacts under `microvm-images/`.
+- `microvmBuildRoleArn` — build role for `CreateMicrovmImage` / `UpdateMicrovmImage`.
+- `microvmExecutionRoleArn` — runtime role for `RunMicrovm` and CloudWatch logs.
+
+General-purpose S3 buckets use the account-regional namespace naming convention:
+
+```text
+[stage-]broods-<service>-<account-id>-<region>-an
+```
+
+Non-bucket AWS resources use the same order without the `-an` suffix:
+
+```text
+[stage-]broods-<service>-<account-id>-<region>
+```
+
+The dev AWS stack defaults to `us-east-1` for Lambda MicroVM support. Production deploys
+to `us-east-1`, `eu-west-1`, and `ap-southeast-1` as separate SST production stages so
+regional Pulumi state does not collide. Lambda MicroVM prerequisites are currently skipped
+in `ap-southeast-1` because the feature is not available there yet. The production Convex
+database remains in `eu-west-1`.
 
 ## Config
 

@@ -25,7 +25,7 @@ jobs:
       id-token: write
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-      AWS_REGION: ${{ vars.AWS_REGION }}
+      AWS_REGION: ${{ vars.DOCS_AWS_REGION || vars.PRODUCTION_AWS_REGION || 'eu-west-1' }}
       AWS_ROLE_ARN: ${{ vars.AWS_ROLE_ARN }}
       DOCS_S3_BUCKET: ${{ vars.DOCS_S3_BUCKET }}
       DOCS_DOMAIN: ${{ vars.DOCS_DOMAIN }}

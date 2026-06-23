@@ -65,7 +65,7 @@ mock.module("../functions/_shared/s3.ts", () => ({
 }));
 
 beforeEach(() => {
-  process.env.AWS_REGION = "eu-central-1";
+  process.env.AWS_REGION = "us-east-1";
   process.env.FILESYSTEM_BUCKET_NAME = "filesystem-bucket";
   process.env.SANDBOX_FN_MOUNT_NET = "sandbox-mount-net";
   process.env.SANDBOX_FN_MOUNT_NONET = "sandbox-mount-nonet";

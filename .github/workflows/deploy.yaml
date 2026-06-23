@@ -1,6 +1,6 @@
 # Deploy pipeline.
 # `main` = SaaS production: PR CI already validated, skip re-validation and
-#   deploy directly (Convex storage provider).
+#   deploy directly to the three production regions (Convex storage provider).
 # `dev` = OSS / community staging: re-validates (typecheck + test + build)
 #   before deploying. Uses Convex storage when the development environment
 #   provides CONVEX_URL + CONVEX_DEPLOY_KEY, otherwise DynamoDB.
@@ -36,7 +36,7 @@ jobs:
     permissions:
       contents: read
     env:
-      AWS_REGION: ${{ vars.AWS_REGION }}
+      AWS_REGION: ${{ vars.DEV_AWS_REGION || 'us-east-1' }}
       CI: "true"
       # sst.config.ts reads these at runtime (no in-source defaults); postinstall
       # `sst install` fails without them.
@@ -72,7 +72,7 @@ jobs:
     runs-on: ubuntu-24.04
     # Resolves CONVEX_URL/CONVEX_DEPLOY_KEY from the matching environment:
     # production (prod Convex) on main, development (dev Convex) otherwise.
-    environment: ${{ github.ref == 'refs/heads/main' && 'production' || 'development' }}
+    environment: ${{ (github.ref == 'refs/heads/main' || startsWith(github.event.inputs.stage || '', 'production')) && 'production' || 'development' }}
     concurrency:
       group: ${{ github.workflow }}-deploy-${{ github.event_name == 'workflow_dispatch' && inputs.stage || github.ref_name }}
       cancel-in-progress: false
@@ -81,8 +81,7 @@ jobs:
       id-token: write
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-      DEFAULT_AWS_REGION: ${{ vars.AWS_REGION }}
-      PRODUCTION_AWS_REGION: ${{ vars.PRODUCTION_AWS_REGION }}
+      DEFAULT_AWS_REGION: ${{ vars.DEV_AWS_REGION || 'us-east-1' }}
       AWS_ROLE_ARN: ${{ vars.AWS_ROLE_ARN }}
       # Account/project identity for resource names, IAM ARNs, and tags. sst.config.ts
       # falls back to placeholders when unset, so set these repo vars for deploys to
@@ -105,22 +104,24 @@ jobs:
       ACCOUNT_OPENAI_ORGANIZATION: ${{ vars.ACCOUNT_OPENAI_ORGANIZATION }}
       ACCOUNT_OPENAI_PROJECT: ${{ vars.ACCOUNT_OPENAI_PROJECT }}
       ACCOUNT_BEDROCK_API_KEY: ${{ secrets.ACCOUNT_BEDROCK_API_KEY }}
-      ACCOUNT_BEDROCK_REGION: ${{ vars.ACCOUNT_BEDROCK_REGION || vars.AWS_REGION }}
+      ACCOUNT_BEDROCK_REGION: ${{ vars.ACCOUNT_BEDROCK_REGION || vars.DEV_AWS_REGION || 'us-east-1' }}
       ACCOUNT_BEDROCK_ACCESS_KEY_ID: ${{ secrets.ACCOUNT_BEDROCK_ACCESS_KEY_ID }}
       ACCOUNT_BEDROCK_SECRET_ACCESS_KEY: ${{ secrets.ACCOUNT_BEDROCK_SECRET_ACCESS_KEY }}
       ACCOUNT_BEDROCK_SESSION_TOKEN: ${{ secrets.ACCOUNT_BEDROCK_SESSION_TOKEN }}
       ACCOUNT_GATEWAY_API_KEY: ${{ secrets.ACCOUNT_GATEWAY_API_KEY }}
       ENABLE_DIRECT_API: ${{ vars.ENABLE_DIRECT_API || 'false' }}
       ENABLE_WEBSOCKET: ${{ vars.ENABLE_WEBSOCKET || 'false' }}
-      # Create the image-based sandbox Lambdas only after the arm64 image is in THIS stage's
-      # region ECR repo. The flag is per-stage because dev and production deploy to different
-      # regions that bootstrap independently: leave a stage's flag unset for its region's first
-      # deploy (creates the empty repo, functions skipped), then set it to 'true' once
-      # lambda-sanbdox CI has mirrored the image. Resolved per-stage in the step below.
-      # dev falls back to the legacy repo-wide SANDBOX_IMAGE_READY for backward compatibility.
+      # Create the image-based sandbox Lambdas only after the arm64 image is in a target's
+      # regional ECR repo. Leave a target's flag unset for its region's first deploy
+      # (creates the empty repo, functions skipped), then set it to 'true' once
+      # lambda-sanbdox CI has mirrored the image. Dev falls back to the legacy repo-wide
+      # SANDBOX_IMAGE_READY for backward compatibility.
       # See docs/workspace/sandbox/lambda.md.
       SANDBOX_IMAGE_READY_DEV: ${{ vars.SANDBOX_IMAGE_READY_DEV || vars.SANDBOX_IMAGE_READY || 'false' }}
       SANDBOX_IMAGE_READY_PRODUCTION: ${{ vars.SANDBOX_IMAGE_READY_PRODUCTION || 'false' }}
+      SANDBOX_IMAGE_READY_PRODUCTION_US_EAST_1: ${{ vars.SANDBOX_IMAGE_READY_PRODUCTION_US_EAST_1 || vars.SANDBOX_IMAGE_READY_PRODUCTION || 'false' }}
+      SANDBOX_IMAGE_READY_PRODUCTION_EU_WEST_1: ${{ vars.SANDBOX_IMAGE_READY_PRODUCTION_EU_WEST_1 || vars.SANDBOX_IMAGE_READY_PRODUCTION || 'false' }}
+      SANDBOX_IMAGE_READY_PRODUCTION_AP_SOUTHEAST_1: ${{ vars.SANDBOX_IMAGE_READY_PRODUCTION_AP_SOUTHEAST_1 || vars.SANDBOX_IMAGE_READY_PRODUCTION || 'false' }}
       NATS_URL: ${{ secrets.NATS_URL }}
       NATS_TOKEN: ${{ secrets.NATS_TOKEN }}
       # Durable Lambda logs/traces. The endpoint is non-secret; the Basic auth
@@ -150,26 +151,45 @@ jobs:
         run: |
           set -euo pipefail
 
+          sandbox_ready_for_region() {
+            case "$1" in
+              us-east-1) echo "${SANDBOX_IMAGE_READY_PRODUCTION_US_EAST_1:-false}" ;;
+              eu-west-1) echo "${SANDBOX_IMAGE_READY_PRODUCTION_EU_WEST_1:-false}" ;;
+              ap-southeast-1) echo "${SANDBOX_IMAGE_READY_PRODUCTION_AP_SOUTHEAST_1:-false}" ;;
+              *) echo "${SANDBOX_IMAGE_READY_PRODUCTION:-false}" ;;
+            esac
+          }
+
+          production_targets() {
+            for region in us-east-1 eu-west-1 ap-southeast-1; do
+              echo "production-${region}|${region}|$(sandbox_ready_for_region "$region")"
+            done
+          }
+
           if [[ -n "${INPUT_STAGE:-}" ]]; then
-            STAGE="$INPUT_STAGE"
+            if [[ "$INPUT_STAGE" == "production" ]]; then
+              DEPLOY_TARGETS="$(production_targets)"
+            elif [[ "$INPUT_STAGE" == production-* ]]; then
+              TARGET_REGION="${INPUT_STAGE#production-}"
+              DEPLOY_TARGETS="${INPUT_STAGE}|${TARGET_REGION}|$(sandbox_ready_for_region "$TARGET_REGION")"
+            else
+              DEPLOY_TARGETS="${INPUT_STAGE}|${DEFAULT_AWS_REGION:-}|${SANDBOX_IMAGE_READY_DEV:-false}"
+            fi
           elif [[ "$GITHUB_REF" == "refs/heads/main" ]]; then
-            STAGE="production"
+            DEPLOY_TARGETS="$(production_targets)"
           else
-            STAGE="dev"
+            DEPLOY_TARGETS="dev|${DEFAULT_AWS_REGION:-}|${SANDBOX_IMAGE_READY_DEV:-false}"
           fi
 
-          if [[ "$STAGE" == "production" ]]; then
-            AWS_REGION="${PRODUCTION_AWS_REGION:-}"
-            SANDBOX_IMAGE_READY="${SANDBOX_IMAGE_READY_PRODUCTION:-false}"
-          else
-            AWS_REGION="${DEFAULT_AWS_REGION:-}"
-            SANDBOX_IMAGE_READY="${SANDBOX_IMAGE_READY_DEV:-false}"
-          fi
-
-          if [[ -z "${AWS_REGION:-}" ]]; then
-            echo "Missing AWS region for stage: $STAGE" >&2
-            exit 1
-          fi
+          while IFS='|' read -r target_stage target_region target_sandbox_ready; do
+            if [[ -z "${target_stage:-}" ]]; then
+              continue
+            fi
+            if [[ -z "${target_region:-}" ]]; then
+              echo "Missing AWS region for stage: $target_stage" >&2
+              exit 1
+            fi
+          done <<< "$DEPLOY_TARGETS"
 
           if [[ -z "${AWS_ROLE_ARN:-}" ]]; then
             echo "Missing required repository variable: AWS_ROLE_ARN" >&2
@@ -186,9 +206,12 @@ jobs:
             exit 1
           fi
 
-          echo "SST_STAGE=$STAGE" >> "$GITHUB_ENV"
-          echo "AWS_REGION=$AWS_REGION" >> "$GITHUB_ENV"
-          echo "SANDBOX_IMAGE_READY=$SANDBOX_IMAGE_READY" >> "$GITHUB_ENV"
+          {
+            echo "DEPLOY_TARGETS<<EOF"
+            echo "$DEPLOY_TARGETS"
+            echo "EOF"
+            echo "AWS_REGION=${DEFAULT_AWS_REGION:-us-east-1}"
+          } >> "$GITHUB_ENV"
 
       - name: Checkout repository
         uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
@@ -213,7 +236,13 @@ jobs:
         working-directory: apps/core
         run: |
           set -euo pipefail
-          bunx sst unlock --stage "$SST_STAGE" || true
+          while IFS='|' read -r target_stage target_region target_sandbox_ready; do
+            if [[ -z "${target_stage:-}" ]]; then
+              continue
+            fi
+            echo "Clearing stale SST lock for $target_stage in $target_region"
+            AWS_REGION="$target_region" AWS_DEFAULT_REGION="$target_region" bunx sst unlock --stage "$target_stage" || true
+          done <<< "$DEPLOY_TARGETS"
 
       - name: Deploy SST app
         working-directory: apps/core
@@ -245,13 +274,25 @@ jobs:
             fi
           done
 
-          for attempt in 1 2 3; do
-            echo "Deploy attempt $attempt/3"
-            if bunx sst deploy --stage "$SST_STAGE" --print-logs; then
-              exit 0
+          while IFS='|' read -r target_stage target_region target_sandbox_ready; do
+            if [[ -z "${target_stage:-}" ]]; then
+              continue
             fi
-            echo "Deploy failed, retrying in 15s..."
-            sleep 15
-          done
-          echo "All deploy attempts failed" >&2
-          exit 1
+
+            for attempt in 1 2 3; do
+              echo "Deploy $target_stage in $target_region attempt $attempt/3"
+              if AWS_REGION="$target_region" \
+                AWS_DEFAULT_REGION="$target_region" \
+                SST_STAGE="$target_stage" \
+                SANDBOX_IMAGE_READY="$target_sandbox_ready" \
+                bunx sst deploy --stage "$target_stage" --print-logs; then
+                break
+              fi
+              if [[ "$attempt" == "3" ]]; then
+                echo "Deploy failed for $target_stage in $target_region" >&2
+                exit 1
+              fi
+              echo "Deploy failed, retrying in 15s..."
+              sleep 15
+            done
+          done <<< "$DEPLOY_TARGETS"

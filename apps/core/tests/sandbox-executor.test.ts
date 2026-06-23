@@ -232,7 +232,7 @@ beforeEach(() => {
   process.env.AWS_ACCESS_KEY_ID = "test-access-key";
   process.env.AWS_SECRET_ACCESS_KEY = "test-secret-key";
   process.env.AWS_SESSION_TOKEN = "test-session-token";
-  process.env.AWS_REGION = "eu-central-1";
+  process.env.AWS_REGION = "us-east-1";
   process.env.SANDBOX_MOUNT_ROLE_ARN = "arn:aws:iam::123456789012:role/sandbox-s3mount";
   process.env.FILESYSTEM_BUCKET_NAME = "workspace-bucket";
   process.env.SKILLS_BUCKET_NAME = "skills-bucket";
@@ -460,8 +460,8 @@ describe("createSandboxExecutor", () => {
         AWS_ACCESS_KEY_ID: "scoped-access-key",
         AWS_SECRET_ACCESS_KEY: "scoped-secret-key",
         AWS_SESSION_TOKEN: "scoped-session-token",
-        AWS_REGION: "eu-central-1",
-        AWS_DEFAULT_REGION: "eu-central-1",
+        AWS_REGION: "us-east-1",
+        AWS_DEFAULT_REGION: "us-east-1",
       },
     }));
     // The sandbox gets role-scoped credentials, never the harness runtime's own.
@@ -469,7 +469,7 @@ describe("createSandboxExecutor", () => {
     expect(assumeRoleInput.RoleArn).toBe("arn:aws:iam::123456789012:role/sandbox-s3mount");
     expect(assumeRoleInput.Policy).toContain(`workspace-bucket/sandbox/${NS}/`);
     expect(daytonaExecuteCommandMock).toHaveBeenCalledWith(
-      `mountpoint -q '/mnt/workspaces/${NS}' || sudo -E mount-s3 --uid "$(id -u)" --gid "$(id -g)" '--allow-delete' '--allow-overwrite' '--allow-other' '--prefix' 'sandbox/${NS}/' '--region' 'eu-central-1' 'workspace-bucket' '/mnt/workspaces/${NS}'`,
+      `mountpoint -q '/mnt/workspaces/${NS}' || sudo -E mount-s3 --uid "$(id -u)" --gid "$(id -g)" '--allow-delete' '--allow-overwrite' '--allow-other' '--prefix' 'sandbox/${NS}/' '--region' 'us-east-1' 'workspace-bucket' '/mnt/workspaces/${NS}'`,
     );
     expect(daytonaExecuteCommandMock).toHaveBeenCalledWith(
       "echo hi && ls",

@@ -35,7 +35,7 @@ export const environmentsFields = {
     kind: v.optional(v.union(v.literal("development"), v.literal("production"), v.literal("custom"))),
     /** Lambda deploy region for promoted/deployable environments. */
     deploymentRegion: v.optional(
-        v.union(v.literal("ap-southeast-1"), v.literal("eu-central-1"), v.literal("us-east-1")),
+        v.union(v.literal("ap-southeast-1"), v.literal("eu-west-1"), v.literal("us-east-1")),
     ),
     isDefault: v.boolean(),
     updatedAt: v.number(),

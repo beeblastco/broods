@@ -5,9 +5,9 @@
 // No in-source defaults — provided via repo vars / local env (see .env.example).
 // CI injects them into the validate + deploy jobs; forks must set them to run
 // `sst install` / deploy.
-const AWS_ACCOUNT_ID = process.env.AWS_ACCOUNT_ID!;
-const PROJECT_NAME = process.env.PROJECT_NAME!;
-const PROJECT_OWNER_EMAIL = process.env.PROJECT_OWNER_EMAIL!;
+const AWS_ACCOUNT_ID = requiredEnv("AWS_ACCOUNT_ID");
+const PROJECT_NAME = requiredEnv("PROJECT_NAME");
+const PROJECT_OWNER_EMAIL = requiredEnv("PROJECT_OWNER_EMAIL");
 const AWS_PROFILE = process.env.CI ? undefined : (process.env.AWS_PROFILE ?? "default");
 const ENABLE_DIRECT_API = parseBooleanEnv("ENABLE_DIRECT_API", false);
 const ENABLE_WEBSOCKET = parseBooleanEnv("ENABLE_WEBSOCKET", false);
@@ -47,8 +47,8 @@ const KUBERNETES_SANDBOX_IMAGE_PULL_SECRETS = process.env.KUBERNETES_SANDBOX_IMA
 // `sst.Secret` indirection. Required ones use `!` (CI validates they are set
 // before deploy); optional provider creds default to empty so stages that do
 // not use them still deploy.
-const ADMIN_ACCOUNT_SECRET = process.env.ADMIN_ACCOUNT_SECRET!;
-const ACCOUNT_CONFIG_ENCRYPTION_SECRET = process.env.ACCOUNT_CONFIG_ENCRYPTION_SECRET!;
+const ADMIN_ACCOUNT_SECRET = requiredEnv("ADMIN_ACCOUNT_SECRET");
+const ACCOUNT_CONFIG_ENCRYPTION_SECRET = requiredEnv("ACCOUNT_CONFIG_ENCRYPTION_SECRET");
 const SERVICE_AUTH_SECRET = process.env.SERVICE_AUTH_SECRET ?? "";
 const DAYTONA_API_KEY = process.env.DAYTONA_API_KEY ?? "";
 const KUBERNETES_SANDBOX_KUBECONFIG = process.env.KUBERNETES_SANDBOX_KUBECONFIG?.trim() ?? "";
@@ -67,12 +67,36 @@ function awsRegion(): string {
     throw new Error("AWS_REGION must be set in CI");
   }
 
-  return "eu-central-1";
+  return "us-east-1";
+}
+
+function requiredEnv(name: string): string {
+  const value = process.env[name]?.trim();
+  if (!value) {
+    throw new Error(`${name} must be set`);
+  }
+  return value;
 }
 
 function resourceName(service: string, stage: string, region: string): string {
-  const stagePrefix = stage === "production" ? "" : `${stage}-`;
-  return `${stagePrefix}${PROJECT_NAME}-${service}-${region}-${AWS_ACCOUNT_ID}`;
+  const stagePrefix = isProductionStage(stage) ? "" : `${stage}-`;
+  return `${stagePrefix}${PROJECT_NAME}-${service}-${AWS_ACCOUNT_ID}-${region}`;
+}
+
+function accountRegionalBucketName(service: string, stage: string, region: string): string {
+  const name = `${resourceName(service, stage, region)}-an`;
+  if (name.length > 63) {
+    throw new Error(`S3 bucket name is too long (${name.length}/63): ${name}`);
+  }
+  return name;
+}
+
+function isProductionStage(stage: string): boolean {
+  return stage === "production" || stage.startsWith("production-");
+}
+
+function microvmPrereqsEnabled(region: string): boolean {
+  return region !== "ap-southeast-1";
 }
 
 function parseBooleanEnv(name: string, defaultValue: boolean): boolean {
@@ -90,6 +114,29 @@ function parseBooleanEnv(name: string, defaultValue: boolean): boolean {
   }
 
   throw new Error(`${name} must be a boolean-like value`);
+}
+
+function ecrRepositoryExists(name: string, region: string): boolean {
+  try {
+    const result = Bun.spawnSync({
+      cmd: [
+        "aws",
+        "ecr",
+        "describe-repositories",
+        "--repository-names",
+        name,
+        "--region",
+        region,
+        "--output",
+        "json",
+      ],
+      stdout: "ignore",
+      stderr: "ignore",
+    });
+    return result.success;
+  } catch {
+    return false;
+  }
 }
 
 function sandboxRuntimePermissions(
@@ -160,6 +207,8 @@ function denyUnlessProjectPrincipal(stage: string, region: string) {
           `arn:aws:iam::${AWS_ACCOUNT_ID}:role/${resourceName("sandbox-s3files", stage, region)}`,
           // Scoped role assumed by the harness for provider-sandbox mount-s3 credentials.
           `arn:aws:iam::${AWS_ACCOUNT_ID}:role/${resourceName("sandbox-s3mount", stage, region)}`,
+          `arn:aws:iam::${AWS_ACCOUNT_ID}:role/${resourceName("microvm-build", stage, region)}`,
+          `arn:aws:iam::${AWS_ACCOUNT_ID}:role/${resourceName("microvm-execution", stage, region)}`,
           `arn:aws:iam::${AWS_ACCOUNT_ID}:role/github-actions-aws-infra-deploy`,
           `arn:aws:iam::${AWS_ACCOUNT_ID}:role/github-actions-aws-sst-infra-deploy`,
           `arn:aws:iam::${AWS_ACCOUNT_ID}:root`,
@@ -176,8 +225,8 @@ export default $config({
 
     return {
       name: PROJECT_NAME,
-      removal: stage === "production" ? "retain" : "remove",
-      protect: stage === "production",
+      removal: isProductionStage(stage) ? "retain" : "remove",
+      protect: isProductionStage(stage),
       home: "aws",
       providers: {
         aws: {
@@ -203,7 +252,8 @@ export default $config({
     // Production = SaaS = Convex storage. Other stages = DynamoDB (default).
     // Async tools, dedupe, conversations still rely on DDB until those modules
     // are lifted into the StorageProvider abstraction in a follow-up.
-    const isProduction = stage === "production";
+    const isProduction = isProductionStage(stage);
+    const enableMicrovmPrereqs = microvmPrereqsEnabled(region);
     // Convex storage is used whenever Convex credentials are supplied: always on
     // production, and opt-in on any other stage (e.g. dev) by setting CONVEX_URL +
     // CONVEX_DEPLOY_KEY. Stages without them fall back to DynamoDB. When a stage
@@ -243,9 +293,12 @@ export default $config({
       cronSchedules: resourceName("cron-schedules", stage, region),
       harnessProcessing: resourceName("harness-processing", stage, region),
       accountManage: resourceName("account-manage", stage, region),
-      filesystem: resourceName("filesystem", stage, region),
-      skills: resourceName("skills", stage, region),
-      toolBundles: resourceName("tool-bundles", stage, region),
+      filesystem: accountRegionalBucketName("filesystem", stage, region),
+      skills: accountRegionalBucketName("skills", stage, region),
+      toolBundles: accountRegionalBucketName("tool-bundles", stage, region),
+      microvmArtifacts: accountRegionalBucketName("microvm-artifacts", stage, region),
+      microvmBuildRole: resourceName("microvm-build", stage, region),
+      microvmExecutionRole: resourceName("microvm-execution", stage, region),
     };
 
     // ADMIN_ACCOUNT_SECRET, ACCOUNT_CONFIG_ENCRYPTION_SECRET, SERVICE_AUTH_SECRET,
@@ -290,7 +343,7 @@ export default $config({
       },
       primaryIndex: { hashKey: "rateLimitKey" },
       ttl: "expiresAt",
-      deletionProtection: stage === "production",
+      deletionProtection: isProduction,
       transform: {
         table: {
           name: names.accountSignupRateLimits,
@@ -386,7 +439,7 @@ export default $config({
         createdAt: "string",
       },
       primaryIndex: { hashKey: "conversationKey", rangeKey: "createdAt" },
-      deletionProtection: stage === "production",
+      deletionProtection: isProduction,
       transform: {
         table: {
           name: names.conversations,
@@ -400,7 +453,7 @@ export default $config({
       },
       primaryIndex: { hashKey: "eventId" },
       ttl: "expiresAt",
-      deletionProtection: stage === "production",
+      deletionProtection: isProduction,
       transform: {
         table: {
           name: names.processedEvents,
@@ -420,7 +473,7 @@ export default $config({
             sk: "string",
           },
           primaryIndex: { hashKey: "pk", rangeKey: "sk" },
-          deletionProtection: stage === "production",
+          deletionProtection: isProduction,
           transform: {
             table: {
               name: names.usage,
@@ -434,7 +487,7 @@ export default $config({
       },
       primaryIndex: { hashKey: "eventId" },
       ttl: "expiresAt",
-      deletionProtection: stage === "production",
+      deletionProtection: isProduction,
       transform: {
         table: {
           name: names.asyncAgentResult,
@@ -451,7 +504,7 @@ export default $config({
         ParentEventIdIndex: { hashKey: "parentEventId" },
       },
       ttl: "expiresAt",
-      deletionProtection: stage === "production",
+      deletionProtection: isProduction,
       transform: {
         table: {
           name: names.asyncToolResult,
@@ -466,7 +519,7 @@ export default $config({
       },
       primaryIndex: { hashKey: "instanceKey" },
       ttl: "expiresAt",
-      deletionProtection: stage === "production",
+      deletionProtection: isProduction,
       transform: {
         table: {
           name: names.persistentSandboxInstance,
@@ -476,12 +529,14 @@ export default $config({
     const filesystemBucketArn = `arn:aws:s3:::${names.filesystem}`;
     const skillsBucketArn = `arn:aws:s3:::${names.skills}`;
     const toolBundlesBucketArn = `arn:aws:s3:::${names.toolBundles}`;
+    const microvmArtifactsBucketArn = `arn:aws:s3:::${names.microvmArtifacts}`;
     const filesystemBucket = new sst.aws.Bucket("Filesystem", {
       versioning: true,
       policy: [denyUnlessProjectPrincipal(stage, region)],
       transform: {
         bucket: {
           bucket: names.filesystem,
+          bucketNamespace: "account-regional",
         },
         publicAccessBlock: {
           blockPublicAcls: true,
@@ -498,6 +553,7 @@ export default $config({
       transform: {
         bucket: {
           bucket: names.skills,
+          bucketNamespace: "account-regional",
         },
         publicAccessBlock: {
           blockPublicAcls: true,
@@ -514,6 +570,7 @@ export default $config({
       transform: {
         bucket: {
           bucket: names.toolBundles,
+          bucketNamespace: "account-regional",
         },
         publicAccessBlock: {
           blockPublicAcls: true,
@@ -524,10 +581,117 @@ export default $config({
       },
     });
 
+    const microvmArtifactsBucket = enableMicrovmPrereqs
+      ? new sst.aws.Bucket("MicrovmArtifacts", {
+          versioning: true,
+          policy: [denyUnlessProjectPrincipal(stage, region)],
+          transform: {
+            bucket: {
+              bucket: names.microvmArtifacts,
+              bucketNamespace: "account-regional",
+            },
+            publicAccessBlock: {
+              blockPublicAcls: true,
+              ignorePublicAcls: true,
+              blockPublicPolicy: true,
+              restrictPublicBuckets: true,
+            },
+          },
+        })
+      : null;
+
+    const microvmRoleTrustPolicy = JSON.stringify({
+      Version: "2012-10-17",
+      Statement: [
+        {
+          Effect: "Allow",
+          Principal: { Service: "lambda.amazonaws.com" },
+          Action: "sts:AssumeRole",
+          Condition: {
+            StringEquals: {
+              "aws:SourceAccount": AWS_ACCOUNT_ID,
+            },
+            ArnLike: {
+              "aws:SourceArn": [
+                `arn:aws:lambda:${region}:${AWS_ACCOUNT_ID}:microvm-image:*`,
+                `arn:aws:lambda:${region}:${AWS_ACCOUNT_ID}:microvm-image/*`,
+              ],
+            },
+          },
+        },
+      ],
+    });
+
+    const microvmBuildRole = enableMicrovmPrereqs
+      ? new aws.iam.Role("MicrovmBuildRole", {
+          name: names.microvmBuildRole,
+          assumeRolePolicy: microvmRoleTrustPolicy,
+        })
+      : null;
+
+    if (microvmBuildRole) {
+      new aws.iam.RolePolicy("MicrovmBuildRolePolicy", {
+        role: microvmBuildRole.id,
+        policy: JSON.stringify({
+          Version: "2012-10-17",
+          Statement: [
+            {
+              Sid: "ReadMicrovmArtifacts",
+              Effect: "Allow",
+              Action: ["s3:GetObject"],
+              Resource: [`${microvmArtifactsBucketArn}/microvm-images/*`],
+            },
+            {
+              Sid: "WriteMicrovmBuildLogs",
+              Effect: "Allow",
+              Action: ["logs:CreateLogGroup", "logs:CreateLogStream", "logs:PutLogEvents"],
+              Resource: [`arn:aws:logs:${region}:${AWS_ACCOUNT_ID}:log-group:/aws/lambda-microvms/*`],
+            },
+            {
+              Sid: "PullPrivateEcrBaseImages",
+              Effect: "Allow",
+              Action: ["ecr:GetAuthorizationToken"],
+              Resource: ["*"],
+            },
+            {
+              Sid: "PullPrivateEcrLayers",
+              Effect: "Allow",
+              Action: ["ecr:BatchCheckLayerAvailability", "ecr:BatchGetImage", "ecr:GetDownloadUrlForLayer"],
+              Resource: [`arn:aws:ecr:${region}:${AWS_ACCOUNT_ID}:repository/*`],
+            },
+          ],
+        }),
+      });
+    }
+
+    const microvmExecutionRole = enableMicrovmPrereqs
+      ? new aws.iam.Role("MicrovmExecutionRole", {
+          name: names.microvmExecutionRole,
+          assumeRolePolicy: microvmRoleTrustPolicy,
+        })
+      : null;
+
+    if (microvmExecutionRole) {
+      new aws.iam.RolePolicy("MicrovmExecutionRolePolicy", {
+        role: microvmExecutionRole.id,
+        policy: JSON.stringify({
+          Version: "2012-10-17",
+          Statement: [
+            {
+              Sid: "WriteMicrovmRuntimeLogs",
+              Effect: "Allow",
+              Action: ["logs:CreateLogGroup", "logs:CreateLogStream", "logs:PutLogEvents"],
+              Resource: [`arn:aws:logs:${region}:${AWS_ACCOUNT_ID}:log-group:/aws/lambda-microvms/*`],
+            },
+          ],
+        }),
+      });
+    }
+
     // Setup the VPC for the sandbox connection. Uses fck-nat (nat: "ec2") on
     // non-production stages — a t4g.nano-based NAT solution ~10x cheaper than
     // a managed NAT Gateway. Production omits NAT entirely to avoid cost.
-    const sandboxNetwork = new sst.aws.Vpc("SandboxNetwork", {
+    const sandboxNetwork = new sst.aws.Vpc.v1("SandboxNetwork", {
       az: 2, // 2 az same price of 1 az.
       ...(isProduction ? {} : { nat: "ec2" }),
     });
@@ -710,8 +874,8 @@ export default $config({
     });
 
     new aws.vpc.SecurityGroupIngressRule("SandboxS3FilesNfsIngress", {
-      securityGroupId: sandboxNetwork.securityGroups.apply((ids) => ids[0]!),
-      referencedSecurityGroupId: sandboxNetwork.securityGroups.apply((ids) => ids[0]!),
+      securityGroupId: sandboxNetwork.securityGroups[0]!,
+      referencedSecurityGroupId: sandboxNetwork.securityGroups[0]!,
       ipProtocol: "tcp",
       fromPort: 2049,
       toPort: 2049,
@@ -755,6 +919,7 @@ export default $config({
     // land before the sandbox functions can be created (the first deploy creates the empty
     // repo, then re-deploy once the image exists). See docs/workspace/sandbox/lambda.md.
     const sandboxImageRepoName = `beeblast-lambda-sandbox-${AWS_ACCOUNT_ID}-${region}`;
+    const sandboxImageRepoExists = ecrRepositoryExists(sandboxImageRepoName, region);
     const sandboxEcr = new aws.ecr.Repository(
       "SandboxImage",
       {
@@ -766,11 +931,9 @@ export default $config({
       {
         retainOnDelete: isProduction,
         // The repo name is intentionally not PROJECT_NAME-scoped (the external lambda-sanbdox
-        // CI pushes `latest-arm64` to this exact name, and SANDBOX_IMAGE_READY relies on that
-        // image existing). The pre-rename `filthy-panty` stack already created it, so the fresh
-        // `broods` Pulumi state must ADOPT the existing repo instead of recreating it (which
-        // 400s with RepositoryAlreadyExists). Import is a no-op once the repo is in state.
-        import: sandboxImageRepoName,
+        // CI pushes `latest-arm64` to this exact name). Adopt a pre-existing repo when one is
+        // already present; otherwise let the first regional deploy create the empty repo.
+        ...(sandboxImageRepoExists ? { import: sandboxImageRepoName } : {}),
       },
     );
 
@@ -836,7 +999,7 @@ export default $config({
           protocol: "tcp",
           fromPort: 2049,
           toPort: 2049,
-          securityGroups: sandboxNetwork.securityGroups.apply((ids) => ids.slice(0, 1)),
+          securityGroups: sandboxNetwork.securityGroups.slice(0, 1),
           description: "Allow NFS egress to S3 Files mount targets",
         },
       ],
@@ -844,7 +1007,7 @@ export default $config({
     });
     // Allow NFS ingress to the S3 Files mount targets from the no-internet security group.
     new aws.vpc.SecurityGroupIngressRule("SandboxS3FilesNfsIngressNoNet", {
-      securityGroupId: sandboxNetwork.securityGroups.apply((ids) => ids[0]!),
+      securityGroupId: sandboxNetwork.securityGroups[0]!,
       referencedSecurityGroupId: sandboxNoNetSecurityGroup.id,
       ipProtocol: "tcp",
       fromPort: 2049,
@@ -995,6 +1158,13 @@ export default $config({
         FILESYSTEM_BUCKET_NAME: names.filesystem,
         SKILLS_BUCKET_NAME: names.skills,
         TOOL_BUNDLES_BUCKET_NAME: names.toolBundles,
+        ...(microvmBuildRole && microvmExecutionRole
+          ? {
+              MICROVM_ARTIFACTS_BUCKET_NAME: names.microvmArtifacts,
+              MICROVM_BUILD_ROLE_ARN: microvmBuildRole.arn,
+              MICROVM_EXECUTION_ROLE_ARN: microvmExecutionRole.arn,
+            }
+          : {}),
         ENABLE_DIRECT_API: ENABLE_DIRECT_API ? "true" : "false",
         ENABLE_WEBSOCKET: ENABLE_WEBSOCKET ? "true" : "false",
         SANDBOX_FN_MOUNT_NET: names.sandboxMountNet,
@@ -1132,6 +1302,45 @@ export default $config({
             sandboxFunctionArn(names.sandboxNomountNonet),
           ],
         },
+        ...(microvmBuildRole && microvmExecutionRole
+          ? [
+              {
+                actions: [
+                  "lambda:CreateMicrovmImage",
+                  "lambda:UpdateMicrovmImage",
+                  "lambda:DeleteMicrovmImage",
+                  "lambda:DeleteMicrovmImageVersion",
+                  "lambda:GetMicrovmImage",
+                  "lambda:ListMicrovmImages",
+                  "lambda:ListMicrovmImageVersions",
+                  "lambda:ListMicrovmImageBuilds",
+                  "lambda:RunMicrovm",
+                  "lambda:GetMicrovm",
+                  "lambda:ListMicrovms",
+                  "lambda:SuspendMicrovm",
+                  "lambda:ResumeMicrovm",
+                  "lambda:TerminateMicrovm",
+                  "lambda:CreateMicrovmAuthToken",
+                  "lambda:CreateMicrovmShellAuthToken",
+                ],
+                resources: [
+                  `arn:aws:lambda:${region}:${AWS_ACCOUNT_ID}:microvm-image:*`,
+                  `arn:aws:lambda:${region}:${AWS_ACCOUNT_ID}:microvm:*`,
+                ],
+              },
+              {
+                actions: ["lambda:PassNetworkConnector"],
+                resources: [
+                  `arn:aws:lambda:${region}:aws:network-connector:aws-network-connector:*`,
+                  `arn:aws:lambda:${region}:${AWS_ACCOUNT_ID}:network-connector:*`,
+                ],
+              },
+              {
+                actions: ["iam:PassRole"],
+                resources: [microvmBuildRole.arn, microvmExecutionRole.arn],
+              },
+            ]
+          : []),
         {
           actions: ["s3:GetObject", "s3:HeadObject", "s3:PutObject", "s3:DeleteObject"],
           resources: [`${filesystemBucketArn}/*`],
@@ -1156,6 +1365,18 @@ export default $config({
           actions: ["s3:ListBucket"],
           resources: [toolBundlesBucketArn],
         },
+        ...(microvmArtifactsBucket
+          ? [
+              {
+                actions: ["s3:GetObject", "s3:HeadObject", "s3:PutObject", "s3:DeleteObject"],
+                resources: [`${microvmArtifactsBucketArn}/microvm-images/*`],
+              },
+              {
+                actions: ["s3:ListBucket"],
+                resources: [microvmArtifactsBucketArn],
+              },
+            ]
+          : []),
       ],
     });
 
@@ -1224,6 +1445,7 @@ export default $config({
         FILESYSTEM_BUCKET_NAME: names.filesystem,
         SKILLS_BUCKET_NAME: names.skills,
         TOOL_BUNDLES_BUCKET_NAME: names.toolBundles,
+        ...(microvmArtifactsBucket ? { MICROVM_ARTIFACTS_BUCKET_NAME: names.microvmArtifacts } : {}),
         ACCOUNT_SIGNUP_RATE_LIMIT_TABLE_NAME: accountSignupRateLimitTable.name,
         ACCOUNT_SIGNUP_RATE_LIMIT_PER_HOUR: "5",
         ADMIN_ACCOUNT_SECRET,
@@ -1374,6 +1596,18 @@ export default $config({
           actions: ["s3:ListBucket"],
           resources: [toolBundlesBucketArn],
         },
+        ...(microvmArtifactsBucket
+          ? [
+              {
+                actions: ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"],
+                resources: [`${microvmArtifactsBucketArn}/microvm-images/*`],
+              },
+              {
+                actions: ["s3:ListBucket"],
+                resources: [microvmArtifactsBucketArn],
+              },
+            ]
+          : []),
       ],
     });
 
@@ -1400,6 +1634,9 @@ export default $config({
       filesystemBucketName: filesystemBucket.name,
       skillsBucketName: skillsBucket.name,
       toolBundlesBucketName: toolBundlesBucket.name,
+      microvmArtifactsBucketName: microvmArtifactsBucket?.name,
+      microvmBuildRoleArn: microvmBuildRole?.arn,
+      microvmExecutionRoleArn: microvmExecutionRole?.arn,
     };
   },
 });

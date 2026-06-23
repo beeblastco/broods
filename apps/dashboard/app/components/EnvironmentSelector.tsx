@@ -37,12 +37,12 @@ import { Label } from "@/app/components/ui/label";
 import { cn } from "@/app/lib/utils";
 
 type EnvironmentKind = "development" | "production" | "custom";
-type DeploymentRegion = "ap-southeast-1" | "eu-central-1" | "us-east-1";
+type DeploymentRegion = "ap-southeast-1" | "eu-west-1" | "us-east-1";
 
 const regionOptions: Array<{ value: DeploymentRegion; label: string; flag: string; enabled: boolean }> = [
+  { value: "eu-west-1", label: "Europe (Ireland)", flag: "🇮🇪", enabled: true },
   { value: "ap-southeast-1", label: "Asia Pacific (Singapore)", flag: "🇸🇬", enabled: true },
-  { value: "eu-central-1", label: "Europe (Frankfurt)", flag: "🇩🇪", enabled: false },
-  { value: "us-east-1", label: "US East (N. Virginia)", flag: "🇺🇸", enabled: false },
+  { value: "us-east-1", label: "US East (N. Virginia)", flag: "🇺🇸", enabled: true },
 ];
 
 /** Infer environment type for legacy rows that predate the explicit kind field. */
@@ -84,7 +84,7 @@ export function EnvironmentSelector() {
 
   const [createOpen, setCreateOpen] = useState(false);
   const [productionOpen, setProductionOpen] = useState(false);
-  const [productionRegion, setProductionRegion] = useState<DeploymentRegion>("ap-southeast-1");
+  const [productionRegion, setProductionRegion] = useState<DeploymentRegion>("eu-west-1");
   const [newName, setNewName] = useState("");
   const [createMode, setCreateMode] = useState<"empty" | "duplicate">("empty");
   const [duplicateFromId, setDuplicateFromId] =

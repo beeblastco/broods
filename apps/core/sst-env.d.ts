@@ -6,20 +6,88 @@
 
 declare module "sst" {
   export interface Resource {
-    "AccountConfigEncryptionSecret": {
-      "type": "sst.sst.Secret"
-      "value": string
+    "AccountConfig": {
+      "name": string
+      "type": "sst.aws.Dynamo"
     }
-    "AdminAccountSecret": {
-      "type": "sst.sst.Secret"
-      "value": string
+    "AccountManage": {
+      "name": string
+      "type": "sst.aws.Function"
+      "url": string
     }
-    "KubernetesSandboxKubeconfig": {
-      "type": "sst.sst.Secret"
-      "value": string
+    "AccountSignupRateLimit": {
+      "name": string
+      "type": "sst.aws.Dynamo"
     }
-    "SandboxNetwork": {
-      "type": "sst.aws.Vpc"
+    "AccountTool": {
+      "name": string
+      "type": "sst.aws.Dynamo"
+    }
+    "AgentConfig": {
+      "name": string
+      "type": "sst.aws.Dynamo"
+    }
+    "AsyncAgentResult": {
+      "name": string
+      "type": "sst.aws.Dynamo"
+    }
+    "AsyncToolResult": {
+      "name": string
+      "type": "sst.aws.Dynamo"
+    }
+    "Conversations": {
+      "name": string
+      "type": "sst.aws.Dynamo"
+    }
+    "Cron": {
+      "name": string
+      "type": "sst.aws.Dynamo"
+    }
+    "Filesystem": {
+      "name": string
+      "type": "sst.aws.Bucket"
+    }
+    "HarnessProcessing": {
+      "name": string
+      "type": "sst.aws.Function"
+      "url": string
+    }
+    "MicrovmArtifacts": {
+      "name": string
+      "type": "sst.aws.Bucket"
+    }
+    "MockWebhookSubscribe": {
+      "name": string
+      "type": "sst.aws.Function"
+      "url": string
+    }
+    "PersistentSandboxInstance": {
+      "name": string
+      "type": "sst.aws.Dynamo"
+    }
+    "ProcessedEvents": {
+      "name": string
+      "type": "sst.aws.Dynamo"
+    }
+    "SandboxConfig": {
+      "name": string
+      "type": "sst.aws.Dynamo"
+    }
+    "Skills": {
+      "name": string
+      "type": "sst.aws.Bucket"
+    }
+    "ToolBundles": {
+      "name": string
+      "type": "sst.aws.Bucket"
+    }
+    "Usage": {
+      "name": string
+      "type": "sst.aws.Dynamo"
+    }
+    "WorkspaceConfig": {
+      "name": string
+      "type": "sst.aws.Dynamo"
     }
   }
 }
