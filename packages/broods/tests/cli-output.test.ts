@@ -83,12 +83,12 @@ test("formatDeploymentTarget includes project, environment, and dashboard URL", 
   const output = formatDeploymentTarget({
     project: "sandbox-stateless",
     environment: "development",
-    dashboardUrl: "https://dashboard.dev.beeblast.co",
+    dashboardUrl: "https://dashboard.dev.broods.app",
   }, { color: false });
 
   expect(output).toContain("▌ Syncing Development: sandbox-stateless");
   expect(output).toContain("[Development] development (dashboard)");
-  expect(output).toContain("▌ └─ https://dashboard.dev.beeblast.co?project=sandbox-stateless&env=development");
+  expect(output).toContain("▌ └─ https://dashboard.dev.broods.app?project=sandbox-stateless&env=development");
 });
 
 test("formatEnvSync lists the synced env var names", () => {

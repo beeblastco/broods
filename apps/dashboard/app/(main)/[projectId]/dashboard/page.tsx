@@ -10,9 +10,11 @@ import { useMutation, useQuery } from "convex/react";
 import Link from "next/link";
 import { useParams, useSearchParams } from "next/navigation";
 import { useCallback, useState } from "react";
+import { KeyRound } from "lucide-react";
 import { BillingPanel } from "./components/BillingPanel";
 import { MonitoringPanel } from "./components/MonitoringPanel";
 import { ObservabilityKeyPrompt } from "./components/ObservabilityKeyPrompt";
+import { RuntimeKeyDialog } from "./components/RuntimeKeyDialog";
 import { TokensUsagePanel } from "./components/TokensUsagePanel";
 import { TracingPanel } from "./components/TracingPanel";
 
@@ -68,6 +70,9 @@ export default function DashboardPage() {
   // Scoped to the env it occurred in so a stale error never leaks onto another
   // environment after switching.
   const [keyError, setKeyError] = useState<{ envId: string; msg: string } | null>(null);
+  // Reveal dialog (key + SDK usage). `justCreated` reframes it right after a mint.
+  const [keyDialogOpen, setKeyDialogOpen] = useState(false);
+  const [keyJustCreated, setKeyJustCreated] = useState(false);
 
   // The key is stored encrypted at rest, so the owner recovers it here without
   // re-minting — logs/traces just stream. Null only when the environment has no
@@ -93,6 +98,10 @@ export default function DashboardPage() {
         const result = await ensureKey({ projectId: projectId, environmentId: activeEnvId });
         if (result.rawApiKey) {
           setGenerated({ endpointId: result.endpointId, key: result.rawApiKey });
+          // Surface the key + SDK usage immediately so a dashboard-first user knows
+          // how to wire it into their code, not just that streaming now works.
+          setKeyJustCreated(true);
+          setKeyDialogOpen(true);
         } else {
           setKeyError({ envId: activeEnvId, msg: "Couldn't load the key — try again." });
         }
@@ -239,9 +248,25 @@ export default function DashboardPage() {
             contentMaxWidth,
           )}
         >
-          <h2 className="text-xl font-semibold text-foreground">
-            {activeLabel}
-          </h2>
+          <div className="flex items-center justify-between gap-3">
+            <h2 className="text-xl font-semibold text-foreground">
+              {activeLabel}
+            </h2>
+            {observabilityApiKey && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="cursor-pointer"
+                onClick={() => {
+                  setKeyJustCreated(false);
+                  setKeyDialogOpen(true);
+                }}
+              >
+                <KeyRound className="size-3.5 mr-1" />
+                API key
+              </Button>
+            )}
+          </div>
         </div>
         <div
           className={cn(
@@ -253,6 +278,15 @@ export default function DashboardPage() {
           {renderPanel()}
         </div>
       </div>
+
+      {observabilityApiKey && (
+        <RuntimeKeyDialog
+          open={keyDialogOpen}
+          onOpenChange={setKeyDialogOpen}
+          apiKey={observabilityApiKey}
+          justCreated={keyJustCreated}
+        />
+      )}
     </div>
   );
 }

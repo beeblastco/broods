@@ -2,9 +2,9 @@
   "name": "@broods/demo-channel-slack", "type": "module", "private": true,
   "scripts": {
     "check": "tsc --noEmit",
-    "dev": "broods dev --dashboard-url https://dashboard.dev.beeblast.co --project channel-slack",
-    "diff": "broods diff --dashboard-url https://dashboard.dev.beeblast.co --project channel-slack",
-    "deploy": "broods deploy --dashboard-url https://dashboard.dev.beeblast.co --project channel-slack"
+    "dev": "broods dev --dashboard-url https://dashboard.dev.broods.app --project channel-slack",
+    "diff": "broods diff --dashboard-url https://dashboard.dev.broods.app --project channel-slack",
+    "deploy": "broods deploy --dashboard-url https://dashboard.dev.broods.app --project channel-slack"
   },
   "dependencies": { "broods": "file:../../broods" },
   "devDependencies": { "@types/bun": "^1.3.14" }

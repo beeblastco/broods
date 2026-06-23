@@ -4,9 +4,9 @@
   "private": true,
   "scripts": {
     "check": "tsc --noEmit",
-    "dev": "broods dev --dashboard-url https://dashboard.dev.beeblast.co --project channel-telegram",
-    "diff": "broods diff --dashboard-url https://dashboard.dev.beeblast.co --project channel-telegram",
-    "deploy": "broods deploy --dashboard-url https://dashboard.dev.beeblast.co --project channel-telegram",
+    "dev": "broods dev --dashboard-url https://dashboard.dev.broods.app --project channel-telegram",
+    "diff": "broods diff --dashboard-url https://dashboard.dev.broods.app --project channel-telegram",
+    "deploy": "broods deploy --dashboard-url https://dashboard.dev.broods.app --project channel-telegram",
     "register": "bun register.ts"
   },
   "dependencies": { "broods": "file:../../broods" },

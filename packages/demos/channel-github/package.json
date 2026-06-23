@@ -4,10 +4,10 @@
   "private": true,
   "scripts": {
     "check": "tsc --noEmit",
-    "cli:login": "broods login --dashboard-url https://dashboard.dev.beeblast.co",
-    "dev": "broods dev --dashboard-url https://dashboard.dev.beeblast.co --project channel-github",
-    "diff": "broods diff --dashboard-url https://dashboard.dev.beeblast.co --project channel-github",
-    "deploy": "broods deploy --dashboard-url https://dashboard.dev.beeblast.co --project channel-github"
+    "cli:login": "broods login --dashboard-url https://dashboard.dev.broods.app",
+    "dev": "broods dev --dashboard-url https://dashboard.dev.broods.app --project channel-github",
+    "diff": "broods diff --dashboard-url https://dashboard.dev.broods.app --project channel-github",
+    "deploy": "broods deploy --dashboard-url https://dashboard.dev.broods.app --project channel-github"
   },
   "dependencies": {
     "broods": "file:../../broods"

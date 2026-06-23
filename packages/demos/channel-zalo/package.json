@@ -2,9 +2,9 @@
   "name": "@broods/demo-channel-zalo", "type": "module", "private": true,
   "scripts": {
     "check": "tsc --noEmit",
-    "dev": "broods dev --dashboard-url https://dashboard.dev.beeblast.co --project channel-zalo",
-    "diff": "broods diff --dashboard-url https://dashboard.dev.beeblast.co --project channel-zalo",
-    "deploy": "broods deploy --dashboard-url https://dashboard.dev.beeblast.co --project channel-zalo",
+    "dev": "broods dev --dashboard-url https://dashboard.dev.broods.app --project channel-zalo",
+    "diff": "broods diff --dashboard-url https://dashboard.dev.broods.app --project channel-zalo",
+    "deploy": "broods deploy --dashboard-url https://dashboard.dev.broods.app --project channel-zalo",
     "register": "bun register.ts"
   },
   "dependencies": { "broods": "file:../../broods" },

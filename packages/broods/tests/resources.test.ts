@@ -947,7 +947,7 @@ test("runtime config loads .env.local without manual client wiring", async () =>
   const cwd = await mkdtemp(join(tmpdir(), "broods-env-test-"));
   tempDirs.push(cwd);
   await writeFile(join(cwd, ".env.local"), [
-    "BROODS_DASHBOARD_URL=https://dashboard.dev.beeblast.co",
+    "BROODS_DASHBOARD_URL=https://dashboard.dev.broods.app",
     "BROODS_TOKEN=fp_cli_test",
     "BROODS_PROJECT=sandbox-stateless",
     "BROODS_ENVIRONMENT=development",
@@ -957,7 +957,7 @@ test("runtime config loads .env.local without manual client wiring", async () =>
   const config = loadBroodsRuntimeConfig(cwd);
 
   expect(config).toEqual({
-    dashboardUrl: "https://dashboard.dev.beeblast.co",
+    dashboardUrl: "https://dashboard.dev.broods.app",
     token: "fp_cli_test",
     project: "sandbox-stateless",
     environment: "development",
