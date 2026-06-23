@@ -31,7 +31,7 @@ export function OnboardingSecretBanner({ secret, onDismiss, className }: Props) 
             className={cn(
                 // Floating overlay island: fixed below the h-12 header, centered,
                 // above the canvas — never a full-width strip in the layout flow.
-                "fixed left-1/2 top-16 z-50 w-[calc(100%-2rem)] max-w-md -translate-x-1/2",
+                "fixed left-1/2 top-16 z-50 w-[calc(100%-2rem)] max-w-xl -translate-x-1/2",
                 className,
             )}
         >
