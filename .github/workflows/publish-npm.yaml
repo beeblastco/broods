@@ -9,15 +9,6 @@ on:
       - 'package.json'
       - 'bun.lock'
       - '.github/workflows/publish-npm.yaml'
-  release:
-    types: [published]
-  workflow_dispatch:
-    inputs:
-      version:
-        description: Expected packages/broods version to publish
-        required: true
-        default: "0.1.0"
-        type: string
 
 concurrency:
   group: publish-npm-${{ github.ref_name }}
@@ -48,24 +39,15 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile --ignore-scripts
 
-      - name: Validate release version
+      - name: Read package version
+        id: package
         shell: bash
         run: |
           set -euo pipefail
 
           PACKAGE_VERSION="$(node -p "require('./packages/broods/package.json').version")"
-          if [[ "${{ github.event_name }}" == "release" ]]; then
-            EXPECTED_VERSION="${GITHUB_REF_NAME#v}"
-          elif [[ "${{ github.event_name }}" == "push" ]]; then
-            EXPECTED_VERSION="$PACKAGE_VERSION"
-          else
-            EXPECTED_VERSION="${{ inputs.version }}"
-          fi
-
-          if [[ "$PACKAGE_VERSION" != "$EXPECTED_VERSION" ]]; then
-            echo "packages/broods version $PACKAGE_VERSION does not match release/input version $EXPECTED_VERSION" >&2
-            exit 1
-          fi
+          echo "version=$PACKAGE_VERSION" >> "$GITHUB_OUTPUT"
+          echo "Publishing candidate: broods@$PACKAGE_VERSION"
 
       - name: Typecheck SDK
         run: bun run --filter broods check

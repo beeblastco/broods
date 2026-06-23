@@ -14,7 +14,7 @@ A separate workflow (`deploy-docs.yaml`) builds the Docusaurus site on `main` pu
 The npm package workflow is split in two:
 
 - `check-broods-sdk.yaml` runs automatically on pull requests and non-`main` pushes that touch `packages/broods/**`, root package metadata, `bun.lock`, or the SDK npm workflows. It typechecks, tests, builds, and dry-run packs the package so source files, tests, and local env files cannot slip into the tarball.
-- `publish-npm.yaml` runs on `main` pushes that touch the SDK package, on published GitHub releases, and manually from Actions. It publishes `packages/broods` to npm through npm Trusted Publishing (OIDC) only when the package version is not already present in the registry. Release tags must match the package version, for example `v0.1.0`.
+- `publish-npm.yaml` runs only on `main` pushes that touch the SDK package, root package metadata, `bun.lock`, or the npm publish workflow. It publishes `packages/broods` to npm through npm Trusted Publishing (OIDC) only when the package version is not already present in the registry. Non-`main` pushes never publish to npm.
 
 ## Required Secrets and Variables
 
