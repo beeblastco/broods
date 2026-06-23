@@ -13,6 +13,7 @@ import { Input } from "@/app/components/ui/input";
 import { Label } from "@/app/components/ui/label";
 import { Check, Copy, Eye, EyeOff, KeyRound } from "lucide-react";
 import { useState } from "react";
+import { Streamdown } from "streamdown";
 
 interface DialogProps {
     open: boolean;
@@ -40,39 +41,49 @@ const WS_SNIPPET = [
     `}`,
 ].join("\n");
 
-/** Small copy-to-clipboard button that flips to a check for a moment after copying. */
-function CopyButton({ text, label, className }: { text: string; label?: string; className?: string }) {
-    const [copied, setCopied] = useState(false);
+// Shiki-highlighted (github-dark / github-light) code blocks via Streamdown, minus
+// its download button, with prose margins reset so they sit flush in our sections.
+const CODE_CLASS =
+    "text-sm [&>*]:my-0 [&_pre]:!my-0 [&_[data-streamdown=code-block]]:!my-0 " +
+    "[&_[data-streamdown=code-block-download-button]]:hidden " +
+    "[&_pre]:text-[12px] [&_pre]:leading-relaxed [&_code]:text-[12px]";
 
-    function copy() {
-        navigator.clipboard.writeText(text);
-        setCopied(true);
-        setTimeout(() => setCopied(false), 1500);
-    }
-
+/** Renders a single fenced code block with VSCode-style syntax highlighting. */
+function CodeBlock({ code, language }: { code: string; language: string }) {
     return (
-        <Button variant="outline" size="sm" className={`shrink-0 cursor-pointer ${className ?? ""}`} onClick={copy}>
-            {copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
-            {label ? <span className="ml-1">{copied ? "Copied" : label}</span> : null}
-        </Button>
+        <Streamdown className={CODE_CLASS}>{`\`\`\`${language}\n${code}\n\`\`\``}</Streamdown>
+    );
+}
+
+/** Inline `<code>` styling for prose mentions of env vars and hosts. */
+function Mono({ children }: { children: React.ReactNode }) {
+    return (
+        <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-[11px] text-foreground">{children}</code>
     );
 }
 
 /** The reusable runtime-key body: the secret, its .env line, and the WebSocket SDK example. */
 export function RuntimeKeyView({ apiKey }: { apiKey: string }) {
     const [showKey, setShowKey] = useState(false);
+    const [copied, setCopied] = useState(false);
     const envLine = `BROODS_API_KEY="${apiKey}"`;
 
+    function copyKey() {
+        navigator.clipboard.writeText(apiKey);
+        setCopied(true);
+        setTimeout(() => setCopied(false), 1500);
+    }
+
     return (
-        <div className="grid gap-5">
+        <div className="grid gap-6">
             {/* The key itself */}
-            <div className="grid gap-1.5">
-                <Label className="text-xs text-muted-foreground">API key</Label>
+            <section className="grid gap-2">
+                <Label className="text-sm font-medium text-foreground">API key</Label>
                 <div className="flex items-center gap-2">
                     <Input
                         readOnly
                         value={showKey ? apiKey : "•".repeat(Math.min(apiKey.length, 44))}
-                        className="h-9 font-mono text-xs"
+                        className="h-9 font-mono text-xs text-foreground"
                     />
                     <Button
                         variant="outline"
@@ -83,47 +94,45 @@ export function RuntimeKeyView({ apiKey }: { apiKey: string }) {
                     >
                         {showKey ? <EyeOff className="size-3.5" /> : <Eye className="size-3.5" />}
                     </Button>
-                    <CopyButton text={apiKey} label="Copy" className="h-9" />
+                    <Button
+                        variant="outline"
+                        size="sm"
+                        className="h-9 shrink-0 cursor-pointer"
+                        onClick={copyKey}
+                    >
+                        {copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
+                        <span className="ml-1">{copied ? "Copied" : "Copy"}</span>
+                    </Button>
                 </div>
-                <p className="text-xs text-muted-foreground">
+                <p className="text-xs leading-relaxed text-muted-foreground">
                     Stored encrypted at rest — treat it like a password. Reopen it here anytime, or rotate it to
                     invalidate the old one.
                 </p>
-            </div>
+            </section>
 
             {/* Drop it into the environment */}
-            <div className="grid gap-1.5">
-                <Label className="text-xs text-muted-foreground">Add it to your environment</Label>
-                <p className="text-xs text-muted-foreground">
-                    The SDK reads <code className="font-mono">BROODS_API_KEY</code> by default — copy this into your{" "}
-                    <code className="font-mono">.env.local</code> or <code className="font-mono">.env</code> file.
+            <section className="grid gap-2">
+                <Label className="text-sm font-medium text-foreground">Add it to your environment</Label>
+                <p className="text-xs leading-relaxed text-muted-foreground">
+                    The SDK reads <Mono>BROODS_API_KEY</Mono> by default — copy this into your{" "}
+                    <Mono>.env.local</Mono> or <Mono>.env</Mono> file.
                 </p>
-                <div className="flex items-center gap-2">
-                    <code className="flex-1 truncate rounded-md border bg-muted/50 px-3 py-2 font-mono text-[11px]">
-                        {envLine}
-                    </code>
-                    <CopyButton text={envLine} className="h-9" />
-                </div>
-            </div>
+                <CodeBlock code={envLine} language="bash" />
+            </section>
 
             {/* Stream over WebSocket */}
-            <div className="grid gap-1.5">
-                <Label className="text-xs text-muted-foreground">Stream over WebSocket</Label>
-                <p className="text-xs text-muted-foreground">
+            <section className="grid gap-2">
+                <Label className="text-sm font-medium text-foreground">Stream over WebSocket</Label>
+                <p className="text-xs leading-relaxed text-muted-foreground">
                     WebSocket streaming gives the lowest latency and a bidirectional connection — the best experience
                     for live agent runs.
                 </p>
-                <div className="relative">
-                    <pre className="overflow-x-auto rounded-md border bg-muted/50 px-3 py-3 font-mono text-[11px] leading-relaxed text-foreground">
-                        {WS_SNIPPET}
-                    </pre>
-                    <CopyButton text={WS_SNIPPET} className="absolute right-2 top-2 h-7" />
-                </div>
-                <p className="text-xs text-muted-foreground">
-                    Calls go to <code className="font-mono">gateway.broods.app</code> by default; override with{" "}
-                    <code className="font-mono">BROODS_BASE_URL</code> for a self-hosted core.
+                <CodeBlock code={WS_SNIPPET} language="ts" />
+                <p className="text-xs leading-relaxed text-muted-foreground">
+                    Calls go to <Mono>gateway.broods.app</Mono> by default; override with <Mono>BROODS_BASE_URL</Mono>{" "}
+                    for a self-hosted core.
                 </p>
-            </div>
+            </section>
         </div>
     );
 }
