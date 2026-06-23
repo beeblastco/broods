@@ -14,7 +14,7 @@ const config: Config = {
   title: 'Broods Developer Docs',
   favicon: 'img/broods-favicon.ico',
 
-  url: 'https://docs.beeblast.co',
+  url: 'https://docs.broods.app',
   baseUrl: '/',
 
   onBrokenLinks: 'throw',
