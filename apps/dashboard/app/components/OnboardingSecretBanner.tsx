@@ -27,8 +27,15 @@ export function OnboardingSecretBanner({ secret, onDismiss, className }: Props) 
     }
 
     return (
-        <div className={cn("w-full px-4", className)}>
-            <div className="relative mx-auto flex max-w-2xl flex-col gap-4 rounded-xl border bg-card px-5 py-4 shadow-sm">
+        <div
+            className={cn(
+                // Floating overlay island: fixed below the h-12 header, centered,
+                // above the canvas — never a full-width strip in the layout flow.
+                "fixed left-1/2 top-16 z-50 w-[calc(100%-2rem)] max-w-md -translate-x-1/2",
+                className,
+            )}
+        >
+            <div className="relative flex flex-col gap-4 rounded-xl border bg-card px-5 py-4 shadow-xl ring-1 ring-black/5">
                 <button
                     type="button"
                     aria-label="Dismiss"

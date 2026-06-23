@@ -72,7 +72,6 @@ export default function MainLayout({
                 <OnboardingSecretBanner
                     secret={onboardingSecret}
                     onDismiss={clearOnboardingSecret}
-                    className="mt-3"
                 />
             )}
             <div className="flex-1 overflow-hidden">{children}</div>
