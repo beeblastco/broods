@@ -83,10 +83,11 @@ jobs:
         run: |
           set -euo pipefail
 
+          PACKAGE_NAME="$(node -p "require('./packages/broods/package.json').name")"
           PACKAGE_VERSION="$(node -p "require('./packages/broods/package.json').version")"
-          if npm view "broods@$PACKAGE_VERSION" version >/dev/null 2>&1; then
+          if npm view "$PACKAGE_NAME@$PACKAGE_VERSION" version >/dev/null 2>&1; then
             echo "exists=true" >> "$GITHUB_OUTPUT"
-            echo "broods@$PACKAGE_VERSION is already published; skipping npm publish."
+            echo "$PACKAGE_NAME@$PACKAGE_VERSION is already published; skipping npm publish."
           else
             echo "exists=false" >> "$GITHUB_OUTPUT"
           fi

@@ -31,7 +31,7 @@ The deploy step hard-fails without these repository secrets:
 
 And these repository variables: `AWS_REGION`, `AWS_ROLE_ARN`, `AWS_ACCOUNT_ID`, `PROJECT_NAME`, `PROJECT_OWNER_EMAIL`.
 
-The npm publish workflow must be configured as a Trusted Publisher in the npm package settings. Use GitHub Actions with organization/user `beeblastco`, repository `broods`, workflow filename `publish-npm.yaml`, and allowed action `npm publish`. Do not commit `.npmrc` files or npm tokens; Trusted Publishing does not require `NPM_TOKEN`.
+The npm publish workflow must be configured as a Trusted Publisher for the npm package `broods`. Use GitHub Actions with organization/user `beeblastco`, repository `broods`, workflow filename `publish-npm.yaml`, and allowed action `npm publish`. Do not commit `.npmrc` files or npm tokens; Trusted Publishing does not require `NPM_TOKEN`.
 
 ## Channel Setup
 
