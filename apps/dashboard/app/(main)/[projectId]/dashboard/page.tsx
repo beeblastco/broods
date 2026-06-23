@@ -10,11 +10,10 @@ import { useMutation, useQuery } from "convex/react";
 import Link from "next/link";
 import { useParams, useSearchParams } from "next/navigation";
 import { useCallback, useState } from "react";
-import { KeyRound } from "lucide-react";
 import { BillingPanel } from "./components/BillingPanel";
 import { MonitoringPanel } from "./components/MonitoringPanel";
 import { ObservabilityKeyPrompt } from "./components/ObservabilityKeyPrompt";
-import { RuntimeKeyDialog } from "./components/RuntimeKeyDialog";
+import { RuntimeKeyDialog, RuntimeKeyView } from "./components/RuntimeKeyDialog";
 import { TokensUsagePanel } from "./components/TokensUsagePanel";
 import { TracingPanel } from "./components/TracingPanel";
 
@@ -23,6 +22,7 @@ const TABS = [
   { id: "tracing", label: "Tracing" },
   { id: "usage", label: "Usage" },
   { id: "billing", label: "Billing & Plan" },
+  { id: "api-key", label: "API key" },
 ] as const;
 
 type DashboardTab = (typeof TABS)[number]["id"];
@@ -138,7 +138,7 @@ export default function DashboardPage() {
   // Monitoring and tracing are dense, scroll-internally panels that should fill
   // the viewport width and height; billing stays narrow; usage keeps the chart width.
   const isObservabilityTab = activeTab === "monitoring" || activeTab === "tracing";
-  const contentMaxWidth = activeTab === "billing"
+  const contentMaxWidth = activeTab === "billing" || activeTab === "api-key"
     ? "max-w-2xl"
     : isObservabilityTab
       ? "max-w-none"
@@ -193,6 +193,12 @@ export default function DashboardPage() {
         );
       case "billing":
         return <BillingPanel projectId={projectId} />;
+      case "api-key":
+        return observabilityApiKey ? (
+          <RuntimeKeyView apiKey={observabilityApiKey} />
+        ) : (
+          observabilityFallback
+        );
       default:
         return observabilityApiKey ? (
           <MonitoringPanel
@@ -248,25 +254,9 @@ export default function DashboardPage() {
             contentMaxWidth,
           )}
         >
-          <div className="flex items-center justify-between gap-3">
-            <h2 className="text-xl font-semibold text-foreground">
-              {activeLabel}
-            </h2>
-            {observabilityApiKey && (
-              <Button
-                variant="outline"
-                size="sm"
-                className="cursor-pointer"
-                onClick={() => {
-                  setKeyJustCreated(false);
-                  setKeyDialogOpen(true);
-                }}
-              >
-                <KeyRound className="size-3.5 mr-1" />
-                API key
-              </Button>
-            )}
-          </div>
+          <h2 className="text-xl font-semibold text-foreground">
+            {activeLabel}
+          </h2>
         </div>
         <div
           className={cn(
