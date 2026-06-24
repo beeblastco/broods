@@ -14,7 +14,7 @@ import { collectEnvRefNames, compileProject } from "../manifest.ts";
 import type { CliManifest } from "../contracts.ts";
 import { GENERATED_DIR, PROJECT_DIR, USER_CONFIG_PATH } from "../config.ts";
 import { writeGeneratedFiles } from "../codegen.ts";
-import { type CliOnboardingContext, type CliOnboardingOrg, diffManifests, BroodsSyncClient, type RemoteManifestResponse } from "../sync.ts";
+import { type CliOnboardingContext, type CliOnboardingOrg, type CliOnboardingProject, diffManifests, BroodsSyncClient, type RemoteManifestResponse } from "../sync.ts";
 import { BroodsClient, DEFAULT_CORE_BASE_URL } from "../client.ts";
 import { loadBroodsRuntimeConfig } from "../runtime-config.ts";
 import { subscribeObservabilityLogs } from "../observability-client.ts";
@@ -26,6 +26,12 @@ import packageJson from "../../package.json" with { type: "json" };
 
 const VERSION = packageJson.version;
 const DEFAULT_DASHBOARD_URL = "https://dashboard.broods.app";
+const DEFAULT_SERVICE_REGION = "eu-west-1";
+const SERVICE_REGIONS = [
+  { region: "eu-west-1", label: "eu-west-1 (Ireland)" },
+  { region: "us-east-1", label: "us-east-1 (US East)" },
+  { region: "ap-southeast-1", label: "ap-southeast-1 (Singapore)" },
+] as const;
 
 const HELP = `broods v${VERSION}
 
@@ -55,10 +61,11 @@ Options:
   --dashboard-url <url> Dashboard base URL (default: ${DEFAULT_DASHBOARD_URL})
   --project <name>      Project name override (default: package name or folder)
   --env <name>          Target environment override
+  --region <region>     Broods service region preference (default: ${DEFAULT_SERVICE_REGION})
   --prune               Allow deploy to delete undeclared remote resources
   --rotate-key          Mint a fresh runtime API key on deploy and write it to .env.local
-  --errors              Show WARN/ERROR only (with \`stream\` and \`logs\`)
-  --level <lvl>         Minimum log level INFO|WARN|ERROR (with \`stream\` and \`logs\`)
+  --errors              Show WARN/ERROR only (default for \`dev\`, \`stream\`, and \`logs\`)
+  --level <lvl>         Minimum log level INFO|WARN|ERROR (default WARN)
   -n, --limit <n>       Backfill line count (with \`logs\`, default 100)
   --json                Print logs as raw JSON (with \`logs\`, applies to backfill output)
   --force               Allow init to overwrite starter files`;
@@ -121,6 +128,7 @@ async function init(args: string[]): Promise<void> {
     dashboardUrl: optionValue(args, "--dashboard-url") ?? DEFAULT_DASHBOARD_URL,
     project: optionValue(args, "--project") ?? inferProjectName(process.cwd()),
     environment: optionValue(args, "--env") ?? "development",
+    region: optionValue(args, "--region") ?? DEFAULT_SERVICE_REGION,
     force: force,
   });
   console.log(`Created ${PROJECT_DIR}/`);
@@ -142,6 +150,7 @@ async function login(args: string[]): Promise<void> {
     dashboardUrl: auth.dashboardUrl,
     project: project,
     environment: environment,
+    region: optionValue(args, "--region") ?? process.env.BROODS_REGION ?? DEFAULT_SERVICE_REGION,
     force: false,
   });
   const user = auth.user?.email || auth.user?.name || auth.user?.authId;
@@ -314,7 +323,7 @@ async function streamDevLogs(args: string[], signal: AbortSignal): Promise<void>
   try {
     creds = resolveObservabilityCredentials();
   } catch {
-    console.log("· live logs off — set BROODS_API_KEY (run `deploy` first) to stream agent logs here");
+    console.log("· live logs off — no runtime key found for this environment yet. Run `broods dev --once` after login to create or reconnect it.");
 
     return;
   }
@@ -368,10 +377,12 @@ async function ensureLocalDevDefaults(args: string[]): Promise<void> {
     "BROODS_DASHBOARD_URL",
     "BROODS_PROJECT",
     "BROODS_ENVIRONMENT",
+    "BROODS_REGION",
   ].filter((key) => values[key] === undefined);
   if (missing.length === 0) return;
   const needsProject = values.BROODS_PROJECT === undefined;
   const needsEnvironment = values.BROODS_ENVIRONMENT === undefined;
+  const needsRegion = values.BROODS_REGION === undefined;
 
   const runtime = loadBroodsRuntimeConfig();
   const dashboardUrl = optionValue(args, "--dashboard-url") ??
@@ -383,24 +394,16 @@ async function ensureLocalDevDefaults(args: string[]): Promise<void> {
   let environment = optionValue(args, "--env") ??
     process.env.BROODS_ENVIRONMENT ??
     "development";
+  let region = optionValue(args, "--region") ??
+    process.env.BROODS_REGION ??
+    DEFAULT_SERVICE_REGION;
 
   if (process.stdin.isTTY && needsProject) {
     const auth = await requireAuthOrLogin(dashboardUrl);
     const client = new BroodsSyncClient({ dashboardUrl: auth.dashboardUrl, token: auth.token });
     const context = await getOnboardingContextOrFallback(client, auth);
-    const selectableOrgs = context.orgs.filter((org) => org.accountStatus === "active");
-    if (selectableOrgs.length === 0) {
-      throw new Error("No selectable org has an active API account. Open Settings -> API Access in the dashboard first.");
-    }
-    const selectedOrg = await promptSelect(
-      "Select organization",
-      selectableOrgs,
-      formatOrgChoice,
-    );
-    const selectedContext = selectedOrg.id === context.currentOrgId
-      ? context
-      : await client.selectOnboardingOrg(selectedOrg.id);
-    project = await promptText("Project name", defaultProjectName(selectedContext, project));
+    const selectedContext = await selectOnboardingOrg(client, context);
+    project = await selectOnboardingProject(selectedContext, project);
     if (!project.trim()) throw new Error("Project name is required.");
   }
 
@@ -409,10 +412,16 @@ async function ensureLocalDevDefaults(args: string[]): Promise<void> {
     if (!environment.trim()) throw new Error("Environment is required.");
   }
 
+  if (process.stdin.isTTY && needsRegion) {
+    region = await promptSelect("Select service region", [...SERVICE_REGIONS], (entry) => entry.label)
+      .then((entry) => entry.region);
+  }
+
   await writeLocalEnvDefaults({
     dashboardUrl: dashboardUrl,
     project: project,
     environment: environment,
+    region: region,
     force: false,
   });
 }
@@ -460,10 +469,54 @@ function formatOrgChoice(org: CliOnboardingOrg): string {
   return `${org.name} (${org.slug}, ${suffix})`;
 }
 
+async function selectOnboardingOrg(
+  client: BroodsSyncClient,
+  context: CliOnboardingContext,
+): Promise<CliOnboardingContext> {
+  const activeOrgs = context.orgs.filter((org) => org.accountStatus === "active");
+  const createNew = { kind: "create" as const, name: "New organization" };
+  const selected = await promptSelect(
+    "Select organization",
+    [...activeOrgs, createNew],
+    (entry) => "kind" in entry ? "Create new organization" : formatOrgChoice(entry),
+  );
+
+  if ("kind" in selected) {
+    const name = await promptText("Organization name", inferProjectName(process.cwd()));
+    if (!name.trim()) throw new Error("Organization name is required.");
+
+    return await client.createOnboardingOrg(name);
+  }
+
+  return selected.id === context.currentOrgId
+    ? context
+    : await client.selectOnboardingOrg(selected.id);
+}
+
 function defaultProjectName(context: CliOnboardingContext, inferred: string): string {
   const exact = context.projects.find((project) => project.name === inferred || project.slug === inferred);
 
   return exact?.name ?? inferred;
+}
+
+async function selectOnboardingProject(context: CliOnboardingContext, inferred: string): Promise<string> {
+  if (context.projects.length === 0) {
+    return promptText("Project name", inferred);
+  }
+
+  const createNew = { kind: "create" as const, name: defaultProjectName(context, inferred), slug: "" };
+  const choices: Array<CliOnboardingProject | typeof createNew> = [
+    ...context.projects,
+    createNew,
+  ];
+  const selected = await promptSelect("Select project", choices, (entry) =>
+    "kind" in entry && entry.kind === "create" ? `Create new project (${entry.name})` : `${entry.name} (${entry.slug})`
+  );
+  if ("kind" in selected && selected.kind === "create") {
+    return promptText("New project name", selected.name);
+  }
+
+  return selected.name;
 }
 
 /**
@@ -772,11 +825,11 @@ function resolveObservabilityCredentials(): { apiKey: string; baseUrl: string } 
   return { apiKey, baseUrl };
 }
 
-/** Parse --errors / --level <lvl> into a LogLevel (defaults to INFO). */
+/** Parse --errors / --level <lvl> into a LogLevel (defaults to WARN). */
 function resolveMinLevel(args: string[]): LogLevel | undefined {
   if (hasFlag(args, "--errors")) return "WARN";
   const raw = optionValue(args, "--level");
-  if (!raw) return undefined;
+  if (!raw) return "WARN";
   const upper = raw.toUpperCase();
   if (upper === "WARN" || upper === "WARNING") return "WARN";
   if (upper === "ERROR") return "ERROR";
@@ -1016,7 +1069,13 @@ async function run(args: string[]): Promise<void> {
   const remote = await new BroodsSyncClient({ dashboardUrl: auth.dashboardUrl, token: auth.token })
     .getManifest(manifest.project, manifest.environment);
   const agentId = remote?.ids.agents[agentName];
-  if (!agentId) throw new Error(`Agent ${agentName} is not deployed. Run broods deploy first.`);
+  if (!agentId) throw new Error(`Agent ${agentName} is not synced yet. Run broods dev --once or broods deploy first.`);
+  const runtimeKey = await new BroodsSyncClient({ dashboardUrl: auth.dashboardUrl, token: auth.token })
+    .getRuntimeKey(manifest.project, manifest.environment)
+    .catch(() => null);
+  if (runtimeKey?.apiKey) {
+    await writeEnvValue("BROODS_API_KEY", runtimeKey.apiKey);
+  }
 
   // `run` reaches the agent over the public SSE endpoint, which is off by
   // default (issue #65). Warn early if the local config has not opted in; the
@@ -1028,7 +1087,7 @@ async function run(args: string[]): Promise<void> {
     );
   }
 
-  const client = new BroodsClient();
+  const client = new BroodsClient(runtimeKey?.apiKey ? { apiKey: runtimeKey.apiKey } : {});
   const state = createRenderState();
   try {
     for await (const part of client.stream({
@@ -1037,6 +1096,9 @@ async function run(args: string[]): Promise<void> {
       id: agentId,
       project: manifest.project,
       environment: manifest.environment,
+      ...(runtimeKey?.endpointId ? { endpointId: runtimeKey.endpointId } : {}),
+      ...(runtimeKey?.projectSlug ? { projectSlug: runtimeKey.projectSlug } : {}),
+      ...(runtimeKey?.environmentSlug ? { environmentSlug: runtimeKey.environmentSlug } : {}),
     }, { input: promptParts.join(" ") })) {
       renderStreamPart(part, state);
     }
@@ -1077,6 +1139,7 @@ async function writeLocalEnvDefaults(options: {
   dashboardUrl: string;
   project: string;
   environment: string;
+  region: string;
   force: boolean;
 }): Promise<void> {
   const path = resolve(process.cwd(), ".env.local");
@@ -1086,6 +1149,7 @@ async function writeLocalEnvDefaults(options: {
     BROODS_DASHBOARD_URL: options.dashboardUrl,
     BROODS_PROJECT: options.project,
     BROODS_ENVIRONMENT: options.environment,
+    BROODS_REGION: options.region,
   };
   const lines = current ? current.replace(/\n?$/, "\n").split(/\n/) : [
     "# Local broods CLI settings. Tokens are stored outside the repo.",

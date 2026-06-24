@@ -38,12 +38,24 @@ test("listEnv returns an empty array when the payload omits variables", async ()
 
 test("getRuntimeKey recovers the environment runtime key", async () => {
   const { client, calls } = clientWith(() =>
-    new Response(JSON.stringify({ apiKey: "fp_agent_secret", keyHint: "fp_agent_…cret" })),
+    new Response(JSON.stringify({
+      apiKey: "fp_agent_secret",
+      keyHint: "fp_agent_…cret",
+      endpointId: "env_123",
+      projectSlug: "demo-app",
+      environmentSlug: "development",
+    })),
   );
 
   const key = await client.getRuntimeKey("demo-app", "development");
 
-  expect(key).toEqual({ apiKey: "fp_agent_secret", keyHint: "fp_agent_…cret" });
+  expect(key).toEqual({
+    apiKey: "fp_agent_secret",
+    keyHint: "fp_agent_…cret",
+    endpointId: "env_123",
+    projectSlug: "demo-app",
+    environmentSlug: "development",
+  });
   expect(calls[0]).toEqual({
     url: "https://dashboard.example.com/api/cli/projects/demo-app/environments/development/runtime-key",
     method: "GET",

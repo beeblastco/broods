@@ -42,7 +42,7 @@ sst deploy ──creates──▶ ECR repo (per region)  ◀──pushes── l
   target's sandbox flag is `true`, `.github/workflows/deploy.yaml` checks for the regional
   `latest-arm64` tag. If it is missing, CI runs one repo-only SST deploy with
   `SANDBOX_IMAGE_READY=false`, copies the source image from `SANDBOX_IMAGE_SOURCE_REGION`
-  (default `ap-southeast-1`) with `crane`, then runs the final deploy with the sandbox
+  (default `eu-west-1`) with `crane`, then runs the final deploy with the sandbox
   functions enabled.
 - **Bootstrap remains gated by `SANDBOX_IMAGE_READY`:** the 4 functions are created only when
   this flag is `true`. The CI bootstrap path keeps a brand-new region deployable without local
@@ -78,11 +78,11 @@ Non-bucket AWS resources use the same order without the `-an` suffix:
 [stage-]broods-<service>-<account-id>-<region>
 ```
 
-The dev AWS stack defaults to `us-east-1` for Lambda MicroVM support. Production deploys
-to `us-east-1`, `eu-west-1`, and `ap-southeast-1` as separate SST production stages so
-regional Pulumi state does not collide. Lambda MicroVM prerequisites are currently skipped
-in `ap-southeast-1` because the feature is not available there yet. The production Convex
-database remains in `eu-west-1`.
+The dev AWS stack defaults to `eu-west-1` for the current cost-down rollout. Production
+currently deploys to `eu-west-1` only. `us-east-1` and `ap-southeast-1` are kept as planned
+production regions, but they are disabled until production is explicitly promoted. Lambda
+MicroVM prerequisites are skipped in `ap-southeast-1` because the feature is not available
+there yet. The production Convex database remains in `eu-west-1`.
 
 ## Config
 

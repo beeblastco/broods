@@ -140,7 +140,7 @@ export class BroodsClient {
     if (typeof refOrName === "string") {
       const name = refOrName;
       const id = agentId ?? "";
-      if (!id) throw new Error(`Agent ${name} is missing a generated id. Run broods deploy first.`);
+      if (!id) throw new Error(`Agent ${name} is missing a generated id. Run broods dev --once or broods deploy to sync it first.`);
 
       return {
         id: id,
@@ -151,7 +151,7 @@ export class BroodsClient {
     }
 
     const ref = refOrName;
-    if (!ref.id) throw new Error(`Agent ${ref.name} is missing a generated id. Run broods deploy first.`);
+    if (!ref.id) throw new Error(`Agent ${ref.name} is missing a generated id. Run broods dev --once or broods deploy to sync it first.`);
 
     return {
       id: ref.id,
@@ -235,7 +235,8 @@ export class BroodsClient {
       }
       : refOrInput as AgentRunInput & { agentId: string; agentName?: string };
     const body = directRunBody(input, "async");
-    const response = await this.fetchJson(`${this.baseUrl}/async`, {
+    const targetUrl = maybeInput ? this.scopedUrl(refOrInput as AgentReference, "/async") : `${this.baseUrl}/async`;
+    const response = await this.fetchJson(targetUrl, {
       method: "POST",
       headers: this.apiKeyHeaders(),
       body: JSON.stringify(body),
@@ -379,13 +380,13 @@ export class BroodsClient {
    * (the same URL the dashboard shows, so core can validate the key against the
    * path); otherwise it falls back to the base URL.
    */
-  private scopedUrl(ref: AgentReference): string {
+  private scopedUrl(ref: AgentReference, suffix = ""): string {
     if (ref.projectSlug && ref.environmentSlug && ref.endpointId) {
       return `${this.baseUrl}/v1/${encodeURIComponent(ref.projectSlug)}` +
-        `/agents/${encodeURIComponent(ref.environmentSlug)}/${encodeURIComponent(ref.endpointId)}`;
+        `/agents/${encodeURIComponent(ref.environmentSlug)}/${encodeURIComponent(ref.endpointId)}${suffix}`;
     }
 
-    return this.baseUrl;
+    return `${this.baseUrl}${suffix}`;
   }
 
   private async openStream(

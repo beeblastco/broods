@@ -67,7 +67,7 @@ function awsRegion(): string {
     throw new Error("AWS_REGION must be set in CI");
   }
 
-  return "us-east-1";
+  return "eu-west-1";
 }
 
 function requiredEnv(name: string): string {
@@ -277,7 +277,6 @@ export default $config({
       asyncToolResult: resourceName("async-tool-result", stage, region),
       usage: resourceName("usage", stage, region),
       persistentSandboxInstance: resourceName("persistent-sandbox-instance", stage, region),
-      webhookSubscribeMock: resourceName("webhook-sub-mock", stage, region),
       // Uniform sandbox image deployed across two axes (workspace mount, internet).
       sandboxMountNet: resourceName("sandbox-mount-net", stage, region),
       sandboxMountNonet: resourceName("sandbox-mount-nonet", stage, region),
@@ -891,24 +890,6 @@ export default $config({
       fileSystemId: sandboxS3Files.id,
       subnetId: sandboxNetwork.privateSubnets.apply((ids) => ids[1]!),
       securityGroups: sandboxNetwork.securityGroups,
-    });
-
-    const mockWebhookSubscribe = new sst.aws.Function("MockWebhookSubscribe", {
-      name: names.webhookSubscribeMock,
-      runtime: "python3.12",
-      architecture: "arm64",
-      bundle: "functions/mock-webhook-subscribe",
-      handler: "handler.handler",
-      description: "Mock webhook subscription endpoint for testing inbound webhooks.",
-      timeout: "30 seconds",
-      memory: "128 MB",
-      url: {
-        authorization: "none",
-      },
-      logging: { format: "json", retention: "1 month" },
-      environment: {
-        MOCK_WEBHOOK_SECRET: process.env.MOCK_WEBHOOK_SECRET ?? "",
-      },
     });
 
     // This app owns the sandbox image ECR repo (moved out of the infra Terraform repo) so
@@ -1616,7 +1597,6 @@ export default $config({
     return {
       agentServiceUrl: harnessProcessing.url,
       accountServiceUrl: accountManage.url,
-      mockWebhookSubscribeUrl: mockWebhookSubscribe.url,
       sandboxMountNetFunctionName: names.sandboxMountNet,
       sandboxMountNoNetFunctionName: names.sandboxMountNonet,
       sandboxNoMountNetFunctionName: names.sandboxNomountNet,

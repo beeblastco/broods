@@ -80,7 +80,7 @@ export function CreateProjectDialog({
         try {
             const id = await createProject({ name: name.trim(), description: undefined });
             handleOpenChange(false);
-            router.push(`/${id}`);
+            router.push(`/${id}?initialize=production`);
         } finally {
             setIsCreating(false);
         }
@@ -109,10 +109,10 @@ export function CreateProjectDialog({
                         />
                     </div>
                     <DialogFooter>
-                        <Button type="button" variant="ghost" onClick={() => handleOpenChange(false)}>
+                        <Button type="button" variant="ghost" className="cursor-pointer" onClick={() => handleOpenChange(false)}>
                             Cancel
                         </Button>
-                        <Button type="submit" disabled={!name.trim() || isCreating}>
+                        <Button type="submit" className="cursor-pointer disabled:cursor-not-allowed" disabled={!name.trim() || isCreating}>
                             {isCreating ? "Creating..." : "Create"}
                         </Button>
                     </DialogFooter>

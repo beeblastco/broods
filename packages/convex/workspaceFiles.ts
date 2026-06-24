@@ -4,13 +4,29 @@
  */
 
 import { v } from "convex/values";
-import { internalMutation, mutation, query } from "./_generated/server";
+import { internalMutation, internalQuery, mutation, query } from "./_generated/server";
 import { authKit } from "./auth";
 import { getOwnedProject } from "./model/ownership/project";
 
 function pathPrefixUpperBound(path: string): string {
     return `${path}\uffff`;
 }
+
+const workspaceFileDoc = v.object({
+    _id: v.id("workspaceFiles"),
+    _creationTime: v.number(),
+    authId: v.string(),
+    projectId: v.id("projects"),
+    nodeId: v.string(),
+    path: v.string(),
+    name: v.string(),
+    isFolder: v.boolean(),
+    storageId: v.optional(v.id("_storage")),
+    mimeType: v.optional(v.string()),
+    sizeBytes: v.optional(v.number()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+});
 
 /**
  * List all file/folder entries for a workspace node.
@@ -66,6 +82,32 @@ export const resolveRuntimeWorkspace = query({
         }
 
         const project = await getOwnedProject(ctx, user.id, args.projectId);
+        if (!project) return null;
+        const workspaceId = ctx.db.normalizeId("workspaceConfigs", args.workspaceId);
+        if (!workspaceId) return null;
+        const workspace = await ctx.db.get(workspaceId);
+        if (!workspace || workspace.projectId !== args.projectId) return null;
+
+        return { accountId: workspace.accountId, workspaceId: workspace._id };
+    },
+});
+
+/**
+ * Internal: resolve an S3-backed workspace for a caller-owned project.
+ * @param authId WorkOS auth id of the caller
+ * @param projectId owning project
+ * @param workspaceId workspaceConfigs document ID stored on the canvas node
+ * @returns runtime account/workspace identifiers, or null when inaccessible
+ */
+export const resolveRuntimeWorkspaceInternal = internalQuery({
+    args: {
+        authId: v.string(),
+        projectId: v.id("projects"),
+        workspaceId: v.string(),
+    },
+    returns: v.union(v.object({ accountId: v.id("accounts"), workspaceId: v.id("workspaceConfigs") }), v.null()),
+    handler: async (ctx, args) => {
+        const project = await getOwnedProject(ctx, args.authId, args.projectId);
         if (!project) return null;
         const workspaceId = ctx.db.normalizeId("workspaceConfigs", args.workspaceId);
         if (!workspaceId) return null;
@@ -315,6 +357,92 @@ export const removeFolder = mutation({
     },
 });
 
+/**
+ * Internal: list legacy Convex-storage files after checking project ownership.
+ * @param authId WorkOS auth id of the caller that started the migration
+ * @param projectId owning project
+ * @param nodeId canvas node ID of the workspace
+ * @returns legacy file metadata rows for migration
+ */
+export const listForMigrationInternal = internalQuery({
+    args: {
+        authId: v.string(),
+        projectId: v.id("projects"),
+        nodeId: v.string(),
+    },
+    returns: v.array(workspaceFileDoc),
+    handler: async (ctx, args) => {
+        const project = await getOwnedProject(ctx, args.authId, args.projectId);
+        if (!project) return [];
+
+        return await ctx.db
+            .query("workspaceFiles")
+            .withIndex("by_projectId_and_nodeId", (q) =>
+                q.eq("projectId", args.projectId).eq("nodeId", args.nodeId),
+            )
+            .collect();
+    },
+});
+
+/**
+ * Internal: create a signed download URL for one legacy file during migration.
+ * @param authId WorkOS auth id of the caller that started the migration
+ * @param projectId owning project
+ * @param nodeId canvas node ID of the workspace
+ * @param path file path inside the legacy workspace tree
+ * @returns signed URL or null when the file cannot be read
+ */
+export const getFileDownloadUrlInternal = internalQuery({
+    args: {
+        authId: v.string(),
+        projectId: v.id("projects"),
+        nodeId: v.string(),
+        path: v.string(),
+    },
+    returns: v.union(v.string(), v.null()),
+    handler: async (ctx, args) => {
+        const project = await getOwnedProject(ctx, args.authId, args.projectId);
+        if (!project) return null;
+
+        const file = await ctx.db
+            .query("workspaceFiles")
+            .withIndex("by_projectId_nodeId_and_path", (q) =>
+                q.eq("projectId", args.projectId).eq("nodeId", args.nodeId).eq("path", args.path),
+            )
+            .first();
+
+        if (!file?.storageId) return null;
+
+        return await ctx.storage.getUrl(file.storageId);
+    },
+});
+
+/**
+ * Internal: remove one legacy file row and storage object after S3 migration.
+ * @param authId WorkOS auth id of the caller that started the migration
+ * @param fileId legacy workspaceFiles row to delete
+ */
+export const removeForMigrationInternal = internalMutation({
+    args: {
+        authId: v.string(),
+        fileId: v.id("workspaceFiles"),
+    },
+    returns: v.null(),
+    handler: async (ctx, args) => {
+        const file = await ctx.db.get(args.fileId);
+        if (!file) return null;
+
+        const project = await getOwnedProject(ctx, args.authId, file.projectId);
+        if (!project) return null;
+
+        if (file.storageId) {
+            await ctx.storage.delete(file.storageId);
+        }
+        await ctx.db.delete(args.fileId);
+
+        return null;
+    },
+});
 
 /**
  * Internal: delete all files for a node (used by skillsPublic.importSkill before re-import).

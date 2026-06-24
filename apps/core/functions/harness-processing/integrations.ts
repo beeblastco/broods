@@ -376,11 +376,11 @@ async function handleLambdaUrlEvent(
     return handleChannelWebhook(accountChannel, request, handlers, account, agent, deployment);
   }
 
-  if (!context.directApiEnabled && (event.rawPath === "/" || isAsyncPath(event.rawPath))) {
+  const publicEndpoint = parsePublicEndpointPath(event.rawPath);
+  if (!context.directApiEnabled && (event.rawPath === "/" || isAsyncPath(event.rawPath) || publicEndpoint)) {
     return directApiDisabledResponse();
   }
 
-  const publicEndpoint = parsePublicEndpointPath(event.rawPath);
   const auth = await context.authResolver(request.headers);
 
   // Scope resolution for the realtime observability gateway. The gateway calls
@@ -422,7 +422,7 @@ async function handleLambdaUrlEvent(
           { code: "public_access_disabled", agentId: parsed.agentId },
         );
       }
-      if (isAsyncPath(event.rawPath)) {
+      if (publicEndpoint?.mode === "async" || isAsyncPath(event.rawPath)) {
         if (!handlers.handleAsyncRequest) {
           return notFoundResponse();
         }
@@ -785,21 +785,26 @@ type PublicEndpointPath = {
   endpointId: string;
   projectSlug?: string;
   environmentSlug?: string;
+  mode: "sync" | "async";
 };
 
 function parsePublicEndpointPath(rawPath: string): PublicEndpointPath | null {
-  const scoped = rawPath.match(/^\/v1\/([^/]+)\/agents\/([^/]+)\/([^/]+)$/);
+  const scoped = rawPath.match(/^\/v1\/([^/]+)\/agents\/([^/]+)\/([^/]+)(?:\/(async))?$/);
   if (scoped?.[1] && scoped[2] && scoped[3]) {
     return {
       projectSlug: decodeURIComponent(scoped[1]),
       environmentSlug: decodeURIComponent(scoped[2]),
       endpointId: decodeURIComponent(scoped[3]),
+      mode: scoped[4] === "async" ? "async" : "sync",
     };
   }
 
-  const unscoped = rawPath.match(/^\/v1\/agents\/([^/]+)$/);
+  const unscoped = rawPath.match(/^\/v1\/agents\/([^/]+)(?:\/(async))?$/);
   if (unscoped?.[1]) {
-    return { endpointId: decodeURIComponent(unscoped[1]) };
+    return {
+      endpointId: decodeURIComponent(unscoped[1]),
+      mode: unscoped[2] === "async" ? "async" : "sync",
+    };
   }
 
   return null;

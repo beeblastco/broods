@@ -28,8 +28,8 @@ export const webhookAgent = defineAgent({
       // events out to multiple of your services.
       webhooks: [{
         enabled: true,
-        url: env.MOCK_WEBHOOK_URL!,
-        secret: env.MOCK_WEBHOOK_SECRET!,
+        url: env.WEBHOOK_URL!,
+        secret: env.WEBHOOK_SECRET!,
         events: [
           "agent.started",
           "tool.call.started",

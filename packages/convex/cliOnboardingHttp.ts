@@ -19,9 +19,18 @@ export const handle = httpAction(async (ctx, req) => {
         }
 
         if (req.method === "POST") {
-            const body = await req.json() as { orgId?: unknown };
+            const body = await req.json() as { orgId?: unknown; createOrgName?: unknown };
+            if (typeof body.createOrgName === "string" && body.createOrgName.trim()) {
+                const context = await ctx.runMutation(internal.cliAuth.createOnboardingOrg, {
+                    tokenHash: auth.secretHash,
+                    name: body.createOrgName,
+                });
+                if (!context) return json({ error: "Invalid CLI token" }, 401);
+
+                return json(context);
+            }
             if (typeof body.orgId !== "string" || !body.orgId.trim()) {
-                return json({ error: "Request body must include orgId" }, 400);
+                return json({ error: "Request body must include orgId or createOrgName" }, 400);
             }
             const context = await ctx.runMutation(internal.cliAuth.selectOnboardingOrg, {
                 tokenHash: auth.secretHash,

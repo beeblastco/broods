@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import {
   buildCoreRunBody,
+  isCoreHttpPathForTest,
   gatewayLimitsFromEnv,
   mapWithConcurrency,
   normalizedCoreBaseUrls,
@@ -108,6 +109,15 @@ test("normalizes and de-duplicates unified gateway core upstreams", () => {
     "https://prod-core.example.com",
   ]);
   expect(() => normalizedCoreBaseUrls(["", "  "])).toThrow("Gateway requires");
+});
+
+test("proxies runtime HTTP paths used by the SDK", () => {
+  expect(isCoreHttpPathForTest("/")).toBe(true);
+  expect(isCoreHttpPathForTest("/async")).toBe(true);
+  expect(isCoreHttpPathForTest("/status/request-1")).toBe(true);
+  expect(isCoreHttpPathForTest("/accounts/me/crons")).toBe(true);
+  expect(isCoreHttpPathForTest("/v1/demo/agents/development/env_123/async")).toBe(true);
+  expect(isCoreHttpPathForTest("/healthz")).toBe(false);
 });
 
 test("routes a runtime key to the matching core upstream", async () => {

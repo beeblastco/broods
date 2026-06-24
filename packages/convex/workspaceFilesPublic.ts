@@ -6,8 +6,9 @@
 
 import { v } from "convex/values";
 import type { Id } from "./_generated/dataModel";
-import { api } from "./_generated/api";
+import { internal } from "./_generated/api";
 import { action, type ActionCtx } from "./_generated/server";
+import { authKit } from "./auth";
 
 const fileEntry = v.object({
     path: v.string(),
@@ -25,6 +26,13 @@ type LegacyFile = {
     storageId?: Id<"_storage">;
 };
 
+async function requireActionUser(ctx: ActionCtx) {
+    const user = await authKit.getAuthUser(ctx);
+    if (!user) throw new Error("User not found or not authenticated");
+
+    return user;
+}
+
 /** Moves legacy files into S3 when needed and returns the authoritative file list. */
 export const migrateLegacy = action({
     args: {
@@ -34,8 +42,10 @@ export const migrateLegacy = action({
     },
     returns: v.array(fileEntry),
     handler: async (ctx, args) => {
+        const user = await requireActionUser(ctx);
         const workspace = await resolveWorkspace(ctx, args);
-        const legacyFiles: LegacyFile[] = await ctx.runQuery(api.workspaceFiles.list, {
+        const legacyFiles: LegacyFile[] = await ctx.runQuery(internal.workspaceFiles.listForMigrationInternal, {
+            authId: user.id,
             projectId: args.projectId,
             nodeId: args.nodeId,
         });
@@ -46,7 +56,8 @@ export const migrateLegacy = action({
 
         for (const file of legacyFiles) {
             if (!file.isFolder && file.storageId && !existingPaths.has(file.path)) {
-                const url: string | null = await ctx.runQuery(api.workspaceFiles.getFileDownloadUrl, {
+                const url: string | null = await ctx.runQuery(internal.workspaceFiles.getFileDownloadUrlInternal, {
+                    authId: user.id,
                     projectId: args.projectId,
                     nodeId: args.nodeId,
                     path: file.path,
@@ -63,7 +74,10 @@ export const migrateLegacy = action({
                 });
                 changed = true;
             }
-            await ctx.runMutation(api.workspaceFiles.remove, { fileId: file._id });
+            await ctx.runMutation(internal.workspaceFiles.removeForMigrationInternal, {
+                authId: user.id,
+                fileId: file._id,
+            });
         }
 
         return changed ? (await readWorkspaceFiles(workspace)).files : current.files;
@@ -156,7 +170,9 @@ async function resolveWorkspace(
     ctx: ActionCtx,
     args: { projectId: Id<"projects">; workspaceId: string },
 ): Promise<RuntimeWorkspace> {
-    const workspace: RuntimeWorkspace | null = await ctx.runQuery(api.workspaceFiles.resolveRuntimeWorkspace, {
+    const user = await requireActionUser(ctx);
+    const workspace: RuntimeWorkspace | null = await ctx.runQuery(internal.workspaceFiles.resolveRuntimeWorkspaceInternal, {
+        authId: user.id,
         projectId: args.projectId,
         workspaceId: args.workspaceId,
     });

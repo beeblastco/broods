@@ -122,7 +122,6 @@ Deploy outputs include:
 
 - `accountServiceUrl`
 - `agentServiceUrl`
-- `mockWebhookSubscribeUrl`
 - DynamoDB table names (dev/community stages; `undefined` on production, which stores config domains in Convex)
 - `filesystemBucketName`, `skillsBucketName`, `toolBundlesBucketName`
 - sandbox Lambda function names and `cronScheduleGroupName`

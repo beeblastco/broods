@@ -96,7 +96,13 @@ export const handle = httpAction(async (ctx, req) => {
             });
 
             return deployment
-                ? json({ apiKey: deployment.apiKey, keyHint: deployment.keyHint, endpointId: deployment.endpointId })
+                ? json({
+                    apiKey: deployment.apiKey,
+                    keyHint: deployment.keyHint,
+                    endpointId: deployment.endpointId,
+                    projectSlug: deployment.projectSlug,
+                    environmentSlug: deployment.environmentSlug,
+                })
                 : json({ error: "Project or environment not found" }, 404);
         }
 

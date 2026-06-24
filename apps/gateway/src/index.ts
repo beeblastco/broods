@@ -105,7 +105,7 @@ export function createGatewayServer(options: GatewayServerOptions): Bun.Server<G
     async fetch(request, server) {
       const url = new URL(request.url);
 
-      if (url.pathname === "/" || url.pathname === "/healthz") {
+      if ((url.pathname === "/" || url.pathname === "/healthz") && request.method === "GET") {
         return json({
           status: "ok",
           activeWebSockets: activeSocketCount,
@@ -1032,8 +1032,18 @@ export function isObservabilityWebSocketPath(pathname: string): boolean {
 }
 
 function isCoreHttpPath(pathname: string): boolean {
-  return pathname === "/v1" || pathname.startsWith("/v1/");
+  return pathname === "/" ||
+    pathname === "/async" ||
+    pathname.startsWith("/status/") ||
+    pathname.startsWith("/accounts/") ||
+    pathname.startsWith("/webhooks/") ||
+    pathname.startsWith("/async-tools/") ||
+    pathname.startsWith("/sandbox-jobs/") ||
+    pathname === "/v1" ||
+    pathname.startsWith("/v1/");
 }
+
+export const isCoreHttpPathForTest = isCoreHttpPath;
 
 function isExecuteMessage(value: object): value is WebSocketClientExecuteMessage {
   const record = value as { type?: unknown; agentId?: unknown };

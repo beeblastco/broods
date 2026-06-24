@@ -98,15 +98,33 @@ export class BroodsSyncClient {
    * dashboard-created project without redeploying. Returns null when the project/
    * environment is unknown.
    */
-  async getRuntimeKey(project: string, environment: string): Promise<{ apiKey: string; keyHint: string } | null> {
+  async getRuntimeKey(project: string, environment: string): Promise<{
+    apiKey: string;
+    keyHint: string;
+    endpointId?: string;
+    projectSlug?: string;
+    environmentSlug?: string;
+  } | null> {
     const response = await this.request(project, environment, "/runtime-key", { method: "GET" });
     if (response.status === 404) return null;
     await assertOk(response, "Fetch runtime key failed");
-    const payload = await response.json() as { apiKey?: string; keyHint?: string };
+    const payload = await response.json() as {
+      apiKey?: string;
+      keyHint?: string;
+      endpointId?: string;
+      projectSlug?: string;
+      environmentSlug?: string;
+    };
 
     if (!payload.apiKey) throw new Error("Fetch runtime key failed: response omitted apiKey");
 
-    return { apiKey: payload.apiKey, keyHint: payload.keyHint ?? "" };
+    return {
+      apiKey: payload.apiKey,
+      keyHint: payload.keyHint ?? "",
+      ...(payload.endpointId ? { endpointId: payload.endpointId } : {}),
+      ...(payload.projectSlug ? { projectSlug: payload.projectSlug } : {}),
+      ...(payload.environmentSlug ? { environmentSlug: payload.environmentSlug } : {}),
+    };
   }
 
   async setEnv(project: string, environment: string, name: string, value: string): Promise<void> {
@@ -169,6 +187,20 @@ export class BroodsSyncClient {
       body: JSON.stringify({ orgId: orgId }),
     });
     await assertOk(response, "Select CLI org failed");
+
+    return await response.json() as CliOnboardingContext;
+  }
+
+  async createOnboardingOrg(name: string): Promise<CliOnboardingContext> {
+    const response = await this.fetchImpl(`${this.dashboardUrl}/api/cli/onboarding`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${this.token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ createOrgName: name }),
+    });
+    await assertOk(response, "Create CLI org failed");
 
     return await response.json() as CliOnboardingContext;
   }

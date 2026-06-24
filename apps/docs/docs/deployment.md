@@ -79,7 +79,6 @@ Deploy outputs include:
 
 - `accountServiceUrl`
 - `agentServiceUrl`
-- `mockWebhookSubscribeUrl`
 - DynamoDB table names (dev/community stages; `undefined` on production, which stores config domains in Convex)
 - `filesystemBucketName`, `skillsBucketName`, `toolBundlesBucketName`
 - sandbox Lambda function names and `cronScheduleGroupName`
@@ -89,7 +88,7 @@ Deploy outputs include:
 After self-hosted deploy, use the same CLI workflow but point it at your deployment:
 
 ```bash
-export BROODS_BASE_URL="https://your-deployment.lambda-url.us-east-1.on.aws"
+export BROODS_BASE_URL="https://your-deployment.lambda-url.eu-west-1.on.aws"
 broods init
 broods login --dashboard-url https://your-dashboard.example.com
 broods dev

@@ -56,11 +56,6 @@ declare module "sst" {
       "name": string
       "type": "sst.aws.Bucket"
     }
-    "MockWebhookSubscribe": {
-      "name": string
-      "type": "sst.aws.Function"
-      "url": string
-    }
     "PersistentSandboxInstance": {
       "name": string
       "type": "sst.aws.Dynamo"

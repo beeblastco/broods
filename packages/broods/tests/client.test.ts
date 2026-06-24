@@ -175,6 +175,44 @@ test("client starts async runs and exposes status id for polling", async () => {
   });
 });
 
+test("client starts async runs through generated scoped agent references", async () => {
+  const calls: Array<{ url: string; body?: unknown }> = [];
+  const client = new BroodsClient({
+    baseUrl: "https://gateway.example",
+    apiKey: "runtime-key",
+    fetch: async (input, init) => {
+      calls.push({
+        url: String(input),
+        body: init?.body ? JSON.parse(String(init.body)) : undefined,
+      });
+
+      return Response.json({
+        statusUrl: "https://gateway.example/status/request-1?agentId=agent_1",
+      }, { status: 202 });
+    },
+  });
+
+  await client.runAsync({
+    kind: "agent",
+    name: "search",
+    id: "agent_1",
+    project: "demo",
+    environment: "development",
+    endpointId: "env_123",
+    projectSlug: "demo",
+    environmentSlug: "development",
+  }, {
+    eventId: "request-1",
+    input: "hello",
+  });
+
+  expect(calls[0]?.url).toBe("https://gateway.example/v1/demo/agents/development/env_123/async");
+  expect(calls[0]?.body).toMatchObject({
+    agentId: "agent_1",
+    eventId: "request-1",
+  });
+});
+
 test("client passes typed run overrides through async run bodies", async () => {
   const bodies: unknown[] = [];
   const client = new BroodsClient({

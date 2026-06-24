@@ -3,7 +3,7 @@
 /** Dropdown selector for switching between project environments and creating new ones. */
 import { useEffect, useState } from "react";
 import { useMutation, useQuery } from "convex/react";
-import { useParams } from "next/navigation";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { api } from "@broods/convex/_generated/api";
 import type { Doc, Id } from "@broods/convex/_generated/dataModel";
 import { useEnvironment } from "@/app/hooks/useEnvironment";
@@ -41,8 +41,8 @@ type DeploymentRegion = "ap-southeast-1" | "eu-west-1" | "us-east-1";
 
 const regionOptions: Array<{ value: DeploymentRegion; label: string; flag: string; enabled: boolean }> = [
   { value: "eu-west-1", label: "Europe (Ireland)", flag: "🇮🇪", enabled: true },
-  { value: "ap-southeast-1", label: "Asia Pacific (Singapore)", flag: "🇸🇬", enabled: true },
-  { value: "us-east-1", label: "US East (N. Virginia)", flag: "🇺🇸", enabled: true },
+  { value: "ap-southeast-1", label: "Asia Pacific (Singapore)", flag: "🇸🇬", enabled: false },
+  { value: "us-east-1", label: "US East (N. Virginia)", flag: "🇺🇸", enabled: false },
 ];
 
 /** Infer environment type for legacy rows that predate the explicit kind field. */
@@ -71,6 +71,8 @@ export function EnvironmentDot({ kind }: { kind: EnvironmentKind }) {
 /** Dropdown to list, switch, and create project environments. */
 export function EnvironmentSelector() {
   const params = useParams<{ projectId?: string }>();
+  const router = useRouter();
+  const searchParams = useSearchParams();
   const projectId = params.projectId as Id<"projects"> | undefined;
   const { environmentId, setEnvironmentId } = useEnvironment();
 
@@ -94,6 +96,17 @@ export function EnvironmentSelector() {
 
   const developmentEnv = environments?.find((env) => environmentKind(env) === "development");
   const productionEnv = environments?.find((env) => environmentKind(env) === "production");
+
+  useEffect(() => {
+    if (!projectId || !environments || searchParams.get("initialize") !== "production") return;
+    if (!productionEnv?.deploymentRegion) {
+      setProductionOpen(true);
+    }
+    const next = new URLSearchParams(searchParams.toString());
+    next.delete("initialize");
+    const suffix = next.toString();
+    router.replace(`/${projectId}${suffix ? `?${suffix}` : ""}`, { scroll: false });
+  }, [environments, productionEnv, projectId, router, searchParams]);
 
   // Ensure default Development environment exists when project loads.
   useEffect(() => {

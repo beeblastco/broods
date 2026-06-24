@@ -1262,12 +1262,30 @@ async function syncCanvasLayoutForManifest(
     const desiredEdges = new Map<string, CanvasEdge>();
     const nextById = new Map(existingNodes.map((node) => [node.id, node]));
     const nodeIdByKindName = new Map<string, string>();
+    const columnX = {
+        agent: 80,
+        sandbox: 340,
+        workspace: 600,
+        skill: 860,
+    } as const;
+    const rowY = {
+        agent: 80,
+        sandbox: 80,
+        workspace: 80,
+        skill: 80,
+    };
+    const nextPosition = (kind: keyof typeof columnX) => {
+        const position = { x: columnX[kind], y: rowY[kind] };
+        rowY[kind] += 132;
+
+        return position;
+    };
 
     const ordered = [...desiredResources].sort((a, b) => {
         const rank = { agent: 0, sandbox: 1, workspace: 2, skill: 3 } as const;
         return rank[a.kind] - rank[b.kind] || a.name.localeCompare(b.name);
     });
-    ordered.forEach((resource, index) => {
+    ordered.forEach((resource) => {
         if (resource.kind === "agent") {
             const config = agentConfigByName.get(resource.name);
             if (!config) return;
@@ -1277,7 +1295,7 @@ async function syncCanvasLayoutForManifest(
                 preferred: existingByAgentConfigId.get(config._id),
                 kind: "agent",
                 name: resource.name,
-                position: { x: 80, y: 80 + index * 180 },
+                position: nextPosition("agent"),
                 data: {
                     label: resource.name,
                     status: "idle",
@@ -1298,7 +1316,7 @@ async function syncCanvasLayoutForManifest(
                 preferred: existingById.get(canvasNodeId("skill", resource.name)),
                 kind: "skill",
                 name: resource.name,
-                position: { x: 760, y: 80 + index * 180 },
+                position: nextPosition("skill"),
                 data: {
                     label: resource.name,
                     status: "idle",
@@ -1326,10 +1344,7 @@ async function syncCanvasLayoutForManifest(
             preferred: existingByResourceId.get(resourceId),
             kind: resource.kind,
             name: resource.name,
-            position: {
-                x: resource.kind === "sandbox" ? 420 : 760,
-                y: 80 + index * 180,
-            },
+            position: nextPosition(resource.kind),
             data: {
                 label: resource.name,
                 status: "idle",

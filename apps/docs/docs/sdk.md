@@ -38,7 +38,7 @@ For self-hosted deployments, point the client at your own core service:
 
 ```ts
 const client = new BroodsClient({
-  baseUrl: "https://your-deployment.lambda-url.us-east-1.on.aws",
+  baseUrl: "https://your-deployment.lambda-url.eu-west-1.on.aws",
   apiKey: "fp_env_...",
 });
 ```
@@ -46,6 +46,9 @@ const client = new BroodsClient({
 ## Invoke an Agent
 
 ### Sync Run (accumulate text)
+
+Pass the generated `api.agents.<name>` reference separately from the model input. The
+reference carries the deployed endpoint, project, and environment routing metadata.
 
 ```ts
 import { api } from "./broods/_generated/api";

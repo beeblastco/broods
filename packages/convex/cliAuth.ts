@@ -6,6 +6,7 @@ import { v } from "convex/values";
 import { internalMutation, mutation, type MutationCtx } from "./_generated/server";
 import type { Id } from "./_generated/dataModel";
 import { authKit } from "./auth";
+import { slugifyName } from "./lib/slug";
 import { getActiveOrgForUser, requireOrgMember } from "./model/ownership/org";
 
 const CLI_CODE_PREFIX = "fp_code_";
@@ -262,6 +263,57 @@ export const selectOnboardingOrg = internalMutation({
     },
 });
 
+/** Creates a new org for the CLI token user and switches the token to it. */
+export const createOnboardingOrg = internalMutation({
+    args: {
+        tokenHash: v.string(),
+        name: v.string(),
+    },
+    returns: v.union(v.null(), onboardingContextValidator),
+    handler: async (ctx, args) => {
+        const resolved = await resolveActiveCliToken(ctx, args.tokenHash);
+        if (!resolved) return null;
+        const { token } = resolved;
+        const user = await userForAuthId(ctx, token.authId);
+        if (!user) throw new Error("CLI token user was not found");
+        const name = args.name.trim();
+        if (!name) throw new Error("Organization name is required");
+
+        const now = Date.now();
+        const slug = await uniqueOrgSlug(ctx, name);
+        const orgId = await ctx.db.insert("orgs", {
+            name: name,
+            slug: slug,
+            ownerAuthId: token.authId,
+            plan: "free",
+            createdAt: now,
+        });
+        await ctx.db.insert("orgMembers", {
+            orgId: orgId,
+            userId: user._id,
+            role: "owner",
+            createdAt: now,
+        });
+        const accountId = await ctx.db.insert("accounts", {
+            orgId: orgId,
+            username: slug,
+            description: `Broods org ${name}`,
+            secretHash: await sha256Hex(randomToken("fp_acct_")),
+            status: "active",
+            createdAt: now,
+            updatedAt: now,
+        });
+        await ctx.db.patch(user._id, { activeOrgId: orgId });
+        await ctx.db.patch(token._id, {
+            orgId: orgId,
+            accountId: accountId,
+            lastUsedAt: now,
+        });
+
+        return await onboardingContext(ctx, token.authId, orgId);
+    },
+});
+
 async function resolveActiveCliToken(ctx: MutationCtx, tokenHash: string) {
     const token = await ctx.db
         .query("cliTokens")
@@ -283,6 +335,20 @@ async function resolveActiveCliToken(ctx: MutationCtx, tokenHash: string) {
     }
 
     return { token: token, account: account };
+}
+
+async function uniqueOrgSlug(ctx: MutationCtx, baseName: string): Promise<string> {
+    const baseSlug = slugifyName(baseName);
+    let suffix = 0;
+    while (true) {
+        const candidate = suffix === 0 ? baseSlug : `${baseSlug}-${suffix}`;
+        const existing = await ctx.db
+            .query("orgs")
+            .withIndex("by_slug", (q) => q.eq("slug", candidate))
+            .first();
+        if (!existing) return candidate;
+        suffix += 1;
+    }
 }
 
 async function userForAuthId(ctx: MutationCtx, authId: string) {

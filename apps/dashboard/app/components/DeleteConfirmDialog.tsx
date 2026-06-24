@@ -1,7 +1,6 @@
 "use client";
 
-/** Reusable typed-confirm delete dialog. First input must equal 'delete <resourceName>'. When
- * critical=true a second input must equal the fixed safety phrase before the button enables. */
+/** Reusable typed-confirm delete dialog. Critical deletes merge the resource name and safety phrase into one input. */
 import { useState } from "react";
 import { Button } from "@/app/components/ui/button";
 import { Input } from "@/app/components/ui/input";
@@ -44,17 +43,14 @@ export function DeleteConfirmDialog({
   isDeleting = false,
 }: Props) {
   const [phrase, setPhrase] = useState("");
-  const [safetyPhrase, setSafetyPhrase] = useState("");
-
-  const deletePhrase = `delete ${resourceName}`;
-  const primaryMatch = phrase === deletePhrase;
-  const secondaryMatch = !critical || safetyPhrase === CRITICAL_SAFETY_PHRASE;
-  const canConfirm = primaryMatch && secondaryMatch && !isDeleting;
+  const deletePhrase = critical
+    ? `delete ${resourceName}, ${CRITICAL_SAFETY_PHRASE}`
+    : `delete ${resourceName}`;
+  const canConfirm = phrase === deletePhrase && !isDeleting;
 
   function handleOpenChange(next: boolean) {
     if (!next) {
       setPhrase("");
-      setSafetyPhrase("");
     }
     onOpenChange(next);
   }
@@ -91,23 +87,6 @@ export function DeleteConfirmDialog({
               autoComplete="off"
             />
           </div>
-          {critical && (
-            <div className="grid gap-1.5">
-              <Label htmlFor="delete-confirm-safety">
-                <span>Also type </span>
-                <span className="font-mono font-medium text-foreground break-all">
-                  {CRITICAL_SAFETY_PHRASE}
-                </span>
-              </Label>
-              <Input
-                id="delete-confirm-safety"
-                value={safetyPhrase}
-                onChange={(e) => setSafetyPhrase(e.target.value)}
-                placeholder={CRITICAL_SAFETY_PHRASE}
-                autoComplete="off"
-              />
-            </div>
-          )}
         </div>
         <DialogFooter>
           <Button

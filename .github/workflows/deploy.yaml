@@ -1,6 +1,6 @@
 # Deploy pipeline.
 # `main` = SaaS production: PR CI already validated, skip re-validation and
-#   deploy directly to the three production regions (Convex storage provider).
+#   deploy directly to the active production region (Convex storage provider).
 # `dev` = OSS / community staging: re-validates (typecheck + test + build)
 #   before deploying. Uses Convex storage when the development environment
 #   provides CONVEX_URL + CONVEX_DEPLOY_KEY, otherwise DynamoDB.
@@ -36,7 +36,7 @@ jobs:
     permissions:
       contents: read
     env:
-      AWS_REGION: ${{ vars.DEV_AWS_REGION || 'us-east-1' }}
+      AWS_REGION: ${{ vars.DEV_AWS_REGION || 'eu-west-1' }}
       CI: "true"
       # sst.config.ts reads these at runtime (no in-source defaults); postinstall
       # `sst install` fails without them.
@@ -81,7 +81,7 @@ jobs:
       id-token: write
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-      DEFAULT_AWS_REGION: ${{ vars.DEV_AWS_REGION || 'us-east-1' }}
+      DEFAULT_AWS_REGION: ${{ vars.DEV_AWS_REGION || 'eu-west-1' }}
       AWS_ROLE_ARN: ${{ vars.AWS_ROLE_ARN }}
       # Account/project identity for resource names, IAM ARNs, and tags. sst.config.ts
       # falls back to placeholders when unset, so set these repo vars for deploys to
@@ -104,7 +104,7 @@ jobs:
       ACCOUNT_OPENAI_ORGANIZATION: ${{ vars.ACCOUNT_OPENAI_ORGANIZATION }}
       ACCOUNT_OPENAI_PROJECT: ${{ vars.ACCOUNT_OPENAI_PROJECT }}
       ACCOUNT_BEDROCK_API_KEY: ${{ secrets.ACCOUNT_BEDROCK_API_KEY }}
-      ACCOUNT_BEDROCK_REGION: ${{ vars.ACCOUNT_BEDROCK_REGION || vars.DEV_AWS_REGION || 'us-east-1' }}
+      ACCOUNT_BEDROCK_REGION: ${{ vars.ACCOUNT_BEDROCK_REGION || vars.DEV_AWS_REGION || 'eu-west-1' }}
       ACCOUNT_BEDROCK_ACCESS_KEY_ID: ${{ secrets.ACCOUNT_BEDROCK_ACCESS_KEY_ID }}
       ACCOUNT_BEDROCK_SECRET_ACCESS_KEY: ${{ secrets.ACCOUNT_BEDROCK_SECRET_ACCESS_KEY }}
       ACCOUNT_BEDROCK_SESSION_TOKEN: ${{ secrets.ACCOUNT_BEDROCK_SESSION_TOKEN }}
@@ -122,7 +122,7 @@ jobs:
       SANDBOX_IMAGE_READY_PRODUCTION_US_EAST_1: ${{ vars.SANDBOX_IMAGE_READY_PRODUCTION_US_EAST_1 || vars.SANDBOX_IMAGE_READY_PRODUCTION || 'false' }}
       SANDBOX_IMAGE_READY_PRODUCTION_EU_WEST_1: ${{ vars.SANDBOX_IMAGE_READY_PRODUCTION_EU_WEST_1 || vars.SANDBOX_IMAGE_READY_PRODUCTION || 'false' }}
       SANDBOX_IMAGE_READY_PRODUCTION_AP_SOUTHEAST_1: ${{ vars.SANDBOX_IMAGE_READY_PRODUCTION_AP_SOUTHEAST_1 || vars.SANDBOX_IMAGE_READY_PRODUCTION || 'false' }}
-      SANDBOX_IMAGE_SOURCE_REGION: ${{ vars.SANDBOX_IMAGE_SOURCE_REGION || 'ap-southeast-1' }}
+      SANDBOX_IMAGE_SOURCE_REGION: ${{ vars.SANDBOX_IMAGE_SOURCE_REGION || 'eu-west-1' }}
       NATS_URL: ${{ secrets.NATS_URL }}
       NATS_TOKEN: ${{ secrets.NATS_TOKEN }}
       # Durable Lambda logs/traces. The endpoint is non-secret; the Basic auth
@@ -144,8 +144,6 @@ jobs:
       # development otherwise). A stage uses Convex when both are set, else DynamoDB.
       CONVEX_URL: ${{ secrets.CONVEX_URL }}
       CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
-      # This is for testing purposes only.
-      MOCK_WEBHOOK_SECRET: ${{ secrets.MOCK_WEBHOOK_SECRET }}
     steps:
       - name: Resolve deploy configuration
         shell: bash
@@ -162,7 +160,7 @@ jobs:
           }
 
           production_targets() {
-            for region in us-east-1 eu-west-1 ap-southeast-1; do
+            for region in eu-west-1; do
               echo "production-${region}|${region}|$(sandbox_ready_for_region "$region")"
             done
           }
@@ -211,7 +209,7 @@ jobs:
             echo "DEPLOY_TARGETS<<EOF"
             echo "$DEPLOY_TARGETS"
             echo "EOF"
-            echo "AWS_REGION=${DEFAULT_AWS_REGION:-us-east-1}"
+            echo "AWS_REGION=${DEFAULT_AWS_REGION:-eu-west-1}"
           } >> "$GITHUB_ENV"
 
       - name: Checkout repository
@@ -262,7 +260,6 @@ jobs:
           DAYTONA_API_KEY: ${{ secrets.DAYTONA_API_KEY }}
           # Optional: base64 kubeconfig for the kubernetes sandbox provider.
           KUBERNETES_SANDBOX_KUBECONFIG: ${{ secrets.KUBERNETES_SANDBOX_KUBECONFIG }}
-          MOCK_WEBHOOK_SECRET: ${{ secrets.MOCK_WEBHOOK_SECRET }}
         shell: bash
         run: |
           set -euo pipefail
@@ -300,7 +297,7 @@ jobs:
             local target_stage="$1"
             local target_region="$2"
             local target_repo="beeblast-lambda-sandbox-${AWS_ACCOUNT_ID}-${target_region}"
-            local source_region="${SANDBOX_IMAGE_SOURCE_REGION:-ap-southeast-1}"
+            local source_region="${SANDBOX_IMAGE_SOURCE_REGION:-eu-west-1}"
             local source_repo="beeblast-lambda-sandbox-${AWS_ACCOUNT_ID}-${source_region}"
             local source_image="${AWS_ACCOUNT_ID}.dkr.ecr.${source_region}.amazonaws.com/${source_repo}:latest-arm64"
             local target_image="${AWS_ACCOUNT_ID}.dkr.ecr.${target_region}.amazonaws.com/${target_repo}:latest-arm64"
@@ -334,8 +331,7 @@ jobs:
 
           for name in \
             ADMIN_ACCOUNT_SECRET \
-            ACCOUNT_CONFIG_ENCRYPTION_SECRET \
-            MOCK_WEBHOOK_SECRET
+            ACCOUNT_CONFIG_ENCRYPTION_SECRET
           do
             if [[ -z "${!name:-}" ]]; then
               echo "Missing required environment value: $name" >&2

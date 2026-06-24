@@ -752,6 +752,53 @@ describe("direct API ingress", () => {
     expect(handledEvents[0]?.statusUrl).toBe("https://example.lambda-url.aws/status/one?agentId=agent_test");
   });
 
+  it("routes scoped async direct API requests with an env-scoped runtime key", async () => {
+    const handledEvents: AsyncDirectInboundEvent[] = [];
+    const response = await routeIncomingEvent(createEvent({
+      agentId: "agent_test",
+      eventId: "one",
+      conversationKey: "alpha",
+      events: [{
+        role: "user",
+        content: [{ type: "text", text: "hello" }],
+      }],
+    }, {
+      authorization: "Bearer fp_agent_test",
+      host: "gateway.broods.app",
+      "x-forwarded-proto": "https",
+    }, {
+      rawPath: "/v1/demo/agents/development/env-endpoint/async",
+      addDefaultAgentId: false,
+    }), createHandlers({
+      handleAsyncRequest: async (event) => {
+        handledEvents.push(event);
+        return {
+          statusCode: 202,
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ statusUrl: event.statusUrl }),
+        };
+      },
+    }), {
+      authResolver: async (headers) =>
+        headers.authorization === "Bearer fp_agent_test"
+          ? {
+            kind: "deployment",
+            account: TEST_ACCOUNT,
+            endpointId: "env-endpoint",
+            projectSlug: "demo",
+            environmentSlug: "development",
+          }
+          : null,
+    });
+
+    expect(response.statusCode).toBe(202);
+    expect(handledEvents).toHaveLength(1);
+    expect(handledEvents[0]?.endpointId).toBe("env-endpoint");
+    expect(handledEvents[0]?.projectSlug).toBe("demo");
+    expect(handledEvents[0]?.environmentSlug).toBe("development");
+    expect(handledEvents[0]?.statusUrl).toBe("https://gateway.broods.app/status/one?agentId=agent_test");
+  });
+
   it("rejects per-request webhook callback config for direct API requests", async () => {
     const response = await routeIncomingEvent(createEvent({
       eventId: "one",
