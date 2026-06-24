@@ -73,6 +73,7 @@ export function EnvironmentSelector() {
   const params = useParams<{ projectId?: string }>();
   const router = useRouter();
   const searchParams = useSearchParams();
+  const shouldOpenProductionPanel = searchParams.get("initialize") === "production";
   const projectId = params.projectId as Id<"projects"> | undefined;
   const { environmentId, setEnvironmentId } = useEnvironment();
 
@@ -85,7 +86,7 @@ export function EnvironmentSelector() {
   const initializeProduction = useMutation(api.environment.initializeProduction);
 
   const [createOpen, setCreateOpen] = useState(false);
-  const [productionOpen, setProductionOpen] = useState(false);
+  const [productionOpen, setProductionOpen] = useState(shouldOpenProductionPanel);
   const [productionRegion, setProductionRegion] = useState<DeploymentRegion>("eu-west-1");
   const [newName, setNewName] = useState("");
   const [createMode, setCreateMode] = useState<"empty" | "duplicate">("empty");
@@ -98,15 +99,12 @@ export function EnvironmentSelector() {
   const productionEnv = environments?.find((env) => environmentKind(env) === "production");
 
   useEffect(() => {
-    if (!projectId || !environments || searchParams.get("initialize") !== "production") return;
-    if (!productionEnv?.deploymentRegion) {
-      setProductionOpen(true);
-    }
+    if (!projectId || !environments || !shouldOpenProductionPanel) return;
     const next = new URLSearchParams(searchParams.toString());
     next.delete("initialize");
     const suffix = next.toString();
     router.replace(`/${projectId}${suffix ? `?${suffix}` : ""}`, { scroll: false });
-  }, [environments, productionEnv, projectId, router, searchParams]);
+  }, [environments, shouldOpenProductionPanel, projectId, router, searchParams]);
 
   // Ensure default Development environment exists when project loads.
   useEffect(() => {
