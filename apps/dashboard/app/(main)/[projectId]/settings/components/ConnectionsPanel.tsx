@@ -518,29 +518,6 @@ export function ConnectionsPanel({ environmentId }: Props) {
   return (
     <>
       <Section>
-        <div className="flex items-start justify-between gap-4">
-          <div>
-            <h3 className="text-sm font-semibold text-foreground">Connections</h3>
-            <p className="mt-0.5 text-xs text-muted-foreground">
-              Connect the apps where your agents can receive and send messages. Each connection has its own context for permissions, instructions, and plugins.
-            </p>
-          </div>
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="outline" size="sm" className="shrink-0 cursor-pointer">
-                <Plus className="mr-1.5 size-3.5" /> Add connector
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-52">
-              <DropdownMenuItem className="cursor-pointer text-sm gap-2.5" onClick={() => setBrowseOpen(true)}>
-                <Grid2x2 className="size-3.5 text-muted-foreground" /> Browse connectors
-              </DropdownMenuItem>
-              <DropdownMenuItem className="cursor-pointer text-sm gap-2.5" onClick={() => setCustomOpen(true)}>
-                <MoreHorizontal className="size-3.5 text-muted-foreground" /> Add custom connector
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-        </div>
         <div className="grid gap-2">
           {connections.map((conn) => <ConnectionCard key={conn.id} conn={conn} onClick={handleCardClick} />)}
         </div>
