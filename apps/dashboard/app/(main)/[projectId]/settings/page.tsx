@@ -33,7 +33,7 @@ const TABS: Array<{ id: SettingsTab; label: string; danger?: boolean }> = [
   { id: "environments", label: "Environments" },
   { id: "deploy", label: "Deploy" },
   { id: "webhooks", label: "Webhooks" },
-  { id: "connections", label: "Connections" },
+  { id: "connections", label: "Channels" },
   { id: "plugins", label: "Plugins" },
   { id: "audit-logs", label: "Audit Logs" },
   { id: "danger", label: "Danger Zone", danger: true },
@@ -139,10 +139,10 @@ export default function SettingsPage() {
             ))}
           </div>
 
-          {/* Broods Tag Group */}
+          {/* Connections Group */}
           <div className="flex flex-col gap-1">
             <div className="px-3 py-1 flex items-center gap-1.5">
-              <span className="text-xs font-semibold text-foreground/80">Broods Tag</span>
+              <span className="text-xs font-semibold text-foreground/80">Connections</span>
             </div>
             <div className="flex flex-col gap-0.5 pl-3">
               {TABS.filter((t) => ["connections", "plugins", "audit-logs"].includes(t.id)).map((t) => (
