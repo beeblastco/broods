@@ -95,9 +95,19 @@ jobs:
           role-to-assume: ${{ vars.AWS_ROLE_ARN }}
 
       - name: Install dependencies (skip sst postinstall)
-        # --ignore-scripts keeps `sst install` from running here; refresh/diff
-        # don't need it (sst is invoked via bunx at deploy-time).
+        # --ignore-scripts keeps `sst install` from running here; sst is
+        # invoked via bunx below.
         run: bun install --frozen-lockfile --ignore-scripts
+
+      - name: Build Lambda binaries
+        # MUST run before refresh/diff. sst.config.ts points both Functions at
+        # the prebuilt `dist/<fn>` bundles, and `sst refresh`/`sst diff` write
+        # `dist/<fn>/resource.enc` (the linked-resource blob) into those dirs
+        # while evaluating the config. Without the `dist/<fn>` directories the
+        # evaluation fails on the very first refresh with
+        # "open dist/harness-processing/resource.enc: no such file or directory".
+        # Mirrors deploy.yaml's build step so the artefacts match a real deploy.
+        run: bun run build
 
       - name: Detect drift (refresh + diff)
         id: detect
@@ -168,14 +178,6 @@ jobs:
           # configuration regression; covers two monthly deploy cycles.
           retention-days: 30
           if-no-files-found: warn
-
-      - name: Build Lambda binaries
-        if: steps.detect.outputs.drift_detected == 'true'
-        # Build only when we are about to apply — sst refresh/diff doesn't
-        # touch the bundle. Mirrors deploy.yaml's build step so the deploy
-        # picks up the same `dist/harness-processing` and `dist/account-manage`
-        # artefacts referenced by sst.config.ts.
-        run: bun run build
 
       - name: Clear stale SST deploy lock
         if: steps.detect.outputs.drift_detected == 'true'
