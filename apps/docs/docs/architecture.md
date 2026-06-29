@@ -197,7 +197,7 @@ flowchart TD
   Status --> AsyncTable
 ```
 
-The async path starts inside `harness-processing`: `POST /async` creates `AsyncAgentResult`, returns a status URL, and starts an internal Lambda Event invocation. Subagents and built-in async tools run inside that Lambda. Uploaded custom tools always execute in Kubernetes; uploaded async tools are waited on for SSE, but `/async`, channel, and NATS turns launch them as detached sandbox work that completes through `/sandbox-jobs/{resultId}/complete`.
+The async path starts inside `harness-processing`: `POST /async` creates `AsyncAgentResult`, returns a status URL, and starts an internal Lambda Event invocation. Subagents and built-in async tools run inside that Lambda. Uploaded custom tools always execute in the `sandbox` provider; uploaded async tools are waited on for SSE, but `/async`, channel, and NATS turns launch them as detached sandbox work that completes through `/sandbox-jobs/{resultId}/complete`.
 
 ```mermaid
 flowchart TD
@@ -205,7 +205,7 @@ flowchart TD
   Kind -->|"subagent"| InMemory["in-memory pending work"]
   Kind -->|"built-in async tool"| InMemory
   Kind -->|"uploaded async tool on SSE"| InMemory
-  Kind -->|"uploaded async tool on detached path"| External["Kubernetes background runner"]
+  Kind -->|"uploaded async tool on detached path"| External["sandbox background runner"]
   InMemory -->|"wait only while pendingCount > 0"| Inject["inject result into conversation"]
   External -->|"sandbox-jobs complete endpoint"| Group["sealed detached group<br/>all siblings settled"]
   Group --> Inject
@@ -396,9 +396,9 @@ read-only `read`/`glob` when absent (via a read-only mount by default, or direct
 `sandbox: null` opt-out); `bash` is also exposed stateless when there is no workspace. Each tool's `permissionMode` (`edit`/`ask`/`bypass`)
 is resolved per call from the selected workspace.
 
-Every sandbox-backed tool compiles to a single `run` against the provider (`lambda`/`e2b`/
-`daytona`/`kubernetes`/`vercel`). The lambda provider deploys the same image as four functions
-(workspace mount × network slot) and auto-selects one per run. A workspace's namespace is
+Every sandbox-backed tool compiles to a single `run` against the provider (`sandbox`/`lambda`/
+`e2b`/`daytona`/`vercel`). The lambda provider runs each session in an AWS Lambda MicroVM
+(the old four-function grid is gone) and mounts the workspace inside the VM. A workspace's namespace is
 derived from `accountId:workspaceId`, so agents that reference the same `workspaceId` share
 files — including across the sandbox-backed and read-only S3 paths. A workspace with no
 sandbox still serves `MEMORY.md` via the S3 API. `workspace.harness.enabled=false`
@@ -430,11 +430,11 @@ Agents control model selection, channel credentials, optional skills, subagents,
 - `AsyncAgentResult`: async direct API and subagent state for `/status/{eventId}` polling.
 - `AsyncToolResult`: async tool call state, same-table detached group rows for callback fan-in, delivery metadata for non-SSE continuations, and structured outputs for parent result injection.
 - `AccountSignupRateLimit`: TTL rows throttling public account creation per source IP.
-- `PersistentSandboxInstance`: reserved sandbox instances for persistent e2b/daytona/vercel providers.
+- `PersistentSandboxInstance`: reserved sandbox instances for persistent sandbox/lambda/daytona/e2b/vercel providers.
 - S3 workspace bucket: workspace files (namespaced by `accountId:workspaceId`) and staged skill bundles.
 - S3 skills bucket: account-scoped skill bundles under `<accountId>/<skill-name>`.
 - S3 tool-bundles bucket: uploaded custom tool bundles.
 
 On the production stage the config domains (accounts, agents, sandboxes, workspaces, tools, cron jobs) are stored in Convex instead of DynamoDB; runtime tables (conversations, dedup, async results) stay in DynamoDB on every stage.
 
-Built-in tool execution is inline in `harness-processing`. Uploaded custom tools execute in Kubernetes. `async: true` only changes the lifecycle: built-in async stays in the current Lambda, uploaded async waits on SSE, and uploaded async detaches automatically on `/async`, channel, and NATS turns. Subagents are in-process child agent loops; they do not require child Lambda workers.
+Built-in tool execution is inline in `harness-processing`. Uploaded custom tools execute in the `sandbox` (workdir) provider. `async: true` only changes the lifecycle: built-in async stays in the current Lambda, uploaded async waits on SSE, and uploaded async detaches automatically on `/async`, channel, and NATS turns. Subagents are in-process child agent loops; they do not require child Lambda workers.

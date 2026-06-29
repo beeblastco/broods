@@ -4,7 +4,6 @@ export const discord = defineDiscordChannel({
   botToken: env.DISCORD_BOT_TOKEN,
   publicKey: env.DISCORD_PUBLIC_KEY,
   allowedGuildIds: process.env.DISCORD_ALLOWED_GUILD_IDS?.split(",").map((value) => value.trim()).filter(Boolean),
-  streaming: { mode: "edit" },
 });
 
 export const agent = defineAgent({

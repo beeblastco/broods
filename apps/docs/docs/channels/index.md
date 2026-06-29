@@ -2,6 +2,15 @@
 
 Channels are communication integrations such as Telegram, GitHub, Slack, Discord, Pancake, and Zalo. They translate provider webhooks into the shared agent input shape, then send replies through a channel-specific `ChannelActions` implementation.
 
+Slack, Telegram, Discord, and GitHub are built on the Chat SDK adapter packages:
+
+- [`@chat-adapter/slack`](https://www.npmjs.com/package/@chat-adapter/slack)
+- [`@chat-adapter/telegram`](https://www.npmjs.com/package/@chat-adapter/telegram)
+- [`@chat-adapter/discord`](https://www.npmjs.com/package/@chat-adapter/discord)
+- [`@chat-adapter/github`](https://www.npmjs.com/package/@chat-adapter/github)
+
+Use the Chat SDK docs for provider capability details: [Platform Adapters](https://chat-sdk.dev/docs/platform-adapters), [Markdown](https://chat-sdk.dev/docs/api/markdown), [Streaming](https://chat-sdk.dev/docs/streaming), and [Slash Commands](https://chat-sdk.dev/docs/slash-commands). Pancake and Zalo are Broods-native adapters because Chat SDK does not provide those providers.
+
 Customers interact with the provider bot, app, or webhook. They do not receive account secrets. The webhook URL always includes the account, agent, and channel:
 
 ```bash
@@ -41,14 +50,14 @@ Webhook handling is split deliberately:
 
 ## Supported Channels
 
-| Channel | Adapter | Required config | Documentation |
-| --- | --- | --- | --- |
-| `telegram` | [`functions/_shared/telegram-channel.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/functions/_shared/telegram-channel.ts) | `botToken`, `webhookSecret`, `allowedChatIds` | [Telegram Details](telegram.md) |
-| `github` | [`functions/_shared/github-channel.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/functions/_shared/github-channel.ts) | `webhookSecret`, `appId`, `privateKey` | [GitHub Details](github.md) |
-| `slack` | [`functions/_shared/slack-channel.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/functions/_shared/slack-channel.ts) | `botToken`, `signingSecret` | [Slack Details](slack.md) |
-| `discord` | [`functions/_shared/discord-channel.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/functions/_shared/discord-channel.ts) | `botToken`, `publicKey` | [Discord Details](discord.md) |
-| `pancake` | [`functions/_shared/pancake-channel.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/functions/_shared/pancake-channel.ts) | `pageId`, `pageAccessToken`, `webhookSecret` | [Pancake Details](pancake.md) |
-| `zalo` | [`functions/_shared/zalo-channel.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/functions/_shared/zalo-channel.ts) | `botToken`, `webhookSecret`, `allowedUserIds` | [Zalo Details](zalo.md) |
+| Channel | Runtime adapter | Chat SDK package | Required config | Documentation |
+| --- | --- | --- | --- | --- |
+| `telegram` | [`functions/_shared/telegram-channel.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/functions/_shared/telegram-channel.ts) | [`@chat-adapter/telegram`](https://www.npmjs.com/package/@chat-adapter/telegram) | `botToken`, `webhookSecret`, `allowedChatIds` | [Telegram Details](telegram.md) |
+| `github` | [`functions/_shared/github-channel.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/functions/_shared/github-channel.ts) | [`@chat-adapter/github`](https://www.npmjs.com/package/@chat-adapter/github) | `webhookSecret`, `appId`, `privateKey` | [GitHub Details](github.md) |
+| `slack` | [`functions/_shared/slack-channel.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/functions/_shared/slack-channel.ts) | [`@chat-adapter/slack`](https://www.npmjs.com/package/@chat-adapter/slack) | `botToken`, `signingSecret` | [Slack Details](slack.md) |
+| `discord` | [`functions/_shared/discord-channel.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/functions/_shared/discord-channel.ts) | [`@chat-adapter/discord`](https://www.npmjs.com/package/@chat-adapter/discord) | `botToken`, `publicKey` | [Discord Details](discord.md) |
+| `pancake` | [`functions/_shared/pancake-channel.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/functions/_shared/pancake-channel.ts) | Broods-native | `pageId`, `pageAccessToken`, `webhookSecret` | [Pancake Details](pancake.md) |
+| `zalo` | [`functions/_shared/zalo-channel.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/functions/_shared/zalo-channel.ts) | Broods-native | `botToken`, `webhookSecret`, `allowedUserIds` | [Zalo Details](zalo.md) |
 
 ---
 
@@ -69,7 +78,6 @@ export const github = defineGitHubChannel({
 export const slack = defineSlackChannel({
   botToken: env.SLACK_BOT_TOKEN,
   signingSecret: env.SLACK_SIGNING_SECRET,
-  streaming: { mode: "edit" },
 });
 
 export const support = defineAgent({
@@ -88,8 +96,8 @@ Runnable examples live under `packages/demos/channel-*`. Provider registration i
 
 Every channel gets these behaviors from the shared pipeline, not from the adapter:
 
-- **Bot commands** — a message starting with `/command` runs a command from [`functions/_shared/commands.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/functions/_shared/commands.ts) instead of the agent: `/new` (alias `/start`) clears the conversation context, `/help` lists commands, and Discord additionally exposes `/ask`. Commands only see the channel-agnostic `ChannelActions`.
-- **Typing + reaction** — an accepted message immediately triggers a fire-and-forget typing indicator and a reaction (👀 on Slack/GitHub, configurable on Telegram, no-op on Discord/Pancake/Zalo).
+- **Bot commands** — command-capable channels (Slack, Discord, and Telegram) route supported `/command` input through [`functions/_shared/commands.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/functions/_shared/commands.ts) instead of the agent: `/new` and `/clear` clear the conversation context, and `/help` lists commands. GitHub, Pancake, and Zalo treat slash-looking message text as agent input.
+- **Typing + reaction** — an accepted message immediately triggers a fire-and-forget typing indicator and a reaction where the channel supports it. Telegram and Slack reaction emoji are configurable; GitHub uses 👀; Pancake/Zalo are no-op.
 - **Tool approval auto-deny** — tools configured with `needsApproval` are automatically denied on channel turns with the reason `Tool approval is only supported through the direct API.`
 - **Error replies** — if processing fails, the channel receives `Error: <message>` as the reply.
 - **Per-channel config scoping** — a webhook run only sees its own channel's config; other channels' credentials are stripped from the runtime agent config.
@@ -99,27 +107,18 @@ Every channel gets these behaviors from the shared pipeline, not from the adapte
 
 ## Reply Streaming
 
-By default a channel sends one final message per turn. Set `config.channels.<channel>.streaming.mode` to stream the assistant reply live as the model produces it:
-
-| Mode | Behavior | Requirement |
-| --- | --- | --- |
-| `off` (default) | One final `sendText` | — |
-| `edit` | Post a placeholder, then edit it in place on a ~1.2s throttle; final edit holds the complete reply | Channel implements `beginMessage`/`editMessage` (else falls back to `chunk`) |
-| `progress` | Show a live preview of tool activity (`⏳ Working… • <tool>`) while the model runs, then swap the same message for the final answer | Same edit primitives as `edit` (else falls back to `chunk`) |
-| `chunk` | Send each paragraph (blank-line boundary) as its own message as it completes; a fenced code block is never split mid-fence | Uses `sendText` — works on every channel |
+Channel replies use Chat SDK adapter streaming by default when the channel adapter exposes `stream()`. Slack uses Chat SDK's native Slack streaming API, Telegram private chats use Chat SDK rich draft previews before persisting the final response, and GitHub uses Chat SDK's buffered Markdown comment streaming. Discord uses Chat SDK's final-message adapter methods because its adapter does not expose native streaming yet. Channels without SDK streaming support send one final `sendText` reply.
 
 ```mermaid
 flowchart LR
-  Text["assistant text deltas"] --> Driver["createChannelStreamWriter<br/>(channel-streaming.ts)"]
-  Tools["tool-call names"] --> Driver
-  Driver -->|"edit"| Edit["beginMessage → editMessage*<br/>(throttled, one message, rotates on overflow)"]
-  Driver -->|"progress"| Progress["tool-activity preview<br/>→ final answer"]
-  Driver -->|"chunk / fallback"| Chunk["sendText per paragraph<br/>(fence-aware)"]
+  Agent["AI SDK fullStream"] --> Adapter["Chat SDK fromFullStream()"]
+  Adapter -->|"ChannelActions.stream exists"| Native["adapter native streaming"]
+  Adapter -->|"no stream support"| Final["sendText final reply"]
 ```
 
-The handler reads `text-delta` and `tool-call` parts from the agent's `fullStream`: `edit`/`chunk` consume the text and ignore tool calls; `progress` consumes tool calls and ignores the streamed text (the answer arrives whole at the end).
+The provider adapter owns the streaming method and fallback behavior.
 
-The driver ([`functions/_shared/channel-streaming.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/functions/_shared/channel-streaming.ts)) owns accumulation and throttling; channels only provide the `beginMessage`/`editMessage` primitives (and an optional `editMaxChars` cap) for edit/progress modes. Streaming is best-effort — a failed edit/send never aborts the turn, and a structured/object final response always sends as one message. When an edited reply outgrows the channel's `editMaxChars` budget (default ~3500 raw characters; Discord uses 1900, both safely below the provider caps of 4096/2000), the driver freezes the current message at a clean break and continues streaming in a new one (rotation), so long replies are not truncated. **Telegram**, **Slack** (`chat.postMessage`/`chat.update`), and **Discord** (interaction webhook edits) ship edit primitives; other channels stream via `chunk` until they add the two methods.
+Channel markdown formatting is delegated to the Chat SDK adapters for Slack, Telegram, Discord, and GitHub, including Slack response-url text conversion and Telegram MarkdownV2 rendering. See Chat SDK [Markdown](https://chat-sdk.dev/docs/api/markdown) for the cross-platform formatting model. Pancake and Zalo keep their provider-specific text handling because Chat SDK does not cover those providers.
 
 ---
 
@@ -161,7 +160,7 @@ The normalized `InboundMessage` contains:
 2. Validate the new `config.channels.<channel>` fields in `normalizeChannelsConfig()`.
 3. Create `functions/_shared/<channel>-channel.ts`.
 4. Implement `ChannelAdapter`.
-5. Keep provider-specific reply formatting and send logic inside the channel module.
+5. Use a Chat SDK adapter when the provider is supported; keep provider-specific reply formatting and send logic inside the channel module only for unsupported providers or Broods-specific event normalization.
 6. Import the channel factory in [`functions/harness-processing/integrations.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/functions/harness-processing/integrations.ts).
 7. Add `create<Channel>ChannelFromConfig()` and include it in `createChannelRegistry()`.
 8. Document the webhook URL as `/webhooks/{accountId}/{agentId}/{channel}`.

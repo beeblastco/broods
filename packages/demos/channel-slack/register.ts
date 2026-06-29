@@ -17,8 +17,8 @@ if (appToken && appId) {
     features: {
       bot_user: { display_name: "Broods Agent", always_online: true },
       slash_commands: [
-        { command: "/ask", description: "Ask the agent a question", url: webhookUrl, should_escape: false },
         { command: "/new", description: "Clear conversation context and start fresh", url: webhookUrl, should_escape: false },
+        { command: "/clear", description: "Clear conversation context and start fresh", url: webhookUrl, should_escape: false },
         { command: "/help", description: "Show available commands", url: webhookUrl, should_escape: false },
       ],
     },
@@ -70,6 +70,6 @@ if (appToken && appId) {
   console.log("Configure this URL in your Slack app at https://api.slack.com/apps:");
   console.log("  1. Event Subscriptions → enable → paste URL as Request URL");
   console.log("  2. Subscribe to bot events: app_mention, message.channels, message.im");
-  console.log("  3. Add Slash Commands (/ask, /new, /help) pointing to the same URL");
+  console.log("  3. Add Slash Commands (/new, /clear, /help) pointing to the same URL");
   console.log("\nTo auto-register, add SLACK_APP_TOKEN (xapp-) and SLACK_APP_ID to .env.local");
 }

@@ -190,7 +190,7 @@ export default function SettingsPage() {
       <div className={cn("flex min-w-0 flex-1 flex-col", isPlugins ? "h-full overflow-hidden" : "overflow-auto")}>
         {/* Page title — aligned with sidebar header height */}
         {!isPlugins && (
-          <div className="px-8 pt-9.25 pb-6 mx-auto w-full max-w-2xl shrink-0">
+          <div className="px-6 pt-9.25 pb-6 mx-auto w-full max-w-2xl shrink-0">
             <h2 className="text-xl font-semibold text-foreground">
               {activeLabel}
             </h2>
@@ -200,7 +200,7 @@ export default function SettingsPage() {
           "w-full",
           isPlugins
             ? "flex-1 flex flex-col min-h-0 bg-background"
-            : "mx-auto w-full max-w-2xl px-8 pb-12"
+            : "mx-auto w-full max-w-2xl px-6 pb-12"
         )}>
           {renderPanel()}
         </div>

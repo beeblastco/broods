@@ -1,5 +1,5 @@
 {
-  "name": "@broods/demo-sandbox-kubernetes-persistent",
+  "name": "@broods/demo-sandbox-persistent",
   "type": "module",
   "private": true,
   "scripts": {

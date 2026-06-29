@@ -42,7 +42,7 @@ to `Sandbox.getOrCreate()`/`Sandbox.get()` instead of emulating them with marker
 Two semantic differences from the other persistent providers:
 
 - **`onResume` timing**: on Vercel the hook fires only when a *stopped* sandbox actually
-  resumes. E2B/Daytona/Kubernetes run `onResume` on every call (they cannot tell a fresh
+  resumes. E2B/Daytona/`sandbox` run `onResume` on every call (they cannot tell a fresh
   reconnect from a resume), so write hooks that are idempotent either way.
 - **Idle timeout**: Vercel's `timeout` counts from sandbox start, not from last activity.
   The executor maps `lifecycle.idleTimeoutSeconds` onto it, so a persistent Vercel sandbox
@@ -87,7 +87,7 @@ unavailable.
 ## Background Jobs
 
 Persistent Vercel sandboxes support `bash` background jobs and `async_status` using the
-harness job-control scripts also used by Daytona and Kubernetes. Auto-delivery still needs egress to the harness
+harness job-control scripts also used by Daytona and the `sandbox` provider. Auto-delivery still needs egress to the harness
 Function URL; with `deny-all` the job runs, but completion must be fetched by polling.
 
 ## Troubleshooting

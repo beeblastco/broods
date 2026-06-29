@@ -135,11 +135,6 @@ jobs:
       DAYTONA_TARGET: ${{ vars.DAYTONA_TARGET }}
       DAYTONA_S3_SNAPSHOT_NAME: ${{ vars.DAYTONA_S3_SNAPSHOT_NAME }}
       DAYTONA_S3_SNAPSHOT_BASE_IMAGE: ${{ vars.DAYTONA_S3_SNAPSHOT_BASE_IMAGE }}
-      # kubernetes sandbox provider (non-secret knobs; kubeconfig is an SST secret).
-      KUBERNETES_SANDBOX_NAMESPACE: ${{ vars.KUBERNETES_SANDBOX_NAMESPACE }}
-      KUBERNETES_SANDBOX_IMAGE: ${{ vars.KUBERNETES_SANDBOX_IMAGE }}
-      KUBERNETES_SANDBOX_SERVICE_ACCOUNT: ${{ vars.KUBERNETES_SANDBOX_SERVICE_ACCOUNT }}
-      KUBERNETES_SANDBOX_IMAGE_PULL_SECRETS: ${{ vars.KUBERNETES_SANDBOX_IMAGE_PULL_SECRETS }}
       # Convex storage provider. Resolved per environment (production on main,
       # development otherwise). A stage uses Convex when both are set, else DynamoDB.
       CONVEX_URL: ${{ secrets.CONVEX_URL }}
@@ -258,8 +253,6 @@ jobs:
           # Optional trusted server-side caller token; empty default keeps deploys working.
           SERVICE_AUTH_SECRET: ${{ secrets.SERVICE_AUTH_SECRET }}
           DAYTONA_API_KEY: ${{ secrets.DAYTONA_API_KEY }}
-          # Optional: base64 kubeconfig for the kubernetes sandbox provider.
-          KUBERNETES_SANDBOX_KUBECONFIG: ${{ secrets.KUBERNETES_SANDBOX_KUBECONFIG }}
         shell: bash
         run: |
           set -euo pipefail

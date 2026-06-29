@@ -99,33 +99,35 @@ export function OrgSwitcher() {
             <ChevronDown className="size-3.5 text-muted-foreground" />
           </button>
         </DropdownMenuTrigger>
-        <DropdownMenuContent align="start" sideOffset={8} className="w-64">
+        <DropdownMenuContent align="start" sideOffset={8} className="flex max-h-[min(24rem,var(--radix-dropdown-menu-content-available-height))] w-64 flex-col overflow-hidden">
           <DropdownMenuLabel className="text-xs text-muted-foreground">
             Organizations
           </DropdownMenuLabel>
-          {orgs === undefined ? (
-            <div className="px-2 py-1.5 text-xs text-muted-foreground">
-              Loading...
-            </div>
-          ) : orgs.length === 0 ? (
-            <div className="px-2 py-1.5 text-xs text-muted-foreground">
-              No organizations yet.
-            </div>
-          ) : (
-            orgs.map((org) => (
-              <DropdownMenuItem
-                key={org._id}
-                className="cursor-pointer"
-                onClick={() => handleSwitch(org._id)}
-              >
-                <Building2 />
-                <span className="flex-1 truncate">{org.name}</span>
-                {active?._id === org._id && (
-                  <Check className="size-3.5 text-muted-foreground" />
-                )}
-              </DropdownMenuItem>
-            ))
-          )}
+          <div className="min-h-0 flex-1 overflow-y-auto">
+            {orgs === undefined ? (
+              <div className="px-2 py-1.5 text-xs text-muted-foreground">
+                Loading...
+              </div>
+            ) : orgs.length === 0 ? (
+              <div className="px-2 py-1.5 text-xs text-muted-foreground">
+                No organizations yet.
+              </div>
+            ) : (
+              orgs.map((org) => (
+                <DropdownMenuItem
+                  key={org._id}
+                  className="cursor-pointer"
+                  onClick={() => handleSwitch(org._id)}
+                >
+                  <Building2 />
+                  <span className="flex-1 truncate">{org.name}</span>
+                  {active?._id === org._id && (
+                    <Check className="size-3.5 text-muted-foreground" />
+                  )}
+                </DropdownMenuItem>
+              ))
+            )}
+          </div>
           <DropdownMenuSeparator />
           <DropdownMenuItem
             className="cursor-pointer"

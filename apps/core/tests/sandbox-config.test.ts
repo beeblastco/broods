@@ -14,18 +14,24 @@ import {
 } from "../functions/_shared/storage/sandbox-config.ts";
 
 describe("sandbox config", () => {
+  it("accepts a predefined size and rejects an unknown one", () => {
+    expect(normalizeSandboxConfig({ provider: "sandbox", size: "medium" }).size).toBe("medium");
+    expect(normalizeSandboxConfig({ provider: "sandbox" }).size).toBeUndefined();
+    expect(() => normalizeSandboxConfig({ provider: "sandbox", size: "huge" })).toThrow("config.size must be one of");
+  });
+
+  it("accepts a snapshot/image pin and rejects a non-string one", () => {
+    expect(normalizeSandboxConfig({ provider: "sandbox", snapshot: "img_curated" }).snapshot).toBe("img_curated");
+    expect(normalizeSandboxConfig({ provider: "sandbox" }).snapshot).toBeUndefined();
+    expect(normalizeSandboxConfig({ provider: "sandbox", snapshot: "  " }).snapshot).toBeUndefined();
+    expect(() => normalizeSandboxConfig({ provider: "sandbox", snapshot: 7 })).toThrow("config.snapshot must be a string");
+  });
+
   it("rejects account-controlled lambda function-name overrides", () => {
     expect(() => normalizeSandboxConfig({
       provider: "lambda",
       options: { functionNames: { noMountNet: "other-function" } },
     })).toThrow("config.options.functionNames is not supported");
-  });
-
-  it("rejects account-controlled kubernetes cluster options", () => {
-    expect(() => normalizeSandboxConfig({
-      provider: "kubernetes",
-      options: { serviceAccountName: "cluster-admin" },
-    })).toThrow("config.options.serviceAccountName is managed by the service");
   });
 
   it("redacts env vars and sensitive provider option names", () => {
@@ -34,10 +40,10 @@ describe("sandbox config", () => {
       sandboxId: "sb_1",
       name: "secure",
       config: {
-        provider: "kubernetes",
+        provider: "sandbox",
         envVars: { API_BASE: "https://api.example.com" },
         options: {
-          kubeconfig: "base64-token",
+          apiKey: "base64-token",
           credentials: "secret-json",
           private_key: "pem",
           workspaceRoot: "/mnt/workspaces",
@@ -48,10 +54,10 @@ describe("sandbox config", () => {
     };
 
     expect(toPublicSandboxConfig(record).config).toEqual({
-      provider: "kubernetes",
+      provider: "sandbox",
       envVars: { API_BASE: "********" },
       options: {
-        kubeconfig: "********",
+        apiKey: "********",
         credentials: "********",
         private_key: "********",
         workspaceRoot: "/mnt/workspaces",
@@ -116,13 +122,13 @@ describe("sandbox config defaults & validation", () => {
 });
 
 describe("sandbox config provider-aware limits", () => {
-  it("bounds lambda timeout at 300s and memory at 1024MB", () => {
-    expect(normalizeSandboxConfig({ provider: "lambda", timeout: 300 }).timeout).toBe(300);
-    expect(() => normalizeSandboxConfig({ provider: "lambda", timeout: 301 }))
-      .toThrow("config.timeout must be an integer from 1 to 300");
-    expect(normalizeSandboxConfig({ provider: "lambda", memoryLimit: 1024 }).memoryLimit).toBe(1024);
-    expect(() => normalizeSandboxConfig({ provider: "lambda", memoryLimit: 2048 }))
-      .toThrow("config.memoryLimit must be an integer from 1 to 1024");
+  it("bounds lambda (MicroVM) timeout at 600s and memory at the 8192MB max size", () => {
+    expect(normalizeSandboxConfig({ provider: "lambda", timeout: 600 }).timeout).toBe(600);
+    expect(() => normalizeSandboxConfig({ provider: "lambda", timeout: 601 }))
+      .toThrow("config.timeout must be an integer from 1 to 600");
+    expect(normalizeSandboxConfig({ provider: "lambda", memoryLimit: 8192 }).memoryLimit).toBe(8192);
+    expect(() => normalizeSandboxConfig({ provider: "lambda", memoryLimit: 8193 }))
+      .toThrow("config.memoryLimit must be an integer from 1 to 8192");
   });
 
   it("gives persistent providers a 600s ceiling and unbounded memory", () => {
@@ -130,56 +136,43 @@ describe("sandbox config provider-aware limits", () => {
     expect(() => normalizeSandboxConfig({ provider: "daytona", timeout: 601 }))
       .toThrow("config.timeout must be an integer from 1 to 600");
     // Persistent providers are operator-sized: memory is validated but not capped.
-    expect(normalizeSandboxConfig({ provider: "kubernetes", memoryLimit: 8192 }).memoryLimit).toBe(8192);
-    expect(() => normalizeSandboxConfig({ provider: "kubernetes", memoryLimit: 0 }))
+    expect(normalizeSandboxConfig({ provider: "sandbox", memoryLimit: 8192 }).memoryLimit).toBe(8192);
+    expect(() => normalizeSandboxConfig({ provider: "sandbox", memoryLimit: 0 }))
       .toThrow("config.memoryLimit must be a positive integer");
   });
 });
 
-describe("sandbox config persistent / lifecycle / PVC", () => {
-  it("rejects persistent on the lambda provider", () => {
-    expect(() => normalizeSandboxConfig({ provider: "lambda", persistent: true }))
-      .toThrow("config.persistent is not supported by the lambda provider");
+describe("sandbox config persistent / lifecycle", () => {
+  it("accepts persistent on the lambda (MicroVM) provider", () => {
+    expect(normalizeSandboxConfig({ provider: "lambda", persistent: true }).persistent).toBe(true);
   });
 
-  it("accepts persistent on kubernetes/daytona/e2b/vercel", () => {
-    expect(normalizeSandboxConfig({ provider: "kubernetes", persistent: true }).persistent).toBe(true);
+  it("accepts persistent on sandbox/daytona/e2b/vercel", () => {
+    expect(normalizeSandboxConfig({ provider: "sandbox", persistent: true }).persistent).toBe(true);
     expect(normalizeSandboxConfig({ provider: "daytona", persistent: true }).persistent).toBe(true);
     expect(normalizeSandboxConfig({ provider: "e2b", persistent: true, network: { mode: "allow-all" } }).persistent).toBe(true);
     expect(normalizeSandboxConfig({ provider: "vercel", persistent: true }).persistent).toBe(true);
   });
 
   it("requires persistent when lifecycle is set, and bounds its intervals", () => {
-    expect(() => normalizeSandboxConfig({ provider: "kubernetes", lifecycle: { idleTimeoutSeconds: 600 } }))
+    expect(() => normalizeSandboxConfig({ provider: "sandbox", lifecycle: { idleTimeoutSeconds: 600 } }))
       .toThrow("config.lifecycle requires config.persistent");
     expect(normalizeSandboxConfig({
-      provider: "kubernetes",
+      provider: "sandbox",
       persistent: true,
       lifecycle: { idleTimeoutSeconds: 1800, maxLifetimeSeconds: 3600 },
     }).lifecycle).toEqual({ idleTimeoutSeconds: 1800, maxLifetimeSeconds: 3600 });
     expect(() => normalizeSandboxConfig({
-      provider: "kubernetes",
+      provider: "sandbox",
       persistent: true,
       lifecycle: { idleTimeoutSeconds: 0 },
     })).toThrow("config.lifecycle.idleTimeoutSeconds must be a positive integer");
   });
 
-  it("only allows ephemeral home on a persistent kubernetes sandbox", () => {
-    expect(() => normalizeSandboxConfig({ provider: "kubernetes", ephemeralHome: true }))
-      .toThrow("config.ephemeralHome requires a persistent kubernetes sandbox");
-    expect(() => normalizeSandboxConfig({ provider: "daytona", persistent: true, ephemeralHome: true }))
-      .toThrow("config.ephemeralHome requires a persistent kubernetes sandbox");
-    expect(normalizeSandboxConfig({
-      provider: "kubernetes",
-      persistent: true,
-      ephemeralHome: true,
-    }).ephemeralHome).toBe(true);
-  });
-
   it("requires persistent when lifecycle hooks are set", () => {
-    expect(() => normalizeSandboxConfig({ provider: "kubernetes", onCreate: ["npm install"] }))
+    expect(() => normalizeSandboxConfig({ provider: "sandbox", onCreate: ["npm install"] }))
       .toThrow("config.onCreate and config.onResume require config.persistent");
-    expect(() => normalizeSandboxConfig({ provider: "kubernetes", persistent: true, onResume: [] }))
+    expect(() => normalizeSandboxConfig({ provider: "sandbox", persistent: true, onResume: [] }))
       .toThrow("config.onResume must be a non-empty array");
     expect(normalizeSandboxConfig({
       provider: "vercel",
@@ -193,20 +186,6 @@ describe("sandbox config persistent / lifecycle / PVC", () => {
       network: { mode: "allow-all" },
       onCreate: ["npm install"],
     })).toThrow("config.onCreate and config.onResume are not supported by the e2b provider");
-  });
-
-  it("only allows PVC options on a persistent kubernetes sandbox", () => {
-    expect(() => normalizeSandboxConfig({ provider: "kubernetes", options: { persistentDiskGb: 10 } }))
-      .toThrow("config.options.persistentDiskGb requires a persistent kubernetes sandbox");
-    expect(() => normalizeSandboxConfig({ provider: "daytona", persistent: true, options: { persistentHome: "/home/x" } }))
-      .toThrow("config.options.persistentHome requires a persistent kubernetes sandbox");
-    expect(() => normalizeSandboxConfig({ provider: "kubernetes", persistent: true, options: { persistentDiskGb: 11 } }))
-      .toThrow("config.options.persistentDiskGb must be an integer from 1 to 10");
-    expect(normalizeSandboxConfig({
-      provider: "kubernetes",
-      persistent: true,
-      options: { persistentDiskGb: 10, persistentHome: "/home/node", storageClass: "local-path" },
-    }).options).toEqual({ persistentDiskGb: 10, persistentHome: "/home/node", storageClass: "local-path" });
   });
 });
 
@@ -230,8 +209,8 @@ describe("sandbox config update merge", () => {
     expect(patched).toEqual({ name: "renamed", description: null, config: existing });
   });
 
-  it("re-applies provider limits on update (lambda timeout > 300 rejected)", () => {
-    expect(() => normalizeUpdateSandboxConfigInput(existing, { config: { timeout: 600 } }))
-      .toThrow("config.timeout must be an integer from 1 to 300");
+  it("re-applies provider limits on update (lambda timeout > 600 rejected)", () => {
+    expect(() => normalizeUpdateSandboxConfigInput(existing, { config: { timeout: 601 } }))
+      .toThrow("config.timeout must be an integer from 1 to 600");
   });
 });

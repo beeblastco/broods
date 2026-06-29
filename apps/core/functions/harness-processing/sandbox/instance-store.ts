@@ -1,7 +1,7 @@
 /**
  * Maps a sandbox reservation key to the reserved provider sandbox id so a later
  * request reconnects instead of creating a new one. Used by daytona/e2b/vercel
- * (kubernetes derives its Sandbox name directly from the key). DynamoDB-backed
+ * (workdir derives its sandbox name directly from the key). DynamoDB-backed
  * with a TTL, refreshed on each reconnect.
  */
 

@@ -65,7 +65,7 @@ Usage notes:
           // read-only mount); otherwise read S3 objects directly (sandbox: null opt-out).
           const runner = ws.sandbox ?? ws.readMount;
           if (!runner) {
-            return await s3ReadNumbered(ws.namespace, rel, offset, limit);
+            return await s3ReadNumbered(ws, rel, offset, limit);
           }
           const q = shellQuote(rel);
           const start = typeof offset === "number" && offset > 0 ? offset : 1;

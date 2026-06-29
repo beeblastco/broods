@@ -10,17 +10,21 @@
 import {
   MAX_IDLE_TIMEOUT_SECONDS,
   MAX_LIFETIME_SECONDS,
-  MAX_PERSISTENT_DISK_GB,
   workspaceSandboxLimits,
 } from "../sandbox.ts";
+import { SANDBOX_SIZE_NAMES, type SandboxSize } from "../sandbox-sizes.ts";
+import { isPlainObject, isStringRecord } from "../object.ts";
 import { mergeConfigObjects, redactConfigSecrets } from "./agent-config.ts";
 
-export type SandboxProvider = "lambda" | "e2b" | "daytona" | "kubernetes" | "vercel";
+// "sandbox" is the self-hosted workdir (Firecracker) provider — the vanilla,
+// most-featured backend. `lambda` remains the default until the workdir/MicroVM
+// data planes are provisioned (see createSandboxExecutor).
+export type SandboxProvider = "sandbox" | "lambda" | "e2b" | "daytona" | "vercel";
 export type SandboxRuntimeName = "bash" | "python" | "node";
 export type SandboxPermissionMode = "edit" | "ask" | "bypass";
 export type SandboxNetworkMode = "allow-all" | "deny-all" | "restricted";
 
-const SANDBOX_PROVIDERS: readonly SandboxProvider[] = ["lambda", "e2b", "daytona", "kubernetes", "vercel"];
+const SANDBOX_PROVIDERS: readonly SandboxProvider[] = ["sandbox", "lambda", "e2b", "daytona", "vercel"];
 const SANDBOX_RUNTIMES: readonly SandboxRuntimeName[] = ["bash", "python", "node"];
 const SANDBOX_PERMISSION_MODES: readonly SandboxPermissionMode[] = ["edit", "ask", "bypass"];
 const SANDBOX_NETWORK_MODES: readonly SandboxNetworkMode[] = ["allow-all", "deny-all", "restricted"];
@@ -41,6 +45,17 @@ export interface SandboxNetworkConfig {
 
 export interface SandboxConfig {
   provider: SandboxProvider;
+  // Predefined compute size (tiny|xsmall|small|medium|large). Drives workdir
+  // create-time resources and the control-plane specs; advisory on providers that
+  // size natively (MicroVM bakes size into the image; daytona/e2b/vercel size
+  // themselves). Defaults to the provider's own default when unset.
+  size?: SandboxSize;
+  // Prebuilt image/snapshot to launch from: a workdir image id/name, or a MicroVM
+  // image ARN. Unset boots the provider's default base image. Consumed by the
+  // self-hosted backends (`sandbox`/`lambda`); advisory on daytona/e2b/vercel,
+  // which select images through their own `options`. The launched-from id is
+  // mirrored onto the dashboard instance row (Snapshots/Images view).
+  snapshot?: string;
   // Advisory runtime allow-list (best-effort harness-side; see docs).
   runtimes?: SandboxRuntimeName[];
   // Provider-normalized egress policy. Unset input normalizes to deny-all.
@@ -48,11 +63,9 @@ export interface SandboxConfig {
   // Tool approval policy: edit|ask|bypass (replaces the old needsApproval boolean).
   permissionMode?: SandboxPermissionMode;
   // Reserve a long-lived sandbox per workspace namespace (reconnect across calls,
-  // run background jobs, persist installed packages). Not valid for `lambda`.
+  // run background jobs, persist installed packages). For `lambda` this reserves a
+  // snapshot-resumable MicroVM (suspend/resume on idle).
   persistent?: boolean;
-  // Persistent kubernetes sandboxes can skip the durable home PVC and use the
-  // image's ephemeral home while still reserving/reusing the sandbox.
-  ephemeralHome?: boolean;
   // Idle/expiry policy when `persistent` is true.
   lifecycle?: SandboxLifecycleConfig;
   // Command hooks for persistent sandboxes.
@@ -64,13 +77,15 @@ export interface SandboxConfig {
   // Env vars injected into every run. Reserved runtime vars always win and the
   // host process.env is never inherited (the sandbox env_clear()s first).
   envVars?: Record<string, undefined | string>;
-  // Provider-specific knobs (e2b/daytona/kubernetes endpoints, templates, etc.).
+  // Provider-specific knobs (e2b/daytona endpoints, templates, etc.).
   options?: Record<string, unknown>;
 }
 
 export interface SandboxConfigRecord {
   accountId: string;
   sandboxId: string;
+  projectId?: string;
+  environmentId?: string;
   name: string;
   description?: string;
   config: SandboxConfig;
@@ -104,19 +119,14 @@ export function normalizeSandboxConfig(value: unknown): SandboxConfig {
   }
   assertOptionalEnum(config.provider, "config.provider", SANDBOX_PROVIDERS);
   assertOptionalEnum(config.permissionMode, "config.permissionMode", SANDBOX_PERMISSION_MODES);
+  assertOptionalEnum(config.size, "config.size", SANDBOX_SIZE_NAMES);
   assertOptionalBoolean(config.persistent, "config.persistent");
-  assertOptionalBoolean(config.ephemeralHome, "config.ephemeralHome");
+  const snapshot = optionalString(config.snapshot, "config.snapshot");
 
   const provider = (config.provider as SandboxProvider | undefined) ?? "lambda";
   const network = normalizeNetwork(config.network);
   if (provider === "e2b" && network.mode !== "allow-all") {
     throw new Error("e2b cannot enforce egress restrictions; set config.network.mode to allow-all explicitly");
-  }
-  if (config.persistent === true && provider === "lambda") {
-    throw new Error("config.persistent is not supported by the lambda provider (lambda is always ephemeral)");
-  }
-  if (config.ephemeralHome === true && (provider !== "kubernetes" || config.persistent !== true)) {
-    throw new Error("config.ephemeralHome requires a persistent kubernetes sandbox");
   }
   const lifecycle = config.lifecycle !== undefined ? normalizeLifecycle(config.lifecycle) : undefined;
   if (lifecycle && config.persistent !== true) {
@@ -142,7 +152,7 @@ export function normalizeSandboxConfig(value: unknown): SandboxConfig {
   }
 
   // Provider-aware ceilings: lambda is bounded by its function; persistent
-  // providers (e2b/daytona/kubernetes) are operator-sized (no memory max here).
+  // providers (sandbox/e2b/daytona) are operator-sized (no memory max here).
   const limits = workspaceSandboxLimits(provider);
   assertOptionalPositiveInteger(config.timeout, "config.timeout", limits.maxTimeoutSeconds);
   assertOptionalPositiveInteger(config.memoryLimit, "config.memoryLimit", limits.maxMemoryLimitMb);
@@ -155,15 +165,16 @@ export function normalizeSandboxConfig(value: unknown): SandboxConfig {
     throw new Error("config.options must be an object");
   }
   if (config.options !== undefined) {
-    validateProviderOptions(provider, config.options, config.persistent === true);
+    validateProviderOptions(provider, config.options);
   }
 
   return {
     provider,
     network,
     permissionMode: (config.permissionMode as SandboxPermissionMode | undefined) ?? "ask",
+    ...(config.size !== undefined ? { size: config.size as SandboxSize } : {}),
+    ...(snapshot ? { snapshot } : {}),
     ...(config.persistent !== undefined ? { persistent: config.persistent as boolean } : {}),
-    ...(config.ephemeralHome !== undefined ? { ephemeralHome: config.ephemeralHome as boolean } : {}),
     ...(lifecycle ? { lifecycle } : {}),
     ...(onCreate ? { onCreate } : {}),
     ...(onResume ? { onResume } : {}),
@@ -224,14 +235,6 @@ function redactSandboxConfigSecrets(config: SandboxConfig): SandboxConfig {
 function asObject(value: unknown): Record<string, unknown> {
   if (!isPlainObject(value)) throw new Error("config must be an object");
   return value;
-}
-
-function isPlainObject(value: unknown): value is Record<string, unknown> {
-  return Boolean(value && typeof value === "object" && !Array.isArray(value));
-}
-
-function isStringRecord(value: unknown): value is Record<string, string> {
-  return isPlainObject(value) && Object.values(value).every((entry) => typeof entry === "string");
 }
 
 function assertOptionalBoolean(value: unknown, name: string): void {
@@ -314,10 +317,6 @@ function optionalString(value: unknown, name: string): string | undefined {
   return trimmed.length > 0 ? trimmed : undefined;
 }
 
-// Persistent home PVC knobs (kubernetes-only). They live under `options` so the
-// free-form provider knobs stay one bag, but are validated here.
-const PVC_OPTION_KEYS = ["persistentDiskGb", "persistentHome", "storageClass"] as const;
-
 function normalizeLifecycle(value: unknown): SandboxLifecycleConfig {
   if (!isPlainObject(value)) {
     throw new Error("config.lifecycle must be an object");
@@ -330,44 +329,14 @@ function normalizeLifecycle(value: unknown): SandboxLifecycleConfig {
   };
 }
 
-function validateProviderOptions(provider: SandboxProvider, options: unknown, persistent: boolean): void {
+function validateProviderOptions(provider: SandboxProvider, options: unknown): void {
   if (!isPlainObject(options)) {
     return;
   }
   if (provider === "lambda" && "functionNames" in options) {
     throw new Error("config.options.functionNames is not supported in account sandbox config");
   }
-
-  const pvcKeys = PVC_OPTION_KEYS.filter((key) => key in options);
-  if (pvcKeys.length > 0 && (provider !== "kubernetes" || !persistent)) {
-    throw new Error(`config.options.${pvcKeys[0]} requires a persistent kubernetes sandbox`);
-  }
-  if ("persistentDiskGb" in options) {
-    assertOptionalPositiveInteger(options.persistentDiskGb, "config.options.persistentDiskGb", MAX_PERSISTENT_DISK_GB);
-  }
-  if ("persistentHome" in options && typeof options.persistentHome !== "string") {
-    throw new Error("config.options.persistentHome must be a string");
-  }
-  if ("storageClass" in options && typeof options.storageClass !== "string") {
-    throw new Error("config.options.storageClass must be a string");
-  }
   if (provider === "vercel" && "runtime" in options && typeof options.runtime !== "string") {
     throw new Error("config.options.runtime must be a string");
-  }
-
-  if (provider !== "kubernetes") {
-    return;
-  }
-
-  const disallowed = [
-    "kubeconfig",
-    "kubeconfigSsmParam",
-    "namespace",
-    "image",
-    "serviceAccountName",
-    "imagePullSecrets",
-  ].filter((key) => key in options);
-  if (disallowed.length > 0) {
-    throw new Error(`config.options.${disallowed[0]} is managed by the service and cannot be set in account sandbox config`);
   }
 }

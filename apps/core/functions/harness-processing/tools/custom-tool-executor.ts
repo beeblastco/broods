@@ -1,7 +1,8 @@
 /**
- * Kubernetes-backed execution for account-uploaded tool bundles.
- * Harness resolves metadata; uploaded code is fetched and executed in the sandbox.
- * Keep bundle loading and user-code execution out of harness-processing.
+ * Sandbox-backed execution for account-uploaded tool bundles.
+ * Harness resolves metadata; uploaded code is fetched and executed in the `sandbox`
+ * (workdir Firecracker) provider. Keep bundle loading and user-code execution out
+ * of harness-processing.
  */
 
 import { Readable } from "node:stream";
@@ -21,17 +22,17 @@ import { buildWorkerEnsureCommand, buildWorkerInvokeCommand, parseWorkerFrame, t
 const RESULT_MARKER = "__CUSTOM_TOOL_RESULT__";
 const RUNNER_HEREDOC_TAG = "__CUSTOM_TOOL_RUNNER__";
 
-// Timeout for foreground (synchronous) execution only. The kubernetes executor
+// Timeout for foreground (synchronous) execution only. The sandbox executor
 // does not enforce timeoutSeconds for runBackground — detached jobs run as
-// setsid processes and are only bounded by the pod's shutdownTime lifecycle.
-// The field is required by SandboxRunRequest so we still pass it for background.
+// setsid processes and are only bounded by the reserved sandbox's idle/lifetime
+// lifecycle. The field is required by SandboxRunRequest so we still pass it for background.
 const FOREGROUND_TIMEOUT_SECONDS = 120;
 const RUNNER_OUTPUT_LIMIT_BYTES = 1024 * 1024;
-// Inline the bundle into the exec payload when it fits, so the pod skips the
-// cross-cloud S3 fetch entirely (the Lambda reads it in-region in ~50ms). The
+// Inline the bundle into the exec payload when it fits, so the sandbox skips the
+// cross-cloud S3 fetch entirely (it reads the inlined source directly). The
 // runner ships as one `bash -lc` arg, capped by the kernel's MAX_ARG_STRLEN
 // (128 KB); 64 KB raw (~85 KB base64) stays safely under it. Larger (e.g.
-// npm-bundled) tools fall back to the signed URL the pod fetches itself.
+// npm-bundled) tools fall back to the signed URL the sandbox fetches itself.
 const MAX_INLINE_BUNDLE_BYTES = 64 * 1024;
 
 interface ExecuteAccountToolOptions {
@@ -57,7 +58,7 @@ interface DetachedAsyncToolMetadata {
 
 interface RunnerPayload {
   // Exactly one source is set: bundleSourceB64 for inlined small bundles,
-  // bundleUrl for large ones the pod downloads via the signed URL.
+  // bundleUrl for large ones the sandbox downloads via the signed URL.
   bundleSourceB64?: string;
   bundleUrl?: string;
   expectedSha256: string;
@@ -129,7 +130,7 @@ async function* streamAccountToolForeground({
   const executor = createExecutor(customToolExecutorConfig());
   const reservationKey = customToolReservationKey(accountId, tool.toolId);
 
-  // Fast path: the resident in-pod worker (no per-call node startup), streaming
+  // Fast path: the resident in-sandbox worker (no per-call node startup), streaming
   // NDJSON frames. Zero frames means the worker was unreachable — fall through to
   // the one-shot runner; an `error` frame is a real tool error surfaced as-is.
   if (executor.execInReservedPod) {
@@ -178,7 +179,7 @@ async function* streamWorkerInvoke(
     },
   }).then((result) => {
     if (result.cpuUsec !== undefined && result.cpuUsec > 0) {
-      onSandboxCpu?.({ type: "kubernetes", role: "tool", toolName, cpuUsec: result.cpuUsec });
+      onSandboxCpu?.({ type: "sandbox", role: "tool", toolName, cpuUsec: result.cpuUsec });
     }
     // Buffered executors (and the test mock) surface the whole body only here;
     // feed whatever onStdout did not already deliver, then close.
@@ -361,7 +362,7 @@ const payload = ${JSON.stringify(payload)};
 async function main() {
   const toolDir = await cacheDir(payload.expectedSha256);
   const bundlePath = path.join(toolDir, "tool.mjs");
-  // Warm pod path: if this sha is already cached, skip S3 entirely and import
+  // Warm sandbox path: if this sha is already cached, skip S3 entirely and import
   // the local module. Cache misses download through the short-lived signed URL.
   await ensureBundle(bundlePath);
   const mod = await import(pathToFileURL(bundlePath).href + "?sha=" + payload.expectedSha256);
@@ -379,7 +380,7 @@ async function main() {
     env: {},
   };
   // This is the uploaded tool's execute function. The source text lives in this
-  // repo only as runner code, but the call happens inside the Kubernetes pod.
+  // repo only as runner code, but the call happens inside the sandbox.
   // The one-shot runner does not stream, so an async-generator execute is drained
   // to its last yielded value (the final result), matching the SDK's convention.
   let result = definition.execute(ctx, payload.input);
@@ -527,19 +528,15 @@ function isDetachedAsyncTool(value: unknown): value is DetachedAsyncToolMetadata
 }
 
 function customToolExecutorConfig(): Parameters<typeof createSandboxExecutor>[0] {
-  // createSandboxExecutor only creates a local client object. Pod lookup,
+  // createSandboxExecutor only creates a local client object. Sandbox lookup,
   // first-use creation, and idle resume happen inside executor.run/runBackground.
+  // Untrusted uploaded tool code runs in the self-hosted Firecracker `sandbox`
+  // (workdir) provider, reserved per tool so detached jobs outlive the request.
   return {
-    provider: "kubernetes",
+    provider: "sandbox",
     persistent: true,
-    // Uploaded tools return results via HTTP callback, never via durable disk, so
-    // skip the home PVC: the pod still outlives the request for detached jobs, but
-    // cold-start drops from ~22s to ~5s (no cloud-volume create+attach).
-    // Do not add onCreate hooks to this ephemeral-home config: the marker would
-    // not survive scale-to-0, so one-time setup would rerun on every resume.
-    ephemeralHome: true,
-    // Uploaded tool code may call any external API, but never the cluster,
-    // node metadata service, or other private ranges.
+    // Uploaded tool code may call any external API, but never the sandbox host,
+    // instance metadata service, or other private ranges.
     network: {
       mode: "restricted",
       allowCidrs: ["0.0.0.0/0"],
@@ -563,11 +560,11 @@ function customToolReservationKey(accountId: string, toolId: string): string {
 }
 
 /**
- * Best-effort pod warm-up. Fired when a request's toolset includes an async
+ * Best-effort sandbox warm-up. Fired when a request's toolset includes an async
  * uploaded tool, so the reserved sandbox is created/resumed and Ready while the
  * model is still producing its first response — the real call then lands on a
- * warm pod (~0.8s) instead of paying pod-create. Fire-and-forget; only runs in
- * the deployed Lambda (it would otherwise hit a real cluster from tests/local).
+ * warm sandbox (~0.8s) instead of paying create-on-first-use. Fire-and-forget; only
+ * runs in the deployed Lambda (it would otherwise hit a real sandbox host from tests/local).
  */
 export function prewarmAccountTool(
   accountId: string,
@@ -580,7 +577,7 @@ export function prewarmAccountTool(
   const reservationKey = customToolReservationKey(accountId, toolId);
   void (async () => {
     await executor.prewarm!({ reservationKey });
-    // Also start the resident worker now, so the first real call skips both pod
+    // Also start the resident worker now, so the first real call skips both sandbox
     // create and worker startup.
     if (executor.execInReservedPod) {
       await executor.execInReservedPod({ reservationKey }, buildWorkerEnsureCommand(), { timeoutSeconds: 30 });

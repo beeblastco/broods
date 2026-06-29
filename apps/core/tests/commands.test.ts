@@ -51,65 +51,44 @@ function createCommandContext(overrides: Partial<{
 }
 
 describe("command definitions", () => {
-  it("defines three commands with expected aliases", () => {
-    expect(commands).toHaveLength(3);
+  it("defines command handlers with expected aliases", () => {
+    expect(commands).toHaveLength(2);
 
     const newCmd = commands.find((c) => c.aliases.includes("/new"));
     const helpCmd = commands.find((c) => c.aliases.includes("/help"));
-    const askCmd = commands.find((c) => c.aliases.includes("/ask"));
 
     expect(newCmd).toBeDefined();
     expect(helpCmd).toBeDefined();
-    expect(askCmd).toBeDefined();
   });
 
-  it("/new and /start share the same handler", () => {
+  it("/new and /clear share the same handler", () => {
     const newCmd = commands.find((c) => c.aliases.includes("/new"));
-    const startCmd = commands.find((c) => c.aliases.includes("/start"));
+    const clearCmd = commands.find((c) => c.aliases.includes("/clear"));
 
-    expect(newCmd).toBe(startCmd);
-    expect(newCmd?.aliases).toEqual(["/new", "/start"]);
-  });
-
-  it("/ask has no execute function and is hidden from help", () => {
-    const askCmd = commands.find((c) => c.aliases.includes("/ask"));
-
-    expect(askCmd?.execute).toBeUndefined();
-    expect(askCmd?.showInHelp).toBe(false);
+    expect(newCmd).toBe(clearCmd);
+    expect(newCmd?.aliases).toEqual(["/new", "/clear"]);
   });
 
   it("all commands have discord metadata", () => {
     for (const cmd of commands) {
       expect(cmd.discord).toBeDefined();
-      expect(cmd.discord?.name).toBeTruthy();
+      expect(cmd.discord?.names.length).toBeGreaterThan(0);
       expect(cmd.discord?.description).toBeTruthy();
     }
-  });
-
-  it("/ask discord command uses message input mode with a required prompt option", () => {
-    const askCmd = commands.find((c) => c.aliases.includes("/ask"));
-
-    expect(askCmd?.discord?.inputMode).toBe("message");
-    expect(askCmd?.discord?.options).toHaveLength(1);
-    expect(askCmd?.discord?.options?.[0]).toMatchObject({
-      type: 3,
-      name: "prompt",
-      required: true,
-    });
   });
 });
 
 describe("parseCommand", () => {
   it("returns the command token for valid executable commands", () => {
     expect(parseCommand("/new")).toBe("/new");
-    expect(parseCommand("/start")).toBe("/start");
+    expect(parseCommand("/clear")).toBe("/clear");
     expect(parseCommand("/help")).toBe("/help");
   });
 
   it("normalizes case and trims whitespace", () => {
     expect(parseCommand("  /NEW  ")).toBe("/new");
     expect(parseCommand("/HELP")).toBe("/help");
-    expect(parseCommand("\t/Start\n")).toBe("/start");
+    expect(parseCommand("\t/Clear\n")).toBe("/clear");
   });
 
   it("extracts the first token when extra arguments are present", () => {
@@ -123,9 +102,9 @@ describe("parseCommand", () => {
     expect(parseCommand("   ")).toBeNull();
   });
 
-  it("returns null for non-executable commands like /ask", () => {
-    expect(parseCommand("/ask")).toBeNull();
-    expect(parseCommand("/ask what is 2+2")).toBeNull();
+  it("returns null for unregistered commands", () => {
+    expect(parseCommand("/query")).toBeNull();
+    expect(parseCommand("/query what is 2+2")).toBeNull();
   });
 
   it("returns null for unknown commands", () => {
@@ -154,20 +133,21 @@ describe("executeCommand", () => {
     const helpText = (channel.sendText as ReturnType<typeof mock>).mock.calls[0]?.[0] as string;
     expect(helpText).toContain("Available commands:");
     expect(helpText).toContain("/new");
+    expect(helpText).toContain("/clear");
     expect(helpText).toContain("/help");
-    expect(helpText).not.toContain("/ask");
+    expect(helpText).not.toContain("/query");
   });
 
-  it("does nothing for commands without an execute handler", async () => {
+  it("does nothing for unknown command tokens", async () => {
     const channel = createMockChannelActions();
     const ctx = createCommandContext({ channel });
 
-    await executeCommand("/ask", ctx);
+    await executeCommand("/query", ctx);
 
     expect(channel.sendText).not.toHaveBeenCalled();
   });
 
-  it("does nothing for unknown command tokens", async () => {
+  it("also ignores bogus command tokens", async () => {
     const channel = createMockChannelActions();
     const ctx = createCommandContext({ channel });
 
@@ -214,31 +194,21 @@ describe("resolveDiscordCommand", () => {
     expect(result?.contentText).toBe("");
   });
 
-  it("resolves a message-mode discord command with content text only", () => {
-    const result = resolveDiscordCommand("ask", "what is the weather?");
+  it("resolves the Discord clear alias with the same command token", () => {
+    const result = resolveDiscordCommand("clear", "");
 
     expect(result).not.toBeNull();
-    expect(result?.commandToken).toBeUndefined();
-    expect(result?.contentText).toBe("what is the weather?");
+    expect(result?.commandToken).toBe("/new");
+    expect(result?.contentText).toBe("");
   });
 
   it("returns null for unknown discord command names", () => {
     expect(resolveDiscordCommand("unknown", "")).toBeNull();
+    expect(resolveDiscordCommand("query", "what is the weather?")).toBeNull();
     expect(resolveDiscordCommand("help", "")).not.toBeNull();
   });
 
-  it("trims option text for message-mode commands", () => {
-    const result = resolveDiscordCommand("ask", "  hello world  ");
-
-    expect(result?.contentText).toBe("hello world");
-  });
-
-  it("returns null when message-mode option text is empty after trimming", () => {
-    expect(resolveDiscordCommand("ask", "")).toBeNull();
-    expect(resolveDiscordCommand("ask", "   ")).toBeNull();
-  });
-
-  it("preserves command token for non-message-mode commands with option text", () => {
+  it("preserves command token for commands with option text", () => {
     const result = resolveDiscordCommand("help", "extra text");
 
     expect(result?.commandToken).toBe("/help");
@@ -251,7 +221,7 @@ describe("getDiscordCommandRegistrations", () => {
     const registrations = getDiscordCommandRegistrations();
 
     expect(registrations).toHaveLength(3);
-    expect(registrations.map((r) => r.name)).toEqual(["new", "help", "ask"]);
+    expect(registrations.map((r) => r.name)).toEqual(["new", "clear", "help"]);
   });
 
   it("includes integration_types and contexts for global scope", () => {
@@ -276,21 +246,10 @@ describe("getDiscordCommandRegistrations", () => {
     }
   });
 
-  it("includes options when the discord command defines them", () => {
+  it("omits options when commands do not define them", () => {
     const registrations = getDiscordCommandRegistrations();
 
-    const askCmd = registrations.find((r) => r.name === "ask");
-    expect(askCmd?.options).toBeDefined();
-    expect(askCmd?.options).toHaveLength(1);
-    expect(askCmd?.options?.[0]).toMatchObject({
-      type: 3,
-      name: "prompt",
-      description: "What you want to ask",
-      required: true,
-    });
-
-    const newCmd = registrations.find((r) => r.name === "new");
-    expect(newCmd?.options).toBeUndefined();
+    expect(registrations.every((r) => r.options === undefined)).toBe(true);
   });
 
   it("uses default integration types and contexts when not specified", () => {

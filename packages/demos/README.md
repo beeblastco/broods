@@ -22,3 +22,12 @@ set `BROODS_WEBSOCKET_URL` for a non-default or self-hosted gateway.
 - `channel-telegram`, `channel-github`, `channel-slack`, `channel-discord`, `channel-pancake`, `channel-zalo`: declare provider channels and receive generated webhook URLs.
 - `tool-custom-stream`: upload and stream an isolated custom tool.
 - `tool-custom-async-sse`: upload a detached asynchronous custom tool.
+
+Sandbox examples (one `defineSandbox` per provider/mode):
+
+- `sandbox`: stateless, bash-only self-hosted `sandbox` (workdir) — code exec, config env var, internet egress.
+- `sandbox-workspace`: workspace-backed `sandbox` — file tools on the shared S3 workspace mount.
+- `sandbox-workspace-persistent`: reserved (persistent) `sandbox` with package persistence + a background job via `async_status`.
+- `sandbox-lambda`: stateless, bash-only `lambda` (AWS Lambda MicroVM).
+- `sandbox-workspace-lambda`: workspace-backed `lambda` MicroVM.
+- `sandbox-workspace-daytona`, `sandbox-vercel`, `sandbox-e2b`, `sandbox-workspace-override`: provider-specific sandbox configs.

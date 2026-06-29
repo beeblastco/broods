@@ -5,7 +5,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, setSystemTime } from "bun:test";
 import type { GitHubSource } from "../functions/_shared/github-channel.ts";
-import { createGitHubActions } from "../functions/_shared/github.ts";
+import { createGitHubChannel } from "../functions/_shared/github-channel.ts";
 
 const TEST_PRIVATE_KEY = `-----BEGIN PRIVATE KEY-----
 MIICdgIBADANBgkqhkiG9w0BAQEFAASCAmAwggJcAgEAAoGBAMzqaeVzkNVUJzir
@@ -40,15 +40,17 @@ describe("github outbound actions", () => {
     const calls: FetchCall[] = [];
     globalThis.fetch = createFetchMock(calls, [
       jsonResponse(201, { token: "installation-token" }),
-      emptyResponse(201),
-      emptyResponse(201),
+      jsonResponse(201, { id: 7001 }),
+      jsonResponse(201, { id: 8001 }),
     ]);
 
-    const actions = createGitHubActions(
-      "app-123",
-      Buffer.from(TEST_PRIVATE_KEY).toString("base64"),
-      createSource({ issueNumber: 7, target: "issue" }),
-    );
+    const actions = createGitHubActions(createSource({
+      threadId: "github:owner/repo:issue:7",
+      issueNumber: 7,
+      messageId: "77",
+      commentId: 77,
+      target: "issue_comment",
+    }), Buffer.from(TEST_PRIVATE_KEY).toString("base64"));
 
     await actions.sendText("hello from bun");
     await actions.reactToMessage();
@@ -56,40 +58,34 @@ describe("github outbound actions", () => {
     expect(calls).toHaveLength(3);
     expect(calls[0]?.url).toBe("https://api.github.com/app/installations/99/access_tokens");
     expect(calls[1]?.url).toBe("https://api.github.com/repos/owner/repo/issues/7/comments");
-    expect(calls[2]?.url).toBe("https://api.github.com/repos/owner/repo/issues/7/reactions");
+    expect(calls[2]?.url).toBe("https://api.github.com/repos/owner/repo/issues/comments/77/reactions");
 
     expect(calls[1]?.jsonBody).toEqual({ body: "hello from bun" });
     expect(calls[2]?.jsonBody).toEqual({ content: "eyes" });
-    expect(calls[1]?.headers.authorization).toBe("Bearer installation-token");
-    expect(calls[2]?.headers.authorization).toBe("Bearer installation-token");
+    expect(calls[1]?.headers.authorization).toBe("token installation-token");
+    expect(calls[2]?.headers.authorization).toBe("token installation-token");
 
-    expect(calls[0]?.headers.accept).toBe("application/vnd.github+json");
-    expect(calls[0]?.headers["x-github-api-version"]).toBe("2022-11-28");
+    expect(calls[0]?.headers.accept).toBe("application/vnd.github.v3+json");
     const claims = decodeJwtClaims(calls[0]?.headers.authorization);
-    expect(claims).toEqual({
-      iss: "app-123",
-      iat: 1_776_988_740,
-      exp: 1_776_989_340,
-    });
+    expect(claims.iss).toBe("app-123");
+    expect(claims.exp - claims.iat).toBe(600);
   });
 
   it("routes review comment replies and reactions through pull request review endpoints", async () => {
     const calls: FetchCall[] = [];
     globalThis.fetch = createFetchMock(calls, [
       jsonResponse(201, { token: "review-token" }),
-      emptyResponse(201),
-      emptyResponse(201),
+      jsonResponse(201, { id: 7002 }),
+      jsonResponse(201, { id: 8002 }),
     ]);
 
-    const actions = createGitHubActions(
-      "app-123",
-      TEST_PRIVATE_KEY,
-      createSource({
-        target: "pull_request_review_comment",
-        pullNumber: 12,
-        commentId: 55,
-      }),
-    );
+    const actions = createGitHubActions(createSource({
+      threadId: "github:owner/repo:12:rc:55",
+      target: "pull_request_review_comment",
+      pullNumber: 12,
+      messageId: "56",
+      commentId: 56,
+    }));
 
     await actions.sendText("reply body");
     await actions.reactToMessage();
@@ -99,7 +95,7 @@ describe("github outbound actions", () => {
       "https://api.github.com/repos/owner/repo/pulls/12/comments/55/replies",
     );
     expect(calls[2]?.url).toBe(
-      "https://api.github.com/repos/owner/repo/pulls/comments/55/reactions",
+      "https://api.github.com/repos/owner/repo/pulls/comments/56/reactions",
     );
     expect(calls[1]?.jsonBody).toEqual({ body: "reply body" });
     expect(calls[2]?.jsonBody).toEqual({ content: "eyes" });
@@ -109,19 +105,17 @@ describe("github outbound actions", () => {
     const calls: FetchCall[] = [];
     globalThis.fetch = createFetchMock(calls, [
       jsonResponse(201, { token: "comment-token" }),
-      emptyResponse(201),
-      emptyResponse(201),
+      jsonResponse(201, { id: 7003 }),
+      jsonResponse(201, { id: 8003 }),
     ]);
 
-    const actions = createGitHubActions(
-      "app-123",
-      TEST_PRIVATE_KEY,
-      createSource({
-        issueNumber: 12,
-        commentId: 77,
-        target: "issue_comment",
-      }),
-    );
+    const actions = createGitHubActions(createSource({
+      threadId: "github:owner/repo:12",
+      issueNumber: 12,
+      messageId: "77",
+      commentId: 77,
+      target: "issue_comment",
+    }));
 
     await actions.sendText("follow-up");
     await actions.reactToMessage();
@@ -133,23 +127,30 @@ describe("github outbound actions", () => {
     expect(calls[2]?.jsonBody).toEqual({ content: "eyes" });
   });
 
-  it("throws when sendText cannot resolve an issue number", async () => {
+  it("streams by buffering and posting one markdown comment through the SDK", async () => {
     const calls: FetchCall[] = [];
     globalThis.fetch = createFetchMock(calls, [
       jsonResponse(201, { token: "pull-request-token" }),
+      jsonResponse(201, { id: 7004 }),
     ]);
 
-    const actions = createGitHubActions(
-      "app-123",
-      TEST_PRIVATE_KEY,
-      createSource({ target: "pull_request", pullNumber: 12 }),
-    );
+    const actions = createGitHubActions(createSource({
+      threadId: "github:owner/repo:12",
+      target: "pull_request",
+      issueNumber: 12,
+      pullNumber: 12,
+    }));
 
-    await expect(actions.sendText("cannot send")).rejects.toThrow(
-      "GitHub sendText requires an issue or pull request number",
-    );
+    expect(actions.stream).toBeDefined();
+    const messageId = await actions.stream!((async function* () {
+      yield "hello";
+      yield " github";
+    })());
 
-    expect(calls).toHaveLength(1);
+    expect(messageId).toBe("7004");
+    expect(calls).toHaveLength(2);
+    expect(calls[1]?.url).toBe("https://api.github.com/repos/owner/repo/issues/12/comments");
+    expect(calls[1]?.jsonBody).toEqual({ body: "hello github" });
   });
 });
 
@@ -183,13 +184,24 @@ function createSource(overrides: Partial<GitHubSource>): GitHubSource {
     owner: "owner",
     repo: "repo",
     installationId: 99,
+    threadId: "github:owner/repo:issue:1",
     target: "issue",
     ...overrides,
   };
 }
 
+function createGitHubActions(source: GitHubSource, privateKey = TEST_PRIVATE_KEY) {
+  return createGitHubChannel("webhook-secret", "app-123", privateKey, null).actions({
+    eventId: "gh:test",
+    conversationKey: source.threadId,
+    channelName: "github",
+    content: [],
+    source: source as unknown as Record<string, unknown>,
+  });
+}
+
 function decodeJwtClaims(authorizationHeader: string | undefined) {
-  const token = authorizationHeader?.replace(/^Bearer\s+/, "");
+  const token = authorizationHeader?.replace(/^bearer\s+/i, "");
   if (!token) {
     throw new Error("Missing authorization header");
   }
@@ -200,10 +212,6 @@ function decodeJwtClaims(authorizationHeader: string | undefined) {
   }
 
   return JSON.parse(Buffer.from(payload, "base64url").toString("utf8"));
-}
-
-function emptyResponse(status: number): Response {
-  return new Response(null, { status });
 }
 
 function jsonResponse(status: number, body: Record<string, unknown>): Response {

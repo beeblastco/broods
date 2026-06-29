@@ -14,6 +14,7 @@ import { FULL_ROUTE_PREFETCH } from "@/app/lib/prefetch";
 const NAV_ITEMS = [
   { segment: "", label: "Architecture" },
   { segment: "/dashboard", label: "Dashboard" },
+  { segment: "/sandbox", label: "Sandbox" },
   { segment: "/settings", label: "Settings" },
 ] as const;
 type ProjectNavSegment = (typeof NAV_ITEMS)[number]["segment"];
@@ -24,6 +25,7 @@ const ROUTE_MODULE_PRELOADERS: Record<
 > = {
   "": () => import("@/app/components/canvas/Canvas"),
   "/dashboard": () => import("@/app/(main)/[projectId]/dashboard/page"),
+  "/sandbox": () => import("@/app/(main)/[projectId]/sandbox/page"),
   "/settings": () => import("@/app/(main)/[projectId]/settings/page"),
 };
 

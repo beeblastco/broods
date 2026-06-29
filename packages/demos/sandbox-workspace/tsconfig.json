@@ -6,5 +6,5 @@
     "moduleResolution": "Bundler",
     "types": ["bun"]
   },
-  "include": ["broods/**/*.ts"]
+  "include": ["index.ts", "broods/**/*.ts"]
 }

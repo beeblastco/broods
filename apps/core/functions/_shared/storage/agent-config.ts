@@ -6,10 +6,14 @@
 
 import type { CallSettings, JSONSchema7, SystemModelMessage, streamText } from "ai";
 import { systemModelMessageSchema } from "ai";
+import type { DiscordAdapterConfig } from "@chat-adapter/discord";
+import type { GitHubAdapterConfig } from "@chat-adapter/github";
+import type { SlackAdapterConfig } from "@chat-adapter/slack";
+import type { TelegramAdapterConfig } from "@chat-adapter/telegram";
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto";
-import type { ChannelStreamMode } from "../channel-streaming.ts";
 import { requireEnv } from "../env.ts";
 import { assertPublicHttpsUrl } from "../http.ts";
+import { isPlainObject, isStringRecord } from "../object.ts";
 import { isAccountToolId } from "./account-tools.ts";
 import {
   accountModelProviderNames,
@@ -222,48 +226,38 @@ export interface AgentChannelsConfig {
   [key: string]: unknown;
 }
 
-// Per-channel reply streaming: the driver modes (edit/chunk/progress) plus "off"
-// (default, one final message). "edit" rewrites one message in place; "progress"
-// shows a tool-activity preview then swaps in the final answer (both fall back to
-// "chunk" on channels without edit support); "chunk" sends each paragraph as it
-// completes. Derived from ChannelStreamMode so the two never drift.
-export type AgentChannelStreamingMode = ChannelStreamMode | "off";
-
-export interface AgentChannelStreamingConfig {
-  mode?: AgentChannelStreamingMode;
-  [key: string]: unknown;
-}
-
 export interface AgentTelegramChannelConfig {
-  botToken?: string;
-  webhookSecret?: string;
+  apiUrl?: TelegramAdapterConfig["apiUrl"];
+  botToken?: TelegramAdapterConfig["botToken"];
+  webhookSecret?: TelegramAdapterConfig["secretToken"];
   allowedChatIds?: number[];
   reactionEmoji?: string;
-  streaming?: AgentChannelStreamingConfig;
   [key: string]: unknown;
 }
 
 export interface AgentGitHubChannelConfig {
-  webhookSecret?: string;
-  appId?: string;
-  privateKey?: string;
+  apiUrl?: Extract<GitHubAdapterConfig, { appId: string }>["apiUrl"];
+  webhookSecret?: Extract<GitHubAdapterConfig, { appId: string }>["webhookSecret"];
+  appId?: Extract<GitHubAdapterConfig, { appId: string }>["appId"];
+  privateKey?: Extract<GitHubAdapterConfig, { appId: string }>["privateKey"];
   allowedRepos?: string[];
   [key: string]: unknown;
 }
 
 export interface AgentSlackChannelConfig {
+  apiUrl?: SlackAdapterConfig["apiUrl"];
   botToken?: string;
-  signingSecret?: string;
+  signingSecret?: SlackAdapterConfig["signingSecret"];
   allowedChannelIds?: string[];
-  streaming?: AgentChannelStreamingConfig;
+  reactionEmoji?: string;
   [key: string]: unknown;
 }
 
 export interface AgentDiscordChannelConfig {
-  botToken?: string;
-  publicKey?: string;
+  apiUrl?: DiscordAdapterConfig["apiUrl"];
+  botToken?: DiscordAdapterConfig["botToken"];
+  publicKey?: DiscordAdapterConfig["publicKey"];
   allowedGuildIds?: string[];
-  streaming?: AgentChannelStreamingConfig;
   [key: string]: unknown;
 }
 
@@ -273,7 +267,6 @@ export interface AgentPancakeChannelConfig {
   webhookSecret?: string;
   senderId?: string;
   options?: Record<string, unknown>;
-  streaming?: AgentChannelStreamingConfig;
   [key: string]: unknown;
 }
 
@@ -281,7 +274,6 @@ export interface AgentZaloChannelConfig {
   botToken?: string;
   webhookSecret?: string;
   allowedUserIds?: string[];
-  streaming?: AgentChannelStreamingConfig;
   [key: string]: unknown;
 }
 
@@ -870,17 +862,18 @@ function normalizeTelegramConfig(value: unknown): void {
   if (value == null) return;
   if (!isPlainObject(value)) throw new Error("config.channels.telegram must be an object");
   const config = value as Record<string, unknown>;
+  assertOptionalString(config.apiUrl, "config.channels.telegram.apiUrl");
   assertOptionalString(config.botToken, "config.channels.telegram.botToken");
   assertOptionalString(config.webhookSecret, "config.channels.telegram.webhookSecret");
   assertOptionalNumberArray(config.allowedChatIds, "config.channels.telegram.allowedChatIds");
   assertOptionalString(config.reactionEmoji, "config.channels.telegram.reactionEmoji");
-  normalizeChannelStreaming(config.streaming, "config.channels.telegram.streaming");
 }
 
 function normalizeGitHubConfig(value: unknown): void {
   if (value == null) return;
   if (!isPlainObject(value)) throw new Error("config.channels.github must be an object");
   const config = value as Record<string, unknown>;
+  assertOptionalString(config.apiUrl, "config.channels.github.apiUrl");
   assertOptionalString(config.webhookSecret, "config.channels.github.webhookSecret");
   assertOptionalString(config.appId, "config.channels.github.appId");
   assertOptionalString(config.privateKey, "config.channels.github.privateKey");
@@ -891,20 +884,21 @@ function normalizeSlackConfig(value: unknown): void {
   if (value == null) return;
   if (!isPlainObject(value)) throw new Error("config.channels.slack must be an object");
   const config = value as Record<string, unknown>;
+  assertOptionalString(config.apiUrl, "config.channels.slack.apiUrl");
   assertOptionalString(config.botToken, "config.channels.slack.botToken");
   assertOptionalString(config.signingSecret, "config.channels.slack.signingSecret");
   assertOptionalStringArray(config.allowedChannelIds, "config.channels.slack.allowedChannelIds");
-  normalizeChannelStreaming(config.streaming, "config.channels.slack.streaming");
+  assertOptionalString(config.reactionEmoji, "config.channels.slack.reactionEmoji");
 }
 
 function normalizeDiscordConfig(value: unknown): void {
   if (value == null) return;
   if (!isPlainObject(value)) throw new Error("config.channels.discord must be an object");
   const config = value as Record<string, unknown>;
+  assertOptionalString(config.apiUrl, "config.channels.discord.apiUrl");
   assertOptionalString(config.botToken, "config.channels.discord.botToken");
   assertOptionalString(config.publicKey, "config.channels.discord.publicKey");
   assertOptionalStringArray(config.allowedGuildIds, "config.channels.discord.allowedGuildIds");
-  normalizeChannelStreaming(config.streaming, "config.channels.discord.streaming");
 }
 
 function normalizePancakeConfig(value: unknown): void {
@@ -920,7 +914,6 @@ function normalizePancakeConfig(value: unknown): void {
   }
   const options = isPlainObject(config.options) ? config.options : {};
   assertOptionalStringArray(options.ignoreTagIds, "config.channels.pancake.options.ignoreTagIds");
-  normalizeChannelStreaming(config.streaming, "config.channels.pancake.streaming");
 }
 
 function normalizeZaloConfig(value: unknown): void {
@@ -936,25 +929,6 @@ function normalizeZaloConfig(value: unknown): void {
       throw new Error("config.channels.zalo.webhookSecret must be 8 to 256 characters");
     }
   }
-  normalizeChannelStreaming(config.streaming, "config.channels.zalo.streaming");
-}
-
-function normalizeChannelStreaming(value: unknown, path: string): void {
-  if (value === undefined) return;
-  if (!isPlainObject(value)) throw new Error(`${path} must be an object`);
-  const mode = (value as { mode?: unknown }).mode;
-  if (mode !== undefined && mode !== "edit" && mode !== "chunk" && mode !== "progress" && mode !== "off") {
-    throw new Error(`${path}.mode must be one of: edit, chunk, progress, off`);
-  }
-}
-
-function isPlainObject(value: unknown): value is Record<string, unknown> {
-  return Boolean(value && typeof value === "object" && !Array.isArray(value));
-}
-
-function isStringRecord(value: unknown): value is Record<string, string> {
-  return isPlainObject(value) &&
-    Object.values(value).every((entry) => typeof entry === "string");
 }
 
 function assertOptionalString(value: unknown, name: string): void {

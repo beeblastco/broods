@@ -38,6 +38,49 @@ describe("workspace config", () => {
       .toEqual({ storage: { provider: "s3" }, harness: { enabled: true } });
   });
 
+  it("parses a bring-your-own bucket with assume-role auth", () => {
+    expect(normalizeWorkspaceConfig({
+      storage: {
+        provider: "s3",
+        bucket: "acme-workspaces",
+        region: "us-west-2",
+        endpoint: "https://s3.us-west-2.amazonaws.com",
+        prefix: "agents/",
+        auth: { type: "assumeRole", roleArn: "arn:aws:iam::111122223333:role/broods-mount", externalId: "ext-1" },
+      },
+    })).toEqual({
+      storage: {
+        provider: "s3",
+        bucket: "acme-workspaces",
+        region: "us-west-2",
+        endpoint: "https://s3.us-west-2.amazonaws.com",
+        prefix: "agents/",
+        auth: { type: "assumeRole", roleArn: "arn:aws:iam::111122223333:role/broods-mount", externalId: "ext-1" },
+      },
+    });
+  });
+
+  it("accepts managed auth and an assume-role without externalId", () => {
+    expect(normalizeWorkspaceConfig({ storage: { provider: "s3", auth: { type: "managed" } } }))
+      .toEqual({ storage: { provider: "s3", auth: { type: "managed" } } });
+    expect(normalizeWorkspaceConfig({
+      storage: { provider: "s3", bucket: "b", auth: { type: "assumeRole", roleArn: "arn:aws:iam::1:role/r" } },
+    })).toEqual({
+      storage: { provider: "s3", bucket: "b", auth: { type: "assumeRole", roleArn: "arn:aws:iam::1:role/r" } },
+    });
+  });
+
+  it("rejects malformed storage auth and fields", () => {
+    expect(() => normalizeWorkspaceConfig({ storage: { provider: "s3", auth: { type: "assumeRole" } } }))
+      .toThrow("config.storage.auth.roleArn must be a non-empty string");
+    expect(() => normalizeWorkspaceConfig({ storage: { provider: "s3", auth: { type: "keys" } } }))
+      .toThrow("config.storage.auth.type must be one of: managed, assumeRole");
+    expect(() => normalizeWorkspaceConfig({ storage: { provider: "s3", auth: "managed" } }))
+      .toThrow("config.storage.auth must be an object");
+    expect(() => normalizeWorkspaceConfig({ storage: { provider: "s3", bucket: 5 } }))
+      .toThrow("config.storage.bucket must be a string");
+  });
+
   it("trims name/description through create input", () => {
     expect(normalizeCreateWorkspaceConfigInput({
       name: "  notes  ",

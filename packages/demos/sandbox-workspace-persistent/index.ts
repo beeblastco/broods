@@ -1,10 +1,10 @@
 /**
- * Example: a reserved (persistent) Kubernetes coding sandbox via declarative broods resources.
+ * Example: a reserved (persistent) self-hosted coding sandbox via declarative broods resources.
  *
- * Demonstrates the `persistent: true` lifecycle on the `kubernetes` provider — a
- * long-lived sandbox per workspace with a home PVC (installed packages + code
- * survive scale-to-0), Fargate-style idle scale-down via the infra reaper, and a
- * detached background job observed with the auto-registered `async_status` tool.
+ * Demonstrates the `persistent: true` lifecycle on the `sandbox` (workdir) provider — a
+ * long-lived sandbox per workspace (installed packages + code survive idle), native
+ * pause/standby idle scale-down, and a detached background job observed with the
+ * auto-registered `async_status` tool.
  */
 
 import { BroodsClient } from "broods";

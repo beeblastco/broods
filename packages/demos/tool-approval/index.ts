@@ -102,13 +102,13 @@ for await (const chunk of client.stream(api.agents.approvalAgent, {
 function parseToolApprovalRequestChunk(chunk: unknown): ToolApprovalRequestChunk | null {
   try {
     const parsed = chunk as unknown;
-    if (!isRecord(parsed) || parsed.type !== "tool-approval-request" || typeof parsed.approvalId !== "string") {
+    if (!isPlainObject(parsed) || parsed.type !== "tool-approval-request" || typeof parsed.approvalId !== "string") {
       return null;
     }
 
     const toolCall = parsed.toolCall;
     if (
-      !isRecord(toolCall) ||
+      !isPlainObject(toolCall) ||
       toolCall.type !== "tool-call" ||
       typeof toolCall.toolCallId !== "string" ||
       typeof toolCall.toolName !== "string"
@@ -122,6 +122,6 @@ function parseToolApprovalRequestChunk(chunk: unknown): ToolApprovalRequestChunk
   }
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value && typeof value === "object");
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value));
 }

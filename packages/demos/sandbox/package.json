@@ -1,0 +1,18 @@
+{
+  "name": "@broods/demo-sandbox",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "check": "tsc --noEmit",
+    "cli:login": "broods login --dashboard-url https://dashboard.dev.broods.app",
+    "dev": "broods dev --dashboard-url https://dashboard.dev.broods.app",
+    "deploy": "broods deploy --dashboard-url https://dashboard.dev.broods.app",
+    "start": "bun index.ts"
+  },
+  "dependencies": {
+    "broods": "file:../../broods"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.3.14"
+  }
+}

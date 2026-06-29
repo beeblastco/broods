@@ -6,6 +6,6 @@ export function cn(...inputs: ClassValue[]) {
 }
 
 /** Narrows a value to a plain (non-array, non-null) object. */
-export function isRecord(value: unknown): value is Record<string, unknown> {
+export function isPlainObject(value: unknown): value is Record<string, unknown> {
     return typeof value === "object" && value !== null && !Array.isArray(value)
 }

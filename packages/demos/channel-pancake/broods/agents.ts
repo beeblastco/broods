@@ -11,7 +11,6 @@ export const pancake = definePancakeChannel({
   webhookSecret: env.PANCAKE_WEBHOOK_SECRET,
   senderId: env.PANCAKE_SENDER_ID,
   ...(ignoreTagIds.length > 0 ? { ignoreTagIds } : {}),
-  streaming: { mode: "off" } as const,
 });
 
 export const agent = defineAgent({

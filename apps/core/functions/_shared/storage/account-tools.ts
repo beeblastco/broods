@@ -5,6 +5,7 @@
 
 import type { JSONSchema7 } from "ai";
 import { createHash, randomBytes } from "node:crypto";
+import { isPlainObject } from "../object.ts";
 
 export type AccountToolStatus = "active" | "deleted";
 
@@ -230,8 +231,4 @@ function normalizeSha256(value: unknown): string {
 
 function sha256Hex(value: string): string {
   return createHash("sha256").update(value, "utf8").digest("hex");
-}
-
-function isPlainObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

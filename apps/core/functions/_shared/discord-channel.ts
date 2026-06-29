@@ -1,16 +1,16 @@
 /**
  * Discord channel adapter.
- * Verify interaction signatures, normalize slash commands, and send replies through the Discord HTTP API.
+ * Verify interaction signatures, normalize slash commands, and send replies through Chat SDK's Discord adapter.
  */
 
+import { DiscordAdapter, type DiscordThreadId } from "@chat-adapter/discord";
+import { ConsoleLogger } from "chat";
 import type {
   ChannelActions,
   ChannelAdapter,
   ChannelParseResult
 } from "./channels.ts";
-import { formatDiscordMessage } from "./channel-format.ts";
 import { resolveDiscordCommand } from "./commands.ts";
-import { verifyDiscordSignature } from "./discord-signature.ts";
 import { logWarn } from "./log.ts";
 import { DISCORD_INTEGRATION_PREFIX } from "./runtime-keys.ts";
 
@@ -37,47 +37,129 @@ interface DiscordInteractionPayload {
   user?: { id?: string };
 }
 
+interface DiscordForwardedEventPayload {
+  type?: string;
+  timestamp?: number;
+  data?: unknown;
+}
+
+interface DiscordGatewayMessageData {
+  attachments?: Array<{
+    id?: string;
+    url?: string;
+    filename?: string;
+    content_type?: string;
+    size?: number;
+  }>;
+  author?: {
+    id?: string;
+    username?: string;
+    global_name?: string;
+    bot?: boolean;
+  };
+  channel_id?: string;
+  channel_type?: number;
+  content?: string;
+  guild_id?: string | null;
+  id?: string;
+  mention_roles?: string[];
+  mentions?: Array<{ id?: string; username?: string }>;
+  thread?: {
+    id?: string;
+    parent_id?: string;
+  };
+  timestamp?: string;
+}
+
 export interface DiscordSource {
   applicationId: string;
-  interactionToken: string;
-  interactionId: string;
+  interactionToken?: string;
+  interactionId?: string;
   guildId?: string;
   channelId?: string;
+  threadId?: string;
+  messageId?: string;
   commandToken?: string;
   userId?: string;
 }
 
-// Raised when the first interaction request fails, signalling that nothing was
-// delivered yet so the caller may safely fall back to a bot-token channel post.
-class DiscordInteractionUnavailable extends Error {}
+interface DiscordSlashCommandContext {
+  channelId: string;
+  initialResponseSent: boolean;
+  interactionToken: string;
+}
 
-// Sentinel message id for the deferred interaction's original ("thinking")
-// message, edited in place via the interaction webhook.
-const DISCORD_ORIGINAL_MESSAGE = "@original";
+// Chat SDK's direct Discord webhook path is `handleWebhook()` + ChatInstance.
+// Broods cannot use that path wholesale because `integrations.ts` must first do
+// account/agent lookup, per-tenant config scoping, durable session setup, and
+// DynamoDB conversation history writes. The SDK also keeps the lower-level hooks
+// we need protected (`verifySignature`, `parseSlashCommand`, and requestContext),
+// so this subclass is only a small access shim around the SDK implementation.
+// If those hooks become public in the SDK, remove this subclass and call the SDK
+// methods directly.
+class BroodsDiscordAdapter extends DiscordAdapter {
+  verifyRequestSignature(
+    body: string,
+    signature: string | null | undefined,
+    timestamp: string | null | undefined,
+  ): Promise<boolean> {
+    return this.verifySignature(new TextEncoder().encode(body), signature ?? null, timestamp ?? null);
+  }
+
+  parseCommand(name: string, options: DiscordInteractionOption[] | undefined): {
+    command: string;
+    text: string;
+  } {
+    return this.parseSlashCommand(name, options as never);
+  }
+
+  runWithSlashCommandContext<T>(
+    context: DiscordSlashCommandContext,
+    callback: () => Promise<T>,
+  ): Promise<T> {
+    return this.requestContext.run({ slashCommand: context }, callback);
+  }
+}
 
 export function createDiscordChannel(
   botToken: string,
   publicKey: string,
   allowedGuildIds: Set<string> | null,
+  apiUrl?: string,
 ): ChannelAdapter {
+  const discord = new BroodsDiscordAdapter({
+    apiUrl,
+    applicationId: "broods-discord-webhook",
+    botToken,
+    publicKey,
+    logger: new ConsoleLogger("error").child("discord"),
+  });
+
   return {
     name: "discord",
 
     canHandle(req) {
-      return "x-signature-ed25519" in req.headers;
+      return "x-signature-ed25519" in req.headers || "x-discord-gateway-token" in req.headers;
     },
 
     authenticate(req) {
-      return verifyDiscordSignature(
-        publicKey,
+      if ("x-discord-gateway-token" in req.headers) {
+        return req.headers["x-discord-gateway-token"] === botToken;
+      }
+
+      return discord.verifyRequestSignature(
+        req.body,
         req.headers["x-signature-ed25519"],
         req.headers["x-signature-timestamp"],
-        req.body,
       );
     },
 
     parse(req): ChannelParseResult {
       const payload = JSON.parse(req.body) as DiscordInteractionPayload;
+      const gatewayEvent = parseForwardedGatewayEvent(discord, payload as DiscordForwardedEventPayload, allowedGuildIds);
+      if (gatewayEvent) {
+        return gatewayEvent;
+      }
 
       if (payload.type === 1) {
         return {
@@ -141,10 +223,8 @@ export function createDiscordChannel(
         };
       }
 
-      const resolvedCommand = resolveDiscordCommand(
-        payload.data.name,
-        extractOptionText(payload.data.options),
-      );
+      const command = discord.parseCommand(payload.data.name, payload.data.options);
+      const resolvedCommand = resolveDiscordCommand(command.command.replace(/^\//, ""), command.text);
       if (!resolvedCommand) {
         return unsupportedInteractionResponse();
       }
@@ -179,36 +259,48 @@ export function createDiscordChannel(
     },
 
     actions(msg): ChannelActions {
-      return createDiscordActions(botToken, toDiscordSource(msg.source));
+      return createDiscordActions(botToken, publicKey, toDiscordSource(msg.source), apiUrl);
     },
   };
 }
 
 function createDiscordActions(
   botToken: string,
+  publicKey: string,
   source: DiscordSource,
+  apiUrl?: string,
 ): ChannelActions {
-  // Edit streaming reuses the deferred "@original" message for the first message,
-  // then posts follow-ups for any rotation past the 2000-char limit.
-  let usedOriginal = false;
+  const discord = new BroodsDiscordAdapter({
+    apiUrl,
+    applicationId: source.applicationId,
+    botToken,
+    publicKey,
+    logger: new ConsoleLogger("error").child("discord"),
+  });
+  const threadId = source.threadId ?? discord.encodeThreadId({
+    guildId: source.guildId ?? "@me",
+    channelId: source.channelId ?? source.interactionId ?? source.messageId ?? "@me",
+  } satisfies DiscordThreadId);
 
   return {
-    // Discord caps a message at 2000 chars; rotate the streaming edit well under it.
-    editMaxChars: 1900,
-
     async sendText(text) {
-      const chunks = splitDiscordMessage(formatDiscordMessage(text));
+      if (!source.interactionToken) {
+        await discord.postMessage(threadId, { markdown: text });
+        return;
+      }
 
       try {
-        await sendInteractionReply(source, chunks);
+        await discord.runWithSlashCommandContext(
+          {
+            channelId: threadId,
+            interactionToken: source.interactionToken,
+            initialResponseSent: false,
+          },
+          () => discord.postMessage(threadId, { markdown: text }),
+        );
       } catch (err) {
-        // The interaction token expires ~15 min after the slash command, so a
-        // delayed reply (e.g. a background job that finishes later) cannot use
-        // it. When nothing was sent yet and we know the channel, post with the
-        // bot token instead. A mid-send failure (first chunk already delivered)
-        // is rethrown so the live path never double-posts.
-        if (err instanceof DiscordInteractionUnavailable && source.channelId) {
-          await sendBotChannelMessages(botToken, source.channelId, chunks);
+        if (source.channelId) {
+          await discord.postMessage(threadId, { markdown: text });
           return;
         }
         throw err;
@@ -219,138 +311,120 @@ function createDiscordActions(
       if (!source.channelId) {
         return;
       }
-
-      const response = await fetch(
-        `https://discord.com/api/v10/channels/${source.channelId}/typing`,
-        {
-          method: "POST",
-          headers: {
-            "Authorization": `Bot ${botToken}`,
-          },
-        },
-      );
-
-      if (!response.ok) {
-        const body = await response.text();
-        throw new Error(`Discord typing indicator failed (${response.status}): ${body}`);
-      }
+      await discord.startTyping(threadId);
     },
 
     async reactToMessage() {
-      return;
-    },
-
-    // Edit-in-place streaming over the interaction webhook. The first message edits
-    // the deferred "@original"; rotation posts a follow-up and returns its id.
-    async beginMessage(text) {
-      const content = splitDiscordMessage(formatDiscordMessage(text))[0] || "…";
-      if (!usedOriginal) {
-        usedOriginal = true;
-        await editInteractionMessage(source, DISCORD_ORIGINAL_MESSAGE, content);
-        return DISCORD_ORIGINAL_MESSAGE;
+      if (typeof source.messageId !== "string") {
+        return;
       }
-      return postInteractionFollowup(source, content);
-    },
-
-    async editMessage(messageId, text) {
-      const content = splitDiscordMessage(formatDiscordMessage(text))[0] || "…";
-      await editInteractionMessage(source, messageId, content);
+      await discord.addReaction(threadId, source.messageId, "eyes");
+      return;
     },
   };
 }
 
-// PATCH a message owned by the interaction (the "@original" deferred reply or a
-// follow-up by id) through the interaction webhook.
-async function editInteractionMessage(source: DiscordSource, messageId: string, content: string): Promise<void> {
-  const response = await fetch(
-    `https://discord.com/api/v10/webhooks/${source.applicationId}/${source.interactionToken}/messages/${messageId}`,
-    {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ content, allowed_mentions: { parse: [] } }),
+function parseForwardedGatewayEvent(
+  discord: BroodsDiscordAdapter,
+  event: DiscordForwardedEventPayload,
+  allowedGuildIds: Set<string> | null,
+): ChannelParseResult | null {
+  if (typeof event.type !== "string" || !event.type.startsWith("GATEWAY_")) {
+    return null;
+  }
+
+  if (event.type !== "GATEWAY_MESSAGE_CREATE") {
+    return gatewayAck();
+  }
+
+  const data = event.data as DiscordGatewayMessageData;
+  if (!isGatewayMessage(data)) {
+    return gatewayAck();
+  }
+
+  if (data.author.bot) {
+    return { kind: "ignore", reason: "bot_message", response: gatewayAck().response };
+  }
+
+  if (!data.guild_id) {
+    logWarn("Discord DM gateway messages are disabled", { channelId: data.channel_id });
+    return { kind: "ignore", reason: "dm_disabled", response: gatewayAck().response };
+  }
+
+  if (allowedGuildIds && !allowedGuildIds.has(data.guild_id)) {
+    logWarn("Discord guild not in allow list", { guildId: data.guild_id });
+    return { kind: "ignore", reason: "guild_not_allowed", response: gatewayAck().response };
+  }
+
+  const thread = toDiscordGatewayThread(data);
+  const threadId = discord.encodeThreadId(thread);
+  const content = data.content.trim();
+  if (!content) {
+    return { kind: "ignore", reason: "empty_message", response: gatewayAck().response };
+  }
+
+  return {
+    kind: "message",
+    ack: gatewayAck().response,
+    message: {
+      eventId: `${DISCORD_INTEGRATION_PREFIX}${data.id}`,
+      conversationKey: threadId,
+      channelName: "discord",
+      content: [{ type: "text", text: content }],
+      source: {
+        applicationId: "broods-discord-gateway",
+        guildId: data.guild_id,
+        channelId: thread.channelId,
+        ...(thread.threadId ? { threadId } : {}),
+        messageId: data.id,
+        userId: data.author.id,
+      } satisfies DiscordSource,
     },
-  );
-  if (!response.ok) {
-    throw new Error(`Discord edit message failed (${response.status}): ${await response.text()}`);
-  }
+  };
 }
 
-// POST a new follow-up message through the interaction webhook; returns its id so a
-// later edit can target it.
-async function postInteractionFollowup(source: DiscordSource, content: string): Promise<string> {
-  const response = await fetch(
-    `https://discord.com/api/v10/webhooks/${source.applicationId}/${source.interactionToken}`,
-    {
-      method: "POST",
+function isGatewayMessage(data: DiscordGatewayMessageData): data is Required<
+  Pick<DiscordGatewayMessageData, "author" | "channel_id" | "content" | "guild_id" | "id">
+> & DiscordGatewayMessageData {
+  return Boolean(
+    data &&
+    typeof data.id === "string" &&
+    typeof data.channel_id === "string" &&
+    typeof data.content === "string" &&
+    (typeof data.guild_id === "string" || data.guild_id === null) &&
+    data.author &&
+    typeof data.author.id === "string" &&
+    typeof data.author.username === "string" &&
+    typeof data.author.bot === "boolean",
+  );
+}
+
+function toDiscordGatewayThread(data: Required<
+  Pick<DiscordGatewayMessageData, "channel_id" | "guild_id">
+> & DiscordGatewayMessageData): DiscordThreadId {
+  if (data.thread?.id && data.thread.parent_id) {
+    return {
+      guildId: data.guild_id ?? "@me",
+      channelId: data.thread.parent_id,
+      threadId: data.thread.id,
+    };
+  }
+
+  return {
+    guildId: data.guild_id ?? "@me",
+    channelId: data.channel_id,
+  };
+}
+
+function gatewayAck(): Extract<ChannelParseResult, { kind: "response" }> {
+  return {
+    kind: "response",
+    response: {
+      statusCode: 200,
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ content, allowed_mentions: { parse: [] } }),
+      body: JSON.stringify({ ok: true }),
     },
-  );
-  if (!response.ok) {
-    throw new Error(`Discord follow-up failed (${response.status}): ${await response.text()}`);
-  }
-  const json = await response.json() as { id?: string };
-  if (!json.id) throw new Error("Discord follow-up returned no message id");
-  return json.id;
-}
-
-/**
- * Reply to a slash command through its interaction webhook: the first chunk
- * edits the deferred "thinking" message, the rest post as follow-ups. A failure
- * on the first chunk throws DiscordInteractionUnavailable (token likely expired,
- * nothing sent); a later failure throws a plain error (partial delivery).
- */
-async function sendInteractionReply(source: DiscordSource, chunks: string[]): Promise<void> {
-  for (const [index, chunk] of chunks.entries()) {
-    const response = await fetch(
-      index === 0
-        ? `https://discord.com/api/v10/webhooks/${source.applicationId}/${source.interactionToken}/messages/@original`
-        : `https://discord.com/api/v10/webhooks/${source.applicationId}/${source.interactionToken}`,
-      {
-        method: index === 0 ? "PATCH" : "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          content: chunk,
-          allowed_mentions: { parse: [] },
-        }),
-      },
-    );
-
-    if (!response.ok) {
-      const body = await response.text();
-      const message = `Discord reply failed (${response.status}): ${body}`;
-      throw index === 0 ? new DiscordInteractionUnavailable(message) : new Error(message);
-    }
-  }
-}
-
-/**
- * Post a message directly to a channel with the bot token. Used for delayed
- * replies once the interaction token has expired; requires the bot to have
- * Send Messages permission in the channel.
- */
-async function sendBotChannelMessages(botToken: string, channelId: string, chunks: string[]): Promise<void> {
-  for (const chunk of chunks) {
-    const response = await fetch(
-      `https://discord.com/api/v10/channels/${channelId}/messages`,
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bot ${botToken}`,
-        },
-        body: JSON.stringify({
-          content: chunk,
-          allowed_mentions: { parse: [] },
-        }),
-      },
-    );
-
-    if (!response.ok) {
-      const body = await response.text();
-      throw new Error(`Discord channel message failed (${response.status}): ${body}`);
-    }
-  }
+  };
 }
 
 function unsupportedInteractionResponse(): ChannelParseResult {
@@ -367,79 +441,26 @@ function unsupportedInteractionResponse(): ChannelParseResult {
   };
 }
 
-function extractOptionText(options: DiscordInteractionOption[] | undefined): string {
-  if (!options || options.length === 0) {
-    return "";
-  }
-
-  return flattenOptions(options).join(" ").trim();
-}
-
-function flattenOptions(options: DiscordInteractionOption[]): string[] {
-  const values: string[] = [];
-
-  for (const option of options) {
-    if (option.options?.length) {
-      values.push(...flattenOptions(option.options));
-      continue;
-    }
-
-    if (option.value !== undefined) {
-      values.push(String(option.value));
-    }
-  }
-
-  return values;
-}
-
-function splitDiscordMessage(text: string): string[] {
-  const trimmed = text.trim();
-  if (!trimmed) {
-    return [""];
-  }
-
-  if (trimmed.length <= 2000) {
-    return [trimmed];
-  }
-
-  const chunks: string[] = [];
-  let remaining = trimmed;
-
-  while (remaining.length > 2000) {
-    const candidate = remaining.slice(0, 2000);
-    const splitAt = Math.max(
-      candidate.lastIndexOf("\n\n"),
-      candidate.lastIndexOf("\n"),
-      candidate.lastIndexOf(" "),
-    );
-    const boundary = splitAt > 1000 ? splitAt : 2000;
-
-    chunks.push(remaining.slice(0, boundary).trim());
-    remaining = remaining.slice(boundary).trim();
-  }
-
-  if (remaining) {
-    chunks.push(remaining);
-  }
-
-  return chunks;
-}
-
 function toDiscordSource(source: Record<string, unknown>): DiscordSource {
-  if (
-    typeof source.applicationId !== "string" ||
-    typeof source.interactionToken !== "string" ||
-    typeof source.interactionId !== "string"
-  ) {
+  if (typeof source.applicationId !== "string") {
+    throw new Error("Invalid Discord source payload");
+  }
+
+  const channelId = typeof source.channelId === "string" ? source.channelId : undefined;
+  const threadId = typeof source.threadId === "string" ? source.threadId : undefined;
+  const interactionId = typeof source.interactionId === "string" ? source.interactionId : undefined;
+  if (!channelId && !threadId && !interactionId) {
     throw new Error("Invalid Discord source payload");
   }
 
   return {
     applicationId: source.applicationId,
-    interactionToken: source.interactionToken,
-    interactionId: source.interactionId,
+    interactionToken: typeof source.interactionToken === "string" ? source.interactionToken : undefined,
+    interactionId,
     guildId: typeof source.guildId === "string" ? source.guildId : undefined,
-    channelId: typeof source.channelId === "string" ? source.channelId : undefined,
+    channelId,
+    threadId,
+    messageId: typeof source.messageId === "string" ? source.messageId : undefined,
     commandToken: typeof source.commandToken === "string" ? source.commandToken : undefined,
     userId: typeof source.userId === "string" ? source.userId : undefined,
   };

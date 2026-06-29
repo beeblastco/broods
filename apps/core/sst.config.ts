@@ -11,13 +11,12 @@ const PROJECT_OWNER_EMAIL = requiredEnv("PROJECT_OWNER_EMAIL");
 const AWS_PROFILE = process.env.CI ? undefined : (process.env.AWS_PROFILE ?? "default");
 const ENABLE_DIRECT_API = parseBooleanEnv("ENABLE_DIRECT_API", false);
 const ENABLE_WEBSOCKET = parseBooleanEnv("ENABLE_WEBSOCKET", false);
-// Gate the 4 image-based sandbox Lambdas. They pull `:latest-arm64` from a region-scoped
-// ECR repo that this app creates, but the lambda-sanbdox CI only mirrors the image into a
-// repo that already exists — a bootstrap deadlock. Keep this off for a region's first
-// deploy (creates the repo, skips the functions), let the lambda-sanbdox CI push the image,
-// then re-deploy with SANDBOX_IMAGE_READY=true. See docs/workspace/sandbox/lambda.md.
+// Whether to import (vs first-create) the region-scoped sandbox ECR repo. The 4 image-based
+// sandbox Lambdas this used to gate are gone — the "lambda" provider is now an AWS Lambda
+// MicroVM (MicrovmSandboxExecutor) whose image is built from an S3 zip, not pulled from ECR.
+// The ECR repo is retained transitionally (the lambda-sanbdox container image still publishes
+// there); its teardown belongs to the Phase 4 infra cleanup. See docs/workspace/sandbox/lambda.md.
 const SANDBOX_IMAGE_READY = parseBooleanEnv("SANDBOX_IMAGE_READY", false);
-const SANDBOX_WORKSPACE_MOUNT_PATH = "/mnt/workspaces";
 const NATS_URL = process.env.NATS_URL?.trim();
 // Token-auth credential for the NATS server; omit for an unauthenticated server.
 const NATS_TOKEN = process.env.NATS_TOKEN?.trim();
@@ -35,13 +34,6 @@ const CONVEX_DEPLOY_KEY = process.env.CONVEX_DEPLOY_KEY?.trim();
 const DAYTONA_ORGANIZATION_ID = process.env.DAYTONA_ORGANIZATION_ID?.trim();
 const DAYTONA_API_URL = process.env.DAYTONA_API_URL?.trim();
 const DAYTONA_TARGET = process.env.DAYTONA_TARGET?.trim();
-// kubernetes sandbox provider (agent-sandbox on the Broods k3s cluster). Non-secret
-// knobs; the kubeconfig is a CI-injected env var (KUBERNETES_SANDBOX_KUBECONFIG),
-// stored in SSM at runtime. See docs/workspace/sandbox/kubernetes.md.
-const KUBERNETES_SANDBOX_NAMESPACE = process.env.KUBERNETES_SANDBOX_NAMESPACE?.trim();
-const KUBERNETES_SANDBOX_IMAGE = process.env.KUBERNETES_SANDBOX_IMAGE?.trim();
-const KUBERNETES_SANDBOX_SERVICE_ACCOUNT = process.env.KUBERNETES_SANDBOX_SERVICE_ACCOUNT?.trim();
-const KUBERNETES_SANDBOX_IMAGE_PULL_SECRETS = process.env.KUBERNETES_SANDBOX_IMAGE_PULL_SECRETS?.trim();
 // Secrets formerly held in the SST secret store are now plain environment
 // variables injected by CI from GitHub Actions secrets (see deploy.yaml). No
 // `sst.Secret` indirection. Required ones use `!` (CI validates they are set
@@ -51,7 +43,6 @@ const ADMIN_ACCOUNT_SECRET = requiredEnv("ADMIN_ACCOUNT_SECRET");
 const ACCOUNT_CONFIG_ENCRYPTION_SECRET = requiredEnv("ACCOUNT_CONFIG_ENCRYPTION_SECRET");
 const SERVICE_AUTH_SECRET = process.env.SERVICE_AUTH_SECRET ?? "";
 const DAYTONA_API_KEY = process.env.DAYTONA_API_KEY ?? "";
-const KUBERNETES_SANDBOX_KUBECONFIG = process.env.KUBERNETES_SANDBOX_KUBECONFIG?.trim() ?? "";
 
 if (ENABLE_WEBSOCKET && !NATS_URL) {
   throw new Error("NATS_URL must be set when ENABLE_WEBSOCKET=true");
@@ -139,30 +130,6 @@ function ecrRepositoryExists(name: string, region: string): boolean {
   }
 }
 
-function sandboxRuntimePermissions(
-  filesystemBucketArn: string,
-  s3FilesFileSystemArn: $util.Input<string>,
-  s3FilesAccessPointArn: $util.Input<string>,
-): {
-  actions: string[];
-  resources: $util.Input<string>[];
-}[] {
-  return [
-    {
-      actions: ["s3files:ClientMount", "s3files:ClientWrite"],
-      resources: [s3FilesFileSystemArn, s3FilesAccessPointArn],
-    },
-    {
-      actions: ["s3:GetObject", "s3:GetObjectVersion", "s3:PutObject", "s3:DeleteObject"],
-      resources: [`${filesystemBucketArn}/*`],
-    },
-    {
-      actions: ["s3:ListBucket"],
-      resources: [filesystemBucketArn],
-    },
-  ];
-}
-
 const LAMBDA_ASSUME_ROLE = JSON.stringify({
   Version: "2012-10-17",
   Statement: [
@@ -200,11 +167,6 @@ function denyUnlessProjectPrincipal(stage: string, region: string) {
         values: [
           `arn:aws:iam::${AWS_ACCOUNT_ID}:role/${PROJECT_NAME}-${stage}-AccountManageRole-*`,
           `arn:aws:iam::${AWS_ACCOUNT_ID}:role/${PROJECT_NAME}-${stage}-HarnessProcessingRole-*`,
-          // Only the workspace-mounted sandbox functions touch the bucket directly.
-          `arn:aws:iam::${AWS_ACCOUNT_ID}:role/${PROJECT_NAME}-${stage}-SandboxMountNetRole-*`,
-          `arn:aws:iam::${AWS_ACCOUNT_ID}:role/${PROJECT_NAME}-${stage}-SandboxMountNoNetRole-*`,
-          `arn:aws:iam::${AWS_ACCOUNT_ID}:role/beeblast_k3s_role`,
-          `arn:aws:iam::${AWS_ACCOUNT_ID}:role/${resourceName("sandbox-s3files", stage, region)}`,
           // Scoped role assumed by the harness for provider-sandbox mount-s3 credentials.
           `arn:aws:iam::${AWS_ACCOUNT_ID}:role/${resourceName("sandbox-s3mount", stage, region)}`,
           `arn:aws:iam::${AWS_ACCOUNT_ID}:role/${resourceName("microvm-build", stage, region)}`,
@@ -272,16 +234,12 @@ export default $config({
       : { STORAGE_PROVIDER: "dynamodb" };
     const names = {
       conversations: resourceName("conversations", stage, region),
+      chatSdkState: resourceName("chat-sdk-state", stage, region),
       processedEvents: resourceName("processed-events", stage, region),
       asyncAgentResult: resourceName("async-agent-result", stage, region),
       asyncToolResult: resourceName("async-tool-result", stage, region),
       usage: resourceName("usage", stage, region),
       persistentSandboxInstance: resourceName("persistent-sandbox-instance", stage, region),
-      // Uniform sandbox image deployed across two axes (workspace mount, internet).
-      sandboxMountNet: resourceName("sandbox-mount-net", stage, region),
-      sandboxMountNonet: resourceName("sandbox-mount-nonet", stage, region),
-      sandboxNomountNet: resourceName("sandbox-nomount-net", stage, region),
-      sandboxNomountNonet: resourceName("sandbox-nomount-nonet", stage, region),
       accountConfigs: resourceName("account-configs", stage, region),
       agentConfigs: resourceName("agent-configs", stage, region),
       sandboxConfigs: resourceName("sandbox-configs", stage, region),
@@ -300,19 +258,9 @@ export default $config({
       microvmExecutionRole: resourceName("microvm-execution", stage, region),
     };
 
-    // ADMIN_ACCOUNT_SECRET, ACCOUNT_CONFIG_ENCRYPTION_SECRET, SERVICE_AUTH_SECRET,
-    // DAYTONA_API_KEY, and KUBERNETES_SANDBOX_KUBECONFIG are read from the
-    // environment above (CI-injected) — no `sst.Secret` resources.
-    //
-    // The kubeconfig (CA + token) is ~2.7KB — too big for a Lambda env var alongside
-    // everything else (4KB hard limit). Store it in SSM and let the harness fetch it at
-    // runtime; only the parameter name goes in the env. SecureString can't be empty, so
-    // unset stages get a "unset" placeholder.
-    const kubernetesSandboxKubeconfigParam = new aws.ssm.Parameter("KubernetesSandboxKubeconfigParam", {
-      name: `/broods/${stage}/kubernetes-sandbox-kubeconfig`,
-      type: "SecureString",
-      value: KUBERNETES_SANDBOX_KUBECONFIG.length > 0 ? KUBERNETES_SANDBOX_KUBECONFIG : "unset",
-    });
+    // ADMIN_ACCOUNT_SECRET, ACCOUNT_CONFIG_ENCRYPTION_SECRET, SERVICE_AUTH_SECRET, and
+    // DAYTONA_API_KEY are read from the environment above (CI-injected) — no
+    // `sst.Secret` resources.
 
     // accounts / agents / crons DDB tables are skipped on production —
     // those domains live in Convex on SaaS. Tables stay for dev / community
@@ -442,6 +390,21 @@ export default $config({
       transform: {
         table: {
           name: names.conversations,
+        },
+      },
+    });
+
+    const chatSdkStateTable = new sst.aws.Dynamo("ChatSdkState", {
+      fields: {
+        pk: "string",
+        sk: "string",
+      },
+      primaryIndex: { hashKey: "pk", rangeKey: "sk" },
+      ttl: "expiresAt",
+      deletionProtection: isProduction,
+      transform: {
+        table: {
+          name: names.chatSdkState,
         },
       },
     });
@@ -687,104 +650,22 @@ export default $config({
       });
     }
 
-    // Setup the VPC for the sandbox connection. Uses fck-nat (nat: "ec2") on
-    // non-production stages — a t4g.nano-based NAT solution ~10x cheaper than
-    // a managed NAT Gateway. Production omits NAT entirely to avoid cost.
+    // Sandbox VPC. Its former consumers (the S3 Files NFS mount targets and the 4-stage
+    // sandbox Lambdas) were removed in the MicroVM cutover: MicroVMs mount S3 with mount-s3
+    // over default internet egress, needing no VPC for the common path. It is retained for
+    // the restricted/deny-all egress mode, which will attach a VPC egress network connector
+    // (lambda-core create-network-connector). The fck-nat EC2 instance was removed in the
+    // Phase 4 teardown, so the VPC has no NAT; the future egress connector handles
+    // restricted/deny-all egress, and the common path mounts S3 over default internet egress.
     const sandboxNetwork = new sst.aws.Vpc.v1("SandboxNetwork", {
       az: 2, // 2 az same price of 1 az.
-      ...(isProduction ? {} : { nat: "ec2" }),
-    });
-
-    const s3FilesRole = new aws.iam.Role("SandboxS3FilesRole", {
-      name: resourceName("sandbox-s3files", stage, region),
-      assumeRolePolicy: JSON.stringify({
-        Version: "2012-10-17",
-        Statement: [
-          {
-            Sid: "AllowS3FilesAssumeRole",
-            Effect: "Allow",
-            Principal: { Service: "elasticfilesystem.amazonaws.com" },
-            Action: "sts:AssumeRole",
-            Condition: {
-              StringEquals: {
-                "aws:SourceAccount": AWS_ACCOUNT_ID,
-              },
-              ArnLike: {
-                "aws:SourceArn": `arn:aws:s3files:${region}:${AWS_ACCOUNT_ID}:file-system/*`,
-              },
-            },
-          },
-        ],
-      }),
-    });
-
-    new aws.iam.RolePolicy("SandboxS3FilesRolePolicy", {
-      role: s3FilesRole.id,
-      policy: JSON.stringify({
-        Version: "2012-10-17",
-        Statement: [
-          {
-            Effect: "Allow",
-            Action: [
-              "s3:AbortMultipartUpload",
-              "s3:DeleteObject*",
-              "s3:GetObject*",
-              "s3:HeadObject",
-              "s3:List*",
-              "s3:PutObject*",
-            ],
-            Resource: [`${filesystemBucketArn}/*`],
-            Condition: {
-              StringEquals: {
-                "aws:ResourceAccount": AWS_ACCOUNT_ID,
-              },
-            },
-          },
-          {
-            Effect: "Allow",
-            Action: ["s3:HeadBucket", "s3:ListBucket", "s3:ListBucketVersions", "s3:ListBucketMultipartUploads"],
-            Resource: [filesystemBucketArn],
-            Condition: {
-              StringEquals: {
-                "aws:ResourceAccount": AWS_ACCOUNT_ID,
-              },
-            },
-          },
-          {
-            Effect: "Allow",
-            Action: [
-              "events:DeleteRule",
-              "events:DisableRule",
-              "events:EnableRule",
-              "events:PutRule",
-              "events:PutTargets",
-              "events:RemoveTargets",
-            ],
-            Resource: ["arn:aws:events:*:*:rule/DO-NOT-DELETE-S3-Files*"],
-            Condition: {
-              StringEquals: {
-                "events:ManagedBy": "elasticfilesystem.amazonaws.com",
-              },
-            },
-          },
-          {
-            Effect: "Allow",
-            Action: [
-              "events:DescribeRule",
-              "events:ListRuleNamesByTarget",
-              "events:ListRules",
-              "events:ListTargetsByRule",
-            ],
-            Resource: ["arn:aws:events:*:*:rule/*"],
-          },
-        ],
-      }),
     });
 
     // Scoped credentials for provider sandboxes that mount S3 with mount-s3
-    // (daytona). The harness assumes this role per sandbox create and hands the
-    // short-lived session credentials to the sandbox instead of its own runtime
-    // credentials, so sandbox code can only reach the workspace/skills buckets.
+    // (daytona, workdir, and the lambda MicroVM via its /run hook). The harness assumes
+    // this role per sandbox create and hands the short-lived, prefix-scoped session
+    // credentials to the sandbox instead of its own runtime credentials, so sandbox
+    // code can only reach the workspace/skills buckets.
     const sandboxS3MountRole = new aws.iam.Role("SandboxS3MountRole", {
       name: resourceName("sandbox-s3mount", stage, region),
       assumeRolePolicy: JSON.stringify({
@@ -829,69 +710,6 @@ export default $config({
       }),
     });
 
-    const sandboxS3Files = new aws.s3.FilesFileSystem(
-      "SandboxS3Files",
-      {
-        bucket: filesystemBucketArn,
-        roleArn: s3FilesRole.arn,
-        acceptBucketWarning: true,
-      },
-      {
-        dependsOn: [filesystemBucket],
-      },
-    );
-
-    const sandboxS3FilesAccessPoint = new aws.s3.FilesAccessPoint("SandboxS3FilesAccessPoint", {
-      fileSystemId: sandboxS3Files.id,
-      posixUsers: [{ uid: 1000, gid: 1000 }],
-      // WARNING — this root path is load-bearing and must stay in sync with
-      // WORKSPACE_MOUNT_PREFIX in functions/_shared/sandbox.ts.
-      //
-      // It MUST be a non-root sub-path. The bucket root ("/") already exists, so the
-      // access point's creationPermissions are NOT applied to it and the mount root is
-      // not writable by the squashed uid (see git commit 2bdb34f "Use writable sandbox
-      // workspace root"). A non-existent sub-path like "/sandbox" gets created with the
-      // 777 creationPermissions below, which is what makes the mount writable.
-      //
-      // Because the access point is rooted here, the mount stores every file under the
-      // "sandbox/" key prefix. All harness-side S3 reads/writes of workspace files apply
-      // the same prefix via workspaceNamespacePrefix(). If you change this path, change
-      // WORKSPACE_MOUNT_PREFIX to match or the harness and sandbox stop seeing each
-      // other's files (publish loses bash-written files; loads show an empty mount).
-      rootDirectories: [
-        {
-          path: "/sandbox",
-          creationPermissions: [
-            {
-              ownerUid: 1000,
-              ownerGid: 1000,
-              permissions: "777",
-            },
-          ],
-        },
-      ],
-    });
-
-    new aws.vpc.SecurityGroupIngressRule("SandboxS3FilesNfsIngress", {
-      securityGroupId: sandboxNetwork.securityGroups[0]!,
-      referencedSecurityGroupId: sandboxNetwork.securityGroups[0]!,
-      ipProtocol: "tcp",
-      fromPort: 2049,
-      toPort: 2049,
-    });
-
-    new aws.s3.FilesMountTarget("SandboxS3FilesMountTargetA", {
-      fileSystemId: sandboxS3Files.id,
-      subnetId: sandboxNetwork.privateSubnets.apply((ids) => ids[0]!),
-      securityGroups: sandboxNetwork.securityGroups,
-    });
-
-    new aws.s3.FilesMountTarget("SandboxS3FilesMountTargetB", {
-      fileSystemId: sandboxS3Files.id,
-      subnetId: sandboxNetwork.privateSubnets.apply((ids) => ids[1]!),
-      securityGroups: sandboxNetwork.securityGroups,
-    });
-
     // This app owns the sandbox image ECR repo (moved out of the infra Terraform repo) so
     // the repo lifecycle stays in sync with the functions that consume it — no cross-repo
     // coordination. Lambda pulls only from PRIVATE ECR in its own region (public.ecr.aws is
@@ -921,7 +739,7 @@ export default $config({
     );
 
     // Wide pull mirrors the prior infra policy. Same-account Lambda pulls work without it;
-    // cross-account consumers (kubernetes / daytona sandbox providers) rely on it.
+    // cross-account consumers (daytona sandbox provider) rely on it.
     new aws.ecr.RepositoryPolicy("SandboxImagePolicy", {
       repository: sandboxEcr.name,
       policy: JSON.stringify({
@@ -936,178 +754,6 @@ export default $config({
         ],
       }),
     });
-
-    // ARM64-only image; there is no multi-arch `latest` manifest, so the source tag is
-    // `latest-arm64`. Pin the function to the tag's *resolved digest* rather than the
-    // mutable tag: with a bare tag, Pulumi diffs the unchanged tag string and never
-    // updates the function, so a freshly pushed image (e.g. the lambda-sanbdox bash
-    // durability fix) silently never rolls out. Resolving the digest at deploy time makes
-    // the imageUri change whenever the tag moves, so each deploy rolls the current image.
-    // Only resolve when SANDBOX_IMAGE_READY: the lookup requires the image to already
-    // exist in ECR, which the flag guarantees (a brand-new region's first deploy leaves it
-    // false, skips the functions, and never queries). See docs/workspace/sandbox/lambda.md.
-    const sandboxImageUri = SANDBOX_IMAGE_READY
-      ? $interpolate`${sandboxEcr.repositoryUrl}@${
-          aws.ecr.getImageOutput({
-            repositoryName: sandboxEcr.name,
-            imageTag: "latest-arm64",
-          }).imageDigest
-        }`
-      : $interpolate`${sandboxEcr.repositoryUrl}:latest-arm64`;
-
-    // The uniform sandbox image is deployed across two axes — workspace mount (VPC +
-    // S3 Files mount) vs none, and internet on vs off. The harness auto-selects the
-    // function per run from (namespace present?) and the sandbox `internet` flag.
-    //
-    // Cost (R2): no managed NAT Gateway. Mounted functions need the VPC for the S3
-    // Files mount; on non-prod the VPC uses fck-nat (~10x cheaper than NAT Gateway).
-    // The no-mount + internet-on function runs WITHOUT a VPC for free managed egress
-    // and the fastest cold start. Internet-off functions use a restricted security group
-    // that drops all egress except NFS (port 2049) to the S3 Files mount targets —
-    // blocking outbound internet even though the subnets route through NAT.
-    const sandboxMountPermissions = sandboxRuntimePermissions(
-      filesystemBucketArn,
-      sandboxS3Files.arn,
-      sandboxS3FilesAccessPoint.arn,
-    );
-
-    // Security group for internet-off sandbox functions. Removes the default allow-all
-    // egress so Lambda cannot reach the public internet. NFS egress to the VPC security
-    // group is allowed so the workspace-mount variant can still reach S3 Files.
-    const sandboxNoNetSecurityGroup = new aws.ec2.SecurityGroup("SandboxNoNetSecurityGroup", {
-      vpcId: sandboxNetwork.nodes.vpc.id,
-      description: "No-internet sandbox: blocks outbound internet, allows NFS to S3 Files only",
-      egress: [
-        {
-          protocol: "tcp",
-          fromPort: 2049,
-          toPort: 2049,
-          securityGroups: sandboxNetwork.securityGroups.slice(0, 1),
-          description: "Allow NFS egress to S3 Files mount targets",
-        },
-      ],
-      tags: { Name: resourceName("sandbox-nonet-sg", stage, region) },
-    });
-    // Allow NFS ingress to the S3 Files mount targets from the no-internet security group.
-    new aws.vpc.SecurityGroupIngressRule("SandboxS3FilesNfsIngressNoNet", {
-      securityGroupId: sandboxNetwork.securityGroups[0]!,
-      referencedSecurityGroupId: sandboxNoNetSecurityGroup.id,
-      ipProtocol: "tcp",
-      fromPort: 2049,
-      toPort: 2049,
-    });
-
-    // sst.aws.Function can't consume a pre-built ECR image (no `image` arg; it always
-    // builds a zip), so the sandbox functions drop to the raw Lambda resource with
-    // packageType "Image". This helper recreates the role / VPC / EFS mount / log-group
-    // wiring SST would otherwise manage. Axes: workspace mount (VPC + S3 Files) and VPC.
-    const sandboxImageFunction = (
-      logical: string,
-      cfg: {
-        name: string;
-        description: string;
-        mount: boolean;
-        vpc: boolean;
-        securityGroupIds?: $util.Input<string[]>;
-      },
-    ) => {
-      const role = new aws.iam.Role(`${logical}Role`, {
-        assumeRolePolicy: LAMBDA_ASSUME_ROLE,
-      });
-
-      new aws.iam.RolePolicyAttachment(`${logical}LogsPolicy`, {
-        role: role.name,
-        policyArn: "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole",
-      });
-      if (cfg.vpc) {
-        new aws.iam.RolePolicyAttachment(`${logical}VpcPolicy`, {
-          role: role.name,
-          policyArn: "arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole",
-        });
-      }
-      if (cfg.mount) {
-        new aws.iam.RolePolicy(`${logical}MountPolicy`, {
-          role: role.id,
-          policy: permissionsPolicy(sandboxMountPermissions),
-        });
-      }
-
-      // Explicit log group preserves the "1 month" retention sst.aws.Function gave us.
-      const logGroup = new aws.cloudwatch.LogGroup(`${logical}LogGroup`, {
-        name: `/aws/lambda/${cfg.name}`,
-        retentionInDays: 30,
-      });
-
-      return new aws.lambda.Function(
-        logical,
-        {
-          name: cfg.name,
-          packageType: "Image",
-          imageUri: sandboxImageUri,
-          architectures: ["arm64"],
-          role: role.arn,
-          description: cfg.description,
-          timeout: 300,
-          memorySize: 512, // Minimum AWS requires for the S3 mount + sandbox execution.
-          environment: { variables: { SANDBOX_WORKSPACE_MOUNT_PATH } },
-          loggingConfig: { logFormat: "JSON", logGroup: logGroup.name },
-          ...(cfg.vpc
-            ? {
-                vpcConfig: {
-                  subnetIds: sandboxNetwork.privateSubnets,
-                  securityGroupIds: cfg.securityGroupIds ?? sandboxNetwork.securityGroups,
-                },
-              }
-            : {}),
-          ...(cfg.mount
-            ? {
-                fileSystemConfig: {
-                  arn: sandboxS3FilesAccessPoint.arn,
-                  localMountPath: SANDBOX_WORKSPACE_MOUNT_PATH,
-                },
-              }
-            : {}),
-        },
-        { dependsOn: [logGroup] },
-      );
-    };
-
-    // Harness wiring (env, IAM, outputs) always uses the deterministic function names/ARNs,
-    // so it is correct whether or not the functions exist yet. The function *resources* are
-    // created only once the arm64 image is in ECR (SANDBOX_IMAGE_READY=true) — see the flag.
-    const sandboxFunctionArn = (name: string) => `arn:aws:lambda:${region}:${AWS_ACCOUNT_ID}:function:${name}`;
-
-    if (SANDBOX_IMAGE_READY) {
-      sandboxImageFunction("SandboxMountNet", {
-        name: names.sandboxMountNet,
-        description: "Uniform sandbox — workspace mount + internet.",
-        mount: true,
-        vpc: true,
-      });
-
-      sandboxImageFunction("SandboxMountNoNet", {
-        name: names.sandboxMountNonet,
-        description: "Uniform sandbox — workspace mount, no internet.",
-        mount: true,
-        vpc: true,
-        securityGroupIds: sandboxNoNetSecurityGroup.id.apply((id) => [id]),
-      });
-
-      sandboxImageFunction("SandboxNoMountNet", {
-        name: names.sandboxNomountNet,
-        description: "Uniform sandbox — stateless + internet (no VPC, fastest cold start).",
-        mount: false,
-        vpc: false,
-      });
-
-      sandboxImageFunction("SandboxNoMountNoNet", {
-        name: names.sandboxNomountNonet,
-        description: "Uniform sandbox — stateless, no internet.",
-        mount: false,
-        vpc: true,
-        securityGroupIds: sandboxNoNetSecurityGroup.id.apply((id) => [id]),
-      });
-    }
 
     const harnessProcessing = new sst.aws.Function("HarnessProcessing", {
       name: names.harnessProcessing,
@@ -1126,6 +772,7 @@ export default $config({
       environment: {
         ...storageEnv,
         CONVERSATIONS_TABLE_NAME: conversationsTable.name,
+        CHAT_SDK_STATE_TABLE_NAME: chatSdkStateTable.name,
         PROCESSED_EVENTS_TABLE_NAME: processedEventsTable.name,
         ASYNC_AGENT_RESULT_TABLE_NAME: asyncAgentResultTable.name,
         ASYNC_TOOL_RESULT_TABLE_NAME: asyncToolResultTable.name,
@@ -1146,14 +793,18 @@ export default $config({
               MICROVM_ARTIFACTS_BUCKET_NAME: names.microvmArtifacts,
               MICROVM_BUILD_ROLE_ARN: microvmBuildRole.arn,
               MICROVM_EXECUTION_ROLE_ARN: microvmExecutionRole.arn,
+              // The "lambda" sandbox provider (MicrovmSandboxExecutor) runs MicroVMs from
+              // this image. The ARN is name-based and deterministic, so it is valid before
+              // the image exists; the lambda-sanbdox microvm-image CI publishes the image
+              // under this exact name (its MICROVM_IMAGE_NAME default). Omit
+              // MICROVM_IMAGE_VERSION so RunMicrovm resolves the ACTIVE version. Restricted/
+              // deny-all egress additionally needs a VPC egress connector ARN in
+              // MICROVM_EGRESS_NETWORK_CONNECTOR_ARN (provisioned later).
+              MICROVM_IMAGE_IDENTIFIER: `arn:aws:lambda:${region}:${AWS_ACCOUNT_ID}:microvm-image:lambda-microvm-agent-sandbox`,
             }
           : {}),
         ENABLE_DIRECT_API: ENABLE_DIRECT_API ? "true" : "false",
         ENABLE_WEBSOCKET: ENABLE_WEBSOCKET ? "true" : "false",
-        SANDBOX_FN_MOUNT_NET: names.sandboxMountNet,
-        SANDBOX_FN_MOUNT_NONET: names.sandboxMountNonet,
-        SANDBOX_FN_NOMOUNT_NET: names.sandboxNomountNet,
-        SANDBOX_FN_NOMOUNT_NONET: names.sandboxNomountNonet,
         ...(cronsTable ? { CRONS_TABLE_NAME: cronsTable.name } : {}),
         ...(NATS_URL ? { NATS_URL } : {}),
         ...(NATS_TOKEN ? { NATS_TOKEN } : {}),
@@ -1165,25 +816,8 @@ export default $config({
         ...(DAYTONA_ORGANIZATION_ID ? { DAYTONA_ORGANIZATION_ID } : {}),
         ...(DAYTONA_API_URL ? { DAYTONA_API_URL } : {}),
         ...(DAYTONA_TARGET ? { DAYTONA_TARGET } : {}),
-        KUBERNETES_SANDBOX_KUBECONFIG_SSM: kubernetesSandboxKubeconfigParam.name,
-        // k3s serves a self-signed API cert, and the bun-compiled Lambda runtime's fetch
-        // ignores the kubeconfig CA / insecure-skip-tls-verify (only this env is honored).
-        // Scope the TLS-verification opt-out to non-production stages, where the kubernetes
-        // sandbox provider is exercised. Production must front the API with a trusted cert
-        // (or bundle the CA via NODE_EXTRA_CA_CERTS) before enabling this provider — we do
-        // NOT weaken TLS on the production harness, which handles account secrets.
-        ...(isProduction ? {} : { NODE_TLS_REJECT_UNAUTHORIZED: "0" }),
-        ...(KUBERNETES_SANDBOX_NAMESPACE ? { KUBERNETES_SANDBOX_NAMESPACE } : {}),
-        ...(KUBERNETES_SANDBOX_IMAGE ? { KUBERNETES_SANDBOX_IMAGE } : {}),
-        ...(KUBERNETES_SANDBOX_SERVICE_ACCOUNT ? { KUBERNETES_SANDBOX_SERVICE_ACCOUNT } : {}),
-        ...(KUBERNETES_SANDBOX_IMAGE_PULL_SECRETS ? { KUBERNETES_SANDBOX_IMAGE_PULL_SECRETS } : {}),
       },
       permissions: [
-        // Read the kubernetes sandbox kubeconfig from SSM (SecureString → needs KMS decrypt).
-        {
-          actions: ["ssm:GetParameter"],
-          resources: [kubernetesSandboxKubeconfigParam.arn],
-        },
         {
           actions: ["sts:AssumeRole"],
           resources: [sandboxS3MountRole.arn],
@@ -1235,12 +869,13 @@ export default $config({
         {
           actions: [
             "dynamodb:BatchWriteItem",
+            "dynamodb:GetItem",
             "dynamodb:Query",
             "dynamodb:PutItem",
             "dynamodb:UpdateItem",
             "dynamodb:DeleteItem",
           ],
-          resources: [conversationsTable.arn, processedEventsTable.arn],
+          resources: [conversationsTable.arn, processedEventsTable.arn, chatSdkStateTable.arn],
         },
         {
           actions: ["dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:UpdateItem"],
@@ -1275,15 +910,6 @@ export default $config({
           // jobs know where to POST their completion callback.
           actions: ["lambda:InvokeFunction", "lambda:GetFunctionUrlConfig"],
           resources: [`arn:aws:lambda:${region}:${AWS_ACCOUNT_ID}:function:${names.harnessProcessing}`],
-        },
-        {
-          actions: ["lambda:InvokeFunction"],
-          resources: [
-            sandboxFunctionArn(names.sandboxMountNet),
-            sandboxFunctionArn(names.sandboxMountNonet),
-            sandboxFunctionArn(names.sandboxNomountNet),
-            sandboxFunctionArn(names.sandboxNomountNonet),
-          ],
         },
         ...(microvmBuildRole && microvmExecutionRole
           ? [
@@ -1421,6 +1047,7 @@ export default $config({
         ...(accountToolsTable ? { ACCOUNT_TOOLS_TABLE_NAME: accountToolsTable.name } : {}),
         ACCOUNT_SECRET_INDEX_NAME: "SecretHashIndex",
         CONVERSATIONS_TABLE_NAME: conversationsTable.name,
+        CHAT_SDK_STATE_TABLE_NAME: chatSdkStateTable.name,
         PROCESSED_EVENTS_TABLE_NAME: processedEventsTable.name,
         ASYNC_AGENT_RESULT_TABLE_NAME: asyncAgentResultTable.name,
         ASYNC_TOOL_RESULT_TABLE_NAME: asyncToolResultTable.name,
@@ -1546,6 +1173,7 @@ export default $config({
           actions: ["dynamodb:BatchWriteItem", "dynamodb:DeleteItem", "dynamodb:Scan"],
           resources: [
             conversationsTable.arn,
+            chatSdkStateTable.arn,
             processedEventsTable.arn,
             asyncAgentResultTable.arn,
             asyncToolResultTable.arn,
@@ -1597,10 +1225,6 @@ export default $config({
     return {
       agentServiceUrl: harnessProcessing.url,
       accountServiceUrl: accountManage.url,
-      sandboxMountNetFunctionName: names.sandboxMountNet,
-      sandboxMountNoNetFunctionName: names.sandboxMountNonet,
-      sandboxNoMountNetFunctionName: names.sandboxNomountNet,
-      sandboxNoMountNoNetFunctionName: names.sandboxNomountNonet,
       accountConfigsTableName: accountConfigsTable?.name,
       agentConfigsTableName: agentConfigsTable?.name,
       sandboxConfigsTableName: sandboxConfigsTable?.name,

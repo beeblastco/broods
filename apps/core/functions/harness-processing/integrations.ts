@@ -544,6 +544,7 @@ async function handleChannelWebhook(
         channel: adapter.name,
         accountId: account.accountId,
         agentId: agent.agentId,
+        reason: parsed.reason,
         statusCode: parsed.response.statusCode,
       });
       return toLambdaResponse(parsed.response);
@@ -557,6 +558,7 @@ async function handleChannelWebhook(
         channel: adapter.name,
         accountId: account.accountId,
         agentId: agent.agentId,
+        reason: parsed.reason,
         statusCode: parsed.response?.statusCode ?? 200,
       });
       return toLambdaResponse(parsed.response ?? { statusCode: 200 });
@@ -661,7 +663,7 @@ async function processChannelMessage(
 
     await handlers.handleChannelRequest({
       ...event,
-      commandToken: resolveCommandToken(event.content, event.source) ?? undefined,
+      commandToken: resolveCommandToken(event.content, event.source, event.channelName) ?? undefined,
     });
     logInfo("Channel message processing completed", {
       channel: event.channelName,
@@ -694,17 +696,26 @@ async function processChannelMessage(
 function resolveCommandToken(
   content: UserContent,
   source: Record<string, unknown>,
+  channelName: string,
 ): string | null {
+  if (typeof source.commandToken === "string") {
+    return parseCommand(source.commandToken);
+  }
+
+  if (!supportsInlineCommands(channelName)) {
+    return null;
+  }
+
   const inlineCommand = parseCommand(extractText(content));
   if (inlineCommand) {
     return inlineCommand;
   }
 
-  if (typeof source.commandToken === "string") {
-    return parseCommand(source.commandToken);
-  }
-
   return null;
+}
+
+function supportsInlineCommands(channelName: string): boolean {
+  return channelName === "discord" || channelName === "slack" || channelName === "telegram";
 }
 
 function toLambdaResponse(response: ChannelResponse): LambdaResponse {
@@ -1153,6 +1164,7 @@ function createTelegramChannelFromConfig(config: AgentConfig): ChannelAdapter | 
     channel.webhookSecret,
     new Set(channel.allowedChatIds),
     channel.reactionEmoji ?? "👀",
+    channel.apiUrl,
   );
 }
 
@@ -1167,6 +1179,7 @@ function createGitHubChannelFromConfig(config: AgentConfig): ChannelAdapter | nu
     channel.appId,
     channel.privateKey,
     channel.allowedRepos ? new Set(channel.allowedRepos) : null,
+    channel.apiUrl,
   );
 }
 
@@ -1180,6 +1193,8 @@ function createSlackChannelFromConfig(config: AgentConfig): ChannelAdapter | nul
     channel.botToken,
     channel.signingSecret,
     channel.allowedChannelIds ? new Set(channel.allowedChannelIds) : null,
+    channel.reactionEmoji ?? "eyes",
+    channel.apiUrl,
   );
 }
 
@@ -1193,6 +1208,7 @@ function createDiscordChannelFromConfig(config: AgentConfig): ChannelAdapter | n
     channel.botToken,
     channel.publicKey,
     channel.allowedGuildIds ? new Set(channel.allowedGuildIds) : null,
+    channel.apiUrl,
   );
 }
 

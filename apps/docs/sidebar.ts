@@ -23,6 +23,11 @@ const sidebars: SidebarsConfig = {
       label: 'Data Security',
     },
     {
+      type: 'doc',
+      id: 'observability',
+      label: 'Observability',
+    },
+    {
       type: 'category',
       label: 'Reference',
       collapsed: false,
@@ -74,28 +79,65 @@ const sidebars: SidebarsConfig = {
               items: [
                 {
                   type: 'doc',
-                  id: 'workspace/sandbox/daytona',
-                  label: 'Daytona',
+                  id: 'workspace/sandbox/index',
+                  label: 'Core design',
                 },
                 {
                   type: 'doc',
-                  id: 'workspace/sandbox/e2b',
-                  label: 'E2B',
+                  id: 'workspace/sandbox/getting-started',
+                  label: 'Getting Started',
                 },
                 {
                   type: 'doc',
-                  id: 'workspace/sandbox/lambda',
-                  label: 'Lambda',
+                  id: 'workspace/sandbox/snapshot',
+                  label: 'Snapshot',
                 },
                 {
                   type: 'doc',
-                  id: 'workspace/sandbox/kubernetes',
-                  label: 'Kubernetes',
+                  id: 'workspace/sandbox/networking',
+                  label: 'Networking',
                 },
                 {
                   type: 'doc',
-                  id: 'workspace/sandbox/vercel',
-                  label: 'Vercel',
+                  id: 'workspace/sandbox/security',
+                  label: 'Security',
+                },
+                {
+                  type: 'doc',
+                  id: 'workspace/sandbox/hook',
+                  label: 'Hook',
+                },
+                {
+                  type: 'doc',
+                  id: 'workspace/sandbox/best-practice',
+                  label: 'Best practice',
+                },
+                {
+                  type: 'category',
+                  label: 'Integration',
+                  collapsed: true,
+                  items: [
+                    {
+                      type: 'doc',
+                      id: 'workspace/sandbox/lambda',
+                      label: 'Lambda',
+                    },
+                    {
+                      type: 'doc',
+                      id: 'workspace/sandbox/daytona',
+                      label: 'Daytona',
+                    },
+                    {
+                      type: 'doc',
+                      id: 'workspace/sandbox/e2b',
+                      label: 'E2B',
+                    },
+                    {
+                      type: 'doc',
+                      id: 'workspace/sandbox/vercel',
+                      label: 'Vercel',
+                    },
+                  ],
                 },
               ],
             },

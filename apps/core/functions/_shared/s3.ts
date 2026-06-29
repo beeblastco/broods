@@ -22,17 +22,28 @@ export interface S3ObjectInfo {
   etag?: string;
 }
 
+// Per-call S3 access for reads against a bring-your-own bucket: short-lived
+// assume-role credentials plus the bucket's region/endpoint. Omitted (the common
+// case) => the default client on the harness's own role against the managed bucket.
+export interface S3Access {
+  credentials?: { accessKeyId: string; secretAccessKey: string; sessionToken?: string };
+  region?: string;
+  endpoint?: string;
+}
+
 const SANDBOX_UID = "993";
 const SANDBOX_GID = "990";
 
-function awsClient(): AwsS3Client {
+function awsClient(access?: S3Access): AwsS3Client {
   return new AwsS3Client({
-    region: process.env.AWS_REGION,
+    region: access?.region ?? process.env.AWS_REGION,
+    ...(access?.endpoint ? { endpoint: access.endpoint, forcePathStyle: true } : {}),
+    ...(access?.credentials ? { credentials: access.credentials } : {}),
   });
 }
 
-export async function readS3Text(bucket: string, key: string): Promise<string> {
-  const body = await readS3Body(bucket, key);
+export async function readS3Text(bucket: string, key: string, access?: S3Access): Promise<string> {
+  const body = await readS3Body(bucket, key, access);
   return body.transformToString();
 }
 
@@ -48,8 +59,8 @@ export async function getS3ObjectUrl(
   );
 }
 
-export async function readS3Bytes(bucket: string, key: string): Promise<Uint8Array> {
-  const body = await readS3Body(bucket, key);
+export async function readS3Bytes(bucket: string, key: string, access?: S3Access): Promise<Uint8Array> {
+  const body = await readS3Body(bucket, key, access);
   return body.transformToByteArray();
 }
 
@@ -164,14 +175,14 @@ export async function s3ObjectExists(bucket: string, key: string): Promise<boole
   }
 }
 
-export async function listS3Prefix(bucket: string, prefix: string): Promise<S3ObjectInfo[]> {
+export async function listS3Prefix(bucket: string, prefix: string, access?: S3Access): Promise<S3ObjectInfo[]> {
   logInfo("s3.list start", { bucket, prefix });
   const objects: S3ObjectInfo[] = [];
   let continuationToken: string | undefined;
 
   try {
     do {
-      const result = await awsClient().send(new ListObjectsV2Command({
+      const result = await awsClient(access).send(new ListObjectsV2Command({
         Bucket: bucket,
         Prefix: prefix,
         ContinuationToken: continuationToken,
@@ -222,8 +233,8 @@ export async function deleteS3Prefix(bucket: string, prefix: string): Promise<nu
   return objects.length;
 }
 
-async function readS3Body(bucket: string, key: string) {
-  const result = await awsClient().send(new GetObjectCommand({
+async function readS3Body(bucket: string, key: string, access?: S3Access) {
+  const result = await awsClient(access).send(new GetObjectCommand({
     Bucket: bucket,
     Key: key,
   }));

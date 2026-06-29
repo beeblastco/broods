@@ -27,6 +27,7 @@ import {
 } from "./model/agentConfigCodec";
 import { saveAgentRuntimeSecrets } from "./model/agentRuntimeSecrets";
 import { loadEnvironmentVariableValues } from "./model/environmentValues";
+import { isPlainObject } from "./model/objects";
 import { uniqueProjectSlug } from "./lib/slug";
 
 const resourceValidator = v.object({
@@ -882,7 +883,7 @@ function assertSupportedWorkspaceSandboxMounts(resources: CliResource[]): void {
             if (!sandbox || supportsS3WorkspaceMount(sandbox)) continue;
             throw new Error(
                 `Agent "${agent.name}" workspace "${String(workspace.name ?? workspace.workspaceId ?? "<unknown>")}" uses sandbox "${sandbox.name}" ` +
-                `(${sandboxProvider(sandbox)}) which does not support S3 workspace mounts. Use lambda, or daytona/kubernetes with ` +
+                `(${sandboxProvider(sandbox)}) which does not support S3 workspace mounts. Use lambda/sandbox, or daytona with ` +
                 `options.mountAwsS3Buckets: true, or set this workspace ref to sandbox: null for read-only S3 access.`,
             );
         }
@@ -891,8 +892,8 @@ function assertSupportedWorkspaceSandboxMounts(resources: CliResource[]): void {
 
 function supportsS3WorkspaceMount(sandbox: CliResource): boolean {
     const provider = sandboxProvider(sandbox);
-    if (provider === "lambda") return true;
-    if (provider !== "daytona" && provider !== "kubernetes") return false;
+    if (provider === "lambda" || provider === "sandbox") return true;
+    if (provider !== "daytona") return false;
     return plainRecord(plainRecord(sandbox.config).options).mountAwsS3Buckets === true;
 }
 
@@ -1172,7 +1173,7 @@ async function syncAgentResources(
 function hasSubagentAllowed(nested: Record<string, unknown>): boolean {
     const subagent = nested.subagent;
 
-    return isRecord(subagent) && Array.isArray(subagent.allowed) && subagent.allowed.length > 0;
+    return isPlainObject(subagent) && Array.isArray(subagent.allowed) && subagent.allowed.length > 0;
 }
 
 /**
@@ -1241,7 +1242,7 @@ async function syncCanvasLayoutForManifest(
     const existingById = new Map<string, CanvasNode>();
     for (const node of existingNodes) {
         existingById.set(node.id, node);
-        const data = isRecord(node.data) ? node.data : {};
+        const data = isPlainObject(node.data) ? node.data : {};
         if (typeof data.agentConfigId === "string") existingByAgentConfigId.set(data.agentConfigId, node);
         if (typeof data.resourceId === "string") existingByResourceId.set(data.resourceId, node);
     }
@@ -1324,7 +1325,7 @@ async function syncCanvasLayoutForManifest(
                     description: resource.description,
                     config: {
                         skillSource: "files",
-                        ...(isRecord(configSnapshot) ? configSnapshot : {}),
+                        ...(isPlainObject(configSnapshot) ? configSnapshot : {}),
                     },
                     managedBy: "cli",
                     cliResourceKey: `skill:${resource.name}`,
@@ -1368,7 +1369,7 @@ async function syncCanvasLayoutForManifest(
 
     for (const agent of desiredResources.filter((entry) => entry.kind === "agent")) {
         const agentId = nodeIdByKindName.get(`agent:${agent.name}`);
-        if (!agentId || !isRecord(agent.config)) continue;
+        if (!agentId || !isPlainObject(agent.config)) continue;
         // Agent→service edges are default (top/bottom handle) edges, like the
         // dashboard's own auto-connect. Only workspace↔sandbox uses a side-handle
         // mount edge (sandbox x=420 sits left of workspace x=760).
@@ -1380,7 +1381,7 @@ async function syncCanvasLayoutForManifest(
 
         if (Array.isArray(agent.config.workspaces)) {
             for (const workspaceRef of agent.config.workspaces) {
-                if (!isRecord(workspaceRef) || typeof workspaceRef.workspaceId !== "string") continue;
+                if (!isPlainObject(workspaceRef) || typeof workspaceRef.workspaceId !== "string") continue;
                 const workspaceName = resourceName(workspaceRef.workspaceId);
                 const workspaceNodeId = nodeIdByKindName.get(`workspace:${workspaceName}`);
                 if (!workspaceNodeId) continue;
@@ -1403,7 +1404,7 @@ async function syncCanvasLayoutForManifest(
         // reconstructs handles + type from the `subagent:` id prefix on load, so the
         // CLI only persists id/source/target — the same way mount edges work.
         const subagent = agent.config.subagent;
-        if (isRecord(subagent) && Array.isArray(subagent.allowed)) {
+        if (isPlainObject(subagent) && Array.isArray(subagent.allowed)) {
             for (const entry of subagent.allowed) {
                 if (typeof entry !== "string" || !entry.trim()) continue;
                 const calleeNodeId = nodeIdByKindName.get(`agent:${resourceName(entry)}`);
@@ -1414,7 +1415,7 @@ async function syncCanvasLayoutForManifest(
         }
 
         const skills = agent.config.skills;
-        if (isRecord(skills) && Array.isArray(skills.allowed)) {
+        if (isPlainObject(skills) && Array.isArray(skills.allowed)) {
             for (const entry of skills.allowed) {
                 if (typeof entry !== "string" || !entry.trim()) continue;
                 const skillNodeId = skillNodeIdForReference(nodeIdByKindName, entry);
@@ -1484,7 +1485,7 @@ function upsertCanvasNode(options: {
         type: kind,
         position: existing?.position ?? position,
         data: {
-            ...(isRecord(existing?.data) ? existing.data : {}),
+            ...(isPlainObject(existing?.data) ? existing.data : {}),
             ...data,
         },
     };
@@ -1498,7 +1499,7 @@ function normalizeCanvasNode(node: CanvasNode): CanvasNode {
         id: String(node.id),
         type: node.type,
         position: node.position ?? { x: 0, y: 0 },
-        data: isRecord(node.data) ? node.data : {},
+        data: isPlainObject(node.data) ? node.data : {},
     };
 }
 
@@ -1980,7 +1981,7 @@ function stableJson(value: unknown): string {
 
 function sortValue(value: unknown): unknown {
     if (Array.isArray(value)) return value.map(sortValue);
-    if (isRecord(value)) {
+    if (isPlainObject(value)) {
         return Object.fromEntries(
             Object.entries(value)
                 .sort(([a], [b]) => a.localeCompare(b))
@@ -2010,7 +2011,7 @@ function rewriteEnvRefsValue(value: unknown, envNames: Set<string>): unknown {
     if (Array.isArray(value)) {
         return value.map((entry) => rewriteEnvRefsValue(entry, envNames));
     }
-    if (isRecord(value)) {
+    if (isPlainObject(value)) {
         if (value.__beeblastEnv === true && typeof value.name === "string") {
             const name = envName(value.name);
             envNames.add(name);
@@ -2037,7 +2038,7 @@ function rewriteResourceRefs(
     }
     if (Array.isArray(result.workspaces)) {
         result.workspaces = result.workspaces.map((entry) => {
-            if (!isRecord(entry)) return entry;
+            if (!isPlainObject(entry)) return entry;
             const workspaceId = typeof entry.workspaceId === "string" && workspaceIds[entry.workspaceId]
                 ? workspaceIds[entry.workspaceId]
                 : entry.workspaceId;
@@ -2070,7 +2071,7 @@ function rewriteIdsToNames(
     }
     if (Array.isArray(result.workspaces)) {
         result.workspaces = result.workspaces.map((entry) => {
-            if (!isRecord(entry)) return entry;
+            if (!isPlainObject(entry)) return entry;
             const workspaceId = typeof entry.workspaceId === "string" && workspaceNames[entry.workspaceId]
                 ? workspaceNames[entry.workspaceId]
                 : entry.workspaceId;
@@ -2085,7 +2086,7 @@ function rewriteIdsToNames(
             };
         });
     }
-    if (isRecord(result.subagent) && Array.isArray(result.subagent.allowed)) {
+    if (isPlainObject(result.subagent) && Array.isArray(result.subagent.allowed)) {
         result.subagent = {
             ...result.subagent,
             allowed: result.subagent.allowed.map((entry) =>
@@ -2093,7 +2094,7 @@ function rewriteIdsToNames(
             ),
         };
     }
-    if (isRecord(result.skills) && Array.isArray(result.skills.allowed)) {
+    if (isPlainObject(result.skills) && Array.isArray(result.skills.allowed)) {
         result.skills = {
             ...result.skills,
             allowed: result.skills.allowed.map((entry) =>
@@ -2101,7 +2102,7 @@ function rewriteIdsToNames(
             ),
         };
     }
-    if (isRecord(result.tools)) {
+    if (isPlainObject(result.tools)) {
         result.tools = Object.fromEntries(Object.entries(result.tools).map(([key, value]) => [
             toolNames[key] ?? key,
             value,
@@ -2113,12 +2114,12 @@ function rewriteIdsToNames(
 
 function snapshotExternalConfig(value: unknown): unknown {
     if (Array.isArray(value)) return value.map(snapshotExternalConfig);
-    if (isRecord(value)) {
+    if (isPlainObject(value)) {
         return Object.fromEntries(Object.entries(value).flatMap(([key, entry]) => {
             if (key === "contentBase64" || key === "bundle") return [];
             if (key === "files" && Array.isArray(entry)) {
                 return [[key, entry.map((file) => {
-                    if (!isRecord(file)) return snapshotExternalConfig(file);
+                    if (!isPlainObject(file)) return snapshotExternalConfig(file);
                     const { contentBase64: _contentBase64, ...rest } = file;
                     return snapshotExternalConfig(rest);
                 })]];
@@ -2132,13 +2133,9 @@ function snapshotExternalConfig(value: unknown): unknown {
 }
 
 function asObject(value: unknown): Record<string, unknown> {
-    if (!isRecord(value)) throw new Error("Resource config must be an object");
+    if (!isPlainObject(value)) throw new Error("Resource config must be an object");
 
     return value;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-    return Boolean(value && typeof value === "object" && !Array.isArray(value));
 }
 
 function resourceName(value: string): string {

@@ -3,7 +3,7 @@
  * transport). A long-lived Node HTTP server runs inside the sandbox pod and
  * executes uploaded tool bundles on `/invoke`, keeping bundles imported in memory
  * across calls. The harness reaches it via `curl` over a unix socket through the
- * k8s exec channel, so a tool call no longer pays a fresh `node` startup.
+ * sandbox exec channel, so a tool call no longer pays a fresh `node` startup.
  *
  * This file owns the worker source and the bash that ensures it is running and
  * pipes one invocation. Tool-call orchestration stays in custom-tool-executor.ts.

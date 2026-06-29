@@ -3,6 +3,8 @@
  * Keep small coercion, path, quoting, and output utilities here.
  */
 
+import { isPlainObject } from "../../_shared/object.ts";
+
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
 
@@ -10,16 +12,34 @@ export function configString(value: unknown): string | undefined {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
 }
 
-export function isRecordObject(value: unknown): value is Record<string, unknown> {
-  return Boolean(value && typeof value === "object" && !Array.isArray(value));
-}
-
-export function isStringRecord(value: unknown): value is Record<string, string> {
-  return isRecordObject(value) && Object.values(value).every((entry) => typeof entry === "string");
+export function assertSafeTenantProviderUrl(value: string, name: string): void {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    throw new Error(`${name} must be a valid URL`);
+  }
+  if (url.protocol !== "https:") {
+    throw new Error(`${name} must use https`);
+  }
+  const host = url.hostname.toLowerCase().replace(/^\[|\]$/g, "");
+  if (
+    host === "localhost" ||
+    host.endsWith(".localhost") ||
+    host === "::1" ||
+    host === "0.0.0.0" ||
+    host.startsWith("127.") ||
+    host.startsWith("10.") ||
+    host.startsWith("192.168.") ||
+    host.startsWith("169.254.") ||
+    isPrivate172(host)
+  ) {
+    throw new Error(`${name} must not target localhost, private, or link-local addresses`);
+  }
 }
 
 export function stringRecord(value: unknown): Record<string, string> {
-  if (!isRecordObject(value)) {
+  if (!isPlainObject(value)) {
     return {};
   }
   return Object.fromEntries(
@@ -49,9 +69,16 @@ export function sandboxReservationKey(request: { reservationKey?: string; namesp
   return request.reservationKey ?? request.namespace;
 }
 
+function isPrivate172(host: string): boolean {
+  const match = /^172\.(\d{1,3})\./.exec(host);
+  if (!match) return false;
+  const octet = Number(match[1]);
+  return Number.isInteger(octet) && octet >= 16 && octet <= 31;
+}
+
 // Deterministic name for a reserved sandbox: the same reservation key always
 // maps to the same sandbox, so any later request reconnects to it. The hash
-// keeps names unique after the slug is truncated. Kubernetes and vercel both
+// keeps names unique after the slug is truncated. workdir and vercel both
 // rely on this exact format to find their existing persistent sandboxes.
 export function persistentSandboxName(reservationKey: string): string {
   return `fp-p-${slugFor(reservationKey)}-${shortHash(reservationKey)}`;
@@ -91,7 +118,7 @@ export function shellQuote(value: string): string {
  * caller can try another config rather than silently drop the instance record).
  */
 export function isSandboxGoneError(error: unknown): boolean {
-  if (!isRecordObject(error)) {
+  if (!isPlainObject(error)) {
     return typeof error === "string" && /not ?found|does not exist|no such/i.test(error);
   }
   const status = error.statusCode ?? error.status ?? error.code;
@@ -108,7 +135,7 @@ export function isSandboxGoneError(error: unknown): boolean {
  * to resolve; the executor only surfaces a clearer message.
  */
 export function isNoRunnersError(error: unknown): boolean {
-  const message = isRecordObject(error) && typeof error.message === "string"
+  const message = isPlainObject(error) && typeof error.message === "string"
     ? error.message
     : typeof error === "string" ? error : "";
   return /no (available )?runners?/i.test(message);

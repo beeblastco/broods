@@ -17,6 +17,7 @@ import {
   SkillAuthorizationError,
   SkillNotFoundError,
 } from "../skills.ts";
+import { isPlainObject } from "../object.ts";
 import { getStorage } from "./index.ts";
 
 export type AgentStatus = "active" | "disabled";
@@ -169,8 +170,4 @@ function optionalString(value: unknown, name: string): string | undefined {
   if (typeof value !== "string") throw new Error(`${name} must be a string`);
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : undefined;
-}
-
-function isPlainObject(value: unknown): value is Record<string, unknown> {
-  return Boolean(value && typeof value === "object" && !Array.isArray(value));
 }

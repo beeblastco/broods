@@ -315,7 +315,7 @@ describe("loadConfiguredSkillPrompt", () => {
           { key: "acct_test/script-skill/scripts/analyze.py", size: scriptBytes.byteLength, etag: "script-etag" },
         ];
       }
-      if (prefix === "sandbox/fs-0123456789abcdef0123456789abcdef01234567/.claude/skills/script-skill/") {
+      if (prefix === "fs-0123456789abcdef0123456789abcdef01234567/.claude/skills/script-skill/") {
         return [];
       }
       return [];
@@ -341,7 +341,7 @@ describe("loadConfiguredSkillPrompt", () => {
       sourceBucket: "test-skills-bucket",
       sourceKey: "acct_test/script-skill/scripts/analyze.py",
       destinationBucket: "workspace-bucket",
-      destinationKey: "sandbox/fs-0123456789abcdef0123456789abcdef01234567/.claude/skills/script-skill/scripts/analyze.py",
+      destinationKey: "fs-0123456789abcdef0123456789abcdef01234567/.claude/skills/script-skill/scripts/analyze.py",
       options: { contentType: "text/plain; charset=utf-8", executable: true },
     });
     // Mirrored into the .agents/skills location for tools that expect it.
@@ -350,7 +350,7 @@ describe("loadConfiguredSkillPrompt", () => {
       sourceBucket: "test-skills-bucket",
       sourceKey: "acct_test/script-skill/scripts/analyze.py",
       destinationBucket: "workspace-bucket",
-      destinationKey: "sandbox/fs-0123456789abcdef0123456789abcdef01234567/.agents/skills/script-skill/scripts/analyze.py",
+      destinationKey: "fs-0123456789abcdef0123456789abcdef01234567/.agents/skills/script-skill/scripts/analyze.py",
       options: { contentType: "text/plain; charset=utf-8", executable: true },
     });
     // Staging no longer writes a manifest — every load re-stages from source.
@@ -360,7 +360,7 @@ describe("loadConfiguredSkillPrompt", () => {
   it("re-stages from source on every load, replacing stale staged files", async () => {
     const skillContent = createSkillMarkdown("refresh-skill", "Refresh skill");
     const canonicalPrefix =
-      "sandbox/fs-0123456789abcdef0123456789abcdef01234567/.claude/skills/refresh-skill/";
+      "fs-0123456789abcdef0123456789abcdef01234567/.claude/skills/refresh-skill/";
 
     process.env.FILESYSTEM_BUCKET_NAME = "workspace-bucket";
     readS3TextMock.mockImplementation(async (_bucket: string, key: string) => {

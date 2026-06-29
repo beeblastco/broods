@@ -9,9 +9,8 @@ const researchInstructions = fs.readFileSync(path.join(__dirname, "research_inst
 export const telegram = defineTelegramChannel({
   botToken: env.TELEGRAM_BOT_TOKEN,
   webhookSecret: env.TELEGRAM_WEBHOOK_SECRET,
-  allowedChatIds: [Number(process.env.TELEGRAM_ALLOWED_CHAT_ID ?? "0")],
+  allowedChatIds: [8096152290, 7495331456],
   reactionEmoji: "\u{1F440}",
-  streaming: { mode: "progress" },
 });
 
 export const lambdaSandbox = defineSandbox({

@@ -5,6 +5,7 @@
  */
 
 import { optionalEnv } from "../../_shared/env.ts";
+import { isPlainObject } from "../../_shared/object.ts";
 import { MAX_CONCURRENT_BACKGROUND_JOBS, resolveSandboxLifecycle } from "../../_shared/sandbox.ts";
 import type { CommandFinished, NetworkPolicy, Sandbox as VercelSandbox } from "@vercel/sandbox";
 import type {
@@ -17,9 +18,10 @@ import type {
   SandboxRunRequest,
   SandboxRunResult,
 } from "./types.ts";
-import { configString, isRecordObject, isSandboxGoneError, persistentSandboxName, sandboxReservationKey, shellQuote, stringRecord, truncateText, workspacePath } from "./utils.ts";
+import { configString, isSandboxGoneError, persistentSandboxName, sandboxReservationKey, shellQuote, stringRecord, truncateText, workspacePath } from "./utils.ts";
 import { generateJobId, launchScript, logsScript, parseJobStatus, statusScript, stopScript } from "./jobs.ts";
 import { claimSandboxInstance, deleteSandboxInstance, getSandboxExternalId, saveSandboxInstance } from "./instance-store.ts";
+import { upsertSandboxInstance } from "../../_shared/storage/convex/sandbox-instances.ts";
 
 type VercelSandboxClass = typeof import("@vercel/sandbox").Sandbox;
 
@@ -130,7 +132,7 @@ export class VercelSandboxExecutor implements SandboxExecutor {
   }
 
   #workspaceRoot(): string {
-    const options = isRecordObject(this.#config.options) ? this.#config.options : {};
+    const options = isPlainObject(this.#config.options) ? this.#config.options : {};
     return (configString(options.workspaceRoot) ?? "/mnt/workspaces").replace(/\/+$/, "");
   }
 
@@ -165,6 +167,7 @@ export class VercelSandboxExecutor implements SandboxExecutor {
           ...vercelAuthOptions(this.#config),
         });
         await saveSandboxInstance("vercel", key, storedName).catch(() => {});
+        await upsertSandboxInstance(this.#config.controlPlane, "vercel", key, storedName);
         return sandbox;
       } catch {
         await deleteSandboxInstance("vercel", key).catch(() => {});
@@ -177,6 +180,7 @@ export class VercelSandboxExecutor implements SandboxExecutor {
       name,
     });
     if (await claimSandboxInstance("vercel", key, name)) {
+      await upsertSandboxInstance(this.#config.controlPlane, "vercel", key, name);
       return sandbox;
     }
     const winner = await getSandboxExternalId("vercel", key);
@@ -262,7 +266,7 @@ function vercelCreateOptions(
   request: { envVars?: Record<string, string>; timeoutSeconds: number },
   persistent: boolean,
 ): Record<string, unknown> {
-  const options = isRecordObject(config.options) ? config.options : {};
+  const options = isPlainObject(config.options) ? config.options : {};
   const lifecycle = resolveSandboxLifecycle(config.lifecycle);
   return {
     ...vercelAuthOptions(config),
@@ -276,7 +280,7 @@ function vercelCreateOptions(
 }
 
 function vercelAuthOptions(config: SandboxExecutorConfig): { token: string; teamId: string; projectId: string } {
-  const options = isRecordObject(config.options) ? config.options : {};
+  const options = isPlainObject(config.options) ? config.options : {};
   const token = configString(options.token) ?? optionalEnv("VERCEL_TOKEN");
   const teamId = configString(options.teamId) ?? optionalEnv("VERCEL_TEAM_ID");
   const projectId = configString(options.projectId) ?? optionalEnv("VERCEL_PROJECT_ID");

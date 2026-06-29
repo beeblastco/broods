@@ -1,88 +1,142 @@
-# Lambda
+# Lambda (AWS Lambda MicroVM)
 
-The default sandbox provider. It runs a **single uniform container image** with real
-`bash`, native `python3`, Node 22, and `uv` all on PATH — there is no emulated shell, no
-WASM Python, and no separate Python function. SST deploys the image as four Lambda
-functions plus one AWS S3 Files filesystem backed by the workspace S3 bucket.
+The default sandbox provider. Each agent **session runs in one AWS Lambda MicroVM** — a
+Firecracker-isolated, snapshot-resumable VM that boots the **lambda-sandbox image as a
+long-lived HTTP server**. Inside it are real `bash`, native `python3`, Node 22, `uv`, and
+`ripgrep` on PATH — no emulated shell, no WASM Python. The old four-function (mount × network)
+grid is gone: there is now a single uniform image and one VM per run.
 
-## 4-function topology
+## How it works
 
-The same image is deployed across two axes; the harness auto-selects one per run:
+```mermaid
+flowchart LR
+  Harness["harness-processing"] -->|RunMicrovm| CP["MicroVM control plane"]
+  CP -->|"{ microvmId, endpoint }"| Harness
+  Harness -->|"CreateMicrovmAuthToken"| CP
+  Harness -->|"POST /exec (443→8080)<br/>X-aws-proxy-auth"| VM["MicroVM<br/>lambda-sandbox HTTP server"]
+  VM -->|"/run hook: mount-s3"| S3["workspace S3 bucket<br/>/mnt/workspaces/&lt;namespace&gt;"]
+  VM -.->|suspend/resume| Snap["Firecracker snapshot"]
+```
 
-| | network `allow-all` | network `deny-all` / `restricted` |
+1. **`RunMicrovm`** starts a VM from the image and returns a unique HTTPS `endpoint` + `microvmId`.
+2. The harness mints a short-lived JWE with **`CreateMicrovmAuthToken`** and POSTs the exec
+   request to `https://<endpoint>/exec` with `X-aws-proxy-auth` + `X-aws-proxy-port: 8080`
+   (the proxy maps external `443` → the image's `8080`). The exec request/response JSON is the
+   same contract the image has always used — only the transport changed from Invoke to HTTP.
+3. The image answers request-level errors with HTTP 200 + an `ok:false` body; `502/503/504`
+   from the proxy mean "VM still restoring its snapshot" (1–10 s), so the first exec retries.
+
+### Lifecycle hooks
+
+The image implements HTTP lifecycle hooks on port `9000` under
+`/aws/lambda-microvms/runtime/v1/<hook>`:
+
+| Hook | When | What the image does |
 | --- | --- | --- |
-| **workspace mounted** | `SandboxMountNet` (VPC + NAT + S3 mount) | `SandboxMountNoNet` (VPC, S3 mount) |
-| **no workspace** | `SandboxNoMountNet` (no VPC, fastest) | `SandboxNoMountNoNet` (VPC, no mount) |
+| `/ready`, `/validate` | image build | health/validation (return 200) |
+| `/run` | per VM start | **mount-s3** the workspace from the `runHookPayload` (see below) |
+| `/resume` | on resume from suspend | reconnect / refresh |
+| `/suspend` | before snapshot | `sync(2)` flush |
+| `/terminate` | on teardown | unmount + final `sync` |
 
-- The **mount axis** comes from whether the run has a workspace namespace.
-- The **network axis** comes from `sandbox.network.mode`.
-- All four are ARM64, 512 MB (minimum for the S3 mount), 5-minute timeout, pulled from the
-  `latest-arm64` ECR image tag.
+## Image & build
 
-`harness-processing` invokes them by function name via four env vars
-(`SANDBOX_FN_{MOUNT,NOMOUNT}_{NET,NONET}`) and never via a public Function URL.
+The image is **built by AWS from an S3 zip** (Dockerfile + sources) via
+`create-microvm-image` / `update-microvm-image` — it is **not** an ECR-image Lambda or a
+custom runtime. Images are versioned (a build is a Firecracker snapshot of memory + disk).
+The harness selects the image by ARN through `MICROVM_IMAGE_IDENTIFIER`. CI for the image
+lives in the [`lambda-sandbox`](https://github.com/beeblastco/lambda-sanbdox) sibling repo.
 
-## Image & ECR
+The SST stack provisions the build prerequisites in the core region:
 
-Lambda can only pull a **private** ECR image **in the function's own region** — public
-ECR and cross-region are rejected. So the repo is region-scoped and **owned by this app**
-(`sst.config.ts` creates `aws.ecr.Repository` `beeblast-lambda-sandbox-<account>-<region>`),
-not the infra repo. The `latest-arm64` image is built by the
-[`lambda-sandbox custom image`](https://github.com/beeblastco/lambda-sanbdox) CI and mirrored
-by the Broods deploy workflow when a target region needs it.
-
-```text
-sst deploy ──creates──▶ ECR repo (per region)  ◀──pushes── lambda-sandbox CI
-                              │
-                         imageUri ▼
-                    4 sandbox Lambda functions
-```
-
-- **Multi-region:** every region you deploy to needs its own repo + pushed image. When a
-  target's sandbox flag is `true`, `.github/workflows/deploy.yaml` checks for the regional
-  `latest-arm64` tag. If it is missing, CI runs one repo-only SST deploy with
-  `SANDBOX_IMAGE_READY=false`, copies the source image from `SANDBOX_IMAGE_SOURCE_REGION`
-  (default `eu-west-1`) with `crane`, then runs the final deploy with the sandbox
-  functions enabled.
-- **Bootstrap remains gated by `SANDBOX_IMAGE_READY`:** the 4 functions are created only when
-  this flag is `true`. The CI bootstrap path keeps a brand-new region deployable without local
-  AWS commands, while preserving the repo-only first pass that lets SST own the ECR repository.
-  Harness env/IAM always carry the deterministic function names/ARNs, so the second pass creates
-  the same function names.
-- **The flag is per-stage/region in `deploy.yaml`**, because each region bootstraps
-  independently. The resolve step picks `SANDBOX_IMAGE_READY_DEV` (falling back to the
-  legacy repo-wide `SANDBOX_IMAGE_READY`) for `dev`, and
-  `SANDBOX_IMAGE_READY_PRODUCTION_{US_EAST_1,EU_WEST_1,AP_SOUTHEAST_1}` for the three
-  production targets. A region whose image is not mirrored yet can keep its flag `false`
-  while another stays `true`.
-
-## Lambda MicroVM prerequisites
-
-The SST stack also creates the AWS Lambda MicroVM prerequisites in the same region as the
-core stack:
-
-- `microvmArtifactsBucketName` — account-regional S3 bucket for zipped MicroVM image
-  artifacts under `microvm-images/`.
+- `microvmArtifactsBucketName` — S3 bucket for the zipped image artifacts (`microvm-images/`).
 - `microvmBuildRoleArn` — build role for `CreateMicrovmImage` / `UpdateMicrovmImage`.
-- `microvmExecutionRoleArn` — runtime role for `RunMicrovm` and CloudWatch logs.
+- `microvmExecutionRoleArn` — runtime role for `RunMicrovm` + CloudWatch logs.
 
-General-purpose S3 buckets use the account-regional namespace naming convention:
+> Lambda MicroVM prerequisites are skipped in `ap-southeast-1` (feature not available there yet).
 
-```text
-[stage-]broods-<service>-<account-id>-<region>-an
+## Workspace mount
+
+For a workspace-backed run the harness assumes a short-lived, **namespace-scoped** STS role
+and delivers the credentials + bucket/prefix in the `runHookPayload` (≤16 KB). The image's
+`/run` hook then runs `mount-s3` **inside the VM**, mounting the workspace at
+`/mnt/workspaces/<namespace>` (rooted at the `<namespace>/` prefix). The harness's own broad
+credentials never enter the VM — any code the agent runs can read that env, so only the
+prefix-scoped session creds go in. This is the same scoped-credential model Daytona and the
+`sandbox` provider use. Stateless (no-workspace) runs skip the mount and work in `/tmp`.
+
+> **Mountpoint-for-S3 has no append/in-place edit** (`>>` or editing a file in place fails) —
+> only whole-file create/overwrite. The `write`/`edit` tools rewrite whole files; agents should
+> not append. Writes upload to S3 on close, and `/suspend` `sync`s before a snapshot.
+
+> **Why `mount-s3` and not S3 Files?** AWS also offers **S3 Files** (`mount -t s3files` over a
+> managed NFS mount target), which allows true in-place edits and keeps credentials out of the
+> VM. We deliberately use **Mountpoint-for-S3** instead: it works over the default
+> `INTERNET_EGRESS` (no VPC egress connector, and no **NAT gateway** to keep internet access
+> alongside the mount), it avoids S3 Files' usage-based surcharges (per-GB cache + per-GB
+> read/write + higher request rates), and it is the **same code path** the `sandbox` and
+> `daytona` providers use, fed prefix-scoped 1-hour STS creds. S3 Files stays a future opt-in
+> for write-heavy or strict-isolation sandboxes — see the
+> [Security model](security.md) for how the scoped creds are contained.
+
+### What the model sees
+
+A workspace-backed run looks like a normal project directory — `bash` starts in the workspace
+and file tools take relative paths:
+
+```bash
+pwd                 # current workspace directory
+ls                  # files in this workspace
+python3 script.py
 ```
 
-Non-bucket AWS resources use the same order without the `-an` suffix:
+Provider mount paths are implementation detail for debugging. Skill bundles are staged into
+the workspace namespace at `/.claude/skills/<name>` by `load_skill` (S3 server-side copy).
 
-```text
-[stage-]broods-<service>-<account-id>-<region>
+## Persistent sandboxes (suspend / resume / snapshots)
+
+Because a MicroVM is a snapshot-resumable VM, `lambda` supports **reserved persistent
+sandboxes** like the other VM providers. Set `persistent: true` to reserve one MicroVM per
+workspace: installed packages, code, and running jobs survive across calls.
+
+- On idle the VM is **suspended** (a Firecracker snapshot of memory + disk); the next call
+  **resumes** it — restore is ~1–10 s. The idle/expiry policy comes from `config.lifecycle`
+  (`idleTimeoutSeconds` → `idlePolicy.maxIdleDurationSeconds`, `autoResumeEnabled`).
+- The reservation is reconnected by `microvmId` through the shared instance-store (same as
+  Daytona/E2B/Vercel), with a conditional claim resolving concurrent first-create races.
+- **Hard cap:** a MicroVM lives at most **8 hours** (`maximumDurationInSeconds` ≤ 28800), so a
+  reservation is recreated after that. `onCreate`/`onResume` hooks run on first create / each
+  acquire.
+
+> **Suspend snapshot ≠ a new image.** The suspend/resume snapshot is a Firecracker
+> checkpoint of *that one instance*; AWS MicroVM has **no runtime API to promote a running
+> VM into a new reusable image**. So the dashboard **Create snapshot** action is not offered
+> for `lambda` (only the workdir `sandbox` provider supports it) — launch images are produced
+> as versioned MicroVM image builds instead. See [Snapshots & Sizes](snapshot.md#capturing-a-snapshot-provider-support).
+
+```jsonc
+{
+  "config": {
+    "provider": "lambda",
+    "network": { "mode": "allow-all" },
+    "persistent": true,
+    "lifecycle": { "idleTimeoutSeconds": 1800, "maxLifetimeSeconds": 28800 }
+  }
+}
 ```
 
-The dev AWS stack defaults to `eu-west-1` for the current cost-down rollout. Production
-currently deploys to `eu-west-1` only. `us-east-1` and `ap-southeast-1` are kept as planned
-production regions, but they are disabled until production is explicitly promoted. Lambda
-MicroVM prerequisites are skipped in `ap-southeast-1` because the feature is not available
-there yet. The production Convex database remains in `eu-west-1`.
+## Background jobs
+
+A persistent MicroVM also runs **detached background jobs** (`bash { background: true }` →
+`statusId`, then `async_status`). The job is launched as a `setsid` session that POSTs its
+result to the harness completion callback when it exits. Because the persistent VM is **not
+terminated after the request**, the job keeps running — and it is snapshotted/restored with
+the VM across suspend/resume (the boot id is unchanged, so a resumed job is still "running").
+See [Best Practice → Background jobs](best-practice.md#background-jobs--async_status).
+
+> Auto-delivery (the completion callback) needs egress to the harness Function URL — use
+> `network.mode: "allow-all"` or allow the Function URL. Without egress the job still runs and
+> `async_status` polling still works; only the automatic push-back is skipped.
 
 ## Config
 
@@ -99,7 +153,7 @@ there yet. The production Convex database remains in `eu-west-1`.
 }
 ```
 
-Function names are service-managed. Account sandbox config cannot override them.
+Image identifier, roles, and sizes are service-managed; account sandbox config cannot override them.
 
 ## Environment variables
 
@@ -111,17 +165,14 @@ Function names are service-managed. Account sandbox config cannot override them.
 | Node | `process.env.MY_API_BASE` |
 | Python | `os.environ["MY_API_BASE"]` |
 
-Rules:
-
-- **The child env is `env_clear()`ed first** — the host Lambda's `process.env` (including
-  AWS credentials) is never inherited. Only the keys you declare reach the run.
+- **The child env is `env_clear()`ed first** — the host's `process.env` (including AWS
+  credentials) is never inherited. Only the keys you declare reach the run.
 - Reserved runtime vars (`PATH`, `HOME`, `TMPDIR`, ...) are set by the image and win.
 - Values must be strings. Sandbox config (and therefore `envVars`) is encrypted at rest.
 
 ## Runtimes
 
-`bash`, `python3`, and `node` are all real binaries on PATH. The harness tools all compile
-to bash, so you can run programs directly:
+`bash`, `python3`, and `node` are all real binaries on PATH, so you can run programs directly:
 
 ```bash
 python3 script.py        # native CPython, full stdlib
@@ -129,113 +180,31 @@ node app.js              # Node 22
 uv run tool.py           # uv is available
 ```
 
-`config.runtimes` is a **best-effort** allow-list. The bash tool rejects obvious
-disallowed runtime invocations and surfaces the allowed list in its description; a
-general shell VM cannot make this a hard isolation boundary.
+`config.runtimes` is a **best-effort** allow-list: the bash tool rejects obvious disallowed
+runtime invocations, but a general VM cannot make this a hard isolation boundary.
 
-## Workspace mount
+## Network
 
-AWS S3 Files is mounted into the mounted functions at `/mnt/workspaces`, rooted at the
-`sandbox/` access-point prefix (load-bearing — keep in sync with `WORKSPACE_MOUNT_PREFIX`).
-A workspace run is rooted at `/mnt/workspaces/<namespace>`, where the namespace is derived
-from `accountId:workspaceId`. The no-mount functions run statelessly in `/tmp`.
+`network.mode` maps onto the MicroVM's egress:
 
-### What the model sees
+| Mode | MicroVM egress |
+| --- | --- |
+| `allow-all` | default `INTERNET_EGRESS` (no connector) |
+| `deny-all` / `restricted` | a customer-managed **VPC egress network connector** (provisioned in SST, ARN passed via `MICROVM_EGRESS_NETWORK_CONNECTOR_ARN`); domain allowlists are logged as unsupported. Without a connector the executor fails closed instead of launching with default internet egress. |
 
-For workspace-backed runs, the model should see a normal project directory. The sandbox
-image starts `bash` in the selected workspace directory, so relative paths are enough:
+## Sizes & logging
 
-```bash
-pwd                 # current workspace directory
-ls                  # files in this workspace
-python3 script.py
-```
-
-Provider mount paths are implementation details for debugging.
-
-Skill bundles are still staged into the workspace namespace at `/.claude/skills/<name>` by
-`load_skill` (S3 server-side copy), so the agent can read and run skill scripts without a
-second mount.
-
-### Read-only workspaces: mount (default) vs S3-direct
-
-A workspace with **no** effective sandbox is **read-only** — `write`/`edit`/`grep`/`bash`
-are not exposed; only `read`/`glob`. How those reads are served depends on the existing
-per-workspace `sandbox` reference value (no new config — it reuses the `null` opt-out):
-
-| Workspace ref | Read path | Sees committed writes | Cost |
-| --- | --- | --- | --- |
-| sandbox omitted / inherited, no effective sandbox (**default**) | service-managed **read-only mount** (`SandboxMountNoNet`) | **immediately** (hop 1) | a mounted Lambda invocation |
-| `sandbox: null` (**explicit opt-out**) | **S3-direct** — reads `sandbox/<namespace>/` keys via the S3 API | only after the S3 export (hop 2, ≥60s) | no VPC/mount/Lambda cold start (cheapest) |
-
-```jsonc
-// agent config — reader on a shared workspace
-"workspaces": [
-  { "name": "shared", "workspaceId": "ws_…" },               // default: read-only mount (fresh reads)
-  { "name": "shared", "workspaceId": "ws_…", "sandbox": null } // opt out: read straight from S3 (cheaper, lagged)
-]
-```
-
-The default mount path reads the same filesystem a writer mounts, so a reader sees a
-writer's committed file right away (subject only to NFS close-to-open consistency, seconds).
-The `null` opt-out trades that freshness for skipping the mount entirely — use it for reads
-that tolerate the S3-export lag and want the lowest cost.
-
-## Write durability & S3 sync
-
-The mount is **AWS S3 Files** (NFS over S3), which has two distinct flush boundaries. Getting
-a write to a plain S3 object is a two-hop journey, and each hop is asynchronous by default:
-
-```text
-  tool write ──fsync──▶ S3 Files server ──async export (~60s idle)──▶ plain S3 object
-              (hop 1: durability)            (hop 2: S3 visibility)
-```
-
-- **Hop 1 — durability across cold containers.** Closing a file does **not** force an NFS
-  COMMIT; the data sits in the container's page cache. A Lambda is frozen the instant the
-  handler returns, so a write that was never committed is **silently lost** on the next cold
-  container. The `write` and `edit` tools therefore `fsync` the file (`sync <file>` /
-  `fs.fsyncSync`) before returning — their writes are durable across cold mounts.
-- **Hop 2 — visibility to the S3-direct opt-out path.** S3 Files exports committed data to
-  plain S3 objects only **asynchronously**, roughly after 60s of write inactivity, and only
-  if **S3 Versioning is enabled** on the bucket. This only matters for the `sandbox: null`
-  opt-out (which reads S3 objects directly): it sees a freshly written file only **after**
-  that export. The **default** read-only path reads through the mount (hop 1), so it — like
-  any mounted sandbox — sees committed writes immediately and never waits on hop 2.
-
-### `bash` writes are flushed automatically
-
-The sandbox runtime calls `sync(2)` after every persistent run, flushing all dirty
-page-cache writes — including raw `bash` redirection (`echo > f`, `cmd > out`, `>>`,
-in-script writes) — to the S3 Files mount before the Lambda freezes. So `bash`-written
-files are durable across the next cold container without any explicit flush, just like
-the dedicated `write`/`edit` tools (which also `fsync` per file). No `sync report.txt`
-incantation is needed in agent scripts anymore.
-
-> **Note — this is a stopgap.** The per-run `sync(2)` only prevents silent data loss on
-> cold containers. It does not solve cross-provider durability, the hop-2 visibility lag,
-> or multi-agent write conflicts on a shared workspace. The intended final solution is a
-> unified shared-data layer (an Archil-style elastic POSIX filesystem mountable across
-> sandboxes) that owns durability and conflict resolution in one place, replacing the
-> per-provider mount/flush mechanics. Tracked in
-> [#64](https://github.com/beeblastco/broods/issues/64).
-
-### Known limitations
-
-- **S3-direct opt-out visibility lag.** Because of hop 2, a write is not immediately visible
-  to a reader using the `sandbox: null` opt-out. Expect a delay (≥60s) and verify the bucket
-  has versioning on. The default read-only mount and any mounted sandbox are unaffected.
-- **No mount-level `sync` option.** Lambda's managed `fileSystemConfig` mount does not expose
-  NFS mount options, so durability is enforced by the runtime (`sync(2)` after each persistent
-  run) and per-write in the dedicated tools, rather than globally at mount time.
+MicroVM sizes range from **0.5 GB / 0.25 vCPU** up to **8 GB / 4 vCPU** (fixed disk per size);
+the predefined size catalog is service-managed. Build + runtime logs go to CloudWatch under
+`/aws/lambda/microvms/<image>` (stream = `microvmId`) and are routed into the cluster
+Loki/Tempo stack.
 
 ## Security
 
-- functions have no public Function URLs and need no account-management permissions
-- child processes run with no AWS credentials (`env_clear()`)
-- only the mounted functions can reach the workspace bucket (bucket policy principals)
-- internet access is gated by `sandbox.network.mode` selecting the on/off function
-- the Lambda mount is rooted at the shared `sandbox/` access-point prefix, so arbitrary
-  `bash` should be treated as privileged workspace compute rather than a hard
-  cross-workspace filesystem isolation boundary; dedicated file tools still reject path
-  traversal, but full isolation requires an image/infra-level chroot or per-namespace mount
+- child processes run with no AWS credentials (`env_clear()` first)
+- the workspace mount is rooted at the run's `<namespace>/` prefix, scoped by the per-mount
+  STS session policy; arbitrary `bash` is privileged workspace compute, not a hard
+  cross-workspace filesystem boundary — dedicated file tools still reject path traversal
+- internet access is gated by `network.mode` (egress connector for restricted/deny-all)
+- each exec is authenticated by a short-lived (`≤15 min`) per-call JWE auth token scoped to
+  port 8080

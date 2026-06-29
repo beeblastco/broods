@@ -84,6 +84,25 @@ export const support = defineAgent({
   }));
 });
 
+test("compileProject carries the sandbox size + snapshot knobs into the manifest", async () => {
+  const cwd = await fixtureProject("", `
+import { defineSandbox } from "${RESOURCES_MODULE}";
+
+export const curated = defineSandbox({
+  name: "curated",
+  config: { provider: "sandbox", size: "small", snapshot: "img_curated" },
+});
+`);
+
+  const { manifest } = await compileProject({ cwd: cwd, command: "dev" });
+
+  expect(manifest.resources).toContainEqual(expect.objectContaining({
+    kind: "sandbox",
+    name: "curated",
+    config: expect.objectContaining({ provider: "sandbox", size: "small", snapshot: "img_curated" }),
+  }));
+});
+
 test("compileProject rejects provider-native workspace storage before upload", async () => {
   const cwd = await fixtureProject("", `
 import { defineWorkspace } from "${RESOURCES_MODULE}";
@@ -229,23 +248,27 @@ export const telegram = defineTelegramChannel({
   webhookSecret: env.TELEGRAM_WEBHOOK_SECRET,
   allowedChatIds: [123],
   reactionEmoji: "eyes",
-  streaming: { mode: "edit" },
+  apiUrl: "https://telegram.example",
 });
 export const github = defineGitHubChannel({
   appId: env.GITHUB_APP_ID,
   privateKey: env.GITHUB_PRIVATE_KEY,
   webhookSecret: env.GITHUB_WEBHOOK_SECRET,
   allowedRepos: ["owner/repo"],
+  apiUrl: "https://github.example/api/v3",
 });
 export const slack = defineSlackChannel({
   botToken: env.SLACK_BOT_TOKEN,
   signingSecret: env.SLACK_SIGNING_SECRET,
   allowedChannelIds: ["C123"],
+  reactionEmoji: "white_check_mark",
+  apiUrl: "https://slack.example/api/",
 });
 export const discord = defineDiscordChannel({
   botToken: env.DISCORD_BOT_TOKEN,
   publicKey: env.DISCORD_PUBLIC_KEY,
   allowedGuildIds: ["G123"],
+  apiUrl: "https://discord.example/api/v10",
 });
 export const pancake = definePancakeChannel({
   pageId: env.PANCAKE_PAGE_ID,
@@ -258,7 +281,6 @@ export const zalo = defineZaloChannel({
   botToken: env.ZALO_BOT_TOKEN,
   webhookSecret: env.ZALO_WEBHOOK_SECRET,
   allowedUserIds: ["user-1"],
-  streaming: { mode: "chunk" },
 });
 
 export const support = defineAgent({
@@ -272,12 +294,12 @@ export const support = defineAgent({
 
   expect(agent.config).toMatchObject({
     channels: {
-      telegram: { allowedChatIds: [123], reactionEmoji: "eyes", streaming: { mode: "edit" } },
-      github: { allowedRepos: ["owner/repo"] },
-      slack: { allowedChannelIds: ["C123"] },
-      discord: { allowedGuildIds: ["G123"] },
+      telegram: { allowedChatIds: [123], reactionEmoji: "eyes", apiUrl: "https://telegram.example" },
+      github: { allowedRepos: ["owner/repo"], apiUrl: "https://github.example/api/v3" },
+      slack: { allowedChannelIds: ["C123"], reactionEmoji: "white_check_mark", apiUrl: "https://slack.example/api/" },
+      discord: { allowedGuildIds: ["G123"], apiUrl: "https://discord.example/api/v10" },
       pancake: { senderId: "staff-1", options: { ignoreTagIds: ["handoff"] } },
-      zalo: { allowedUserIds: ["user-1"], streaming: { mode: "chunk" } },
+      zalo: { allowedUserIds: ["user-1"] },
     },
   });
   expect(channels.map(({ alias, type, agentName }) => ({ alias, type, agentName }))).toEqual([

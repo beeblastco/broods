@@ -26,7 +26,7 @@ import type { AgentConfig } from "../_shared/storage/index.ts";
 import { getStorage } from "../_shared/storage/index.ts";
 import type { AsyncToolDelivery } from "./async-tool-result.ts";
 import { isMissingS3Error, readS3Text } from "../_shared/s3.ts";
-import { workspaceNamespacePrefix } from "../_shared/sandbox.ts";
+import { resolveS3ReadTarget, workspaceReadContext } from "./sandbox/s3-mount.ts";
 import {
   dynamo,
   fromAttributeValue,
@@ -55,7 +55,6 @@ import type { SandboxPermissionMode } from "../_shared/storage/index.ts";
 
 const CONVERSATIONS_TABLE_NAME = requireEnv("CONVERSATIONS_TABLE_NAME");
 const PROCESSED_EVENTS_TABLE_NAME = requireEnv("PROCESSED_EVENTS_TABLE_NAME");
-const FILESYSTEM_BUCKET_NAME = requireEnv("FILESYSTEM_BUCKET_NAME");
 
 // Default conversation lease TTL of 15 minutes.
 const CONVERSATION_LEASE_TTL_SECONDS = 15 * 60;
@@ -599,10 +598,13 @@ export class Session {
     // a per-turn sandbox round-trip is costly. Reading via S3 also lets a workspace
     // serve memory without any sandbox attached. See docs/workspace/storage.md.
 
-    const key = `${workspaceNamespacePrefix(workspace.namespace)}/MEMORY.md`;
+    const target = await resolveS3ReadTarget(workspaceReadContext(workspace.config.storage, workspace.namespace));
+    const key = `${target.prefix}MEMORY.md`;
 
     try {
-      return await readS3Text(FILESYSTEM_BUCKET_NAME, key);
+      return target.access
+        ? await readS3Text(target.bucket, key, target.access)
+        : await readS3Text(target.bucket, key);
     } catch (error) {
       if (!isMissingS3Error(error)) {
         logError("Failed to load MEMORY.md for session prompt", {

@@ -6,10 +6,10 @@
 import { InvokeCommand, LambdaClient } from "@aws-sdk/client-lambda";
 import type { ToolModelMessage, JSONValue, UserModelMessage } from "ai";
 import type { LambdaFunctionURLEvent } from "aws-lambda";
+import { fromFullStream } from "chat";
 import { timingSafeStringEqual } from "../_shared/auth.ts";
 import { markHandlerEntry } from "../_shared/cold-start.ts";
 import { formatChannelErrorText } from "../_shared/channels.ts";
-import { createChannelStreamWriter, type ChannelStreamMode, type ChannelStreamWriter } from "../_shared/channel-streaming.ts";
 import { executeCommand } from "../_shared/commands.ts";
 import { toRuntimeAgentConfig } from "../_shared/storage/index.ts";
 import { getStorage, type CronRecord } from "../_shared/storage/index.ts";
@@ -785,88 +785,40 @@ async function handleChannelRequest(event: ChannelInboundEvent, context?: Lambda
         continue;
       }
 
-      // Per-channel reply streaming. When configured, the reply streams into the
-      // chat (edit-in-place, a tool-activity preview, or paragraph chunks); the
-      // final message is the writer's last flush, so onFinalText only sends directly
-      // when nothing was streamed (e.g. a structured/object final or a tool-only
-      // turn). The writer decides what each event does: edit/chunk consume text and
-      // ignore tool calls; progress shows tool/reasoning status and streams the
-      // answer text into the same live preview.
-      const streamMode = channelStreamMode(event.agentConfig, event.channelName);
-      let writer: ChannelStreamWriter | undefined;
       let streamed = false;
-      let finished = false;
-      const ensureWriter = (): ChannelStreamWriter =>
-        (writer ??= createChannelStreamWriter(event.channel, streamMode!));
-      // Best-effort: a failed edit/send never aborts the turn; the final flush (or
-      // onFinalText fallback) still delivers the complete reply.
-      const streamWarn = (op: string) => (error: unknown) => logWarn(`Channel stream ${op} failed`, {
+      const streamWarn = (error: unknown) => logWarn("Channel SDK stream failed; falling back to final sendText", {
         channel: event.channelName,
         eventId: session.eventId,
         error: error instanceof Error ? error.message : String(error),
       });
 
       const result = await runAgentLoopUntilSubagentsIdle(session, turnContext, event.agentConfig ?? {}, context, {
-        ...(streamMode
+        ...(event.channel.stream
           ? {
-            onTextDelta: async (delta) => {
-              // Mark streamed only after a send succeeds, so a total streaming
-              // failure leaves onFinalText to deliver the reply normally.
+            streamMessage: async (stream) => {
               try {
-                await ensureWriter().push(delta);
-                streamed = true;
+                const result = await event.channel.stream!(fromFullStream(readAgentFullStream(stream)));
+                streamed = Boolean(result);
+                if (!streamed) {
+                  await stream.consumeStream();
+                }
               } catch (error) {
-                streamWarn("push")(error);
-              }
-            },
-            onReasoningDelta: async (delta) => {
-              const w = ensureWriter();
-              if (!w.reasoning) return; // only progress mode renders reasoning
-              try {
-                await w.reasoning(delta);
-                streamed = true;
-              } catch (error) {
-                streamWarn("reasoning")(error);
-              }
-            },
-            onToolCall: async (toolName, input) => {
-              const w = ensureWriter();
-              if (!w.progress) return; // only progress mode renders tool activity
-              try {
-                await w.progress(formatToolProgress(toolName, input));
-                streamed = true;
-              } catch (error) {
-                streamWarn("progress")(error);
-              }
-            },
-            onStepFinish: async () => {
-              const w = ensureWriter();
-              if (!w.stepFinish) return;
-              try {
-                await w.stepFinish();
-              } catch (error) {
-                streamWarn("step finish")(error);
+                streamWarn(error);
+                if (!streamed) {
+                  try {
+                    await stream.consumeStream();
+                  } catch {
+                    // The final error path below will send the channel error reply.
+                  }
+                }
               }
             },
           }
           : {}),
         onFinalText: async (response) => {
-          // Text answer + an active stream: the writer's final flush IS the reply.
-          // For edit/progress modes this overwrites the streamed message in place
-          // with the authoritative final text.
-          if (writer && streamed && typeof response === "string") {
-            finished = true;
-            await writer.finish(response).catch(streamWarn("finish"));
+          if (streamed && typeof response === "string") {
             return;
           }
-          // Fallback: nothing streamed, or the final is a structured/object output
-          // (not a string). We send it as one fresh message (prettified JSON if an
-          // object). Note: in progress/edit mode a structured final lands here, so
-          // the streamed "⏳ Working…"/partial preview is NOT overwritten and lingers
-          // above this message — there is no deleteMessage primitive to clear it.
-          // Acceptable because structured/object output to a chat channel is rare;
-          // to overwrite the preview instead, pass the stringified text to
-          // writer.finish() in the branch above.
           const text = typeof response === "string" ? response : JSON.stringify(response, null, 2);
           logInfo("Channel reply sending", {
             channel: event.channelName,
@@ -895,14 +847,6 @@ async function handleChannelRequest(event: ChannelInboundEvent, context?: Lambda
             conversationKey: session.conversationKey,
             textLength: text.length,
           });
-          // A live preview is mid-stream: turn it into the error in place so no
-          // "Working…" draft is left dangling above the error message.
-          if (writer && streamed && !finished) {
-            finished = true;
-            await writer.finish(text).catch(streamWarn("error finish"));
-
-            return;
-          }
           await event.channel.sendText(text);
           logInfo("Channel error reply sent", {
             channel: event.channelName,
@@ -924,14 +868,6 @@ async function handleChannelRequest(event: ChannelInboundEvent, context?: Lambda
           await session.persistModelMessages([createChannelApprovalDenial(approvals)]);
         },
       });
-
-      // The turn streamed text but ended without a text final (a detached async
-      // tool was dispatched, or approval was required), so onFinalText never ran.
-      // Reconcile the preview so the last throttled delta is flushed; the real
-      // answer, if any, arrives later as a follow-up message.
-      if (writer && streamed && !finished && !result.didFail) {
-        await writer.finish().catch(streamWarn("finish"));
-      }
 
       if (result.didFail) {
         logError("Channel agent loop failed", {
@@ -1319,18 +1255,7 @@ async function runAgentLoopUntilSubagentsIdle(
     onFinalText(response: JSONValue): Promise<void>;
     onErrorText(error: string): Promise<void>;
     onApprovalRequired?(approvals: ToolApprovalSummary[]): Promise<void>;
-    // When present, assistant text deltas are forwarded live (used to stream a
-    // reply into a chat channel). Absent => the stream is just drained.
-    onTextDelta?(delta: string): Promise<void>;
-    // When present, reasoning/thinking deltas are forwarded live (used by
-    // progress-mode channel streaming to show the model's live thought).
-    onReasoningDelta?(delta: string): Promise<void>;
-    // When present, each tool call's name is forwarded live (used by progress-mode
-    // channel streaming to render a tool-activity preview).
-    onToolCall?(toolName: string, input: unknown): Promise<void>;
-    // Chunk streaming flushes once per completed model step, including steps
-    // without paragraph boundaries.
-    onStepFinish?(): Promise<void>;
+    streamMessage?(stream: AgentLoopStream): Promise<void>;
   },
 ): Promise<{ didFail: boolean; failureText: string | null; hasDetachedCallbacks: boolean }> {
   const subagentCoordinator = new SubagentCoordinator(session, agentConfig, waitUntilMs(context));
@@ -1341,33 +1266,9 @@ async function runAgentLoopUntilSubagentsIdle(
     asyncToolCoordinator: asyncToolCoordinator,
     initialTurnContext: initialTurnContext,
     agentConfig: agentConfig,
-    consumeStream: (reply.onTextDelta || reply.onReasoningDelta || reply.onToolCall || reply.onStepFinish)
-      ? async (stream) => {
-          try {
-            const reader = stream.fullStream.getReader();
-            while (true) {
-              const { done, value: part } = await reader.read();
-              if (done) break;
-              if (part.type === "text-delta") {
-                await reply.onTextDelta?.(part.text);
-              } else if (part.type === "reasoning-delta") {
-                await reply.onReasoningDelta?.(part.text);
-              } else if (part.type === "tool-call") {
-                await reply.onToolCall?.(part.toolName, part.input);
-              } else if (part.type === "finish-step") {
-                await reply.onStepFinish?.();
-              }
-            }
-          } finally {
-            // Reading fullStream drives the model callbacks, but the AI SDK skips
-            // onFinish when the run errors before any step completes (usage-limit on
-            // the first call), so the task span would never close. Guarantee it.
-            await stream.ensureFinalized();
-          }
-        }
-      : async (stream) => {
-          await stream.consumeStream();
-        },
+    consumeStream: reply.streamMessage ?? (async (stream) => {
+      await stream.consumeStream();
+    }),
   });
   const hasDetachedCallbacks = asyncToolCoordinator.hasDetachedCallbacks;
   if (hasDetachedCallbacks) {
@@ -1613,6 +1514,19 @@ async function pipeAgentNatsStream(
   }
 }
 
+async function* readAgentFullStream(stream: AgentLoopStream): AsyncIterable<unknown> {
+  const reader = stream.fullStream.getReader();
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      yield value;
+    }
+  } finally {
+    await stream.ensureFinalized();
+  }
+}
+
 function waitUntilMs(context: LambdaInvocation | undefined): number {
   if (context?.deadlineMs && Number.isFinite(context.deadlineMs)) {
     return Math.max(Date.now(), context.deadlineMs - LAMBDA_TIMEOUT_SAFETY_MS);
@@ -1737,51 +1651,4 @@ function isRunnableModelInput(message: DirectInboundEvent["events"][number] | Di
 
 function asyncResultEventIds(event: DirectInboundEvent): string[] {
   return [...new Set([event.asyncResultEventId ?? event.eventId, event.eventId])];
-}
-
-// Resolve the configured streaming mode for a channel. "edit"/"chunk"/"progress"
-// enable streaming; "off" or unset keep the single-final-message behavior.
-function channelStreamMode(
-  agentConfig: ChannelInboundEvent["agentConfig"],
-  channelName: string,
-): ChannelStreamMode | undefined {
-  const channels = (agentConfig as { channels?: Record<string, unknown> } | undefined)?.channels;
-  const channel = channels?.[channelName] as { streaming?: { mode?: unknown } } | undefined;
-  const mode = channel?.streaming?.mode;
-  return mode === "edit" || mode === "chunk" || mode === "progress" ? mode : undefined;
-}
-
-function formatToolProgress(toolName: string, input: unknown): string {
-  const hint = toolProgressHint(input);
-
-  return hint ? `🛠 ${toolName}: ${hint}` : `🛠 ${toolName}`;
-}
-
-// A short, human-readable descriptor for a tool call — prefer a meaningful field
-// (query/prompt/command/path/url) over dumping the raw arguments JSON.
-function toolProgressHint(input: unknown): string | undefined {
-  const maxLength = 80;
-  const clip = (text: string): string => {
-    const oneLine = text.replace(/\s+/g, " ").trim();
-
-    return oneLine.length > maxLength ? `${oneLine.slice(0, maxLength - 1)}…` : oneLine;
-  };
-  if (typeof input === "string") return input ? clip(input) : undefined;
-  if (input === null || typeof input !== "object") return undefined;
-  const record = input as Record<string, unknown>;
-  // run_subagent: summarize the dispatched tasks.
-  const tasks = record["tasks"];
-  if (Array.isArray(tasks)) {
-    const first = tasks[0] as Record<string, unknown> | undefined;
-    const prompt = first && typeof first["prompt"] === "string" ? first["prompt"] : undefined;
-    const count = tasks.length > 1 ? ` (+${tasks.length - 1} more)` : "";
-
-    return prompt ? `${clip(prompt)}${count}` : `${tasks.length} task${tasks.length === 1 ? "" : "s"}`;
-  }
-  for (const key of ["query", "prompt", "command", "path", "url", "name", "pattern"]) {
-    const value = record[key];
-    if (typeof value === "string" && value.trim()) return clip(value);
-  }
-
-  return undefined;
 }

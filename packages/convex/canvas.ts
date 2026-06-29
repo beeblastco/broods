@@ -52,6 +52,16 @@ function asRecord(value: unknown): Record<string, unknown> {
         : {};
 }
 
+/**
+ * Canvas layouts are UI state, not a secret store. Sandbox config may include
+ * provider credentials/env vars, so persist only display metadata + resource id.
+ */
+function sandboxLayoutNode(node: CanvasNode, data: Record<string, unknown>, resourceId: Id<"sandboxConfigs">): CanvasNode {
+    const { config: _config, ...safeData } = data;
+
+    return { ...node, data: { ...safeData, resourceId: resourceId } };
+}
+
 /** Return the org account backing a project, if it has been provisioned. */
 async function accountForProject(
     ctx: MutationCtx,
@@ -278,7 +288,7 @@ async function materializeRuntimeNodes(
                     ...(encrypted ?? {}),
                 });
             }
-            result.push({ ...node, data: { ...data, resourceId: existing._id } });
+            result.push(sandboxLayoutNode(node, data, existing._id));
             continue;
         }
 
@@ -298,7 +308,7 @@ async function materializeRuntimeNodes(
             updatedAt: now,
             ...(encrypted ?? {}),
         });
-        result.push({ ...node, data: { ...data, resourceId: createdId } });
+        result.push(sandboxLayoutNode(node, data, createdId));
     }
 
     return result;

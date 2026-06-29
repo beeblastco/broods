@@ -11,7 +11,7 @@ import { Switch } from "@/app/components/ui/switch";
 import { Textarea } from "@/app/components/ui/textarea";
 import { readAgentBranch, readModelReasoning, type FlatAgentConfig } from "@/app/lib/agentConfigCodec";
 import { resolveCoreEndpoint } from "@/app/lib/coreEndpoint";
-import { isRecord } from "@/app/lib/utils";
+import { isPlainObject } from "@/app/lib/utils";
 import type { Doc, Id } from "@broods/convex/_generated/dataModel";
 import { Check, Copy, Eye, EyeOff, KeyRound, RefreshCw, Wifi } from "lucide-react";
 import { useRef, useState } from "react";
@@ -115,9 +115,9 @@ export function DetailsTab({
     const allTools = agentConfig
         ? (readAgentBranch(agentConfig as unknown as FlatAgentConfig, "tools") as Record<string, unknown>)
         : {};
-    const tavilySearchCfg = isRecord(allTools.tavilySearch) ? (allTools.tavilySearch as Record<string, unknown>) : {};
-    const tavilyExtractCfg = isRecord(allTools.tavilyExtract) ? (allTools.tavilyExtract as Record<string, unknown>) : {};
-    const googleSearchCfg = isRecord(allTools.googleSearch)
+    const tavilySearchCfg = isPlainObject(allTools.tavilySearch) ? (allTools.tavilySearch as Record<string, unknown>) : {};
+    const tavilyExtractCfg = isPlainObject(allTools.tavilyExtract) ? (allTools.tavilyExtract as Record<string, unknown>) : {};
+    const googleSearchCfg = isPlainObject(allTools.googleSearch)
         ? (allTools.googleSearch as Record<string, unknown>)
         : { enabled: agentConfig?.searchToolEnabled };
     const tavilySearchEnabled = tavilySearchCfg.enabled === true;
@@ -156,11 +156,11 @@ export function DetailsTab({
     // in extraConfig; off by default so the agent is secured until enabled.
     const publicAccess = ((agentConfig?.extraConfig as Record<string, unknown> | undefined)?.publicAccess) === true;
 
-    const outputFormat = agentConfig?.outputFormat && isRecord(agentConfig.outputFormat)
+    const outputFormat = agentConfig?.outputFormat && isPlainObject(agentConfig.outputFormat)
         ? agentConfig.outputFormat as OutputFormatConfig
         : undefined;
     const outputFormatEnabled = outputFormat !== undefined;
-    const schemaFromConfigText = isRecord(outputFormat?.schema)
+    const schemaFromConfigText = isPlainObject(outputFormat?.schema)
         ? JSON.stringify(outputFormat.schema, null, 2)
         : "";
     const displayOutputSchemaText = hasEditedOutputSchema
@@ -192,7 +192,7 @@ export function DetailsTab({
     function parseSchemaText(input: string): Record<string, unknown> | null {
         try {
             const parsed = JSON.parse(input);
-            if (!isRecord(parsed)) {
+            if (!isPlainObject(parsed)) {
                 setOutputSchemaError("Schema must be a JSON object.");
 
                 return null;
@@ -217,7 +217,7 @@ export function DetailsTab({
             return;
         }
 
-        const existingSchema = isRecord(outputFormat?.schema)
+        const existingSchema = isPlainObject(outputFormat?.schema)
             ? (outputFormat.schema as Record<string, unknown>)
             : undefined;
         setOutputSchemaError(null);

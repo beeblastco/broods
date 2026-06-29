@@ -10,10 +10,9 @@
 import type {
   AgentConfig,
   AgentDiscordChannelConfig,
-  AgentPancakeChannelConfig,
+  AgentGitHubChannelConfig,
   AgentSlackChannelConfig,
   AgentTelegramChannelConfig,
-  AgentZaloChannelConfig,
   CreateCronInput,
   SandboxConfig,
   WorkspaceConfig,
@@ -114,43 +113,36 @@ export interface ChannelDefinition<Type extends ChannelType, Config> {
   readonly config: Config;
 }
 
+type RequiredChannelKeys<Config, Keys extends keyof Config> =
+  & Required<Pick<Config, Keys>>
+  & Omit<Config, Keys>;
 type ChannelSecret = string | EnvRef | undefined;
 
-export interface TelegramChannelInput {
-  botToken: ChannelSecret;
-  webhookSecret: ChannelSecret;
-  allowedChatIds: readonly number[];
-  reactionEmoji?: string | EnvRef;
-  streaming?: EnvRefString<NonNullable<AgentTelegramChannelConfig["streaming"]>>;
-}
+export type TelegramChannelInput = EnvRefString<RequiredChannelKeys<
+  Pick<AgentTelegramChannelConfig, "apiUrl" | "botToken" | "webhookSecret" | "allowedChatIds" | "reactionEmoji">,
+  "botToken" | "webhookSecret" | "allowedChatIds"
+>>;
 
-export interface GitHubChannelInput {
-  webhookSecret: ChannelSecret;
-  appId: ChannelSecret;
-  privateKey: ChannelSecret;
-  allowedRepos?: readonly (string | EnvRef)[];
-}
+export type GitHubChannelInput = EnvRefString<RequiredChannelKeys<
+  Pick<AgentGitHubChannelConfig, "apiUrl" | "webhookSecret" | "appId" | "privateKey" | "allowedRepos">,
+  "webhookSecret" | "appId" | "privateKey"
+>>;
 
-export interface SlackChannelInput {
-  botToken: ChannelSecret;
-  signingSecret: ChannelSecret;
-  allowedChannelIds?: readonly (string | EnvRef)[];
-  streaming?: EnvRefString<NonNullable<AgentSlackChannelConfig["streaming"]>>;
-}
+export type SlackChannelInput = EnvRefString<RequiredChannelKeys<
+  Pick<AgentSlackChannelConfig, "apiUrl" | "botToken" | "signingSecret" | "allowedChannelIds" | "reactionEmoji">,
+  "botToken" | "signingSecret"
+>>;
 
-export interface DiscordChannelInput {
-  botToken: ChannelSecret;
-  publicKey: ChannelSecret;
-  allowedGuildIds?: readonly (string | EnvRef)[];
-  streaming?: EnvRefString<NonNullable<AgentDiscordChannelConfig["streaming"]>>;
-}
+export type DiscordChannelInput = EnvRefString<RequiredChannelKeys<
+  Pick<AgentDiscordChannelConfig, "apiUrl" | "botToken" | "publicKey" | "allowedGuildIds">,
+  "botToken" | "publicKey"
+>>;
 export interface PancakeChannelInput {
   pageId: ChannelSecret;
   pageAccessToken: ChannelSecret;
   webhookSecret: ChannelSecret;
   senderId?: string | EnvRef;
   ignoreTagIds?: readonly (string | EnvRef)[];
-  streaming?: EnvRefString<NonNullable<AgentPancakeChannelConfig["streaming"]>>;
 }
 
 type PancakeChannelDefinitionConfig = Omit<PancakeChannelInput, "ignoreTagIds"> & {
@@ -160,7 +152,6 @@ export interface ZaloChannelInput {
   botToken: ChannelSecret;
   webhookSecret: ChannelSecret;
   allowedUserIds: readonly (string | EnvRef)[];
-  streaming?: EnvRefString<NonNullable<AgentZaloChannelConfig["streaming"]>>;
 }
 
 export type TelegramChannelDefinition = ChannelDefinition<"telegram", TelegramChannelInput>;

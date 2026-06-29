@@ -7,6 +7,7 @@
 
 import type { ModelMessage } from "ai";
 import { optionalEnv } from "../env.ts";
+import { isPlainObject } from "../object.ts";
 
 const SCHEDULE_NAME_PATTERN = /^[A-Za-z0-9_.-]{1,64}$/;
 const TIMEZONE_PATTERN = /^[A-Za-z0-9_./+-]{1,64}$/;
@@ -259,8 +260,4 @@ function optionalString(value: unknown, name: string, maxLength: number): string
   const trimmed = value.trim();
   if (trimmed.length > maxLength) throw new Error(`${name} must be at most ${maxLength} characters`);
   return trimmed.length > 0 ? trimmed : undefined;
-}
-
-function isPlainObject(value: unknown): value is Record<string, unknown> {
-  return Boolean(value && typeof value === "object" && !Array.isArray(value));
 }

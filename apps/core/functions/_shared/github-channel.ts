@@ -1,15 +1,15 @@
 /**
  * GitHub channel adapter.
- * Keep webhook verification, event parsing, and source mapping here.
+ * Keep Broods-specific event filtering/source mapping here; delegate GitHub auth and API calls to Chat SDK.
  */
 
-import { createHmac, timingSafeEqual } from "node:crypto";
+import { GitHubAdapter, type GitHubThreadId } from "@chat-adapter/github";
+import { ConsoleLogger } from "chat";
 import type {
   ChannelActions,
   ChannelAdapter,
   ChannelParseResult
 } from "./channels.ts";
-import { createGitHubActions } from "./github.ts";
 import { logWarn } from "./log.ts";
 import { GITHUB_INTEGRATION_PREFIX } from "./runtime-keys.ts";
 
@@ -34,6 +34,7 @@ interface GitHubPullRequestRef {
 
 interface GitHubCommentRef {
   id?: number;
+  in_reply_to_id?: number;
   body?: string | null;
   user?: {
     login?: string;
@@ -58,10 +59,18 @@ export interface GitHubSource {
   owner: string;
   repo: string;
   installationId: number;
+  threadId: string;
+  messageId?: string;
   issueNumber?: number;
   pullNumber?: number;
   commentId?: number;
   target: "issue" | "issue_comment" | "pull_request" | "pull_request_review_comment";
+}
+
+class BroodsGitHubAdapter extends GitHubAdapter {
+  verifyWebhookSignature(body: string, signature: string | null | undefined): boolean {
+    return this.verifySignature(body, signature ?? null);
+  }
 }
 
 export function createGitHubChannel(
@@ -69,7 +78,16 @@ export function createGitHubChannel(
   appId: string,
   privateKey: string,
   allowedRepos: Set<string> | null,
+  apiUrl?: string,
 ): ChannelAdapter {
+  const github = new BroodsGitHubAdapter({
+    apiUrl,
+    appId,
+    privateKey: normalizePrivateKey(privateKey),
+    webhookSecret,
+    logger: new ConsoleLogger("error").child("github"),
+  });
+
   return {
     name: "github",
 
@@ -78,17 +96,7 @@ export function createGitHubChannel(
     },
 
     authenticate(req) {
-      const signature = req.headers["x-hub-signature-256"];
-      if (!signature) {
-        return false;
-      }
-
-      const expected = `sha256=${createHmac("sha256", webhookSecret).update(req.body).digest("hex")}`;
-      const actualBytes = Buffer.from(signature);
-      const expectedBytes = Buffer.from(expected);
-
-      return actualBytes.length === expectedBytes.length
-        && timingSafeEqual(actualBytes, expectedBytes);
+      return github.verifyWebhookSignature(req.body, req.headers["x-hub-signature-256"]);
     },
 
     parse(req): ChannelParseResult {
@@ -122,25 +130,26 @@ export function createGitHubChannel(
 
       switch (event) {
         case "issues":
-          return parseIssuesEvent(payload, deliveryId, owner, repo, fullName);
+          return parseIssuesEvent(github, payload, deliveryId, owner, repo, fullName);
         case "issue_comment":
-          return parseIssueCommentEvent(payload, deliveryId, owner, repo, fullName);
+          return parseIssueCommentEvent(github, payload, deliveryId, owner, repo, fullName);
         case "pull_request":
-          return parsePullRequestEvent(payload, deliveryId, owner, repo, fullName);
+          return parsePullRequestEvent(github, payload, deliveryId, owner, repo, fullName);
         case "pull_request_review_comment":
-          return parseReviewCommentEvent(payload, deliveryId, owner, repo, fullName);
+          return parseReviewCommentEvent(github, payload, deliveryId, owner, repo, fullName);
         default:
           return { kind: "ignore" };
       }
     },
 
     actions(msg): ChannelActions {
-      return createGitHubActions(appId, privateKey, toGitHubSource(msg.source));
+      return createGitHubActions(appId, privateKey, toGitHubSource(msg.source), apiUrl);
     },
   };
 }
 
 function parseIssuesEvent(
+  github: GitHubAdapter,
   payload: GitHubWebhookPayload,
   deliveryId: string,
   owner: string,
@@ -156,6 +165,8 @@ function parseIssuesEvent(
   if (!issueNumber || !installationId) {
     return { kind: "ignore" };
   }
+  const thread = { owner, repo, prNumber: issueNumber, type: "issue" } satisfies GitHubThreadId;
+  const threadId = github.encodeThreadId(thread);
 
   return {
     kind: "message",
@@ -172,6 +183,7 @@ function parseIssuesEvent(
         owner,
         repo,
         installationId,
+        threadId,
         issueNumber,
         target: "issue",
       } satisfies GitHubSource,
@@ -180,6 +192,7 @@ function parseIssuesEvent(
 }
 
 function parseIssueCommentEvent(
+  github: GitHubAdapter,
   payload: GitHubWebhookPayload,
   deliveryId: string,
   owner: string,
@@ -203,6 +216,13 @@ function parseIssueCommentEvent(
   }
 
   const resource = payload.issue?.pull_request ? "pr" : "issue";
+  const thread = {
+    owner,
+    repo,
+    prNumber: issueNumber,
+    type: resource === "issue" ? "issue" : "pr",
+  } satisfies GitHubThreadId;
+  const threadId = github.encodeThreadId(thread);
 
   return {
     kind: "message",
@@ -216,6 +236,8 @@ function parseIssueCommentEvent(
         owner,
         repo,
         installationId,
+        threadId,
+        messageId: String(commentId),
         issueNumber,
         commentId,
         target: "issue_comment",
@@ -225,6 +247,7 @@ function parseIssueCommentEvent(
 }
 
 function parsePullRequestEvent(
+  github: GitHubAdapter,
   payload: GitHubWebhookPayload,
   deliveryId: string,
   owner: string,
@@ -240,6 +263,8 @@ function parsePullRequestEvent(
   if (!pullNumber || !installationId) {
     return { kind: "ignore" };
   }
+  const thread = { owner, repo, prNumber: pullNumber } satisfies GitHubThreadId;
+  const threadId = github.encodeThreadId(thread);
 
   return {
     kind: "message",
@@ -256,6 +281,7 @@ function parsePullRequestEvent(
         owner,
         repo,
         installationId,
+        threadId,
         issueNumber: pullNumber,
         pullNumber,
         target: "pull_request",
@@ -265,6 +291,7 @@ function parsePullRequestEvent(
 }
 
 function parseReviewCommentEvent(
+  github: GitHubAdapter,
   payload: GitHubWebhookPayload,
   deliveryId: string,
   owner: string,
@@ -286,6 +313,14 @@ function parseReviewCommentEvent(
   if (!pullNumber || !installationId || !body || !commentId) {
     return { kind: "ignore" };
   }
+  const rootCommentId = payload.comment?.in_reply_to_id ?? commentId;
+  const thread = {
+    owner,
+    repo,
+    prNumber: pullNumber,
+    reviewCommentId: rootCommentId,
+  } satisfies GitHubThreadId;
+  const threadId = github.encodeThreadId(thread);
 
   return {
     kind: "message",
@@ -299,6 +334,8 @@ function parseReviewCommentEvent(
         owner,
         repo,
         installationId,
+        threadId,
+        messageId: String(commentId),
         issueNumber: pullNumber,
         pullNumber,
         commentId,
@@ -313,6 +350,7 @@ function toGitHubSource(source: Record<string, unknown>): GitHubSource {
     typeof source.owner !== "string" ||
     typeof source.repo !== "string" ||
     typeof source.installationId !== "number" ||
+    typeof source.threadId !== "string" ||
     !isGitHubTarget(source.target)
   ) {
     throw new Error("Invalid GitHub source payload");
@@ -322,6 +360,8 @@ function toGitHubSource(source: Record<string, unknown>): GitHubSource {
     owner: source.owner,
     repo: source.repo,
     installationId: source.installationId,
+    threadId: source.threadId,
+    messageId: typeof source.messageId === "string" ? source.messageId : undefined,
     issueNumber: typeof source.issueNumber === "number" ? source.issueNumber : undefined,
     pullNumber: typeof source.pullNumber === "number" ? source.pullNumber : undefined,
     commentId: typeof source.commentId === "number" ? source.commentId : undefined,
@@ -351,4 +391,46 @@ function formatTitleAndBody(prefix: string, title: string | undefined, body: str
     lines.push(body.trim());
   }
   return lines.join("\n");
+}
+
+function createGitHubActions(
+  appId: string,
+  privateKey: string,
+  source: GitHubSource,
+  apiUrl?: string,
+): ChannelActions {
+  const github = new GitHubAdapter({
+    apiUrl,
+    appId,
+    installationId: source.installationId,
+    privateKey: normalizePrivateKey(privateKey),
+    logger: new ConsoleLogger("error").child("github"),
+    webhookSecret: "not-used-for-outbound-actions",
+  });
+
+  return {
+    async sendText(text) {
+      await github.postMessage(source.threadId, { markdown: text });
+    },
+
+    async sendTyping() {
+      await github.startTyping(source.threadId);
+    },
+
+    async reactToMessage() {
+      if (!source.messageId) {
+        return;
+      }
+      await github.addReaction(source.threadId, source.messageId, "eyes");
+    },
+
+    stream: async (textStream, options) => {
+      const result = await github.stream(source.threadId, textStream, options);
+      return result.id;
+    },
+  };
+}
+
+function normalizePrivateKey(value: string): string {
+  return value.includes("BEGIN") ? value : Buffer.from(value, "base64").toString("utf8");
 }

@@ -157,7 +157,7 @@ export default function DashboardPage() {
     ? "max-w-2xl"
     : isObservabilityTab
       ? "max-w-none"
-      : "max-w-6xl";
+      : "max-w-7xl";
 
   // While the reveal query is still resolving, hold a quiet loader instead of
   // flashing the "generate a key" prompt — the prompt is only the true-absence state.
@@ -265,7 +265,7 @@ export default function DashboardPage() {
         {/* Page title — aligned with sidebar header height */}
         <div
           className={cn(
-            "px-8 pt-9.25 pb-5 mx-auto w-full shrink-0",
+            "px-6 pt-9.25 pb-5 mx-auto w-full shrink-0",
             contentMaxWidth,
           )}
         >
@@ -275,7 +275,7 @@ export default function DashboardPage() {
         </div>
         <div
           className={cn(
-            "mx-auto w-full px-8",
+            "mx-auto w-full px-6",
             contentMaxWidth,
             isObservabilityTab ? "flex min-h-0 flex-1 flex-col pb-6" : "pb-12",
           )}

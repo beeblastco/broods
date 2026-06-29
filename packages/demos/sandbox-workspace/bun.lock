@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "@broods/demo-sandbox-workspace-kubernetes",
+      "name": "@broods/demo-sandbox-stateless",
       "dependencies": {
         "broods": "file:../../broods",
       },

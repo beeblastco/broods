@@ -969,7 +969,7 @@ paths:
                 config:
                   type: object
                   properties:
-                    provider: { type: string, enum: [lambda, e2b, daytona, kubernetes, vercel] }
+                    provider: { type: string, enum: [sandbox, lambda, e2b, daytona, vercel] }
                     network:
                       type: object
                       description: "Egress policy. Defaults to deny-all when omitted."
@@ -984,8 +984,9 @@ paths:
                           description: "Allowed CIDR ranges when mode is restricted and the provider supports CIDR rules."
                           items: { type: string }
                     permissionMode: { type: string, enum: [edit, ask, bypass] }
-                    persistent: { type: boolean, description: "Reserve one long-lived sandbox per workspace (reconnect across calls, background jobs, packages persist). Not valid for lambda." }
-                    ephemeralHome: { type: boolean, description: "Persistent kubernetes only. Skip the durable home PVC and use the image's ephemeral home while still reserving/reusing the sandbox." }
+                    size: { type: string, enum: [tiny, xsmall, small, medium, large], description: "Predefined compute size (vcpu/memory/disk). Drives workdir create-time resources and the dashboard's instance specs; advisory on providers that size natively (MicroVM bakes size into the image; daytona/e2b/vercel size themselves). Defaults to the provider's own default when unset. Free tier: tiny + xsmall." }
+                    snapshot: { type: string, description: "Prebuilt image/snapshot to launch from: a workdir image id/name or a MicroVM image ARN. Unset boots the provider's default base image. Consumed by the self-hosted backends (sandbox/lambda); advisory on daytona/e2b/vercel, which pick images via their own options. The launched-from id is mirrored onto the dashboard instance row." }
+                    persistent: { type: boolean, description: "Reserve one long-lived sandbox per workspace (reconnect across calls, background jobs, packages persist). For lambda this reserves a snapshot-resumable MicroVM (suspend/resume on idle, 8h max)." }
                     lifecycle:
                       type: object
                       description: "Idle/expiry policy when persistent. Requires persistent: true."
@@ -1003,26 +1004,28 @@ paths:
                     runtimes:
                       type: array
                       items: { type: string, enum: [bash, python, node] }
-                    timeout: { type: integer, description: "per-call seconds (max: lambda 300, other providers 600)" }
-                    memoryLimit: { type: integer, description: "MB; bounded for lambda (max 1024), operator-sized for other providers" }
+                    timeout: { type: integer, description: "per-call seconds (max 600 for every provider)" }
+                    memoryLimit: { type: integer, description: "MB; bounded for lambda MicroVM (max 8192), operator-sized for other providers" }
                     outputLimitBytes: { type: integer }
                     envVars: { type: object, additionalProperties: { type: string } }
-                    options: { type: object, description: "Provider knobs. Persistent kubernetes also accepts persistentDiskGb (GiB), persistentHome (HOME path), and storageClass (PVC StorageClass) for the home PVC." }
+                    options: { type: object, description: "Provider-specific knobs (e.g. mountAwsS3Buckets, workspaceRoot)." }
             examples:
               lambda:
                 value:
                   name: default
                   config: { provider: lambda, network: { mode: allow-all }, permissionMode: ask }
-              persistentKubernetes:
+              persistentSandbox:
                 value:
                   name: reserved
                   config:
-                    provider: kubernetes
+                    provider: sandbox
+                    size: small
+                    snapshot: img_curated_python
                     network: { mode: allow-all }
                     persistent: true
                     permissionMode: bypass
                     lifecycle: { idleTimeoutSeconds: 1800 }
-                    options: { mountAwsS3Buckets: true, persistentDiskGb: 10, persistentHome: /home/node }
+                    options: { mountAwsS3Buckets: true }
               vercel:
                 value:
                   name: vercel
@@ -1058,6 +1061,18 @@ paths:
       security: [{ BearerAuth: [] }]
       parameters:
         - { name: sandboxId, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string }
+                description: { type: string }
+                config:
+                  type: object
+                  description: Full replacement sandbox config. Uses the same shape as create.
       responses:
         '200': { description: Updated }
     delete:
@@ -1068,6 +1083,95 @@ paths:
         - { name: sandboxId, in: path, required: true, schema: { type: string } }
       responses:
         '200': { description: Deleted }
+
+  /accounts/me/sandboxes/{sandboxId}/suspend:
+    post:
+      tags: [Sandboxes]
+      summary: Suspend sandbox instance
+      description: Suspends a persistent sandbox reservation. The `reservationKey` must belong to this account and sandbox config.
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - { name: sandboxId, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reservationKey]
+              properties:
+                reservationKey: { type: string }
+      responses:
+        '200': { description: Suspended }
+        '403': { description: Reservation does not belong to this account or sandbox config }
+        '409': { description: Provider does not support suspend }
+
+  /accounts/me/sandboxes/{sandboxId}/resume:
+    post:
+      tags: [Sandboxes]
+      summary: Resume sandbox instance
+      description: Resumes a persistent sandbox reservation. The `reservationKey` must belong to this account and sandbox config.
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - { name: sandboxId, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reservationKey]
+              properties:
+                reservationKey: { type: string }
+      responses:
+        '200': { description: Running }
+        '403': { description: Reservation does not belong to this account or sandbox config }
+        '409': { description: Provider does not support resume }
+
+  /accounts/me/sandboxes/{sandboxId}/terminate:
+    post:
+      tags: [Sandboxes]
+      summary: Terminate sandbox instance
+      description: Terminates a persistent sandbox reservation and removes its live-instance registry row. The `reservationKey` must belong to this account and sandbox config.
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - { name: sandboxId, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reservationKey]
+              properties:
+                reservationKey: { type: string }
+      responses:
+        '200': { description: Terminated }
+        '403': { description: Reservation does not belong to this account or sandbox config }
+        '409': { description: Provider does not support terminate }
+
+  /accounts/me/sandboxes/{sandboxId}/snapshot:
+    post:
+      tags: [Sandboxes]
+      summary: Snapshot sandbox instance
+      description: Creates a reusable image from a persistent sandbox reservation when the provider supports snapshots. Currently supported by the self-hosted workdir `sandbox` provider.
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - { name: sandboxId, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reservationKey, name]
+              properties:
+                reservationKey: { type: string }
+                name: { type: string }
+      responses:
+        '200': { description: Snapshot active }
+        '403': { description: Reservation does not belong to this account or sandbox config }
+        '409': { description: Provider does not support snapshot }
 
   /accounts/me/workspaces:
     post:
@@ -2612,17 +2716,6 @@ components:
               type: string
               description: ISO date string
 
-    ChannelStreamingConfig:
-      type: object
-      description: >
-        Live reply streaming for a channel. `edit` rewrites one message in place;
-        `progress` shows a tool-activity preview then swaps in the final answer
-        (both require channel edit support, else fall back to `chunk`); `chunk`
-        sends one message per paragraph; `off` (default) sends one final message.
-      properties:
-        mode:
-          type: string
-          enum: [edit, chunk, progress, off]
     ChannelsConfig:
       type: object
       description: Channel webhook configuration. Webhook URLs follow the pattern `/webhooks/{accountId}/{agentId}/{channel}`.
@@ -2630,6 +2723,8 @@ components:
         telegram:
           type: object
           properties:
+            apiUrl:
+              type: string
             botToken:
               type: string
             webhookSecret:
@@ -2640,11 +2735,11 @@ components:
                 type: integer
             reactionEmoji:
               type: string
-            streaming:
-              $ref: '#/components/schemas/ChannelStreamingConfig'
         github:
           type: object
           properties:
+            apiUrl:
+              type: string
             webhookSecret:
               type: string
             appId:
@@ -2660,6 +2755,8 @@ components:
         slack:
           type: object
           properties:
+            apiUrl:
+              type: string
             botToken:
               type: string
             signingSecret:
@@ -2668,11 +2765,13 @@ components:
               type: array
               items:
                 type: string
-            streaming:
-              $ref: '#/components/schemas/ChannelStreamingConfig'
+            reactionEmoji:
+              type: string
         discord:
           type: object
           properties:
+            apiUrl:
+              type: string
             botToken:
               type: string
             publicKey:
@@ -2681,8 +2780,6 @@ components:
               type: array
               items:
                 type: string
-            streaming:
-              $ref: '#/components/schemas/ChannelStreamingConfig'
         pancake:
           type: object
           description: Pancake sends no signature header; the webhook URL must carry `?secret=<webhookSecret>`, checked on every request.

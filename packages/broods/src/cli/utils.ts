@@ -20,6 +20,10 @@ export function hasFlag(args: string[], name: string): boolean {
   return args.includes(name);
 }
 
+export function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
 export async function requireAuth(dashboardUrl?: string): Promise<StoredAuthConfig> {
   loadBroodsRuntimeConfig();
   const auth = await readStoredAuth();

@@ -1,6 +1,6 @@
 /**
  * AI SDK adapter for account-uploaded custom tool metadata.
- * Execution is delegated to the Kubernetes custom-tool-executor.ts.
+ * Execution is delegated to custom-tool-executor.ts (the `sandbox`/workdir provider).
  */
 
 import { jsonSchema, tool, type ToolSet } from "ai";

@@ -1,5 +1,5 @@
 {
-  "name": "@broods/demo-sandbox-workspace-kubernetes",
+  "name": "@broods/demo-sandbox-workspace",
   "type": "module",
   "private": true,
   "scripts": {
@@ -7,7 +7,6 @@
     "cli:login": "broods login --dashboard-url https://dashboard.dev.broods.app",
     "dev": "broods dev --dashboard-url https://dashboard.dev.broods.app",
     "deploy": "broods deploy --dashboard-url https://dashboard.dev.broods.app",
-    "agent:ls": "broods agent ls --dashboard-url https://dashboard.dev.broods.app",
     "start": "bun index.ts"
   },
   "dependencies": {

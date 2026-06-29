@@ -7,12 +7,8 @@ const route = guildId
   : `/applications/${applicationId}/commands`;
 const commands = [
   { name: "new", description: "Clear conversation context and start fresh" },
+  { name: "clear", description: "Clear conversation context and start fresh" },
   { name: "help", description: "Show available commands" },
-  { name: "ask", description: "Ask the agent a question", options: [{ 
-    type: 3, name: 
-    "prompt", description: "What you want to ask", 
-    required: true 
-  }] },
 ];
 const response = await fetch(`https://discord.com/api/v10${route}`, {
   method: "PUT",
