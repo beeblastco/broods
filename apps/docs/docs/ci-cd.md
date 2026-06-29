@@ -26,8 +26,6 @@ The deploy step hard-fails without these repository secrets:
 - `SST_SECRET_TAVILYAPIKEY`
 - `DAYTONA_API_KEY` (mapped to the `DaytonaApiKey` SST secret)
 
-`KUBERNETES_SANDBOX_KUBECONFIG` is optional (enables the Kubernetes sandbox provider).
-
 And these repository variables: `AWS_ROLE_ARN`, `AWS_ACCOUNT_ID`, `PROJECT_NAME`, `PROJECT_OWNER_EMAIL`.
 `DEV_AWS_REGION` controls the dev stack and defaults to `eu-west-1`. Production currently deploys
 to `eu-west-1` (Ireland) only. The production Convex database remains in `eu-west-1`.

@@ -2,7 +2,7 @@
 
 Uses a [Daytona](https://daytona.io/docs) sandbox with an S3 workspace mount at
 `options.workspaceRoot/<namespace>`. The default `workspaceRoot` is `/mnt/workspaces`
-so Daytona matches Lambda and Kubernetes.
+so Daytona matches Lambda and the `sandbox` provider.
 
 ## Configuration
 
@@ -39,13 +39,13 @@ bun run daytona:s3-snapshot
 
 `network.mode` maps to Daytona's `networkBlockAll` (`allow-all` → `false`, `deny-all` → `true`); `restricted` applies the CIDR allowlist only — domain allowlists are ignored with a warning.
 
-Persistent mode (`persistent: true`) reserves one Daytona sandbox per workspace: idle/lifetime settings map to Daytona's `autoStopInterval`/`autoDeleteInterval`, the instance is tracked and reconnected across calls, and `onCreate`/`onResume` hooks plus detached background jobs work as described in [the sandbox overview](index.md#reserved-persistent-sandboxes).
+Persistent mode (`persistent: true`) reserves one Daytona sandbox per workspace: idle/lifetime settings map to Daytona's `autoStopInterval`/`autoDeleteInterval`, the instance is tracked and reconnected across calls, and `onCreate`/`onResume` hooks plus detached background jobs work as described in [Best Practice → Reserved sandboxes](best-practice.md#reserved-persistent-sandboxes).
 
 ## Requirements
 
 Use an image or target with Node and Python installed. For persistent workspace tools,
 set `options.mountAwsS3Buckets: true`; the executor mounts the selected
-`sandbox/<namespace>/` prefix at `options.workspaceRoot/<namespace>`.
+`<namespace>/` prefix at `options.workspaceRoot/<namespace>`.
 
 ## What the model sees
 

@@ -33,7 +33,7 @@ function assertSafeJobId(jobId: string): void {
 
 /**
  * onCreate/onResume hook script for providers without native lifecycle
- * callbacks (daytona/kubernetes; vercel uses the SDK's own hooks).
+ * callbacks (daytona/sandbox; vercel uses the SDK's own hooks).
  * onCreate runs once, guarded by a marker file in the workDir; onResume runs on
  * every acquisition. Returns undefined when no hooks are configured.
  */

@@ -4,7 +4,7 @@ export const slack = defineSlackChannel({
   botToken: env.SLACK_BOT_TOKEN,
   signingSecret: env.SLACK_SIGNING_SECRET,
   allowedChannelIds: process.env.SLACK_ALLOWED_CHANNEL_IDS?.split(",").map((value) => value.trim()).filter(Boolean),
-  streaming: { mode: "edit" },
+  reactionEmoji: process.env.SLACK_REACTION_EMOJI ?? "eyes",
 });
 
 export const agent = defineAgent({

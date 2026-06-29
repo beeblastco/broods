@@ -240,7 +240,7 @@ describe("deleteAccountRuntimeData", () => {
     expect(summary.filesystemObjectsDeleted).toBe(1);
     expect(mockDeleteS3PrefixCalls).toContainEqual([
       "test-bucket",
-      `sandbox/${normalizeFilesystemNamespace("acct_test:ws_shared")}/`,
+      `${normalizeFilesystemNamespace("acct_test:ws_shared")}/`,
     ]);
     resetStorageForTests();
   });

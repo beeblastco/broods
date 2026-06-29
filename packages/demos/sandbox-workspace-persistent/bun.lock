@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "@broods/demo-sandbox-kubernetes-persistent",
+      "name": "@broods/demo-sandbox-persistent",
       "dependencies": {
         "broods": "file:../../broods",
       },

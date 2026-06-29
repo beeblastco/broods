@@ -1,6 +1,6 @@
 "use client";
 
-/** Reusable typed-confirm delete dialog. Critical deletes merge the resource name and safety phrase into one input. */
+/** Reusable typed-confirm delete dialog. */
 import { useState } from "react";
 import { Button } from "@/app/components/ui/button";
 import { Input } from "@/app/components/ui/input";
@@ -24,7 +24,7 @@ interface Props {
   resourceName: string;
   /** Shown in the dialog title as 'Delete <resourceType>'. */
   resourceType: string;
-  /** When true, a second confirmation input is required with the fixed safety phrase. */
+  /** When true, the confirmation phrase includes an extra irreversible-delete acknowledgement. */
   critical?: boolean;
   /** Called only when all required inputs match. Must return a promise. */
   onConfirm: () => Promise<void>;
@@ -72,12 +72,14 @@ export function DeleteConfirmDialog({
         <div className="grid gap-4 py-2">
           <div className="grid gap-1.5">
             <Label htmlFor="delete-confirm-primary">
-              <span>Type </span>
-              <span className="font-mono font-medium text-foreground break-all">
-                {deletePhrase}
-              </span>
-              <span> to confirm</span>
+              Confirmation text
             </Label>
+            <div
+              className="select-text whitespace-pre-wrap break-words rounded-md border bg-muted/40 px-3 py-2 font-mono text-sm leading-6 text-foreground"
+              aria-label="Text to type for delete confirmation"
+            >
+              {deletePhrase}
+            </div>
             <Input
               id="delete-confirm-primary"
               value={phrase}

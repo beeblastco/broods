@@ -15,7 +15,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Separator } from "@/app/components/ui/separator";
 import { useConnectedAgentConfig } from "@/app/hooks/useConnectedAgentConfig";
 import { readAgentBranch, type FlatAgentConfig } from "@/app/lib/agentConfigCodec";
-import { isRecord } from "@/app/lib/utils";
+import { isPlainObject } from "@/app/lib/utils";
 import { Check, Copy, Eye, EyeOff, Plus, Trash2 } from "lucide-react";
 import { useMemo, useState, type CSSProperties, type ReactNode } from "react";
 
@@ -244,8 +244,8 @@ function SandboxConfig({
     updateBranch: UpdateBranch;
 }) {
     const provider = sandbox.provider ?? "lambda";
-    const options = isRecord(sandbox.options) ? sandbox.options : {};
-    const envVars = isRecord(sandbox.envVars) ? (sandbox.envVars as Record<string, string>) : {};
+    const options = isPlainObject(sandbox.options) ? sandbox.options : {};
+    const envVars = isPlainObject(sandbox.envVars) ? (sandbox.envVars as Record<string, string>) : {};
     const setOption = (key: string, value: unknown) => updateBranch(["workspace", "sandbox", "options", key], value);
 
     return (

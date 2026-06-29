@@ -1,5 +1,5 @@
 {
-  "name": "@broods/demo-sandbox-stateless",
+  "name": "@broods/demo-sandbox-lambda",
   "type": "module",
   "private": true,
   "scripts": {

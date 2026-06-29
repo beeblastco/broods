@@ -13,6 +13,8 @@
  * `runtimeVariables` right before pushing the config to broods.
  */
 
+import { isPlainObject } from "./utils";
+
 /** Recognised top-level branches in broods `AgentConfig`. */
 const NESTED_BRANCHES = [
     "agent",
@@ -57,10 +59,6 @@ export interface FlatAgentConfig {
 
 /** Nested broods `AgentConfig` shape rendered for the Config tab. */
 export type NestedAgentConfig = Record<string, unknown>;
-
-function isPlainObject(value: unknown): value is Record<string, unknown> {
-    return typeof value === "object" && value !== null && !Array.isArray(value);
-}
 
 /**
  * One-level-deep merge of two `providerOptions` maps. Provider sub-objects

@@ -289,10 +289,93 @@ export const sandboxConfigsFields = {
     sourceEncryptionTag: v.optional(v.string()),
     /** Masked markers of the `env.NAME` refs this config uses; see `agentConfigsFields.runtimeVariables`. */
     runtimeVariables: v.optional(v.array(v.object({ key: v.string(), value: v.string() }))),
+    /** Prebuilt snapshot/image id this sandbox launches from, when pinned (see `sandboxSnapshotsFields`). */
+    snapshotId: v.optional(v.string()),
     /** Ownership marker; see `agentConfigsFields.managedBy`. */
     managedBy: v.optional(v.union(v.literal("cli"), v.literal("dashboard"))),
     createdAt: v.number(),
     updatedAt: v.number(),
+};
+
+/** Sandbox compute backends a persistent instance / snapshot can target. */
+export const sandboxProviderValidator = v.union(
+    v.literal("sandbox"),
+    v.literal("lambda"),
+    v.literal("daytona"),
+    v.literal("e2b"),
+    v.literal("vercel"),
+);
+
+/**
+ * Live persistent-sandbox registry, mirrored from broods so the dashboard can
+ * show running/suspended instances and drive suspend/resume/terminate through
+ * Convex live queries. broods (the runtime) is authoritative — it owns the
+ * provider lifecycle and the DynamoDB reconnection map, and dual-writes each
+ * transition here; this table is the real-time view, not the source of truth.
+ * One row per reserved sandbox, keyed by `reservationKey` (the broods
+ * reconnection key, globally unique since it embeds the account + workspace).
+ */
+export const sandboxInstancesFields = {
+    accountId: v.id("accounts"),
+    /** Environment scope; optional like `sandboxConfigsFields` for account-scoped/legacy rows. */
+    projectId: v.optional(v.id("projects")),
+    environmentId: v.optional(v.id("environments")),
+    provider: sandboxProviderValidator,
+    /** Stable reservation key broods reconnects by (mirror of the DynamoDB instanceKey). */
+    reservationKey: v.string(),
+    /** Sandbox config this instance was reserved from; lets the dashboard drive its write-path. */
+    sandboxConfigId: v.optional(v.id("sandboxConfigs")),
+    /** Provider-side id: workdir `sbx_…` / MicroVM `microvmId` / daytona id / vercel name. */
+    externalId: v.string(),
+    name: v.string(),
+    status: v.union(
+        v.literal("running"),
+        v.literal("suspended"),
+        v.literal("terminating"),
+        v.literal("error"),
+    ),
+    /** Snapshot/image this instance launched from, when any. */
+    snapshotId: v.optional(v.string()),
+    /** Non-secret egress policy summary (config `network.mode`); powers the dashboard Networking view. */
+    egress: v.optional(
+        v.union(v.literal("allow-all"), v.literal("deny-all"), v.literal("restricted")),
+    ),
+    /** Tool approval policy (`edit`/`ask`/`bypass`); powers the dashboard Security view. */
+    permissionMode: v.optional(
+        v.union(v.literal("edit"), v.literal("ask"), v.literal("bypass")),
+    ),
+    specs: v.object({ vcpu: v.number(), memoryMb: v.number(), storageGb: v.number() }),
+    createdAt: v.number(),
+    lastUsedAt: v.number(),
+    suspendedAt: v.optional(v.number()),
+    terminatedAt: v.optional(v.number()),
+};
+
+/**
+ * Sandbox snapshot/image registry, mirrored from broods. Account-scoped because
+ * a built image is reusable across environments. `status` follows the unified
+ * (Daytona-aligned) build model mapped from AWS MicroVM image versions and
+ * workdir images; broods owns the build pipeline and dual-writes status here.
+ */
+export const sandboxSnapshotsFields = {
+    accountId: v.id("accounts"),
+    name: v.string(),
+    provider: sandboxProviderValidator,
+    baseImage: v.string(),
+    status: v.union(
+        v.literal("pending"),
+        v.literal("building"),
+        v.literal("pulling"),
+        v.literal("active"),
+        v.literal("inactive"),
+        v.literal("error"),
+        v.literal("build_failed"),
+    ),
+    /** Provider-side image id: workdir image id / MicroVM image ARN. */
+    externalImageId: v.string(),
+    pulledCount: v.number(),
+    createdAt: v.number(),
+    lastUsedAt: v.number(),
 };
 
 /**
@@ -493,9 +576,9 @@ export const usageTasksFields = {
     /**
      * CPU consumed in sandboxes during the task, one entry per sandbox context:
      * the agent's own sandbox (role "agent") and any per-tool sandbox (role
-     * "tool"), tagged by provider `type` ("kubernetes", "lambda", …). cpuUsec is
-     * recorded for instrumented providers (kubernetes via cgroup, lambda via the
-     * sandbox image's getrusage report); providers that do not report it store 0.
+     * "tool"), tagged by provider `type` ("sandbox", "lambda", …). cpuUsec is
+     * recorded for the self-hosted providers (sandbox via the workdir exec report,
+     * lambda via the MicroVM image's getrusage report); others store 0.
      */
     sandboxUsage: v.array(
         v.object({
@@ -538,7 +621,7 @@ export const usageRollupsFields = {
     modelCalls: v.number(),
     /** Harness runtime wall-clock ms folded into this bucket. */
     runtimeWallMs: v.number(),
-    /** Agent-sandbox CPU usage_usec folded into this bucket. */
+    /** Sandbox CPU usage_usec folded into this bucket. */
     agentSandboxCpuUsec: v.number(),
     /** Tool-sandbox CPU usage_usec (user-uploaded tools) folded into this bucket. */
     toolSandboxCpuUsec: v.number(),
@@ -605,6 +688,13 @@ export default defineSchema({
         .index("by_accountId", ["accountId"])
         .index("by_accountId_and_name", ["accountId", "name"])
         .index("by_environmentId_and_name", ["environmentId", "name"]),
+    sandboxInstances: defineTable(sandboxInstancesFields)
+        .index("by_accountId", ["accountId"])
+        .index("by_accountId_projectId_and_environmentId", ["accountId", "projectId", "environmentId"])
+        .index("by_reservationKey", ["reservationKey"]),
+    sandboxSnapshots: defineTable(sandboxSnapshotsFields)
+        .index("by_accountId", ["accountId"])
+        .index("by_accountId_and_name", ["accountId", "name"]),
     environmentVariables: defineTable(environmentVariablesFields)
         .index("by_projectId_and_environmentId", ["projectId", "environmentId"])
         .index("by_environmentId_and_name", ["environmentId", "name"]),

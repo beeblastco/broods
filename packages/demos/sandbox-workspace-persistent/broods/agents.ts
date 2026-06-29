@@ -1,9 +1,15 @@
 import { defineAgent, defineSandbox, defineWorkspace, env } from "broods";
 
-export const k8sReservedSandbox = defineSandbox({
-  name: "k8s-reserved",
+export const reservedSandbox = defineSandbox({
+  name: "reserved",
   config: {
-    provider: "kubernetes",
+    provider: "sandbox",
+    // Predefined compute size (tiny | xsmall | small | medium | large). xsmall is
+    // the free default; omit `size` to keep the cheap default-create path.
+    size: "small",
+    // Pin a prebuilt image/snapshot to boot from (workdir image id/name, MicroVM
+    // image ARN). Omit to boot the provider's default base image.
+    // snapshot: "img_curated_python",
     network: { mode: "allow-all" },
     permissionMode: "bypass",
     persistent: true,
@@ -15,8 +21,6 @@ export const k8sReservedSandbox = defineSandbox({
     options: {
       mountAwsS3Buckets: true,
       // workspaceRoot: "/mnt/workspaces",
-      // persistentDiskGb: 10,
-      // persistentHome: "/home/node",
     },
   },
 });
@@ -43,13 +47,13 @@ export const reservedAgent = defineAgent({
     },
     agent: {
       system: [
-        "You are testing a reserved (persistent) Kubernetes coding sandbox.",
+        "You are testing a reserved (persistent) self-hosted coding sandbox.",
         "Install Python packages into a virtualenv under $HOME so they persist across calls.",
         "Use a SEPARATE bash call for each numbered step.",
         "For long-running work, use bash with background:true and then poll async_status.",
       ].join(" "),
     },
-    sandbox: k8sReservedSandbox,
+    sandbox: reservedSandbox,
     workspaces: [projectWorkspace],
     publicAccess: true,
   },

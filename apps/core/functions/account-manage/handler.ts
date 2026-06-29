@@ -32,8 +32,12 @@ import {
     parseJsonBody,
 } from "../_shared/http.ts";
 import type { LambdaResponse } from "../_shared/runtime.ts";
+import { createSandboxExecutor } from "../harness-processing/sandbox/index.ts";
+import { removeSandboxInstance, setSandboxInstanceStatus } from "../_shared/storage/convex/sandbox-instances.ts";
+import { upsertSandboxSnapshot } from "../_shared/storage/convex/sandbox-snapshots.ts";
 import { deleteAccountRuntimeData, releaseReservedSandboxes, releaseSandboxConfigInstances } from "./cleanup.ts";
 import { workspaceNamespace } from "../_shared/workspaces.ts";
+import { isPlainObject } from "../_shared/object.ts";
 import {
     createOrReplaceSkill,
     deleteAccountSkills,
@@ -169,6 +173,20 @@ export async function handler(event: LambdaFunctionURLEvent): Promise<LambdaResp
             // they can run agents, not mutate uploaded account tools.
             const account = requireAccountAuth(auth, { allowServiceToken: true });
             return await handleToolRoute(method, account.accountId, selfToolMatch?.[1], event);
+        }
+
+        const selfSandboxLifecycleMatch = rawPath.match(/^\/accounts\/me\/sandboxes\/([^/]+)\/(suspend|resume|terminate|snapshot)$/);
+        if (selfSandboxLifecycleMatch?.[1] && selfSandboxLifecycleMatch[2]) {
+            // Driven by the dashboard via the sandboxPublic Convex actions, which
+            // authenticate with the shared service token.
+            const account = requireAccountAuth(auth, { allowServiceToken: true });
+            return await handleSandboxLifecycle(
+                method,
+                account.accountId,
+                selfSandboxLifecycleMatch[1],
+                selfSandboxLifecycleMatch[2] as "suspend" | "resume" | "terminate" | "snapshot",
+                event,
+            );
         }
 
         const selfSandboxCollection = rawPath === "/accounts/me/sandboxes";
@@ -633,6 +651,106 @@ async function handleSandboxRoute(
     }
 
     return errorResponse(405, "Method not allowed", { method, allowedMethods: ["GET", "PATCH", "DELETE"] });
+}
+
+/**
+ * Drives a reserved sandbox's suspend/resume/terminate lifecycle on behalf of the
+ * dashboard. Loads the (decrypted) sandbox config so the provider credentials are
+ * available, runs the provider lifecycle call, then mirrors the new status into
+ * Convex so the live dashboard query reflects it.
+ */
+async function handleSandboxLifecycle(
+    method: string,
+    accountId: string,
+    rawSandboxId: string,
+    action: "suspend" | "resume" | "terminate" | "snapshot",
+    event: LambdaFunctionURLEvent,
+): Promise<LambdaResponse> {
+    if (method !== "POST") {
+        return errorResponse(405, "Method not allowed", { method, allowedMethods: ["POST"] });
+    }
+    const sandboxId = decodeURIComponent(rawSandboxId);
+    const record = await getStorage().sandboxConfigs.getById(accountId, sandboxId);
+    if (!record) {
+        return errorResponse(404, "Sandbox not found");
+    }
+
+    const body = parseJsonBody(event) as Record<string, unknown>;
+    const reservationKey = typeof body.reservationKey === "string" ? body.reservationKey.trim() : "";
+    if (!reservationKey) {
+        return errorResponse(400, "reservationKey is required");
+    }
+    if (!await sandboxReservationBelongsToAccount(accountId, record.config, reservationKey)) {
+        return errorResponse(403, "reservationKey does not belong to this account or sandbox config");
+    }
+
+    const executor = createSandboxExecutor(record.config);
+    const ref = { reservationKey: reservationKey };
+    const provider = record.config.provider;
+
+    if (action === "suspend") {
+        if (!executor.suspend) {
+            return errorResponse(409, `provider ${provider} does not support suspend`);
+        }
+        await executor.suspend(ref);
+        await setSandboxInstanceStatus(accountId, reservationKey, "suspended");
+        return jsonResponse(200, { status: "suspended" });
+    }
+    if (action === "resume") {
+        if (!executor.resume) {
+            return errorResponse(409, `provider ${provider} does not support resume`);
+        }
+        await executor.resume(ref);
+        await setSandboxInstanceStatus(accountId, reservationKey, "running");
+        return jsonResponse(200, { status: "running" });
+    }
+    if (action === "snapshot") {
+        if (!executor.snapshot) {
+            return errorResponse(409, `provider ${provider} does not support snapshot`);
+        }
+        const name = typeof body.name === "string" ? body.name.trim() : "";
+        if (!name) {
+            return errorResponse(400, "name is required");
+        }
+        const result = await executor.snapshot(ref);
+        const externalImageId = result.externalImageId ?? result.snapshotId;
+        await upsertSandboxSnapshot({
+            accountId,
+            name,
+            provider,
+            baseImage: provider,
+            externalImageId,
+            status: "active",
+        });
+        return jsonResponse(200, { status: "active", snapshotId: result.snapshotId, externalImageId });
+    }
+    if (!executor.release) {
+        return errorResponse(409, `provider ${provider} does not support terminate`);
+    }
+    await executor.release(ref);
+    await removeSandboxInstance(accountId, reservationKey);
+
+    return jsonResponse(200, { status: "terminated" });
+}
+
+/**
+ * Authorizes dashboard lifecycle controls against reservations this account can
+ * create: workspace namespaces owned by the account, or the config's explicit
+ * stateless reservation key. Prevents arbitrary provider lifecycle calls.
+ */
+async function sandboxReservationBelongsToAccount(
+    accountId: string,
+    config: { persistent?: boolean; options?: Record<string, unknown> },
+    reservationKey: string,
+): Promise<boolean> {
+    if (config.persistent !== true) return false;
+    const options = isPlainObject(config.options) ? config.options : {};
+    if (typeof options.reservationKey === "string" && options.reservationKey.trim() === reservationKey) {
+        return true;
+    }
+
+    const workspaces = await getStorage().workspaceConfigs.list(accountId);
+    return workspaces.some((workspace) => workspaceNamespace(accountId, workspace.workspaceId) === reservationKey);
 }
 
 async function handleToolRoute(

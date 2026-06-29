@@ -1,6 +1,6 @@
 /**
  * Uploaded custom tool executor tests.
- * Mock S3 and Kubernetes so the test stays local and deterministic.
+ * Mock S3 and the sandbox executor so the test stays local and deterministic.
  */
 
 import { beforeEach, describe, expect, it, mock } from "bun:test";
@@ -22,7 +22,7 @@ const runMock = mock(async (): Promise<SandboxRunResult> => ({
   stdout: '\n__CUSTOM_TOOL_RESULT__{"ok":true,"result":{"type":"text","value":"done"}}\n',
   stderr: "",
   durationMs: 10,
-  provider: "kubernetes",
+  provider: "sandbox",
 }));
 const runBackgroundMock = mock(async (): Promise<SandboxJobHandle> => ({ jobId: "job_test" }));
 const execInReservedPodMock = mock(async () => ({
@@ -68,7 +68,7 @@ beforeEach(() => {
 });
 
 describe("executeAccountToolInSandbox", () => {
-  it("loads a bundle, verifies its hash, and delegates execution to Kubernetes", async () => {
+  it("loads a bundle, verifies its hash, and delegates execution to the sandbox executor", async () => {
     const { executeAccountToolInSandbox } = await import("../functions/harness-processing/tools/custom-tool-executor.ts");
 
     const result = await executeAccountToolInSandbox({
@@ -81,13 +81,13 @@ describe("executeAccountToolInSandbox", () => {
     });
 
     expect(result).toEqual({ type: "text", value: "done" });
-    // Small bundle is inlined: read in-region, never fetched cross-cloud by the pod.
+    // Small bundle is inlined: read in-region, never fetched cross-cloud by the sandbox.
     expect(readS3BytesMock).toHaveBeenCalledWith("tool-bundles", "account-tools/acct_test/bundles/hash.mjs");
     expect(getS3ObjectUrlMock).not.toHaveBeenCalled();
     expect(createSandboxExecutorMock).toHaveBeenCalledWith(expect.objectContaining({
-      provider: "kubernetes",
+      provider: "sandbox",
       persistent: true,
-      // Public internet only: uploaded tool code must not reach the cluster,
+      // Public internet only: uploaded tool code must not reach the host,
       // node metadata service, or other private ranges.
       network: expect.objectContaining({
         mode: "restricted",
@@ -180,7 +180,7 @@ describe("executeAccountToolInSandbox", () => {
     expect(runMock).not.toHaveBeenCalled();
   });
 
-  it("starts uploaded async tools as Kubernetes background work when completion metadata is detached", async () => {
+  it("starts uploaded async tools as sandbox background work when completion metadata is detached", async () => {
     const { executeAccountToolInSandbox } = await import("../functions/harness-processing/tools/custom-tool-executor.ts");
 
     const result = await executeAccountToolInSandbox({
@@ -220,7 +220,7 @@ describe("executeAccountToolInSandbox", () => {
       stdout: '\n__CUSTOM_TOOL_RESULT__{"ok":false,"error":"custom tool bundle hash mismatch inside runner"}\n',
       stderr: "",
       durationMs: 10,
-      provider: "kubernetes",
+      provider: "sandbox",
     }));
     const { executeAccountToolInSandbox } = await import("../functions/harness-processing/tools/custom-tool-executor.ts");
 

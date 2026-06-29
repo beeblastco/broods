@@ -39,7 +39,7 @@ E2B background execution uses the native E2B command API (`commands.run` with
 `background: true`) and disconnects from the returned command handle after launch. It does
 not use the harness `.fp-jobs` marker files, so E2B can launch detached work and deliver
 completion through the existing callback/result row path, but it does not expose the
-Daytona/Kubernetes/Vercel live log-tail and stop controls.
+`sandbox`/Daytona/Vercel live log-tail and stop controls.
 
 `onCreate` / `onResume` hooks are not accepted for E2B in this harness. Put setup in the
 E2B template or run explicit setup commands in a persistent sandbox.

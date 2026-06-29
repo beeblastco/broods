@@ -89,6 +89,7 @@ describe("github channel adapter", () => {
       owner: "owner",
       repo: "repo",
       installationId: 99,
+      threadId: "github:owner/repo:issue:7",
       issueNumber: 7,
       target: "issue",
     });
@@ -124,6 +125,8 @@ describe("github channel adapter", () => {
       owner: "owner",
       repo: "repo",
       installationId: 99,
+      threadId: "github:owner/repo:12",
+      messageId: "55",
       issueNumber: 12,
       commentId: 55,
       target: "issue_comment",

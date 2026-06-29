@@ -19,7 +19,7 @@ import { BroodsClient, DEFAULT_CORE_BASE_URL } from "../client.ts";
 import { loadBroodsRuntimeConfig } from "../runtime-config.ts";
 import { subscribeObservabilityLogs } from "../observability-client.ts";
 import type { LogLevel, ObservabilityLogEntry } from "../observability-contracts.ts";
-import { hasFlag, loginWithBrowser, optionValue, promptConfirm, promptSecret, promptSelect, promptText, requireAuth } from "./utils.ts";
+import { hasFlag, isPlainObject, loginWithBrowser, optionValue, promptConfirm, promptSecret, promptSelect, promptText, requireAuth } from "./utils.ts";
 import { printDeploymentTarget, printDiffEntries, printEnvSync, printReadyLine, printWarning } from "./output.ts";
 import { createRenderState, renderStreamPart } from "./render.ts";
 import packageJson from "../../package.json" with { type: "json" };
@@ -1009,14 +1009,14 @@ async function agentGet(name: string | undefined, args: string[]): Promise<void>
   const workspaces = Array.isArray(config.workspaces)
     ? config.workspaces.map((ref) => (typeof ref === "string" ? ref : (ref as { name?: string }).name)).filter(Boolean)
     : [];
-  const tools = isRecord(config.tools) ? Object.keys(config.tools) : [];
-  const channels = isRecord(config.channels) ? Object.keys(config.channels) : [];
-  const subagents = isRecord(config.subagent) && Array.isArray((config.subagent as { allowed?: unknown }).allowed)
+  const tools = isPlainObject(config.tools) ? Object.keys(config.tools) : [];
+  const channels = isPlainObject(config.channels) ? Object.keys(config.channels) : [];
+  const subagents = isPlainObject(config.subagent) && Array.isArray((config.subagent as { allowed?: unknown }).allowed)
     ? ((config.subagent as { allowed: unknown[] }).allowed).map((entry) =>
         typeof entry === "string" ? entry : (entry as { name?: string }).name).filter(Boolean)
     : [];
-  const webhooks = isRecord(config.hooks) && Array.isArray((config.hooks as { webhooks?: unknown }).webhooks)
-    ? ((config.hooks as { webhooks: unknown[] }).webhooks).filter(isRecord)
+  const webhooks = isPlainObject(config.hooks) && Array.isArray((config.hooks as { webhooks?: unknown }).webhooks)
+    ? ((config.hooks as { webhooks: unknown[] }).webhooks).filter(isPlainObject)
     : [];
 
   console.log(`Agent: ${agent.name}`);
@@ -1041,16 +1041,12 @@ async function agentGet(name: string | undefined, args: string[]): Promise<void>
 
 /** A compact `provider/modelId` label from an agent's nested config. */
 function agentModelLabel(config: Record<string, unknown>): string {
-  const model = isRecord(config.model) ? config.model : {};
+  const model = isPlainObject(config.model) ? config.model : {};
   const provider = typeof model.provider === "string" ? model.provider : undefined;
   const modelId = typeof model.modelId === "string" ? model.modelId : undefined;
   if (provider && modelId) return `${provider}/${modelId}`;
 
   return modelId ?? provider ?? "unconfigured model";
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 async function run(args: string[]): Promise<void> {

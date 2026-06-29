@@ -61,7 +61,7 @@ bunx sst secret set AccountConfigEncryptionSecret <long-random-value>
 bunx sst secret set DaytonaApiKey <daytona-api-key>
 ```
 
-`DaytonaApiKey` has no fallback — `sst deploy` fails without it. A fourth secret, `KubernetesSandboxKubeconfig`, is optional and only needed for the Kubernetes sandbox provider.
+`DaytonaApiKey` has no fallback — `sst deploy` fails without it.
 
 Provider and tool API keys are account-specific. Store them in the encrypted agent config under fields such as `config.provider.<provider>.apiKey` and `config.tools.<tool>.apiKey`.
 

@@ -444,6 +444,8 @@ function cryptoRandomId(): string {
 interface ConvexSandboxConfigDoc {
   _id: string;
   accountId: string;
+  projectId?: string;
+  environmentId?: string;
   name: string;
   description?: string;
   encryptedConfig?: string;
@@ -467,6 +469,8 @@ function sandboxConfigFromConvex(doc: ConvexSandboxConfigDoc | null): SandboxCon
   return {
     accountId: doc.accountId,
     sandboxId: doc._id,
+    ...(doc.projectId ? { projectId: doc.projectId } : {}),
+    ...(doc.environmentId ? { environmentId: doc.environmentId } : {}),
     name: doc.name,
     ...(doc.description ? { description: doc.description } : {}),
     config,

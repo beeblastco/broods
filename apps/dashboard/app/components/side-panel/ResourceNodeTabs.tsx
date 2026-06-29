@@ -12,7 +12,7 @@ import { SectionHeader } from "@/app/components/side-panel/SectionHeader";
 import { Input } from "@/app/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/app/components/ui/select";
 import { Separator } from "@/app/components/ui/separator";
-import { isRecord } from "@/app/lib/utils";
+import { isPlainObject } from "@/app/lib/utils";
 
 type UpdateNodeData = (patch: Partial<BaseNodeData>) => void;
 
@@ -39,8 +39,8 @@ export function WorkspaceResourceDetailsTab({
     onSaveName: () => void;
     onUpdateNodeData: UpdateNodeData;
 }) {
-    const config: Record<string, unknown> = isRecord(data.config) ? data.config : WORKSPACE_DEFAULT_CONFIG;
-    const harness = isRecord(config.harness) ? config.harness : {};
+    const config: Record<string, unknown> = isPlainObject(data.config) ? data.config : WORKSPACE_DEFAULT_CONFIG;
+    const harness = isPlainObject(config.harness) ? config.harness : {};
 
     return (
         <div className="flex flex-1 flex-col gap-5 overflow-y-auto p-4">
@@ -117,10 +117,10 @@ export function SandboxResourceDetailsTab({
     onSaveName: () => void;
     onUpdateNodeData: UpdateNodeData;
 }) {
-    const config: Record<string, unknown> = isRecord(data.config) ? data.config : SANDBOX_DEFAULT_CONFIG;
+    const config: Record<string, unknown> = isPlainObject(data.config) ? data.config : SANDBOX_DEFAULT_CONFIG;
     // Egress policy. Core models this as `network.mode` (allow-all/deny-all/restricted),
     // which is what code-synced sandboxes carry — not a flat `internet` boolean.
-    const network: { mode?: string } = isRecord(config.network) ? (config.network as { mode?: string }) : {};
+    const network: { mode?: string } = isPlainObject(config.network) ? (config.network as { mode?: string }) : {};
 
     function setConfig(patch: Record<string, unknown>) {
         onUpdateNodeData({ config: { ...config, ...patch } });
@@ -148,9 +148,9 @@ export function SandboxResourceDetailsTab({
                     onValueChange={(provider) => setConfig({ provider: provider })}
                     options={[
                         { value: "lambda", label: "AWS Lambda" },
+                        { value: "sandbox", label: "Sandbox" },
                         { value: "e2b", label: "e2b" },
                         { value: "daytona", label: "Daytona" },
-                        { value: "kubernetes", label: "Kubernetes" },
                     ]}
                 />
                 <SelectField
@@ -207,7 +207,7 @@ export function ResourceConfigTab({
             <BranchEditor
                 title={nodeType === "workspace" ? "Workspace Config" : "Sandbox Config"}
                 value={data.config ?? fallback}
-                onSave={(config) => onUpdateNodeData({ config: isRecord(config) ? config : fallback })}
+                onSave={(config) => onUpdateNodeData({ config: isPlainObject(config) ? config : fallback })}
             />
         </div>
     );

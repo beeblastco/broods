@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { createDiscordChannel } from "../functions/_shared/discord-channel.ts";
 import { createPancakeChannel } from "../functions/_shared/pancake-channel.ts";
 import { createSlackChannel } from "../functions/_shared/slack-channel.ts";
+import { createTelegramChannel } from "../functions/_shared/telegram-channel.ts";
 import { createZaloChannel } from "../functions/_shared/zalo-channel.ts";
 
 type FetchInput = string | URL | Request;
@@ -17,6 +18,7 @@ interface FetchCall {
 }
 
 const originalFetch = globalThis.fetch;
+const TEST_DISCORD_PUBLIC_KEY = "0".repeat(64);
 
 beforeEach(() => {
   globalThis.fetch = originalFetch;
@@ -26,16 +28,102 @@ afterEach(() => {
   globalThis.fetch = originalFetch;
 });
 
-describe("discord channel actions", () => {
-  it("splits long replies, sends typing, and ignores reactions", async () => {
+describe("telegram channel actions", () => {
+  it("uses the Chat SDK adapter for sending, streaming, typing, and reactions", async () => {
     const fetchMock = installFetchMock();
     fetchMock.responses.push(
-      new Response("", { status: 200 }),
-      new Response("", { status: 200 }),
+      telegramMessageResponse(50, "hello"),
+      jsonResponse({ ok: true, result: true }),
+      jsonResponse({ ok: true, result: true }),
+      telegramMessageResponse(51, "stream done"),
+      jsonResponse({ ok: true, result: true }),
+      jsonResponse({ ok: true, result: true }),
+    );
+
+    const actions = createTelegramChannel("bot-token", "secret", new Set([123]), "👀").actions(
+      createMessage({
+        chatId: 123,
+        messageId: "123:42",
+        threadId: "telegram:123",
+      }),
+    );
+
+    await actions.sendText("hello **telegram**");
+    expect(actions.stream).toBeDefined();
+    if (!actions.stream) {
+      throw new Error("Expected Telegram actions to support SDK streaming");
+    }
+    const messageId = await actions.stream((async function* () {
+      yield "stream";
+      yield " done";
+    })());
+    await actions.sendTyping();
+    await actions.reactToMessage();
+
+    expect(fetchMock.calls).toHaveLength(6);
+    expect(toUrl(fetchMock.calls[0]!.input)).toBe("https://api.telegram.org/botbot-token/sendRichMessage");
+    expect(JSON.parse(String(fetchMock.calls[0]!.init?.body))).toMatchObject({
+      chat_id: "123",
+    });
+    expect(JSON.stringify(JSON.parse(String(fetchMock.calls[0]!.init?.body))))
+      .toContain("telegram");
+
+    expect(messageId).toBe("123:51");
+    expect(toUrl(fetchMock.calls[1]!.input)).toBe("https://api.telegram.org/botbot-token/sendRichMessageDraft");
+    expect(toUrl(fetchMock.calls[2]!.input)).toBe("https://api.telegram.org/botbot-token/sendRichMessageDraft");
+    expect(toUrl(fetchMock.calls[3]!.input)).toBe("https://api.telegram.org/botbot-token/sendRichMessage");
+    expect(JSON.parse(String(fetchMock.calls[3]!.init?.body))).toMatchObject({
+      chat_id: "123",
+      rich_message: {
+        markdown: "stream done",
+      },
+    });
+
+    expect(toUrl(fetchMock.calls[4]!.input)).toBe("https://api.telegram.org/botbot-token/sendChatAction");
+    expect(JSON.parse(String(fetchMock.calls[4]!.init?.body))).toMatchObject({
+      chat_id: "123",
+      action: "typing",
+    });
+
+    expect(toUrl(fetchMock.calls[5]!.input)).toBe("https://api.telegram.org/botbot-token/setMessageReaction");
+    expect(JSON.parse(String(fetchMock.calls[5]!.init?.body))).toMatchObject({
+      chat_id: "123",
+      message_id: 42,
+    });
+  });
+
+  it("splits long final Telegram replies before SDK formatting to avoid truncation", async () => {
+    const fetchMock = installFetchMock();
+    fetchMock.responses.push(
+      telegramMessageResponse(50, "first"),
+      telegramMessageResponse(51, "second"),
+    );
+
+    const actions = createTelegramChannel("bot-token", "secret", new Set([123]), "👀").actions(
+      createMessage({
+        chatId: 123,
+        messageId: "123:42",
+        threadId: "telegram:123",
+      }),
+    );
+
+    await actions.sendText(`${"a".repeat(3600)} ${"b".repeat(20)}`);
+
+    expect(fetchMock.calls).toHaveLength(2);
+    expect(toUrl(fetchMock.calls[0]!.input)).toBe("https://api.telegram.org/botbot-token/sendRichMessage");
+    expect(toUrl(fetchMock.calls[1]!.input)).toBe("https://api.telegram.org/botbot-token/sendRichMessage");
+  });
+});
+
+describe("discord channel actions", () => {
+  it("uses the Chat SDK adapter for deferred replies and typing", async () => {
+    const fetchMock = installFetchMock();
+    fetchMock.responses.push(
+      jsonResponse({ id: "reply-1" }),
       new Response("", { status: 204 }),
     );
 
-    const actions = createDiscordChannel("bot-token", "public-key", null).actions(
+    const actions = createDiscordChannel("bot-token", TEST_DISCORD_PUBLIC_KEY, null).actions(
       createMessage({
         applicationId: "app-1",
         interactionToken: "interaction-token",
@@ -48,31 +136,24 @@ describe("discord channel actions", () => {
     await actions.sendTyping();
     await actions.reactToMessage();
 
-    expect(fetchMock.calls).toHaveLength(3);
+    expect(fetchMock.calls).toHaveLength(2);
     expect(toUrl(fetchMock.calls[0]!.input)).toBe(
       "https://discord.com/api/v10/webhooks/app-1/interaction-token/messages/@original",
     );
     expect(fetchMock.calls[0]!.init?.method).toBe("PATCH");
-    expect(JSON.parse(String(fetchMock.calls[0]!.init?.body))).toMatchObject({
-      allowed_mentions: { parse: [] },
-    });
+    expect(JSON.parse(String(fetchMock.calls[0]!.init?.body)).content).toHaveLength(2000);
 
     expect(toUrl(fetchMock.calls[1]!.input)).toBe(
-      "https://discord.com/api/v10/webhooks/app-1/interaction-token",
-    );
-    expect(fetchMock.calls[1]!.init?.method).toBe("POST");
-
-    expect(toUrl(fetchMock.calls[2]!.input)).toBe(
       "https://discord.com/api/v10/channels/channel-1/typing",
     );
-    expect(fetchMock.calls[2]!.init?.headers).toEqual({
+    expect(fetchMock.calls[1]!.init?.headers).toEqual({
       Authorization: "Bot bot-token",
     });
   });
 
   it("rethrows an interaction failure when no channel id is available to fall back to", async () => {
     const fetchMock = installFetchMock();
-    const actions = createDiscordChannel("bot-token", "public-key", null).actions(
+    const actions = createDiscordChannel("bot-token", TEST_DISCORD_PUBLIC_KEY, null).actions(
       createMessage({
         applicationId: "app-1",
         interactionToken: "interaction-token",
@@ -82,14 +163,14 @@ describe("discord channel actions", () => {
 
     fetchMock.responses.push(new Response("boom", { status: 500 }));
     await expect(actions.sendText("hello")).rejects.toThrow(
-      "Discord reply failed (500): boom",
+      "Discord interaction API error: 500 boom",
     );
     expect(fetchMock.calls).toHaveLength(1);
   });
 
   it("falls back to a bot-token channel post when the interaction token has expired", async () => {
     const fetchMock = installFetchMock();
-    const actions = createDiscordChannel("bot-token", "public-key", null).actions(
+    const actions = createDiscordChannel("bot-token", TEST_DISCORD_PUBLIC_KEY, null).actions(
       createMessage({
         applicationId: "app-1",
         interactionToken: "expired-token",
@@ -100,7 +181,7 @@ describe("discord channel actions", () => {
 
     // Interaction @original edit fails (token expired), bot-token channel post succeeds.
     fetchMock.responses.push(new Response("Unknown Webhook", { status: 404 }));
-    fetchMock.responses.push(new Response("", { status: 200 }));
+    fetchMock.responses.push(jsonResponse({ id: "fallback-1" }));
 
     await actions.sendText("job done");
 
@@ -114,13 +195,12 @@ describe("discord channel actions", () => {
     });
     expect(JSON.parse(String(fetchMock.calls[1]!.init?.body))).toMatchObject({
       content: "job done",
-      allowed_mentions: { parse: [] },
     });
   });
 
   it("surfaces a bot-token channel post failure", async () => {
     const fetchMock = installFetchMock();
-    const actions = createDiscordChannel("bot-token", "public-key", null).actions(
+    const actions = createDiscordChannel("bot-token", TEST_DISCORD_PUBLIC_KEY, null).actions(
       createMessage({
         applicationId: "app-1",
         interactionToken: "expired-token",
@@ -132,13 +212,13 @@ describe("discord channel actions", () => {
     fetchMock.responses.push(new Response("Unknown Webhook", { status: 404 }));
     fetchMock.responses.push(new Response("missing access", { status: 403 }));
     await expect(actions.sendText("hello")).rejects.toThrow(
-      "Discord channel message failed (403): missing access",
+      "Discord API error: 403 missing access",
     );
   });
 
   it("throws when a Discord typing request fails", async () => {
     const fetchMock = installFetchMock();
-    const actions = createDiscordChannel("bot-token", "public-key", null).actions(
+    const actions = createDiscordChannel("bot-token", TEST_DISCORD_PUBLIC_KEY, null).actions(
       createMessage({
         applicationId: "app-1",
         interactionToken: "interaction-token",
@@ -149,13 +229,13 @@ describe("discord channel actions", () => {
 
     fetchMock.responses.push(new Response("nope", { status: 403 }));
     await expect(actions.sendTyping()).rejects.toThrow(
-      "Discord typing indicator failed (403): nope",
+      "Discord API error: 403 nope",
     );
   });
 
   it("skips typing without a channel id and rejects invalid source payloads", async () => {
     const fetchMock = installFetchMock();
-    const adapter = createDiscordChannel("bot-token", "public-key", null);
+    const adapter = createDiscordChannel("bot-token", TEST_DISCORD_PUBLIC_KEY, null);
     const actions = adapter.actions(
       createMessage({
         applicationId: "app-1",
@@ -176,11 +256,11 @@ describe("discord channel actions", () => {
 });
 
 describe("slack channel actions", () => {
-  it("posts to response_url payloads with formatted table attachments", async () => {
+  it("posts to response_url payloads with SDK-formatted markdown", async () => {
     const fetchMock = installFetchMock();
     fetchMock.responses.push(new Response("", { status: 200 }));
 
-    const actions = createSlackChannel("bot-token", "signing-secret", null).actions(
+    const actions = createSlackChannel("bot-token", "signing-secret", null, "white_check_mark").actions(
       createMessage({
         teamId: "T1",
         channelId: "C1",
@@ -194,35 +274,19 @@ describe("slack channel actions", () => {
     expect(toUrl(fetchMock.calls[0]!.input)).toBe("https://hooks.slack.test/response");
     expect(fetchMock.calls[0]!.init?.method).toBe("POST");
     expect(JSON.parse(String(fetchMock.calls[0]!.init?.body))).toEqual({
-      text: " ",
+      text: "```\nName  | Value\n------|------\nAlpha | Beta\n```",
       response_type: "in_channel",
-      attachments: [{
-        blocks: [{
-          type: "table",
-          column_settings: [{ is_wrapped: true }, null],
-          rows: [
-            [
-              { type: "raw_text", text: "Name" },
-              { type: "raw_text", text: "Value" },
-            ],
-            [
-              { type: "raw_text", text: "Alpha" },
-              { type: "raw_text", text: "Beta" },
-            ],
-          ],
-        }],
-      }],
     });
   });
 
   it("posts threaded Slack messages and reactions through the Web API", async () => {
     const fetchMock = installFetchMock();
     fetchMock.responses.push(
-      jsonResponse({ ok: true }),
+      jsonResponse({ ok: true, ts: "1713916800.000003" }),
       jsonResponse({ ok: true }),
     );
 
-    const actions = createSlackChannel("bot-token", "signing-secret", null).actions(
+    const actions = createSlackChannel("bot-token", "signing-secret", null, "white_check_mark").actions(
       createMessage({
         teamId: "T1",
         channelId: "C1",
@@ -238,12 +302,12 @@ describe("slack channel actions", () => {
     expect(fetchMock.calls).toHaveLength(2);
     expect(toUrl(fetchMock.calls[0]!.input)).toBe("https://slack.com/api/chat.postMessage");
     expect(fetchMock.calls[0]!.init?.headers).toEqual({
-      Authorization: "Bearer bot-token",
-      "Content-Type": "application/json; charset=utf-8",
+      authorization: "Bearer bot-token",
+      "content-type": "application/x-www-form-urlencoded",
     });
-    expect(JSON.parse(String(fetchMock.calls[0]!.init?.body))).toEqual({
+    expect(Object.fromEntries(new URLSearchParams(String(fetchMock.calls[0]!.init?.body)))).toMatchObject({
       channel: "C1",
-      text: "hello slack",
+      markdown_text: "hello slack",
       thread_ts: "1713916800.000001",
     });
 
@@ -251,7 +315,7 @@ describe("slack channel actions", () => {
     expect(JSON.parse(String(fetchMock.calls[1]!.init?.body))).toEqual({
       channel: "C1",
       timestamp: "1713916800.000002",
-      name: "eyes",
+      name: "white_check_mark",
     });
   });
 
@@ -511,5 +575,17 @@ function jsonResponse(body: Record<string, unknown>, status = 200) {
   return new Response(JSON.stringify(body), {
     status,
     headers: { "Content-Type": "application/json" },
+  });
+}
+
+function telegramMessageResponse(messageId: number, text: string) {
+  return jsonResponse({
+    ok: true,
+    result: {
+      message_id: messageId,
+      chat: { id: 123, type: "private" },
+      date: 1_700_000_000,
+      text,
+    },
   });
 }

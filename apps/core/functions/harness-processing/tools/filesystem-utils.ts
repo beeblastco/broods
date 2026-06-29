@@ -11,11 +11,11 @@
 
 import type { JSONObject } from "@ai-sdk/provider";
 import type { Tool } from "ai";
-import { requireEnv } from "../../_shared/env.ts";
-import { workspaceNamespacePrefix, workspaceSandboxLimits } from "../../_shared/sandbox.ts";
+import { isPlainObject } from "../../_shared/object.ts";
+import { workspaceSandboxLimits } from "../../_shared/sandbox.ts";
 import { isMissingS3Error, listS3Prefix, readS3Text } from "../../_shared/s3.ts";
+import { resolveS3ReadTarget, workspaceReadContext } from "../sandbox/s3-mount.ts";
 import { createSandboxExecutor } from "../sandbox/index.ts";
-import { isRecordObject } from "../sandbox/utils.ts";
 import type { SandboxCpuSample, SandboxExecutorConfig, SandboxJobCallback, SandboxJobHandle, SandboxRunResult, SandboxRuntime } from "../sandbox/types.ts";
 import type { ResolvedWorkspace } from "../../_shared/workspaces.ts";
 import type { SandboxPermissionMode } from "../../_shared/storage/index.ts";
@@ -48,21 +48,21 @@ export interface SandboxToolContext {
 }
 
 export function workspaceRootFor(config: SandboxExecutorConfig): string {
-  const options = isRecordObject(config.options) ? config.options : {};
+  const options = isPlainObject(config.options) ? config.options : {};
   return typeof options.workspaceRoot === "string" && options.workspaceRoot.trim()
     ? options.workspaceRoot.trim()
     : DEFAULT_WORKSPACE_ROOT;
 }
 
 function statelessReservationKeyFor(config: SandboxExecutorConfig): string | undefined {
-  const options = isRecordObject(config.options) ? config.options : {};
+  const options = isPlainObject(config.options) ? config.options : {};
   const reservationKey = options.reservationKey;
 
   return typeof reservationKey === "string" && reservationKey.trim() ? reservationKey.trim() : undefined;
 }
 
 export function sandboxSupportsBackgroundJobs(config: SandboxExecutorConfig | undefined): boolean {
-  return config?.persistent === true && config.provider !== "lambda";
+  return config?.persistent === true;
 }
 
 export function sandboxSupportsJobControls(config: SandboxExecutorConfig | undefined): boolean {
@@ -191,21 +191,26 @@ function permissionModeFor(workspace: ResolvedWorkspace | undefined): SandboxPer
   return workspace?.sandbox?.permissionMode ?? "ask";
 }
 
-// S3-direct read-only path (workspaces with no sandbox). Reads/lists straight
-// from the workspace bucket under the same `sandbox/<namespace>/` prefix the mount
-// uses, so it sees exactly what a sandbox-backed run would.
+// S3-direct read-only path (workspaces with no sandbox). Reads/lists straight from
+// the workspace's storage bucket under the same prefix the mount uses, so it sees
+// exactly what a sandbox-backed run would. A bring-your-own bucket resolves its own
+// bucket/prefix and short-lived assume-role credentials; the managed bucket reads on
+// the harness's own role (no per-read STS) under `<namespace>/`.
 const READ_DEFAULT_LIMIT = 2000;
 
 export async function s3ReadNumbered(
-  namespace: string,
+  ws: ResolvedWorkspace,
   rel: string,
   offset?: number,
   limit?: number,
 ): Promise<ToolModelResult> {
-  const key = `${workspaceNamespacePrefix(namespace)}/${rel}`;
+  const target = await resolveS3ReadTarget(workspaceReadContext(ws.config.storage, ws.namespace));
+  const key = `${target.prefix}${rel}`;
   let text: string;
   try {
-    text = await readS3Text(workspaceBucket(), key);
+    text = target.access
+      ? await readS3Text(target.bucket, key, target.access)
+      : await readS3Text(target.bucket, key);
   } catch (cause) {
     if (isMissingS3Error(cause)) {
       return toolError(`Error: file not found: ${rel}`);
@@ -226,14 +231,16 @@ export async function s3ReadNumbered(
   return toolText(numbered.length > 0 ? `${numbered}\n` : "");
 }
 
-export async function s3Glob(namespace: string, pattern: string, path?: string): Promise<ToolModelResult> {
-  const base = workspaceNamespacePrefix(namespace);
+export async function s3Glob(ws: ResolvedWorkspace, pattern: string, path?: string): Promise<ToolModelResult> {
+  const target = await resolveS3ReadTarget(workspaceReadContext(ws.config.storage, ws.namespace));
   const rootRel = path ? toWorkspaceRelative(path) : ".";
-  const searchPrefix = rootRel === "." ? `${base}/` : `${base}/${rootRel}/`;
+  const searchPrefix = rootRel === "." ? target.prefix : `${target.prefix}${rootRel}/`;
 
   let objects: Awaited<ReturnType<typeof listS3Prefix>>;
   try {
-    objects = await listS3Prefix(workspaceBucket(), searchPrefix);
+    objects = target.access
+      ? await listS3Prefix(target.bucket, searchPrefix, target.access)
+      : await listS3Prefix(target.bucket, searchPrefix);
   } catch (cause) {
     return toolError(cause instanceof Error ? cause.message : String(cause));
   }
@@ -246,10 +253,6 @@ export async function s3Glob(namespace: string, pattern: string, path?: string):
     .map((entry) => entry.rel);
 
   return toolText(matches.length > 0 ? `${matches.join("\n")}\n` : "No files found\n");
-}
-
-function workspaceBucket(): string {
-  return requireEnv("FILESYSTEM_BUCKET_NAME");
 }
 
 export function formatRunText(result: SandboxRunResult): string {
@@ -279,7 +282,8 @@ export function runtimeList(config: SandboxExecutorConfig): SandboxRuntime[] {
 }
 
 export function runtimeDescription(config: SandboxExecutorConfig | undefined): string {
-  return `Allowed runtimes: ${runtimeList(config ?? {}).join(", ")}.`;
+  const runtimes = config ? runtimeList(config) : ["bash", "python", "node"];
+  return `Allowed runtimes: ${runtimes.join(", ")}.`;
 }
 
 export function disallowedRuntimeCommand(config: SandboxExecutorConfig, command: string): string | undefined {

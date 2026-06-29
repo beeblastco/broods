@@ -7,6 +7,7 @@ import { useParams, useRouter } from "next/navigation";
 import { api } from "@broods/convex/_generated/api";
 import type { Doc } from "@broods/convex/_generated/dataModel";
 import { ChevronDown, Plus, Folder } from "lucide-react";
+import { cn } from "@/app/lib/utils";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -87,28 +88,31 @@ export function ProjectSelector() {
           </Button>
         </DropdownMenuTrigger>
 
-        <DropdownMenuContent align="start" sideOffset={8} className="w-72">
+        <DropdownMenuContent align="start" sideOffset={8} className="flex max-h-[min(24rem,var(--radix-dropdown-menu-content-available-height))] w-72 flex-col overflow-hidden">
           <DropdownMenuLabel>{projectsLabel}</DropdownMenuLabel>
           <DropdownMenuSeparator />
 
-          {projects.map((project: Doc<"projects">) => (
+          <div className="min-h-0 flex-1 overflow-y-auto">
+            {projects.map((project: Doc<"projects">) => (
             <DropdownMenuItem
               key={project._id}
               onClick={() => router.push(`/${project._id}`)}
               onMouseEnter={() => prefetchProject(project._id)}
               onFocus={() => prefetchProject(project._id)}
-              className={
+              className={cn(
+                "cursor-pointer",
                 project._id === currentProjectId
                   ? "bg-accent text-accent-foreground"
-                  : ""
-              }
+                  : "",
+              )}
             >
-              <Folder className="size-4" />
-              <span className="truncate max-w-60 block">
-                {project.name}
-              </span>
-            </DropdownMenuItem>
-          ))}
+                <Folder className="size-4" />
+                <span className="truncate max-w-60 block">
+                  {project.name}
+                </span>
+              </DropdownMenuItem>
+            ))}
+          </div>
 
           <DropdownMenuSeparator />
           <DropdownMenuItem onClick={() => setDialogOpen(true)}>

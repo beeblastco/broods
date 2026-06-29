@@ -40,6 +40,7 @@ import type * as model_agentRuntimeSecrets from "../model/agentRuntimeSecrets.js
 import type * as model_agentSync from "../model/agentSync.js";
 import type * as model_cascade from "../model/cascade.js";
 import type * as model_environmentValues from "../model/environmentValues.js";
+import type * as model_objects from "../model/objects.js";
 import type * as model_ownership_environment from "../model/ownership/environment.js";
 import type * as model_ownership_org from "../model/ownership/org.js";
 import type * as model_ownership_project from "../model/ownership/project.js";
@@ -51,6 +52,9 @@ import type * as orgLifecycle from "../orgLifecycle.js";
 import type * as orgMembers from "../orgMembers.js";
 import type * as project from "../project.js";
 import type * as sandboxConfigs from "../sandboxConfigs.js";
+import type * as sandboxInstances from "../sandboxInstances.js";
+import type * as sandboxPublic from "../sandboxPublic.js";
+import type * as sandboxSnapshots from "../sandboxSnapshots.js";
 import type * as skills from "../skills.js";
 import type * as skillsPublic from "../skillsPublic.js";
 import type * as stripe from "../stripe.js";
@@ -101,6 +105,7 @@ declare const fullApi: ApiFromModules<{
   "model/agentSync": typeof model_agentSync;
   "model/cascade": typeof model_cascade;
   "model/environmentValues": typeof model_environmentValues;
+  "model/objects": typeof model_objects;
   "model/ownership/environment": typeof model_ownership_environment;
   "model/ownership/org": typeof model_ownership_org;
   "model/ownership/project": typeof model_ownership_project;
@@ -112,6 +117,9 @@ declare const fullApi: ApiFromModules<{
   orgMembers: typeof orgMembers;
   project: typeof project;
   sandboxConfigs: typeof sandboxConfigs;
+  sandboxInstances: typeof sandboxInstances;
+  sandboxPublic: typeof sandboxPublic;
+  sandboxSnapshots: typeof sandboxSnapshots;
   skills: typeof skills;
   skillsPublic: typeof skillsPublic;
   stripe: typeof stripe;

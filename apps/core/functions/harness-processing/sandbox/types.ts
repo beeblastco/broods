@@ -9,8 +9,10 @@
  */
 
 import type { Readable } from "node:stream";
+import type { WorkspaceStorageConfig } from "../../_shared/storage/workspace-config.ts";
+import type { SandboxControlPlane, SandboxSize } from "../../_shared/sandbox-sizes.ts";
 
-export type SandboxProvider = "lambda" | "e2b" | "daytona" | "kubernetes" | "vercel";
+export type SandboxProvider = "sandbox" | "lambda" | "e2b" | "daytona" | "vercel";
 export type SandboxRuntime = "bash" | "python" | "node";
 export type SandboxNetworkMode = "allow-all" | "deny-all" | "restricted";
 
@@ -18,15 +20,22 @@ export interface SandboxNetworkConfig {
   mode: SandboxNetworkMode;
   allowDomains?: string[];
   allowCidrs?: string[];
-  // Carved out of every allowCidrs block (NetworkPolicy ipBlock.except). Lets a
-  // policy say "all public internet" by allowing 0.0.0.0/0 minus private ranges.
+  // Carved out of every allowCidrs block. Lets a policy say "all public internet"
+  // by allowing 0.0.0.0/0 minus private ranges.
   denyCidrs?: string[];
 }
 
 // Runtime subset of the persisted sandbox config (see storage/sandbox-config.ts)
-// that an executor needs.
+// that an executor needs. `provider` is required: normalizeSandboxConfig always
+// resolves one, so an executor config never carries an undefined provider.
 export interface SandboxExecutorConfig {
-  provider?: SandboxProvider;
+  provider: SandboxProvider;
+  // Predefined compute size; drives workdir create-time resources (see
+  // _shared/sandbox-sizes). Advisory on providers that size natively.
+  size?: SandboxSize;
+  // Prebuilt image/snapshot to launch from (workdir image id/name, MicroVM image
+  // ARN). Consumed by the self-hosted backends; unset boots the provider default.
+  snapshot?: string;
   runtimes?: SandboxRuntime[];
   network?: SandboxNetworkConfig;
   timeout?: number;
@@ -34,15 +43,8 @@ export interface SandboxExecutorConfig {
   outputLimitBytes?: number;
   // Reserve a long-lived sandbox instead of create-and-destroy per call.
   // Persistent runs must pass a stable request.reservationKey, or request.namespace
-  // for workspace-backed callers. Only meaningful for kubernetes/daytona/e2b.
+  // for workspace-backed callers. Meaningful for sandbox/lambda/daytona/e2b.
   persistent?: boolean;
-  // Persistent sandboxes normally reserve a durable home PVC so package-manager
-  // caches survive scale-to-0. Set true to skip the PVC and use the image's own
-  // ephemeral home: the sandbox is still reserved/reused, but provisioning skips
-  // the slow cloud-volume create+attach (the dominant cold-start cost). Used by
-  // account-uploaded tools, whose results return via HTTP callback and never
-  // depend on durable disk.
-  ephemeralHome?: boolean;
   // Idle/expiry policy for a persistent sandbox (Fargate-style scale-to-0).
   lifecycle?: SandboxLifecycle;
   // Persistent sandbox command hooks. onCreate is guarded by a marker for
@@ -54,15 +56,24 @@ export interface SandboxExecutorConfig {
   envVars?: Record<string, string | undefined>;
   // Provider-specific knobs (function names, templates, kubeconfig, ...).
   options?: Record<string, unknown>;
+  // The workspace's storage identity (bucket / region / endpoint / prefix / auth),
+  // attached per-workspace by the runtime resolver. Drives the S3 mount target and
+  // credentials. Absent for stateless (no-workspace) runs. Storage is a property of
+  // the workspace, not the sandbox compute — see _shared/storage/workspace-config.
+  storage?: WorkspaceStorageConfig;
+  // Account + sandbox identity attached by the runtime resolver so a freshly
+  // reserved persistent instance mirrors itself into the Convex registry. Absent
+  // for synthetic/stateless configs (the mirror then no-ops). See _shared/sandbox-sizes.
+  controlPlane?: SandboxControlPlane;
 }
 
 export interface SandboxLifecycle {
   // Scale the sandbox down after this many seconds with no activity and no
-  // running background job. Maps to the k8s reaper cooldown, daytona
+  // running background job. Maps to the workdir auto_stop, daytona
   // autoStopInterval, and e2b onTimeout pause.
   idleTimeoutSeconds?: number;
   // Hard expiry: delete/stop the sandbox this many seconds after creation
-  // regardless of activity (k8s shutdownTime). Undefined => no hard expiry.
+  // regardless of activity. Undefined => no hard expiry.
   maxLifetimeSeconds?: number;
 }
 
@@ -109,10 +120,10 @@ export interface SandboxRunResult {
   timedOut?: boolean;
   truncated?: boolean;
   provider: SandboxProvider;
-  /** CPU time consumed by this exec in microseconds. Sourced from the cgroup v2
-   *  cpu.stat delta on kubernetes and from the lambda-sandbox image's getrusage
-   *  report on lambda. Absent (undefined) for providers that do not report it and
-   *  on read failure. */
+  /** CPU time consumed by this exec in microseconds. Sourced from the workdir exec
+   *  report on sandbox and from the lambda-sandbox image's getrusage report on
+   *  lambda. Absent (undefined) for providers that do not report it and on read
+   *  failure. */
   cpuUsec?: number;
 }
 
@@ -126,7 +137,7 @@ export interface SandboxCpuSample {
 }
 
 // A detached, long-running job started inside a persistent sandbox. The work
-// outlives the harness request: it runs in the sandbox (k8s pod / daytona
+// outlives the harness request: it runs in the sandbox (workdir sandbox / daytona
 // session / e2b background command), not in the Lambda. Identified by `jobId`.
 export type SandboxJobState = "running" | "completed" | "failed" | "unknown";
 
@@ -155,6 +166,25 @@ export interface SandboxJobRequest {
   outputLimitBytes?: number;
 }
 
+/** Identifies a reserved sandbox by workspace namespace or explicit reservation key. */
+export interface SandboxReservationRef {
+  namespace?: string;
+  reservationKey?: string;
+}
+
+/** Result of capturing a sandbox snapshot/image (workdir snapshot or MicroVM image). */
+export interface SandboxSnapshotResult {
+  snapshotId: string;
+  // Provider-side image id/ARN, when distinct from snapshotId.
+  externalImageId?: string;
+}
+
+/** Live instance info surfaced for control-plane sync (Convex sandboxInstances). */
+export interface SandboxInstanceInfo {
+  externalId: string;
+  state: "running" | "suspended" | "terminating" | "error" | "unknown";
+}
+
 export interface SandboxExecutor {
   run(request: SandboxRunRequest): Promise<SandboxRunResult>;
   // Best-effort: create/resume the reserved sandbox and wait until its pod is
@@ -171,15 +201,25 @@ export interface SandboxExecutor {
     // tool's NDJSON frames live). The returned stdout still holds the full output.
     opts?: { stdin?: Readable; timeoutSeconds?: number; outputLimitBytes?: number; onStdout?: (chunk: string) => void },
   ): Promise<{ stdout: string; stderr: string; exitCode: number | null; timedOut?: boolean; cpuUsec?: number }>;
-  // Persistent-only background capabilities. Implemented by kubernetes/daytona/
+  // Persistent-only background capabilities. Implemented by sandbox/daytona/
   // e2b when config.persistent is true; absent otherwise (callers feature-detect).
   runBackground?(request: SandboxRunRequest): Promise<SandboxJobHandle>;
   jobStatus?(request: SandboxJobRequest): Promise<SandboxJobStatus>;
   jobLogs?(request: SandboxJobRequest): Promise<SandboxJobLogs>;
   stopJob?(request: SandboxJobRequest): Promise<SandboxJobStatus>;
   // Tear down the reserved sandbox for a reservation and its durable storage
-  // (k8s Sandbox + PVC, daytona/e2b sandbox) plus its instance record.
+  // (workdir/daytona/e2b sandbox) plus its instance record.
   // Best-effort + idempotent: a missing sandbox is a no-op. Called on
   // account/workspace deletion to prevent leaked compute/disk.
   release?(request: { namespace?: string; reservationKey?: string }): Promise<void>;
+  // --- Snapshot/standby lifecycle (workdir + lambda-microvm). All optional; callers
+  // feature-detect. Drives control-plane sync + dashboard suspend/resume/snapshot. ---
+  // Suspend a reserved sandbox, preserving disk+memory while freeing compute.
+  suspend?(request: SandboxReservationRef): Promise<void>;
+  // Resume a suspended sandbox.
+  resume?(request: SandboxReservationRef): Promise<void>;
+  // Capture the current sandbox state as a reusable snapshot/image.
+  snapshot?(request: SandboxReservationRef): Promise<SandboxSnapshotResult>;
+  // Best-effort live instance info (external id + state) for control-plane sync.
+  getInstanceInfo?(request: SandboxReservationRef): Promise<SandboxInstanceInfo | null>;
 }

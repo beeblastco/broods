@@ -29,7 +29,7 @@ afterEach(() => {
 describe("sendChannelReply", () => {
   it("rebuilds the telegram sender from config + source and posts to the chat", async () => {
     const fetchMock = installFetchMock();
-    fetchMock.responses.push(new Response("{}", { status: 200 }));
+    fetchMock.responses.push(new Response(JSON.stringify({ ok: true, result: { message_id: 101, chat: { id: 555 } } }), { status: 200 }));
 
     const config: AgentConfig = {
       channels: {
@@ -46,16 +46,17 @@ describe("sendChannelReply", () => {
       accountId: "acct-1",
       agentId: "agent-1",
       channelName: "telegram",
-      source: { chatId: 555, messageId: "100", threadId: "" },
+      source: { chatId: 555, messageId: "555:100", threadId: "telegram:555" },
       text: "background job done",
     });
 
     expect(fetchMock.calls).toHaveLength(1);
     expect(toUrl(fetchMock.calls[0]!.input)).toBe(
-      "https://api.telegram.org/botbot-xyz/sendMessage",
+      "https://api.telegram.org/botbot-xyz/sendRichMessage",
     );
     expect(JSON.parse(String(fetchMock.calls[0]!.init?.body))).toMatchObject({
-      chat_id: 555,
+      chat_id: "555",
+      rich_message: { markdown: "background job done" },
     });
   });
 
@@ -67,7 +68,7 @@ describe("sendChannelReply", () => {
         accountId: "acct-1",
         agentId: "agent-1",
         channelName: "telegram",
-        source: { chatId: 555, messageId: "100", threadId: "" },
+        source: { chatId: 555, messageId: "555:100", threadId: "telegram:555" },
         text: "hello",
       }),
     ).rejects.toThrow("Channel telegram is not configured");

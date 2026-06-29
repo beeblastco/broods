@@ -2,6 +2,8 @@
 
 Telegram integration allows your agent to interact with users via Telegram bots.
 
+Broods uses [`@chat-adapter/telegram`](https://www.npmjs.com/package/@chat-adapter/telegram) for Telegram message parsing, MarkdownV2 formatting, streaming, typing indicators, reactions, and Bot API calls. See Chat SDK [Platform Adapters](https://chat-sdk.dev/docs/platform-adapters), [Markdown](https://chat-sdk.dev/docs/api/markdown), and [Streaming](https://chat-sdk.dev/docs/streaming) for the adapter capabilities.
+
 ## Configuration
 
 Define a Telegram channel with `defineTelegramChannel` and attach it to an agent:
@@ -18,7 +20,7 @@ export const telegram = defineTelegramChannel({
   webhookSecret: env.TELEGRAM_WEBHOOK_SECRET,
   allowedChatIds: [123456789, 987654321],
   reactionEmoji: "👀",
-  streaming: { mode: "edit" },
+  apiUrl: "https://api.telegram.org",
 });
 
 export const myAgent = defineAgent({
@@ -39,4 +41,6 @@ Channel telegram (telegram): https://gateway.broods.app/webhooks/acct_.../agent_
 - `webhookSecret`: A secret string to verify incoming webhooks.
 - `allowedChatIds`: An array of numeric chat IDs allowed to talk to the agent.
 - `reactionEmoji` (optional): Emoji to use for reactions, defaults to "👀".
-- `streaming` (optional): Live reply streaming. Telegram supports all modes — `edit` (edit one message in place), `progress` (tool-activity preview then final answer), `chunk` (one message per paragraph), or `off` (default). See [Reply Streaming](index.md#reply-streaming).
+- `apiUrl` (optional): Telegram Bot API base URL. This maps to `TelegramAdapterConfig["apiUrl"]`.
+
+Telegram private chats stream through Chat SDK rich draft previews and persist the final response. Group chats receive one final reply. MarkdownV2 formatting is delegated to Chat SDK.

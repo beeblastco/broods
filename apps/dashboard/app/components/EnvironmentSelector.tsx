@@ -215,35 +215,37 @@ export function EnvironmentSelector() {
           </Button>
         </DropdownMenuTrigger>
 
-        <DropdownMenuContent align="start" sideOffset={8} className="w-56">
+        <DropdownMenuContent align="start" sideOffset={8} className="flex max-h-[min(24rem,var(--radix-dropdown-menu-content-available-height))] w-56 flex-col overflow-hidden">
           <DropdownMenuLabel>Environments</DropdownMenuLabel>
           <DropdownMenuSeparator />
 
-          {environments.map((env: Doc<"environments">) => (
-            <DropdownMenuItem
-              key={env._id}
-              className={cn(
-                "gap-2 cursor-pointer",
-                env._id === environmentId
-                  ? "bg-accent text-accent-foreground"
-                  : "",
-              )}
-              onClick={() => handleSelectEnvironment(env)}
-            >
-              <EnvironmentDot kind={environmentKind(env)} />
-              {env.name}
-            </DropdownMenuItem>
-          ))}
+          <div className="min-h-0 flex-1 overflow-y-auto">
+            {environments.map((env: Doc<"environments">) => (
+              <DropdownMenuItem
+                key={env._id}
+                className={cn(
+                  "gap-2 cursor-pointer",
+                  env._id === environmentId
+                    ? "bg-accent text-accent-foreground"
+                    : "",
+                )}
+                onClick={() => handleSelectEnvironment(env)}
+              >
+                <EnvironmentDot kind={environmentKind(env)} />
+                {env.name}
+              </DropdownMenuItem>
+            ))}
 
-          {!productionEnv && (
-            <DropdownMenuItem
-              className="gap-2 cursor-pointer"
-              onClick={handleSelectProductionTarget}
-            >
-              <EnvironmentDot kind="production" />
-              Production
-            </DropdownMenuItem>
-          )}
+            {!productionEnv && (
+              <DropdownMenuItem
+                className="gap-2 cursor-pointer"
+                onClick={handleSelectProductionTarget}
+              >
+                <EnvironmentDot kind="production" />
+                Production
+              </DropdownMenuItem>
+            )}
+          </div>
 
           <DropdownMenuSeparator />
           <DropdownMenuItem

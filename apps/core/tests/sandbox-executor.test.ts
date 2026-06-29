@@ -4,7 +4,7 @@
  * third-party services.
  */
 
-import { beforeEach, describe, expect, it, mock } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
 
 const e2bDisconnectMock = mock(async () => {});
 const e2bRunMock = mock(async (_command: string, options: Record<string, unknown>) => {
@@ -34,6 +34,7 @@ const daytonaExecuteCommandMock = mock(async (_command: string, _cwd?: string, _
   result: "ok\n",
 }));
 const daytonaDeleteMock = mock(async () => {});
+let daytonaClientOptionsSeen: Record<string, unknown>[] = [];
 const daytonaCreateMock = mock(async (_options: Record<string, unknown>) => ({
   process: {
     executeCommand: daytonaExecuteCommandMock,
@@ -92,7 +93,9 @@ const stsSendMock = mock(async (_command: unknown) => ({
     SessionToken: "scoped-session-token",
   },
 }));
-let lambdaPayload = {
+// AWS Lambda MicroVM mocks: RunMicrovm/auth-token/lifecycle go through the SDK
+// client; the exec request itself is an HTTPS POST to the VM endpoint (fetch).
+let microvmExecPayload = {
   ok: true,
   runtime: "bash",
   exit_code: 0,
@@ -101,46 +104,37 @@ let lambdaPayload = {
   stdout: "shell ok\n",
   stderr: "",
 };
-const lambdaSendMock = mock(async (_command: unknown) => ({
-  Payload: new TextEncoder().encode(JSON.stringify(lambdaPayload)),
-}));
-const k8sCreateNamespacedCustomObjectMock = mock(async (_input: unknown) => ({}));
-const k8sDeleteNamespacedCustomObjectMock = mock(async (_input: unknown) => ({}));
-// Persistent path: default to "not found" so the executor creates the Sandbox.
-let k8sGetSandboxResult: unknown = undefined;
-const k8sGetNamespacedCustomObjectMock = mock(async (_input: unknown) => {
-  if (k8sGetSandboxResult === undefined) {
-    throw { code: 404, body: { reason: "NotFound" } };
+let microvmGetResponses: Array<Record<string, unknown>> = [];
+const microvmSendMock = mock(async (command: { _type?: string }) => {
+  switch (command?._type) {
+    case "RunMicrovm":
+      return { microvmId: "microvm-1", endpoint: "microvm-1.lambda-microvm.us-east-1.on.aws", state: "PENDING" };
+    case "CreateMicrovmAuthToken":
+      return { authToken: { "X-aws-proxy-auth": "proxy-token" } };
+    case "GetMicrovm":
+      if (microvmGetResponses.length > 0) return microvmGetResponses.shift();
+      return { microvmId: "microvm-1", endpoint: "microvm-1.lambda-microvm.us-east-1.on.aws", state: "RUNNING" };
+    default:
+      return {};
   }
-  return k8sGetSandboxResult;
 });
-const k8sPatchNamespacedCustomObjectMock = mock(async (_input: unknown) => ({}));
-const k8sCreateNamespacedNetworkPolicyMock = mock(async (_input: unknown) => ({}));
-const k8sReplaceNamespacedNetworkPolicyMock = mock(async (_input: unknown) => ({}));
-const k8sDeleteNamespacedNetworkPolicyMock = mock(async (_input: unknown) => ({}));
-const k8sReadNamespacedPodMock = mock(async (input: { name: string; namespace: string }) => ({
-  metadata: { name: input.name, namespace: input.namespace },
-  status: { conditions: [{ type: "Ready", status: "True" }] },
-}));
-const k8sExecMock = mock(async (
-  _namespace: string,
-  _podName: string,
-  _container: string,
-  _command: string[],
-  _stdout: unknown,
-  _stderr: unknown,
-  _stdin: unknown,
-  _tty: boolean,
-  statusCallback: (status: { status: string }) => void,
-) => {
-  statusCallback({ status: "Success" });
-  return {
-    on(event: string, callback: () => void) {
-      if (event === "close") queueMicrotask(callback);
-    },
+const originalFetch = globalThis.fetch;
+const microvmFetchMock = mock(async (_url: string, _init?: unknown) =>
+  new Response(JSON.stringify(microvmExecPayload), { status: 200, headers: { "content-type": "application/json" } }),
+);
+function microvmCommand(type: string) {
+  return class {
+    input: unknown;
+    _type = type;
+    constructor(input: unknown) {
+      this.input = input;
+    }
   };
-});
-
+}
+const microvmRunInput = (): Record<string, unknown> => {
+  const call = microvmSendMock.mock.calls.find((c) => (c[0] as { _type?: string })?._type === "RunMicrovm");
+  return (call![0] as { input: Record<string, unknown> }).input;
+};
 mock.module("e2b", () => ({
   Sandbox: {
     create: e2bCreateMock,
@@ -149,7 +143,9 @@ mock.module("e2b", () => ({
 
 mock.module("@daytona/sdk", () => ({
   Daytona: class {
-    constructor(_options: Record<string, unknown>) {}
+    constructor(options: Record<string, unknown>) {
+      daytonaClientOptionsSeen.push(options);
+    }
 
     create = daytonaCreateMock;
   },
@@ -170,22 +166,16 @@ mock.module("../functions/harness-processing/sandbox/instance-store.ts", () => (
   deleteSandboxInstance: deleteSandboxInstanceMock,
 }));
 
-mock.module("@aws-sdk/client-lambda", () => ({
-  LambdaClient: class {
-    send = lambdaSendMock;
+mock.module("@aws-sdk/client-lambda-microvms", () => ({
+  LambdaMicrovms: class {
+    send = microvmSendMock;
   },
-  InvokeCommand: class {
-    input: unknown;
-    constructor(input: unknown) {
-      this.input = input;
-    }
-  },
-  GetFunctionUrlConfigCommand: class {
-    input: unknown;
-    constructor(input: unknown) {
-      this.input = input;
-    }
-  },
+  RunMicrovmCommand: microvmCommand("RunMicrovm"),
+  CreateMicrovmAuthTokenCommand: microvmCommand("CreateMicrovmAuthToken"),
+  TerminateMicrovmCommand: microvmCommand("TerminateMicrovm"),
+  GetMicrovmCommand: microvmCommand("GetMicrovm"),
+  SuspendMicrovmCommand: microvmCommand("SuspendMicrovm"),
+  ResumeMicrovmCommand: microvmCommand("ResumeMicrovm"),
 }));
 
 mock.module("@aws-sdk/client-sts", () => ({
@@ -200,34 +190,6 @@ mock.module("@aws-sdk/client-sts", () => ({
   },
 }));
 
-mock.module("@kubernetes/client-node", () => ({
-  KubeConfig: class {
-    loadFromDefault() {}
-    loadFromString(_raw: string) {}
-    makeApiClient(api: new () => unknown) {
-      return new api();
-    }
-  },
-  CoreV1Api: class {
-    readNamespacedPod = k8sReadNamespacedPodMock;
-  },
-  CustomObjectsApi: class {
-    createNamespacedCustomObject = k8sCreateNamespacedCustomObjectMock;
-    deleteNamespacedCustomObject = k8sDeleteNamespacedCustomObjectMock;
-    getNamespacedCustomObject = k8sGetNamespacedCustomObjectMock;
-    patchNamespacedCustomObject = k8sPatchNamespacedCustomObjectMock;
-  },
-  NetworkingV1Api: class {
-    createNamespacedNetworkPolicy = k8sCreateNamespacedNetworkPolicyMock;
-    replaceNamespacedNetworkPolicy = k8sReplaceNamespacedNetworkPolicyMock;
-    deleteNamespacedNetworkPolicy = k8sDeleteNamespacedNetworkPolicyMock;
-  },
-  Exec: class {
-    constructor(_kc: unknown) {}
-    exec = k8sExecMock;
-  },
-}));
-
 beforeEach(() => {
   process.env.AWS_ACCESS_KEY_ID = "test-access-key";
   process.env.AWS_SECRET_ACCESS_KEY = "test-secret-key";
@@ -237,11 +199,10 @@ beforeEach(() => {
   process.env.FILESYSTEM_BUCKET_NAME = "workspace-bucket";
   process.env.SKILLS_BUCKET_NAME = "skills-bucket";
   process.env.PERSISTENT_SANDBOX_INSTANCE_TABLE_NAME = "persistent-sandbox-instance";
-  process.env.SANDBOX_FN_MOUNT_NET = "sandbox-mount-net";
-  process.env.SANDBOX_FN_MOUNT_NONET = "sandbox-mount-nonet";
-  process.env.SANDBOX_FN_NOMOUNT_NET = "sandbox-nomount-net";
-  process.env.SANDBOX_FN_NOMOUNT_NONET = "sandbox-nomount-nonet";
-  delete process.env.KUBERNETES_SANDBOX_SERVICE_ACCOUNT;
+  process.env.MICROVM_IMAGE_IDENTIFIER = "arn:aws:lambda:us-east-1:123456789012:microvm-image:sandbox";
+  process.env.MICROVM_EXECUTION_ROLE_ARN = "arn:aws:iam::123456789012:role/microvm-execution";
+  process.env.MICROVM_EGRESS_NETWORK_CONNECTOR_ARN = "arn:aws:lambda:us-east-1:123456789012:network-connector:vpc-egress";
+  globalThis.fetch = microvmFetchMock as unknown as typeof fetch;
   e2bRunMock.mockClear();
   e2bDisconnectMock.mockClear();
   e2bKillMock.mockClear();
@@ -249,6 +210,7 @@ beforeEach(() => {
   daytonaExecuteCommandMock.mockClear();
   daytonaDeleteMock.mockClear();
   daytonaCreateMock.mockClear();
+  daytonaClientOptionsSeen = [];
   vercelRunCommandMock.mockClear();
   vercelStopMock.mockClear();
   vercelDeleteMock.mockClear();
@@ -260,18 +222,10 @@ beforeEach(() => {
   claimSandboxInstanceMock.mockClear();
   saveSandboxInstanceMock.mockClear();
   deleteSandboxInstanceMock.mockClear();
-  lambdaSendMock.mockClear();
-  k8sCreateNamespacedCustomObjectMock.mockClear();
-  k8sDeleteNamespacedCustomObjectMock.mockClear();
-  k8sGetNamespacedCustomObjectMock.mockClear();
-  k8sPatchNamespacedCustomObjectMock.mockClear();
-  k8sCreateNamespacedNetworkPolicyMock.mockClear();
-  k8sReplaceNamespacedNetworkPolicyMock.mockClear();
-  k8sDeleteNamespacedNetworkPolicyMock.mockClear();
-  k8sGetSandboxResult = undefined;
-  k8sReadNamespacedPodMock.mockClear();
-  k8sExecMock.mockClear();
-  lambdaPayload = {
+  microvmSendMock.mockClear();
+  microvmFetchMock.mockClear();
+  microvmGetResponses = [];
+  microvmExecPayload = {
     ok: true,
     runtime: "bash",
     exit_code: 0,
@@ -282,23 +236,27 @@ beforeEach(() => {
   };
 });
 
+afterEach(() => {
+  globalThis.fetch = originalFetch;
+});
+
 const NS = "fs-0123456789abcdef0123456789abcdef01234567";
 
 describe("createSandboxExecutor", () => {
-  it("creates the built-in Lambda executor by default", () => {
+  it("requires an explicit provider and never silently defaults", () => {
     const { createSandboxExecutor } = require("../functions/harness-processing/sandbox/index.ts");
-    expect(createSandboxExecutor({}).constructor.name).toBe("LambdaSandboxExecutor");
+    expect(() => createSandboxExecutor({})).toThrow(/provider/);
+    expect(createSandboxExecutor({ provider: "lambda" }).constructor.name).toBe("MicrovmSandboxExecutor");
   });
 
-  it("creates E2B, Daytona, Kubernetes, and Vercel executor adapters", () => {
+  it("creates E2B, Daytona, and Vercel executor adapters", () => {
     const { createSandboxExecutor } = require("../functions/harness-processing/sandbox/index.ts");
     expect(createSandboxExecutor({ provider: "e2b" }).constructor.name).toBe("E2BSandboxExecutor");
     expect(createSandboxExecutor({ provider: "daytona" }).constructor.name).toBe("DaytonaSandboxExecutor");
-    expect(createSandboxExecutor({ provider: "kubernetes" }).constructor.name).toBe("KubernetesSandboxExecutor");
     expect(createSandboxExecutor({ provider: "vercel" }).constructor.name).toBe("VercelSandboxExecutor");
   });
 
-  it("selects the mounted (no-internet) lambda when a namespace is present", async () => {
+  it("runs a MicroVM and mounts the workspace via the run-hook payload when a namespace is present", async () => {
     const { createSandboxExecutor } = require("../functions/harness-processing/sandbox/index.ts");
     const executor = createSandboxExecutor({ provider: "lambda" });
 
@@ -311,9 +269,24 @@ describe("createSandboxExecutor", () => {
     });
 
     expect(result).toMatchObject({ ok: true, provider: "lambda", stdout: "shell ok\n" });
-    const command = lambdaSendMock.mock.calls[0]![0] as { input: { FunctionName: string; Payload: Uint8Array } };
-    expect(command.input.FunctionName).toBe("sandbox-mount-nonet");
-    expect(JSON.parse(new TextDecoder().decode(command.input.Payload))).toMatchObject({
+    // RunMicrovm carries the image identifier + a run-hook payload describing the
+    // workspace mount (namespace + scoped, short-lived assume-role creds).
+    const runInput = microvmRunInput();
+    expect(runInput.imageIdentifier).toBe("arn:aws:lambda:us-east-1:123456789012:microvm-image:sandbox");
+    expect(runInput.executionRoleArn).toBe("arn:aws:iam::123456789012:role/microvm-execution");
+    const payload = JSON.parse(runInput.runHookPayload as string);
+    expect(payload.workspace).toMatchObject({ namespace: NS, root: "/mnt/workspaces" });
+    expect(payload.workspace.mount).toMatchObject({
+      bucket: "workspace-bucket",
+      prefix: `${NS}/`,
+      env: { AWS_ACCESS_KEY_ID: "scoped-access-key" },
+    });
+    // The exec request is POSTed to the VM endpoint with the proxy auth headers.
+    const [url, init] = microvmFetchMock.mock.calls[0] as [string, { headers: Record<string, string>; body: string }];
+    expect(url).toBe("https://microvm-1.lambda-microvm.us-east-1.on.aws/exec");
+    expect(init.headers["X-aws-proxy-auth"]).toBe("proxy-token");
+    expect(init.headers["X-aws-proxy-port"]).toBe("8080");
+    expect(JSON.parse(init.body)).toMatchObject({
       runtime: "bash",
       code: "echo ok",
       namespace: NS,
@@ -322,17 +295,108 @@ describe("createSandboxExecutor", () => {
     });
   });
 
-  it("selects the no-mount internet lambda when stateless + allow-all network", async () => {
+  it("launches from the config snapshot pin, overriding the MICROVM_IMAGE_IDENTIFIER default", async () => {
+    const { createSandboxExecutor } = require("../functions/harness-processing/sandbox/index.ts");
+    const executor = createSandboxExecutor({
+      provider: "lambda",
+      snapshot: "arn:aws:lambda:us-east-1:123456789012:microvm-image:curated",
+    });
+
+    await executor.run({ code: "echo ok", timeoutSeconds: 30, outputLimitBytes: 4096 });
+
+    expect(microvmRunInput().imageIdentifier).toBe("arn:aws:lambda:us-east-1:123456789012:microvm-image:curated");
+  });
+
+  it("runs a stateless MicroVM with default internet egress and no workspace mount", async () => {
     const { createSandboxExecutor } = require("../functions/harness-processing/sandbox/index.ts");
     const executor = createSandboxExecutor({ provider: "lambda", network: { mode: "allow-all" } });
 
     await executor.run({ code: "echo ok", timeoutSeconds: 30, outputLimitBytes: 4096 });
-    const command = lambdaSendMock.mock.calls[0]![0] as { input: { FunctionName: string; Payload: Uint8Array } };
-    expect(command.input.FunctionName).toBe("sandbox-nomount-net");
-    expect(JSON.parse(new TextDecoder().decode(command.input.Payload)).namespace).toBeUndefined();
+    const runInput = microvmRunInput();
+    expect(runInput.runHookPayload).toBeUndefined();
+    expect(runInput.egressNetworkConnectors).toBeUndefined();
+    const init = microvmFetchMock.mock.calls[0]![1] as { body: string };
+    expect(JSON.parse(init.body).namespace).toBeUndefined();
   });
 
-  it("maps restricted lambda network to the no-internet slot", async () => {
+  it("reconnects to a reserved MicroVM for a persistent run and never terminates it", async () => {
+    storedSandboxExternalId = "microvm-1";
+    const { createSandboxExecutor } = require("../functions/harness-processing/sandbox/index.ts");
+    const executor = createSandboxExecutor({ provider: "lambda", persistent: true });
+
+    const result = await executor.run({
+      code: "echo ok", namespace: NS, workspaceRoot: "/mnt/workspaces", timeoutSeconds: 30, outputLimitBytes: 4096,
+    });
+
+    expect(result).toMatchObject({ ok: true, provider: "lambda" });
+    const types = microvmSendMock.mock.calls.map((c) => (c[0] as { _type?: string })?._type);
+    // Reconnected via GetMicrovm; no fresh RunMicrovm and no Terminate (persistent).
+    expect(types).toContain("GetMicrovm");
+    expect(types).not.toContain("RunMicrovm");
+    expect(types).not.toContain("TerminateMicrovm");
+  });
+
+  it("resumes a suspended reserved MicroVM before using its endpoint", async () => {
+    storedSandboxExternalId = "microvm-1";
+    microvmGetResponses = [
+      { microvmId: "microvm-1", state: "SUSPENDED" },
+      { microvmId: "microvm-1", endpoint: "microvm-1.lambda-microvm.us-east-1.on.aws", state: "RUNNING" },
+    ];
+    const { createSandboxExecutor } = require("../functions/harness-processing/sandbox/index.ts");
+    const executor = createSandboxExecutor({ provider: "lambda", persistent: true });
+
+    await executor.run({
+      code: "echo ok", namespace: NS, workspaceRoot: "/mnt/workspaces", timeoutSeconds: 30, outputLimitBytes: 4096,
+    });
+
+    const types = microvmSendMock.mock.calls.map((c) => (c[0] as { _type?: string })?._type);
+    expect(types.filter((type) => type === "GetMicrovm")).toHaveLength(2);
+    expect(types).toContain("ResumeMicrovm");
+    expect(microvmFetchMock).toHaveBeenCalled();
+  });
+
+  it("fails persistent MicroVM runs when a lifecycle hook exits nonzero", async () => {
+    const { createSandboxExecutor } = require("../functions/harness-processing/sandbox/index.ts");
+    microvmExecPayload = {
+      ...microvmExecPayload,
+      ok: false,
+      exit_code: 22,
+      stdout: "",
+      stderr: "hook failed\n",
+    };
+    const executor = createSandboxExecutor({ provider: "lambda", persistent: true, onCreate: "exit 22" });
+
+    await expect(executor.run({
+      code: "echo ok", namespace: NS, workspaceRoot: "/mnt/workspaces", timeoutSeconds: 30, outputLimitBytes: 4096,
+    })).rejects.toThrow("hook failed");
+  });
+
+  it("launches a detached background job in the persistent MicroVM and returns a jobId", async () => {
+    storedSandboxExternalId = "microvm-1";
+    const { createSandboxExecutor } = require("../functions/harness-processing/sandbox/index.ts");
+    const executor = createSandboxExecutor({ provider: "lambda", persistent: true });
+
+    const handle = await executor.runBackground({
+      code: "uv run train.py",
+      namespace: NS,
+      workspaceRoot: "/mnt/workspaces",
+      timeoutSeconds: 30,
+      outputLimitBytes: 4096,
+      jobId: "job_test",
+      callback: { url: "https://fn.example/sandbox-jobs/job_test/complete", token: "tok-123" },
+    });
+
+    expect(handle.jobId).toBe("job_test");
+    // The launch script is POSTed to the VM /exec as a detached setsid session; the
+    // marker files live beside the workspace mount (not under the S3 mount).
+    const init = microvmFetchMock.mock.calls[0]![1] as { body: string };
+    const launched = JSON.parse(init.body).code as string;
+    expect(launched).toContain("setsid bash");
+    expect(launched).toContain("job_test.running");
+    expect(launched).toContain(`.fp-jobs/${NS}`);
+  });
+
+  it("passes the egress network connector for a restricted MicroVM network", async () => {
     const { createSandboxExecutor } = require("../functions/harness-processing/sandbox/index.ts");
     const executor = createSandboxExecutor({
       provider: "lambda",
@@ -340,14 +404,26 @@ describe("createSandboxExecutor", () => {
     });
 
     await executor.run({ code: "echo ok", timeoutSeconds: 30, outputLimitBytes: 4096 });
-    const command = lambdaSendMock.mock.calls[0]![0] as { input: { FunctionName: string } };
-    expect(command.input.FunctionName).toBe("sandbox-nomount-nonet");
+    const runInput = microvmRunInput();
+    expect(runInput.egressNetworkConnectors).toEqual([
+      "arn:aws:lambda:us-east-1:123456789012:network-connector:vpc-egress",
+    ]);
   });
 
-  it("applies the harness output limit to lambda responses", async () => {
+  it("fails closed when a restricted MicroVM network has no egress connector", async () => {
+    delete process.env.MICROVM_EGRESS_NETWORK_CONNECTOR_ARN;
     const { createSandboxExecutor } = require("../functions/harness-processing/sandbox/index.ts");
-    lambdaPayload = {
-      ...lambdaPayload,
+    const executor = createSandboxExecutor({ provider: "lambda", network: { mode: "restricted", allowDomains: ["api.example.com"] } });
+
+    await expect(executor.run({ code: "echo ok", timeoutSeconds: 30, outputLimitBytes: 4096 }))
+      .rejects.toThrow("MICROVM_EGRESS_NETWORK_CONNECTOR_ARN");
+    expect(microvmSendMock).not.toHaveBeenCalled();
+  });
+
+  it("applies the harness output limit to MicroVM responses", async () => {
+    const { createSandboxExecutor } = require("../functions/harness-processing/sandbox/index.ts");
+    microvmExecPayload = {
+      ...microvmExecPayload,
       stdout: "abcdef",
       stderr: "uvwxyz",
     };
@@ -467,9 +543,9 @@ describe("createSandboxExecutor", () => {
     // The sandbox gets role-scoped credentials, never the harness runtime's own.
     const assumeRoleInput = (stsSendMock.mock.calls.at(-1)?.[0] as { input: { RoleArn: string; Policy?: string } }).input;
     expect(assumeRoleInput.RoleArn).toBe("arn:aws:iam::123456789012:role/sandbox-s3mount");
-    expect(assumeRoleInput.Policy).toContain(`workspace-bucket/sandbox/${NS}/`);
+    expect(assumeRoleInput.Policy).toContain(`workspace-bucket/${NS}/`);
     expect(daytonaExecuteCommandMock).toHaveBeenCalledWith(
-      `mountpoint -q '/mnt/workspaces/${NS}' || sudo -E mount-s3 --uid "$(id -u)" --gid "$(id -g)" '--allow-delete' '--allow-overwrite' '--allow-other' '--prefix' 'sandbox/${NS}/' '--region' 'us-east-1' 'workspace-bucket' '/mnt/workspaces/${NS}'`,
+      `mountpoint -q '/mnt/workspaces/${NS}' || sudo -E mount-s3 --uid "$(id -u)" --gid "$(id -g)" '--allow-delete' '--allow-overwrite' '--allow-other' '--prefix' '${NS}/' '--region' 'us-east-1' 'workspace-bucket' '/mnt/workspaces/${NS}'`,
     );
     expect(daytonaExecuteCommandMock).toHaveBeenCalledWith(
       "echo hi && ls",
@@ -478,6 +554,45 @@ describe("createSandboxExecutor", () => {
       45,
     );
     expect(daytonaDeleteMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("requires a tenant API key when a tenant Daytona API URL is configured", async () => {
+    const { createSandboxExecutor } = require("../functions/harness-processing/sandbox/index.ts");
+    const executor = createSandboxExecutor({
+      provider: "daytona",
+      options: { apiUrl: "https://tenant-daytona.example.com" },
+    });
+
+    await expect(executor.run({ code: "echo ok", timeoutSeconds: 30, outputLimitBytes: 4096 }))
+      .rejects.toThrow("config.options.apiKey is required");
+    expect(daytonaCreateMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects unsafe tenant Daytona API URLs", async () => {
+    const { createSandboxExecutor } = require("../functions/harness-processing/sandbox/index.ts");
+    const executor = createSandboxExecutor({
+      provider: "daytona",
+      options: { apiUrl: "https://169.254.169.254", apiKey: "tenant-key" },
+    });
+
+    await expect(executor.run({ code: "echo ok", timeoutSeconds: 30, outputLimitBytes: 4096 }))
+      .rejects.toThrow("config.options.apiUrl must not target");
+    expect(daytonaCreateMock).not.toHaveBeenCalled();
+  });
+
+  it("passes tenant Daytona API URLs only with tenant credentials", async () => {
+    const { createSandboxExecutor } = require("../functions/harness-processing/sandbox/index.ts");
+    const executor = createSandboxExecutor({
+      provider: "daytona",
+      options: { apiUrl: "https://tenant-daytona.example.com", apiKey: "tenant-key" },
+    });
+
+    await executor.run({ code: "echo ok", timeoutSeconds: 30, outputLimitBytes: 4096 });
+
+    expect(daytonaClientOptionsSeen[0]).toMatchObject({
+      apiUrl: "https://tenant-daytona.example.com",
+      apiKey: "tenant-key",
+    });
   });
 
   it("rejects Daytona S3 mounts without a namespace before assuming the mount role", async () => {
@@ -501,6 +616,46 @@ describe("createSandboxExecutor", () => {
     })).rejects.toThrow("Daytona AWS S3 mounts require a workspace namespace");
 
     expect(stsSendMock.mock.calls.length).toBe(stsCallCount);
+  });
+
+  it("mounts a Daytona bring-your-own bucket via the workspace storage assume-role", async () => {
+    const { createSandboxExecutor } = require("../functions/harness-processing/sandbox/index.ts");
+    const executor = createSandboxExecutor({
+      provider: "daytona",
+      storage: {
+        provider: "s3",
+        bucket: "acme",
+        region: "us-west-2",
+        endpoint: "https://r2.example.com",
+        prefix: "agents/",
+        auth: { type: "assumeRole", roleArn: "arn:aws:iam::222:role/byo", externalId: "ext-7" },
+      },
+      options: { organizationId: "org-id", workspaceRoot: "/mnt/workspaces", mountAwsS3Buckets: true },
+    });
+
+    await executor.run({
+      code: "echo hi",
+      namespace: NS,
+      workspaceRoot: "/mnt/workspaces",
+      timeoutSeconds: 30,
+      outputLimitBytes: 4096,
+    });
+
+    // The developer's bucket/prefix/region/endpoint drive the mount, not the managed defaults.
+    expect(daytonaCreateMock).toHaveBeenCalledWith(expect.objectContaining({
+      envVars: expect.objectContaining({
+        AWS_ACCESS_KEY_ID: "scoped-access-key",
+        AWS_REGION: "us-west-2",
+        AWS_DEFAULT_REGION: "us-west-2",
+      }),
+    }));
+    const assumeRoleInput = (stsSendMock.mock.calls.at(-1)?.[0] as { input: { RoleArn: string; ExternalId?: string; Policy?: string } }).input;
+    expect(assumeRoleInput.RoleArn).toBe("arn:aws:iam::222:role/byo");
+    expect(assumeRoleInput.ExternalId).toBe("ext-7");
+    expect(assumeRoleInput.Policy).toContain("acme/agents/");
+    expect(daytonaExecuteCommandMock).toHaveBeenCalledWith(
+      `mountpoint -q '/mnt/workspaces/${NS}' || sudo -E mount-s3 --uid "$(id -u)" --gid "$(id -g)" '--allow-delete' '--allow-overwrite' '--allow-other' '--prefix' 'agents/' '--region' 'us-west-2' '--endpoint-url' 'https://r2.example.com' 'acme' '/mnt/workspaces/${NS}'`,
+    );
   });
 
   it("runs Vercel commands and adapts async command output", async () => {
@@ -570,145 +725,6 @@ describe("createSandboxExecutor", () => {
     expect(vercelCommandIncludes("echo resume >> hook.txt")).toBe(true);
   });
 
-  it("uses the workspace service account for Kubernetes S3 mounts by default", async () => {
-    const { KubernetesSandboxExecutor } = await import("../functions/harness-processing/sandbox/kubernetes-executor.ts");
-    const executor = new KubernetesSandboxExecutor({
-      provider: "kubernetes",
-      options: {
-        mountAwsS3Buckets: true,
-        workspaceRoot: "/mnt/workspaces",
-      },
-    });
-
-    const result = await executor.run({
-      code: "echo hi",
-      namespace: NS,
-      workspaceRoot: "/mnt/workspaces",
-      timeoutSeconds: 45,
-      outputLimitBytes: 4096,
-    });
-
-    expect(result).toMatchObject({ ok: true, provider: "kubernetes" });
-    const createInput = k8sCreateNamespacedCustomObjectMock.mock.calls[0]![0] as {
-      body: { spec: { podTemplate: { spec: { serviceAccountName?: string; containers: Array<{ securityContext?: unknown }> } } } };
-    };
-    const podSpec = createInput.body.spec.podTemplate.spec;
-    expect(podSpec.serviceAccountName).toBe("agent-sandbox-workspace");
-    expect(podSpec.containers[0]?.securityContext).toEqual({ privileged: true, runAsUser: 0 });
-    expect(k8sExecMock.mock.calls.map((call) => call[3])).toContainEqual([
-      "bash",
-      "-lc",
-      expect.stringContaining("mount-s3 --uid 1000 --gid 1000"),
-    ]);
-  });
-
-  it("reserves a persistent Kubernetes sandbox with a home PVC and never deletes it", async () => {
-    const { KubernetesSandboxExecutor } = await import("../functions/harness-processing/sandbox/kubernetes-executor.ts");
-    const executor = new KubernetesSandboxExecutor({
-      provider: "kubernetes",
-      persistent: true,
-      lifecycle: { idleTimeoutSeconds: 1800 },
-      options: { mountAwsS3Buckets: true, workspaceRoot: "/mnt/workspaces", persistentDiskGb: 10 },
-    });
-
-    const result = await executor.run({
-      code: "echo hi",
-      namespace: NS,
-      workspaceRoot: "/mnt/workspaces",
-      timeoutSeconds: 30,
-      outputLimitBytes: 4096,
-    });
-
-    expect(result).toMatchObject({ ok: true, provider: "kubernetes" });
-    expect(k8sCreateNamespacedCustomObjectMock).toHaveBeenCalledTimes(1);
-    expect(k8sDeleteNamespacedCustomObjectMock).not.toHaveBeenCalled();
-    const body = (k8sCreateNamespacedCustomObjectMock.mock.calls[0]![0] as { body: Record<string, any> }).body;
-    expect(body.metadata.name).toMatch(/^fp-p-/);
-    expect(body.metadata.labels).toEqual({ "broods.app/persistent": "true" });
-    expect(body.metadata.annotations["broods.app/idle-timeout-seconds"]).toBe("1800");
-    expect(body.spec.replicas).toBe(1);
-    expect(body.spec.shutdownPolicy).toBe("Delete");
-    expect(typeof body.spec.shutdownTime).toBe("string");
-    expect(body.spec.volumeClaimTemplates[0].metadata.name).toBe("home");
-    expect(body.spec.volumeClaimTemplates[0].spec.resources.requests.storage).toBe("10Gi");
-    const container = body.spec.podTemplate.spec.containers[0];
-    expect(container.volumeMounts).toEqual([{ name: "home", mountPath: "/home/node" }]);
-    expect(container.env).toEqual(expect.arrayContaining([{ name: "HOME", value: "/home/node" }]));
-    expect(k8sPatchNamespacedCustomObjectMock).toHaveBeenCalled();
-  });
-
-  it("skips the home PVC for an ephemeralHome persistent sandbox but keeps HOME", async () => {
-    const { KubernetesSandboxExecutor } = await import("../functions/harness-processing/sandbox/kubernetes-executor.ts");
-    const executor = new KubernetesSandboxExecutor({
-      provider: "kubernetes",
-      persistent: true,
-      ephemeralHome: true,
-      options: {},
-    });
-
-    await executor.run({
-      code: "echo hi",
-      reservationKey: "custom-tool:acct_1:tool_1",
-      workspaceRoot: "/tmp",
-      timeoutSeconds: 30,
-      outputLimitBytes: 4096,
-    });
-
-    const body = (k8sCreateNamespacedCustomObjectMock.mock.calls[0]![0] as { body: Record<string, any> }).body;
-    expect(body.spec.replicas).toBe(1);
-    // Reserved + reused, but no cloud volume to provision: the cold-start win.
-    expect(body.spec.volumeClaimTemplates).toBeUndefined();
-    const container = body.spec.podTemplate.spec.containers[0];
-    expect(container.volumeMounts).toBeUndefined();
-    expect(body.spec.podTemplate.spec.securityContext).toBeUndefined();
-    expect(container.env).toEqual(expect.arrayContaining([{ name: "HOME", value: "/home/node" }]));
-  });
-
-  it("creates a Kubernetes deny-all NetworkPolicy by default", async () => {
-    const { KubernetesSandboxExecutor } = await import("../functions/harness-processing/sandbox/kubernetes-executor.ts");
-    const executor = new KubernetesSandboxExecutor({ provider: "kubernetes" });
-
-    await executor.run({
-      code: "echo hi",
-      namespace: NS,
-      workspaceRoot: "/mnt/workspaces",
-      timeoutSeconds: 30,
-      outputLimitBytes: 4096,
-    });
-
-    const policy = k8sCreateNamespacedNetworkPolicyMock.mock.calls[0]![0] as {
-      body: { spec: { podSelector: { matchLabels: Record<string, string> }; egress: unknown[] } };
-    };
-    expect(policy.body.spec.podSelector.matchLabels["broods.app/sandbox-name"]).toMatch(/^fp-/);
-    expect(policy.body.spec.egress).toEqual([]);
-  });
-
-  it("resumes an idled persistent sandbox by scaling replicas 0 -> 1", async () => {
-    const { KubernetesSandboxExecutor } = await import("../functions/harness-processing/sandbox/kubernetes-executor.ts");
-    k8sGetSandboxResult = { spec: { replicas: 0 } };
-    const executor = new KubernetesSandboxExecutor({
-      provider: "kubernetes",
-      persistent: true,
-      options: { mountAwsS3Buckets: true, workspaceRoot: "/mnt/workspaces" },
-    });
-
-    await executor.run({
-      code: "echo hi",
-      namespace: NS,
-      workspaceRoot: "/mnt/workspaces",
-      timeoutSeconds: 30,
-      outputLimitBytes: 4096,
-    });
-
-    expect(k8sCreateNamespacedCustomObjectMock).not.toHaveBeenCalled();
-    const scalePatch = k8sPatchNamespacedCustomObjectMock.mock.calls.find(
-      (call) => Array.isArray((call[0] as { body?: unknown }).body) &&
-        ((call[0] as { body: Array<{ path?: string }> }).body)[0]?.path === "/spec/replicas",
-    );
-    expect(scalePatch).toBeTruthy();
-    const scaleBody = (scalePatch![0] as { body: Array<{ value: number }> }).body;
-    expect(scaleBody[0]?.value).toBe(1);
-  });
 });
 
 describe("background job scripts", () => {
@@ -812,6 +828,6 @@ describe("workspaceNamespacePrefix", () => {
   it("prefixes namespaces with the sandbox mount root so harness and mount agree", async () => {
     const { workspaceNamespacePrefix } = await import("../functions/_shared/sandbox.ts");
     // Must match SandboxS3FilesAccessPoint.rootDirectories[].path in sst.config.ts.
-    expect(workspaceNamespacePrefix("fs-abc")).toBe("sandbox/fs-abc");
+    expect(workspaceNamespacePrefix("fs-abc")).toBe("fs-abc");
   });
 });

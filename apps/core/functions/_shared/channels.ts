@@ -3,22 +3,16 @@
  * Define the shared HTTP and channel adapter boundaries for inbound webhook traffic.
  */
 
+import type { StreamChunk, StreamOptions } from "chat";
 import type { UserContent } from "ai";
 
 export interface ChannelActions {
   sendText(text: string): Promise<void>;
   sendTyping(): Promise<void>;
   reactToMessage(): Promise<void>;
-  // Optional streaming primitives. A channel that can edit a posted message
-  // implements both: beginMessage posts the first partial reply and returns its
-  // id; editMessage rewrites it. The shared streaming driver (channel-streaming.ts)
-  // uses them for "edit" mode and falls back to chunked sendText when absent. Both
-  // format text the same way as sendText.
-  beginMessage?(text: string): Promise<string>;
-  editMessage?(messageId: string, text: string): Promise<void>;
-  // Provider message-length cap for edit/progress streaming (raw chars). The driver
-  // rotates into a new message past this; defaults to ~3500 when unset.
-  editMaxChars?: number;
+  // Optional native SDK/platform streaming. Channels omit it when the provider
+  // lacks SDK streaming support, in which case the harness sends one final reply.
+  stream?(textStream: AsyncIterable<string | StreamChunk>, options?: StreamOptions): Promise<string | null>;
 }
 
 export interface ChannelRequest {
@@ -55,8 +49,8 @@ export interface ParsedChannelMessage {
  */
 export type ChannelParseResult =
   | ParsedChannelMessage
-  | { kind: "ignore"; response?: ChannelResponse }
-  | { kind: "response"; response: ChannelResponse };
+  | { kind: "ignore"; reason?: string; response?: ChannelResponse }
+  | { kind: "response"; reason?: string; response: ChannelResponse };
 
 export interface ChannelAdapter {
   readonly name: string;

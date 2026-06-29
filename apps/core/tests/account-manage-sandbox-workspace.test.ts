@@ -104,6 +104,25 @@ describe("account-manage sandbox endpoints", () => {
     const response = await handler(createEvent("GET", "/accounts/me/sandboxes"));
     expect(response.statusCode).toBe(401);
   });
+
+  it("rejects lifecycle actions for reservation keys not owned by the account/config", async () => {
+    process.env.SERVICE_AUTH_SECRET = "service-secret";
+    setStorageForTests(createFakeStorage());
+    const created = responseJson(await handler(createEvent("POST", "/accounts/me/sandboxes", AUTH, {
+      name: "persistent",
+      config: { provider: "sandbox", persistent: true, options: { workdirUrl: "https://workdir.example.com", apiKey: "tenant-key" } },
+    }))) as SandboxConfigRecord;
+
+    const response = await handler(createEvent(
+      "POST",
+      `/accounts/me/sandboxes/${created.sandboxId}/terminate`,
+      { authorization: "Bearer service-secret", "x-account-id": ACCOUNT_ID },
+      { reservationKey: "fs-not-owned-by-this-account" },
+    ));
+
+    expect(response.statusCode).toBe(403);
+    expect(responseJson(response)).toEqual({ error: "reservationKey does not belong to this account or sandbox config" });
+  });
 });
 
 describe("account-manage workspace endpoints", () => {

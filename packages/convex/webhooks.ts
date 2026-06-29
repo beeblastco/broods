@@ -12,6 +12,7 @@ import { mutation, query } from "./_generated/server";
 import type { MutationCtx } from "./_generated/server";
 import { authKit } from "./auth";
 import { ensureAgentsRowForConfig, pushEncryptedConfigToAgentRow } from "./model/agentSync";
+import { isPlainObject } from "./model/objects";
 import { getOwnedEnvironment } from "./model/ownership/environment";
 import { getOwnedProject } from "./model/ownership/project";
 import { scheduleServiceLog } from "./observability";
@@ -25,16 +26,12 @@ const webhookRow = v.object({
     events: v.array(v.string()),
 });
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-    return Boolean(value && typeof value === "object" && !Array.isArray(value));
-}
-
 /** Reads the `hooks.webhooks` array out of an agent config's `extraConfig` blob. */
 function readWebhooks(extraConfig: unknown): Record<string, unknown>[] {
-    const hooks = isRecord(extraConfig) && isRecord(extraConfig.hooks) ? extraConfig.hooks : undefined;
+    const hooks = isPlainObject(extraConfig) && isPlainObject(extraConfig.hooks) ? extraConfig.hooks : undefined;
     const webhooks = hooks && Array.isArray(hooks.webhooks) ? hooks.webhooks : [];
 
-    return webhooks.filter(isRecord);
+    return webhooks.filter(isPlainObject);
 }
 
 /**
@@ -104,8 +101,8 @@ async function mutateAgentWebhooks(
         throw new Error("Agent config not found.");
     }
 
-    const extra: Record<string, unknown> = isRecord(config.extraConfig) ? { ...config.extraConfig } : {};
-    const hooks: Record<string, unknown> = isRecord(extra.hooks) ? { ...extra.hooks } : {};
+    const extra: Record<string, unknown> = isPlainObject(config.extraConfig) ? { ...config.extraConfig } : {};
+    const hooks: Record<string, unknown> = isPlainObject(extra.hooks) ? { ...extra.hooks } : {};
     hooks.webhooks = mutate(readWebhooks(config.extraConfig));
     extra.hooks = hooks;
 

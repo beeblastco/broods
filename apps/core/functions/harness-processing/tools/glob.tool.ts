@@ -113,7 +113,7 @@ Usage notes:
           // read-only mount); otherwise list S3 objects directly (sandbox: null opt-out).
           const runner = ws.sandbox ?? ws.readMount;
           if (!runner) {
-            return await s3Glob(ws.namespace, pattern, path);
+            return await s3Glob(ws, pattern, path);
           }
           const root = path ? toWorkspaceRelative(path) : ".";
           const code = globScript(toBase64(pattern), toBase64(root));

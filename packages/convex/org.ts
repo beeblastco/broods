@@ -3,7 +3,7 @@
  * own multiple orgs; membership is tracked in the `orgMembers` join table.
  */
 import { v } from "convex/values";
-import type { MutationCtx } from "./_generated/server";
+import type { MutationCtx, QueryCtx } from "./_generated/server";
 import { mutation, query } from "./_generated/server";
 import { authKit } from "./auth";
 import { purgeOrg } from "./model/cascade";
@@ -41,6 +41,33 @@ async function uniqueOrgSlug(
 }
 
 /**
+ * Resolves the broods `accounts` doc for the caller's active org, or null when
+ * the user is unauthenticated, has no active org, or it has not been
+ * provisioned yet. Shared by the account-scoped public queries so the
+ * auth -> user -> org -> account chain lives in one place.
+ * @param ctx query/mutation context.
+ * @returns the account document, or null when none resolves.
+ */
+export async function getActiveAccountForUser(ctx: QueryCtx) {
+    const authUser = await authKit.getAuthUser(ctx);
+    if (!authUser) return null;
+
+    const user = await ctx.db
+        .query("users")
+        .withIndex("by_authId", (q) => q.eq("authId", authUser.id))
+        .unique();
+    if (!user) return null;
+
+    const org = await getActiveOrgForUser(ctx, user._id);
+    if (!org) return null;
+
+    return await ctx.db
+        .query("accounts")
+        .withIndex("by_orgId", (q) => q.eq("orgId", org._id))
+        .unique();
+}
+
+/**
  * Returns the active org's broods account id + status for the caller, or
  * null when the user has no active org or it has not been provisioned yet.
  */
@@ -54,24 +81,7 @@ export const getActiveAccount = query({
         v.null(),
     ),
     handler: async (ctx) => {
-        const authUser = await authKit.getAuthUser(ctx);
-        if (!authUser) {
-            return null;
-        }
-
-        const user = await ctx.db
-            .query("users")
-            .withIndex("by_authId", (q) => q.eq("authId", authUser.id))
-            .unique();
-        if (!user) return null;
-
-        const org = await getActiveOrgForUser(ctx, user._id);
-        if (!org) return null;
-
-        const account = await ctx.db
-            .query("accounts")
-            .withIndex("by_orgId", (q) => q.eq("orgId", org._id))
-            .unique();
+        const account = await getActiveAccountForUser(ctx);
         if (!account) return null;
 
         return { accountId: account._id, status: account.status };

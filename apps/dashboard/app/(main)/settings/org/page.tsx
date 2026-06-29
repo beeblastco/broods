@@ -85,10 +85,10 @@ export default function OrgSettingsPage() {
 
             {/* Content area */}
             <div className="flex flex-1 flex-col overflow-auto">
-                <div className="px-8 pt-9.25 pb-6 mx-auto w-full max-w-2xl shrink-0">
+                <div className="px-6 pt-9.25 pb-6 mx-auto w-full max-w-2xl shrink-0">
                     <h2 className="text-xl font-semibold text-foreground">{activeLabel}</h2>
                 </div>
-                <div className="mx-auto w-full max-w-2xl px-8 pb-12">
+                <div className="mx-auto w-full max-w-2xl px-6 pb-12">
                     {org === undefined ? (
                         <p className="text-sm text-muted-foreground">Loading...</p>
                     ) : org === null ? (

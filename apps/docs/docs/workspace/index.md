@@ -141,7 +141,7 @@ flowchart TD
   Session --> Resolve["sandbox + workspace records<br/>(account-scoped lookups)"]
   Session --> Harness["harness.ts (streamText loop)"]
   Harness --> Tools["tools/index.ts<br/>per-workspace sandbox + permissionMode"]
-  Tools --> Sandbox["sandbox executor (run)<br/>lambda / e2b / daytona / kubernetes / vercel"]
+  Tools --> Sandbox["sandbox executor (run)<br/>sandbox / lambda / e2b / daytona / vercel"]
   Tools -->|read/glob on read-only workspace| Files
   Sandbox --> Files["workspace files on S3<br/>namespace = hash(accountId:workspaceId)"]
   Session -->|MEMORY.md via S3 API| Files

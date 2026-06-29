@@ -6,8 +6,7 @@
  */
 
 import { canonicalModelProvider, PROVIDER_CACHE_WRITE_FIELDS } from "@broods/convex/modelPricing";
-
-export { PROVIDER_CACHE_WRITE_FIELDS } from "@broods/convex/modelPricing";
+import { isPlainObject } from "../_shared/object.ts";
 
 // Cache-write tokens for one step; 0 when the provider doesn't break them out,
 // the field is absent, or metadata is missing. Never throws.
@@ -24,7 +23,7 @@ export function extractCacheWriteTokens(
   // providerMetadata shape: { [providerKey]: { [fieldName]: value, ... } }
   // The top-level key matches the canonical provider name (e.g. "anthropic").
   const providerBlock = providerMetadata[provider];
-  if (isRecord(providerBlock)) {
+  if (isPlainObject(providerBlock)) {
     const val = providerBlock[field];
     if (typeof val === "number" && val > 0) return val;
   }
@@ -32,9 +31,9 @@ export function extractCacheWriteTokens(
   // Bedrock wraps the Anthropic block under "anthropic" inside the bedrock block.
   if (provider === "bedrock") {
     const bedrockBlock = providerMetadata["bedrock"];
-    if (isRecord(bedrockBlock)) {
+    if (isPlainObject(bedrockBlock)) {
       const anthropicBlock = bedrockBlock["anthropic"];
-      if (isRecord(anthropicBlock)) {
+      if (isPlainObject(anthropicBlock)) {
         const val = anthropicBlock[field];
         if (typeof val === "number" && val > 0) return val;
       }
@@ -47,9 +46,9 @@ export function extractCacheWriteTokens(
   // Google: usageMetadata lives under the "google" key.
   if (provider === "google") {
     const googleBlock = providerMetadata["google"];
-    if (isRecord(googleBlock)) {
+    if (isPlainObject(googleBlock)) {
       const usageMeta = googleBlock["usageMetadata"];
-      if (isRecord(usageMeta)) {
+      if (isPlainObject(usageMeta)) {
         const val = usageMeta[field];
         if (typeof val === "number" && val > 0) return val;
       }
@@ -60,8 +59,4 @@ export function extractCacheWriteTokens(
   }
 
   return 0;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value && typeof value === "object" && !Array.isArray(value));
 }

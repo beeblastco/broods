@@ -4,7 +4,6 @@ export const zalo = defineZaloChannel({
   botToken: env.ZALO_BOT_TOKEN,
   webhookSecret: env.ZALO_WEBHOOK_SECRET,
   allowedUserIds: process.env.ZALO_ALLOWED_USER_IDS?.split(",").map((value) => value.trim()).filter(Boolean) ?? [],
-  streaming: { mode: "chunk" },
 });
 
 export const agent = defineAgent({

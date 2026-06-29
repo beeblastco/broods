@@ -63,7 +63,7 @@ describe("workspace file storage", () => {
     const files = await listWorkspaceFiles("acct_test", "ws_test");
 
     expect(listMock.mock.calls[0]?.[0]).toBe("workspace-bucket");
-    expect(listMock.mock.calls[0]?.[1]).toMatch(/^sandbox\/fs-[a-f0-9]{40}\/$/);
+    expect(listMock.mock.calls[0]?.[1]).toMatch(/^fs-[a-f0-9]{40}\/$/);
     expect(files).toEqual([
       { path: "src", name: "src", isFolder: true },
       { path: "src/components", name: "components", isFolder: true },
@@ -87,7 +87,7 @@ describe("workspace file storage", () => {
     });
 
     const key = String(writeMock.mock.calls[0]?.[1]);
-    expect(key).toMatch(/^sandbox\/fs-[a-f0-9]{40}\/notes\/new\.txt$/);
+    expect(key).toMatch(/^fs-[a-f0-9]{40}\/notes\/new\.txt$/);
     expect(ensureDirectoriesMock).toHaveBeenCalledWith("workspace-bucket", key);
     expect(writeMock.mock.calls[0]?.[2]).toEqual(Buffer.from("hello"));
     expect(file).toEqual({ path: "notes/new.txt", name: "new.txt", isFolder: false, sizeBytes: 5 });

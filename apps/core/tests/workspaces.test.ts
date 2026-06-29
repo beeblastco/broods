@@ -29,7 +29,7 @@ describe("resolveAgentRuntime", () => {
     setStorageForTests({
       sandboxConfigs: {
         getById: async (_accountId: string, id: string) =>
-          id === "sb_1" ? { config: { provider: "lambda", permissionMode: "ask" } } : null,
+          id === "sb_1" ? { sandboxId: "sb_1", name: "primary", config: { provider: "lambda", permissionMode: "ask", snapshot: "img_primary" } } : null,
       },
       workspaceConfigs: {
         getById: async (_accountId: string, id: string) =>
@@ -43,14 +43,29 @@ describe("resolveAgentRuntime", () => {
     );
 
     expect(resolved.sandbox).toMatchObject({ provider: "lambda", permissionMode: "ask" });
-    // The workspace inherits the agent-level sandbox as its effective sandbox.
+    // The workspace inherits the agent-level sandbox as its effective sandbox, with
+    // its own storage identity attached so the executor resolves the mount target, plus
+    // the control-plane identity so a reserved instance can mirror itself into Convex.
     expect(resolved.workspaces).toEqual([{
       name: "notes",
       workspaceId: "ws_a",
       namespace: workspaceNamespace("acct_1", "ws_a"),
       description: "notes ws",
       config: { storage: { provider: "s3" } },
-      sandbox: { provider: "lambda", permissionMode: "ask" },
+      sandbox: {
+        provider: "lambda",
+        permissionMode: "ask",
+        snapshot: "img_primary",
+        storage: { provider: "s3" },
+        controlPlane: {
+          accountId: "acct_1",
+          sandboxConfigId: "sb_1",
+          name: "primary",
+          specs: { vcpu: 0.5, memoryMb: 1024, storageGb: 8 },
+          snapshotId: "img_primary",
+          permissionMode: "ask",
+        },
+      },
     }]);
   });
 

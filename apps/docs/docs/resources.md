@@ -172,7 +172,6 @@ export const telegram = defineTelegramChannel({
   botToken: env.TELEGRAM_BOT_TOKEN,
   webhookSecret: env.TELEGRAM_WEBHOOK_SECRET,
   allowedChatIds: [123456789],
-  streaming: { mode: "progress" },
 });
 
 export const myAgent = defineAgent({
@@ -207,7 +206,7 @@ export const myAgent = defineAgent({
     workspaces: [
       notes,                                          // inherit agent sandbox
       { workspace: notes, sandbox: null },            // read-only
-      { workspace: teamWorkspace, sandbox: k8sSandbox }, // per-workspace override
+      { workspace: teamWorkspace, sandbox: reservedSandbox }, // per-workspace override
     ],
   },
 });
@@ -311,10 +310,10 @@ export const lambdaSandbox = defineSandbox({
   },
 });
 
-export const k8sSandbox = defineSandbox({
-  name: "persistent-k8s",
+export const reservedSandbox = defineSandbox({
+  name: "persistent",
   config: {
-    provider: "kubernetes",
+    provider: "sandbox",
     network: { mode: "allow-all" },
     permissionMode: "bypass",
     persistent: true,
@@ -324,7 +323,7 @@ export const k8sSandbox = defineSandbox({
 });
 ```
 
-Supported providers: `lambda`, `e2b`, `daytona`, `kubernetes`, `vercel`.
+Supported providers: `sandbox`, `lambda`, `e2b`, `daytona`, `vercel`.
 
 See [Workspace & Sandbox](workspace/index.md) for the full sandbox model.
 

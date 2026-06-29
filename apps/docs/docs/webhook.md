@@ -1,6 +1,6 @@
 # Lifecycle Webhooks
 
-Lifecycle webhooks publish agent runtime events to an HTTPS endpoint configured on the agent. They are different from channel provider webhooks under `/webhooks/{accountId}/{agentId}/{channel}`.
+Lifecycle webhooks publish agent runtime events to an HTTPS endpoint configured on the agent. They are different from channel provider webhooks under `/webhooks/{accountId}/{agentId}/{channel}`, and different again from [sandbox hooks](workspace/sandbox/hook.md): a lifecycle webhook is **declarative HTTPS delivery of event JSON to an external service**, whereas sandbox `onCreate`/`onResume` commands run *inside the sandbox*. Neither uploads or executes user hook code today — per-invocation user code hooks are tracked under [#63](https://github.com/beeblastco/broods/issues/63).
 
 ```mermaid
 flowchart LR

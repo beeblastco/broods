@@ -6,6 +6,7 @@
  */
 
 import { optionalEnv } from "../../_shared/env.ts";
+import { isPlainObject } from "../../_shared/object.ts";
 import { resolveSandboxLifecycle } from "../../_shared/sandbox.ts";
 import { Buffer } from "node:buffer";
 import { Sandbox } from "e2b";
@@ -16,9 +17,10 @@ import type {
   SandboxRunRequest,
   SandboxRunResult,
 } from "./types.ts";
-import { configString, isRecordObject, isSandboxGoneError, sandboxReservationKey, shellQuote, stringRecord, truncateText } from "./utils.ts";
+import { configString, isSandboxGoneError, sandboxReservationKey, shellQuote, stringRecord, truncateText } from "./utils.ts";
 import { callbackSnippet, generateJobId } from "./jobs.ts";
 import { claimSandboxInstance, deleteSandboxInstance, getSandboxExternalId, saveSandboxInstance } from "./instance-store.ts";
+import { upsertSandboxInstance } from "../../_shared/storage/convex/sandbox-instances.ts";
 
 export class E2BSandboxExecutor implements SandboxExecutor {
   readonly #config: SandboxExecutorConfig;
@@ -102,6 +104,7 @@ export class E2BSandboxExecutor implements SandboxExecutor {
       try {
         const sandbox = await Sandbox.connect(externalId, e2bApiOptions(this.#config));
         await saveSandboxInstance("e2b", ns, externalId).catch(() => {});
+        await upsertSandboxInstance(this.#config.controlPlane, "e2b", ns, externalId);
         return sandbox;
       } catch {
         await deleteSandboxInstance("e2b", ns).catch(() => {});
@@ -109,6 +112,7 @@ export class E2BSandboxExecutor implements SandboxExecutor {
     }
     const created = await Sandbox.create(e2bCreateOptions(this.#config, true));
     if (await claimSandboxInstance("e2b", ns, created.sandboxId)) {
+      await upsertSandboxInstance(this.#config.controlPlane, "e2b", ns, created.sandboxId);
       return created;
     }
     // Lost a concurrent create race: discard our duplicate and reconnect to the
@@ -140,7 +144,7 @@ function e2bBackgroundCommand(request: SandboxRunRequest, jobId: string): string
 }
 
 function e2bApiOptions(config: SandboxExecutorConfig): Record<string, unknown> {
-  const options = isRecordObject(config.options) ? config.options : {};
+  const options = isPlainObject(config.options) ? config.options : {};
   const apiKey = configString(options.apiKey) ?? optionalEnv("E2B_API_KEY");
   return {
     ...(apiKey ? { apiKey } : {}),
@@ -149,7 +153,7 @@ function e2bApiOptions(config: SandboxExecutorConfig): Record<string, unknown> {
 }
 
 function e2bCreateOptions(config: SandboxExecutorConfig, persistent: boolean): Record<string, unknown> {
-  const options = isRecordObject(config.options) ? config.options : {};
+  const options = isPlainObject(config.options) ? config.options : {};
   const apiKey = configString(options.apiKey) ?? optionalEnv("E2B_API_KEY");
   const template = configString(options.template) ?? configString(options.templateId);
   return {

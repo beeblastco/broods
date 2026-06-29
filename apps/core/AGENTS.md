@@ -56,7 +56,7 @@ Key rules:
 - Priority to push to `dev` or `main` branch and let CI/CD workflows handle deployment.
 - To add a new communication channel (e.g. Slack, WhatsApp): create `functions/_shared/<channel>-channel.ts` implementing the `ChannelAdapter` interface from `functions/_shared/channels.ts`, then wire the normalization path into `functions/harness-processing/integrations.ts`. Reply sending should stay inside that channel's `ChannelActions`; do not hardcode channel-specific logic into shared handlers or the core agent loop.
 - To add a new bot command: add an entry to the `commands` array in `functions/_shared/commands.ts` with aliases, description, and an execute function. Commands receive a `CommandContext` with a channel-agnostic `ChannelActions` interface — do not import channel-specific modules from commands.
-- Reply formatting uses `markdownToHtml()` from `functions/_shared/telegram.ts` for Telegram. New channels should implement their own formatting in their channel module if needed.
+- Reply formatting should prefer the channel SDK/adapter formatter when one exists. New custom formatting should stay in the channel module only when the provider lacks SDK support.
 - Core secrets are managed via SST: `AdminAccountSecret` and `AccountConfigEncryptionSecret`. Channel, provider, and tool credentials live in each account's encrypted config when they are account-specific.
 
 Remember:

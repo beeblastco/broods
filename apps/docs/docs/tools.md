@@ -2,7 +2,7 @@
 
 This guide covers agent-configured external tools: built-in tools such as Tavily/Google Search and account-uploaded custom tools. It does not cover the sandbox tools (`bash`, `read`, `write`, `edit`, `glob`, `grep` — see [Workspace & Sandbox](workspace/index.md)), `load_skill`, or `run_subagent`.
 
-External tools are enabled per agent through `config.tools`. Built-in keys use their static name. Uploaded custom tools use their account-scoped `toolId` key, and the uploaded manifest supplies the model-facing name, description, and input schema. Uploaded tool code executes in a Kubernetes sandbox runner, not inside `harness-processing`.
+External tools are enabled per agent through `config.tools`. Built-in keys use their static name. Uploaded custom tools use their account-scoped `toolId` key, and the uploaded manifest supplies the model-facing name, description, and input schema. Uploaded tool code executes in a self-hosted `sandbox` (workdir Firecracker) runner, not inside `harness-processing`.
 
 ```mermaid
 flowchart LR
@@ -15,7 +15,7 @@ flowchart LR
   Call --> BuiltIn["built-in<br/>Lambda execute"]
   Call --> UploadedSse["uploaded + SSE<br/>wait for runner result"]
   Call --> UploadedDetached["uploaded + detached path<br/>runner completes by callback"]
-  UploadedSse --> Runner["Kubernetes tool runner"]
+  UploadedSse --> Runner["sandbox tool runner"]
   UploadedDetached --> Runner
 ```
 
@@ -28,7 +28,7 @@ flowchart LR
 | `googleSearch` | [`functions/harness-processing/tools/google-search.tool.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/functions/harness-processing/tools/google-search.tool.ts) | Google provider-defined tool | `config.tools.googleSearch` |
 | `handoffs` | [`functions/harness-processing/tools/handoffs.tool.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/functions/harness-processing/tools/handoffs.tool.ts) | Pancake tags + Zalo staff ping | `config.tools.handoffs` (`pancake.scenarioTagIds.{order,pending}`, `zalo.{botToken,notifyUserIds}`) |
 | `async_status` | [`functions/harness-processing/tools/async-status.tool.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/functions/harness-processing/tools/async-status.tool.ts) | — (auto-registered, see below) | — |
-| Uploaded custom tool | S3 bundle + account tool metadata | Kubernetes tool runner | `config.tools.<toolId>` |
+| Uploaded custom tool | S3 bundle + account tool metadata | sandbox tool runner | `config.tools.<toolId>` |
 
 `async_status` is not configured directly: it is registered automatically whenever any `config.tools` entry has `async: true` or a workspace has a persistent sandbox. It is the model-facing polling surface for the async lifecycle described below (`statusId` + actions `status`/`logs`/`stop`).
 
@@ -49,21 +49,21 @@ Tool registry path:
 7. `needsApproval` is applied before tools are passed to `streamText()`.
 8. Local `execute` tools with `async: true` are wrapped by `AsyncToolCoordinator`.
 
-Built-in local tools execute during the current `harness-processing` request. Uploaded custom tools run in a persistent Kubernetes runner pod keyed by account/tool. `harness-processing` creates a local Kubernetes executor client, but that does not mean a new pod is created for each call: `persistent: true` selects the reserved-sandbox path, and the stable account/tool `reservationKey` becomes the deterministic Kubernetes Sandbox name. Change the reservation key and the executor will address a different pod; keep it stable and it reconnects to the existing pod, creates it on first use, or resumes it after idle scale-to-zero.
+Built-in local tools execute during the current `harness-processing` request. Uploaded custom tools run in a persistent `sandbox` (workdir) runner keyed by account/tool. `harness-processing` creates a local sandbox executor client, but that does not mean a new sandbox is created for each call: `persistent: true` selects the reserved-sandbox path, and the stable account/tool `reservationKey` becomes the deterministic reserved-sandbox identity. Change the reservation key and the executor will address a different sandbox; keep it stable and it reconnects to the existing sandbox, creates it on first use, or resumes it after idle standby.
 
-Runner pods get a NetworkPolicy allowing egress to the public internet only — cluster IPs, the node metadata service, and other private ranges are blocked, so uploaded tool code can call external APIs and the result callback but nothing inside the cluster.
+Runners get a network egress policy allowing the public internet only — host IPs, the node metadata service, and other private ranges are blocked, so uploaded tool code can call external APIs and the result callback but nothing on the private network.
 
-Each call prefers the **resident worker**: a long-lived in-pod Node process serving HTTP over a unix socket (`/invoke` + `/health`), started on first use and reused across calls. The Lambda sends the tool input, merged config, the bundle (inlined base64 when ≤ 64 KB, otherwise a short-lived signed URL), bundle hash, and async metadata. The worker verifies the cached bundle under `/cache/tools/<sha256>` first, downloads only on cache miss, verifies the downloaded hash, imports the default export, calls `execute(ctx, input)`, and returns NDJSON frames. A short `exec` heredoc runner remains as fallback when the worker produces no frames. `$HOME/.cache/tools` and `/tmp/cache/tools` are fallback cache roots for images that do not expose `/cache/tools`.
+Each call prefers the **resident worker**: a long-lived in-sandbox Node process serving HTTP over a unix socket (`/invoke` + `/health`), started on first use and reused across calls. The Lambda sends the tool input, merged config, the bundle (inlined base64 when ≤ 64 KB, otherwise a short-lived signed URL), bundle hash, and async metadata. The worker verifies the cached bundle under `/cache/tools/<sha256>` first, downloads only on cache miss, verifies the downloaded hash, imports the default export, calls `execute(ctx, input)`, and returns NDJSON frames. A short `exec` heredoc runner remains as fallback when the worker produces no frames. `$HOME/.cache/tools` and `/tmp/cache/tools` are fallback cache roots for images that do not expose `/cache/tools`.
 
 ```mermaid
 sequenceDiagram
   participant H as harness-processing
-  participant K as Kubernetes executor
-  participant P as "persistent account/tool pod"
+  participant K as sandbox executor
+  participant P as "persistent account/tool sandbox"
   participant S as "S3 bundle object"
 
   H->>K: run(reservationKey=custom-tool-account-tool)
-  K->>P: reconnect/create/resume pod
+  K->>P: reconnect/create/resume sandbox
   P->>P: check /cache/tools/sha256/tool.mjs
   opt cache miss
     P->>S: GET signed bundle URL
@@ -75,10 +75,10 @@ sequenceDiagram
 
 ### Resident Worker
 
-The long-lived Node worker ([`custom-tool-worker.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/functions/harness-processing/tools/custom-tool-worker.ts)) is started inside the persistent pod on first use:
+The long-lived Node worker ([`custom-tool-worker.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/functions/harness-processing/tools/custom-tool-worker.ts)) is started inside the persistent sandbox on first use:
 
 ```text
-harness-processing -> exec into pod -> warm worker (unix-socket HTTP) -> cached module -> execute(ctx,input)
+harness-processing -> exec into sandbox -> warm worker (unix-socket HTTP) -> cached module -> execute(ctx,input)
 ```
 
 It keeps loaded modules in process memory (keyed by bundle hash, so a tool update loads the new module), serves only over a local unix socket, and is health-checked before each invoke. If the worker yields no frames, the call falls back to the one-shot `exec` heredoc runner.
@@ -108,9 +108,9 @@ When `config.tools.<name>.async` is `true`, the platform chooses the lifecycle f
 | --- | --- | --- | --- | --- | --- |
 | Built-in sync | all paths | `harness-processing` Lambda | Yes | tool `execute()` return value | same active agent loop |
 | Built-in async | all paths | `harness-processing` Lambda | Yes | tool `execute()` return value | same active agent loop injects result |
-| Uploaded sync | all paths | Kubernetes runner | Yes | runner returns final result | same active agent loop |
-| Uploaded async | SSE | Kubernetes runner | Yes | runner returns final result | same SSE Lambda injects result and streams final answer |
-| Uploaded async | `/async`, channel, NATS | Kubernetes background runner | No | token-authenticated completion endpoint | new continuation Lambda injects result |
+| Uploaded sync | all paths | sandbox runner | Yes | runner returns final result | same active agent loop |
+| Uploaded async | SSE | sandbox runner | Yes | runner returns final result | same SSE Lambda injects result and streams final answer |
+| Uploaded async | `/async`, channel, NATS | sandbox background runner | No | token-authenticated completion endpoint | new continuation Lambda injects result |
 
 SSE is the only path that must wait for uploaded async tools. The open SSE response belongs to the current Lambda invocation, so a later callback cannot write to that response without a separate broker/reconnect protocol. Detached paths already have a polling, channel, or NATS delivery target, so uploaded async tools are launched as sandbox background work and complete through the existing settle-and-continue pipeline.
 
@@ -120,7 +120,7 @@ sequenceDiagram
   participant P as Parent agent
   participant C as AsyncToolCoordinator
   participant D as DynamoDB AsyncToolResult
-  participant W as Kubernetes runner
+  participant W as sandbox runner
 
   alt built-in async or uploaded async on SSE
     P->>C: tool call
@@ -131,7 +131,7 @@ sequenceDiagram
   else uploaded async on detached path
     P->>C: tool call
     C->>D: processing row + delivery metadata + dispatch group
-    C->>W: launch Kubernetes background runner
+    C->>W: launch sandbox background runner
     C-->>H: pending result, Lambda can exit
     W->>H: POST /sandbox-jobs/\{resultId\}/complete
     H->>D: settle result row
@@ -168,7 +168,7 @@ Detached uploaded async completion path:
 
 1. The wrapper creates one `AsyncToolResult` row for each async tool call.
 2. For detached uploaded async, the wrapper also registers the `resultId` in a dispatch-group item in the same `AsyncToolResult` table.
-3. The Kubernetes runner launches the uploaded tool as background sandbox work and returns the pending result to the model.
+3. The sandbox runner launches the uploaded tool as background work and returns the pending result to the model.
 4. The runner calls `POST /sandbox-jobs/{resultId}/complete` when it finishes. It does not write DynamoDB directly.
 5. The completion handler settles that `AsyncToolResult` row.
 6. When the parent model pass has registered all detached calls, the group is sealed.
@@ -250,9 +250,9 @@ The CLI bundles the tool source into ESM, hashes it, and uploads it on sync. Age
 
 Omitting a tool disables it. Setting `enabled: false` also disables it. Set `needsApproval: true` when the tool should require the AI SDK approval flow before execution.
 Set `async: true` when a local `execute` tool may take long enough that the parent agent should keep working while the result is produced.
-For uploaded tools, `config` is merged over the upload-time `defaultConfig` and passed to `ctx.config`. Uploaded tool code always runs in Kubernetes; the platform decides whether to wait or detach from the request path.
+For uploaded tools, `config` is merged over the upload-time `defaultConfig` and passed to `ctx.config`. Uploaded tool code always runs in the `sandbox` provider; the platform decides whether to wait or detach from the request path.
 
-See [`packages/demos/tool-custom-async-sse`](https://github.com/beeblastco/broods/tree/dev/packages/demos/tool-custom-async-sse) for a runnable direct SSE example that uploads `test_async`, enables `config.tools.<toolId>.async`, and asks the agent to call the uploaded tool. [`packages/demos/tool-custom-stream`](https://github.com/beeblastco/broods/tree/dev/packages/demos/tool-custom-stream) covers the streaming variant. Uploaded tools continue to execute in the isolated Kubernetes worker, including when their agent is reached through a channel.
+See [`packages/demos/tool-custom-async-sse`](https://github.com/beeblastco/broods/tree/dev/packages/demos/tool-custom-async-sse) for a runnable direct SSE example that uploads `test_async`, enables `config.tools.<toolId>.async`, and asks the agent to call the uploaded tool. [`packages/demos/tool-custom-stream`](https://github.com/beeblastco/broods/tree/dev/packages/demos/tool-custom-stream) covers the streaming variant. Uploaded tools continue to execute in the isolated `sandbox` worker, including when their agent is reached through a channel.
 
 The full config field reference lives in the [API Reference](/api-reference) under `AgentConfig.tools`.
 

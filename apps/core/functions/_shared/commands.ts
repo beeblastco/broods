@@ -27,12 +27,11 @@ interface DiscordCommandOption {
 }
 
 interface DiscordCommandMetadata {
-  name: string;
+  names: string[];
   description: string;
   options?: DiscordCommandOption[];
   integrationTypes?: number[];
   contexts?: number[];
-  inputMode?: "command" | "message";
 }
 
 interface CommandHandler {
@@ -61,10 +60,10 @@ const DEFAULT_DISCORD_CONTEXTS = [0, 1];
 
 export const commands: CommandHandler[] = [
   {
-    aliases: ["/new", "/start"],
+    aliases: ["/new", "/clear"],
     description: "Clear conversation context and start fresh",
     discord: {
-      name: "new",
+      names: ["new", "clear"],
       description: "Clear conversation context and start fresh",
     },
     async execute(ctx) {
@@ -76,7 +75,7 @@ export const commands: CommandHandler[] = [
     aliases: ["/help"],
     description: "Show available commands",
     discord: {
-      name: "help",
+      names: ["help"],
       description: "Show available commands",
     },
     async execute() {
@@ -85,27 +84,9 @@ export const commands: CommandHandler[] = [
         if (cmd.showInHelp === false) {
           continue;
         }
-        lines.push(`${cmd.aliases[0]} — ${cmd.description}`);
+        lines.push(`${cmd.aliases.join(", ")} — ${cmd.description}`);
       }
       return lines.join("\n");
-    },
-  },
-  {
-    aliases: ["/ask"],
-    description: "Ask the agent a question",
-    showInHelp: false,
-    discord: {
-      name: "ask",
-      description: "Ask the agent a question",
-      inputMode: "message",
-      options: [
-        {
-          type: 3,
-          name: "prompt",
-          description: "What you want to ask",
-          required: true,
-        },
-      ],
     },
   },
 ];
@@ -140,14 +121,9 @@ export function resolveDiscordCommand(
   name: string,
   optionText: string,
 ): DiscordCommandResolution | null {
-  const handler = commands.find((command) => command.discord?.name === name);
+  const handler = commands.find((command) => command.discord?.names.includes(name));
   if (!handler?.discord) {
     return null;
-  }
-
-  if (handler.discord.inputMode === "message") {
-    const contentText = optionText.trim();
-    return contentText ? { contentText } : null;
   }
 
   return {
@@ -160,21 +136,22 @@ export function getDiscordCommandRegistrations(
   scope: "global" | "guild" = "global",
 ): DiscordCommandRegistration[] {
   return commands.flatMap((command) => {
-    if (!command.discord) {
+    const discord = command.discord;
+    if (!discord) {
       return [];
     }
 
-    return [{
-      name: command.discord.name,
-      description: command.discord.description,
-      ...(command.discord.options ? { options: command.discord.options } : {}),
+    return discord.names.map((name) => ({
+      name,
+      description: discord.description,
+      ...(discord.options ? { options: discord.options } : {}),
       ...(scope === "global"
         ? {
-          integration_types: command.discord.integrationTypes ?? DEFAULT_DISCORD_INTEGRATION_TYPES,
-          contexts: command.discord.contexts ?? DEFAULT_DISCORD_CONTEXTS,
+          integration_types: discord.integrationTypes ?? DEFAULT_DISCORD_INTEGRATION_TYPES,
+          contexts: discord.contexts ?? DEFAULT_DISCORD_CONTEXTS,
         }
         : {}),
-    }];
+    }));
   });
 }
 

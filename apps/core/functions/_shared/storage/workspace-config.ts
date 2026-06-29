@@ -9,6 +9,7 @@
 
 import { mergeConfigObjects } from "./agent-config.ts";
 import { logError } from "../log.ts";
+import { isPlainObject } from "../object.ts";
 
 // Implemented storage backends. The roadmap adds more (s3-compatible endpoints,
 // Cloudflare R2, Google Cloud Storage, Azure Blob): extend this list and wire the
@@ -16,8 +17,32 @@ import { logError } from "../log.ts";
 export const WORKSPACE_STORAGE_PROVIDERS = ["s3"] as const;
 export type WorkspaceStorageProvider = (typeof WORKSPACE_STORAGE_PROVIDERS)[number];
 
+// How the harness authenticates to the workspace bucket. `managed` (default) uses
+// the broods-operated bucket + platform role. `assumeRole` is the bring-your-own
+// bucket path: the harness assumes a cross-account role the developer controls —
+// keyless, scoped to their bucket, paired with an ExternalId in their role's trust
+// policy. Static-key auth for non-AWS S3-compatible stores is not modeled here yet
+// (no account secret store); those still rely on the sandbox's encrypted envVars.
+export type WorkspaceStorageAuth =
+  | { type: "managed" }
+  | { type: "assumeRole"; roleArn: string; externalId?: string };
+
+// Storage identity for a workspace's S3-backed filesystem. All fields optional:
+// omit `bucket` to use the broods-managed bucket (the default). `endpoint` selects
+// an S3-compatible vendor (R2/MinIO/...) within provider "s3"; `prefix` scopes the
+// mount to a sub-path of a bring-your-own bucket. Holds no secrets (a roleArn is
+// not a secret), so workspace config stays plaintext.
+export interface WorkspaceStorageConfig {
+  provider: WorkspaceStorageProvider;
+  bucket?: string;
+  region?: string;
+  endpoint?: string;
+  prefix?: string;
+  auth?: WorkspaceStorageAuth;
+}
+
 export interface WorkspaceConfig {
-  storage: { provider: WorkspaceStorageProvider };
+  storage: WorkspaceStorageConfig;
   // Whether the workspace harness prompt (memory/tasks guidance) is injected.
   harness?: { enabled?: boolean };
 }
@@ -53,23 +78,7 @@ export function normalizeWorkspaceConfig(value: unknown): WorkspaceConfig {
   }
 
   const config = value;
-  let storageProvider: WorkspaceStorageProvider = "s3";
-  if (config.storage !== undefined) {
-    if (!isPlainObject(config.storage)) {
-      throw new Error("config.storage must be an object");
-    }
-    if (config.storage.provider === "vercel") {
-      logError("Unsupported workspace storage provider rejected", {
-        provider: "vercel",
-        reason: "Vercel Drive workspace storage is not wired yet",
-      });
-      throw new Error(
-        'config.storage.provider "vercel" is not supported yet; Vercel Drive workspace storage is not wired. Use "s3" or omit config.storage.',
-      );
-    }
-    assertOptionalEnum(config.storage.provider, "config.storage.provider", WORKSPACE_STORAGE_PROVIDERS);
-    storageProvider = (config.storage.provider as WorkspaceStorageProvider | undefined) ?? "s3";
-  }
+  const storage = normalizeWorkspaceStorage(config.storage);
 
   let harness: { enabled?: boolean } | undefined;
   if (config.harness !== undefined) {
@@ -83,9 +92,60 @@ export function normalizeWorkspaceConfig(value: unknown): WorkspaceConfig {
   }
 
   return {
-    storage: { provider: storageProvider },
+    storage,
     ...(harness ? { harness } : {}),
   };
+}
+
+function normalizeWorkspaceStorage(value: unknown): WorkspaceStorageConfig {
+  if (value === undefined) {
+    return { provider: "s3" };
+  }
+  if (!isPlainObject(value)) {
+    throw new Error("config.storage must be an object");
+  }
+  if (value.provider === "vercel") {
+    logError("Unsupported workspace storage provider rejected", {
+      provider: "vercel",
+      reason: "Vercel Drive workspace storage is not wired yet",
+    });
+    throw new Error(
+      'config.storage.provider "vercel" is not supported yet; Vercel Drive workspace storage is not wired. Use "s3" or omit config.storage.',
+    );
+  }
+  assertOptionalEnum(value.provider, "config.storage.provider", WORKSPACE_STORAGE_PROVIDERS);
+
+  const bucket = optionalString(value.bucket, "config.storage.bucket");
+  const region = optionalString(value.region, "config.storage.region");
+  const endpoint = optionalString(value.endpoint, "config.storage.endpoint");
+  const prefix = optionalString(value.prefix, "config.storage.prefix");
+  const auth = normalizeWorkspaceStorageAuth(value.auth);
+  return {
+    provider: (value.provider as WorkspaceStorageProvider | undefined) ?? "s3",
+    ...(bucket ? { bucket } : {}),
+    ...(region ? { region } : {}),
+    ...(endpoint ? { endpoint } : {}),
+    ...(prefix ? { prefix } : {}),
+    ...(auth ? { auth } : {}),
+  };
+}
+
+function normalizeWorkspaceStorageAuth(value: unknown): WorkspaceStorageAuth | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (!isPlainObject(value)) {
+    throw new Error("config.storage.auth must be an object");
+  }
+  if (value.type === "managed") {
+    return { type: "managed" };
+  }
+  if (value.type === "assumeRole") {
+    const roleArn = requireString(value.roleArn, "config.storage.auth.roleArn");
+    const externalId = optionalString(value.externalId, "config.storage.auth.externalId");
+    return { type: "assumeRole", roleArn, ...(externalId ? { externalId } : {}) };
+  }
+  throw new Error("config.storage.auth.type must be one of: managed, assumeRole");
 }
 
 export function normalizeCreateWorkspaceConfigInput(
@@ -125,10 +185,6 @@ export function toPublicWorkspaceConfig(record: WorkspaceConfigRecord): Workspac
 function asObject(value: unknown): Record<string, unknown> {
   if (!isPlainObject(value)) throw new Error("config must be an object");
   return value;
-}
-
-function isPlainObject(value: unknown): value is Record<string, unknown> {
-  return Boolean(value && typeof value === "object" && !Array.isArray(value));
 }
 
 function assertOptionalBoolean(value: unknown, name: string): void {

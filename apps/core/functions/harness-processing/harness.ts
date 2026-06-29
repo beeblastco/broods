@@ -156,7 +156,7 @@ export async function runAgentLoop(
   // Task-scoped usage accumulators — written by hooks/callbacks, read at finalize.
   let taskCacheWriteTokens = 0;
   // Accumulate sandbox CPU per (type, role, tool); each bucket becomes one
-  // sandboxUsage row at finalize. CPU only arrives for kubernetes execs.
+  // sandboxUsage row at finalize. CPU only arrives for sandbox/lambda execs.
   const sandboxUsageByKey = new Map<string, SandboxCpuSample>();
   const recordSandboxCpu = (sample: SandboxCpuSample): void => {
     if (!(sample.cpuUsec > 0)) return;
@@ -175,7 +175,7 @@ export async function runAgentLoop(
   };
   // Accumulated sandbox CPU split by role (agent's own sandbox vs uploaded tool
   // sandboxes), so the dashboard can stream the Compute chart live off the running
-  // root span instead of waiting for the finalize write. Empty until a kubernetes
+  // root span instead of waiting for the finalize write. Empty until a sandbox
   // exec reports CPU.
   const sandboxCpuRoleAttributes = (): Record<string, number> => {
     let agent = 0;
@@ -948,7 +948,7 @@ export async function runAgentLoop(
       }
       // Re-publish the running root span with the sandbox CPU accumulated so far so
       // the dashboard's Compute chart streams live, not only at finalize. Skipped
-      // until a kubernetes exec actually reports CPU (keeps NATS traffic minimal).
+      // until a sandbox exec actually reports CPU (keeps NATS traffic minimal).
       const liveRoleCpu = sandboxCpuRoleAttributes();
       if (Object.keys(liveRoleCpu).length > 0) {
         // A running span has no known end — keep end == start (like the initial
@@ -1350,18 +1350,19 @@ function toToolCallPart(toolCall: ApprovalToolCall): ToolCallPart {
 }
 
 function serializeError(error: unknown): Record<string, unknown> {
-  if (!isRecord(error)) {
+  if (!error || typeof error !== "object") {
     return { message: String(error) };
   }
 
+  const errorObject = error as Record<string, unknown>;
   const details: Record<string, unknown> = {
-    name: typeof error.name === "string" ? error.name : error instanceof Error ? error.name : undefined,
-    message: typeof error.message === "string" ? error.message : errorMessage(error),
+    name: typeof errorObject.name === "string" ? errorObject.name : error instanceof Error ? error.name : undefined,
+    message: typeof errorObject.message === "string" ? errorObject.message : errorMessage(error),
   };
 
   for (const key of ["status", "statusCode", "requestId"]) {
-    if (key in error) {
-      details[key] = error[key];
+    if (key in errorObject) {
+      details[key] = errorObject[key];
     }
   }
   if (error instanceof Error && error.stack) {
@@ -1369,8 +1370,4 @@ function serializeError(error: unknown): Record<string, unknown> {
   }
 
   return details;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value && typeof value === "object");
 }

@@ -289,7 +289,7 @@ function assertSupportedWorkspaceSandboxMounts(resources: AnyResource[]): void {
       if (!sandbox || supportsS3WorkspaceMount(sandbox)) continue;
       throw new Error(
         `Agent "${resource.name}" workspace "${workspaceName}" uses sandbox "${sandbox.name}" (${sandboxProvider(sandbox)}) ` +
-          `which does not support S3 workspace mounts. Use lambda, or daytona/kubernetes with options.mountAwsS3Buckets: true, ` +
+          `which does not support S3 workspace mounts. Use lambda/sandbox, or daytona with options.mountAwsS3Buckets: true, ` +
           `or set this workspace ref to sandbox: null for read-only S3 access.`,
       );
     }
@@ -327,8 +327,8 @@ function workspaceNameFor(entry: unknown): string {
 
 function supportsS3WorkspaceMount(sandbox: SandboxResource): boolean {
   const provider = sandboxProvider(sandbox);
-  if (provider === "lambda") return true;
-  if (provider !== "daytona" && provider !== "kubernetes") return false;
+  if (provider === "lambda" || provider === "sandbox") return true;
+  if (provider !== "daytona") return false;
   const options = (sandbox.config as { options?: unknown }).options;
   return Boolean(options && typeof options === "object" && !Array.isArray(options) &&
     (options as Record<string, unknown>).mountAwsS3Buckets === true);

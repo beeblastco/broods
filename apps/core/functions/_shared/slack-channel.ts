@@ -3,13 +3,30 @@
  * Handle request verification, inbound normalization, and Slack Web API reply actions here.
  */
 
-import { createHmac, timingSafeEqual } from "node:crypto";
+import {
+  assertSlackOk,
+  callSlackApi,
+  postSlackMessage,
+  sendSlackResponseUrl,
+  SlackApiError,
+} from "@chat-adapter/slack/api";
+import {
+  SlackAdapter,
+  SlackFormatConverter,
+  type SlackEvent,
+  type SlackThreadId,
+} from "@chat-adapter/slack";
+import {
+  parseSlackWebhookBody,
+  verifySlackSignature,
+  type SlackSlashCommandPayload,
+} from "@chat-adapter/slack/webhook";
+import { ConsoleLogger } from "chat";
 import type {
   ChannelActions,
   ChannelAdapter,
   ChannelParseResult
 } from "./channels.ts";
-import { formatSlackMessage } from "./channel-format.ts";
 import { logWarn } from "./log.ts";
 import {
   SLACK_COMMAND_INTEGRATION_PREFIX,
@@ -17,21 +34,11 @@ import {
 } from "./runtime-keys.ts";
 
 interface SlackEventEnvelope {
-  type: string;
+  challenge?: string;
+  event?: SlackEvent;
   event_id?: string;
   team_id?: string;
-  challenge?: string;
-  event?: {
-    type?: string;
-    subtype?: string;
-    text?: string;
-    channel?: string;
-    channel_type?: string;
-    user?: string;
-    bot_id?: string;
-    ts?: string;
-    thread_ts?: string;
-  };
+  type?: string;
 }
 
 export interface SlackSource {
@@ -48,7 +55,17 @@ export function createSlackChannel(
   botToken: string,
   signingSecret: string,
   allowedChannelIds: Set<string> | null,
+  reactionEmoji = "eyes",
+  apiUrl?: string,
 ): ChannelAdapter {
+  const slack = new SlackAdapter({
+    apiUrl,
+    botToken,
+    signingSecret,
+    mode: "webhook",
+    logger: new ConsoleLogger("error").child("slack"),
+  });
+
   return {
     name: "slack",
 
@@ -56,40 +73,46 @@ export function createSlackChannel(
       return "x-slack-signature" in req.headers;
     },
 
-    authenticate(req) {
-      const timestamp = req.headers["x-slack-request-timestamp"];
-      const signature = req.headers["x-slack-signature"];
-      if (!timestamp || !signature) {
+    async authenticate(req) {
+      try {
+        await verifySlackSignature(req.body, req.headers, { signingSecret });
+        return true;
+      } catch (err) {
+        logWarn("Slack request signature verification failed", {
+          error: err instanceof Error ? err.message : String(err),
+        });
         return false;
       }
-
-      const ageSeconds = Math.abs(Math.floor(Date.now() / 1000) - Number(timestamp));
-      if (!Number.isFinite(ageSeconds) || ageSeconds > 60 * 5) {
-        logWarn("Slack request timestamp outside replay window");
-        return false;
-      }
-
-      const base = `v0:${timestamp}:${req.body}`;
-      const expected = `v0=${createHmac("sha256", signingSecret).update(base).digest("hex")}`;
-      const actualBytes = Buffer.from(signature);
-      const expectedBytes = Buffer.from(expected);
-
-      return actualBytes.length === expectedBytes.length
-        && timingSafeEqual(actualBytes, expectedBytes);
     },
 
     parse(req): ChannelParseResult {
-      const contentType = req.headers["content-type"] ?? "";
+      const payload = parseSlackWebhookBody(req.body, { headers: req.headers });
 
-      if (contentType.includes("application/x-www-form-urlencoded")) {
-        return parseSlashCommand(req.body, allowedChannelIds);
+      if (payload.kind === "url_verification") {
+        return {
+          kind: "response",
+          reason: "url_verification",
+          response: {
+            statusCode: 200,
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ challenge: payload.challenge }),
+          },
+        };
+      }
+
+      if (payload.kind === "slash_command") {
+        return parseSlashCommand(payload, allowedChannelIds);
+      }
+
+      if ((req.headers["content-type"] ?? "").includes("application/x-www-form-urlencoded")) {
+        return { kind: "ignore", reason: `unsupported_slack_payload:${payload.kind}` };
       }
 
       return parseEventCallback(req.body, allowedChannelIds);
     },
 
     actions(msg): ChannelActions {
-      return createSlackActions(botToken, toSlackSource(msg.source));
+      return createSlackActions(botToken, slack, toSlackSource(msg.source), reactionEmoji);
     },
   };
 }
@@ -103,6 +126,7 @@ function parseEventCallback(
   if (payload.type === "url_verification" && typeof payload.challenge === "string") {
     return {
       kind: "response",
+      reason: "url_verification",
       response: {
         statusCode: 200,
         headers: { "Content-Type": "application/json" },
@@ -111,23 +135,23 @@ function parseEventCallback(
     };
   }
 
-  if (payload.type !== "event_callback" || !payload.event || !payload.event_id || !payload.team_id) {
-    return { kind: "ignore" };
+  if (payload.type !== "event_callback" || !isSlackMessageEvent(payload.event) || !payload.event_id || !payload.team_id) {
+    return { kind: "ignore", reason: "invalid_event_callback" };
   }
 
   if (!isSupportedSlackEvent(payload.event)) {
-    return { kind: "ignore" };
+    return { kind: "ignore", reason: getUnsupportedSlackEventReason(payload.event) };
   }
 
   const channelId = payload.event.channel;
   const ts = payload.event.ts;
   if (!channelId || !ts) {
-    return { kind: "ignore" };
+    return { kind: "ignore", reason: "missing_channel_or_timestamp" };
   }
 
   if (allowedChannelIds && !allowedChannelIds.has(channelId)) {
     logWarn("Slack channel not in allow list", { channelId });
-    return { kind: "ignore" };
+    return { kind: "ignore", reason: "channel_not_allowed" };
   }
 
   const text = stripSlackMentions(payload.event.text ?? "");
@@ -153,7 +177,11 @@ function parseEventCallback(
   };
 }
 
-function isSupportedSlackEvent(event: NonNullable<SlackEventEnvelope["event"]>): boolean {
+function isSlackMessageEvent(event: SlackEvent | undefined): event is SlackEvent {
+  return Boolean(event && "type" in event && typeof event.type === "string");
+}
+
+function isSupportedSlackEvent(event: SlackEvent): boolean {
   if (event.subtype || event.bot_id) {
     return false;
   }
@@ -162,13 +190,29 @@ function isSupportedSlackEvent(event: NonNullable<SlackEventEnvelope["event"]>):
     return true;
   }
 
-  return event.type === "message" && (event.channel_type === "im" || event.channel_type === "app_home");
+  return event.type === "message" && isSupportedSlackMessageChannel(event.channel_type);
+}
+
+function getUnsupportedSlackEventReason(event: SlackEvent): string {
+  if (event.bot_id) return "bot_message";
+  if (event.subtype) return `unsupported_subtype:${event.subtype}`;
+  if (event.type === "message") return `unsupported_message_channel:${event.channel_type ?? "unknown"}`;
+
+  return `unsupported_event:${event.type ?? "unknown"}`;
+}
+
+function isSupportedSlackMessageChannel(channelType: string | undefined): boolean {
+  return channelType === "channel"
+    || channelType === "group"
+    || channelType === "mpim"
+    || channelType === "im"
+    || channelType === "app_home";
 }
 
 function getSlackConversationKey(
   teamId: string,
   channelId: string,
-  event: NonNullable<SlackEventEnvelope["event"]>,
+  event: SlackEvent,
   threadTs: string,
 ): string {
   if (event.type === "message" && (event.channel_type === "im" || event.channel_type === "app_home")) {
@@ -179,10 +223,13 @@ function getSlackConversationKey(
 }
 
 function getSlackReplyThreadTs(
-  event: NonNullable<SlackEventEnvelope["event"]>,
+  event: SlackEvent,
   messageTs: string,
 ): string | undefined {
-  if (event.type === "app_mention") {
+  if (
+    event.type === "app_mention" ||
+    (event.type === "message" && event.channel_type !== "im" && event.channel_type !== "app_home")
+  ) {
     return event.thread_ts ?? messageTs;
   }
 
@@ -190,39 +237,38 @@ function getSlackReplyThreadTs(
 }
 
 function parseSlashCommand(
-  body: string,
+  payload: SlackSlashCommandPayload,
   allowedChannelIds: Set<string> | null,
 ): ChannelParseResult {
-  const params = new URLSearchParams(body);
-  const teamId = params.get("team_id");
-  const channelId = params.get("channel_id");
-  const command = params.get("command");
+  const teamId = payload.teamId;
+  const channelId = payload.channelId;
+  const command = payload.command;
 
   if (!teamId || !channelId || !command) {
-    return { kind: "ignore" };
+    return { kind: "ignore", reason: "invalid_slash_command" };
   }
 
   if (allowedChannelIds && !allowedChannelIds.has(channelId)) {
     logWarn("Slack slash command channel not in allow list", { channelId });
-    return { kind: "ignore" };
+    return { kind: "ignore", reason: "slash_command_channel_not_allowed" };
   }
 
-  const text = params.get("text") ?? "";
+  const text = payload.text ?? "";
 
   return {
     kind: "message",
     ack: { statusCode: 200 },
     message: {
-      eventId: `${SLACK_COMMAND_INTEGRATION_PREFIX}${params.get("trigger_id") ?? `${teamId}:${channelId}:${command}:${text}`}`,
+      eventId: `${SLACK_COMMAND_INTEGRATION_PREFIX}${payload.triggerId ?? `${teamId}:${channelId}:${command}:${text}`}`,
       conversationKey: `${SLACK_INTEGRATION_PREFIX}${teamId}:${channelId}`,
       channelName: "slack",
       content: [{ type: "text", text }],
       source: {
         teamId,
         channelId,
-        responseUrl: params.get("response_url") ?? undefined,
+        responseUrl: payload.responseUrl,
         commandToken: command,
-        userId: params.get("user_id") ?? undefined,
+        userId: payload.userId,
       } satisfies SlackSource,
     },
   };
@@ -230,34 +276,34 @@ function parseSlashCommand(
 
 function createSlackActions(
   botToken: string,
+  slack: SlackAdapter,
   source: SlackSource,
+  reactionEmoji: string,
 ): ChannelActions {
+  const threadId = source.threadTs
+    ? slack.encodeThreadId({ channel: source.channelId, threadTs: source.threadTs } satisfies SlackThreadId)
+    : undefined;
+  const formatter = new SlackFormatConverter();
+
   return {
     async sendText(text) {
-      const formattedMessage = formatSlackMessage(text);
-
       if (source.responseUrl) {
-        const response = await fetch(source.responseUrl, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            text: formattedMessage.text,
-            response_type: "in_channel",
-            ...(formattedMessage.attachments ? { attachments: formattedMessage.attachments } : {}),
-          }),
-        });
-        if (!response.ok) {
-          throw new Error(`Slack response_url failed (${response.status})`);
-        }
+        await sendSlackWebhookResponse(source.responseUrl, formatter.toResponseUrlText({ markdown: text }));
         return;
       }
 
-      await slackApi(botToken, "chat.postMessage", {
-        channel: source.channelId,
-        text: formattedMessage.text,
-        ...(formattedMessage.attachments ? { attachments: formattedMessage.attachments } : {}),
-        ...(source.threadTs ? { thread_ts: source.threadTs } : {}),
-      });
+      try {
+        await postSlackMessage({
+          token: botToken,
+          channel: source.channelId,
+          markdownText: text,
+          threadTs: source.threadTs,
+          unfurlLinks: false,
+          unfurlMedia: false,
+        });
+      } catch (err) {
+        throw normalizeSlackApiError("chat.postMessage", err);
+      }
     },
 
     async sendTyping() {
@@ -269,32 +315,33 @@ function createSlackActions(
         return;
       }
 
-      await slackApi(botToken, "reactions.add", {
-        channel: source.channelId,
-        timestamp: source.messageTs,
-        name: "eyes",
-      });
+      try {
+        assertSlackOk("reactions.add", await callSlackApi(
+          "reactions.add",
+          {
+            channel: source.channelId,
+            timestamp: source.messageTs,
+            name: reactionEmoji,
+          },
+          { token: botToken, contentType: "json" },
+        ));
+      } catch (err) {
+        throw normalizeSlackApiError("reactions.add", err);
+      }
     },
 
-    // Edit-in-place streaming. Always posts to the channel/thread (chat.update
-    // cannot edit a response_url message) and returns the new message ts.
-    async beginMessage(text) {
-      const result = await slackApi(botToken, "chat.postMessage", {
-        channel: source.channelId,
-        text: formatSlackMessage(text).text,
-        ...(source.threadTs ? { thread_ts: source.threadTs } : {}),
-      });
-      if (!result.ts) throw new Error("Slack chat.postMessage returned no ts");
-      return result.ts;
-    },
-
-    async editMessage(messageTs, text) {
-      await slackApi(botToken, "chat.update", {
-        channel: source.channelId,
-        ts: messageTs,
-        text: formatSlackMessage(text).text,
-      });
-    },
+    ...(threadId && source.userId
+      ? {
+        stream: async (textStream, options) => {
+          const result = await slack.stream(threadId, textStream, {
+            ...options,
+            recipientTeamId: source.teamId,
+            recipientUserId: source.userId!,
+          });
+          return result.id;
+        },
+      }
+      : {}),
   };
 }
 
@@ -317,27 +364,30 @@ function toSlackSource(source: Record<string, unknown>): SlackSource {
   };
 }
 
-async function slackApi(
-  token: string,
-  method: string,
-  payload: Record<string, unknown>,
-): Promise<{ ok?: boolean; error?: string; ts?: string }> {
-  const response = await fetch(`https://slack.com/api/${method}`, {
-    method: "POST",
-    headers: {
-      "Authorization": `Bearer ${token}`,
-      "Content-Type": "application/json; charset=utf-8",
-    },
-    body: JSON.stringify(payload),
-  });
-
-  const json = await response.json() as { ok?: boolean; error?: string; ts?: string };
-  if (!response.ok || !json.ok) {
-    throw new Error(
-      `Slack ${method} failed (${response.status}): ${json.error ?? "unknown_error"}`,
+function normalizeSlackApiError(method: string, err: unknown): Error {
+  if (err instanceof SlackApiError) {
+    return new Error(
+      `Slack ${method} failed (${err.status ?? 200}): ${err.response?.error ?? "unknown_error"}`,
     );
   }
-  return json;
+  return err instanceof Error ? err : new Error(String(err));
+}
+
+async function sendSlackWebhookResponse(
+  url: string,
+  text: string,
+): Promise<void> {
+  try {
+    await sendSlackResponseUrl(url, {
+      text,
+      responseType: "in_channel",
+    });
+  } catch (err) {
+    if (err instanceof SlackApiError) {
+      throw new Error(`Slack response_url failed (${err.status ?? 0})`);
+    }
+    throw err;
+  }
 }
 
 function stripSlackMentions(text: string): string {

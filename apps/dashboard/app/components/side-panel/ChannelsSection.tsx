@@ -39,6 +39,7 @@ const CHANNELS: ChannelKind[] = [
             { key: "webhookSecret", label: "Webhook secret", type: "secret", required: true },
             { key: "allowedChatIds", label: "Allowed chat IDs", type: "numberList", placeholder: "123456789, …" },
             { key: "reactionEmoji", label: "Reaction emoji", type: "text", placeholder: "👀" },
+            { key: "apiUrl", label: "API URL", type: "text", placeholder: "https://api.telegram.org" },
         ],
     },
     {
@@ -49,6 +50,7 @@ const CHANNELS: ChannelKind[] = [
             { key: "appId", label: "App ID", type: "text", required: true },
             { key: "privateKey", label: "Private key", type: "secret", required: true },
             { key: "allowedRepos", label: "Allowed repos", type: "stringList", placeholder: "owner/repo, …" },
+            { key: "apiUrl", label: "API URL", type: "text", placeholder: "https://api.github.com" },
         ],
     },
     {
@@ -58,6 +60,8 @@ const CHANNELS: ChannelKind[] = [
             { key: "botToken", label: "Bot token", type: "secret", required: true },
             { key: "signingSecret", label: "Signing secret", type: "secret", required: true },
             { key: "allowedChannelIds", label: "Allowed channel IDs", type: "stringList", placeholder: "C123, …" },
+            { key: "reactionEmoji", label: "Reaction emoji", type: "text", placeholder: "eyes" },
+            { key: "apiUrl", label: "API URL", type: "text", placeholder: "https://slack.com/api/" },
         ],
     },
     {
@@ -67,6 +71,7 @@ const CHANNELS: ChannelKind[] = [
             { key: "botToken", label: "Bot token", type: "secret", required: true },
             { key: "publicKey", label: "Public key", type: "text", required: true },
             { key: "allowedGuildIds", label: "Allowed guild IDs", type: "stringList", placeholder: "123, …" },
+            { key: "apiUrl", label: "API URL", type: "text", placeholder: "https://discord.com/api/v10" },
         ],
     },
     {

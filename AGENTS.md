@@ -17,6 +17,7 @@ This is a Bun workspaces monorepo for Broods / broods.
 - Use Bun, not npm/yarn/pnpm.
 - Declare dependencies in the package that imports them; the workspace uses Bun's isolated linker.
 - Keep env files package-local. Do not commit real secrets.
+- For unknown JSON/config/webhook payloads, prefer a clearly named `isPlainObject` guard at the nearest package boundary. Do not add new `isRecord` helpers; consolidate repeated object guards into the package's existing utility/helper module instead of copying them into each file. Use schema validators for complex external payloads.
 - Run focused checks from the root when possible:
   - `bun run check` for core + Convex + SDK type checks.
   - `bun run test` for core tests.

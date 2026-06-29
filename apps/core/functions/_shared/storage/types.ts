@@ -117,7 +117,7 @@ export interface UsageTaskInput {
   runtimeWallMs: number;
   /** Harness runtime memory size in MB (AWS_LAMBDA_FUNCTION_MEMORY_SIZE). */
   runtimeMemoryMb: number;
-  /** CPU per sandbox context; cgroup cpu.stat delta, recorded for kubernetes only. */
+  /** CPU per sandbox context; recorded for the self-hosted providers (sandbox/lambda). */
   sandboxUsage: SandboxUsageEntry[];
   /** Number of model steps executed in this task. */
   stepCount: number;
@@ -127,7 +127,7 @@ export interface UsageTaskInput {
 
 /** One sandbox's CPU within a task: the agent's own sandbox or a per-tool sandbox. */
 export interface SandboxUsageEntry {
-  /** Sandbox provider type: "kubernetes" (metered) or "other" (third-party, unmetered). */
+  /** Sandbox provider type: self-hosted (sandbox/lambda, metered) or third-party (unmetered). */
   type: string;
   role: "agent" | "tool";
   /** The custom tool that ran, when role is "tool". */

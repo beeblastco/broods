@@ -10,6 +10,8 @@
  * harness can decrypt with `decodeStoredAgentConfig`.
  */
 
+import { isPlainObject } from "./objects";
+
 export interface FlatAgentConfig {
     name?: string;
     description?: string;
@@ -33,10 +35,6 @@ export type NestedAgentConfig = Record<string, unknown>;
 
 const UNSUPPORTED_WORKSPACE_KEYS = ["memory", "tasks", "filesystem"] as const;
 const UNSUPPORTED_SANDBOX_KEYS = ["filesystem"] as const;
-
-function isPlainObject(value: unknown): value is Record<string, unknown> {
-    return typeof value === "object" && value !== null && !Array.isArray(value);
-}
 
 /**
  * One-level-deep merge of two `providerOptions` maps. Provider sub-objects

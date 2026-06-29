@@ -5,11 +5,12 @@
  * reconnecting by stored id (Daytona auto-stops it on idle; the harness restarts it).
  */
 
-import { AssumeRoleCommand, STSClient } from "@aws-sdk/client-sts";
 import { optionalEnv } from "../../_shared/env.ts";
 import { logWarn } from "../../_shared/log.ts";
-import { DEFAULT_RELEASE_GRACE_SECONDS, MAX_CONCURRENT_BACKGROUND_JOBS, WORKSPACE_MOUNT_PREFIX, resolveSandboxLifecycle } from "../../_shared/sandbox.ts";
+import { isPlainObject, isStringRecord } from "../../_shared/object.ts";
+import { DEFAULT_RELEASE_GRACE_SECONDS, MAX_CONCURRENT_BACKGROUND_JOBS, resolveSandboxLifecycle } from "../../_shared/sandbox.ts";
 import { Daytona, type Sandbox } from "@daytona/sdk";
+import { type S3MountContext, type S3MountIdentity, resolveS3Mount, resolveS3MountIdentity } from "./s3-mount.ts";
 import type {
   SandboxExecutor,
   SandboxExecutorConfig,
@@ -20,9 +21,10 @@ import type {
   SandboxRunRequest,
   SandboxRunResult,
 } from "./types.ts";
-import { configString, isNoRunnersError, isRecordObject, isSandboxGoneError, isStringRecord, sandboxReservationKey, shellQuote, truncateText, workspacePath } from "./utils.ts";
+import { assertSafeTenantProviderUrl, configString, isNoRunnersError, isSandboxGoneError, sandboxReservationKey, shellQuote, truncateText, workspacePath } from "./utils.ts";
 import { generateJobId, launchScript, lifecycleScript, logsScript, parseJobStatus, statusScript, stopScript } from "./jobs.ts";
 import { claimSandboxInstance, deleteSandboxInstance, getSandboxExternalId, saveSandboxInstance } from "./instance-store.ts";
+import { upsertSandboxInstance } from "../../_shared/storage/convex/sandbox-instances.ts";
 
 export class DaytonaSandboxExecutor implements SandboxExecutor {
   readonly #config: SandboxExecutorConfig;
@@ -128,7 +130,7 @@ export class DaytonaSandboxExecutor implements SandboxExecutor {
   }
 
   #workspaceRoot(): string {
-    const options = isRecordObject(this.#config.options) ? this.#config.options : {};
+    const options = isPlainObject(this.#config.options) ? this.#config.options : {};
     return (configString(options.workspaceRoot) ?? "/mnt/workspaces").replace(/\/+$/, "");
   }
 
@@ -153,6 +155,7 @@ export class DaytonaSandboxExecutor implements SandboxExecutor {
       try {
         const sandbox = await this.#reconnect(client, externalId);
         await saveSandboxInstance("daytona", ns, externalId).catch(() => {});
+        await upsertSandboxInstance(this.#config.controlPlane, "daytona", ns, externalId);
         return sandbox;
       } catch {
         await deleteSandboxInstance("daytona", ns).catch(() => {});
@@ -160,6 +163,7 @@ export class DaytonaSandboxExecutor implements SandboxExecutor {
     }
     const sandbox = await this.#create(client, await daytonaCreateOptions(this.#config, request, true));
     if (await claimSandboxInstance("daytona", ns, sandbox.id)) {
+      await upsertSandboxInstance(this.#config.controlPlane, "daytona", ns, sandbox.id);
       return sandbox;
     }
     // Lost a concurrent create race: discard our duplicate and reconnect to the
@@ -184,7 +188,7 @@ export class DaytonaSandboxExecutor implements SandboxExecutor {
       return await client.create(options);
     } catch (err) {
       if (isNoRunnersError(err)) {
-        const snapshot = configString(isRecordObject(this.#config.options) ? this.#config.options.snapshot : undefined);
+        const snapshot = configString(isPlainObject(this.#config.options) ? this.#config.options.snapshot : undefined);
         throw new Error(
           `Daytona has no available runner for ${snapshot ? `snapshot '${snapshot}'` : "the request"} in the ` +
           `selected region. The snapshot may be non-general (pinned to one runner) or the runner is at capacity — ` +
@@ -220,10 +224,18 @@ export class DaytonaSandboxExecutor implements SandboxExecutor {
 }
 
 function daytonaClientOptions(config: SandboxExecutorConfig): Record<string, unknown> {
-  const options = isRecordObject(config.options) ? config.options : {};
-  const apiKey = configString(options.apiKey) ?? optionalEnv("DAYTONA_API_KEY");
+  const options = isPlainObject(config.options) ? config.options : {};
+  const customApiUrl = configString(options.apiUrl);
+  if (customApiUrl) {
+    assertSafeTenantProviderUrl(customApiUrl, "config.options.apiUrl");
+  }
+  const customApiKey = configString(options.apiKey);
+  if (customApiUrl && !customApiKey) {
+    throw new Error("config.options.apiKey is required when config.options.apiUrl is set");
+  }
+  const apiKey = customApiKey ?? optionalEnv("DAYTONA_API_KEY");
   const organizationId = configString(options.organizationId) ?? optionalEnv("DAYTONA_ORGANIZATION_ID");
-  const apiUrl = configString(options.apiUrl) ?? optionalEnv("DAYTONA_API_URL");
+  const apiUrl = customApiUrl ?? optionalEnv("DAYTONA_API_URL");
   const target = configString(options.target) ?? optionalEnv("DAYTONA_TARGET");
   return {
     ...(apiKey ? { apiKey } : {}),
@@ -238,9 +250,9 @@ async function daytonaCreateOptions(
   request: { namespace?: string; envVars?: Record<string, string> },
   persistent: boolean,
 ): Promise<Record<string, unknown>> {
-  const options = isRecordObject(config.options) ? config.options : {};
+  const options = isPlainObject(config.options) ? config.options : {};
   const baseEnv = { ...(isStringRecord(config.envVars) ? config.envVars : {}), ...(request.envVars ?? {}) };
-  const envVars = await daytonaEnvVars(baseEnv, options, request.namespace);
+  const envVars = await daytonaEnvVars(config, request, baseEnv);
   // Persistent: auto-stop on idle (filesystem persists, harness restarts on next
   // call); auto-delete after the grace if it stays stopped (leak backstop).
   const lifecycle = resolveSandboxLifecycle(config.lifecycle);
@@ -275,97 +287,59 @@ function daytonaNetworkOptions(config: SandboxExecutorConfig): Record<string, un
   };
 }
 
+// Resolve the S3 mount credentials (+ region) into the sandbox env at create time.
+// Daytona's mount-s3 runs via `sudo -E` and reads creds from the process env. The
+// shared resolver hands back short-lived, prefix-scoped assume-role creds (the
+// developer's bring-your-own-bucket role, or the platform role); a store with no
+// role falls back to whatever static keys the account itself supplied. The harness's
+// own broad runtime creds must never land here — agent code can read the env.
 async function daytonaEnvVars(
-  userEnv: Record<string, string>,
-  options: Record<string, unknown>,
-  namespace: string | undefined,
+  config: SandboxExecutorConfig,
+  request: { namespace?: string },
+  baseEnv: Record<string, string>,
 ): Promise<Record<string, string>> {
-  const envVars = { ...userEnv };
+  const options = isPlainObject(config.options) ? config.options : {};
   if (options.mountAwsS3Buckets !== true) {
-    return envVars;
+    return baseEnv;
   }
-
-  const credentials = await awsCredentialEnvVars(envVars, namespace);
-  const region = configString(options.awsRegion) ?? optionalEnv("AWS_REGION") ?? optionalEnv("AWS_DEFAULT_REGION");
+  const mount = await resolveS3Mount(daytonaS3Context(config, request));
   return {
-    ...envVars,
-    ...credentials,
-    ...(region ? { AWS_REGION: region, AWS_DEFAULT_REGION: region } : {}),
+    ...baseEnv,
+    ...(mount.credentials ?? staticAwsKeys(baseEnv)),
+    ...(mount.region ? { AWS_REGION: mount.region, AWS_DEFAULT_REGION: mount.region } : {}),
   };
 }
 
-// Sandbox env vars are readable by any code the agent runs, so the harness's
-// own runtime credentials must never land there. Use the scoped mount role
-// when deployed, otherwise only credentials the account supplied itself.
-async function awsCredentialEnvVars(
-  envVars: Record<string, string>,
-  namespace: string | undefined,
-): Promise<Record<string, string>> {
-  const roleArn = optionalEnv("SANDBOX_MOUNT_ROLE_ARN");
-  if (roleArn) {
-    if (!namespace) {
-      throw new Error("Daytona AWS S3 mounts require a workspace namespace when SANDBOX_MOUNT_ROLE_ARN is configured.");
-    }
-    return assumeScopedMountCredentials(roleArn, namespace);
+// Build the shared-resolver context from the executor options + env fallbacks.
+// Throws on a missing namespace before any STS call (the create path hits this first).
+function daytonaS3Context(config: SandboxExecutorConfig, request: { namespace?: string }): S3MountContext {
+  const options = isPlainObject(config.options) ? config.options : {};
+  if (!request.namespace) {
+    throw new Error("Daytona AWS S3 mounts require a workspace namespace.");
   }
+  return {
+    storage: config.storage,
+    namespace: request.namespace,
+    managedBucket: configString(options.workspaceBucketName) ?? optionalEnv("FILESYSTEM_BUCKET_NAME"),
+    region: configString(options.awsRegion) ?? optionalEnv("AWS_REGION") ?? optionalEnv("AWS_DEFAULT_REGION"),
+    ...(configString(options.s3Endpoint) ? { endpoint: configString(options.s3Endpoint) } : {}),
+  };
+}
 
-  const accessKeyId = envVars.AWS_ACCESS_KEY_ID;
-  const secretAccessKey = envVars.AWS_SECRET_ACCESS_KEY;
+// Static keys the account supplied itself, for a store with no role configured.
+// The scoped mount role is preferred; these are only the fallback.
+function staticAwsKeys(env: Record<string, string>): Record<string, string> {
+  const accessKeyId = env.AWS_ACCESS_KEY_ID;
+  const secretAccessKey = env.AWS_SECRET_ACCESS_KEY;
   if (!accessKeyId || !secretAccessKey) {
     throw new Error(
       "Daytona AWS S3 mounts require SANDBOX_MOUNT_ROLE_ARN in the harness runtime or AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY in sandbox envVars.",
     );
   }
-
   return {
     AWS_ACCESS_KEY_ID: accessKeyId,
     AWS_SECRET_ACCESS_KEY: secretAccessKey,
-    ...(envVars.AWS_SESSION_TOKEN ? { AWS_SESSION_TOKEN: envVars.AWS_SESSION_TOKEN } : {}),
-  };
-}
-
-// The role policy already limits access to the workspace/skills buckets; the
-// session policy narrows the workspace bucket further to this sandbox's own
-// namespace prefix.
-async function assumeScopedMountCredentials(
-  roleArn: string,
-  namespace: string,
-): Promise<Record<string, string>> {
-  const workspaceBucket = optionalEnv("FILESYSTEM_BUCKET_NAME");
-  if (!workspaceBucket) {
-    throw new Error("Daytona AWS S3 mounts require FILESYSTEM_BUCKET_NAME when SANDBOX_MOUNT_ROLE_ARN is configured.");
-  }
-
-  const prefix = `${WORKSPACE_MOUNT_PREFIX}/${namespace}/`;
-  const statements = [
-    {
-      Effect: "Allow",
-      Action: ["s3:GetObject", "s3:PutObject", "s3:DeleteObject", "s3:AbortMultipartUpload"],
-      Resource: [`arn:aws:s3:::${workspaceBucket}/${prefix}*`],
-    },
-    {
-      Effect: "Allow",
-      Action: ["s3:ListBucket"],
-      Resource: [`arn:aws:s3:::${workspaceBucket}`],
-      Condition: { StringLike: { "s3:prefix": [`${prefix}*`] } },
-    },
-  ];
-
-  const result = await new STSClient({}).send(new AssumeRoleCommand({
-    RoleArn: roleArn,
-    RoleSessionName: "fp-sandbox-mount",
-    DurationSeconds: 3600,
-    Policy: JSON.stringify({ Version: "2012-10-17", Statement: statements }),
-  }));
-  const credentials = result.Credentials;
-  if (!credentials?.AccessKeyId || !credentials.SecretAccessKey || !credentials.SessionToken) {
-    throw new Error("Failed to assume the sandbox S3 mount role");
-  }
-
-  return {
-    AWS_ACCESS_KEY_ID: credentials.AccessKeyId,
-    AWS_SECRET_ACCESS_KEY: credentials.SecretAccessKey,
-    AWS_SESSION_TOKEN: credentials.SessionToken,
+    ...(env.AWS_SESSION_TOKEN ? { AWS_SESSION_TOKEN: env.AWS_SESSION_TOKEN } : {}),
   };
 }
 
@@ -374,32 +348,14 @@ async function mountAwsS3Buckets(
   request: { workspaceRoot?: string; namespace?: string },
   config: SandboxExecutorConfig,
 ): Promise<void> {
-  const options = isRecordObject(config.options) ? config.options : {};
+  const options = isPlainObject(config.options) ? config.options : {};
   if (options.mountAwsS3Buckets !== true) {
     return;
   }
-
-  const workspaceBucketName = configString(options.workspaceBucketName) ?? optionalEnv("FILESYSTEM_BUCKET_NAME");
-  if (!workspaceBucketName) {
-    throw new Error(
-      "Daytona AWS S3 workspace mount requires config.options.workspaceBucketName or FILESYSTEM_BUCKET_NAME.",
-    );
-  }
-  if (!request.namespace) {
-    throw new Error("Daytona AWS S3 workspace mount requires a workspace namespace.");
-  }
-
+  // Identity only (no STS): the create path already assumed the role into the env.
+  const identity = resolveS3MountIdentity(daytonaS3Context(config, request));
   const workspaceRoot = (request.workspaceRoot ?? "/mnt/workspaces").replace(/\/+$/, "");
-  const workspaceMountPath = `${workspaceRoot}/${request.namespace}`;
-  // Mount only the workspace key prefix so paths line up with the harness and the
-  // Lambda provider's S3 Files access point (see workspaceNamespacePrefix).
-  await mountS3Bucket(
-    sandbox,
-    workspaceBucketName,
-    workspaceMountPath,
-    options,
-    `${WORKSPACE_MOUNT_PREFIX}/${request.namespace}/`,
-  );
+  await mountS3Bucket(sandbox, identity, `${workspaceRoot}/${request.namespace}`);
 
   if (configString(options.skillsBucketName) || optionalEnv("SKILLS_BUCKET_NAME")) {
     logWarn("Daytona skills bucket mount skipped; selected skills are staged into the workspace bucket instead");
@@ -407,37 +363,28 @@ async function mountAwsS3Buckets(
 }
 
 /**
- * Mounts an S3 bucket into the sandbox with full read/write permissions.
+ * Mounts an S3 bucket into the sandbox with full read/write permissions, reading
+ * creds from the process env (set at create time, preserved through `sudo -E`).
  * Idempotent: skips the mount when the path is already a mountpoint (a restarted
  * persistent sandbox keeps its filesystem but loses FUSE mounts).
  */
-async function mountS3Bucket(
-  sandbox: Sandbox,
-  bucketName: string,
-  mountPath: string,
-  options: Record<string, unknown>,
-  keyPrefix?: string,
-): Promise<void> {
+async function mountS3Bucket(sandbox: Sandbox, mount: S3MountIdentity, mountPath: string): Promise<void> {
   await executeDaytonaSetupCommand(sandbox, `sudo mkdir -p ${shellQuote(mountPath)}`);
   await executeDaytonaSetupCommand(sandbox, `sudo chown "$(id -u)":"$(id -g)" ${shellQuote(mountPath)}`);
   const mountArgs = [
     "--allow-delete",
     "--allow-overwrite",
     "--allow-other",
-    ...(keyPrefix ? ["--prefix", keyPrefix] : []),
-    ...mountRegionArgs(options),
-    bucketName,
+    ...(mount.prefix ? ["--prefix", mount.prefix] : []),
+    ...(mount.region ? ["--region", mount.region] : []),
+    ...(mount.endpoint ? ["--endpoint-url", mount.endpoint] : []),
+    mount.bucket,
     mountPath,
   ].map(shellQuote).join(" ");
   await executeDaytonaSetupCommand(
     sandbox,
     `mountpoint -q ${shellQuote(mountPath)} || sudo -E mount-s3 --uid "$(id -u)" --gid "$(id -g)" ${mountArgs}`,
   );
-}
-
-function mountRegionArgs(options: Record<string, unknown>): string[] {
-  const region = configString(options.awsRegion) ?? optionalEnv("AWS_REGION") ?? optionalEnv("AWS_DEFAULT_REGION");
-  return region ? ["--region", region] : [];
 }
 
 async function executeDaytonaSetupCommand(sandbox: Sandbox, command: string): Promise<void> {
@@ -448,5 +395,5 @@ async function executeDaytonaSetupCommand(sandbox: Sandbox, command: string): Pr
 }
 
 function artifactStdout(artifacts: unknown): string {
-  return isRecordObject(artifacts) && typeof artifacts.stdout === "string" ? artifacts.stdout : "";
+  return isPlainObject(artifacts) && typeof artifacts.stdout === "string" ? artifacts.stdout : "";
 }
