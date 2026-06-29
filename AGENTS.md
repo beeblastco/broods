@@ -35,3 +35,4 @@ This is a Bun workspaces monorepo for Broods / broods.
 - Convex `_generated/` is committed on purpose. After schema/function changes, run `bun run --filter @broods/convex codegen` and commit generated diffs.
 - React versions are aligned per app package. Do not add React to the root package.
 - When public API or config shape changes, sync `apps/docs/docs/api-reference/openapi.yaml`, relevant docs, demos, SDK types/client code, and focused tests.
+- `.github/workflows/drift-cleanup.yaml` runs `sst refresh` + `sst diff` nightly and reconciles drift (deleting Pulumi-tracked orphans) per active stage. Production reconciliation respects the GitHub `production` environment approval. Add new stages to its matrix when you stand them up.

@@ -232,6 +232,39 @@ cd packages/demos/async && bun index.ts
 - GitHub Actions runs CI on pull requests and pushes; deploys run on pushes to `dev` (stage `dev`) and `main` (stage `production`). Docs-only changes are skipped.
 - See [CI/CD](ci-cd.md) for the required repository secrets and variables.
 
+## Drift Cleanup
+
+A daily GitHub Actions workflow (`.github/workflows/drift-cleanup.yaml`) reconciles
+drift between `sst.config.ts` and the live stack so resources whose code was
+removed cannot accrue charges by sitting in the cloud unreconciled.
+
+```mermaid
+flowchart LR
+  Schedule["cron 0 3 * * *<br/>(or workflow_dispatch)"] --> Matrix
+  Matrix["Matrix: dev, production-*"] --> Refresh["sst refresh"]
+  Refresh --> Diff["sst diff"]
+  Diff -->|drift detected| Deploy["sst deploy<br/>(auto-reconcile)"]
+  Diff -->|clean| Done["Archive refresh log<br/>(30 days)"]
+  Deploy --> Done
+  Deploy -->|failure| Alert["Step summary +<br/>uploaded artifacts"]
+```
+
+| Stage | Auto-reconcile on drift? | Gate |
+| --- | --- | --- |
+| `dev` | yes | `development` environment (no approval) |
+| `production-*` | yes (when the GitHub `production` environment is approved) | `production` environment (approval-gated — same gate as a normal prod deploy) |
+
+Each run uploads the full refresh + diff log as the artifact
+`drift-plan-{stage}`. The first 200 lines of any non-empty diff are also rendered
+in the workflow's step summary, so a Slack-notified CI summary is enough to see
+what got deleted when the run auto-reconciles.
+
+This is the safety net for stages that did not get reconciled at the time of a
+code change (failed dev deploy, or a Phase-4-style cutover landing after the
+last prod deploy). It catches Pulumi-state-tracked orphans only; resources
+created entirely outside SST state (no Pulumi URN — e.g. an `aws ec2` command
+run by hand) still need manual cleanup.
+
 ## Runtime Telemetry
 
 `harness-processing` writes compact JSON log lines for metric-bearing model and tool events so CloudWatch Logs Insights, metric filters, and dashboards can graph model usage without parsing SSE payloads.

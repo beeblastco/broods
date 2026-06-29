@@ -11,6 +11,14 @@ Deploys run on push to two branches, plus manual `workflow_dispatch` with a stag
 
 A separate workflow (`deploy-docs.yaml`) builds the Docusaurus site on `main` pushes touching docs and syncs it to S3 + CloudFront (vars `DOCS_S3_BUCKET`, `DOCS_DOMAIN`).
 
+A daily `drift-cleanup.yaml` runs `sst refresh` + `sst diff` for every active
+stage (`dev`, `production-*`). When drift is detected, it deploys to reconcile —
+deleting resources whose code was removed (orphan NAT Gateways, unused log
+groups, fck-nat-era Lambdas, etc.) so billable resources cannot pile up.
+Production reconciliation respects the same `production` GitHub environment
+approval gate as a regular prod deploy. See [Operations → Drift Cleanup](operations.md#drift-cleanup)
+for the full workflow diagram and artifact retention policy.
+
 The npm package workflow is split in two:
 
 - `check-broods-sdk.yaml` runs automatically on pull requests and non-`main` pushes that touch `packages/broods/**`, root package metadata, `bun.lock`, or the SDK npm workflows. It typechecks, tests, builds, and dry-run packs the package so source files, tests, and local env files cannot slip into the tarball.

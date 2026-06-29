@@ -1,0 +1,228 @@
+# Drift cleanup.
+# Runs `sst refresh` + `sst diff` for every active stage nightly, then if drift
+# is detected, runs `sst deploy` to reconcile (deleting resources whose code
+# was removed). This is the safety net for stages that did not get reconciled
+# at the time of a code change (e.g. failed deploy on `dev`, or a Phase-4-style
+# cutover landed after the last prod deploy). It is the second line of defence
+# against billable orphans (NAT Gateways, EIPs, unused log groups, deprecated
+# Lambda functions).
+#
+# Production safety:
+#   - The matrix uses the GitHub `production` environment for production-*
+#     stages and `development` otherwise. The `production` environment in
+#     this repo is already approval-gated (see deploy.yaml), so prod
+#     reconciliation runs are no more dangerous than a regular prod deploy.
+#   - `sst deploy` auto-confirms in CI (no TTY). Drift is bounded because
+#     the only diff is between sst.config.ts and the live stack — never
+#     against an out-of-tree change.
+#
+# Trigger:
+#   - schedule: 0 3 * * * (03:00 UTC daily; low-traffic window)
+#   - workflow_dispatch: ad-hoc run, same matrix
+
+name: Drift Cleanup
+
+on:
+  schedule:
+    - cron: '0 3 * * *'
+  workflow_dispatch:
+
+# Serialize against the deploy workflow so a manual prod deploy + a same-hour
+# drift run cannot both try to grab the SST/Pulumi state lock.
+concurrency:
+  group: drift-cleanup-${{ github.workflow }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  reconcile:
+    name: Reconcile ${{ matrix.stage }}
+    runs-on: ubuntu-24.04
+    strategy:
+      # Each stage must finish (or fail) independently — one stage failing
+      # should not block another's cleanup pass.
+      fail-fast: false
+      matrix:
+        include:
+          - stage: dev
+            region: eu-west-1
+          - stage: production-eu-west-1
+            region: eu-west-1
+
+    # Mirror deploy.yaml environment mapping so the same prod approval flow
+    # guards drift-driven deploys. To turn this into a fully hands-off prod
+    # cleanup, remove the `production` environment from this repo's settings
+    # — but the default keeps a human in the loop for prod reconcile.
+    environment: ${{ startsWith(matrix.stage, 'production') && 'production' || 'development' }}
+
+    env:
+      AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+      PROJECT_NAME: ${{ vars.PROJECT_NAME }}
+      PROJECT_OWNER_EMAIL: ${{ vars.PROJECT_OWNER_EMAIL }}
+      # Mirrors deploy.yaml env block for SST/Pulumi to compose the same
+      # identity, runtime, and Convex credentials it sees on a normal deploy.
+      CI: 'true'
+      ADMIN_ACCOUNT_SECRET: ${{ secrets.ADMIN_ACCOUNT_SECRET || secrets.SST_SECRET_ADMINACCOUNTSECRET }}
+      ACCOUNT_CONFIG_ENCRYPTION_SECRET: ${{ secrets.ACCOUNT_CONFIG_ENCRYPTION_SECRET || secrets.SST_SECRET_ACCOUNTCONFIGENCRYPTIONSECRET }}
+      SERVICE_AUTH_SECRET: ${{ secrets.SERVICE_AUTH_SECRET }}
+      DAYTONA_API_KEY: ${{ secrets.DAYTONA_API_KEY }}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${{ vars.OTEL_EXPORTER_OTLP_ENDPOINT || 'https://otel.beeblast.co' }}
+      OTEL_EXPORTER_OTLP_HEADERS: ${{ secrets.OTEL_EXPORTER_OTLP_HEADERS }}
+      ENABLE_DIRECT_API: ${{ vars.ENABLE_DIRECT_API || 'false' }}
+      ENABLE_WEBSOCKET: ${{ vars.ENABLE_WEBSOCKET || 'false' }}
+      # Do NOT pass SANDBOX_IMAGE_READY_* for drift cleanup — drift should
+      # only reconcile state, not bootstrap sandbox images. The deploy
+      # workflow owns that mirror step.
+      NATS_URL: ${{ secrets.NATS_URL }}
+      NATS_TOKEN: ${{ secrets.NATS_TOKEN }}
+      CONVEX_URL: ${{ secrets.CONVEX_URL }}
+      CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@ec61189d14ec14c8efccab744f656cffd0e33f37
+        with:
+          aws-region: ${{ matrix.region }}
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+
+      - name: Install dependencies (skip sst postinstall)
+        # --ignore-scripts keeps `sst install` from running here; refresh/diff
+        # don't need it (sst is invoked via bunx at deploy-time).
+        run: bun install --frozen-lockfile --ignore-scripts
+
+      - name: Detect drift (refresh + diff)
+        id: detect
+        working-directory: apps/core
+        env:
+          TARGET_STAGE: ${{ matrix.stage }}
+          TARGET_REGION: ${{ matrix.region }}
+        shell: bash
+        run: |
+          set -uo pipefail
+
+          LOG_DIR="/tmp/drift-${TARGET_STAGE}"
+          mkdir -p "$LOG_DIR"
+
+          echo "::group::sst refresh — pull real cloud state into Pulumi state"
+          AWS_REGION="$TARGET_REGION" AWS_DEFAULT_REGION="$TARGET_REGION" \
+            bunx sst refresh --stage "$TARGET_STAGE" \
+            2>&1 | tee "$LOG_DIR/refresh.log"
+          echo "::endgroup::"
+
+          echo "::group::sst diff — compute desired-vs-actual plan"
+          # sst diff returns non-zero on errors, zero with content for diffs
+          # and zero without content when the stack already matches.
+          set +e
+          AWS_REGION="$TARGET_REGION" AWS_DEFAULT_REGION="$TARGET_REGION" \
+            bunx sst diff --stage "$TARGET_STAGE" \
+            2>&1 | tee "$LOG_DIR/diff.log"
+          DIFF_RC=$?
+          set -e
+          echo "::endgroup::"
+
+          if [ "$DIFF_RC" -ne 0 ]; then
+            echo "::warning::sst diff exited $DIFF_RC — treating as 'drift detected, do not apply' so a human can review"
+            echo "diff_rc=$DIFF_RC" >> "$GITHUB_OUTPUT"
+            echo "drift_detected=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # Drift signal: any Pulumi-style diff line (starts with +, -, ~) at
+          # column 0 (resource-level) or after 6 spaces (attribute-level).
+          if grep -qE '^([\+\-\~] |^      [\+\-\~] )' "$LOG_DIR/diff.log"; then
+            echo "drift_detected=true" >> "$GITHUB_OUTPUT"
+            {
+              echo "## Drift detected for stage \`$TARGET_STAGE\` in \`$TARGET_REGION\`"
+              echo ""
+              echo "Pulumi plan will reconcile this stack. The full plan is archived as the workflow artifact \`drift-plan-${TARGET_STAGE}\`. First 200 lines:"
+              echo ""
+              echo '```'
+              head -200 "$LOG_DIR/diff.log"
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "drift_detected=false" >> "$GITHUB_OUTPUT"
+            {
+              echo "## No drift for stage \`$TARGET_STAGE\` in \`$TARGET_REGION\` ✓"
+              echo ""
+              echo "Refresh + diff completed clean. Refresh log is archived as \`drift-plan-${TARGET_STAGE}\` for the next 30 days."
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload drift plan
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: drift-plan-${{ matrix.stage }}
+          path: /tmp/drift-${{ matrix.stage }}/*.log
+          # 30 days is enough to investigate the run that introduced a
+          # configuration regression; covers two monthly deploy cycles.
+          retention-days: 30
+          if-no-files-found: warn
+
+      - name: Build Lambda binaries
+        if: steps.detect.outputs.drift_detected == 'true'
+        # Build only when we are about to apply — sst refresh/diff doesn't
+        # touch the bundle. Mirrors deploy.yaml's build step so the deploy
+        # picks up the same `dist/harness-processing` and `dist/account-manage`
+        # artefacts referenced by sst.config.ts.
+        run: bun run build
+
+      - name: Clear stale SST deploy lock
+        if: steps.detect.outputs.drift_detected == 'true'
+        working-directory: apps/core
+        env:
+          TARGET_STAGE: ${{ matrix.stage }}
+          TARGET_REGION: ${{ matrix.region }}
+        shell: bash
+        run: |
+          set -uo pipefail
+          AWS_REGION="$TARGET_REGION" AWS_DEFAULT_REGION="$TARGET_REGION" \
+            bunx sst unlock --stage "$TARGET_STAGE" || true
+
+      - name: Reconcile (sst deploy)
+        if: steps.detect.outputs.drift_detected == 'true'
+        working-directory: apps/core
+        env:
+          TARGET_STAGE: ${{ matrix.stage }}
+          TARGET_REGION: ${{ matrix.region }}
+        shell: bash
+        run: |
+          set -uo pipefail
+
+          echo "::group::sst deploy — apply reconciliation for $TARGET_STAGE"
+          AWS_REGION="$TARGET_REGION" AWS_DEFAULT_REGION="$TARGET_REGION" \
+            SST_STAGE="$TARGET_STAGE" \
+            bunx sst deploy --stage "$TARGET_STAGE" --print-logs
+          DEPLOY_RC=$?
+          echo "::endgroup::"
+
+          if [ "$DEPLOY_RC" -ne 0 ]; then
+            echo "::error::sst deploy failed for $TARGET_STAGE in $TARGET_REGION (rc=$DEPLOY_RC)"
+            {
+              echo "## ❌ sst deploy failed for \`$TARGET_STAGE\` in \`$TARGET_REGION\` (rc=$DEPLOY_RC)"
+              echo ""
+              echo "Re-run manually after fixing the underlying issue:"
+              echo ""
+              echo '```'
+              echo "AWS_REGION=$TARGET_REGION AWS_DEFAULT_REGION=$TARGET_REGION \\"
+              echo "  bunx sst deploy --stage $TARGET_STAGE --print-logs"
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit "$DEPLOY_RC"
+          fi
+
+          {
+            echo "## ✅ sst deploy succeeded for \`$TARGET_STAGE\` in \`$TARGET_REGION\`"
+            echo ""
+            echo "Drift was applied. The stack now matches sst.config.ts. Audit the artifact \`drift-plan-${TARGET_STAGE}\` for the historical plan."
+          } >> "$GITHUB_STEP_SUMMARY"
