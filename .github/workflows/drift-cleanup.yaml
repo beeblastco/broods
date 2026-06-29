@@ -45,17 +45,30 @@ jobs:
       # Each stage must finish (or fail) independently — one stage failing
       # should not block another's cleanup pass.
       fail-fast: false
+      # `ref` pins each stage to the branch that actually feeds it, mirroring
+      # deploy.yaml's source-of-truth: the `dev` stage tracks `dev`, and every
+      # `production-*` stage tracks `main` (the promoted code). Without this the
+      # workflow would check out its own trigger ref (`dev`) for ALL stages and
+      # the nightly cron would silently deploy dev's HEAD to production every
+      # night — bypassing the one-click promote-dev-to-main gate. Production
+      # must only ever be reconciled to what has been promoted to `main`.
       matrix:
         include:
           - stage: dev
             region: eu-west-1
+            ref: dev
           - stage: production-eu-west-1
             region: eu-west-1
+            ref: main
 
-    # Mirror deploy.yaml environment mapping so the same prod approval flow
-    # guards drift-driven deploys. To turn this into a fully hands-off prod
-    # cleanup, remove the `production` environment from this repo's settings
-    # — but the default keeps a human in the loop for prod reconcile.
+    # Mirror deploy.yaml's environment mapping so prod reconciles route through
+    # the `production` GitHub environment. NOTE: this only adds a human gate if
+    # the `production` environment has required reviewers configured in repo
+    # settings — it currently does NOT, so the gate is advisory until that is
+    # added. The `ref: main` pinning above is the load-bearing safety control
+    # (prod can only ever reconcile to promoted code); the environment gate is
+    # defense-in-depth on top of it. Add required reviewers to `production` to
+    # also require manual approval before a prod drift-reconcile applies.
     environment: ${{ startsWith(matrix.stage, 'production') && 'production' || 'development' }}
 
     env:
@@ -84,6 +97,10 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+        with:
+          # Reconcile each stage against ITS branch (see matrix `ref` above):
+          # dev←dev, production-*←main. Never deploy dev's HEAD to production.
+          ref: ${{ matrix.ref }}
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
