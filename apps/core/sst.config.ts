@@ -650,16 +650,19 @@ export default $config({
       });
     }
 
-    // Sandbox VPC. Its former consumers (the S3 Files NFS mount targets and the 4-stage
-    // sandbox Lambdas) were removed in the MicroVM cutover: MicroVMs mount S3 with mount-s3
-    // over default internet egress, needing no VPC for the common path. It is retained for
-    // the restricted/deny-all egress mode, which will attach a VPC egress network connector
-    // (lambda-core create-network-connector). The fck-nat EC2 instance was removed in the
-    // Phase 4 teardown, so the VPC has no NAT; the future egress connector handles
-    // restricted/deny-all egress, and the common path mounts S3 over default internet egress.
-    const sandboxNetwork = new sst.aws.Vpc.v1("SandboxNetwork", {
-      az: 2, // 2 az same price of 1 az.
-    });
+    // No sandbox VPC. The MicroVM `lambda` provider runs on default INTERNET_EGRESS and
+    // mounts S3 with mount-s3 (Mountpoint-for-S3 + scoped STS creds) over that egress, so
+    // the common path needs no VPC. The old S3 Files NFS mount targets and the 4-stage
+    // sandbox Lambdas (the only former consumers) were removed in the MicroVM cutover.
+    //
+    // The previous `sst.aws.Vpc.v1("SandboxNetwork")` was dead-but-billable: it had no
+    // consumers, yet Vpc.v1 always provisions a managed NAT gateway + EIP per AZ (~$65/mo
+    // each, ~$130/mo per stage) with no way to opt out. Removing it deletes those NATs.
+    //
+    // When restricted/deny-all egress is actually implemented (lambda-core
+    // create-network-connector), reintroduce a purpose-built VPC then: `sst.aws.Vpc` (v2,
+    // NAT-less by default) plus a *free* S3 Gateway VPC Endpoint for the mount-s3 path —
+    // deny-all needs no egress at all, and restricted-to-S3 does not need a NAT.
 
     // Scoped credentials for provider sandboxes that mount S3 with mount-s3
     // (daytona, workdir, and the lambda MicroVM via its /run hook). The harness assumes
