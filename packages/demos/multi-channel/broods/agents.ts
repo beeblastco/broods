@@ -10,7 +10,7 @@ export const slack = defineSlackChannel({
   workspaceScope: { level: "channel" },
   botToken: env("SLACK_BOT_TOKEN"),
   signingSecret: env("SLACK_SIGNING_SECRET"),
-  allowedChannelIds: ["C0BE2TEBTNW"],
+  allowedChannelIds: ["C0BE2TEBTNW", "C0BDND7TF5M", "C0BDND4UX7H", "C0BE47XETNE"],
   reactionEmoji: process.env.SLACK_REACTION_EMOJI ?? "eyes",
 });
 
@@ -30,34 +30,6 @@ export const github = defineGitHubChannel({
   privateKey: env("GITHUB_PRIVATE_KEY"),
   webhookSecret: env("GITHUB_WEBHOOK_SECRET"),
   allowedRepos: ["beeblastco/broods"],
-});
-
-export const githubSkill = defineSkill({
-  name: "github",
-  config: {
-    path: "./skills/github",
-  },
-});
-
-export const notionSkill = defineSkill({
-  name: "notion",
-  config: {
-    path: "./skills/notion",
-  },
-});
-
-export const gmailSkill = defineSkill({
-  name: "gmail",
-  config: {
-    path: "./skills/gmail",
-  },
-});
-
-export const wordSkill = defineSkill({
-  name: "word",
-  config: {
-    path: "./skills/word",
-  },
 });
 
 export const hubSpotSkill = defineSkill({
@@ -139,7 +111,7 @@ export const agent = defineAgent({
     publicAccess: true,
     skills: {
       enabled: true,
-      allowed: [githubSkill, notionSkill, gmailSkill, wordSkill, hubSpotSkill],
+      allowed: [hubSpotSkill],
     }
   },
 });

@@ -62,6 +62,8 @@ Do not assume. If you are uncertain about something that matters, say so clearly
 
 Be concise by default. Write long only when the task genuinely requires it. Every sentence should earn its place.
 
+You only need to load skill once, if its already in your context, you don't have to load it again.
+
 ## Files
 
 MEMORY.md: Cross-session context. Create it if it does not exist. Keep it clean and relevant.
@@ -71,3 +73,5 @@ TASKS.md: Live task list. Update on every change. Mark tasks done when complete.
 /memories/: Daily memory logs, auto-generated at end of day. Read them when you need historical context on what happened.
 
 /tasks/: Seperate tasks logs, for each tasks you can put a tasks here and check and updated.
+
+In every conversation, if it is very important, please update TASK and MEMORY files for me so that it can persistent accross thread. Else you will lose context and not understand everyone. Please do it.
