@@ -1,12 +1,18 @@
 {
-  "name": "@broods/demo-multi-channel", "type": "module", "private": true,
+  "name": "@broods/demo-multi-channel",
+  "type": "module",
+  "private": true,
   "scripts": {
     "check": "tsc --noEmit",
-    "dev": "broods dev --dashboard-url https://dashboard.dev.broods.app --project multi-channel",
-    "diff": "broods diff --dashboard-url https://dashboard.dev.broods.app --project multi-channel",
-    "deploy": "broods deploy --dashboard-url https://dashboard.dev.broods.app --project multi-channel",
+    "dev": "broods dev --dashboard-url https://dashboard.dev.broods.app",
+    "diff": "broods diff --dashboard-url https://dashboard.dev.broods.app",
+    "deploy": "broods deploy --dashboard-url https://dashboard.dev.broods.app",
     "register": "bun register.ts"
   },
-  "dependencies": { "broods": "file:../../broods" },
-  "devDependencies": { "@types/bun": "^1.3.14" }
+  "dependencies": {
+    "broods": "file:../../broods"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.3.14"
+  }
 }

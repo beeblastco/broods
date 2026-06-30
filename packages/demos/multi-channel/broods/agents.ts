@@ -16,7 +16,7 @@ export const telegram = defineTelegramChannel({
   botToken: env("TELEGRAM_BOT_TOKEN"),
   webhookSecret: env("TELEGRAM_WEBHOOK_SECRET"),
   allowedChatIds: [8096152290, 7495331456],
-  reactionEmoji: "\u{1F440}",
+  reactionEmoji: "\u{1F440}", 
 });
 
 export const github = defineGitHubChannel({
