@@ -6,6 +6,7 @@
 import { afterEach, describe, expect, it } from "bun:test";
 import { normalizeFilesystemNamespace } from "../functions/_shared/runtime-keys.ts";
 import {
+  isolatedWorkspaceNamespace,
   resolveAgentRuntime,
   workspaceNamespace,
 } from "../functions/_shared/workspaces.ts";
@@ -21,6 +22,39 @@ describe("workspaceNamespace", () => {
     expect(workspaceNamespace("acct_1", "ws_a")).not.toBe(workspaceNamespace("acct_1", "ws_b"));
     // Same workspaceId resolves to the same namespace regardless of caller.
     expect(workspaceNamespace("acct_1", "ws_a")).toBe(workspaceNamespace("acct_1", "ws_a"));
+  });
+
+  it("adds optional channel and conversation folders under the same workspace namespace", () => {
+    const base = workspaceNamespace("acct_1", "ws_a");
+    const scope = {
+      channelScopeKey: "slack:T123:C456",
+      channelIsolationScopeKey: "slack:T123:C456",
+      conversationKey: "slack:T123:C456:1719760000.000000",
+    };
+
+    expect(isolatedWorkspaceNamespace(base, "none", scope)).toBe(base);
+    expect(isolatedWorkspaceNamespace(base, "channel", scope)).toBe(
+      `${base}/channels/${normalizeFilesystemNamespace(scope.channelScopeKey)}`,
+    );
+    expect(isolatedWorkspaceNamespace(base, "conversation", scope)).toBe(
+      `${base}/channels/${normalizeFilesystemNamespace(scope.channelScopeKey)}/conversations/${normalizeFilesystemNamespace(scope.conversationKey)}`,
+    );
+  });
+
+  it("can make channel isolation use the full conversation without changing conversation hierarchy", () => {
+    const base = workspaceNamespace("acct_1", "ws_a");
+    const scope = {
+      channelScopeKey: "slack:T123:C456",
+      channelIsolationScopeKey: "slack:T123:C456:1719760000.000000",
+      conversationKey: "slack:T123:C456:1719760000.000000",
+    };
+
+    expect(isolatedWorkspaceNamespace(base, "channel", scope)).toBe(
+      `${base}/channels/${normalizeFilesystemNamespace(scope.channelIsolationScopeKey)}`,
+    );
+    expect(isolatedWorkspaceNamespace(base, "conversation", scope)).toBe(
+      `${base}/channels/${normalizeFilesystemNamespace(scope.channelScopeKey)}/conversations/${normalizeFilesystemNamespace(scope.conversationKey)}`,
+    );
   });
 });
 
@@ -67,6 +101,27 @@ describe("resolveAgentRuntime", () => {
         },
       },
     }]);
+  });
+
+  it("resolves workspace isolation with the current channel/conversation scope", async () => {
+    setStorageForTests({
+      sandboxConfigs: { getById: async () => null },
+      workspaceConfigs: {
+        getById: async (_accountId: string, id: string) =>
+          id === "ws_a" ? { config: { storage: { provider: "s3" }, isolation: "conversation" } } : null,
+      },
+    } as never);
+
+    const resolved = await resolveAgentRuntime(
+      { workspaces: [{ name: "notes", workspaceId: "ws_a" }] },
+      "acct_1",
+      { channelScopeKey: "slack:T123:C456", conversationKey: "slack:T123:C456:1719760000.000000" },
+    );
+
+    const base = workspaceNamespace("acct_1", "ws_a");
+    expect(resolved.workspaces[0]?.namespace).toBe(
+      `${base}/channels/${normalizeFilesystemNamespace("slack:T123:C456")}/conversations/${normalizeFilesystemNamespace("slack:T123:C456:1719760000.000000")}`,
+    );
   });
 
   it("lets a workspace override the agent-level sandbox per agent", async () => {

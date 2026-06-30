@@ -5,7 +5,8 @@
 - A **sandbox** is the compute backend plus a collection of bash and filesystem tools
   (`bash`, `read`, `write`, `edit`, `glob`, `grep`) and a `permissionMode`.
 - A **workspace** is the persistent S3-backed filesystem that gets mounted into a sandbox.
-  Agents that reference the **same** `workspaceId` read and write the **same files**.
+  Agents that reference the **same** `workspaceId` read and write the **same files** unless
+  the workspace opts into channel or conversation isolation.
 
 A sandbox can be attached **agent-wide** (`config.sandbox`) or **per workspace**
 (`workspaces[].sandbox`). A workspace's **effective sandbox** follows a simple cascade:
@@ -69,6 +70,7 @@ export const notes = defineWorkspace({
   name: "notes",
   config: {
     storage: { provider: "s3" },
+    isolation: "channel", // none | channel | conversation
     harness: { enabled: true },
   },
 });
@@ -143,11 +145,25 @@ flowchart TD
   Harness --> Tools["tools/index.ts<br/>per-workspace sandbox + permissionMode"]
   Tools --> Sandbox["sandbox executor (run)<br/>sandbox / lambda / e2b / daytona / vercel"]
   Tools -->|read/glob on read-only workspace| Files
-  Sandbox --> Files["workspace files on S3<br/>namespace = hash(accountId:workspaceId)"]
+  Sandbox --> Files["workspace files on S3<br/>namespace = hash(accountId:workspaceId)<br/>+ optional channel/conversation folders"]
   Session -->|MEMORY.md via S3 API| Files
 ```
 
 The workspace **namespace** is derived from `accountId:workspaceId` (not the
-conversation), which is what makes a workspace shared across agents and conversations.
+conversation), which is what makes a workspace shared across agents and conversations by
+default. Set `workspace.config.isolation` to change only the folder scope inside that
+workspace:
+
+| `workspace.config.isolation` | Filesystem scope |
+| --- | --- |
+| `none` or unset | one shared workspace root for every run |
+| `channel` | nested under the originating channel scope, e.g. one Slack channel |
+| `conversation` | nested under the full conversation/thread key |
+
+Isolation does **not** create another bucket. It adds hierarchical folders under the same
+workspace namespace, so managed and bring-your-own buckets keep the same bucket identity.
+For channels, `config.channels.<channel>.workspaceIsolationScope` controls whether a
+channel-scoped workspace uses the provider's broad channel key (`"channel"`, default) or
+the full conversation/thread key (`"conversation"`).
 Set `workspace.harness.enabled: false` to suppress the MEMORY/TASKS guidance while still
 loading an existing `MEMORY.md`.

@@ -61,7 +61,7 @@ describe("slack channel adapter", () => {
     expect(parsed.response.body).toBe(JSON.stringify({ challenge: "challenge-token" }));
   });
 
-  it("stores public channel messages as channel-scoped context", async () => {
+  it("stores public channel messages as thread-scoped context", async () => {
     const adapter = createTestSlackChannel(null);
 
     const parsed = await adapter.parse(createEventRequest({
@@ -83,8 +83,7 @@ describe("slack channel adapter", () => {
       throw new Error("Expected public channel message to be stored as context");
     }
 
-    // Channel-scoped so the bot sees all interstitial messages in the group.
-    expect(parsed.message.conversationKey).toBe("slack:T1:C1");
+    expect(parsed.message.conversationKey).toBe("slack:T1:C1:1713916800.000004");
     // Group-channel messages include the sender's user id so the agent knows
     // who is talking in a multi-user channel.
     expect(parsed.message.content).toEqual([{ type: "text", text: "Alex: hello channel" }]);
@@ -95,6 +94,48 @@ describe("slack channel adapter", () => {
       threadTs: "1713916800.000004",
       userId: "U1",
     });
+  });
+
+  it("keeps root context and later thread mentions in the same Slack conversation", async () => {
+    const adapter = createTestSlackChannel(null);
+
+    const root = await adapter.parse(createEventRequest({
+      type: "event_callback",
+      event_id: "evt-root",
+      team_id: "T1",
+      event: {
+        type: "message",
+        text: "Here is the customer list screenshot.",
+        channel: "C1",
+        channel_type: "channel",
+        user: "U1",
+        ts: "1713916800.000020",
+      },
+    }));
+    const mention = await adapter.parse(createEventRequest({
+      type: "event_callback",
+      authorizations: [{ user_id: "BOT", is_bot: true }],
+      event_id: "evt-thread-mention",
+      team_id: "T1",
+      event: {
+        type: "app_mention",
+        text: "<@BOT> summarize this",
+        channel: "C1",
+        channel_type: "channel",
+        user: "U2",
+        thread_ts: "1713916800.000020",
+        ts: "1713916800.000021",
+      },
+    }));
+
+    expect(root.kind).toBe("context");
+    expect(mention.kind).toBe("message");
+    if (root.kind !== "context" || mention.kind !== "message") {
+      throw new Error("Expected root context and thread mention");
+    }
+    expect(root.message.conversationKey).toBe("slack:T1:C1:1713916800.000020");
+    expect(mention.message.conversationKey).toBe(root.message.conversationKey);
+    expect(mention.message.source.threadTs).toBe("1713916800.000020");
   });
 
   it("stores generic message events with human mentions as context", async () => {
@@ -147,7 +188,7 @@ describe("slack channel adapter", () => {
     expect(parsed.reason).toBe("unsupported_subtype:message_changed");
   });
 
-  it("normalizes app mentions into channel-scoped conversations and strips the bot mention", async () => {
+  it("normalizes app mentions into thread-scoped conversations and strips the bot mention", async () => {
     const adapter = createTestSlackChannel(new Set(["C1"]));
 
     const parsed = await adapter.parse(createEventRequest({
@@ -174,7 +215,7 @@ describe("slack channel adapter", () => {
     // Both app_mention and message events for the same user message share the
     // same ts, so using ts as the eventId lets session.claim() dedupe them.
     expect(parsed.message.eventId).toBe("slack:T1:C1:1713916800.000002");
-    expect(parsed.message.conversationKey).toBe("slack:T1:C1");
+    expect(parsed.message.conversationKey).toBe("slack:T1:C1:1713916800.000002");
     expect(parsed.message.content).toEqual([{ type: "text", text: "Alex: hello there" }]);
     expect(parsed.message.source).toEqual({
       teamId: "T1",

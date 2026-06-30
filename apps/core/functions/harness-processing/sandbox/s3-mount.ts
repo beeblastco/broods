@@ -48,7 +48,6 @@ export interface S3MountContext {
   namespace: string;
   // broods-managed bucket fallback (FILESYSTEM_BUCKET_NAME) when storage omits one.
   managedBucket?: string;
-  // region/endpoint fallbacks from the executor options when storage omits them.
   region?: string;
   endpoint?: string;
 }
@@ -72,11 +71,23 @@ export function resolveS3MountIdentity(ctx: S3MountContext): S3MountIdentity {
     throw new Error("workspace S3 mount requires storage.bucket or a managed bucket (FILESYSTEM_BUCKET_NAME).");
   }
   const prefix = storage?.bucket
-    ? normalizePrefix(storage.prefix)
+    ? joinPrefix(normalizePrefix(storage.prefix), namespaceIsolationSuffix(ctx.namespace))
     : `${workspaceNamespacePrefix(ctx.namespace)}/`;
   const region = storage?.region ?? ctx.region;
   const endpoint = storage?.endpoint ?? ctx.endpoint;
   return { bucket, prefix, ...(region ? { region } : {}), ...(endpoint ? { endpoint } : {}) };
+}
+
+function namespaceIsolationSuffix(namespace: string): string | undefined {
+  const separator = namespace.indexOf("/");
+  return separator >= 0 ? namespace.slice(separator + 1) : undefined;
+}
+
+function joinPrefix(prefix: string | undefined, suffix: string | undefined): string {
+  const normalizedPrefix = prefix?.replace(/^\/+|\/+$/g, "");
+  const normalizedSuffix = suffix?.replace(/^\/+|\/+$/g, "");
+  const joined = [normalizedPrefix, normalizedSuffix].filter(Boolean).join("/");
+  return joined ? `${joined}/` : "";
 }
 
 // Where a harness-side read of a workspace lands: the bucket + key prefix, plus the

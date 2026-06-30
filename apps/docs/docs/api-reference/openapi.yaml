@@ -1198,6 +1198,10 @@ paths:
                       type: object
                       properties:
                         provider: { type: string, enum: [s3] }
+                    isolation:
+                      type: string
+                      enum: [none, channel, conversation]
+                      description: Filesystem isolation below the workspace namespace. `none`/unset shares one root; `channel` and `conversation` add nested folders under the same bucket/prefix.
                     harness:
                       type: object
                       properties:
@@ -1206,7 +1210,7 @@ paths:
               notes:
                 value:
                   name: notes
-                  config: { storage: { provider: s3 }, harness: { enabled: true } }
+                  config: { storage: { provider: s3 }, isolation: channel, harness: { enabled: true } }
       responses:
         '201': { description: Workspace created }
     get:
@@ -2735,6 +2739,10 @@ components:
                 type: integer
             reactionEmoji:
               type: string
+            workspaceIsolationScope:
+              type: string
+              enum: [channel, conversation]
+              description: For workspaces with `isolation: channel`, choose whether this channel uses the broad channel key or the full conversation key.
         github:
           type: object
           properties:
@@ -2752,6 +2760,9 @@ components:
               items:
                 type: string
               description: Repository slugs (`owner/repo`)
+            workspaceIsolationScope:
+              type: string
+              enum: [channel, conversation]
         slack:
           type: object
           properties:
@@ -2767,6 +2778,9 @@ components:
                 type: string
             reactionEmoji:
               type: string
+            workspaceIsolationScope:
+              type: string
+              enum: [channel, conversation]
         discord:
           type: object
           properties:
@@ -2780,6 +2794,9 @@ components:
               type: array
               items:
                 type: string
+            workspaceIsolationScope:
+              type: string
+              enum: [channel, conversation]
         pancake:
           type: object
           description: Pancake sends no signature header; the webhook URL must carry `?secret=<webhookSecret>`, checked on every request.
@@ -2803,6 +2820,9 @@ components:
                   items:
                     type: string
                   description: Conversation tag IDs that mark human handoff; tagged conversations are ignored.
+            workspaceIsolationScope:
+              type: string
+              enum: [channel, conversation]
         zalo:
           type: object
           description: Official Zalo Bot API webhook channel for direct text messages.
@@ -2819,3 +2839,6 @@ components:
               items:
                 type: string
               description: Zalo user IDs allowed to trigger the agent.
+            workspaceIsolationScope:
+              type: string
+              enum: [channel, conversation]

@@ -38,6 +38,17 @@ describe("workspace config", () => {
       .toEqual({ storage: { provider: "s3" }, harness: { enabled: true } });
   });
 
+  it("accepts workspace isolation modes and omits the none default", () => {
+    expect(normalizeWorkspaceConfig({ storage: { provider: "s3" }, isolation: "none" }))
+      .toEqual({ storage: { provider: "s3" } });
+    expect(normalizeWorkspaceConfig({ storage: { provider: "s3" }, isolation: "channel" }))
+      .toEqual({ storage: { provider: "s3" }, isolation: "channel" });
+    expect(normalizeWorkspaceConfig({ storage: { provider: "s3" }, isolation: "conversation" }))
+      .toEqual({ storage: { provider: "s3" }, isolation: "conversation" });
+    expect(() => normalizeWorkspaceConfig({ isolation: "agent" }))
+      .toThrow("config.isolation must be one of: none, channel, conversation");
+  });
+
   it("parses a bring-your-own bucket with assume-role auth", () => {
     expect(normalizeWorkspaceConfig({
       storage: {

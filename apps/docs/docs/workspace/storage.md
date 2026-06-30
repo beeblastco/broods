@@ -2,7 +2,8 @@
 
 Storage is the filesystem backing for Workspace. By default a workspace uses the
 broods-managed S3 bucket (`{ "storage": { "provider": "s3" } }`), partitioned per
-workspace under `<namespace>/`. A workspace can also point at a
+workspace under `<namespace>/`. Optional workspace isolation adds more folders below
+that namespace, never another bucket. A workspace can also point at a
 **bring-your-own bucket** with its own credentials — see
 [Bring-your-own bucket](#bring-your-own-bucket). Provider-native storage values such
 as `vercel` are rejected until they are wired into the same workspace mount/read
@@ -44,7 +45,7 @@ flowchart TD
 
 Every S3-backed provider mounts the selected prefix at the workspace directory for the run with `mount-s3`. The Lambda MicroVM provider mounts inside the VM from its `/run` lifecycle hook; the `sandbox`/workdir and Daytona providers mount per run (`mountAwsS3Buckets: true`, or any workspace with `storage` for the `sandbox` provider). E2B and Vercel do not currently support S3 workspaces in this harness; attaching an S3 workspace to those sandboxes fails fast instead of silently using provider-native filesystem state.
 
-The mount target + credentials are resolved one way for every S3 provider (`functions/harness-processing/sandbox/s3-mount.ts`): the managed bucket is partitioned by `<namespace>/`; a [bring-your-own bucket](#bring-your-own-bucket) uses its own bucket/prefix and short-lived assume-role credentials.
+The mount target + credentials are resolved one way for every S3 provider (`functions/harness-processing/sandbox/s3-mount.ts`): the managed bucket is partitioned by `<namespace>/`; a [bring-your-own bucket](#bring-your-own-bucket) uses its own bucket/prefix and short-lived assume-role credentials. When a workspace has `isolation: "channel"` or `isolation: "conversation"`, the same resolver appends `channels/<hash>/` or `channels/<hash>/conversations/<hash>/` under that prefix.
 
 The dashboard workspace **Files** tab lists and mutates this same S3 namespace through
 the authenticated account-management API. Uploads, renames, and deletes therefore
@@ -171,6 +172,7 @@ export const notes = defineWorkspace({
   name: "notes",
   config: {
     storage: { provider: "s3" },
+    isolation: "none", // default; also supports "channel" and "conversation"
     harness: { enabled: true },
   },
 });

@@ -183,7 +183,7 @@ async function parseEventCallback(
       // (app_mention + message for the same mention) dedupe naturally via
       // session.claim().  ts is unique per message within a channel.
       eventId: `${SLACK_INTEGRATION_PREFIX}${payload.team_id}:${channelId}:${ts}`,
-      conversationKey: getSlackConversationKey(payload.team_id, channelId),
+      conversationKey: getSlackConversationKey(payload.team_id, channelId, payload.event, threadTs),
       channelName: "slack",
       content: [{ type: "text", text }],
       source: {
@@ -229,10 +229,17 @@ function isSupportedSlackMessageChannel(channelType: string | undefined): boolea
     || channelType === "app_home";
 }
 
-function getSlackConversationKey(teamId: string, channelId: string): string {
-  // Channel-scoped for all channel types so the agent sees every message in
-  // the channel/thread, not just the ones in a single thread branch.
-  return `${SLACK_INTEGRATION_PREFIX}${teamId}:${channelId}`;
+function getSlackConversationKey(
+  teamId: string,
+  channelId: string,
+  event: SlackEvent,
+  threadTs: string,
+): string {
+  if (event.channel_type === "im" || event.channel_type === "app_home") {
+    return `${SLACK_INTEGRATION_PREFIX}${teamId}:${channelId}`;
+  }
+
+  return `${SLACK_INTEGRATION_PREFIX}${teamId}:${channelId}:${threadTs}`;
 }
 
 function getSlackReplyThreadTs(
@@ -500,21 +507,22 @@ function cleanSlackText(value: string): string {
 }
 
 /**
- * Converts the AI SDK full stream into Slack Chat SDK chunks. Plain text remains
- * incremental markdown, while reasoning and tool events become native task
- * updates so Slack can show progress cards instead of only the final text.
+ * Converts the AI SDK full stream into Slack Chat SDK chunks. Text is buffered
+ * and sent once at the end so partial answer text does not jump below the
+ * progress card while reasoning and tool chunks are still updating.
  */
 export async function* toSlackStream(
   textStream: AsyncIterable<unknown>,
 ): AsyncGenerator<string | StreamChunk> {
   let needsSeparator = false;
-  let hasEmittedText = false;
+  let bufferedText = "";
   let reasoningText = "";
   const toolNamesById = new Map<string, string>();
 
   for await (const chunk of textStream) {
     if (typeof chunk === "string") {
-      yield chunk;
+      bufferedText = appendBufferedSlackText(bufferedText, chunk, needsSeparator);
+      needsSeparator = false;
       continue;
     }
 
@@ -534,12 +542,8 @@ export async function* toSlackStream(
       case "text-delta": {
         const text = (event.text ?? event.delta ?? "") as string;
         if (text) {
-          if (needsSeparator && hasEmittedText) {
-            yield "\n\n";
-          }
+          bufferedText = appendBufferedSlackText(bufferedText, text, needsSeparator);
           needsSeparator = false;
-          hasEmittedText = true;
-          yield text;
         }
         break;
       }
@@ -659,6 +663,18 @@ export async function* toSlackStream(
         break;
     }
   }
+
+  if (bufferedText) {
+    yield bufferedText;
+  }
+}
+
+function appendBufferedSlackText(current: string, text: string, needsSeparator: boolean): string {
+  if (!text) return current;
+  if (needsSeparator && current) {
+    return `${current}\n\n${text}`;
+  }
+  return `${current}${text}`;
 }
 
 function taskId(prefix: string, value: unknown): string {

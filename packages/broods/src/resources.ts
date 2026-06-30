@@ -11,8 +11,10 @@ import type {
   AgentConfig,
   AgentDiscordChannelConfig,
   AgentGitHubChannelConfig,
+  AgentPancakeChannelConfig,
   AgentSlackChannelConfig,
   AgentTelegramChannelConfig,
+  AgentZaloChannelConfig,
   CreateCronInput,
   SandboxConfig,
   WorkspaceConfig,
@@ -119,22 +121,22 @@ type RequiredChannelKeys<Config, Keys extends keyof Config> =
 type ChannelSecret = string | EnvRef | undefined;
 
 export type TelegramChannelInput = EnvRefString<RequiredChannelKeys<
-  Pick<AgentTelegramChannelConfig, "apiUrl" | "botToken" | "webhookSecret" | "allowedChatIds" | "reactionEmoji">,
+  Pick<AgentTelegramChannelConfig, "apiUrl" | "botToken" | "webhookSecret" | "allowedChatIds" | "reactionEmoji" | "workspaceIsolationScope">,
   "botToken" | "webhookSecret" | "allowedChatIds"
 >>;
 
 export type GitHubChannelInput = EnvRefString<RequiredChannelKeys<
-  Pick<AgentGitHubChannelConfig, "apiUrl" | "webhookSecret" | "appId" | "privateKey" | "allowedRepos">,
+  Pick<AgentGitHubChannelConfig, "apiUrl" | "webhookSecret" | "appId" | "privateKey" | "allowedRepos" | "workspaceIsolationScope">,
   "webhookSecret" | "appId" | "privateKey"
 >>;
 
 export type SlackChannelInput = EnvRefString<RequiredChannelKeys<
-  Pick<AgentSlackChannelConfig, "apiUrl" | "botToken" | "signingSecret" | "allowedChannelIds" | "reactionEmoji">,
+  Pick<AgentSlackChannelConfig, "apiUrl" | "botToken" | "signingSecret" | "allowedChannelIds" | "reactionEmoji" | "workspaceIsolationScope">,
   "botToken" | "signingSecret"
 >>;
 
 export type DiscordChannelInput = EnvRefString<RequiredChannelKeys<
-  Pick<AgentDiscordChannelConfig, "apiUrl" | "botToken" | "publicKey" | "allowedGuildIds">,
+  Pick<AgentDiscordChannelConfig, "apiUrl" | "botToken" | "publicKey" | "allowedGuildIds" | "workspaceIsolationScope">,
   "botToken" | "publicKey"
 >>;
 export interface PancakeChannelInput {
@@ -143,6 +145,7 @@ export interface PancakeChannelInput {
   webhookSecret: ChannelSecret;
   senderId?: string | EnvRef;
   ignoreTagIds?: readonly (string | EnvRef)[];
+  workspaceIsolationScope?: AgentPancakeChannelConfig["workspaceIsolationScope"];
 }
 
 type PancakeChannelDefinitionConfig = Omit<PancakeChannelInput, "ignoreTagIds"> & {
@@ -152,6 +155,7 @@ export interface ZaloChannelInput {
   botToken: ChannelSecret;
   webhookSecret: ChannelSecret;
   allowedUserIds: readonly (string | EnvRef)[];
+  workspaceIsolationScope?: AgentZaloChannelConfig["workspaceIsolationScope"];
 }
 
 export type TelegramChannelDefinition = ChannelDefinition<"telegram", TelegramChannelInput>;

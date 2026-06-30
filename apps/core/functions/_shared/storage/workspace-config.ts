@@ -16,6 +16,8 @@ import { isPlainObject } from "../object.ts";
 // provider's mount/read path — validation and the type follow automatically.
 export const WORKSPACE_STORAGE_PROVIDERS = ["s3"] as const;
 export type WorkspaceStorageProvider = (typeof WORKSPACE_STORAGE_PROVIDERS)[number];
+export const WORKSPACE_ISOLATION_MODES = ["none", "channel", "conversation"] as const;
+export type WorkspaceIsolationMode = (typeof WORKSPACE_ISOLATION_MODES)[number];
 
 // How the harness authenticates to the workspace bucket. `managed` (default) uses
 // the broods-operated bucket + platform role. `assumeRole` is the bring-your-own
@@ -43,6 +45,10 @@ export interface WorkspaceStorageConfig {
 
 export interface WorkspaceConfig {
   storage: WorkspaceStorageConfig;
+  // Filesystem isolation under this workspace's bucket prefix. "none" preserves
+  // the shared workspace root; "channel" and "conversation" add nested folders
+  // under the same workspace prefix.
+  isolation?: WorkspaceIsolationMode;
   // Whether the workspace harness prompt (memory/tasks guidance) is injected.
   harness?: { enabled?: boolean };
 }
@@ -79,6 +85,8 @@ export function normalizeWorkspaceConfig(value: unknown): WorkspaceConfig {
 
   const config = value;
   const storage = normalizeWorkspaceStorage(config.storage);
+  assertOptionalEnum(config.isolation, "config.isolation", WORKSPACE_ISOLATION_MODES);
+  const isolation = config.isolation as WorkspaceIsolationMode | undefined;
 
   let harness: { enabled?: boolean } | undefined;
   if (config.harness !== undefined) {
@@ -93,6 +101,7 @@ export function normalizeWorkspaceConfig(value: unknown): WorkspaceConfig {
 
   return {
     storage,
+    ...(isolation && isolation !== "none" ? { isolation } : {}),
     ...(harness ? { harness } : {}),
   };
 }

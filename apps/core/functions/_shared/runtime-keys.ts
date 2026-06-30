@@ -45,12 +45,50 @@ const RESERVED_CONVERSATION_PREFIXES = [
   ZALO_INTEGRATION_PREFIX,
 ] as const;
 
+const CHANNEL_CONVERSATION_PREFIXES = [
+  GITHUB_INTEGRATION_PREFIX,
+  SLACK_INTEGRATION_PREFIX,
+  TELEGRAM_INTEGRATION_PREFIX,
+  DISCORD_INTEGRATION_PREFIX,
+  PANCAKE_INTEGRATION_PREFIX,
+  ZALO_INTEGRATION_PREFIX,
+] as const;
+
 export function normalizeFilesystemNamespace(conversationKey: string): string {
   return `${FILESYSTEM_NAMESPACE_PREFIX}${hashScopedValue("filesystem-namespace", conversationKey)}`;
 }
 
 export function conversationLeaseKey(conversationKey: string): string {
   return `${INTERNAL_EVENT_ID_PREFIX}${hashScopedValue("conversation-lease", conversationKey)}`;
+}
+
+export function channelScopeKeyFromConversation(
+  conversationKey: string,
+  scope: "channel" | "conversation" = "channel",
+): string {
+  const unscopedKey = unscopedChannelConversationKey(conversationKey);
+  if (scope === "conversation") {
+    return unscopedKey;
+  }
+
+  if (unscopedKey.startsWith(SLACK_INTEGRATION_PREFIX)) {
+    const parts = unscopedKey.split(":");
+    return parts.length >= 4 ? parts.slice(0, 3).join(":") : unscopedKey;
+  }
+  if (unscopedKey.startsWith(DISCORD_INTEGRATION_PREFIX)) {
+    const parts = unscopedKey.split(":");
+    return parts.length >= 3 ? parts.slice(0, 3).join(":") : unscopedKey;
+  }
+  if (unscopedKey.startsWith(PANCAKE_INTEGRATION_PREFIX)) {
+    const parts = unscopedKey.split(":");
+    return parts.length >= 3 ? parts.slice(0, 2).join(":") : unscopedKey;
+  }
+  if (unscopedKey.startsWith(GITHUB_INTEGRATION_PREFIX)) {
+    const parts = unscopedKey.split(":");
+    return parts.length >= 2 ? parts.slice(0, 2).join(":") : unscopedKey;
+  }
+
+  return unscopedKey;
 }
 
 export function normalizeDirectIdentifier(name: string, value: string): string {
@@ -113,6 +151,16 @@ function hasReservedConversationPrefix(value: string): boolean {
 
 function hasReservedEventIdPrefix(value: string): boolean {
   return RESERVED_EVENT_ID_PREFIXES.some((prefix) => value.startsWith(prefix));
+}
+
+function unscopedChannelConversationKey(conversationKey: string): string {
+  for (const prefix of CHANNEL_CONVERSATION_PREFIXES) {
+    const start = conversationKey.indexOf(prefix);
+    if (start === 0 || (start > 0 && conversationKey[start - 1] === ":")) {
+      return conversationKey.slice(start);
+    }
+  }
+  return conversationKey;
 }
 
 function hashScopedValue(scope: string, value: string): string {

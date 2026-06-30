@@ -716,6 +716,34 @@ describe("agent config", () => {
     });
   });
 
+  it("validates channel workspace isolation scope", () => {
+    expect(normalizeAgentConfig({
+      channels: {
+        slack: {
+          botToken: "slack-token",
+          signingSecret: "slack-secret",
+          workspaceIsolationScope: "conversation",
+        },
+      },
+    })).toEqual({
+      channels: {
+        slack: {
+          botToken: "slack-token",
+          signingSecret: "slack-secret",
+          workspaceIsolationScope: "conversation",
+        },
+      },
+    });
+
+    expect(() => normalizeAgentConfig({
+      channels: {
+        slack: {
+          workspaceIsolationScope: "workspace",
+        },
+      },
+    })).toThrow("config.channels.slack.workspaceIsolationScope must be one of: channel, conversation");
+  });
+
   it("validates Zalo channel config", () => {
     expect(normalizeAgentConfig({
       channels: {

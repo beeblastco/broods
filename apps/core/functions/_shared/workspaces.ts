@@ -18,6 +18,7 @@ import type {
   WorkspaceConfig,
 } from "./storage/index.ts";
 import type { WorkspaceStorageConfig } from "./storage/workspace-config.ts";
+import type { WorkspaceIsolationMode } from "./storage/workspace-config.ts";
 import { resolveSandboxSpecs, type SandboxControlPlane } from "./sandbox-sizes.ts";
 
 // The effective sandbox for a workspace, with the workspace's storage identity and
@@ -57,10 +58,41 @@ export interface ResolvedAgentRuntime {
   workspaces: ResolvedWorkspace[];
 }
 
+export interface WorkspaceIsolationScope {
+  channelScopeKey?: string;
+  channelIsolationScopeKey?: string;
+  conversationKey?: string;
+}
+
 /** Derive the shared filesystem namespace for a workspace record. */
 export function workspaceNamespace(accountId: string | undefined, workspaceId: string): string {
   const scope = accountId ? `${accountId}:${workspaceId}` : workspaceId;
   return normalizeFilesystemNamespace(scope);
+}
+
+export function isolatedWorkspaceNamespace(
+  baseNamespace: string,
+  isolation: WorkspaceIsolationMode | undefined,
+  scope: WorkspaceIsolationScope = {},
+): string {
+  if (!isolation || isolation === "none") {
+    return baseNamespace;
+  }
+
+  const channelKey = isolation === "channel"
+    ? scope.channelIsolationScopeKey ?? scope.channelScopeKey ?? scope.conversationKey
+    : scope.channelScopeKey ?? scope.channelIsolationScopeKey ?? scope.conversationKey;
+  if (!channelKey) {
+    return baseNamespace;
+  }
+
+  const channelNamespace = `channels/${normalizeFilesystemNamespace(channelKey)}`;
+  if (isolation === "channel") {
+    return `${baseNamespace}/${channelNamespace}`;
+  }
+
+  const conversationKey = scope.conversationKey ?? channelKey;
+  return `${baseNamespace}/${channelNamespace}/conversations/${normalizeFilesystemNamespace(conversationKey)}`;
 }
 
 /**
@@ -70,6 +102,7 @@ export function workspaceNamespace(accountId: string | undefined, workspaceId: s
 export async function resolveAgentRuntime(
   agentConfig: AgentConfig,
   accountId: string | undefined,
+  isolationScope: WorkspaceIsolationScope = {},
 ): Promise<ResolvedAgentRuntime> {
   const storage = getStorage();
   const sandboxCache = new Map<string, WorkspaceSandboxConfig>();
@@ -133,7 +166,11 @@ export async function resolveAgentRuntime(
     workspaces.push({
       name: ref.name,
       workspaceId: ref.workspaceId,
-      namespace: workspaceNamespace(accountId, ref.workspaceId),
+      namespace: isolatedWorkspaceNamespace(
+        workspaceNamespace(accountId, ref.workspaceId),
+        record.config.isolation,
+        isolationScope,
+      ),
       ...(record.description ? { description: record.description } : {}),
       config: record.config,
       // Attach the workspace's storage identity to its effective sandbox so the

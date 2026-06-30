@@ -226,12 +226,16 @@ export interface AgentChannelsConfig {
   [key: string]: unknown;
 }
 
+export type ChannelWorkspaceIsolationScope = "channel" | "conversation";
+const CHANNEL_WORKSPACE_ISOLATION_SCOPES = ["channel", "conversation"] as const;
+
 export interface AgentTelegramChannelConfig {
   apiUrl?: TelegramAdapterConfig["apiUrl"];
   botToken?: TelegramAdapterConfig["botToken"];
   webhookSecret?: TelegramAdapterConfig["secretToken"];
   allowedChatIds?: number[];
   reactionEmoji?: string;
+  workspaceIsolationScope?: ChannelWorkspaceIsolationScope;
   [key: string]: unknown;
 }
 
@@ -241,6 +245,7 @@ export interface AgentGitHubChannelConfig {
   appId?: Extract<GitHubAdapterConfig, { appId: string }>["appId"];
   privateKey?: Extract<GitHubAdapterConfig, { appId: string }>["privateKey"];
   allowedRepos?: string[];
+  workspaceIsolationScope?: ChannelWorkspaceIsolationScope;
   [key: string]: unknown;
 }
 
@@ -250,6 +255,7 @@ export interface AgentSlackChannelConfig {
   signingSecret?: SlackAdapterConfig["signingSecret"];
   allowedChannelIds?: string[];
   reactionEmoji?: string;
+  workspaceIsolationScope?: ChannelWorkspaceIsolationScope;
   [key: string]: unknown;
 }
 
@@ -258,6 +264,7 @@ export interface AgentDiscordChannelConfig {
   botToken?: DiscordAdapterConfig["botToken"];
   publicKey?: DiscordAdapterConfig["publicKey"];
   allowedGuildIds?: string[];
+  workspaceIsolationScope?: ChannelWorkspaceIsolationScope;
   [key: string]: unknown;
 }
 
@@ -267,6 +274,7 @@ export interface AgentPancakeChannelConfig {
   webhookSecret?: string;
   senderId?: string;
   options?: Record<string, unknown>;
+  workspaceIsolationScope?: ChannelWorkspaceIsolationScope;
   [key: string]: unknown;
 }
 
@@ -274,6 +282,7 @@ export interface AgentZaloChannelConfig {
   botToken?: string;
   webhookSecret?: string;
   allowedUserIds?: string[];
+  workspaceIsolationScope?: ChannelWorkspaceIsolationScope;
   [key: string]: unknown;
 }
 
@@ -867,6 +876,7 @@ function normalizeTelegramConfig(value: unknown): void {
   assertOptionalString(config.webhookSecret, "config.channels.telegram.webhookSecret");
   assertOptionalNumberArray(config.allowedChatIds, "config.channels.telegram.allowedChatIds");
   assertOptionalString(config.reactionEmoji, "config.channels.telegram.reactionEmoji");
+  assertOptionalEnum(config.workspaceIsolationScope, "config.channels.telegram.workspaceIsolationScope", CHANNEL_WORKSPACE_ISOLATION_SCOPES);
 }
 
 function normalizeGitHubConfig(value: unknown): void {
@@ -878,6 +888,7 @@ function normalizeGitHubConfig(value: unknown): void {
   assertOptionalString(config.appId, "config.channels.github.appId");
   assertOptionalString(config.privateKey, "config.channels.github.privateKey");
   assertOptionalStringArray(config.allowedRepos, "config.channels.github.allowedRepos");
+  assertOptionalEnum(config.workspaceIsolationScope, "config.channels.github.workspaceIsolationScope", CHANNEL_WORKSPACE_ISOLATION_SCOPES);
 }
 
 function normalizeSlackConfig(value: unknown): void {
@@ -889,6 +900,7 @@ function normalizeSlackConfig(value: unknown): void {
   assertOptionalString(config.signingSecret, "config.channels.slack.signingSecret");
   assertOptionalStringArray(config.allowedChannelIds, "config.channels.slack.allowedChannelIds");
   assertOptionalString(config.reactionEmoji, "config.channels.slack.reactionEmoji");
+  assertOptionalEnum(config.workspaceIsolationScope, "config.channels.slack.workspaceIsolationScope", CHANNEL_WORKSPACE_ISOLATION_SCOPES);
 }
 
 function normalizeDiscordConfig(value: unknown): void {
@@ -899,6 +911,7 @@ function normalizeDiscordConfig(value: unknown): void {
   assertOptionalString(config.botToken, "config.channels.discord.botToken");
   assertOptionalString(config.publicKey, "config.channels.discord.publicKey");
   assertOptionalStringArray(config.allowedGuildIds, "config.channels.discord.allowedGuildIds");
+  assertOptionalEnum(config.workspaceIsolationScope, "config.channels.discord.workspaceIsolationScope", CHANNEL_WORKSPACE_ISOLATION_SCOPES);
 }
 
 function normalizePancakeConfig(value: unknown): void {
@@ -909,6 +922,7 @@ function normalizePancakeConfig(value: unknown): void {
   assertOptionalString(config.pageAccessToken, "config.channels.pancake.pageAccessToken");
   assertOptionalString(config.webhookSecret, "config.channels.pancake.webhookSecret");
   assertOptionalString(config.senderId, "config.channels.pancake.senderId");
+  assertOptionalEnum(config.workspaceIsolationScope, "config.channels.pancake.workspaceIsolationScope", CHANNEL_WORKSPACE_ISOLATION_SCOPES);
   if (config.options !== undefined && !isPlainObject(config.options)) {
     throw new Error("config.channels.pancake.options must be an object");
   }
@@ -923,6 +937,7 @@ function normalizeZaloConfig(value: unknown): void {
   assertOptionalString(config.botToken, "config.channels.zalo.botToken");
   assertOptionalString(config.webhookSecret, "config.channels.zalo.webhookSecret");
   assertOptionalStringArray(config.allowedUserIds, "config.channels.zalo.allowedUserIds");
+  assertOptionalEnum(config.workspaceIsolationScope, "config.channels.zalo.workspaceIsolationScope", CHANNEL_WORKSPACE_ISOLATION_SCOPES);
   if (typeof config.webhookSecret === "string") {
     const length = config.webhookSecret.length;
     if (length < 8 || length > 256) {

@@ -35,9 +35,11 @@ import {
 } from "../_shared/storage/dynamo/client.ts";
 import { requireEnv } from "../_shared/env.ts";
 import {
+  channelScopeKeyFromConversation,
   conversationLeaseKey,
 } from "../_shared/runtime-keys.ts";
 import { logError, logInfo } from "../_shared/log.ts";
+import { isPlainObject } from "../_shared/object.ts";
 import {
   resolveAgentRuntime,
   type ResolvedAgentRuntime,
@@ -475,11 +477,26 @@ export class Session {
    * from their storage IDs). Promise-memoized so concurrent callers share one fetch.
    */
   private async ensureResolvedRuntime(): Promise<ResolvedAgentRuntime> {
-    this.resolvedRuntimePromise ??= resolveAgentRuntime(this.agentConfig, this.accountId).then((resolved) => {
+    const isolationScope = this.channelWorkspaceIsolationScope();
+    const channelScopeKey = channelScopeKeyFromConversation(this.conversationKey);
+    const conversationScopeKey = channelScopeKeyFromConversation(this.conversationKey, "conversation");
+    this.resolvedRuntimePromise ??= resolveAgentRuntime(this.agentConfig, this.accountId, {
+      channelScopeKey,
+      channelIsolationScopeKey: isolationScope === "conversation" ? conversationScopeKey : channelScopeKey,
+      conversationKey: conversationScopeKey,
+    }).then((resolved) => {
       this.resolvedRuntime = resolved;
       return resolved;
     });
     return this.resolvedRuntimePromise;
+  }
+
+  private channelWorkspaceIsolationScope(): "channel" | "conversation" {
+    if (this.delivery?.kind !== "channel") {
+      return "channel";
+    }
+    const config = this.agentConfig.channels?.[this.delivery.channelName];
+    return isPlainObject(config) && config.workspaceIsolationScope === "conversation" ? "conversation" : "channel";
   }
 
   private async buildSystemPromptParts(
