@@ -4,7 +4,7 @@
  */
 
 import { GitHubAdapter, type GitHubThreadId } from "@chat-adapter/github";
-import { ConsoleLogger } from "chat";
+import { ConsoleLogger, fromFullStream } from "chat";
 import type {
   ChannelActions,
   ChannelAdapter,
@@ -425,7 +425,7 @@ function createGitHubActions(
     },
 
     stream: async (textStream, options) => {
-      const result = await github.stream(source.threadId, textStream, options);
+      const result = await github.stream(source.threadId, fromFullStream(textStream), options);
       return result.id;
     },
   };

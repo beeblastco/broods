@@ -21,7 +21,7 @@ import {
   verifySlackSignature,
   type SlackSlashCommandPayload,
 } from "@chat-adapter/slack/webhook";
-import { ConsoleLogger } from "chat";
+import { ConsoleLogger, type StreamChunk } from "chat";
 import type {
   ChannelActions,
   ChannelAdapter,
@@ -34,6 +34,7 @@ import {
 } from "./runtime-keys.ts";
 
 interface SlackEventEnvelope {
+  authorizations?: Array<{ user_id?: string; is_bot?: boolean }>;
   challenge?: string;
   event?: SlackEvent;
   event_id?: string;
@@ -154,16 +155,27 @@ function parseEventCallback(
     return { kind: "ignore", reason: "channel_not_allowed" };
   }
 
-  const text = stripSlackMentions(payload.event.text ?? "");
+  if (payload.event.type === "message" && mentionsSlackBot(payload.event.text ?? "", payload)) {
+    return { kind: "ignore", reason: "message_with_mention_wait_for_app_mention" };
+  }
+
+  const isGroupChannel = payload.event.channel_type !== "im" && payload.event.channel_type !== "app_home";
+  const text = formatSlackMessageText(payload.event.text ?? "", payload.event.user, isGroupChannel);
   const threadTs = payload.event.thread_ts ?? ts;
   const replyThreadTs = getSlackReplyThreadTs(payload.event, ts);
+  const runAgent = payload.event.type === "app_mention"
+    || payload.event.channel_type === "im"
+    || payload.event.channel_type === "app_home";
 
   return {
-    kind: "message",
+    kind: runAgent ? "message" : "context",
     ack: { statusCode: 200 },
     message: {
-      eventId: `${SLACK_INTEGRATION_PREFIX}${payload.event_id}`,
-      conversationKey: getSlackConversationKey(payload.team_id, channelId, payload.event, threadTs),
+      // Use team:channel:ts as the eventId so that duplicate Slack deliveries
+      // (app_mention + message for the same mention) dedupe naturally via
+      // session.claim().  ts is unique per message within a channel.
+      eventId: `${SLACK_INTEGRATION_PREFIX}${payload.team_id}:${channelId}:${ts}`,
+      conversationKey: getSlackConversationKey(payload.team_id, channelId),
       channelName: "slack",
       content: [{ type: "text", text }],
       source: {
@@ -209,17 +221,10 @@ function isSupportedSlackMessageChannel(channelType: string | undefined): boolea
     || channelType === "app_home";
 }
 
-function getSlackConversationKey(
-  teamId: string,
-  channelId: string,
-  event: SlackEvent,
-  threadTs: string,
-): string {
-  if (event.type === "message" && (event.channel_type === "im" || event.channel_type === "app_home")) {
-    return `${SLACK_INTEGRATION_PREFIX}${teamId}:${channelId}`;
-  }
-
-  return `${SLACK_INTEGRATION_PREFIX}${teamId}:${channelId}:${threadTs}`;
+function getSlackConversationKey(teamId: string, channelId: string): string {
+  // Channel-scoped for all channel types so the agent sees every message in
+  // the channel/thread, not just the ones in a single thread branch.
+  return `${SLACK_INTEGRATION_PREFIX}${teamId}:${channelId}`;
 }
 
 function getSlackReplyThreadTs(
@@ -333,7 +338,7 @@ function createSlackActions(
     ...(threadId && source.userId
       ? {
         stream: async (textStream, options) => {
-          const result = await slack.stream(threadId, textStream, {
+          const result = await slack.stream(threadId, toSlackStream(textStream), {
             ...options,
             recipientTeamId: source.teamId,
             recipientUserId: source.userId!,
@@ -390,6 +395,248 @@ async function sendSlackWebhookResponse(
   }
 }
 
-function stripSlackMentions(text: string): string {
-  return text.replace(/<@[^>]+>/g, "").trim();
+/**
+ * Convert Slack mrkdwn mention syntax `<@U123>` into `@U123` so the LLM can
+ * understand who was mentioned.  Preserves all mentions (including the bot's)
+ * rather than stripping them.
+ */
+function normalizeSlackMentions(text: string): string {
+  return text.replace(/<@([^>]+)>/g, "@$1").trim();
+}
+
+function hasSlackMention(text: string): boolean {
+  return /<@[^>]+>/.test(text);
+}
+
+function mentionsSlackBot(text: string, payload: SlackEventEnvelope): boolean {
+  const botUserIds = new Set(
+    (payload.authorizations ?? [])
+      .filter((authorization) => authorization.is_bot !== false)
+      .map((authorization) => authorization.user_id)
+      .filter((userId): userId is string => typeof userId === "string" && userId.length > 0),
+  );
+  if (botUserIds.size === 0 || !hasSlackMention(text)) {
+    return false;
+  }
+
+  for (const [, mentionedUserId] of text.matchAll(/<@([^>]+)>/g)) {
+    if (mentionedUserId && botUserIds.has(mentionedUserId)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+/**
+ * Prefix a group-channel message with the sender's user identifier so the
+ * agent knows who is talking when multiple users are in the conversation.
+ * DMs and app_home messages are not prefixed because there is only one user.
+ */
+function formatSlackMessageText(text: string, userId: string | undefined, isGroupChannel: boolean): string {
+  const normalized = normalizeSlackMentions(text);
+  if (!isGroupChannel || !userId || !normalized) {
+    return normalized;
+  }
+  return `@${userId}: ${normalized}`;
+}
+
+/**
+ * Converts the AI SDK full stream into Slack Chat SDK chunks. Plain text remains
+ * incremental markdown, while reasoning and tool events become native task
+ * updates so Slack can show progress cards instead of only the final text.
+ */
+export async function* toSlackStream(
+  textStream: AsyncIterable<unknown>,
+): AsyncGenerator<string | StreamChunk> {
+  let needsSeparator = false;
+  let hasEmittedText = false;
+  let reasoningText = "";
+  const toolNamesById = new Map<string, string>();
+
+  for await (const chunk of textStream) {
+    if (typeof chunk === "string") {
+      yield chunk;
+      continue;
+    }
+
+    if (!chunk || typeof chunk !== "object") {
+      continue;
+    }
+
+    const event = chunk as Record<string, unknown>;
+    const type = event.type;
+
+    if (isStreamChunk(event)) {
+      yield event;
+      continue;
+    }
+
+    switch (type) {
+      case "text-delta": {
+        const text = (event.text ?? event.delta ?? "") as string;
+        if (text) {
+          if (needsSeparator && hasEmittedText) {
+            yield "\n\n";
+          }
+          needsSeparator = false;
+          hasEmittedText = true;
+          yield text;
+        }
+        break;
+      }
+
+      case "finish-step": {
+        needsSeparator = true;
+        break;
+      }
+
+      case "reasoning-start": {
+        reasoningText = "";
+        yield {
+          type: "task_update",
+          id: taskId("reasoning", event.id),
+          title: "Thinking",
+          status: "in_progress",
+        };
+        break;
+      }
+
+      case "reasoning-delta": {
+        const text = (event.text ?? event.delta ?? "") as string;
+        if (text) {
+          reasoningText = truncateForSlackTask(`${reasoningText}${text}`);
+          yield {
+            type: "task_update",
+            id: taskId("reasoning", event.id),
+            title: "Thinking",
+            status: "in_progress",
+            details: reasoningText,
+          };
+        }
+        break;
+      }
+
+      case "reasoning-end": {
+        yield {
+          type: "task_update",
+          id: taskId("reasoning", event.id),
+          title: "Thinking",
+          status: "complete",
+          ...(reasoningText ? { output: reasoningText } : {}),
+        };
+        reasoningText = "";
+        break;
+      }
+
+      case "tool-input-start": {
+        const toolName = (event.toolName ?? "tool") as string;
+        const id = stringValue(event.id) ?? toolName;
+        toolNamesById.set(id, toolName);
+        yield {
+          type: "task_update",
+          id: taskId("tool", id),
+          title: `Using ${toolName}`,
+          status: "in_progress",
+        };
+        break;
+      }
+
+      case "tool-input-delta": {
+        // Ignore input deltas; we already announced the tool call.
+        break;
+      }
+
+      case "tool-call": {
+        const toolName = (event.toolName ?? "tool") as string;
+        const id = stringValue(event.toolCallId) ?? stringValue(event.id) ?? toolName;
+        toolNamesById.set(id, toolName);
+        yield {
+          type: "task_update",
+          id: taskId("tool", id),
+          title: `Using ${toolName}`,
+          status: "in_progress",
+        };
+        break;
+      }
+
+      case "tool-result": {
+        const id = stringValue(event.toolCallId) ?? stringValue(event.id) ?? "tool";
+        const toolName = (event.toolName ?? toolNamesById.get(id) ?? "tool") as string;
+        yield {
+          type: "task_update",
+          id: taskId("tool", id),
+          title: `Using ${toolName}`,
+          status: "complete",
+          output: truncateForSlackTask(formatToolOutput(event.output)),
+        };
+        toolNamesById.delete(id);
+        break;
+      }
+
+      case "tool-error": {
+        const id = stringValue(event.toolCallId) ?? stringValue(event.id) ?? "tool";
+        const toolName = (event.toolName ?? toolNamesById.get(id) ?? "tool") as string;
+        yield {
+          type: "task_update",
+          id: taskId("tool", id),
+          title: `Using ${toolName}`,
+          status: "error",
+          output: truncateForSlackTask(formatToolOutput(event.error)),
+        };
+        toolNamesById.delete(id);
+        break;
+      }
+
+      case "error": {
+        const errorText = (event.error ?? "Unknown error") as string;
+        yield {
+          type: "markdown_text",
+          text: `Error: ${errorText}`,
+        };
+        break;
+      }
+
+      default:
+        break;
+    }
+  }
+}
+
+function taskId(prefix: string, value: unknown): string {
+  return `${prefix}:${stringValue(value) ?? "default"}`;
+}
+
+function stringValue(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value : undefined;
+}
+
+function formatToolOutput(value: unknown): string {
+  if (value == null) return "";
+  if (typeof value === "string") return value;
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
+}
+
+function truncateForSlackTask(value: string): string {
+  const normalized = value.trim();
+  return normalized.length <= 1200 ? normalized : `${normalized.slice(0, 1197)}...`;
+}
+
+function isStreamChunk(value: unknown): value is StreamChunk {
+  if (!value || typeof value !== "object") return false;
+  const record = value as Record<string, unknown>;
+  switch (record.type) {
+    case "markdown_text":
+      return typeof record.text === "string";
+    case "task_update":
+      return typeof record.id === "string" && typeof record.title === "string" && typeof record.status === "string";
+    case "plan_update":
+      return typeof record.title === "string";
+    default:
+      return false;
+  }
 }

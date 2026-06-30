@@ -6,7 +6,6 @@
 import { InvokeCommand, LambdaClient } from "@aws-sdk/client-lambda";
 import type { ToolModelMessage, JSONValue, UserModelMessage } from "ai";
 import type { LambdaFunctionURLEvent } from "aws-lambda";
-import { fromFullStream } from "chat";
 import { timingSafeStringEqual } from "../_shared/auth.ts";
 import { markHandlerEntry } from "../_shared/cold-start.ts";
 import { formatChannelErrorText } from "../_shared/channels.ts";
@@ -29,6 +28,7 @@ import {
   sendChannelReply,
   type AsyncDirectInboundEvent,
   type AsyncToolCompletionInboundEvent,
+  type ChannelContextEvent,
   type ChannelInboundEvent,
   type DirectInboundEvent,
   type SandboxJobCompletionInboundEvent,
@@ -134,6 +134,7 @@ export async function handler(
     handleAsyncToolCompletionRequest,
     handleSandboxJobCompletionRequest,
     handleChannelRequest: (channelEvent) => handleChannelRequest(channelEvent, context),
+    handleChannelContext,
   }, {
     directApiEnabled: ENABLE_DIRECT_API,
   });
@@ -797,7 +798,7 @@ async function handleChannelRequest(event: ChannelInboundEvent, context?: Lambda
           ? {
             streamMessage: async (stream) => {
               try {
-                const result = await event.channel.stream!(fromFullStream(readAgentFullStream(stream)));
+                const result = await event.channel.stream!(readAgentFullStream(stream));
                 streamed = Boolean(result);
                 if (!streamed) {
                   await stream.consumeStream();
@@ -893,6 +894,48 @@ async function handleChannelRequest(event: ChannelInboundEvent, context?: Lambda
     });
     await session.releaseConversationLease().catch(() => { });
   }
+}
+
+async function handleChannelContext(event: ChannelContextEvent): Promise<void> {
+  const session = new Session(
+    event.eventId,
+    event.conversationKey,
+    event.accountId,
+    event.agentId,
+    event.agentConfig ?? {},
+    undefined,
+    event.endpointId,
+    event.projectSlug,
+    event.environmentSlug,
+  );
+  logInfo("Channel context received", {
+    channel: event.channelName,
+    accountId: event.accountId,
+    agentId: event.agentId,
+    eventId: session.eventId,
+    conversationKey: session.conversationKey,
+    source: event.source,
+  });
+
+  if (!(await claimSession(session))) {
+    logInfo("Channel context already claimed", {
+      channel: event.channelName,
+      accountId: event.accountId,
+      agentId: event.agentId,
+      eventId: session.eventId,
+      conversationKey: session.conversationKey,
+    });
+    return;
+  }
+
+  await session.appendIngressEvents(event.events);
+  logInfo("Channel context persisted", {
+    channel: event.channelName,
+    accountId: event.accountId,
+    agentId: event.agentId,
+    eventId: session.eventId,
+    conversationKey: session.conversationKey,
+  });
 }
 
 /**

@@ -3,7 +3,7 @@
  * Define the shared HTTP and channel adapter boundaries for inbound webhook traffic.
  */
 
-import type { StreamChunk, StreamOptions } from "chat";
+import type { StreamOptions } from "chat";
 import type { UserContent } from "ai";
 
 export interface ChannelActions {
@@ -12,7 +12,7 @@ export interface ChannelActions {
   reactToMessage(): Promise<void>;
   // Optional native SDK/platform streaming. Channels omit it when the provider
   // lacks SDK streaming support, in which case the harness sends one final reply.
-  stream?(textStream: AsyncIterable<string | StreamChunk>, options?: StreamOptions): Promise<string | null>;
+  stream?(textStream: AsyncIterable<unknown>, options?: StreamOptions): Promise<string | null>;
 }
 
 export interface ChannelRequest {
@@ -43,12 +43,19 @@ export interface ParsedChannelMessage {
   ack?: ChannelResponse;
 }
 
+export interface ParsedChannelContext {
+  kind: "context";
+  message: InboundMessage;
+  ack?: ChannelResponse;
+}
+
 /**
  * Channel parse results describe what the webhook should do before the agent runs.
  * Some providers need an immediate HTTP response, while others can be acknowledged and processed later.
  */
 export type ChannelParseResult =
   | ParsedChannelMessage
+  | ParsedChannelContext
   | { kind: "ignore"; reason?: string; response?: ChannelResponse }
   | { kind: "response"; reason?: string; response: ChannelResponse };
 

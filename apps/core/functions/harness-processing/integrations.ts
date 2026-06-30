@@ -147,6 +147,21 @@ export interface ChannelInboundEvent {
   commandToken?: string;
 }
 
+export interface ChannelContextEvent {
+  accountId?: string;
+  agentId?: string;
+  agentConfig?: AgentConfig;
+  endpointId?: string;
+  projectSlug?: string;
+  environmentSlug?: string;
+  eventId: string;
+  conversationKey: string;
+  content: UserContent;
+  events: ConversationIngressEvent[];
+  channelName: string;
+  source: Record<string, unknown>;
+}
+
 interface IntegrationHandlers {
   handleDirectRequest(event: DirectInboundEvent): Promise<LambdaResponse>;
   handleAsyncRequest?(event: AsyncDirectInboundEvent): Promise<LambdaResponse>;
@@ -154,6 +169,7 @@ interface IntegrationHandlers {
   handleAsyncToolCompletionRequest?(event: AsyncToolCompletionInboundEvent): Promise<LambdaResponse>;
   handleSandboxJobCompletionRequest?(event: SandboxJobCompletionInboundEvent): Promise<LambdaResponse>;
   handleChannelRequest(event: ChannelInboundEvent): Promise<void>;
+  handleChannelContext?(event: ChannelContextEvent): Promise<void>;
 }
 
 export interface ChannelRegistry {
@@ -562,6 +578,45 @@ async function handleChannelWebhook(
         statusCode: parsed.response?.statusCode ?? 200,
       });
       return toLambdaResponse(parsed.response ?? { statusCode: 200 });
+    }
+
+    if (parsed.kind === "context") {
+      const { message, ack } = parsed;
+      const response = ack ?? { statusCode: 200 };
+      logInfo("Channel webhook accepted as context", {
+        channel: adapter.name,
+        accountId: account.accountId,
+        agentId: agent.agentId,
+        eventId: message.eventId,
+        conversationKey: message.conversationKey,
+        statusCode: response.statusCode,
+      });
+
+      return {
+        statusCode: response.statusCode,
+        headers: response.headers,
+        body: response.body ?? "",
+        afterResponse: Promise.resolve().then(() =>
+          handlers.handleChannelContext?.({
+            eventId: accountAgentScopedKey(account.accountId, agent.agentId, message.eventId),
+            conversationKey: accountAgentScopedKey(account.accountId, agent.agentId, message.conversationKey),
+            content: message.content,
+            events: [{ role: "user", content: message.content }],
+            channelName: message.channelName,
+            source: message.source,
+            accountId: account.accountId,
+            agentId: agent.agentId,
+            agentConfig: toChannelRuntimeAgentConfig(agent.config, message.channelName),
+            ...(deployment
+              ? {
+                endpointId: deployment.endpointId,
+                projectSlug: deployment.projectSlug,
+                environmentSlug: deployment.environmentSlug,
+              }
+              : {}),
+          })
+        ),
+      };
     }
 
     // The promise is deferred by one microtask so this request's scoped context

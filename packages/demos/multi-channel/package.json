@@ -1,10 +1,10 @@
 {
-  "name": "@broods/demo-channel-slack", "type": "module", "private": true,
+  "name": "@broods/demo-multi-channel", "type": "module", "private": true,
   "scripts": {
     "check": "tsc --noEmit",
-    "dev": "broods dev --dashboard-url https://dashboard.dev.broods.app --project channel-slack",
-    "diff": "broods diff --dashboard-url https://dashboard.dev.broods.app --project channel-slack",
-    "deploy": "broods deploy --dashboard-url https://dashboard.dev.broods.app --project channel-slack",
+    "dev": "broods dev --dashboard-url https://dashboard.dev.broods.app --project multi-channel",
+    "diff": "broods diff --dashboard-url https://dashboard.dev.broods.app --project multi-channel",
+    "deploy": "broods deploy --dashboard-url https://dashboard.dev.broods.app --project multi-channel",
     "register": "bun register.ts"
   },
   "dependencies": { "broods": "file:../../broods" },

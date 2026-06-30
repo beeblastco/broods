@@ -27,6 +27,7 @@ if (slackRef) {
       features: {
         bot_user: { display_name: "Tracy", always_online: true },
         slash_commands: [
+          { command: "/new", description: "Clear conversation context and start fresh", url: webhookUrl, should_escape: false },
           { command: "/clear", description: "Clear conversation context and start fresh", url: webhookUrl, should_escape: false },
           { command: "/help", description: "Show available commands", url: webhookUrl, should_escape: false },
         ],
@@ -107,4 +108,15 @@ if (telegramRef) {
   }
 } else {
   console.log("No Telegram channel defined — skipping Telegram registration.");
+}
+
+// ── GitHub ─────────────────────────────────────────────────────────
+const githubRef = api.channels?.github;
+
+if (githubRef) {
+  const githubUrl = `${baseUrl}${githubRef.webhookPath}`;
+  console.log(`\nBroods GitHub webhook URL:\n\n  ${githubUrl}\n`);
+  console.log("Configure this URL in your GitHub App webhook settings.");
+} else {
+  console.log("No GitHub channel defined — skipping GitHub registration.");
 }

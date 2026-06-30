@@ -4,7 +4,7 @@
  */
 
 import { TelegramAdapter, type TelegramMessage, type TelegramUpdate } from "@chat-adapter/telegram";
-import { ConsoleLogger } from "chat";
+import { ConsoleLogger, fromFullStream } from "chat";
 import { timingSafeEqual } from "node:crypto";
 import type { ChannelActions, ChannelAdapter, ChannelParseResult } from "./channels.ts";
 import { logWarn } from "./log.ts";
@@ -97,7 +97,7 @@ export function createTelegramChannel(
         ...(source.chatId > 0
           ? {
             stream: async (textStream, options) => {
-              const result = await transport.stream(source.threadId, textStream, options);
+              const result = await transport.stream(source.threadId, fromFullStream(textStream), options);
               return result?.id ?? null;
             },
           }

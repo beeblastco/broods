@@ -5,7 +5,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, setSystemTime } from "bun:test";
 import { createHmac } from "node:crypto";
-import { createSlackChannel } from "../functions/_shared/slack-channel.ts";
+import { createSlackChannel, toSlackStream } from "../functions/_shared/slack-channel.ts";
 
 describe("slack channel adapter", () => {
   beforeEach(() => {
@@ -61,7 +61,7 @@ describe("slack channel adapter", () => {
     expect(parsed.response.body).toBe(JSON.stringify({ challenge: "challenge-token" }));
   });
 
-  it("normalizes public channel messages into threaded conversations", async () => {
+  it("stores public channel messages as channel-scoped context", async () => {
     const adapter = createSlackChannel("bot-token", "signing-secret", null);
 
     const parsed = await adapter.parse(createEventRequest({
@@ -78,12 +78,16 @@ describe("slack channel adapter", () => {
       },
     }));
 
-    expect(parsed.kind).toBe("message");
-    if (parsed.kind !== "message") {
-      throw new Error("Expected public channel message to be accepted");
+    expect(parsed.kind).toBe("context");
+    if (parsed.kind !== "context") {
+      throw new Error("Expected public channel message to be stored as context");
     }
 
-    expect(parsed.message.conversationKey).toBe("slack:T1:C1:1713916800.000004");
+    // Channel-scoped so the bot sees all interstitial messages in the group.
+    expect(parsed.message.conversationKey).toBe("slack:T1:C1");
+    // Group-channel messages include the sender's user id so the agent knows
+    // who is talking in a multi-user channel.
+    expect(parsed.message.content).toEqual([{ type: "text", text: "@U1: hello channel" }]);
     expect(parsed.message.source).toEqual({
       teamId: "T1",
       channelId: "C1",
@@ -91,6 +95,30 @@ describe("slack channel adapter", () => {
       threadTs: "1713916800.000004",
       userId: "U1",
     });
+  });
+
+  it("stores generic message events with human mentions as context", async () => {
+    const adapter = createSlackChannel("bot-token", "signing-secret", null);
+
+    const parsed = await adapter.parse(createEventRequest({
+      type: "event_callback",
+      event_id: "evt-mentions",
+      team_id: "T1",
+      event: {
+        type: "message",
+        text: "Hey <@U2> and <@U3>, what do you think?",
+        channel: "C1",
+        channel_type: "channel",
+        user: "U1",
+        ts: "1713916800.000010",
+      },
+    }));
+
+    expect(parsed.kind).toBe("context");
+    if (parsed.kind !== "context") {
+      throw new Error("Expected human mentions to be preserved as channel context");
+    }
+    expect(parsed.message.content).toEqual([{ type: "text", text: "@U1: Hey @U2 and @U3, what do you think?" }]);
   });
 
   it("explains ignored Slack message subtypes", async () => {
@@ -119,7 +147,7 @@ describe("slack channel adapter", () => {
     expect(parsed.reason).toBe("unsupported_subtype:message_changed");
   });
 
-  it("normalizes app mentions into threaded conversations and strips bot mentions", async () => {
+  it("normalizes app mentions into channel-scoped conversations and preserves mentions", async () => {
     const adapter = createSlackChannel("bot-token", "signing-secret", new Set(["C1"]));
 
     const parsed = await adapter.parse(createEventRequest({
@@ -142,9 +170,11 @@ describe("slack channel adapter", () => {
     }
 
     expect(parsed.ack).toEqual({ statusCode: 200 });
-    expect(parsed.message.eventId).toBe("slack:evt-2");
-    expect(parsed.message.conversationKey).toBe("slack:T1:C1:1713916800.000002");
-    expect(parsed.message.content).toEqual([{ type: "text", text: "hello there" }]);
+    // Both app_mention and message events for the same user message share the
+    // same ts, so using ts as the eventId lets session.claim() dedupe them.
+    expect(parsed.message.eventId).toBe("slack:T1:C1:1713916800.000002");
+    expect(parsed.message.conversationKey).toBe("slack:T1:C1");
+    expect(parsed.message.content).toEqual([{ type: "text", text: "@U1: @BOT hello there" }]);
     expect(parsed.message.source).toEqual({
       teamId: "T1",
       channelId: "C1",
@@ -152,6 +182,68 @@ describe("slack channel adapter", () => {
       threadTs: "1713916800.000002",
       userId: "U1",
     });
+  });
+
+  it("deduplicates app_mention and message events with the same ts", async () => {
+    const adapter = createSlackChannel("bot-token", "signing-secret", new Set(["C1"]));
+
+    const mention = await adapter.parse(createEventRequest({
+      type: "event_callback",
+      event_id: "evt-mention",
+      team_id: "T1",
+      event: {
+        type: "app_mention",
+        text: "<@BOT> hello",
+        channel: "C1",
+        channel_type: "channel",
+        user: "U1",
+        ts: "1713916800.000099",
+      },
+    }));
+
+    const message = await adapter.parse(createEventRequest({
+      type: "event_callback",
+      authorizations: [{ user_id: "BOT", is_bot: true }],
+      event_id: "evt-message",
+      team_id: "T1",
+      event: {
+        type: "message",
+        text: "<@BOT> hello",
+        channel: "C1",
+        channel_type: "channel",
+        user: "U1",
+        ts: "1713916800.000099",
+      },
+    }));
+
+    expect(mention.kind).toBe("message");
+    expect(message.kind).toBe("ignore");
+    if (mention.kind !== "message" || message.kind !== "ignore") {
+      throw new Error("Expected app_mention to run and generic message duplicate to be ignored");
+    }
+    expect(message.reason).toBe("message_with_mention_wait_for_app_mention");
+  });
+
+  it("maps AI SDK full stream progress into Slack task updates", async () => {
+    const chunks = await collect(toSlackStream((async function* () {
+      yield { type: "reasoning-start", id: "r1" };
+      yield { type: "reasoning-delta", id: "r1", text: "checking context" };
+      yield { type: "reasoning-end", id: "r1" };
+      yield { type: "tool-input-start", id: "tc1", toolName: "bash" };
+      yield { type: "tool-call", toolCallId: "tc1", toolName: "bash", input: { command: "ls" } };
+      yield { type: "tool-result", toolCallId: "tc1", toolName: "bash", output: "done" };
+      yield { type: "text-delta", id: "t1", text: "final" };
+    })()));
+
+    expect(chunks).toEqual([
+      { type: "task_update", id: "reasoning:r1", title: "Thinking", status: "in_progress" },
+      { type: "task_update", id: "reasoning:r1", title: "Thinking", status: "in_progress", details: "checking context" },
+      { type: "task_update", id: "reasoning:r1", title: "Thinking", status: "complete", output: "checking context" },
+      { type: "task_update", id: "tool:tc1", title: "Using bash", status: "in_progress" },
+      { type: "task_update", id: "tool:tc1", title: "Using bash", status: "in_progress" },
+      { type: "task_update", id: "tool:tc1", title: "Using bash", status: "complete", output: "done" },
+      "final",
+    ]);
   });
 
   it("keeps direct messages channel-scoped instead of thread-scoped", async () => {
@@ -177,6 +269,8 @@ describe("slack channel adapter", () => {
     }
 
     expect(parsed.message.conversationKey).toBe("slack:T1:D1");
+    // DMs are not prefixed with the user id because there is only one user.
+    expect(parsed.message.content).toEqual([{ type: "text", text: "hello dm" }]);
     expect(parsed.message.source).toEqual({
       teamId: "T1",
       channelId: "D1",
@@ -249,4 +343,12 @@ function createSlackHeaders(body: string, timestamp: string): Record<string, str
     "x-slack-signature": signature,
     "content-type": "application/json",
   };
+}
+
+async function collect<T>(iterable: AsyncIterable<T>): Promise<T[]> {
+  const values: T[] = [];
+  for await (const value of iterable) {
+    values.push(value);
+  }
+  return values;
 }

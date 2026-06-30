@@ -1,4 +1,4 @@
-import { defineAgent, defineSlackChannel, defineTelegramChannel, defineSandbox, defineWorkspace, env } from "broods";
+import { defineAgent, defineGitHubChannel, defineSandbox, defineSkill, defineSlackChannel, defineTelegramChannel, defineWorkspace, env } from "broods";
 import fs from "fs";
 import path from "path";
 
@@ -8,7 +8,7 @@ const instructions = fs.readFileSync(path.join(__dirname, "instructions.md"), "u
 export const slack = defineSlackChannel({
   botToken: env("SLACK_BOT_TOKEN"),
   signingSecret: env("SLACK_SIGNING_SECRET"),
-  allowedChannelIds: ["C0A698FER9D", "C0BDZ4DK3PF", "C0BDW6155K5"],
+  allowedChannelIds: ["C0BE2TEBTNW"],
   reactionEmoji: process.env.SLACK_REACTION_EMOJI ?? "eyes",
 });
 
@@ -19,12 +19,63 @@ export const telegram = defineTelegramChannel({
   reactionEmoji: "\u{1F440}",
 });
 
+export const github = defineGitHubChannel({
+  appId: env("GITHUB_APP_ID"),
+  privateKey: env("GITHUB_PRIVATE_KEY"),
+  webhookSecret: env("GITHUB_WEBHOOK_SECRET"),
+  allowedRepos: ["beeblastco/broods"],
+});
+
+export const githubSkill = defineSkill({
+  name: "github",
+  config: {
+    path: "./skills/github",
+  },
+});
+
+export const notionSkill = defineSkill({
+  name: "notion",
+  config: {
+    path: "./skills/notion",
+  },
+});
+
+export const gmailSkill = defineSkill({
+  name: "gmail",
+  config: {
+    path: "./skills/gmail",
+  },
+});
+
+export const wordSkill = defineSkill({
+  name: "word",
+  config: {
+    path: "./skills/word",
+  },
+});
+
+export const hubSpotSkill = defineSkill({
+  name: "hubspot",
+  config: {
+    path: "./skills/hubspot",
+  },   
+})
+
 export const sandbox = defineSandbox({
   name: "lambda-sandbox",
   config: {
     provider: "lambda",
     network: { mode: "allow-all" },
     permissionMode: "bypass",
+    persistent: true,
+    lifecycle: {
+      idleTimeoutSeconds: 900,
+      maxLifetimeSeconds: 28800,
+    },
+    envVars: {
+      HUBSPOT_API_TOKEN: env("HUBSPOT_API_TOKEN"),
+      HUBSPOT_BASE_URL: "https://api.hubapi.com"
+    }
   },
 })
 
@@ -72,12 +123,16 @@ export const agent = defineAgent({
         apiKey: env.TAVILY_API_KEY,
       }
     },
-    channels: [slack, telegram],
+    channels: [slack, telegram, github],
     sandbox: sandbox,
     workspaces: [workspace],
     subagent: {
       enabled: true,
     },
     publicAccess: true,
+    skills: {
+      enabled: true,
+      allowed: [githubSkill, notionSkill, gmailSkill, wordSkill, hubSpotSkill],
+    }
   },
 });
