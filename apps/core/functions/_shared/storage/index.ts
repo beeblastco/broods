@@ -103,6 +103,7 @@ export {
   toRuntimeAgentConfig,
   type AgentConfig,
   type AgentBehaviorConfig,
+  type AgentChannelWorkspaceScope,
   type AgentChannelsConfig,
   type AgentDiscordChannelConfig,
   type AgentGitHubChannelConfig,

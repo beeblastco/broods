@@ -44,9 +44,9 @@ describe("resolveS3MountIdentity", () => {
   it("keeps managed isolated namespaces inside the managed bucket prefix", () => {
     expect(resolveS3MountIdentity({
       storage: undefined,
-      namespace: `${NS}/channels/fs-channel/conversations/fs-conversation`,
+      namespace: `${NS}/support/fs-conversation`,
       managedBucket: "managed-bucket",
-    })).toEqual({ bucket: "managed-bucket", prefix: `${NS}/channels/fs-channel/conversations/fs-conversation/` });
+    })).toEqual({ bucket: "managed-bucket", prefix: `${NS}/support/fs-conversation/` });
   });
 
   it("uses a bring-your-own bucket with its own (normalized) prefix", () => {
@@ -65,8 +65,8 @@ describe("resolveS3MountIdentity", () => {
   it("adds isolation folders under a bring-your-own bucket prefix without changing buckets", () => {
     expect(resolveS3MountIdentity({
       storage: { provider: "s3", bucket: "acme", prefix: "agents/" },
-      namespace: `${NS}/channels/fs-channel`,
-    })).toEqual({ bucket: "acme", prefix: "agents/channels/fs-channel/" });
+      namespace: `${NS}/support`,
+    })).toEqual({ bucket: "acme", prefix: "agents/support/" });
   });
 
   it("throws when neither storage.bucket nor a managed bucket is available", () => {

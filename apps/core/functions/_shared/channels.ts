@@ -49,6 +49,14 @@ export interface ParsedChannelContext {
   ack?: ChannelResponse;
 }
 
+export interface ParsedChannelCleanup {
+  kind: "cleanup";
+  channelName: string;
+  conversationKey: string;
+  eventId?: string;
+  ack?: ChannelResponse;
+}
+
 /**
  * Channel parse results describe what the webhook should do before the agent runs.
  * Some providers need an immediate HTTP response, while others can be acknowledged and processed later.
@@ -56,6 +64,7 @@ export interface ParsedChannelContext {
 export type ChannelParseResult =
   | ParsedChannelMessage
   | ParsedChannelContext
+  | ParsedChannelCleanup
   | { kind: "ignore"; reason?: string; response?: ChannelResponse }
   | { kind: "response"; reason?: string; response: ChannelResponse };
 

@@ -6,6 +6,8 @@ const __dirname = new URL(".", import.meta.url).pathname;
 const instructions = fs.readFileSync(path.join(__dirname, "instructions.md"), "utf-8").trim();
 
 export const slack = defineSlackChannel({
+  id: "slack-support",
+  workspaceScope: { level: "channel" },
   botToken: env("SLACK_BOT_TOKEN"),
   signingSecret: env("SLACK_SIGNING_SECRET"),
   allowedChannelIds: ["C0BE2TEBTNW"],
@@ -13,6 +15,8 @@ export const slack = defineSlackChannel({
 });
 
 export const telegram = defineTelegramChannel({
+  id: "telegram-support",
+  workspaceScope: { level: "channel" },
   botToken: env("TELEGRAM_BOT_TOKEN"),
   webhookSecret: env("TELEGRAM_WEBHOOK_SECRET"),
   allowedChatIds: [8096152290, 7495331456],
@@ -20,6 +24,8 @@ export const telegram = defineTelegramChannel({
 });
 
 export const github = defineGitHubChannel({
+  id: "github-support",
+  workspaceScope: { alias: "support", level: "conversation" },
   appId: env("GITHUB_APP_ID"),
   privateKey: env("GITHUB_PRIVATE_KEY"),
   webhookSecret: env("GITHUB_WEBHOOK_SECRET"),
@@ -83,6 +89,7 @@ export const workspace = defineWorkspace({
   name: "workspace",
   config: {
     storage: { provider: "s3" },
+    isolation: true,
     harness: { enabled: true },
   }
 })

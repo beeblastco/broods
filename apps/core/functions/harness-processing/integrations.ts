@@ -25,6 +25,7 @@ import {
   toChannelRuntimeAgentConfig,
   toRuntimeAgentConfig,
   type AccountRecord,
+  type AgentChannelWorkspaceScope,
   type AgentConfig,
   type AgentRecord,
   type RunOverrides,
@@ -47,6 +48,7 @@ import {
   normalizeHeaders,
 } from "../_shared/http.ts";
 import { collectSecretValues, logError, logInfo, logWarn } from "../_shared/log.ts";
+import { isPlainObject } from "../_shared/object.ts";
 import {
   getObservabilityContext,
   mintTraceId,
@@ -61,10 +63,20 @@ import {
   assertValidPublicConversationKey,
   assertValidPublicEventId,
   accountAgentScopedKey,
+  channelScopeKeyFromConversation,
   normalizeDirectIdentifier,
   scopedDirectConversationKey,
   scopedDirectEventId,
 } from "../_shared/runtime-keys.ts";
+import { deleteS3Prefix } from "../_shared/s3.ts";
+import {
+  isolatedWorkspaceNamespace,
+  workspaceNamespace,
+} from "../_shared/workspaces.ts";
+import {
+  resolveS3ReadTarget,
+  workspaceReadContext,
+} from "./sandbox/s3-mount.ts";
 import type { ConversationIngressEvent } from "./session.ts";
 import type { AgentDeploymentRecord } from "../_shared/storage/types.ts";
 
@@ -580,6 +592,31 @@ async function handleChannelWebhook(
       return toLambdaResponse(parsed.response ?? { statusCode: 200 });
     }
 
+    if (parsed.kind === "cleanup") {
+      const response = parsed.ack ?? { statusCode: 200 };
+      logInfo("Channel webhook accepted for workspace cleanup", {
+        channel: adapter.name,
+        accountId: account.accountId,
+        agentId: agent.agentId,
+        eventId: parsed.eventId,
+        conversationKey: parsed.conversationKey,
+        statusCode: response.statusCode,
+      });
+      return {
+        statusCode: response.statusCode,
+        headers: response.headers,
+        body: response.body ?? "",
+        afterResponse: Promise.resolve().then(() =>
+          cleanupChannelWorkspaceScopes({
+            accountId: account.accountId,
+            agentConfig: agent.config,
+            channelName: parsed.channelName,
+            conversationKey: parsed.conversationKey,
+          })
+        ),
+      };
+    }
+
     if (parsed.kind === "context") {
       const { message, ack } = parsed;
       const response = ack ?? { statusCode: 200 };
@@ -675,6 +712,55 @@ async function handleChannelWebhook(
       setObservabilityContext(previousObservabilityContext);
     }
   }
+}
+
+async function cleanupChannelWorkspaceScopes(options: {
+  accountId: string;
+  agentConfig: AgentConfig;
+  channelName: string;
+  conversationKey: string;
+}): Promise<void> {
+  const channelConfig = options.agentConfig.channels?.[options.channelName];
+  const rawWorkspaceScope = isPlainObject(channelConfig) ? channelConfig.workspaceScope : undefined;
+  const workspaceScope = isChannelWorkspaceScope(rawWorkspaceScope) ? rawWorkspaceScope : undefined;
+  if (workspaceScope?.level !== "conversation") {
+    return;
+  }
+
+  const storage = getStorage();
+  let deleted = 0;
+  for (const ref of options.agentConfig.workspaces ?? []) {
+    const record = await storage.workspaceConfigs.getById(options.accountId, ref.workspaceId);
+    if (!record || record.config.isolation !== true) {
+      continue;
+    }
+
+    const namespace = isolatedWorkspaceNamespace(
+      workspaceNamespace(options.accountId, ref.workspaceId),
+      record.config.isolation,
+      {
+        channelName: options.channelName,
+        channelScopeKey: channelScopeKeyFromConversation(options.conversationKey),
+        conversationKey: channelScopeKeyFromConversation(options.conversationKey, "conversation"),
+        workspaceScope,
+      },
+    );
+    const target = await resolveS3ReadTarget(workspaceReadContext(record.config.storage, namespace));
+    deleted += await deleteS3Prefix(target.bucket, target.prefix, target.access);
+  }
+
+  logInfo("Channel workspace scoped cleanup completed", {
+    accountId: options.accountId,
+    channelName: options.channelName,
+    conversationKey: options.conversationKey,
+    deleted,
+  });
+}
+
+function isChannelWorkspaceScope(value: unknown): value is AgentChannelWorkspaceScope {
+  if (!isPlainObject(value)) return false;
+  if (value.level === "channel") return value.alias === undefined;
+  return value.level === "conversation" && typeof value.alias === "string";
 }
 
 async function processChannelMessage(

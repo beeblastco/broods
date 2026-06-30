@@ -156,13 +156,21 @@ function parseIssuesEvent(
   repo: string,
   repoFullName: string,
 ): ChannelParseResult {
-  if (!isRelevantAction(payload.action)) {
-    return { kind: "ignore" };
-  }
-
   const issueNumber = payload.issue?.number;
   const installationId = payload.installation?.id;
   if (!issueNumber || !installationId) {
+    return { kind: "ignore" };
+  }
+  if (payload.action === "closed") {
+    return {
+      kind: "cleanup",
+      ack: { statusCode: 200 },
+      eventId: `${GITHUB_INTEGRATION_PREFIX}${deliveryId}`,
+      channelName: "github",
+      conversationKey: `${GITHUB_INTEGRATION_PREFIX}${repoFullName}:issue:${issueNumber}`,
+    };
+  }
+  if (!isRelevantAction(payload.action)) {
     return { kind: "ignore" };
   }
   const thread = { owner, repo, prNumber: issueNumber, type: "issue" } satisfies GitHubThreadId;
@@ -254,13 +262,21 @@ function parsePullRequestEvent(
   repo: string,
   repoFullName: string,
 ): ChannelParseResult {
-  if (!isRelevantAction(payload.action)) {
-    return { kind: "ignore" };
-  }
-
   const pullNumber = payload.pull_request?.number;
   const installationId = payload.installation?.id;
   if (!pullNumber || !installationId) {
+    return { kind: "ignore" };
+  }
+  if (payload.action === "closed") {
+    return {
+      kind: "cleanup",
+      ack: { statusCode: 200 },
+      eventId: `${GITHUB_INTEGRATION_PREFIX}${deliveryId}`,
+      channelName: "github",
+      conversationKey: `${GITHUB_INTEGRATION_PREFIX}${repoFullName}:pr:${pullNumber}`,
+    };
+  }
+  if (!isRelevantAction(payload.action)) {
     return { kind: "ignore" };
   }
   const thread = { owner, repo, prNumber: pullNumber } satisfies GitHubThreadId;

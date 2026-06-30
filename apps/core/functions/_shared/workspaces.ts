@@ -11,6 +11,7 @@
 import { normalizeFilesystemNamespace } from "./runtime-keys.ts";
 import { getStorage } from "./storage/index.ts";
 import type {
+  AgentChannelWorkspaceScope,
   AgentConfig,
   AgentWorkspaceRef,
   SandboxConfig,
@@ -18,7 +19,6 @@ import type {
   WorkspaceConfig,
 } from "./storage/index.ts";
 import type { WorkspaceStorageConfig } from "./storage/workspace-config.ts";
-import type { WorkspaceIsolationMode } from "./storage/workspace-config.ts";
 import { resolveSandboxSpecs, type SandboxControlPlane } from "./sandbox-sizes.ts";
 
 // The effective sandbox for a workspace, with the workspace's storage identity and
@@ -59,9 +59,10 @@ export interface ResolvedAgentRuntime {
 }
 
 export interface WorkspaceIsolationScope {
+  channelName?: string;
   channelScopeKey?: string;
-  channelIsolationScopeKey?: string;
   conversationKey?: string;
+  workspaceScope?: AgentChannelWorkspaceScope;
 }
 
 /** Derive the shared filesystem namespace for a workspace record. */
@@ -72,27 +73,30 @@ export function workspaceNamespace(accountId: string | undefined, workspaceId: s
 
 export function isolatedWorkspaceNamespace(
   baseNamespace: string,
-  isolation: WorkspaceIsolationMode | undefined,
+  isolation: boolean | undefined,
   scope: WorkspaceIsolationScope = {},
 ): string {
-  if (!isolation || isolation === "none") {
+  if (isolation !== true) {
     return baseNamespace;
   }
 
-  const channelKey = isolation === "channel"
-    ? scope.channelIsolationScopeKey ?? scope.channelScopeKey ?? scope.conversationKey
-    : scope.channelScopeKey ?? scope.channelIsolationScopeKey ?? scope.conversationKey;
-  if (!channelKey) {
+  const workspaceScope = scope.workspaceScope;
+  if (!workspaceScope) {
+    if (!scope.channelName) {
+      return baseNamespace;
+    }
+    throw new Error("Workspace isolation requires the active channel to define workspaceScope");
+  }
+
+  if (workspaceScope.level === "channel") {
     return baseNamespace;
   }
 
-  const channelNamespace = `channels/${normalizeFilesystemNamespace(channelKey)}`;
-  if (isolation === "channel") {
-    return `${baseNamespace}/${channelNamespace}`;
+  const conversationKey = scope.conversationKey ?? scope.channelScopeKey;
+  if (!conversationKey) {
+    throw new Error("Conversation workspace isolation requires an active conversation key");
   }
-
-  const conversationKey = scope.conversationKey ?? channelKey;
-  return `${baseNamespace}/${channelNamespace}/conversations/${normalizeFilesystemNamespace(conversationKey)}`;
+  return `${baseNamespace}/${workspaceScope.alias}/${normalizeFilesystemNamespace(conversationKey)}`;
 }
 
 /**

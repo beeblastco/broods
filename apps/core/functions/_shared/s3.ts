@@ -220,16 +220,16 @@ export async function listS3Prefix(bucket: string, prefix: string, access?: S3Ac
   return objects;
 }
 
-export async function deleteS3Object(bucket: string, key: string): Promise<void> {
-  await awsClient().send(new DeleteObjectCommand({
+export async function deleteS3Object(bucket: string, key: string, access?: S3Access): Promise<void> {
+  await awsClient(access).send(new DeleteObjectCommand({
     Bucket: bucket,
     Key: key,
   }));
 }
 
-export async function deleteS3Prefix(bucket: string, prefix: string): Promise<number> {
-  const objects = await listS3Prefix(bucket, prefix);
-  await Promise.all(objects.map((object) => deleteS3Object(bucket, object.key)));
+export async function deleteS3Prefix(bucket: string, prefix: string, access?: S3Access): Promise<number> {
+  const objects = await listS3Prefix(bucket, prefix, access);
+  await Promise.all(objects.map((object) => deleteS3Object(bucket, object.key, access)));
   return objects.length;
 }
 

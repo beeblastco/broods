@@ -1199,9 +1199,8 @@ paths:
                       properties:
                         provider: { type: string, enum: [s3] }
                     isolation:
-                      type: string
-                      enum: [none, channel, conversation]
-                      description: Filesystem isolation below the workspace namespace. `none`/unset shares one root; `channel` and `conversation` add nested folders under the same bucket/prefix.
+                      type: boolean
+                      description: Enables hierarchical workspace folders. Omit or set false to share the workspace root.
                     harness:
                       type: object
                       properties:
@@ -1210,7 +1209,7 @@ paths:
               notes:
                 value:
                   name: notes
-                  config: { storage: { provider: s3 }, isolation: channel, harness: { enabled: true } }
+                  config: { storage: { provider: s3 }, isolation: true, harness: { enabled: true } }
       responses:
         '201': { description: Workspace created }
     get:
@@ -2727,6 +2726,9 @@ components:
         telegram:
           type: object
           properties:
+            id:
+              type: string
+              description: Stable channel instance id. Required when `workspaceScope` is set.
             apiUrl:
               type: string
             botToken:
@@ -2739,13 +2741,24 @@ components:
                 type: integer
             reactionEmoji:
               type: string
-            workspaceIsolationScope:
-              type: string
-              enum: [channel, conversation]
-              description: For workspaces with `isolation: channel`, choose whether this channel uses the broad channel key or the full conversation key.
+            workspaceScope:
+              type: object
+              description: Hierarchical workspace isolation scope for workspaces with `isolation: true`.
+              required: [level]
+              properties:
+                alias:
+                  type: string
+                  pattern: "^[A-Za-z0-9._-]+$"
+                  description: Model-visible child scope folder name. Required when level is conversation; not allowed when level is channel.
+                level:
+                  type: string
+                  enum: [channel, conversation]
         github:
           type: object
           properties:
+            id:
+              type: string
+              description: Stable channel instance id. Required when `workspaceScope` is set.
             apiUrl:
               type: string
             webhookSecret:
@@ -2760,12 +2773,24 @@ components:
               items:
                 type: string
               description: Repository slugs (`owner/repo`)
-            workspaceIsolationScope:
-              type: string
-              enum: [channel, conversation]
+            workspaceScope:
+              type: object
+              description: Hierarchical workspace isolation scope for workspaces with `isolation: true`.
+              required: [level]
+              properties:
+                alias:
+                  type: string
+                  pattern: "^[A-Za-z0-9._-]+$"
+                  description: Model-visible child scope folder name. Required when level is conversation; not allowed when level is channel.
+                level:
+                  type: string
+                  enum: [channel, conversation]
         slack:
           type: object
           properties:
+            id:
+              type: string
+              description: Stable channel instance id. Required when `workspaceScope` is set.
             apiUrl:
               type: string
             botToken:
@@ -2778,12 +2803,24 @@ components:
                 type: string
             reactionEmoji:
               type: string
-            workspaceIsolationScope:
-              type: string
-              enum: [channel, conversation]
+            workspaceScope:
+              type: object
+              description: Hierarchical workspace isolation scope for workspaces with `isolation: true`.
+              required: [level]
+              properties:
+                alias:
+                  type: string
+                  pattern: "^[A-Za-z0-9._-]+$"
+                  description: Model-visible child scope folder name. Required when level is conversation; not allowed when level is channel.
+                level:
+                  type: string
+                  enum: [channel, conversation]
         discord:
           type: object
           properties:
+            id:
+              type: string
+              description: Stable channel instance id. Required when `workspaceScope` is set.
             apiUrl:
               type: string
             botToken:
@@ -2794,13 +2831,25 @@ components:
               type: array
               items:
                 type: string
-            workspaceIsolationScope:
-              type: string
-              enum: [channel, conversation]
+            workspaceScope:
+              type: object
+              description: Hierarchical workspace isolation scope for workspaces with `isolation: true`.
+              required: [level]
+              properties:
+                alias:
+                  type: string
+                  pattern: "^[A-Za-z0-9._-]+$"
+                  description: Model-visible child scope folder name. Required when level is conversation; not allowed when level is channel.
+                level:
+                  type: string
+                  enum: [channel, conversation]
         pancake:
           type: object
           description: Pancake sends no signature header; the webhook URL must carry `?secret=<webhookSecret>`, checked on every request.
           properties:
+            id:
+              type: string
+              description: Stable channel instance id. Required when `workspaceScope` is set.
             pageId:
               type: string
             pageAccessToken:
@@ -2820,13 +2869,25 @@ components:
                   items:
                     type: string
                   description: Conversation tag IDs that mark human handoff; tagged conversations are ignored.
-            workspaceIsolationScope:
-              type: string
-              enum: [channel, conversation]
+            workspaceScope:
+              type: object
+              description: Hierarchical workspace isolation scope for workspaces with `isolation: true`.
+              required: [level]
+              properties:
+                alias:
+                  type: string
+                  pattern: "^[A-Za-z0-9._-]+$"
+                  description: Model-visible child scope folder name. Required when level is conversation; not allowed when level is channel.
+                level:
+                  type: string
+                  enum: [channel, conversation]
         zalo:
           type: object
           description: Official Zalo Bot API webhook channel for direct text messages.
           properties:
+            id:
+              type: string
+              description: Stable channel instance id. Required when `workspaceScope` is set.
             botToken:
               type: string
             webhookSecret:
@@ -2839,6 +2900,15 @@ components:
               items:
                 type: string
               description: Zalo user IDs allowed to trigger the agent.
-            workspaceIsolationScope:
-              type: string
-              enum: [channel, conversation]
+            workspaceScope:
+              type: object
+              description: Hierarchical workspace isolation scope for workspaces with `isolation: true`.
+              required: [level]
+              properties:
+                alias:
+                  type: string
+                  pattern: "^[A-Za-z0-9._-]+$"
+                  description: Model-visible child scope folder name. Required when level is conversation; not allowed when level is channel.
+                level:
+                  type: string
+                  enum: [channel, conversation]

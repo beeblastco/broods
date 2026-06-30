@@ -226,63 +226,73 @@ export interface AgentChannelsConfig {
   [key: string]: unknown;
 }
 
-export type ChannelWorkspaceIsolationScope = "channel" | "conversation";
-const CHANNEL_WORKSPACE_ISOLATION_SCOPES = ["channel", "conversation"] as const;
+export type ChannelWorkspaceScopeLevel = "channel" | "conversation";
+const CHANNEL_WORKSPACE_SCOPE_LEVELS = ["channel", "conversation"] as const;
+
+export type AgentChannelWorkspaceScope =
+  | { level: "channel"; alias?: never }
+  | { level: "conversation"; alias: string };
 
 export interface AgentTelegramChannelConfig {
+  id?: string;
   apiUrl?: TelegramAdapterConfig["apiUrl"];
   botToken?: TelegramAdapterConfig["botToken"];
   webhookSecret?: TelegramAdapterConfig["secretToken"];
   allowedChatIds?: number[];
   reactionEmoji?: string;
-  workspaceIsolationScope?: ChannelWorkspaceIsolationScope;
+  workspaceScope?: AgentChannelWorkspaceScope;
   [key: string]: unknown;
 }
 
 export interface AgentGitHubChannelConfig {
+  id?: string;
   apiUrl?: Extract<GitHubAdapterConfig, { appId: string }>["apiUrl"];
   webhookSecret?: Extract<GitHubAdapterConfig, { appId: string }>["webhookSecret"];
   appId?: Extract<GitHubAdapterConfig, { appId: string }>["appId"];
   privateKey?: Extract<GitHubAdapterConfig, { appId: string }>["privateKey"];
   allowedRepos?: string[];
-  workspaceIsolationScope?: ChannelWorkspaceIsolationScope;
+  workspaceScope?: AgentChannelWorkspaceScope;
   [key: string]: unknown;
 }
 
 export interface AgentSlackChannelConfig {
+  id?: string;
   apiUrl?: SlackAdapterConfig["apiUrl"];
   botToken?: string;
   signingSecret?: SlackAdapterConfig["signingSecret"];
   allowedChannelIds?: string[];
   reactionEmoji?: string;
-  workspaceIsolationScope?: ChannelWorkspaceIsolationScope;
+  workspaceScope?: AgentChannelWorkspaceScope;
   [key: string]: unknown;
 }
 
 export interface AgentDiscordChannelConfig {
+  id?: string;
   apiUrl?: DiscordAdapterConfig["apiUrl"];
   botToken?: DiscordAdapterConfig["botToken"];
   publicKey?: DiscordAdapterConfig["publicKey"];
   allowedGuildIds?: string[];
-  workspaceIsolationScope?: ChannelWorkspaceIsolationScope;
+  workspaceScope?: AgentChannelWorkspaceScope;
   [key: string]: unknown;
 }
 
 export interface AgentPancakeChannelConfig {
+  id?: string;
   pageId?: string;
   pageAccessToken?: string;
   webhookSecret?: string;
   senderId?: string;
   options?: Record<string, unknown>;
-  workspaceIsolationScope?: ChannelWorkspaceIsolationScope;
+  workspaceScope?: AgentChannelWorkspaceScope;
   [key: string]: unknown;
 }
 
 export interface AgentZaloChannelConfig {
+  id?: string;
   botToken?: string;
   webhookSecret?: string;
   allowedUserIds?: string[];
-  workspaceIsolationScope?: ChannelWorkspaceIsolationScope;
+  workspaceScope?: AgentChannelWorkspaceScope;
   [key: string]: unknown;
 }
 
@@ -871,58 +881,58 @@ function normalizeTelegramConfig(value: unknown): void {
   if (value == null) return;
   if (!isPlainObject(value)) throw new Error("config.channels.telegram must be an object");
   const config = value as Record<string, unknown>;
+  normalizeChannelIdentityConfig(config, "config.channels.telegram");
   assertOptionalString(config.apiUrl, "config.channels.telegram.apiUrl");
   assertOptionalString(config.botToken, "config.channels.telegram.botToken");
   assertOptionalString(config.webhookSecret, "config.channels.telegram.webhookSecret");
   assertOptionalNumberArray(config.allowedChatIds, "config.channels.telegram.allowedChatIds");
   assertOptionalString(config.reactionEmoji, "config.channels.telegram.reactionEmoji");
-  assertOptionalEnum(config.workspaceIsolationScope, "config.channels.telegram.workspaceIsolationScope", CHANNEL_WORKSPACE_ISOLATION_SCOPES);
 }
 
 function normalizeGitHubConfig(value: unknown): void {
   if (value == null) return;
   if (!isPlainObject(value)) throw new Error("config.channels.github must be an object");
   const config = value as Record<string, unknown>;
+  normalizeChannelIdentityConfig(config, "config.channels.github");
   assertOptionalString(config.apiUrl, "config.channels.github.apiUrl");
   assertOptionalString(config.webhookSecret, "config.channels.github.webhookSecret");
   assertOptionalString(config.appId, "config.channels.github.appId");
   assertOptionalString(config.privateKey, "config.channels.github.privateKey");
   assertOptionalStringArray(config.allowedRepos, "config.channels.github.allowedRepos");
-  assertOptionalEnum(config.workspaceIsolationScope, "config.channels.github.workspaceIsolationScope", CHANNEL_WORKSPACE_ISOLATION_SCOPES);
 }
 
 function normalizeSlackConfig(value: unknown): void {
   if (value == null) return;
   if (!isPlainObject(value)) throw new Error("config.channels.slack must be an object");
   const config = value as Record<string, unknown>;
+  normalizeChannelIdentityConfig(config, "config.channels.slack");
   assertOptionalString(config.apiUrl, "config.channels.slack.apiUrl");
   assertOptionalString(config.botToken, "config.channels.slack.botToken");
   assertOptionalString(config.signingSecret, "config.channels.slack.signingSecret");
   assertOptionalStringArray(config.allowedChannelIds, "config.channels.slack.allowedChannelIds");
   assertOptionalString(config.reactionEmoji, "config.channels.slack.reactionEmoji");
-  assertOptionalEnum(config.workspaceIsolationScope, "config.channels.slack.workspaceIsolationScope", CHANNEL_WORKSPACE_ISOLATION_SCOPES);
 }
 
 function normalizeDiscordConfig(value: unknown): void {
   if (value == null) return;
   if (!isPlainObject(value)) throw new Error("config.channels.discord must be an object");
   const config = value as Record<string, unknown>;
+  normalizeChannelIdentityConfig(config, "config.channels.discord");
   assertOptionalString(config.apiUrl, "config.channels.discord.apiUrl");
   assertOptionalString(config.botToken, "config.channels.discord.botToken");
   assertOptionalString(config.publicKey, "config.channels.discord.publicKey");
   assertOptionalStringArray(config.allowedGuildIds, "config.channels.discord.allowedGuildIds");
-  assertOptionalEnum(config.workspaceIsolationScope, "config.channels.discord.workspaceIsolationScope", CHANNEL_WORKSPACE_ISOLATION_SCOPES);
 }
 
 function normalizePancakeConfig(value: unknown): void {
   if (value == null) return;
   if (!isPlainObject(value)) throw new Error("config.channels.pancake must be an object");
   const config = value as Record<string, unknown>;
+  normalizeChannelIdentityConfig(config, "config.channels.pancake");
   assertOptionalString(config.pageId, "config.channels.pancake.pageId");
   assertOptionalString(config.pageAccessToken, "config.channels.pancake.pageAccessToken");
   assertOptionalString(config.webhookSecret, "config.channels.pancake.webhookSecret");
   assertOptionalString(config.senderId, "config.channels.pancake.senderId");
-  assertOptionalEnum(config.workspaceIsolationScope, "config.channels.pancake.workspaceIsolationScope", CHANNEL_WORKSPACE_ISOLATION_SCOPES);
   if (config.options !== undefined && !isPlainObject(config.options)) {
     throw new Error("config.channels.pancake.options must be an object");
   }
@@ -934,16 +944,45 @@ function normalizeZaloConfig(value: unknown): void {
   if (value == null) return;
   if (!isPlainObject(value)) throw new Error("config.channels.zalo must be an object");
   const config = value as Record<string, unknown>;
+  normalizeChannelIdentityConfig(config, "config.channels.zalo");
   assertOptionalString(config.botToken, "config.channels.zalo.botToken");
   assertOptionalString(config.webhookSecret, "config.channels.zalo.webhookSecret");
   assertOptionalStringArray(config.allowedUserIds, "config.channels.zalo.allowedUserIds");
-  assertOptionalEnum(config.workspaceIsolationScope, "config.channels.zalo.workspaceIsolationScope", CHANNEL_WORKSPACE_ISOLATION_SCOPES);
   if (typeof config.webhookSecret === "string") {
     const length = config.webhookSecret.length;
     if (length < 8 || length > 256) {
       throw new Error("config.channels.zalo.webhookSecret must be 8 to 256 characters");
     }
   }
+}
+
+function normalizeChannelIdentityConfig(config: Record<string, unknown>, name: string): void {
+  assertOptionalString(config.id, `${name}.id`);
+  if (config.workspaceIsolationScope !== undefined) {
+    throw new Error(`${name}.workspaceIsolationScope is no longer supported; use ${name}.workspaceScope`);
+  }
+  if (config.workspaceScope === undefined) {
+    return;
+  }
+  if (!isPlainObject(config.workspaceScope)) {
+    throw new Error(`${name}.workspaceScope must be an object`);
+  }
+  if (typeof config.id !== "string" || config.id.trim().length === 0) {
+    throw new Error(`${name}.id is required when ${name}.workspaceScope is set`);
+  }
+  const workspaceScope = config.workspaceScope as Record<string, unknown>;
+  assertOptionalEnum(workspaceScope.level, `${name}.workspaceScope.level`, CHANNEL_WORKSPACE_SCOPE_LEVELS);
+  if (workspaceScope.level === undefined) {
+    throw new Error(`${name}.workspaceScope.level must be one of: ${CHANNEL_WORKSPACE_SCOPE_LEVELS.join(", ")}`);
+  }
+  if (workspaceScope.level === "channel") {
+    if (workspaceScope.alias !== undefined) {
+      throw new Error(`${name}.workspaceScope.alias is only supported when ${name}.workspaceScope.level is conversation`);
+    }
+    return;
+  }
+  normalizeRequiredString(workspaceScope.alias, `${name}.workspaceScope.alias`);
+  assertWorkspaceScopeAlias(workspaceScope.alias, `${name}.workspaceScope.alias`);
 }
 
 function assertOptionalString(value: unknown, name: string): void {
@@ -1003,6 +1042,12 @@ function assertOptionalNonEmptyString(value: unknown, name: string): void {
 
 function assertWorkspaceId(value: string, name: string): void {
   if (!/^[A-Za-z0-9._-]+$/.test(value)) {
+    throw new Error(`${name} must use only letters, numbers, dots, underscores, or hyphens`);
+  }
+}
+
+function assertWorkspaceScopeAlias(value: unknown, name: string): void {
+  if (typeof value !== "string" || !/^[A-Za-z0-9._-]+$/.test(value)) {
     throw new Error(`${name} must use only letters, numbers, dots, underscores, or hyphens`);
   }
 }

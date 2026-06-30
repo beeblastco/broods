@@ -133,6 +133,44 @@ describe("github channel adapter", () => {
     });
   });
 
+  it("normalizes closed issue and pull request events into cleanup results", async () => {
+    const adapter = createGitHubChannel("webhook-secret", "app-id", "private-key", null);
+
+    const issue = await adapter.parse(createRequest(JSON.stringify({
+      action: "closed",
+      repository: createRepository(),
+      issue: { number: 7, title: "Bug", body: "Details" },
+      installation: { id: 99 },
+    }), {
+      "x-github-event": "issues",
+      "x-github-delivery": "delivery-closed-issue",
+    }));
+    expect(issue).toEqual({
+      kind: "cleanup",
+      ack: { statusCode: 200 },
+      eventId: "gh:delivery-closed-issue",
+      channelName: "github",
+      conversationKey: "gh:owner/repo:issue:7",
+    });
+
+    const pullRequest = await adapter.parse(createRequest(JSON.stringify({
+      action: "closed",
+      repository: createRepository(),
+      pull_request: { number: 12, title: "PR", body: "Details" },
+      installation: { id: 99 },
+    }), {
+      "x-github-event": "pull_request",
+      "x-github-delivery": "delivery-closed-pr",
+    }));
+    expect(pullRequest).toEqual({
+      kind: "cleanup",
+      ack: { statusCode: 200 },
+      eventId: "gh:delivery-closed-pr",
+      channelName: "github",
+      conversationKey: "gh:owner/repo:pr:12",
+    });
+  });
+
   it("ignores issue comments from bot actors", async () => {
     const adapter = createGitHubChannel("webhook-secret", "app-id", "private-key", null);
 

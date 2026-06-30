@@ -18,6 +18,7 @@ import {
   type BroodsConfigDefinition,
   type BroodsProjectConfig,
   type SandboxResource,
+  type WorkspaceResource,
 } from "./resources.ts";
 
 export interface CompileOptions {
@@ -39,6 +40,7 @@ export interface CompiledProject {
 export interface CompiledChannel {
   alias: string;
   type: AnyChannelDefinition["type"];
+  id?: string;
   agentName: string;
 }
 
@@ -79,6 +81,8 @@ export async function compileProject(options: CompileOptions = {}): Promise<Comp
   const channels = compileChannels(resourceExports, exports);
   for (const resource of resources) assertKnownConfigKeys(resource);
   for (const resource of resources) assertSupportedWorkspaceStorage(resource);
+  for (const resource of resources) assertSupportedWorkspaceIsolationShape(resource);
+  assertWorkspaceIsolationConsistency(resources);
   assertSupportedWorkspaceSandboxMounts(resources);
   const resourceAliases = aliasesForResources(resourceExports);
   const environment = resolveEnvironment(
@@ -275,6 +279,117 @@ function assertSupportedWorkspaceStorage(resource: AnyResource): void {
   throw new Error(`Workspace "${resource.name}" config.storage.provider must be one of: s3`);
 }
 
+function assertSupportedWorkspaceIsolationShape(resource: AnyResource): void {
+  if (resource.kind !== "workspace") return;
+  const config = resource.config as unknown as Record<string, unknown>;
+  if (typeof config.isolation === "string") {
+    throw new Error(
+      `Workspace "${resource.name}" config.isolation no longer supports string modes; use isolation: true or omit it.`,
+    );
+  }
+  if (config.isolation !== undefined && typeof config.isolation !== "boolean") {
+    throw new Error(`Workspace "${resource.name}" config.isolation must be a boolean`);
+  }
+}
+
+function assertWorkspaceIsolationConsistency(resources: AnyResource[]): void {
+  const workspaceResources = new Map(
+    resources.filter((resource): resource is WorkspaceResource => resource.kind === "workspace")
+      .map((resource) => [resource.name, resource]),
+  );
+  const seenChannelIds = new Set<string>();
+
+  for (const resource of resources) {
+    if (resource.kind !== "agent") continue;
+    const config = resource.config as Record<string, unknown>;
+    const channels = config.channels;
+    if (channels !== undefined && !Array.isArray(channels)) {
+      throw new Error(`Agent "${resource.name}" config.channels must be an array of channel definitions`);
+    }
+    const channelDefinitions = Array.isArray(channels) ? channels.filter(isChannelDefinition) : [];
+    for (const channel of channelDefinitions) {
+      const channelId = channel.id;
+      if (channel.workspaceScope && (!channelId || channelId.trim().length === 0)) {
+        throw new Error(`Agent "${resource.name}" channel "${channel.type}" defines workspaceScope, so id is required`);
+      }
+      if (channel.workspaceScope) {
+        assertWorkspaceScopeShape(channel.workspaceScope, `Agent "${resource.name}" channel "${channelId ?? channel.type}"`);
+      }
+      if (channelId) {
+        if (seenChannelIds.has(channelId)) {
+          throw new Error(`Duplicate channel id: ${channelId}`);
+        }
+        seenChannelIds.add(channelId);
+      }
+      if (channel.config && typeof channel.config === "object" && "workspaceIsolationScope" in channel.config) {
+        throw new Error(
+          `Agent "${resource.name}" channel "${channelId ?? channel.type}" uses workspaceIsolationScope, which is no longer supported; use workspaceScope.`,
+        );
+      }
+    }
+
+    const attachedWorkspaces = Array.isArray(config.workspaces)
+      ? config.workspaces
+        .map((entry) => resolveLocalWorkspace(entry, workspaceResources))
+        .filter((entry): entry is WorkspaceResource => Boolean(entry))
+      : [];
+    const isolatedWorkspaces = attachedWorkspaces.filter((workspace) =>
+      (workspace.config as unknown as Record<string, unknown>).isolation === true
+    );
+    const scopedChannels = channelDefinitions.filter((channel) => channel.workspaceScope);
+
+    if (scopedChannels.length > 0 && isolatedWorkspaces.length === 0) {
+      const channel = scopedChannels[0]!;
+      throw new Error(
+        `Agent "${resource.name}" channel "${channel.id ?? channel.type}" defines workspaceScope, but no attached workspace has isolation: true.`,
+      );
+    }
+
+    if (isolatedWorkspaces.length > 0) {
+      for (const channel of channelDefinitions) {
+        if (!channel.workspaceScope) {
+          throw new Error(
+            `Agent "${resource.name}" attaches isolated workspace "${isolatedWorkspaces[0]!.name}", but channel "${channel.id ?? channel.type}" does not define workspaceScope.`,
+          );
+        }
+      }
+    }
+  }
+}
+
+function assertWorkspaceScopeShape(scope: AnyChannelDefinition["workspaceScope"], name: string): void {
+  if (!scope) return;
+  if (scope.level === "channel") {
+    if ("alias" in scope && scope.alias !== undefined) {
+      throw new Error(`${name} workspaceScope.alias is only supported when workspaceScope.level is conversation`);
+    }
+    return;
+  }
+  if (scope.level !== "conversation") {
+    throw new Error(`${name} workspaceScope.level must be one of: channel, conversation`);
+  }
+  if (!("alias" in scope) || typeof scope.alias !== "string" || scope.alias.length === 0) {
+    throw new Error(`${name} workspaceScope.alias must be a non-empty string when workspaceScope.level is conversation`);
+  }
+  if (!/^[A-Za-z0-9._-]+$/.test(scope.alias)) {
+    throw new Error(`${name} workspaceScope.alias must use only letters, numbers, dots, underscores, or hyphens`);
+  }
+}
+
+function resolveLocalWorkspace(
+  entry: unknown,
+  workspaces: Map<string, WorkspaceResource>,
+): WorkspaceResource | undefined {
+  if (isResource(entry) && entry.kind === "workspace") return entry;
+  if (typeof entry === "string") return workspaces.get(entry);
+  if (entry && typeof entry === "object" && "workspace" in entry) {
+    const workspace = (entry as { workspace: unknown }).workspace;
+    if (isResource(workspace) && workspace.kind === "workspace") return workspace;
+    if (typeof workspace === "string") return workspaces.get(workspace);
+  }
+  return undefined;
+}
+
 function assertSupportedWorkspaceSandboxMounts(resources: AnyResource[]): void {
   const sandboxes = new Map(resources.filter((resource) => resource.kind === "sandbox").map((resource) => [resource.name, resource]));
   for (const resource of resources) {
@@ -406,7 +521,12 @@ function compileChannels(resources: ExportedResource[], exports: ExportedValue[]
       const alias = exportedAliases.get(entry) ?? `${fallbackAgent}${capitalize(entry.type)}Channel`;
       if (aliases.has(alias)) throw new Error(`Duplicate channel export alias: ${alias}`);
       aliases.add(alias);
-      compiled.push({ alias, type: entry.type, agentName: resource.name });
+      compiled.push({
+        alias,
+        type: entry.type,
+        ...(entry.id ? { id: entry.id } : {}),
+        agentName: resource.name,
+      });
     }
   }
 

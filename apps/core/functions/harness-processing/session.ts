@@ -22,7 +22,7 @@ import {
   modelMessageSchema,
   systemModelMessageSchema,
 } from "ai";
-import type { AgentConfig } from "../_shared/storage/index.ts";
+import type { AgentChannelWorkspaceScope, AgentConfig } from "../_shared/storage/index.ts";
 import { getStorage } from "../_shared/storage/index.ts";
 import type { AsyncToolDelivery } from "./async-tool-result.ts";
 import { isMissingS3Error, readS3Text } from "../_shared/s3.ts";
@@ -477,13 +477,13 @@ export class Session {
    * from their storage IDs). Promise-memoized so concurrent callers share one fetch.
    */
   private async ensureResolvedRuntime(): Promise<ResolvedAgentRuntime> {
-    const isolationScope = this.channelWorkspaceIsolationScope();
     const channelScopeKey = channelScopeKeyFromConversation(this.conversationKey);
     const conversationScopeKey = channelScopeKeyFromConversation(this.conversationKey, "conversation");
     this.resolvedRuntimePromise ??= resolveAgentRuntime(this.agentConfig, this.accountId, {
+      channelName: this.delivery?.kind === "channel" ? this.delivery.channelName : undefined,
       channelScopeKey,
-      channelIsolationScopeKey: isolationScope === "conversation" ? conversationScopeKey : channelScopeKey,
       conversationKey: conversationScopeKey,
+      workspaceScope: this.channelWorkspaceScope(),
     }).then((resolved) => {
       this.resolvedRuntime = resolved;
       return resolved;
@@ -491,12 +491,13 @@ export class Session {
     return this.resolvedRuntimePromise;
   }
 
-  private channelWorkspaceIsolationScope(): "channel" | "conversation" {
+  private channelWorkspaceScope(): AgentChannelWorkspaceScope | undefined {
     if (this.delivery?.kind !== "channel") {
-      return "channel";
+      return undefined;
     }
     const config = this.agentConfig.channels?.[this.delivery.channelName];
-    return isPlainObject(config) && config.workspaceIsolationScope === "conversation" ? "conversation" : "channel";
+    const workspaceScope = isPlainObject(config) ? config.workspaceScope : undefined;
+    return isWorkspaceScope(workspaceScope) ? workspaceScope : undefined;
   }
 
   private async buildSystemPromptParts(
@@ -1039,4 +1040,10 @@ function isToolApprovalResponseMessage(message: ModelMessage | undefined): messa
   return message?.role === "tool" &&
     message.content.length > 0 &&
     message.content.every((part) => part.type === "tool-approval-response");
+}
+
+function isWorkspaceScope(value: unknown): value is AgentChannelWorkspaceScope {
+  if (!isPlainObject(value)) return false;
+  if (value.level === "channel") return value.alias === undefined;
+  return value.level === "conversation" && typeof value.alias === "string";
 }

@@ -716,21 +716,23 @@ describe("agent config", () => {
     });
   });
 
-  it("validates channel workspace isolation scope", () => {
+  it("validates channel workspace scope", () => {
     expect(normalizeAgentConfig({
       channels: {
         slack: {
+          id: "slack-support",
           botToken: "slack-token",
           signingSecret: "slack-secret",
-          workspaceIsolationScope: "conversation",
+          workspaceScope: { level: "channel" },
         },
       },
     })).toEqual({
       channels: {
         slack: {
+          id: "slack-support",
           botToken: "slack-token",
           signingSecret: "slack-secret",
-          workspaceIsolationScope: "conversation",
+          workspaceScope: { level: "channel" },
         },
       },
     });
@@ -738,10 +740,45 @@ describe("agent config", () => {
     expect(() => normalizeAgentConfig({
       channels: {
         slack: {
-          workspaceIsolationScope: "workspace",
+          workspaceIsolationScope: "conversation",
         },
       },
-    })).toThrow("config.channels.slack.workspaceIsolationScope must be one of: channel, conversation");
+    })).toThrow("config.channels.slack.workspaceIsolationScope is no longer supported; use config.channels.slack.workspaceScope");
+
+    expect(() => normalizeAgentConfig({
+      channels: {
+        slack: {
+          workspaceScope: { alias: "support", level: "conversation" },
+        },
+      },
+    })).toThrow("config.channels.slack.id is required when config.channels.slack.workspaceScope is set");
+
+    expect(() => normalizeAgentConfig({
+      channels: {
+        slack: {
+          id: "slack-support",
+          workspaceScope: { alias: "support", level: "workspace" },
+        },
+      },
+    })).toThrow("config.channels.slack.workspaceScope.level must be one of: channel, conversation");
+
+    expect(() => normalizeAgentConfig({
+      channels: {
+        slack: {
+          id: "slack-support",
+          workspaceScope: { alias: "../support", level: "channel" },
+        },
+      },
+    })).toThrow("config.channels.slack.workspaceScope.alias is only supported when config.channels.slack.workspaceScope.level is conversation");
+
+    expect(() => normalizeAgentConfig({
+      channels: {
+        slack: {
+          id: "slack-support",
+          workspaceScope: { alias: "../support", level: "conversation" },
+        },
+      },
+    })).toThrow("config.channels.slack.workspaceScope.alias must use only letters, numbers, dots, underscores, or hyphens");
   });
 
   it("validates Zalo channel config", () => {

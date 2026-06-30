@@ -6,7 +6,7 @@
   (`bash`, `read`, `write`, `edit`, `glob`, `grep`) and a `permissionMode`.
 - A **workspace** is the persistent S3-backed filesystem that gets mounted into a sandbox.
   Agents that reference the **same** `workspaceId` read and write the **same files** unless
-  the workspace opts into channel or conversation isolation.
+  the workspace opts into hierarchical alias isolation.
 
 A sandbox can be attached **agent-wide** (`config.sandbox`) or **per workspace**
 (`workspaces[].sandbox`). A workspace's **effective sandbox** follows a simple cascade:
@@ -52,7 +52,9 @@ Define sandbox and workspace resources in `broods/`, then pass them to an agent:
 ```ts title="broods/index.ts"
 import {
   defineAgent,
+  defineGitHubChannel,
   defineSandbox,
+  defineSlackChannel,
   defineWorkspace,
   env,
 } from "broods";
@@ -70,9 +72,24 @@ export const notes = defineWorkspace({
   name: "notes",
   config: {
     storage: { provider: "s3" },
-    isolation: "channel", // none | channel | conversation
+    isolation: true,
     harness: { enabled: true },
   },
+});
+
+export const slack = defineSlackChannel({
+  id: "slack-support",
+  workspaceScope: { level: "channel" },
+  botToken: env.SLACK_BOT_TOKEN,
+  signingSecret: env.SLACK_SIGNING_SECRET,
+});
+
+export const github = defineGitHubChannel({
+  id: "github-support",
+  workspaceScope: { alias: "support", level: "conversation" },
+  webhookSecret: env.GITHUB_WEBHOOK_SECRET,
+  appId: env.GITHUB_APP_ID,
+  privateKey: env.GITHUB_PRIVATE_KEY,
 });
 
 export const myAgent = defineAgent({
@@ -81,6 +98,7 @@ export const myAgent = defineAgent({
     provider: { openai: { apiKey: env.OPENAI_API_KEY } },
     model: { provider: "openai", modelId: "gpt-5.5" },
     agent: { system: "You are a helpful assistant." },
+    channels: [slack, github],
     sandbox: lambdaSandbox,
     workspaces: [
       notes,                                    // inherit agent sandbox
@@ -145,25 +163,163 @@ flowchart TD
   Harness --> Tools["tools/index.ts<br/>per-workspace sandbox + permissionMode"]
   Tools --> Sandbox["sandbox executor (run)<br/>sandbox / lambda / e2b / daytona / vercel"]
   Tools -->|read/glob on read-only workspace| Files
-  Sandbox --> Files["workspace files on S3<br/>namespace = hash(accountId:workspaceId)<br/>+ optional channel/conversation folders"]
+  Sandbox --> Files["workspace working folder<br/>namespace = hash(accountId:workspaceId)<br/>+ optional alias folders"]
   Session -->|MEMORY.md via S3 API| Files
 ```
 
-The workspace **namespace** is derived from `accountId:workspaceId` (not the
-conversation), which is what makes a workspace shared across agents and conversations by
-default. Set `workspace.config.isolation` to change only the folder scope inside that
-workspace:
+The workspace **base namespace** is derived from `accountId:workspaceId`. Isolation does
+not change the agent, system prompt, model config, channel config, credentials, or tool
+definitions. It only changes which working folder is mounted for that run. Each isolated
+folder starts as its own workspace folder, so `MEMORY.md`, `TASKS.md`, generated files,
+downloaded files, and sandbox edits are separated from other scopes.
 
-| `workspace.config.isolation` | Filesystem scope |
+```mermaid
+flowchart TD
+  Run["incoming run<br/>Slack · GitHub · Discord · Telegram"] --> Shared["shared agent configuration<br/>system prompt · business context · tools · credentials"]
+  Run --> Workspace["workspace record<br/>isolation true or omitted"]
+  Workspace --> Mode{"workspace.config.isolation"}
+  Mode -->|"omitted or false"| Root["mount base workspace folder"]
+  Mode -->|"true"| Scope["active channel workspaceScope"]
+  Scope -->|"direct API or cron"| Root
+  Scope -->|"level channel"| Parent["mount workspace root"]
+  Scope -->|"alias support, level conversation"| Child["mount private child folder<br/>support/fs-conversation/"]
+  Parent --> Contents["MEMORY.md · TASKS.md · files · child folders"]
+  Child --> Private["MEMORY.md · TASKS.md · files for this conversation only"]
+```
+
+| Workspace setting | Channel setting | What happens |
+| --- | --- | --- |
+| `isolation` omitted or `false` | `workspaceScope` is not allowed | every run mounts the same workspace root |
+| `isolation: true` | every attached channel must set `workspaceScope` | channel runs mount the workspace root; conversation runs mount a private child folder |
+
+If any channel defines `workspaceScope`, at least one attached workspace must use
+`isolation: true`. If a workspace uses `isolation: true`, every attached channel must
+define `workspaceScope`. The CLI rejects mixed or old-mode configs so the runtime does not
+silently pick the wrong folder.
+
+## Isolation scenarios
+
+Use isolation for the **working folder security boundary** of a team, project, ticket, or
+chat. Do not use it for business-wide instructions: put shared business context in the
+agent system prompt, configured skills, tools, or a separate non-isolated workspace.
+
+What stays shared:
+
+- agent system prompt and model configuration
+- channel configuration and credentials
+- tool definitions, tool credentials, and tool availability
+- account-level resources such as skills and configured business data
+
+What isolation separates:
+
+- the mounted workspace folder
+- `MEMORY.md` and `TASKS.md` inside that folder
+- files created, edited, downloaded, or staged by the sandbox
+- any workspace-relative artifacts the agent writes while handling that scope
+
+Existing files in one isolated folder are not copied into another isolated folder. If the
+workspace root has `fileA`, `MEMORY.md`, and `TASKS.md`, a GitHub issue child starts with
+its own empty working folder unless you seed or copy files into that child. The agent
+still sees the same workspace name, but that name points at the scoped folder for the
+current run.
+
+Use no isolation for a deliberately global workspace:
+
+```ts
+export const companyKnowledge = defineWorkspace({
+  name: "company-knowledge",
+  config: {
+    storage: { provider: "s3" },
+  },
+});
+```
+
+Effect:
+
+- Slack, GitHub, Discord, Telegram, and direct API runs all mount the same folder.
+- A file written from GitHub can be read later from Discord if both agents use this
+  workspace.
+- Channel `workspaceScope` is invalid because there is no isolated folder hierarchy.
+
+Use this for shared reference files, common templates, or non-sensitive business notes. Do
+not use it for customer-specific work, incidents, tickets, or team folders that should not
+see each other.
+
+Use `isolation: true` with `workspaceScope` when teams and issues need different folder
+boundaries:
+
+```ts
+export const supportWorkspace = defineWorkspace({
+  name: "support",
+  config: {
+    storage: { provider: "s3" },
+    isolation: true,
+  },
+});
+
+export const slack = defineSlackChannel({
+  id: "slack-support",
+  workspaceScope: { level: "channel" },
+  botToken: env.SLACK_BOT_TOKEN,
+  signingSecret: env.SLACK_SIGNING_SECRET,
+});
+
+export const github = defineGitHubChannel({
+  id: "github-support",
+  workspaceScope: { alias: "support", level: "conversation" },
+  webhookSecret: env.GITHUB_WEBHOOK_SECRET,
+  appId: env.GITHUB_APP_ID,
+  privateKey: env.GITHUB_PRIVATE_KEY,
+});
+```
+
+With that setup:
+
+| Incoming source | Folder behavior |
 | --- | --- |
-| `none` or unset | one shared workspace root for every run |
-| `channel` | nested under the originating channel scope, e.g. one Slack channel |
-| `conversation` | nested under the full conversation/thread key |
+| Slack `T123 / C456 / thread A` | shares the channel working folder with Slack `thread B` in the same channel |
+| GitHub `owner/repo#123` | gets a separate working folder from `owner/repo#456` |
+| Telegram chat `123` | scoped to chat `123`; `channel` and `conversation` are usually the same key |
 
-Isolation does **not** create another bucket. It adds hierarchical folders under the same
-workspace namespace, so managed and bring-your-own buckets keep the same bucket identity.
-For channels, `config.channels.<channel>.workspaceIsolationScope` controls whether a
-channel-scoped workspace uses the provider's broad channel key (`"channel"`, default) or
-the full conversation/thread key (`"conversation"`).
+Use this mixed mode when providers should not all use the same granularity. For example:
+
+- Slack should share one folder for a team channel.
+- GitHub should isolate each issue or PR.
+- Discord should share one workspace per team channel, or per thread if that server uses
+  threads as tickets.
+
+`workspaceScope.alias` is only used for child conversation scopes. It is the model-visible
+folder name below the workspace root, such as `support/`. Same alias plus `conversation`
+creates private child folders directly under that alias. Different aliases create separate
+child folder trees. Alias values must be safe path segments: letters, numbers, dots,
+underscores, or hyphens.
+
+`workspaceScope.level` controls visibility:
+
+- `channel` mounts the workspace root. The parent can see root files and child folders
+  below it.
+- `conversation` mounts only that conversation child folder. The child cannot read the
+  parent folder, and sibling children cannot read each other.
+
+The model-facing workspace name stays the same. If the agent has a workspace named
+`support`, it still selects `support` from Slack and from GitHub. What changes is the
+folder mounted behind that same name:
+
+| Run | Agent sees | Mounted working folder |
+| --- | --- | --- |
+| Direct API or cron | workspace `support` | `<workspace>/` |
+| Slack in channel `C456` | workspace `support` | `<workspace>/` |
+| GitHub issue `owner/repo#123` | workspace `support` | `<workspace>/support/fs-<hash(owner/repo#123)>/` |
+| GitHub issue `owner/repo#456` | workspace `support` | `<workspace>/support/fs-<hash(owner/repo#456)>/` |
+
+The Slack channel run, direct API runs, and cron runs mount the workspace root, so they
+can browse child issue folders under `support/`. A GitHub issue child mounts only its own
+child folder, so it cannot see the workspace root or another issue child.
+
+If the workspace root already contains `fileA`, `MEMORY.md`, and `TASKS.md`, GitHub issue
+`#123` will not see them. GitHub issue `#123` sees its own child folder under `support/`.
+GitHub issue `#456` sees another child folder under `support/`. All three runs use the same
+workspace name, but each scope is backed by a different folder.
+
 Set `workspace.harness.enabled: false` to suppress the MEMORY/TASKS guidance while still
 loading an existing `MEMORY.md`.

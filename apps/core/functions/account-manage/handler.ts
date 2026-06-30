@@ -35,7 +35,12 @@ import type { LambdaResponse } from "../_shared/runtime.ts";
 import { createSandboxExecutor } from "../harness-processing/sandbox/index.ts";
 import { removeSandboxInstance, setSandboxInstanceStatus } from "../_shared/storage/convex/sandbox-instances.ts";
 import { upsertSandboxSnapshot } from "../_shared/storage/convex/sandbox-snapshots.ts";
-import { deleteAccountRuntimeData, releaseReservedSandboxes, releaseSandboxConfigInstances } from "./cleanup.ts";
+import {
+    deleteAccountRuntimeData,
+    deleteWorkspaceFilesystem,
+    releaseReservedSandboxes,
+    releaseSandboxConfigInstances,
+} from "./cleanup.ts";
 import { workspaceNamespace } from "../_shared/workspaces.ts";
 import { isPlainObject } from "../_shared/object.ts";
 import {
@@ -822,6 +827,11 @@ async function handleWorkspaceRoute(
         return record ? jsonResponse(200, toPublicWorkspaceConfig(record)) : errorResponse(404, "Workspace not found");
     }
     if (method === "DELETE") {
+        const record = await workspaceConfigs.getById(accountId, workspaceId);
+        if (!record) {
+            return errorResponse(404, "Workspace not found");
+        }
+        await deleteWorkspaceFilesystem(accountId, workspaceId, record.config.storage);
         const deleted = await workspaceConfigs.remove(accountId, workspaceId);
         if (deleted) {
             // Tear down any reserved sandbox bound to this workspace's namespace.

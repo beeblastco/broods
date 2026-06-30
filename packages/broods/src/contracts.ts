@@ -5,6 +5,7 @@
 
 import type {
   AgentConfig,
+  AgentChannelWorkspaceScope,
   AgentChannelsConfig,
   AgentDiscordChannelConfig,
   AgentGitHubChannelConfig,
@@ -32,6 +33,7 @@ export type Doc<TableName extends string = string> = Record<string, unknown> & {
 
 export type {
   AgentConfig,
+  AgentChannelWorkspaceScope,
   AgentChannelsConfig,
   AgentDiscordChannelConfig,
   AgentGitHubChannelConfig,

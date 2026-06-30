@@ -492,6 +492,22 @@ describe("deleteAccountRuntimeData", () => {
     ]);
   });
 
+  it("deletes a single workspace filesystem prefix", async () => {
+    process.env.FILESYSTEM_BUCKET_NAME = "test-bucket";
+    mockDeleteS3PrefixResult = 3;
+
+    const { deleteWorkspaceFilesystem } = await import("../functions/account-manage/cleanup.ts");
+    const { workspaceNamespace } = await import("../functions/_shared/workspaces.ts");
+    const { workspaceNamespacePrefix } = await import("../functions/_shared/sandbox.ts");
+
+    const deleted = await deleteWorkspaceFilesystem("acct_test", "ws_demo", { provider: "s3" });
+
+    expect(deleted).toBe(3);
+    expect(mockDeleteS3PrefixCalls).toEqual([
+      ["test-bucket", `${workspaceNamespacePrefix(workspaceNamespace("acct_test", "ws_demo"))}/`],
+    ]);
+  });
+
   it("handles listAgents failure gracefully by defaulting to empty array", async () => {
     process.env.CONVERSATIONS_TABLE_NAME = "conversations";
     dynamo.send = sendMock as never;

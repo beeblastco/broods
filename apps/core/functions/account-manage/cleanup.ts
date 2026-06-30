@@ -12,11 +12,15 @@ import {
 import type { AccountRecord, SandboxConfig } from "../_shared/storage/index.ts";
 import { getStorage } from "../_shared/storage/index.ts";
 import { deleteS3Prefix as deleteBunS3Prefix } from "../_shared/s3.ts";
-import { workspaceNamespacePrefix } from "../_shared/sandbox.ts";
+import type { WorkspaceStorageConfig } from "../_shared/storage/workspace-config.ts";
 import { dynamo } from "../_shared/storage/dynamo/client.ts";
 import { optionalEnv } from "../_shared/env.ts";
 import { accountScopedPrefix } from "../_shared/runtime-keys.ts";
 import { workspaceNamespace } from "../_shared/workspaces.ts";
+import {
+  resolveS3ReadTarget,
+  workspaceReadContext,
+} from "../harness-processing/sandbox/s3-mount.ts";
 import { WorkdirSandboxExecutor } from "../harness-processing/sandbox/workdir-executor.ts";
 import { MicrovmSandboxExecutor } from "../harness-processing/sandbox/microvm-executor.ts";
 import { DaytonaSandboxExecutor } from "../harness-processing/sandbox/daytona-executor.ts";
@@ -60,7 +64,7 @@ export async function deleteAccountRuntimeData(account: AccountRecord): Promise<
     deleteProcessedEvents(accountPrefix),
     deleteAsyncAgentResult(accountPrefix),
     deleteAsyncToolResult(accountPrefix),
-    deleteFilesystemNamespaces(filesystemNamespaces),
+    deleteWorkspaceFilesystems(account.accountId, workspaceConfigs),
   ]);
 
   // Remove the account's sandbox + workspace config records.
@@ -138,6 +142,20 @@ export async function releaseSandboxConfigInstances(accountId: string, config: S
     if (await releaseFromConfigs(config.provider, [config], namespace)) released++;
   }
   return released;
+}
+
+export async function deleteWorkspaceFilesystem(
+  accountId: string,
+  workspaceId: string,
+  storage: WorkspaceStorageConfig | undefined,
+): Promise<number> {
+  if (!storage?.bucket && !optionalEnv("FILESYSTEM_BUCKET_NAME")) {
+    return 0;
+  }
+
+  const namespace = workspaceNamespace(accountId, workspaceId);
+  const target = await resolveS3ReadTarget(workspaceReadContext(storage, namespace));
+  return deleteBunS3Prefix(target.bucket, target.prefix, target.access);
 }
 
 async function releaseFromConfigs(
@@ -314,22 +332,15 @@ function projectKey(
   return key;
 }
 
-async function deleteFilesystemNamespaces(namespaces: string[]): Promise<number> {
-  const bucketName = optionalEnv("FILESYSTEM_BUCKET_NAME");
-  if (!bucketName) {
-    return 0;
-  }
-
+async function deleteWorkspaceFilesystems(
+  accountId: string,
+  workspaces: Array<{ workspaceId: string; config: { storage?: WorkspaceStorageConfig } }>,
+): Promise<number> {
   let deleted = 0;
-  for (const namespace of namespaces) {
-    deleted += await deleteS3Prefix(bucketName, `${workspaceNamespacePrefix(namespace)}/`);
+  for (const workspace of workspaces) {
+    deleted += await deleteWorkspaceFilesystem(accountId, workspace.workspaceId, workspace.config.storage);
   }
-
   return deleted;
-}
-
-async function deleteS3Prefix(bucketName: string, prefix: string): Promise<number> {
-  return deleteBunS3Prefix(bucketName, prefix);
 }
 
 function conversationsTableName(): string | undefined {
