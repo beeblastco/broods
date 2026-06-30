@@ -350,6 +350,7 @@ function createSlackActions(
             ...options,
             recipientTeamId: source.teamId,
             recipientUserId: source.userId!,
+            taskDisplayMode: "plan",
           });
           return result.id;
         },
