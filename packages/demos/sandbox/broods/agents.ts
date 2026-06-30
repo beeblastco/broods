@@ -17,11 +17,11 @@ export const myAgent = defineAgent({
   name: "my-agent",
   config: {
     provider: {
-      minimax: { apiKey: env.MINIMAX_API_KEY },
+      google: { apiKey: env.GOOGLE_API_KEY },
     },
     model: {
-      provider: "minimax",
-      modelId: "MiniMax-M3",
+      provider: "google",
+      modelId: "gemma-4-31b-it",
     },
     agent: {
       system:
