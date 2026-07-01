@@ -1,9 +1,10 @@
 /**
  * Dashboard-facing sandbox lifecycle actions. The dashboard reads instances via
  * `sandboxInstances.listForActiveOrg` (live) and drives suspend/resume/terminate
- * here. Each action proxies to broods's account-manage service endpoint with the
- * shared service-auth secret; broods owns the provider credentials + lifecycle
- * and writes the resulting status back into Convex. Mirrors `cronPublic.ts`.
+ * plus bounded terminal commands here. Each action proxies to broods's account-
+ * manage service endpoint with the shared service-auth secret; broods owns the
+ * provider credentials + lifecycle and writes the resulting status back into Convex.
+ * Mirrors `cronPublic.ts`.
  */
 
 import { v } from "convex/values";
@@ -54,9 +55,9 @@ async function callLifecycle(
     ctx: ActionCtx,
     sandboxId: string,
     reservationKey: string,
-    op: "suspend" | "resume" | "terminate" | "snapshot" | "refresh",
+    op: "suspend" | "resume" | "terminate" | "snapshot" | "refresh" | "exec",
     extra?: Record<string, unknown>,
-): Promise<void> {
+): Promise<unknown> {
     const account = await ctx.runQuery(api.org.getActiveAccount, {});
     if (!account) throw new Error("No active org / account not provisioned");
     const controllable = await ctx.runQuery(internal.sandboxInstances.isControllable, {
@@ -77,6 +78,11 @@ async function callLifecycle(
     if (!res.ok) {
         throw new Error(`Broods sandbox ${op} failed: ${res.status} ${await res.text()}`);
     }
+
+    const text = await res.text();
+    if (!text) return null;
+
+    return JSON.parse(text);
 }
 
 /**
@@ -134,5 +140,46 @@ export const refreshSandbox = action({
         await callLifecycle(ctx, args.sandboxId, args.reservationKey, "refresh");
 
         return null;
+    },
+});
+
+/** Runs one bounded shell command against a reserved sandbox instance. */
+export const runSandboxCommand = action({
+    args: {
+        sandboxId: v.id("sandboxConfigs"),
+        reservationKey: v.string(),
+        code: v.string(),
+    },
+    returns: v.object({
+        ok: v.boolean(),
+        runtime: v.string(),
+        exitCode: v.union(v.number(), v.null()),
+        stdout: v.string(),
+        stderr: v.string(),
+        durationMs: v.number(),
+        truncated: v.boolean(),
+        provider: v.string(),
+    }),
+    handler: async (ctx, args) => {
+        const result = await callLifecycle(ctx, args.sandboxId, args.reservationKey, "exec", {
+            code: args.code,
+            timeoutSeconds: 30,
+            outputLimitBytes: 64 * 1024,
+        });
+        if (!result || typeof result !== "object") {
+            throw new Error("Broods sandbox exec returned an empty response");
+        }
+        const record = result as Record<string, unknown>;
+
+        return {
+            ok: record.ok === true,
+            runtime: typeof record.runtime === "string" ? record.runtime : "bash",
+            exitCode: typeof record.exitCode === "number" ? record.exitCode : null,
+            stdout: typeof record.stdout === "string" ? record.stdout : "",
+            stderr: typeof record.stderr === "string" ? record.stderr : "",
+            durationMs: typeof record.durationMs === "number" ? record.durationMs : 0,
+            truncated: record.truncated === true,
+            provider: typeof record.provider === "string" ? record.provider : "sandbox",
+        };
     },
 });

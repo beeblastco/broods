@@ -5,9 +5,8 @@
  * redaction (sandbox), and validation errors are exercised end to end.
  */
 
-import { afterEach, describe, expect, it } from "bun:test";
+import { afterEach, describe, expect, it, mock } from "bun:test";
 import type { LambdaFunctionURLEvent } from "aws-lambda";
-import { handler } from "../functions/account-manage/handler.ts";
 import type { LambdaResponse } from "../functions/_shared/runtime.ts";
 import { resetStorageForTests, setStorageForTests } from "../functions/_shared/storage/index.ts";
 import {
@@ -24,10 +23,63 @@ import {
 const ACCOUNT_ID = "acct_test";
 const AUTH = { authorization: "Bearer fp_acct_test" };
 const ORIGINAL_SERVICE_AUTH_SECRET = process.env.SERVICE_AUTH_SECRET;
+const ORIGINAL_WORKDIR_URL = process.env.WORKDIR_URL;
+const ORIGINAL_WORKDIR_API_KEY = process.env.WORKDIR_API_KEY;
+const ORIGINAL_FILESYSTEM_BUCKET_NAME = process.env.FILESYSTEM_BUCKET_NAME;
+const realFetch = globalThis.fetch;
+
+interface FetchCall {
+  method: string;
+  path: string;
+  body: Record<string, unknown> | undefined;
+}
+
+let fetchCalls: FetchCall[] = [];
+const fetchMock = mock(async (url: string | URL, init?: RequestInit): Promise<Response> => {
+  const path = String(url).replace(/^https?:\/\/[^/]+/, "");
+  const method = (init?.method ?? "GET").toUpperCase();
+  const body = init?.body ? (JSON.parse(String(init.body)) as Record<string, unknown>) : undefined;
+  fetchCalls.push({ method, path, body });
+
+  if (method === "GET" && path === "/v1/sandboxes/sbx_handler") {
+    return fetchResponse({ id: "sbx_handler", state: "running", image: "base" });
+  }
+  if (method === "POST" && path === "/v1/sandboxes/sbx_handler/exec") {
+    return fetchResponse({ exit_code: 7, stdout: "stdout text", stderr: "stderr text" });
+  }
+  return fetchResponse({ error: { code: "not_found", message: path } }, 404);
+});
+
+const getSandboxExternalIdMock = mock(async (_provider: string, _key: string) => "sbx_handler");
+const claimSandboxInstanceMock = mock(async () => true);
+const saveSandboxInstanceMock = mock(async () => {});
+const deleteSandboxInstanceMock = mock(async () => {});
+
+mock.module("../functions/harness-processing/sandbox/instance-store.ts", () => ({
+  getSandboxExternalId: getSandboxExternalIdMock,
+  claimSandboxInstance: claimSandboxInstanceMock,
+  saveSandboxInstance: saveSandboxInstanceMock,
+  deleteSandboxInstance: deleteSandboxInstanceMock,
+}));
+
+const { handler } = await import("../functions/account-manage/handler.ts");
 
 afterEach(() => {
   if (ORIGINAL_SERVICE_AUTH_SECRET === undefined) delete process.env.SERVICE_AUTH_SECRET;
   else process.env.SERVICE_AUTH_SECRET = ORIGINAL_SERVICE_AUTH_SECRET;
+  if (ORIGINAL_WORKDIR_URL === undefined) delete process.env.WORKDIR_URL;
+  else process.env.WORKDIR_URL = ORIGINAL_WORKDIR_URL;
+  if (ORIGINAL_WORKDIR_API_KEY === undefined) delete process.env.WORKDIR_API_KEY;
+  else process.env.WORKDIR_API_KEY = ORIGINAL_WORKDIR_API_KEY;
+  if (ORIGINAL_FILESYSTEM_BUCKET_NAME === undefined) delete process.env.FILESYSTEM_BUCKET_NAME;
+  else process.env.FILESYSTEM_BUCKET_NAME = ORIGINAL_FILESYSTEM_BUCKET_NAME;
+  globalThis.fetch = realFetch;
+  fetchCalls = [];
+  fetchMock.mockClear();
+  getSandboxExternalIdMock.mockClear();
+  claimSandboxInstanceMock.mockClear();
+  saveSandboxInstanceMock.mockClear();
+  deleteSandboxInstanceMock.mockClear();
   setStorageForTests(null);
   resetStorageForTests();
 });
@@ -123,10 +175,45 @@ describe("account-manage sandbox endpoints", () => {
     expect(response.statusCode).toBe(403);
     expect(responseJson(response)).toEqual({ error: "reservationKey does not belong to this account or sandbox config" });
   });
+
+  it("runs bounded lifecycle exec commands without marking non-zero exits as sandbox errors", async () => {
+    process.env.SERVICE_AUTH_SECRET = "service-secret";
+    process.env.WORKDIR_URL = "https://workdir.example.com";
+    process.env.WORKDIR_API_KEY = "tenant-key";
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+    setStorageForTests(createFakeStorage());
+    const reservationKey = "fs-0123456789abcdef0123456789abcdef01234567";
+    const created = responseJson(await handler(createEvent("POST", "/accounts/me/sandboxes", AUTH, {
+      name: "persistent",
+      config: { provider: "sandbox", persistent: true, options: { reservationKey } },
+    }))) as SandboxConfigRecord;
+
+    const response = await handler(createEvent(
+      "POST",
+      `/accounts/me/sandboxes/${created.sandboxId}/exec`,
+      { authorization: "Bearer service-secret", "x-account-id": ACCOUNT_ID },
+      { reservationKey, code: "exit 7", timeoutSeconds: 9999, outputLimitBytes: 999999 },
+    ));
+
+    expect(response.statusCode).toBe(200);
+    expect(responseJson(response)).toMatchObject({
+      ok: false,
+      runtime: "bash",
+      exitCode: 7,
+      stdout: "stdout text",
+      stderr: "stderr text",
+      truncated: false,
+      provider: "sandbox",
+    });
+    expect(fetchCalls.find((call) => call.path === "/v1/sandboxes/sbx_handler/exec")?.body).toMatchObject({
+      cmd: "exit 7",
+    });
+  });
 });
 
 describe("account-manage workspace endpoints", () => {
   it("creates, lists, updates, and deletes a workspace (no secrets, plaintext config)", async () => {
+    delete process.env.FILESYSTEM_BUCKET_NAME;
     setStorageForTests(createFakeStorage());
 
     const created = await handler(createEvent("POST", "/accounts/me/workspaces", AUTH, {
@@ -193,6 +280,14 @@ describe("account-manage workspace endpoints", () => {
 
 function responseJson(response: LambdaResponse): unknown {
   return JSON.parse(String(response.body ?? "{}"));
+}
+
+function fetchResponse(payload: unknown, status = 200): Response {
+  return {
+    ok: status >= 200 && status < 300,
+    status,
+    text: async () => JSON.stringify(payload),
+  } as unknown as Response;
 }
 
 function fakeAccount() {

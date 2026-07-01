@@ -35,6 +35,7 @@ import type { LambdaResponse } from "../_shared/runtime.ts";
 import { createSandboxExecutor } from "../harness-processing/sandbox/index.ts";
 import { removeSandboxInstance, setSandboxInstanceStatus } from "../_shared/storage/convex/sandbox-instances.ts";
 import { upsertSandboxSnapshot } from "../_shared/storage/convex/sandbox-snapshots.ts";
+import { workspaceSandboxLimits } from "../_shared/sandbox.ts";
 import {
     deleteAccountRuntimeData,
     deleteWorkspaceFilesystem,
@@ -180,7 +181,7 @@ export async function handler(event: LambdaFunctionURLEvent): Promise<LambdaResp
             return await handleToolRoute(method, account.accountId, selfToolMatch?.[1], event);
         }
 
-        const selfSandboxLifecycleMatch = rawPath.match(/^\/accounts\/me\/sandboxes\/([^/]+)\/(suspend|resume|terminate|snapshot|refresh)$/);
+        const selfSandboxLifecycleMatch = rawPath.match(/^\/accounts\/me\/sandboxes\/([^/]+)\/(suspend|resume|terminate|snapshot|refresh|exec)$/);
         if (selfSandboxLifecycleMatch?.[1] && selfSandboxLifecycleMatch[2]) {
             // Driven by the dashboard via the sandboxPublic Convex actions, which
             // authenticate with the shared service token.
@@ -189,7 +190,7 @@ export async function handler(event: LambdaFunctionURLEvent): Promise<LambdaResp
                 method,
                 account.accountId,
                 selfSandboxLifecycleMatch[1],
-                selfSandboxLifecycleMatch[2] as "suspend" | "resume" | "terminate" | "snapshot" | "refresh",
+                selfSandboxLifecycleMatch[2] as "suspend" | "resume" | "terminate" | "snapshot" | "refresh" | "exec",
                 event,
             );
         }
@@ -668,7 +669,7 @@ async function handleSandboxLifecycle(
     method: string,
     accountId: string,
     rawSandboxId: string,
-    action: "suspend" | "resume" | "terminate" | "snapshot" | "refresh",
+    action: "suspend" | "resume" | "terminate" | "snapshot" | "refresh" | "exec",
     event: LambdaFunctionURLEvent,
 ): Promise<LambdaResponse> {
     if (method !== "POST") {
@@ -692,6 +693,38 @@ async function handleSandboxLifecycle(
     const executor = createSandboxExecutor(record.config);
     const ref = { reservationKey: reservationKey };
     const provider = record.config.provider;
+
+    if (action === "exec") {
+        const code = typeof body.code === "string" ? body.code : "";
+        if (!code.trim()) {
+            return errorResponse(400, "code is required");
+        }
+        if (code.length > 20_000) {
+            return errorResponse(400, "code must be 20000 characters or less");
+        }
+
+        const limits = workspaceSandboxLimits(provider);
+        const timeoutSeconds = boundedInteger(body.timeoutSeconds, record.config.timeout ?? limits.defaultTimeoutSeconds, limits.maxTimeoutSeconds);
+        const outputLimitBytes = boundedInteger(body.outputLimitBytes, record.config.outputLimitBytes ?? limits.defaultOutputLimitBytes, limits.maxOutputLimitBytes);
+        const result = await executor.run({
+            code,
+            reservationKey,
+            timeoutSeconds,
+            outputLimitBytes,
+        });
+        await setSandboxInstanceStatus(accountId, reservationKey, "running");
+
+        return jsonResponse(200, {
+            ok: result.ok,
+            runtime: result.runtime,
+            exitCode: result.exitCode,
+            stdout: result.stdout,
+            stderr: result.stderr,
+            durationMs: result.durationMs,
+            truncated: result.truncated === true,
+            provider: result.provider,
+        });
+    }
 
     if (action === "refresh") {
         if (!executor.getInstanceInfo) {
@@ -750,6 +783,18 @@ async function handleSandboxLifecycle(
     await removeSandboxInstance(accountId, reservationKey);
 
     return jsonResponse(200, { status: "terminated" });
+}
+
+function boundedInteger(value: unknown, defaultValue: number, max: number): number {
+    if (value === undefined || value === null) {
+        return defaultValue;
+    }
+    const parsed = typeof value === "number" ? value : Number(value);
+    if (!Number.isSafeInteger(parsed) || parsed < 1 || parsed > max) {
+        return defaultValue;
+    }
+
+    return parsed;
 }
 
 /**
