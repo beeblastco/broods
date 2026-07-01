@@ -88,13 +88,6 @@ export function SandboxInstancesTable({ instances, projectId }: Props) {
         .map((instance) => `${instance.sandboxConfigId}:${instance.reservationKey}`)
         .join("|");
 
-    useEffect(() => {
-        if (!refreshKey || refreshedPages.current.has(refreshKey)) return;
-        refreshedPages.current.add(refreshKey);
-        void refreshVisible();
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [refreshKey]);
-
     async function toggle(instance: Doc<"sandboxInstances">, nextRunning: boolean) {
         if (!instance.sandboxConfigId) return;
         setPendingId(instance._id);
@@ -124,6 +117,13 @@ export function SandboxInstancesTable({ instances, projectId }: Props) {
             setRefreshing(false);
         }
     }
+
+    useEffect(() => {
+        if (!refreshKey || refreshedPages.current.has(refreshKey)) return;
+        refreshedPages.current.add(refreshKey);
+        void refreshVisible();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [refreshKey]);
 
     function traceHref(traceId: string): string {
         const next = new URLSearchParams();

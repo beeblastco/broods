@@ -45,6 +45,18 @@ function Field({ label, value }: { label: string; value: React.ReactNode }) {
     );
 }
 
+/** Inline link button that deep-links to a trace in the dashboard. */
+function TraceLink({ traceId, href }: { traceId: string; href: string }) {
+    return (
+        <Button asChild variant="outline" size="xs" className="cursor-pointer">
+            <Link href={href}>
+                <code className="max-w-45 truncate font-mono">{traceId}</code>
+                <ExternalLink className="size-3" />
+            </Link>
+        </Button>
+    );
+}
+
 export function SandboxInstanceSheet({ instance, projectId, onClose }: Props) {
     const createSnapshot = useAction(api.sandboxPublic.createSnapshot);
     const refresh = useAction(api.sandboxPublic.refreshSandbox);
@@ -74,17 +86,6 @@ export function SandboxInstanceSheet({ instance, projectId, onClose }: Props) {
         next.set("trace", traceId);
 
         return `/${projectId}/dashboard?${next.toString()}`;
-    }
-
-    function TraceLink({ traceId }: { traceId: string }) {
-        return (
-            <Button asChild variant="outline" size="xs" className="cursor-pointer">
-                <Link href={traceHref(traceId)}>
-                    <code className="max-w-45 truncate font-mono">{traceId}</code>
-                    <ExternalLink className="size-3" />
-                </Link>
-            </Button>
-        );
     }
 
     async function handleSnapshot() {
@@ -159,8 +160,8 @@ export function SandboxInstanceSheet({ instance, projectId, onClose }: Props) {
                             {instance.agentId && <Field label="Agent" value={<code className="font-mono">{instance.agentId}</code>} />}
                             {instance.conversationKey && <Field label="Conversation" value={<code className="font-mono break-all">{instance.conversationKey}</code>} />}
                             {instance.workspaceName && <Field label="Workspace" value={instance.workspaceName} />}
-                            {instance.createdByTraceId && <Field label="Created trace" value={<TraceLink traceId={instance.createdByTraceId} />} />}
-                            {instance.lastUsedTraceId && <Field label="Last trace" value={<TraceLink traceId={instance.lastUsedTraceId} />} />}
+                            {instance.createdByTraceId && <Field label="Created trace" value={<TraceLink traceId={instance.createdByTraceId} href={traceHref(instance.createdByTraceId)} />} />}
+                            {instance.lastUsedTraceId && <Field label="Last trace" value={<TraceLink traceId={instance.lastUsedTraceId} href={traceHref(instance.lastUsedTraceId)} />} />}
                             {instance.snapshotId && <Field label="Snapshot" value={<code className="font-mono">{instance.snapshotId}</code>} />}
                             <Field label="Created" value={relativeTime(instance.createdAt)} />
                             <Field label="Last used" value={relativeTime(instance.lastUsedAt)} />

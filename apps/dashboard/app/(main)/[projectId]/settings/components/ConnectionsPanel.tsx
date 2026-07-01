@@ -20,12 +20,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/app/components/ui/dialog";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/app/components/ui/dropdown-menu";
 import { Input } from "@/app/components/ui/input";
 import { Label } from "@/app/components/ui/label";
 import { Separator } from "@/app/components/ui/separator";
@@ -44,7 +38,6 @@ import {
   ChevronDown,
   ChevronRight,
   Clock,
-  Grid2x2,
   MoreHorizontal,
   Plus,
   Search,
