@@ -169,8 +169,12 @@ export class VercelSandboxExecutor implements SandboxExecutor {
         await saveSandboxInstance("vercel", key, storedName).catch(() => {});
         await upsertSandboxInstance(this.#config.controlPlane, "vercel", key, storedName, request.metadata);
         return sandbox;
-      } catch {
-        await deleteSandboxInstance("vercel", key).catch(() => {});
+      } catch (error) {
+        // Recreate only when the sandbox is really gone; a transient error must
+        // propagate or the still-live sandbox is orphaned at the provider. The
+        // conditional delete keeps a row a concurrent call already re-claimed.
+        if (!isSandboxGoneError(error)) throw error;
+        await deleteSandboxInstance("vercel", key, storedName).catch(() => {});
       }
     }
 

@@ -106,8 +106,12 @@ export class E2BSandboxExecutor implements SandboxExecutor {
         await saveSandboxInstance("e2b", ns, externalId).catch(() => {});
         await upsertSandboxInstance(this.#config.controlPlane, "e2b", ns, externalId, request.metadata);
         return sandbox;
-      } catch {
-        await deleteSandboxInstance("e2b", ns).catch(() => {});
+      } catch (error) {
+        // Recreate only when the sandbox is really gone; a transient error must
+        // propagate or the still-live sandbox is orphaned at the provider. The
+        // conditional delete keeps a row a concurrent call already re-claimed.
+        if (!isSandboxGoneError(error)) throw error;
+        await deleteSandboxInstance("e2b", ns, externalId).catch(() => {});
       }
     }
     const created = await Sandbox.create(e2bCreateOptions(this.#config, true));

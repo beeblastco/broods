@@ -262,13 +262,19 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
     const key = sandboxReservationKey(request)!;
     const existing = await getSandboxExternalId(PROVIDER, key);
     if (existing) {
-      const reconnected = await this.#reconnect(existing).catch(() => null);
-      if (reconnected) {
+      try {
+        const reconnected = await this.#reconnect(existing);
         await saveSandboxInstance(PROVIDER, key, existing).catch(() => {});
         await upsertSandboxInstance(this.#config.controlPlane, PROVIDER, key, existing, request.metadata);
         return reconnected;
+      } catch (error) {
+        // Recreate only when the provider says the VM no longer exists. A slow
+        // resume or transient control-plane error must propagate instead: replacing
+        // a still-allocated (e.g. suspended) VM leaks it and burns the account's
+        // MicroVM memory quota until nothing can launch.
+        if (!isMicrovmNotFound(error)) throw error;
+        await deleteSandboxInstance(PROVIDER, key, existing).catch(() => {});
       }
-      await deleteSandboxInstance(PROVIDER, key).catch(() => {});
     }
     const created = await this.#runMicrovm(request);
     if (await claimSandboxInstance(PROVIDER, key, created.microvmId)) {

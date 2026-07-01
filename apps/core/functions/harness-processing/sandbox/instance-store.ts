@@ -61,9 +61,28 @@ export async function saveSandboxInstance(provider: SandboxProvider, reservation
   }));
 }
 
-export async function deleteSandboxInstance(provider: SandboxProvider, reservationKey: string): Promise<void> {
-  await dynamo.send(new DeleteItemCommand({
-    TableName: tableName(),
-    Key: { instanceKey: { S: instanceKey(provider, reservationKey) } },
-  }));
+/**
+ * Drop a reservation mapping. When `expectedExternalId` is given the delete is
+ * conditional on the row still pointing at that sandbox, so a concurrent call
+ * that already re-claimed the reservation with a fresh sandbox keeps its row
+ * (deleting it would orphan the new sandbox at the provider).
+ */
+export async function deleteSandboxInstance(provider: SandboxProvider, reservationKey: string, expectedExternalId?: string): Promise<void> {
+  try {
+    await dynamo.send(new DeleteItemCommand({
+      TableName: tableName(),
+      Key: { instanceKey: { S: instanceKey(provider, reservationKey) } },
+      ...(expectedExternalId
+        ? {
+          ConditionExpression: "externalId = :expected",
+          ExpressionAttributeValues: { ":expected": { S: expectedExternalId } },
+        }
+        : {}),
+    }));
+  } catch (err) {
+    if (expectedExternalId && isConditionalCheckFailed(err)) {
+      return;
+    }
+    throw err;
+  }
 }

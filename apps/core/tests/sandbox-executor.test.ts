@@ -387,6 +387,43 @@ describe("createSandboxExecutor", () => {
     expect(microvmFetchMock).toHaveBeenCalled();
   });
 
+  it("recreates the reserved MicroVM only when the provider says it is gone", async () => {
+    storedSandboxExternalId = "microvm-gone";
+    microvmGetResponses = [
+      Object.assign(new Error("MicroVM does not exist"), { name: "ResourceNotFoundException" }),
+    ];
+    const { createSandboxExecutor } = require("../functions/harness-processing/sandbox/index.ts");
+    const executor = createSandboxExecutor({ provider: "lambda", persistent: true });
+
+    const result = await executor.run({
+      code: "echo ok", namespace: NS, workspaceRoot: "/mnt/workspaces", timeoutSeconds: 30, outputLimitBytes: 4096,
+    });
+
+    expect(result).toMatchObject({ ok: true, provider: "lambda" });
+    const types = microvmSendMock.mock.calls.map((c) => (c[0] as { _type?: string })?._type);
+    expect(types).toContain("RunMicrovm");
+    // The stale row is dropped conditionally on the dead id, so a concurrent
+    // re-claim with a fresh VM is never deleted out from under it.
+    expect(deleteSandboxInstanceMock).toHaveBeenCalledWith("lambda", NS, "microvm-gone");
+  });
+
+  it("surfaces transient reconnect failures instead of replacing (and leaking) the reserved MicroVM", async () => {
+    storedSandboxExternalId = "microvm-1";
+    microvmGetResponses = [
+      Object.assign(new Error("Rate exceeded"), { name: "ThrottlingException" }),
+    ];
+    const { createSandboxExecutor } = require("../functions/harness-processing/sandbox/index.ts");
+    const executor = createSandboxExecutor({ provider: "lambda", persistent: true });
+
+    await expect(executor.run({
+      code: "echo ok", namespace: NS, workspaceRoot: "/mnt/workspaces", timeoutSeconds: 30, outputLimitBytes: 4096,
+    })).rejects.toThrow("Rate exceeded");
+
+    const types = microvmSendMock.mock.calls.map((c) => (c[0] as { _type?: string })?._type);
+    expect(types).not.toContain("RunMicrovm");
+    expect(deleteSandboxInstanceMock).not.toHaveBeenCalled();
+  });
+
   it("reports a missing reserved MicroVM as absent during status refresh", async () => {
     storedSandboxExternalId = "microvm-missing";
     microvmGetResponses = [

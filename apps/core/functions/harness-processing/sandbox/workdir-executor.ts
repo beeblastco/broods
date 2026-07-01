@@ -307,8 +307,12 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
         await saveSandboxInstance("sandbox", ns, externalId).catch(() => {});
         await upsertSandboxInstance(this.#config.controlPlane, "sandbox", ns, externalId, "metadata" in request ? request.metadata : undefined);
         return sandbox;
-      } catch {
-        await deleteSandboxInstance("sandbox", ns).catch(() => {});
+      } catch (error) {
+        // Recreate only when the sandbox is really gone; a transient error must
+        // propagate or the still-live sandbox is orphaned at the provider. The
+        // conditional delete keeps a row a concurrent call already re-claimed.
+        if (!isSandboxGoneError(error)) throw error;
+        await deleteSandboxInstance("sandbox", ns, externalId).catch(() => {});
       }
     }
     const created = await this.#client.sandboxes.create(this.#createOptions(request, true));

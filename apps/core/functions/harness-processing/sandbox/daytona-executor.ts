@@ -157,8 +157,12 @@ export class DaytonaSandboxExecutor implements SandboxExecutor {
         await saveSandboxInstance("daytona", ns, externalId).catch(() => {});
         await upsertSandboxInstance(this.#config.controlPlane, "daytona", ns, externalId, request.metadata);
         return sandbox;
-      } catch {
-        await deleteSandboxInstance("daytona", ns).catch(() => {});
+      } catch (error) {
+        // Recreate only when the sandbox is really gone; a transient error must
+        // propagate or the still-live sandbox is orphaned at the provider. The
+        // conditional delete keeps a row a concurrent call already re-claimed.
+        if (!isSandboxGoneError(error)) throw error;
+        await deleteSandboxInstance("daytona", ns, externalId).catch(() => {});
       }
     }
     const sandbox = await this.#create(client, await daytonaCreateOptions(this.#config, request, true));
