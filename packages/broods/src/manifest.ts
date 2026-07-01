@@ -306,7 +306,14 @@ function assertWorkspaceIsolationConsistency(resources: AnyResource[]): void {
       throw new Error(`Agent "${resource.name}" config.channels must be an array of channel definitions`);
     }
     const channelDefinitions = Array.isArray(channels) ? channels.filter(isChannelDefinition) : [];
+    const channelIds = new Set<string>();
     for (const channel of channelDefinitions) {
+      const config = channel.config as Record<string, unknown>;
+      const channelId = typeof config.id === "string" ? config.id : undefined;
+      if (channelId) {
+        if (channelIds.has(channelId)) throw new Error(`Duplicate channel id: ${channelId}`);
+        channelIds.add(channelId);
+      }
       if (channel.workspaceScope) {
         assertWorkspaceScopeShape(channel.workspaceScope, `Agent "${resource.name}" channel "${channel.type}"`);
       }

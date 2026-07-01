@@ -377,7 +377,7 @@ export const support = defineAgent({
   expect(agent?.config).toMatchObject({
     channels: {
       slack: { id: "supportSlackChannel", workspaceScope: { level: "channel" } },
-      github: { id: "supportGitHubChannel", workspaceScope: { alias: "support", level: "conversation" } },
+      github: { id: "supportGithubChannel", workspaceScope: { alias: "support", level: "conversation" } },
     },
     workspaces: [{ name: "repo", workspaceId: "repo" }],
   });
@@ -442,7 +442,7 @@ export const support = defineAgent({ name: "support", config: { channels: [slack
 `);
 
   await expect(compileProject({ cwd, command: "dev" })).rejects.toThrow(
-    'Agent "support" channel "slack-support" workspaceScope.alias must use only letters, numbers, dots, underscores, or hyphens',
+    'Agent "support" channel "slack" workspaceScope.alias must use only letters, numbers, dots, underscores, or hyphens',
   );
 });
 
