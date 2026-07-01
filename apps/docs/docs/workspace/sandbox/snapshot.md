@@ -61,6 +61,18 @@ Curated images are built and versioned out of band, then referenced by id/ARN:
 - **`sandbox` (workdir):** images are built/imported through the workdir image API and
   referenced by name.
 
+:::caution Self-hosted workdir guest requirements
+S3 workspace mounts run `mount-s3` (FUSE) **inside the guest**, so a self-hosted workdir
+node needs two things baked in, or every file tool fails with `mount-s3: not found`:
+
+- **Rootfs**: the [`mountpoint-s3`](https://github.com/awslabs/mountpoint-s3) binary in the
+  image (add it to the workdir `deploy/images/*/Dockerfile` and rebuild with
+  `build-image.sh`).
+- **Guest kernel**: `CONFIG_FUSE_FS=y`. The prebuilt Firecracker CI kernels up to v1.13 ship
+  **without** FUSE; build the kernel from the FC `microvm-kernel-ci` config with FUSE
+  enabled and point `kernel_image` in the node's `config.toml` at it.
+:::
+
 ## Unified status model
 
 The dashboard normalizes each backend's build/lifecycle states into one snapshot status,
