@@ -143,6 +143,8 @@ test("routes a runtime key to the matching core upstream", async () => {
 
 test("bounds observability backfill requests", () => {
   expect(isObservabilityClientMessage({ type: "subscribe", stream: "logs", backfill: 100 })).toBe(true);
+  expect(isObservabilityClientMessage({ type: "subscribe", stream: "logs", liveOnly: true })).toBe(true);
+  expect(isObservabilityClientMessage({ type: "subscribe", stream: "logs", liveOnly: "true" })).toBe(false);
   expect(isObservabilityClientMessage({
     type: "subscribe",
     stream: "logs",

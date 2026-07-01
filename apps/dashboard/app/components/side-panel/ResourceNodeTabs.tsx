@@ -182,7 +182,6 @@ export function SandboxResourceDetailsTab({
                     label="Persistent"
                     description="Reserve a long-lived sandbox per workspace namespace."
                     checked={config.persistent === true}
-                    disabled={config.provider === "lambda"}
                     onCheckedChange={(persistent) => setConfig({ persistent: persistent ? true : undefined })}
                 />
             </div>

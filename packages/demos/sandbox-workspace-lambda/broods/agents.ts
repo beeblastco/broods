@@ -6,6 +6,7 @@ export const sandbox = defineSandbox({
     provider: "lambda",
     network: { mode: "allow-all" },
     permissionMode: "bypass",
+    persistent: true,
     timeout: 60,
     envVars: {
       SANDBOX_SMOKE_VAR: env("SANDBOX_SMOKE_VAR"),

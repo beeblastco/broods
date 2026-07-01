@@ -567,7 +567,7 @@ async function syncDev(args: string[]): Promise<RemoteManifestResponse> {
 
   // Push any `env.NAME` values from .env.local up first, so this sync's configs
   // resolve them and the missing-env warning only fires for genuinely-absent vars.
-  await syncLocalEnvVars(client, manifest);
+  await syncLocalEnvVars(client, manifest, envSyncScopeKey(auth.dashboardUrl, auth.token));
 
   // Push creates/updates (and canvas wiring) immediately, undeleted.
   let result = await client.putManifest(manifest, false);
@@ -640,7 +640,7 @@ function printChannelEndpoints(
  * removing a var locally never deletes it remotely. `deploy` is left untouched
  * so production secrets stay an explicit `broods env set`.
  */
-async function syncLocalEnvVars(client: BroodsSyncClient, manifest: CliManifest): Promise<void> {
+async function syncLocalEnvVars(client: BroodsSyncClient, manifest: CliManifest, scopeKey: string): Promise<void> {
   const present = collectEnvRefNames(manifest).filter((name) => {
     const value = process.env[name];
     return !name.startsWith("BROODS_") && value !== undefined && value !== "";
@@ -651,26 +651,32 @@ async function syncLocalEnvVars(client: BroodsSyncClient, manifest: CliManifest)
   // tracked by a user-local hash cache outside the project tree. Without this
   // every watch save would re-encrypt and re-bake every agent config that
   // references the var. The cache stores hashes (never the values), survives
-  // across watch child processes, and a cleared cache just re-pushes once —
-  // safe because the set is idempotent.
+  // across watch child processes, and is scoped to the authenticated target so
+  // switching dashboard/account cannot suppress a needed push. A cleared cache
+  // just re-pushes once — safe because the set is idempotent.
   const cache = await loadEnvSyncCache();
-  const known = cache[envCacheKey(manifest.project, manifest.environment)] ?? {};
-  const changed = present.filter((name) => known[name] !== hashEnvValue(process.env[name]!));
+  const known = cache[envCacheKey(scopeKey, manifest.project, manifest.environment)] ?? {};
+  const remoteNames = new Set((await client.listEnv(manifest.project, manifest.environment)).map((entry) => entry.name));
+  const changed = present.filter((name) => !remoteNames.has(name) || known[name] !== hashEnvValue(process.env[name]!));
   if (changed.length === 0) return;
 
   await Promise.all(
     changed.map((name) => client.setEnv(manifest.project, manifest.environment, name, process.env[name]!)),
   );
   for (const name of changed) known[name] = hashEnvValue(process.env[name]!);
-  cache[envCacheKey(manifest.project, manifest.environment)] = known;
+  cache[envCacheKey(scopeKey, manifest.project, manifest.environment)] = known;
   await saveEnvSyncCache(cache);
   printEnvSync(changed);
 }
 
 type EnvSyncCache = Record<string, Record<string, string>>;
 
-function envCacheKey(project: string, environment: string): string {
-  return `${project}:${environment}`;
+function envSyncScopeKey(dashboardUrl: string, token: string): string {
+  return `${dashboardUrl}:${createHash("sha256").update(token).digest("hex").slice(0, 16)}`;
+}
+
+function envCacheKey(scopeKey: string, project: string, environment: string): string {
+  return `${scopeKey}:${project}:${environment}`;
 }
 
 function envSyncCachePath(): string {
@@ -700,17 +706,17 @@ async function saveEnvSyncCache(cache: EnvSyncCache): Promise<void> {
 }
 
 /** Records the synced hash for a var set via `env set`, so `dev` won't re-push an unchanged value. */
-async function rememberEnvSyncValue(project: string, environment: string, name: string, value: string): Promise<void> {
+async function rememberEnvSyncValue(scopeKey: string, project: string, environment: string, name: string, value: string): Promise<void> {
   const cache = await loadEnvSyncCache();
-  const key = envCacheKey(project, environment);
+  const key = envCacheKey(scopeKey, project, environment);
   cache[key] = { ...(cache[key] ?? {}), [name]: hashEnvValue(value) };
   await saveEnvSyncCache(cache);
 }
 
 /** Drops a var's cached hash after `env rm`, so a later re-add with the same value re-pushes. */
-async function forgetEnvSyncValue(project: string, environment: string, name: string): Promise<void> {
+async function forgetEnvSyncValue(scopeKey: string, project: string, environment: string, name: string): Promise<void> {
   const cache = await loadEnvSyncCache();
-  const key = envCacheKey(project, environment);
+  const key = envCacheKey(scopeKey, project, environment);
   if (!cache[key] || !(name in cache[key])) return;
   delete cache[key][name];
   await saveEnvSyncCache(cache);
@@ -771,6 +777,7 @@ async function envCommand(args: string[]): Promise<void> {
   });
   const auth = await requireAuth(optionValue(args, "--dashboard-url") ?? config.dashboardUrl);
   const client = new BroodsSyncClient({ dashboardUrl: auth.dashboardUrl, token: auth.token });
+  const scopeKey = envSyncScopeKey(auth.dashboardUrl, auth.token);
   const target = `${manifest.project}/${manifest.environment}`;
 
   if (isList) {
@@ -798,14 +805,14 @@ async function envCommand(args: string[]): Promise<void> {
 
   if (isRemove) {
     await client.removeEnv(manifest.project, manifest.environment, name!);
-    await forgetEnvSyncValue(manifest.project, manifest.environment, name!);
+    await forgetEnvSyncValue(scopeKey, manifest.project, manifest.environment, name!);
     console.log(`Removed ${name} from ${target}`);
     return;
   }
 
   const value = await promptSecret(name!);
   await client.setEnv(manifest.project, manifest.environment, name!, value);
-  await rememberEnvSyncValue(manifest.project, manifest.environment, name!, value);
+  await rememberEnvSyncValue(scopeKey, manifest.project, manifest.environment, name!, value);
   console.log(`Stored ${name} for ${target}`);
 }
 

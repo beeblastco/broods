@@ -22,6 +22,9 @@ export interface ObservabilityClientOptions {
 export interface ObservabilitySubscribeOptions {
   // Recent lines to backfill from Loki before going live; 0/absent = live-only.
   backfill?: number;
+  // Explicitly skip the gateway's recent JetStream replay. Defaults to true when
+  // no backfill is requested, matching CLI/client live-tail expectations.
+  liveOnly?: boolean;
   minLevel?: LogLevel;
   signal?: AbortSignal;
 }
@@ -87,6 +90,7 @@ async function* subscribeObservabilityLogsOnce(
 ): AsyncGenerator<ObservabilityLogEntry> {
   const { baseUrl, apiKey, project, environment } = options;
   const { backfill = 0, minLevel, signal } = subscribeOptions;
+  const liveOnly = subscribeOptions.liveOnly ?? backfill <= 0;
 
   if (signal?.aborted) return;
 
@@ -131,6 +135,7 @@ async function* subscribeObservabilityLogsOnce(
       type: "subscribe",
       stream: "logs",
       ...(backfill > 0 ? { backfill } : {}),
+      ...(liveOnly ? { liveOnly: true } : {}),
       ...(minLevel !== undefined ? { minLevel } : {}),
     };
     socket.send(JSON.stringify(msg));

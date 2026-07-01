@@ -21,6 +21,19 @@ const KEY = process.env.WORKDIR_TEST_KEY ?? "";
 
 describe.skipIf(!URL)("WorkdirSandboxExecutor (live)", () => {
   function executor() {
+    if (URL!.startsWith("http://")) {
+      process.env.WORKDIR_URL = URL!;
+      if (KEY) {
+        process.env.WORKDIR_API_KEY = KEY;
+      } else {
+        delete process.env.WORKDIR_API_KEY;
+      }
+      return new WorkdirSandboxExecutor({
+        provider: "sandbox",
+        network: { mode: "allow-all" },
+      });
+    }
+
     return new WorkdirSandboxExecutor({
       provider: "sandbox",
       network: { mode: "allow-all" },

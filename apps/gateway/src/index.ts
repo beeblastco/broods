@@ -584,7 +584,7 @@ async function handleObservabilityMessage(
   }
 
   // subscribe
-  await handleObservabilitySubscribe(socket, scope, msg.stream, msg.backfill, msg.minLevel ?? "INFO");
+  await handleObservabilitySubscribe(socket, scope, msg.stream, msg.backfill, msg.liveOnly === true, msg.minLevel ?? "INFO");
 }
 
 async function handleObservabilitySubscribe(
@@ -592,6 +592,7 @@ async function handleObservabilitySubscribe(
   scope: ObservabilityScope,
   stream: "logs" | "traces",
   backfill: number | undefined,
+  liveOnly: boolean,
   minLevel: LogLevel,
 ): Promise<void> {
   const state = obsState.get(socket as Bun.ServerWebSocket<GatewayData>);
@@ -607,7 +608,7 @@ async function handleObservabilitySubscribe(
   // Subscribe and relay live events immediately. The durable backfill runs in the
   // background below so a slow Tempo/Loki query can never hold back live spans —
   // historical entries merge in when they land and clients de-duplicate overlap.
-  const live = await startLiveSubscription(socket, scope, stream, state);
+  const live = await startLiveSubscription(socket, scope, stream, state, liveOnly);
   if (!live) {
     sendObs(socket, { type: "error", error: "Live observability transport is unavailable." });
     return;
@@ -921,16 +922,16 @@ export function tempoTraceRowsFromResponse(payload: unknown, fallbackTraceId = "
 const OBS_REPLAY_WINDOW_MS = 30 * 60 * 1000;
 
 /**
- * Start a JetStream consumer for logs or traces: it replays the recent window
- * from the durable OBSERVABILITY stream and then keeps delivering live messages,
- * so a single consumer both backfills (full fidelity) and tails. Replaces the old
- * core `subscribe`, which dropped anything published while no tab was watching.
+ * Start a JetStream consumer for logs or traces. Dashboard subscriptions replay
+ * the recent OBSERVABILITY window for full-fidelity refreshes; CLI/client live
+ * tails pass `liveOnly` to start at "now" and avoid stale error output.
  */
 async function startLiveSubscription(
   socket: Bun.ServerWebSocket<ObservabilityGatewayData>,
   scope: ObservabilityScope,
   stream: "logs" | "traces",
   state: ObservabilitySocketState,
+  liveOnly: boolean,
 ): Promise<boolean> {
   try {
     const connection = await getNatsConnection();
@@ -940,7 +941,7 @@ async function startLiveSubscription(
       accountId: scope.accountId,
       project: scope.projectSlug,
       env: scope.environmentSlug,
-      startTime: new Date(Date.now() - OBS_REPLAY_WINDOW_MS).toISOString(),
+      startTime: new Date(liveOnly ? Date.now() : Date.now() - OBS_REPLAY_WINDOW_MS).toISOString(),
     });
     const natsSub: NatsSubscription = { unsubscribe: () => messages.stop() };
 

@@ -54,6 +54,10 @@ export type ObservabilitySubscribeMessage = {
   stream: "logs" | "traces";
   // Loki/Tempo backfill of up to this many recent entries before going live.
   backfill?: number;
+  // Skip JetStream replay and subscribe only to entries published after this
+  // subscription starts. Used by CLI live tails so stale errors never print on
+  // startup; dashboard views omit it to keep the recent full-fidelity replay.
+  liveOnly?: boolean;
   // Server-side min level for the live "logs" relay (default INFO+); traces are unfiltered.
   minLevel?: LogLevel;
 };
@@ -112,6 +116,7 @@ export function isObservabilityClientMessage(v: unknown): v is ObservabilityClie
         backfill < 0 ||
         backfill > MAX_OBSERVABILITY_BACKFILL)
     ) return false;
+    if (msg["liveOnly"] !== undefined && typeof msg["liveOnly"] !== "boolean") return false;
     const minLevel = msg["minLevel"];
     if (minLevel !== undefined && minLevel !== "INFO" && minLevel !== "WARN" && minLevel !== "ERROR") return false;
     return true;

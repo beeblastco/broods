@@ -80,6 +80,28 @@ test("reconnects transient log sockets and de-duplicates overlap backfill", asyn
   await stream.return(undefined);
 });
 
+test("requests live-only logs when no backfill is requested", async () => {
+  globalThis.WebSocket = FakeObservabilitySocket as unknown as typeof WebSocket;
+  const controller = new AbortController();
+  const stream = subscribeObservabilityLogs(
+    { baseUrl: "https://app.example", apiKey: "secret-key", project: "demo", environment: "development" },
+    { signal: controller.signal },
+  );
+
+  const pending = stream.next();
+  await Bun.sleep(0);
+
+  expect(JSON.parse(FakeObservabilitySocket.instances[0]!.sent[0]!)).toEqual({
+    type: "subscribe",
+    stream: "logs",
+    liveOnly: true,
+  });
+
+  controller.abort();
+  await stream.return(undefined);
+  await pending;
+});
+
 test("does not include the runtime key in connection errors", async () => {
   globalThis.WebSocket = FakeObservabilitySocket as unknown as typeof WebSocket;
   const stream = subscribeObservabilityLogs(
