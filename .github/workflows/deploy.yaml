@@ -253,6 +253,8 @@ jobs:
           # Optional trusted server-side caller token; empty default keeps deploys working.
           SERVICE_AUTH_SECRET: ${{ secrets.SERVICE_AUTH_SECRET }}
           DAYTONA_API_KEY: ${{ secrets.DAYTONA_API_KEY }}
+          WORKDIR_URL: ${{ vars.WORKDIR_URL }}
+          WORKDIR_API_KEY: ${{ secrets.WORKDIR_API_KEY }}
         shell: bash
         run: |
           set -euo pipefail

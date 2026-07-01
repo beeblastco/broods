@@ -43,6 +43,8 @@ const ADMIN_ACCOUNT_SECRET = requiredEnv("ADMIN_ACCOUNT_SECRET");
 const ACCOUNT_CONFIG_ENCRYPTION_SECRET = requiredEnv("ACCOUNT_CONFIG_ENCRYPTION_SECRET");
 const SERVICE_AUTH_SECRET = process.env.SERVICE_AUTH_SECRET ?? "";
 const DAYTONA_API_KEY = process.env.DAYTONA_API_KEY ?? "";
+const WORKDIR_URL = process.env.WORKDIR_URL?.trim() ?? "";
+const WORKDIR_API_KEY = process.env.WORKDIR_API_KEY ?? "";
 
 if (ENABLE_WEBSOCKET && !NATS_URL) {
   throw new Error("NATS_URL must be set when ENABLE_WEBSOCKET=true");
@@ -816,6 +818,8 @@ export default $config({
         ...(OTEL_EXPORTER_OTLP_HEADERS ? { OTEL_EXPORTER_OTLP_HEADERS } : {}),
         ...(usageTable ? { USAGE_TABLE_NAME: usageTable.name } : {}),
         DAYTONA_API_KEY,
+        ...(WORKDIR_URL ? { WORKDIR_URL } : {}),
+        ...(WORKDIR_API_KEY ? { WORKDIR_API_KEY } : {}),
         SANDBOX_MOUNT_ROLE_ARN: sandboxS3MountRole.arn,
         ...(DAYTONA_ORGANIZATION_ID ? { DAYTONA_ORGANIZATION_ID } : {}),
         ...(DAYTONA_API_URL ? { DAYTONA_API_URL } : {}),
@@ -1070,6 +1074,8 @@ export default $config({
         ...(OTEL_EXPORTER_OTLP_ENDPOINT ? { OTEL_EXPORTER_OTLP_ENDPOINT } : {}),
         ...(OTEL_EXPORTER_OTLP_HEADERS ? { OTEL_EXPORTER_OTLP_HEADERS } : {}),
         ...(cronsTable ? { CRONS_TABLE_NAME: cronsTable.name } : {}),
+        ...(WORKDIR_URL ? { WORKDIR_URL } : {}),
+        ...(WORKDIR_API_KEY ? { WORKDIR_API_KEY } : {}),
         CRON_SCHEDULER_TARGET_FUNCTION_ARN: harnessProcessing.arn,
         CRON_SCHEDULER_ROLE_ARN: cronSchedulerRole.arn,
         CRON_SCHEDULER_GROUP_NAME: cronScheduleGroup.name,
