@@ -168,6 +168,25 @@ describe("sandbox tool set", () => {
     expect(lastSandboxExec().payload.namespace).toBeUndefined();
   });
 
+  it("bash treats sandbox setup failures as failed tool calls", async () => {
+    microvmFetchMock.mockImplementationOnce(async (_url: string, init: { body: string }) => {
+      const payload = JSON.parse(init.body);
+      return new Response(JSON.stringify({
+        ok: false,
+        runtime: payload.runtime,
+        exit_code: null,
+        timed_out: false,
+        duration_ms: 8,
+        stdout: "",
+        stderr: "invalid namespace: must match fs-[a-f0-9]{40}",
+      }), { status: 200, headers: { "content-type": "application/json" } });
+    });
+    const bash = await tool("bash", workspaceCtx());
+
+    await expect(bash.execute({ command: "pwd" }))
+      .rejects.toThrow("Sandbox setup failed: invalid namespace");
+  });
+
   it("mounts the workspace regardless of the deny-all network mode", async () => {
     const bash = await tool("bash", workspaceCtx({ network: { mode: "deny-all" } }));
     await bash.execute({ command: "pwd" });

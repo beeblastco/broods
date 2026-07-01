@@ -104,7 +104,7 @@ let microvmExecPayload = {
   stdout: "shell ok\n",
   stderr: "",
 };
-let microvmGetResponses: Array<Record<string, unknown>> = [];
+let microvmGetResponses: Array<Record<string, unknown> | Error> = [];
 const microvmSendMock = mock(async (command: { _type?: string }) => {
   switch (command?._type) {
     case "RunMicrovm":
@@ -112,7 +112,11 @@ const microvmSendMock = mock(async (command: { _type?: string }) => {
     case "CreateMicrovmAuthToken":
       return { authToken: { "X-aws-proxy-auth": "proxy-token" } };
     case "GetMicrovm":
-      if (microvmGetResponses.length > 0) return microvmGetResponses.shift();
+      if (microvmGetResponses.length > 0) {
+        const next = microvmGetResponses.shift();
+        if (next instanceof Error) throw next;
+        return next;
+      }
       return { microvmId: "microvm-1", endpoint: "microvm-1.lambda-microvm.us-east-1.on.aws", state: "RUNNING" };
     default:
       return {};
@@ -241,6 +245,7 @@ afterEach(() => {
 });
 
 const NS = "fs-0123456789abcdef0123456789abcdef01234567";
+const CHILD_NS = `${NS}/issues/fs-76543210fedcba9876543210fedcba9876543210`;
 
 describe("createSandboxExecutor", () => {
   it("requires an explicit provider and never silently defaults", () => {
@@ -292,6 +297,33 @@ describe("createSandboxExecutor", () => {
       namespace: NS,
       workspace_root: "/mnt/workspaces",
       timeout_ms: 30000,
+    });
+  });
+
+  it("uses a flat MicroVM local namespace while mounting the hierarchical storage prefix", async () => {
+    const { createSandboxExecutor } = require("../functions/harness-processing/sandbox/index.ts");
+    const executor = createSandboxExecutor({ provider: "lambda", persistent: true });
+
+    await executor.run({
+      code: "pwd",
+      namespace: CHILD_NS,
+      workspaceRoot: "/mnt/workspaces",
+      timeoutSeconds: 30,
+      outputLimitBytes: 4096,
+    });
+
+    expect(claimSandboxInstanceMock.mock.calls[0]?.[1]).toBe(CHILD_NS);
+    const runInput = microvmRunInput();
+    const payload = JSON.parse(runInput.runHookPayload as string);
+    expect(payload.workspace).toMatchObject({ namespace: NS, root: "/mnt/workspaces" });
+    expect(payload.workspace.mount).toMatchObject({
+      bucket: "workspace-bucket",
+      prefix: `${CHILD_NS}/`,
+    });
+    const init = microvmFetchMock.mock.calls[0]![1] as { body: string };
+    expect(JSON.parse(init.body)).toMatchObject({
+      namespace: NS,
+      workspace_root: "/mnt/workspaces",
     });
   });
 
@@ -353,6 +385,17 @@ describe("createSandboxExecutor", () => {
     expect(types.filter((type) => type === "GetMicrovm")).toHaveLength(2);
     expect(types).toContain("ResumeMicrovm");
     expect(microvmFetchMock).toHaveBeenCalled();
+  });
+
+  it("reports a missing reserved MicroVM as absent during status refresh", async () => {
+    storedSandboxExternalId = "microvm-missing";
+    microvmGetResponses = [
+      Object.assign(new Error("MicroVM does not exist"), { name: "ResourceNotFoundException" }),
+    ];
+    const { createSandboxExecutor } = require("../functions/harness-processing/sandbox/index.ts");
+    const executor = createSandboxExecutor({ provider: "lambda", persistent: true });
+
+    await expect(executor.getInstanceInfo({ namespace: NS })).resolves.toBeNull();
   });
 
   it("fails persistent MicroVM runs when a lifecycle hook exits nonzero", async () => {

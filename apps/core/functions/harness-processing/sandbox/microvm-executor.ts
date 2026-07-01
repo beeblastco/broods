@@ -100,7 +100,7 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
     const { microvmId, endpoint } = await this.#acquire(request);
 
     try {
-      if (persistent) await this.#runLifecycle(microvmId, endpoint, this.#workDir(sandboxReservationKey(request)!));
+      if (persistent) await this.#runLifecycle(microvmId, endpoint, this.#workDir(this.#workspaceKey(request)));
       const response = await this.#exec(microvmId, endpoint, this.#execPayload(request));
       const stdout = truncateText(response.stdout, request.outputLimitBytes);
       const stderr = truncateText(response.stderr, request.outputLimitBytes);
@@ -128,9 +128,10 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
   async runBackground(request: SandboxRunRequest): Promise<SandboxJobHandle> {
     const key = this.#requirePersistent(request);
     const { microvmId, endpoint } = await this.#acquire(request);
-    await this.#runLifecycle(microvmId, endpoint, this.#workDir(key));
+    const workDir = this.#workDir(this.#workspaceKey(request));
+    await this.#runLifecycle(microvmId, endpoint, workDir);
     const jobId = request.jobId ?? generateJobId();
-    const script = launchScript(this.#jobsDir(key), jobId, this.#workDir(key), request.code, {
+    const script = launchScript(this.#jobsDir(key), jobId, workDir, request.code, {
       maxConcurrentJobs: MAX_CONCURRENT_BACKGROUND_JOBS,
       ...(request.callback ? { callback: request.callback } : {}),
     });
@@ -180,7 +181,10 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
     try {
       const info = await this.#client.send(new GetMicrovmCommand({ microvmIdentifier: microvmId }));
       return { externalId: microvmId, state: mapMicrovmState(info.state) };
-    } catch {
+    } catch (error) {
+      if (isMicrovmNotFound(error)) {
+        return null;
+      }
       return { externalId: microvmId, state: "unknown" };
     }
   }
@@ -233,6 +237,14 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
 
   #workDir(key: string): string {
     return `${this.#workspaceRoot()}/${key}`;
+  }
+
+  #workspaceKey(request: SandboxReservationRef): string {
+    const key = request.namespace ? microvmLocalNamespace(request.namespace) : sandboxReservationKey(request);
+    if (!key) {
+      throw new Error("persistent MicroVM lifecycle requires a workspace namespace or reservation key");
+    }
+    return key;
   }
 
   // Job markers live beside the workspace mount (not under the S3 mount) so the tiny
@@ -329,9 +341,10 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
     if (!request.namespace) return undefined;
     const mount = await resolveS3Mount(this.#s3Context(request.namespace));
     const workspaceRoot = (request.workspaceRoot ?? DEFAULT_WORKSPACE_ROOT).replace(/\/+$/, "");
+    const namespace = microvmLocalNamespace(request.namespace);
     return JSON.stringify({
       workspace: {
-        namespace: request.namespace,
+        namespace,
         root: workspaceRoot,
         mount: {
           bucket: mount.bucket,
@@ -372,7 +385,7 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
     return {
       runtime: request.runtime ?? "bash",
       code: request.code,
-      ...(request.namespace ? { namespace: request.namespace } : {}),
+      ...(request.namespace ? { namespace: microvmLocalNamespace(request.namespace) } : {}),
       ...(request.workspaceRoot ? { workspace_root: request.workspaceRoot } : {}),
       timeout_ms: request.timeoutSeconds * 1000,
       ...(request.args && request.args.length > 0 ? { args: request.args } : {}),
@@ -505,6 +518,17 @@ function mapMicrovmState(state: MicrovmState | undefined): SandboxInstanceInfo["
     default:
       return "unknown";
   }
+}
+
+function microvmLocalNamespace(namespace: string): string {
+  return namespace.split("/")[0] ?? namespace;
+}
+
+function isMicrovmNotFound(error: unknown): boolean {
+  const name = error && typeof error === "object" ? (error as { name?: unknown }).name : undefined;
+  const message = error instanceof Error ? error.message : String(error);
+
+  return name === "ResourceNotFoundException" || /not found|does not exist|not exist/i.test(message);
 }
 
 function delay(ms: number): Promise<void> {

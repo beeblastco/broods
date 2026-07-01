@@ -28,16 +28,16 @@ export const DEFAULT_WORKSPACE_ROOT = "/mnt/workspaces";
 export type ToolModelResult = Awaited<ReturnType<NonNullable<Tool<Record<string, unknown>, unknown>["toModelOutput"]>>>;
 export const toolText = (value: string): ToolModelResult => ({ type: "text", value });
 export const toolError = (value: string): ToolModelResult => {
-  if (isSandboxResourceLimitError(value)) {
-    throw new Error(`Sandbox resource limit reached: ${value}`);
+  if (isFatalSandboxSetupError(value)) {
+    throw new Error(`Sandbox setup failed: ${value}`);
   }
 
   return { type: "error-text", value };
 };
 export const toolJson = (value: JSONObject): ToolModelResult => ({ type: "json", value });
 
-function isSandboxResourceLimitError(value: string): boolean {
-  return /base maximum allocated memory limit|allocated memory limit|resource limit|quota exceeded/i.test(value);
+function isFatalSandboxSetupError(value: string): boolean {
+  return /base maximum allocated memory limit|allocated memory limit|resource limit|quota exceeded|invalid namespace: must match/i.test(value);
 }
 
 // Per-tool runtime context. `workspaces` is the (registry-filtered) set this tool
@@ -284,6 +284,13 @@ export async function s3Glob(ws: ResolvedWorkspace, pattern: string, path?: stri
 }
 
 export function formatRunText(result: SandboxRunResult): string {
+  if (!result.ok) {
+    const error = `${result.stderr}${result.stdout}`.trim() || "sandbox command failed";
+    if (isFatalSandboxSetupError(error)) {
+      throw new Error(error);
+    }
+  }
+
   return `${result.stdout}${result.stderr}`;
 }
 

@@ -18,16 +18,20 @@ import {
 } from "@/app/components/ui/select";
 import { Switch } from "@/app/components/ui/switch";
 import { api } from "@broods/convex/_generated/api";
-import type { Doc } from "@broods/convex/_generated/dataModel";
+import type { Doc, Id } from "@broods/convex/_generated/dataModel";
 import { useAction } from "convex/react";
-import { ChevronLeft, ChevronRight, Search, X } from "lucide-react";
-import { useMemo, useState } from "react";
+import { ChevronLeft, ChevronRight, ExternalLink, RefreshCw, Search, X } from "lucide-react";
+import Link from "next/link";
+import { useSearchParams } from "next/navigation";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { SandboxInstanceSheet } from "./SandboxInstanceSheet";
 import { formatSpecs, instanceStatusBadge, relativeTime } from "./sandboxFormat";
 
 interface Props {
     /** Sandbox instance rows from Convex. */
     instances: Array<Doc<"sandboxInstances">>;
+    /** Current project route id, used to build trace deep links. */
+    projectId: Id<"projects">;
 }
 
 /** Status filter values; "all" disables the status predicate. */
@@ -41,16 +45,20 @@ const STATUS_FILTERS: Array<{ value: string; label: string }> = [
 
 const PAGE_SIZE = 8;
 
-export function SandboxInstancesTable({ instances }: Props) {
+export function SandboxInstancesTable({ instances, projectId }: Props) {
     const suspend = useAction(api.sandboxPublic.suspendSandbox);
     const resume = useAction(api.sandboxPublic.resumeSandbox);
+    const refresh = useAction(api.sandboxPublic.refreshSandbox);
+    const searchParams = useSearchParams();
 
     const [selected, setSelected] = useState<Doc<"sandboxInstances"> | null>(null);
     const [pendingId, setPendingId] = useState<string | null>(null);
+    const [refreshing, setRefreshing] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [search, setSearch] = useState("");
     const [status, setStatus] = useState("all");
     const [page, setPage] = useState(0);
+    const refreshedPages = useRef(new Set<string>());
 
     // Filter by name/externalId/provider substring + status, then paginate. The
     // live query returns the whole (small) list, so filtering client-side is fine.
@@ -75,6 +83,17 @@ export function SandboxInstancesTable({ instances }: Props) {
     const safePage = Math.min(page, pageCount - 1);
     const pageRows = filtered.slice(safePage * PAGE_SIZE, safePage * PAGE_SIZE + PAGE_SIZE);
     const hasFilters = search.trim() !== "" || status !== "all";
+    const refreshKey = pageRows
+        .filter((instance) => instance.sandboxConfigId)
+        .map((instance) => `${instance.sandboxConfigId}:${instance.reservationKey}`)
+        .join("|");
+
+    useEffect(() => {
+        if (!refreshKey || refreshedPages.current.has(refreshKey)) return;
+        refreshedPages.current.add(refreshKey);
+        void refreshVisible();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [refreshKey]);
 
     async function toggle(instance: Doc<"sandboxInstances">, nextRunning: boolean) {
         if (!instance.sandboxConfigId) return;
@@ -88,6 +107,32 @@ export function SandboxInstancesTable({ instances }: Props) {
         } finally {
             setPendingId(null);
         }
+    }
+
+    async function refreshVisible() {
+        const targets = pageRows.filter((instance) => instance.sandboxConfigId);
+        if (targets.length === 0) return;
+        setRefreshing(true);
+        setError(null);
+        try {
+            await Promise.all(targets.map((instance) =>
+                refresh({ sandboxId: instance.sandboxConfigId!, reservationKey: instance.reservationKey })
+            ));
+        } catch (err) {
+            setError(err instanceof Error ? err.message : "Refresh failed");
+        } finally {
+            setRefreshing(false);
+        }
+    }
+
+    function traceHref(traceId: string): string {
+        const next = new URLSearchParams();
+        const env = searchParams.get("env");
+        if (env) next.set("env", env);
+        next.set("tab", "tracing");
+        next.set("trace", traceId);
+
+        return `/${projectId}/dashboard?${next.toString()}`;
     }
 
     /** Resets pagination whenever a filter changes so results stay visible. */
@@ -139,6 +184,18 @@ export function SandboxInstancesTable({ instances }: Props) {
                     </SelectContent>
                 </Select>
 
+                <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={refreshVisible}
+                    disabled={refreshing || pageRows.every((instance) => !instance.sandboxConfigId)}
+                    className="cursor-pointer disabled:cursor-not-allowed"
+                >
+                    <RefreshCw className={refreshing ? "size-3.5 animate-spin" : "size-3.5"} />
+                    Refresh visible
+                </Button>
+
                 {hasFilters && (
                     <Button
                         type="button"
@@ -159,7 +216,7 @@ export function SandboxInstancesTable({ instances }: Props) {
             </div>
 
             <div className="overflow-x-auto rounded-lg border border-border bg-card">
-                <table className="w-full min-w-205 text-sm">
+                <table className="w-full min-w-230 text-sm">
                     <thead className="bg-muted/40 text-xs text-muted-foreground">
                         <tr>
                             <th className="px-4 py-2 text-left font-medium">Name</th>
@@ -167,6 +224,7 @@ export function SandboxInstancesTable({ instances }: Props) {
                             <th className="px-4 py-2 text-left font-medium">Status</th>
                             <th className="px-4 py-2 text-left font-medium">Size</th>
                             <th className="px-4 py-2 text-left font-medium">Image</th>
+                            <th className="px-4 py-2 text-left font-medium">Trace</th>
                             <th className="px-4 py-2 text-left font-medium">Created</th>
                             <th className="px-4 py-2 text-left font-medium">Last used</th>
                             <th className="px-4 py-2 text-right font-medium">Running</th>
@@ -193,6 +251,18 @@ export function SandboxInstancesTable({ instances }: Props) {
                                     <td className="px-4 py-2.5">{instanceStatusBadge(instance.status)}</td>
                                     <td className="px-4 py-2.5 text-xs text-muted-foreground">{formatSpecs(instance.specs)}</td>
                                     <td className="px-4 py-2.5 font-mono text-xs text-muted-foreground">{instance.snapshotId ?? "—"}</td>
+                                    <td className="px-4 py-2.5" onClick={(e) => e.stopPropagation()}>
+                                        {instance.lastUsedTraceId || instance.createdByTraceId ? (
+                                            <Button asChild variant="outline" size="xs" className="cursor-pointer">
+                                                <Link href={traceHref(instance.lastUsedTraceId ?? instance.createdByTraceId!)}>
+                                                    <ExternalLink className="size-3" />
+                                                    Trace
+                                                </Link>
+                                            </Button>
+                                        ) : (
+                                            <span className="text-xs text-muted-foreground">—</span>
+                                        )}
+                                    </td>
                                     <td className="px-4 py-2.5 text-xs text-muted-foreground">{relativeTime(instance.createdAt)}</td>
                                     <td className="px-4 py-2.5 text-xs text-muted-foreground">{relativeTime(instance.lastUsedAt)}</td>
                                     <td className="px-4 py-2.5 text-right" onClick={(e) => e.stopPropagation()}>
@@ -208,7 +278,7 @@ export function SandboxInstancesTable({ instances }: Props) {
                         })}
                         {pageRows.length === 0 && (
                             <tr>
-                                <td colSpan={8} className="px-4 py-10 text-center text-xs text-muted-foreground">
+                                <td colSpan={9} className="px-4 py-10 text-center text-xs text-muted-foreground">
                                     No instances match the current filters.
                                 </td>
                             </tr>
@@ -263,6 +333,7 @@ export function SandboxInstancesTable({ instances }: Props) {
             {selected && (
                 <SandboxInstanceSheet
                     instance={selected}
+                    projectId={projectId}
                     onClose={() => setSelected(null)}
                 />
             )}

@@ -18,15 +18,19 @@ import {
 } from "@/app/components/ui/sheet";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/app/components/ui/tabs";
 import { api } from "@broods/convex/_generated/api";
-import type { Doc } from "@broods/convex/_generated/dataModel";
+import type { Doc, Id } from "@broods/convex/_generated/dataModel";
 import { useAction } from "convex/react";
-import { Camera, RefreshCw } from "lucide-react";
+import { Camera, ExternalLink, RefreshCw } from "lucide-react";
+import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { useState } from "react";
 import { formatSpecs, instanceStatusBadge, relativeTime } from "./sandboxFormat";
 
 interface Props {
     /** The instance whose detail is shown. */
     instance: Doc<"sandboxInstances">;
+    /** Current project route id, used to build trace deep links. */
+    projectId: Id<"projects">;
     /** Close the sheet. */
     onClose: () => void;
 }
@@ -41,10 +45,11 @@ function Field({ label, value }: { label: string; value: React.ReactNode }) {
     );
 }
 
-export function SandboxInstanceSheet({ instance, onClose }: Props) {
+export function SandboxInstanceSheet({ instance, projectId, onClose }: Props) {
     const createSnapshot = useAction(api.sandboxPublic.createSnapshot);
     const refresh = useAction(api.sandboxPublic.refreshSandbox);
     const terminate = useAction(api.sandboxPublic.terminateSandbox);
+    const searchParams = useSearchParams();
 
     const [snapName, setSnapName] = useState("");
     const [snapPending, setSnapPending] = useState(false);
@@ -60,6 +65,27 @@ export function SandboxInstanceSheet({ instance, onClose }: Props) {
     // no runtime snapshot-to-image API, so the capture action is hidden for them —
     // their state is still preserved across idle via suspend/resume.
     const supportsSnapshot = instance.provider === "sandbox";
+
+    function traceHref(traceId: string): string {
+        const next = new URLSearchParams();
+        const env = searchParams.get("env");
+        if (env) next.set("env", env);
+        next.set("tab", "tracing");
+        next.set("trace", traceId);
+
+        return `/${projectId}/dashboard?${next.toString()}`;
+    }
+
+    function TraceLink({ traceId }: { traceId: string }) {
+        return (
+            <Button asChild variant="outline" size="xs" className="cursor-pointer">
+                <Link href={traceHref(traceId)}>
+                    <code className="max-w-45 truncate font-mono">{traceId}</code>
+                    <ExternalLink className="size-3" />
+                </Link>
+            </Button>
+        );
+    }
 
     async function handleSnapshot() {
         if (!instance.sandboxConfigId || !snapName.trim()) return;
@@ -133,8 +159,8 @@ export function SandboxInstanceSheet({ instance, onClose }: Props) {
                             {instance.agentId && <Field label="Agent" value={<code className="font-mono">{instance.agentId}</code>} />}
                             {instance.conversationKey && <Field label="Conversation" value={<code className="font-mono break-all">{instance.conversationKey}</code>} />}
                             {instance.workspaceName && <Field label="Workspace" value={instance.workspaceName} />}
-                            {instance.createdByTraceId && <Field label="Created trace" value={<code className="font-mono break-all">{instance.createdByTraceId}</code>} />}
-                            {instance.lastUsedTraceId && <Field label="Last trace" value={<code className="font-mono break-all">{instance.lastUsedTraceId}</code>} />}
+                            {instance.createdByTraceId && <Field label="Created trace" value={<TraceLink traceId={instance.createdByTraceId} />} />}
+                            {instance.lastUsedTraceId && <Field label="Last trace" value={<TraceLink traceId={instance.lastUsedTraceId} />} />}
                             {instance.snapshotId && <Field label="Snapshot" value={<code className="font-mono">{instance.snapshotId}</code>} />}
                             <Field label="Created" value={relativeTime(instance.createdAt)} />
                             <Field label="Last used" value={relativeTime(instance.lastUsedAt)} />

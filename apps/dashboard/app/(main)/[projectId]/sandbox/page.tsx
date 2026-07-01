@@ -99,7 +99,7 @@ export default function SandboxPage() {
                             </p>
                         </div>
                     ) : view === "instances" ? (
-                        <SandboxInstancesTable instances={instances} />
+                        <SandboxInstancesTable instances={instances} projectId={projectId} />
                     ) : view === "snapshots" ? (
                         <SandboxSnapshotsTable snapshots={snapshots} />
                     ) : view === "security" ? (
