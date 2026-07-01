@@ -37,13 +37,14 @@ export const reservedAgent = defineAgent({
   name: "reserved-agent",
   config: {
     provider: {
-      minimax: {
-        apiKey: env.MINIMAX_API_KEY
+      bedrock: {
+        region: "us-east-1",
+        apiKey: env("BEDROCK_API_KEY"),
       },
     },
     model: {
-      provider: "minimax",
-      modelId: "MiniMax-M3",
+      provider: "bedrock",
+      modelId: "minimax.minimax-m2.5",
     },
     agent: {
       system: [
