@@ -139,7 +139,12 @@ export async function releaseSandboxConfigInstances(accountId: string, config: S
   let released = 0;
   for (const workspace of workspaceConfigs) {
     const namespace = workspaceNamespace(accountId, workspace.workspaceId);
-    if (await releaseFromConfigs(config.provider, [config], namespace)) released++;
+    if (await releaseFromConfigs(config.provider, [config], namespace)) {
+      released++;
+      // Mirror the removal into Convex so the dashboard drops the instance row
+      // with the config instead of keeping an orphan it can no longer act on.
+      await removeSandboxInstance(accountId, namespace);
+    }
   }
   return released;
 }

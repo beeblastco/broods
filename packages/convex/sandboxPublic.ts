@@ -75,6 +75,17 @@ async function callLifecycle(
         headers: headers(account.accountId, secret),
         body: JSON.stringify({ reservationKey: reservationKey, ...extra }),
     });
+    if (res.status === 404 && op === "refresh") {
+        // The sandbox config behind this instance row was deleted, so broods can
+        // no longer act on it. Drop the orphaned mirror row so the dashboard
+        // heals on refresh instead of erroring forever.
+        await ctx.runMutation(internal.sandboxInstances.remove, {
+            accountId: account.accountId as never,
+            reservationKey: reservationKey,
+        });
+
+        return null;
+    }
     if (!res.ok) {
         throw new Error(`Broods sandbox ${op} failed: ${res.status} ${await res.text()}`);
     }
