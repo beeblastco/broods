@@ -18,7 +18,7 @@ for await (const chunk of client.stream(api.agents.myAgent, {
     "2. Write fib.js that does the same, then run node fib.js.",
     "3. Echo the DEMO_GREETING environment variable to prove config env vars are injected.",
     "4. Confirm internet egress with `curl -s https://api.github.com/zen`.",
-    "5. Run `ls -1` to show the files present, then `cat` each one to show its contents.",
+    "5. Because this sandbox is stateless between calls, create /tmp/broods-demo/check.txt, run `ls -1 /tmp/broods-demo`, then `cat /tmp/broods-demo/check.txt` in the same bash call.",
   ].join("\n"),
 })) {
   switch (chunk.type) {

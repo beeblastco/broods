@@ -17,11 +17,14 @@ export const myAgent = defineAgent({
   name: "my-agent",
   config: {
     provider: {
-      google: { apiKey: env.GOOGLE_API_KEY },
+      bedrock: {
+        region: "us-east-1",
+        apiKey: env("BEDROCK_API_KEY"),
+      },
     },
     model: {
-      provider: "google",
-      modelId: "gemma-4-31b-it",
+      provider: "bedrock",
+      modelId: "minimax.minimax-m2.5",
     },
     agent: {
       system:
