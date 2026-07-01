@@ -8,7 +8,7 @@ export const sandbox = defineSandbox({
     permissionMode: "bypass",
     timeout: 60,
     envVars: {
-      SANDBOX_SMOKE_VAR: env.SANDBOX_SMOKE_VAR,
+      SANDBOX_SMOKE_VAR: env("SANDBOX_SMOKE_VAR"),
     },
   },
 });
@@ -26,7 +26,7 @@ export const sandboxAgent = defineAgent({
   config: {
     provider: {
       google: {
-        apiKey: env.GOOGLE_API_KEY
+        apiKey: env("GOOGLE_API_KEY"),
       },
     },
     model: {
