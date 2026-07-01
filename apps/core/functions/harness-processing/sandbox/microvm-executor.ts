@@ -460,6 +460,7 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
       runtime: "bash",
       code: script,
       timeout_ms: timeoutSeconds * 1000,
+      env: this.#sandboxEnvVars(),
     });
     return { stdout: response.stdout, stderr: response.stderr, exitCode: response.exit_code ?? null };
   }

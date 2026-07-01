@@ -264,6 +264,7 @@ async function dev(args: string[]): Promise<void> {
     ...process.env,
     BROODS_DECLINED_FILE: declinedFile,
     BROODS_SUPPRESS_DEV_TARGET: "1",
+    BROODS_RELOAD_ENV: "1",
   };
 
   await printDevTarget(args);
@@ -1239,7 +1240,7 @@ async function collectSourceFiles(dir: string, files: string[]): Promise<void> {
       await collectSourceFiles(full, files);
       continue;
     }
-    if (entry.isFile() && entry.name.endsWith(".ts")) files.push(full);
+    if (entry.isFile() && (entry.name.endsWith(".ts") || entry.name.endsWith(".md"))) files.push(full);
   }
 }
 

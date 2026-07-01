@@ -4,7 +4,11 @@
  */
 
 import type { StreamOptions } from "chat";
-import type { UserContent } from "ai";
+import type { SystemModelMessage, UserContent, UserModelMessage } from "ai";
+
+export type ChannelIngressEvent =
+  | UserModelMessage
+  | (SystemModelMessage & { persist?: false });
 
 export interface ChannelActions {
   sendText(text: string): Promise<void>;
@@ -34,6 +38,7 @@ export interface InboundMessage {
   conversationKey: string;
   channelName: string;
   content: UserContent;
+  events?: ChannelIngressEvent[];
   source: Record<string, unknown>;
 }
 

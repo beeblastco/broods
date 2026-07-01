@@ -251,6 +251,10 @@ export interface AgentGitHubChannelConfig {
   appId?: Extract<GitHubAdapterConfig, { appId: string }>["appId"];
   privateKey?: Extract<GitHubAdapterConfig, { appId: string }>["privateKey"];
   allowedRepos?: string[];
+  /** Bot username for @-mention detection (e.g. "my-bot" or "my-bot[bot]"). */
+  userName?: string;
+  /** Bot's numeric GitHub user ID for self-message detection. */
+  botUserId?: number;
   workspaceScope?: AgentChannelWorkspaceScope;
   [key: string]: unknown;
 }
@@ -899,6 +903,8 @@ function normalizeGitHubConfig(value: unknown): void {
   assertOptionalString(config.appId, "config.channels.github.appId");
   assertOptionalString(config.privateKey, "config.channels.github.privateKey");
   assertOptionalStringArray(config.allowedRepos, "config.channels.github.allowedRepos");
+  assertOptionalString(config.userName, "config.channels.github.userName");
+  assertOptionalPositiveInteger(config.botUserId, "config.channels.github.botUserId", Number.MAX_SAFE_INTEGER);
 }
 
 function normalizeSlackConfig(value: unknown): void {
@@ -957,7 +963,7 @@ function normalizeZaloConfig(value: unknown): void {
 }
 
 function normalizeChannelIdentityConfig(config: Record<string, unknown>, name: string): void {
-  assertOptionalString(config.id, `${name}.id`);
+  normalizeRequiredString(config.id, `${name}.id`);
   if (config.workspaceIsolationScope !== undefined) {
     throw new Error(`${name}.workspaceIsolationScope is no longer supported; use ${name}.workspaceScope`);
   }
@@ -967,16 +973,13 @@ function normalizeChannelIdentityConfig(config: Record<string, unknown>, name: s
   if (!isPlainObject(config.workspaceScope)) {
     throw new Error(`${name}.workspaceScope must be an object`);
   }
-  if (typeof config.id !== "string" || config.id.trim().length === 0) {
-    throw new Error(`${name}.id is required when ${name}.workspaceScope is set`);
-  }
   const workspaceScope = config.workspaceScope as Record<string, unknown>;
   assertOptionalEnum(workspaceScope.level, `${name}.workspaceScope.level`, CHANNEL_WORKSPACE_SCOPE_LEVELS);
   if (workspaceScope.level === undefined) {
     throw new Error(`${name}.workspaceScope.level must be one of: ${CHANNEL_WORKSPACE_SCOPE_LEVELS.join(", ")}`);
   }
   if (workspaceScope.level === "channel") {
-    if (workspaceScope.alias !== undefined) {
+    if ("alias" in workspaceScope && workspaceScope.alias !== undefined) {
       throw new Error(`${name}.workspaceScope.alias is only supported when ${name}.workspaceScope.level is conversation`);
     }
     return;

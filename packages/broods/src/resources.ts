@@ -111,7 +111,6 @@ export interface ChannelDefinition<Type extends ChannelType, Config> {
   readonly [CHANNEL_MARKER]: true;
   readonly kind: "channel";
   readonly type: Type;
-  readonly id?: string;
   readonly workspaceScope?: AgentChannelWorkspaceScope;
   readonly config: Config;
 }
@@ -121,7 +120,6 @@ type RequiredChannelKeys<Config, Keys extends keyof Config> =
   & Omit<Config, Keys>;
 type ChannelSecret = string | EnvRef | undefined;
 type ChannelIdentityInput = {
-  id?: string;
   workspaceScope?: AgentChannelWorkspaceScope;
 };
 
@@ -131,7 +129,7 @@ export type TelegramChannelInput = EnvRefString<RequiredChannelKeys<
 >> & ChannelIdentityInput;
 
 export type GitHubChannelInput = EnvRefString<RequiredChannelKeys<
-  Pick<AgentGitHubChannelConfig, "apiUrl" | "webhookSecret" | "appId" | "privateKey" | "allowedRepos">,
+  Pick<AgentGitHubChannelConfig, "apiUrl" | "webhookSecret" | "appId" | "privateKey" | "allowedRepos" | "userName" | "botUserId">,
   "webhookSecret" | "appId" | "privateKey"
 >> & ChannelIdentityInput;
 
@@ -297,16 +295,14 @@ function defineChannel<const Type extends ChannelType, Config>(
   type: Type,
   config: Config & ChannelIdentityInput,
 ): ChannelDefinition<Type, Config> {
-  const { id, workspaceScope, ...channelConfig } = config;
+  const { workspaceScope, ...channelConfig } = config;
   return {
     [CHANNEL_MARKER]: true,
     kind: "channel",
     type,
-    ...(id ? { id } : {}),
     ...(workspaceScope ? { workspaceScope } : {}),
     config: {
       ...channelConfig,
-      ...(id ? { id } : {}),
       ...(workspaceScope ? { workspaceScope } : {}),
     } as Config,
   };

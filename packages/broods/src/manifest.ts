@@ -40,7 +40,7 @@ export interface CompiledProject {
 export interface CompiledChannel {
   alias: string;
   type: AnyChannelDefinition["type"];
-  id?: string;
+  id: string;
   agentName: string;
 }
 
@@ -297,7 +297,6 @@ function assertWorkspaceIsolationConsistency(resources: AnyResource[]): void {
     resources.filter((resource): resource is WorkspaceResource => resource.kind === "workspace")
       .map((resource) => [resource.name, resource]),
   );
-  const seenChannelIds = new Set<string>();
 
   for (const resource of resources) {
     if (resource.kind !== "agent") continue;
@@ -308,22 +307,12 @@ function assertWorkspaceIsolationConsistency(resources: AnyResource[]): void {
     }
     const channelDefinitions = Array.isArray(channels) ? channels.filter(isChannelDefinition) : [];
     for (const channel of channelDefinitions) {
-      const channelId = channel.id;
-      if (channel.workspaceScope && (!channelId || channelId.trim().length === 0)) {
-        throw new Error(`Agent "${resource.name}" channel "${channel.type}" defines workspaceScope, so id is required`);
-      }
       if (channel.workspaceScope) {
-        assertWorkspaceScopeShape(channel.workspaceScope, `Agent "${resource.name}" channel "${channelId ?? channel.type}"`);
-      }
-      if (channelId) {
-        if (seenChannelIds.has(channelId)) {
-          throw new Error(`Duplicate channel id: ${channelId}`);
-        }
-        seenChannelIds.add(channelId);
+        assertWorkspaceScopeShape(channel.workspaceScope, `Agent "${resource.name}" channel "${channel.type}"`);
       }
       if (channel.config && typeof channel.config === "object" && "workspaceIsolationScope" in channel.config) {
         throw new Error(
-          `Agent "${resource.name}" channel "${channelId ?? channel.type}" uses workspaceIsolationScope, which is no longer supported; use workspaceScope.`,
+          `Agent "${resource.name}" channel "${channel.type}" uses workspaceIsolationScope, which is no longer supported; use workspaceScope.`,
         );
       }
     }
@@ -341,7 +330,7 @@ function assertWorkspaceIsolationConsistency(resources: AnyResource[]): void {
     if (scopedChannels.length > 0 && isolatedWorkspaces.length === 0) {
       const channel = scopedChannels[0]!;
       throw new Error(
-        `Agent "${resource.name}" channel "${channel.id ?? channel.type}" defines workspaceScope, but no attached workspace has isolation: true.`,
+        `Agent "${resource.name}" channel "${channel.type}" defines workspaceScope, but no attached workspace has isolation: true.`,
       );
     }
 
@@ -349,7 +338,7 @@ function assertWorkspaceIsolationConsistency(resources: AnyResource[]): void {
       for (const channel of channelDefinitions) {
         if (!channel.workspaceScope) {
           throw new Error(
-            `Agent "${resource.name}" attaches isolated workspace "${isolatedWorkspaces[0]!.name}", but channel "${channel.id ?? channel.type}" does not define workspaceScope.`,
+            `Agent "${resource.name}" attaches isolated workspace "${isolatedWorkspaces[0]!.name}", but channel "${channel.type}" does not define workspaceScope.`,
           );
         }
       }
@@ -524,7 +513,7 @@ function compileChannels(resources: ExportedResource[], exports: ExportedValue[]
       compiled.push({
         alias,
         type: entry.type,
-        ...(entry.id ? { id: entry.id } : {}),
+        id: alias,
         agentName: resource.name,
       });
     }
@@ -565,7 +554,8 @@ async function normalizeConfig(resource: AnyResource, projectRoot: string): Prom
         if (!isChannelDefinition(channel)) {
           throw new Error(`Agent "${resource.name}" config.channels must contain channel definitions`);
         }
-        return [channel.type, channel.config];
+        const channelId = `${resource.name}${capitalize(channel.type)}Channel`;
+        return [channel.type, { id: channelId, ...channel.config }];
       }));
     }
     if (isResource(config.sandbox)) {

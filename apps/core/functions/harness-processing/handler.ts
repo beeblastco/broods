@@ -4,7 +4,7 @@
  */
 
 import { InvokeCommand, LambdaClient } from "@aws-sdk/client-lambda";
-import type { ToolModelMessage, JSONValue, UserModelMessage } from "ai";
+import type { SystemModelMessage, ToolModelMessage, JSONValue, UserModelMessage } from "ai";
 import type { LambdaFunctionURLEvent } from "aws-lambda";
 import { timingSafeStringEqual } from "../_shared/auth.ts";
 import { markHandlerEntry } from "../_shared/cold-start.ts";
@@ -746,10 +746,11 @@ async function handleChannelRequest(event: ChannelInboundEvent, context?: Lambda
     // remain. A message that arrives mid-turn is buffered (above) and appended
     // here — after the in-flight reply — so a fast follow-up is answered in order.
     let incoming: ConversationIngressEvent[] = ownEvents;
+    let ephemeralSystem: SystemModelMessage[] = [];
     while (true) {
       if (incoming.length > 0) {
         try {
-          await session.appendIngressEvents(incoming);
+          ephemeralSystem = await session.appendIngressEvents(incoming);
           logInfo("Channel ingress events persisted", {
             channel: event.channelName,
             accountId: event.accountId,
@@ -770,7 +771,8 @@ async function handleChannelRequest(event: ChannelInboundEvent, context?: Lambda
         incoming = [];
       }
 
-      const turnContext = await session.createTurnContext();
+      const turnContext = await session.createTurnContext(ephemeralSystem);
+      ephemeralSystem = [];
       if (!isRunnableModelInput(turnContext.messages.at(-1))) {
         // History is fully answered — drain anything queued during the reply.
         incoming = await session.takePendingIngress();

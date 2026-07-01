@@ -3,11 +3,17 @@
  * Cover webhook auth, allow-list handling, and issue/comment normalization here.
  */
 
-import { describe, expect, it } from "bun:test";
-import { createHmac } from "node:crypto";
+import { afterEach, describe, expect, it } from "bun:test";
+import { createHmac, generateKeyPairSync } from "node:crypto";
 import { createGitHubChannel } from "../functions/_shared/github-channel.ts";
 
 describe("github channel adapter", () => {
+  const originalFetch = globalThis.fetch;
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+  });
+
   it("authenticates valid webhook signatures and rejects mismatches", () => {
     const body = JSON.stringify({
       action: "opened",
@@ -192,7 +198,300 @@ describe("github channel adapter", () => {
 
     expect(parsed).toEqual({ kind: "ignore" });
   });
+
+  it("ignores issue comments without @-mention when userName is configured", async () => {
+    const adapter = createGitHubChannel("webhook-secret", "app-id", "private-key", null, undefined, "my-bot");
+
+    const parsed = await adapter.parse(createRequest(JSON.stringify({
+      action: "created",
+      repository: createRepository(),
+      issue: { number: 12 },
+      comment: {
+        id: 55,
+        body: "This is a regular comment",
+        user: { login: "alice", type: "User" },
+      },
+      installation: { id: 99 },
+      sender: { login: "alice", type: "User" },
+    }), {
+      "x-github-event": "issue_comment",
+      "x-github-delivery": "delivery-6",
+    }));
+
+    expect(parsed).toEqual({ kind: "ignore" });
+  });
+
+  it("accepts issue comments with @-mention when userName is configured", async () => {
+    const adapter = createGitHubChannel("webhook-secret", "app-id", "private-key", null, undefined, "my-bot");
+
+    const parsed = await adapter.parse(createRequest(JSON.stringify({
+      action: "created",
+      repository: createRepository(),
+      issue: { number: 12 },
+      comment: {
+        id: 55,
+        body: "@my-bot please help with this issue",
+        user: { login: "alice", type: "User" },
+      },
+      installation: { id: 99 },
+      sender: { login: "alice", type: "User" },
+    }), {
+      "x-github-event": "issue_comment",
+      "x-github-delivery": "delivery-7",
+    }));
+
+    expect(parsed.kind).toBe("message");
+  });
+
+  it("hydrates issue title, body, and prior comments for tagged issue comments", async () => {
+    const calls: Array<{ url: string; method: string; headers: Record<string, string>; jsonBody: unknown }> = [];
+    globalThis.fetch = createFetchMock(calls, [
+      jsonResponse(201, { token: "installation-token" }),
+      jsonResponse(200, {
+        number: 12,
+        title: "Existing outage",
+        body: "Original issue body",
+        state: "open",
+        user: { login: "reporter" },
+      }),
+      jsonResponse(200, [
+        {
+          id: 50,
+          body: "First detail before the tag",
+          created_at: "2026-06-01T10:00:00Z",
+          user: { login: "alice" },
+        },
+        {
+          id: 55,
+          body: "@my-bot please summarize",
+          created_at: "2026-06-01T10:05:00Z",
+          user: { login: "bob" },
+        },
+        {
+          id: 56,
+          body: "Comment after current webhook",
+          created_at: "2026-06-01T10:06:00Z",
+          user: { login: "carol" },
+        },
+      ]),
+    ]);
+    const adapter = createGitHubChannel("webhook-secret", "app-id", testPrivateKey(), null, undefined, "my-bot");
+
+    const parsed = await adapter.parse(createRequest(JSON.stringify({
+      action: "created",
+      repository: createRepository(),
+      issue: { number: 12 },
+      comment: {
+        id: 55,
+        body: "@my-bot please summarize",
+        created_at: "2026-06-01T10:05:00Z",
+        user: { login: "bob", type: "User" },
+      },
+      installation: { id: 99 },
+      sender: { login: "bob", type: "User" },
+    }), {
+      "x-github-event": "issue_comment",
+      "x-github-delivery": "delivery-hydrate",
+    }));
+
+    expect(parsed.kind).toBe("message");
+    if (parsed.kind !== "message") {
+      throw new Error("Expected GitHub issue comment to be accepted");
+    }
+
+    expect(calls.map((call) => call.url)).toEqual([
+      "https://api.github.com/app/installations/99/access_tokens",
+      "https://api.github.com/repos/owner/repo/issues/12",
+      "https://api.github.com/repos/owner/repo/issues/12/comments?per_page=100",
+    ]);
+    expect(parsed.message.events).toHaveLength(2);
+    expect(parsed.message.events?.[0]?.role).toBe("system");
+    const context = String(parsed.message.events?.[0]?.content ?? "");
+    expect(context).toContain("<github_thread_context>");
+    expect(context).toContain("Title: Existing outage");
+    expect(context).toContain("Original issue body");
+    expect(context).toContain("First detail before the tag");
+    expect(context).not.toContain("@my-bot please summarize");
+    expect(context).not.toContain("Comment after current webhook");
+    expect(parsed.message.events?.[1]).toEqual({
+      role: "user",
+      content: [{ type: "text", text: "@my-bot please summarize" }],
+    });
+  });
+
+  it("hydrates pull request body, issue comments, and review comments for tagged review comments", async () => {
+    const calls: Array<{ url: string; method: string; headers: Record<string, string>; jsonBody: unknown }> = [];
+    globalThis.fetch = createFetchMock(calls, [
+      jsonResponse(201, { token: "installation-token" }),
+      jsonResponse(200, {
+        number: 10,
+        title: "Improve retries",
+        body: "Pull request body",
+        state: "open",
+        user: { login: "reporter" },
+      }),
+      jsonResponse(200, [
+        {
+          id: 70,
+          body: "PR conversation note",
+          created_at: "2026-06-01T09:00:00Z",
+          user: { login: "alice" },
+        },
+      ]),
+      jsonResponse(200, [
+        {
+          id: 59,
+          body: "Earlier line note",
+          path: "src/retry.ts",
+          line: 14,
+          created_at: "2026-06-01T09:30:00Z",
+          user: { login: "reviewer" },
+        },
+        {
+          id: 60,
+          body: "@my-bot can you review this?",
+          path: "src/retry.ts",
+          line: 18,
+          created_at: "2026-06-01T10:00:00Z",
+          user: { login: "bob" },
+        },
+      ]),
+    ]);
+    const adapter = createGitHubChannel("webhook-secret", "app-id", testPrivateKey(), null, undefined, "my-bot");
+
+    const parsed = await adapter.parse(createRequest(JSON.stringify({
+      action: "created",
+      repository: createRepository(),
+      pull_request: { number: 10 },
+      comment: {
+        id: 60,
+        body: "@my-bot can you review this?",
+        path: "src/retry.ts",
+        line: 18,
+        created_at: "2026-06-01T10:00:00Z",
+        user: { login: "bob", type: "User" },
+      },
+      installation: { id: 99 },
+      sender: { login: "bob", type: "User" },
+    }), {
+      "x-github-event": "pull_request_review_comment",
+      "x-github-delivery": "delivery-pr-hydrate",
+    }));
+
+    expect(parsed.kind).toBe("message");
+    if (parsed.kind !== "message") {
+      throw new Error("Expected GitHub review comment to be accepted");
+    }
+
+    expect(calls.map((call) => call.url)).toEqual([
+      "https://api.github.com/app/installations/99/access_tokens",
+      "https://api.github.com/repos/owner/repo/pulls/10",
+      "https://api.github.com/repos/owner/repo/issues/10/comments?per_page=100",
+      "https://api.github.com/repos/owner/repo/pulls/10/comments?per_page=100",
+    ]);
+    const context = String(parsed.message.events?.[0]?.content ?? "");
+    expect(context).toContain("Thread: Pull request #10");
+    expect(context).toContain("PR conversation note");
+    expect(context).toContain("review comment on src/retry.ts:14");
+    expect(context).toContain("Earlier line note");
+    expect(context).not.toContain("@my-bot can you review this?");
+  });
+
+  it("accepts review comments with @-mention when userName is configured", async () => {
+    const adapter = createGitHubChannel("webhook-secret", "app-id", "private-key", null, undefined, "my-bot");
+
+    const parsed = await adapter.parse(createRequest(JSON.stringify({
+      action: "created",
+      repository: createRepository(),
+      pull_request: { number: 10 },
+      comment: {
+        id: 60,
+        body: "@my-bot can you review this?",
+        user: { login: "bob", type: "User" },
+      },
+      installation: { id: 99 },
+      sender: { login: "bob", type: "User" },
+    }), {
+      "x-github-event": "pull_request_review_comment",
+      "x-github-delivery": "delivery-8",
+    }));
+
+    expect(parsed.kind).toBe("message");
+  });
+
+  it("ignores review comments without @-mention when userName is configured", async () => {
+    const adapter = createGitHubChannel("webhook-secret", "app-id", "private-key", null, undefined, "my-bot");
+
+    const parsed = await adapter.parse(createRequest(JSON.stringify({
+      action: "created",
+      repository: createRepository(),
+      pull_request: { number: 10 },
+      comment: {
+        id: 60,
+        body: "Looks good to me",
+        user: { login: "bob", type: "User" },
+      },
+      installation: { id: 99 },
+      sender: { login: "bob", type: "User" },
+    }), {
+      "x-github-event": "pull_request_review_comment",
+      "x-github-delivery": "delivery-9",
+    }));
+
+    expect(parsed).toEqual({ kind: "ignore" });
+  });
 });
+
+function createFetchMock(
+  calls: Array<{ url: string; method: string; headers: Record<string, string>; jsonBody: unknown }>,
+  responses: Response[],
+): typeof fetch {
+  return (async (input: string | URL | Request, init?: RequestInit) => {
+    const response = responses.shift();
+    if (!response) {
+      throw new Error(`Unexpected fetch: ${String(input)}`);
+    }
+
+    calls.push({
+      url: String(input),
+      method: init?.method ?? "GET",
+      headers: normalizeHeaders(init?.headers),
+      jsonBody: typeof init?.body === "string" ? JSON.parse(init.body) : undefined,
+    });
+
+    return response;
+  }) as unknown as typeof fetch;
+}
+
+function jsonResponse(status: number, body: unknown): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { "Content-Type": "application/json" },
+  });
+}
+
+function normalizeHeaders(headers: RequestInit["headers"] | undefined): Record<string, string> {
+  if (!headers) {
+    return {};
+  }
+
+  if (headers instanceof Headers) {
+    return Object.fromEntries(headers.entries());
+  }
+
+  if (Array.isArray(headers)) {
+    return Object.fromEntries(headers);
+  }
+
+  return Object.fromEntries(
+    Object.entries(headers).map(([key, value]) => [key.toLowerCase(), String(value)]),
+  );
+}
+
+function testPrivateKey(): string {
+  const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 1024 });
+  return privateKey.export({ type: "pkcs8", format: "pem" }).toString();
+}
 
 function createRequest(body: string, headers: Record<string, string>) {
   return {

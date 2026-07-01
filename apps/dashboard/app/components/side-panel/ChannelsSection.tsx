@@ -51,6 +51,8 @@ const CHANNELS: ChannelKind[] = [
             { key: "privateKey", label: "Private key", type: "secret", required: true },
             { key: "allowedRepos", label: "Allowed repos", type: "stringList", placeholder: "owner/repo, …" },
             { key: "apiUrl", label: "API URL", type: "text", placeholder: "https://api.github.com" },
+            { key: "userName", label: "Bot username (for @-mention gating)", type: "text", placeholder: "my-bot" },
+            { key: "botUserId", label: "Bot user ID", type: "text", placeholder: "Auto-detected if omitted" },
         ],
     },
     {

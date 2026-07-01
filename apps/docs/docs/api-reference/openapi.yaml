@@ -2726,9 +2726,6 @@ components:
         telegram:
           type: object
           properties:
-            id:
-              type: string
-              description: Stable channel instance id. Required when `workspaceScope` is set.
             apiUrl:
               type: string
             botToken:
@@ -2756,9 +2753,6 @@ components:
         github:
           type: object
           properties:
-            id:
-              type: string
-              description: Stable channel instance id. Required when `workspaceScope` is set.
             apiUrl:
               type: string
             webhookSecret:
@@ -2773,6 +2767,12 @@ components:
               items:
                 type: string
               description: Repository slugs (`owner/repo`)
+            userName:
+              type: string
+              description: Bot username for @-mention detection (e.g. `my-bot` or `my-bot[bot]`). When set, the bot only responds to comments that mention it.
+            botUserId:
+              type: number
+              description: Bot's numeric GitHub user ID for self-message detection. Auto-detected from the GitHub API when omitted.
             workspaceScope:
               type: object
               description: Hierarchical workspace isolation scope for workspaces with `isolation: true`.
@@ -2788,9 +2788,6 @@ components:
         slack:
           type: object
           properties:
-            id:
-              type: string
-              description: Stable channel instance id. Required when `workspaceScope` is set.
             apiUrl:
               type: string
             botToken:
@@ -2818,9 +2815,6 @@ components:
         discord:
           type: object
           properties:
-            id:
-              type: string
-              description: Stable channel instance id. Required when `workspaceScope` is set.
             apiUrl:
               type: string
             botToken:
@@ -2847,9 +2841,6 @@ components:
           type: object
           description: Pancake sends no signature header; the webhook URL must carry `?secret=<webhookSecret>`, checked on every request.
           properties:
-            id:
-              type: string
-              description: Stable channel instance id. Required when `workspaceScope` is set.
             pageId:
               type: string
             pageAccessToken:
@@ -2885,9 +2876,6 @@ components:
           type: object
           description: Official Zalo Bot API webhook channel for direct text messages.
           properties:
-            id:
-              type: string
-              description: Stable channel instance id. Required when `workspaceScope` is set.
             botToken:
               type: string
             webhookSecret:

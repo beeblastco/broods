@@ -36,6 +36,8 @@ export const myAgent = defineAgent({
 - `privateKey`: GitHub App Private Key.
 - `allowedRepos` (optional): An array of full repository names (`owner/repo`) the agent may respond in. Events are matched against the webhook's `repository.full_name`.
 - `apiUrl` (optional): GitHub API base URL, for example for GitHub Enterprise. This maps to `GitHubAdapterConfig["apiUrl"]`.
+- `userName` (optional): Bot username for @-mention detection (e.g. `"my-bot"` or `"my-bot[bot]"`). When set, the bot only responds to comments that mention `@userName`. Without this, the bot responds to all human comments.
+- `botUserId` (optional): Bot's numeric GitHub user ID for self-message detection. Auto-detected from the GitHub API when omitted.
 
 ## Runtime Behavior
 
@@ -45,5 +47,7 @@ The GitHub channel accepts these webhook events:
 - `pull_request`: `opened`, `edited`, and `reopened`
 - `issue_comment`: `created`, including pull request conversation comments
 - `pull_request_review_comment`: `created`
+
+When a comment triggers the agent, Broods fetches the issue or pull request title, body, and prior comments from GitHub and adds them as one-turn context before the model answers. This lets an agent tagged midway through an issue understand the conversation above the tag, while the model still sees the triggering comment as the user message.
 
 The GitHub adapter streams by buffering the model text and posting one GitHub Markdown comment, which matches GitHub's API behavior.

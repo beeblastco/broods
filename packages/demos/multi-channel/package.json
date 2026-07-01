@@ -5,6 +5,7 @@
   "scripts": {
     "check": "tsc --noEmit",
     "dev": "broods dev --dashboard-url https://dashboard.dev.broods.app",
+    "login": "broods login --dashboard-url https://dashboard.dev.broods.app",
     "diff": "broods diff --dashboard-url https://dashboard.dev.broods.app",
     "deploy": "broods deploy --dashboard-url https://dashboard.dev.broods.app",
     "register": "bun register.ts"

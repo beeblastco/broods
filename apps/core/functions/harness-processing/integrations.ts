@@ -638,7 +638,7 @@ async function handleChannelWebhook(
             eventId: accountAgentScopedKey(account.accountId, agent.agentId, message.eventId),
             conversationKey: accountAgentScopedKey(account.accountId, agent.agentId, message.conversationKey),
             content: message.content,
-            events: [{ role: "user", content: message.content }],
+            events: message.events ?? [{ role: "user", content: message.content }],
             channelName: message.channelName,
             source: message.source,
             accountId: account.accountId,
@@ -681,7 +681,7 @@ async function handleChannelWebhook(
             eventId: accountAgentScopedKey(account.accountId, agent.agentId, message.eventId),
             conversationKey: accountAgentScopedKey(account.accountId, agent.agentId, message.conversationKey),
             content: message.content,
-            events: [{ role: "user", content: message.content }],
+            events: message.events ?? [{ role: "user", content: message.content }],
             channelName: message.channelName,
             source: message.source,
             channel: channel,
@@ -1321,6 +1321,8 @@ function createGitHubChannelFromConfig(config: AgentConfig): ChannelAdapter | nu
     channel.privateKey,
     channel.allowedRepos ? new Set(channel.allowedRepos) : null,
     channel.apiUrl,
+    channel.userName,
+    channel.botUserId,
   );
 }
 

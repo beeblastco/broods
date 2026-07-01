@@ -348,14 +348,12 @@ test("compileProject carries channel id and workspaceScope for isolated workspac
 import { defineAgent, defineGitHubChannel, defineSlackChannel, defineWorkspace, env } from "${RESOURCES_MODULE}";
 
 export const slack = defineSlackChannel({
-  id: "slack-support",
   workspaceScope: { level: "channel" },
   botToken: env.SLACK_BOT_TOKEN,
   signingSecret: env.SLACK_SIGNING_SECRET,
 });
 
 export const github = defineGitHubChannel({
-  id: "github-support",
   workspaceScope: { alias: "support", level: "conversation" },
   appId: env.GITHUB_APP_ID,
   privateKey: env.GITHUB_PRIVATE_KEY,
@@ -378,14 +376,14 @@ export const support = defineAgent({
 
   expect(agent?.config).toMatchObject({
     channels: {
-      slack: { id: "slack-support", workspaceScope: { level: "channel" } },
-      github: { id: "github-support", workspaceScope: { alias: "support", level: "conversation" } },
+      slack: { id: "supportSlackChannel", workspaceScope: { level: "channel" } },
+      github: { id: "supportGitHubChannel", workspaceScope: { alias: "support", level: "conversation" } },
     },
     workspaces: [{ name: "repo", workspaceId: "repo" }],
   });
   expect(channels.map(({ alias, type, id, agentName }) => ({ alias, type, id, agentName }))).toEqual([
-    { alias: "github", type: "github", id: "github-support", agentName: "support" },
-    { alias: "slack", type: "slack", id: "slack-support", agentName: "support" },
+    { alias: "github", type: "github", id: "github", agentName: "support" },
+    { alias: "slack", type: "slack", id: "slack", agentName: "support" },
   ]);
 });
 
@@ -404,7 +402,7 @@ export const repo = defineWorkspace({
   );
 });
 
-test("compileProject rejects workspaceScope without channel id", async () => {
+test("compileProject auto-generates channel id for workspaceScope", async () => {
   const cwd = await fixtureProject("", `
 import { defineAgent, defineSlackChannel, defineWorkspace, env } from "${RESOURCES_MODULE}";
 
@@ -417,9 +415,17 @@ export const repo = defineWorkspace({ name: "repo", config: { storage: { provide
 export const support = defineAgent({ name: "support", config: { channels: [slack], workspaces: [repo] } });
 `);
 
-  await expect(compileProject({ cwd, command: "dev" })).rejects.toThrow(
-    'Agent "support" channel "slack" defines workspaceScope, so id is required',
-  );
+  const { manifest, channels } = await compileProject({ cwd, command: "dev" });
+  const agent = manifest.resources.find((resource) => resource.kind === "agent" && resource.name === "support");
+
+  expect(agent?.config).toMatchObject({
+    channels: {
+      slack: { id: "supportSlackChannel", workspaceScope: { level: "channel" } },
+    },
+  });
+  expect(channels.map(({ alias, type, id, agentName }) => ({ alias, type, id, agentName }))).toEqual([
+    { alias: "slack", type: "slack", id: "slack", agentName: "support" },
+  ]);
 });
 
 test("compileProject rejects unsafe workspaceScope aliases", async () => {
@@ -427,7 +433,6 @@ test("compileProject rejects unsafe workspaceScope aliases", async () => {
 import { defineAgent, defineSlackChannel, defineWorkspace, env } from "${RESOURCES_MODULE}";
 
 export const slack = defineSlackChannel({
-  id: "slack-support",
   workspaceScope: { alias: "../support", level: "conversation" },
   botToken: env.SLACK_BOT_TOKEN,
   signingSecret: env.SLACK_SIGNING_SECRET,
@@ -446,7 +451,6 @@ test("compileProject rejects unknown workspaceScope levels", async () => {
 import { defineAgent, defineSlackChannel, defineWorkspace, env } from "${RESOURCES_MODULE}";
 
 export const slack = defineSlackChannel({
-  id: "slack-support",
   workspaceScope: { alias: "support", level: "workspace" },
   botToken: env.SLACK_BOT_TOKEN,
   signingSecret: env.SLACK_SIGNING_SECRET,
@@ -456,7 +460,7 @@ export const support = defineAgent({ name: "support", config: { channels: [slack
 `);
 
   await expect(compileProject({ cwd, command: "dev" })).rejects.toThrow(
-    'Agent "support" channel "slack-support" workspaceScope.level must be one of: channel, conversation',
+    'Agent "support" channel "slack" workspaceScope.level must be one of: channel, conversation',
   );
 });
 
@@ -465,7 +469,6 @@ test("compileProject rejects scoped channels without an isolated workspace", asy
 import { defineAgent, defineSlackChannel, defineWorkspace, env } from "${RESOURCES_MODULE}";
 
 export const slack = defineSlackChannel({
-  id: "slack-support",
   workspaceScope: { level: "channel" },
   botToken: env.SLACK_BOT_TOKEN,
   signingSecret: env.SLACK_SIGNING_SECRET,
@@ -475,7 +478,7 @@ export const support = defineAgent({ name: "support", config: { channels: [slack
 `);
 
   await expect(compileProject({ cwd, command: "dev" })).rejects.toThrow(
-    'Agent "support" channel "slack-support" defines workspaceScope, but no attached workspace has isolation: true.',
+    'Agent "support" channel "slack" defines workspaceScope, but no attached workspace has isolation: true.',
   );
 });
 
@@ -484,7 +487,6 @@ test("compileProject rejects isolated workspaces when a channel lacks workspaceS
 import { defineAgent, defineGitHubChannel, defineSlackChannel, defineWorkspace, env } from "${RESOURCES_MODULE}";
 
 export const slack = defineSlackChannel({
-  id: "slack-support",
   workspaceScope: { level: "channel" },
   botToken: env.SLACK_BOT_TOKEN,
   signingSecret: env.SLACK_SIGNING_SECRET,

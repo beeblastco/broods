@@ -78,14 +78,12 @@ export const notes = defineWorkspace({
 });
 
 export const slack = defineSlackChannel({
-  id: "slack-support",
   workspaceScope: { level: "channel" },
   botToken: env.SLACK_BOT_TOKEN,
   signingSecret: env.SLACK_SIGNING_SECRET,
 });
 
 export const github = defineGitHubChannel({
-  id: "github-support",
   workspaceScope: { alias: "support", level: "conversation" },
   webhookSecret: env.GITHUB_WEBHOOK_SECRET,
   appId: env.GITHUB_APP_ID,
@@ -258,14 +256,12 @@ export const supportWorkspace = defineWorkspace({
 });
 
 export const slack = defineSlackChannel({
-  id: "slack-support",
   workspaceScope: { level: "channel" },
   botToken: env.SLACK_BOT_TOKEN,
   signingSecret: env.SLACK_SIGNING_SECRET,
 });
 
 export const github = defineGitHubChannel({
-  id: "github-support",
   workspaceScope: { alias: "support", level: "conversation" },
   webhookSecret: env.GITHUB_WEBHOOK_SECRET,
   appId: env.GITHUB_APP_ID,

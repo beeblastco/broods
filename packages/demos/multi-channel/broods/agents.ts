@@ -4,6 +4,12 @@ import path from "path";
 
 const __dirname = new URL(".", import.meta.url).pathname;
 const instructions = fs.readFileSync(path.join(__dirname, "instructions.md"), "utf-8").trim();
+const setupGitDevEnvironment = fs.readFileSync(path.join(__dirname, "hooks/setup-github-dev.sh"), "utf-8").trim();
+const githubGitUserName = process.env.GITHUB_GIT_USER_NAME ?? process.env.GITHUB_BOT_USERNAME ?? "Broods Agent";
+const githubGitUserEmail = process.env.GITHUB_GIT_USER_EMAIL ?? "broods-agent@users.noreply.github.com";
+const optionalSandboxGithubEnv = {
+  ...(process.env.GITHUB_INSTALLATION_ID ? { GITHUB_INSTALLATION_ID: env("GITHUB_INSTALLATION_ID") } : {}),
+};
 
 export const slack = defineSlackChannel({
   id: "slack-support",
@@ -25,11 +31,12 @@ export const telegram = defineTelegramChannel({
 
 export const github = defineGitHubChannel({
   id: "github-support",
-  workspaceScope: { alias: "support", level: "conversation" },
+  workspaceScope: { alias: "issues", level: "conversation" },
   appId: env("GITHUB_APP_ID"),
   privateKey: env("GITHUB_PRIVATE_KEY"),
   webhookSecret: env("GITHUB_WEBHOOK_SECRET"),
   allowedRepos: ["beeblastco/broods"],
+  userName: env("GITHUB_BOT_USERNAME"),
 });
 
 export const hubSpotSkill = defineSkill({
@@ -50,9 +57,18 @@ export const sandbox = defineSandbox({
       idleTimeoutSeconds: 900,
       maxLifetimeSeconds: 28800,
     },
+    onCreate: [setupGitDevEnvironment],
+    onResume: [setupGitDevEnvironment],
     envVars: {
       HUBSPOT_API_TOKEN: env("HUBSPOT_API_TOKEN"),
-      HUBSPOT_BASE_URL: "https://api.hubapi.com"
+      HUBSPOT_BASE_URL: "https://api.hubapi.com",
+      GITHUB_APP_ID: env("GITHUB_APP_ID"),
+      GITHUB_PRIVATE_KEY: env("GITHUB_PRIVATE_KEY"),
+      GITHUB_API_URL: "https://api.github.com",
+      GITHUB_GIT_USER_NAME: githubGitUserName,
+      GITHUB_GIT_USER_EMAIL: githubGitUserEmail,
+      GIT_TERMINAL_PROMPT: "0",
+      ...optionalSandboxGithubEnv,
     }
   },
 })
@@ -91,7 +107,7 @@ export const agent = defineAgent({
     tools: {
       tavilySearch: {
         enabled: true,
-        apiKey: env.TAVILY_API_KEY,
+        apiKey: env("TAVILY_API_KEY"),
         searchDepth: "advanced",
         includeAnswer: true,
         maxResults: 5,
@@ -99,7 +115,7 @@ export const agent = defineAgent({
       },
       tavilyExtract: {
         enabled: true,
-        apiKey: env.TAVILY_API_KEY,
+        apiKey: env("TAVILY_API_KEY"),
       }
     },
     channels: [slack, telegram, github],

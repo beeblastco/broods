@@ -7,7 +7,7 @@
  * synchronous so the BroodsClient constructor can call it without awaiting.
  */
 
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { USER_CONFIG_PATH, stripTrailingSlash } from "./config.ts";
 
@@ -18,7 +18,28 @@ export interface BroodsRuntimeConfig {
   environment?: string;
 }
 
-let loadedEnvForCwd: string | null = null;
+interface EnvCacheEntry {
+  mtimeMs: number;
+}
+
+const envFileCache = new Map<string, EnvCacheEntry>();
+
+/**
+ * Snapshot of `process.env` keys captured once at module load time. Represents
+ * the "real" shell environment before any `.env`/`.env.local` loading. Used to
+ * decide which variables `loadEnvFiles` is allowed to set: it will never touch
+ * a key that was already present at startup (i.e. set in the shell), but it
+ * *will* overwrite keys it loaded itself on a previous call.
+ */
+const realEnvSnapshot = new Set(Object.keys(process.env));
+
+/**
+ * Keys that were loaded from a `.env`/`.env.local` file by this module. On
+ * re-read (file mtime changed) these can be overwritten; keys outside this set
+ * that were present at startup are treated as part of the real environment and
+ * left untouched.
+ */
+const loadedFromFiles = new Set<string>();
 
 export function loadBroodsRuntimeConfig(cwd = process.cwd()): BroodsRuntimeConfig {
   loadEnvFiles(cwd);
@@ -34,21 +55,39 @@ export function loadBroodsRuntimeConfig(cwd = process.cwd()): BroodsRuntimeConfi
 
 /**
  * Loads `.env` then `.env.local` from `cwd` into `process.env`, so `.env.local`
- * overrides `.env` while neither clobbers a variable already set in the real
- * environment. Memoized per resolved cwd so repeated client/compile calls don't
- * re-read the files.
+ * overrides `.env`. A variable is only set when:
+ *
+ *  1. It was NOT present in the real shell environment at module load time, OR
+ *  2. It was previously loaded from a `.env`/`.env.local` file by this module.
+ *
+ * This lets `dev` child processes pick up `.env.local` edits while still
+ * respecting variables exported in the shell (`BROODS_ENVIRONMENT=staging broods dev`).
+ *
+ * Cached by file path + mtime so unchanged files are not re-read.
  */
 function loadEnvFiles(cwd: string): void {
   const root = resolve(cwd);
-  if (loadedEnvForCwd === root) return;
-  loadedEnvForCwd = root;
+  // When BROODS_RELOAD_ENV is set (by `dev` child processes), skip the
+  // real-env guard so `.env.local` edits are always picked up even when the
+  // child inherited stale values from the parent's process.env.
+  const forceReload = process.env.BROODS_RELOAD_ENV === "1";
 
-  const originallySet = new Set(Object.keys(process.env));
   for (const file of [".env", ".env.local"]) {
     const path = join(root, file);
-    if (!existsSync(path)) continue;
+    if (!existsSync(path)) {
+      envFileCache.delete(path);
+      continue;
+    }
+    const mtimeMs = statSync(path).mtimeMs;
+    const cached = envFileCache.get(path);
+    if (cached && cached.mtimeMs === mtimeMs) continue;
+    envFileCache.set(path, { mtimeMs });
+
     for (const [key, value] of Object.entries(parseEnv(readFileSync(path, "utf8")))) {
-      if (!originallySet.has(key)) process.env[key] = value;
+      if (forceReload || !realEnvSnapshot.has(key) || loadedFromFiles.has(key)) {
+        process.env[key] = value;
+        loadedFromFiles.add(key);
+      }
     }
   }
 }

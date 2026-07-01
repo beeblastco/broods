@@ -35,6 +35,7 @@ describe("agent config", () => {
       sandbox: "sb_old",
       channels: {
         telegram: {
+          id: "telegramChannel",
           botToken: "real-token",
           webhookSecret: "real-secret",
           allowedChatIds: [123],
@@ -44,6 +45,7 @@ describe("agent config", () => {
       sandbox: null,
       channels: {
         telegram: {
+          id: "telegramChannel",
           botToken: "********",
           webhookSecret: null,
         },
@@ -53,6 +55,7 @@ describe("agent config", () => {
     expect(merged).toEqual({
       channels: {
         telegram: {
+          id: "telegramChannel",
           botToken: "real-token",
           allowedChatIds: [123],
         },
@@ -640,6 +643,7 @@ describe("agent config", () => {
     expect(normalizeAgentConfig({
       channels: {
         pancake: {
+          id: "pancakeChannel",
           pageId: "page-1",
           pageAccessToken: "page-token",
           senderId: "sender-1",
@@ -652,6 +656,7 @@ describe("agent config", () => {
     })).toEqual({
       channels: {
         pancake: {
+          id: "pancakeChannel",
           pageId: "page-1",
           pageAccessToken: "page-token",
           senderId: "sender-1",
@@ -666,6 +671,7 @@ describe("agent config", () => {
     expect(() => normalizeAgentConfig({
       channels: {
         pancake: {
+          id: "pancakeChannel",
           pageAccessToken: 123,
         },
       },
@@ -674,6 +680,7 @@ describe("agent config", () => {
     expect(() => normalizeAgentConfig({
       channels: {
         pancake: {
+          id: "pancakeChannel",
           pageId: "page-1",
           pageAccessToken: "page-token",
           options: "bad",
@@ -684,6 +691,7 @@ describe("agent config", () => {
     expect(() => normalizeAgentConfig({
       channels: {
         pancake: {
+          id: "pancakeChannel",
           pageId: "page-1",
           pageAccessToken: "page-token",
           options: {
@@ -696,6 +704,7 @@ describe("agent config", () => {
     expect(normalizeAgentConfig({
       channels: {
         pancake: {
+          id: "pancakeChannel",
           pageId: "page-1",
           pageAccessToken: "page-token",
           options: {
@@ -706,6 +715,7 @@ describe("agent config", () => {
     })).toEqual({
       channels: {
         pancake: {
+          id: "pancakeChannel",
           pageId: "page-1",
           pageAccessToken: "page-token",
           options: {
@@ -740,6 +750,7 @@ describe("agent config", () => {
     expect(() => normalizeAgentConfig({
       channels: {
         slack: {
+          id: "supportSlackChannel",
           workspaceIsolationScope: "conversation",
         },
       },
@@ -748,15 +759,16 @@ describe("agent config", () => {
     expect(() => normalizeAgentConfig({
       channels: {
         slack: {
+          id: "supportSlackChannel",
           workspaceScope: { alias: "support", level: "conversation" },
         },
       },
-    })).toThrow("config.channels.slack.id is required when config.channels.slack.workspaceScope is set");
+    })).not.toThrow();
 
     expect(() => normalizeAgentConfig({
       channels: {
         slack: {
-          id: "slack-support",
+          id: "supportSlackChannel",
           workspaceScope: { alias: "support", level: "workspace" },
         },
       },
@@ -765,7 +777,7 @@ describe("agent config", () => {
     expect(() => normalizeAgentConfig({
       channels: {
         slack: {
-          id: "slack-support",
+          id: "supportSlackChannel",
           workspaceScope: { alias: "../support", level: "channel" },
         },
       },
@@ -785,6 +797,7 @@ describe("agent config", () => {
     expect(normalizeAgentConfig({
       channels: {
         zalo: {
+          id: "zaloChannel",
           botToken: "zalo-token",
           webhookSecret: "zalo-secret",
           allowedUserIds: ["user-1"],
@@ -793,6 +806,7 @@ describe("agent config", () => {
     })).toEqual({
       channels: {
         zalo: {
+          id: "zaloChannel",
           botToken: "zalo-token",
           webhookSecret: "zalo-secret",
           allowedUserIds: ["user-1"],
@@ -803,6 +817,7 @@ describe("agent config", () => {
     expect(() => normalizeAgentConfig({
       channels: {
         zalo: {
+          id: "zaloChannel",
           botToken: 123,
         },
       },
@@ -811,6 +826,7 @@ describe("agent config", () => {
     expect(() => normalizeAgentConfig({
       channels: {
         zalo: {
+          id: "zaloChannel",
           botToken: "zalo-token",
           webhookSecret: "short",
         },
@@ -820,6 +836,7 @@ describe("agent config", () => {
     expect(() => normalizeAgentConfig({
       channels: {
         zalo: {
+          id: "zaloChannel",
           botToken: "zalo-token",
           webhookSecret: "zalo-secret",
           allowedUserIds: [123],
