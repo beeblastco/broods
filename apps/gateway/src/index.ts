@@ -645,6 +645,17 @@ export function openTerminalTicketWithSecrets(token: string, secrets: string[]):
  * both directions. Client keystrokes typed while the dial is in flight are
  * buffered (bounded) and flushed on open; PTY output is relayed as-is.
  */
+/** True for the MicroVM shell's leading `{"type":"session_init",...}` metadata frame. */
+export function isSessionInitFrame(frame: string): boolean {
+  if (!frame.startsWith("{")) return false;
+  try {
+    const parsed: unknown = JSON.parse(frame);
+    return typeof parsed === "object" && parsed !== null && (parsed as { type?: unknown }).type === "session_init";
+  } catch {
+    return false;
+  }
+}
+
 function openTerminalUpstream(socket: Bun.ServerWebSocket<TerminalGatewayData>): void {
   const state: TerminalSocketState = { upstream: null, pending: [], pendingBytes: 0 };
   terminalState.set(socket as Bun.ServerWebSocket<GatewayData>, state);
@@ -671,8 +682,16 @@ function openTerminalUpstream(socket: Bun.ServerWebSocket<TerminalGatewayData>):
     state.pending = [];
     state.pendingBytes = 0;
   };
+  // AWS MicroVM shells prefix the byte stream with one JSON metadata frame
+  // ({"type":"session_init",...}); swallow it so terminals open on the prompt,
+  // not a JSON banner. Only ever checked on the first frame.
+  let firstFrame = true;
   upstream.onmessage = (event) => {
     if (socket.readyState !== WebSocket.OPEN) return;
+    if (firstFrame) {
+      firstFrame = false;
+      if (typeof event.data === "string" && isSessionInitFrame(event.data)) return;
+    }
     try {
       if (typeof event.data === "string") {
         socket.send(event.data);

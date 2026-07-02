@@ -322,7 +322,7 @@ describe("createSandboxExecutor", () => {
     // Persistent (reserved) VMs attach the managed shell-ingress connector at
     // launch so the dashboard terminal can mint shell tokens later.
     expect(runInput.ingressNetworkConnectors).toEqual([
-      "arn:aws:lambda:us-east-1:aws:network-connector:aws-network-connector:ALL_INGRESS",
+      "arn:aws:lambda:us-east-1:aws:network-connector:aws-network-connector:HTTP_INGRESS",
       "arn:aws:lambda:us-east-1:aws:network-connector:aws-network-connector:SHELL_INGRESS",
     ]);
     const payload = JSON.parse(runInput.runHookPayload as string);

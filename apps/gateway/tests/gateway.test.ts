@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import {
   buildCoreRunBody,
   isCoreHttpPathForTest,
+  isSessionInitFrame,
   gatewayLimitsFromEnv,
   mapWithConcurrency,
   normalizedCoreBaseUrls,
@@ -350,6 +351,13 @@ test("opens a sealed terminal ticket with whichever stage secret verifies it", (
   expect(openTerminalTicketWithSecrets(sealed, ["dev-secret"])).toBeNull();
   expect(openTerminalTicketWithSecrets("", ["dev-secret"])).toBeNull();
   expect(openTerminalTicketWithSecrets("garbage-token", ["dev-secret", "prod-secret"])).toBeNull();
+});
+
+test("recognizes only the MicroVM shell session_init metadata frame", () => {
+  expect(isSessionInitFrame('{"type":"session_init","session_id":"abc"}')).toBe(true);
+  expect(isSessionInitFrame('{"type":"resize"}')).toBe(false);
+  expect(isSessionInitFrame("$ echo hello")).toBe(false);
+  expect(isSessionInitFrame("{not json")).toBe(false);
 });
 
 test("preserves the MicroVM shell auth header through the sealed ticket", () => {

@@ -389,8 +389,11 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
   // connector so the dashboard terminal can mint shell auth tokens later —
   // connectors are fixed at RunMicrovm and cannot be added to a live VM.
   #networkConnectors(persistent: boolean): Pick<RunMicrovmRequest, "egressNetworkConnectors" | "ingressNetworkConnectors"> {
+    // ALL_INGRESS cannot be combined with other ingress connectors (AWS rejects
+    // it); HTTP_INGRESS + SHELL_INGRESS restore the default HTTP path and add
+    // the shell endpoint.
     const ingress = persistent
-      ? { ingressNetworkConnectors: [managedIngressConnectorArn("ALL_INGRESS"), managedIngressConnectorArn("SHELL_INGRESS")] }
+      ? { ingressNetworkConnectors: [managedIngressConnectorArn("HTTP_INGRESS"), managedIngressConnectorArn("SHELL_INGRESS")] }
       : {};
     const mode = this.#config.network?.mode ?? "deny-all";
     if (mode === "allow-all") return ingress;
@@ -526,7 +529,7 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
 }
 
 // AWS-managed ingress connectors live under a service-owned ARN namespace,
-// parameterized only by region and name (ALL_INGRESS / SHELL_INGRESS / NO_INGRESS).
+// parameterized only by region and name (HTTP_INGRESS / SHELL_INGRESS / NO_INGRESS).
 function managedIngressConnectorArn(name: string): string {
   const region = optionalEnv("AWS_REGION") ?? optionalEnv("AWS_DEFAULT_REGION");
   if (!region) throw new Error("MicroVM ingress connectors require AWS_REGION");
