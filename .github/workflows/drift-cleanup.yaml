@@ -84,6 +84,8 @@ jobs:
       DAYTONA_API_KEY: ${{ secrets.DAYTONA_API_KEY }}
       WORKDIR_URL: ${{ vars.WORKDIR_URL }}
       WORKDIR_API_KEY: ${{ secrets.WORKDIR_API_KEY }}
+      OPA_BASE_URL: ${{ vars.OPA_BASE_URL }}
+      OPA_API_TOKEN: ${{ secrets.OPA_API_TOKEN }}
       OTEL_EXPORTER_OTLP_ENDPOINT: ${{ vars.OTEL_EXPORTER_OTLP_ENDPOINT || 'https://otel.beeblast.co' }}
       OTEL_EXPORTER_OTLP_HEADERS: ${{ secrets.OTEL_EXPORTER_OTLP_HEADERS }}
       ENABLE_DIRECT_API: ${{ vars.ENABLE_DIRECT_API || 'false' }}

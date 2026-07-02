@@ -1,7 +1,7 @@
 /**
  * AI SDK policy approval wiring.
- * OPA is the policy decision point; SDK shadow mode records decisions without
- * blocking tool execution while the policy rolls out.
+ * OPA is the policy decision point. config.policy.mode picks the rollout
+ * stage: audit records decisions without blocking, enforce acts on them.
  */
 
 import type { ToolApprovalConfiguration, ToolApprovalStatus, ToolSet } from "ai";
@@ -31,7 +31,7 @@ export async function createPolicyToolApproval(
   workspaces: ResolvedWorkspace[],
 ): Promise<RuntimeToolApproval | undefined> {
   if (!isPolicyEnabled(agentConfig) || !baseInput.accountId) return undefined;
-  const mode: AgentPolicyMode = "audit";
+  const mode: AgentPolicyMode = agentConfig.policy?.mode ?? "audit";
   const policyIds = [...new Set(agentConfig.policy?.policyIds ?? [])];
   const records = await Promise.all(policyIds.map((policyId) =>
     getStorage().agentPolicies.getById(baseInput.accountId!, policyId),
@@ -40,8 +40,12 @@ export async function createPolicyToolApproval(
     .filter((record): record is NonNullable<typeof record> => Boolean(record))
     .map((record) => record.document);
 
+  const opaToken = optionalEnv("OPA_API_TOKEN");
   const client = withEvaluationDeadline(
-    httpPolicyClient({ url: optionalEnv("OPA_BASE_URL") ?? "http://127.0.0.1:8181" }),
+    httpPolicyClient({
+      url: optionalEnv("OPA_BASE_URL") ?? "http://127.0.0.1:8181",
+      ...(opaToken ? { headers: { authorization: `Bearer ${opaToken}` } } : {}),
+    }),
     OPA_EVALUATE_TIMEOUT_MS,
   );
   const approval = shadow(
@@ -56,14 +60,17 @@ export async function createPolicyToolApproval(
       }),
     }),
     {
+      enforce: mode === "enforce",
       onDecision: (event) => {
         if (event.decision.type === "approved") return;
-        logWarn("Agent policy shadow decision", {
+        logWarn("Agent policy decision", {
           accountId: baseInput.accountId,
           agentId: baseInput.agentId,
           toolName: event.toolCall.toolName,
           toolCallId: event.toolCall.toolCallId,
           decision: event.decision.type,
+          mode,
+          enforced: event.enforced,
           reason: "reason" in event.decision ? event.decision.reason : undefined,
         });
       },

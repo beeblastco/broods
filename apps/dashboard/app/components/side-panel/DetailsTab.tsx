@@ -509,7 +509,7 @@ export function DetailsTab({
                             </Select>
                         </div>
                         <p className="text-[11px] text-muted-foreground">
-                            Decisions are audit-only during rollout; Enforce activates once policy enforcement ships.
+                            Audit records decisions without blocking; Enforce blocks tool calls the policy denies.
                         </p>
                         <div className="flex flex-col gap-1.5">
                             {(policyOptions ?? []).map((policy) => {
