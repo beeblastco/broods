@@ -29,6 +29,7 @@ const NESTED_BRANCHES = [
     "tools",
     "skills",
     "subagent",
+    "policy",
 ] as const;
 
 /** Cherry-coke columns that round-trip through `model` / `agent` branches. */
@@ -158,6 +159,7 @@ export function toNestedAgentConfig(flat: FlatAgentConfig): NestedAgentConfig {
         ...(pruneEmpty(tools) ? { tools: pruneEmpty(tools) } : {}),
         ...(extra.skills ? { skills: extra.skills } : {}),
         ...(extra.subagent ? { subagent: extra.subagent } : {}),
+        ...(extra.policy ? { policy: extra.policy } : {}),
         // Top-level public-endpoint opt-in carried in extraConfig (issue #65).
         ...(typeof extra.publicAccess === "boolean" ? { publicAccess: extra.publicAccess } : {}),
     };

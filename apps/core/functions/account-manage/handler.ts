@@ -9,6 +9,7 @@ import { resolveBearerAuth, type AuthContext } from "../_shared/auth.ts";
 import {
     AgentSkillAuthorizationError,
     AgentSkillNotFoundError,
+    AgentPolicyNotFoundError,
     AgentSubagentNotFoundError,
     applyCronPatch,
     getStorage,
@@ -189,6 +190,13 @@ export async function handler(event: LambdaFunctionURLEvent): Promise<LambdaResp
             return await handleToolRoute(method, account.accountId, selfToolMatch?.[1], event);
         }
 
+        const selfPolicyCollection = rawPath === "/accounts/me/policies";
+        const selfPolicyMatch = rawPath.match(/^\/accounts\/me\/policies\/([^/]+)$/);
+        if (selfPolicyCollection || selfPolicyMatch?.[1]) {
+            const account = requireAccountAuth(auth, { allowServiceToken: true });
+            return await handlePolicyRoute(method, account.accountId, selfPolicyMatch?.[1], event);
+        }
+
         const selfSandboxLifecycleMatch = rawPath.match(/^\/accounts\/me\/sandboxes\/([^/]+)\/(suspend|resume|terminate|snapshot|refresh|exec|terminal)$/);
         if (selfSandboxLifecycleMatch?.[1] && selfSandboxLifecycleMatch[2]) {
             // Driven by the dashboard via the sandboxPublic Convex actions, which
@@ -288,6 +296,11 @@ export async function handler(event: LambdaFunctionURLEvent): Promise<LambdaResp
         const adminToolMatch = rawPath.match(/^\/accounts\/([^/]+)\/tools(?:\/([^/]+))?$/);
         if (adminToolMatch?.[1]) {
             return await handleToolRoute(method, decodeURIComponent(adminToolMatch[1]), adminToolMatch[2], event);
+        }
+
+        const adminPolicyMatch = rawPath.match(/^\/accounts\/([^/]+)\/policies(?:\/([^/]+))?$/);
+        if (adminPolicyMatch?.[1]) {
+            return await handlePolicyRoute(method, decodeURIComponent(adminPolicyMatch[1]), adminPolicyMatch[2], event);
         }
 
         const adminSandboxMatch = rawPath.match(/^\/accounts\/([^/]+)\/sandboxes(?:\/([^/]+))?$/);
@@ -1007,6 +1020,43 @@ async function handleToolRoute(
     return errorResponse(405, "Method not allowed", { method, allowedMethods: ["GET", "PATCH", "DELETE"] });
 }
 
+async function handlePolicyRoute(
+    method: string,
+    accountId: string,
+    rawPolicyId: string | undefined,
+    event: LambdaFunctionURLEvent,
+): Promise<LambdaResponse> {
+    const policyId = rawPolicyId ? decodeURIComponent(rawPolicyId) : undefined;
+    const policies = getStorage().agentPolicies;
+
+    if (!policyId) {
+        if (method === "GET") {
+            const records = await policies.list(accountId);
+            return jsonResponse(200, { policies: records });
+        }
+        if (method === "POST") {
+            const record = await policies.create(accountId, parseJsonBody(event) as never);
+            return jsonResponse(201, record);
+        }
+        return errorResponse(405, "Method not allowed", { method, allowedMethods: ["GET", "POST"] });
+    }
+
+    if (method === "GET") {
+        const record = await policies.getById(accountId, policyId);
+        return record ? jsonResponse(200, record) : errorResponse(404, "Policy not found");
+    }
+    if (method === "PATCH") {
+        const record = await policies.update(accountId, policyId, parseJsonBody(event) as never);
+        return record ? jsonResponse(200, record) : errorResponse(404, "Policy not found");
+    }
+    if (method === "DELETE") {
+        const deleted = await policies.remove(accountId, policyId);
+        return deleted ? jsonResponse(200, { deleted: true }) : errorResponse(404, "Policy not found");
+    }
+
+    return errorResponse(405, "Method not allowed", { method, allowedMethods: ["GET", "PATCH", "DELETE"] });
+}
+
 async function handleWorkspaceRoute(
     method: string,
     accountId: string,
@@ -1268,6 +1318,9 @@ function errorResponseForError(err: unknown): LambdaResponse {
         return errorResponse(404, err.message);
     }
     if (err instanceof AgentSubagentNotFoundError) {
+        return errorResponse(404, err.message);
+    }
+    if (err instanceof AgentPolicyNotFoundError) {
         return errorResponse(404, err.message);
     }
     return errorResponse(400, err instanceof Error ? err.message : "Invalid request");

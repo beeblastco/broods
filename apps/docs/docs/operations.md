@@ -69,6 +69,7 @@ Use `apps/core/.env` for local SST inputs only:
 - `NATS_URL` - Required when `ENABLE_WEBSOCKET=true`; ignored by the deployed Lambda when WebSocket is disabled. The transport is chosen by scheme: `wss://`/`ws://` (WebSocket, e.g. `wss://nats.beeblast.co` from the out-of-cluster Lambda) or `nats://`/`tls://` (core TCP, for future in-cluster callers).
 - `NATS_TOKEN` - Token-auth credential for the NATS server; optional (omit for an unauthenticated server).
 - `BROODS_WEBSOCKET_URL` - Optional SDK/demo override for WebSocket clients using a non-default or self-hosted gateway. The hosted SDK default is `gateway.broods.app`.
+- `OPA_BASE_URL` - Optional OPA REST endpoint for runtime policy decisions. Use `http://127.0.0.1:8181` for a core pod sidecar, or `http://opa.beeblast.svc.cluster.local:8181` for the shared k3s OPA service.
 
 Runtime secrets are SST secrets. Generate your own secret and set
 
@@ -89,6 +90,8 @@ Provider API keys are account-specific, not global SST secrets. Each account-own
 Public account creation is throttled by `ACCOUNT_SIGNUP_RATE_LIMIT_PER_HOUR`, currently set to `5` in `sst.config.ts`.
 
 WebSocket gateway support is application infrastructure, not agent configuration. `sst.config.ts` fails early when `ENABLE_WEBSOCKET=true` is set without `NATS_URL`. At runtime, `harness-processing` also rejects `nats-worker` invocations unless WebSocket is enabled and the NATS connection can be established.
+
+OPA-backed agent policy is optional. When an agent has no enabled policy assignment, runtime behavior is unchanged and no policy decision is requested. When policy is enabled, Broods posts policy inputs to OPA at `/v1/data/broods/authz/decision`; `OPA_BASE_URL` overrides the default localhost sidecar endpoint. Unavailable OPA blocks in `enforce` mode and only logs in `audit` mode.
 
 ## Local Setup
 

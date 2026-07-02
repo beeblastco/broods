@@ -208,6 +208,22 @@ export const accountToolsFields = {
     deletedAt: v.optional(v.number()),
 };
 
+/** Environment-scoped reusable agent authorization policy. */
+export const agentPoliciesFields = {
+    accountId: v.id("accounts"),
+    projectId: v.optional(v.id("projects")),
+    environmentId: v.optional(v.id("environments")),
+    name: v.string(),
+    description: v.optional(v.string()),
+    document: v.any(),
+    status: v.union(v.literal("active"), v.literal("deleted")),
+    /** Ownership marker; see `agentConfigsFields.managedBy`. */
+    managedBy: v.optional(v.union(v.literal("cli"), v.literal("dashboard"))),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+    deletedAt: v.optional(v.number()),
+};
+
 /**
  * Cherry-coke SaaS workspace. Owns the per-tenant broods `accounts`
  * row; `orgId` on `accounts` points back to one of these.
@@ -732,6 +748,10 @@ export default defineSchema({
     accountTools: defineTable(accountToolsFields)
         .index("by_accountId", ["accountId"])
         .index("by_accountId_and_status", ["accountId", "status"]),
+    agentPolicies: defineTable(agentPoliciesFields)
+        .index("by_accountId", ["accountId"])
+        .index("by_accountId_and_status", ["accountId", "status"])
+        .index("by_environmentId_and_name", ["environmentId", "name"]),
     sandboxConfigs: defineTable(sandboxConfigsFields)
         .index("by_accountId", ["accountId"])
         .index("by_accountId_and_name", ["accountId", "name"])

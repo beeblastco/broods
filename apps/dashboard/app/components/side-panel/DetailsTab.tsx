@@ -12,7 +12,9 @@ import { Textarea } from "@/app/components/ui/textarea";
 import { readAgentBranch, readModelReasoning, type FlatAgentConfig } from "@/app/lib/agentConfigCodec";
 import { resolveCoreEndpoint } from "@/app/lib/coreEndpoint";
 import { isPlainObject } from "@/app/lib/utils";
+import { api } from "@broods/convex/_generated/api";
 import type { Doc, Id } from "@broods/convex/_generated/dataModel";
+import { useQuery } from "convex/react";
 import { Check, Copy, Eye, EyeOff, KeyRound, RefreshCw, Wifi } from "lucide-react";
 import { useRef, useState } from "react";
 
@@ -60,6 +62,8 @@ const DEFAULT_OUTPUT_SCHEMA: Record<string, unknown> = {
 
 export function DetailsTab({
     agentConfig,
+    projectId,
+    environmentId,
     activeDeployment,
     deploymentApiKey,
     editName,
@@ -76,8 +80,11 @@ export function DetailsTab({
     onUpdateChannelConfig,
     onUpdateModelReasoning,
     onUpdatePublicAccess,
+    onUpdatePolicyConfig,
 }: {
     agentConfig: Doc<"agentConfigs"> | null | undefined;
+    projectId: Id<"projects"> | undefined;
+    environmentId: Id<"environments"> | null | undefined;
     activeDeployment: EnvironmentDeployment | undefined;
     deploymentApiKey?: string;
     editName: string;
@@ -94,6 +101,7 @@ export function DetailsTab({
     onUpdateChannelConfig?: (kind: string, config: Record<string, unknown> | null) => Promise<void>;
     onUpdateModelReasoning?: (next: { budgetTokens?: number; effort?: string }) => Promise<void>;
     onUpdatePublicAccess?: (enabled: boolean) => Promise<void>;
+    onUpdatePolicyConfig?: (config: Record<string, unknown> | null) => Promise<void>;
 }) {
     const [showApiKey, setShowApiKey] = useState(false);
     const [copiedField, setCopiedField] = useState<string | null>(null);
@@ -155,6 +163,18 @@ export function DetailsTab({
     // Per-agent public-endpoint opt-in (issue #65). Stored as a top-level scalar
     // in extraConfig; off by default so the agent is secured until enabled.
     const publicAccess = ((agentConfig?.extraConfig as Record<string, unknown> | undefined)?.publicAccess) === true;
+    const policyOptions = useQuery(
+        api.agentPolicies.listForEnvironment,
+        projectId && environmentId ? { projectId: projectId, environmentId: environmentId } : "skip",
+    ) as Doc<"agentPolicies">[] | undefined;
+    const policyConfig = agentConfig
+        ? (readAgentBranch(agentConfig as unknown as FlatAgentConfig, "policy") as Record<string, unknown>)
+        : {};
+    const assignedPolicyIds = Array.isArray(policyConfig.policyIds)
+        ? policyConfig.policyIds.filter((entry): entry is string => typeof entry === "string")
+        : [];
+    const policyEnabled = policyConfig.enabled === true && assignedPolicyIds.length > 0;
+    const policyMode = policyConfig.mode === "audit" ? "audit" : "enforce";
 
     const outputFormat = agentConfig?.outputFormat && isPlainObject(agentConfig.outputFormat)
         ? agentConfig.outputFormat as OutputFormatConfig
@@ -277,6 +297,33 @@ export function DetailsTab({
         }
 
         void onSaveModelSettings?.({ provider: provider, modelId: trimmed });
+    }
+
+    function updatePolicy(next: Record<string, unknown>) {
+        const policyIds = Array.isArray(next.policyIds)
+            ? next.policyIds.filter((entry): entry is string => typeof entry === "string")
+            : [];
+        const payload = policyIds.length === 0 && next.enabled !== true
+            ? null
+            : {
+                enabled: next.enabled === true,
+                policyIds: policyIds,
+                mode: next.mode === "audit" ? "audit" : "enforce",
+            };
+
+        void onUpdatePolicyConfig?.(payload);
+    }
+
+    function togglePolicyId(policyId: string) {
+        const nextIds = assignedPolicyIds.includes(policyId)
+            ? assignedPolicyIds.filter((entry) => entry !== policyId)
+            : [...assignedPolicyIds, policyId];
+        updatePolicy({
+            ...policyConfig,
+            enabled: nextIds.length > 0 ? policyConfig.enabled !== false : false,
+            policyIds: nextIds,
+            mode: policyMode,
+        });
     }
 
     return (
@@ -423,6 +470,70 @@ export function DetailsTab({
             )}
 
             <Separator />
+
+            {onUpdatePolicyConfig && (
+                <>
+                    <div className="flex flex-col gap-3">
+                        <span className="text-[11px] uppercase tracking-wider text-muted-foreground/70">Runtime Policy</span>
+                        <ToggleRow
+                            label="Enabled"
+                            description="Apply assigned policies to tools, files, skills, and subagents"
+                            checked={policyEnabled}
+                            onCheckedChange={(next) => updatePolicy({
+                                ...policyConfig,
+                                enabled: next,
+                                policyIds: assignedPolicyIds,
+                                mode: policyMode,
+                            })}
+                        />
+                        <div className="flex items-center justify-between gap-3">
+                            <span className="text-[11px] text-muted-foreground">Mode</span>
+                            <Select
+                                value={policyMode}
+                                onValueChange={(value) => updatePolicy({
+                                    ...policyConfig,
+                                    enabled: policyConfig.enabled === true,
+                                    policyIds: assignedPolicyIds,
+                                    mode: value,
+                                })}
+                            >
+                                <SelectTrigger className="h-7 w-28 cursor-pointer text-xs">
+                                    <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                    <SelectItem value="enforce">Enforce</SelectItem>
+                                    <SelectItem value="audit">Audit</SelectItem>
+                                </SelectContent>
+                            </Select>
+                        </div>
+                        <div className="flex flex-col gap-1.5">
+                            {(policyOptions ?? []).map((policy) => {
+                                const selected = assignedPolicyIds.includes(policy._id);
+
+                                return (
+                                    <Button
+                                        key={policy._id}
+                                        type="button"
+                                        variant={selected ? "secondary" : "outline"}
+                                        size="sm"
+                                        className="h-8 justify-start truncate text-xs"
+                                        onClick={() => togglePolicyId(policy._id)}
+                                    >
+                                        {policy.name}
+                                    </Button>
+                                );
+                            })}
+                            {policyOptions && policyOptions.length === 0 && (
+                                <p className="rounded-md border border-border bg-muted/40 px-2.5 py-2 text-xs text-muted-foreground">
+                                    No policies in this environment.
+                                </p>
+                            )}
+                        </div>
+                    </div>
+
+                    <Separator />
+                </>
+            )}
 
             {/* Public access controls */}
             <div className="flex flex-col gap-3">

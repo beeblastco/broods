@@ -52,6 +52,7 @@ Keep `.env` for local SST inputs only:
 - `ENABLE_WEBSOCKET`
 - `NATS_URL` (transport by scheme: `wss://` WebSocket / `nats://` core TCP)
 - `NATS_TOKEN` (optional; token-auth credential for the NATS server)
+- `OPA_BASE_URL` (optional; OPA policy decision endpoint, for example `http://127.0.0.1:8181` for a sidecar or `http://opa.beeblast.svc.cluster.local:8181` for the k3s service)
 
 Runtime secrets are SST secrets:
 
@@ -64,6 +65,8 @@ bunx sst secret set DaytonaApiKey <daytona-api-key>
 `DaytonaApiKey` has no fallback — `sst deploy` fails without it.
 
 Provider and tool API keys are account-specific. Store them in the encrypted agent config under fields such as `config.provider.<provider>.apiKey` and `config.tools.<tool>.apiKey`.
+
+Agent policies use the Broods structured document shape and are evaluated by OPA at `/v1/data/broods/authz/decision`. The runtime defaults to `http://127.0.0.1:8181` for a colocated sidecar, or uses `OPA_BASE_URL` when an external/shared OPA service is configured. OPA errors fail closed in `enforce` mode and are logged without blocking in `audit` mode.
 
 ### Build and Deploy
 

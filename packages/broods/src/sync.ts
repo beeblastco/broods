@@ -293,7 +293,7 @@ function renameSnapshot(resource: { kind: string; config: unknown } & Record<str
 }
 
 function isRenamableKind(kind: string): boolean {
-  return kind === "agent" || kind === "workspace" || kind === "sandbox";
+  return kind === "agent" || kind === "workspace" || kind === "sandbox" || kind === "policy";
 }
 
 function diffSortKey(entry: DiffEntry): string {

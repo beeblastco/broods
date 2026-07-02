@@ -45,6 +45,7 @@ const SERVICE_AUTH_SECRET = process.env.SERVICE_AUTH_SECRET ?? "";
 const DAYTONA_API_KEY = process.env.DAYTONA_API_KEY ?? "";
 const WORKDIR_URL = process.env.WORKDIR_URL?.trim() ?? "";
 const WORKDIR_API_KEY = process.env.WORKDIR_API_KEY ?? "";
+const OPA_BASE_URL = process.env.OPA_BASE_URL?.trim();
 
 if (ENABLE_WEBSOCKET && !NATS_URL) {
   throw new Error("NATS_URL must be set when ENABLE_WEBSOCKET=true");
@@ -247,6 +248,7 @@ export default $config({
       agentConfigs: resourceName("agent-configs", stage, region),
       sandboxConfigs: resourceName("sandbox-configs", stage, region),
       workspaceConfigs: resourceName("workspace-configs", stage, region),
+      agentPolicies: resourceName("agent-policies", stage, region),
       accountTools: resourceName("account-tools", stage, region),
       accountSignupRateLimits: resourceName("account-signup-rate-limits", stage, region),
       crons: resourceName("crons", stage, region),
@@ -363,6 +365,22 @@ export default $config({
           transform: {
             table: {
               name: names.accountTools,
+            },
+          },
+        });
+
+    const agentPoliciesTable = useConvexStorage
+      ? null
+      : new sst.aws.Dynamo("AgentPolicy", {
+          fields: {
+            accountId: "string",
+            policyId: "string",
+          },
+          primaryIndex: { hashKey: "accountId", rangeKey: "policyId" },
+          deletionProtection: false,
+          transform: {
+            table: {
+              name: names.agentPolicies,
             },
           },
         });
@@ -798,6 +816,7 @@ export default $config({
         ...(sandboxConfigsTable ? { SANDBOX_CONFIGS_TABLE_NAME: sandboxConfigsTable.name } : {}),
         ...(workspaceConfigsTable ? { WORKSPACE_CONFIGS_TABLE_NAME: workspaceConfigsTable.name } : {}),
         ...(accountToolsTable ? { ACCOUNT_TOOLS_TABLE_NAME: accountToolsTable.name } : {}),
+        ...(agentPoliciesTable ? { AGENT_POLICIES_TABLE_NAME: agentPoliciesTable.name } : {}),
         ACCOUNT_SECRET_INDEX_NAME: "SecretHashIndex",
         ACCOUNT_CONFIG_ENCRYPTION_SECRET,
         SERVICE_AUTH_SECRET,
@@ -831,6 +850,7 @@ export default $config({
         DAYTONA_API_KEY,
         ...(WORKDIR_URL ? { WORKDIR_URL } : {}),
         ...(WORKDIR_API_KEY ? { WORKDIR_API_KEY } : {}),
+        ...(OPA_BASE_URL ? { OPA_BASE_URL } : {}),
         SANDBOX_MOUNT_ROLE_ARN: sandboxS3MountRole.arn,
         ...(DAYTONA_ORGANIZATION_ID ? { DAYTONA_ORGANIZATION_ID } : {}),
         ...(DAYTONA_API_URL ? { DAYTONA_API_URL } : {}),
@@ -882,6 +902,14 @@ export default $config({
               {
                 actions: ["dynamodb:GetItem", "dynamodb:Query"],
                 resources: [accountToolsTable.arn],
+              },
+            ]
+          : []),
+        ...(agentPoliciesTable
+          ? [
+              {
+                actions: ["dynamodb:GetItem", "dynamodb:Query"],
+                resources: [agentPoliciesTable.arn],
               },
             ]
           : []),
@@ -1064,6 +1092,7 @@ export default $config({
         ...(sandboxConfigsTable ? { SANDBOX_CONFIGS_TABLE_NAME: sandboxConfigsTable.name } : {}),
         ...(workspaceConfigsTable ? { WORKSPACE_CONFIGS_TABLE_NAME: workspaceConfigsTable.name } : {}),
         ...(accountToolsTable ? { ACCOUNT_TOOLS_TABLE_NAME: accountToolsTable.name } : {}),
+        ...(agentPoliciesTable ? { AGENT_POLICIES_TABLE_NAME: agentPoliciesTable.name } : {}),
         ACCOUNT_SECRET_INDEX_NAME: "SecretHashIndex",
         CONVERSATIONS_TABLE_NAME: conversationsTable.name,
         CHAT_SDK_STATE_TABLE_NAME: chatSdkStateTable.name,
@@ -1163,6 +1192,20 @@ export default $config({
               },
             ]
           : []),
+        ...(agentPoliciesTable
+          ? [
+              {
+                actions: [
+                  "dynamodb:DeleteItem",
+                  "dynamodb:GetItem",
+                  "dynamodb:PutItem",
+                  "dynamodb:Query",
+                  "dynamodb:UpdateItem",
+                ],
+                resources: [agentPoliciesTable.arn],
+              },
+            ]
+          : []),
         ...(cronsTable
           ? [
               {
@@ -1251,6 +1294,7 @@ export default $config({
       sandboxConfigsTableName: sandboxConfigsTable?.name,
       workspaceConfigsTableName: workspaceConfigsTable?.name,
       accountToolsTableName: accountToolsTable?.name,
+      agentPoliciesTableName: agentPoliciesTable?.name,
       cronsTableName: cronsTable?.name,
       accountSignupRateLimitTableName: accountSignupRateLimitTable.name,
       conversationsTableName: conversationsTable.name,

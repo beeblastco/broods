@@ -62,6 +62,7 @@ export {
 export {
   AgentSkillAuthorizationError,
   AgentSkillNotFoundError,
+  AgentPolicyNotFoundError,
   AgentSubagentNotFoundError,
   toPublicAgent,
   validateAgentSkillPaths,
@@ -130,6 +131,25 @@ export {
   type AgentWorkspaceRef,
   type AccountModelProviderName,
 } from "./agent-config.ts";
+export {
+  AGENT_POLICY_ACTIONS,
+  normalizeAgentPolicyDocument,
+  normalizeCreateAgentPolicyInput,
+  normalizeUpdateAgentPolicyInput,
+  type AgentPolicyAction,
+  type AgentPolicyConfig,
+  type AgentPolicyCondition,
+  type AgentPolicyDocument,
+  type AgentPolicyEffect,
+  type AgentPolicyMode,
+  type AgentPolicyRecord,
+  type AgentPolicyResourceSelector,
+  type AgentPolicyRule,
+  type CreateAgentPolicyInput,
+  type PolicyDecision,
+  type PolicyDecisionInput,
+  type UpdateAgentPolicyInput,
+} from "./agent-policy.ts";
 export {
   normalizeCreateSandboxConfigInput,
   normalizeUpdateSandboxConfigInput,

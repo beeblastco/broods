@@ -677,6 +677,23 @@ export const NodeSidePanel = memo(function NodeSidePanel({
     [agentConfigId, agentConfig, updateConfig],
   );
 
+  const handleUpdatePolicyConfig = useCallback(
+    async (config: Record<string, unknown> | null) => {
+      if (!agentConfigId || !agentConfig) return;
+
+      const currentExtra =
+        (agentConfig.extraConfig as Record<string, unknown>) ?? {};
+      await updateConfig({
+        configId: agentConfigId,
+        extraConfig: {
+          ...currentExtra,
+          policy: config ?? undefined,
+        },
+      });
+    },
+    [agentConfigId, agentConfig, updateConfig],
+  );
+
   // Reasoning config. Maps the budget/effort knobs to the selected provider's
   // Vercel AI SDK providerOptions (model.providerOptions.<provider>.*) — the only
   // reasoning shape the core accepts. See applyModelReasoning in the config codec.
@@ -836,6 +853,8 @@ export const NodeSidePanel = memo(function NodeSidePanel({
               <DetailsTab
                 key={`${agentConfigId ?? "agent-details"}-${selectedProvider}-${agentConfig?.modelId ?? ""}`}
                 agentConfig={agentConfig}
+                projectId={projectId}
+                environmentId={environmentId}
                 activeDeployment={activeDeployment}
                 deploymentApiKey={resolvedDeploymentApiKey}
                 editName={editName}
@@ -852,6 +871,7 @@ export const NodeSidePanel = memo(function NodeSidePanel({
                 onUpdateChannelConfig={handleUpdateChannelConfig}
                 onUpdateModelReasoning={handleUpdateModelReasoning}
                 onUpdatePublicAccess={handleUpdatePublicAccess}
+                onUpdatePolicyConfig={handleUpdatePolicyConfig}
               />
             ) : isTool && node ? (
               <ToolDetailsTab

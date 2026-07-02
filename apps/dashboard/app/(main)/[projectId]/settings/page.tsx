@@ -15,6 +15,7 @@ import { DangerPanel } from "./components/DangerPanel";
 import { DeployKeysPanel } from "./components/DeployKeysPanel";
 import { EnvironmentsPanel } from "./components/EnvironmentsPanel";
 import { PluginsPanel } from "./components/PluginsPanel";
+import { PoliciesPanel } from "./components/PoliciesPanel";
 import { ProjectGeneralPanel } from "./components/ProjectGeneralPanel";
 import { WebhooksPanel } from "./components/WebhooksPanel";
 
@@ -25,6 +26,7 @@ type SettingsTab =
   | "webhooks"
   | "connections"
   | "plugins"
+  | "policies"
   | "audit-logs"
   | "danger";
 
@@ -35,6 +37,7 @@ const TABS: Array<{ id: SettingsTab; label: string; danger?: boolean }> = [
   { id: "webhooks", label: "Webhooks" },
   { id: "connections", label: "Channels" },
   { id: "plugins", label: "Plugins" },
+  { id: "policies", label: "Policies" },
   { id: "audit-logs", label: "Audit Logs" },
   { id: "danger", label: "Danger Zone", danger: true },
 ];
@@ -96,6 +99,10 @@ export default function SettingsPage() {
         return (
           <PluginsPanel projectId={projectId} environmentId={activeEnvId} />
         );
+      case "policies":
+        return (
+          <PoliciesPanel projectId={projectId} environmentId={activeEnvId} />
+        );
       case "audit-logs":
         return (
           <AuditLogsPanel projectId={projectId} environmentId={activeEnvId} />
@@ -145,7 +152,7 @@ export default function SettingsPage() {
               <span className="text-xs font-semibold text-foreground/80">Connections</span>
             </div>
             <div className="flex flex-col gap-0.5 pl-3">
-              {TABS.filter((t) => ["connections", "plugins", "audit-logs"].includes(t.id)).map((t) => (
+              {TABS.filter((t) => ["connections", "plugins", "policies", "audit-logs"].includes(t.id)).map((t) => (
                 <Button
                   key={t.id}
                   asChild

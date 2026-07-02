@@ -14,6 +14,8 @@ import type {
   AgentGitHubChannelConfig,
   AgentSlackChannelConfig,
   AgentTelegramChannelConfig,
+  AgentPolicyConfig,
+  AgentPolicyDocument,
   CreateCronInput,
   SandboxConfig,
   WorkspaceConfig,
@@ -56,7 +58,7 @@ export interface BroodsConfigDefinition {
   readonly config: BroodsProjectConfig;
 }
 
-export type ResourceKind = "agent" | "workspace" | "sandbox" | "cron" | "skill" | "tool";
+export type ResourceKind = "agent" | "workspace" | "sandbox" | "cron" | "skill" | "tool" | "policy";
 
 export interface ResourceDefinition<
   Kind extends ResourceKind,
@@ -104,6 +106,8 @@ export interface ToolDefinitionConfig {
   inputSchema: Record<string, unknown>;
   defaultConfig?: Record<string, unknown>;
 }
+
+export type PolicyDefinitionConfig = AgentPolicyDocument;
 
 export type ChannelType = "telegram" | "github" | "slack" | "discord" | "pancake" | "zalo";
 
@@ -199,6 +203,10 @@ export type AgentSkillsDefinitionConfig = Omit<NonNullable<AgentConfig["skills"]
   allowed?: readonly (SkillResource | string)[];
 };
 
+export type AgentPolicyDefinitionConfig = Omit<AgentPolicyConfig, "policyIds"> & {
+  policies?: readonly (PolicyResource | string)[];
+};
+
 /**
  * Code-first agent config surface. Built from an explicit `Pick` of `AgentConfig`
  * (not `Omit`) so the SDK input type does NOT inherit `AgentConfig`'s
@@ -215,6 +223,7 @@ export type AgentDefinitionConfig =
     workspaces?: readonly AgentWorkspaceInput[];
     subagent?: AgentSubagentDefinitionConfig;
     skills?: AgentSkillsDefinitionConfig;
+    policy?: AgentPolicyDefinitionConfig;
     /**
      * Opt the agent into the public runtime endpoint (SSE/WebSocket via the
      * environment runtime key). Off by default — secured: when unset the public
@@ -233,6 +242,7 @@ export type WorkspaceResource<Name extends string = string> = ResourceDefinition
 export type SandboxResource<Name extends string = string> = ResourceDefinition<"sandbox", Name, SandboxDefinitionConfig>;
 export type SkillResource<Name extends string = string> = ResourceDefinition<"skill", Name, SkillDefinitionConfig>;
 export type ToolResource<Name extends string = string> = ResourceDefinition<"tool", Name, ToolDefinitionConfig>;
+export type PolicyResource<Name extends string = string> = ResourceDefinition<"policy", Name, PolicyDefinitionConfig>;
 export type CronResource<Name extends string = string> = ResourceDefinition<"cron", Name, CronDefinitionConfig>;
 
 export type AnyResource =
@@ -241,7 +251,8 @@ export type AnyResource =
   | SandboxResource
   | CronResource
   | SkillResource
-  | ToolResource;
+  | ToolResource
+  | PolicyResource;
 
 /**
  * References an account/environment variable resolved on the SERVER at runtime —
@@ -368,6 +379,12 @@ export function defineTool<const Name extends string>(
   input: ResourceDefinitionInput<Name, ToolDefinitionConfig>,
 ): ToolResource<Name> {
   return defineResource("tool", input);
+}
+
+export function definePolicy<const Name extends string>(
+  input: ResourceDefinitionInput<Name, PolicyDefinitionConfig>,
+): PolicyResource<Name> {
+  return defineResource("policy", input);
 }
 
 export function defineCron<const Name extends string>(

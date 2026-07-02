@@ -38,6 +38,7 @@ const resourceValidator = v.object({
         v.literal("cron"),
         v.literal("skill"),
         v.literal("tool"),
+        v.literal("policy"),
     ),
     name: v.string(),
     description: v.optional(v.string()),
@@ -58,6 +59,7 @@ const idsValidator = v.object({
     crons: v.record(v.string(), v.string()),
     skills: v.record(v.string(), v.string()),
     tools: v.record(v.string(), v.string()),
+    policies: v.record(v.string(), v.string()),
 });
 
 /**
@@ -167,6 +169,7 @@ export const syncManifestBySecretHash = internalMutation({
         const projectDoc = await ensureProject(ctx, account, manifest.project);
         const environmentDoc = await ensureEnvironment(ctx, projectDoc, manifest.environment);
         const workspaceIds = await syncWorkspaceResources(ctx, account._id, projectDoc._id, environmentDoc._id, manifest.resources);
+        const policyIds = await syncPolicyResources(ctx, account._id, projectDoc._id, environmentDoc._id, manifest.resources);
         const envValues = await loadEnvironmentVariableValues(ctx, projectDoc._id, environmentDoc._id);
         const missingEnv = new Set<string>();
         const sandboxIds = await syncSandboxResources(ctx, {
@@ -184,12 +187,14 @@ export const syncManifestBySecretHash = internalMutation({
             resources: manifest.resources,
             workspaceIds: workspaceIds,
             sandboxIds: sandboxIds,
+            policyIds: policyIds,
             envValues: envValues,
             missingEnv: missingEnv,
         });
 
         if (prune === true) {
             await pruneAgents(ctx, projectDoc._id, environmentDoc._id, manifest.resources);
+            await prunePolicyResources(ctx, environmentDoc._id, manifest.resources);
             await pruneWorkspaceResources(ctx, environmentDoc._id, manifest.resources);
             await pruneSandboxResources(ctx, environmentDoc._id, manifest.resources);
         }
@@ -212,6 +217,7 @@ export const syncManifestBySecretHash = internalMutation({
             crons: {},
             skills: externalIds.skills,
             tools: externalIds.tools,
+            policies: policyIds,
         };
         const resources = await resourcesForEnvironment(ctx, account._id, projectDoc._id, environmentDoc._id);
 
@@ -1013,6 +1019,70 @@ async function syncSandboxResources(
     return ids;
 }
 
+async function syncPolicyResources(
+    ctx: MutationCtx,
+    accountId: Id<"accounts">,
+    projectId: Id<"projects">,
+    environmentId: Id<"environments">,
+    resources: CliResource[],
+): Promise<Record<string, string>> {
+    const ids: Record<string, string> = {};
+    const policies = resources.filter((entry) => entry.kind === "policy");
+    if (policies.length === 0) return ids;
+
+    const existing = await ctx.db
+        .query("agentPolicies")
+        .withIndex("by_environmentId_and_name", (q) => q.eq("environmentId", environmentId))
+        .collect();
+    const desiredNames = new Set(policies.map((entry) => resourceName(entry.name)));
+    const claimed = new Set<Id<"agentPolicies">>();
+
+    for (const resource of policies) {
+        const name = resourceName(resource.name);
+        const current = existing.find((entry) => entry.name === name);
+        const target = current ?? existing.find((entry) =>
+            entry.managedBy === "cli" &&
+            !claimed.has(entry._id) &&
+            !desiredNames.has(entry.name) &&
+            stableJson(renameComparableResource(entry.description, entry.document)) ===
+            stableJson(renameComparableResource(resource.description, resource.config))
+        );
+        if (target) {
+            claimed.add(target._id);
+            await ctx.db.patch(target._id, {
+                accountId: accountId,
+                projectId: projectId,
+                environmentId: environmentId,
+                name: name,
+                description: resource.description,
+                document: resource.config,
+                status: "active",
+                managedBy: "cli",
+                updatedAt: Date.now(),
+                deletedAt: undefined,
+            });
+            ids[name] = target._id;
+        } else {
+            const now = Date.now();
+            const id = await ctx.db.insert("agentPolicies", {
+                accountId: accountId,
+                projectId: projectId,
+                environmentId: environmentId,
+                name: name,
+                description: resource.description,
+                document: resource.config,
+                status: "active",
+                managedBy: "cli",
+                createdAt: now,
+                updatedAt: now,
+            });
+            ids[name] = id;
+        }
+    }
+
+    return ids;
+}
+
 /**
  * Fail loudly when an old account-scoped runtime resource would shadow the new
  * environment-scoped row. Operators must migrate or delete that row explicitly.
@@ -1049,11 +1119,12 @@ async function syncAgentResources(
         resources: CliResource[];
         workspaceIds: Record<string, string>;
         sandboxIds: Record<string, string>;
+        policyIds: Record<string, string>;
         envValues: Record<string, string>;
         missingEnv: Set<string>;
     },
 ): Promise<Record<string, string>> {
-    const { account, projectId, environmentId, resources, workspaceIds, sandboxIds, envValues, missingEnv } = options;
+    const { account, projectId, environmentId, resources, workspaceIds, sandboxIds, policyIds, envValues, missingEnv } = options;
     const ids: Record<string, string> = {};
     // Agents whose `subagent.allowed` references other agents by name. Resolved
     // to deploy-time agent ids in a second pass, once every agent row exists.
@@ -1079,6 +1150,7 @@ async function syncAgentResources(
             rewriteEnvRefs(asObject(resource.config), envNames),
             workspaceIds,
             sandboxIds,
+            policyIds,
         );
         const flat = fromNestedAgentConfig(nested);
         // Names referenced via `env.NAME` but not yet stored for this environment.
@@ -1617,6 +1689,29 @@ async function pruneAgents(
     }
 }
 
+async function prunePolicyResources(
+    ctx: MutationCtx,
+    environmentId: Id<"environments">,
+    resources: CliResource[],
+): Promise<void> {
+    const declared = new Set(
+        resources.filter((entry) => entry.kind === "policy").map((entry) => resourceName(entry.name)),
+    );
+    const existing = await ctx.db
+        .query("agentPolicies")
+        .withIndex("by_environmentId_and_name", (q) => q.eq("environmentId", environmentId))
+        .collect();
+    for (const policy of existing) {
+        if (policy.managedBy === "cli" && !declared.has(policy.name)) {
+            await ctx.db.patch(policy._id, {
+                status: "deleted",
+                deletedAt: Date.now(),
+                updatedAt: Date.now(),
+            });
+        }
+    }
+}
+
 async function pruneWorkspaceResources(
     ctx: MutationCtx,
     environmentId: Id<"environments">,
@@ -1736,6 +1831,10 @@ async function resourcesForEnvironment(
             q.eq("projectId", projectId).eq("environmentId", environmentId),
         )
         .collect();
+    const policies = await ctx.db
+        .query("agentPolicies")
+        .withIndex("by_environmentId_and_name", (q) => q.eq("environmentId", environmentId))
+        .collect();
     const agentIds = agents.flatMap((entry) => entry.agentId ? [entry.agentId] : []);
     const crons = (await Promise.all(
         agentIds.map((agentId) =>
@@ -1764,6 +1863,9 @@ async function resourcesForEnvironment(
     const toolNames = Object.fromEntries(externalResources
         .filter((entry) => entry.kind === "tool")
         .map((entry) => [entry.externalId, entry.name]));
+    const policyNames = Object.fromEntries(policies
+        .filter((entry) => entry.managedBy === "cli" && entry.status === "active")
+        .map((entry) => [entry._id, entry.name]));
 
     // sandboxConfigs is stored encrypted (broods contract); decrypt back
     // into the manifest shape the CLI expects.
@@ -1797,7 +1899,13 @@ async function resourcesForEnvironment(
                 searchToolEnabled: agent.searchToolEnabled,
                 searchToolConfig: agent.searchToolConfig as Record<string, unknown> | undefined,
                 extraConfig: agent.extraConfig as Record<string, unknown> | undefined,
-            }), workspaceNames, sandboxNames, agentNames, skillNames, toolNames),
+            }), workspaceNames, sandboxNames, agentNames, skillNames, toolNames, policyNames),
+        })),
+        ...policies.filter((policy) => policy.managedBy === "cli" && policy.status === "active").map((policy): CliResource => ({
+            kind: "policy",
+            name: policy.name,
+            description: policy.description,
+            config: policy.document,
         })),
         ...externalResources.map((resource): CliResource => ({
             kind: resource.kind,
@@ -1854,6 +1962,10 @@ async function idsForEnvironment(
             q.eq("projectId", projectId).eq("environmentId", environmentId),
         )
         .collect();
+    const policies = await ctx.db
+        .query("agentPolicies")
+        .withIndex("by_environmentId_and_name", (q) => q.eq("environmentId", environmentId))
+        .collect();
     const agentIds = new Set(agents.flatMap((entry) => entry.agentId ? [entry.agentId] : []));
     const crons = (await Promise.all(
         [...agentIds].map((agentId) =>
@@ -1876,6 +1988,9 @@ async function idsForEnvironment(
         )),
         skills: externalIds.skills,
         tools: externalIds.tools,
+        policies: Object.fromEntries(policies
+            .filter((entry) => entry.managedBy === "cli" && entry.status === "active")
+            .map((entry) => [entry.name, entry._id])),
     };
 }
 
@@ -2031,6 +2146,7 @@ function rewriteResourceRefs(
     config: Record<string, unknown>,
     workspaceIds: Record<string, string>,
     sandboxIds: Record<string, string>,
+    policyIds: Record<string, string>,
 ): Record<string, unknown> {
     const result = { ...config };
     if (typeof result.sandbox === "string" && sandboxIds[result.sandbox]) {
@@ -2053,6 +2169,14 @@ function rewriteResourceRefs(
             };
         });
     }
+    if (isPlainObject(result.policy) && Array.isArray(result.policy.policyIds)) {
+        result.policy = {
+            ...result.policy,
+            policyIds: result.policy.policyIds.map((entry) =>
+                typeof entry === "string" && policyIds[entry] ? policyIds[entry] : entry,
+            ),
+        };
+    }
 
     return result;
 }
@@ -2064,6 +2188,7 @@ function rewriteIdsToNames(
     agentNames: Record<string, string> = {},
     skillNames: Record<string, string> = {},
     toolNames: Record<string, string> = {},
+    policyNames: Record<string, string> = {},
 ): Record<string, unknown> {
     const result = { ...config };
     if (typeof result.sandbox === "string" && sandboxNames[result.sandbox]) {
@@ -2107,6 +2232,14 @@ function rewriteIdsToNames(
             toolNames[key] ?? key,
             value,
         ]));
+    }
+    if (isPlainObject(result.policy) && Array.isArray(result.policy.policyIds)) {
+        result.policy = {
+            ...result.policy,
+            policyIds: result.policy.policyIds.map((entry) =>
+                typeof entry === "string" && policyNames[entry] ? policyNames[entry] : entry,
+            ),
+        };
     }
 
     return result;

@@ -41,6 +41,11 @@ import {
   normalizeUpdateAccountToolInput,
   type AccountToolRecord,
 } from "../account-tools.ts";
+import {
+  normalizeCreateAgentPolicyInput,
+  normalizeUpdateAgentPolicyInput,
+  type AgentPolicyRecord,
+} from "../agent-policy.ts";
 import { usage } from "./usage.ts";
 
 // ConvexHttpClient's typed `query`/`mutation` only accept public function
@@ -57,6 +62,7 @@ import type {
   AgentDeploymentStore,
   AgentRecord,
   AccountStore,
+  AgentPolicyStore,
   AccountToolStore,
   AgentStore,
   CronRecord,
@@ -653,6 +659,92 @@ function accountToolFromConvex(doc: ConvexAccountToolDoc | null): AccountToolRec
   };
 }
 
+interface ConvexAgentPolicyDoc {
+  _id: string;
+  accountId: string;
+  name: string;
+  description?: string;
+  document: AgentPolicyRecord["document"];
+  status: "active" | "deleted";
+  createdAt: number;
+  updatedAt: number;
+}
+
+function agentPolicyFromConvex(doc: ConvexAgentPolicyDoc | null): AgentPolicyRecord | null {
+  if (!doc) return null;
+
+  return {
+    accountId: doc.accountId,
+    policyId: doc._id,
+    name: doc.name,
+    ...(doc.description ? { description: doc.description } : {}),
+    document: doc.document,
+    status: doc.status,
+    createdAt: new Date(doc.createdAt).toISOString(),
+    updatedAt: new Date(doc.updatedAt).toISOString(),
+  };
+}
+
+const agentPolicies: AgentPolicyStore = {
+  async getById(accountId, policyId) {
+    const doc = await getConvexClient().query(internal.agentPolicies.getById, {
+      accountId: accountId as any,
+      policyId: policyId,
+    });
+
+    return agentPolicyFromConvex(doc as ConvexAgentPolicyDoc | null);
+  },
+  async list(accountId) {
+    const docs = (await getConvexClient().query(internal.agentPolicies.list, {
+      accountId: accountId as any,
+    })) as ConvexAgentPolicyDoc[];
+
+    return docs.map((d) => agentPolicyFromConvex(d)!).filter(Boolean);
+  },
+  async create(accountId, input) {
+    const normalized = normalizeCreateAgentPolicyInput(input);
+    const id = (await getConvexClient().mutation(internal.agentPolicies.createInternal, {
+      accountId: accountId as any,
+      name: normalized.name,
+      description: normalized.description,
+      document: normalized.document as any,
+    })) as string;
+    const created = await this.getById(accountId, id);
+    if (!created) throw new Error("Failed to fetch created agent policy");
+
+    return created;
+  },
+  async update(accountId, policyId, rawPatch) {
+    const patch = normalizeUpdateAgentPolicyInput(rawPatch);
+    await getConvexClient().mutation(internal.agentPolicies.updateInternal, {
+      accountId: accountId as any,
+      policyId: policyId,
+      name: patch.name,
+      description: patch.description,
+      document: patch.document as any,
+      status: patch.status,
+    });
+
+    return this.getById(accountId, policyId);
+  },
+  async remove(accountId, policyId) {
+    await getConvexClient().mutation(internal.agentPolicies.removeInternal, {
+      accountId: accountId as any,
+      policyId: policyId,
+    });
+
+    return true;
+  },
+  async removeAllForAccount(accountId) {
+    const list = await this.list(accountId);
+    for (const policyRecord of list) {
+      await this.remove(accountId, policyRecord.policyId);
+    }
+
+    return list.length;
+  },
+};
+
 const accountTools: AccountToolStore = {
   async getById(accountId, toolId) {
     const doc = await getConvexClient().query(internal.accountTools.getById, {
@@ -715,6 +807,7 @@ export const convexStorageProvider: StorageProvider = {
   crons,
   sandboxConfigs,
   workspaceConfigs,
+  agentPolicies,
   accountTools,
   usage,
 };

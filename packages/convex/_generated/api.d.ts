@@ -12,6 +12,7 @@ import type * as accountTools from "../accountTools.js";
 import type * as accounts from "../accounts.js";
 import type * as agentConfig from "../agentConfig.js";
 import type * as agentDeployments from "../agentDeployments.js";
+import type * as agentPolicies from "../agentPolicies.js";
 import type * as agents from "../agents.js";
 import type * as asyncResults from "../asyncResults.js";
 import type * as auth from "../auth.js";
@@ -78,6 +79,7 @@ declare const fullApi: ApiFromModules<{
   accounts: typeof accounts;
   agentConfig: typeof agentConfig;
   agentDeployments: typeof agentDeployments;
+  agentPolicies: typeof agentPolicies;
   agents: typeof agents;
   asyncResults: typeof asyncResults;
   auth: typeof auth;

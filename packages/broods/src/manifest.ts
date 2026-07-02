@@ -17,6 +17,7 @@ import {
   type AnyResource,
   type BroodsConfigDefinition,
   type BroodsProjectConfig,
+  type PolicyResource,
   type SandboxResource,
   type WorkspaceResource,
 } from "./resources.ts";
@@ -218,6 +219,7 @@ const KNOWN_AGENT_CONFIG_KEYS = new Set([
   "workspaces",
   "subagent",
   "skills",
+  "policy",
   "publicAccess",
 ]);
 
@@ -225,6 +227,7 @@ const KNOWN_AGENT_CONFIG_KEYS = new Set([
 const AGENT_KEY_SUGGESTIONS: Record<string, string> = {
   workspace: "workspaces",
   skill: "skills",
+  policies: "policy",
   tool: "tools",
   channel: "channels",
   hook: "hooks",
@@ -571,6 +574,9 @@ async function normalizeConfig(resource: AnyResource, projectRoot: string): Prom
     if (Array.isArray(config.workspaces)) {
       config.workspaces = config.workspaces.map((workspace) => normalizeWorkspaceRef(workspace, resource.name));
     }
+    if (config.policy !== undefined) {
+      config.policy = normalizeAgentPolicyConfig(config.policy, resource.name);
+    }
     return rewriteValues(config);
   }
 
@@ -585,6 +591,10 @@ async function normalizeConfig(resource: AnyResource, projectRoot: string): Prom
       inputSchema: Record<string, unknown>;
       defaultConfig?: Record<string, unknown>;
     }, projectRoot);
+  }
+
+  if (resource.kind === "policy") {
+    return rewriteValues(resource.config);
   }
 
   if (resource.kind === "cron") {
@@ -603,6 +613,38 @@ async function normalizeConfig(resource: AnyResource, projectRoot: string): Prom
   }
 
   return rewriteValues(resource.config);
+}
+
+function normalizeAgentPolicyConfig(config: unknown, agentName: string): Record<string, unknown> {
+  if (!config || typeof config !== "object" || Array.isArray(config)) {
+    throw new Error(`Agent "${agentName}" config.policy must be an object`);
+  }
+  const input = config as Record<string, unknown>;
+  const policyIds = input.policyIds;
+  const policies = input.policies;
+  if (policyIds !== undefined && policies !== undefined) {
+    throw new Error(`Agent "${agentName}" config.policy cannot set both policyIds and policies`);
+  }
+  const refs = policies ?? policyIds;
+  if (refs !== undefined && !Array.isArray(refs)) {
+    throw new Error(`Agent "${agentName}" config.policy.policies must be an array`);
+  }
+
+  const normalized: Record<string, unknown> = {
+    ...input,
+    ...(Array.isArray(refs)
+      ? {
+          policyIds: refs.map((entry) => {
+            if (isResource(entry) && entry.kind === "policy") return (entry as PolicyResource).name;
+            if (typeof entry === "string") return entry;
+            throw new Error(`Agent "${agentName}" config.policy.policies must contain definePolicy(...) resources or strings`);
+          }),
+        }
+      : {}),
+  };
+  delete normalized.policies;
+
+  return normalized;
 }
 
 async function normalizeSkillConfig(config: { path: string }, projectRoot: string): Promise<Record<string, unknown>> {

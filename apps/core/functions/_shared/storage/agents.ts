@@ -75,6 +75,12 @@ export class AgentSubagentNotFoundError extends Error {
   }
 }
 
+export class AgentPolicyNotFoundError extends Error {
+  constructor(public readonly policyId: string) {
+    super(`Agent policy not found: ${policyId}`);
+  }
+}
+
 export async function validateAgentSkillPaths(accountId: string, config: AgentConfig): Promise<void> {
   for (const skillPath of config.skills?.allowed ?? []) {
     try {
@@ -96,6 +102,15 @@ export async function validateAgentSubagentIds(accountId: string, config: AgentC
   }
 }
 
+export async function validateAgentPolicyIds(accountId: string, config: AgentConfig): Promise<void> {
+  for (const policyId of config.policy?.policyIds ?? []) {
+    const policy = await getStorage().agentPolicies.getById(accountId, policyId);
+    if (!policy || policy.status !== "active") {
+      throw new AgentPolicyNotFoundError(policyId);
+    }
+  }
+}
+
 export async function normalizeCreateAgentInput(
   accountId: string,
   value: CreateAgentInput,
@@ -106,6 +121,7 @@ export async function normalizeCreateAgentInput(
   const config = normalizeAgentConfig(value.config);
   await validateAgentSkillPaths(accountId, config);
   await validateAgentSubagentIds(accountId, config);
+  await validateAgentPolicyIds(accountId, config);
   return {
     name,
     ...(description ? { description } : {}),
@@ -125,6 +141,7 @@ export async function normalizeUpdateAgentInput(
     : existingConfig;
   await validateAgentSkillPaths(accountId, config);
   await validateAgentSubagentIds(accountId, config);
+  await validateAgentPolicyIds(accountId, config);
 
   return {
     ...(value.name !== undefined ? { name: requireString(value.name, "name") } : {}),

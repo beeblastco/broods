@@ -46,6 +46,7 @@ function idsForManifest(ids: GeneratedIds, manifest: CliManifest): GeneratedIds 
     crons: namesForKind(manifest, "cron"),
     skills: namesForKind(manifest, "skill"),
     tools: namesForKind(manifest, "tool"),
+    policies: namesForKind(manifest, "policy"),
   };
 
   return {
@@ -55,6 +56,7 @@ function idsForManifest(ids: GeneratedIds, manifest: CliManifest): GeneratedIds 
     crons: pickIds(ids.crons, namesByKind.crons),
     skills: pickIds(ids.skills, namesByKind.skills),
     tools: pickIds(ids.tools, namesByKind.tools),
+    policies: pickIds(ids.policies, namesByKind.policies),
   };
 }
 
@@ -68,7 +70,7 @@ function namesForKind(manifest: CliManifest, kind: string): Set<string> {
 
 function pickIds(values: Record<string, string>, names: Set<string>): Record<string, string> {
   return Object.fromEntries(
-    Object.entries(values).filter(([name]) => names.has(name)),
+    Object.entries(values ?? {}).filter(([name]) => names.has(name)),
   );
 }
 
@@ -80,7 +82,8 @@ function idsFile(ids: GeneratedIds): string {
     `export const sandboxes = ids.sandboxes;\n` +
     `export const crons = ids.crons;\n` +
     `export const skills = ids.skills;\n` +
-    `export const tools = ids.tools;\n`;
+    `export const tools = ids.tools;\n` +
+    `export const policies = ids.policies;\n`;
 }
 
 function resourcesFile(manifest: CliManifest): string {
@@ -123,6 +126,7 @@ function apiFile(
     `  crons: ${aliasedIdMap("crons", ids.crons, aliases.cron)},\n` +
     `  skills: ${aliasedIdMap("skills", ids.skills, aliases.skill)},\n` +
     `  tools: ${aliasedIdMap("tools", ids.tools, aliases.tool)},\n` +
+    `  policies: ${aliasedIdMap("policies", ids.policies, aliases.policy)},\n` +
     `} as const satisfies ResourceApi;\n`;
 }
 

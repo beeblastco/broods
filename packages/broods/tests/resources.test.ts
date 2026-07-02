@@ -914,6 +914,66 @@ description: Says hello.
   expect(typeof (tool?.config as Record<string, unknown>).sha256).toBe("string");
 });
 
+test("compileProject maps policy resources and agent policy refs", async () => {
+  const cwd = await fixtureProject(`
+import { defineBroods } from "${RESOURCES_MODULE}";
+
+export default defineBroods({ project: "typed-app" });
+`, `
+import { defineAgent, definePolicy } from "${RESOURCES_MODULE}";
+
+export const filesystemPolicy = definePolicy({
+  name: "filesystem-guard",
+  description: "Restricts workspace writes.",
+  config: {
+    version: 1,
+    rules: [
+      { id: "allow-read", effect: "allow", actions: ["workspace.read"] },
+      {
+        id: "deny-secrets",
+        effect: "deny",
+        actions: ["workspace.write"],
+        resources: { filePaths: ["/workspace/secrets"] },
+      },
+    ],
+  },
+});
+
+export const support = defineAgent({
+  name: "support",
+  config: {
+    model: { provider: "openai", modelId: "gpt-5-mini" },
+    policy: { enabled: true, mode: "audit", policies: [filesystemPolicy] },
+  },
+});
+`);
+
+  const { manifest } = await compileProject({ cwd: cwd, command: "dev" });
+  const policy = manifest.resources.find((resource) => resource.kind === "policy" && resource.name === "filesystem-guard");
+  const agent = manifest.resources.find((resource) => resource.kind === "agent" && resource.name === "support");
+
+  expect(policy?.description).toBe("Restricts workspace writes.");
+  expect(policy?.config).toMatchObject({
+    version: 1,
+    rules: [
+      { id: "allow-read", effect: "allow", actions: ["workspace.read"] },
+      {
+        id: "deny-secrets",
+        effect: "deny",
+        actions: ["workspace.write"],
+        resources: { filePaths: ["/workspace/secrets"] },
+      },
+    ],
+  });
+  expect(agent?.config).toMatchObject({
+    policy: {
+      enabled: true,
+      mode: "audit",
+      policyIds: ["filesystem-guard"],
+    },
+  });
+});
+
 test("compileProject rejects skill and tool paths outside broods project root", async () => {
   const cwd = await fixtureProject("", `
 import { defineSkill, defineTool } from "${RESOURCES_MODULE}";

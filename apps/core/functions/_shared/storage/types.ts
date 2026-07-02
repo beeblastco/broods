@@ -46,6 +46,11 @@ import type {
   CreateAccountToolInput,
   UpdateAccountToolInput,
 } from "./account-tools.ts";
+import type {
+  AgentPolicyRecord,
+  CreateAgentPolicyInput,
+  UpdateAgentPolicyInput,
+} from "./agent-policy.ts";
 
 export type {
   AccountRecord,
@@ -70,6 +75,9 @@ export type {
   AccountToolRecord,
   CreateAccountToolInput,
   UpdateAccountToolInput,
+  AgentPolicyRecord,
+  CreateAgentPolicyInput,
+  UpdateAgentPolicyInput,
 };
 
 /**
@@ -243,6 +251,16 @@ export interface AccountToolStore {
   removeAllForAccount(accountId: string): Promise<number>;
 }
 
+/** Account-scoped reusable runtime authorization policies. */
+export interface AgentPolicyStore {
+  getById(accountId: string, policyId: string): Promise<AgentPolicyRecord | null>;
+  list(accountId: string): Promise<AgentPolicyRecord[]>;
+  create(accountId: string, input: CreateAgentPolicyInput): Promise<AgentPolicyRecord>;
+  update(accountId: string, policyId: string, patch: UpdateAgentPolicyInput): Promise<AgentPolicyRecord | null>;
+  remove(accountId: string, policyId: string): Promise<boolean>;
+  removeAllForAccount(accountId: string): Promise<number>;
+}
+
 /**
  * Writes per-task usage counts. The active storage provider implements this;
  * it inserts one raw-count row per finished task and folds into a rollup
@@ -261,5 +279,6 @@ export interface StorageProvider {
   sandboxConfigs: SandboxConfigStore;
   workspaceConfigs: WorkspaceConfigStore;
   accountTools: AccountToolStore;
+  agentPolicies: AgentPolicyStore;
   usage: UsageStore;
 }

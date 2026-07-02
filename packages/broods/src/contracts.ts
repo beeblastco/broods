@@ -27,6 +27,10 @@ import type {
 import type {
   WorkspaceConfig,
 } from "../../../apps/core/functions/_shared/storage/workspace-config.ts";
+import type {
+  AgentPolicyConfig,
+  AgentPolicyDocument,
+} from "../../../apps/core/functions/_shared/storage/agent-policy.ts";
 
 export type Id<TableName extends string = string> = string & { readonly __tableName?: TableName };
 export type Doc<TableName extends string = string> = Record<string, unknown> & { readonly _id: Id<TableName> };
@@ -42,6 +46,8 @@ export type {
   AgentTelegramChannelConfig,
   AgentZaloChannelConfig,
   AgentWorkspaceRef,
+  AgentPolicyConfig,
+  AgentPolicyDocument,
   CreateCronInput,
   CronLastStatus,
   CronStatus,
@@ -57,7 +63,7 @@ export type WorkspaceConfigDoc = Doc<"workspaceConfigs">;
 export type SandboxConfigDoc = Doc<"sandboxConfigs">;
 export type CronDoc = Doc<"crons">;
 
-export type CliResourceKind = "agent" | "workspace" | "sandbox" | "cron";
+export type CliResourceKind = "agent" | "workspace" | "sandbox" | "cron" | "policy";
 
 // Manifest wire types come from the backend's canonical leaf module so the
 // CLI/SDK can't silently drift from the server contract.
