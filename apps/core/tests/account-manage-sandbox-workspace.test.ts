@@ -19,6 +19,7 @@ import {
   normalizeUpdateWorkspaceConfigInput,
   type WorkspaceConfigRecord,
 } from "../functions/_shared/storage/workspace-config.ts";
+import { openTerminalTicket, TERMINAL_WEBSOCKET_PATH } from "../functions/_shared/terminal-ticket.ts";
 
 const ACCOUNT_ID = "acct_test";
 const AUTH = { authorization: "Bearer fp_acct_test" };
@@ -208,6 +209,59 @@ describe("account-manage sandbox endpoints", () => {
     expect(fetchCalls.find((call) => call.path === "/v1/sandboxes/sbx_handler/exec")?.body).toMatchObject({
       cmd: "exit 7",
     });
+  });
+
+  it("mints a sealed terminal ticket that targets the reserved workdir PTY", async () => {
+    process.env.SERVICE_AUTH_SECRET = "service-secret";
+    process.env.WORKDIR_URL = "https://workdir.example.com";
+    process.env.WORKDIR_API_KEY = "tenant-key";
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+    setStorageForTests(createFakeStorage());
+    const reservationKey = "fs-0123456789abcdef0123456789abcdef01234567";
+    const created = responseJson(await handler(createEvent("POST", "/accounts/me/sandboxes", AUTH, {
+      name: "persistent",
+      config: { provider: "sandbox", persistent: true, options: { reservationKey } },
+    }))) as SandboxConfigRecord;
+
+    const response = await handler(createEvent(
+      "POST",
+      `/accounts/me/sandboxes/${created.sandboxId}/terminal`,
+      { authorization: "Bearer service-secret", "x-account-id": ACCOUNT_ID },
+      { reservationKey },
+    ));
+
+    expect(response.statusCode).toBe(200);
+    const body = responseJson(response) as { token: string; expiresAt: number; websocketPath: string };
+    expect(body.websocketPath).toBe(TERMINAL_WEBSOCKET_PATH);
+    expect(body.expiresAt).toBeGreaterThan(Date.now());
+    // The browser-held token is opaque; only a stage secret opens it.
+    expect(body.token).not.toContain("tenant-key");
+    expect(openTerminalTicket(body.token, "wrong-secret")).toBeNull();
+    expect(openTerminalTicket(body.token, "service-secret")).toMatchObject({
+      url: "wss://workdir.example.com/v1/sandboxes/sbx_handler/pty",
+      authorization: "Bearer tenant-key",
+      accountId: ACCOUNT_ID,
+    });
+  });
+
+  it("refuses terminal tickets for providers without an in-guest PTY", async () => {
+    process.env.SERVICE_AUTH_SECRET = "service-secret";
+    setStorageForTests(createFakeStorage());
+    const reservationKey = "fs-0123456789abcdef0123456789abcdef01234567";
+    const created = responseJson(await handler(createEvent("POST", "/accounts/me/sandboxes", AUTH, {
+      name: "persistent",
+      config: { provider: "lambda", persistent: true, options: { reservationKey } },
+    }))) as SandboxConfigRecord;
+
+    const response = await handler(createEvent(
+      "POST",
+      `/accounts/me/sandboxes/${created.sandboxId}/terminal`,
+      { authorization: "Bearer service-secret", "x-account-id": ACCOUNT_ID },
+      { reservationKey },
+    ));
+
+    expect(response.statusCode).toBe(409);
+    expect(String((responseJson(response) as { error: string }).error)).toContain("does not support a live terminal");
   });
 });
 

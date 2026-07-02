@@ -55,7 +55,7 @@ async function callLifecycle(
     ctx: ActionCtx,
     sandboxId: string,
     reservationKey: string,
-    op: "suspend" | "resume" | "terminate" | "snapshot" | "refresh" | "exec",
+    op: "suspend" | "resume" | "terminate" | "snapshot" | "refresh" | "exec" | "terminal",
     extra?: Record<string, unknown>,
 ): Promise<unknown> {
     const account = await ctx.runQuery(api.org.getActiveAccount, {});
@@ -151,6 +151,36 @@ export const refreshSandbox = action({
         await callLifecycle(ctx, args.sandboxId, args.reservationKey, "refresh");
 
         return null;
+    },
+});
+
+/**
+ * Mints a short-lived sealed ticket for a live PTY terminal on a reserved
+ * sandbox instance. The browser passes the opaque token to the public gateway's
+ * terminal WebSocket; broods resumes a suspended instance first when needed.
+ */
+export const openTerminal = action({
+    args: { sandboxId: v.id("sandboxConfigs"), reservationKey: v.string() },
+    returns: v.object({
+        token: v.string(),
+        expiresAt: v.number(),
+        websocketPath: v.string(),
+    }),
+    handler: async (ctx, args) => {
+        const result = await callLifecycle(ctx, args.sandboxId, args.reservationKey, "terminal");
+        if (!result || typeof result !== "object") {
+            throw new Error("Broods sandbox terminal returned an empty response");
+        }
+        const record = result as Record<string, unknown>;
+        if (typeof record.token !== "string" || typeof record.expiresAt !== "number" || typeof record.websocketPath !== "string") {
+            throw new Error("Broods sandbox terminal returned an invalid ticket");
+        }
+
+        return {
+            token: record.token,
+            expiresAt: record.expiresAt,
+            websocketPath: record.websocketPath,
+        };
     },
 });
 

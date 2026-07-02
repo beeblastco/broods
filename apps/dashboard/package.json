@@ -21,6 +21,8 @@
     "@radix-ui/react-collapsible": "^1.1.13",
     "@workos-inc/authkit-nextjs": "^4.1.1",
     "@workos-inc/node": "^9.3.1",
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/xterm": "^6.0.0",
     "@xyflow/react": "^12.11.0",
     "ai": "^6.0.197",
     "class-variance-authority": "^0.7.1",

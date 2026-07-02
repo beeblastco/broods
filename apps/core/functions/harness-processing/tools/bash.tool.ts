@@ -29,6 +29,7 @@ import {
   sealDetachedAsyncToolGroup,
 } from "../async-tool-result.ts";
 import { generateJobId } from "../sandbox/jobs.ts";
+import { shellQuote } from "../sandbox/utils.ts";
 import { getHarnessPublicUrl } from "../self-url.ts";
 import type { ResolvedWorkspace } from "../../_shared/workspaces.ts";
 import type { SandboxExecutorConfig, SandboxJobCallback } from "../sandbox/types.ts";
@@ -38,6 +39,14 @@ interface BashInput {
   command: string;
   workspace?: string;
   background?: boolean;
+  pty?: boolean;
+}
+
+// Attach the command to a real pseudo-terminal inside the guest (util-linux
+// `script`): programs see isatty()=true and a normal terminal line discipline,
+// which is what interactive-only CLIs and TTY-gated output paths check for.
+function ptyCommand(command: string): string {
+  return `script -qec ${shellQuote(command)} /dev/null`;
 }
 
 // Background jobs need a persistent workspace sandbox (to outlive the request)
@@ -56,6 +65,10 @@ function inputSchema(context: SandboxToolContext): JSONSchema7 {
         description: "The bash command to run.",
       },
       ...(workspaceProp ? { workspace: workspaceProp as JSONSchema7 } : {}),
+      pty: {
+        type: "boolean",
+        description: "Run the command attached to a real interactive TTY (pseudo-terminal). Use when a program refuses to run or degrades without a terminal (isatty checks, TTY-only prompts, terminal UIs). Note: stderr merges into stdout and lines end with CRLF.",
+      },
       ...(backgroundAvailable(context)
         ? {
             background: {
@@ -184,7 +197,7 @@ export default function bashTool(context: SandboxToolContext): ToolSet {
       inputSchema: jsonSchema(inputSchema(context)),
       needsApproval: (input) => bashNeedsApproval(context, (input as BashInput).workspace),
       async execute(input, options) {
-        const { command, workspace, background } = input as BashInput;
+        const { command, workspace, background, pty } = input as BashInput;
         const trimmed = (command ?? "").trim();
         if (!trimmed) {
           return toolError("Error: command is required");
@@ -205,11 +218,14 @@ export default function bashTool(context: SandboxToolContext): ToolSet {
           if (disallowed) {
             return toolError(disallowed);
           }
+          // The PTY wrapper is applied after the policy guards so they always
+          // inspect the real command, never the `script` wrapper.
+          const effective = pty === true ? ptyCommand(trimmed) : trimmed;
           if (background === true) {
-            return await dispatchBackground(context, ws, sandbox, trimmed, options.toolCallId);
+            return await dispatchBackground(context, ws, sandbox, effective, options.toolCallId);
           }
-          logInfo("bash tool command", { namespace: ws?.namespace, commandLength: trimmed.length });
-          return toolText(formatRunText(await runSandbox(sandbox, ws?.namespace, trimmed, {
+          logInfo("bash tool command", { namespace: ws?.namespace, commandLength: trimmed.length, pty: pty === true });
+          return toolText(formatRunText(await runSandbox(sandbox, ws?.namespace, effective, {
             onSandboxCpu: context.onSandboxCpu,
             metadata: sandboxRunMetadata(context, ws),
           })));

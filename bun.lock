@@ -75,6 +75,8 @@
         "@radix-ui/react-collapsible": "^1.1.13",
         "@workos-inc/authkit-nextjs": "^4.1.1",
         "@workos-inc/node": "^9.3.1",
+        "@xterm/addon-fit": "^0.11.0",
+        "@xterm/xterm": "^6.0.0",
         "@xyflow/react": "^12.11.0",
         "ai": "^6.0.197",
         "class-variance-authority": "^0.7.1",
@@ -1890,6 +1892,10 @@
     "@workos-inc/authkit-react": ["@workos-inc/authkit-react@0.16.1", "", { "dependencies": { "@workos-inc/authkit-js": "0.20.0" }, "peerDependencies": { "react": ">=17" } }, "sha512-u8IJsAAyZFFM02+3JhvvNTopSNQoJk/hjOoBlmOkh6j+AnVYrR8hjzJn8j3m9Vi5tRE0il7mpsEDT9fI2xRNjg=="],
 
     "@workos-inc/node": ["@workos-inc/node@9.3.1", "", { "dependencies": { "eventemitter3": "^5.0.4" } }, "sha512-z6+V5lPAdEtJ2IklAsOUJWv5guihkMbtC8WHmLCKOJYLa/H0j9bRj/OmxTs7T+bzL2dhItxPRarhxlAAq/0jgQ=="],
+
+    "@xterm/addon-fit": ["@xterm/addon-fit@0.11.0", "", {}, "sha512-jYcgT6xtVYhnhgxh3QgYDnnNMYTcf8ElbxxFzX0IZo+vabQqSPAjC3c1wJrKB5E19VwQei89QCiZZP86DCPF7g=="],
+
+    "@xterm/xterm": ["@xterm/xterm@6.0.0", "", {}, "sha512-TQwDdQGtwwDt+2cgKDLn0IRaSxYu1tSUjgKarSDkUM0ZNiSRXFpjxEsvc/Zgc5kq5omJ+V0a8/kIM2WD3sMOYg=="],
 
     "@xtuc/ieee754": ["@xtuc/ieee754@1.2.0", "", {}, "sha512-DX8nKgqcGwsc0eJSqYt5lwP4DH5FlHnmuWWBRy7X0NcaGR0ZtuyeESgMwTYVEtxmsNGY+qit4QYT/MIYTOTPeA=="],
 

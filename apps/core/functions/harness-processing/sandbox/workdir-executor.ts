@@ -390,7 +390,10 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
   }
 }
 
-function workdirClient(config: SandboxExecutorConfig): Client {
+// Resolve the workdir control-plane target for a sandbox config: a tenant's own
+// node (options.workdirUrl + apiKey) or the platform default from the env. Also
+// used by the account-manage `terminal` op to dial the node's PTY WebSocket.
+export function workdirConnection(config: SandboxExecutorConfig): { baseUrl: string; apiKey: string } {
   const options = isPlainObject(config.options) ? config.options : {};
   const customBaseUrl = configString(options.workdirUrl);
   if (customBaseUrl) {
@@ -404,7 +407,21 @@ function workdirClient(config: SandboxExecutorConfig): Client {
   if (customBaseUrl && !customApiKey) {
     throw new Error("config.options.apiKey is required when config.options.workdirUrl is set");
   }
-  const apiKey = customApiKey ?? optionalEnv("WORKDIR_API_KEY") ?? "";
+
+  return { baseUrl, apiKey: customApiKey ?? optionalEnv("WORKDIR_API_KEY") ?? "" };
+}
+
+// The in-guest TTY workdir exposes per sandbox (`GET /v1/sandboxes/:id/pty`).
+export function workdirPtyUrl(baseUrl: string, externalId: string): string {
+  const url = new URL(baseUrl);
+  url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+  url.pathname = `${url.pathname.replace(/\/+$/, "")}/v1/sandboxes/${encodeURIComponent(externalId)}/pty`;
+
+  return url.toString();
+}
+
+function workdirClient(config: SandboxExecutorConfig): Client {
+  const { baseUrl, apiKey } = workdirConnection(config);
   return new Client(baseUrl, apiKey);
 }
 

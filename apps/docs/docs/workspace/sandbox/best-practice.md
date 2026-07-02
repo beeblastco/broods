@@ -132,6 +132,45 @@ forever"). The idle scale-down never pauses a sandbox while a job is still runni
 > Without egress the job still runs and `async_status` polling still works; only the
 > automatic push-back is skipped.
 
+## Live terminal & real TTY runs
+
+Two ways to get **real terminal behaviour** out of a sandbox:
+
+**Agent side — `bash` with `pty: true`.** The bash tool accepts a `pty` flag that attaches
+the command to a real pseudo-terminal inside the guest (util-linux `script`). Programs see
+`isatty() = true` and a normal terminal line discipline, so TTY-gated CLIs, prompts, and
+terminal UIs behave as they would in a real shell. It works on every provider (it is a
+guest-side wrapper); note that stderr merges into stdout and lines end with CRLF, so keep
+`pty` off for output you want byte-exact.
+
+**Operator side — the dashboard Terminal tab.** For `sandbox` (workdir) instances the
+dashboard's Sandbox → Instances detail panel has a live interactive terminal — a real
+in-guest TTY streamed over WebSocket, not a command runner. Connecting resumes a suspended
+instance. Other providers keep the bounded command runner (30 s / 64 KiB per command).
+
+```mermaid
+sequenceDiagram
+  participant D as Dashboard (xterm.js)
+  participant C as Convex action
+  participant AM as account-manage
+  participant G as Gateway (WS)
+  participant W as workdir node PTY
+
+  D->>C: openTerminal(sandboxId, reservationKey)
+  C->>AM: POST /sandboxes/:id/terminal (service auth)
+  AM-->>D: sealed ticket (opaque token, ~2 min TTL)
+  D->>G: WS /v1/sandboxes/terminal/ws?token=…
+  G->>G: open ticket with stage service secret
+  G->>W: WS /v1/sandboxes/:id/pty (org key)
+  W-->>D: raw TTY bytes ⇄ keystrokes
+```
+
+The upstream URL and provider credential travel **inside the sealed (AES-256-GCM) ticket**,
+so the browser only ever holds an opaque, short-lived token; the workdir org key never
+leaves the trusted tier (core mints, gateway opens). AWS MicroVM (`lambda`) has a native
+shell-token API but requires the VM to run with a `SHELL_INGRESS` connector — native lambda
+PTY is tracked as follow-up work; its Terminal tab stays on the bounded runner.
+
 ## Keep prompts portable
 
 Tell the model to **use relative paths** (`analysis.json`, `src/index.ts`) — the harness

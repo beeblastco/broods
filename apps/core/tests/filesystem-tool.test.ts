@@ -162,6 +162,12 @@ describe("sandbox tool set", () => {
     });
   });
 
+  it("bash pty:true attaches the command to a real guest pseudo-terminal", async () => {
+    const bash = await tool("bash", workspaceCtx());
+    await bash.execute({ command: "echo hi", pty: true });
+    expect(lastSandboxExec().payload.code).toBe("script -qec 'echo hi' /dev/null");
+  });
+
   it("runs a stateless MicroVM (no namespace) when no workspace is attached", async () => {
     const bash = await tool("bash", statelessCtx());
     await bash.execute({ command: "echo hi" });
