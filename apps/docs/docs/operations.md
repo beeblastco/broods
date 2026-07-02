@@ -92,7 +92,7 @@ Public account creation is throttled by `ACCOUNT_SIGNUP_RATE_LIMIT_PER_HOUR`, cu
 
 WebSocket gateway support is application infrastructure, not agent configuration. `sst.config.ts` fails early when `ENABLE_WEBSOCKET=true` is set without `NATS_URL`. At runtime, `harness-processing` also rejects `nats-worker` invocations unless WebSocket is enabled and the NATS connection can be established.
 
-OPA-backed agent policy is optional. When an agent has no enabled policy assignment, runtime behavior is unchanged and no policy decision is requested. When policy is enabled, Broods posts policy inputs to OPA at `/v1/data/broods/authz/decision` using `OPA_BASE_URL` + `OPA_API_TOKEN`. `config.policy.mode` picks the rollout stage per agent: `audit` (default) evaluates and logs every decision without blocking; `enforce` acts on decisions, so denied tool calls are blocked and an unavailable OPA fails closed.
+OPA-backed agent policy is optional. When an agent has no assigned policy IDs, runtime behavior is unchanged and no policy decision is requested. When policies are assigned, Broods posts policy inputs to OPA at `/v1/data/broods/authz/decision` using `OPA_BASE_URL` + `OPA_API_TOKEN`. Inputs include action/resource context plus sanitized tool-call details (`toolName`, `toolId`, `tool.input.*`) so policies can match specific functions and parameters. `config.policy.mode` picks the rollout stage per agent: `audit` (default) evaluates and logs every decision without blocking; `enforce` acts on decisions, so denied tool calls are blocked and an unavailable OPA fails closed.
 
 ## Local Setup
 

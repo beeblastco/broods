@@ -22,6 +22,7 @@ set `BROODS_WEBSOCKET_URL` for a non-default or self-hosted gateway.
 - `channel-telegram`, `channel-github`, `channel-slack`, `channel-discord`, `channel-pancake`, `channel-zalo`: declare provider channels and receive generated webhook URLs.
 - `tool-custom-stream`: upload and stream an isolated custom tool.
 - `tool-custom-async-sse`: upload a detached asynchronous custom tool.
+- `policy-enforcement-lambda`: compare OPA policy `audit` vs `enforce` behavior against the AWS Lambda MicroVM sandbox using Bedrock MiniMax.
 
 Sandbox examples (one `defineSandbox` per provider/mode):
 

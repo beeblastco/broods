@@ -2441,10 +2441,8 @@ components:
 
     AgentPolicyConfig:
       type: object
-      description: Optional runtime authorization policy assignment. When unset or disabled, existing behavior is unchanged.
+      description: Optional runtime authorization policy assignment. When unset or policyIds is empty, existing behavior is unchanged.
       properties:
-        enabled:
-          type: boolean
         policyIds:
           type: array
           items:
@@ -2505,7 +2503,7 @@ components:
       properties:
         attribute:
           type: string
-          description: Trusted runtime attribute such as accountId, project, environment, agentId, channel, toolName, filePath, workspaceName, or sandboxPermissionMode.
+          description: Trusted runtime attribute or dotted path. Examples include accountId, project, environment, agentId, channel, toolName, toolId, filePath, workspaceName, sandboxPermissionMode, tool.input.command, tool.input.file_path, and tool.inputKeys.
         operator:
           type: string
           enum: [equals, notEquals, in, notIn, prefix, contains]

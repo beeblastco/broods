@@ -61,7 +61,6 @@ export interface AgentPolicyRecord {
 }
 
 export interface AgentPolicyConfig {
-  enabled?: boolean;
   policyIds?: string[];
   mode?: AgentPolicyMode;
 }
@@ -84,6 +83,11 @@ export interface PolicyDecisionInput {
   subagentId?: string;
   skillPath?: string;
   sandboxPermissionMode?: string;
+  tool?: {
+    input?: Record<string, unknown>;
+    inputKeys?: string[];
+    inputPreview?: string;
+  };
 }
 
 export interface PolicyDecision {
@@ -119,15 +123,17 @@ export function normalizeAgentPolicyConfig(value: unknown): AgentPolicyConfig | 
       throw new Error(`config.policy.${key} is not supported`);
     }
   }
+  // `enabled` is accepted for backward compatibility with early policy configs,
+  // but activation now follows assigned policyIds. An empty policy object is a no-op.
   assertOptionalBoolean(config.enabled, "config.policy.enabled");
   assertOptionalStringArray(config.policyIds, "config.policy.policyIds");
   assertOptionalEnum(config.mode, "config.policy.mode", ["enforce", "audit"]);
 
-  return {
-    ...(config.enabled !== undefined ? { enabled: config.enabled as boolean } : {}),
-    ...(config.policyIds !== undefined ? { policyIds: config.policyIds as string[] } : {}),
+  const normalized = {
+    ...(Array.isArray(config.policyIds) && config.policyIds.length > 0 ? { policyIds: config.policyIds as string[] } : {}),
     ...(config.mode !== undefined ? { mode: config.mode as AgentPolicyMode } : {}),
   };
+  return normalized.policyIds ? normalized : undefined;
 }
 
 export function normalizeCreateAgentPolicyInput(value: CreateAgentPolicyInput): CreateAgentPolicyInput {

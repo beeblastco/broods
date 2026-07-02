@@ -91,7 +91,7 @@ conditions_match(rule) if {
 }
 
 condition_match(condition) if {
-  actual := object.get(input, condition.attribute, null)
+  actual := condition_attribute_value(condition.attribute)
   condition.operator == "equals"
   actual == condition.value
 }
@@ -100,13 +100,13 @@ condition_match(condition) if {
 # notEquals/notIn cannot match requests that never carried the attribute.
 condition_match(condition) if {
   condition.operator == "notEquals"
-  actual := object.get(input, condition.attribute, null)
+  actual := condition_attribute_value(condition.attribute)
   actual != null
   actual != condition.value
 }
 
 condition_match(condition) if {
-  actual := object.get(input, condition.attribute, null)
+  actual := condition_attribute_value(condition.attribute)
   condition.operator == "in"
   is_array(condition.value)
   value_in_collection(condition.value, actual)
@@ -114,24 +114,30 @@ condition_match(condition) if {
 
 condition_match(condition) if {
   condition.operator == "notIn"
-  actual := object.get(input, condition.attribute, null)
+  actual := condition_attribute_value(condition.attribute)
   actual != null
   is_array(condition.value)
   not value_in_collection(condition.value, actual)
 }
 
 condition_match(condition) if {
-  actual := object.get(input, condition.attribute, "")
+  actual := condition_attribute_value(condition.attribute)
   condition.operator == "prefix"
+  is_string(actual)
   startswith(actual, condition.value)
 }
 
 condition_match(condition) if {
-  actual := object.get(input, condition.attribute, "")
+  actual := condition_attribute_value(condition.attribute)
   condition.operator == "contains"
+  is_string(actual)
   contains(actual, condition.value)
 }
 
 value_in_collection(values, actual) if {
   values[_] == actual
+}
+
+condition_attribute_value(attribute) := value if {
+  value := object.get(input, split(attribute, "."), null)
 }

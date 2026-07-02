@@ -64,6 +64,7 @@ export interface ToolContext {
   onSandboxCpu?: (sample: SandboxCpuSample) => void;
   sandboxMetadata?: SandboxRunMetadata;
   approvalRequirements?: Map<string, true>;
+  policyToolIdsByName?: Map<string, string>;
 }
 
 type ToolFactory = (context: ToolContext) => ToolSet;
@@ -215,6 +216,7 @@ export async function createTools(context: Omit<ToolContext, "config">, agentCon
       throw new Error(`config.tools.${toolId} model-facing name '${record.name}' conflicts with another tool`);
     }
     if (toolConfig.needsApproval === true) context.approvalRequirements?.set(record.name, true);
+    context.policyToolIdsByName?.set(record.name, toolId);
     Object.assign(tools, accountTool(record, {
       ...context,
       accountId,

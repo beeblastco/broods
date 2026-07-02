@@ -575,7 +575,9 @@ async function normalizeConfig(resource: AnyResource, projectRoot: string): Prom
       config.workspaces = config.workspaces.map((workspace) => normalizeWorkspaceRef(workspace, resource.name));
     }
     if (config.policy !== undefined) {
-      config.policy = normalizeAgentPolicyConfig(config.policy, resource.name);
+      const policy = normalizeAgentPolicyConfig(config.policy, resource.name);
+      if (policy) config.policy = policy;
+      else delete config.policy;
     }
     return rewriteValues(config);
   }
@@ -594,7 +596,9 @@ async function normalizeConfig(resource: AnyResource, projectRoot: string): Prom
   }
 
   if (resource.kind === "policy") {
-    return rewriteValues(resource.config);
+    const config = { ...(resource.config as Record<string, unknown>) };
+    config.version = config.version ?? 1;
+    return rewriteValues(config);
   }
 
   if (resource.kind === "cron") {
@@ -615,11 +619,16 @@ async function normalizeConfig(resource: AnyResource, projectRoot: string): Prom
   return rewriteValues(resource.config);
 }
 
-function normalizeAgentPolicyConfig(config: unknown, agentName: string): Record<string, unknown> {
+function normalizeAgentPolicyConfig(config: unknown, agentName: string): Record<string, unknown> | undefined {
   if (!config || typeof config !== "object" || Array.isArray(config)) {
     throw new Error(`Agent "${agentName}" config.policy must be an object`);
   }
   const input = config as Record<string, unknown>;
+  for (const key of Object.keys(input)) {
+    if (key !== "enabled" && key !== "policyIds" && key !== "policies" && key !== "mode") {
+      throw new Error(`Agent "${agentName}" config.policy.${key} is not supported`);
+    }
+  }
   const policyIds = input.policyIds;
   const policies = input.policies;
   if (policyIds !== undefined && policies !== undefined) {
@@ -643,8 +652,12 @@ function normalizeAgentPolicyConfig(config: unknown, agentName: string): Record<
       : {}),
   };
   delete normalized.policies;
+  delete normalized.enabled;
+  if (Array.isArray(normalized.policyIds) && normalized.policyIds.length === 0) {
+    delete normalized.policyIds;
+  }
 
-  return normalized;
+  return Array.isArray(normalized.policyIds) && normalized.policyIds.length > 0 ? normalized : undefined;
 }
 
 async function normalizeSkillConfig(config: { path: string }, projectRoot: string): Promise<Record<string, unknown>> {
