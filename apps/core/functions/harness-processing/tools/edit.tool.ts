@@ -7,7 +7,6 @@
 
 import { jsonSchema, tool, type JSONSchema7, type ToolSet } from "ai";
 import {
-  editNeedsApproval,
   resolveWorkspace,
   runSandbox,
   sandboxRunMetadata,
@@ -86,7 +85,6 @@ Usage notes:
 - new_string must differ from old_string.
 - The edit fails if the file does not exist — use the \`write\` tool to create new files.`,
       inputSchema: jsonSchema(inputSchema(context)),
-      needsApproval: (input) => editNeedsApproval(context.workspaces, (input as EditInput).workspace),
       async execute(input) {
         const { file_path, old_string, new_string, replace_all, workspace } = input as EditInput;
         try {

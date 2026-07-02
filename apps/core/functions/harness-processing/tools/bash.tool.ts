@@ -7,7 +7,6 @@
 
 import { jsonSchema, tool, type JSONSchema7, type ToolSet } from "ai";
 import {
-  bashNeedsApproval,
   disallowedRuntimeCommand,
   formatRunText,
   outsideWorkspaceCommand,
@@ -195,7 +194,6 @@ export default function bashTool(context: SandboxToolContext): ToolSet {
     bash: tool({
       description: description(context),
       inputSchema: jsonSchema(inputSchema(context)),
-      needsApproval: (input) => bashNeedsApproval(context, (input as BashInput).workspace),
       async execute(input, options) {
         const { command, workspace, background, pty } = input as BashInput;
         const trimmed = (command ?? "").trim();

@@ -12,6 +12,9 @@ process.env.ASYNC_TOOL_RESULT_TABLE_NAME = "async-tool-result";
 
 const originalSend = dynamo.send;
 const sendMock = mock(async (_command: unknown) => ({}));
+type TestToolExecute = {
+  execute(input: unknown, options: { toolCallId: string; messages: []; context: undefined }): Promise<unknown>;
+};
 
 afterEach(() => {
   dynamo.send = originalSend;
@@ -50,9 +53,10 @@ describe("AsyncToolCoordinator", () => {
       }),
     }, new Map([["slowLookup", "built-in" as const]]));
 
-    const pending = await (tools.slowLookup as {
-      execute(input: unknown, options: { toolCallId: string; messages: [] }): Promise<unknown>;
-    }).execute({ query: "alpha" }, { toolCallId: "tool-call-1", messages: [] });
+    const pending = await (tools.slowLookup as unknown as TestToolExecute).execute(
+      { query: "alpha" },
+      { toolCallId: "tool-call-1", messages: [], context: undefined },
+    );
 
     expect(pending).toEqual({
       resultId: expect.stringMatching(/^async_tool_/),
@@ -124,9 +128,10 @@ describe("AsyncToolCoordinator", () => {
       }),
     }, new Map([["neverFinishes", "built-in" as const]]));
 
-    await (tools.neverFinishes as {
-      execute(input: unknown, options: { toolCallId: string; messages: [] }): Promise<unknown>;
-    }).execute({}, { toolCallId: "tool-call-2", messages: [] });
+    await (tools.neverFinishes as unknown as TestToolExecute).execute(
+      {},
+      { toolCallId: "tool-call-2", messages: [], context: undefined },
+    );
 
     await expect(coordinator.waitForIdle()).resolves.toBe("timeout");
     await expect(coordinator.drainCompletionsAndTimeoutsToParent()).resolves.toBe(1);
@@ -175,9 +180,10 @@ describe("AsyncToolCoordinator", () => {
       }),
     }, new Map([["uploadedLookup", "uploaded" as const]]));
 
-    const pending = await (tools.uploadedLookup as {
-      execute(input: unknown, options: { toolCallId: string; messages: [] }): Promise<unknown>;
-    }).execute({}, { toolCallId: "tool-call-3", messages: [] });
+    const pending = await (tools.uploadedLookup as unknown as TestToolExecute).execute(
+      {},
+      { toolCallId: "tool-call-3", messages: [], context: undefined },
+    );
 
     expect(coordinator.pendingCount).toBe(0);
     expect(coordinator.hasDetachedCallbacks).toBe(true);
@@ -248,14 +254,16 @@ describe("AsyncToolCoordinator", () => {
       ["uploadedAsync", "uploaded" as const],
     ]));
 
-    await expect((tools.builtInAsync as {
-      execute(input: unknown, options: { toolCallId: string; messages: [] }): Promise<unknown>;
-    }).execute({}, { toolCallId: "tool-call-4", messages: [] })).resolves.toMatchObject({
+    await expect((tools.builtInAsync as unknown as TestToolExecute).execute(
+      {},
+      { toolCallId: "tool-call-4", messages: [], context: undefined },
+    )).resolves.toMatchObject({
       status: "running",
     });
-    await expect((tools.uploadedAsync as {
-      execute(input: unknown, options: { toolCallId: string; messages: [] }): Promise<unknown>;
-    }).execute({}, { toolCallId: "tool-call-5", messages: [] })).resolves.toMatchObject({
+    await expect((tools.uploadedAsync as unknown as TestToolExecute).execute(
+      {},
+      { toolCallId: "tool-call-5", messages: [], context: undefined },
+    )).resolves.toMatchObject({
       status: "running",
     });
 

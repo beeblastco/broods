@@ -97,22 +97,24 @@ export const myAgent = defineAgent({
 
 ### Reasoning / Thinking Tokens
 
-Use standard Vercel AI SDK `providerOptions` in `config.model`:
+Prefer the AI SDK v7 unified `reasoning` level in `config.model` — it is
+provider-agnostic and survives switching `config.model.provider`:
 
 ```ts
 model: {
   provider: "openai",
   modelId: "o3",
-  providerOptions: {
-    openai: {
-      reasoningEffort: "high",
-      reasoningSummary: "auto",
-    },
-  },
+  reasoning: "high", // provider-default | none | minimal | low | medium | high | xhigh
 },
 ```
 
-| Provider | Thinking config |
+Provider-specific thinking settings are still accepted through `providerOptions`
+and **take precedence** over `reasoning` when both are set — remove overlapping
+`providerOptions` entries when you migrate. If a model coerces or does not
+support the requested level, the SDK reports a call warning; the harness logs it
+(`model.step.warnings` events in Loki).
+
+| Provider | Provider-specific override |
 | --- | --- |
 | OpenAI | `providerOptions.openai.reasoningEffort` |
 | Anthropic | `providerOptions.anthropic.thinking` |

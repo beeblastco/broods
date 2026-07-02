@@ -1546,7 +1546,7 @@ async function pipeAgentSseStream(
   controller: ReadableStreamDefaultController<Uint8Array>,
 ): Promise<void> {
   let emittedErrorChunk = false;
-  const reader = stream.fullStream.getReader();
+  const reader = stream.stream.getReader();
 
   while (true) {
     const { done, value } = await reader.read();
@@ -1580,7 +1580,7 @@ async function pipeAgentNatsStream(
   publisher: NatsPublisher,
 ): Promise<void> {
   let emittedErrorChunk = false;
-  const reader = stream.fullStream.getReader();
+  const reader = stream.stream.getReader();
 
   while (true) {
     const { done, value } = await reader.read();
@@ -1611,7 +1611,7 @@ async function pipeAgentNatsStream(
 // ReadableStream. This adapter also finalizes tracing/usage when the channel
 // drains the stream directly instead of calling stream.consumeStream().
 async function* readAgentFullStream(stream: AgentLoopStream): AsyncIterable<unknown> {
-  const reader = stream.fullStream.getReader();
+  const reader = stream.stream.getReader();
   try {
     while (true) {
       const { done, value } = await reader.read();

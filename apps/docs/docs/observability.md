@@ -28,7 +28,11 @@ flowchart LR
 - **stdout** — always, unmodified; the CloudWatch fallback and the source for metric
   filters (see [Runtime Telemetry](operations.md#runtime-telemetry)).
 - **OTLP** — best-effort to `OTEL_EXPORTER_OTLP_ENDPOINT` (`/v1/logs`, `/v1/traces`),
-  landing in **Loki** and **Tempo** as the long-term store.
+  landing in **Loki** and **Tempo** as the long-term store. SDK-native gen-ai spans
+  come from the AI SDK v7 `@ai-sdk/otel` integration, registered against the same
+  tracer at init (`registerTelemetry(new OpenTelemetry({ tracer }))`); inputs/outputs
+  are not recorded on those spans because the harness's own span rows already carry
+  the redacted payloads.
 - **NATS** — INFO/WARN/ERROR only, and only when an *observability context* is set
   (project + environment + endpoint id). This is the live path the dashboard tails.
 
@@ -43,7 +47,7 @@ dashboard stream all correlate:
 
 NATS subjects encode the routable subset (`functions/_shared/nats.ts`):
 
-```
+```text
 v1.<accountId>.<project>.<base64url(environment)>.{logs|traces}.<endpointId>
 ```
 

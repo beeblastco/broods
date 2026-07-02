@@ -261,6 +261,18 @@ describe("agent config", () => {
       },
     })).toThrow("config.model.providerOptions must be an object");
 
+    // Unified v7 reasoning setting: level enum, not provider thinking objects.
+    expect(() => normalizeAgentConfig({
+      model: {
+        reasoning: "very-high",
+      },
+    })).toThrow("config.model.reasoning must be one of: provider-default, none, minimal, low, medium, high, xhigh");
+    expect(normalizeAgentConfig({
+      model: {
+        reasoning: "high",
+      },
+    })).toMatchObject({ model: { reasoning: "high" } });
+
     expect(normalizeAgentConfig({
       agent: {
         system: [{

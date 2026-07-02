@@ -3,7 +3,8 @@
  * Keep static tool imports and agent-configured tool selection here.
  *
  * Sandbox tools (bash/read/write/edit/glob/grep) are enabled by the presence of
- * a referenced sandbox + workspaces, gated by the sandbox's permissionMode.
+ * a referenced sandbox + workspaces. Approval is produced as AI SDK v7
+ * toolApproval in the harness.
  * config.tools-driven tools (search/research/handoffs) remain opt-in.
  */
 
@@ -62,6 +63,7 @@ export interface ToolContext {
   // (agent bash/fs => role "agent"; uploaded custom tools => role "tool").
   onSandboxCpu?: (sample: SandboxCpuSample) => void;
   sandboxMetadata?: SandboxRunMetadata;
+  approvalRequirements?: Map<string, true>;
 }
 
 type ToolFactory = (context: ToolContext) => ToolSet;
@@ -84,8 +86,7 @@ export async function createTools(context: Omit<ToolContext, "config">, agentCon
   //  - read/glob: every workspace (sandbox-backed via the mount, read-only
   //    workspaces straight from S3).
   //  - write/edit/grep: sandbox-backed workspaces only.
-  // Each tool sets its own per-call `needsApproval` from the selected
-  // workspace's permissionMode, so workspaces can differ in approval policy.
+  // Per-call sandbox approval is handled by the harness-level v7 toolApproval.
   const workspaces = context.workspaces ?? [];
   const sandboxWorkspaces = workspaces.filter((workspace) => workspace.sandbox);
   const statelessSandbox = workspaces.length === 0 ? context.statelessSandbox : undefined;
@@ -179,23 +180,21 @@ export async function createTools(context: Omit<ToolContext, "config">, agentCon
       continue;
     }
 
-    Object.assign(tools, withToolApproval(toolFactory({
+    if (toolConfig.needsApproval === true) context.approvalRequirements?.set(toolName, true);
+    Object.assign(tools, toolFactory({
       ...context,
       config: externalToolRuntimeConfig(toolConfig),
-    }), {
-      [toolName]: toolConfig.needsApproval === true,
     }));
     addAsyncModeIfConfigured(asyncModes, toolName, toolConfig, "built-in");
   }
 
   const handoffsConfig = agentConfig.tools?.handoffs;
   if (isToolEnabled(handoffsConfig)) {
-    Object.assign(tools, withToolApproval(handoffsTool({
+    if (handoffsConfig.needsApproval === true) context.approvalRequirements?.set("handoffs", true);
+    Object.assign(tools, handoffsTool({
       ...context,
       channels: agentConfig.channels,
       config: externalToolRuntimeConfig(handoffsConfig),
-    }), {
-      handoffs: handoffsConfig.needsApproval === true,
     }));
     addAsyncModeIfConfigured(asyncModes, "handoffs", handoffsConfig, "built-in");
   }
@@ -215,12 +214,11 @@ export async function createTools(context: Omit<ToolContext, "config">, agentCon
     if (tools[record.name]) {
       throw new Error(`config.tools.${toolId} model-facing name '${record.name}' conflicts with another tool`);
     }
-    Object.assign(tools, withToolApproval(accountTool(record, {
+    if (toolConfig.needsApproval === true) context.approvalRequirements?.set(record.name, true);
+    Object.assign(tools, accountTool(record, {
       ...context,
       accountId,
       config: externalToolRuntimeConfig(toolConfig),
-    }), {
-      [record.name]: toolConfig.needsApproval === true,
     }));
     addAsyncModeIfConfigured(asyncModes, record.name, toolConfig, "uploaded");
     // Warm the tool's sandbox pod now, in parallel with the model's first
@@ -244,15 +242,6 @@ export async function createTools(context: Omit<ToolContext, "config">, agentCon
   return context.dispatchAsyncTools
     ? context.dispatchAsyncTools(tools, asyncModes)
     : tools;
-}
-
-function withToolApproval(tools: ToolSet, approvals: Record<string, boolean>): ToolSet {
-  return Object.fromEntries(
-    Object.entries(tools).map(([toolName, entry]) => [
-      toolName,
-      approvals[toolName] === true ? { ...entry, needsApproval: true } : entry,
-    ]),
-  ) satisfies ToolSet;
 }
 
 function assertSupportedConfiguredTools(tools: AgentConfig["tools"]): void {

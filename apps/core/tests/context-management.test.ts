@@ -28,6 +28,7 @@ const getAgentMock = mock(async (_accountId: string, agentId: string) => ({
 }));
 
 mock.module("@ai-sdk/google", () => ({
+  createGoogle: createGoogleMock,
   createGoogleGenerativeAI: createGoogleMock,
 }));
 

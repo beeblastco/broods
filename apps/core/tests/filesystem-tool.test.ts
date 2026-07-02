@@ -142,6 +142,20 @@ function readonlyMountCtx() {
   } as never;
 }
 
+async function approvalStatus(toolName: string, input: Record<string, unknown>, ctx: {
+  workspaces?: unknown[];
+  statelessSandbox?: unknown;
+  statelessPermissionMode?: unknown;
+}) {
+  const { compatibilityApprovalStatus } = await import("../functions/harness-processing/policy.ts");
+  return compatibilityApprovalStatus(toolName, input, {
+    configuredApprovals: new Map(),
+    workspaces: (ctx.workspaces ?? []) as never,
+    ...(ctx.statelessSandbox ? { statelessSandbox: ctx.statelessSandbox as never } : {}),
+    ...(typeof ctx.statelessPermissionMode === "string" ? { statelessPermissionMode: ctx.statelessPermissionMode as never } : {}),
+  });
+}
+
 // The compiled bash the tool sent lands in the body of the exec POST to the VM.
 function lastSandboxExec() {
   const call = microvmFetchMock.mock.calls.at(-1) as [string, { body: string }] | undefined;
@@ -375,26 +389,16 @@ describe("read-only mount workspace (default)", () => {
 });
 
 describe("write/edit approval policy", () => {
-  // Returns the raw tool entry so the per-call `needsApproval` predicate is visible.
-  async function approval(name: "write" | "edit" | "bash", ctx: never) {
-    const mod = await import(`../functions/harness-processing/tools/${name}.tool.ts`);
-    return mod.default(ctx)[name] as { needsApproval(input: Record<string, unknown>): boolean };
-  }
-
   it("a read-only workspace never prompts — it falls through to the clean error", async () => {
     // No sandbox => nothing to approve. Without this, permissionMode defaults to
     // "ask" and the write would prompt for an approval it can never satisfy.
-    const write = await approval("write", readonlyCtx());
-    expect(write.needsApproval({ file_path: "a.txt", content: "x" })).toBe(false);
-    const bash = await approval("bash", readonlyCtx());
-    expect(bash.needsApproval({ command: "ls" })).toBe(false);
+    await expect(approvalStatus("write", { file_path: "a.txt", content: "x" }, readonlyCtx())).resolves.toBeUndefined();
+    await expect(approvalStatus("bash", { command: "ls" }, readonlyCtx())).resolves.toBeUndefined();
   });
 
   it("a sandbox-backed workspace follows its permissionMode", async () => {
-    const ask = await approval("edit", workspaceCtx({ permissionMode: "ask" }));
-    expect(ask.needsApproval({ file_path: "a.txt" })).toBe(true);
-    const bypass = await approval("edit", workspaceCtx({ permissionMode: "bypass" }));
-    expect(bypass.needsApproval({ file_path: "a.txt" })).toBe(false);
+    await expect(approvalStatus("edit", { file_path: "a.txt" }, workspaceCtx({ permissionMode: "ask" }))).resolves.toBe("user-approval");
+    await expect(approvalStatus("edit", { file_path: "a.txt" }, workspaceCtx({ permissionMode: "bypass" }))).resolves.toBeUndefined();
   });
 });
 

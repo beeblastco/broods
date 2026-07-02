@@ -6,7 +6,7 @@
 import { createAmazonBedrock } from "@ai-sdk/amazon-bedrock";
 import { createAnthropic } from "@ai-sdk/anthropic";
 import { createGateway } from "@ai-sdk/gateway";
-import { createGoogleGenerativeAI } from "@ai-sdk/google";
+import { createGoogle } from "@ai-sdk/google";
 import { createOpenAI } from "@ai-sdk/openai";
 import { createMinimax } from "vercel-minimax-ai-provider";
 import { jsonSchema, Output, type LanguageModel } from "ai";
@@ -37,7 +37,7 @@ export function resolveConfiguredModel(agentConfig: AgentConfig): ResolvedModelP
 
   switch (providerName) {
     case "google":
-      return resolveProviderModel(providerName, createGoogleGenerativeAI(providerConfig as never), modelId);
+      return resolveProviderModel(providerName, createGoogle(providerConfig as never), modelId);
     case "openai":
       return resolveProviderModel(providerName, createOpenAI(providerConfig as never), modelId);
     case "anthropic":

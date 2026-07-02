@@ -4,7 +4,7 @@
  * Account types and auth live in `./accounts.ts` and `../auth.ts`.
  */
 
-import type { CallSettings, JSONSchema7, SystemModelMessage, streamText } from "ai";
+import type { JSONSchema7, LanguageModelCallOptions, RequestOptions, SystemModelMessage, streamText } from "ai";
 import { systemModelMessageSchema } from "ai";
 import type { DiscordAdapterConfig } from "@chat-adapter/discord";
 import type { GitHubAdapterConfig } from "@chat-adapter/github";
@@ -15,6 +15,10 @@ import { requireEnv } from "../env.ts";
 import { assertPublicHttpsUrl } from "../http.ts";
 import { isPlainObject, isStringRecord } from "../object.ts";
 import { isAccountToolId } from "./account-tools.ts";
+import {
+  normalizeAgentPolicyConfig,
+  type AgentPolicyConfig,
+} from "./agent-policy.ts";
 import {
   accountModelProviderNames,
   isAccountModelProviderName,
@@ -55,6 +59,7 @@ export interface AgentConfig {
   tools?: AgentToolsConfig;
   skills?: AgentSkillsConfig;
   subagent?: AgentSubagentConfig;
+  policy?: AgentPolicyConfig;
   // Opt-in flag for the public runtime endpoint (SSE/WebSocket via the
   // environment runtime key). Off by default: when not `true` the deployment
   // (public-key) request path is refused. Internal callers (account/admin
@@ -78,9 +83,10 @@ export interface RunOverrides {
   model?: Partial<AgentModelConfig>;
 }
 
-// A per-run `model` override may tune sampling (the Vercel AI SDK `CallSettings`:
-// temperature, topP, topK, maxOutputTokens, …) and provider-specific
-// `providerOptions`. Identity/credential keys are rejected.
+// A per-run `model` override may tune sampling (the Vercel AI SDK
+// `LanguageModelCallOptions`: temperature, topP, topK, maxOutputTokens,
+// reasoning, …) and provider-specific `providerOptions`. Identity/credential
+// keys are rejected.
 export const RUN_OVERRIDE_RESERVED_MODEL_KEYS = [
   "provider",
   "modelId",
@@ -103,6 +109,7 @@ export const MODEL_CONFIG_SETTING_KEYS = [
   "frequencyPenalty",
   "stopSequences",
   "seed",
+  "reasoning",
   "maxRetries",
   "timeout",
 ] as const;
@@ -121,7 +128,7 @@ export interface AgentSubagentConfig {
   [key: string]: unknown;
 }
 
-export interface AgentModelConfig extends Omit<CallSettings, "abortSignal" | "headers"> {
+export interface AgentModelConfig extends LanguageModelCallOptions, Pick<RequestOptions, "maxRetries" | "timeout"> {
   provider?: AccountModelProviderName;
   modelId?: string;
   providerOptions?: AgentModelProviderOptions;
@@ -322,6 +329,7 @@ export function toRuntimeAgentConfig(config: AgentConfig): AgentConfig {
     tools,
     skills,
     subagent,
+    policy,
     publicAccess,
   } = config;
 
@@ -336,6 +344,7 @@ export function toRuntimeAgentConfig(config: AgentConfig): AgentConfig {
     ...(tools !== undefined ? { tools } : {}),
     ...(skills !== undefined ? { skills } : {}),
     ...(subagent !== undefined ? { subagent } : {}),
+    ...(policy !== undefined ? { policy } : {}),
     ...(publicAccess !== undefined ? { publicAccess } : {}),
   });
 }
@@ -377,6 +386,8 @@ export function normalizeAgentConfig(value: unknown): AgentConfig {
   normalizeToolsConfig(config.tools);
   normalizeSkillsConfig(config.skills);
   normalizeSubagentConfig(config.subagent);
+  const policy = normalizeAgentPolicyConfig(config.policy);
+  if (policy) config.policy = policy;
   assertOptionalBoolean(config.publicAccess, "config.publicAccess");
 
   return config as AgentConfig;
@@ -456,6 +467,15 @@ function normalizeModelConfig(value: unknown): void {
   }
   assertOptionalProviderName(config.provider, "config.model.provider");
   assertOptionalString(config.modelId, "config.model.modelId");
+  assertOptionalEnum(config.reasoning, "config.model.reasoning", [
+    "provider-default",
+    "none",
+    "minimal",
+    "low",
+    "medium",
+    "high",
+    "xhigh",
+  ]);
   if (config.providerOptions !== undefined && !isPlainObject(config.providerOptions)) {
     throw new Error("config.model.providerOptions must be an object");
   }

@@ -110,6 +110,7 @@ function inMemoryStorage(): StorageProvider {
 	    crons: {} as never,
     sandboxConfigs: {} as never,
     workspaceConfigs: {} as never,
+    agentPolicies: {} as never,
     accountTools: {
       async getById(accountId, toolId) {
         return records.get(`${accountId}:${toolId}`) ?? null;

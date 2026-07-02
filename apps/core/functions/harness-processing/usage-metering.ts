@@ -1,12 +1,34 @@
 /**
- * Per-task cache-write token metering. Cache-write tokens are not in the Vercel
- * AI SDK's normalised usage (cache-READ is, via usage.cachedInputTokens) — they
- * live in per-provider providerMetadata. Only Anthropic, Bedrock (Anthropic),
- * and Google bill for cache creation; OpenAI does not break it out.
+ * Per-task token metering helpers. Flattens the AI SDK v7 `LanguageModelUsage`
+ * shape (nested input/output token details) for span attributes and usage rows,
+ * and meters cache-write tokens with a providerMetadata fallback for providers
+ * that only surface cache creation there.
  */
 
+import type { LanguageModelUsage } from "ai";
 import { canonicalModelProvider, PROVIDER_CACHE_WRITE_FIELDS } from "@broods/convex/modelPricing";
 import { isPlainObject } from "../_shared/object.ts";
+
+export interface UsageTokenTotals {
+  inputTokens: number;
+  outputTokens: number;
+  reasoningTokens: number;
+  cachedInputTokens: number;
+  cacheWriteTokens: number;
+  totalTokens: number;
+}
+
+// Absent counts read as 0 so span attributes and usage rows stay numeric.
+export function usageTokenTotals(usage: LanguageModelUsage | undefined): UsageTokenTotals {
+  return {
+    inputTokens: usage?.inputTokens ?? 0,
+    outputTokens: usage?.outputTokens ?? 0,
+    reasoningTokens: usage?.outputTokenDetails?.reasoningTokens ?? 0,
+    cachedInputTokens: usage?.inputTokenDetails?.cacheReadTokens ?? 0,
+    cacheWriteTokens: usage?.inputTokenDetails?.cacheWriteTokens ?? 0,
+    totalTokens: usage?.totalTokens ?? 0,
+  };
+}
 
 // Cache-write tokens for one step; 0 when the provider doesn't break them out,
 // the field is absent, or metadata is missing. Never throws.

@@ -55,7 +55,8 @@ export async function compactSessionContext(input: CompactionInput): Promise<Sys
   const result = await generateText({
     ...modelSettingsFromModelConfig(input.agentConfig),
     model: configuredModel.model,
-    system: DEFAULT_COMPACTION_PROMPT,
+    instructions: DEFAULT_COMPACTION_PROMPT,
+    telemetry: { functionId: "harness.compaction", recordInputs: false, recordOutputs: false },
     messages: [{
       role: "user",
       content: formatMessagesForCompaction(compactableContext),

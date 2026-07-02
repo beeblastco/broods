@@ -34,7 +34,7 @@ let streamTextScenario:
   | "multi-step-text" = "empty";
 
 const streamTextMock = mock((options: {
-  experimental_onStepStart?: (args: {
+  onStepStart?: (args: {
     stepNumber: number;
     model: { provider: string; modelId: string };
     messages: unknown[];
@@ -42,20 +42,19 @@ const streamTextMock = mock((options: {
     activeTools?: string[];
     metadata?: Record<string, unknown>;
   }) => Promise<void>;
-  experimental_onToolCallStart?: (args: {
-    stepNumber?: number;
+  onToolExecutionStart?: (args: {
     toolCall: { toolCallId: string; toolName: string; input?: unknown };
   }) => Promise<void>;
-  experimental_onToolCallFinish?: (args: {
-    stepNumber?: number;
+  onToolExecutionEnd?: (args: {
     toolCall: { toolCallId: string; toolName: string; input?: unknown };
-    durationMs: number;
-    success: boolean;
-    error?: unknown;
+    toolExecutionMs: number;
+    toolOutput:
+      | { type: "tool-result"; output: unknown }
+      | { type: "tool-error"; error: unknown };
   }) => Promise<void>;
   onChunk?: unknown;
   onError(args: { error: unknown }): Promise<void>;
-  onFinish(args: {
+  onEnd(args: {
     response: {
       messages: unknown[];
       id?: string;
@@ -82,7 +81,7 @@ const streamTextMock = mock((options: {
     providerMetadata?: Record<string, unknown>;
     metadata?: Record<string, unknown>;
   }): Promise<void>;
-  onStepFinish?(args: {
+  onStepEnd?(args: {
     stepNumber: number;
     model: { provider: string; modelId: string };
     finishReason: string;
@@ -104,11 +103,12 @@ const streamTextMock = mock((options: {
   }): Promise<void>;
   output?: unknown;
   stopWhen?: unknown;
-  system?: unknown;
+  instructions?: unknown;
   tools?: unknown;
+  toolApproval?: unknown;
 }) => {
   let consumed = false;
-  const fullStream = new ReadableStream({
+  const stream = new ReadableStream({
     async start(controller) {
       if (streamTextScenario === "hard-throw") {
         controller.error(new Error("stream transport failed"));
@@ -123,7 +123,7 @@ const streamTextMock = mock((options: {
       if (streamTextScenario === "error-no-finish") {
         // Mimic the real AI SDK: a run that errors before any step completes (a
         // usage-limit error on the first model call) fires onError but SKIPS
-        // onFinish, so a fullStream-draining caller never finalizes on its own.
+        // onEnd, so a stream-draining caller never finalizes on its own.
         await options.onError({ error: new Error("provider failed") });
         controller.enqueue({ type: "error", error: new Error("provider failed") });
         controller.close();
@@ -141,7 +141,7 @@ const streamTextMock = mock((options: {
             input: { shell: "rm file.txt" },
           },
         };
-        await options.onFinish({
+        await options.onEnd({
           response: {
             messages: [{
               role: "assistant",
@@ -169,14 +169,14 @@ const streamTextMock = mock((options: {
       }
 
       if (streamTextScenario === "structured-output") {
-        await options.experimental_onStepStart?.({
+        await options.onStepStart?.({
           stepNumber: 0,
           model: { provider: "google", modelId: "gemini-custom" },
           messages: [{ role: "user", content: "hello" }],
           tools: options.tools as Record<string, unknown> | undefined,
           metadata: { run: "test" },
         });
-        await options.onStepFinish?.({
+        await options.onStepEnd?.({
           stepNumber: 0,
           model: { provider: "google", modelId: "gemini-custom" },
           finishReason: "stop",
@@ -199,7 +199,7 @@ const streamTextMock = mock((options: {
           providerMetadata: { google: { safetyRatings: [] } },
           metadata: { run: "test" },
         });
-        await options.onFinish({
+        await options.onEnd({
           response: {
             messages: [{ role: "assistant", content: "{\"answer\":\"done\"}" }],
             id: "response-1",
@@ -233,24 +233,22 @@ const streamTextMock = mock((options: {
           toolName: "bash",
           input: { shell: "ls" },
         };
-        await options.experimental_onStepStart?.({
+        await options.onStepStart?.({
           stepNumber: 0,
           model: { provider: "google", modelId: "gemini-custom" },
           messages: [{ role: "user", content: "hello" }],
           tools: options.tools as Record<string, unknown> | undefined,
           metadata: { run: "test" },
         });
-        await options.experimental_onToolCallStart?.({
-          stepNumber: 0,
+        await options.onToolExecutionStart?.({
           toolCall,
         });
-        await options.experimental_onToolCallFinish?.({
-          stepNumber: 0,
+        await options.onToolExecutionEnd?.({
           toolCall,
-          durationMs: 12,
-          success: true,
+          toolExecutionMs: 12,
+          toolOutput: { type: "tool-result", output: { type: "text", value: "file.txt" } },
         });
-        await options.onStepFinish?.({
+        await options.onStepEnd?.({
           stepNumber: 0,
           model: { provider: "google", modelId: "gemini-custom" },
           finishReason: "stop",
@@ -273,7 +271,7 @@ const streamTextMock = mock((options: {
           },
           metadata: { run: "test" },
         });
-        await options.onFinish({
+        await options.onEnd({
           response: {
             messages: [{ role: "assistant", content: "done" }],
             id: "response-1",
@@ -294,7 +292,7 @@ const streamTextMock = mock((options: {
       }
 
       if (streamTextScenario === "multi-step-text") {
-        await options.onStepFinish?.({
+        await options.onStepEnd?.({
           stepNumber: 0,
           model: { provider: "google", modelId: "gemini-custom" },
           finishReason: "tool-calls",
@@ -312,7 +310,7 @@ const streamTextMock = mock((options: {
           },
           text: "Let me try again:",
         });
-        await options.onStepFinish?.({
+        await options.onStepEnd?.({
           stepNumber: 1,
           model: { provider: "google", modelId: "gemini-custom" },
           finishReason: "stop",
@@ -330,7 +328,7 @@ const streamTextMock = mock((options: {
           },
           text: "Final answer only.",
         });
-        await options.onFinish({
+        await options.onEnd({
           response: {
             messages: [{ role: "assistant", content: "Let me try again:\n\nFinal answer only." }],
             id: "response-2",
@@ -350,7 +348,7 @@ const streamTextMock = mock((options: {
         return;
       }
 
-      await options.onFinish({
+      await options.onEnd({
         response: { messages: [] },
         text: "   ",
         finishReason: "stop",
@@ -364,20 +362,21 @@ const streamTextMock = mock((options: {
   });
 
   return {
-    fullStream,
+    stream,
     async consumeStream() {
       if (consumed) {
         return;
       }
 
       consumed = true;
-      const reader = fullStream.getReader();
+      const reader = stream.getReader();
       while (!(await reader.read()).done) { }
     },
   };
 });
 
 mock.module("@ai-sdk/google", () => ({
+  createGoogle: createGoogleMock,
   createGoogleGenerativeAI: createGoogleMock,
 }));
 
@@ -476,8 +475,8 @@ describe("runAgentLoop", () => {
     expect(streamTextMock.mock.calls[0]?.[0]).not.toHaveProperty("tools");
     expect(streamTextMock.mock.calls[0]?.[0]).not.toHaveProperty("providerOptions");
     expect(typeof streamTextMock.mock.calls[0]?.[0].onChunk).toBe("function");
-    expect(typeof streamTextMock.mock.calls[0]?.[0].experimental_onToolCallStart).toBe("function");
-    expect(typeof streamTextMock.mock.calls[0]?.[0].experimental_onToolCallFinish).toBe("function");
+    expect(typeof streamTextMock.mock.calls[0]?.[0].onToolExecutionStart).toBe("function");
+    expect(typeof streamTextMock.mock.calls[0]?.[0].onToolExecutionEnd).toBe("function");
   });
 
   it("sends configured lifecycle webhooks for agent events", async () => {
@@ -640,10 +639,10 @@ describe("runAgentLoop", () => {
     expect(usageWrites[0]?.input?.TransactItems?.[0]?.Put?.Item?.status?.S).toBe("failed");
   });
 
-  it("finalizes via ensureFinalized when a caller drains fullStream and onFinish never fires", async () => {
-    // The channel progress streamer reads fullStream directly instead of calling
+  it("finalizes via ensureFinalized when a caller drains stream and onEnd never fires", async () => {
+    // The channel progress streamer reads stream directly instead of calling
     // consumeStream. When the model errors before any step completes (a usage-limit
-    // error on the first call), the AI SDK fires onError but skips onFinish, so the
+    // error on the first call), the AI SDK fires onError but skips onEnd, so the
     // task would never finalize and its trace span would spin "running" forever.
     // ensureFinalized() is the safety net that path must call.
     streamTextScenario = "error-no-finish";
@@ -686,8 +685,8 @@ describe("runAgentLoop", () => {
       onErrorText,
     });
 
-    // Drain fullStream the way the channel streamer does (no consumeStream call).
-    const reader = stream.fullStream.getReader();
+    // Drain stream the way the channel streamer does (no consumeStream call).
+    const reader = stream.stream.getReader();
     while (true) {
       const { done } = await reader.read();
       if (done) break;
@@ -778,14 +777,16 @@ describe("runAgentLoop", () => {
         },
       ],
     }]);
-    // bash now sets a per-call needsApproval function (resolves the selected
-    // workspace's mode); stateless "ask" => approval required.
-    const bashNeedsApproval = (streamTextMock.mock.calls[0]?.[0].tools as {
-      bash: { needsApproval: (input: unknown, options: unknown) => boolean | Promise<boolean> };
-    }).bash.needsApproval;
-    expect(typeof bashNeedsApproval).toBe("function");
-    expect(await bashNeedsApproval({}, { toolCallId: "t", messages: [] })).toBe(true);
-    expect(streamTextMock.mock.calls[0]?.[0].system).toEqual([]);
+    const toolApproval = streamTextMock.mock.calls[0]?.[0].toolApproval as (event: unknown) => Promise<unknown>;
+    expect(typeof toolApproval).toBe("function");
+    await expect(toolApproval({
+      toolCall: { type: "tool-call", toolCallId: "t", toolName: "bash", input: {} },
+      tools: streamTextMock.mock.calls[0]?.[0].tools,
+      toolsContext: {},
+      runtimeContext: {},
+      messages: [],
+    })).resolves.toBe("user-approval");
+    expect(streamTextMock.mock.calls[0]?.[0].instructions).toEqual([]);
   });
 
   it("passes agent model config into streamText", async () => {
@@ -820,6 +821,7 @@ describe("runAgentLoop", () => {
         modelId: "gemini-custom",
         temperature: 0.2,
         maxOutputTokens: 2048,
+        reasoning: "low",
         providerOptions: {
           google: {
             thinkingConfig: {
@@ -838,6 +840,8 @@ describe("runAgentLoop", () => {
       model: { provider: "google", modelId: "gemini-custom" },
       temperature: 0.2,
       maxOutputTokens: 2048,
+      // Unified v7 reasoning setting flows through as a plain model setting.
+      reasoning: "low",
       providerOptions: {
         google: {
           thinkingConfig: {

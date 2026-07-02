@@ -4,16 +4,18 @@
  */
 
 import {
-  stepCountIs,
+  isStepCount,
   streamText,
   type AssistantModelMessage,
   type JSONValue,
+  type LanguageModelUsage,
   type ModelMessage,
   type StepResult,
   type ToolCallPart,
   type ToolApprovalRequestOutput,
   type ToolSet,
 } from "ai";
+import { NoSuchProviderReferenceError, UnsupportedFunctionalityError } from "@ai-sdk/provider";
 import {
   context as otelContextApi,
   SpanStatusCode,
@@ -22,9 +24,9 @@ import {
   type Span,
 } from "@opentelemetry/api";
 import type { AgentConfig } from "../_shared/storage/index.ts";
-import { collectSecretValues, logDebug, logError, logInfo, redact, redactSensitiveText } from "../_shared/log.ts";
+import { collectSecretValues, logDebug, logError, logInfo, logWarn, redact, redactSensitiveText } from "../_shared/log.ts";
 import { recordUsageTask } from "../_shared/telemetry.ts";
-import { extractCacheWriteTokens } from "./usage-metering.ts";
+import { extractCacheWriteTokens, usageTokenTotals } from "./usage-metering.ts";
 import {
   getTracer,
   forceFlushOtel,
@@ -48,6 +50,7 @@ import type { Session, TurnContextSnapshot } from "./session.ts";
 import type { RunAsyncToolDispatch } from "./async-tools.ts";
 import { createAgentLifecycleEmitter, toLifecycleValue } from "./lifecycle.ts";
 import { createTools } from "./tools/index.ts";
+import { createPolicyToolApproval, createRuntimeToolApproval } from "./policy.ts";
 import type { SandboxCpuSample } from "./sandbox/types.ts";
 import type { RunSubagentDispatch } from "./tools/run-subagent.tool.ts";
 
@@ -324,6 +327,18 @@ export async function runAgentLoop(
     }
   }
 
+  const policyToolApproval = await createPolicyToolApproval(agentConfig, {
+    accountId: session.accountId,
+    project: session.projectSlug,
+    environment: session.environmentSlug,
+    endpointId: session.endpointId,
+    agentId: session.agentId,
+    conversationKey: session.conversationKey,
+    delivery: session.delivery?.kind ?? "direct",
+    channel: session.delivery?.kind === "channel" ? session.delivery.channelName : undefined,
+  }, resolvedWorkspaces);
+
+  const configuredApprovals = new Map<string, true>();
   const tools = {
     ...await createTools({
       accountId: session.accountId,
@@ -336,6 +351,7 @@ export async function runAgentLoop(
       session: session,
       dispatchAsyncTools: options.dispatchAsyncTools,
       onSandboxCpu: recordSandboxCpu,
+      approvalRequirements: configuredApprovals,
       sandboxMetadata: {
         traceId: traceId,
         taskId: session.eventId,
@@ -354,6 +370,13 @@ export async function runAgentLoop(
         : {}),
     }, agentConfig),
   } satisfies ToolSet;
+  const toolApproval = createRuntimeToolApproval({
+    configuredApprovals,
+    workspaces: resolvedWorkspaces,
+    ...(statelessSandbox ? { statelessSandbox } : {}),
+    statelessPermissionMode: session.statelessPermissionMode(),
+    ...(policyToolApproval ? { policyApproval: policyToolApproval } : {}),
+  });
   const enabledTools = Object.keys(tools).length > 0 ? tools : undefined;
   const modelSettings = modelSettingsFromModelConfig(agentConfig);
   const modelOutput = modelOutputFromModelConfig(agentConfig);
@@ -366,6 +389,7 @@ export async function runAgentLoop(
   // Their real OTel IDs are reused in the live NATS trace rows.
   const stepSpans = new Map<number, TrackedSpan>();
   const toolSpans = new Map<string, TrackedSpan>();
+  const toolStepNumbers = new Map<string, number | undefined>();
   const startTrackedSpan = (
     name: "model.step" | "tool.call",
     startTimeMs: number,
@@ -436,12 +460,12 @@ export async function runAgentLoop(
   // freeze the process.
   let usageFinalized = false;
   let finishObserved = false;
-  let taskUsage: unknown;
+  let taskUsage: LanguageModelUsage | undefined;
   let taskStepCount = 0;
   let terminalError: Error | undefined;
   const finalizeUsage = async (
     status: "completed" | "failed",
-    usage: unknown,
+    usage: LanguageModelUsage | undefined,
     stepCount: number,
     toolCallCount: number,
     durationMs: number,
@@ -449,6 +473,7 @@ export async function runAgentLoop(
   ): Promise<void> => {
     if (usageFinalized) return;
     usageFinalized = true;
+    const taskTokens = usageTokenTotals(usage);
 
     const context = getObservabilityContext();
     const sanitizedError = error
@@ -487,7 +512,6 @@ export async function runAgentLoop(
     stepSpans.clear();
     // Task totals on the root span: token usage and sandbox CPU split per provider
     // so the dashboard reads final usage straight off the trace stream.
-    const totals = (usage ?? {}) as Record<string, number | undefined>;
     const cpuUsecByType = new Map<string, number>();
     for (const sample of sandboxUsageByKey.values()) {
       cpuUsecByType.set(sample.type, (cpuUsecByType.get(sample.type) ?? 0) + sample.cpuUsec);
@@ -514,11 +538,11 @@ export async function runAgentLoop(
         "agent.tool_call_count": toolCallCount,
         "agent.model_provider": configuredModel.providerName,
         "agent.model_id": agentConfig.model?.modelId,
-        "usage.input_tokens": totals.inputTokens ?? 0,
-        "usage.output_tokens": totals.outputTokens ?? 0,
-        "usage.reasoning_tokens": totals.reasoningTokens ?? 0,
-        "usage.cached_input_tokens": totals.cachedInputTokens ?? 0,
-        "usage.total_tokens": totals.totalTokens ?? 0,
+        "usage.input_tokens": taskTokens.inputTokens,
+        "usage.output_tokens": taskTokens.outputTokens,
+        "usage.reasoning_tokens": taskTokens.reasoningTokens,
+        "usage.cached_input_tokens": taskTokens.cachedInputTokens,
+        "usage.total_tokens": taskTokens.totalTokens,
         ...sandboxCpuAttributes,
       },
       ...(sanitizedError ? { error: sanitizedError.message } : {}),
@@ -545,7 +569,6 @@ export async function runAgentLoop(
     // dashboard load can keep a stale "running" copy of an already-finished task.
     const rootPublished = publishSpan(rootSpanRow);
 
-    const u = (usage ?? {}) as Record<string, number | undefined>;
     try {
       await recordUsageTask({
         accountId: session.accountId ?? "",
@@ -558,12 +581,12 @@ export async function runAgentLoop(
         finishedAt: endTimeMs,
         durationMs,
         status,
-        inputTokens: u.inputTokens ?? 0,
-        outputTokens: u.outputTokens ?? 0,
-        reasoningTokens: u.reasoningTokens ?? 0,
-        cachedInputTokens: u.cachedInputTokens ?? 0,
+        inputTokens: taskTokens.inputTokens,
+        outputTokens: taskTokens.outputTokens,
+        reasoningTokens: taskTokens.reasoningTokens,
+        cachedInputTokens: taskTokens.cachedInputTokens,
         cacheWriteTokens: taskCacheWriteTokens,
-        totalTokens: u.totalTokens ?? 0,
+        totalTokens: taskTokens.totalTokens,
         runtimeKind: "lambda",
         runtimeWallMs: durationMs,
         runtimeMemoryMb: parseInt(process.env.AWS_LAMBDA_FUNCTION_MEMORY_SIZE ?? "0", 10),
@@ -601,12 +624,17 @@ export async function runAgentLoop(
     maxOutputTokens: 16000,
     ...modelSettings,
     model: configuredModel.model,
-    system: turnContext.system,
+    instructions: turnContext.system,
     messages: turnContext.messages,
     ...(modelOutput ? { output: modelOutput } : {}),
     ...(enabledTools ? { tools: enabledTools } : {}),
+    ...(toolApproval ? { toolApproval } : {}),
     ...(providerOptions ? { providerOptions: providerOptions as never } : {}),
-    stopWhen: stepCountIs(agentConfig.agent?.maxTurn ?? MAX_AGENT_ITERATIONS),
+    // SDK-native OTel spans (via the @ai-sdk/otel integration registered in
+    // initOtel). Inputs/outputs are off: the harness's own span rows already
+    // carry redacted response/tool payloads for the dashboard.
+    telemetry: { functionId: "harness.agent", recordInputs: false, recordOutputs: false },
+    stopWhen: isStepCount(agentConfig.agent?.maxTurn ?? MAX_AGENT_ITERATIONS),
     prepareStep: async () => {
       // `systemContextSnapshot` is the persisted system-message snapshot from
       // session.ts. Refresh it before each step so dynamic system context added
@@ -618,20 +646,22 @@ export async function runAgentLoop(
       systemContextSnapshot = refreshed.systemContextSnapshot;
 
       return {
-        system: refreshed.system,
+        instructions: refreshed.system,
       };
     },
     onChunk: ({ chunk }) => {
-      // First chunk of the active step marks the model's time-to-first-token.
+      // First generated chunk of the active step marks the model's time-to-first-token.
       // Synchronous and cheap; onChunk pauses the stream until it returns.
-      if (chunk.type === "raw" || chunk.type === "source") return;
+      // v7 routes EVERY stream part through onChunk — including boundary and
+      // lifecycle parts (start-step, finish-step, finish, …) and post-execution
+      // tool results — so gate on generated-content parts only; anything else
+      // would skew the time-to-first/last-token windows.
+      if (!MODEL_CONTENT_CHUNK_TYPES.has(chunk.type)) return;
       const step = activeStepNumber;
       if (step === undefined) return;
       const now = Date.now();
       if (!firstChunkAt.has(step)) firstChunkAt.set(step, now);
-      // `tool-result` arrives AFTER tool execution; exclude it so streaming time
-      // ends at the last generated token, not after the tool ran.
-      if (chunk.type !== "tool-result") lastModelChunkAt.set(step, now);
+      lastModelChunkAt.set(step, now);
       const bump = (windows: Map<number, StreamWindow>) => {
         const existing = windows.get(step);
         if (existing) existing.last = now;
@@ -653,7 +683,7 @@ export async function runAgentLoop(
         bump(toolInputWindow);
       }
     },
-    experimental_onStepStart: async ({ stepNumber, messages }) => {
+    onStepStart: async ({ stepNumber, messages }) => {
       const now = Date.now();
       stepStartedAt.set(stepNumber, now);
       activeStepNumber = stepNumber;
@@ -691,7 +721,8 @@ export async function runAgentLoop(
         attributes,
       });
     },
-    experimental_onToolCallStart: async ({ stepNumber, toolCall }) => {
+    onToolExecutionStart: async ({ toolCall }) => {
+      const stepNumber = activeStepNumber;
       const now = Date.now();
       logDebug("Tool call started", {
         eventType: "tool.call.started",
@@ -719,6 +750,7 @@ export async function runAgentLoop(
         attributes,
       );
       toolSpans.set(toolCall.toolCallId, tracked);
+      toolStepNumbers.set(toolCall.toolCallId, stepNumber);
       publishSpan({
         traceId: tracked.traceId,
         spanId: tracked.spanId,
@@ -740,7 +772,12 @@ export async function runAgentLoop(
         toolCall: toLifecycleValue(toolCall),
       });
     },
-    experimental_onToolCallFinish: async ({ stepNumber, toolCall, durationMs, success, output, error }) => {
+    onToolExecutionEnd: async ({ toolCall, toolExecutionMs, toolOutput }) => {
+      const stepNumber = toolStepNumbers.get(toolCall.toolCallId);
+      toolStepNumbers.delete(toolCall.toolCallId);
+      const durationMs = toolExecutionMs;
+      const output = toolOutput.type === "tool-result" ? toolOutput.output : undefined;
+      const error = toolOutput.type === "tool-error" ? toolOutput.error : undefined;
       // Close the tool.call span.
       const toolEndMs = Date.now();
       const tracked = toolSpans.get(toolCall.toolCallId) ?? startTrackedSpan(
@@ -752,7 +789,7 @@ export async function runAgentLoop(
       );
       const toolDurationMs = toolEndMs - tracked.startTimeMs;
       const outputErrorText = toolOutputErrorText(output);
-      const toolSucceeded = success && !outputErrorText;
+      const toolSucceeded = toolOutput.type === "tool-result" && !outputErrorText;
       const errorText = toolSucceeded ? undefined : redactSensitiveText(
         outputErrorText ?? errorMessage(error),
         getObservabilityContext()?.secretValues,
@@ -826,7 +863,7 @@ export async function runAgentLoop(
         errorDetails: serializeError(error),
       });
     },
-    onStepFinish: async ({
+    onStepEnd: async ({
       stepNumber,
       finishReason,
       rawFinishReason,
@@ -853,7 +890,22 @@ export async function runAgentLoop(
       // providerMetadata is typed as ProviderMetadata (Record<string, Record<string, unknown>>)
       // by the AI SDK; cast to the shape extractCacheWriteTokens expects.
       const meta = providerMetadata as Record<string, unknown> | undefined;
-      taskCacheWriteTokens += extractCacheWriteTokens(configuredModel.providerName, meta);
+      const stepTokens = usageTokenTotals(usage);
+      taskCacheWriteTokens += stepTokens.cacheWriteTokens || extractCacheWriteTokens(configuredModel.providerName, meta);
+
+      // Provider coercion warnings (e.g. an unsupported `reasoning` level or a
+      // dropped setting) are silent in the stream; surface them in Loki.
+      if (warnings && warnings.length > 0) {
+        logWarn("Model call warnings", {
+          eventType: "model.step.warnings",
+          ...logContext,
+          stepNumber: stepNumber,
+          warnings: warnings.map((warning) => redactSensitiveText(
+            formatCallWarning(warning),
+            getObservabilityContext()?.secretValues,
+          )),
+        });
+      }
 
       await lifecycle.emit("agent.step.finished", {
         stepNumber: stepNumber,
@@ -930,11 +982,11 @@ export async function runAgentLoop(
           ...(reasoningMs !== undefined ? { "model.reasoning_stream_ms": reasoningMs } : {}),
           ...(textMs !== undefined ? { "model.text_stream_ms": textMs } : {}),
           ...(toolInputMs !== undefined ? { "model.tool_input_stream_ms": toolInputMs } : {}),
-          "model.input_tokens": usage.inputTokens ?? 0,
-          "model.output_tokens": usage.outputTokens ?? 0,
-          "model.reasoning_tokens": usage.reasoningTokens ?? 0,
-          "model.cached_input_tokens": usage.cachedInputTokens ?? 0,
-          "model.total_tokens": usage.totalTokens ?? 0,
+          "model.input_tokens": stepTokens.inputTokens,
+          "model.output_tokens": stepTokens.outputTokens,
+          "model.reasoning_tokens": stepTokens.reasoningTokens,
+          "model.cached_input_tokens": stepTokens.cachedInputTokens,
+          "model.total_tokens": stepTokens.totalTokens,
           "model.response": traceAttribute(text),
           "model.reasoning": traceAttribute(reasoningText ?? ""),
           "model.tool_calls": traceAttribute(toolCalls),
@@ -1030,7 +1082,7 @@ export async function runAgentLoop(
       });
       await reply?.onErrorText(errorText).catch(() => { });
     },
-    onFinish: async ({
+    onEnd: async ({
       response,
       text,
       finishReason,
@@ -1038,7 +1090,6 @@ export async function runAgentLoop(
       steps,
       toolCalls,
       usage,
-      totalUsage,
     }) => {
       for (const toolCall of toolCalls) {
         recordToolCallSummary(toolCallSummaries, toolCall, {});
@@ -1048,7 +1099,7 @@ export async function runAgentLoop(
       const stepCount = steps.length;
       const toolCallCount = toolCalls.length;
       finishObserved = true;
-      taskUsage = totalUsage ?? usage;
+      taskUsage = usage;
       taskStepCount = stepCount;
       const approvalRequests = extractApprovalRequests(steps);
       const approvals = approvalRequests.map(summarizeApprovalRequest);
@@ -1064,7 +1115,7 @@ export async function runAgentLoop(
         toolsUsed: tools.toolsUsed,
         toolUsage: tools.toolUsage,
         toolCalls: tools.toolCalls,
-        usage: totalUsage,
+        usage: usage,
       };
 
       try {
@@ -1125,7 +1176,7 @@ export async function runAgentLoop(
             toolsUsed: tools.toolsUsed,
             toolUsage: tools.toolUsage,
             toolCalls: tools.toolCalls,
-            usage: totalUsage ?? usage,
+            usage: usage,
           });
           await lifecycle.emit("agent.failed", {
             error: errorText,
@@ -1189,10 +1240,10 @@ export async function runAgentLoop(
     },
   });
 
-  // Guarantee finalizeUsage runs even when onFinish/onError never fire. The AI SDK
-  // skips onFinish when a run errors before any step completes (e.g. a usage-limit
+  // Guarantee finalizeUsage runs even when onEnd/onError never fire. The AI SDK
+  // skips onEnd when a run errors before any step completes (e.g. a usage-limit
   // error on the first model call) — only onError fires — so a caller that drains
-  // the stream by reading fullStream directly would never finalize and the task
+  // the stream directly would never finalize and the task
   // span would spin "running" forever. Idempotent via usageFinalized.
   const ensureFinalized = async (): Promise<void> => {
     if (usageFinalized) return;
@@ -1213,7 +1264,7 @@ export async function runAgentLoop(
 
   // Wrap consumeStream so finalizeUsage fires in a finally block even when
   // streamText throws hard (e.g. network failure before any chunk arrives) and
-  // onFinish / onError never run.
+  // onEnd / onError never run.
   const originalConsumeStream = stream.consumeStream.bind(stream);
   const wrappedConsumeStream = async (): Promise<void> => {
     try {
@@ -1231,8 +1282,8 @@ export async function runAgentLoop(
 
   return Object.assign(stream, {
     consumeStream: wrappedConsumeStream,
-    // Callers that drain the stream themselves (channel progress streaming reads
-    // fullStream directly) must call this in a finally to guarantee finalization.
+    // Callers that drain the stream themselves must call this in a finally to
+    // guarantee finalization.
     ensureFinalized,
     didFail: () => didFail,
     failureText: () => failureText,
@@ -1244,7 +1295,45 @@ export async function runAgentLoop(
 }
 
 function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
+  const message = error instanceof Error ? error.message : String(error);
+  // Provider-managed assets (uploadFile/uploadSkill provider references) are
+  // per-provider: switching config.model.provider mid-conversation invalidates
+  // them. Return an actionable message instead of the bare provider error.
+  if (NoSuchProviderReferenceError.isInstance(error)) {
+    return `${message} The conversation references a file or skill uploaded to a different ` +
+      `provider's storage. Re-upload it for the "${error.provider}" provider, switch ` +
+      `config.model.provider back, or attach the content as workspace (S3) files instead.`;
+  }
+  if (UnsupportedFunctionalityError.isInstance(error)) {
+    return `${message} The configured model provider does not support this capability; ` +
+      `use a provider that does, or attach the content as workspace (S3) files instead of ` +
+      `provider uploads.`;
+  }
+  return message;
+}
+
+// Generated-content stream parts that count toward per-step streaming windows
+// (time-to-first-token / last-token). v7 delivers every TextStreamPart to
+// onChunk, so boundary, lifecycle, and post-execution parts must not qualify.
+const MODEL_CONTENT_CHUNK_TYPES: ReadonlySet<string> = new Set([
+  "text-delta",
+  "reasoning-delta",
+  "tool-input-start",
+  "tool-input-delta",
+  "tool-call",
+  "file",
+]);
+
+function formatCallWarning(warning: {
+  type: string;
+  feature?: string;
+  setting?: string;
+  message?: string;
+  details?: string;
+}): string {
+  const subject = warning.feature ?? warning.setting;
+  const detail = warning.message ?? warning.details;
+  return [warning.type, subject, detail].filter(Boolean).join(": ");
 }
 
 function toolOutputErrorText(output: unknown): string | undefined {

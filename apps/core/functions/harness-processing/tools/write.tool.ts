@@ -6,7 +6,6 @@
 
 import { jsonSchema, tool, type JSONSchema7, type ToolSet } from "ai";
 import {
-  editNeedsApproval,
   resolveWorkspace,
   runSandbox,
   sandboxRunMetadata,
@@ -49,7 +48,6 @@ Usage notes:
 - Prefer editing an existing file with the \`edit\` tool over overwriting it with \`write\`.
 - Always prefer this over \`bash\` redirection for creating files.`,
       inputSchema: jsonSchema(inputSchema(context)),
-      needsApproval: (input) => editNeedsApproval(context.workspaces, (input as WriteInput).workspace),
       async execute(input) {
         const { file_path, content, workspace } = input as WriteInput;
         try {

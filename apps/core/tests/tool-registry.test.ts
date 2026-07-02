@@ -43,16 +43,19 @@ describe("createTools", () => {
 
   it("includes the sandbox bash tool plus enabled configured tools", async () => {
     const { createTools } = await import("../functions/harness-processing/tools/index.ts");
+    const approvalRequirements = new Map<string, true>();
+    const context = Object.assign({}, sandboxContext(), { approvalRequirements }) as never;
 
-    const tools = await createTools(sandboxContext(), {
+    const tools = await createTools(context, {
       tools: {
         tavilyExtract: { needsApproval: true },
       },
     });
 
     expect(Object.keys(tools).sort()).toEqual(["bash", "tavilyExtract"]);
-    expect(await needsApproval(tools.bash)).toBe(true); // bash asks in `ask` mode
-    expect(tools.tavilyExtract?.needsApproval).toBe(true);
+    await expect(approvalStatus("bash", {}, context)).resolves.toBe("user-approval");
+    expect(approvalRequirements.has("tavilyExtract")).toBe(true);
+    expect((tools.tavilyExtract as { needsApproval?: unknown })?.needsApproval).toBeUndefined();
     expect(tavilySearchMock).not.toHaveBeenCalled();
     expect(tavilyExtractMock).toHaveBeenCalledTimes(1);
   });
@@ -60,39 +63,42 @@ describe("createTools", () => {
   it("exposes only bash when a sandbox has no workspace (stateless)", async () => {
     const { createTools } = await import("../functions/harness-processing/tools/index.ts");
 
-    const tools = await createTools(sandboxContext(), {});
+    const context = sandboxContext();
+    const tools = await createTools(context, {});
 
     expect(Object.keys(tools).sort()).toEqual(["bash"]);
-    expect(await needsApproval(tools.bash)).toBe(true);
+    await expect(approvalStatus("bash", {}, context)).resolves.toBe("user-approval");
   });
 
   it("exposes the full file tool set when a workspace is attached", async () => {
     const { createTools } = await import("../functions/harness-processing/tools/index.ts");
 
-    const tools = await createTools(sandboxContext([
+    const context = sandboxContext([
       { name: "notes", workspaceId: "ws_a", namespace: "fs-a" },
-    ], "bypass"), {});
+    ], "bypass");
+    const tools = await createTools(context, {});
 
     expect(Object.keys(tools).sort()).toEqual(["bash", "edit", "glob", "grep", "read", "write"]);
     // bypass mode auto-approves everything.
     for (const name of Object.keys(tools)) {
-      expect(await needsApproval(tools[name])).toBe(false);
+      await expect(approvalStatus(name, {}, context)).resolves.toBeUndefined();
     }
   });
 
   it("asks before write/edit/bash in `ask` mode but never for read/glob/grep", async () => {
     const { createTools } = await import("../functions/harness-processing/tools/index.ts");
 
-    const tools = await createTools(sandboxContext([
+    const context = sandboxContext([
       { name: "notes", workspaceId: "ws_a", namespace: "fs-a" },
-    ], "ask"), {});
+    ], "ask");
+    const tools = await createTools(context, {});
 
-    expect(await needsApproval(tools.write)).toBe(true);
-    expect(await needsApproval(tools.edit)).toBe(true);
-    expect(await needsApproval(tools.bash)).toBe(true);
-    expect(await needsApproval(tools.read)).toBe(false);
-    expect(await needsApproval(tools.glob)).toBe(false);
-    expect(await needsApproval(tools.grep)).toBe(false);
+    await expect(approvalStatus("write", {}, context)).resolves.toBe("user-approval");
+    await expect(approvalStatus("edit", {}, context)).resolves.toBe("user-approval");
+    await expect(approvalStatus("bash", {}, context)).resolves.toBe("user-approval");
+    await expect(approvalStatus("read", {}, context)).resolves.toBeUndefined();
+    await expect(approvalStatus("glob", {}, context)).resolves.toBeUndefined();
+    await expect(approvalStatus("grep", {}, context)).resolves.toBeUndefined();
   });
 
   it("exposes only read/glob for a read-only workspace (no sandbox)", async () => {
@@ -345,9 +351,10 @@ describe("createTools", () => {
 
   it("passes async-enabled built-in tools through the async coordinator", async () => {
     const { createTools } = await import("../functions/harness-processing/tools/index.ts");
+    const approvalRequirements = new Map<string, true>();
     const dispatch = mock((tools: Record<string, unknown>, asyncToolModes: Map<string, string>) => {
       expect([...asyncToolModes.entries()]).toEqual([["tavilySearch", "built-in"]]);
-      expect((tools.tavilySearch as { needsApproval?: boolean }).needsApproval).toBe(true);
+      expect((tools.tavilySearch as { needsApproval?: unknown }).needsApproval).toBeUndefined();
       return {
         tavilySearch: {
           ...(tools.tavilySearch as object),
@@ -362,7 +369,11 @@ describe("createTools", () => {
       execute: mock(async () => ({ ok: true })),
     }));
 
-    const tools = await createTools(createToolContext(undefined, "google", undefined, dispatch), {
+    const tools = await createTools(Object.assign(
+      {},
+      createToolContext(undefined, "google", undefined, dispatch),
+      { approvalRequirements },
+    ) as never, {
       tools: {
         tavilySearch: {
           async: true,
@@ -374,6 +385,7 @@ describe("createTools", () => {
 
     expect(dispatch).toHaveBeenCalledTimes(1);
     expect((tools.tavilySearch as { wrapped?: boolean }).wrapped).toBe(true);
+    expect(approvalRequirements.has("tavilySearch")).toBe(true);
     expect(tavilySearchMock).toHaveBeenCalledWith({
       apiKey: "tavily-key",
       searchDepth: "advanced",
@@ -385,6 +397,7 @@ describe("createTools", () => {
 
   it("registers uploaded account tools by toolId and wraps async by uploaded name", async () => {
     const { createTools } = await import("../functions/harness-processing/tools/index.ts");
+    const approvalRequirements = new Map<string, true>();
     setStorageForTests(storageWithAccountTool({
       accountId: "acct_test",
       toolId: "qs78zwc4z4q5ysxm74fgrhd13s88xxtv",
@@ -409,7 +422,11 @@ describe("createTools", () => {
       };
     });
 
-    const tools = await createTools(createToolContext(undefined, "google", undefined, dispatch), {
+    const tools = await createTools(Object.assign(
+      {},
+      createToolContext(undefined, "google", undefined, dispatch),
+      { approvalRequirements },
+    ) as never, {
       tools: {
         qs78zwc4z4q5ysxm74fgrhd13s88xxtv: {
           enabled: true,
@@ -423,7 +440,8 @@ describe("createTools", () => {
 
     expect(Object.keys(tools).sort()).toEqual(["async_status", "tavilyExtract", "test_async"]);
     expect(tools.test_async?.description).toBe("Uploaded async test tool.");
-    expect(tools.test_async?.needsApproval).toBe(true);
+    expect(tools.test_async?.needsApproval).toBeUndefined();
+    expect(approvalRequirements.has("test_async")).toBe(true);
     expect((tools.test_async as { wrapped?: boolean }).wrapped).toBe(true);
     expect(tavilyExtractMock).toHaveBeenCalledTimes(1);
   });
@@ -483,6 +501,7 @@ function storageWithAccountTool(accountTool: AccountToolRecord): StorageProvider
     crons: {} as never,
     sandboxConfigs: {} as never,
     workspaceConfigs: {} as never,
+    agentPolicies: {} as never,
     accountTools: {
       async getById(accountId: string, toolId: string) {
         const record = accountTool as { accountId: string; toolId: string };
@@ -520,8 +539,24 @@ function sandboxContext(
   } as never;
 }
 
-// Sandbox tools set per-call function-form needsApproval; configured tools set a
-// boolean. Normalize both to a boolean for assertions.
+async function approvalStatus(toolName: string, input: Record<string, unknown>, ctx: {
+  workspaces?: unknown[];
+  statelessSandbox?: unknown;
+  statelessPermissionMode?: unknown;
+  approvalRequirements?: Map<string, true>;
+}) {
+  const { compatibilityApprovalStatus } = await import("../functions/harness-processing/policy.ts");
+  return compatibilityApprovalStatus(toolName, input, {
+    configuredApprovals: ctx.approvalRequirements ?? new Map(),
+    workspaces: (ctx.workspaces ?? []) as never,
+    ...(ctx.statelessSandbox ? { statelessSandbox: ctx.statelessSandbox as never } : {}),
+    ...(typeof ctx.statelessPermissionMode === "string" ? { statelessPermissionMode: ctx.statelessPermissionMode as never } : {}),
+  });
+}
+
+// v7 approval lives on harness-level toolApproval. Tool definitions should not
+// carry legacy needsApproval; normalize the absence to false where tests only
+// need to verify auto-approved tools stay clean.
 async function needsApproval(entry: unknown, input: Record<string, unknown> = {}): Promise<boolean> {
   const value = (entry as { needsApproval?: unknown }).needsApproval;
   if (typeof value === "function") {

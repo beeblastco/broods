@@ -4,6 +4,8 @@
  * never throws into the agent path.
  */
 
+import { registerTelemetry } from "ai";
+import { OpenTelemetry } from "@ai-sdk/otel";
 import { trace, type Context, type Tracer } from "@opentelemetry/api";
 import { logs, SeverityNumber } from "@opentelemetry/api-logs";
 import { BasicTracerProvider, BatchSpanProcessor, RandomIdGenerator } from "@opentelemetry/sdk-trace-base";
@@ -102,6 +104,12 @@ export function initOtel(): void {
     _loggerProvider = loggerProvider;
 
     _tracer = trace.getTracer("broods-harness");
+
+    // AI SDK v7 no longer emits OTel spans on its own: span collection moved to
+    // the @ai-sdk/otel integration. Register it against our tracer so SDK-native
+    // gen-ai spans (generateText/streamText/tool execution) export to Tempo
+    // alongside the harness's task/model.step/tool.call spans.
+    registerTelemetry(new OpenTelemetry({ tracer: _tracer }));
   } catch {
     // Best-effort: a failed init leaves the global API noop.
   }

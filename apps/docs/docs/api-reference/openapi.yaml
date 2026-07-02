@@ -127,10 +127,7 @@ paths:
                       persist: false
                   model:
                     temperature: 0.3
-                    providerOptions:
-                      openai:
-                        reasoningEffort: high
-                        reasoningSummary: auto
+                    reasoning: high
                   events:
                     - role: user
                       content:
@@ -1432,6 +1429,84 @@ paths:
       responses:
         '200': { description: Deleted }
 
+  /accounts/me/policies:
+    post:
+      tags: [Policies]
+      summary: Create agent policy
+      description: Create a reusable structured policy for runtime authorization decisions.
+      security: [{ BearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AgentPolicyCreate'
+      responses:
+        '201':
+          description: Policy created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentPolicy'
+    get:
+      tags: [Policies]
+      summary: List agent policies
+      security: [{ BearerAuth: [] }]
+      responses:
+        '200':
+          description: Policy list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  policies:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/AgentPolicy'
+
+  /accounts/me/policies/{policyId}:
+    get:
+      tags: [Policies]
+      summary: Get agent policy
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - { name: policyId, in: path, required: true, schema: { type: string } }
+      responses:
+        '200':
+          description: Policy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentPolicy'
+        '404': { description: Not found }
+    patch:
+      tags: [Policies]
+      summary: Update agent policy
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - { name: policyId, in: path, required: true, schema: { type: string } }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AgentPolicyUpdate'
+      responses:
+        '200':
+          description: Updated policy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentPolicy'
+    delete:
+      tags: [Policies]
+      summary: Delete agent policy
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - { name: policyId, in: path, required: true, schema: { type: string } }
+      responses:
+        '200': { description: Deleted }
+
   /accounts/me/skills:
     post:
       tags:
@@ -1783,18 +1858,18 @@ components:
         Per-run model setting overrides, merged onto `config.model` for one
         invocation only. Accepts standard Vercel AI SDK call settings
         (temperature, topP, topK, maxOutputTokens, frequencyPenalty,
-        presencePenalty, seed, stopSequences) and provider-specific
-        `providerOptions`, the same shape used by `config.model`. The reserved
-        keys `provider`, `modelId`, `output`, and `apiKey` are rejected so a
-        request cannot swap the model, provider, structured output contract, or
-        credentials.
+        presencePenalty, seed, stopSequences, reasoning) and provider-specific
+        `providerOptions`, the same shape used by `config.model`. Prefer the
+        provider-agnostic `reasoning` level (`provider-default | none | minimal
+        | low | medium | high | xhigh`) over per-provider reasoning settings in
+        `providerOptions`; when both are set the provider-specific setting wins.
+        The reserved keys `provider`, `modelId`, `output`, and `apiKey` are
+        rejected so a request cannot swap the model, provider, structured output
+        contract, or credentials.
       example:
         temperature: 0.3
         maxOutputTokens: 4096
-        providerOptions:
-          openai:
-            reasoningEffort: high
-            reasoningSummary: auto
+        reasoning: high
 
     Message:
       type: object
@@ -2333,6 +2408,8 @@ components:
           $ref: '#/components/schemas/SkillsConfig'
         subagent:
           $ref: '#/components/schemas/SubagentConfig'
+        policy:
+          $ref: '#/components/schemas/AgentPolicyConfig'
         publicAccess:
           type: boolean
           description: "Opt the agent into the public runtime endpoint (SSE/WebSocket via the environment runtime key). Off by default — secured. When false/unset, public-key requests for this agent are refused with HTTP 403 (code public_access_disabled); internal callers and channel webhooks are unaffected."
@@ -2360,6 +2437,128 @@ components:
           $ref: '#/components/schemas/ToolsConfig'
         channels:
           $ref: '#/components/schemas/ChannelsConfig'
+
+    AgentPolicyConfig:
+      type: object
+      description: Optional runtime authorization policy assignment. When unset or disabled, existing behavior is unchanged.
+      properties:
+        enabled:
+          type: boolean
+        policyIds:
+          type: array
+          items:
+            type: string
+        mode:
+          type: string
+          enum: [enforce, audit]
+          default: enforce
+
+    AgentPolicyDocument:
+      type: object
+      required: [version, rules]
+      properties:
+        version:
+          type: integer
+          enum: [1]
+        rules:
+          type: array
+          items:
+            $ref: '#/components/schemas/AgentPolicyRule'
+
+    AgentPolicyRule:
+      type: object
+      required: [effect, actions]
+      properties:
+        id:
+          type: string
+        effect:
+          type: string
+          enum: [allow, deny]
+        actions:
+          type: array
+          items:
+            type: string
+            enum: [tool.call, workspace.read, workspace.write, workspace.exec, subagent.run, skill.load]
+        resources:
+          $ref: '#/components/schemas/AgentPolicyResourceSelector'
+        conditions:
+          type: array
+          items:
+            $ref: '#/components/schemas/AgentPolicyCondition'
+
+    AgentPolicyResourceSelector:
+      type: object
+      properties:
+        toolNames: { type: array, items: { type: string } }
+        toolIds: { type: array, items: { type: string } }
+        workspaceIds: { type: array, items: { type: string } }
+        workspaceNames: { type: array, items: { type: string } }
+        filePaths: { type: array, items: { type: string } }
+        subagentIds: { type: array, items: { type: string } }
+        skillPaths: { type: array, items: { type: string } }
+
+    AgentPolicyCondition:
+      type: object
+      required: [attribute, operator, value]
+      properties:
+        attribute:
+          type: string
+          description: Trusted runtime attribute such as accountId, project, environment, agentId, channel, toolName, filePath, workspaceName, or sandboxPermissionMode.
+        operator:
+          type: string
+          enum: [equals, notEquals, in, notIn, prefix, contains]
+        value:
+          oneOf:
+            - type: string
+            - type: number
+            - type: boolean
+            - type: array
+              items:
+                oneOf:
+                  - type: string
+                  - type: number
+                  - type: boolean
+
+    AgentPolicyCreate:
+      type: object
+      required: [name, document]
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        document:
+          $ref: '#/components/schemas/AgentPolicyDocument'
+
+    AgentPolicyUpdate:
+      type: object
+      properties:
+        name:
+          type: string
+        description:
+          type: [string, "null"]
+        document:
+          $ref: '#/components/schemas/AgentPolicyDocument'
+        status:
+          type: string
+          enum: [active, deleted]
+
+    AgentPolicy:
+      allOf:
+        - $ref: '#/components/schemas/AgentPolicyCreate'
+        - type: object
+          properties:
+            accountId:
+              type: string
+            policyId:
+              type: string
+            status:
+              type: string
+              enum: [active, deleted]
+            createdAt:
+              type: string
+            updatedAt:
+              type: string
 
     ProviderConfig:
       type: object

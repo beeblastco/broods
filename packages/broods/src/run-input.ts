@@ -1,7 +1,7 @@
-import type { CallSettings, ModelMessage, SystemModelMessage, streamText } from "ai";
+import type { LanguageModelCallOptions, ModelMessage, RequestOptions, SystemModelMessage, streamText } from "ai";
 
 type StreamTextOptions = Parameters<typeof streamText>[0];
-type JsonCallSettings = Partial<Omit<CallSettings, "abortSignal" | "headers">>;
+type JsonCallSettings = Partial<LanguageModelCallOptions & Pick<RequestOptions, "maxRetries" | "timeout">>;
 
 export type AgentRunModelOverrides = JsonCallSettings & Pick<StreamTextOptions, "providerOptions">;
 
