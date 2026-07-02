@@ -297,7 +297,7 @@ export const myAgent = defineAgent({
 
 Supported policy actions are `tool.call`, `workspace.read`, `workspace.write`, `workspace.exec`, `subagent.run`, and `skill.load`. `deny` rules win over `allow` rules. `mode: "audit"` logs denials without blocking; `mode: "enforce"` blocks denied actions.
 
-When policy is enabled, the runtime sends the same structured input to OPA at `/v1/data/broods/authz/decision`; `OPA_BASE_URL` overrides the default localhost sidecar endpoint. This keeps the decision function compatible with AI SDK policy tool approvals: OPA is the policy decision point, `enforce` behaves as fail-closed, and `audit` mirrors shadow-mode rollout without blocking tool execution.
+When policy is enabled, the runtime sends the same structured input to OPA at `/v1/data/broods/authz/decision` (endpoint and credential come from `OPA_BASE_URL` / `OPA_API_TOKEN`). This keeps the decision function compatible with AI SDK policy tool approvals: OPA is the policy decision point, `enforce` behaves as fail-closed (a denied or failed evaluation blocks the tool call), and `audit` mirrors shadow-mode rollout without blocking tool execution.
 
 ### Hooks
 

@@ -174,7 +174,7 @@ export function DetailsTab({
         ? policyConfig.policyIds.filter((entry): entry is string => typeof entry === "string")
         : [];
     const policyEnabled = policyConfig.enabled === true && assignedPolicyIds.length > 0;
-    const policyMode = policyConfig.mode === "audit" ? "audit" : "enforce";
+    const policyMode = policyConfig.mode === "enforce" ? "enforce" : "audit";
 
     const outputFormat = agentConfig?.outputFormat && isPlainObject(agentConfig.outputFormat)
         ? agentConfig.outputFormat as OutputFormatConfig
@@ -310,7 +310,7 @@ export function DetailsTab({
             : {
                 enabled: next.enabled === true,
                 policyIds: policyIds,
-                mode: next.mode === "audit" ? "audit" : "enforce",
+                mode: next.mode === "enforce" ? "enforce" : "audit",
             };
 
         void onUpdatePolicyConfig?.(payload);
@@ -509,7 +509,7 @@ export function DetailsTab({
                             </Select>
                         </div>
                         <p className="text-[11px] text-muted-foreground">
-                            Decisions are audit-only during rollout; Enforce activates once policy enforcement ships.
+                            Audit records decisions without blocking; Enforce blocks tool calls the policy denies.
                         </p>
                         <div className="flex flex-col gap-1.5">
                             {(policyOptions ?? []).map((policy) => {

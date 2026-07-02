@@ -2452,7 +2452,8 @@ components:
         mode:
           type: string
           enum: [enforce, audit]
-          default: enforce
+          default: audit
+          description: "audit evaluates and logs decisions without blocking; enforce blocks denied tool calls and fails closed when OPA is unavailable."
 
     AgentPolicyDocument:
       type: object
@@ -3016,6 +3017,12 @@ components:
             botUserId:
               type: number
               description: Bot's numeric GitHub user ID for self-message detection. Auto-detected from the GitHub API when omitted.
+            triggerOnIssueOpen:
+              type: boolean
+              description: When false, the bot does not auto-trigger on new issues (opened, edited, reopened). Defaults to true.
+            triggerOnPROpen:
+              type: boolean
+              description: When false, the bot does not auto-trigger on new pull requests (opened, edited, reopened). Defaults to true.
             workspaceScope:
               type: object
               description: Hierarchical workspace isolation scope for workspaces with `isolation: true`.

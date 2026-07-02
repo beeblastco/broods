@@ -46,6 +46,7 @@ const DAYTONA_API_KEY = process.env.DAYTONA_API_KEY ?? "";
 const WORKDIR_URL = process.env.WORKDIR_URL?.trim() ?? "";
 const WORKDIR_API_KEY = process.env.WORKDIR_API_KEY ?? "";
 const OPA_BASE_URL = process.env.OPA_BASE_URL?.trim();
+const OPA_API_TOKEN = process.env.OPA_API_TOKEN ?? "";
 
 if (ENABLE_WEBSOCKET && !NATS_URL) {
   throw new Error("NATS_URL must be set when ENABLE_WEBSOCKET=true");
@@ -851,6 +852,7 @@ export default $config({
         ...(WORKDIR_URL ? { WORKDIR_URL } : {}),
         ...(WORKDIR_API_KEY ? { WORKDIR_API_KEY } : {}),
         ...(OPA_BASE_URL ? { OPA_BASE_URL } : {}),
+        ...(OPA_API_TOKEN ? { OPA_API_TOKEN } : {}),
         SANDBOX_MOUNT_ROLE_ARN: sandboxS3MountRole.arn,
         ...(DAYTONA_ORGANIZATION_ID ? { DAYTONA_ORGANIZATION_ID } : {}),
         ...(DAYTONA_API_URL ? { DAYTONA_API_URL } : {}),
