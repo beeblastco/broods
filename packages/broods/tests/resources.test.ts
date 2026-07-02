@@ -926,7 +926,6 @@ export const filesystemPolicy = definePolicy({
   name: "filesystem-guard",
   description: "Restricts workspace writes.",
   config: {
-    version: 1,
     rules: [
       { id: "allow-read", effect: "allow", actions: ["workspace.read"] },
       {
@@ -943,7 +942,7 @@ export const support = defineAgent({
   name: "support",
   config: {
     model: { provider: "openai", modelId: "gpt-5-mini" },
-    policy: { enabled: true, mode: "audit", policies: [filesystemPolicy] },
+    policy: { mode: "audit", policies: [filesystemPolicy] },
   },
 });
 `);
@@ -967,11 +966,47 @@ export const support = defineAgent({
   });
   expect(agent?.config).toMatchObject({
     policy: {
-      enabled: true,
       mode: "audit",
       policyIds: ["filesystem-guard"],
     },
   });
+});
+
+test("compileProject drops empty agent policy config", async () => {
+  const cwd = await fixtureProject("", `
+import { defineAgent } from "${RESOURCES_MODULE}";
+
+export const support = defineAgent({
+  name: "support",
+  config: {
+    model: { provider: "openai", modelId: "gpt-5-mini" },
+    policy: {},
+  },
+});
+`);
+
+  const { manifest } = await compileProject({ cwd: cwd, command: "dev" });
+  const agent = manifest.resources.find((resource) => resource.kind === "agent" && resource.name === "support");
+
+  expect(agent?.config).not.toHaveProperty("policy");
+});
+
+test("compileProject rejects unknown agent policy config keys", async () => {
+  const cwd = await fixtureProject("", `
+import { defineAgent } from "${RESOURCES_MODULE}";
+
+export const support = defineAgent({
+  name: "support",
+  config: {
+    model: { provider: "openai", modelId: "gpt-5-mini" },
+    policy: { enabbled: true },
+  },
+});
+`);
+
+  await expect(compileProject({ cwd: cwd, command: "dev" })).rejects.toThrow(
+    'Agent "support" config.policy.enabbled is not supported',
+  );
 });
 
 test("compileProject rejects skill and tool paths outside broods project root", async () => {

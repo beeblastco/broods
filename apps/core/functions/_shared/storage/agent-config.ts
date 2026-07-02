@@ -391,7 +391,11 @@ export function normalizeAgentConfig(value: unknown): AgentConfig {
   normalizeSkillsConfig(config.skills);
   normalizeSubagentConfig(config.subagent);
   const policy = normalizeAgentPolicyConfig(config.policy);
-  if (policy) config.policy = policy;
+  if (policy) {
+    config.policy = policy;
+  } else {
+    delete config.policy;
+  }
   assertOptionalBoolean(config.publicAccess, "config.publicAccess");
 
   return config as AgentConfig;

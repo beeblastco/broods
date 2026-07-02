@@ -327,18 +327,8 @@ export async function runAgentLoop(
     }
   }
 
-  const policyToolApproval = await createPolicyToolApproval(agentConfig, {
-    accountId: session.accountId,
-    project: session.projectSlug,
-    environment: session.environmentSlug,
-    endpointId: session.endpointId,
-    agentId: session.agentId,
-    conversationKey: session.conversationKey,
-    delivery: session.delivery?.kind ?? "direct",
-    channel: session.delivery?.kind === "channel" ? session.delivery.channelName : undefined,
-  }, resolvedWorkspaces);
-
   const configuredApprovals = new Map<string, true>();
+  const policyToolIdsByName = new Map<string, string>();
   const tools = {
     ...await createTools({
       accountId: session.accountId,
@@ -352,6 +342,7 @@ export async function runAgentLoop(
       dispatchAsyncTools: options.dispatchAsyncTools,
       onSandboxCpu: recordSandboxCpu,
       approvalRequirements: configuredApprovals,
+      policyToolIdsByName,
       sandboxMetadata: {
         traceId: traceId,
         taskId: session.eventId,
@@ -370,6 +361,16 @@ export async function runAgentLoop(
         : {}),
     }, agentConfig),
   } satisfies ToolSet;
+  const policyToolApproval = await createPolicyToolApproval(agentConfig, {
+    accountId: session.accountId,
+    project: session.projectSlug,
+    environment: session.environmentSlug,
+    endpointId: session.endpointId,
+    agentId: session.agentId,
+    conversationKey: session.conversationKey,
+    delivery: session.delivery?.kind ?? "direct",
+    channel: session.delivery?.kind === "channel" ? session.delivery.channelName : undefined,
+  }, resolvedWorkspaces, { toolIdsByName: policyToolIdsByName });
   const toolApproval = createRuntimeToolApproval({
     configuredApprovals,
     workspaces: resolvedWorkspaces,
@@ -609,7 +610,7 @@ export async function runAgentLoop(
     messageCount: turnContext.messages.length,
   });
 
-  logInfo("Agent loop started", {
+  logInfo(`Agent loop started: ${configuredModel.providerName}/${agentConfig.model?.modelId ?? "unknown"} with ${turnContext.messages.length} message(s), ${Object.keys(tools).length} tool(s)`, {
     eventType: "model.invocation.started",
     ...logContext,
     messageCount: turnContext.messages.length,
@@ -829,11 +830,11 @@ export async function runAgentLoop(
       };
 
       if (toolSucceeded) {
-        logInfo("Tool call finished", details);
+        logInfo(`Tool call finished: ${toolCall.toolName} in ${formatDuration(durationMs)}`, details);
         return;
       }
 
-      logError("Tool call failed", {
+      logError(`Tool call failed: ${toolCall.toolName} in ${formatDuration(durationMs)}${errorText ? `: ${errorText}` : ""}`, {
         ...details,
         error: errorText ?? errorMessage(error),
         errorDetails: serializeError(error),
@@ -872,7 +873,7 @@ export async function runAgentLoop(
       // Provider coercion warnings (e.g. an unsupported `reasoning` level or a
       // dropped setting) are silent in the stream; surface them in Loki.
       if (warnings && warnings.length > 0) {
-        logWarn("Model call warnings", {
+        logWarn(`Model call warning on step ${stepNumber}: ${warnings.map((warning) => formatCallWarning(warning)).filter(Boolean).join("; ")}`, {
           eventType: "model.step.warnings",
           ...logContext,
           stepNumber: stepNumber,
@@ -897,7 +898,7 @@ export async function runAgentLoop(
           toolResult: toLifecycleValue(toolResult),
         })
       ));
-      logInfo("Agent loop step finished", {
+      logInfo(`Agent step ${stepNumber} finished: ${finishReason}, ${toolCalls.length} tool call(s), ${formatUsageSummary(usage)}, ${formatDuration(durationMs)}`, {
         eventType: "model.step.finished",
         ...logContext,
         stepNumber: stepNumber,
@@ -1021,7 +1022,7 @@ export async function runAgentLoop(
       didFail = true;
       failureText = errorText;
       terminalError = error instanceof Error ? error : new Error(errorText);
-      logError("Agent loop failed", {
+      logError(`Agent loop failed after ${formatDuration(Date.now() - runStartedAt)}${tools.toolsUsed.length > 0 ? ` using ${tools.toolsUsed.join(", ")}` : ""}: ${errorText}`, {
         eventType: "model.invocation.failed",
         ...logContext,
         durationMs: Date.now() - runStartedAt,
@@ -1095,7 +1096,7 @@ export async function runAgentLoop(
           didFail = true;
           failureText = errorText;
           terminalError = new Error(errorText);
-          logError(errorText, {
+          logError(`${errorText}${tools.toolsUsed.length > 0 ? `; tools used: ${tools.toolsUsed.join(", ")}` : ""}`, {
             eventType: "model.invocation.failed",
             ...logContext,
             durationMs: Date.now() - runStartedAt,
@@ -1123,7 +1124,7 @@ export async function runAgentLoop(
         // The invocation (and its token spend) is real even if structured-output
         // parsing or reply delivery below fails, so record the metric line once
         // here; a later failure adds its own model.invocation.failed line.
-        logInfo("Model invocation finished", finishLog);
+        logInfo(`Model invocation finished: ${finishReason}, ${stepCount} step(s), ${toolCallCount} tool call(s), ${tools.toolsUsed.length > 0 ? `tools ${tools.toolsUsed.join(", ")}, ` : ""}${formatUsageSummary(usage)}, ${formatDuration(finishLog.durationMs)}`, finishLog);
 
         if (approvals.length > 0) {
           approvalSummaries = approvals;
@@ -1297,6 +1298,15 @@ function formatCallWarning(warning: {
   const subject = warning.feature ?? warning.setting;
   const detail = warning.message ?? warning.details;
   return [warning.type, subject, detail].filter(Boolean).join(": ");
+}
+
+function formatDuration(durationMs: number | undefined): string {
+  return typeof durationMs === "number" ? `${durationMs}ms` : "unknown duration";
+}
+
+function formatUsageSummary(usage: LanguageModelUsage | undefined): string {
+  const totals = usageTokenTotals(usage);
+  return `${totals.inputTokens} in / ${totals.outputTokens} out / ${totals.totalTokens} total token(s)`;
 }
 
 function toolOutputErrorText(output: unknown): string | undefined {

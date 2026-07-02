@@ -270,7 +270,6 @@ import { defineAgent, definePolicy } from "broods";
 export const workspacePolicy = definePolicy({
   name: "workspace-guard",
   config: {
-    version: 1,
     rules: [
       { id: "allow-read", effect: "allow", actions: ["workspace.read"] },
       {
@@ -278,6 +277,21 @@ export const workspacePolicy = definePolicy({
         effect: "deny",
         actions: ["workspace.write", "workspace.exec"],
         resources: { filePaths: ["/workspace/secrets"] },
+      },
+      {
+        id: "deny-rm-rf",
+        effect: "deny",
+        actions: ["workspace.exec"],
+        resources: { toolNames: ["bash"] },
+        conditions: [
+          { attribute: "tool.input.command", operator: "contains", value: "rm -rf" },
+        ],
+      },
+      {
+        id: "allow-other-bash",
+        effect: "allow",
+        actions: ["workspace.exec"],
+        resources: { toolNames: ["bash"] },
       },
     ],
   },
@@ -287,7 +301,6 @@ export const myAgent = defineAgent({
   name: "my-agent",
   config: {
     policy: {
-      enabled: true,
       mode: "enforce",
       policies: [workspacePolicy],
     },
@@ -295,9 +308,16 @@ export const myAgent = defineAgent({
 });
 ```
 
-Supported policy actions are `tool.call`, `workspace.read`, `workspace.write`, `workspace.exec`, `subagent.run`, and `skill.load`. `deny` rules win over `allow` rules. `mode: "audit"` logs denials without blocking; `mode: "enforce"` blocks denied actions.
+Supported policy actions are `tool.call`, `workspace.read`, `workspace.write`, `workspace.exec`, `subagent.run`, and `skill.load`. `deny` rules win over `allow` rules, and a request with no matching allow rule is denied. Assigning at least one policy activates evaluation; an empty `policy` object is ignored. `mode: "audit"` logs decisions without blocking; `mode: "enforce"` blocks denied actions.
 
-When policy is enabled, the runtime sends the same structured input to OPA at `/v1/data/broods/authz/decision` (endpoint and credential come from `OPA_BASE_URL` / `OPA_API_TOKEN`). This keeps the decision function compatible with AI SDK policy tool approvals: OPA is the policy decision point, `enforce` behaves as fail-closed (a denied or failed evaluation blocks the tool call), and `audit` mirrors shadow-mode rollout without blocking tool execution.
+Policy rules can scope by resource selectors like `toolNames`, `toolIds`, `filePaths`, `workspaceNames`, `skillPaths`, and `subagentIds`. Conditions can read trusted top-level attributes such as `project`, `environment`, `agentId`, `channel`, `toolName`, `toolId`, `filePath`, and `sandboxPermissionMode`, or nested tool-call input attributes with dotted paths:
+
+- `toolName`: exact model-facing tool/function name, for example `bash`, `read`, `tavilySearch`, or an uploaded tool's model name.
+- `toolId`: stable uploaded account tool id when the call is for a custom tool.
+- `tool.input.<field>`: sanitized tool input parameter, for example `tool.input.command`, `tool.input.file_path`, `tool.input.query`, or `tool.input.tasks`.
+- `tool.inputKeys`: sorted list of supplied input parameter names.
+
+When policies are assigned, the runtime sends the same structured input to OPA at `/v1/data/broods/authz/decision` (endpoint and credential come from `OPA_BASE_URL` / `OPA_API_TOKEN`). The SDK defaults policy documents to Broods schema `version: 1` before upload; that field is not an OPA/Rego version. It lets Broods evolve the structured rule format later without guessing which shape a stored document uses. This keeps the decision function compatible with AI SDK policy tool approvals: OPA is the policy decision point, `enforce` behaves as fail-closed (a denied or failed evaluation blocks the tool call), and `audit` mirrors shadow-mode rollout without blocking tool execution.
 
 ### Hooks
 

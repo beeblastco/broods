@@ -107,7 +107,9 @@ export interface ToolDefinitionConfig {
   defaultConfig?: Record<string, unknown>;
 }
 
-export type PolicyDefinitionConfig = AgentPolicyDocument;
+export type PolicyDefinitionConfig = Omit<AgentPolicyDocument, "version"> & {
+  version?: AgentPolicyDocument["version"];
+};
 
 export type ChannelType = "telegram" | "github" | "slack" | "discord" | "pancake" | "zalo";
 

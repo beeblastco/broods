@@ -7,7 +7,7 @@
 import type { ToolApprovalConfiguration, ToolApprovalStatus, ToolSet } from "ai";
 import { httpPolicyClient, opaPolicy, shadow, type PolicyClient } from "@ai-sdk/policy-opa";
 import { optionalEnv } from "../_shared/env.ts";
-import { logDebug, logWarn } from "../_shared/log.ts";
+import { logDebug, logInfo, logWarn } from "../_shared/log.ts";
 import {
   getStorage,
   type AgentConfig,
@@ -22,13 +22,14 @@ import { bashNeedsApproval, editNeedsApproval, resolveWorkspace } from "./tools/
 type RuntimeToolApproval = Extract<ToolApprovalConfiguration<ToolSet, unknown>, (...args: any[]) => unknown>;
 
 export function isPolicyEnabled(agentConfig: AgentConfig): boolean {
-  return agentConfig.policy?.enabled === true && (agentConfig.policy.policyIds?.length ?? 0) > 0;
+  return (agentConfig.policy?.policyIds?.length ?? 0) > 0;
 }
 
 export async function createPolicyToolApproval(
   agentConfig: AgentConfig,
   baseInput: Omit<PolicyDecisionInput, "action">,
   workspaces: ResolvedWorkspace[],
+  options: { toolIdsByName?: ReadonlyMap<string, string> } = {},
 ): Promise<RuntimeToolApproval | undefined> {
   if (!isPolicyEnabled(agentConfig) || !baseInput.accountId) return undefined;
   const mode: AgentPolicyMode = agentConfig.policy?.mode ?? "audit";
@@ -54,7 +55,7 @@ export async function createPolicyToolApproval(
       path: "broods/authz/decision",
       toInput: ({ toolCall }) => ({
         ...baseInput,
-        ...policyInputForTool(toolCall.toolName, toolCall.input, workspaces),
+        ...policyInputForTool(toolCall.toolName, toolCall.input, workspaces, options),
         mode,
         policies: documents,
       }),
@@ -62,21 +63,65 @@ export async function createPolicyToolApproval(
     {
       enforce: mode === "enforce",
       onDecision: (event) => {
-        if (event.decision.type === "approved") return;
-        logWarn("Agent policy decision", {
+        const reason = "reason" in event.decision ? event.decision.reason : undefined;
+        const policyInput = policyInputForTool(event.toolCall.toolName, event.toolCall.input, workspaces, options);
+        const message = policyDecisionLogMessage({
+          action: policyInput.action,
+          decision: event.decision.type,
+          enforced: event.enforced,
+          inputPreview: policyInput.tool?.inputPreview,
+          mode,
+          reason,
+          toolName: event.toolCall.toolName,
+        });
+        const data = {
           accountId: baseInput.accountId,
           agentId: baseInput.agentId,
           toolName: event.toolCall.toolName,
           toolCallId: event.toolCall.toolCallId,
+          action: policyInput.action,
           decision: event.decision.type,
           mode,
           enforced: event.enforced,
-          reason: "reason" in event.decision ? event.decision.reason : undefined,
-        });
+          reason,
+          toolInputKeys: policyInput.tool?.inputKeys,
+          toolInputPreview: policyInput.tool?.inputPreview,
+          toolId: policyInput.toolId,
+          workspaceId: policyInput.workspaceId,
+          workspaceName: policyInput.workspaceName,
+          filePath: policyInput.filePath,
+          skillPath: policyInput.skillPath,
+          subagentId: policyInput.subagentId,
+        };
+        if (event.decision.type === "approved") {
+          logInfo(message, data);
+        } else {
+          logWarn(message, data);
+        }
       },
     },
   );
   return typeof approval === "function" ? approval as RuntimeToolApproval : undefined;
+}
+
+export function policyDecisionLogMessage(input: {
+  action?: string;
+  decision: string;
+  enforced: boolean;
+  inputPreview?: string;
+  mode: AgentPolicyMode;
+  reason?: string;
+  toolName: string;
+}): string {
+  const action = input.decision === "denied" && !input.enforced
+    ? "would deny"
+    : input.decision;
+  const details = [
+    input.action ? `action ${input.action}` : undefined,
+    input.inputPreview ? `input ${input.inputPreview}` : undefined,
+  ].filter(Boolean).join(", ");
+  const message = `Agent policy ${action} ${input.toolName} (${input.mode})${details ? `: ${details}` : ""}`;
+  return input.reason ? `${message}: ${input.reason}` : message;
 }
 
 export function createRuntimeToolApproval(options: {
@@ -132,9 +177,10 @@ export function policyInputForTool(
   toolName: string,
   input: unknown,
   workspaces: ResolvedWorkspace[],
+  options: { toolIdsByName?: ReadonlyMap<string, string> } = {},
 ): Pick<
   PolicyDecisionInput,
-  "action" | "toolName" | "workspaceId" | "workspaceName" | "filePath" | "skillPath" | "subagentId" | "sandboxPermissionMode"
+  "action" | "toolName" | "toolId" | "workspaceId" | "workspaceName" | "filePath" | "skillPath" | "subagentId" | "sandboxPermissionMode" | "tool"
 > {
   const record = input && typeof input === "object" ? input as Record<string, unknown> : {};
   const workspace = resolveWorkspaceForPolicy(workspaces, typeof record.workspace === "string" ? record.workspace : undefined);
@@ -145,6 +191,8 @@ export function policyInputForTool(
       : undefined;
   const base = {
     toolName,
+    ...(options.toolIdsByName?.get(toolName) ? { toolId: options.toolIdsByName.get(toolName)! } : {}),
+    tool: toolContextForPolicy(input),
     ...(workspace ? {
       workspaceId: workspace.workspaceId,
       workspaceName: workspace.name,
@@ -170,6 +218,70 @@ export function policyInputForTool(
   }
 
   return { action: "tool.call", ...base };
+}
+
+function toolContextForPolicy(input: unknown): NonNullable<PolicyDecisionInput["tool"]> {
+  const sanitizedInput = sanitizePolicyToolInput(input);
+  return {
+    ...(sanitizedInput ? { input: sanitizedInput } : {}),
+    ...(sanitizedInput ? { inputKeys: Object.keys(sanitizedInput).sort() } : {}),
+    ...(sanitizedInput ? { inputPreview: formatPolicyInputPreview(sanitizedInput) } : {}),
+  };
+}
+
+const POLICY_INPUT_MAX_DEPTH = 4;
+const POLICY_INPUT_MAX_ARRAY = 20;
+const POLICY_INPUT_MAX_STRING = 500;
+const POLICY_INPUT_PREVIEW_MAX = 160;
+const POLICY_REDACTED_VALUE = "[redacted]";
+const SENSITIVE_INPUT_KEY = /(api[_-]?key|authorization|bearer|credential|password|secret|token)/i;
+
+function sanitizePolicyToolInput(value: unknown, depth = 0): Record<string, unknown> | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const result = sanitizePolicyValue(value, depth);
+  return result && typeof result === "object" && !Array.isArray(result)
+    ? result as Record<string, unknown>
+    : undefined;
+}
+
+function sanitizePolicyValue(value: unknown, depth: number): unknown {
+  if (value == null || typeof value === "number" || typeof value === "boolean") return value;
+  if (typeof value === "string") return truncatePolicyString(value);
+  if (Array.isArray(value)) {
+    if (depth >= POLICY_INPUT_MAX_DEPTH) return `[array:${value.length}]`;
+    return value.slice(0, POLICY_INPUT_MAX_ARRAY).map((entry) => sanitizePolicyValue(entry, depth + 1));
+  }
+  if (typeof value === "object") {
+    if (depth >= POLICY_INPUT_MAX_DEPTH) return "[object]";
+    const output: Record<string, unknown> = {};
+    for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
+      output[key] = SENSITIVE_INPUT_KEY.test(key) ? POLICY_REDACTED_VALUE : sanitizePolicyValue(entry, depth + 1);
+    }
+    return output;
+  }
+  return String(value);
+}
+
+function truncatePolicyString(value: string): string {
+  return value.length > POLICY_INPUT_MAX_STRING
+    ? `${value.slice(0, POLICY_INPUT_MAX_STRING)}...`
+    : value;
+}
+
+function formatPolicyInputPreview(input: Record<string, unknown>): string {
+  return Object.entries(input)
+    .slice(0, 6)
+    .map(([key, value]) => `${key}=${formatPolicyPreviewValue(value)}`)
+    .join(" ")
+    .slice(0, POLICY_INPUT_PREVIEW_MAX);
+}
+
+function formatPolicyPreviewValue(value: unknown): string {
+  if (typeof value === "string") return JSON.stringify(value.length > 80 ? `${value.slice(0, 80)}...` : value);
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  if (Array.isArray(value)) return `[array:${value.length}]`;
+  if (value && typeof value === "object") return "{object}";
+  return String(value);
 }
 
 function resolveWorkspaceForPolicy(workspaces: ResolvedWorkspace[], workspaceName: string | undefined) {

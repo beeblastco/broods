@@ -22,6 +22,11 @@ describe("agent policy input", () => {
     expect(policyInputForTool("read", { workspace: "repo", file_path: "src/index.ts" }, workspaces)).toEqual({
       action: "workspace.read",
       toolName: "read",
+      tool: {
+        input: { workspace: "repo", file_path: "src/index.ts" },
+        inputKeys: ["file_path", "workspace"],
+        inputPreview: 'workspace="repo" file_path="src/index.ts"',
+      },
       workspaceId: "ws_123",
       workspaceName: "repo",
       sandboxPermissionMode: "ask",
@@ -31,6 +36,11 @@ describe("agent policy input", () => {
     expect(policyInputForTool("bash", { workspace: "repo", command: "bun test" }, workspaces)).toMatchObject({
       action: "workspace.exec",
       toolName: "bash",
+      tool: {
+        input: { workspace: "repo", command: "bun test" },
+        inputKeys: ["command", "workspace"],
+        inputPreview: 'workspace="repo" command="bun test"',
+      },
       workspaceId: "ws_123",
       workspaceName: "repo",
     });
@@ -40,12 +50,22 @@ describe("agent policy input", () => {
     expect(policyInputForTool("load_skill", { path: "acct/skills/review/SKILL.md" }, [])).toEqual({
       action: "skill.load",
       toolName: "load_skill",
+      tool: {
+        input: { path: "acct/skills/review/SKILL.md" },
+        inputKeys: ["path"],
+        inputPreview: 'path="acct/skills/review/SKILL.md"',
+      },
       skillPath: "acct/skills/review/SKILL.md",
     });
 
     expect(policyInputForTool("run_subagent", { tasks: [{ agentId: "agent_child", prompt: "check this" }] }, [])).toEqual({
       action: "subagent.run",
       toolName: "run_subagent",
+      tool: {
+        input: { tasks: [{ agentId: "agent_child", prompt: "check this" }] },
+        inputKeys: ["tasks"],
+        inputPreview: "tasks=[array:1]",
+      },
       subagentId: "agent_child",
     });
   });
@@ -54,6 +74,42 @@ describe("agent policy input", () => {
     expect(policyInputForTool("tavilySearch", { query: "opa" }, [])).toEqual({
       action: "tool.call",
       toolName: "tavilySearch",
+      tool: {
+        input: { query: "opa" },
+        inputKeys: ["query"],
+        inputPreview: 'query="opa"',
+      },
+    });
+  });
+
+  it("maps uploaded tool model names to stable tool ids when provided", () => {
+    expect(policyInputForTool("customer_lookup", { email: "a@example.com" }, [], {
+      toolIdsByName: new Map([["customer_lookup", "tool_abc123"]]),
+    })).toEqual({
+      action: "tool.call",
+      toolName: "customer_lookup",
+      toolId: "tool_abc123",
+      tool: {
+        input: { email: "a@example.com" },
+        inputKeys: ["email"],
+        inputPreview: 'email="a@example.com"',
+      },
+    });
+  });
+
+  it("redacts sensitive tool input fields before policy logging", () => {
+    expect(policyInputForTool("customTool", {
+      query: "hello",
+      apiKey: "sk-secret",
+      nested: { token: "secret", keep: "visible" },
+    }, [])).toMatchObject({
+      tool: {
+        input: {
+          query: "hello",
+          apiKey: "[redacted]",
+          nested: { token: "[redacted]", keep: "visible" },
+        },
+      },
     });
   });
 });
@@ -62,10 +118,16 @@ describe("agent policy validation", () => {
   it("rejects unknown config.policy keys instead of dropping them", () => {
     expect(() => normalizeAgentPolicyConfig({ enabbled: true })).toThrow("config.policy.enabbled is not supported");
     expect(normalizeAgentPolicyConfig({ enabled: true, policyIds: ["policy_a"], mode: "audit" })).toEqual({
-      enabled: true,
       policyIds: ["policy_a"],
       mode: "audit",
     });
+  });
+
+  it("treats an empty config.policy object as no policy assignment", () => {
+    expect(normalizeAgentPolicyConfig({})).toBeUndefined();
+    expect(normalizeAgentPolicyConfig({ enabled: true })).toBeUndefined();
+    expect(normalizeAgentPolicyConfig({ mode: "audit" })).toBeUndefined();
+    expect(normalizeAgentPolicyConfig({ policyIds: [], mode: "enforce" })).toBeUndefined();
   });
 
   it("rejects unknown resource selector keys", () => {

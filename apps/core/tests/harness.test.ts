@@ -1206,6 +1206,7 @@ describe("runAgentLoop", () => {
       "model.invocation.finished",
     ]);
     expect(logs.find((log) => log.eventType === "model.invocation.started")).toMatchObject({
+      message: "Agent loop started: google/gemini-custom with 1 message(s), 0 tool(s)",
       accountId: "acct_test",
       agentId: "agent_test",
       conversationKey: "direct:conversation",
@@ -1216,6 +1217,7 @@ describe("runAgentLoop", () => {
       enabledTools: [],
     });
     expect(logs.find((log) => log.eventType === "model.step.finished")).toMatchObject({
+      message: expect.stringContaining("Agent step 0 finished: stop, 0 tool call(s), 4 in / 6 out / 10 total token(s),"),
       accountId: "acct_test",
       agentId: "agent_test",
       conversationKey: "direct:conversation",
@@ -1236,6 +1238,7 @@ describe("runAgentLoop", () => {
     });
     expect(typeof logs.find((log) => log.eventType === "model.step.finished").durationMs).toBe("number");
     expect(logs.find((log) => log.eventType === "model.invocation.finished")).toMatchObject({
+      message: expect.stringContaining("Model invocation finished: stop, 0 step(s), 0 tool call(s), 4 in / 6 out / 10 total token(s),"),
       usage: { inputTokens: 4, outputTokens: 6, totalTokens: 10 },
       accountId: "acct_test",
       endpointId: "env-1234",
@@ -1290,6 +1293,7 @@ describe("runAgentLoop", () => {
 
     const logs = lines.map((line) => JSON.parse(line));
     expect(logs.find((log) => log.eventType === "tool.call.finished")).toMatchObject({
+      message: "Tool call finished: bash in 12ms",
       accountId: "acct_test",
       agentId: "agent_test",
       eventId: "direct-event",

@@ -173,7 +173,6 @@ export function DetailsTab({
     const assignedPolicyIds = Array.isArray(policyConfig.policyIds)
         ? policyConfig.policyIds.filter((entry): entry is string => typeof entry === "string")
         : [];
-    const policyEnabled = policyConfig.enabled === true && assignedPolicyIds.length > 0;
     const policyMode = policyConfig.mode === "enforce" ? "enforce" : "audit";
 
     const outputFormat = agentConfig?.outputFormat && isPlainObject(agentConfig.outputFormat)
@@ -303,12 +302,10 @@ export function DetailsTab({
         const policyIds = Array.isArray(next.policyIds)
             ? next.policyIds.filter((entry): entry is string => typeof entry === "string")
             : [];
-        // No assigned policies means nothing to evaluate: clear the config
-        // instead of persisting `enabled: true` that the UI reads back as off.
+        // No assigned policies means nothing to evaluate: clear the config.
         const payload = policyIds.length === 0
             ? null
             : {
-                enabled: next.enabled === true,
                 policyIds: policyIds,
                 mode: next.mode === "enforce" ? "enforce" : "audit",
             };
@@ -322,7 +319,6 @@ export function DetailsTab({
             : [...assignedPolicyIds, policyId];
         updatePolicy({
             ...policyConfig,
-            enabled: nextIds.length > 0 ? policyConfig.enabled !== false : false,
             policyIds: nextIds,
             mode: policyMode,
         });
@@ -477,24 +473,12 @@ export function DetailsTab({
                 <>
                     <div className="flex flex-col gap-3">
                         <span className="text-[11px] uppercase tracking-wider text-muted-foreground/70">Runtime Policy</span>
-                        <ToggleRow
-                            label="Enabled"
-                            description="Apply assigned policies to tools, files, skills, and subagents"
-                            checked={policyEnabled}
-                            onCheckedChange={(next) => updatePolicy({
-                                ...policyConfig,
-                                enabled: next,
-                                policyIds: assignedPolicyIds,
-                                mode: policyMode,
-                            })}
-                        />
                         <div className="flex items-center justify-between gap-3">
                             <span className="text-[11px] text-muted-foreground">Mode</span>
                             <Select
                                 value={policyMode}
                                 onValueChange={(value) => updatePolicy({
                                     ...policyConfig,
-                                    enabled: policyConfig.enabled === true,
                                     policyIds: assignedPolicyIds,
                                     mode: value,
                                 })}
