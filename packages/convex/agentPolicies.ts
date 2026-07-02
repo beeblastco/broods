@@ -78,6 +78,18 @@ export const create = mutation({
         const account = await resolveActiveAccountForAuthId(ctx, user.id);
         if (!account) throw new Error("Broods account not provisioned.");
 
+        // CLI sync adopts policies by exact (environmentId, name), so a
+        // duplicate dashboard name could be claimed non-deterministically by an
+        // unrelated manifest entry on the next `broods deploy`.
+        const duplicate = await ctx.db
+            .query("agentPolicies")
+            .withIndex("by_environmentId_and_name", (q) =>
+                q.eq("environmentId", args.environmentId).eq("name", args.name.trim()),
+            )
+            .filter((q) => q.eq(q.field("status"), "active"))
+            .first();
+        if (duplicate) throw new Error(`A policy named "${args.name.trim()}" already exists in this environment.`);
+
         const document = normalizePolicyDocument(args.document);
         const now = Date.now();
 
@@ -303,7 +315,14 @@ async function requireEditablePolicy(
     return policy;
 }
 
-function normalizePolicyDocument(value: unknown): unknown {
+/**
+ * Validates a policy document's shape before persisting.
+ * Exported so CLI sync writes go through the same gate as CRUD mutations.
+ * @param value candidate policy document
+ * @returns the validated document
+ * @throws when version, rules, effects, or actions are malformed
+ */
+export function normalizePolicyDocument(value: unknown): unknown {
     if (!isPlainObject(value)) throw new Error("Policy document must be an object.");
     if (value.version !== 1) throw new Error("Policy document version must be 1.");
     if (!Array.isArray(value.rules)) throw new Error("Policy document rules must be an array.");

@@ -114,6 +114,11 @@ export function normalizeAgentPolicyConfig(value: unknown): AgentPolicyConfig | 
   if (value == null) return undefined;
   if (!isPlainObject(value)) throw new Error("config.policy must be an object");
   const config = value as Record<string, unknown>;
+  for (const key of Object.keys(config)) {
+    if (key !== "enabled" && key !== "policyIds" && key !== "mode") {
+      throw new Error(`config.policy.${key} is not supported`);
+    }
+  }
   assertOptionalBoolean(config.enabled, "config.policy.enabled");
   assertOptionalStringArray(config.policyIds, "config.policy.policyIds");
   assertOptionalEnum(config.mode, "config.policy.mode", ["enforce", "audit"]);
@@ -188,10 +193,17 @@ function normalizeAgentPolicyRule(value: unknown, index: number): AgentPolicyRul
   };
 }
 
+const RESOURCE_SELECTOR_KEYS = ["toolNames", "toolIds", "workspaceIds", "workspaceNames", "filePaths", "subagentIds", "skillPaths"] as const;
+
 function normalizeResourceSelector(value: unknown, index: number): AgentPolicyResourceSelector {
   if (!isPlainObject(value)) throw new Error(`policy rules[${index}].resources must be an object`);
   const selector = value as Record<string, unknown>;
-  for (const key of ["toolNames", "toolIds", "workspaceIds", "workspaceNames", "filePaths", "subagentIds", "skillPaths"]) {
+  for (const key of Object.keys(selector)) {
+    if (!RESOURCE_SELECTOR_KEYS.includes(key as (typeof RESOURCE_SELECTOR_KEYS)[number])) {
+      throw new Error(`policy rules[${index}].resources.${key} is not supported`);
+    }
+  }
+  for (const key of RESOURCE_SELECTOR_KEYS) {
     assertOptionalStringArray(selector[key], `policy rules[${index}].resources.${key}`);
   }
 
@@ -231,9 +243,13 @@ function normalizeConditions(value: unknown, index: number): AgentPolicyConditio
 
 function isConditionValue(value: unknown): value is AgentPolicyCondition["value"] {
   if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") return true;
-  return Array.isArray(value) && value.every((entry) =>
-    typeof entry === "string" || typeof entry === "number" || typeof entry === "boolean"
-  );
+  if (!Array.isArray(value)) return false;
+  if (value.length === 0) return true;
+  // The declared union is homogeneous (string[] | number[] | boolean[]); a
+  // mixed array would hand OPA a shape the contract does not allow.
+  const elementType = typeof value[0];
+  if (elementType !== "string" && elementType !== "number" && elementType !== "boolean") return false;
+  return value.every((entry) => typeof entry === elementType);
 }
 
 function assertOptionalBoolean(value: unknown, name: string): void {

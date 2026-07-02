@@ -234,11 +234,19 @@ async function applyDeploymentKey(
 /** Surface non-fatal deploy advisories (e.g. env vars referenced but not set). */
 function printSyncWarnings(result: RemoteManifestResponse): void {
   const missing = result.warnings?.missingEnv ?? [];
-  if (missing.length === 0) return;
-  printWarning(
-    `⚠ ${missing.length} env var(s) referenced in agent config but not set: ${missing.join(", ")}`,
-  );
-  for (const name of missing) console.log(`    broods env set ${name}`);
+  if (missing.length > 0) {
+    printWarning(
+      `⚠ ${missing.length} env var(s) referenced in agent config but not set: ${missing.join(", ")}`,
+    );
+    for (const name of missing) console.log(`    broods env set ${name}`);
+  }
+  const missingPolicies = result.warnings?.missingPolicies ?? [];
+  if (missingPolicies.length > 0) {
+    printWarning(
+      `⚠ ${missingPolicies.length} policy ref(s) in agent config match no policy resource ` +
+      `in this deploy and will be ignored at runtime: ${missingPolicies.join(", ")}`,
+    );
+  }
 }
 
 async function dev(args: string[]): Promise<void> {

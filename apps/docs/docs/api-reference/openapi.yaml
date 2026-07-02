@@ -1506,6 +1506,7 @@ paths:
         - { name: policyId, in: path, required: true, schema: { type: string } }
       responses:
         '200': { description: Deleted }
+        '404': { description: Not found }
 
   /accounts/me/skills:
     post:
@@ -2633,6 +2634,10 @@ components:
         modelId:
           type: string
           description: Provider-specific model identifier
+        reasoning:
+          type: string
+          enum: [provider-default, none, minimal, low, medium, high, xhigh]
+          description: Provider-agnostic reasoning level. Provider-specific `providerOptions` reasoning settings take precedence when both are set.
         temperature:
           type: number
         maxOutputTokens:

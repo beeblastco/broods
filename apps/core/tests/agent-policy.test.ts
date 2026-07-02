@@ -1,5 +1,9 @@
 import { describe, expect, it } from "bun:test";
 import { policyInputForTool } from "../functions/harness-processing/policy.ts";
+import {
+  normalizeAgentPolicyConfig,
+  normalizeAgentPolicyDocument,
+} from "../functions/_shared/storage/agent-policy.ts";
 import type { ResolvedWorkspace } from "../functions/_shared/workspaces.ts";
 
 const workspaces: ResolvedWorkspace[] = [{
@@ -51,5 +55,38 @@ describe("agent policy input", () => {
       action: "tool.call",
       toolName: "tavilySearch",
     });
+  });
+});
+
+describe("agent policy validation", () => {
+  it("rejects unknown config.policy keys instead of dropping them", () => {
+    expect(() => normalizeAgentPolicyConfig({ enabbled: true })).toThrow("config.policy.enabbled is not supported");
+    expect(normalizeAgentPolicyConfig({ enabled: true, policyIds: ["policy_a"], mode: "audit" })).toEqual({
+      enabled: true,
+      policyIds: ["policy_a"],
+      mode: "audit",
+    });
+  });
+
+  it("rejects unknown resource selector keys", () => {
+    expect(() => normalizeAgentPolicyDocument({
+      version: 1,
+      rules: [{ effect: "deny", actions: ["workspace.exec"], resources: { toolName: ["bash"] } }],
+    })).toThrow("policy rules[0].resources.toolName is not supported");
+  });
+
+  it("rejects heterogeneous condition value arrays", () => {
+    const documentWithValue = (value: unknown) => ({
+      version: 1,
+      rules: [{
+        effect: "deny",
+        actions: ["tool.call"],
+        conditions: [{ attribute: "environment", operator: "in", value }],
+      }],
+    });
+    expect(() => normalizeAgentPolicyDocument(documentWithValue(["prod", 1, true]))).toThrow(
+      "policy rules[0].conditions[0].value is invalid",
+    );
+    expect(() => normalizeAgentPolicyDocument(documentWithValue(["prod", "staging"]))).not.toThrow();
   });
 });

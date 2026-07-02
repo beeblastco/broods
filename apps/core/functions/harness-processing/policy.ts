@@ -5,9 +5,9 @@
  */
 
 import type { ToolApprovalConfiguration, ToolApprovalStatus, ToolSet } from "ai";
-import { httpPolicyClient, opaPolicy, shadow } from "@ai-sdk/policy-opa";
+import { httpPolicyClient, opaPolicy, shadow, type PolicyClient } from "@ai-sdk/policy-opa";
 import { optionalEnv } from "../_shared/env.ts";
-import { logWarn } from "../_shared/log.ts";
+import { logDebug, logWarn } from "../_shared/log.ts";
 import {
   getStorage,
   type AgentConfig,
@@ -40,7 +40,10 @@ export async function createPolicyToolApproval(
     .filter((record): record is NonNullable<typeof record> => Boolean(record))
     .map((record) => record.document);
 
-  const client = httpPolicyClient({ url: optionalEnv("OPA_BASE_URL") ?? "http://127.0.0.1:8181" });
+  const client = withEvaluationDeadline(
+    httpPolicyClient({ url: optionalEnv("OPA_BASE_URL") ?? "http://127.0.0.1:8181" }),
+    OPA_EVALUATE_TIMEOUT_MS,
+  );
   const approval = shadow(
     opaPolicy({
       client,
@@ -165,7 +168,36 @@ export function policyInputForTool(
 function resolveWorkspaceForPolicy(workspaces: ResolvedWorkspace[], workspaceName: string | undefined) {
   try {
     return resolveWorkspace(workspaces, workspaceName);
-  } catch {
+  } catch (error) {
+    // Workspace-scoped selectors cannot match without this context, so make
+    // the miss visible before enforcement mode relies on it.
+    logDebug("Policy workspace resolution failed", {
+      workspaceName,
+      error: error instanceof Error ? error.message : String(error),
+    });
     return undefined;
   }
+}
+
+// httpPolicyClient exposes no timeout/AbortSignal, and the OPA round-trip sits
+// on the tool-approval path: a hung OPA endpoint would stall gated tool
+// execution. A rejected evaluation fails closed inside opaPolicy.
+const OPA_EVALUATE_TIMEOUT_MS = 3000;
+
+function withEvaluationDeadline(client: PolicyClient, timeoutMs: number): PolicyClient {
+  return {
+    evaluate: async <TInput, TResult>(path: string, input: TInput): Promise<TResult> => {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        return await Promise.race([
+          client.evaluate<TInput, TResult>(path, input),
+          new Promise<never>((_, reject) => {
+            timer = setTimeout(() => reject(new Error(`OPA evaluation timed out after ${timeoutMs}ms`)), timeoutMs);
+          }),
+        ]);
+      } finally {
+        clearTimeout(timer);
+      }
+    },
+  };
 }

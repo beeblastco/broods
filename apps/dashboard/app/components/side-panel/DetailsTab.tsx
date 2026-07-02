@@ -303,7 +303,9 @@ export function DetailsTab({
         const policyIds = Array.isArray(next.policyIds)
             ? next.policyIds.filter((entry): entry is string => typeof entry === "string")
             : [];
-        const payload = policyIds.length === 0 && next.enabled !== true
+        // No assigned policies means nothing to evaluate: clear the config
+        // instead of persisting `enabled: true` that the UI reads back as off.
+        const payload = policyIds.length === 0
             ? null
             : {
                 enabled: next.enabled === true,
@@ -506,6 +508,9 @@ export function DetailsTab({
                                 </SelectContent>
                             </Select>
                         </div>
+                        <p className="text-[11px] text-muted-foreground">
+                            Decisions are audit-only during rollout; Enforce activates once policy enforcement ships.
+                        </p>
                         <div className="flex flex-col gap-1.5">
                             {(policyOptions ?? []).map((policy) => {
                                 const selected = assignedPolicyIds.includes(policy._id);

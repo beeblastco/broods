@@ -1295,7 +1295,10 @@ export async function runAgentLoop(
 }
 
 function errorMessage(error: unknown): string {
-  const message = error instanceof Error ? error.message : String(error);
+  const rawMessage = error instanceof Error ? error.message : String(error);
+  // This text reaches the end user via reply.onErrorText, so it must pass the
+  // same secret scrubbing the telemetry path applies before any sink sees it.
+  const message = redactSensitiveText(rawMessage, getObservabilityContext()?.secretValues);
   // Provider-managed assets (uploadFile/uploadSkill provider references) are
   // per-provider: switching config.model.provider mid-conversation invalidates
   // them. Return an actionable message instead of the bare provider error.

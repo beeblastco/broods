@@ -14,8 +14,8 @@ export interface SyncClientOptions {
 export interface RemoteManifestResponse {
   manifest: CliManifest;
   ids: GeneratedIds;
-  /** Non-fatal deploy advisories (e.g. referenced-but-unset env vars). */
-  warnings?: { missingEnv?: string[] };
+  /** Non-fatal deploy advisories (e.g. referenced-but-unset env vars, unresolved policy refs). */
+  warnings?: { missingEnv?: string[]; missingPolicies?: string[] };
   /**
    * The environment's runtime API key context. Deployments include the plaintext
    * `apiKey` so the CLI can write `BROODS_API_KEY` locally.

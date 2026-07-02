@@ -141,9 +141,12 @@ export const dynamoAgentPolicyStore: AgentPolicyStore = {
     const patch = normalizeUpdateAgentPolicyInput(rawPatch);
     const setExpressions: string[] = ["updatedAt = :updatedAt"];
     const removeExpressions: string[] = [];
-    const names: Record<string, string> = {};
+    // Condition on active status so a stale update cannot resurrect or mutate
+    // a concurrently soft-deleted policy.
+    const names: Record<string, string> = { "#status": "status" };
     const values: Record<string, AttributeValue> = {
       ":updatedAt": { S: new Date().toISOString() },
+      ":activeStatus": { S: "active" },
     };
 
     if (patch.name !== undefined) {
@@ -164,7 +167,6 @@ export const dynamoAgentPolicyStore: AgentPolicyStore = {
     }
     if (patch.status !== undefined) {
       setExpressions.push("#status = :status");
-      names["#status"] = "status";
       values[":status"] = { S: patch.status };
     }
 
@@ -177,8 +179,8 @@ export const dynamoAgentPolicyStore: AgentPolicyStore = {
             `SET ${setExpressions.join(", ")}`,
             ...(removeExpressions.length > 0 ? [`REMOVE ${removeExpressions.join(", ")}`] : []),
           ].join(" "),
-          ConditionExpression: "attribute_exists(accountId) AND attribute_exists(policyId)",
-          ...(Object.keys(names).length > 0 ? { ExpressionAttributeNames: names } : {}),
+          ConditionExpression: "attribute_exists(accountId) AND attribute_exists(policyId) AND #status = :activeStatus",
+          ExpressionAttributeNames: names,
           ExpressionAttributeValues: values,
           ReturnValues: "ALL_NEW",
         }),
@@ -198,10 +200,13 @@ export const dynamoAgentPolicyStore: AgentPolicyStore = {
           TableName: agentPoliciesTableName(),
           Key: { accountId: { S: accountId }, policyId: { S: policyId } },
           UpdateExpression: "SET #status = :status, updatedAt = :updatedAt",
-          ConditionExpression: "attribute_exists(accountId) AND attribute_exists(policyId)",
+          // Only active policies can transition to deleted, so a repeated
+          // delete reports false and the handler maps it to 404.
+          ConditionExpression: "attribute_exists(accountId) AND attribute_exists(policyId) AND #status = :activeStatus",
           ExpressionAttributeNames: { "#status": "status" },
           ExpressionAttributeValues: {
             ":status": { S: "deleted" },
+            ":activeStatus": { S: "active" },
             ":updatedAt": { S: new Date().toISOString() },
           },
         }),

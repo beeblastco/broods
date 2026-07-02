@@ -728,6 +728,10 @@ const agentPolicies: AgentPolicyStore = {
     return this.getById(accountId, policyId);
   },
   async remove(accountId, policyId) {
+    // Missing/foreign/already-deleted policies must report false so the
+    // account-manage handler can answer 404 instead of a spurious success.
+    const existing = await this.getById(accountId, policyId);
+    if (!existing) return false;
     await getConvexClient().mutation(internal.agentPolicies.removeInternal, {
       accountId: accountId as any,
       policyId: policyId,

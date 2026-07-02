@@ -10,6 +10,7 @@ import type { Doc, Id } from "./_generated/dataModel";
 import type { CliManifestResource, GeneratedIds } from "./cliTypes";
 import { internalMutation, internalQuery, type MutationCtx, type QueryCtx } from "./_generated/server";
 import { ensureEnvironmentDeployment } from "./agentDeployments";
+import { normalizePolicyDocument } from "./agentPolicies";
 import { scheduleServiceLog } from "./observability";
 import {
     ensureAgentsRowForConfig,
@@ -66,9 +67,13 @@ const idsValidator = v.object({
  * Non-fatal deploy advisories returned to the CLI. `missingEnv` lists env var
  * names referenced via `env.NAME` in agent config but not yet stored for the
  * environment, so the operator can run `broods env set <NAME>`.
+ * `missingPolicies` lists `policy.policyIds` refs that did not resolve to a
+ * policy resource in this deploy, so a typo cannot silently weaken the
+ * intended policy set.
  */
 const warningsValidator = v.object({
     missingEnv: v.array(v.string()),
+    missingPolicies: v.array(v.string()),
 });
 
 type CliResource = CliManifestResource;
@@ -172,6 +177,7 @@ export const syncManifestBySecretHash = internalMutation({
         const policyIds = await syncPolicyResources(ctx, account._id, projectDoc._id, environmentDoc._id, manifest.resources);
         const envValues = await loadEnvironmentVariableValues(ctx, projectDoc._id, environmentDoc._id);
         const missingEnv = new Set<string>();
+        const missingPolicies = new Set<string>();
         const sandboxIds = await syncSandboxResources(ctx, {
             accountId: account._id,
             projectId: projectDoc._id,
@@ -190,6 +196,7 @@ export const syncManifestBySecretHash = internalMutation({
             policyIds: policyIds,
             envValues: envValues,
             missingEnv: missingEnv,
+            missingPolicies: missingPolicies,
         });
 
         if (prune === true) {
@@ -229,7 +236,7 @@ export const syncManifestBySecretHash = internalMutation({
                 resources: resources,
             },
             ids: ids,
-            warnings: { missingEnv: [...missingEnv].sort() },
+            warnings: { missingEnv: [...missingEnv].sort(), missingPolicies: [...missingPolicies].sort() },
         };
     },
 });
@@ -1039,6 +1046,9 @@ async function syncPolicyResources(
 
     for (const resource of policies) {
         const name = resourceName(resource.name);
+        // Same validation gate as the CRUD mutations: a malformed manifest
+        // policy must fail the deploy, not reach OPA at runtime.
+        const document = normalizePolicyDocument(resource.config);
         const current = existing.find((entry) => entry.name === name);
         const target = current ?? existing.find((entry) =>
             entry.managedBy === "cli" &&
@@ -1055,7 +1065,7 @@ async function syncPolicyResources(
                 environmentId: environmentId,
                 name: name,
                 description: resource.description,
-                document: resource.config,
+                document: document,
                 status: "active",
                 managedBy: "cli",
                 updatedAt: Date.now(),
@@ -1070,7 +1080,7 @@ async function syncPolicyResources(
                 environmentId: environmentId,
                 name: name,
                 description: resource.description,
-                document: resource.config,
+                document: document,
                 status: "active",
                 managedBy: "cli",
                 createdAt: now,
@@ -1122,9 +1132,10 @@ async function syncAgentResources(
         policyIds: Record<string, string>;
         envValues: Record<string, string>;
         missingEnv: Set<string>;
+        missingPolicies: Set<string>;
     },
 ): Promise<Record<string, string>> {
-    const { account, projectId, environmentId, resources, workspaceIds, sandboxIds, policyIds, envValues, missingEnv } = options;
+    const { account, projectId, environmentId, resources, workspaceIds, sandboxIds, policyIds, envValues, missingEnv, missingPolicies } = options;
     const ids: Record<string, string> = {};
     // Agents whose `subagent.allowed` references other agents by name. Resolved
     // to deploy-time agent ids in a second pass, once every agent row exists.
@@ -1146,12 +1157,16 @@ async function syncAgentResources(
     for (const resource of agentResources) {
         const name = resourceName(resource.name);
         const envNames = new Set<string>();
-        const nested = rewriteResourceRefs(
-            rewriteEnvRefs(asObject(resource.config), envNames),
-            workspaceIds,
-            sandboxIds,
-            policyIds,
-        );
+        const withEnvRefs = rewriteEnvRefs(asObject(resource.config), envNames);
+        // Policy refs that resolve to no policy resource in this deploy stay
+        // behind as raw strings the runtime later drops, silently weakening the
+        // intended policy set. Surface them as a deploy warning instead.
+        if (isPlainObject(withEnvRefs.policy) && Array.isArray(withEnvRefs.policy.policyIds)) {
+            for (const entry of withEnvRefs.policy.policyIds) {
+                if (typeof entry === "string" && !policyIds[entry]) missingPolicies.add(entry);
+            }
+        }
+        const nested = rewriteResourceRefs(withEnvRefs, workspaceIds, sandboxIds, policyIds);
         const flat = fromNestedAgentConfig(nested);
         // Names referenced via `env.NAME` but not yet stored for this environment.
         // Surfaced as a deploy warning so a typo/rename can't silently no-op into

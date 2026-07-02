@@ -96,9 +96,12 @@ condition_match(condition) if {
   actual == condition.value
 }
 
+# Negated operators require the attribute to be present so a rule scoped by
+# notEquals/notIn cannot match requests that never carried the attribute.
 condition_match(condition) if {
-  actual := object.get(input, condition.attribute, null)
   condition.operator == "notEquals"
+  actual := object.get(input, condition.attribute, null)
+  actual != null
   actual != condition.value
 }
 
@@ -110,8 +113,9 @@ condition_match(condition) if {
 }
 
 condition_match(condition) if {
-  actual := object.get(input, condition.attribute, null)
   condition.operator == "notIn"
+  actual := object.get(input, condition.attribute, null)
+  actual != null
   is_array(condition.value)
   not value_in_collection(condition.value, actual)
 }
