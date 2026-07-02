@@ -96,6 +96,22 @@ describe("agent policy enforce mode", () => {
     }
   });
 
+  it("fails closed in enforce mode when OPA is unreachable", async () => {
+    const closed = Bun.serve({ port: 0, fetch: () => new Response("") });
+    const closedPort = closed.port;
+    closed.stop(true);
+    const previous = process.env.OPA_BASE_URL;
+    process.env.OPA_BASE_URL = `http://127.0.0.1:${closedPort}`;
+    try {
+      const approval = await createPolicyToolApproval(agentConfig("enforce"), { accountId: "acct_1", agentId: "agent_1" }, []);
+      expect(approval).toBeDefined();
+      const status = await approval!(toolCallEvent);
+      expect(decisionType(status)).toBe("denied");
+    } finally {
+      process.env.OPA_BASE_URL = previous;
+    }
+  });
+
   it("sends the OPA_API_TOKEN bearer header on evaluations", () => {
     expect(seenAuthHeaders.length).toBeGreaterThan(0);
     expect(seenAuthHeaders).toEqual(seenAuthHeaders.map(() => "Bearer test-opa-token"));
