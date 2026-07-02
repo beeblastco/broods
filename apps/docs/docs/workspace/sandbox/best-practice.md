@@ -143,10 +143,11 @@ terminal UIs behave as they would in a real shell. It works on every provider (i
 guest-side wrapper); note that stderr merges into stdout and lines end with CRLF, so keep
 `pty` off for output you want byte-exact.
 
-**Operator side — the dashboard Terminal tab.** For `sandbox` (workdir) instances the
-dashboard's Sandbox → Instances detail panel has a live interactive terminal — a real
-in-guest TTY streamed over WebSocket, not a command runner. Connecting resumes a suspended
-instance. Other providers keep the bounded command runner (30 s / 64 KiB per command).
+**Operator side — the dashboard Terminal tab.** For `sandbox` (workdir) and `lambda`
+(AWS MicroVM) instances the dashboard's Sandbox → Instances detail panel has a live
+interactive terminal — a real in-guest TTY streamed over WebSocket, not a command runner.
+Connecting resumes a suspended instance. The third-party providers keep the bounded
+command runner (30 s / 64 KiB per command).
 
 ```mermaid
 sequenceDiagram
@@ -154,22 +155,28 @@ sequenceDiagram
   participant C as Convex action
   participant AM as account-manage
   participant G as Gateway (WS)
-  participant W as workdir node PTY
+  participant P as workdir PTY / MicroVM shell
 
   D->>C: openTerminal(sandboxId, reservationKey)
   C->>AM: POST /sandboxes/:id/terminal (service auth)
   AM-->>D: sealed ticket (opaque token, ~2 min TTL)
   D->>G: WS /v1/sandboxes/terminal/ws?token=…
   G->>G: open ticket with stage service secret
-  G->>W: WS /v1/sandboxes/:id/pty (org key)
-  W-->>D: raw TTY bytes ⇄ keystrokes
+  G->>P: WS upstream (org key / shell auth token)
+  P-->>D: raw TTY bytes ⇄ keystrokes
 ```
 
 The upstream URL and provider credential travel **inside the sealed (AES-256-GCM) ticket**,
-so the browser only ever holds an opaque, short-lived token; the workdir org key never
-leaves the trusted tier (core mints, gateway opens). AWS MicroVM (`lambda`) has a native
-shell-token API but requires the VM to run with a `SHELL_INGRESS` connector — native lambda
-PTY is tracked as follow-up work; its Terminal tab stays on the bounded runner.
+so the browser only ever holds an opaque, short-lived token; the credential never leaves
+the trusted tier (core mints, gateway opens). workdir tickets carry the org key as a
+bearer `Authorization` header; MicroVM tickets carry a `CreateMicrovmShellAuthToken` JWE
+in `X-aws-proxy-auth`, dialing the VM endpoint's native shell (`wss://<endpoint>`).
+
+> **MicroVM note:** shell access requires the VM to have been launched with the
+> AWS-managed `SHELL_INGRESS` network connector. Persistent (reserved) MicroVMs attach it
+> automatically at `RunMicrovm`; connectors cannot be added to a live VM, so instances
+> reserved before this feature must be terminated and re-reserved once to gain a terminal
+> (the API answers `409` with that hint).
 
 ## Keep prompts portable
 

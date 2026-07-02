@@ -97,9 +97,10 @@ export function SandboxInstanceSheet({ instance, projectId, onClose }: Props) {
 
     const controllable = Boolean(instance.sandboxConfigId);
     const commandRunnable = controllable && instance.status !== "terminating";
-    // Only the self-hosted workdir `sandbox` provider exposes an in-guest PTY
-    // WebSocket; the other providers keep the bounded command runner.
-    const supportsLiveTerminal = instance.provider === "sandbox";
+    // The self-hosted workdir `sandbox` provider exposes an in-guest PTY WebSocket
+    // and AWS MicroVM (`lambda`) exposes its native shell endpoint; the third-party
+    // providers keep the bounded command runner.
+    const supportsLiveTerminal = instance.provider === "sandbox" || instance.provider === "lambda";
     // Only the self-hosted workdir `sandbox` provider can capture a running instance
     // into a reusable image. AWS MicroVM (`lambda`) and the third-party providers have
     // no runtime snapshot-to-image API, so the capture action is hidden for them —

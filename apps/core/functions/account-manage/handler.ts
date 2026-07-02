@@ -34,6 +34,7 @@ import {
 import type { LambdaResponse } from "../_shared/runtime.ts";
 import { createSandboxExecutor } from "../harness-processing/sandbox/index.ts";
 import { workdirConnection, workdirPtyUrl } from "../harness-processing/sandbox/workdir-executor.ts";
+import { MICROVM_SHELL_AUTH_HEADER, microvmShellConnection } from "../harness-processing/sandbox/microvm-executor.ts";
 import { getSandboxExternalId } from "../harness-processing/sandbox/instance-store.ts";
 import { sealTerminalTicket, TERMINAL_TICKET_TTL_MS, TERMINAL_WEBSOCKET_PATH } from "../_shared/terminal-ticket.ts";
 import { requireEnv } from "../_shared/env.ts";
@@ -733,12 +734,13 @@ async function handleSandboxLifecycle(
     }
 
     if (action === "terminal") {
-        // Only workdir exposes an in-guest PTY WebSocket today; other providers
-        // keep the bounded `exec` terminal.
-        if (provider !== "sandbox") {
+        // workdir exposes an in-guest PTY WebSocket; AWS MicroVMs expose the native
+        // shell endpoint (SHELL_INGRESS). Other providers keep the bounded `exec`
+        // terminal.
+        if (provider !== "sandbox" && provider !== "lambda") {
             return errorResponse(409, `provider ${provider} does not support a live terminal`);
         }
-        const externalId = await getSandboxExternalId("sandbox", reservationKey);
+        const externalId = await getSandboxExternalId(provider, reservationKey);
         if (!externalId) {
             return errorResponse(404, "No reserved sandbox instance for this reservation key");
         }
@@ -751,14 +753,23 @@ async function handleSandboxLifecycle(
                 await setSandboxInstanceStatus(accountId, reservationKey, "running");
             }
         }
-        const { baseUrl, apiKey } = workdirConnection(record.config);
+        let target: { url: string; authorization: string; authorizationHeader?: string };
+        if (provider === "lambda") {
+            try {
+                const shell = await microvmShellConnection(externalId);
+                target = { ...shell, authorizationHeader: MICROVM_SHELL_AUTH_HEADER };
+            } catch (error) {
+                // Most likely a VM launched before SHELL_INGRESS was attached at
+                // RunMicrovm; connectors cannot be added to a live VM.
+                const message = error instanceof Error ? error.message : String(error);
+                return errorResponse(409, `MicroVM shell access unavailable (${message}); terminate and re-reserve the instance to enable the live terminal`);
+            }
+        } else {
+            const { baseUrl, apiKey } = workdirConnection(record.config);
+            target = { url: workdirPtyUrl(baseUrl, externalId), authorization: `Bearer ${apiKey}` };
+        }
         const expiresAt = Date.now() + TERMINAL_TICKET_TTL_MS;
-        const token = sealTerminalTicket({
-            url: workdirPtyUrl(baseUrl, externalId),
-            authorization: `Bearer ${apiKey}`,
-            accountId,
-            expiresAt,
-        }, requireEnv("SERVICE_AUTH_SECRET"));
+        const token = sealTerminalTicket({ ...target, accountId, expiresAt }, requireEnv("SERVICE_AUTH_SECRET"));
 
         return jsonResponse(200, { token, expiresAt, websocketPath: TERMINAL_WEBSOCKET_PATH });
     }

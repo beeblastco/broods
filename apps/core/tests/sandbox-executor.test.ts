@@ -111,6 +111,8 @@ const microvmSendMock = mock(async (command: { _type?: string }) => {
       return { microvmId: "microvm-1", endpoint: "microvm-1.lambda-microvm.us-east-1.on.aws", state: "PENDING" };
     case "CreateMicrovmAuthToken":
       return { authToken: { "X-aws-proxy-auth": "proxy-token" } };
+    case "CreateMicrovmShellAuthToken":
+      return { authToken: { "X-aws-proxy-auth": "shell-jwe-token" } };
     case "GetMicrovm":
       if (microvmGetResponses.length > 0) {
         const next = microvmGetResponses.shift();
@@ -176,6 +178,7 @@ mock.module("@aws-sdk/client-lambda-microvms", () => ({
   },
   RunMicrovmCommand: microvmCommand("RunMicrovm"),
   CreateMicrovmAuthTokenCommand: microvmCommand("CreateMicrovmAuthToken"),
+  CreateMicrovmShellAuthTokenCommand: microvmCommand("CreateMicrovmShellAuthToken"),
   TerminateMicrovmCommand: microvmCommand("TerminateMicrovm"),
   GetMicrovmCommand: microvmCommand("GetMicrovm"),
   SuspendMicrovmCommand: microvmCommand("SuspendMicrovm"),
@@ -314,6 +317,12 @@ describe("createSandboxExecutor", () => {
 
     expect(claimSandboxInstanceMock.mock.calls[0]?.[1]).toBe(CHILD_NS);
     const runInput = microvmRunInput();
+    // Persistent (reserved) VMs attach the managed shell-ingress connector at
+    // launch so the dashboard terminal can mint shell tokens later.
+    expect(runInput.ingressNetworkConnectors).toEqual([
+      "arn:aws:lambda:us-east-1:aws:network-connector:aws-network-connector:ALL_INGRESS",
+      "arn:aws:lambda:us-east-1:aws:network-connector:aws-network-connector:SHELL_INGRESS",
+    ]);
     const payload = JSON.parse(runInput.runHookPayload as string);
     expect(payload.workspace).toMatchObject({ namespace: NS, root: "/mnt/workspaces" });
     expect(payload.workspace.mount).toMatchObject({
@@ -347,8 +356,22 @@ describe("createSandboxExecutor", () => {
     const runInput = microvmRunInput();
     expect(runInput.runHookPayload).toBeUndefined();
     expect(runInput.egressNetworkConnectors).toBeUndefined();
+    // Ephemeral VMs never serve a terminal, so no shell ingress is attached.
+    expect(runInput.ingressNetworkConnectors).toBeUndefined();
     const init = microvmFetchMock.mock.calls[0]![1] as { body: string };
     expect(JSON.parse(init.body).namespace).toBeUndefined();
+  });
+
+  it("mints a native shell connection target for a reserved MicroVM", async () => {
+    const { microvmShellConnection, MICROVM_SHELL_AUTH_HEADER } = require("../functions/harness-processing/sandbox/microvm-executor.ts");
+
+    const shell = await microvmShellConnection("microvm-1");
+
+    expect(MICROVM_SHELL_AUTH_HEADER).toBe("X-aws-proxy-auth");
+    expect(shell).toEqual({
+      url: "wss://microvm-1.lambda-microvm.us-east-1.on.aws",
+      authorization: "shell-jwe-token",
+    });
   });
 
   it("reconnects to a reserved MicroVM for a persistent run and never terminates it", async () => {

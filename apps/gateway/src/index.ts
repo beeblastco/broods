@@ -652,9 +652,10 @@ function openTerminalUpstream(socket: Bun.ServerWebSocket<TerminalGatewayData>):
   let upstream: WebSocket;
   try {
     // Bun's WebSocket client accepts custom headers; the upstream credential
-    // never leaves this process.
+    // never leaves this process. The ticket names the header — workdir uses
+    // `authorization`, AWS MicroVM shells use `X-aws-proxy-auth`.
     upstream = new WebSocket(socket.data.ticket.url, {
-      headers: { authorization: socket.data.ticket.authorization },
+      headers: { [socket.data.ticket.authorizationHeader ?? "authorization"]: socket.data.ticket.authorization },
     } as unknown as string[]);
   } catch {
     socket.close(1011, "failed to reach the sandbox terminal");

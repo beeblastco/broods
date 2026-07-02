@@ -351,3 +351,15 @@ test("opens a sealed terminal ticket with whichever stage secret verifies it", (
   expect(openTerminalTicketWithSecrets("", ["dev-secret"])).toBeNull();
   expect(openTerminalTicketWithSecrets("garbage-token", ["dev-secret", "prod-secret"])).toBeNull();
 });
+
+test("preserves the MicroVM shell auth header through the sealed ticket", () => {
+  const ticket = {
+    url: "wss://mvm-1.lambda-microvm.eu-west-1.on.aws",
+    authorization: "jwe-shell-token",
+    authorizationHeader: "X-aws-proxy-auth",
+    accountId: "acct_1",
+    expiresAt: Date.now() + 60_000,
+  };
+
+  expect(openTerminalTicketWithSecrets(sealTerminalTicket(ticket, "dev-secret"), ["dev-secret"])).toEqual(ticket);
+});

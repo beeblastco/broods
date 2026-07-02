@@ -51,6 +51,7 @@ mock.module("@aws-sdk/client-lambda-microvms", () => ({
   },
   RunMicrovmCommand: microvmCommand("RunMicrovm"),
   CreateMicrovmAuthTokenCommand: microvmCommand("CreateMicrovmAuthToken"),
+  CreateMicrovmShellAuthTokenCommand: microvmCommand("CreateMicrovmShellAuthToken"),
   TerminateMicrovmCommand: microvmCommand("TerminateMicrovm"),
   GetMicrovmCommand: microvmCommand("GetMicrovm"),
   SuspendMicrovmCommand: microvmCommand("SuspendMicrovm"),

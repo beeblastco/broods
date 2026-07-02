@@ -31,6 +31,18 @@ describe("terminal tickets", () => {
     expect(sealed).not.toContain("sk_live_abc");
   });
 
+  test("round-trips a custom auth header (MicroVM shells use X-aws-proxy-auth)", () => {
+    const microvm = ticket({
+      url: "wss://mvm-1.lambda-microvm.eu-west-1.on.aws",
+      authorization: "jwe-shell-token",
+      authorizationHeader: "X-aws-proxy-auth",
+    });
+    const opened = openTerminalTicket(sealTerminalTicket(microvm, SECRET), SECRET);
+    expect(opened).toEqual(microvm);
+    // workdir tickets omit the field and keep defaulting to `authorization`.
+    expect(openTerminalTicket(sealTerminalTicket(ticket(), SECRET), SECRET)?.authorizationHeader).toBeUndefined();
+  });
+
   test("rejects an expired ticket", () => {
     const sealed = sealTerminalTicket(ticket({ expiresAt: Date.now() - 1 }), SECRET);
     expect(openTerminalTicket(sealed, SECRET)).toBeNull();

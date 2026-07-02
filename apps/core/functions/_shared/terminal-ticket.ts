@@ -19,6 +19,8 @@ export interface TerminalTicket {
   url: string;
   /** Authorization header value for the upstream connection. */
   authorization: string;
+  /** Header the credential is sent in; defaults to `authorization` (workdir). MicroVM shells use `X-aws-proxy-auth`. */
+  authorizationHeader?: string;
   /** Owning account, kept for gateway-side logging/limits. */
   accountId: string;
   /** Unix ms after which the ticket is rejected. */
@@ -60,11 +62,12 @@ export function openTerminalTicket(token: string, secret: string, now = Date.now
     ]).toString("utf-8");
     const parsed: unknown = JSON.parse(plaintext);
     if (!isPlainObject(parsed)) return null;
-    const { url, authorization, accountId, expiresAt } = parsed;
+    const { url, authorization, authorizationHeader, accountId, expiresAt } = parsed;
     if (typeof url !== "string" || typeof authorization !== "string" || typeof accountId !== "string") return null;
+    if (authorizationHeader !== undefined && typeof authorizationHeader !== "string") return null;
     if (typeof expiresAt !== "number" || expiresAt <= now) return null;
 
-    return { url, authorization, accountId, expiresAt };
+    return { url, authorization, accountId, expiresAt, ...(authorizationHeader ? { authorizationHeader } : {}) };
   } catch {
     return null;
   }

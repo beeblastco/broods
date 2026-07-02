@@ -63,6 +63,43 @@ mock.module("../functions/harness-processing/sandbox/instance-store.ts", () => (
   deleteSandboxInstance: deleteSandboxInstanceMock,
 }));
 
+// The MicroVM terminal mint goes through the AWS SDK (GetMicrovm →
+// CreateMicrovmShellAuthToken); answer that sequence and let a test force the
+// shell-token failure seen on VMs launched without SHELL_INGRESS.
+let microvmShellTokenError: string | null = null;
+const microvmSendMock = mock(async (command: { _type?: string }) => {
+  switch (command?._type) {
+    case "GetMicrovm":
+      return { microvmId: "sbx_handler", endpoint: "sbx-handler.lambda-microvm.eu-west-1.on.aws", state: "RUNNING" };
+    case "CreateMicrovmShellAuthToken":
+      if (microvmShellTokenError) throw new Error(microvmShellTokenError);
+      return { authToken: { "X-aws-proxy-auth": "jwe-shell-token" } };
+    default:
+      return {};
+  }
+});
+function microvmCommand(type: string) {
+  return class {
+    input: unknown;
+    _type = type;
+    constructor(input: unknown) {
+      this.input = input;
+    }
+  };
+}
+mock.module("@aws-sdk/client-lambda-microvms", () => ({
+  LambdaMicrovms: class {
+    send = microvmSendMock;
+  },
+  RunMicrovmCommand: microvmCommand("RunMicrovm"),
+  CreateMicrovmAuthTokenCommand: microvmCommand("CreateMicrovmAuthToken"),
+  CreateMicrovmShellAuthTokenCommand: microvmCommand("CreateMicrovmShellAuthToken"),
+  TerminateMicrovmCommand: microvmCommand("TerminateMicrovm"),
+  GetMicrovmCommand: microvmCommand("GetMicrovm"),
+  SuspendMicrovmCommand: microvmCommand("SuspendMicrovm"),
+  ResumeMicrovmCommand: microvmCommand("ResumeMicrovm"),
+}));
+
 const { handler } = await import("../functions/account-manage/handler.ts");
 
 afterEach(() => {
@@ -81,6 +118,8 @@ afterEach(() => {
   claimSandboxInstanceMock.mockClear();
   saveSandboxInstanceMock.mockClear();
   deleteSandboxInstanceMock.mockClear();
+  microvmSendMock.mockClear();
+  microvmShellTokenError = null;
   setStorageForTests(null);
   resetStorageForTests();
 });
@@ -244,13 +283,63 @@ describe("account-manage sandbox endpoints", () => {
     });
   });
 
-  it("refuses terminal tickets for providers without an in-guest PTY", async () => {
+  it("mints a sealed terminal ticket that targets the MicroVM native shell", async () => {
     process.env.SERVICE_AUTH_SECRET = "service-secret";
     setStorageForTests(createFakeStorage());
     const reservationKey = "fs-0123456789abcdef0123456789abcdef01234567";
     const created = responseJson(await handler(createEvent("POST", "/accounts/me/sandboxes", AUTH, {
       name: "persistent",
       config: { provider: "lambda", persistent: true, options: { reservationKey } },
+    }))) as SandboxConfigRecord;
+
+    const response = await handler(createEvent(
+      "POST",
+      `/accounts/me/sandboxes/${created.sandboxId}/terminal`,
+      { authorization: "Bearer service-secret", "x-account-id": ACCOUNT_ID },
+      { reservationKey },
+    ));
+
+    expect(response.statusCode).toBe(200);
+    const body = responseJson(response) as { token: string; expiresAt: number; websocketPath: string };
+    expect(body.websocketPath).toBe(TERMINAL_WEBSOCKET_PATH);
+    // The gateway must send the shell token in the MicroVM proxy header, not
+    // a bearer Authorization header.
+    expect(openTerminalTicket(body.token, "service-secret")).toMatchObject({
+      url: "wss://sbx-handler.lambda-microvm.eu-west-1.on.aws",
+      authorization: "jwe-shell-token",
+      authorizationHeader: "X-aws-proxy-auth",
+      accountId: ACCOUNT_ID,
+    });
+  });
+
+  it("maps MicroVM shell-token failures to a re-reserve hint", async () => {
+    process.env.SERVICE_AUTH_SECRET = "service-secret";
+    microvmShellTokenError = "MicroVM must have been run with the SHELL_INGRESS network connector attached";
+    setStorageForTests(createFakeStorage());
+    const reservationKey = "fs-0123456789abcdef0123456789abcdef01234567";
+    const created = responseJson(await handler(createEvent("POST", "/accounts/me/sandboxes", AUTH, {
+      name: "persistent",
+      config: { provider: "lambda", persistent: true, options: { reservationKey } },
+    }))) as SandboxConfigRecord;
+
+    const response = await handler(createEvent(
+      "POST",
+      `/accounts/me/sandboxes/${created.sandboxId}/terminal`,
+      { authorization: "Bearer service-secret", "x-account-id": ACCOUNT_ID },
+      { reservationKey },
+    ));
+
+    expect(response.statusCode).toBe(409);
+    expect(String((responseJson(response) as { error: string }).error)).toContain("terminate and re-reserve");
+  });
+
+  it("refuses terminal tickets for providers without an in-guest PTY", async () => {
+    process.env.SERVICE_AUTH_SECRET = "service-secret";
+    setStorageForTests(createFakeStorage());
+    const reservationKey = "fs-0123456789abcdef0123456789abcdef01234567";
+    const created = responseJson(await handler(createEvent("POST", "/accounts/me/sandboxes", AUTH, {
+      name: "persistent",
+      config: { provider: "e2b", persistent: true, network: { mode: "allow-all" }, options: { reservationKey } },
     }))) as SandboxConfigRecord;
 
     const response = await handler(createEvent(

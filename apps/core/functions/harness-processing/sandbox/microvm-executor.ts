@@ -22,6 +22,7 @@
 
 import {
   CreateMicrovmAuthTokenCommand,
+  CreateMicrovmShellAuthTokenCommand,
   GetMicrovmCommand,
   LambdaMicrovms,
   type MicrovmState,
@@ -67,6 +68,12 @@ const MAX_MICROVM_DURATION_SECONDS = 28_800;
 const DEFAULT_WORKSPACE_ROOT = "/mnt/workspaces";
 
 const PROVIDER = "lambda" as const;
+
+// The proxy authenticates shell WebSocket upgrades with this header; the value
+// comes from CreateMicrovmShellAuthToken. 30 minutes bounds a terminal session's
+// credential without cutting normal interactive use short.
+export const MICROVM_SHELL_AUTH_HEADER = "X-aws-proxy-auth";
+const SHELL_TOKEN_TTL_MINUTES = 30;
 
 // The JSON contract the lambda-sandbox image returns (snake_case), unchanged from
 // the Invoke era — only the transport (HTTP vs Invoke) differs.
@@ -335,7 +342,7 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
       maximumDurationInSeconds: persistent
         ? Math.min(lifecycle.maxLifetimeSeconds ?? MAX_MICROVM_DURATION_SECONDS, MAX_MICROVM_DURATION_SECONDS)
         : Math.min(request.timeoutSeconds + 60, MAX_MICROVM_DURATION_SECONDS),
-      ...this.#networkConnectors(),
+      ...this.#networkConnectors(persistent),
       ...(runHookPayload ? { runHookPayload } : {}),
     };
   }
@@ -376,14 +383,20 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
   // INTERNET_EGRESS (no connector). restricted/deny-all need a VPC egress connector
   // (provisioned in SST, ARN passed via env); without one we fail closed instead of
   // silently launching with the MicroVM service's default internet egress.
-  #networkConnectors(): Pick<RunMicrovmRequest, "egressNetworkConnectors" | "ingressNetworkConnectors"> {
+  // Persistent (reserved) VMs additionally attach the AWS-managed SHELL_INGRESS
+  // connector so the dashboard terminal can mint shell auth tokens later —
+  // connectors are fixed at RunMicrovm and cannot be added to a live VM.
+  #networkConnectors(persistent: boolean): Pick<RunMicrovmRequest, "egressNetworkConnectors" | "ingressNetworkConnectors"> {
+    const ingress = persistent
+      ? { ingressNetworkConnectors: [managedIngressConnectorArn("ALL_INGRESS"), managedIngressConnectorArn("SHELL_INGRESS")] }
+      : {};
     const mode = this.#config.network?.mode ?? "deny-all";
-    if (mode === "allow-all") return {};
+    if (mode === "allow-all") return ingress;
     const egress = optionalEnv("MICROVM_EGRESS_NETWORK_CONNECTOR_ARN");
     if (!egress) {
       throw new Error(`MicroVM sandbox cannot enforce ${mode} egress without MICROVM_EGRESS_NETWORK_CONNECTOR_ARN`);
     }
-    return { egressNetworkConnectors: [egress] };
+    return { ...ingress, egressNetworkConnectors: [egress] };
   }
 
   // The exec request body, wire-compatible with the image's existing JSON contract.
@@ -508,6 +521,36 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
   async #terminate(microvmId: string): Promise<void> {
     await this.#client.send(new TerminateMicrovmCommand({ microvmIdentifier: microvmId })).catch(() => {});
   }
+}
+
+// AWS-managed ingress connectors live under a service-owned ARN namespace,
+// parameterized only by region and name (ALL_INGRESS / SHELL_INGRESS / NO_INGRESS).
+function managedIngressConnectorArn(name: string): string {
+  const region = optionalEnv("AWS_REGION") ?? optionalEnv("AWS_DEFAULT_REGION");
+  if (!region) throw new Error("MicroVM ingress connectors require AWS_REGION");
+  return `arn:aws:lambda:${region}:aws:network-connector:aws-network-connector:${name}`;
+}
+
+/**
+ * Mints the live-shell WebSocket target for a reserved MicroVM: the VM endpoint
+ * plus a short-lived shell auth token. account-manage seals both into a terminal
+ * ticket; the gateway dials the URL with the token in X-aws-proxy-auth. Fails for
+ * VMs launched without the SHELL_INGRESS connector (reservations that predate it).
+ */
+export async function microvmShellConnection(
+  microvmId: string,
+  client = new LambdaMicrovms({ region: process.env.AWS_REGION }),
+): Promise<{ url: string; authorization: string }> {
+  const info = await client.send(new GetMicrovmCommand({ microvmIdentifier: microvmId }));
+  if (!info.endpoint) throw new Error(`MicroVM ${microvmId} has no endpoint`);
+  const result = await client.send(new CreateMicrovmShellAuthTokenCommand({
+    microvmIdentifier: microvmId,
+    expirationInMinutes: SHELL_TOKEN_TTL_MINUTES,
+  }));
+  const token = result.authToken?.[MICROVM_SHELL_AUTH_HEADER];
+  if (!token) throw new Error("CreateMicrovmShellAuthToken did not return an X-aws-proxy-auth token");
+
+  return { url: `wss://${info.endpoint.replace(/^https?:\/\//, "")}`, authorization: token };
 }
 
 function mapMicrovmState(state: MicrovmState | undefined): SandboxInstanceInfo["state"] {

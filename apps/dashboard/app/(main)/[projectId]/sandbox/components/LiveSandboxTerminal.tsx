@@ -1,8 +1,8 @@
 "use client";
 
 /**
- * Live PTY terminal for a workdir-backed sandbox instance. Mints a sealed
- * terminal ticket through Convex, then bridges an xterm.js terminal to the
+ * Live PTY terminal for a workdir- or MicroVM-backed sandbox instance. Mints a
+ * sealed terminal ticket through Convex, then bridges an xterm.js terminal to the
  * public gateway's terminal WebSocket (raw bytes both ways, no resize protocol).
  */
 

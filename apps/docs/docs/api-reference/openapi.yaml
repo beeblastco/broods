@@ -1179,10 +1179,12 @@ paths:
       summary: Mint a live terminal ticket
       description: >
         Mints a short-lived sealed ticket for an interactive PTY session on a persistent
-        sandbox reservation (self-hosted workdir `sandbox` provider only). A suspended
-        instance is resumed first. The opaque `token` is passed to the public gateway's
-        terminal WebSocket (`websocketPath` + `?token=`), which bridges the browser to the
-        sandbox's in-guest TTY; the provider credential never reaches the client.
+        sandbox reservation (self-hosted workdir `sandbox` and AWS MicroVM `lambda`
+        providers). A suspended instance is resumed first. The opaque `token` is passed
+        to the public gateway's terminal WebSocket (`websocketPath` + `?token=`), which
+        bridges the browser to the sandbox's in-guest TTY; the provider credential never
+        reaches the client. MicroVMs reserved before shell ingress was attached at launch
+        answer 409 until terminated and re-reserved.
       security: [{ BearerAuth: [] }]
       parameters:
         - { name: sandboxId, in: path, required: true, schema: { type: string } }
@@ -1208,7 +1210,7 @@ paths:
                   websocketPath: { type: string }
         '403': { description: Reservation does not belong to this account or sandbox config }
         '404': { description: No reserved instance for this reservation key }
-        '409': { description: Provider does not support a live terminal }
+        '409': { description: Provider does not support a live terminal, or the MicroVM was launched without shell ingress }
 
   /accounts/me/workspaces:
     post:
