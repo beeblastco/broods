@@ -133,7 +133,7 @@ export type TelegramChannelInput = EnvRefString<RequiredChannelKeys<
 >> & ChannelIdentityInput;
 
 export type GitHubChannelInput = EnvRefString<RequiredChannelKeys<
-  Pick<AgentGitHubChannelConfig, "apiUrl" | "webhookSecret" | "appId" | "privateKey" | "allowedRepos" | "userName" | "botUserId">,
+  Pick<AgentGitHubChannelConfig, "apiUrl" | "webhookSecret" | "appId" | "privateKey" | "allowedRepos" | "userName" | "botUserId" | "triggerOnIssueOpen" | "triggerOnPROpen">,
   "webhookSecret" | "appId" | "privateKey"
 >> & ChannelIdentityInput;
 

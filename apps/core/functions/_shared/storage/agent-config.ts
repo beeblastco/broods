@@ -262,6 +262,10 @@ export interface AgentGitHubChannelConfig {
   userName?: string;
   /** Bot's numeric GitHub user ID for self-message detection. */
   botUserId?: number;
+  /** When false, the bot does not auto-trigger on new issues (opened/edited/reopened). Defaults to true. The bot still triggers when assigned to an issue. */
+  triggerOnIssueOpen?: boolean;
+  /** When false, the bot does not auto-trigger on new PRs (opened/edited/reopened). Defaults to true. The bot still triggers when assigned to a PR. */
+  triggerOnPROpen?: boolean;
   workspaceScope?: AgentChannelWorkspaceScope;
   [key: string]: unknown;
 }

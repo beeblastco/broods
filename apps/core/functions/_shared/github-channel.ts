@@ -58,6 +58,7 @@ interface GitHubWebhookPayload {
   issue?: GitHubIssueRef;
   pull_request?: GitHubPullRequestRef;
   comment?: GitHubCommentRef;
+  assignee?: { login?: string; type?: string };
   installation?: { id?: number };
   sender?: {
     login?: string;
@@ -96,6 +97,7 @@ export function createGitHubChannel(
   apiUrl?: string,
   userName?: string,
   botUserId?: number,
+  options?: { triggerOnIssueOpen?: boolean; triggerOnPROpen?: boolean },
 ): ChannelAdapter {
   const github = new BroodsGitHubAdapter({
     apiUrl,
@@ -142,14 +144,14 @@ export function createGitHubChannel(
         return { kind: "ignore" };
       }
 
-      if (allowedRepos && !allowedRepos.has(fullName)) {
+      if (allowedRepos && !allowedRepos.has("*") && !allowedRepos.has(fullName)) {
         logWarn("GitHub repository not in allow list", { repository: fullName });
         return { kind: "ignore" };
       }
 
       switch (event) {
         case "issues":
-          return parseIssuesEvent(github, payload, deliveryId, owner, repo, fullName);
+          return parseIssuesEvent(github, payload, deliveryId, owner, repo, fullName, options, userName);
         case "issue_comment":
           return parseIssueCommentEvent(github, payload, deliveryId, owner, repo, fullName, {
             apiUrl,
@@ -158,7 +160,7 @@ export function createGitHubChannel(
             botUserName: userName,
           });
         case "pull_request":
-          return parsePullRequestEvent(github, payload, deliveryId, owner, repo, fullName);
+          return parsePullRequestEvent(github, payload, deliveryId, owner, repo, fullName, options, userName);
         case "pull_request_review_comment":
           return parseReviewCommentEvent(github, payload, deliveryId, owner, repo, fullName, {
             apiUrl,
@@ -184,6 +186,8 @@ function parseIssuesEvent(
   owner: string,
   repo: string,
   repoFullName: string,
+  options?: { triggerOnIssueOpen?: boolean },
+  botUserName?: string,
 ): ChannelParseResult {
   const issueNumber = payload.issue?.number;
   const installationId = payload.installation?.id;
@@ -199,7 +203,38 @@ function parseIssuesEvent(
       conversationKey: `${GITHUB_INTEGRATION_PREFIX}${repoFullName}:issue:${issueNumber}`,
     };
   }
+  if (payload.action === "assigned") {
+    if (!isBotAssignee(payload, botUserName)) {
+      return { kind: "ignore" };
+    }
+    const thread = { owner, repo, prNumber: issueNumber, type: "issue" } satisfies GitHubThreadId;
+    const threadId = github.encodeThreadId(thread);
+    return {
+      kind: "message",
+      ack: { statusCode: 200 },
+      message: {
+        eventId: `${GITHUB_INTEGRATION_PREFIX}${deliveryId}`,
+        conversationKey: `${GITHUB_INTEGRATION_PREFIX}${repoFullName}:issue:${issueNumber}`,
+        channelName: "github",
+        content: [{
+          type: "text",
+          text: formatTitleAndBody("Issue", payload.issue?.title, payload.issue?.body),
+        }],
+        source: {
+          owner,
+          repo,
+          installationId,
+          threadId,
+          issueNumber,
+          target: "issue",
+        } satisfies GitHubSource,
+      },
+    };
+  }
   if (!isRelevantAction(payload.action)) {
+    return { kind: "ignore" };
+  }
+  if (options?.triggerOnIssueOpen === false) {
     return { kind: "ignore" };
   }
   const thread = { owner, repo, prNumber: issueNumber, type: "issue" } satisfies GitHubThreadId;
@@ -345,6 +380,8 @@ function parsePullRequestEvent(
   owner: string,
   repo: string,
   repoFullName: string,
+  options?: { triggerOnPROpen?: boolean },
+  botUserName?: string,
 ): ChannelParseResult {
   const pullNumber = payload.pull_request?.number;
   const installationId = payload.installation?.id;
@@ -360,7 +397,39 @@ function parsePullRequestEvent(
       conversationKey: `${GITHUB_INTEGRATION_PREFIX}${repoFullName}:pr:${pullNumber}`,
     };
   }
+  if (payload.action === "assigned") {
+    if (!isBotAssignee(payload, botUserName)) {
+      return { kind: "ignore" };
+    }
+    const thread = { owner, repo, prNumber: pullNumber } satisfies GitHubThreadId;
+    const threadId = github.encodeThreadId(thread);
+    return {
+      kind: "message",
+      ack: { statusCode: 200 },
+      message: {
+        eventId: `${GITHUB_INTEGRATION_PREFIX}${deliveryId}`,
+        conversationKey: `${GITHUB_INTEGRATION_PREFIX}${repoFullName}:pr:${pullNumber}`,
+        channelName: "github",
+        content: [{
+          type: "text",
+          text: formatTitleAndBody("Pull request", payload.pull_request?.title, payload.pull_request?.body),
+        }],
+        source: {
+          owner,
+          repo,
+          installationId,
+          threadId,
+          issueNumber: pullNumber,
+          pullNumber,
+          target: "pull_request",
+        } satisfies GitHubSource,
+      },
+    };
+  }
   if (!isRelevantAction(payload.action)) {
+    return { kind: "ignore" };
+  }
+  if (options?.triggerOnPROpen === false) {
     return { kind: "ignore" };
   }
   const thread = { owner, repo, prNumber: pullNumber } satisfies GitHubThreadId;
@@ -524,6 +593,14 @@ function toGitHubSource(source: Record<string, unknown>): GitHubSource {
 
 function isRelevantAction(action: string | undefined): boolean {
   return action === "opened" || action === "edited" || action === "reopened" || action === "created";
+}
+
+function isBotAssignee(payload: GitHubWebhookPayload, botUserName: string | undefined): boolean {
+  if (!botUserName) return false;
+  const assignee = payload.assignee;
+  if (!assignee?.login) return false;
+  if (isBotActor(assignee.type)) return false;
+  return assignee.login.toLowerCase() === botUserName.toLowerCase();
 }
 
 function isBotActor(type: string | undefined): boolean {

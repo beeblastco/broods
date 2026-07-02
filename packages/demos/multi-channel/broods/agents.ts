@@ -35,8 +35,10 @@ export const github = defineGitHubChannel({
   appId: env("GITHUB_APP_ID"),
   privateKey: env("GITHUB_PRIVATE_KEY"),
   webhookSecret: env("GITHUB_WEBHOOK_SECRET"),
-  allowedRepos: ["beeblastco/broods"],
+  allowedRepos: ["*"],
   userName: env("GITHUB_BOT_USERNAME"),
+  triggerOnIssueOpen: false,
+  triggerOnPROpen: false,
 });
 
 export const hubSpotSkill = defineSkill({

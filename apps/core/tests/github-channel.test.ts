@@ -69,6 +69,22 @@ describe("github channel adapter", () => {
     expect(parsed).toEqual({ kind: "ignore" });
   });
 
+  it("allows all repos when allowedRepos contains '*'", async () => {
+    const adapter = createGitHubChannel("webhook-secret", "app-id", "private-key", new Set(["*"]));
+
+    const parsed = await adapter.parse(createRequest(JSON.stringify({
+      action: "opened",
+      repository: createRepository(),
+      issue: { number: 1, title: "Issue title", body: "Issue body" },
+      installation: { id: 99 },
+    }), {
+      "x-github-event": "issues",
+      "x-github-delivery": "delivery-wildcard",
+    }));
+
+    expect(parsed.kind).toBe("message");
+  });
+
   it("normalizes issue events into issue conversation keys", async () => {
     const adapter = createGitHubChannel("webhook-secret", "app-id", "private-key", null);
 
@@ -439,6 +455,180 @@ describe("github channel adapter", () => {
     }));
 
     expect(parsed).toEqual({ kind: "ignore" });
+  });
+
+  it("triggers on issue assigned to bot user", async () => {
+    const adapter = createGitHubChannel("webhook-secret", "app-id", "private-key", null, undefined, "my-bot");
+
+    const parsed = await adapter.parse(createRequest(JSON.stringify({
+      action: "assigned",
+      repository: createRepository(),
+      issue: { number: 5, title: "Feature request", body: "Add dark mode" },
+      assignee: { login: "my-bot", type: "User" },
+      installation: { id: 99 },
+    }), {
+      "x-github-event": "issues",
+      "x-github-delivery": "delivery-assigned-issue",
+    }));
+
+    expect(parsed.kind).toBe("message");
+    if (parsed.kind !== "message") return;
+    expect(parsed.message.conversationKey).toBe("gh:owner/repo:issue:5");
+    expect(parsed.message.source).toEqual(expect.objectContaining({ target: "issue", issueNumber: 5 }));
+  });
+
+  it("ignores issue assigned to non-bot user", async () => {
+    const adapter = createGitHubChannel("webhook-secret", "app-id", "private-key", null, undefined, "my-bot");
+
+    const parsed = await adapter.parse(createRequest(JSON.stringify({
+      action: "assigned",
+      repository: createRepository(),
+      issue: { number: 5, title: "Feature request", body: "Add dark mode" },
+      assignee: { login: "alice", type: "User" },
+      installation: { id: 99 },
+    }), {
+      "x-github-event": "issues",
+      "x-github-delivery": "delivery-assigned-other",
+    }));
+
+    expect(parsed).toEqual({ kind: "ignore" });
+  });
+
+  it("ignores issue assigned when userName is not configured", async () => {
+    const adapter = createGitHubChannel("webhook-secret", "app-id", "private-key", null);
+
+    const parsed = await adapter.parse(createRequest(JSON.stringify({
+      action: "assigned",
+      repository: createRepository(),
+      issue: { number: 5, title: "Feature request", body: "Add dark mode" },
+      assignee: { login: "my-bot", type: "User" },
+      installation: { id: 99 },
+    }), {
+      "x-github-event": "issues",
+      "x-github-delivery": "delivery-assigned-no-username",
+    }));
+
+    expect(parsed).toEqual({ kind: "ignore" });
+  });
+
+  it("ignores issue assigned by a bot actor", async () => {
+    const adapter = createGitHubChannel("webhook-secret", "app-id", "private-key", null, undefined, "my-bot");
+
+    const parsed = await adapter.parse(createRequest(JSON.stringify({
+      action: "assigned",
+      repository: createRepository(),
+      issue: { number: 5, title: "Feature request", body: "Add dark mode" },
+      assignee: { login: "my-bot", type: "Bot" },
+      installation: { id: 99 },
+    }), {
+      "x-github-event": "issues",
+      "x-github-delivery": "delivery-assigned-bot-type",
+    }));
+
+    expect(parsed).toEqual({ kind: "ignore" });
+  });
+
+  it("triggers on PR assigned to bot user", async () => {
+    const adapter = createGitHubChannel("webhook-secret", "app-id", "private-key", null, undefined, "my-bot");
+
+    const parsed = await adapter.parse(createRequest(JSON.stringify({
+      action: "assigned",
+      repository: createRepository(),
+      pull_request: { number: 8, title: "Fix bug", body: "Regression fix" },
+      assignee: { login: "my-bot", type: "User" },
+      installation: { id: 99 },
+    }), {
+      "x-github-event": "pull_request",
+      "x-github-delivery": "delivery-assigned-pr",
+    }));
+
+    expect(parsed.kind).toBe("message");
+    if (parsed.kind !== "message") return;
+    expect(parsed.message.conversationKey).toBe("gh:owner/repo:pr:8");
+    expect(parsed.message.source).toEqual(expect.objectContaining({ target: "pull_request", pullNumber: 8 }));
+  });
+
+  it("ignores PR assigned to non-bot user", async () => {
+    const adapter = createGitHubChannel("webhook-secret", "app-id", "private-key", null, undefined, "my-bot");
+
+    const parsed = await adapter.parse(createRequest(JSON.stringify({
+      action: "assigned",
+      repository: createRepository(),
+      pull_request: { number: 8, title: "Fix bug", body: "Regression fix" },
+      assignee: { login: "alice", type: "User" },
+      installation: { id: 99 },
+    }), {
+      "x-github-event": "pull_request",
+      "x-github-delivery": "delivery-assigned-pr-other",
+    }));
+
+    expect(parsed).toEqual({ kind: "ignore" });
+  });
+
+  it("ignores opened issue when triggerOnIssueOpen is false", async () => {
+    const adapter = createGitHubChannel("webhook-secret", "app-id", "private-key", null, undefined, undefined, undefined, { triggerOnIssueOpen: false });
+
+    const parsed = await adapter.parse(createRequest(JSON.stringify({
+      action: "opened",
+      repository: createRepository(),
+      issue: { number: 10, title: "New issue", body: "Body" },
+      installation: { id: 99 },
+    }), {
+      "x-github-event": "issues",
+      "x-github-delivery": "delivery-trigger-off",
+    }));
+
+    expect(parsed).toEqual({ kind: "ignore" });
+  });
+
+  it("ignores opened PR when triggerOnPROpen is false", async () => {
+    const adapter = createGitHubChannel("webhook-secret", "app-id", "private-key", null, undefined, undefined, undefined, { triggerOnPROpen: false });
+
+    const parsed = await adapter.parse(createRequest(JSON.stringify({
+      action: "opened",
+      repository: createRepository(),
+      pull_request: { number: 15, title: "New PR", body: "Body" },
+      installation: { id: 99 },
+    }), {
+      "x-github-event": "pull_request",
+      "x-github-delivery": "delivery-trigger-pr-off",
+    }));
+
+    expect(parsed).toEqual({ kind: "ignore" });
+  });
+
+  it("triggers on assigned issue even when triggerOnIssueOpen is false", async () => {
+    const adapter = createGitHubChannel("webhook-secret", "app-id", "private-key", null, undefined, "my-bot", undefined, { triggerOnIssueOpen: false });
+
+    const parsed = await adapter.parse(createRequest(JSON.stringify({
+      action: "assigned",
+      repository: createRepository(),
+      issue: { number: 5, title: "Feature request", body: "Add dark mode" },
+      assignee: { login: "my-bot", type: "User" },
+      installation: { id: 99 },
+    }), {
+      "x-github-event": "issues",
+      "x-github-delivery": "delivery-assigned-despite-flag",
+    }));
+
+    expect(parsed.kind).toBe("message");
+  });
+
+  it("triggers on assigned PR even when triggerOnPROpen is false", async () => {
+    const adapter = createGitHubChannel("webhook-secret", "app-id", "private-key", null, undefined, "my-bot", undefined, { triggerOnPROpen: false });
+
+    const parsed = await adapter.parse(createRequest(JSON.stringify({
+      action: "assigned",
+      repository: createRepository(),
+      pull_request: { number: 8, title: "Fix bug", body: "Regression fix" },
+      assignee: { login: "my-bot", type: "User" },
+      installation: { id: 99 },
+    }), {
+      "x-github-event": "pull_request",
+      "x-github-delivery": "delivery-assigned-pr-despite-flag",
+    }));
+
+    expect(parsed.kind).toBe("message");
   });
 });
 

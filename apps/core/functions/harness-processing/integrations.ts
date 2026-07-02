@@ -1327,6 +1327,10 @@ function createGitHubChannelFromConfig(config: AgentConfig): ChannelAdapter | nu
     channel.apiUrl,
     channel.userName,
     channel.botUserId,
+    {
+      triggerOnIssueOpen: channel.triggerOnIssueOpen,
+      triggerOnPROpen: channel.triggerOnPROpen,
+    },
   );
 }
 
