@@ -16,7 +16,7 @@ export const slack = defineSlackChannel({
   workspaceScope: { level: "channel" },
   botToken: env("SLACK_BOT_TOKEN"),
   signingSecret: env("SLACK_SIGNING_SECRET"),
-  allowedChannelIds: ["C0BEDDS52GK"],
+  allowedChannelIds: ["C0BEDDS52GK", "C0BEQ9XRE4A"],
   reactionEmoji: process.env.SLACK_REACTION_EMOJI ?? "eyes",
 });
 
