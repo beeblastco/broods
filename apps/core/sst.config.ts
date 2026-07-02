@@ -175,6 +175,9 @@ function denyUnlessProjectPrincipal(stage: string, region: string) {
           `arn:aws:iam::${AWS_ACCOUNT_ID}:role/${resourceName("sandbox-s3mount", stage, region)}`,
           `arn:aws:iam::${AWS_ACCOUNT_ID}:role/${resourceName("microvm-build", stage, region)}`,
           `arn:aws:iam::${AWS_ACCOUNT_ID}:role/${resourceName("microvm-execution", stage, region)}`,
+          // Self-hosted container runtime user (epic #85 phase 9a) — without
+          // this entry every pod S3 call gets an explicit deny.
+          `arn:aws:iam::${AWS_ACCOUNT_ID}:user/${resourceName("core-runtime", stage, region)}`,
           `arn:aws:iam::${AWS_ACCOUNT_ID}:role/github-actions-ecr-push`,
           `arn:aws:iam::${AWS_ACCOUNT_ID}:role/github-actions-aws-infra-deploy`,
           `arn:aws:iam::${AWS_ACCOUNT_ID}:role/github-actions-aws-sst-infra-deploy`,
@@ -790,6 +793,187 @@ export default $config({
       }),
     });
 
+    // Also granted to the self-hosted container runtime user (CoreRuntimeUser
+    // below), so the pod tracks the Lambda role permissions automatically.
+    const harnessPermissions = [
+      {
+        actions: ["sts:AssumeRole"],
+        resources: [sandboxS3MountRole.arn],
+      },
+      {
+        actions: ["kms:Decrypt"],
+        resources: ["*"],
+      },
+      ...(accountConfigsTable
+        ? [
+            {
+              actions: ["dynamodb:GetItem", "dynamodb:Query"],
+              resources: [accountConfigsTable.arn, $interpolate`${accountConfigsTable.arn}/index/SecretHashIndex`],
+            },
+          ]
+        : []),
+      ...(agentConfigsTable
+        ? [
+            {
+              actions: ["dynamodb:GetItem", "dynamodb:Query"],
+              resources: [agentConfigsTable.arn],
+            },
+          ]
+        : []),
+      ...(sandboxConfigsTable
+        ? [
+            {
+              actions: ["dynamodb:GetItem", "dynamodb:Query"],
+              resources: [sandboxConfigsTable.arn],
+            },
+          ]
+        : []),
+      ...(workspaceConfigsTable
+        ? [
+            {
+              actions: ["dynamodb:GetItem", "dynamodb:Query"],
+              resources: [workspaceConfigsTable.arn],
+            },
+          ]
+        : []),
+      ...(accountToolsTable
+        ? [
+            {
+              actions: ["dynamodb:GetItem", "dynamodb:Query"],
+              resources: [accountToolsTable.arn],
+            },
+          ]
+        : []),
+      ...(agentPoliciesTable
+        ? [
+            {
+              actions: ["dynamodb:GetItem", "dynamodb:Query"],
+              resources: [agentPoliciesTable.arn],
+            },
+          ]
+        : []),
+      {
+        actions: [
+          "dynamodb:BatchWriteItem",
+          "dynamodb:GetItem",
+          "dynamodb:Query",
+          "dynamodb:PutItem",
+          "dynamodb:UpdateItem",
+          "dynamodb:DeleteItem",
+        ],
+        resources: [conversationsTable.arn, processedEventsTable.arn, chatSdkStateTable.arn],
+      },
+      {
+        actions: ["dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:UpdateItem"],
+        resources: [asyncAgentResultTable.arn],
+      },
+      {
+        actions: ["dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:UpdateItem"],
+        resources: [asyncToolResultTable.arn],
+      },
+      {
+        actions: ["dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:UpdateItem", "dynamodb:DeleteItem"],
+        resources: [persistentSandboxInstanceTable.arn],
+      },
+      ...(cronsTable
+        ? [
+            {
+              actions: ["dynamodb:GetItem", "dynamodb:UpdateItem"],
+              resources: [cronsTable.arn],
+            },
+          ]
+        : []),
+      ...(usageTable
+        ? [
+            {
+              actions: ["dynamodb:PutItem", "dynamodb:UpdateItem"],
+              resources: [usageTable.arn],
+            },
+          ]
+        : []),
+      {
+        // Self-invoke (async worker) + read its own Function URL so background
+        // jobs know where to POST their completion callback.
+        actions: ["lambda:InvokeFunction", "lambda:GetFunctionUrlConfig"],
+        resources: [`arn:aws:lambda:${region}:${AWS_ACCOUNT_ID}:function:${names.harnessProcessing}`],
+      },
+      ...(microvmBuildRole && microvmExecutionRole
+        ? [
+            {
+              actions: [
+                "lambda:CreateMicrovmImage",
+                "lambda:UpdateMicrovmImage",
+                "lambda:DeleteMicrovmImage",
+                "lambda:DeleteMicrovmImageVersion",
+                "lambda:GetMicrovmImage",
+                "lambda:ListMicrovmImages",
+                "lambda:ListMicrovmImageVersions",
+                "lambda:ListMicrovmImageBuilds",
+                "lambda:RunMicrovm",
+                "lambda:GetMicrovm",
+                "lambda:ListMicrovms",
+                "lambda:SuspendMicrovm",
+                "lambda:ResumeMicrovm",
+                "lambda:TerminateMicrovm",
+                "lambda:CreateMicrovmAuthToken",
+                "lambda:CreateMicrovmShellAuthToken",
+              ],
+              resources: [
+                `arn:aws:lambda:${region}:${AWS_ACCOUNT_ID}:microvm-image:*`,
+                `arn:aws:lambda:${region}:${AWS_ACCOUNT_ID}:microvm:*`,
+              ],
+            },
+            {
+              actions: ["lambda:PassNetworkConnector"],
+              resources: [
+                `arn:aws:lambda:${region}:aws:network-connector:aws-network-connector:*`,
+                `arn:aws:lambda:${region}:${AWS_ACCOUNT_ID}:network-connector:*`,
+              ],
+            },
+            {
+              actions: ["iam:PassRole"],
+              resources: [microvmBuildRole.arn, microvmExecutionRole.arn],
+            },
+          ]
+        : []),
+      {
+        actions: ["s3:GetObject", "s3:HeadObject", "s3:PutObject", "s3:DeleteObject"],
+        resources: [`${filesystemBucketArn}/*`],
+      },
+      {
+        actions: ["s3:ListBucket"],
+        resources: [filesystemBucketArn],
+      },
+      {
+        actions: ["s3:GetObject", "s3:HeadObject", "s3:PutObject", "s3:DeleteObject"],
+        resources: [`${skillsBucketArn}/*`],
+      },
+      {
+        actions: ["s3:ListBucket"],
+        resources: [skillsBucketArn],
+      },
+      {
+        actions: ["s3:GetObject", "s3:HeadObject"],
+        resources: [`${toolBundlesBucketArn}/*`],
+      },
+      {
+        actions: ["s3:ListBucket"],
+        resources: [toolBundlesBucketArn],
+      },
+      ...(microvmArtifactsBucket
+        ? [
+            {
+              actions: ["s3:GetObject", "s3:HeadObject", "s3:PutObject", "s3:DeleteObject"],
+              resources: [`${microvmArtifactsBucketArn}/microvm-images/*`],
+            },
+            {
+              actions: ["s3:ListBucket"],
+              resources: [microvmArtifactsBucketArn],
+            },
+          ]
+        : []),
+    ];
+
     const harnessProcessing = new sst.aws.Function("HarnessProcessing", {
       name: names.harnessProcessing,
       runtime: "provided.al2023",
@@ -858,184 +1042,7 @@ export default $config({
         ...(DAYTONA_API_URL ? { DAYTONA_API_URL } : {}),
         ...(DAYTONA_TARGET ? { DAYTONA_TARGET } : {}),
       },
-      permissions: [
-        {
-          actions: ["sts:AssumeRole"],
-          resources: [sandboxS3MountRole.arn],
-        },
-        {
-          actions: ["kms:Decrypt"],
-          resources: ["*"],
-        },
-        ...(accountConfigsTable
-          ? [
-              {
-                actions: ["dynamodb:GetItem", "dynamodb:Query"],
-                resources: [accountConfigsTable.arn, $interpolate`${accountConfigsTable.arn}/index/SecretHashIndex`],
-              },
-            ]
-          : []),
-        ...(agentConfigsTable
-          ? [
-              {
-                actions: ["dynamodb:GetItem", "dynamodb:Query"],
-                resources: [agentConfigsTable.arn],
-              },
-            ]
-          : []),
-        ...(sandboxConfigsTable
-          ? [
-              {
-                actions: ["dynamodb:GetItem", "dynamodb:Query"],
-                resources: [sandboxConfigsTable.arn],
-              },
-            ]
-          : []),
-        ...(workspaceConfigsTable
-          ? [
-              {
-                actions: ["dynamodb:GetItem", "dynamodb:Query"],
-                resources: [workspaceConfigsTable.arn],
-              },
-            ]
-          : []),
-        ...(accountToolsTable
-          ? [
-              {
-                actions: ["dynamodb:GetItem", "dynamodb:Query"],
-                resources: [accountToolsTable.arn],
-              },
-            ]
-          : []),
-        ...(agentPoliciesTable
-          ? [
-              {
-                actions: ["dynamodb:GetItem", "dynamodb:Query"],
-                resources: [agentPoliciesTable.arn],
-              },
-            ]
-          : []),
-        {
-          actions: [
-            "dynamodb:BatchWriteItem",
-            "dynamodb:GetItem",
-            "dynamodb:Query",
-            "dynamodb:PutItem",
-            "dynamodb:UpdateItem",
-            "dynamodb:DeleteItem",
-          ],
-          resources: [conversationsTable.arn, processedEventsTable.arn, chatSdkStateTable.arn],
-        },
-        {
-          actions: ["dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:UpdateItem"],
-          resources: [asyncAgentResultTable.arn],
-        },
-        {
-          actions: ["dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:UpdateItem"],
-          resources: [asyncToolResultTable.arn],
-        },
-        {
-          actions: ["dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:UpdateItem", "dynamodb:DeleteItem"],
-          resources: [persistentSandboxInstanceTable.arn],
-        },
-        ...(cronsTable
-          ? [
-              {
-                actions: ["dynamodb:GetItem", "dynamodb:UpdateItem"],
-                resources: [cronsTable.arn],
-              },
-            ]
-          : []),
-        ...(usageTable
-          ? [
-              {
-                actions: ["dynamodb:PutItem", "dynamodb:UpdateItem"],
-                resources: [usageTable.arn],
-              },
-            ]
-          : []),
-        {
-          // Self-invoke (async worker) + read its own Function URL so background
-          // jobs know where to POST their completion callback.
-          actions: ["lambda:InvokeFunction", "lambda:GetFunctionUrlConfig"],
-          resources: [`arn:aws:lambda:${region}:${AWS_ACCOUNT_ID}:function:${names.harnessProcessing}`],
-        },
-        ...(microvmBuildRole && microvmExecutionRole
-          ? [
-              {
-                actions: [
-                  "lambda:CreateMicrovmImage",
-                  "lambda:UpdateMicrovmImage",
-                  "lambda:DeleteMicrovmImage",
-                  "lambda:DeleteMicrovmImageVersion",
-                  "lambda:GetMicrovmImage",
-                  "lambda:ListMicrovmImages",
-                  "lambda:ListMicrovmImageVersions",
-                  "lambda:ListMicrovmImageBuilds",
-                  "lambda:RunMicrovm",
-                  "lambda:GetMicrovm",
-                  "lambda:ListMicrovms",
-                  "lambda:SuspendMicrovm",
-                  "lambda:ResumeMicrovm",
-                  "lambda:TerminateMicrovm",
-                  "lambda:CreateMicrovmAuthToken",
-                  "lambda:CreateMicrovmShellAuthToken",
-                ],
-                resources: [
-                  `arn:aws:lambda:${region}:${AWS_ACCOUNT_ID}:microvm-image:*`,
-                  `arn:aws:lambda:${region}:${AWS_ACCOUNT_ID}:microvm:*`,
-                ],
-              },
-              {
-                actions: ["lambda:PassNetworkConnector"],
-                resources: [
-                  `arn:aws:lambda:${region}:aws:network-connector:aws-network-connector:*`,
-                  `arn:aws:lambda:${region}:${AWS_ACCOUNT_ID}:network-connector:*`,
-                ],
-              },
-              {
-                actions: ["iam:PassRole"],
-                resources: [microvmBuildRole.arn, microvmExecutionRole.arn],
-              },
-            ]
-          : []),
-        {
-          actions: ["s3:GetObject", "s3:HeadObject", "s3:PutObject", "s3:DeleteObject"],
-          resources: [`${filesystemBucketArn}/*`],
-        },
-        {
-          actions: ["s3:ListBucket"],
-          resources: [filesystemBucketArn],
-        },
-        {
-          actions: ["s3:GetObject", "s3:HeadObject", "s3:PutObject", "s3:DeleteObject"],
-          resources: [`${skillsBucketArn}/*`],
-        },
-        {
-          actions: ["s3:ListBucket"],
-          resources: [skillsBucketArn],
-        },
-        {
-          actions: ["s3:GetObject", "s3:HeadObject"],
-          resources: [`${toolBundlesBucketArn}/*`],
-        },
-        {
-          actions: ["s3:ListBucket"],
-          resources: [toolBundlesBucketArn],
-        },
-        ...(microvmArtifactsBucket
-          ? [
-              {
-                actions: ["s3:GetObject", "s3:HeadObject", "s3:PutObject", "s3:DeleteObject"],
-                resources: [`${microvmArtifactsBucketArn}/microvm-images/*`],
-              },
-              {
-                actions: ["s3:ListBucket"],
-                resources: [microvmArtifactsBucketArn],
-              },
-            ]
-          : []),
-      ],
+      permissions: harnessPermissions,
     });
 
     const cronScheduleGroup = new aws.scheduler.ScheduleGroup("CronScheduleGroup", {
@@ -1071,6 +1078,172 @@ export default $config({
         }),
       ),
     });
+
+    // Also granted to CoreRuntimeUser below, same as harnessPermissions.
+    const accountManagePermissions = [
+      ...(accountConfigsTable
+        ? [
+            {
+              actions: [
+                "dynamodb:DeleteItem",
+                "dynamodb:GetItem",
+                "dynamodb:PutItem",
+                "dynamodb:Query",
+                "dynamodb:Scan",
+                "dynamodb:UpdateItem",
+              ],
+              resources: [accountConfigsTable.arn, $interpolate`${accountConfigsTable.arn}/index/SecretHashIndex`],
+            },
+          ]
+        : []),
+      ...(agentConfigsTable
+        ? [
+            {
+              actions: [
+                "dynamodb:DeleteItem",
+                "dynamodb:GetItem",
+                "dynamodb:PutItem",
+                "dynamodb:Query",
+                "dynamodb:UpdateItem",
+              ],
+              resources: [agentConfigsTable.arn],
+            },
+          ]
+        : []),
+      ...(sandboxConfigsTable
+        ? [
+            {
+              actions: [
+                "dynamodb:DeleteItem",
+                "dynamodb:GetItem",
+                "dynamodb:PutItem",
+                "dynamodb:Query",
+                "dynamodb:UpdateItem",
+              ],
+              resources: [sandboxConfigsTable.arn],
+            },
+          ]
+        : []),
+      ...(workspaceConfigsTable
+        ? [
+            {
+              actions: [
+                "dynamodb:DeleteItem",
+                "dynamodb:GetItem",
+                "dynamodb:PutItem",
+                "dynamodb:Query",
+                "dynamodb:UpdateItem",
+              ],
+              resources: [workspaceConfigsTable.arn],
+            },
+          ]
+        : []),
+      ...(accountToolsTable
+        ? [
+            {
+              actions: [
+                "dynamodb:DeleteItem",
+                "dynamodb:GetItem",
+                "dynamodb:PutItem",
+                "dynamodb:Query",
+                "dynamodb:UpdateItem",
+              ],
+              resources: [accountToolsTable.arn],
+            },
+          ]
+        : []),
+      ...(agentPoliciesTable
+        ? [
+            {
+              actions: [
+                "dynamodb:DeleteItem",
+                "dynamodb:GetItem",
+                "dynamodb:PutItem",
+                "dynamodb:Query",
+                "dynamodb:UpdateItem",
+              ],
+              resources: [agentPoliciesTable.arn],
+            },
+          ]
+        : []),
+      ...(cronsTable
+        ? [
+            {
+              actions: [
+                "dynamodb:DeleteItem",
+                "dynamodb:GetItem",
+                "dynamodb:PutItem",
+                "dynamodb:Query",
+                "dynamodb:UpdateItem",
+              ],
+              resources: [cronsTable.arn],
+            },
+          ]
+        : []),
+      {
+        // Read + drop reserved-sandbox instance rows when releasing on delete.
+        actions: ["dynamodb:GetItem", "dynamodb:DeleteItem"],
+        resources: [persistentSandboxInstanceTable.arn],
+      },
+      {
+        actions: ["scheduler:CreateSchedule", "scheduler:DeleteSchedule", "scheduler:UpdateSchedule"],
+        resources: [$interpolate`arn:aws:scheduler:${region}:${AWS_ACCOUNT_ID}:schedule/${cronScheduleGroup.name}/*`],
+      },
+      {
+        actions: ["iam:PassRole"],
+        resources: [cronSchedulerRole.arn],
+      },
+      {
+        actions: ["dynamodb:BatchWriteItem", "dynamodb:DeleteItem", "dynamodb:Scan"],
+        resources: [
+          conversationsTable.arn,
+          chatSdkStateTable.arn,
+          processedEventsTable.arn,
+          asyncAgentResultTable.arn,
+          asyncToolResultTable.arn,
+        ],
+      },
+      {
+        actions: ["dynamodb:UpdateItem"],
+        resources: [accountSignupRateLimitTable.arn],
+      },
+      {
+        actions: ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"],
+        resources: [`${filesystemBucketArn}/*`],
+      },
+      {
+        actions: ["s3:ListBucket"],
+        resources: [filesystemBucketArn],
+      },
+      {
+        actions: ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"],
+        resources: [`${skillsBucketArn}/*`],
+      },
+      {
+        actions: ["s3:ListBucket"],
+        resources: [skillsBucketArn],
+      },
+      {
+        actions: ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"],
+        resources: [`${toolBundlesBucketArn}/*`],
+      },
+      {
+        actions: ["s3:ListBucket"],
+        resources: [toolBundlesBucketArn],
+      },
+      ...(microvmArtifactsBucket
+        ? [
+            {
+              actions: ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"],
+              resources: [`${microvmArtifactsBucketArn}/microvm-images/*`],
+            },
+            {
+              actions: ["s3:ListBucket"],
+              resources: [microvmArtifactsBucketArn],
+            },
+          ]
+        : []),
+    ];
 
     const accountManage = new sst.aws.Function("AccountManage", {
       name: names.accountManage,
@@ -1122,170 +1295,34 @@ export default $config({
         CRON_SCHEDULER_ROLE_ARN: cronSchedulerRole.arn,
         CRON_SCHEDULER_GROUP_NAME: cronScheduleGroup.name,
       },
-      permissions: [
-        ...(accountConfigsTable
-          ? [
-              {
-                actions: [
-                  "dynamodb:DeleteItem",
-                  "dynamodb:GetItem",
-                  "dynamodb:PutItem",
-                  "dynamodb:Query",
-                  "dynamodb:Scan",
-                  "dynamodb:UpdateItem",
-                ],
-                resources: [accountConfigsTable.arn, $interpolate`${accountConfigsTable.arn}/index/SecretHashIndex`],
-              },
-            ]
-          : []),
-        ...(agentConfigsTable
-          ? [
-              {
-                actions: [
-                  "dynamodb:DeleteItem",
-                  "dynamodb:GetItem",
-                  "dynamodb:PutItem",
-                  "dynamodb:Query",
-                  "dynamodb:UpdateItem",
-                ],
-                resources: [agentConfigsTable.arn],
-              },
-            ]
-          : []),
-        ...(sandboxConfigsTable
-          ? [
-              {
-                actions: [
-                  "dynamodb:DeleteItem",
-                  "dynamodb:GetItem",
-                  "dynamodb:PutItem",
-                  "dynamodb:Query",
-                  "dynamodb:UpdateItem",
-                ],
-                resources: [sandboxConfigsTable.arn],
-              },
-            ]
-          : []),
-        ...(workspaceConfigsTable
-          ? [
-              {
-                actions: [
-                  "dynamodb:DeleteItem",
-                  "dynamodb:GetItem",
-                  "dynamodb:PutItem",
-                  "dynamodb:Query",
-                  "dynamodb:UpdateItem",
-                ],
-                resources: [workspaceConfigsTable.arn],
-              },
-            ]
-          : []),
-        ...(accountToolsTable
-          ? [
-              {
-                actions: [
-                  "dynamodb:DeleteItem",
-                  "dynamodb:GetItem",
-                  "dynamodb:PutItem",
-                  "dynamodb:Query",
-                  "dynamodb:UpdateItem",
-                ],
-                resources: [accountToolsTable.arn],
-              },
-            ]
-          : []),
-        ...(agentPoliciesTable
-          ? [
-              {
-                actions: [
-                  "dynamodb:DeleteItem",
-                  "dynamodb:GetItem",
-                  "dynamodb:PutItem",
-                  "dynamodb:Query",
-                  "dynamodb:UpdateItem",
-                ],
-                resources: [agentPoliciesTable.arn],
-              },
-            ]
-          : []),
-        ...(cronsTable
-          ? [
-              {
-                actions: [
-                  "dynamodb:DeleteItem",
-                  "dynamodb:GetItem",
-                  "dynamodb:PutItem",
-                  "dynamodb:Query",
-                  "dynamodb:UpdateItem",
-                ],
-                resources: [cronsTable.arn],
-              },
-            ]
-          : []),
-        {
-          // Read + drop reserved-sandbox instance rows when releasing on delete.
-          actions: ["dynamodb:GetItem", "dynamodb:DeleteItem"],
-          resources: [persistentSandboxInstanceTable.arn],
-        },
-        {
-          actions: ["scheduler:CreateSchedule", "scheduler:DeleteSchedule", "scheduler:UpdateSchedule"],
-          resources: [$interpolate`arn:aws:scheduler:${region}:${AWS_ACCOUNT_ID}:schedule/${cronScheduleGroup.name}/*`],
-        },
-        {
-          actions: ["iam:PassRole"],
-          resources: [cronSchedulerRole.arn],
-        },
-        {
-          actions: ["dynamodb:BatchWriteItem", "dynamodb:DeleteItem", "dynamodb:Scan"],
-          resources: [
-            conversationsTable.arn,
-            chatSdkStateTable.arn,
-            processedEventsTable.arn,
-            asyncAgentResultTable.arn,
-            asyncToolResultTable.arn,
-          ],
-        },
-        {
-          actions: ["dynamodb:UpdateItem"],
-          resources: [accountSignupRateLimitTable.arn],
-        },
-        {
-          actions: ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"],
-          resources: [`${filesystemBucketArn}/*`],
-        },
-        {
-          actions: ["s3:ListBucket"],
-          resources: [filesystemBucketArn],
-        },
-        {
-          actions: ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"],
-          resources: [`${skillsBucketArn}/*`],
-        },
-        {
-          actions: ["s3:ListBucket"],
-          resources: [skillsBucketArn],
-        },
-        {
-          actions: ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"],
-          resources: [`${toolBundlesBucketArn}/*`],
-        },
-        {
-          actions: ["s3:ListBucket"],
-          resources: [toolBundlesBucketArn],
-        },
-        ...(microvmArtifactsBucket
-          ? [
-              {
-                actions: ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"],
-                resources: [`${microvmArtifactsBucketArn}/microvm-images/*`],
-              },
-              {
-                actions: ["s3:ListBucket"],
-                resources: [microvmArtifactsBucketArn],
-              },
-            ]
-          : []),
-      ],
+      permissions: accountManagePermissions,
+    });
+
+    // IAM principal for the self-hosted container runtime (epic #85 phase 9a):
+    // one pod runs both handlers, so the user gets the union of the two Lambda
+    // roles' permissions, generated from the same arrays so it cannot drift.
+    // The access key is minted out of band (`aws iam create-access-key`) and
+    // delivered to the cluster as a k8s Secret — never in Pulumi state or git.
+    // Two managed policies instead of one inline: IAM caps inline user policies
+    // at 2048 chars total, which these documents exceed.
+    const coreRuntimeUser = new aws.iam.User("CoreRuntimeUser", {
+      name: resourceName("core-runtime", stage, region),
+    });
+    const coreRuntimeHarnessPolicy = new aws.iam.Policy("CoreRuntimeHarnessPolicy", {
+      name: resourceName("core-runtime-harness", stage, region),
+      policy: permissionsPolicy(harnessPermissions),
+    });
+    const coreRuntimeAccountPolicy = new aws.iam.Policy("CoreRuntimeAccountPolicy", {
+      name: resourceName("core-runtime-account", stage, region),
+      policy: permissionsPolicy(accountManagePermissions),
+    });
+    new aws.iam.UserPolicyAttachment("CoreRuntimeHarnessPolicyAttachment", {
+      user: coreRuntimeUser.name,
+      policyArn: coreRuntimeHarnessPolicy.arn,
+    });
+    new aws.iam.UserPolicyAttachment("CoreRuntimeAccountPolicyAttachment", {
+      user: coreRuntimeUser.name,
+      policyArn: coreRuntimeAccountPolicy.arn,
     });
 
     return {
@@ -1310,6 +1347,7 @@ export default $config({
       microvmArtifactsBucketName: microvmArtifactsBucket?.name,
       microvmBuildRoleArn: microvmBuildRole?.arn,
       microvmExecutionRoleArn: microvmExecutionRole?.arn,
+      coreRuntimeUserName: coreRuntimeUser.name,
     };
   },
 });

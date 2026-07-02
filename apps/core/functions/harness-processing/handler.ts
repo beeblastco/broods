@@ -1136,20 +1136,76 @@ async function invokeNatsWorker(event: DirectInboundEvent): Promise<void> {
 }
 
 /**
- * Generic worker invocation helper that sends an event to the harness-processing Lambda.
- * Uses Event invocation type to run the worker asynchronously.
+ * Generic worker invocation helper. On Lambda it self-invokes with Event type;
+ * in the self-hosted container (no AWS_LAMBDA_FUNCTION_NAME) the same payload
+ * runs in-process as fire-and-forget background work.
  */
 async function invokeHarnessWorker(payload: AsyncWorkerInvocation | NatsWorkerInvocation): Promise<void> {
   const functionName = process.env.AWS_LAMBDA_FUNCTION_NAME;
-  if (!functionName) {
-    throw new Error("Missing AWS_LAMBDA_FUNCTION_NAME for worker invocation");
+  if (functionName) {
+    await lambda.send(new InvokeCommand({
+      FunctionName: functionName,
+      InvocationType: "Event",
+      Payload: textEncoder.encode(JSON.stringify(payload)),
+    }));
+    return;
   }
 
-  await lambda.send(new InvokeCommand({
-    FunctionName: functionName,
-    InvocationType: "Event",
-    Payload: textEncoder.encode(JSON.stringify(payload)),
-  }));
+  dispatchInProcessWorker(payload);
+}
+
+const MAX_INPROCESS_WORKERS = Math.max(1, Number(process.env.MAX_INPROCESS_WORKERS ?? "8"));
+const WORKER_TIMEOUT_BUDGET_MS = Number(process.env.WORKER_TIMEOUT_BUDGET_MS ?? String(10 * 60 * 1000));
+type InProcessWorkerRun = (
+  payload: AsyncWorkerInvocation | NatsWorkerInvocation,
+  context: LambdaInvocation,
+) => Promise<unknown>;
+const inProcessWorkers = new Set<Promise<void>>();
+const pendingWorkerPayloads: [AsyncWorkerInvocation | NatsWorkerInvocation, InProcessWorkerRun][] = [];
+let activeInProcessWorkers = 0;
+
+// Container replacement for the Lambda Event self-invoke: run the worker in
+// this process, capped like Lambda's concurrency and queued (never rejected)
+// when at capacity. Failures are logged, matching fire-and-forget semantics.
+export function dispatchInProcessWorker(
+  payload: AsyncWorkerInvocation | NatsWorkerInvocation,
+  run: InProcessWorkerRun = handler,
+): void {
+  if (activeInProcessWorkers >= MAX_INPROCESS_WORKERS) {
+    pendingWorkerPayloads.push([payload, run]);
+    return;
+  }
+
+  activeInProcessWorkers += 1;
+  const worker: Promise<void> = run(payload, {
+    requestId: crypto.randomUUID(),
+    functionArn: "",
+    traceId: "",
+    deadlineMs: Date.now() + WORKER_TIMEOUT_BUDGET_MS,
+  }).then(
+    () => undefined,
+    (err) => {
+      logError("In-process worker failed", {
+        kind: payload.kind,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    },
+  ).finally(() => {
+    activeInProcessWorkers -= 1;
+    inProcessWorkers.delete(worker);
+    const next = pendingWorkerPayloads.shift();
+    if (next) {
+      dispatchInProcessWorker(next[0], next[1]);
+    }
+  });
+  inProcessWorkers.add(worker);
+}
+
+/** Awaited by the container bootstrap on shutdown so queued work is not lost. */
+export async function drainInProcessWorkers(): Promise<void> {
+  while (inProcessWorkers.size > 0) {
+    await Promise.allSettled([...inProcessWorkers]);
+  }
 }
 
 async function continueDetachedAsyncToolsIfReady(

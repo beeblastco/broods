@@ -81,7 +81,7 @@ export function initOtel(): void {
       timeoutMillis: 5000,
     });
     const resource = resourceFromAttributes({
-      "service.name": process.env.AWS_LAMBDA_FUNCTION_NAME ?? "broods-core",
+      "service.name": process.env.AWS_LAMBDA_FUNCTION_NAME ?? process.env.SERVICE_NAME ?? "broods-core",
       "service.namespace": "beeblast",
     });
     const tracerProvider = new BasicTracerProvider({

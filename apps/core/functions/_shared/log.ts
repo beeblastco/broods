@@ -223,7 +223,7 @@ function emit(
 ): void {
   const ctx = getObservabilityContext();
   const ts = Date.now();
-  const service = process.env.AWS_LAMBDA_FUNCTION_NAME ?? "broods-core";
+  const service = process.env.AWS_LAMBDA_FUNCTION_NAME ?? process.env.SERVICE_NAME ?? "broods-core";
   const secretValues = [...sensitiveEnvValues(), ...(ctx?.secretValues ?? [])];
 
   // Build the full structured entry, then redact the message and data payload.

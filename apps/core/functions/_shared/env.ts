@@ -13,6 +13,13 @@ export function optionalEnv(name: string): string | undefined {
   return value ? value : undefined;
 }
 
+// True in the deployed runtimes (Lambda, or the self-hosted container which
+// sets BROODS_CONTAINER_RUNTIME), false in tests/local dev. Gates side effects
+// that must not fire outside a deployment, like sandbox prewarm.
+export function isDeployedRuntime(): boolean {
+  return Boolean(process.env.AWS_LAMBDA_FUNCTION_NAME || process.env.BROODS_CONTAINER_RUNTIME);
+}
+
 export function booleanEnv(name: string, defaultValue = false): boolean {
   const value = optionalEnv(name);
   if (value === undefined) {
