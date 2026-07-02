@@ -12,7 +12,6 @@ const optionalSandboxGithubEnv = {
 };
 
 export const slack = defineSlackChannel({
-  id: "slack-support",
   workspaceScope: { level: "channel" },
   botToken: env("SLACK_BOT_TOKEN"),
   signingSecret: env("SLACK_SIGNING_SECRET"),
@@ -21,7 +20,6 @@ export const slack = defineSlackChannel({
 });
 
 export const telegram = defineTelegramChannel({
-  id: "telegram-support",
   workspaceScope: { level: "channel" },
   botToken: env("TELEGRAM_BOT_TOKEN"),
   webhookSecret: env("TELEGRAM_WEBHOOK_SECRET"),
@@ -30,7 +28,6 @@ export const telegram = defineTelegramChannel({
 });
 
 export const github = defineGitHubChannel({
-  id: "github-support",
   workspaceScope: { level: "channel" },
   appId: env("GITHUB_APP_ID"),
   privateKey: env("GITHUB_PRIVATE_KEY"),
