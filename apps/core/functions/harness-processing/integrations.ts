@@ -69,6 +69,7 @@ import {
   scopedDirectEventId,
 } from "../_shared/runtime-keys.ts";
 import { deleteS3Prefix } from "../_shared/s3.ts";
+import { releaseReservedSandboxes } from "../_shared/sandbox-cleanup.ts";
 import {
   isolatedWorkspaceNamespace,
   workspaceNamespace,
@@ -729,6 +730,7 @@ async function cleanupChannelWorkspaceScopes(options: {
 
   const storage = getStorage();
   let deleted = 0;
+  let reservedSandboxesReleased = 0;
   for (const ref of options.agentConfig.workspaces ?? []) {
     const record = await storage.workspaceConfigs.getById(options.accountId, ref.workspaceId);
     if (!record || record.config.isolation !== true) {
@@ -745,6 +747,7 @@ async function cleanupChannelWorkspaceScopes(options: {
         workspaceScope,
       },
     );
+    reservedSandboxesReleased += await releaseReservedSandboxes(options.accountId, [namespace]);
     const target = await resolveS3ReadTarget(workspaceReadContext(record.config.storage, namespace));
     deleted += await deleteS3Prefix(target.bucket, target.prefix, target.access);
   }
@@ -754,6 +757,7 @@ async function cleanupChannelWorkspaceScopes(options: {
     channelName: options.channelName,
     conversationKey: options.conversationKey,
     deleted,
+    reservedSandboxesReleased,
   });
 }
 

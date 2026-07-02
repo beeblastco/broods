@@ -31,7 +31,7 @@ export const telegram = defineTelegramChannel({
 
 export const github = defineGitHubChannel({
   id: "github-support",
-  workspaceScope: { alias: "issues", level: "conversation" },
+  workspaceScope: { level: "channel" },
   appId: env("GITHUB_APP_ID"),
   privateKey: env("GITHUB_PRIVATE_KEY"),
   webhookSecret: env("GITHUB_WEBHOOK_SECRET"),
@@ -55,7 +55,7 @@ export const sandbox = defineSandbox({
     persistent: true,
     lifecycle: {
       idleTimeoutSeconds: 900,
-      maxLifetimeSeconds: 28800,
+      maxLifetimeSeconds: 3600,
     },
     onCreate: [setupGitDevEnvironment],
     onResume: [setupGitDevEnvironment],

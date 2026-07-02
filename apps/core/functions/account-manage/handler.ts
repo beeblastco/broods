@@ -45,9 +45,11 @@ import { workspaceSandboxLimits } from "../_shared/sandbox.ts";
 import {
     deleteAccountRuntimeData,
     deleteWorkspaceFilesystem,
+} from "./cleanup.ts";
+import {
     releaseReservedSandboxes,
     releaseSandboxConfigInstances,
-} from "./cleanup.ts";
+} from "../_shared/sandbox-cleanup.ts";
 import { workspaceNamespace, workspaceNamespaceOwnsReservationKey } from "../_shared/workspaces.ts";
 import { isPlainObject } from "../_shared/object.ts";
 import {
