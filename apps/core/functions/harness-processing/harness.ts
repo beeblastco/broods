@@ -24,7 +24,7 @@ import {
   type Span,
 } from "@opentelemetry/api";
 import type { AgentConfig } from "../_shared/storage/index.ts";
-import { collectSecretValues, logDebug, logError, logInfo, logWarn, redact, redactSensitiveText } from "../_shared/log.ts";
+import { collectSecretValues, logError, logInfo, logWarn, redact, redactSensitiveText } from "../_shared/log.ts";
 import { recordUsageTask } from "../_shared/telemetry.ts";
 import { extractCacheWriteTokens, usageTokenTotals } from "./usage-metering.ts";
 import {
@@ -439,10 +439,6 @@ export async function runAgentLoop(
   const reasoningWindow = new Map<number, StreamWindow>();
   const textWindow = new Map<number, StreamWindow>();
   const toolInputWindow = new Map<number, StreamWindow>();
-  // First text / reasoning chunk per step, for DEBUG lifecycle logs (Loki only;
-  // DEBUG is excluded from the live INFO stream so it never spams the dashboard).
-  const textStartedSteps = new Set<number>();
-  const reasoningStartedSteps = new Set<number>();
   let activeStepNumber: number | undefined;
   const toolCallSummaries = new Map<string, ToolCallSummary>();
   const logContext = {
@@ -669,16 +665,8 @@ export async function runAgentLoop(
       };
       if (chunk.type === "text-delta") {
         bump(textWindow);
-        if (!textStartedSteps.has(step)) {
-          textStartedSteps.add(step);
-          logDebug("Model text started", { eventType: "model.text.started", ...logContext, stepNumber: step });
-        }
       } else if (chunk.type === "reasoning-delta") {
         bump(reasoningWindow);
-        if (!reasoningStartedSteps.has(step)) {
-          reasoningStartedSteps.add(step);
-          logDebug("Model thinking started", { eventType: "model.thinking.started", ...logContext, stepNumber: step });
-        }
       } else if (chunk.type === "tool-input-start" || chunk.type === "tool-input-delta" || chunk.type === "tool-call") {
         bump(toolInputWindow);
       }
@@ -687,11 +675,6 @@ export async function runAgentLoop(
       const now = Date.now();
       stepStartedAt.set(stepNumber, now);
       activeStepNumber = stepNumber;
-      logDebug("Agent loop step started", {
-        eventType: "model.step.started",
-        ...logContext,
-        stepNumber: stepNumber,
-      });
       const attributes = {
         "agent.step_number": stepNumber,
         "step.state": "running",
@@ -724,13 +707,6 @@ export async function runAgentLoop(
     onToolExecutionStart: async ({ toolCall }) => {
       const stepNumber = activeStepNumber;
       const now = Date.now();
-      logDebug("Tool call started", {
-        eventType: "tool.call.started",
-        ...logContext,
-        stepNumber: stepNumber,
-        toolName: toolCall.toolName,
-        toolCallId: toolCall.toolCallId,
-      });
       if (stepNumber !== undefined && !stepStartedAt.has(stepNumber)) {
         stepStartedAt.set(stepNumber, now);
       }
@@ -1033,26 +1009,8 @@ export async function runAgentLoop(
           attributes: { ...rootRunningAttributes, ...liveRoleCpu },
         });
       }
-      if (textStartedSteps.has(stepNumber)) {
-        logDebug("Model text ended", {
-          eventType: "model.text.ended",
-          ...logContext,
-          stepNumber: stepNumber,
-          length: text.length,
-        });
-      }
-      if (reasoningStartedSteps.has(stepNumber)) {
-        logDebug("Model thinking ended", {
-          eventType: "model.thinking.ended",
-          ...logContext,
-          stepNumber: stepNumber,
-          length: (reasoningText ?? "").length,
-        });
-      }
       stepSpans.delete(stepNumber);
       firstChunkAt.delete(stepNumber);
-      textStartedSteps.delete(stepNumber);
-      reasoningStartedSteps.delete(stepNumber);
       if (activeStepNumber === stepNumber) {
         activeStepNumber = undefined;
       }
@@ -1125,36 +1083,7 @@ export async function runAgentLoop(
             : response.messages,
         );
 
-        if (approvals.length > 0) {
-          approvalSummaries = approvals;
-          logInfo("Model invocation finished", finishLog);
-          await lifecycle.emit("agent.approval.required", {
-            approvals: toLifecycleValue(approvals),
-            toolsUsed: toLifecycleValue(tools.toolsUsed),
-            toolUsage: toLifecycleValue(tools.toolUsage),
-            toolCalls: toLifecycleValue(tools.toolCalls),
-          });
-          await reply?.onApprovalRequired?.(approvals);
-          return;
-        }
-
-        if (modelOutput) {
-          finalResponse = await modelOutput.parseCompleteOutput({ text }, { response, usage, finishReason }) as JSONValue;
-          await reply?.onFinalText(finalResponse);
-          logInfo("Model invocation finished", finishLog);
-          await lifecycle.emit("agent.finished", {
-            finishReason: finishReason,
-            stepCount: stepCount,
-            toolCallCount: toolCallCount,
-            toolsUsed: toLifecycleValue(tools.toolsUsed),
-            toolUsage: toLifecycleValue(tools.toolUsage),
-            toolCalls: toLifecycleValue(tools.toolCalls),
-            response: toLifecycleValue(finalResponse),
-          });
-          return;
-        }
-
-        if (!finalText) {
+        if (approvals.length === 0 && !modelOutput && !finalText) {
           if (didFail) {
             return;
           }
@@ -1191,9 +1120,40 @@ export async function runAgentLoop(
           return;
         }
 
+        // The invocation (and its token spend) is real even if structured-output
+        // parsing or reply delivery below fails, so record the metric line once
+        // here; a later failure adds its own model.invocation.failed line.
+        logInfo("Model invocation finished", finishLog);
+
+        if (approvals.length > 0) {
+          approvalSummaries = approvals;
+          await lifecycle.emit("agent.approval.required", {
+            approvals: toLifecycleValue(approvals),
+            toolsUsed: toLifecycleValue(tools.toolsUsed),
+            toolUsage: toLifecycleValue(tools.toolUsage),
+            toolCalls: toLifecycleValue(tools.toolCalls),
+          });
+          await reply?.onApprovalRequired?.(approvals);
+          return;
+        }
+
+        if (modelOutput) {
+          finalResponse = await modelOutput.parseCompleteOutput({ text }, { response, usage, finishReason }) as JSONValue;
+          await reply?.onFinalText(finalResponse);
+          await lifecycle.emit("agent.finished", {
+            finishReason: finishReason,
+            stepCount: stepCount,
+            toolCallCount: toolCallCount,
+            toolsUsed: toLifecycleValue(tools.toolsUsed),
+            toolUsage: toLifecycleValue(tools.toolUsage),
+            toolCalls: toLifecycleValue(tools.toolCalls),
+            response: toLifecycleValue(finalResponse),
+          });
+          return;
+        }
+
         finalResponse = finalText;
         await reply?.onFinalText(finalText);
-        logInfo("Model invocation finished", finishLog);
         await lifecycle.emit("agent.finished", {
           finishReason: finishReason,
           stepCount: stepCount,
