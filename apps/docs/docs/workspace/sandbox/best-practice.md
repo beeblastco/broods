@@ -10,10 +10,21 @@ By default every provider is **ephemeral per call** (create → run → destroy)
 *files* persist (via the S3 mount). That is the right default for stateless tasks — it is
 cheap and there is nothing to leak.
 
+**Prefer `persistent: false` unless you actually need the state.** Each persistent config
+reserves **one long-lived instance per workspace**, and on `lambda` a MicroVM counts against
+the account's *allocated memory* quota while it is **running or suspended** — a suspended VM
+still holds its full allocation until `suspendedDurationSeconds` (or a dashboard Terminate)
+releases it. A handful of persistent agents/workspaces can exhaust the quota and every new
+launch then fails with `ServiceQuotaExceededException` ("maximum allocated memory limit").
+Ephemeral runs hold quota only for the seconds a command executes.
+
 Reserve a persistent sandbox (`persistent: true`) when **installed packages, code, or
 running processes need to survive across calls** — a cloud dev box where `pip`/`npm`/`uv`
 installs and background jobs stay alive, scaling down on idle like Fargate. Reach for it for
-iterative coding sessions and long-running work; avoid it for one-shot tasks.
+iterative coding sessions, long-running work, and when you want the live dashboard terminal;
+avoid it for one-shot tasks. When a reservation is done, **Terminate it from the dashboard**
+(Sandbox → Instances) — that tears down the provider instance and frees its quota
+immediately instead of waiting out the suspended grace period.
 
 ## Reserved (persistent) sandboxes
 
