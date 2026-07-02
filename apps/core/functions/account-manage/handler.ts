@@ -33,6 +33,10 @@ import {
 } from "../_shared/http.ts";
 import type { LambdaResponse } from "../_shared/runtime.ts";
 import { createSandboxExecutor } from "../harness-processing/sandbox/index.ts";
+import { workdirConnection, workdirPtyUrl } from "../harness-processing/sandbox/workdir-executor.ts";
+import { getSandboxExternalId } from "../harness-processing/sandbox/instance-store.ts";
+import { sealTerminalTicket, TERMINAL_TICKET_TTL_MS, TERMINAL_WEBSOCKET_PATH } from "../_shared/terminal-ticket.ts";
+import { requireEnv } from "../_shared/env.ts";
 import { removeSandboxInstance, setSandboxInstanceStatus } from "../_shared/storage/convex/sandbox-instances.ts";
 import { upsertSandboxSnapshot } from "../_shared/storage/convex/sandbox-snapshots.ts";
 import { workspaceSandboxLimits } from "../_shared/sandbox.ts";
@@ -181,7 +185,7 @@ export async function handler(event: LambdaFunctionURLEvent): Promise<LambdaResp
             return await handleToolRoute(method, account.accountId, selfToolMatch?.[1], event);
         }
 
-        const selfSandboxLifecycleMatch = rawPath.match(/^\/accounts\/me\/sandboxes\/([^/]+)\/(suspend|resume|terminate|snapshot|refresh|exec)$/);
+        const selfSandboxLifecycleMatch = rawPath.match(/^\/accounts\/me\/sandboxes\/([^/]+)\/(suspend|resume|terminate|snapshot|refresh|exec|terminal)$/);
         if (selfSandboxLifecycleMatch?.[1] && selfSandboxLifecycleMatch[2]) {
             // Driven by the dashboard via the sandboxPublic Convex actions, which
             // authenticate with the shared service token.
@@ -190,7 +194,7 @@ export async function handler(event: LambdaFunctionURLEvent): Promise<LambdaResp
                 method,
                 account.accountId,
                 selfSandboxLifecycleMatch[1],
-                selfSandboxLifecycleMatch[2] as "suspend" | "resume" | "terminate" | "snapshot" | "refresh" | "exec",
+                selfSandboxLifecycleMatch[2] as SandboxLifecycleAction,
                 event,
             );
         }
@@ -665,11 +669,13 @@ async function handleSandboxRoute(
  * available, runs the provider lifecycle call, then mirrors the new status into
  * Convex so the live dashboard query reflects it.
  */
+type SandboxLifecycleAction = "suspend" | "resume" | "terminate" | "snapshot" | "refresh" | "exec" | "terminal";
+
 async function handleSandboxLifecycle(
     method: string,
     accountId: string,
     rawSandboxId: string,
-    action: "suspend" | "resume" | "terminate" | "snapshot" | "refresh" | "exec",
+    action: SandboxLifecycleAction,
     event: LambdaFunctionURLEvent,
 ): Promise<LambdaResponse> {
     if (method !== "POST") {
@@ -724,6 +730,37 @@ async function handleSandboxLifecycle(
             truncated: result.truncated === true,
             provider: result.provider,
         });
+    }
+
+    if (action === "terminal") {
+        // Only workdir exposes an in-guest PTY WebSocket today; other providers
+        // keep the bounded `exec` terminal.
+        if (provider !== "sandbox") {
+            return errorResponse(409, `provider ${provider} does not support a live terminal`);
+        }
+        const externalId = await getSandboxExternalId("sandbox", reservationKey);
+        if (!externalId) {
+            return errorResponse(404, "No reserved sandbox instance for this reservation key");
+        }
+        // The PTY endpoint requires a running guest, so opening a terminal
+        // resumes a suspended instance the same way an exec would.
+        if (executor.getInstanceInfo && executor.resume) {
+            const info = await executor.getInstanceInfo(ref);
+            if (info?.state === "suspended") {
+                await executor.resume(ref);
+                await setSandboxInstanceStatus(accountId, reservationKey, "running");
+            }
+        }
+        const { baseUrl, apiKey } = workdirConnection(record.config);
+        const expiresAt = Date.now() + TERMINAL_TICKET_TTL_MS;
+        const token = sealTerminalTicket({
+            url: workdirPtyUrl(baseUrl, externalId),
+            authorization: `Bearer ${apiKey}`,
+            accountId,
+            expiresAt,
+        }, requireEnv("SERVICE_AUTH_SECRET"));
+
+        return jsonResponse(200, { token, expiresAt, websocketPath: TERMINAL_WEBSOCKET_PATH });
     }
 
     if (action === "refresh") {

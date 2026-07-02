@@ -6,11 +6,14 @@ import {
   mapWithConcurrency,
   normalizedCoreBaseUrls,
   normalizeOtelId,
+  openTerminalTicketWithSecrets,
   resolveObservabilityScope,
   tempoTraceRowsFromResponse,
+  terminalServiceSecretsFromEnv,
   lokiLogEntry,
   websocketMessageForNatsData,
 } from "../src/index.ts";
+import { sealTerminalTicket } from "../../core/functions/_shared/terminal-ticket.ts";
 import {
   isObservabilityClientMessage,
   MAX_OBSERVABILITY_BACKFILL,
@@ -325,4 +328,26 @@ test("maps with bounded concurrency, preserves order, and isolates failures", as
     40,
     50,
   ]);
+});
+
+test("collects stage service secrets from the env (multi-stage or single)", () => {
+  expect(terminalServiceSecretsFromEnv({ BROODS_SERVICE_AUTH_SECRETS: "dev-secret, prod-secret,dev-secret" }))
+    .toEqual(["dev-secret", "prod-secret"]);
+  expect(terminalServiceSecretsFromEnv({ BROODS_SERVICE_AUTH_SECRET: "only-secret" })).toEqual(["only-secret"]);
+  expect(terminalServiceSecretsFromEnv({})).toEqual([]);
+});
+
+test("opens a sealed terminal ticket with whichever stage secret verifies it", () => {
+  const ticket = {
+    url: "ws://sandbox-node.example:8080/v1/sandboxes/sb_1/pty",
+    authorization: "Bearer sk_live_key",
+    accountId: "acct_1",
+    expiresAt: Date.now() + 60_000,
+  };
+  const sealed = sealTerminalTicket(ticket, "prod-secret");
+
+  expect(openTerminalTicketWithSecrets(sealed, ["dev-secret", "prod-secret"])).toEqual(ticket);
+  expect(openTerminalTicketWithSecrets(sealed, ["dev-secret"])).toBeNull();
+  expect(openTerminalTicketWithSecrets("", ["dev-secret"])).toBeNull();
+  expect(openTerminalTicketWithSecrets("garbage-token", ["dev-secret", "prod-secret"])).toBeNull();
 });

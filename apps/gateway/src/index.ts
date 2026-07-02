@@ -2,9 +2,12 @@
  * Bun gateway for public app traffic. It forwards normal HTTP requests to core
  * and adapts public WebSocket clients to core's NATS-backed stream.
  *
- * Two WS modes coexist — never mixed on the same socket:
+ * Three WS modes coexist — never mixed on the same socket:
  *   agent-test  /v1/agents/<id>/ws  and  /v1/<project>/agents/<env>/<endpointId>/ws
  *   observability  /v1/<project>/<env>/observability/ws
+ *   terminal  /v1/sandboxes/terminal/ws — bridges the dashboard to a sandbox's
+ *   in-guest PTY. The upstream target + credential ride inside a sealed ticket
+ *   minted by core, so this gateway only needs the stage service secrets.
  */
 
 import { resolveRunEvents } from "../../../packages/broods/src/run-input.ts";
@@ -28,6 +31,11 @@ import {
   type NatsConnection,
   type NatsStreamEvent,
 } from "../../core/functions/_shared/nats.ts";
+import {
+  openTerminalTicket,
+  TERMINAL_WEBSOCKET_PATH,
+  type TerminalTicket,
+} from "../../core/functions/_shared/terminal-ticket.ts";
 
 // Typed socket data — agent-test vs observability are fully separate.
 type AgentTestGatewayData = {
@@ -45,7 +53,12 @@ type ObservabilityGatewayData = {
   scope: ObservabilityScope;
 };
 
-type GatewayData = AgentTestGatewayData | ObservabilityGatewayData;
+type TerminalGatewayData = {
+  kind: "terminal";
+  ticket: TerminalTicket;
+};
+
+type GatewayData = AgentTestGatewayData | ObservabilityGatewayData | TerminalGatewayData;
 
 // Observability scope returned by POST /v1/internal/observability-scope.
 type ObservabilityScope = {
@@ -84,9 +97,20 @@ type GatewayLimits = {
   runStartTimeoutMs: number;
 };
 
+type TerminalSocketState = {
+  upstream: WebSocket | null;
+  /** Client input received before the upstream PTY socket opened. */
+  pending: (string | Uint8Array<ArrayBuffer>)[];
+  pendingBytes: number;
+};
+
 const decoder = new TextDecoder();
 const activeRuns = new WeakMap<Bun.ServerWebSocket<GatewayData>, ActiveRun>();
 const obsState = new WeakMap<Bun.ServerWebSocket<GatewayData>, ObservabilitySocketState>();
+const terminalState = new WeakMap<Bun.ServerWebSocket<GatewayData>, TerminalSocketState>();
+// Keystrokes buffered while the upstream PTY dial is in flight; anything past
+// this is a misbehaving client, not typing.
+const MAX_PENDING_TERMINAL_BYTES = 64 * 1024;
 let natsConnectionPromise: Promise<NatsConnection> | null = null;
 let activeSocketCount = 0;
 const maxBunIdleTimeoutSeconds = 255;
@@ -114,6 +138,27 @@ export function createGatewayServer(options: GatewayServerOptions): Bun.Server<G
       }
 
       if (isWebSocketRequest(request)) {
+        if (url.pathname === TERMINAL_WEBSOCKET_PATH) {
+          if (activeSocketCount >= limits.maxConnections) {
+            return json({ error: "Gateway is at capacity" }, { status: 503 });
+          }
+
+          const token = url.searchParams.get("token") ?? "";
+          const ticket = openTerminalTicketWithSecrets(token, terminalServiceSecretsFromEnv());
+          if (!ticket) {
+            return json({ error: "Invalid or expired terminal ticket" }, { status: 401 });
+          }
+
+          const upgraded = server.upgrade(request, {
+            data: {
+              kind: "terminal",
+              ticket: ticket,
+            } satisfies TerminalGatewayData,
+          });
+
+          return upgraded ? undefined : json({ error: "WebSocket upgrade failed" }, { status: 400 });
+        }
+
         if (isObservabilityWebSocketPath(url.pathname)) {
           if (activeSocketCount >= limits.maxConnections) {
             return json({ error: "Gateway is at capacity" }, { status: 503 });
@@ -203,8 +248,16 @@ export function createGatewayServer(options: GatewayServerOptions): Bun.Server<G
             logsMinLevel: "INFO",
           });
         }
+        if (socket.data.kind === "terminal") {
+          openTerminalUpstream(socket as Bun.ServerWebSocket<TerminalGatewayData>);
+        }
       },
       async message(socket, rawMessage) {
+        if (socket.data.kind === "terminal") {
+          relayTerminalInput(socket as Bun.ServerWebSocket<TerminalGatewayData>, rawMessage);
+          return;
+        }
+
         if (socket.data.kind === "observability") {
           await handleObservabilityMessage(socket as Bun.ServerWebSocket<ObservabilityGatewayData>, rawMessage);
           return;
@@ -234,6 +287,10 @@ export function createGatewayServer(options: GatewayServerOptions): Bun.Server<G
       },
       close(socket) {
         activeSocketCount = Math.max(0, activeSocketCount - 1);
+        if (socket.data.kind === "terminal") {
+          cleanupTerminalSocket(socket as Bun.ServerWebSocket<TerminalGatewayData>);
+          return;
+        }
         if (socket.data.kind === "observability") {
           cleanupObservabilitySocket(socket as Bun.ServerWebSocket<ObservabilityGatewayData>);
           return;
@@ -559,6 +616,111 @@ export async function resolveObservabilityScope(
   }
 
   return null;
+}
+
+/**
+ * One public gateway serves every hosted stage, so terminal tickets are opened
+ * against each stage's service secret in turn (comma-separated env). A single
+ * `BROODS_SERVICE_AUTH_SECRET` also works for single-stage deployments.
+ */
+export function terminalServiceSecretsFromEnv(env: Record<string, string | undefined> = process.env): string[] {
+  const raw = env.BROODS_SERVICE_AUTH_SECRETS ?? env.BROODS_SERVICE_AUTH_SECRET ?? "";
+
+  return [...new Set(raw.split(",").map((value) => value.trim()).filter(Boolean))];
+}
+
+/** Open a sealed terminal ticket with the first stage secret that verifies it. */
+export function openTerminalTicketWithSecrets(token: string, secrets: string[]): TerminalTicket | null {
+  if (!token.trim()) return null;
+  for (const secret of secrets) {
+    const ticket = openTerminalTicket(token, secret);
+    if (ticket) return ticket;
+  }
+
+  return null;
+}
+
+/**
+ * Dial the sandbox node's PTY WebSocket named in the socket's ticket and wire
+ * both directions. Client keystrokes typed while the dial is in flight are
+ * buffered (bounded) and flushed on open; PTY output is relayed as-is.
+ */
+function openTerminalUpstream(socket: Bun.ServerWebSocket<TerminalGatewayData>): void {
+  const state: TerminalSocketState = { upstream: null, pending: [], pendingBytes: 0 };
+  terminalState.set(socket as Bun.ServerWebSocket<GatewayData>, state);
+
+  let upstream: WebSocket;
+  try {
+    // Bun's WebSocket client accepts custom headers; the upstream credential
+    // never leaves this process.
+    upstream = new WebSocket(socket.data.ticket.url, {
+      headers: { authorization: socket.data.ticket.authorization },
+    } as unknown as string[]);
+  } catch {
+    socket.close(1011, "failed to reach the sandbox terminal");
+    return;
+  }
+  upstream.binaryType = "arraybuffer";
+  state.upstream = upstream;
+
+  upstream.onopen = () => {
+    for (const chunk of state.pending) {
+      upstream.send(chunk);
+    }
+    state.pending = [];
+    state.pendingBytes = 0;
+  };
+  upstream.onmessage = (event) => {
+    if (socket.readyState !== WebSocket.OPEN) return;
+    try {
+      if (typeof event.data === "string") {
+        socket.send(event.data);
+      } else {
+        socket.send(new Uint8Array(event.data as ArrayBuffer));
+      }
+    } catch {
+      // Client transport failed mid-send; the close handler tears down upstream.
+    }
+  };
+  upstream.onclose = () => {
+    // Shell exited (or the node dropped us) — end the client session cleanly so
+    // the dashboard shows "session ended" instead of retrying a dead PTY.
+    if (socket.readyState === WebSocket.OPEN) socket.close(1000, "terminal session ended");
+  };
+  upstream.onerror = () => {
+    if (socket.readyState === WebSocket.OPEN) socket.close(1011, "sandbox terminal transport error");
+  };
+}
+
+/** Forward client keystrokes to the upstream PTY, buffering until it opens. */
+function relayTerminalInput(socket: Bun.ServerWebSocket<TerminalGatewayData>, rawMessage: string | Buffer): void {
+  const state = terminalState.get(socket as Bun.ServerWebSocket<GatewayData>);
+  if (!state) return;
+  const chunk = typeof rawMessage === "string" ? rawMessage : (new Uint8Array(rawMessage) as Uint8Array<ArrayBuffer>);
+  if (state.upstream && state.upstream.readyState === WebSocket.OPEN) {
+    state.upstream.send(chunk);
+    return;
+  }
+  state.pendingBytes += typeof chunk === "string" ? chunk.length : chunk.byteLength;
+  if (state.pendingBytes > MAX_PENDING_TERMINAL_BYTES) {
+    socket.close(1009, "terminal input buffer exceeded");
+    return;
+  }
+  state.pending.push(chunk);
+}
+
+/** Tear down the upstream PTY connection when the client socket closes. */
+function cleanupTerminalSocket(socket: Bun.ServerWebSocket<TerminalGatewayData>): void {
+  const state = terminalState.get(socket as Bun.ServerWebSocket<GatewayData>);
+  if (!state) return;
+  terminalState.delete(socket as Bun.ServerWebSocket<GatewayData>);
+  if (state.upstream && state.upstream.readyState !== WebSocket.CLOSED) {
+    try {
+      state.upstream.close(1000, "client disconnected");
+    } catch {
+      // Already closing — nothing to release.
+    }
+  }
 }
 
 /** Dispatch an incoming message for an observability socket. */

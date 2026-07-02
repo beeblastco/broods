@@ -173,6 +173,10 @@ grep   TODO                 # ripgrep
 bash   python3 notes/run.py # run programs directly
 ```
 
+`bash` also accepts `pty: true` to attach the command to a real in-guest TTY for programs
+that refuse to run without a terminal — see
+[Best Practice → Live terminal & real TTY runs](best-practice.md#live-terminal--real-tty-runs).
+
 With no workspace, only `bash` is available and each call is a fresh container, so
 write-and-run in one command:
 
@@ -198,5 +202,5 @@ truncated at 256 KB by the image and again at `outputLimitBytes` harness-side.
 | [Networking](networking.md) | egress modes and per-provider enforcement |
 | [Security](security.md) | credential isolation and workspace scoping |
 | [Hooks](hook.md) | setup commands and runtime lifecycle hooks |
-| [Best Practice](best-practice.md) | persistent sandboxes, background jobs, idle tuning |
+| [Best Practice](best-practice.md) | persistent sandboxes, background jobs, live terminal + PTY runs, idle tuning |
 | [Integration](lambda.md) | Lambda · Daytona · E2B · Vercel specifics |

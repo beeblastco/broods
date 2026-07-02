@@ -3,7 +3,8 @@
 /**
  * Slide-in detail for one sandbox instance. The Detail tab shows the instance's
  * runtime identity + size and hosts the snapshot + terminate actions; the Terminal
- * tab runs bounded shell commands through broods's sandbox control plane.
+ * tab is a live in-guest PTY for workdir instances and a bounded command runner
+ * for providers without a PTY endpoint.
  */
 
 import { DeleteConfirmDialog } from "@/app/components/DeleteConfirmDialog";
@@ -25,6 +26,7 @@ import { Camera, ExternalLink, Play, RefreshCw, Terminal } from "lucide-react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useState } from "react";
+import { LiveSandboxTerminal } from "./LiveSandboxTerminal";
 import { formatSpecs, instanceStatusBadge, relativeTime } from "./sandboxFormat";
 
 interface Props {
@@ -95,6 +97,9 @@ export function SandboxInstanceSheet({ instance, projectId, onClose }: Props) {
 
     const controllable = Boolean(instance.sandboxConfigId);
     const commandRunnable = controllable && instance.status !== "terminating";
+    // Only the self-hosted workdir `sandbox` provider exposes an in-guest PTY
+    // WebSocket; the other providers keep the bounded command runner.
+    const supportsLiveTerminal = instance.provider === "sandbox";
     // Only the self-hosted workdir `sandbox` provider can capture a running instance
     // into a reusable image. AWS MicroVM (`lambda`) and the third-party providers have
     // no runtime snapshot-to-image API, so the capture action is hidden for them —
@@ -286,6 +291,13 @@ export function SandboxInstanceSheet({ instance, projectId, onClose }: Props) {
                     </TabsContent>
 
                     <TabsContent value="terminal" className="mt-4">
+                        {supportsLiveTerminal && instance.sandboxConfigId ? (
+                            <LiveSandboxTerminal
+                                sandboxId={instance.sandboxConfigId}
+                                reservationKey={instance.reservationKey}
+                                disabled={!commandRunnable}
+                            />
+                        ) : (
                         <div className="space-y-3">
                             <div className="rounded-lg border border-border bg-card p-3">
                                 <div className="mb-2 flex items-center gap-2 text-sm font-medium text-foreground">
@@ -349,6 +361,7 @@ export function SandboxInstanceSheet({ instance, projectId, onClose }: Props) {
                                 ))}
                             </div>
                         </div>
+                        )}
                     </TabsContent>
                 </Tabs>
             </SheetContent>
