@@ -49,21 +49,27 @@ describe("in-process worker dispatch", () => {
       active -= 1;
     };
 
+    const waitForStarted = async (count: number): Promise<void> => {
+      for (let i = 0; i < 200 && started.length < count; i += 1) {
+        await Bun.sleep(1);
+      }
+    };
+
     // Default cap is 8; dispatch 10 so two must queue.
     for (let i = 0; i < 10; i += 1) {
       dispatchInProcessWorker(payload(i), run(i));
     }
-    await Bun.sleep(10);
+    await waitForStarted(8);
     expect(started).toEqual([0, 1, 2, 3, 4, 5, 6, 7]);
 
     // Finishing one worker pulls the next queued payload, in FIFO order.
     releases.shift()!();
-    await Bun.sleep(10);
+    await waitForStarted(9);
     expect(started).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8]);
 
     while (releases.length > 0) {
       releases.shift()!();
-      await Bun.sleep(1);
+      await waitForStarted(Math.min(10, started.length + 1));
     }
     await drainInProcessWorkers();
     expect(started).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);

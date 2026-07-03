@@ -119,12 +119,19 @@ async function synthesizeEvent(
     queryStringParameters[key] = value;
   });
 
+  // Function URL events deliver cookies as a dedicated array (payload v2.0).
+  const cookies = headers["cookie"]
+    ?.split(";")
+    .map((cookie) => cookie.trim())
+    .filter(Boolean);
+
   return {
     version: "2.0",
     routeKey: "$default",
     rawPath: url.pathname,
     rawQueryString: url.search.startsWith("?") ? url.search.slice(1) : url.search,
     headers,
+    ...(cookies && cookies.length > 0 ? { cookies } : {}),
     ...(url.searchParams.size > 0 ? { queryStringParameters } : {}),
     requestContext: {
       accountId: "anonymous",
@@ -179,22 +186,28 @@ function tapStream(source: ReadableStream<Uint8Array>): [ReadableStream<Uint8Arr
   const flushed = new Promise<void>((resolve) => {
     settle = resolve;
   });
+  const reader = source.getReader();
 
+  // Pull-based so a slow client applies backpressure to the source instead of
+  // buffering the whole body, and a client disconnect cancels the source.
   const stream = new ReadableStream<Uint8Array>({
-    async start(controller) {
-      const reader = source.getReader();
+    async pull(controller) {
       try {
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          if (value) controller.enqueue(value);
+        const { done, value } = await reader.read();
+        if (done) {
+          controller.close();
+          settle();
+          return;
         }
-        controller.close();
+        controller.enqueue(value);
       } catch (err) {
-        controller.error(err);
-      } finally {
         settle();
+        controller.error(err);
       }
+    },
+    async cancel(reason) {
+      settle();
+      await reader.cancel(reason);
     },
   });
 

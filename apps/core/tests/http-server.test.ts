@@ -84,6 +84,17 @@ describe("core http server", () => {
     expect(context?.deadlineMs).toBeLessThanOrEqual(Date.now() + 90_000);
   });
 
+  it("splits the Cookie header into the Function URL cookies array", async () => {
+    harnessResponse = async () => ({ statusCode: 204 });
+    await fetch(`${baseUrl}/`, {
+      method: "POST",
+      headers: { Cookie: "session=abc; theme=dark" },
+      body: "{}",
+    });
+    const { event } = lastInvocation();
+    expect(event.cookies).toEqual(["session=abc", "theme=dark"]);
+  });
+
   it("keeps binary bodies byte-exact through base64", async () => {
     harnessResponse = async () => ({ statusCode: 204 });
     const payload = new Uint8Array([0, 255, 1, 128, 10, 13, 0]);

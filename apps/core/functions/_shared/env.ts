@@ -13,6 +13,14 @@ export function optionalEnv(name: string): string | undefined {
   return value ? value : undefined;
 }
 
+// Positive-integer env parsing that can never yield NaN: a malformed value
+// falls back instead of silently disabling numeric guards downstream.
+export function positiveIntegerEnv(name: string, fallback: number): number {
+  const raw = optionalEnv(name);
+  const parsed = raw === undefined ? fallback : Number(raw);
+  return Number.isFinite(parsed) && parsed >= 1 ? Math.floor(parsed) : fallback;
+}
+
 // True in the deployed runtimes (Lambda, or the self-hosted container which
 // sets BROODS_CONTAINER_RUNTIME), false in tests/local dev. Gates side effects
 // that must not fire outside a deployment, like sandbox prewarm.

@@ -12,7 +12,7 @@ import { formatChannelErrorText } from "../_shared/channels.ts";
 import { executeCommand } from "../_shared/commands.ts";
 import { toRuntimeAgentConfig } from "../_shared/storage/index.ts";
 import { getStorage, type CronRecord } from "../_shared/storage/index.ts";
-import { booleanEnv, requireEnv } from "../_shared/env.ts";
+import { booleanEnv, positiveIntegerEnv, requireEnv } from "../_shared/env.ts";
 import { jsonResponse } from "../_shared/http.ts";
 import { logError, logInfo, logWarn } from "../_shared/log.ts";
 import { LiveNatsPublisher, type NatsPublisher } from "../_shared/nats.ts";
@@ -1154,8 +1154,11 @@ async function invokeHarnessWorker(payload: AsyncWorkerInvocation | NatsWorkerIn
   dispatchInProcessWorker(payload);
 }
 
-const MAX_INPROCESS_WORKERS = Math.max(1, Number(process.env.MAX_INPROCESS_WORKERS ?? "8"));
-const WORKER_TIMEOUT_BUDGET_MS = Number(process.env.WORKER_TIMEOUT_BUDGET_MS ?? String(10 * 60 * 1000));
+const MAX_INPROCESS_WORKERS = positiveIntegerEnv("MAX_INPROCESS_WORKERS", 8);
+const WORKER_TIMEOUT_BUDGET_MS = positiveIntegerEnv("WORKER_TIMEOUT_BUDGET_MS", 10 * 60 * 1000);
+// Bounds pathological bursts (each queued payload can carry full message
+// bodies); far above anything normal operation reaches.
+const MAX_PENDING_WORKER_PAYLOADS = 1000;
 type InProcessWorkerRun = (
   payload: AsyncWorkerInvocation | NatsWorkerInvocation,
   context: LambdaInvocation,
@@ -1172,6 +1175,11 @@ export function dispatchInProcessWorker(
   run: InProcessWorkerRun = handler,
 ): void {
   if (activeInProcessWorkers >= MAX_INPROCESS_WORKERS) {
+    if (pendingWorkerPayloads.length >= MAX_PENDING_WORKER_PAYLOADS) {
+      // Load-shed like a failed Lambda Event invoke: the awaiting caller
+      // surfaces the error instead of the queue growing without bound.
+      throw new Error("In-process worker queue is full");
+    }
     pendingWorkerPayloads.push([payload, run]);
     return;
   }
