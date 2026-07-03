@@ -16,6 +16,7 @@ import { booleanEnv, positiveIntegerEnv, requireEnv } from "../_shared/env.ts";
 import { jsonResponse } from "../_shared/http.ts";
 import { logError, logInfo, logWarn } from "../_shared/log.ts";
 import { LiveNatsPublisher, type NatsPublisher } from "../_shared/nats.ts";
+import { runWithObservabilityScope } from "../_shared/otel.ts";
 import type { LambdaInvocation, LambdaResponse } from "../_shared/runtime.ts";
 import {
   publicConversationKeyFromScoped,
@@ -107,6 +108,17 @@ class ConversationBusyError extends Error {
 }
 
 export async function handler(
+  event: LambdaFunctionURLEvent | AsyncWorkerInvocation | NatsWorkerInvocation | CronInvocation,
+  context?: LambdaInvocation,
+): Promise<LambdaResponse> {
+  // Each invocation (a Lambda call, an HTTP request, or an in-process worker in
+  // the container) gets a request-private observability scope so concurrent
+  // tenants in the shared container process cannot clobber each other's log
+  // redaction secrets or NATS routing tags.
+  return runWithObservabilityScope(() => handleRequest(event, context));
+}
+
+async function handleRequest(
   event: LambdaFunctionURLEvent | AsyncWorkerInvocation | NatsWorkerInvocation | CronInvocation,
   context?: LambdaInvocation,
 ): Promise<LambdaResponse> {
@@ -1156,6 +1168,8 @@ async function invokeHarnessWorker(payload: AsyncWorkerInvocation | NatsWorkerIn
 
 const MAX_INPROCESS_WORKERS = positiveIntegerEnv("MAX_INPROCESS_WORKERS", 8);
 const WORKER_TIMEOUT_BUDGET_MS = positiveIntegerEnv("WORKER_TIMEOUT_BUDGET_MS", 10 * 60 * 1000);
+// Grace beyond the worker's own deadline before its slot is force-reclaimed.
+const WORKER_SLOT_GRACE_MS = 5_000;
 // Bounds pathological bursts (each queued payload can carry full message
 // bodies); far above anything normal operation reaches.
 const MAX_PENDING_WORKER_PAYLOADS = 1000;
@@ -1185,7 +1199,7 @@ export function dispatchInProcessWorker(
   }
 
   activeInProcessWorkers += 1;
-  const worker: Promise<void> = run(payload, {
+  const execution = run(payload, {
     requestId: crypto.randomUUID(),
     functionArn: "",
     traceId: "",
@@ -1198,7 +1212,28 @@ export function dispatchInProcessWorker(
         error: err instanceof Error ? err.message : String(err),
       });
     },
-  ).finally(() => {
+  );
+  // Reclaim the slot when the worker finishes OR overruns its deadline. Unlike
+  // Lambda, nothing here kills a hung model stream/tool, so without this a few
+  // stuck workers would pin every slot and wedge async processing for all
+  // tenants on the pod. An overrun leaves the underlying work running but frees
+  // the slot (and unblocks shutdown drain).
+  let slotTimer: ReturnType<typeof setTimeout> | undefined;
+  const guarded = Promise.race([
+    execution,
+    new Promise<void>((resolve) => {
+      slotTimer = setTimeout(() => {
+        logError("In-process worker exceeded deadline; reclaiming slot", {
+          kind: payload.kind,
+          budgetMs: WORKER_TIMEOUT_BUDGET_MS,
+        });
+        resolve();
+      }, WORKER_TIMEOUT_BUDGET_MS + WORKER_SLOT_GRACE_MS);
+      slotTimer.unref?.();
+    }),
+  ]);
+  const worker: Promise<void> = guarded.finally(() => {
+    if (slotTimer) clearTimeout(slotTimer);
     activeInProcessWorkers -= 1;
     inProcessWorkers.delete(worker);
     const next = pendingWorkerPayloads.shift();
@@ -1368,31 +1403,36 @@ function createDirectContinuationSseBody(
   context?: LambdaInvocation,
 ): ReadableStream<Uint8Array> {
   return new ReadableStream({
-    async start(controller) {
-      const subagentCoordinator = new SubagentCoordinator(session, event.agentConfig, waitUntilMs(context));
-      const asyncToolCoordinator = new AsyncToolCoordinator(session, waitUntilMs(context));
+    // This callback runs during stream consumption, after handler() has already
+    // returned and its observability scope has closed, so open a fresh one here
+    // to keep the continuation's redaction/routing tenant-private.
+    start(controller) {
+      return runWithObservabilityScope(async () => {
+        const subagentCoordinator = new SubagentCoordinator(session, event.agentConfig, waitUntilMs(context));
+        const asyncToolCoordinator = new AsyncToolCoordinator(session, waitUntilMs(context));
 
-      try {
-        await runParentContinuationLoop({
-          session: session,
-          subagentCoordinator: subagentCoordinator,
-          asyncToolCoordinator: asyncToolCoordinator,
-          initialTurnContext: initialTurnContext,
-          agentConfig: event.agentConfig,
-          consumeStream: (stream) => pipeAgentSseStream(stream, controller),
-          onHeartbeat: (pendingCount) => controller.enqueue(textEncoder.encode(`: waiting for async work pending=${pendingCount}\n\n`))
-        });
-      } catch (err) {
-        const error = err instanceof Error ? err.message : String(err);
-        logError("Direct continuation stream failed", {
-          eventId: event.eventId,
-          error,
-        });
-        controller.enqueue(textEncoder.encode(`data: ${JSON.stringify({ type: "error", error })}\n\n`));
-      } finally {
-        await session.releaseConversationLease().catch(() => { });
-        controller.close();
-      }
+        try {
+          await runParentContinuationLoop({
+            session: session,
+            subagentCoordinator: subagentCoordinator,
+            asyncToolCoordinator: asyncToolCoordinator,
+            initialTurnContext: initialTurnContext,
+            agentConfig: event.agentConfig,
+            consumeStream: (stream) => pipeAgentSseStream(stream, controller),
+            onHeartbeat: (pendingCount) => controller.enqueue(textEncoder.encode(`: waiting for async work pending=${pendingCount}\n\n`))
+          });
+        } catch (err) {
+          const error = err instanceof Error ? err.message : String(err);
+          logError("Direct continuation stream failed", {
+            eventId: event.eventId,
+            error,
+          });
+          controller.enqueue(textEncoder.encode(`data: ${JSON.stringify({ type: "error", error })}\n\n`));
+        } finally {
+          await session.releaseConversationLease().catch(() => { });
+          controller.close();
+        }
+      });
     },
   });
 }

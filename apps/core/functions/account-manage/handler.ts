@@ -78,6 +78,7 @@ import {
     getObservabilityContext,
     mintTraceId,
     setObservabilityContext,
+    runWithObservabilityScope,
 } from "../_shared/otel.ts";
 import {
     deleteWorkspacePath,
@@ -88,6 +89,12 @@ import {
 } from "./workspace-files.ts";
 
 export async function handler(event: LambdaFunctionURLEvent): Promise<LambdaResponse> {
+    // Request-private observability scope so concurrent tenants in the shared
+    // container process cannot clobber each other's log redaction/routing.
+    return runWithObservabilityScope(() => handleAccountRequest(event));
+}
+
+async function handleAccountRequest(event: LambdaFunctionURLEvent): Promise<LambdaResponse> {
     const method = event.requestContext.http.method;
     const rawPath = normalizePath(event.rawPath);
     const headers = normalizeHeaders(event.headers);

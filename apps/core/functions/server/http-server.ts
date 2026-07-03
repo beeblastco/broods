@@ -21,6 +21,10 @@ export interface CoreServerOptions {
   accountManageHosts: string[];
   /** Synthesized invocation deadline; matches the 10-minute Lambda timeout. */
   requestBudgetMs?: number;
+  /** Connection idle timeout; finite so slow/idle connections are reaped. */
+  idleTimeoutSeconds?: number;
+  /** Max buffered request body; guards against OOM from large POSTs. */
+  maxRequestBodyBytes?: number;
   port: number;
   hostname?: string;
 }
@@ -54,8 +58,14 @@ export function createCoreServer(options: CoreServerOptions): CoreServer {
   const server = Bun.serve({
     port: options.port,
     hostname: options.hostname ?? "0.0.0.0",
-    // SSE streams can have long quiet gaps; Bun's 10s default would kill them.
-    idleTimeout: 0,
+    // Long enough for SSE quiet gaps between tokens, but finite so idle/slow
+    // (slowloris) connections are still reaped. Bun's 10s default is too short
+    // for streaming; 0 (never reap) is a DoS vector.
+    idleTimeout: options.idleTimeoutSeconds ?? 255,
+    // Cap request bodies well under the pod memory limit. The whole body is
+    // buffered (plus a base64 copy) before auth/routing, so without this an
+    // unauthenticated caller could OOM the pod with large concurrent POSTs.
+    maxRequestBodySize: options.maxRequestBodyBytes ?? 10 * 1024 * 1024,
     fetch: async (request, bunServer) => {
       const url = new URL(request.url);
       if (url.pathname === "/healthz" && request.method === "GET") {
@@ -110,7 +120,15 @@ async function synthesizeEvent(
 
   const bodyBytes = new Uint8Array(await request.arrayBuffer());
   const host = (headers["host"] ?? url.hostname).split(":")[0]!.toLowerCase();
-  const forwardedFor = headers["x-forwarded-for"]?.split(",")[0]?.trim();
+  // Use the RIGHTMOST X-Forwarded-For entry: the single traefik ingress appends
+  // the real peer IP, so the last hop is the client IP it observed. A client can
+  // only prepend spoofed entries, never overwrite the last one. Never trust the
+  // leftmost entry for a security control (e.g. the signup rate limiter keys on
+  // sourceIp) — it is fully client-controlled.
+  const forwardedChain = headers["x-forwarded-for"];
+  const clientIp = forwardedChain
+    ? forwardedChain.split(",").map((entry) => entry.trim()).filter(Boolean).pop()
+    : undefined;
   const now = Date.now();
   const requestId = crypto.randomUUID();
 
@@ -142,7 +160,7 @@ async function synthesizeEvent(
         method: request.method,
         path: url.pathname,
         protocol: "HTTP/1.1",
-        sourceIp: forwardedFor || socketAddress || "",
+        sourceIp: clientIp || socketAddress || "",
         userAgent: headers["user-agent"] ?? "",
       },
       requestId,
