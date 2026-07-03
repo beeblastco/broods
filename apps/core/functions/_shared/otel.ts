@@ -4,6 +4,7 @@
  * never throws into the agent path.
  */
 
+import { AsyncLocalStorage } from "node:async_hooks";
 import { registerTelemetry } from "ai";
 import { OpenTelemetry } from "@ai-sdk/otel";
 import { trace, type Context, type Tracer } from "@opentelemetry/api";
@@ -28,15 +29,40 @@ export interface ObservabilityContext {
   secretValues: readonly string[];
 }
 
-// Module-level store — safe under Lambda's single-request-per-process model.
-let _obsCtx: ObservabilityContext | null = null;
+// The observability context (per-tenant secretValues for log redaction + NATS
+// routing tags) must be request-scoped. Under Lambda's one-request-per-process
+// model a module global was safe, but the self-hosted container serves many
+// tenants concurrently in one process, so a global would let one request's
+// secrets/tags clobber another's mid-flight. Each container entry point opens a
+// scope via runWithObservabilityScope; setters write into that request's cell.
+// When no scope is active (e.g. the Lambda runtime, which never opens one) the
+// module global is used, preserving the previous single-tenant behaviour.
+interface ObservabilityCell {
+  current: ObservabilityContext | null;
+}
+
+const _obsStore = new AsyncLocalStorage<ObservabilityCell>();
+let _obsCtxGlobal: ObservabilityContext | null = null;
+
+// Runs fn with a fresh, request-private observability cell. Nested scopes
+// (subagents, save/restore call sites) share the cell, which is correct — it is
+// the same logical request. Concurrent requests each get their own cell.
+export function runWithObservabilityScope<T>(fn: () => T): T {
+  return _obsStore.run({ current: null }, fn);
+}
 
 export function setObservabilityContext(ctx: ObservabilityContext | null): void {
-  _obsCtx = ctx;
+  const cell = _obsStore.getStore();
+  if (cell) {
+    cell.current = ctx;
+    return;
+  }
+  _obsCtxGlobal = ctx;
 }
 
 export function getObservabilityContext(): ObservabilityContext | null {
-  return _obsCtx;
+  const cell = _obsStore.getStore();
+  return cell ? cell.current : _obsCtxGlobal;
 }
 
 const _idGen = new RandomIdGenerator();

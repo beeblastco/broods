@@ -72,7 +72,8 @@ describe("core http server", () => {
     expect(event.rawQueryString).toBe("limit=2&q=a%20b");
     expect(event.queryStringParameters).toEqual({ limit: "2", q: "a b" });
     expect(event.requestContext.http.method).toBe("POST");
-    expect(event.requestContext.http.sourceIp).toBe("203.0.113.9");
+    // Rightmost XFF entry (the proxy-appended peer), not the spoofable leftmost.
+    expect(event.requestContext.http.sourceIp).toBe("10.0.0.1");
     // Header keys are lowercased, matching the Lambda Function URL envelope.
     expect(event.headers["x-custom-header"]).toBe("Value-Kept");
     expect(event.headers["content-type"]).toBe("application/json");
@@ -82,6 +83,17 @@ describe("core http server", () => {
     expect(context?.requestId).toBe(event.requestContext.requestId);
     expect(context?.deadlineMs).toBeGreaterThan(Date.now() + 60_000);
     expect(context?.deadlineMs).toBeLessThanOrEqual(Date.now() + 90_000);
+  });
+
+  it("derives sourceIp from the rightmost X-Forwarded-For entry (proxy-appended, unspoofable)", async () => {
+    harnessResponse = async () => ({ statusCode: 204 });
+    await fetch(`${baseUrl}/`, {
+      method: "POST",
+      // Client prepends spoofed entries; traefik appends the real peer last.
+      headers: { "x-forwarded-for": "1.1.1.1, 2.2.2.2, 203.0.113.7" },
+      body: "{}",
+    });
+    expect(lastInvocation().event.requestContext.http.sourceIp).toBe("203.0.113.7");
   });
 
   it("splits the Cookie header into the Function URL cookies array", async () => {
