@@ -12,7 +12,7 @@ import { formatChannelErrorText } from "../_shared/channels.ts";
 import { executeCommand } from "../_shared/commands.ts";
 import { toRuntimeAgentConfig } from "../_shared/storage/index.ts";
 import { getStorage, type CronRecord } from "../_shared/storage/index.ts";
-import { booleanEnv, requireEnv } from "../_shared/env.ts";
+import { booleanEnv, positiveIntegerEnv, requireEnv } from "../_shared/env.ts";
 import { jsonResponse } from "../_shared/http.ts";
 import { logError, logInfo, logWarn } from "../_shared/log.ts";
 import { LiveNatsPublisher, type NatsPublisher } from "../_shared/nats.ts";
@@ -1136,20 +1136,84 @@ async function invokeNatsWorker(event: DirectInboundEvent): Promise<void> {
 }
 
 /**
- * Generic worker invocation helper that sends an event to the harness-processing Lambda.
- * Uses Event invocation type to run the worker asynchronously.
+ * Generic worker invocation helper. On Lambda it self-invokes with Event type;
+ * in the self-hosted container (no AWS_LAMBDA_FUNCTION_NAME) the same payload
+ * runs in-process as fire-and-forget background work.
  */
 async function invokeHarnessWorker(payload: AsyncWorkerInvocation | NatsWorkerInvocation): Promise<void> {
   const functionName = process.env.AWS_LAMBDA_FUNCTION_NAME;
-  if (!functionName) {
-    throw new Error("Missing AWS_LAMBDA_FUNCTION_NAME for worker invocation");
+  if (functionName) {
+    await lambda.send(new InvokeCommand({
+      FunctionName: functionName,
+      InvocationType: "Event",
+      Payload: textEncoder.encode(JSON.stringify(payload)),
+    }));
+    return;
   }
 
-  await lambda.send(new InvokeCommand({
-    FunctionName: functionName,
-    InvocationType: "Event",
-    Payload: textEncoder.encode(JSON.stringify(payload)),
-  }));
+  dispatchInProcessWorker(payload);
+}
+
+const MAX_INPROCESS_WORKERS = positiveIntegerEnv("MAX_INPROCESS_WORKERS", 8);
+const WORKER_TIMEOUT_BUDGET_MS = positiveIntegerEnv("WORKER_TIMEOUT_BUDGET_MS", 10 * 60 * 1000);
+// Bounds pathological bursts (each queued payload can carry full message
+// bodies); far above anything normal operation reaches.
+const MAX_PENDING_WORKER_PAYLOADS = 1000;
+type InProcessWorkerRun = (
+  payload: AsyncWorkerInvocation | NatsWorkerInvocation,
+  context: LambdaInvocation,
+) => Promise<unknown>;
+const inProcessWorkers = new Set<Promise<void>>();
+const pendingWorkerPayloads: [AsyncWorkerInvocation | NatsWorkerInvocation, InProcessWorkerRun][] = [];
+let activeInProcessWorkers = 0;
+
+// Container replacement for the Lambda Event self-invoke: run the worker in
+// this process, capped like Lambda's concurrency and queued (never rejected)
+// when at capacity. Failures are logged, matching fire-and-forget semantics.
+export function dispatchInProcessWorker(
+  payload: AsyncWorkerInvocation | NatsWorkerInvocation,
+  run: InProcessWorkerRun = handler,
+): void {
+  if (activeInProcessWorkers >= MAX_INPROCESS_WORKERS) {
+    if (pendingWorkerPayloads.length >= MAX_PENDING_WORKER_PAYLOADS) {
+      // Load-shed like a failed Lambda Event invoke: the awaiting caller
+      // surfaces the error instead of the queue growing without bound.
+      throw new Error("In-process worker queue is full");
+    }
+    pendingWorkerPayloads.push([payload, run]);
+    return;
+  }
+
+  activeInProcessWorkers += 1;
+  const worker: Promise<void> = run(payload, {
+    requestId: crypto.randomUUID(),
+    functionArn: "",
+    traceId: "",
+    deadlineMs: Date.now() + WORKER_TIMEOUT_BUDGET_MS,
+  }).then(
+    () => undefined,
+    (err) => {
+      logError("In-process worker failed", {
+        kind: payload.kind,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    },
+  ).finally(() => {
+    activeInProcessWorkers -= 1;
+    inProcessWorkers.delete(worker);
+    const next = pendingWorkerPayloads.shift();
+    if (next) {
+      dispatchInProcessWorker(next[0], next[1]);
+    }
+  });
+  inProcessWorkers.add(worker);
+}
+
+/** Awaited by the container bootstrap on shutdown so queued work is not lost. */
+export async function drainInProcessWorkers(): Promise<void> {
+  while (inProcessWorkers.size > 0) {
+    await Promise.allSettled([...inProcessWorkers]);
+  }
 }
 
 async function continueDetachedAsyncToolsIfReady(

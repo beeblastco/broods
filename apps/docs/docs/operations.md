@@ -129,6 +129,29 @@ Deploy outputs include:
 - `filesystemBucketName`, `skillsBucketName`, `toolBundlesBucketName`
 - sandbox Lambda function names and `cronScheduleGroupName`
 
+## Container Runtime (Phase 9a)
+
+The core also ships as a single container image, `ghcr.io/beeblastco/broods-core`, built from `apps/core/Dockerfile` by the `Build Core Image` workflow (`dev` and `main` tags). One Bun process serves both `harness-processing` and `account-manage`, routed by the request `Host` header (`ACCOUNT_MANAGE_HOSTS` lists the account-manage hostnames). The container runs against the same AWS data plane as the Lambdas — DynamoDB, S3, Convex, NATS, OPA — using an IAM access key for the per-stage `core-runtime` user that SST creates with the union of the two Lambda roles' permissions.
+
+```mermaid
+flowchart LR
+    Client((Client)) -->|HTTPS| Ingress[Traefik ingress]
+    Ingress -->|core host| Pod[broods-core pod\nBun.serve]
+    Ingress -->|core-account host| Pod
+    Pod -->|synthesized Function URL event| Handlers[harness-processing +\naccount-manage handlers]
+    Handlers --> Data[(DynamoDB / S3 / Convex\nNATS / OPA / sandboxes)]
+    Lambda[Lambda Function URLs\nunchanged default path] --> Data
+```
+
+Differences from the Lambda path, all internal to the container entry (`functions/server/`):
+
+- Async self-invocations run in-process (capped by `MAX_INPROCESS_WORKERS`) instead of Lambda `Event` invokes.
+- Background-job callbacks use `PUBLIC_BASE_URL` instead of Function URL discovery.
+- The invocation deadline is synthesized from `REQUEST_TIMEOUT_BUDGET_MS` (default 10 minutes, matching the Lambda timeout).
+- Cron schedules keep targeting the harness Lambda; cron cutover is a later phase.
+
+The Lambda path stays the production default until pod parity is proven; the pods are deployed from the infra repo (`kubernetes/charts/releases/core-dev.yaml` / `core.yaml`) at `core[.dev].broods.app` and `core-account[.dev].broods.app`.
+
 ## Post-Deploy Account Setup (Self-Hosted)
 
 When self-hosting, the CLI still handles tenant configuration. After `broods deploy` syncs your resources, the CLI prints the agent-scoped webhook URLs. Register them with your channel providers (see the [Channels overview](channels/index.md)).

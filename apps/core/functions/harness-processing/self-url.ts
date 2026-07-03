@@ -21,6 +21,13 @@ export function getHarnessPublicUrl(): Promise<string | undefined> {
 }
 
 async function resolve(): Promise<string | undefined> {
+  // The self-hosted container has a stable public hostname, so it is set
+  // directly instead of discovered from the Lambda API.
+  const configured = optionalEnv("PUBLIC_BASE_URL");
+  if (configured) {
+    return configured.replace(/\/+$/, "");
+  }
+
   const functionName = optionalEnv("AWS_LAMBDA_FUNCTION_NAME");
   if (!functionName) {
     return undefined;

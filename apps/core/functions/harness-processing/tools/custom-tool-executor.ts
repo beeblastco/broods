@@ -6,7 +6,7 @@
  */
 
 import { Readable } from "node:stream";
-import { optionalEnv, requireEnv } from "../../_shared/env.ts";
+import { isDeployedRuntime, optionalEnv, requireEnv } from "../../_shared/env.ts";
 import { getS3ObjectUrl, readS3Bytes } from "../../_shared/s3.ts";
 import { logWarn } from "../../_shared/log.ts";
 import type { AccountToolRecord, AgentToolConfig } from "../../_shared/storage/index.ts";
@@ -571,7 +571,7 @@ export function prewarmAccountTool(
   toolId: string,
   createExecutor: typeof createSandboxExecutor = createSandboxExecutor,
 ): void {
-  if (!optionalEnv("AWS_LAMBDA_FUNCTION_NAME")) return;
+  if (!isDeployedRuntime()) return;
   const executor = createExecutor(customToolExecutorConfig());
   if (!executor.prewarm) return;
   const reservationKey = customToolReservationKey(accountId, toolId);
