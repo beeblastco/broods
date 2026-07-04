@@ -14,7 +14,7 @@
  */
 
 import { describe, expect, it } from "bun:test";
-import { WorkdirSandboxExecutor } from "../functions/harness-processing/sandbox/workdir-executor.ts";
+import { WorkdirSandboxExecutor } from "../src/harness/sandbox/workdir-executor.ts";
 
 const URL = process.env.WORKDIR_TEST_URL;
 const KEY = process.env.WORKDIR_TEST_KEY ?? "";

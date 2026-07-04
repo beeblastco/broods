@@ -16,15 +16,10 @@ info:
   version: 0.1.0
 
 servers:
-  - url: https://{functionUrl}.lambda-url.{region}.on.aws
-    description: Deployed Function URL
-    variables:
-      functionUrl:
-        default: your-function-url
-        description: Your deployed Function URL ID
-      region:
-        default: eu-west-1
-        description: AWS deployment region
+  - url: https://gateway.broods.app
+    description: Managed gateway (default SDK host)
+  - url: http://localhost:3000
+    description: Locally-run core container (`cd apps/core && bun run serve`)
 
 security:
   - BearerAuth: []
@@ -224,7 +219,7 @@ paths:
               examples:
                 accepted:
                   value:
-                    statusUrl: https://your-function-url.lambda-url.eu-west-1.on.aws/status/async-unique-id?agentId=agent_abc123
+                    statusUrl: https://gateway.broods.app/status/async-unique-id?agentId=agent_abc123
         '403':
           description: Agent has not opted into public access (secure by default)
           content:

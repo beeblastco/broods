@@ -5,7 +5,7 @@
 
 import { afterEach, describe, expect, it, mock } from "bun:test";
 import * as actualAi from "ai";
-import { dynamo } from "../functions/_shared/storage/dynamo/client.ts";
+import { dynamo } from "../src/shared/storage/dynamo/client.ts";
 
 const ORIGINAL_ENV = { ...process.env };
 const ORIGINAL_STDOUT_WRITE = process.stdout.write.bind(process.stdout);
@@ -429,7 +429,7 @@ afterEach(() => {
 describe("runAgentLoop", () => {
   it("sends the error hook when the model finishes with empty text", async () => {
     installHarnessEnv();
-    const { runAgentLoop } = await import("../functions/harness-processing/harness.ts");
+    const { runAgentLoop } = await import("../src/harness/harness.ts");
     const persistModelMessages = mock(async () => { });
     const onErrorText = mock(async () => { });
 
@@ -485,7 +485,7 @@ describe("runAgentLoop", () => {
       new Response(null, { status: 200 })
     );
     globalThis.fetch = fetchMock as never;
-    const { runAgentLoop } = await import("../functions/harness-processing/harness.ts");
+    const { runAgentLoop } = await import("../src/harness/harness.ts");
 
     const stream = await runAgentLoop({
       accountId: "acct_test",
@@ -552,7 +552,7 @@ describe("runAgentLoop", () => {
   it("keeps the provider error when the stream also finishes with empty text", async () => {
     streamTextScenario = "error-then-empty";
     installHarnessEnv();
-    const { runAgentLoop } = await import("../functions/harness-processing/harness.ts");
+    const { runAgentLoop } = await import("../src/harness/harness.ts");
     const onErrorText = mock(async () => { });
 
     const stream = await runAgentLoop({
@@ -610,7 +610,7 @@ describe("runAgentLoop", () => {
       usageWrites.push(command);
       return {};
     }) as never;
-    const { runAgentLoop } = await import("../functions/harness-processing/harness.ts");
+    const { runAgentLoop } = await import("../src/harness/harness.ts");
     const stream = await runAgentLoop({
       conversationKey: "direct:conversation",
       eventId: "direct-event",
@@ -657,7 +657,7 @@ describe("runAgentLoop", () => {
       usageWrites.push(command);
       return {};
     }) as never;
-    const { runAgentLoop } = await import("../functions/harness-processing/harness.ts");
+    const { runAgentLoop } = await import("../src/harness/harness.ts");
     const onErrorText = mock(async () => { });
 
     const stream = await runAgentLoop({
@@ -709,7 +709,7 @@ describe("runAgentLoop", () => {
   it("treats tool approval requests as pending work instead of empty responses", async () => {
     streamTextScenario = "approval-request";
     installHarnessEnv();
-    const { runAgentLoop } = await import("../functions/harness-processing/harness.ts");
+    const { runAgentLoop } = await import("../src/harness/harness.ts");
     const persistModelMessages = mock(async () => { });
     const onErrorText = mock(async () => { });
     const onApprovalRequired = mock(async () => { });
@@ -791,7 +791,7 @@ describe("runAgentLoop", () => {
 
   it("passes agent model config into streamText", async () => {
     installHarnessEnv();
-    const { runAgentLoop } = await import("../functions/harness-processing/harness.ts");
+    const { runAgentLoop } = await import("../src/harness/harness.ts");
 
     const stream = await runAgentLoop({
       conversationKey: "direct:conversation",
@@ -854,7 +854,7 @@ describe("runAgentLoop", () => {
 
   it("passes providerOptions through without custom thinking aliases", async () => {
     installHarnessEnv();
-    const { runAgentLoop } = await import("../functions/harness-processing/harness.ts");
+    const { runAgentLoop } = await import("../src/harness/harness.ts");
 
     const stream = await runAgentLoop({
       conversationKey: "direct:conversation",
@@ -913,7 +913,7 @@ describe("runAgentLoop", () => {
 
   it("passes OpenAI and Anthropic providerOptions through directly", async () => {
     installHarnessEnv();
-    const { runAgentLoop } = await import("../functions/harness-processing/harness.ts");
+    const { runAgentLoop } = await import("../src/harness/harness.ts");
 
     const baseSession = {
       conversationKey: "direct:conversation",
@@ -1000,7 +1000,7 @@ describe("runAgentLoop", () => {
 
   it("passes MiniMax providerOptions through directly", async () => {
     installHarnessEnv();
-    const { runAgentLoop } = await import("../functions/harness-processing/harness.ts");
+    const { runAgentLoop } = await import("../src/harness/harness.ts");
 
     const stream = await runAgentLoop({
       conversationKey: "direct:conversation",
@@ -1050,7 +1050,7 @@ describe("runAgentLoop", () => {
   it("passes structured output config into streamText and returns parsed output", async () => {
     streamTextScenario = "structured-output";
     installHarnessEnv();
-    const { runAgentLoop } = await import("../functions/harness-processing/harness.ts");
+    const { runAgentLoop } = await import("../src/harness/harness.ts");
     const onFinalText = mock(async (_response: unknown) => { });
 
     const stream = await runAgentLoop({
@@ -1110,7 +1110,7 @@ describe("runAgentLoop", () => {
   it("uses the last non-empty step text for final channel output", async () => {
     streamTextScenario = "multi-step-text";
     installHarnessEnv();
-    const { runAgentLoop } = await import("../functions/harness-processing/harness.ts");
+    const { runAgentLoop } = await import("../src/harness/harness.ts");
     const onFinalText = mock(async (_response: unknown) => { });
 
     const stream = await runAgentLoop({
@@ -1161,7 +1161,7 @@ describe("runAgentLoop", () => {
       lines.push(typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf8"));
       return true;
     }) as typeof process.stdout.write;
-    const { runAgentLoop } = await import("../functions/harness-processing/harness.ts");
+    const { runAgentLoop } = await import("../src/harness/harness.ts");
 
     const stream = await runAgentLoop({
       accountId: "acct_test",
@@ -1256,7 +1256,7 @@ describe("runAgentLoop", () => {
       lines.push(typeof chunk === "string" ? chunk.trim() : Buffer.from(chunk).toString("utf8").trim());
       return true;
     }) as typeof process.stdout.write;
-    const { runAgentLoop } = await import("../functions/harness-processing/harness.ts");
+    const { runAgentLoop } = await import("../src/harness/harness.ts");
 
     const stream = await runAgentLoop({
       accountId: "acct_test",
@@ -1318,7 +1318,7 @@ describe("runAgentLoop", () => {
 
   it("uses agent maxTurn for the model loop limit", async () => {
     installHarnessEnv();
-    const { runAgentLoop } = await import("../functions/harness-processing/harness.ts");
+    const { runAgentLoop } = await import("../src/harness/harness.ts");
 
     const stream = await runAgentLoop({
       conversationKey: "direct:conversation",
@@ -1359,7 +1359,7 @@ describe("runAgentLoop", () => {
 
   it("exposes skill tools only when skills are enabled", async () => {
     installHarnessEnv();
-    const { runAgentLoop } = await import("../functions/harness-processing/harness.ts");
+    const { runAgentLoop } = await import("../src/harness/harness.ts");
     const loadSkillPrompt = mock(async () => ({
       path: "acct_test/support-flow",
       loadedPaths: ["SKILL.md"],
@@ -1422,7 +1422,7 @@ describe("runAgentLoop", () => {
 
   it("does not expose load_skill when no skills are configured", async () => {
     installHarnessEnv();
-    const { runAgentLoop } = await import("../functions/harness-processing/harness.ts");
+    const { runAgentLoop } = await import("../src/harness/harness.ts");
 
     const stream = await runAgentLoop({
       conversationKey: "direct:conversation",
@@ -1463,7 +1463,7 @@ describe("runAgentLoop", () => {
 
   it("forwards turn ephemeral system messages into subagent dispatch", async () => {
     installHarnessEnv();
-    const { runAgentLoop } = await import("../functions/harness-processing/harness.ts");
+    const { runAgentLoop } = await import("../src/harness/harness.ts");
     const dispatchSubagents = mock(async () => ({
       tasks: [{
         taskId: "subagent_1",
@@ -1543,7 +1543,7 @@ describe("runAgentLoop", () => {
 
   it("creates an OpenAI provider from agent provider config", async () => {
     installHarnessEnv();
-    const { runAgentLoop } = await import("../functions/harness-processing/harness.ts");
+    const { runAgentLoop } = await import("../src/harness/harness.ts");
 
     const stream = await runAgentLoop({
       conversationKey: "direct:conversation",
@@ -1590,7 +1590,7 @@ describe("runAgentLoop", () => {
 
   it("creates an Anthropic provider from agent provider config", async () => {
     installHarnessEnv();
-    const { runAgentLoop } = await import("../functions/harness-processing/harness.ts");
+    const { runAgentLoop } = await import("../src/harness/harness.ts");
 
     const stream = await runAgentLoop({
       conversationKey: "direct:conversation",
@@ -1636,7 +1636,7 @@ describe("runAgentLoop", () => {
 
   it("creates a MiniMax provider from agent provider config", async () => {
     installHarnessEnv();
-    const { runAgentLoop } = await import("../functions/harness-processing/harness.ts");
+    const { runAgentLoop } = await import("../src/harness/harness.ts");
 
     const stream = await runAgentLoop({
       conversationKey: "direct:conversation",
@@ -1684,7 +1684,7 @@ describe("runAgentLoop", () => {
 
   it("throws when model provider or provider apiKey is missing", async () => {
     installHarnessEnv();
-    const { runAgentLoop } = await import("../functions/harness-processing/harness.ts");
+    const { runAgentLoop } = await import("../src/harness/harness.ts");
     const session = {
       conversationKey: "direct:conversation",
       eventId: "direct-event",
@@ -1725,7 +1725,7 @@ describe("runAgentLoop", () => {
 
   it("creates Bedrock and Gateway providers from agent provider config", async () => {
     installHarnessEnv();
-    const { runAgentLoop } = await import("../functions/harness-processing/harness.ts");
+    const { runAgentLoop } = await import("../src/harness/harness.ts");
 
     const baseSession = {
       conversationKey: "direct:conversation",

@@ -4,7 +4,7 @@
     "types": ["bun"]
   },
   "include": [
-    "functions/**/*.ts",
+    "src/**/*.ts",
     "scripts/**/*.ts",
     "tests/**/*.ts",
     "sst-env.d.ts"

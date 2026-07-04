@@ -6,7 +6,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 
 const SYSTEM_PROMPT_SOURCE = new URL("../SYSTEM.md", import.meta.url);
 const COMPACTION_PROMPT_SOURCE = new URL("../COMPACTION.md", import.meta.url);
-const GENERATED_DIR = new URL("../functions/_shared/.generated/", import.meta.url);
+const GENERATED_DIR = new URL("../src/shared/.generated/", import.meta.url);
 const SYSTEM_PROMPT_MODULE = new URL("./system-prompt.ts", GENERATED_DIR);
 const COMPACTION_PROMPT_MODULE = new URL("./compaction-prompt.ts", GENERATED_DIR);
 

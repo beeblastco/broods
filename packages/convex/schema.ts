@@ -568,7 +568,7 @@ export const asyncResultsFields = {
 
 /**
  * Per-account scheduled agent runs. Mirrors broods's CronRecord
- * (functions/_shared/cron.ts) so the SaaS dashboard can manage them
+ * (src/shared/cron.ts) so the SaaS dashboard can manage them
  * directly via Convex live queries. The schedulerName / schedulerGroupName
  * are still the AWS EventBridge Scheduler identifiers — Convex stores them
  * for visibility but broods Lambda is what actually invokes EBS.

@@ -11,7 +11,7 @@ import {
   toPublicSandboxConfig,
   type SandboxConfig,
   type SandboxConfigRecord,
-} from "../functions/_shared/storage/sandbox-config.ts";
+} from "../src/shared/storage/sandbox-config.ts";
 
 describe("sandbox config", () => {
   it("accepts a predefined size and rejects an unknown one", () => {

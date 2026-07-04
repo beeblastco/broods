@@ -4,11 +4,11 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { createDiscordChannel } from "../functions/_shared/discord-channel.ts";
-import { createPancakeChannel } from "../functions/_shared/pancake-channel.ts";
-import { createSlackChannel } from "../functions/_shared/slack-channel.ts";
-import { createTelegramChannel } from "../functions/_shared/telegram-channel.ts";
-import { createZaloChannel } from "../functions/_shared/zalo-channel.ts";
+import { createDiscordChannel } from "../src/shared/discord-channel.ts";
+import { createPancakeChannel } from "../src/shared/pancake-channel.ts";
+import { createSlackChannel } from "../src/shared/slack-channel.ts";
+import { createTelegramChannel } from "../src/shared/telegram-channel.ts";
+import { createZaloChannel } from "../src/shared/zalo-channel.ts";
 
 type FetchInput = string | URL | Request;
 

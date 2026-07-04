@@ -1,15 +1,14 @@
 import { afterEach, describe, expect, it } from "bun:test";
-import type { LambdaFunctionURLEvent } from "aws-lambda";
-import { handler } from "../functions/account-manage/handler.ts";
-import type { LambdaResponse } from "../functions/_shared/runtime.ts";
-import { resetStorageForTests, setStorageForTests } from "../functions/_shared/storage/index.ts";
+import { handler } from "../src/accounts/handler.ts";
+import type { CoreRequest } from "../src/shared/http.ts";
+import { resetStorageForTests, setStorageForTests } from "../src/shared/storage/index.ts";
 
 const originalAdminSecret = process.env.ADMIN_ACCOUNT_SECRET;
 const originalSignupLimit = process.env.ACCOUNT_SIGNUP_RATE_LIMIT_PER_HOUR;
 const originalServiceSecret = process.env.SERVICE_AUTH_SECRET;
 const originalCronsTable = process.env.CRONS_TABLE_NAME;
 const originalSchedulerRoleArn = process.env.CRON_SCHEDULER_ROLE_ARN;
-const originalSchedulerTargetArn = process.env.CRON_SCHEDULER_TARGET_FUNCTION_ARN;
+const originalSchedulerTargetArn = process.env.CRON_SCHEDULER_TARGET_ARN;
 const originalSchedulerGroupName = process.env.CRON_SCHEDULER_GROUP_NAME;
 
 afterEach(() => {
@@ -39,9 +38,9 @@ afterEach(() => {
     process.env.CRON_SCHEDULER_ROLE_ARN = originalSchedulerRoleArn;
   }
   if (originalSchedulerTargetArn === undefined) {
-    delete process.env.CRON_SCHEDULER_TARGET_FUNCTION_ARN;
+    delete process.env.CRON_SCHEDULER_TARGET_ARN;
   } else {
-    process.env.CRON_SCHEDULER_TARGET_FUNCTION_ARN = originalSchedulerTargetArn;
+    process.env.CRON_SCHEDULER_TARGET_ARN = originalSchedulerTargetArn;
   }
   if (originalSchedulerGroupName === undefined) {
     delete process.env.CRON_SCHEDULER_GROUP_NAME;
@@ -56,15 +55,15 @@ describe("account management HTTP handler", () => {
   it("returns a JSON health response", async () => {
     const response = await handler(createEvent("GET", "/"));
 
-    expect(response.statusCode).toBe(200);
-    expect(responseJson(response)).toEqual({ status: "ok" });
+    expect(response.status).toBe(200);
+    expect(await responseJson(response)).toEqual({ status: "ok" });
   });
 
   it("returns JSON errors for missing auth", async () => {
     const response = await handler(createEvent("GET", "/accounts/me"));
 
-    expect(response.statusCode).toBe(401);
-    expect(responseJson(response)).toEqual({ error: "Unauthorized" });
+    expect(response.status).toBe(401);
+    expect(await responseJson(response)).toEqual({ error: "Unauthorized" });
   });
 
   it("accepts scoped Convex service audit events with service auth", async () => {
@@ -84,8 +83,8 @@ describe("account management HTTP handler", () => {
       data: { changedFields: ["modelId"] },
     }));
 
-    expect(response.statusCode).toBe(202);
-    expect(responseJson(response)).toEqual({ accepted: true });
+    expect(response.status).toBe(202);
+    expect(await responseJson(response)).toEqual({ accepted: true });
   });
 
   it("returns create account one-time secret as secret", async () => {
@@ -104,8 +103,8 @@ describe("account management HTTP handler", () => {
       description: "Company A account",
     }));
 
-    expect(response.statusCode).toBe(201);
-    expect(responseJson(response)).toEqual({
+    expect(response.status).toBe(201);
+    expect(await responseJson(response)).toEqual({
       account: {
         accountId: "acct_test",
         username: "company-a",
@@ -130,8 +129,8 @@ describe("account management HTTP handler", () => {
       authorization: "Bearer admin-secret",
     }));
 
-    expect(response.statusCode).toBe(200);
-    expect(responseJson(response)).toEqual({
+    expect(response.status).toBe(200);
+    expect(await responseJson(response)).toEqual({
       account: {
         accountId: "acct_test",
         username: "company-a",
@@ -150,8 +149,8 @@ describe("account management HTTP handler", () => {
       authorization: "Bearer admin-secret",
     }));
 
-    expect(response.statusCode).toBe(404);
-    expect(responseJson(response)).toEqual({ error: "Not found" });
+    expect(response.status).toBe(404);
+    expect(await responseJson(response)).toEqual({ error: "Not found" });
   });
 
   it("reports cron routes as unavailable when scheduler env is missing", async () => {
@@ -161,15 +160,15 @@ describe("account management HTTP handler", () => {
       authorization: "Bearer admin-secret",
     }));
 
-    expect(response.statusCode).toBe(503);
-    expect(responseJson(response)).toEqual({ error: "Cron jobs are unavailable" });
+    expect(response.status).toBe(503);
+    expect(await responseJson(response)).toEqual({ error: "Cron jobs are unavailable" });
   });
 
   it("allows service tokens on self cron, skill, and tool routes only", async () => {
     process.env.SERVICE_AUTH_SECRET = "service-secret";
     process.env.CRONS_TABLE_NAME = "crons";
     process.env.CRON_SCHEDULER_ROLE_ARN = "arn:aws:iam::123456789012:role/scheduler";
-    process.env.CRON_SCHEDULER_TARGET_FUNCTION_ARN = "arn:aws:lambda:us-east-1:123456789012:function:harness";
+    process.env.CRON_SCHEDULER_TARGET_ARN = "arn:aws:lambda:us-east-1:123456789012:function:harness";
     process.env.CRON_SCHEDULER_GROUP_NAME = "cron-group";
     setStorageForTests(createFakeStorage({
       agents: {
@@ -192,8 +191,8 @@ describe("account management HTTP handler", () => {
       "/accounts/me/workspaces",
     ]) {
       const response = await handler(createEvent("GET", path, serviceHeaders));
-      expect(response.statusCode).toBe(400);
-      expect(responseJson(response)).toEqual(serviceTokenRejection);
+      expect(response.status).toBe(400);
+      expect(await responseJson(response)).toEqual(serviceTokenRejection);
     }
 
     // Skill/tool sync routes accept the account-scoped service token (the Convex CLI
@@ -201,18 +200,18 @@ describe("account management HTTP handler", () => {
     // but it is never the service-token rejection).
     for (const path of ["/accounts/me/skills", "/accounts/me/tools"]) {
       const response = await handler(createEvent("GET", path, serviceHeaders));
-      expect(responseJson(response)).not.toEqual(serviceTokenRejection);
+      expect(await responseJson(response)).not.toEqual(serviceTokenRejection);
     }
 
     const cronResponse = await handler(createEvent("GET", "/accounts/me/crons", serviceHeaders));
-    expect(cronResponse.statusCode).toBe(200);
-    expect(responseJson(cronResponse)).toEqual({ crons: [] });
+    expect(cronResponse.status).toBe(200);
+    expect(await responseJson(cronResponse)).toEqual({ crons: [] });
   });
 
   it("allows deployment runtime keys on self cron routes", async () => {
     process.env.CRONS_TABLE_NAME = "crons";
     process.env.CRON_SCHEDULER_ROLE_ARN = "arn:aws:iam::123456789012:role/scheduler";
-    process.env.CRON_SCHEDULER_TARGET_FUNCTION_ARN = "arn:aws:lambda:us-east-1:123456789012:function:harness";
+    process.env.CRON_SCHEDULER_TARGET_ARN = "arn:aws:lambda:us-east-1:123456789012:function:harness";
     process.env.CRON_SCHEDULER_GROUP_NAME = "cron-group";
     setStorageForTests(createFakeStorage({
       crons: {
@@ -248,8 +247,8 @@ describe("account management HTTP handler", () => {
       authorization: "Bearer fp_agent_test",
     }));
 
-    expect(response.statusCode).toBe(200);
-    expect(responseJson(response)).toEqual({
+    expect(response.status).toBe(200);
+    expect(await responseJson(response)).toEqual({
       crons: [{
         accountId: "acct_test",
         cronId: "cron_1",
@@ -268,7 +267,7 @@ describe("account management HTTP handler", () => {
     process.env.ADMIN_ACCOUNT_SECRET = "admin-secret";
     process.env.CRONS_TABLE_NAME = "crons";
     process.env.CRON_SCHEDULER_ROLE_ARN = "arn:aws:iam::123456789012:role/scheduler";
-    process.env.CRON_SCHEDULER_TARGET_FUNCTION_ARN = "arn:aws:lambda:us-east-1:123456789012:function:harness";
+    process.env.CRON_SCHEDULER_TARGET_ARN = "arn:aws:lambda:us-east-1:123456789012:function:harness";
     process.env.CRON_SCHEDULER_GROUP_NAME = "cron-group";
     setStorageForTests(createFakeStorage({
       agents: {
@@ -290,14 +289,14 @@ describe("account management HTTP handler", () => {
       scheduleExpression: "rate(1 day)",
     }));
 
-    expect(response.statusCode).toBe(400);
-    expect(responseJson(response)).toEqual({ error: "Cron job agentId must reference an active agent" });
+    expect(response.status).toBe(400);
+    expect(await responseJson(response)).toEqual({ error: "Cron job agentId must reference an active agent" });
   });
 });
 
-function responseJson(response: LambdaResponse): unknown {
-  expect(response.headers?.["Content-Type"]).toBe("application/json");
-  return JSON.parse(String(response.body ?? "{}"));
+async function responseJson(response: Response): Promise<unknown> {
+  expect(response.headers.get("content-type")).toBe("application/json");
+  return response.json();
 }
 
 function createEvent(
@@ -305,33 +304,18 @@ function createEvent(
   rawPath: string,
   headers: Record<string, string> = {},
   body?: unknown,
-): LambdaFunctionURLEvent {
+): CoreRequest {
+  const lower: Record<string, string> = {};
+  for (const [key, value] of Object.entries(headers)) lower[key.toLowerCase()] = value;
   return {
-    version: "2.0",
-    routeKey: "$default",
-    rawPath,
-    rawQueryString: "",
-    headers,
-    requestContext: {
-      accountId: "123456789012",
-      apiId: "api-id",
-      domainName: "example.lambda-url.aws",
-      domainPrefix: "example",
-      http: {
-        method,
-        path: rawPath,
-        protocol: "HTTP/1.1",
-        sourceIp: "127.0.0.1",
-        userAgent: "bun-test",
-      },
-      requestId: "request-id",
-      routeKey: "$default",
-      stage: "$default",
-      time: "01/May/2026:00:00:00 +0000",
-      timeEpoch: 1777593600000,
-    },
-    isBase64Encoded: false,
-    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    method,
+    path: rawPath,
+    search: "",
+    query: new URLSearchParams(),
+    headers: lower,
+    body: body === undefined ? "" : JSON.stringify(body),
+    cookies: [],
+    clientIp: "127.0.0.1",
   };
 }
 

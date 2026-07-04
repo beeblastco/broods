@@ -1,33 +1,31 @@
 /**
- * Container HTTP bridge tests.
- * Cover HTTP-to-Lambda-event synthesis, host routing, SSE streaming, and
- * afterResponse ordering for the self-hosted core server here.
+ * Container HTTP server tests.
+ * Cover HTTP-to-CoreRequest synthesis, path routing, SSE streaming, and
+ * waitUntil drain ordering for the self-hosted core server here.
  */
 
 import { afterAll, describe, expect, it } from "bun:test";
-import type { LambdaFunctionURLEvent } from "aws-lambda";
-import type { LambdaInvocation, LambdaResponse } from "../functions/_shared/runtime.ts";
-import { createCoreServer, type CoreServer } from "../functions/server/http-server.ts";
+import { createCoreServer, type CoreServer } from "../src/server.ts";
+import type { CoreRequest, RequestContext } from "../src/shared/http.ts";
 
 interface CapturedInvocation {
-  event: LambdaFunctionURLEvent;
-  context: LambdaInvocation | undefined;
+  request: CoreRequest;
+  context: RequestContext;
 }
 
 const captured: CapturedInvocation[] = [];
 const accountCaptured: CapturedInvocation[] = [];
-let harnessResponse: () => Promise<LambdaResponse> = async () => ({ statusCode: 204 });
+let harnessResponse: (ctx: RequestContext) => Promise<Response> = async () => new Response(null, { status: 204 });
 
 const core: CoreServer = createCoreServer({
-  harnessHandler: async (event, context) => {
-    captured.push({ event, context });
-    return harnessResponse();
+  harnessHandler: async (request, context) => {
+    captured.push({ request, context });
+    return harnessResponse(context);
   },
-  accountHandler: async (event, context) => {
-    accountCaptured.push({ event, context });
-    return { statusCode: 200, body: JSON.stringify({ from: "account" }) };
+  accountHandler: async (request, context) => {
+    accountCaptured.push({ request, context });
+    return Response.json({ from: "account" });
   },
-  accountManageHosts: ["core-account.test.broods.app"],
   requestBudgetMs: 90_000,
   port: 0,
 });
@@ -53,8 +51,8 @@ describe("core http server", () => {
     expect(captured.length + accountCaptured.length).toBe(before);
   });
 
-  it("synthesizes the Lambda Function URL event shape", async () => {
-    harnessResponse = async () => ({ statusCode: 204 });
+  it("builds the CoreRequest shape", async () => {
+    harnessResponse = async () => new Response(null, { status: 204 });
     const res = await fetch(`${baseUrl}/webhooks/acct/agent/telegram?limit=2&q=a%20b`, {
       method: "POST",
       headers: {
@@ -66,71 +64,79 @@ describe("core http server", () => {
     });
     expect(res.status).toBe(204);
 
-    const { event, context } = lastInvocation();
-    expect(event.version).toBe("2.0");
-    expect(event.rawPath).toBe("/webhooks/acct/agent/telegram");
-    expect(event.rawQueryString).toBe("limit=2&q=a%20b");
-    expect(event.queryStringParameters).toEqual({ limit: "2", q: "a b" });
-    expect(event.requestContext.http.method).toBe("POST");
+    const { request, context } = lastInvocation();
+    expect(request.path).toBe("/webhooks/acct/agent/telegram");
+    expect(request.search).toBe("limit=2&q=a%20b");
+    expect(request.query.get("limit")).toBe("2");
+    expect(request.query.get("q")).toBe("a b");
+    expect(request.method).toBe("POST");
     // Rightmost XFF entry (the proxy-appended peer), not the spoofable leftmost.
-    expect(event.requestContext.http.sourceIp).toBe("10.0.0.1");
-    // Header keys are lowercased, matching the Lambda Function URL envelope.
-    expect(event.headers["x-custom-header"]).toBe("Value-Kept");
-    expect(event.headers["content-type"]).toBe("application/json");
-    expect(event.isBase64Encoded).toBe(true);
-    expect(JSON.parse(Buffer.from(event.body!, "base64").toString("utf8"))).toEqual({ hello: "world" });
+    expect(request.clientIp).toBe("10.0.0.1");
+    expect(request.headers["x-custom-header"]).toBe("Value-Kept");
+    expect(request.headers["content-type"]).toBe("application/json");
+    expect(JSON.parse(request.body)).toEqual({ hello: "world" });
 
-    expect(context?.requestId).toBe(event.requestContext.requestId);
-    expect(context?.deadlineMs).toBeGreaterThan(Date.now() + 60_000);
-    expect(context?.deadlineMs).toBeLessThanOrEqual(Date.now() + 90_000);
+    expect(context.requestId).toBeString();
+    expect(context.deadlineMs).toBeGreaterThan(Date.now() + 60_000);
+    expect(context.deadlineMs).toBeLessThanOrEqual(Date.now() + 90_000);
   });
 
   it("derives sourceIp from the rightmost X-Forwarded-For entry (proxy-appended, unspoofable)", async () => {
-    harnessResponse = async () => ({ statusCode: 204 });
+    harnessResponse = async () => new Response(null, { status: 204 });
     await fetch(`${baseUrl}/`, {
       method: "POST",
       // Client prepends spoofed entries; traefik appends the real peer last.
       headers: { "x-forwarded-for": "1.1.1.1, 2.2.2.2, 203.0.113.7" },
       body: "{}",
     });
-    expect(lastInvocation().event.requestContext.http.sourceIp).toBe("203.0.113.7");
+    expect(lastInvocation().request.clientIp).toBe("203.0.113.7");
   });
 
-  it("splits the Cookie header into the Function URL cookies array", async () => {
-    harnessResponse = async () => ({ statusCode: 204 });
+  it("splits the Cookie header into the CoreRequest cookies array", async () => {
+    harnessResponse = async () => new Response(null, { status: 204 });
     await fetch(`${baseUrl}/`, {
       method: "POST",
       headers: { Cookie: "session=abc; theme=dark" },
       body: "{}",
     });
-    const { event } = lastInvocation();
-    expect(event.cookies).toEqual(["session=abc", "theme=dark"]);
+    const { request } = lastInvocation();
+    expect(request.cookies).toEqual(["session=abc", "theme=dark"]);
   });
 
-  it("keeps binary bodies byte-exact through base64", async () => {
-    harnessResponse = async () => ({ statusCode: 204 });
-    const payload = new Uint8Array([0, 255, 1, 128, 10, 13, 0]);
-    await fetch(`${baseUrl}/`, { method: "POST", body: payload });
+  it("passes UTF-8 request bodies through as text", async () => {
+    harnessResponse = async () => new Response(null, { status: 204 });
+    await fetch(`${baseUrl}/`, { method: "POST", body: "hello\nworld" });
 
-    const { event } = lastInvocation();
-    expect(event.isBase64Encoded).toBe(true);
-    expect([...Buffer.from(event.body!, "base64")]).toEqual([...payload]);
+    const { request } = lastInvocation();
+    expect(request.body).toBe("hello\nworld");
   });
 
-  it("omits the body for bodyless requests", async () => {
-    harnessResponse = async () => ({ statusCode: 204 });
+  it("uses an empty body string for bodyless requests", async () => {
+    harnessResponse = async () => new Response(null, { status: 204 });
     await fetch(`${baseUrl}/status`);
-    const { event } = lastInvocation();
-    expect(event.body).toBeUndefined();
-    expect(event.isBase64Encoded).toBe(false);
+    const { request } = lastInvocation();
+    expect(request.body).toBe("");
   });
 
-  it("routes account-manage hosts to the account handler", async () => {
+  it("routes /accounts paths to the account handler regardless of Host", async () => {
     const res = await fetch(`${baseUrl}/accounts/me`, {
-      headers: { Host: "core-account.test.broods.app" },
+      // The gateway strips Host on proxy, so routing must not depend on it.
+      headers: { Host: "anything.example.com" },
     });
     expect(await res.json()).toEqual({ from: "account" });
-    expect(accountCaptured.at(-1)?.event.requestContext.domainName).toBe("core-account.test.broods.app");
+    expect(accountCaptured.at(-1)?.request.path).toBe("/accounts/me");
+  });
+
+  it("splits the /v1/internal leaves: observability-log to account, observability-scope to harness", async () => {
+    harnessResponse = async () => new Response(null, { status: 204 });
+
+    const accountBefore = accountCaptured.length;
+    await fetch(`${baseUrl}/v1/internal/observability-log`, { method: "POST", body: "{}" });
+    expect(accountCaptured.length).toBe(accountBefore + 1);
+
+    const harnessBefore = captured.length;
+    await fetch(`${baseUrl}/v1/internal/observability-scope`, { method: "POST", body: "{}" });
+    expect(captured.length).toBe(harnessBefore + 1);
   });
 
   it("streams SSE chunks incrementally and maps headers and cookies", async () => {
@@ -138,11 +144,8 @@ describe("core http server", () => {
     const gate = new Promise<void>((resolve) => {
       release = resolve;
     });
-    harnessResponse = async () => ({
-      statusCode: 200,
-      headers: { "Content-Type": "text/event-stream" },
-      cookies: ["a=1", "b=2"],
-      body: new ReadableStream<Uint8Array>({
+    harnessResponse = async () => new Response(
+      new ReadableStream<Uint8Array>({
         async start(controller) {
           controller.enqueue(new TextEncoder().encode("data: first\n\n"));
           await gate;
@@ -150,7 +153,15 @@ describe("core http server", () => {
           controller.close();
         },
       }),
-    });
+      {
+        status: 200,
+        headers: [
+          ["Content-Type", "text/event-stream"],
+          ["Set-Cookie", "a=1"],
+          ["Set-Cookie", "b=2"],
+        ],
+      },
+    );
 
     const res = await fetch(`${baseUrl}/`, { method: "POST", body: "{}" });
     expect(res.status).toBe(200);
@@ -172,18 +183,17 @@ describe("core http server", () => {
     expect(rest).toContain("data: second");
   });
 
-  it("does not drain until afterResponse work settles", async () => {
+  it("does not drain until waitUntil work settles", async () => {
     let releaseAfter!: () => void;
     let afterDone = false;
-    harnessResponse = async () => ({
-      statusCode: 200,
-      body: "ack",
-      afterResponse: new Promise<void>((resolve) => {
+    harnessResponse = async (ctx) => {
+      ctx.waitUntil(new Promise<void>((resolve) => {
         releaseAfter = resolve;
       }).then(() => {
         afterDone = true;
-      }),
-    });
+      }));
+      return new Response("ack");
+    };
 
     const res = await fetch(`${baseUrl}/`, { method: "POST", body: "{}" });
     expect(await res.text()).toBe("ack");
@@ -205,6 +215,6 @@ describe("core http server", () => {
     const res = await fetch(`${baseUrl}/`, { method: "POST", body: "{}" });
     expect(res.status).toBe(500);
     expect(await res.json()).toEqual({ error: "Internal server error" });
-    harnessResponse = async () => ({ statusCode: 204 });
+    harnessResponse = async () => new Response(null, { status: 204 });
   });
 });

@@ -12,7 +12,7 @@ process.env.ASYNC_AGENT_RESULT_TABLE_NAME ??= "async-agent-result";
 process.env.ASYNC_TOOL_RESULT_TABLE_NAME ??= "async-tool-result";
 
 const { dispatchInProcessWorker, drainInProcessWorkers } = await import(
-  "../functions/harness-processing/handler.ts"
+  "../src/harness/handler.ts"
 );
 
 type WorkerPayload = Parameters<typeof dispatchInProcessWorker>[0];

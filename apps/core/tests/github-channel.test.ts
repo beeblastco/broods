@@ -5,7 +5,7 @@
 
 import { afterEach, describe, expect, it } from "bun:test";
 import { createHmac, generateKeyPairSync } from "node:crypto";
-import { createGitHubChannel } from "../functions/_shared/github-channel.ts";
+import { createGitHubChannel } from "../src/shared/github-channel.ts";
 
 describe("github channel adapter", () => {
   const originalFetch = globalThis.fetch;

@@ -9,7 +9,7 @@ import {
   setStorageForTests,
   type AccountToolRecord,
   type StorageProvider,
-} from "../functions/_shared/storage/index.ts";
+} from "../src/shared/storage/index.ts";
 
 const tavilySearchMock = mock((options: unknown) => ({ provider: "tavilySearch", options }));
 const tavilyExtractMock = mock((options: unknown) => ({ provider: "tavilyExtract", options }));
@@ -34,7 +34,7 @@ afterEach(() => {
 
 describe("createTools", () => {
   it("returns no tools when agent config does not list tools", async () => {
-    const { createTools } = await import("../functions/harness-processing/tools/index.ts");
+    const { createTools } = await import("../src/harness/tools/index.ts");
 
     expect(await createTools(createToolContext(), {})).toEqual({});
     expect(tavilySearchMock).not.toHaveBeenCalled();
@@ -42,7 +42,7 @@ describe("createTools", () => {
   });
 
   it("includes the sandbox bash tool plus enabled configured tools", async () => {
-    const { createTools } = await import("../functions/harness-processing/tools/index.ts");
+    const { createTools } = await import("../src/harness/tools/index.ts");
     const approvalRequirements = new Map<string, true>();
     const context = Object.assign({}, sandboxContext(), { approvalRequirements }) as never;
 
@@ -61,7 +61,7 @@ describe("createTools", () => {
   });
 
   it("exposes only bash when a sandbox has no workspace (stateless)", async () => {
-    const { createTools } = await import("../functions/harness-processing/tools/index.ts");
+    const { createTools } = await import("../src/harness/tools/index.ts");
 
     const context = sandboxContext();
     const tools = await createTools(context, {});
@@ -71,7 +71,7 @@ describe("createTools", () => {
   });
 
   it("exposes the full file tool set when a workspace is attached", async () => {
-    const { createTools } = await import("../functions/harness-processing/tools/index.ts");
+    const { createTools } = await import("../src/harness/tools/index.ts");
 
     const context = sandboxContext([
       { name: "notes", workspaceId: "ws_a", namespace: "fs-a" },
@@ -86,7 +86,7 @@ describe("createTools", () => {
   });
 
   it("asks before write/edit/bash in `ask` mode but never for read/glob/grep", async () => {
-    const { createTools } = await import("../functions/harness-processing/tools/index.ts");
+    const { createTools } = await import("../src/harness/tools/index.ts");
 
     const context = sandboxContext([
       { name: "notes", workspaceId: "ws_a", namespace: "fs-a" },
@@ -102,7 +102,7 @@ describe("createTools", () => {
   });
 
   it("exposes only read/glob for a read-only workspace (no sandbox)", async () => {
-    const { createTools } = await import("../functions/harness-processing/tools/index.ts");
+    const { createTools } = await import("../src/harness/tools/index.ts");
 
     const tools = await createTools({
       conversationKey: "conversation",
@@ -119,7 +119,7 @@ describe("createTools", () => {
   });
 
   it("mixes a read-only and a sandbox-backed workspace", async () => {
-    const { createTools } = await import("../functions/harness-processing/tools/index.ts");
+    const { createTools } = await import("../src/harness/tools/index.ts");
 
     const tools = await createTools({
       conversationKey: "conversation",
@@ -147,13 +147,13 @@ describe("createTools", () => {
   });
 
   it("exposes no sandbox tools when no sandbox is referenced", async () => {
-    const { createTools } = await import("../functions/harness-processing/tools/index.ts");
+    const { createTools } = await import("../src/harness/tools/index.ts");
 
     expect(await createTools(createToolContext(), {})).toEqual({});
   });
 
   it("exposes run_subagent only when subagents are enabled with a dispatcher", async () => {
-    const { createTools } = await import("../functions/harness-processing/tools/index.ts");
+    const { createTools } = await import("../src/harness/tools/index.ts");
     const dispatch = mock(async () => ({
       tasks: [{
         taskId: "subagent_1",
@@ -253,7 +253,7 @@ describe("createTools", () => {
   });
 
   it("exposes subagent conversation keys in persistent mode", async () => {
-    const { createTools } = await import("../functions/harness-processing/tools/index.ts");
+    const { createTools } = await import("../src/harness/tools/index.ts");
     const dispatch = mock(async () => ({ tasks: [] }));
     const tools = await createTools(createToolContext(undefined, "google", dispatch), {
       subagent: {
@@ -294,7 +294,7 @@ describe("createTools", () => {
 
   it("passes provider config into Tavily and Google Search tools", async () => {
     const googleSearchMock = mock((options: unknown) => ({ provider: "googleSearch", options }));
-    const { createTools } = await import("../functions/harness-processing/tools/index.ts");
+    const { createTools } = await import("../src/harness/tools/index.ts");
 
     const tools = await createTools(createToolContext(googleSearchMock), {
       tools: {
@@ -326,7 +326,7 @@ describe("createTools", () => {
   });
 
   it("registers the handoff tool from config.tools", async () => {
-    const { createTools } = await import("../functions/harness-processing/tools/index.ts");
+    const { createTools } = await import("../src/harness/tools/index.ts");
 
     const tools = await createTools(createToolContext(), {
       tools: {
@@ -350,7 +350,7 @@ describe("createTools", () => {
   });
 
   it("passes async-enabled built-in tools through the async coordinator", async () => {
-    const { createTools } = await import("../functions/harness-processing/tools/index.ts");
+    const { createTools } = await import("../src/harness/tools/index.ts");
     const approvalRequirements = new Map<string, true>();
     const dispatch = mock((tools: Record<string, unknown>, asyncToolModes: Map<string, string>) => {
       expect([...asyncToolModes.entries()]).toEqual([["tavilySearch", "built-in"]]);
@@ -396,7 +396,7 @@ describe("createTools", () => {
   });
 
   it("registers uploaded account tools by toolId and wraps async by uploaded name", async () => {
-    const { createTools } = await import("../functions/harness-processing/tools/index.ts");
+    const { createTools } = await import("../src/harness/tools/index.ts");
     const approvalRequirements = new Map<string, true>();
     setStorageForTests(storageWithAccountTool({
       accountId: "acct_test",
@@ -447,7 +447,7 @@ describe("createTools", () => {
   });
 
   it("rejects googleSearch for non-Google model providers", async () => {
-    const { createTools } = await import("../functions/harness-processing/tools/index.ts");
+    const { createTools } = await import("../src/harness/tools/index.ts");
 
     await expect(createTools(createToolContext(undefined, "openai"), {
       tools: {
@@ -457,7 +457,7 @@ describe("createTools", () => {
   });
 
   it("rejects configured tools without a registered factory", async () => {
-    const { createTools } = await import("../functions/harness-processing/tools/index.ts");
+    const { createTools } = await import("../src/harness/tools/index.ts");
 
     await expect(createTools(createToolContext(), {
       tools: {
@@ -545,7 +545,7 @@ async function approvalStatus(toolName: string, input: Record<string, unknown>, 
   statelessPermissionMode?: unknown;
   approvalRequirements?: Map<string, true>;
 }) {
-  const { compatibilityApprovalStatus } = await import("../functions/harness-processing/policy.ts");
+  const { compatibilityApprovalStatus } = await import("../src/harness/policy.ts");
   return compatibilityApprovalStatus(toolName, input, {
     configuredApprovals: ctx.approvalRequirements ?? new Map(),
     workspaces: (ctx.workspaces ?? []) as never,

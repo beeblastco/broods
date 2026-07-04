@@ -11,7 +11,7 @@ import {
   UpdateItemCommand,
 } from "@aws-sdk/client-dynamodb";
 import type { UserModelMessage } from "ai";
-import { dynamo } from "../functions/_shared/storage/dynamo/client.ts";
+import { dynamo } from "../src/shared/storage/dynamo/client.ts";
 
 const ORIGINAL_ENV = { ...process.env };
 const originalSend = dynamo.send;
@@ -21,7 +21,7 @@ process.env.CONVERSATIONS_TABLE_NAME = "conversations";
 process.env.PROCESSED_EVENTS_TABLE_NAME = "processed-events";
 process.env.FILESYSTEM_BUCKET_NAME = "filesystem";
 
-const { Session } = await import("../functions/harness-processing/session.ts");
+const { Session } = await import("../src/harness/session.ts");
 
 function newSession() {
   return new Session("event-1", "tg:123", "acct", "agent");

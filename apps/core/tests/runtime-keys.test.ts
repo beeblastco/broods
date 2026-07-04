@@ -3,7 +3,7 @@
  */
 
 import { describe, expect, it } from "bun:test";
-import { channelScopeKeyFromConversation } from "../functions/_shared/runtime-keys.ts";
+import { channelScopeKeyFromConversation } from "../src/shared/runtime-keys.ts";
 
 describe("channelScopeKeyFromConversation", () => {
   it("keeps Slack channel isolation at team+channel and conversation isolation at full thread key", () => {

@@ -30,12 +30,12 @@ import {
   readObservabilityStream,
   type NatsConnection,
   type NatsStreamEvent,
-} from "../../core/functions/_shared/nats.ts";
+} from "../../core/src/shared/nats.ts";
 import {
   openTerminalTicket,
   TERMINAL_WEBSOCKET_PATH,
   type TerminalTicket,
-} from "../../core/functions/_shared/terminal-ticket.ts";
+} from "../../core/src/shared/terminal-ticket.ts";
 
 // Typed socket data — agent-test vs observability are fully separate.
 type AgentTestGatewayData = {

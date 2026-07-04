@@ -5,7 +5,7 @@
 
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
-import type { S3ObjectInfo } from "../functions/_shared/s3.ts";
+import type { S3ObjectInfo } from "../src/shared/s3.ts";
 
 const ORIGINAL_ENV = { ...process.env };
 const originalFetch = globalThis.fetch;
@@ -18,7 +18,7 @@ const readS3TextMock = mock(async (_bucket: string, _key: string): Promise<strin
 const writeS3ObjectMock = mock(async (_bucket: string, _key: string, _body: Uint8Array, _options?: { contentType?: string }) => 0);
 const deleteS3PrefixMock = mock(async (_bucket: string, _prefix: string) => 0);
 
-mock.module("../functions/_shared/s3.ts", () => ({
+mock.module("../src/shared/s3.ts", () => ({
   s3ObjectExists: s3ObjectExistsMock,
   isMissingS3Error: (error: unknown) =>
     error instanceof Error && error.message === "NoSuchKey",
@@ -52,7 +52,7 @@ function createSkillMarkdown(name: string, description: string, content = "# Ins
 
 describe("createOrReplaceSkill", () => {
   it("creates a skill from JSON source", async () => {
-    const { createOrReplaceSkill } = await import("../functions/account-manage/skills.ts");
+    const { createOrReplaceSkill } = await import("../src/accounts/skills.ts");
 
     const result = await createOrReplaceSkill("acct_test", {
       source: "json",
@@ -69,7 +69,7 @@ describe("createOrReplaceSkill", () => {
   });
 
   it("rejects invalid input type", async () => {
-    const { createOrReplaceSkill } = await import("../functions/account-manage/skills.ts");
+    const { createOrReplaceSkill } = await import("../src/accounts/skills.ts");
 
     await expect(createOrReplaceSkill("acct_test", "not-an-object")).rejects.toThrow(
       "Request body must be an object",
@@ -77,7 +77,7 @@ describe("createOrReplaceSkill", () => {
   });
 
   it("rejects null input", async () => {
-    const { createOrReplaceSkill } = await import("../functions/account-manage/skills.ts");
+    const { createOrReplaceSkill } = await import("../src/accounts/skills.ts");
 
     await expect(createOrReplaceSkill("acct_test", null)).rejects.toThrow(
       "Request body must be an object",
@@ -85,7 +85,7 @@ describe("createOrReplaceSkill", () => {
   });
 
   it("rejects unknown source", async () => {
-    const { createOrReplaceSkill } = await import("../functions/account-manage/skills.ts");
+    const { createOrReplaceSkill } = await import("../src/accounts/skills.ts");
 
     await expect(createOrReplaceSkill("acct_test", { source: "unknown" })).rejects.toThrow(
       "source must be one of: json, files, github",
@@ -93,7 +93,7 @@ describe("createOrReplaceSkill", () => {
   });
 
   it("rejects JSON skill with missing fields", async () => {
-    const { createOrReplaceSkill } = await import("../functions/account-manage/skills.ts");
+    const { createOrReplaceSkill } = await import("../src/accounts/skills.ts");
 
     await expect(createOrReplaceSkill("acct_test", {
       source: "json",
@@ -102,7 +102,7 @@ describe("createOrReplaceSkill", () => {
   });
 
   it("rejects JSON skill with invalid name", async () => {
-    const { createOrReplaceSkill } = await import("../functions/account-manage/skills.ts");
+    const { createOrReplaceSkill } = await import("../src/accounts/skills.ts");
 
     await expect(createOrReplaceSkill("acct_test", {
       source: "json",
@@ -113,7 +113,7 @@ describe("createOrReplaceSkill", () => {
   });
 
   it("rejects JSON skill with invalid description", async () => {
-    const { createOrReplaceSkill } = await import("../functions/account-manage/skills.ts");
+    const { createOrReplaceSkill } = await import("../src/accounts/skills.ts");
 
     await expect(createOrReplaceSkill("acct_test", {
       source: "json",
@@ -124,7 +124,7 @@ describe("createOrReplaceSkill", () => {
   });
 
   it("creates a skill from file upload source", async () => {
-    const { createOrReplaceSkill } = await import("../functions/account-manage/skills.ts");
+    const { createOrReplaceSkill } = await import("../src/accounts/skills.ts");
     const content = createSkillMarkdown("upload-skill", "Uploaded skill");
     const contentBase64 = Buffer.from(content).toString("base64");
 
@@ -145,7 +145,7 @@ describe("createOrReplaceSkill", () => {
   });
 
   it("rejects empty files array", async () => {
-    const { createOrReplaceSkill } = await import("../functions/account-manage/skills.ts");
+    const { createOrReplaceSkill } = await import("../src/accounts/skills.ts");
 
     await expect(createOrReplaceSkill("acct_test", {
       source: "files",
@@ -154,7 +154,7 @@ describe("createOrReplaceSkill", () => {
   });
 
   it("rejects files that is not an array", async () => {
-    const { createOrReplaceSkill } = await import("../functions/account-manage/skills.ts");
+    const { createOrReplaceSkill } = await import("../src/accounts/skills.ts");
 
     await expect(createOrReplaceSkill("acct_test", {
       source: "files",
@@ -163,7 +163,7 @@ describe("createOrReplaceSkill", () => {
   });
 
   it("rejects file entry without path", async () => {
-    const { createOrReplaceSkill } = await import("../functions/account-manage/skills.ts");
+    const { createOrReplaceSkill } = await import("../src/accounts/skills.ts");
 
     await expect(createOrReplaceSkill("acct_test", {
       source: "files",
@@ -172,7 +172,7 @@ describe("createOrReplaceSkill", () => {
   });
 
   it("rejects file entry without contentBase64", async () => {
-    const { createOrReplaceSkill } = await import("../functions/account-manage/skills.ts");
+    const { createOrReplaceSkill } = await import("../src/accounts/skills.ts");
 
     await expect(createOrReplaceSkill("acct_test", {
       source: "files",
@@ -181,7 +181,7 @@ describe("createOrReplaceSkill", () => {
   });
 
   it("rejects duplicate file paths in bundle", async () => {
-    const { createOrReplaceSkill } = await import("../functions/account-manage/skills.ts");
+    const { createOrReplaceSkill } = await import("../src/accounts/skills.ts");
     const content = createSkillMarkdown("dup-skill", "Duplicate test");
     const contentBase64 = Buffer.from(content).toString("base64");
 
@@ -195,7 +195,7 @@ describe("createOrReplaceSkill", () => {
   });
 
   it("rejects skill bundle missing SKILL.md", async () => {
-    const { createOrReplaceSkill } = await import("../functions/account-manage/skills.ts");
+    const { createOrReplaceSkill } = await import("../src/accounts/skills.ts");
 
     await expect(createOrReplaceSkill("acct_test", {
       source: "files",
@@ -206,7 +206,7 @@ describe("createOrReplaceSkill", () => {
   });
 
   it("rejects file with path traversal", async () => {
-    const { createOrReplaceSkill } = await import("../functions/account-manage/skills.ts");
+    const { createOrReplaceSkill } = await import("../src/accounts/skills.ts");
     const content = createSkillMarkdown("traversal-skill", "Traversal test");
     const contentBase64 = Buffer.from(content).toString("base64");
 
@@ -219,7 +219,7 @@ describe("createOrReplaceSkill", () => {
   });
 
   it("rejects unsupported file extension", async () => {
-    const { createOrReplaceSkill } = await import("../functions/account-manage/skills.ts");
+    const { createOrReplaceSkill } = await import("../src/accounts/skills.ts");
     const skillContent = createSkillMarkdown("ext-skill", "Extension test");
     const skillBase64 = Buffer.from(skillContent).toString("base64");
     const binaryBase64 = Buffer.from(new Uint8Array([0x00, 0x01, 0x02, 0x03])).toString("base64");
@@ -234,7 +234,7 @@ describe("createOrReplaceSkill", () => {
   });
 
   it("detects binary content in text files via null byte", async () => {
-    const { createOrReplaceSkill } = await import("../functions/account-manage/skills.ts");
+    const { createOrReplaceSkill } = await import("../src/accounts/skills.ts");
     const skillContent = createSkillMarkdown("binary-skill", "Binary test");
     const skillBase64 = Buffer.from(skillContent).toString("base64");
     const binaryContent = new Uint8Array([0x50, 0x44, 0x46, 0x00, 0x25]);
@@ -250,7 +250,7 @@ describe("createOrReplaceSkill", () => {
   });
 
   it("trims content and wraps in frontmatter for JSON skills", async () => {
-    const { createOrReplaceSkill } = await import("../functions/account-manage/skills.ts");
+    const { createOrReplaceSkill } = await import("../src/accounts/skills.ts");
 
     await createOrReplaceSkill("acct_test", {
       source: "json",
@@ -268,7 +268,7 @@ describe("createOrReplaceSkill", () => {
   });
 
   it("validates content type for JSON files", async () => {
-    const { createOrReplaceSkill } = await import("../functions/account-manage/skills.ts");
+    const { createOrReplaceSkill } = await import("../src/accounts/skills.ts");
 
     await createOrReplaceSkill("acct_test", {
       source: "files",
@@ -291,7 +291,7 @@ describe("createOrReplaceSkill", () => {
   });
 
   it("validates content type for non-JSON text files", async () => {
-    const { createOrReplaceSkill } = await import("../functions/account-manage/skills.ts");
+    const { createOrReplaceSkill } = await import("../src/accounts/skills.ts");
 
     await createOrReplaceSkill("acct_test", {
       source: "files",
@@ -318,7 +318,7 @@ describe("listAccountSkills", () => {
   it("returns empty array when no skills exist", async () => {
     listS3PrefixMock.mockResolvedValue([]);
 
-    const { listAccountSkills } = await import("../functions/account-manage/skills.ts");
+    const { listAccountSkills } = await import("../src/accounts/skills.ts");
 
     const result = await listAccountSkills("acct_test");
 
@@ -353,7 +353,7 @@ describe("listAccountSkills", () => {
 
     s3ObjectExistsMock.mockResolvedValue(true);
 
-    const { listAccountSkills } = await import("../functions/account-manage/skills.ts");
+    const { listAccountSkills } = await import("../src/accounts/skills.ts");
 
     const result = await listAccountSkills("acct_test");
 
@@ -370,7 +370,7 @@ describe("getSkill", () => {
       throw new Error("NoSuchKey");
     });
 
-    const { getSkill } = await import("../functions/account-manage/skills.ts");
+    const { getSkill } = await import("../src/accounts/skills.ts");
 
     const result = await getSkill("acct_test", "missing-skill");
 
@@ -394,7 +394,7 @@ describe("getSkill", () => {
 
     s3ObjectExistsMock.mockResolvedValue(true);
 
-    const { getSkill } = await import("../functions/account-manage/skills.ts");
+    const { getSkill } = await import("../src/accounts/skills.ts");
 
     const result = await getSkill("acct_test", "my-skill");
 
@@ -408,7 +408,7 @@ describe("getSkill", () => {
   });
 
   it("rejects invalid skill name", async () => {
-    const { getSkill } = await import("../functions/account-manage/skills.ts");
+    const { getSkill } = await import("../src/accounts/skills.ts");
 
     await expect(getSkill("acct_test", "Invalid-Name")).rejects.toThrow(
       "Skill name must be lowercase",
@@ -420,7 +420,7 @@ describe("deleteSkill", () => {
   it("returns false when skill does not exist", async () => {
     s3ObjectExistsMock.mockResolvedValue(false);
 
-    const { deleteSkill } = await import("../functions/account-manage/skills.ts");
+    const { deleteSkill } = await import("../src/accounts/skills.ts");
 
     const result = await deleteSkill("acct_test", "missing-skill");
 
@@ -431,7 +431,7 @@ describe("deleteSkill", () => {
     s3ObjectExistsMock.mockResolvedValue(true);
     deleteS3PrefixMock.mockResolvedValue(2);
 
-    const { deleteSkill } = await import("../functions/account-manage/skills.ts");
+    const { deleteSkill } = await import("../src/accounts/skills.ts");
 
     const result = await deleteSkill("acct_test", "test-skill");
 
@@ -440,7 +440,7 @@ describe("deleteSkill", () => {
   });
 
   it("rejects invalid skill name", async () => {
-    const { deleteSkill } = await import("../functions/account-manage/skills.ts");
+    const { deleteSkill } = await import("../src/accounts/skills.ts");
 
     await expect(deleteSkill("acct_test", "Bad-Name")).rejects.toThrow(
       "Skill name must be lowercase",
@@ -452,7 +452,7 @@ describe("deleteAccountSkills", () => {
   it("deletes all skills for an account", async () => {
     deleteS3PrefixMock.mockResolvedValue(5);
 
-    const { deleteAccountSkills } = await import("../functions/account-manage/skills.ts");
+    const { deleteAccountSkills } = await import("../src/accounts/skills.ts");
 
     const result = await deleteAccountSkills("acct_test");
 
@@ -463,7 +463,7 @@ describe("deleteAccountSkills", () => {
 
 describe("GitHub skill import", () => {
   it("rejects non-https GitHub URLs", async () => {
-    const { createOrReplaceSkill } = await import("../functions/account-manage/skills.ts");
+    const { createOrReplaceSkill } = await import("../src/accounts/skills.ts");
 
     await expect(createOrReplaceSkill("acct_test", {
       source: "github",
@@ -472,7 +472,7 @@ describe("GitHub skill import", () => {
   });
 
   it("rejects non-tree GitHub URLs", async () => {
-    const { createOrReplaceSkill } = await import("../functions/account-manage/skills.ts");
+    const { createOrReplaceSkill } = await import("../src/accounts/skills.ts");
 
     await expect(createOrReplaceSkill("acct_test", {
       source: "github",
@@ -481,7 +481,7 @@ describe("GitHub skill import", () => {
   });
 
   it("rejects GitHub URLs with path traversal", async () => {
-    const { createOrReplaceSkill } = await import("../functions/account-manage/skills.ts");
+    const { createOrReplaceSkill } = await import("../src/accounts/skills.ts");
 
     await expect(createOrReplaceSkill("acct_test", {
       source: "github",
@@ -490,7 +490,7 @@ describe("GitHub skill import", () => {
   });
 
   it("rejects empty URL", async () => {
-    const { createOrReplaceSkill } = await import("../functions/account-manage/skills.ts");
+    const { createOrReplaceSkill } = await import("../src/accounts/skills.ts");
 
     await expect(createOrReplaceSkill("acct_test", {
       source: "github",
@@ -499,7 +499,7 @@ describe("GitHub skill import", () => {
   });
 
   it("rejects non-string URL", async () => {
-    const { createOrReplaceSkill } = await import("../functions/account-manage/skills.ts");
+    const { createOrReplaceSkill } = await import("../src/accounts/skills.ts");
 
     await expect(createOrReplaceSkill("acct_test", {
       source: "github",
@@ -513,7 +513,7 @@ describe("GitHub skill import", () => {
       status: 404,
     })) as never;
 
-    const { createOrReplaceSkill } = await import("../functions/account-manage/skills.ts");
+    const { createOrReplaceSkill } = await import("../src/accounts/skills.ts");
 
     await expect(createOrReplaceSkill("acct_test", {
       source: "github",
@@ -524,7 +524,7 @@ describe("GitHub skill import", () => {
 
 describe("file upload edge cases", () => {
   it("rejects file entry that is not an object", async () => {
-    const { createOrReplaceSkill } = await import("../functions/account-manage/skills.ts");
+    const { createOrReplaceSkill } = await import("../src/accounts/skills.ts");
 
     await expect(createOrReplaceSkill("acct_test", {
       source: "files",
@@ -533,7 +533,7 @@ describe("file upload edge cases", () => {
   });
 
   it("rejects file entry that is null", async () => {
-    const { createOrReplaceSkill } = await import("../functions/account-manage/skills.ts");
+    const { createOrReplaceSkill } = await import("../src/accounts/skills.ts");
 
     await expect(createOrReplaceSkill("acct_test", {
       source: "files",
@@ -542,7 +542,7 @@ describe("file upload edge cases", () => {
   });
 
   it("normalizes file paths by trimming whitespace", async () => {
-    const { createOrReplaceSkill } = await import("../functions/account-manage/skills.ts");
+    const { createOrReplaceSkill } = await import("../src/accounts/skills.ts");
     const content = createSkillMarkdown("trim-skill", "Trim test");
     const contentBase64 = Buffer.from(content).toString("base64");
 
@@ -557,7 +557,7 @@ describe("file upload edge cases", () => {
   });
 
   it("rejects file path with backslashes", async () => {
-    const { createOrReplaceSkill } = await import("../functions/account-manage/skills.ts");
+    const { createOrReplaceSkill } = await import("../src/accounts/skills.ts");
     const content = createSkillMarkdown("backslash-skill", "Backslash test");
     const contentBase64 = Buffer.from(content).toString("base64");
 
@@ -570,7 +570,7 @@ describe("file upload edge cases", () => {
   });
 
   it("rejects file path starting with slash", async () => {
-    const { createOrReplaceSkill } = await import("../functions/account-manage/skills.ts");
+    const { createOrReplaceSkill } = await import("../src/accounts/skills.ts");
     const content = createSkillMarkdown("slash-skill", "Slash test");
     const contentBase64 = Buffer.from(content).toString("base64");
 
@@ -583,7 +583,7 @@ describe("file upload edge cases", () => {
   });
 
   it("rejects file path with empty segments", async () => {
-    const { createOrReplaceSkill } = await import("../functions/account-manage/skills.ts");
+    const { createOrReplaceSkill } = await import("../src/accounts/skills.ts");
     const content = createSkillMarkdown("empty-seg-skill", "Empty segment test");
     const contentBase64 = Buffer.from(content).toString("base64");
 
@@ -596,7 +596,7 @@ describe("file upload edge cases", () => {
   });
 
   it("rejects file path with null bytes", async () => {
-    const { createOrReplaceSkill } = await import("../functions/account-manage/skills.ts");
+    const { createOrReplaceSkill } = await import("../src/accounts/skills.ts");
     const content = createSkillMarkdown("null-skill", "Null byte test");
     const contentBase64 = Buffer.from(content).toString("base64");
 
@@ -611,7 +611,7 @@ describe("file upload edge cases", () => {
 
 describe("skill name validation", () => {
   it("rejects skill names containing anthropic", async () => {
-    const { createOrReplaceSkill } = await import("../functions/account-manage/skills.ts");
+    const { createOrReplaceSkill } = await import("../src/accounts/skills.ts");
     const content = createSkillMarkdown("anthropic-helper", "Anthropic test");
     const contentBase64 = Buffer.from(content).toString("base64");
 
@@ -624,7 +624,7 @@ describe("skill name validation", () => {
   });
 
   it("rejects skill names containing claude", async () => {
-    const { createOrReplaceSkill } = await import("../functions/account-manage/skills.ts");
+    const { createOrReplaceSkill } = await import("../src/accounts/skills.ts");
     const content = createSkillMarkdown("claude-helper", "Claude test");
     const contentBase64 = Buffer.from(content).toString("base64");
 
@@ -637,7 +637,7 @@ describe("skill name validation", () => {
   });
 
   it("rejects skill names with XML tags", async () => {
-    const { createOrReplaceSkill } = await import("../functions/account-manage/skills.ts");
+    const { createOrReplaceSkill } = await import("../src/accounts/skills.ts");
     const content = createSkillMarkdown("skill<tag>", "XML test");
     const contentBase64 = Buffer.from(content).toString("base64");
 
@@ -650,7 +650,7 @@ describe("skill name validation", () => {
   });
 
   it("rejects skill name exceeding max length", async () => {
-    const { createOrReplaceSkill } = await import("../functions/account-manage/skills.ts");
+    const { createOrReplaceSkill } = await import("../src/accounts/skills.ts");
     const longName = "a".repeat(65);
     const content = createSkillMarkdown(longName, "Long name test");
     const contentBase64 = Buffer.from(content).toString("base64");
@@ -664,7 +664,7 @@ describe("skill name validation", () => {
   });
 
   it("rejects empty skill name", async () => {
-    const { createOrReplaceSkill } = await import("../functions/account-manage/skills.ts");
+    const { createOrReplaceSkill } = await import("../src/accounts/skills.ts");
     const content = createSkillMarkdown("", "Empty name test");
     const contentBase64 = Buffer.from(content).toString("base64");
 
@@ -677,7 +677,7 @@ describe("skill name validation", () => {
   });
 
   it("rejects skill name with uppercase letters", async () => {
-    const { createOrReplaceSkill } = await import("../functions/account-manage/skills.ts");
+    const { createOrReplaceSkill } = await import("../src/accounts/skills.ts");
     const content = createSkillMarkdown("My-Skill", "Uppercase test");
     const contentBase64 = Buffer.from(content).toString("base64");
 
@@ -690,7 +690,7 @@ describe("skill name validation", () => {
   });
 
   it("rejects skill name with special characters", async () => {
-    const { createOrReplaceSkill } = await import("../functions/account-manage/skills.ts");
+    const { createOrReplaceSkill } = await import("../src/accounts/skills.ts");
     const content = createSkillMarkdown("my_skill!", "Special chars test");
     const contentBase64 = Buffer.from(content).toString("base64");
 
@@ -705,7 +705,7 @@ describe("skill name validation", () => {
 
 describe("skill description validation", () => {
   it("rejects empty description after trim", async () => {
-    const { createOrReplaceSkill } = await import("../functions/account-manage/skills.ts");
+    const { createOrReplaceSkill } = await import("../src/accounts/skills.ts");
     const content = createSkillMarkdown("desc-skill", "   ");
     const contentBase64 = Buffer.from(content).toString("base64");
 
@@ -718,7 +718,7 @@ describe("skill description validation", () => {
   });
 
   it("rejects description with XML tags", async () => {
-    const { createOrReplaceSkill } = await import("../functions/account-manage/skills.ts");
+    const { createOrReplaceSkill } = await import("../src/accounts/skills.ts");
     const content = createSkillMarkdown("xml-desc-skill", "A <tag>description</tag>");
     const contentBase64 = Buffer.from(content).toString("base64");
 
@@ -733,7 +733,7 @@ describe("skill description validation", () => {
 
 describe("account-scoped skill paths", () => {
   it("formats skill paths with account prefix", async () => {
-    const { createOrReplaceSkill } = await import("../functions/account-manage/skills.ts");
+    const { createOrReplaceSkill } = await import("../src/accounts/skills.ts");
     const content = createSkillMarkdown("scoped-skill", "Scoped test");
     const contentBase64 = Buffer.from(content).toString("base64");
 
@@ -763,7 +763,7 @@ describe("account-scoped skill paths", () => {
     readS3TextMock.mockResolvedValue(skillContent);
     s3ObjectExistsMock.mockResolvedValue(true);
 
-    const { listAccountSkills } = await import("../functions/account-manage/skills.ts");
+    const { listAccountSkills } = await import("../src/accounts/skills.ts");
 
     const result = await listAccountSkills("acct_456");
 
@@ -774,7 +774,7 @@ describe("account-scoped skill paths", () => {
   it("deletes skills scoped to specific account only", async () => {
     deleteS3PrefixMock.mockResolvedValue(3);
 
-    const { deleteAccountSkills } = await import("../functions/account-manage/skills.ts");
+    const { deleteAccountSkills } = await import("../src/accounts/skills.ts");
 
     await deleteAccountSkills("acct_789");
 
@@ -784,7 +784,7 @@ describe("account-scoped skill paths", () => {
 
 describe("skill file size validation", () => {
   it("rejects skill file exceeding 5 MB limit", async () => {
-    const { createOrReplaceSkill } = await import("../functions/account-manage/skills.ts");
+    const { createOrReplaceSkill } = await import("../src/accounts/skills.ts");
     const largeContent = "x".repeat(5 * 1024 * 1024 + 1);
     const largeBase64 = Buffer.from(largeContent).toString("base64");
 
@@ -806,7 +806,7 @@ describe("GitHub skill import success path", () => {
       blob: async () => new Blob([emptyTarGz]),
     })) as never;
 
-    const { createOrReplaceSkill } = await import("../functions/account-manage/skills.ts");
+    const { createOrReplaceSkill } = await import("../src/accounts/skills.ts");
 
     await expect(createOrReplaceSkill("acct_test", {
       source: "github",
@@ -815,7 +815,7 @@ describe("GitHub skill import success path", () => {
   });
 
   it("validates GitHub URL and parses archive URL correctly", async () => {
-    const { parseGitHubSkillUrl } = await import("../functions/_shared/skills.ts");
+    const { parseGitHubSkillUrl } = await import("../src/shared/skills.ts");
 
     const parsed = parseGitHubSkillUrl("https://github.com/owner/repo/tree/main/skills/my-skill");
 

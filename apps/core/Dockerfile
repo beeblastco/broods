@@ -23,10 +23,9 @@ COPY package.json bun.lock ./
 # The storage adapter require()s @broods/convex/_generated/api (committed).
 COPY packages/convex ./packages/convex
 COPY apps/core ./apps/core
-# Compile at the default (x64) target: the k3s cluster nodes are amd64, unlike
-# the arm64 Lambda binaries under dist/.
+# Compile at the default (x64) target: the k3s cluster nodes are amd64.
 RUN cd apps/core && bun run scripts/system-prompt.ts \
-    && bun build --compile --minify functions/server/bootstrap.ts --outfile /out/core-server
+    && bun build --compile --minify src/server.ts --outfile /out/core-server
 
 FROM alpine:3.22 AS runner
 WORKDIR /app

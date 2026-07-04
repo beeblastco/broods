@@ -5,12 +5,12 @@
 
 import { afterEach, describe, expect, it, mock } from "bun:test";
 import { UpdateItemCommand } from "@aws-sdk/client-dynamodb";
-import type { LambdaFunctionURLEvent } from "aws-lambda";
-import { dynamo } from "../functions/_shared/storage/dynamo/client.ts";
+import { dynamo } from "../src/shared/storage/dynamo/client.ts";
 import {
   enforceAccountSignupRateLimit,
   RateLimitExceededError,
-} from "../functions/account-manage/rate-limit.ts";
+} from "../src/accounts/rate-limit.ts";
+import { coreRequest } from "./helpers/http.ts";
 
 const ORIGINAL_ENV = { ...process.env };
 const originalSend = dynamo.send;
@@ -32,33 +32,8 @@ describe("RateLimitExceededError", () => {
 });
 
 describe("enforceAccountSignupRateLimit", () => {
-  function createEvent(sourceIp: string): LambdaFunctionURLEvent {
-    return {
-      version: "2.0",
-      routeKey: "$default",
-      rawPath: "/accounts",
-      rawQueryString: "",
-      headers: {},
-      requestContext: {
-        accountId: "123456789012",
-        apiId: "api-id",
-        domainName: "example.lambda-url.aws",
-        domainPrefix: "example",
-        http: {
-          method: "POST",
-          path: "/accounts",
-          protocol: "HTTP/1.1",
-          sourceIp,
-          userAgent: "test",
-        },
-        requestId: "request-id",
-        routeKey: "$default",
-        stage: "$default",
-        time: "01/May/2026:00:00:00 +0000",
-        timeEpoch: 1777593600000,
-      },
-      isBase64Encoded: false,
-    };
+  function createEvent(sourceIp: string): ReturnType<typeof coreRequest> {
+    return coreRequest("POST", "/accounts", { "x-forwarded-for": sourceIp });
   }
 
   it("allows requests when rate limiting is disabled (limit 0)", async () => {
@@ -201,7 +176,7 @@ describe("enforceAccountSignupRateLimit", () => {
     dynamo.send = sendMock as never;
 
     const eventWithoutIp = createEvent("");
-    eventWithoutIp.requestContext.http.sourceIp = "";
+    eventWithoutIp.clientIp = "";
 
     await expect(enforceAccountSignupRateLimit(eventWithoutIp)).resolves.toBeUndefined();
 

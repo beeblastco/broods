@@ -5,16 +5,15 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
-import type { LambdaFunctionURLEvent } from "aws-lambda";
-import type { LambdaResponse } from "../functions/_shared/runtime.ts";
-import { workspaceNamespacePrefix } from "../functions/_shared/sandbox.ts";
-import { resetStorageForTests, setStorageForTests } from "../functions/_shared/storage/index.ts";
-import type { WorkspaceConfigRecord } from "../functions/_shared/storage/workspace-config.ts";
-import { workspaceNamespace } from "../functions/_shared/workspaces.ts";
+import { workspaceNamespacePrefix } from "../src/shared/sandbox.ts";
+import { resetStorageForTests, setStorageForTests } from "../src/shared/storage/index.ts";
+import type { WorkspaceConfigRecord } from "../src/shared/storage/workspace-config.ts";
+import { workspaceNamespace } from "../src/shared/workspaces.ts";
+import { coreRequest, responseJson } from "./helpers/http.ts";
 
 const deletePrefixMock = mock(async (_bucket: string, _prefix: string, _access?: unknown) => 3);
 
-mock.module("../functions/_shared/s3.ts", () => ({
+mock.module("../src/shared/s3.ts", () => ({
   deleteS3Prefix: deletePrefixMock,
   readS3Text: mock(async () => ""),
   readS3Bytes: mock(async () => new Uint8Array()),
@@ -78,11 +77,11 @@ describe("workspace delete cleanup", () => {
       },
     } as never);
 
-    const { handler } = await import("../functions/account-manage/handler.ts");
+    const { handler } = await import("../src/accounts/handler.ts");
     const response = await handler(createEvent("DELETE", `/accounts/me/workspaces/${workspace.workspaceId}`, AUTH));
 
-    expect(response.statusCode).toBe(200);
-    expect(responseJson(response)).toEqual({ deleted: true });
+    expect(response.status).toBe(200);
+    expect(await responseJson(response)).toEqual({ deleted: true });
     expect(removed).toBe(true);
     expect(deletePrefixMock).toHaveBeenCalledWith(
       "workspace-bucket",
@@ -103,39 +102,10 @@ function fakeAccount() {
   };
 }
 
-function responseJson(response: LambdaResponse): unknown {
-  return JSON.parse(String(response.body ?? "{}"));
-}
-
 function createEvent(
   method: string,
   rawPath: string,
   headers: Record<string, string> = {},
-): LambdaFunctionURLEvent {
-  return {
-    version: "2.0",
-    routeKey: "$default",
-    rawPath,
-    rawQueryString: "",
-    headers,
-    requestContext: {
-      accountId: "123456789012",
-      apiId: "api-id",
-      domainName: "example.lambda-url.aws",
-      domainPrefix: "example",
-      http: {
-        method,
-        path: rawPath,
-        protocol: "HTTP/1.1",
-        sourceIp: "127.0.0.1",
-        userAgent: "bun-test",
-      },
-      requestId: "request-id",
-      routeKey: "$default",
-      stage: "$default",
-      time: "01/May/2026:00:00:00 +0000",
-      timeEpoch: 1777593600000,
-    },
-    isBase64Encoded: false,
-  };
+): ReturnType<typeof coreRequest> {
+  return coreRequest(method, rawPath, headers);
 }

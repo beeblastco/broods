@@ -16,8 +16,8 @@ import {
   toRuntimeAgentConfig,
   type AccountRecord,
   type AgentRecord,
-} from "../functions/_shared/storage/index.ts";
-import { dynamo } from "../functions/_shared/storage/dynamo/client.ts";
+} from "../src/shared/storage/index.ts";
+import { dynamo } from "../src/shared/storage/dynamo/client.ts";
 
 const ORIGINAL_ENV = { ...process.env };
 const originalSend = dynamo.send;
@@ -1167,7 +1167,7 @@ describe("agent config", () => {
       throw new Error("unexpected command");
     });
 
-    const { resetStorageForTests } = await import("../functions/_shared/storage/index.ts");
+    const { resetStorageForTests } = await import("../src/shared/storage/index.ts");
     resetStorageForTests();
     expect(getStorage().accounts.list()).resolves.toEqual([]);
 

@@ -8,15 +8,15 @@ import {
   BatchWriteItemCommand,
   QueryCommand,
 } from "@aws-sdk/client-dynamodb";
-import { dynamo } from "../functions/_shared/storage/dynamo/client.ts";
-import type { ChannelActions } from "../functions/_shared/channels.ts";
+import { dynamo } from "../src/shared/storage/dynamo/client.ts";
+import type { ChannelActions } from "../src/shared/channels.ts";
 import {
   commands,
   executeCommand,
   getDiscordCommandRegistrations,
   parseCommand,
   resolveDiscordCommand,
-} from "../functions/_shared/commands.ts";
+} from "../src/shared/commands.ts";
 
 const originalSend = dynamo.send;
 

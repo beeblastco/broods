@@ -5,8 +5,8 @@
  */
 
 import { afterAll, describe, expect, it } from "bun:test";
-import { createPolicyToolApproval, policyDecisionLogMessage } from "../functions/harness-processing/policy.ts";
-import { setStorageForTests, type StorageProvider } from "../functions/_shared/storage/index.ts";
+import { createPolicyToolApproval, policyDecisionLogMessage } from "../src/harness/policy.ts";
+import { setStorageForTests, type StorageProvider } from "../src/shared/storage/index.ts";
 
 const policyRecord = {
   accountId: "acct_1",

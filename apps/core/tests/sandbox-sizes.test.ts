@@ -5,7 +5,7 @@
  */
 
 import { describe, expect, it } from "bun:test";
-import { resolveSandboxSpecs, workdirSizeResources, SANDBOX_SIZES } from "../functions/_shared/sandbox-sizes.ts";
+import { resolveSandboxSpecs, workdirSizeResources, SANDBOX_SIZES } from "../src/shared/sandbox-sizes.ts";
 
 describe("resolveSandboxSpecs", () => {
   it("returns the catalog specs for a pinned size", () => {

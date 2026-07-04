@@ -1,0 +1,1049 @@
+/**
+ * Session lifecycle for harness-processing.
+ * Keep event persistence, context projection, leases, and prompt loading here.
+ */
+
+import {
+  DeleteItemCommand,
+  PutItemCommand,
+  QueryCommand,
+  UpdateItemCommand,
+  type AttributeValue,
+  type QueryCommandOutput,
+} from "@aws-sdk/client-dynamodb";
+import type {
+  AssistantModelMessage,
+  ModelMessage,
+  SystemModelMessage,
+  ToolModelMessage,
+  UserModelMessage,
+} from "ai";
+import {
+  modelMessageSchema,
+  systemModelMessageSchema,
+} from "ai";
+import type { AgentChannelWorkspaceScope, AgentConfig } from "../shared/storage/index.ts";
+import { getStorage } from "../shared/storage/index.ts";
+import type { AsyncToolDelivery } from "./async-tool-result.ts";
+import { isMissingS3Error, readS3Text } from "../shared/s3.ts";
+import { resolveS3ReadTarget, workspaceReadContext } from "./sandbox/s3-mount.ts";
+import {
+  dynamo,
+  fromAttributeValue,
+  isConditionalCheckFailed,
+  toAttributeValue,
+} from "../shared/storage/dynamo/client.ts";
+import { requireEnv } from "../shared/env.ts";
+import {
+  channelScopeKeyFromConversation,
+  conversationLeaseKey,
+} from "../shared/runtime-keys.ts";
+import { logError, logInfo } from "../shared/log.ts";
+import { isPlainObject } from "../shared/object.ts";
+import {
+  resolveAgentRuntime,
+  type ResolvedAgentRuntime,
+  type ResolvedWorkspace,
+} from "../shared/workspaces.ts";
+import {
+  loadConfiguredSkillPrompt,
+  listConfiguredSkillMetadata,
+  type SkillMetadata,
+} from "./skills.ts";
+import { compactSessionContext, isCompactionSummaryMessage } from "./compaction.ts";
+import { pruneSessionMessages } from "./pruning.ts";
+import type { SandboxExecutorConfig } from "./sandbox/types.ts";
+import type { SandboxPermissionMode } from "../shared/storage/index.ts";
+
+const CONVERSATIONS_TABLE_NAME = requireEnv("CONVERSATIONS_TABLE_NAME");
+const PROCESSED_EVENTS_TABLE_NAME = requireEnv("PROCESSED_EVENTS_TABLE_NAME");
+
+// Default conversation lease TTL of 15 minutes.
+const CONVERSATION_LEASE_TTL_SECONDS = 15 * 60;
+
+export type ConversationIngressEvent =
+  | UserModelMessage
+  | AssistantModelMessage
+  | ToolModelMessage
+  | (SystemModelMessage & { persist?: boolean });
+
+export interface TurnContextSnapshot {
+  messages: ModelMessage[];
+  system: SystemModelMessage[];
+  // Request-local system messages. These are already included in `system`, but
+  // the harness keeps the source list so prepareStep can rebuild system prompts
+  // during the same model run without dropping temporary instructions.
+  ephemeralSystem: SystemModelMessage[];
+  // Cursor-backed system context that prepareStep can refresh incrementally mid-run.
+  systemContextSnapshot: SystemContextSnapshot;
+  // Wall-clock windows for the work that precedes the model run, so the harness
+  // can surface them as trace phase spans. Absent for in-memory ephemeral turns.
+  timings?: TurnContextTimings;
+}
+
+export interface TurnContextTimings {
+  // Whole createTurnContext span (load + project + system prompt + prune).
+  prepareStartedMs: number;
+  prepareEndedMs: number;
+  // Present only when compaction actually produced a summary this turn.
+  compaction?: { startedMs: number; endedMs: number };
+}
+
+export interface SystemContextSnapshot {
+  // Highest conversation row already folded into the dynamic system-context view.
+  // `loadRefreshedSystemPromptParts` uses this as a DynamoDB cursor so each
+  // prepareStep only loads newly persisted system messages instead of
+  // rebuilding system context from the full conversation every time.
+  cursor: string | null;
+  // Persisted system-role events accumulated up to cursor.
+  // These are not normal chat history. `buildSystemPromptParts` appends them
+  // to the model's `system` prompt while `projectEntriesToMessages` omits them
+  // from the user/assistant/tool message list.
+  messages: SystemModelMessage[];
+}
+
+interface SubagentMetadata {
+  agentId: string;
+  name: string;
+  description?: string;
+}
+
+/**
+ * Shared fields for every stored conversation event.
+ * `version` gives us a migration hook for future schema changes, and
+ * `sourceEventId` ties projected rows back to the inbound Lambda/webhook event
+ * that created them for dedupe/debugging.
+ */
+interface StoredEventBase {
+  version: 1;
+  sourceEventId: string;
+}
+
+// Internal normalized shapes persisted in DynamoDB. We use AI SDK-style roles
+// here as well so an event is effectively a stored model message plus metadata.
+interface StoredConversationEventBase<TMessage extends ModelMessage> extends StoredEventBase {
+  message: TMessage;
+}
+
+type StoredConversationEvent =
+  | StoredConversationEventBase<UserModelMessage>
+  | StoredConversationEventBase<AssistantModelMessage>
+  | StoredConversationEventBase<ToolModelMessage>
+  | StoredConversationEventBase<SystemModelMessage>;
+
+// Query results need both the stored event payload and its DynamoDB sort key so
+// we can build point-in-time snapshots and later fetch only prompt deltas after
+// a known cursor.
+interface StoredConversationEntry {
+  createdAt: string;
+  event: StoredConversationEvent;
+}
+
+/**
+ * Agent conversation session.
+ * Owns persistence, leases, prompt assembly, and in-memory child turns.
+ */
+export class Session {
+  private messageSequence = 0;
+  private hasLoggedMissingMemoryFile = false;
+  private loadedSkillPrompts: SystemModelMessage[] = [];
+  private subagentMetadataPromise: Promise<SubagentMetadata[]> | undefined;
+  // Resolved sandbox + workspace records (from the agent's `sandbox`/`workspaces`
+  // refs). Resolved once per session at turn-context construction; the sync
+  // getters below read the cached value.
+  private resolvedRuntime: ResolvedAgentRuntime | undefined;
+  private resolvedRuntimePromise: Promise<ResolvedAgentRuntime> | undefined;
+
+  constructor(
+    public readonly eventId: string,
+    public readonly conversationKey: string,
+    public readonly accountId: string | undefined,
+    public readonly agentId: string | undefined,
+    private readonly agentConfig: AgentConfig = {},
+    // Where a deferred result spawned in this turn (a detached background job)
+    // should be delivered when it settles in a later invocation. Carries the
+    // originating chat channel or WebSocket connection; absent for plain
+    // direct/async API turns, which fall back to status polling.
+    public readonly delivery?: AsyncToolDelivery,
+    // Per-deployment id from the runtime key that authorized this turn. Present
+    // for deployment-key traffic and resolved channel integrations.
+    // Used to scope realtime telemetry to the dashboard's deployment view.
+    public readonly endpointId?: string,
+    // Project and environment slugs from the runtime key scope. Present for
+    // deployment-key traffic and resolved channel integrations. Used to build
+    // NATS observability subjects (tracesSubject, logsSubject) for live streaming.
+    public readonly projectSlug?: string,
+    public readonly environmentSlug?: string,
+  ) { }
+
+  async claim(): Promise<boolean> {
+    const ttl = Math.floor(Date.now() / 1000) + 86400;
+
+    try {
+      await dynamo.send(new PutItemCommand({
+        TableName: PROCESSED_EVENTS_TABLE_NAME,
+        Item: {
+          eventId: { S: this.eventId },
+          createdAt: { S: new Date().toISOString() },
+          expiresAt: { N: String(ttl) },
+        },
+        ConditionExpression: "attribute_not_exists(eventId)",
+      }));
+      return true;
+    } catch (err) {
+      if (isConditionalCheckFailed(err)) {
+        return false;
+      }
+      throw err;
+    }
+  }
+
+  async release(): Promise<void> {
+    await dynamo.send(new DeleteItemCommand({
+      TableName: PROCESSED_EVENTS_TABLE_NAME,
+      Key: { eventId: { S: this.eventId } },
+    }));
+  }
+
+  async acquireConversationLease(): Promise<boolean> {
+    const now = Math.floor(Date.now() / 1000);
+    const ttl = now + CONVERSATION_LEASE_TTL_SECONDS;
+
+    try {
+      await dynamo.send(new PutItemCommand({
+        TableName: PROCESSED_EVENTS_TABLE_NAME,
+        Item: {
+          eventId: { S: this.conversationLeaseKey() },
+          createdAt: { S: new Date().toISOString() },
+          expiresAt: { N: String(ttl) },
+          ownerEventId: { S: this.eventId },
+          conversationKey: { S: this.conversationKey },
+        },
+        ConditionExpression: "attribute_not_exists(eventId) OR expiresAt < :now",
+        ExpressionAttributeValues: {
+          ":now": { N: String(now) },
+        },
+      }));
+      return true;
+    } catch (err) {
+      if (isConditionalCheckFailed(err)) {
+        return false;
+      }
+      throw err;
+    }
+  }
+
+  async releaseConversationLease(): Promise<void> {
+    try {
+      await dynamo.send(new DeleteItemCommand({
+        TableName: PROCESSED_EVENTS_TABLE_NAME,
+        Key: { eventId: { S: this.conversationLeaseKey() } },
+        ConditionExpression: "ownerEventId = :ownerEventId",
+        ExpressionAttributeValues: {
+          ":ownerEventId": { S: this.eventId },
+        },
+      }));
+    } catch (err) {
+      if (isConditionalCheckFailed(err)) {
+        return;
+      }
+
+      throw err;
+    }
+  }
+
+  /**
+   * Buffer ingress events for a conversation whose turn is already in progress so
+   * the lease holder can answer them after its current reply, instead of dropping
+   * them. Stored as a JSON-encoded list under a per-conversation key; the atomic
+   * `list_append` lets concurrent webhooks queue without clobbering each other.
+   */
+  async enqueuePendingIngress(events: ConversationIngressEvent[]): Promise<void> {
+    if (events.length === 0) {
+      return;
+    }
+    const ttl = Math.floor(Date.now() / 1000) + CONVERSATION_LEASE_TTL_SECONDS;
+    await dynamo.send(new UpdateItemCommand({
+      TableName: PROCESSED_EVENTS_TABLE_NAME,
+      Key: { eventId: { S: this.pendingIngressKey() } },
+      UpdateExpression: "SET queued = list_append(if_not_exists(queued, :empty), :events), expiresAt = :ttl",
+      ExpressionAttributeValues: {
+        ":events": { L: events.map((event) => ({ S: JSON.stringify(event) })) },
+        ":empty": { L: [] },
+        ":ttl": { N: String(ttl) },
+      },
+    }));
+  }
+
+  /**
+   * Atomically remove and return every buffered ingress event for this
+   * conversation. The delete-with-ALL_OLD is a single op, so a webhook enqueuing
+   * concurrently either lands in this batch or in the next item (picked up on the
+   * next drain) — nothing is lost or double-read.
+   */
+  async takePendingIngress(): Promise<ConversationIngressEvent[]> {
+    const result = await dynamo.send(new DeleteItemCommand({
+      TableName: PROCESSED_EVENTS_TABLE_NAME,
+      Key: { eventId: { S: this.pendingIngressKey() } },
+      ReturnValues: "ALL_OLD",
+    }));
+    const queued = result.Attributes?.queued?.L ?? [];
+    const events: ConversationIngressEvent[] = [];
+    for (const item of queued) {
+      if (typeof item.S !== "string") {
+        continue;
+      }
+      try {
+        events.push(JSON.parse(item.S) as ConversationIngressEvent);
+      } catch {
+        // Skip a malformed entry rather than failing the whole drain.
+      }
+    }
+
+    return events;
+  }
+
+  async appendIngressEvents(events: ConversationIngressEvent[]): Promise<SystemModelMessage[]> {
+    const ephemeralSystem: SystemModelMessage[] = [];
+    const persistedMessages: ModelMessage[] = [];
+
+    for (const event of events) {
+      if (event.role === "system") {
+        const message = systemModelMessageSchema.parse(event);
+
+        if (event.persist === false) {
+          // Direct API system injections are one-turn instructions. They are
+          // returned to the caller and included in the current turn's system
+          // prompt, but never written to DynamoDB.
+          ephemeralSystem.push(message);
+          continue;
+        }
+
+        persistedMessages.push(message);
+        continue;
+      }
+
+      persistedMessages.push(event);
+    }
+
+    await this.persistModelMessages(persistedMessages);
+    return ephemeralSystem;
+  }
+
+  async persistModelMessages(messages: ModelMessage[]): Promise<string[]> {
+    const createdAtValues: string[] = [];
+
+    for (const message of messages) {
+      const storedEvent = createStoredEventFromModelMessage(message, this.eventId);
+      if (!storedEvent) {
+        continue;
+      }
+
+      createdAtValues.push(await this.persistStoredEvent(storedEvent));
+    }
+
+    return createdAtValues;
+  }
+
+  async createTurnContext(ephemeralSystem: SystemModelMessage[] = []): Promise<TurnContextSnapshot> {
+    const prepareStartedMs = Date.now();
+    await this.ensureResolvedRuntime();
+    const entries = await this.loadConversationEntries();
+    const activeEntries = projectActiveConversationEntries(entries);
+    // Snapshot persisted system context separately from chat messages. The
+    // harness passes this through prepareStep so long-running tool loops can
+    // refresh system prompt parts without duplicating old system rows.
+    const systemContextSnapshot = createSystemContextSnapshot(entries);
+    let messages = projectEntriesToMessages(activeEntries);
+    const system = await this.buildSystemPromptParts(systemContextSnapshot.messages, ephemeralSystem);
+
+    const compactionStartedMs = Date.now();
+    const compactionSummary = await compactSessionContext({
+      conversationKey: this.conversationKey,
+      system,
+      messages,
+      agentConfig: this.agentConfig,
+    }).catch((error) => {
+      logError("Session context compaction failed; continuing without compaction", {
+        conversationKey: this.conversationKey,
+        eventId: this.eventId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return null;
+    });
+    const compactionEndedMs = Date.now();
+
+    if (compactionSummary) {
+      const [summaryCursor] = await this.persistModelMessages([compactionSummary]);
+      const compactedSystemContextSnapshot = {
+        cursor: summaryCursor ?? systemContextSnapshot.cursor,
+        messages: [compactionSummary],
+      };
+      // Approval responses need their matching assistant request in model history.
+      // Keep that pending pair outside the compacted summary so the AI SDK can resume it.
+      messages = selectPostCompactionPendingMessages(messages);
+
+      return {
+        messages: pruneSessionMessages(messages, this.agentConfig),
+        system: await this.buildSystemPromptParts(compactedSystemContextSnapshot.messages, ephemeralSystem),
+        ephemeralSystem: ephemeralSystem,
+        systemContextSnapshot: compactedSystemContextSnapshot,
+        timings: {
+          prepareStartedMs,
+          prepareEndedMs: Date.now(),
+          compaction: { startedMs: compactionStartedMs, endedMs: compactionEndedMs },
+        },
+      };
+    }
+
+    const prunedMessageCount = messages.length;
+    messages = pruneSessionMessages(messages, this.agentConfig);
+    logInfo("Session context pruned", {
+      conversationKey: this.conversationKey,
+      eventId: this.eventId,
+      beforeCount: prunedMessageCount,
+      afterCount: messages.length,
+    });
+
+    return {
+      messages,
+      system,
+      ephemeralSystem,
+      systemContextSnapshot,
+      timings: { prepareStartedMs, prepareEndedMs: Date.now() },
+    };
+  }
+
+  async createEphemeralTurnContext(
+    messages: ModelMessage[],
+    ephemeralSystem: SystemModelMessage[] = [],
+  ): Promise<TurnContextSnapshot> {
+    await this.ensureResolvedRuntime();
+    // Ephemeral child turns are in-memory only, but they still need the same
+    // source `ephemeralSystem` list so system prompt refreshes preserve it.
+    return {
+      messages: pruneSessionMessages(messages, this.agentConfig),
+      system: await this.buildSystemPromptParts([], ephemeralSystem),
+      ephemeralSystem: ephemeralSystem,
+      systemContextSnapshot: { cursor: null, messages: [] },
+    };
+  }
+
+  /**
+   * Called from harness.ts prepareStep. Keep `systemContextSnapshot` updated across
+   * model steps so newly persisted system rows become visible while prior
+   * system rows remain included exactly once.
+   */
+  async loadRefreshedSystemPromptParts(options: {
+    systemContextSnapshot: SystemContextSnapshot;
+    ephemeralSystem?: SystemModelMessage[];
+  }): Promise<{ systemContextSnapshot: SystemContextSnapshot; system: SystemModelMessage[] }> {
+    // Incremental refresh for prepareStep: load only conversation rows newer
+    // than the cursor, then fold any system-role rows into the snapshot.
+    const entries = await this.loadConversationEntries({
+      afterCreatedAt: options.systemContextSnapshot.cursor,
+    });
+
+    const systemContextSnapshot: SystemContextSnapshot = entries.length === 0
+      ? options.systemContextSnapshot
+      : {
+        cursor: entries.at(-1)?.createdAt ?? options.systemContextSnapshot.cursor,
+        messages: [...options.systemContextSnapshot.messages, ...projectSystemContextMessages(entries)],
+      };
+
+    return {
+      systemContextSnapshot: systemContextSnapshot,
+      system: await this.buildSystemPromptParts(systemContextSnapshot.messages, options.ephemeralSystem ?? []),
+    };
+  }
+
+  async loadSkillPrompt(
+    allowedSkillPaths: string[],
+    skillPath: string,
+    resourcePaths?: string[],
+  ): Promise<{ path: string; loadedPaths: string[]; stagedPath?: string; stagedFiles: string[]; bytes: number }> {
+    const loaded = await loadConfiguredSkillPrompt(
+      allowedSkillPaths,
+      skillPath,
+      resourcePaths,
+      this.defaultWorkspaceHasSandbox() ? this.filesystemNamespace() : undefined,
+    );
+    this.loadedSkillPrompts.push(loaded.prompt);
+    return loaded;
+  }
+
+  /**
+   * Lazily fetches and caches the resolved runtime (sandbox + workspaces hydrated
+   * from their storage IDs). Promise-memoized so concurrent callers share one fetch.
+   */
+  private async ensureResolvedRuntime(): Promise<ResolvedAgentRuntime> {
+    const channelScopeKey = channelScopeKeyFromConversation(this.conversationKey);
+    const conversationScopeKey = channelScopeKeyFromConversation(this.conversationKey, "conversation");
+    this.resolvedRuntimePromise ??= resolveAgentRuntime(this.agentConfig, this.accountId, {
+      channelName: this.delivery?.kind === "channel" ? this.delivery.channelName : undefined,
+      channelScopeKey,
+      conversationKey: conversationScopeKey,
+      workspaceScope: this.channelWorkspaceScope(),
+    }).then((resolved) => {
+      this.resolvedRuntime = resolved;
+      return resolved;
+    });
+    return this.resolvedRuntimePromise;
+  }
+
+  private channelWorkspaceScope(): AgentChannelWorkspaceScope | undefined {
+    if (this.delivery?.kind !== "channel") {
+      return undefined;
+    }
+    const config = this.agentConfig.channels?.[this.delivery.channelName];
+    const workspaceScope = isPlainObject(config) ? config.workspaceScope : undefined;
+    return isWorkspaceScope(workspaceScope) ? workspaceScope : undefined;
+  }
+
+  private async buildSystemPromptParts(
+    promptMessages: SystemModelMessage[],
+    ephemeralSystem: SystemModelMessage[] = [],
+  ): Promise<SystemModelMessage[]> {
+    const [memoryFiles, skillMetadata, subagentMetadata] = await Promise.all([
+      this.loadMemoryFiles(),
+      this.loadSkillMetadata(),
+      this.loadSubagentMetadata(),
+    ]);
+    const memorySystem: SystemModelMessage[] = memoryFiles.length === 0
+      ? []
+      : [{
+        role: "system",
+        content: formatMemorySystemPrompt(memoryFiles),
+      }];
+    const workspaceHarnessSystem: SystemModelMessage[] = this.isWorkspaceHarnessEnabled()
+      ? [{
+        role: "system",
+        content: formatWorkspaceHarnessSystemPrompt(this.resolvedWorkspaces()),
+      }]
+      : [];
+    const skillsSystem: SystemModelMessage[] = skillMetadata.length > 0
+      ? [{
+        role: "system",
+        content: formatSkillsSystemPrompt(skillMetadata),
+      }]
+      : [];
+    const subagentSystem: SystemModelMessage[] = this.agentConfig.subagent?.enabled === true
+      ? [{
+        role: "system",
+        content: formatSubagentSystemPrompt(subagentMetadata),
+      }]
+      : [];
+
+    return [
+      ...agentSystemMessages(this.agentConfig.agent?.system),
+      ...memorySystem,
+      ...workspaceHarnessSystem,
+      ...skillsSystem,
+      ...subagentSystem,
+      ...this.loadedSkillPrompts,
+      ...promptMessages,
+      ...ephemeralSystem,
+    ];
+  }
+
+  private async persistStoredEvent(event: StoredConversationEvent): Promise<string> {
+    const createdAt = this.nextCreatedAt();
+    await dynamo.send(new PutItemCommand({
+      TableName: CONVERSATIONS_TABLE_NAME,
+      Item: {
+        conversationKey: { S: this.conversationKey },
+        createdAt: { S: createdAt },
+        event: toAttributeValue(event),
+      },
+    }));
+    return createdAt;
+  }
+
+  private async loadConversationEntries(options: {
+    afterCreatedAt?: string | null;
+  } = {}): Promise<StoredConversationEntry[]> {
+    const keyConditionExpression = options.afterCreatedAt
+      ? "conversationKey = :conversationKey AND createdAt > :createdAt"
+      : "conversationKey = :conversationKey";
+    const items: NonNullable<QueryCommandOutput["Items"]> = [];
+    let exclusiveStartKey: QueryCommandOutput["LastEvaluatedKey"];
+    do {
+      const result: QueryCommandOutput = await dynamo.send(new QueryCommand({
+        TableName: CONVERSATIONS_TABLE_NAME,
+        KeyConditionExpression: keyConditionExpression,
+        ExpressionAttributeValues: {
+          ":conversationKey": { S: this.conversationKey },
+          ...(options.afterCreatedAt ? { ":createdAt": { S: options.afterCreatedAt } } : {}),
+        },
+        ConsistentRead: true,
+        ScanIndexForward: true,
+        ...(exclusiveStartKey ? { ExclusiveStartKey: exclusiveStartKey } : {}),
+      }));
+      items.push(...(result.Items ?? []));
+      exclusiveStartKey = result.LastEvaluatedKey;
+    } while (exclusiveStartKey);
+
+    return items
+      .map(itemToStoredConversationEntry)
+      .filter((entry): entry is StoredConversationEntry => entry != null);
+  }
+
+  private nextCreatedAt(): string {
+    const sequence = String(this.messageSequence).padStart(4, "0");
+    this.messageSequence += 1;
+    return `${new Date().toISOString()}#${this.eventId}#${sequence}`;
+  }
+
+  private async loadMemoryFiles(): Promise<Array<{ workspace: ResolvedWorkspace; content: string }>> {
+    if (!this.isWorkspaceEnabled()) {
+      return [];
+    }
+
+    const memoryFiles: Array<{ workspace: ResolvedWorkspace; content: string }> = [];
+    for (const workspace of this.resolvedWorkspaces()) {
+      const content = await this.loadMemoryFile(workspace);
+      if (content != null) {
+        memoryFiles.push({ workspace, content });
+      }
+    }
+    return memoryFiles;
+  }
+
+  private async loadMemoryFile(workspace: ResolvedWorkspace): Promise<string | null> {
+    // Reads MEMORY.md via the S3 API (not the sandbox mount). If the agent edited
+    // MEMORY.md through the mount less than ~1-2 min ago, S3 Files may not have synced
+    // it yet, so this can be briefly stale. Accepted: memory converges across turns and
+    // a per-turn sandbox round-trip is costly. Reading via S3 also lets a workspace
+    // serve memory without any sandbox attached. See docs/workspace/storage.md.
+
+    const target = await resolveS3ReadTarget(workspaceReadContext(workspace.config.storage, workspace.namespace));
+    const key = `${target.prefix}MEMORY.md`;
+
+    try {
+      return target.access
+        ? await readS3Text(target.bucket, key, target.access)
+        : await readS3Text(target.bucket, key);
+    } catch (error) {
+      if (!isMissingS3Error(error)) {
+        logError("Failed to load MEMORY.md for session prompt", {
+          conversationKey: this.conversationKey,
+          workspace: workspace.name,
+          key,
+          error: error instanceof Error ? error.message : String(error),
+        });
+        throw error;
+      }
+    }
+
+    if (!this.hasLoggedMissingMemoryFile) {
+      logInfo("No MEMORY.md found for session prompt", {
+        conversationKey: this.conversationKey,
+        workspace: workspace.name,
+        key,
+      });
+      this.hasLoggedMissingMemoryFile = true;
+    }
+
+    return null;
+  }
+
+  private conversationLeaseKey(): string {
+    return conversationLeaseKey(this.conversationKey);
+  }
+
+  /** Key for the per-conversation buffer of messages queued while a turn ran. */
+  private pendingIngressKey(): string {
+    return `pending:${conversationLeaseKey(this.conversationKey)}`;
+  }
+
+  // Namespace of the default (first) workspace, used for memory/skill staging
+  // S3 reads. Empty string when no workspace is attached.
+  filesystemNamespace(): string {
+    return this.resolvedWorkspaces()[0]?.namespace ?? "";
+  }
+
+  /** Resolved workspaces for this turn (first is the default). Empty when none. */
+  resolvedWorkspaces(): ResolvedWorkspace[] {
+    return this.resolvedRuntime?.workspaces ?? [];
+  }
+
+  /**
+   * Agent-level sandbox for stateless bash (no workspace attached). Workspace-backed
+   * tools use each workspace's own effective sandbox (see resolvedWorkspaces). Undefined
+   * when no agent-level sandbox is referenced.
+   */
+  statelessSandbox(): SandboxExecutorConfig | undefined {
+    return this.resolvedRuntime?.sandbox;
+  }
+
+  statelessPermissionMode(): SandboxPermissionMode {
+    return this.resolvedRuntime?.sandbox?.permissionMode ?? "ask";
+  }
+
+  private isWorkspaceEnabled(): boolean {
+    return (this.resolvedRuntime?.workspaces.length ?? 0) > 0;
+  }
+
+  private defaultWorkspaceHasSandbox(): boolean {
+    return Boolean(this.resolvedWorkspaces()[0]?.sandbox);
+  }
+
+  private isWorkspaceHarnessEnabled(): boolean {
+    return (this.resolvedRuntime?.workspaces ?? []).some((workspace) => workspace.config.harness?.enabled !== false);
+  }
+
+  private async loadSkillMetadata(): Promise<SkillMetadata[]> {
+    return listConfiguredSkillMetadata(this.accountId, this.agentConfig);
+  }
+
+  private async loadSubagentMetadata(): Promise<SubagentMetadata[]> {
+    if (this.agentConfig.subagent?.enabled !== true || !this.accountId) {
+      return [];
+    }
+    if (!this.subagentMetadataPromise) {
+      this.subagentMetadataPromise = Promise.all(
+        (this.agentConfig.subagent.allowed ?? []).map(async (agentId) => {
+          const agent = await getStorage().agents.getById(this.accountId!, agentId);
+          if (!agent || agent.status !== "active") {
+            return null;
+          }
+
+          return {
+            agentId: agent.agentId,
+            name: agent.name,
+            ...(agent.description ? { description: agent.description } : {}),
+          };
+        }),
+      ).then((metadata) => metadata.filter((entry): entry is SubagentMetadata => entry !== null));
+    }
+
+    return this.subagentMetadataPromise;
+  }
+}
+
+function formatMemorySystemPrompt(memoryFiles: Array<{ workspace: ResolvedWorkspace; content: string }>): string {
+  if (memoryFiles.length === 1 && memoryFiles[0]?.workspace.name === "default") {
+    const normalizedContent = memoryFiles[0].content.trimEnd();
+    return normalizedContent.length > 0
+      ? `Current MEMORY.md content for this conversation:\n\n${normalizedContent}`
+      : "Current MEMORY.md content for this conversation:\n\n(MEMORY.md exists but is empty)";
+  }
+
+  const sections = memoryFiles.map(({ workspace, content }) => {
+    const normalizedContent = content.trimEnd();
+    return `## ${workspace.name}\n\n${normalizedContent.length > 0 ? normalizedContent : "(MEMORY.md exists but is empty)"}`;
+  }).join("\n\n");
+
+  return `Current workspace MEMORY.md content:\n\n${sections}`;
+}
+
+function formatWorkspaceHarnessSystemPrompt(workspaces: ResolvedWorkspace[]): string {
+  const hasWritable = workspaces.some((ws) => ws.sandbox != null);
+  const hasReadOnly = workspaces.some((ws) => ws.sandbox == null);
+
+  const workspaceList = workspaces
+    .map((workspace, index) => {
+      const readOnlyTag = workspace.sandbox == null ? " [read-only: read, glob]" : "";
+      return `- ${workspace.name}${index === 0 ? " (default)" : ""}${readOnlyTag}: ${workspace.namespace}${workspace.description ? ` - ${workspace.description}` : ""}`;
+    })
+    .join("\n");
+
+  const toolsLine = hasWritable && hasReadOnly
+    ? "Use the file tools (read, glob) on all workspaces; write, edit, grep, and bash are available only on writable workspaces."
+    : hasWritable
+      ? "Use the file tools (read, write, edit, glob, grep) and bash to work with the mounted filesystem; bash starts in the current workspace directory."
+      : "Use the file tools (read, glob) to read the mounted filesystem. These workspaces are read-only, attempt to modify will get error.";
+
+  const guidance = hasWritable
+    ? `1. Use read/write/edit to inspect and change files, glob/grep to find files and content, and bash to run commands and programs (python3, node, and the usual tools are on PATH).
+2. When more than one workspace is configured, pass the workspace field to select one; omitted means the default workspace.
+3. Use MEMORY.md for durable project facts, decisions, conventions, and context that should survive long-running work.
+4. Use TASKS.md or focused task markdown files for plans and progress tracking when that helps the work stay aligned.
+5. Treat MEMORY.md and task files as normal workspace files: read them before relying on them, update them when useful, and keep them concise.`
+    : `1. Use read to inspect files and glob to find files by pattern.
+2. When more than one workspace is configured, pass the workspace field to select one; omitted means the default workspace.`;
+
+  return `<workspace>
+A persistent workspace is attached. ${toolsLine}
+
+Configured workspaces:
+${workspaceList}
+
+Guidance:
+${guidance}
+</workspace>`;
+}
+
+function formatSkillsSystemPrompt(skills: SkillMetadata[]): string {
+  const skillList = skills
+    .map((skill) => `- ${skill.path} (${skill.name}): ${skill.description}`)
+    .join("\n");
+
+  return `<skills>
+Select appropriate skills to assist with the user's request. A skill must be loaded with the load_skill tool before using its detailed instructions.
+
+Available skills:
+${skillList}
+
+Workflow:
+1. Check whether the user's task matches any skill description.
+2. Use load_skill with the exact skill path before applying that skill.
+3. Request resource paths only when the loaded SKILL.md references them and they are needed.
+</skills>`;
+}
+
+function formatSubagentSystemPrompt(subagents: SubagentMetadata[]): string {
+  const hasPredefinedSubagents = subagents.length > 0;
+  const predefined = hasPredefinedSubagents
+    ? subagents
+      .map((agent) => {
+        const description = agent.description?.trim() || "No description provided.";
+        return `- ${agent.agentId} (${agent.name}): ${description}`;
+      })
+      .join("\n")
+    : "- No predefined subagents are configured. Omit agentId to run a virtual one-shot subagent.";
+
+  return `<subagent>
+Use run_subagent to dispatch independent work that can continue while you keep working. The tool returns task ids immediately; results are injected into this conversation when the child work finishes.
+
+Available predefined subagents:
+${predefined}
+
+Tool guidance:
+1. Use the exact agentId from the predefined list when a listed subagent is suitable for the task.
+2. Omit agentId only when no predefined subagent is suitable or the user explicitly asks for a virtual one-shot subagent.
+3. A virtual one-shot subagent uses this agent's model and tool configuration.
+</subagent>`;
+}
+
+// DynamoDB row decoding.
+function agentSystemMessages(system: string | SystemModelMessage | SystemModelMessage[] | undefined): SystemModelMessage[] {
+  if (system === undefined) {
+    return [];
+  }
+  if (typeof system === "string") {
+    return [{ role: "system", content: system }];
+  }
+
+  return Array.isArray(system) ? system : [system];
+}
+
+function itemToStoredConversationEntry(item: Record<string, AttributeValue>): StoredConversationEntry | null {
+  const createdAt = item.createdAt?.S;
+  if (!createdAt) {
+    return null;
+  }
+
+  const event = item.event ? normalizeStoredConversationEvent(fromAttributeValue(item.event)) : null;
+  return event ? { createdAt, event } : null;
+}
+
+function normalizeStoredConversationEvent(value: unknown): StoredConversationEvent | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+
+  const candidate = value as {
+    sourceEventId?: string;
+    message?: unknown;
+  };
+
+  if (typeof candidate.sourceEventId !== "string") {
+    return null;
+  }
+
+  const parsedMessage = modelMessageSchema.safeParse(candidate.message);
+  return parsedMessage.success
+    ? createStoredEventFromModelMessage(parsedMessage.data, candidate.sourceEventId)
+    : null;
+}
+
+// Message persistence sanitization.
+function createStoredEventFromModelMessage(
+  message: ModelMessage | undefined,
+  sourceEventId: string,
+): StoredConversationEvent | null {
+  if (!message) {
+    return null;
+  }
+
+  switch (message.role) {
+    case "user":
+      return toStoredConversationEvent(sanitizeUserMessage(message), sourceEventId);
+    case "assistant":
+      return toStoredConversationEvent(sanitizeAssistantMessage(message), sourceEventId);
+    case "tool":
+      return toStoredConversationEvent(sanitizeToolMessage(message), sourceEventId);
+    case "system":
+      return toStoredConversationEvent(systemModelMessageSchema.parse(message), sourceEventId);
+    default:
+      return null;
+  }
+}
+
+function toStoredConversationEvent<TMessage extends StoredConversationEvent["message"]>(
+  message: TMessage | null,
+  sourceEventId: string,
+): StoredConversationEventBase<TMessage> | null {
+  return message ? {
+    version: 1,
+    sourceEventId,
+    message,
+  } : null;
+}
+
+// Conversation projection.
+function projectEntriesToMessages(entries: StoredConversationEntry[]): ModelMessage[] {
+  return entries.flatMap(({ event }) => {
+    switch (event.message.role) {
+      case "system":
+        return [];
+      case "user":
+      case "assistant":
+      case "tool":
+        return [event.message];
+    }
+  });
+}
+
+function projectSystemContextMessages(entries: StoredConversationEntry[]): SystemModelMessage[] {
+  const latestCompactionIndex = findLatestCompactionSummaryIndex(entries);
+
+  return entries.flatMap(({ event }, index) => {
+    if (event.message.role !== "system") {
+      return [];
+    }
+
+    if (isCompactionSummaryMessage(event.message)) {
+      return index === latestCompactionIndex ? [event.message] : [];
+    }
+
+    return latestCompactionIndex === -1 || index > latestCompactionIndex ? [event.message] : [];
+  });
+}
+
+function createSystemContextSnapshot(entries: StoredConversationEntry[]): SystemContextSnapshot {
+  const systemEntries = entriesSinceLatestCompactionSummary(entries);
+
+  return {
+    cursor: systemEntries.at(-1)?.createdAt ?? entries.at(-1)?.createdAt ?? null,
+    messages: projectSystemContextMessages(systemEntries),
+  };
+}
+
+function projectActiveConversationEntries(entries: StoredConversationEntry[]): StoredConversationEntry[] {
+  const latestCompactionIndex = findLatestCompactionSummaryIndex(entries);
+  return latestCompactionIndex === -1 ? entries : entries.slice(latestCompactionIndex + 1);
+}
+
+// Compaction resume support.
+export function selectPostCompactionPendingMessages(messages: ModelMessage[]): ModelMessage[] {
+  const lastMessage = messages.at(-1);
+  if (lastMessage?.role === "user") {
+    return [lastMessage];
+  }
+
+  if (!isToolApprovalResponseMessage(lastMessage)) {
+    return [];
+  }
+
+  const approvalIds = new Set(
+    lastMessage.content
+      .filter((part) => part.type === "tool-approval-response")
+      .map((part) => part.approvalId),
+  );
+  // The approval response references only approvalId; the prior assistant message
+  // carries the tool call details needed to execute or deny the tool on resume.
+  const approvalRequestMessages = messages.filter((message): message is AssistantModelMessage =>
+    message.role === "assistant" &&
+    typeof message.content !== "string" &&
+    message.content.some((part) => part.type === "tool-approval-request" && approvalIds.has(part.approvalId))
+  );
+
+  return approvalRequestMessages.length > 0
+    ? [...approvalRequestMessages, lastMessage]
+    : [lastMessage];
+}
+
+function entriesSinceLatestCompactionSummary(entries: StoredConversationEntry[]): StoredConversationEntry[] {
+  const latestCompactionIndex = findLatestCompactionSummaryIndex(entries);
+  return latestCompactionIndex === -1 ? entries : entries.slice(latestCompactionIndex);
+}
+
+function findLatestCompactionSummaryIndex(entries: StoredConversationEntry[]): number {
+  for (let index = entries.length - 1; index >= 0; index -= 1) {
+    const message = entries[index]?.event.message;
+    if (message?.role === "system" && isCompactionSummaryMessage(message)) {
+      return index;
+    }
+  }
+
+  return -1;
+}
+
+/**
+ * Filters user message to only text content parts.
+ */
+function sanitizeUserMessage(message: UserModelMessage): UserModelMessage | null {
+  if (typeof message.content === "string") {
+    return message;
+  }
+
+  const content = message.content.filter((part) => part.type === "text");
+  return content.length > 0 ? { ...message, content } : null;
+}
+
+/**
+ * Filters assistant message to only persisted content parts.
+ */
+function sanitizeAssistantMessage(message: AssistantModelMessage): AssistantModelMessage | null {
+  if (typeof message.content === "string") {
+    return message;
+  }
+
+  const content = message.content.filter(isPersistedAssistantContentPart);
+
+  return content.length > 0 ? { ...message, content } : null;
+}
+
+/**
+ * Filters tool message to only persisted content parts.
+ */
+function sanitizeToolMessage(message: ToolModelMessage): ToolModelMessage | null {
+  const content = message.content.filter(isPersistedToolContentPart);
+
+  return content.length > 0 ? { ...message, content } : null;
+}
+
+/**
+ * Checks if assistant content part should be persisted.
+ */
+function isPersistedAssistantContentPart(
+  part: Exclude<AssistantModelMessage["content"], string>[number],
+): boolean {
+  return part.type === "text" ||
+    part.type === "tool-call" ||
+    part.type === "tool-approval-request" ||
+    part.type === "tool-result";
+}
+
+/**
+ * Checks if tool content part should be persisted.
+ */
+function isPersistedToolContentPart(
+  part: ToolModelMessage["content"][number],
+): boolean {
+  return part.type === "tool-approval-response" || part.type === "tool-result";
+}
+
+function isToolApprovalResponseMessage(message: ModelMessage | undefined): message is ToolModelMessage {
+  return message?.role === "tool" &&
+    message.content.length > 0 &&
+    message.content.every((part) => part.type === "tool-approval-response");
+}
+
+function isWorkspaceScope(value: unknown): value is AgentChannelWorkspaceScope {
+  if (!isPlainObject(value)) return false;
+  if (value.level === "channel") return value.alias === undefined;
+  return value.level === "conversation" && typeof value.alias === "string";
+}

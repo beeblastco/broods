@@ -12,11 +12,12 @@ import {
   type CreateAccountToolInput,
   type StorageProvider,
   type UpdateAccountToolInput,
-} from "../functions/_shared/storage/index.ts";
+} from "../src/shared/storage/index.ts";
+import { coreRequest, responseJson } from "./helpers/http.ts";
 
 const writeS3ObjectMock = mock(async () => 1);
 
-mock.module("../functions/_shared/s3.ts", () => ({
+mock.module("../src/shared/s3.ts", () => ({
   writeS3Object: writeS3ObjectMock,
 }));
 
@@ -34,7 +35,7 @@ describe("account tool API", () => {
   it("creates, lists, gets, updates, and deletes account tools", async () => {
     const store = inMemoryStorage();
     setStorageForTests(store);
-    const { handler } = await import("../functions/account-manage/handler.ts");
+    const { handler } = await import("../src/accounts/handler.ts");
 
     const createResponse = await handler(event("POST", "/accounts/me/tools", {
       name: "test_async",
@@ -43,34 +44,34 @@ describe("account tool API", () => {
       bundle: "export default { name: 'test_async', async execute() { return { ok: true }; } };",
       defaultConfig: { delayMs: 1 },
     }));
-    expect(createResponse.statusCode).toBe(201);
-    const created = responseJson(createResponse);
+    expect(createResponse.status).toBe(201);
+    const created = await responseJson(createResponse);
     expect(created.toolId).toBe("tool_abc123");
     expect(created.name).toBe("test_async");
     expect(created).not.toHaveProperty("bundle");
     expect(writeS3ObjectMock).toHaveBeenCalledTimes(1);
 
     const listResponse = await handler(event("GET", "/accounts/me/tools"));
-    expect(responseJson(listResponse).tools).toHaveLength(1);
+    expect((await responseJson(listResponse)).tools).toHaveLength(1);
 
     const getResponse = await handler(event("GET", "/accounts/me/tools/tool_abc123"));
-    expect(responseJson(getResponse).description).toBe("Uploaded test tool.");
+    expect((await responseJson(getResponse)).description).toBe("Uploaded test tool.");
 
     const patchResponse = await handler(event("PATCH", "/accounts/me/tools/tool_abc123", {
       description: "Updated.",
     }));
-    expect(responseJson(patchResponse).description).toBe("Updated.");
+    expect((await responseJson(patchResponse)).description).toBe("Updated.");
 
     const deleteResponse = await handler(event("DELETE", "/accounts/me/tools/tool_abc123"));
-    expect(deleteResponse.statusCode).toBe(200);
+    expect(deleteResponse.status).toBe(200);
 
     const missingResponse = await handler(event("GET", "/accounts/me/tools/tool_abc123"));
-    expect(missingResponse.statusCode).toBe(404);
+    expect(missingResponse.status).toBe(404);
   });
 
   it("rejects invalid uploads", async () => {
     setStorageForTests(inMemoryStorage());
-    const { handler } = await import("../functions/account-manage/handler.ts");
+    const { handler } = await import("../src/accounts/handler.ts");
 
     const response = await handler(event("POST", "/accounts/me/tools", {
       name: "bad name",
@@ -79,8 +80,8 @@ describe("account tool API", () => {
       bundle: "export default {};",
     }));
 
-    expect(response.statusCode).toBe(400);
-    expect(responseJson(response).error).toContain("tool.name");
+    expect(response.status).toBe(400);
+    expect((await responseJson(response)).error).toContain("tool.name");
   });
 });
 
@@ -169,19 +170,5 @@ function inMemoryStorage(): StorageProvider {
 }
 
 function event(method: string, rawPath: string, body?: unknown) {
-  return {
-    rawPath,
-    headers: { authorization: "Bearer test-secret" },
-    requestContext: {
-      http: { method },
-    },
-    ...(body !== undefined ? { body: JSON.stringify(body), isBase64Encoded: false } : {}),
-  } as never;
-}
-
-function responseJson(response: { body?: unknown }): Record<string, any> {
-  if (typeof response.body !== "string") {
-    throw new Error("Expected string response body");
-  }
-  return JSON.parse(response.body) as Record<string, any>;
+  return coreRequest(method, rawPath, { authorization: "Bearer test-secret" }, body);
 }

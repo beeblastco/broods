@@ -4,8 +4,8 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, setSystemTime } from "bun:test";
-import type { GitHubSource } from "../functions/_shared/github-channel.ts";
-import { createGitHubChannel } from "../functions/_shared/github-channel.ts";
+import type { GitHubSource } from "../src/shared/github-channel.ts";
+import { createGitHubChannel } from "../src/shared/github-channel.ts";
 
 const TEST_PRIVATE_KEY = `-----BEGIN PRIVATE KEY-----
 MIICdgIBADANBgkqhkiG9w0BAQEFAASCAmAwggJcAgEAAoGBAMzqaeVzkNVUJzir

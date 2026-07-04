@@ -8,7 +8,7 @@ import {
   openTerminalTicket,
   sealTerminalTicket,
   type TerminalTicket,
-} from "../functions/_shared/terminal-ticket.ts";
+} from "../src/shared/terminal-ticket.ts";
 
 const SECRET = "test-service-secret";
 

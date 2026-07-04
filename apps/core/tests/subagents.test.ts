@@ -41,7 +41,7 @@ interface CoordinatorInternals {
 
 describe("SubagentCoordinator", () => {
   it("waits for all pending subagents before draining parent messages", async () => {
-    const { SubagentCoordinator } = await import("../functions/harness-processing/subagents.ts");
+    const { SubagentCoordinator } = await import("../src/harness/subagents.ts");
     const persistModelMessages = mock(async (_messages: UserModelMessage[]) => []);
     const coordinator = new SubagentCoordinator({
       accountId: "account_1",
@@ -76,7 +76,7 @@ describe("SubagentCoordinator", () => {
   });
 
   it("emits heartbeats while waiting and batches completed results with timeout notices", async () => {
-    const { SubagentCoordinator } = await import("../functions/harness-processing/subagents.ts");
+    const { SubagentCoordinator } = await import("../src/harness/subagents.ts");
     const persistModelMessages = mock(async (_messages: UserModelMessage[]) => []);
     const onHeartbeat = mock((_pendingCount: number) => { });
     const coordinator = new SubagentCoordinator({
@@ -109,7 +109,7 @@ describe("SubagentCoordinator", () => {
   });
 
   it("stringifies structured subagent results for parent injection", async () => {
-    const { SubagentCoordinator } = await import("../functions/harness-processing/subagents.ts");
+    const { SubagentCoordinator } = await import("../src/harness/subagents.ts");
     const persistModelMessages = mock(async (_messages: UserModelMessage[]) => []);
     const coordinator = new SubagentCoordinator({
       accountId: "account_1",
@@ -127,7 +127,7 @@ describe("SubagentCoordinator", () => {
   });
 
   it("resolves persistent conversation keys for new and resumed subagents", async () => {
-    const { SubagentCoordinator } = await import("../functions/harness-processing/subagents.ts");
+    const { SubagentCoordinator } = await import("../src/harness/subagents.ts");
     const coordinator = new SubagentCoordinator({
       accountId: "account_1",
       agentId: "agent_parent",
@@ -158,7 +158,7 @@ describe("SubagentCoordinator", () => {
   });
 
   it("carries the parent deployment scope into the ephemeral child session", async () => {
-    const { createEphemeralChildSession } = await import("../functions/harness-processing/subagents.ts");
+    const { createEphemeralChildSession } = await import("../src/harness/subagents.ts");
     const childSession = {
       accountId: "account_1",
       agentId: "virtual_subagent_x",
@@ -188,7 +188,7 @@ describe("SubagentCoordinator", () => {
   });
 
   it("rejects coordinator-level conversation keys outside persistent mode", async () => {
-    const { SubagentCoordinator } = await import("../functions/harness-processing/subagents.ts");
+    const { SubagentCoordinator } = await import("../src/harness/subagents.ts");
     const coordinator = new SubagentCoordinator({
       accountId: "account_1",
       agentId: "agent_parent",

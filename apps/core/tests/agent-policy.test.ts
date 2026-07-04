@@ -1,10 +1,10 @@
 import { describe, expect, it } from "bun:test";
-import { policyInputForTool } from "../functions/harness-processing/policy.ts";
+import { policyInputForTool } from "../src/harness/policy.ts";
 import {
   normalizeAgentPolicyConfig,
   normalizeAgentPolicyDocument,
-} from "../functions/_shared/storage/agent-policy.ts";
-import type { ResolvedWorkspace } from "../functions/_shared/workspaces.ts";
+} from "../src/shared/storage/agent-policy.ts";
+import type { ResolvedWorkspace } from "../src/shared/workspaces.ts";
 
 const workspaces: ResolvedWorkspace[] = [{
   name: "repo",

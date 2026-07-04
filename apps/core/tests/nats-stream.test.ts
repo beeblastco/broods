@@ -6,7 +6,7 @@
 
 import { describe, expect, it } from "bun:test";
 import { DeliverPolicy } from "nats.ws";
-import { consumerStartPolicy, streamResponseSubject, subjectToken } from "../functions/_shared/nats.ts";
+import { consumerStartPolicy, streamResponseSubject, subjectToken } from "../src/shared/nats.ts";
 
 describe("nats subject scheme", () => {
   it("encodes a conversationKey into a single NATS-safe subject token", () => {

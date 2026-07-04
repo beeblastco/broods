@@ -4,7 +4,7 @@
  */
 
 import { describe, expect, it } from "bun:test";
-import { createTelegramChannel } from "../functions/_shared/telegram-channel.ts";
+import { createTelegramChannel } from "../src/shared/telegram-channel.ts";
 
 describe("telegram channel adapter", () => {
   it("authenticates matching webhook secrets and rejects mismatches", () => {

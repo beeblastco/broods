@@ -5,7 +5,7 @@
 
 import { afterEach, describe, expect, it, mock } from "bun:test";
 import { GetItemCommand, PutItemCommand, QueryCommand, UpdateItemCommand } from "@aws-sdk/client-dynamodb";
-import { dynamo, toAttributeValue } from "../functions/_shared/storage/dynamo/client.ts";
+import { dynamo, toAttributeValue } from "../src/shared/storage/dynamo/client.ts";
 
 const ORIGINAL_ENV = { ...process.env };
 const originalSend = dynamo.send;
@@ -21,7 +21,7 @@ describe("async agent result persistence", () => {
   it("stores tool approval summaries for awaiting approval results", async () => {
     process.env.ASYNC_AGENT_RESULT_TABLE_NAME = "async-agent-result";
     dynamo.send = sendMock as never;
-    const { markAsyncAgentResultAwaitingApproval } = await import("../functions/harness-processing/async-agent-result.ts");
+    const { markAsyncAgentResultAwaitingApproval } = await import("../src/harness/async-agent-result.ts");
 
     await markAsyncAgentResultAwaitingApproval({
       eventId: "event-1",
@@ -81,7 +81,7 @@ describe("async agent result persistence", () => {
       }
       throw new Error("unexpected command");
     });
-    const { getAsyncAgentResult } = await import("../functions/harness-processing/async-agent-result.ts");
+    const { getAsyncAgentResult } = await import("../src/harness/async-agent-result.ts");
 
     await expect(getAsyncAgentResult("event-1")).resolves.toEqual({
       eventId: "event-1",
@@ -104,7 +104,7 @@ describe("async agent result persistence", () => {
   it("stores and decodes structured async agent responses", async () => {
     process.env.ASYNC_AGENT_RESULT_TABLE_NAME = "async-agent-result";
     dynamo.send = sendMock as never;
-    const { getAsyncAgentResult, markAsyncAgentResultCompleted } = await import("../functions/harness-processing/async-agent-result.ts");
+    const { getAsyncAgentResult, markAsyncAgentResultCompleted } = await import("../src/harness/async-agent-result.ts");
 
     await markAsyncAgentResultCompleted({
       eventId: "event-1",
@@ -152,7 +152,7 @@ describe("async tool result persistence", () => {
   it("stores pending async tool result rows with structured input", async () => {
     process.env.ASYNC_TOOL_RESULT_TABLE_NAME = "async-tool-result";
     dynamo.send = sendMock as never;
-    const { createPendingAsyncToolResult } = await import("../functions/harness-processing/async-tool-result.ts");
+    const { createPendingAsyncToolResult } = await import("../src/harness/async-tool-result.ts");
 
     await createPendingAsyncToolResult({
       resultId: "result-1",
@@ -181,7 +181,7 @@ describe("async tool result persistence", () => {
   it("stores NATS delivery metadata on detached async tool rows", async () => {
     process.env.ASYNC_TOOL_RESULT_TABLE_NAME = "async-tool-result";
     dynamo.send = sendMock as never;
-    const { createPendingAsyncToolResult } = await import("../functions/harness-processing/async-tool-result.ts");
+    const { createPendingAsyncToolResult } = await import("../src/harness/async-tool-result.ts");
 
     await createPendingAsyncToolResult({
       resultId: "result-1",
@@ -237,7 +237,7 @@ describe("async tool result persistence", () => {
       }
       throw new Error("unexpected command");
     });
-    const { sealDetachedAsyncToolGroup } = await import("../functions/harness-processing/async-tool-result.ts");
+    const { sealDetachedAsyncToolGroup } = await import("../src/harness/async-tool-result.ts");
 
     await expect(sealDetachedAsyncToolGroup("event-1")).resolves.toEqual({
       parentEventId: "event-1",
@@ -275,7 +275,7 @@ describe("async tool result persistence", () => {
       }
       throw new Error("unexpected command");
     });
-    const { listAsyncToolResultsByParentEvent } = await import("../functions/harness-processing/async-tool-result.ts");
+    const { listAsyncToolResultsByParentEvent } = await import("../src/harness/async-tool-result.ts");
 
     await expect(listAsyncToolResultsByParentEvent("event-1")).resolves.toMatchObject([{
       resultId: "result-1",
@@ -315,7 +315,7 @@ describe("async tool result persistence", () => {
       }
       throw new Error("unexpected command");
     });
-    const { getAsyncToolResult } = await import("../functions/harness-processing/async-tool-result.ts");
+    const { getAsyncToolResult } = await import("../src/harness/async-tool-result.ts");
 
     await expect(getAsyncToolResult("result-1")).resolves.toEqual({
       resultId: "result-1",
@@ -356,7 +356,7 @@ describe("async tool result persistence", () => {
       }
       throw new Error("unexpected command");
     });
-    const { settleAsyncToolResultFromCallback } = await import("../functions/harness-processing/async-tool-result.ts");
+    const { settleAsyncToolResultFromCallback } = await import("../src/harness/async-tool-result.ts");
 
     await expect(settleAsyncToolResultFromCallback({
       resultId: "result-1",

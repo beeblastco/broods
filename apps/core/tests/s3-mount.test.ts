@@ -21,7 +21,7 @@ const {
   resolveS3Mount,
   resolveS3MountIdentity,
   resolveS3ReadTarget,
-} = await import("../functions/harness-processing/sandbox/s3-mount.ts");
+} = await import("../src/harness/sandbox/s3-mount.ts");
 
 const NS = "fs-abc";
 

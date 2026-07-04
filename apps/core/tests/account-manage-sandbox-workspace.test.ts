@@ -6,20 +6,19 @@
  */
 
 import { afterEach, describe, expect, it, mock } from "bun:test";
-import type { LambdaFunctionURLEvent } from "aws-lambda";
-import type { LambdaResponse } from "../functions/_shared/runtime.ts";
-import { resetStorageForTests, setStorageForTests } from "../functions/_shared/storage/index.ts";
+import { coreRequest, responseJson } from "./helpers/http.ts";
+import { resetStorageForTests, setStorageForTests } from "../src/shared/storage/index.ts";
 import {
   normalizeCreateSandboxConfigInput,
   normalizeUpdateSandboxConfigInput,
   type SandboxConfigRecord,
-} from "../functions/_shared/storage/sandbox-config.ts";
+} from "../src/shared/storage/sandbox-config.ts";
 import {
   normalizeCreateWorkspaceConfigInput,
   normalizeUpdateWorkspaceConfigInput,
   type WorkspaceConfigRecord,
-} from "../functions/_shared/storage/workspace-config.ts";
-import { openTerminalTicket, TERMINAL_WEBSOCKET_PATH } from "../functions/_shared/terminal-ticket.ts";
+} from "../src/shared/storage/workspace-config.ts";
+import { openTerminalTicket, TERMINAL_WEBSOCKET_PATH } from "../src/shared/terminal-ticket.ts";
 
 const ACCOUNT_ID = "acct_test";
 const AUTH = { authorization: "Bearer fp_acct_test" };
@@ -56,7 +55,7 @@ const claimSandboxInstanceMock = mock(async () => true);
 const saveSandboxInstanceMock = mock(async () => {});
 const deleteSandboxInstanceMock = mock(async () => {});
 
-mock.module("../functions/harness-processing/sandbox/instance-store.ts", () => ({
+mock.module("../src/harness/sandbox/instance-store.ts", () => ({
   getSandboxExternalId: getSandboxExternalIdMock,
   claimSandboxInstance: claimSandboxInstanceMock,
   saveSandboxInstance: saveSandboxInstanceMock,
@@ -100,7 +99,7 @@ mock.module("@aws-sdk/client-lambda-microvms", () => ({
   ResumeMicrovmCommand: microvmCommand("ResumeMicrovm"),
 }));
 
-const { handler } = await import("../functions/account-manage/handler.ts");
+const { handler } = await import("../src/accounts/handler.ts");
 
 afterEach(() => {
   if (ORIGINAL_SERVICE_AUTH_SECRET === undefined) delete process.env.SERVICE_AUTH_SECRET;
@@ -138,8 +137,8 @@ describe("account-manage sandbox endpoints", () => {
       },
     }));
 
-    expect(response.statusCode).toBe(201);
-    const body = responseJson(response) as SandboxConfigRecord;
+    expect(response.status).toBe(201);
+    const body = await responseJson(response) as SandboxConfigRecord;
     expect(body.sandboxId).toMatch(/^sb_/);
     expect(body.name).toBe("builder");
     expect(body.config.envVars).toEqual({ TOKEN: "********" });
@@ -149,34 +148,34 @@ describe("account-manage sandbox endpoints", () => {
   it("lists, fetches, updates, and deletes a sandbox", async () => {
     setStorageForTests(createFakeStorage());
 
-    const created = responseJson(await handler(createEvent("POST", "/accounts/me/sandboxes", AUTH, {
+    const created = await responseJson(await handler(createEvent("POST", "/accounts/me/sandboxes", AUTH, {
       name: "builder",
       config: { provider: "lambda", permissionMode: "ask" },
     }))) as SandboxConfigRecord;
     const id = created.sandboxId;
 
-    const list = responseJson(await handler(createEvent("GET", "/accounts/me/sandboxes", AUTH))) as {
+    const list = await responseJson(await handler(createEvent("GET", "/accounts/me/sandboxes", AUTH))) as {
       sandboxes: SandboxConfigRecord[];
     };
     expect(list.sandboxes.map((s) => s.sandboxId)).toEqual([id]);
 
     const fetched = await handler(createEvent("GET", `/accounts/me/sandboxes/${id}`, AUTH));
-    expect(fetched.statusCode).toBe(200);
-    expect((responseJson(fetched) as SandboxConfigRecord).config.permissionMode).toBe("ask");
+    expect(fetched.status).toBe(200);
+    expect((await responseJson(fetched) as SandboxConfigRecord).config.permissionMode).toBe("ask");
 
     const updated = await handler(createEvent("PATCH", `/accounts/me/sandboxes/${id}`, AUTH, {
       config: { permissionMode: "bypass" },
     }));
-    expect(updated.statusCode).toBe(200);
-    expect((responseJson(updated) as SandboxConfigRecord).config.permissionMode).toBe("bypass");
+    expect(updated.status).toBe(200);
+    expect((await responseJson(updated) as SandboxConfigRecord).config.permissionMode).toBe("bypass");
 
     const deleted = await handler(createEvent("DELETE", `/accounts/me/sandboxes/${id}`, AUTH));
-    expect(deleted.statusCode).toBe(200);
-    expect(responseJson(deleted)).toEqual({ deleted: true });
+    expect(deleted.status).toBe(200);
+    expect(await responseJson(deleted)).toEqual({ deleted: true });
 
     const missing = await handler(createEvent("GET", `/accounts/me/sandboxes/${id}`, AUTH));
-    expect(missing.statusCode).toBe(404);
-    expect(responseJson(missing)).toEqual({ error: "Sandbox not found" });
+    expect(missing.status).toBe(404);
+    expect(await responseJson(missing)).toEqual({ error: "Sandbox not found" });
   });
 
   it("returns 400 for an invalid sandbox provider", async () => {
@@ -187,20 +186,20 @@ describe("account-manage sandbox endpoints", () => {
       config: { provider: "fargate" },
     }));
 
-    expect(response.statusCode).toBe(400);
-    expect(String((responseJson(response) as { error: string }).error)).toContain("config.provider must be one of");
+    expect(response.status).toBe(400);
+    expect(String((await responseJson(response) as { error: string }).error)).toContain("config.provider must be one of");
   });
 
   it("rejects unauthenticated sandbox requests", async () => {
     setStorageForTests(createFakeStorage());
     const response = await handler(createEvent("GET", "/accounts/me/sandboxes"));
-    expect(response.statusCode).toBe(401);
+    expect(response.status).toBe(401);
   });
 
   it("rejects lifecycle actions for reservation keys not owned by the account/config", async () => {
     process.env.SERVICE_AUTH_SECRET = "service-secret";
     setStorageForTests(createFakeStorage());
-    const created = responseJson(await handler(createEvent("POST", "/accounts/me/sandboxes", AUTH, {
+    const created = await responseJson(await handler(createEvent("POST", "/accounts/me/sandboxes", AUTH, {
       name: "persistent",
       config: { provider: "sandbox", persistent: true, options: { workdirUrl: "https://workdir.example.com", apiKey: "tenant-key" } },
     }))) as SandboxConfigRecord;
@@ -212,8 +211,8 @@ describe("account-manage sandbox endpoints", () => {
       { reservationKey: "fs-not-owned-by-this-account" },
     ));
 
-    expect(response.statusCode).toBe(403);
-    expect(responseJson(response)).toEqual({ error: "reservationKey does not belong to this account or sandbox config" });
+    expect(response.status).toBe(403);
+    expect(await responseJson(response)).toEqual({ error: "reservationKey does not belong to this account or sandbox config" });
   });
 
   it("runs bounded lifecycle exec commands without marking non-zero exits as sandbox errors", async () => {
@@ -223,7 +222,7 @@ describe("account-manage sandbox endpoints", () => {
     globalThis.fetch = fetchMock as unknown as typeof fetch;
     setStorageForTests(createFakeStorage());
     const reservationKey = "fs-0123456789abcdef0123456789abcdef01234567";
-    const created = responseJson(await handler(createEvent("POST", "/accounts/me/sandboxes", AUTH, {
+    const created = await responseJson(await handler(createEvent("POST", "/accounts/me/sandboxes", AUTH, {
       name: "persistent",
       config: { provider: "sandbox", persistent: true, options: { reservationKey } },
     }))) as SandboxConfigRecord;
@@ -235,8 +234,8 @@ describe("account-manage sandbox endpoints", () => {
       { reservationKey, code: "exit 7", timeoutSeconds: 9999, outputLimitBytes: 999999 },
     ));
 
-    expect(response.statusCode).toBe(200);
-    expect(responseJson(response)).toMatchObject({
+    expect(response.status).toBe(200);
+    expect(await responseJson(response)).toMatchObject({
       ok: false,
       runtime: "bash",
       exitCode: 7,
@@ -257,7 +256,7 @@ describe("account-manage sandbox endpoints", () => {
     globalThis.fetch = fetchMock as unknown as typeof fetch;
     setStorageForTests(createFakeStorage());
     const reservationKey = "fs-0123456789abcdef0123456789abcdef01234567";
-    const created = responseJson(await handler(createEvent("POST", "/accounts/me/sandboxes", AUTH, {
+    const created = await responseJson(await handler(createEvent("POST", "/accounts/me/sandboxes", AUTH, {
       name: "persistent",
       config: { provider: "sandbox", persistent: true, options: { reservationKey } },
     }))) as SandboxConfigRecord;
@@ -269,8 +268,8 @@ describe("account-manage sandbox endpoints", () => {
       { reservationKey },
     ));
 
-    expect(response.statusCode).toBe(200);
-    const body = responseJson(response) as { token: string; expiresAt: number; websocketPath: string };
+    expect(response.status).toBe(200);
+    const body = await responseJson(response) as { token: string; expiresAt: number; websocketPath: string };
     expect(body.websocketPath).toBe(TERMINAL_WEBSOCKET_PATH);
     expect(body.expiresAt).toBeGreaterThan(Date.now());
     // The browser-held token is opaque; only a stage secret opens it.
@@ -287,7 +286,7 @@ describe("account-manage sandbox endpoints", () => {
     process.env.SERVICE_AUTH_SECRET = "service-secret";
     setStorageForTests(createFakeStorage());
     const reservationKey = "fs-0123456789abcdef0123456789abcdef01234567";
-    const created = responseJson(await handler(createEvent("POST", "/accounts/me/sandboxes", AUTH, {
+    const created = await responseJson(await handler(createEvent("POST", "/accounts/me/sandboxes", AUTH, {
       name: "persistent",
       config: { provider: "lambda", persistent: true, options: { reservationKey } },
     }))) as SandboxConfigRecord;
@@ -299,8 +298,8 @@ describe("account-manage sandbox endpoints", () => {
       { reservationKey },
     ));
 
-    expect(response.statusCode).toBe(200);
-    const body = responseJson(response) as { token: string; expiresAt: number; websocketPath: string };
+    expect(response.status).toBe(200);
+    const body = await responseJson(response) as { token: string; expiresAt: number; websocketPath: string };
     expect(body.websocketPath).toBe(TERMINAL_WEBSOCKET_PATH);
     // The gateway must send the shell token in the MicroVM proxy header, not
     // a bearer Authorization header.
@@ -317,7 +316,7 @@ describe("account-manage sandbox endpoints", () => {
     microvmShellTokenError = "MicroVM must have been run with the SHELL_INGRESS network connector attached";
     setStorageForTests(createFakeStorage());
     const reservationKey = "fs-0123456789abcdef0123456789abcdef01234567";
-    const created = responseJson(await handler(createEvent("POST", "/accounts/me/sandboxes", AUTH, {
+    const created = await responseJson(await handler(createEvent("POST", "/accounts/me/sandboxes", AUTH, {
       name: "persistent",
       config: { provider: "lambda", persistent: true, options: { reservationKey } },
     }))) as SandboxConfigRecord;
@@ -329,15 +328,15 @@ describe("account-manage sandbox endpoints", () => {
       { reservationKey },
     ));
 
-    expect(response.statusCode).toBe(409);
-    expect(String((responseJson(response) as { error: string }).error)).toContain("terminate and re-reserve");
+    expect(response.status).toBe(409);
+    expect(String((await responseJson(response) as { error: string }).error)).toContain("terminate and re-reserve");
   });
 
   it("refuses terminal tickets for providers without an in-guest PTY", async () => {
     process.env.SERVICE_AUTH_SECRET = "service-secret";
     setStorageForTests(createFakeStorage());
     const reservationKey = "fs-0123456789abcdef0123456789abcdef01234567";
-    const created = responseJson(await handler(createEvent("POST", "/accounts/me/sandboxes", AUTH, {
+    const created = await responseJson(await handler(createEvent("POST", "/accounts/me/sandboxes", AUTH, {
       name: "persistent",
       config: { provider: "e2b", persistent: true, network: { mode: "allow-all" }, options: { reservationKey } },
     }))) as SandboxConfigRecord;
@@ -349,8 +348,8 @@ describe("account-manage sandbox endpoints", () => {
       { reservationKey },
     ));
 
-    expect(response.statusCode).toBe(409);
-    expect(String((responseJson(response) as { error: string }).error)).toContain("does not support a live terminal");
+    expect(response.status).toBe(409);
+    expect(String((await responseJson(response) as { error: string }).error)).toContain("does not support a live terminal");
   });
 });
 
@@ -364,12 +363,12 @@ describe("account-manage workspace endpoints", () => {
       description: "shared notes",
       config: { storage: { provider: "s3" }, harness: { enabled: true } },
     }));
-    expect(created.statusCode).toBe(201);
-    const record = responseJson(created) as WorkspaceConfigRecord;
+    expect(created.status).toBe(201);
+    const record = await responseJson(created) as WorkspaceConfigRecord;
     expect(record.workspaceId).toMatch(/^ws_/);
     expect(record.config).toEqual({ storage: { provider: "s3" }, harness: { enabled: true } });
 
-    const list = responseJson(await handler(createEvent("GET", "/accounts/me/workspaces", AUTH))) as {
+    const list = await responseJson(await handler(createEvent("GET", "/accounts/me/workspaces", AUTH))) as {
       workspaces: WorkspaceConfigRecord[];
     };
     expect(list.workspaces).toHaveLength(1);
@@ -377,10 +376,10 @@ describe("account-manage workspace endpoints", () => {
     const updated = await handler(createEvent("PATCH", `/accounts/me/workspaces/${record.workspaceId}`, AUTH, {
       config: { harness: { enabled: false } },
     }));
-    expect((responseJson(updated) as WorkspaceConfigRecord).config.harness).toEqual({ enabled: false });
+    expect((await responseJson(updated) as WorkspaceConfigRecord).config.harness).toEqual({ enabled: false });
 
     const deleted = await handler(createEvent("DELETE", `/accounts/me/workspaces/${record.workspaceId}`, AUTH));
-    expect(responseJson(deleted)).toEqual({ deleted: true });
+    expect(await responseJson(deleted)).toEqual({ deleted: true });
   });
 
   it("returns 400 for an unsupported storage provider", async () => {
@@ -391,21 +390,21 @@ describe("account-manage workspace endpoints", () => {
       config: { storage: { provider: "vercel" } },
     }));
 
-    expect(response.statusCode).toBe(400);
-    expect(String((responseJson(response) as { error: string }).error)).toContain('config.storage.provider "vercel" is not supported yet');
+    expect(response.status).toBe(400);
+    expect(String((await responseJson(response) as { error: string }).error)).toContain('config.storage.provider "vercel" is not supported yet');
   });
 
   it("returns 404 when updating a missing workspace", async () => {
     setStorageForTests(createFakeStorage());
     const response = await handler(createEvent("PATCH", "/accounts/me/workspaces/ws_missing", AUTH, { name: "x" }));
-    expect(response.statusCode).toBe(404);
-    expect(responseJson(response)).toEqual({ error: "Workspace not found" });
+    expect(response.status).toBe(404);
+    expect(await responseJson(response)).toEqual({ error: "Workspace not found" });
   });
 
   it("allows the Convex service token to reach workspace file routes", async () => {
     process.env.SERVICE_AUTH_SECRET = "service-secret";
     setStorageForTests(createFakeStorage());
-    const created = responseJson(await handler(createEvent("POST", "/accounts/me/workspaces", AUTH, {
+    const created = await responseJson(await handler(createEvent("POST", "/accounts/me/workspaces", AUTH, {
       name: "notes",
       config: { storage: { provider: "s3" } },
     }))) as WorkspaceConfigRecord;
@@ -416,14 +415,10 @@ describe("account-manage workspace endpoints", () => {
       { authorization: "Bearer service-secret", "x-account-id": ACCOUNT_ID },
     ));
 
-    expect(response.statusCode).toBe(405);
-    expect(responseJson(response)).toMatchObject({ error: "Method not allowed" });
+    expect(response.status).toBe(405);
+    expect(await responseJson(response)).toMatchObject({ error: "Method not allowed" });
   });
 });
-
-function responseJson(response: LambdaResponse): unknown {
-  return JSON.parse(String(response.body ?? "{}"));
-}
 
 function fetchResponse(payload: unknown, status = 200): Response {
   return {
@@ -531,32 +526,6 @@ function createEvent(
   rawPath: string,
   headers: Record<string, string> = {},
   body?: unknown,
-): LambdaFunctionURLEvent {
-  return {
-    version: "2.0",
-    routeKey: "$default",
-    rawPath,
-    rawQueryString: "",
-    headers,
-    requestContext: {
-      accountId: "123456789012",
-      apiId: "api-id",
-      domainName: "example.lambda-url.aws",
-      domainPrefix: "example",
-      http: {
-        method,
-        path: rawPath,
-        protocol: "HTTP/1.1",
-        sourceIp: "127.0.0.1",
-        userAgent: "bun-test",
-      },
-      requestId: "request-id",
-      routeKey: "$default",
-      stage: "$default",
-      time: "01/May/2026:00:00:00 +0000",
-      timeEpoch: 1777593600000,
-    },
-    isBase64Encoded: false,
-    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-  };
+): ReturnType<typeof coreRequest> {
+  return coreRequest(method, rawPath, headers, body);
 }

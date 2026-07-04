@@ -5,7 +5,7 @@
 
 import { describe, expect, it } from "bun:test";
 import type { UserContent } from "ai";
-import { extractText, isOpenAllowList } from "../functions/_shared/channels.ts";
+import { extractText, isOpenAllowList } from "../src/shared/channels.ts";
 
 describe("shared channel helpers", () => {
   it("extracts and concatenates only text parts from structured user content", () => {

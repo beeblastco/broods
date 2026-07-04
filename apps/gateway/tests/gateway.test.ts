@@ -14,7 +14,7 @@ import {
   lokiLogEntry,
   websocketMessageForNatsData,
 } from "../src/index.ts";
-import { sealTerminalTicket } from "../../core/functions/_shared/terminal-ticket.ts";
+import { sealTerminalTicket } from "../../core/src/shared/terminal-ticket.ts";
 import {
   isObservabilityClientMessage,
   MAX_OBSERVABILITY_BACKFILL,

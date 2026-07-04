@@ -21,7 +21,7 @@ const deletePrefixMock = mock(async (_bucket: string, _prefix: string) => 0);
 const deleteObjectMock = mock(async (_bucket: string, _key: string) => {});
 const existsMock = mock(async (_bucket: string, _key: string) => false);
 
-mock.module("../functions/_shared/s3.ts", () => ({
+mock.module("../src/shared/s3.ts", () => ({
   listS3Prefix: listMock,
   readS3Text: mock(async () => ""),
   readS3Bytes: mock(async () => new Uint8Array()),
@@ -58,7 +58,7 @@ describe("workspace file storage", () => {
       size: 42,
       lastModified: "2026-06-18T00:00:00.000Z",
     }]);
-    const { listWorkspaceFiles } = await import("../functions/account-manage/workspace-files.ts");
+    const { listWorkspaceFiles } = await import("../src/accounts/workspace-files.ts");
 
     const files = await listWorkspaceFiles("acct_test", "ws_test");
 
@@ -78,7 +78,7 @@ describe("workspace file storage", () => {
   });
 
   it("writes dashboard uploads into the mounted namespace with directory metadata", async () => {
-    const { uploadWorkspaceFile } = await import("../functions/account-manage/workspace-files.ts");
+    const { uploadWorkspaceFile } = await import("../src/accounts/workspace-files.ts");
 
     const file = await uploadWorkspaceFile("acct_test", "ws_test", {
       path: "notes/new.txt",
@@ -96,7 +96,7 @@ describe("workspace file storage", () => {
   it("deletes both a folder prefix and its directory marker", async () => {
     deletePrefixMock.mockResolvedValueOnce(3);
     existsMock.mockResolvedValueOnce(true);
-    const { deleteWorkspacePath } = await import("../functions/account-manage/workspace-files.ts");
+    const { deleteWorkspacePath } = await import("../src/accounts/workspace-files.ts");
 
     const deleted = await deleteWorkspacePath("acct_test", "ws_test", "notes");
 
@@ -106,7 +106,7 @@ describe("workspace file storage", () => {
   });
 
   it("rejects traversal before touching S3", async () => {
-    const { uploadWorkspaceFile } = await import("../functions/account-manage/workspace-files.ts");
+    const { uploadWorkspaceFile } = await import("../src/accounts/workspace-files.ts");
 
     await expect(uploadWorkspaceFile("acct_test", "ws_test", {
       path: "../secret.txt",

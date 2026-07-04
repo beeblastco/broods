@@ -2,9 +2,9 @@
 
 import { afterEach, describe, expect, it, mock } from "bun:test";
 import { TransactWriteItemsCommand } from "@aws-sdk/client-dynamodb";
-import { dynamo } from "../functions/_shared/storage/dynamo/client.ts";
-import { dynamoUsageStore } from "../functions/_shared/storage/dynamo/usage.ts";
-import type { UsageTaskInput } from "../functions/_shared/storage/types.ts";
+import { dynamo } from "../src/shared/storage/dynamo/client.ts";
+import { dynamoUsageStore } from "../src/shared/storage/dynamo/usage.ts";
+import type { UsageTaskInput } from "../src/shared/storage/types.ts";
 
 const originalSend = dynamo.send;
 

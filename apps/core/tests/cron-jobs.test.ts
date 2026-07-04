@@ -12,7 +12,7 @@ import {
   UpdateItemCommand,
   type AttributeValue,
 } from "@aws-sdk/client-dynamodb";
-import { dynamo } from "../functions/_shared/storage/dynamo/client.ts";
+import { dynamo } from "../src/shared/storage/dynamo/client.ts";
 
 const ORIGINAL_ENV = { ...process.env };
 const originalSend = dynamo.send;
@@ -28,7 +28,7 @@ describe("cron job persistence", () => {
   it("creates account-scoped cron job records", async () => {
     process.env.CRONS_TABLE_NAME = "crons";
     dynamo.send = sendMock as never;
-    const { getStorage, resetStorageForTests } = await import("../functions/_shared/storage/index.ts");
+    const { getStorage, resetStorageForTests } = await import("../src/shared/storage/index.ts");
     resetStorageForTests();
 
     const cron = await getStorage().crons.create("acct_test", {
@@ -60,7 +60,7 @@ describe("cron job persistence", () => {
   it("lists cron jobs by account", async () => {
     process.env.CRONS_TABLE_NAME = "crons";
     dynamo.send = sendMock as never;
-    const { getStorage, resetStorageForTests } = await import("../functions/_shared/storage/index.ts");
+    const { getStorage, resetStorageForTests } = await import("../src/shared/storage/index.ts");
     resetStorageForTests();
     sendMock.mockImplementation(async (command: unknown) => {
       if (command instanceof QueryCommand) {
@@ -82,7 +82,7 @@ describe("cron job persistence", () => {
   it("updates and deletes cron jobs", async () => {
     process.env.CRONS_TABLE_NAME = "crons";
     dynamo.send = sendMock as never;
-    const { getStorage, resetStorageForTests } = await import("../functions/_shared/storage/index.ts");
+    const { getStorage, resetStorageForTests } = await import("../src/shared/storage/index.ts");
     resetStorageForTests();
     sendMock.mockImplementation(async (command: unknown) => {
       if (command instanceof UpdateItemCommand) {
@@ -111,7 +111,7 @@ describe("cron job persistence", () => {
   it("loads one cron job by account and id", async () => {
     process.env.CRONS_TABLE_NAME = "crons";
     dynamo.send = sendMock as never;
-    const { getStorage, resetStorageForTests } = await import("../functions/_shared/storage/index.ts");
+    const { getStorage, resetStorageForTests } = await import("../src/shared/storage/index.ts");
     resetStorageForTests();
     sendMock.mockImplementation(async (command: unknown) => {
       if (command instanceof GetItemCommand) {
@@ -130,7 +130,7 @@ describe("cron job persistence", () => {
   it("records and lists cron job run history", async () => {
     process.env.CRONS_TABLE_NAME = "crons";
     dynamo.send = sendMock as never;
-    const { getStorage, resetStorageForTests } = await import("../functions/_shared/storage/index.ts");
+    const { getStorage, resetStorageForTests } = await import("../src/shared/storage/index.ts");
     resetStorageForTests();
     let runItem: Record<string, AttributeValue> | undefined;
     sendMock.mockImplementation(async (command: unknown) => {

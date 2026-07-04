@@ -11,14 +11,14 @@ import {
   ScanCommand,
   type AttributeValue,
 } from "@aws-sdk/client-dynamodb";
-import { dynamo, toAttributeValue } from "../functions/_shared/storage/dynamo/client.ts";
-import type { AccountRecord } from "../functions/_shared/storage/index.ts";
-import { normalizeFilesystemNamespace } from "../functions/_shared/runtime-keys.ts";
+import { dynamo, toAttributeValue } from "../src/shared/storage/dynamo/client.ts";
+import type { AccountRecord } from "../src/shared/storage/index.ts";
+import { normalizeFilesystemNamespace } from "../src/shared/runtime-keys.ts";
 
 let mockDeleteS3PrefixResult = 0;
 let mockDeleteS3PrefixCalls: [string, string][] = [];
 
-mock.module("../functions/_shared/s3.ts", () => ({
+mock.module("../src/shared/s3.ts", () => ({
   deleteS3Prefix: mock(async (bucketName: string, prefix: string) => {
     mockDeleteS3PrefixCalls.push([bucketName, prefix]);
     return mockDeleteS3PrefixResult;
@@ -62,7 +62,7 @@ const testAccount: AccountRecord = {
 describe("deleteAccountRuntimeData", () => {
   it("returns zeroed summary when no table env vars are set", async () => {
     dynamo.send = sendMock as never;
-    const { deleteAccountRuntimeData } = await import("../functions/account-manage/cleanup.ts");
+    const { deleteAccountRuntimeData } = await import("../src/accounts/cleanup.ts");
 
     const summary = await deleteAccountRuntimeData(testAccount);
 
@@ -79,7 +79,7 @@ describe("deleteAccountRuntimeData", () => {
   it("deletes conversations across paginated scan results", async () => {
     process.env.CONVERSATIONS_TABLE_NAME = "conversations";
     dynamo.send = sendMock as never;
-    const { deleteAccountRuntimeData } = await import("../functions/account-manage/cleanup.ts");
+    const { deleteAccountRuntimeData } = await import("../src/accounts/cleanup.ts");
 
     let deleteScanPage = 0;
     sendMock.mockImplementation(async (command: unknown) => {
@@ -134,7 +134,7 @@ describe("deleteAccountRuntimeData", () => {
     process.env.CONVERSATIONS_TABLE_NAME = "conversations";
     process.env.PROCESSED_EVENTS_TABLE_NAME = "processed-events";
     dynamo.send = sendMock as never;
-    const { deleteAccountRuntimeData } = await import("../functions/account-manage/cleanup.ts");
+    const { deleteAccountRuntimeData } = await import("../src/accounts/cleanup.ts");
 
     sendMock.mockImplementation(async (command: unknown) => {
       if (command instanceof ScanCommand) {
@@ -162,7 +162,7 @@ describe("deleteAccountRuntimeData", () => {
     process.env.CONVERSATIONS_TABLE_NAME = "conversations";
     process.env.ASYNC_AGENT_RESULT_TABLE_NAME = "async-agent-results";
     dynamo.send = sendMock as never;
-    const { deleteAccountRuntimeData } = await import("../functions/account-manage/cleanup.ts");
+    const { deleteAccountRuntimeData } = await import("../src/accounts/cleanup.ts");
 
     sendMock.mockImplementation(async (command: unknown) => {
       if (command instanceof ScanCommand) {
@@ -194,9 +194,9 @@ describe("deleteAccountRuntimeData", () => {
     process.env.SANDBOX_CONFIGS_TABLE_NAME = "sandbox-configs";
     mockDeleteS3PrefixResult = 1;
     dynamo.send = sendMock as never;
-    const { resetStorageForTests } = await import("../functions/_shared/storage/index.ts");
+    const { resetStorageForTests } = await import("../src/shared/storage/index.ts");
     resetStorageForTests();
-    const { deleteAccountRuntimeData } = await import("../functions/account-manage/cleanup.ts");
+    const { deleteAccountRuntimeData } = await import("../src/accounts/cleanup.ts");
 
     let workspaceListed = false;
     sendMock.mockImplementation(async (command: unknown) => {
@@ -249,7 +249,7 @@ describe("deleteAccountRuntimeData", () => {
     process.env.CONVERSATIONS_TABLE_NAME = "conversations";
     process.env.ASYNC_TOOL_RESULT_TABLE_NAME = "async-tool-results";
     dynamo.send = sendMock as never;
-    const { deleteAccountRuntimeData } = await import("../functions/account-manage/cleanup.ts");
+    const { deleteAccountRuntimeData } = await import("../src/accounts/cleanup.ts");
 
     sendMock.mockImplementation(async (command: unknown) => {
       if (command instanceof ScanCommand) {
@@ -276,7 +276,7 @@ describe("deleteAccountRuntimeData", () => {
   it("flushes remaining items when scan ends with partial batch", async () => {
     process.env.CONVERSATIONS_TABLE_NAME = "conversations";
     dynamo.send = sendMock as never;
-    const { deleteAccountRuntimeData } = await import("../functions/account-manage/cleanup.ts");
+    const { deleteAccountRuntimeData } = await import("../src/accounts/cleanup.ts");
 
     sendMock.mockImplementation(async (command: unknown) => {
       if (command instanceof ScanCommand) {
@@ -310,7 +310,7 @@ describe("deleteAccountRuntimeData", () => {
   it("handles unprocessed items by retrying in flushBatchDeletes", async () => {
     process.env.CONVERSATIONS_TABLE_NAME = "conversations";
     dynamo.send = sendMock as never;
-    const { deleteAccountRuntimeData } = await import("../functions/account-manage/cleanup.ts");
+    const { deleteAccountRuntimeData } = await import("../src/accounts/cleanup.ts");
 
     let batchCallCount = 0;
     sendMock.mockImplementation(async (command: unknown) => {
@@ -352,7 +352,7 @@ describe("deleteAccountRuntimeData", () => {
   it("skips items with missing key attributes in projectKey", async () => {
     process.env.CONVERSATIONS_TABLE_NAME = "conversations";
     dynamo.send = sendMock as never;
-    const { deleteAccountRuntimeData } = await import("../functions/account-manage/cleanup.ts");
+    const { deleteAccountRuntimeData } = await import("../src/accounts/cleanup.ts");
 
     sendMock.mockImplementation(async (command: unknown) => {
       if (command instanceof ScanCommand) {
@@ -389,7 +389,7 @@ describe("deleteAccountRuntimeData", () => {
     process.env.AGENT_CONFIGS_TABLE_NAME = "agent-configs";
     dynamo.send = sendMock as never;
 
-    const { deleteAccountRuntimeData } = await import("../functions/account-manage/cleanup.ts");
+    const { deleteAccountRuntimeData } = await import("../src/accounts/cleanup.ts");
 
     sendMock.mockImplementation(async (command: unknown) => {
       if (command instanceof ScanCommand) {
@@ -420,7 +420,7 @@ describe("deleteAccountRuntimeData", () => {
     process.env.CONVERSATIONS_TABLE_NAME = "conversations";
     dynamo.send = sendMock as never;
 
-    const { deleteAccountRuntimeData } = await import("../functions/account-manage/cleanup.ts");
+    const { deleteAccountRuntimeData } = await import("../src/accounts/cleanup.ts");
 
     sendMock.mockImplementation(async (command: unknown) => {
       if (command instanceof ScanCommand) {
@@ -444,9 +444,9 @@ describe("deleteAccountRuntimeData", () => {
     dynamo.send = sendMock as never;
     mockDeleteS3PrefixResult = 2;
 
-    const { deleteAccountRuntimeData } = await import("../functions/account-manage/cleanup.ts");
-    const { workspaceNamespace } = await import("../functions/_shared/workspaces.ts");
-    const { workspaceNamespacePrefix } = await import("../functions/_shared/sandbox.ts");
+    const { deleteAccountRuntimeData } = await import("../src/accounts/cleanup.ts");
+    const { workspaceNamespace } = await import("../src/shared/workspaces.ts");
+    const { workspaceNamespacePrefix } = await import("../src/shared/sandbox.ts");
 
     sendMock.mockImplementation(async (command: unknown) => {
       if (command instanceof ScanCommand) {
@@ -496,9 +496,9 @@ describe("deleteAccountRuntimeData", () => {
     process.env.FILESYSTEM_BUCKET_NAME = "test-bucket";
     mockDeleteS3PrefixResult = 3;
 
-    const { deleteWorkspaceFilesystem } = await import("../functions/account-manage/cleanup.ts");
-    const { workspaceNamespace } = await import("../functions/_shared/workspaces.ts");
-    const { workspaceNamespacePrefix } = await import("../functions/_shared/sandbox.ts");
+    const { deleteWorkspaceFilesystem } = await import("../src/accounts/cleanup.ts");
+    const { workspaceNamespace } = await import("../src/shared/workspaces.ts");
+    const { workspaceNamespacePrefix } = await import("../src/shared/sandbox.ts");
 
     const deleted = await deleteWorkspaceFilesystem("acct_test", "ws_demo", { provider: "s3" });
 
@@ -511,7 +511,7 @@ describe("deleteAccountRuntimeData", () => {
   it("handles listAgents failure gracefully by defaulting to empty array", async () => {
     process.env.CONVERSATIONS_TABLE_NAME = "conversations";
     dynamo.send = sendMock as never;
-    const { deleteAccountRuntimeData } = await import("../functions/account-manage/cleanup.ts");
+    const { deleteAccountRuntimeData } = await import("../src/accounts/cleanup.ts");
 
     sendMock.mockImplementation(async (command: unknown) => {
       if (command instanceof ScanCommand) {
@@ -538,7 +538,7 @@ describe("deleteAccountRuntimeData", () => {
     process.env.AGENT_CONFIGS_TABLE_NAME = "agent-configs";
     dynamo.send = sendMock as never;
 
-    const { deleteAccountRuntimeData } = await import("../functions/account-manage/cleanup.ts");
+    const { deleteAccountRuntimeData } = await import("../src/accounts/cleanup.ts");
 
     sendMock.mockImplementation(async (command: unknown) => {
       if (command instanceof ScanCommand) {
@@ -572,7 +572,7 @@ describe("deleteAccountRuntimeData", () => {
     process.env.AGENT_CONFIGS_TABLE_NAME = "agent-configs";
     dynamo.send = sendMock as never;
 
-    const { deleteAccountRuntimeData } = await import("../functions/account-manage/cleanup.ts");
+    const { deleteAccountRuntimeData } = await import("../src/accounts/cleanup.ts");
 
     sendMock.mockImplementation(async (command: unknown) => {
       if (command instanceof ScanCommand) {
@@ -605,7 +605,7 @@ describe("deleteAccountRuntimeData", () => {
     process.env.ASYNC_AGENT_RESULT_TABLE_NAME = "async-agent-results";
     process.env.ASYNC_TOOL_RESULT_TABLE_NAME = "async-tool-results";
     dynamo.send = sendMock as never;
-    const { deleteAccountRuntimeData } = await import("../functions/account-manage/cleanup.ts");
+    const { deleteAccountRuntimeData } = await import("../src/accounts/cleanup.ts");
 
     sendMock.mockImplementation(async (command: unknown) => {
       if (command instanceof ScanCommand) {
@@ -632,7 +632,7 @@ describe("deleteAccountRuntimeData", () => {
   it("uses correct filter expression for conversations delete scan", async () => {
     process.env.CONVERSATIONS_TABLE_NAME = "conversations";
     dynamo.send = sendMock as never;
-    const { deleteAccountRuntimeData } = await import("../functions/account-manage/cleanup.ts");
+    const { deleteAccountRuntimeData } = await import("../src/accounts/cleanup.ts");
 
     sendMock.mockImplementation(async (command: unknown) => {
       if (command instanceof ScanCommand) {
@@ -662,7 +662,7 @@ describe("deleteAccountRuntimeData", () => {
     process.env.CONVERSATIONS_TABLE_NAME = "conversations";
     process.env.PROCESSED_EVENTS_TABLE_NAME = "processed-events";
     dynamo.send = sendMock as never;
-    const { deleteAccountRuntimeData } = await import("../functions/account-manage/cleanup.ts");
+    const { deleteAccountRuntimeData } = await import("../src/accounts/cleanup.ts");
 
     sendMock.mockImplementation(async (command: unknown) => {
       if (command instanceof ScanCommand) {
@@ -689,7 +689,7 @@ describe("deleteAccountRuntimeData", () => {
     process.env.CONVERSATIONS_TABLE_NAME = "conversations";
     process.env.ASYNC_AGENT_RESULT_TABLE_NAME = "async-agent-results";
     dynamo.send = sendMock as never;
-    const { deleteAccountRuntimeData } = await import("../functions/account-manage/cleanup.ts");
+    const { deleteAccountRuntimeData } = await import("../src/accounts/cleanup.ts");
 
     sendMock.mockImplementation(async (command: unknown) => {
       if (command instanceof ScanCommand) {
@@ -716,7 +716,7 @@ describe("deleteAccountRuntimeData", () => {
     process.env.CONVERSATIONS_TABLE_NAME = "conversations";
     process.env.ASYNC_TOOL_RESULT_TABLE_NAME = "async-tool-results";
     dynamo.send = sendMock as never;
-    const { deleteAccountRuntimeData } = await import("../functions/account-manage/cleanup.ts");
+    const { deleteAccountRuntimeData } = await import("../src/accounts/cleanup.ts");
 
     sendMock.mockImplementation(async (command: unknown) => {
       if (command instanceof ScanCommand) {
@@ -742,7 +742,7 @@ describe("deleteAccountRuntimeData", () => {
   it("batches deletes at the DynamoDB limit of 25 items", async () => {
     process.env.CONVERSATIONS_TABLE_NAME = "conversations";
     dynamo.send = sendMock as never;
-    const { deleteAccountRuntimeData } = await import("../functions/account-manage/cleanup.ts");
+    const { deleteAccountRuntimeData } = await import("../src/accounts/cleanup.ts");
 
     const items = Array.from({ length: 30 }, (_, i) =>
       conversationItem(`acct_test:agent:agent_abc:api:conv${i}`, `2026-05-01T00:00:${i < 10 ? "0" : ""}${i}.000Z`),
@@ -777,7 +777,7 @@ describe("deleteAccountRuntimeData", () => {
   it("counts deleted items correctly when unprocessed items are returned", async () => {
     process.env.CONVERSATIONS_TABLE_NAME = "conversations";
     dynamo.send = sendMock as never;
-    const { deleteAccountRuntimeData } = await import("../functions/account-manage/cleanup.ts");
+    const { deleteAccountRuntimeData } = await import("../src/accounts/cleanup.ts");
 
     let callCount = 0;
     sendMock.mockImplementation(async (command: unknown) => {
@@ -817,7 +817,7 @@ describe("deleteAccountRuntimeData", () => {
   it("returns zero when conversations table env var is not set", async () => {
     process.env.PROCESSED_EVENTS_TABLE_NAME = "processed-events";
     dynamo.send = sendMock as never;
-    const { deleteAccountRuntimeData } = await import("../functions/account-manage/cleanup.ts");
+    const { deleteAccountRuntimeData } = await import("../src/accounts/cleanup.ts");
 
     sendMock.mockImplementation(async (command: unknown) => {
       if (command instanceof ScanCommand) {
@@ -837,7 +837,7 @@ describe("deleteAccountRuntimeData", () => {
   it("returns zero when processed events table env var is not set", async () => {
     process.env.CONVERSATIONS_TABLE_NAME = "conversations";
     dynamo.send = sendMock as never;
-    const { deleteAccountRuntimeData } = await import("../functions/account-manage/cleanup.ts");
+    const { deleteAccountRuntimeData } = await import("../src/accounts/cleanup.ts");
 
     sendMock.mockImplementation(async (command: unknown) => {
       if (command instanceof ScanCommand) {
@@ -857,7 +857,7 @@ describe("deleteAccountRuntimeData", () => {
   it("returns zero when async agent result table env var is not set", async () => {
     process.env.CONVERSATIONS_TABLE_NAME = "conversations";
     dynamo.send = sendMock as never;
-    const { deleteAccountRuntimeData } = await import("../functions/account-manage/cleanup.ts");
+    const { deleteAccountRuntimeData } = await import("../src/accounts/cleanup.ts");
 
     sendMock.mockImplementation(async (command: unknown) => {
       if (command instanceof ScanCommand) {
@@ -877,7 +877,7 @@ describe("deleteAccountRuntimeData", () => {
   it("returns zero when async tool result table env var is not set", async () => {
     process.env.CONVERSATIONS_TABLE_NAME = "conversations";
     dynamo.send = sendMock as never;
-    const { deleteAccountRuntimeData } = await import("../functions/account-manage/cleanup.ts");
+    const { deleteAccountRuntimeData } = await import("../src/accounts/cleanup.ts");
 
     sendMock.mockImplementation(async (command: unknown) => {
       if (command instanceof ScanCommand) {
