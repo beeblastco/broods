@@ -25,7 +25,7 @@ COPY packages/convex ./packages/convex
 COPY apps/core ./apps/core
 # Compile at the default (x64) target: the k3s cluster nodes are amd64.
 RUN cd apps/core && bun run scripts/system-prompt.ts \
-    && bun build --compile --minify src/server.ts --outfile /out/core-server
+    && bun build --compile --target=bun-linux-x64 --minify src/server.ts --outfile /out/core-server
 
 FROM alpine:3.22 AS runner
 WORKDIR /app

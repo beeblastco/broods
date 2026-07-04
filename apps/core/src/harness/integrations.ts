@@ -460,12 +460,17 @@ async function handleHttpRequest(
           return notFoundResponse();
         }
 
+        const statusUrl = buildStatusUrl(parsed.publicEventId, parsed.agentId);
+        if (!statusUrl) {
+          return errorResponse(503, "Async API is unavailable: PUBLIC_BASE_URL is not configured");
+        }
+
         return handlers.handleAsyncRequest({
           ...parsed,
           endpointId: auth.endpointId,
           projectSlug: auth.projectSlug,
           environmentSlug: auth.environmentSlug,
-          statusUrl: buildStatusUrl(parsed.publicEventId, parsed.agentId),
+          statusUrl,
         });
       }
 
@@ -497,9 +502,14 @@ async function handleHttpRequest(
         return notFoundResponse();
       }
 
+      const statusUrl = buildStatusUrl(parsed.publicEventId, parsed.agentId);
+      if (!statusUrl) {
+        return errorResponse(503, "Async API is unavailable: PUBLIC_BASE_URL is not configured");
+      }
+
       return handlers.handleAsyncRequest({
         ...parsed,
-        statusUrl: buildStatusUrl(parsed.publicEventId, parsed.agentId),
+        statusUrl,
       });
     }
 
@@ -616,10 +626,7 @@ async function handleChannelWebhook(
           conversationKey: parsed.conversationKey,
         })
       ));
-      return new Response(response.body ?? "", {
-        status: response.statusCode ?? 200,
-        headers: response.headers ?? {},
-      });
+      return toResponse(response);
     }
 
     if (parsed.kind === "context") {
@@ -654,10 +661,7 @@ async function handleChannelWebhook(
             : {}),
         })
       ));
-      return new Response(response.body ?? "", {
-        status: response.statusCode ?? 200,
-        headers: response.headers ?? {},
-      });
+      return toResponse(response);
     }
 
     // The promise is deferred by one microtask so this request's scoped context
@@ -699,10 +703,7 @@ async function handleChannelWebhook(
         handlers,
       )
     ));
-    return new Response(response.body ?? "", {
-      status: response.statusCode ?? 200,
-      headers: response.headers ?? {},
-    });
+    return toResponse(response);
   } catch (err) {
     logError("Failed to process webhook request", {
       channel: adapter.name,
@@ -1213,10 +1214,10 @@ function isStatusPath(rawPath: string): boolean {
   return rawPath.startsWith("/status/");
 }
 
-function buildStatusUrl(publicEventId: string, agentId: string): string {
+function buildStatusUrl(publicEventId: string, agentId: string): string | null {
   const baseUrl = getHarnessPublicUrl();
   if (!baseUrl) {
-    throw new Error("PUBLIC_BASE_URL is not configured");
+    return null;
   }
 
   return `${baseUrl}/status/${encodeURIComponent(publicEventId)}?agentId=${encodeURIComponent(agentId)}`;
