@@ -178,6 +178,9 @@ function denyUnlessProjectPrincipal(stage: string, region: string) {
           // Self-hosted container runtime user (epic #85 phase 9a) — without
           // this entry every pod S3 call gets an explicit deny.
           `arn:aws:iam::${AWS_ACCOUNT_ID}:user/${resourceName("core-runtime", stage, region)}`,
+          // Convex config-plane role (epic #85 phase 9) — Convex node actions own
+          // the skills/tool-bundle/workspace S3 objects directly after assuming it.
+          `arn:aws:iam::${AWS_ACCOUNT_ID}:role/${resourceName("convex-aws", stage, region)}`,
           `arn:aws:iam::${AWS_ACCOUNT_ID}:role/github-actions-ecr-push`,
           `arn:aws:iam::${AWS_ACCOUNT_ID}:role/github-actions-aws-infra-deploy`,
           `arn:aws:iam::${AWS_ACCOUNT_ID}:role/github-actions-aws-sst-infra-deploy`,
@@ -1325,6 +1328,76 @@ export default $config({
       policyArn: coreRuntimeAccountPolicy.arn,
     });
 
+    // AWS access for the Convex config plane (epic #85 phase 9 — state plane owns
+    // AWS directly, no core proxy). Convex node actions assume ConvexAwsRole with a
+    // minimal bootstrap user's static key (minted out of band, stored in the Convex
+    // deployment env as AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY + CONVEX_AWS_ROLE_ARN)
+    // and get short-lived credentials scoped to: the skills/tool-bundle/workspace S3
+    // buckets, and EventBridge Scheduler for account cron jobs (targeting core's
+    // cron-run endpoint). The role ARN is also allow-listed in
+    // denyUnlessProjectPrincipal so its S3 calls are not denied.
+    const convexAwsPermissions = [
+      {
+        actions: ["s3:GetObject", "s3:PutObject", "s3:DeleteObject", "s3:HeadObject"],
+        resources: [`${skillsBucketArn}/*`, `${toolBundlesBucketArn}/*`, `${filesystemBucketArn}/*`],
+      },
+      {
+        actions: ["s3:ListBucket"],
+        resources: [skillsBucketArn, toolBundlesBucketArn, filesystemBucketArn],
+      },
+      {
+        actions: [
+          "scheduler:CreateSchedule",
+          "scheduler:UpdateSchedule",
+          "scheduler:DeleteSchedule",
+          "scheduler:GetSchedule",
+        ],
+        resources: [$interpolate`arn:aws:scheduler:${region}:${AWS_ACCOUNT_ID}:schedule/${cronScheduleGroup.name}/*`],
+      },
+      {
+        // Convex creates schedules that run as the cron scheduler role.
+        actions: ["iam:PassRole"],
+        resources: [cronSchedulerRole.arn],
+      },
+    ];
+    const convexAwsRole = new aws.iam.Role("ConvexAwsRole", {
+      name: resourceName("convex-aws", stage, region),
+      assumeRolePolicy: JSON.stringify({
+        Version: "2012-10-17",
+        Statement: [
+          {
+            Effect: "Allow",
+            Principal: { AWS: `arn:aws:iam::${AWS_ACCOUNT_ID}:user/${resourceName("convex-bootstrap", stage, region)}` },
+            Action: "sts:AssumeRole",
+            Condition: { StringEquals: { "sts:ExternalId": "broods-convex" } },
+          },
+        ],
+      }),
+    });
+    const convexAwsPolicy = new aws.iam.Policy("ConvexAwsPolicy", {
+      name: resourceName("convex-aws", stage, region),
+      policy: permissionsPolicy(convexAwsPermissions),
+    });
+    new aws.iam.RolePolicyAttachment("ConvexAwsPolicyAttachment", {
+      role: convexAwsRole.name,
+      policyArn: convexAwsPolicy.arn,
+    });
+    // Bootstrap identity Convex uses to assume the role above. It can do nothing
+    // except assume that role; the access key is created out of band and never
+    // stored in Pulumi state or git.
+    const convexBootstrapUser = new aws.iam.User("ConvexBootstrapUser", {
+      name: resourceName("convex-bootstrap", stage, region),
+    });
+    new aws.iam.UserPolicy("ConvexBootstrapAssumePolicy", {
+      user: convexBootstrapUser.name,
+      policy: convexAwsRole.arn.apply((arn) =>
+        JSON.stringify({
+          Version: "2012-10-17",
+          Statement: [{ Effect: "Allow", Action: "sts:AssumeRole", Resource: arn }],
+        }),
+      ),
+    });
+
     return {
       agentServiceUrl: harnessProcessing.url,
       accountServiceUrl: accountManage.url,
@@ -1348,6 +1421,8 @@ export default $config({
       microvmBuildRoleArn: microvmBuildRole?.arn,
       microvmExecutionRoleArn: microvmExecutionRole?.arn,
       coreRuntimeUserName: coreRuntimeUser.name,
+      convexAwsRoleArn: convexAwsRole.arn,
+      convexBootstrapUserName: convexBootstrapUser.name,
     };
   },
 });
