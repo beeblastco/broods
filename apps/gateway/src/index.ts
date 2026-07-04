@@ -79,6 +79,8 @@ type ObservabilitySocketState = {
 
 type GatewayServerOptions = {
   coreBaseUrls: string[];
+  /** Convex HTTP-actions base URL serving the config plane (skills/tools/workspace files). */
+  configBaseUrl?: string;
   port?: number;
   host?: string;
   limits?: GatewayLimits;
@@ -120,6 +122,7 @@ const LOG_LEVEL_ORDER: Record<LogLevel, number> = { INFO: 0, WARN: 1, ERROR: 2 }
 
 export function createGatewayServer(options: GatewayServerOptions): Bun.Server<GatewayData> {
   const coreBaseUrls = normalizedCoreBaseUrls(options.coreBaseUrls);
+  const configBaseUrl = options.configBaseUrl?.trim() ? normalizeBaseUrl(options.configBaseUrl) : undefined;
   const limits = options.limits ?? gatewayLimitsFromEnv();
 
   return Bun.serve<GatewayData>({
@@ -225,6 +228,16 @@ export function createGatewayServer(options: GatewayServerOptions): Bun.Server<G
 
           return upgraded ? undefined : json({ error: "WebSocket upgrade failed" }, { status: 400 });
         }
+      }
+
+      // Config-plane CRUD (skills, tools, workspace files) is served by the
+      // Convex HTTP actions, not core (epic #85 phase 9).
+      if (isConfigHttpPath(url.pathname)) {
+        if (!configBaseUrl) {
+          return json({ error: "Config plane is not configured (BROODS_CONFIG_URL)" }, { status: 503 });
+        }
+
+        return proxyHttp(request, [configBaseUrl]);
       }
 
       if (!isCoreHttpPath(url.pathname)) {
@@ -1228,6 +1241,17 @@ function isCoreHttpPath(pathname: string): boolean {
 
 export const isCoreHttpPathForTest = isCoreHttpPath;
 
+/**
+ * Config-plane routes forwarded to Convex instead of core. Exact-depth
+ * patterns (mirroring core's router) so scoped agent invocations like
+ * /v1/skills/agents/{env}/{endpoint} still reach core.
+ */
+export function isConfigHttpPath(pathname: string): boolean {
+  return /^\/v1\/skills(?:\/[^/]+)?$/.test(pathname) ||
+    /^\/v1\/tools(?:\/[^/]+)?$/.test(pathname) ||
+    /^\/v1\/workspaces\/[^/]+\/files$/.test(pathname);
+}
+
 function isExecuteMessage(value: object): value is WebSocketClientExecuteMessage {
   const record = value as { type?: unknown; agentId?: unknown };
 
@@ -1262,6 +1286,9 @@ function positiveInt(value: string | undefined, fallback: number): number {
 
 if (import.meta.main) {
   const configuredCoreUrls = process.env.BROODS_CORE_URLS?.split(",") ?? [];
-  const server = createGatewayServer({ coreBaseUrls: configuredCoreUrls });
+  const server = createGatewayServer({
+    coreBaseUrls: configuredCoreUrls,
+    ...(process.env.BROODS_CONFIG_URL ? { configBaseUrl: process.env.BROODS_CONFIG_URL } : {}),
+  });
   process.stdout.write(`gateway listening on ${server.hostname}:${server.port}\n`);
 }

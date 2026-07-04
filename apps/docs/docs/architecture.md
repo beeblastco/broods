@@ -136,15 +136,15 @@ sequenceDiagram
   M->>A: store secretHash + metadata
   M-->>U: account + one-time secret
 
-  U->>M: POST /accounts/me/agents (Bearer account secret)
+  U->>M: POST /v1/agents (Bearer account secret)
   M->>A: store encrypted agent config
   M-->>U: agent + agentId
 
-  U->>M: POST /accounts/me/skills (Bearer account secret)
+  U->>M: POST /v1/skills (Bearer account secret)
   M->>S: validate + store skill bundle
   M-->>U: path
 
-  U->>M: PATCH /accounts/me/agents/{agentId}
+  U->>M: PATCH /v1/agents/{agentId}
   M->>A: resolve secretHash
   M->>A: deep-merge agent metadata/config
   M-->>U: redacted agent view

@@ -32,8 +32,8 @@ Sandbox paths map to S3 keys through that layout: the bucket holds `<namespace>/
 flowchart TD
   Namespace["Session.filesystemNamespace()"] --> Prefix["workspaceNamespacePrefix()<br/>&lt;namespace&gt;"]
   Prefix --> S3["S3 workspace bucket<br/>FILESYSTEM_BUCKET_NAME"]
-  Dashboard["Dashboard workspace Files tab"] --> AccountApi["account-manage workspace file API"]
-  AccountApi --> Prefix
+  Dashboard["Dashboard workspace Files tab"] --> ConfigApi["Convex config-plane workspace file API"]
+  ConfigApi --> Prefix
   S3 --> Memory["<namespace>/MEMORY.md"]
   S3 --> Tasks["<namespace>/TASKS.md"]
   S3 --> Skills["<namespace>/.claude/skills/<name><br/>+ mirror .agents/skills/<name>"]
@@ -48,7 +48,7 @@ Every S3-backed provider mounts the selected prefix at the workspace directory f
 The mount target + credentials are resolved one way for every S3 provider (`functions/harness-processing/sandbox/s3-mount.ts`): the managed bucket is partitioned by `<namespace>/`; a [bring-your-own bucket](#bring-your-own-bucket) uses its own bucket/prefix and short-lived assume-role credentials. When a workspace has `isolation: true`, channel, direct API, and cron runs mount the workspace root; conversation-scoped channel runs mount the configured child alias folder.
 
 The dashboard workspace **Files** tab lists and mutates this same S3 namespace through
-the authenticated account-management API. Uploads, renames, and deletes therefore
+the authenticated Convex config-plane API. Uploads, renames, and deletes therefore
 operate on the files the agent mounts; Convex file storage is used only for editable
 skill-node bundles.
 

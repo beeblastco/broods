@@ -29,16 +29,18 @@ afterEach(() => {
 });
 
 describe("account-management deployment key auth", () => {
-  it("rejects deployment runtime keys on skill and tool self routes but keeps cron self routes allowed", async () => {
+  it("keeps cron self routes allowed for deployment keys; skill and tool routes are no longer core's", async () => {
     setStorageForTests(deploymentStorage());
     const { handler } = await import("../src/accounts/handler.ts");
 
-    const skillsResponse = await handler(event("GET", "/accounts/me/skills"));
-    const toolsResponse = await handler(event("GET", "/accounts/me/tools"));
-    const cronsResponse = await handler(event("GET", "/accounts/me/crons"));
+    // Skills and tools CRUD moved to the Convex config plane — the account
+    // handler no longer serves them for any principal.
+    const skillsResponse = await handler(event("GET", "/v1/skills"));
+    const toolsResponse = await handler(event("GET", "/v1/tools"));
+    const cronsResponse = await handler(event("GET", "/v1/crons"));
 
-    expect(skillsResponse.status).toBe(401);
-    expect(toolsResponse.status).toBe(401);
+    expect(skillsResponse.status).toBe(403);
+    expect(toolsResponse.status).toBe(403);
     expect(cronsResponse.status).toBe(200);
     expect(await responseJson(cronsResponse)).toEqual({ crons: [] });
   });

@@ -78,7 +78,7 @@ describe("workspace delete cleanup", () => {
     } as never);
 
     const { handler } = await import("../src/accounts/handler.ts");
-    const response = await handler(createEvent("DELETE", `/accounts/me/workspaces/${workspace.workspaceId}`, AUTH));
+    const response = await handler(createEvent("DELETE", `/v1/workspaces/${workspace.workspaceId}`, AUTH));
 
     expect(response.status).toBe(200);
     expect(await responseJson(response)).toEqual({ deleted: true });

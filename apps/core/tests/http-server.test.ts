@@ -119,12 +119,43 @@ describe("core http server", () => {
   });
 
   it("routes /accounts paths to the account handler regardless of Host", async () => {
-    const res = await fetch(`${baseUrl}/accounts/me`, {
+    const res = await fetch(`${baseUrl}/v1/account`, {
       // The gateway strips Host on proxy, so routing must not depend on it.
       headers: { Host: "anything.example.com" },
     });
     expect(await res.json()).toEqual({ from: "account" });
-    expect(accountCaptured.at(-1)?.request.path).toBe("/accounts/me");
+    expect(accountCaptured.at(-1)?.request.path).toBe("/v1/account");
+  });
+
+  it("routes /v1 account resources to the account handler and invocations to the harness", async () => {
+    harnessResponse = async () => new Response(null, { status: 204 });
+
+    // Resource CRUD → account handler.
+    for (const path of ["/v1/agents", "/v1/crons/abc/runs", "/v1/sandboxes/sbx/exec", "/v1/workspaces/ws"]) {
+      const before = accountCaptured.length;
+      await fetch(`${baseUrl}${path}`);
+      expect(accountCaptured.length).toBe(before + 1);
+    }
+
+    // Skills, tools, and workspace files CRUD are Convex config-plane routes
+    // (gateway-forwarded); a core hit falls through to the harness 404 path.
+    for (const path of ["/v1/skills", "/v1/tools/tool-1", "/v1/workspaces/ws/files"]) {
+      const before = captured.length;
+      await fetch(`${baseUrl}${path}`);
+      expect(captured.length).toBe(before + 1);
+    }
+
+    // Method split on /v1/agents/{id}: POST invokes (harness), GET reads config (account).
+    const accountBefore = accountCaptured.length;
+    await fetch(`${baseUrl}/v1/agents/my-agent`);
+    expect(accountCaptured.length).toBe(accountBefore + 1);
+
+    const harnessBefore = captured.length;
+    await fetch(`${baseUrl}/v1/agents/my-agent`, { method: "POST", body: "{}" });
+    await fetch(`${baseUrl}/v1/agents/my-agent/async`, { method: "POST", body: "{}" });
+    // Scoped invocation falls through even when the project slug shadows a resource name.
+    await fetch(`${baseUrl}/v1/skills/agents/prod/endpoint-1`, { method: "POST", body: "{}" });
+    expect(captured.length).toBe(harnessBefore + 3);
   });
 
   it("splits the /v1/internal leaves: observability-log to account, observability-scope to harness", async () => {

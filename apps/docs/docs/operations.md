@@ -224,7 +224,7 @@ export ACCOUNT_GOOGLE_API_KEY=<googleApiKey>
 export ACCOUNT_TAVILY_API_KEY=<tavilyApiKey>
 ```
 
-Each script creates a temporary account through `ACCOUNT_SERVICE_URL/accounts`, runs the probe with the returned account secret, then deletes the test account through `DELETE /accounts/me` in a cleanup step.
+Each script creates a temporary account through `ACCOUNT_SERVICE_URL/accounts`, runs the probe with the returned account secret, then deletes the test account through `DELETE /v1/account` in a cleanup step.
 
 Confirm the harness URL is live:
 

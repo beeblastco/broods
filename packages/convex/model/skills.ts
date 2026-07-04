@@ -106,6 +106,30 @@ export async function getSkill(accountId: string, skillName: string): Promise<St
 }
 
 /**
+ * List an account's stored skills' metadata. Mirrors core's `listAccountSkills`.
+ * @param accountId account id owning the skills
+ * @returns name/description/path for every readable skill
+ */
+export async function listAccountSkills(accountId: string): Promise<SkillMetadata[]> {
+    const objects = await listS3Prefix(skillsBucketName(), `${accountId}/`);
+    const skillNames = new Set<string>();
+    for (const object of objects) {
+        const [, skillName] = object.key.split("/");
+        if (skillName) {
+            skillNames.add(skillName);
+        }
+    }
+
+    const skills = await Promise.all([...skillNames].map((skillName) =>
+        getSkill(accountId, skillName).catch(() => null)
+    ));
+
+    return skills
+        .filter((skill): skill is StoredSkill => skill !== null)
+        .map(({ name, description, path }) => ({ name: name, description: description, path: path }));
+}
+
+/**
  * Delete a stored skill's objects.
  * @param accountId account id owning the skill
  * @param skillName the skill name

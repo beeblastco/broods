@@ -12,14 +12,14 @@ info:
     > - Advanced integrations that need direct account-management access
     > - Admin operations using `AdminAccountSecret`
 
-    Every `/accounts/me/...` sub-resource (agents, skills, crons, tools, sandboxes, workspaces, rotate-secret) is also reachable by admins as `/accounts/{accountId}/...` with the `AdminAccountSecret` bearer token; behavior and shapes are identical.
+    Agents, crons, policies, sandboxes, workspaces, and rotate-secret are also reachable by admins as `/accounts/{accountId}/...` with the `AdminAccountSecret` bearer token; behavior and shapes are identical. Skills, tools, and workspace files are served by the config plane behind the same gateway host and have no admin path variants.
   version: 0.1.0
 
 servers:
   - url: https://gateway.broods.app
     description: Managed gateway (default SDK host)
   - url: http://localhost:3000
-    description: Locally-run core container (`cd apps/core && bun run serve`)
+    description: Locally-run core container (`cd apps/core && bun run serve`; skills/tools/workspace-files routes are served by the Convex config plane, not a local core)
 
 security:
   - BearerAuth: []
@@ -673,7 +673,7 @@ paths:
                       username: company-a
                     secret: fp_acct_new...
 
-  /accounts/me:
+  /v1/account:
     get:
       tags:
         - Accounts
@@ -745,7 +745,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/DeleteResponse'
 
-  /accounts/me/rotate-secret:
+  /v1/account/rotate-secret:
     post:
       tags:
         - Accounts
@@ -772,7 +772,7 @@ paths:
                       username: company-a
                     secret: fp_acct_new...
 
-  /accounts/me/agents:
+  /v1/agents:
     post:
       tags:
         - Agents
@@ -869,7 +869,7 @@ paths:
                     items:
                       $ref: '#/components/schemas/Agent'
 
-  /accounts/me/agents/{agentId}:
+  /v1/agents/{agentId}:
     get:
       tags:
         - Agents
@@ -940,7 +940,7 @@ paths:
         '200':
           description: Agent deleted
 
-  /accounts/me/sandboxes:
+  /v1/sandboxes:
     post:
       tags:
         - Sandboxes
@@ -1037,7 +1037,7 @@ paths:
       responses:
         '200': { description: List of sandboxes }
 
-  /accounts/me/sandboxes/{sandboxId}:
+  /v1/sandboxes/{sandboxId}:
     get:
       tags: [Sandboxes]
       summary: Get sandbox
@@ -1076,7 +1076,7 @@ paths:
       responses:
         '200': { description: Deleted }
 
-  /accounts/me/sandboxes/{sandboxId}/suspend:
+  /v1/sandboxes/{sandboxId}/suspend:
     post:
       tags: [Sandboxes]
       summary: Suspend sandbox instance
@@ -1098,7 +1098,7 @@ paths:
         '403': { description: Reservation does not belong to this account or sandbox config }
         '409': { description: Provider does not support suspend }
 
-  /accounts/me/sandboxes/{sandboxId}/resume:
+  /v1/sandboxes/{sandboxId}/resume:
     post:
       tags: [Sandboxes]
       summary: Resume sandbox instance
@@ -1120,7 +1120,7 @@ paths:
         '403': { description: Reservation does not belong to this account or sandbox config }
         '409': { description: Provider does not support resume }
 
-  /accounts/me/sandboxes/{sandboxId}/terminate:
+  /v1/sandboxes/{sandboxId}/terminate:
     post:
       tags: [Sandboxes]
       summary: Terminate sandbox instance
@@ -1142,7 +1142,7 @@ paths:
         '403': { description: Reservation does not belong to this account or sandbox config }
         '409': { description: Provider does not support terminate }
 
-  /accounts/me/sandboxes/{sandboxId}/snapshot:
+  /v1/sandboxes/{sandboxId}/snapshot:
     post:
       tags: [Sandboxes]
       summary: Snapshot sandbox instance
@@ -1165,7 +1165,7 @@ paths:
         '403': { description: Reservation does not belong to this account or sandbox config }
         '409': { description: Provider does not support snapshot }
 
-  /accounts/me/sandboxes/{sandboxId}/terminal:
+  /v1/sandboxes/{sandboxId}/terminal:
     post:
       tags: [Sandboxes]
       summary: Mint a live terminal ticket
@@ -1204,7 +1204,7 @@ paths:
         '404': { description: No reserved instance for this reservation key }
         '409': { description: Provider does not support a live terminal, or the MicroVM was launched without shell ingress }
 
-  /accounts/me/workspaces:
+  /v1/workspaces:
     post:
       tags:
         - Workspaces
@@ -1251,7 +1251,7 @@ paths:
       responses:
         '200': { description: List of workspaces }
 
-  /accounts/me/workspaces/{workspaceId}:
+  /v1/workspaces/{workspaceId}:
     get:
       tags: [Workspaces]
       summary: Get workspace
@@ -1278,7 +1278,7 @@ paths:
       responses:
         '200': { description: Deleted }
 
-  /accounts/me/workspaces/{workspaceId}/files:
+  /v1/workspaces/{workspaceId}/files:
     get:
       tags: [Workspaces]
       summary: List workspace files or create a download URL
@@ -1346,7 +1346,7 @@ paths:
       responses:
         '200': { description: File or folder deleted }
 
-  /accounts/me/tools:
+  /v1/tools:
     post:
       tags: [Tools]
       summary: Create uploaded custom tool
@@ -1382,7 +1382,7 @@ paths:
                     items:
                       $ref: '#/components/schemas/AccountTool'
 
-  /accounts/me/tools/{toolId}:
+  /v1/tools/{toolId}:
     get:
       tags: [Tools]
       summary: Get uploaded custom tool
@@ -1424,7 +1424,7 @@ paths:
       responses:
         '200': { description: Deleted }
 
-  /accounts/me/policies:
+  /v1/policies:
     post:
       tags: [Policies]
       summary: Create agent policy
@@ -1460,7 +1460,7 @@ paths:
                     items:
                       $ref: '#/components/schemas/AgentPolicy'
 
-  /accounts/me/policies/{policyId}:
+  /v1/policies/{policyId}:
     get:
       tags: [Policies]
       summary: Get agent policy
@@ -1503,7 +1503,7 @@ paths:
         '200': { description: Deleted }
         '404': { description: Not found }
 
-  /accounts/me/skills:
+  /v1/skills:
     post:
       tags:
         - Skills
@@ -1590,7 +1590,7 @@ paths:
                     items:
                       $ref: '#/components/schemas/Skill'
 
-  /accounts/me/skills/{skillName}:
+  /v1/skills/{skillName}:
     get:
       tags:
         - Skills
@@ -1686,7 +1686,7 @@ paths:
         '200':
           description: Skill deleted
 
-  /accounts/me/crons:
+  /v1/crons:
     post:
       tags:
         - Cron Jobs
@@ -1738,7 +1738,7 @@ paths:
                     items:
                       $ref: '#/components/schemas/Cron'
 
-  /accounts/me/crons/{cronId}:
+  /v1/crons/{cronId}:
     get:
       tags:
         - Cron Jobs
@@ -2411,7 +2411,7 @@ components:
           description: "Opt the agent into the public runtime endpoint (SSE/WebSocket via the environment runtime key). Off by default — secured. When false/unset, public-key requests for this agent are refused with HTTP 403 (code public_access_disabled); internal callers and channel webhooks are unaffected."
         sandbox:
           type: string
-          description: Id of the agent-level sandbox config (POST /accounts/me/sandboxes). Powers stateless bash and is the default sandbox for workspaces that don't set their own.
+          description: Id of the agent-level sandbox config (POST /v1/sandboxes). Powers stateless bash and is the default sandbox for workspaces that don't set their own.
         workspaces:
           type: array
           description: References to account-scoped workspace configs. Agents sharing a workspaceId share files.

@@ -74,7 +74,7 @@ A sandbox is a standalone, account-scoped record referenced from agent config by
 (see [Workspace & Sandbox](../index.md)).
 
 ```jsonc
-// POST /accounts/me/sandboxes
+// POST /v1/sandboxes
 {
   "name": "default",
   "config": {
