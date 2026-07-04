@@ -1,25 +1,22 @@
 "use node";
 /**
- * Public skill actions that call the broods account-manage API.
- * Runs in Node.js runtime for Buffer / crypto access.
- * The caller supplies their account Bearer token; this action hashes it to
- * verify ownership before forwarding files to broods.
+ * Public skill actions for the Convex config plane: publish, create, and
+ * import skill bundles directly against S3 (epic #85 phase 9 — no core proxy).
+ * Runs in Node.js runtime for Buffer / crypto / S3 access.
+ * The caller supplies their account Bearer token; each action hashes it to
+ * resolve and verify the owning account before touching that account's skills.
  */
 
 import { createHash } from "node:crypto";
 import { v } from "convex/values";
-import { action } from "./_generated/server";
+import { action, type ActionCtx } from "./_generated/server";
 import { api, internal } from "./_generated/api";
+import type { Doc } from "./_generated/dataModel";
 import { authKit } from "./auth";
+import { createJsonSkillFiles, createOrReplaceSkill, fetchGitHubSkillFiles, getSkill, readSkillFileBytes } from "./model/skills";
 
 const MAX_FILE_BYTES = 5 * 1024 * 1024;
 const MAX_BUNDLE_BYTES = 30 * 1024 * 1024;
-
-function accountManageUrl(): string {
-    const url = process.env.BROODS_ACCOUNT_MANAGE_URL;
-    if (!url) throw new Error("BROODS_ACCOUNT_MANAGE_URL is not configured");
-    return url.replace(/\/+$/, "");
-}
 
 /** SHA-256 hex of the raw token — matches what the accounts table stores. */
 function hashToken(token: string): string {
@@ -27,11 +24,27 @@ function hashToken(token: string): string {
 }
 
 /**
- * Package all workspaceFiles for a skill node and publish them to broods.
+ * Resolve the account a Bearer token belongs to.
+ * @param ctx action context for the lookup query
+ * @param bearerToken the caller's broods account Bearer token
+ * @returns the matching account document
+ * @throws when the token matches no account
+ */
+async function requireAccountForToken(ctx: ActionCtx, bearerToken: string): Promise<Doc<"accounts">> {
+    const account = await ctx.runQuery(internal.accounts.getBySecretHash, {
+        secretHash: hashToken(bearerToken),
+    });
+    if (!account) throw new Error("Invalid Bearer token.");
+
+    return account;
+}
+
+/**
+ * Package all workspaceFiles for a skill node and publish them to S3.
  * @param projectId owning project
  * @param nodeId canvas skill node ID
  * @param bearerToken the caller's broods account Bearer token
- * @returns published skill metadata (name, description, sizeBytes)
+ * @returns published skill metadata (name, description, path, sizeBytes)
  */
 export const publishSkill = action({
     args: {
@@ -48,12 +61,7 @@ export const publishSkill = action({
             throw new Error("User not found or not authenticated");
         }
 
-        // Verify the token belongs to an account owned by this user's org
-        const secretHash = hashToken(bearerToken);
-        const account = await ctx.runQuery(internal.accounts.getBySecretHash, {
-            secretHash: secretHash,
-        });
-        if (!account) throw new Error("Invalid Bearer token.");
+        const account = await requireAccountForToken(ctx, bearerToken);
 
         // Load the file list
         const files = await ctx.runQuery(api.workspaceFiles.list, {
@@ -71,8 +79,8 @@ export const publishSkill = action({
             throw new Error("SKILL.md is required at the root of the skill bundle.");
         }
 
-        // Download and base64-encode each file from Convex storage
-        const skillFiles: Array<{ path: string; contentBase64: string }> = [];
+        // Download each file from Convex storage
+        const skillFiles: Array<{ path: string; bytes: Uint8Array }> = [];
         let totalBytes = 0;
 
         for (const file of fileItems) {
@@ -95,38 +103,24 @@ export const publishSkill = action({
 
             skillFiles.push({
                 path: file.path,
-                contentBase64: Buffer.from(buffer).toString("base64"),
+                bytes: new Uint8Array(buffer),
             });
         }
 
-        // POST to broods
-        const response = await fetch(`${accountManageUrl()}/accounts/me/skills`, {
-            method: "POST",
-            headers: {
-                "Content-Type": "application/json",
-                "Authorization": `Bearer ${bearerToken}`,
-            },
-            body: JSON.stringify({ source: "files", files: skillFiles }),
-        });
+        const skill = await createOrReplaceSkill(account._id, skillFiles);
 
-        if (!response.ok) {
-            const msg = await response.text().catch(() => response.statusText);
-            throw new Error(`Publish failed (${response.status}): ${msg}`);
-        }
-
-        const result = (await response.json()) as {
-            name: string;
-            description?: string;
-            sizeBytes?: number;
+        return {
+            name: skill.name,
+            description: skill.description,
+            path: skill.path,
+            sizeBytes: totalBytes,
         };
-
-        return result;
     },
 });
 
 /**
- * Create a skill in broods directly from a GitHub repository URL.
- * broods fetches and extracts the repository; no local file management needed.
+ * Create a skill directly from a GitHub repository URL: download and extract
+ * the tarball, then store the bundle in S3.
  * @param bearerToken the caller's broods account Bearer token
  * @param githubUrl GitHub tree URL (https://github.com/{owner}/{repo}/tree/{ref}/{path})
  * @returns created skill metadata including the path to use as skill reference
@@ -145,27 +139,17 @@ export const createFromGithub = action({
             throw new Error("User not found or not authenticated");
         }
 
-        const response = await fetch(`${accountManageUrl()}/accounts/me/skills`, {
-            method: "POST",
-            headers: {
-                "Content-Type": "application/json",
-                "Authorization": `Bearer ${bearerToken}`,
-            },
-            body: JSON.stringify({ source: "github", url: githubUrl }),
-        });
+        const account = await requireAccountForToken(ctx, bearerToken);
+        const files = await fetchGitHubSkillFiles(githubUrl);
+        const skill = await createOrReplaceSkill(account._id, files);
 
-        if (!response.ok) {
-            const msg = await response.text().catch(() => response.statusText);
-            throw new Error(`GitHub import failed (${response.status}): ${msg}`);
-        }
-
-        return (await response.json()) as { name: string; path: string; description?: string };
+        return { name: skill.name, path: skill.path, description: skill.description };
     },
 });
 
 /**
- * Create a simple skill in broods from name, description, and markdown content.
- * broods generates the SKILL.md; no local file management needed.
+ * Create a simple skill from name, description, and markdown content by
+ * generating its SKILL.md and storing it in S3.
  * @param bearerToken the caller's broods account Bearer token
  * @param name skill name (lowercase letters, numbers, hyphens, max 64 chars)
  * @param description short description (max 1024 chars)
@@ -188,26 +172,15 @@ export const createFromJson = action({
             throw new Error("User not found or not authenticated");
         }
 
-        const response = await fetch(`${accountManageUrl()}/accounts/me/skills`, {
-            method: "POST",
-            headers: {
-                "Content-Type": "application/json",
-                "Authorization": `Bearer ${bearerToken}`,
-            },
-            body: JSON.stringify({ source: "json", name: name, description: description, content: content }),
-        });
+        const account = await requireAccountForToken(ctx, bearerToken);
+        const skill = await createOrReplaceSkill(account._id, createJsonSkillFiles(name, description, content));
 
-        if (!response.ok) {
-            const msg = await response.text().catch(() => response.statusText);
-            throw new Error(`Skill creation failed (${response.status}): ${msg}`);
-        }
-
-        return (await response.json()) as { name: string; path: string; description?: string };
+        return { name: skill.name, path: skill.path, description: skill.description };
     },
 });
 
 /**
- * Import an existing skill from broods and store its files in workspaceFiles.
+ * Import an existing skill from S3 and store its files in workspaceFiles.
  * Existing files for this nodeId are cleared before import.
  * @param projectId owning project
  * @param nodeId canvas skill node ID
@@ -231,27 +204,17 @@ export const importSkill = action({
             throw new Error("User not found or not authenticated");
         }
 
+        const account = await requireAccountForToken(ctx, bearerToken);
+
         const project = await ctx.runQuery(api.project.getById, { projectId: projectId });
         if (!project) {
             throw new Error("Project not found.");
         }
 
-        // Fetch skill from broods
-        const response = await fetch(
-            `${accountManageUrl()}/accounts/me/skills/${encodeURIComponent(skillName)}`,
-            { headers: { "Authorization": `Bearer ${bearerToken}` } },
-        );
-
-        if (!response.ok) {
-            const msg = await response.text().catch(() => response.statusText);
-            throw new Error(`Import failed (${response.status}): ${msg}`);
+        const skill = await getSkill(account._id, skillName);
+        if (!skill) {
+            throw new Error(`Skill not found: ${skillName}`);
         }
-
-        const skill = (await response.json()) as {
-            name: string;
-            description?: string;
-            files: Array<{ path: string; bytes: string }>;
-        };
 
         // Clear existing files for this node before importing
         await ctx.runMutation(internal.workspaceFiles.clearNodeInternal, {
@@ -262,7 +225,7 @@ export const importSkill = action({
         // Upload each file to Convex storage and create workspaceFiles entries
         for (const file of skill.files) {
             const uploadUrl = await ctx.runMutation(api.workspaceFiles.generateUploadUrl, {});
-            const content = Buffer.from(file.bytes, "base64");
+            const content = Buffer.from(await readSkillFileBytes(skill.path, file.path));
 
             const uploadRes = await fetch(uploadUrl, {
                 method: "POST",

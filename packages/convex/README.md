@@ -6,10 +6,10 @@ Shared Convex backend for the broods monorepo, used by two workspaces:
   dashboard Docker image build runs `convex deploy` from this directory) and
   calls the public functions through the generated `api`.
 - **`apps/core`** — does NOT deploy these functions; its storage adapter at
-  `apps/core/functions/_shared/storage/convex/` imports the generated
+  `apps/core/src/shared/storage/convex/` imports the generated
   `internal` types and calls the functions remotely via `ConvexHttpClient`
-  with a Convex deploy key. Convex storage is active on the `production`
-  stage only (`dev` uses DynamoDB).
+  with a Convex deploy key. Convex storage is active on any stage that
+  supplies both `CONVEX_URL` and `CONVEX_DEPLOY_KEY`.
 
 ## Tables
 
@@ -44,6 +44,29 @@ Naming follows the CRUD rule: `create`, `update`, `list`, `remove`, `getById`,
 
 Every mutation validates the `accountId` argument against the row being
 touched. A leaked Convex deploy key cannot trivially cross-tenant.
+
+## AWS config plane (epic #85 phase 9)
+
+Convex owns the account config plane's AWS resources directly (no core proxy):
+skill bundles, tool bundles, and workspace files in S3, and (Stage 3) account
+cron schedules. `model/aws.ts` assumes `ConvexAwsRole` (created by
+`apps/core/sst.config.ts`) from a minimal bootstrap IAM user whose only
+permission is `sts:AssumeRole`. Node-only AWS code lives in `model/` and the
+`"use node"` action files (`awsBundles.ts`, `awsSkills.ts`, `skillsPublic.ts`,
+`workspaceFilesPublic.ts`).
+
+Deployment environment variables:
+
+- `AWS_REGION` — data-plane region (matches the core stage).
+- `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` — the bootstrap user's static
+  key, minted out of band (`aws iam create-access-key`), never in git or
+  Pulumi state.
+- `CONVEX_AWS_ROLE_ARN` — the `ConvexAwsRole` ARN (sst output
+  `convexAwsRoleArn`).
+- `CONVEX_AWS_EXTERNAL_ID` — assume-role external id (default
+  `broods-convex`).
+- `SKILLS_BUCKET_NAME`, `TOOL_BUNDLES_BUCKET_NAME`, `FILESYSTEM_BUCKET_NAME` —
+  the stage's S3 buckets (sst outputs).
 
 ## Workflow
 

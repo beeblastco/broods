@@ -447,14 +447,15 @@ async function syncExternalResources(
     );
     if (!hasExternalResources) return { skills: {}, tools: {} };
 
-    const skills = await syncSkillResources(accountId, manifest);
+    const skills = await syncSkillResources(ctx, accountId as Id<"accounts">, manifest);
     const tools = await syncToolResources(ctx, accountId as Id<"accounts">, manifest, prune);
 
     return { skills, tools };
 }
 
 async function syncSkillResources(
-    accountId: string,
+    ctx: ActionCtx,
+    accountId: Id<"accounts">,
     manifest: CliManifest,
 ): Promise<Record<string, string>> {
     const ids: Record<string, string> = {};
@@ -462,16 +463,22 @@ async function syncSkillResources(
         const config = asRecord(resource.config, `skill:${resource.name}`);
         const files = config.files;
         if (!Array.isArray(files)) throw new Error(`skill:${resource.name}.files must be an array`);
-        const response = await accountManageFetchWithServiceToken(
-            accountId,
-            `/accounts/me/skills/${encodeURIComponent(resource.name)}`,
-            {
-                method: "PUT",
-                body: JSON.stringify({ source: "files", files }),
-            },
-        );
-        const payload = await response.json() as { path?: string };
-        ids[resource.name] = payload.path ?? `${accountId}/${resource.name}`;
+        const skill = await ctx.runAction(internal.awsSkills.putSkillBundle, {
+            accountId: accountId,
+            expectedName: resource.name,
+            files: files.map((file, index) => {
+                const entry = asRecord(file, `skill:${resource.name}.files[${index}]`);
+                if (typeof entry.path !== "string" || typeof entry.contentBase64 !== "string") {
+                    throw new Error(`skill:${resource.name}.files[${index}] requires path and contentBase64`);
+                }
+                return {
+                    path: entry.path,
+                    contentBase64: entry.contentBase64,
+                    ...(typeof entry.contentType === "string" ? { contentType: entry.contentType } : {}),
+                };
+            }),
+        });
+        ids[resource.name] = skill.path;
     }
 
     return ids;
