@@ -460,12 +460,17 @@ async function handleHttpRequest(
           return notFoundResponse();
         }
 
+        const statusUrl = buildStatusUrl(parsed.publicEventId, parsed.agentId);
+        if (!statusUrl) {
+          return errorResponse(503, "Async API is unavailable: PUBLIC_BASE_URL is not configured");
+        }
+
         return handlers.handleAsyncRequest({
           ...parsed,
           endpointId: auth.endpointId,
           projectSlug: auth.projectSlug,
           environmentSlug: auth.environmentSlug,
-          statusUrl: buildStatusUrl(parsed.publicEventId, parsed.agentId),
+          statusUrl,
         });
       }
 
@@ -497,9 +502,14 @@ async function handleHttpRequest(
         return notFoundResponse();
       }
 
+      const statusUrl = buildStatusUrl(parsed.publicEventId, parsed.agentId);
+      if (!statusUrl) {
+        return errorResponse(503, "Async API is unavailable: PUBLIC_BASE_URL is not configured");
+      }
+
       return handlers.handleAsyncRequest({
         ...parsed,
-        statusUrl: buildStatusUrl(parsed.publicEventId, parsed.agentId),
+        statusUrl,
       });
     }
 
@@ -1207,7 +1217,7 @@ function isStatusPath(rawPath: string): boolean {
   return rawPath.startsWith("/status/");
 }
 
-function buildStatusUrl(publicEventId: string, agentId: string): string {
+function buildStatusUrl(publicEventId: string, agentId: string): string | null {
   const baseUrl = getHarnessPublicUrl();
   if (!baseUrl) {
     throw new StatusUrlConfigError("PUBLIC_BASE_URL is not configured");
