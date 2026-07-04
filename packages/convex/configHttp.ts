@@ -1,15 +1,17 @@
 /**
- * Public config-plane HTTP surface (epic #85 phase 9): skills, tools, and
- * workspace files CRUD served straight from Convex, replacing core's former
- * /v1/{skills,tools} and /v1/workspaces/{id}/files routes. The gateway
- * forwards these paths here; response shapes match the retired core handlers
- * so the public API contract is unchanged. Auth is the account Bearer secret.
+ * Public config-plane HTTP surface (epic #85 phase 9): skills, tools,
+ * workspace files, and cron CRUD served straight from Convex, replacing
+ * core's former /v1/{skills,tools,crons} and /v1/workspaces/{id}/files
+ * routes. The gateway forwards these paths here; response shapes match the
+ * retired core handlers so the public API contract is unchanged. Auth is the
+ * account Bearer secret.
  */
 
 import { httpAction, type ActionCtx } from "./_generated/server";
 import { internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
 import { normalizeAccountToolUpload } from "./model/accountTools";
+import { parseCronRunsLimit, toCronResponse, toCronRunResponse } from "./model/cronRules";
 
 export const handle = httpAction(async (ctx, req) => {
     try {
@@ -25,6 +27,8 @@ export const handle = httpAction(async (ctx, req) => {
                 return await handleToolRoute(ctx, req, account._id, route.toolId);
             case "workspaceFiles":
                 return await handleWorkspaceFilesRoute(ctx, req, account._id, route.workspaceId);
+            case "crons":
+                return await handleCronRoute(ctx, req, account._id, route.cronId, route.runs);
         }
     } catch (err) {
         if (isClientInputError(err)) {
@@ -39,7 +43,8 @@ export const handle = httpAction(async (ctx, req) => {
 type ConfigRoute =
     | { kind: "skills"; name?: string }
     | { kind: "tools"; toolId?: string }
-    | { kind: "workspaceFiles"; workspaceId: string };
+    | { kind: "workspaceFiles"; workspaceId: string }
+    | { kind: "crons"; cronId?: string; runs: boolean };
 
 /**
  * Parse a config-plane pathname into its route parts.
@@ -55,6 +60,12 @@ function parseRoute(pathname: string): ConfigRoute | null {
 
     const files = pathname.match(/^\/v1\/workspaces\/([^/]+)\/files$/);
     if (files?.[1]) return { kind: "workspaceFiles", workspaceId: decodeURIComponent(files[1]) };
+
+    const cronRuns = pathname.match(/^\/v1\/crons\/([^/]+)\/runs$/);
+    if (cronRuns?.[1]) return { kind: "crons", cronId: decodeURIComponent(cronRuns[1]), runs: true };
+
+    const crons = pathname.match(/^\/v1\/crons(?:\/([^/]+))?$/);
+    if (crons) return { kind: "crons", ...(crons[1] ? { cronId: decodeURIComponent(crons[1]) } : {}), runs: false };
 
     return null;
 }
@@ -263,6 +274,75 @@ async function handleWorkspaceFilesRoute(
 }
 
 /**
+ * Cron CRUD: list/create on the collection, get/patch/delete by id, plus the
+ * run history at /v1/crons/{id}/runs. Table writes and EventBridge Scheduler
+ * mutations happen in awsCrons; mirrors core's former handleCronRoute contract.
+ */
+async function handleCronRoute(
+    ctx: ActionCtx,
+    req: Request,
+    accountId: Id<"accounts">,
+    cronId: string | undefined,
+    runs: boolean,
+): Promise<Response> {
+    if (runs && cronId) {
+        if (req.method !== "GET") return methodNotAllowed(["GET"]);
+        const limit = parseCronRunsLimit(new URL(req.url).searchParams.get("limit"));
+        const records = await ctx
+            .runQuery(internal.cron.listRuns, {
+                accountId: accountId,
+                cronId: cronId as Id<"crons">,
+                ...(limit !== undefined ? { limit: limit } : {}),
+            })
+            .catch(() => []);
+
+        return json({ runs: records.map((record) => toCronRunResponse(record)) });
+    }
+
+    if (!cronId) {
+        if (req.method === "GET") {
+            const records = await ctx.runQuery(internal.cron.list, { accountId: accountId });
+
+            return json({ crons: records.map((record) => toCronResponse(record)) });
+        }
+        if (req.method === "POST") {
+            const cron = await ctx.runAction(internal.awsCrons.create, {
+                accountId: accountId,
+                input: await req.json(),
+            });
+
+            return json(cron, 201);
+        }
+
+        return methodNotAllowed(["GET", "POST"]);
+    }
+
+    if (req.method === "GET") {
+        const record = await ctx
+            .runQuery(internal.cron.getById, { accountId: accountId, cronId: cronId as Id<"crons"> })
+            .catch(() => null);
+
+        return record ? json(toCronResponse(record)) : json({ error: "Cron job not found" }, 404);
+    }
+    if (req.method === "PATCH") {
+        const cron = await ctx.runAction(internal.awsCrons.update, {
+            accountId: accountId,
+            cronId: cronId,
+            patch: await req.json(),
+        });
+
+        return cron ? json(cron) : json({ error: "Cron job not found" }, 404);
+    }
+    if (req.method === "DELETE") {
+        const deleted = await ctx.runAction(internal.awsCrons.remove, { accountId: accountId, cronId: cronId });
+
+        return deleted ? json({ deleted: true }) : json({ error: "Cron job not found" }, 404);
+    }
+
+    return methodNotAllowed(["GET", "PATCH", "DELETE"]);
+}
+
+/**
  * Map an accountTools document to the public tool shape core used to return.
  * @param record the accountTools document
  * @returns the public record with toolId and ISO timestamps
@@ -312,6 +392,17 @@ function isClientInputError(error: unknown): error is Error {
         "Workspace uploads ",
         "Workspace file not found",
         "Workspace path not found",
+        "name must",
+        "agentId must",
+        "description must",
+        "conversationKey must",
+        "scheduleExpression must",
+        "timezone ",
+        "status must",
+        "events must",
+        "Provide exactly one of",
+        "limit must",
+        "Cron job agentId ",
     ].some((prefix) => error.message.startsWith(prefix));
 }
 

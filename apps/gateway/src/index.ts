@@ -1249,7 +1249,8 @@ export const isCoreHttpPathForTest = isCoreHttpPath;
 export function isConfigHttpPath(pathname: string): boolean {
   return /^\/v1\/skills(?:\/[^/]+)?$/.test(pathname) ||
     /^\/v1\/tools(?:\/[^/]+)?$/.test(pathname) ||
-    /^\/v1\/workspaces\/[^/]+\/files$/.test(pathname);
+    /^\/v1\/workspaces\/[^/]+\/files$/.test(pathname) ||
+    /^\/v1\/crons(?:\/[^/]+(?:\/runs)?)?$/.test(pathname);
 }
 
 function isExecuteMessage(value: object): value is WebSocketClientExecuteMessage {

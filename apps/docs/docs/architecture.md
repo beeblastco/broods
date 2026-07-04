@@ -63,9 +63,9 @@ flowchart TD
 
   ManageUrl --> AccountStore["DynamoDB: AccountConfig<br/>account metadata + secretHash"]
   ManageUrl --> AgentStore["DynamoDB: AgentConfig<br/>encrypted agent configs"]
-  ManageUrl -->|"Manage Skills"| SkillStore["S3: Skills<br/>account-scoped skill bundles"]
-  ManageUrl -->|"Manage Cron Jobs"| Crons["DynamoDB: Crons"]
-  ManageUrl -->|"Create/update/delete schedules"| Scheduler["EventBridge Scheduler"]
+  ConfigPlane["Convex config plane<br/>skills / tools / files / crons CRUD"] -->|"Manage Skills"| SkillStore["S3: Skills<br/>account-scoped skill bundles"]
+  ConfigPlane -->|"Manage Cron Jobs"| Crons["Convex: crons"]
+  ConfigPlane -->|"Create/update/delete schedules"| Scheduler["EventBridge Scheduler"]
   AccountStore -->|Authentication| HarnessUrl
   AgentStore -->|agentId config lookup| HarnessUrl
   HarnessUrl --> Integrations["integrations.ts<br/>account auth + routing"]
@@ -85,7 +85,7 @@ flowchart TD
   Handler --> AsyncAgentResult["DynamoDB: AsyncAgentResult"]
   AsyncTools --> AsyncToolResult["DynamoDB: AsyncToolResult"]
   Scheduler -->|"cron event"| HarnessUrl
-  HarnessUrl --> Crons["DynamoDB: Crons"]
+  HarnessUrl --> Crons["Convex: crons"]
   Session --> Workspace["S3: account-scoped workspace files"]
   SkillStore -->|"Load skills metadata"| Session
   Harness -->|"Access skills"| SkillStore 
@@ -217,13 +217,13 @@ Direct sync and async POST access is controlled by `ENABLE_DIRECT_API`. Deploys 
 
 ## Cron Jobs
 
-Cron jobs are included in the default stack as a small scheduled-agent add-on, not a workflow DSL. `account-manage` owns cron job create, update, delete, and list operations: it stores the account-scoped cron job in DynamoDB and creates, updates, or deletes the matching EventBridge Scheduler schedule. EventBridge Scheduler wakes `harness-processing` with `{ kind: "cron", accountId, cronId }`, and the harness starts the configured agent asynchronously.
+Cron jobs are included in the default stack as a small scheduled-agent add-on, not a workflow DSL. The Convex config plane owns cron job create, update, delete, and list operations (`/v1/crons`, forwarded there by the gateway): it stores the account-scoped cron job in the `crons` table and creates, updates, or deletes the matching EventBridge Scheduler schedule. EventBridge Scheduler wakes the core harness with `{ kind: "cron", accountId, cronId }`, and the harness starts the configured agent asynchronously.
 
 ```mermaid
 flowchart TD
-  Manage["account-manage<br/>cron create/update/delete/list"] --> Jobs["DynamoDB: Crons"]
-  Manage --> Scheduler["EventBridge Scheduler<br/>schedule lifecycle"]
-  Scheduler -->|"cron event"| Harness["harness-processing"]
+  Config["Convex config plane<br/>cron create/update/delete/list"] --> Jobs["Convex: crons"]
+  Config --> Scheduler["EventBridge Scheduler<br/>schedule lifecycle"]
+  Scheduler -->|"cron event"| Harness["core harness (cron-run)"]
   Harness --> Jobs
   Harness -->|"internal async worker event"| Harness
   Harness --> AsyncAgentResult["AsyncAgentResult"]

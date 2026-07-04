@@ -48,9 +48,9 @@ export const handle = httpAction(async (ctx, req) => {
         if (!route) return json({ error: "Not found" }, 404);
 
         // Resolve the token to an account secret hash, enforcing deploy-key scope
-        // against the route's project/environment. `scoped` keys can't forward to
-        // broods's cron API (which only knows the org secret), so cron sync
-        // is skipped for them — `forwardToken` is null in that case.
+        // against the route's project/environment. Cron sync runs natively
+        // against the crons table + EventBridge Scheduler (awsCrons), so it
+        // works for org secrets and scoped deploy keys alike.
         const resolved = await ctx.runQuery(internal.cliSync.resolveCliAuth, {
             tokenHash: auth.secretHash,
             project: route.project,
@@ -68,7 +68,6 @@ export const handle = httpAction(async (ctx, req) => {
         } : null);
         if (!authResult) return json({ error: "Invalid or out-of-scope deploy token" }, 401);
         const secretHash = authResult.secretHash;
-        const forwardToken = authResult.scoped ? null : auth.token;
         const accountId = authResult.accountId;
 
         if (route.kind === "manifest" && req.method === "GET") {
@@ -140,9 +139,7 @@ export const handle = httpAction(async (ctx, req) => {
                 manifest: originalManifest,
             });
 
-            const cronIds = forwardToken
-                ? await syncCrons(forwardToken, syncManifest, result.ids, body.prune === true)
-                : await syncCronsWithServiceToken(accountId, syncManifest, result.ids, body.prune === true);
+            const cronIds = await syncCrons(ctx, accountId, syncManifest, result.ids, body.prune === true);
             const refreshed = await ctx.runQuery(internal.cliSync.getManifestBySecretHash, {
                 secretHash: secretHash,
                 project: route.project,
@@ -227,9 +224,7 @@ export const handle = httpAction(async (ctx, req) => {
 
         if (route.kind === "resource" && req.method === "DELETE") {
             if (route.resourceKind === "cron") {
-                // Scoped deploy keys can't manage broods cron jobs; no-op for them.
-                if (forwardToken) await deleteCronByName(forwardToken, route.name);
-                else await deleteCronByNameWithServiceToken(accountId, route.name);
+                await deleteCronByName(ctx, accountId, route.name);
             } else {
                 await ctx.runMutation(internal.cliSync.deleteResourceBySecretHash, {
                     secretHash: secretHash,
@@ -579,29 +574,20 @@ function rewriteExternalConfigRefs(config: Record<string, unknown>, ids: Externa
     return result;
 }
 
+/**
+ * Reconcile manifest cron resources against the account's cron jobs using the
+ * Convex-native cron plane (crons table + EventBridge Scheduler via awsCrons).
+ */
 async function syncCrons(
-    token: string,
+    ctx: ActionCtx,
+    accountId: Id<"accounts">,
     manifest: CliManifest,
     ids: GeneratedIds,
     prune: boolean,
-): Promise<Record<string, string>> {
-    return syncCronsWithFetch(
-        manifest,
-        ids,
-        prune,
-        (path, init) => accountManageFetch(token, path, init),
-    );
-}
-
-async function syncCronsWithFetch(
-    manifest: CliManifest,
-    ids: GeneratedIds,
-    prune: boolean,
-    fetchCron: (path: string, init: RequestInit) => Promise<Response>,
 ): Promise<Record<string, string>> {
     const desired = desiredCrons(manifest, ids.agents ?? {});
     if (desired.length === 0 && prune !== true) return {};
-    const existing = await listCronsWithFetch(fetchCron);
+    const existing = await ctx.runQuery(internal.cron.list, { accountId: accountId });
     const existingByName = new Map(existing.map((job) => [job.name, job]));
     const desiredNames = new Set(desired.map((job) => job.name));
     const cronIds: Record<string, string> = {};
@@ -609,19 +595,26 @@ async function syncCronsWithFetch(
     for (const job of desired) {
         const existingJob = existingByName.get(job.name);
         if (existingJob) {
-            await updateCronWithFetch(fetchCron, existingJob.cronId, job);
-            cronIds[job.resourceName] = existingJob.cronId;
+            await ctx.runAction(internal.awsCrons.update, {
+                accountId: accountId,
+                cronId: existingJob._id,
+                patch: cronBody(job),
+            });
+            cronIds[job.resourceName] = existingJob._id;
         } else {
-            const created = await createCronWithFetch(fetchCron, job);
+            const created = await ctx.runAction(internal.awsCrons.create, {
+                accountId: accountId,
+                input: cronBody(job),
+            }) as { cronId: string };
             cronIds[job.resourceName] = created.cronId;
         }
     }
 
     if (prune === true) {
-        const environmentAgentIds = new Set(Object.values(ids.agents ?? {}));
+        const environmentAgentIds = new Set<string>(Object.values(ids.agents ?? {}));
         for (const job of existing) {
             if (!environmentAgentIds.has(job.agentId) || desiredNames.has(job.name)) continue;
-            await deleteCronWithFetch(fetchCron, job.cronId);
+            await ctx.runAction(internal.awsCrons.remove, { accountId: accountId, cronId: job._id });
         }
     }
 
@@ -654,137 +647,14 @@ function desiredCrons(
         });
 }
 
-async function listCrons(token: string): Promise<CronResponse[]> {
-    return listCronsWithFetch((path, init) => accountManageFetch(token, path, init));
-}
-
-async function listCronsWithFetch(
-    fetchCron: (path: string, init: RequestInit) => Promise<Response>,
-): Promise<CronResponse[]> {
-    const response = await fetchCron("/v1/crons", { method: "GET" });
-    const payload = await response.json() as { crons?: CronResponse[] };
-    return Array.isArray(payload.crons) ? payload.crons : [];
-}
-
-async function createCron(
-    token: string,
-    job: DesiredCron,
-): Promise<CronResponse> {
-    return createCronWithFetch((path, init) => accountManageFetch(token, path, init), job);
-}
-
-async function createCronWithFetch(
-    fetchCron: (path: string, init: RequestInit) => Promise<Response>,
-    job: DesiredCron,
-): Promise<CronResponse> {
-    const response = await fetchCron("/v1/crons", {
-        method: "POST",
-        body: JSON.stringify(cronBody(job)),
-    });
-    const payload = await response.json() as CronResponse | { cron?: CronResponse };
-    return "cron" in payload && payload.cron ? payload.cron : payload as CronResponse;
-}
-
-async function updateCron(
-    token: string,
-    cronId: string,
-    job: DesiredCron,
-): Promise<void> {
-    await updateCronWithFetch((path, init) => accountManageFetch(token, path, init), cronId, job);
-}
-
-async function updateCronWithFetch(
-    fetchCron: (path: string, init: RequestInit) => Promise<Response>,
-    cronId: string,
-    job: DesiredCron,
-): Promise<void> {
-    await fetchCron(`/v1/crons/${encodeURIComponent(cronId)}`, {
-        method: "PATCH",
-        body: JSON.stringify(cronBody(job)),
-    });
-}
-
-async function deleteCron(token: string, cronId: string): Promise<void> {
-    await deleteCronWithFetch((path, init) => accountManageFetch(token, path, init), cronId);
-}
-
-async function deleteCronWithFetch(
-    fetchCron: (path: string, init: RequestInit) => Promise<Response>,
-    cronId: string,
-): Promise<void> {
-    await fetchCron(`/v1/crons/${encodeURIComponent(cronId)}`, {
-        method: "DELETE",
-    });
-}
-
-async function deleteCronByName(token: string, name: string): Promise<void> {
-    const existing = await listCrons(token);
+/**
+ * Delete a manifest-managed cron job by its configured name, if present.
+ */
+async function deleteCronByName(ctx: ActionCtx, accountId: Id<"accounts">, name: string): Promise<void> {
+    const existing = await ctx.runQuery(internal.cron.list, { accountId: accountId });
     const cron = existing.find((job) => job.name === name);
     if (!cron) return;
-    await deleteCron(token, cron.cronId);
-}
-
-async function accountManageFetch(token: string, path: string, init: RequestInit): Promise<Response> {
-    const baseUrl = process.env.BROODS_ACCOUNT_MANAGE_URL;
-    if (!baseUrl) throw new Error("BROODS_ACCOUNT_MANAGE_URL is required to sync cron jobs");
-    const response = await fetch(`${baseUrl.replace(/\/+$/, "")}${path}`, {
-        ...init,
-        headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${token}`,
-            ...init.headers,
-        },
-    });
-    if (!response.ok) {
-        throw new Error(`Broods account-manage cron sync failed: ${response.status} ${await response.text()}`);
-    }
-
-    return response;
-}
-
-async function accountManageFetchWithServiceToken(accountId: string, path: string, init: RequestInit): Promise<Response> {
-    const baseUrl = process.env.BROODS_ACCOUNT_MANAGE_URL;
-    const token = process.env.BROODS_SERVICE_AUTH_SECRET;
-    if (!baseUrl || !token) {
-        throw new Error("BROODS_ACCOUNT_MANAGE_URL and BROODS_SERVICE_AUTH_SECRET are required");
-    }
-    const response = await fetch(`${baseUrl.replace(/\/+$/, "")}${path}`, {
-        ...init,
-        headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${token}`,
-            "X-Account-Id": accountId,
-            ...init.headers,
-        },
-    });
-    if (!response.ok) {
-        throw new Error(`Broods account-manage service call failed: ${response.status} ${await response.text()}`);
-    }
-
-    return response;
-}
-
-async function syncCronsWithServiceToken(
-    accountId: string,
-    manifest: CliManifest,
-    ids: GeneratedIds,
-    prune: boolean,
-): Promise<Record<string, string>> {
-    return syncCronsWithFetch(
-        manifest,
-        ids,
-        prune,
-        (path, init) => accountManageFetchWithServiceToken(accountId, path, init),
-    );
-}
-
-async function deleteCronByNameWithServiceToken(accountId: string, name: string): Promise<void> {
-    const existing = await listCronsWithFetch((path, init) => accountManageFetchWithServiceToken(accountId, path, init));
-    const cron = existing.find((job) => job.name === name);
-    if (!cron) return;
-    await accountManageFetchWithServiceToken(accountId, `/v1/crons/${encodeURIComponent(cron.cronId)}`, {
-        method: "DELETE",
-    });
+    await ctx.runAction(internal.awsCrons.remove, { accountId: accountId, cronId: cron._id });
 }
 
 function cronBody(job: DesiredCron): Record<string, unknown> {

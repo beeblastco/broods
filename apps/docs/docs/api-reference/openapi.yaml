@@ -12,14 +12,14 @@ info:
     > - Advanced integrations that need direct account-management access
     > - Admin operations using `AdminAccountSecret`
 
-    Agents, crons, policies, sandboxes, workspaces, and rotate-secret are also reachable by admins as `/accounts/{accountId}/...` with the `AdminAccountSecret` bearer token; behavior and shapes are identical. Skills, tools, and workspace files are served by the config plane behind the same gateway host and have no admin path variants.
+    Agents, policies, sandboxes, workspaces, and rotate-secret are also reachable by admins as `/accounts/{accountId}/...` with the `AdminAccountSecret` bearer token; behavior and shapes are identical. Skills, tools, workspace files, and crons are served by the config plane behind the same gateway host and have no admin path variants.
   version: 0.1.0
 
 servers:
   - url: https://gateway.broods.app
     description: Managed gateway (default SDK host)
   - url: http://localhost:3000
-    description: Locally-run core container (`cd apps/core && bun run serve`; skills/tools/workspace-files routes are served by the Convex config plane, not a local core)
+    description: Locally-run core container (`cd apps/core && bun run serve`; skills/tools/workspace-files/crons routes are served by the Convex config plane, not a local core)
 
 security:
   - BearerAuth: []

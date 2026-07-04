@@ -1,13 +1,13 @@
 # Cron Jobs
 
-Cron jobs start account agents on a schedule. They are included in the default infrastructure as a small add-on surface on top of the existing account and harness services.
+Cron jobs start account agents on a schedule. Cron CRUD lives in the Convex config plane (`/v1/crons` is forwarded there by the gateway); execution stays in the core harness, invoked by EventBridge Scheduler.
 
 ```mermaid
 flowchart TD
-  Owner["Account owner / SDK"] -->|"create / update / delete cron job"| Manage["account-manage"]
-  Manage --> Jobs["Cron store<br/>(Convex or DynamoDB)"]
-  Manage --> Scheduler["EventBridge Scheduler<br/>schedule lifecycle"]
-  Scheduler -->|"accountId + cronId"| Harness["harness-processing"]
+  Owner["Account owner / SDK"] -->|"create / update / delete cron job"| Config["Convex config plane<br/>(configHttp + awsCrons)"]
+  Config --> Jobs["crons table (Convex)"]
+  Config --> Scheduler["EventBridge Scheduler<br/>schedule lifecycle"]
+  Scheduler -->|"accountId + cronId"| Harness["core harness<br/>(cron-run)"]
   Harness --> Jobs
   Harness -->|"internal async worker event"| Harness
   Harness --> Results["AsyncAgentResult + Conversations"]

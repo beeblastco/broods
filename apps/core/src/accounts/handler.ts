@@ -10,8 +10,8 @@ import {
     AgentSkillNotFoundError,
     AgentPolicyNotFoundError,
     AgentSubagentNotFoundError,
-    applyCronPatch,
     getStorage,
+    isCronsConfigured,
     normalizeCreateAccountInput,
     normalizeUpdateAccountInput,
     toPublicAccount,
@@ -20,8 +20,6 @@ import {
     toPublicWorkspaceConfig,
     type AccountRecord,
     type AgentRecord,
-    type CronRecord,
-    type CronRunRecord,
 } from "../shared/storage/index.ts";
 import {
     errorResponse,
@@ -52,14 +50,7 @@ import { workspaceNamespace, workspaceNamespaceOwnsReservationKey } from "../sha
 import { isPlainObject } from "../shared/object.ts";
 import { deleteAccountSkills } from "./skills.ts";
 import { enforceAccountSignupRateLimit, RateLimitExceededError } from "./rate-limit.ts";
-import {
-    assertCronsAvailable,
-    createCronSchedule,
-    CronsUnavailableError,
-    deleteCronSchedule,
-    schedulerGroupName,
-    updateCronSchedule,
-} from "./cron.ts";
+import { deleteCronSchedule } from "./cron.ts";
 import { logError, logInfo, logWarn } from "../shared/log.ts";
 import {
     forceFlushOtel,
@@ -147,20 +138,12 @@ async function handleAccountRequest(request: CoreRequest): Promise<Response> {
             );
         }
 
-        // Skills, tools, and workspace-file CRUD moved to the Convex config
-        // plane (configHttp.ts, epic #85 phase 9); the gateway routes those
-        // paths there. Runtime reads stay in src/shared/skills.ts, uploaded
-        // tool bundle loading, and workspace mount/S3 read helpers.
-        const selfCronCollection = rawPath === "/v1/crons";
-        const selfCronRunsMatch = rawPath.match(/^\/v1\/crons\/([^/]+)\/runs$/);
-        const selfCronMatch = rawPath.match(/^\/v1\/crons\/([^/]+)$/);
-        if (selfCronCollection || selfCronMatch?.[1] || selfCronRunsMatch?.[1]) {
-            const account = requireAccountAuth(auth, { allowServiceToken: true, allowDeployment: true });
-            return await handleCronRoute(method, account.accountId, selfCronMatch?.[1] ?? selfCronRunsMatch?.[1], request, {
-                runs: Boolean(selfCronRunsMatch?.[1]),
-            });
-        }
-
+        // Skills, tools, workspace-file, and cron CRUD moved to the Convex
+        // config plane (configHttp.ts, epic #85 phase 9); the gateway routes
+        // those paths there. Runtime reads stay in src/shared/skills.ts,
+        // uploaded tool bundle loading, workspace mount/S3 read helpers, and
+        // the harness cron-run leaf; account deletion still sweeps leftover
+        // schedules (deleteAccountCrons).
         const selfPolicyCollection = rawPath === "/v1/policies";
         const selfPolicyMatch = rawPath.match(/^\/v1\/policies\/([^/]+)$/);
         if (selfPolicyCollection || selfPolicyMatch?.[1]) {
@@ -241,11 +224,6 @@ async function handleAccountRequest(request: CoreRequest): Promise<Response> {
                 adminAgentMatch[2] ? decodeURIComponent(adminAgentMatch[2]) : undefined,
                 () => handleAgentRoute(method, accountId, adminAgentMatch[2], request),
             );
-        }
-
-        const adminCronMatch = rawPath.match(/^\/accounts\/([^/]+)\/crons(?:\/([^/]+))?$/);
-        if (adminCronMatch?.[1]) {
-            return await handleCronRoute(method, decodeURIComponent(adminCronMatch[1]), adminCronMatch[2], request);
         }
 
         const adminPolicyMatch = rawPath.match(/^\/accounts\/([^/]+)\/policies(?:\/([^/]+))?$/);
@@ -369,78 +347,6 @@ function requiredLogField(body: Record<string, unknown>, field: string): string 
     return value;
 }
 
-async function handleCronRoute(
-    method: string,
-    accountId: string,
-    rawCronId: string | undefined,
-    request: CoreRequest,
-    options: { runs?: boolean } = {},
-): Promise<Response> {
-    assertCronsAvailable();
-    const cronId = rawCronId ? decodeURIComponent(rawCronId) : undefined;
-
-    const crons = getStorage().crons;
-    if (options.runs) {
-        if (!cronId) return errorResponse(404, "Cron job not found");
-        if (method !== "GET") return errorResponse(405, "Method not allowed", { method, allowedMethods: ["GET"] });
-        const limit = parsePositiveLimit(request.query.get("limit") ?? undefined);
-        const records = await crons.listRuns(accountId, cronId, limit);
-        return jsonResponse(200, { runs: records.map(toCronRunResponse) });
-    }
-
-    if (!cronId) {
-        if (method === "GET") {
-            const records = await crons.list(accountId);
-            return jsonResponse(200, { crons: records.map(toCronResponse) });
-        }
-        if (method === "POST") {
-            const body = parseJsonBody(request) as { agentId?: unknown };
-            await assertCronAgentExists(accountId, body.agentId);
-            const cron = await crons.create(accountId, body as never, {
-                schedulerGroupName: schedulerGroupName(),
-            });
-            try {
-                await createCronSchedule(cron);
-            } catch (err) {
-                await crons.remove(accountId, cron.cronId).catch(() => { });
-                throw err;
-            }
-            return jsonResponse(201, toCronResponse(cron));
-        }
-        return errorResponse(405, "Method not allowed", { method, allowedMethods: ["GET", "POST"] });
-    }
-
-    if (method === "GET") {
-        const cron = await crons.getById(accountId, cronId);
-        return cron ? jsonResponse(200, toCronResponse(cron)) : errorResponse(404, "Cron job not found");
-    }
-    if (method === "PATCH") {
-        const existing = await crons.getById(accountId, cronId);
-        if (!existing) {
-            return errorResponse(404, "Cron job not found");
-        }
-
-        const patch = parseJsonBody(request);
-        if (typeof (patch as { agentId?: unknown }).agentId !== "undefined") {
-            await assertCronAgentExists(accountId, (patch as { agentId?: unknown }).agentId);
-        }
-        const patched = applyCronPatch(existing, patch as never);
-        await updateCronSchedule(patched);
-        const cron = await crons.update(accountId, cronId, patch as never);
-        return cron ? jsonResponse(200, toCronResponse(cron)) : errorResponse(404, "Cron job not found");
-    }
-    if (method === "DELETE") {
-        const existing = await crons.getById(accountId, cronId);
-        if (!existing) {
-            return errorResponse(404, "Cron job not found");
-        }
-        await deleteCronSchedule(existing);
-        const deleted = await crons.remove(accountId, cronId);
-        return deleted ? jsonResponse(200, { deleted: true }) : errorResponse(404, "Cron job not found");
-    }
-
-    return errorResponse(405, "Method not allowed", { method, allowedMethods: ["GET", "PATCH", "DELETE"] });
-}
 
 async function handleAgentRoute(
     method: string,
@@ -999,18 +905,6 @@ async function deleteAccountResponse(account: Extract<AuthContext, { kind: "acco
     return jsonResponse(200, { deleted: true, cleanup: { ...cleanup, agentsDeleted, skillObjectsDeleted, cronsDeleted, accountToolsDeleted } });
 }
 
-async function assertCronAgentExists(accountId: string, agentId: unknown): Promise<void> {
-    if (typeof agentId !== "string" || agentId.trim().length === 0) {
-        throw new Error("agentId is required");
-    }
-    const agent = await getStorage().agents.getById(accountId, agentId);
-    if (!agent) {
-        throw new Error("Cron job agentId must reference an existing agent");
-    }
-    if (agent.status !== "active") {
-        throw new Error("Cron job agentId must reference an active agent");
-    }
-}
 
 function requireAccountAuth(
     auth: AuthContext,
@@ -1055,58 +949,12 @@ function toCreateAgentResponse(agent: AgentRecord): Record<string, unknown> {
     };
 }
 
-function toCronResponse(cron: CronRecord): Record<string, unknown> {
-    return {
-        accountId: cron.accountId,
-        cronId: cron.cronId,
-        name: cron.name,
-        ...(cron.description ? { description: cron.description } : {}),
-        agentId: cron.agentId,
-        events: cron.events,
-        ...(cron.conversationKey ? { conversationKey: cron.conversationKey } : {}),
-        scheduleExpression: cron.scheduleExpression,
-        ...(cron.timezone ? { timezone: cron.timezone } : {}),
-        status: cron.status,
-        createdAt: cron.createdAt,
-        updatedAt: cron.updatedAt,
-        ...(cron.lastInvokedAt ? { lastInvokedAt: cron.lastInvokedAt } : {}),
-        ...(cron.lastStatus ? { lastStatus: cron.lastStatus } : {}),
-        ...(cron.lastError ? { lastError: cron.lastError } : {}),
-    };
-}
 
-function toCronRunResponse(run: CronRunRecord): Record<string, unknown> {
-    return {
-        accountId: run.accountId,
-        cronId: run.cronId,
-        runId: run.runId,
-        eventId: run.eventId,
-        conversationKey: run.conversationKey,
-        status: run.status,
-        ...(run.result !== undefined ? { result: run.result } : {}),
-        ...(run.error ? { error: run.error } : {}),
-        startedAt: run.startedAt,
-        ...(run.completedAt ? { completedAt: run.completedAt } : {}),
-    };
-}
 
-function parsePositiveLimit(value: string | undefined): number | undefined {
-    if (value === undefined) return undefined;
-    const parsed = Number(value);
-    if (!Number.isInteger(parsed) || parsed < 1 || parsed > 100) {
-        throw new Error("limit must be an integer between 1 and 100");
-    }
-    return parsed;
-}
 
 async function deleteAccountCrons(accountId: string): Promise<number> {
-    try {
-        assertCronsAvailable();
-    } catch (err) {
-        if (err instanceof CronsUnavailableError) {
-            return 0;
-        }
-        throw err;
+    if (!isCronsConfigured()) {
+        return 0;
     }
 
     const cronsStore = getStorage().crons;
@@ -1125,9 +973,6 @@ function parseAccountPatch(request: CoreRequest): unknown {
 function errorResponseForError(err: unknown): Response {
     if (err instanceof AccountEndpointUnauthorizedError) {
         return errorResponse(401, err.message);
-    }
-    if (err instanceof CronsUnavailableError) {
-        return errorResponse(503, err.message);
     }
     if (err instanceof AgentSkillAuthorizationError) {
         return errorResponse(401, err.message);

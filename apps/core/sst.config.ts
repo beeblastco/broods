@@ -1294,9 +1294,6 @@ export default $config({
         ...(cronsTable ? { CRONS_TABLE_NAME: cronsTable.name } : {}),
         ...(WORKDIR_URL ? { WORKDIR_URL } : {}),
         ...(WORKDIR_API_KEY ? { WORKDIR_API_KEY } : {}),
-        CRON_SCHEDULER_TARGET_ARN: harnessProcessing.arn,
-        CRON_SCHEDULER_ROLE_ARN: cronSchedulerRole.arn,
-        CRON_SCHEDULER_GROUP_NAME: cronScheduleGroup.name,
       },
       permissions: accountManagePermissions,
     });
@@ -1414,6 +1411,10 @@ export default $config({
       asyncAgentResultTableName: asyncAgentResultTable.name,
       asyncToolResultTableName: asyncToolResultTable.name,
       cronScheduleGroupName: cronScheduleGroup.name,
+      // Cron schedule target for the Convex config plane (awsCrons.ts env:
+      // CRON_SCHEDULER_TARGET_ARN / CRON_SCHEDULER_ROLE_ARN / group above).
+      cronSchedulerTargetArn: harnessProcessing.arn,
+      cronSchedulerRoleArn: cronSchedulerRole.arn,
       filesystemBucketName: filesystemBucket.name,
       skillsBucketName: skillsBucket.name,
       toolBundlesBucketName: toolBundlesBucket.name,

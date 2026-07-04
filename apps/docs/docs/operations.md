@@ -148,7 +148,7 @@ Differences from the Lambda path, all internal to the container entry (`function
 - Async self-invocations run in-process (capped by `MAX_INPROCESS_WORKERS`) instead of Lambda `Event` invokes.
 - Background-job callbacks use `PUBLIC_BASE_URL` instead of Function URL discovery.
 - The invocation deadline is synthesized from `REQUEST_TIMEOUT_BUDGET_MS` (default 10 minutes, matching the Lambda timeout).
-- Cron schedules keep targeting the harness Lambda; cron cutover is a later phase.
+- Cron schedule CRUD lives in the Convex config plane (`packages/convex/awsCrons.ts`); schedules keep targeting the harness (`CRON_SCHEDULER_TARGET_ARN` on the Convex deployment) until the cron-run API-destination cutover.
 
 The Lambda path stays the production default until pod parity is proven; the pods are deployed from the infra repo (`kubernetes/charts/releases/core-dev.yaml` / `core.yaml`) at `core[.dev].broods.app` and `core-account[.dev].broods.app`.
 

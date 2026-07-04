@@ -48,17 +48,21 @@ touched. A leaked Convex deploy key cannot trivially cross-tenant.
 ## AWS config plane (epic #85 phase 9)
 
 Convex owns the account config plane's AWS resources directly (no core proxy):
-skill bundles, tool bundles, and workspace files in S3, and (Stage 3) account
-cron schedules. `model/aws.ts` assumes `ConvexAwsRole` (created by
-`apps/core/sst.config.ts`) from a minimal bootstrap IAM user whose only
-permission is `sts:AssumeRole`. Node-only AWS code lives in `model/` and the
-`"use node"` action files (`awsBundles.ts`, `awsSkills.ts`,
-`awsWorkspaceFiles.ts`, `skillsPublic.ts`, `workspaceFilesPublic.ts`).
+skill bundles, tool bundles, and workspace files in S3, plus account cron
+schedules in EventBridge Scheduler. `model/aws.ts` assumes `ConvexAwsRole`
+(created by `apps/core/sst.config.ts`) from a minimal bootstrap IAM user whose
+only permission is `sts:AssumeRole`. Node-only AWS code lives in `model/` and
+the `"use node"` action files (`awsBundles.ts`, `awsSkills.ts`,
+`awsWorkspaceFiles.ts`, `awsCrons.ts`, `skillsPublic.ts`,
+`workspaceFilesPublic.ts`).
 
 `configHttp.ts` serves the public config API on this deployment's
-`.convex.site` host — `/v1/skills*`, `/v1/tools*`, and
-`/v1/workspaces/{id}/files` with account Bearer auth — replacing core's former
-routes; the gateway forwards those paths here (`BROODS_CONFIG_URL`).
+`.convex.site` host — `/v1/skills*`, `/v1/tools*`,
+`/v1/workspaces/{id}/files`, and `/v1/crons*` with account Bearer auth —
+replacing core's former routes; the gateway forwards those paths here
+(`BROODS_CONFIG_URL`). Cron execution stays in core: schedules invoke the
+configured target with `{kind: "cron", accountId, cronId}` and core's harness
+runs the agent.
 
 Deployment environment variables:
 
@@ -72,6 +76,13 @@ Deployment environment variables:
   `broods-convex`).
 - `SKILLS_BUCKET_NAME`, `TOOL_BUNDLES_BUCKET_NAME`, `FILESYSTEM_BUCKET_NAME` —
   the stage's S3 buckets (sst outputs).
+- `CRON_SCHEDULER_TARGET_ARN` — what schedules invoke (sst output
+  `cronSchedulerTargetArn`; the harness today, the gateway cron-run API
+  destination after cutover).
+- `CRON_SCHEDULER_ROLE_ARN` — the role schedules assume (sst output
+  `cronSchedulerRoleArn`).
+- `CRON_SCHEDULER_GROUP_NAME` — the stage's schedule group (sst output
+  `cronScheduleGroupName`).
 
 ## Workflow
 

@@ -17,6 +17,7 @@ import type * as agents from "../agents.js";
 import type * as asyncResults from "../asyncResults.js";
 import type * as auth from "../auth.js";
 import type * as awsBundles from "../awsBundles.js";
+import type * as awsCrons from "../awsCrons.js";
 import type * as awsSkills from "../awsSkills.js";
 import type * as awsWorkspaceFiles from "../awsWorkspaceFiles.js";
 import type * as canvas from "../canvas.js";
@@ -46,6 +47,7 @@ import type * as model_agentRuntimeSecrets from "../model/agentRuntimeSecrets.js
 import type * as model_agentSync from "../model/agentSync.js";
 import type * as model_aws from "../model/aws.js";
 import type * as model_cascade from "../model/cascade.js";
+import type * as model_cronRules from "../model/cronRules.js";
 import type * as model_environmentValues from "../model/environmentValues.js";
 import type * as model_objects from "../model/objects.js";
 import type * as model_ownership_environment from "../model/ownership/environment.js";
@@ -94,6 +96,7 @@ declare const fullApi: ApiFromModules<{
   asyncResults: typeof asyncResults;
   auth: typeof auth;
   awsBundles: typeof awsBundles;
+  awsCrons: typeof awsCrons;
   awsSkills: typeof awsSkills;
   awsWorkspaceFiles: typeof awsWorkspaceFiles;
   canvas: typeof canvas;
@@ -123,6 +126,7 @@ declare const fullApi: ApiFromModules<{
   "model/agentSync": typeof model_agentSync;
   "model/aws": typeof model_aws;
   "model/cascade": typeof model_cascade;
+  "model/cronRules": typeof model_cronRules;
   "model/environmentValues": typeof model_environmentValues;
   "model/objects": typeof model_objects;
   "model/ownership/environment": typeof model_ownership_environment;

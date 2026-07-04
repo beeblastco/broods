@@ -153,29 +153,32 @@ describe("account management HTTP handler", () => {
     expect(await responseJson(response)).toEqual({ error: "Not found" });
   });
 
-  it("reports cron routes as unavailable when scheduler env is missing", async () => {
+  it("no longer serves cron CRUD — those routes live in the Convex config plane", async () => {
     process.env.ADMIN_ACCOUNT_SECRET = "admin-secret";
-    delete process.env.CRONS_TABLE_NAME;
-    const response = await handler(createEvent("GET", "/accounts/acct_test/crons", {
+    process.env.SERVICE_AUTH_SECRET = "service-secret";
+    setStorageForTests(createFakeStorage({}));
+
+    // Admin cron routes were removed with the rest of the cron plane.
+    const adminResponse = await handler(createEvent("GET", "/accounts/acct_test/crons", {
       authorization: "Bearer admin-secret",
     }));
+    expect(adminResponse.status).toBe(404);
+    expect(await responseJson(adminResponse)).toEqual({ error: "Not found" });
 
-    expect(response.status).toBe(503);
-    expect(await responseJson(response)).toEqual({ error: "Cron jobs are unavailable" });
+    // Account-authenticated /v1/crons falls through to the admin gate.
+    const serviceResponse = await handler(createEvent("GET", "/v1/crons", {
+      authorization: "Bearer service-secret",
+      "x-account-id": "acct_test",
+    }));
+    expect(serviceResponse.status).toBe(403);
+    expect(await responseJson(serviceResponse)).toEqual({ error: "Forbidden" });
   });
 
-  it("allows service tokens on self cron, skill, and tool routes only", async () => {
+  it("rejects service tokens on non-cron account endpoints", async () => {
     process.env.SERVICE_AUTH_SECRET = "service-secret";
-    process.env.CRONS_TABLE_NAME = "crons";
-    process.env.CRON_SCHEDULER_ROLE_ARN = "arn:aws:iam::123456789012:role/scheduler";
-    process.env.CRON_SCHEDULER_TARGET_ARN = "arn:aws:lambda:us-east-1:123456789012:function:harness";
-    process.env.CRON_SCHEDULER_GROUP_NAME = "cron-group";
     setStorageForTests(createFakeStorage({
       agents: {
         async getById() { return fakeAgent({ status: "active" }); },
-      },
-      crons: {
-        async list() { return []; },
       },
     }));
     const serviceHeaders = {
@@ -194,103 +197,6 @@ describe("account management HTTP handler", () => {
       expect(response.status).toBe(400);
       expect(await responseJson(response)).toEqual(serviceTokenRejection);
     }
-
-    // Skill/tool sync routes accept the account-scoped service token (the Convex CLI
-    // sync path); the request gets past auth (downstream listing may fail without S3,
-    // but it is never the service-token rejection).
-    for (const path of ["/v1/skills", "/v1/tools"]) {
-      const response = await handler(createEvent("GET", path, serviceHeaders));
-      expect(await responseJson(response)).not.toEqual(serviceTokenRejection);
-    }
-
-    const cronResponse = await handler(createEvent("GET", "/v1/crons", serviceHeaders));
-    expect(cronResponse.status).toBe(200);
-    expect(await responseJson(cronResponse)).toEqual({ crons: [] });
-  });
-
-  it("allows deployment runtime keys on self cron routes", async () => {
-    process.env.CRONS_TABLE_NAME = "crons";
-    process.env.CRON_SCHEDULER_ROLE_ARN = "arn:aws:iam::123456789012:role/scheduler";
-    process.env.CRON_SCHEDULER_TARGET_ARN = "arn:aws:lambda:us-east-1:123456789012:function:harness";
-    process.env.CRON_SCHEDULER_GROUP_NAME = "cron-group";
-    setStorageForTests(createFakeStorage({
-      crons: {
-        async list(accountId: string) {
-          return [{
-            accountId: accountId,
-            cronId: "cron_1",
-            name: "Daily",
-            agentId: "agent_main",
-            events: [{ role: "user", content: [{ type: "text", text: "Run maintenance." }] }],
-            scheduleExpression: "rate(1 day)",
-            status: "active",
-            schedulerName: "cron_1",
-            schedulerGroupName: "cron-group",
-            createdAt: "2026-05-01T00:00:00.000Z",
-            updatedAt: "2026-05-01T00:00:00.000Z",
-          }];
-        },
-      },
-      agentDeployments: {
-        async getByApiKeyHash() {
-          return {
-            accountId: "acct_test",
-            endpointId: "env-endpoint",
-            projectSlug: "demo",
-            environmentSlug: "development",
-          };
-        },
-      },
-    }));
-
-    const response = await handler(createEvent("GET", "/v1/crons", {
-      authorization: "Bearer fp_agent_test",
-    }));
-
-    expect(response.status).toBe(200);
-    expect(await responseJson(response)).toEqual({
-      crons: [{
-        accountId: "acct_test",
-        cronId: "cron_1",
-        name: "Daily",
-        agentId: "agent_main",
-        events: [{ role: "user", content: [{ type: "text", text: "Run maintenance." }] }],
-        scheduleExpression: "rate(1 day)",
-        status: "active",
-        createdAt: "2026-05-01T00:00:00.000Z",
-        updatedAt: "2026-05-01T00:00:00.000Z",
-      }],
-    });
-  });
-
-  it("rejects cron jobs that reference inactive agents", async () => {
-    process.env.ADMIN_ACCOUNT_SECRET = "admin-secret";
-    process.env.CRONS_TABLE_NAME = "crons";
-    process.env.CRON_SCHEDULER_ROLE_ARN = "arn:aws:iam::123456789012:role/scheduler";
-    process.env.CRON_SCHEDULER_TARGET_ARN = "arn:aws:lambda:us-east-1:123456789012:function:harness";
-    process.env.CRON_SCHEDULER_GROUP_NAME = "cron-group";
-    setStorageForTests(createFakeStorage({
-      agents: {
-        async getById() { return fakeAgent({ status: "disabled" }); },
-      },
-      crons: {
-        async create() {
-          throw new Error("cron job should not be created for inactive agents");
-        },
-      },
-    }));
-
-    const response = await handler(createEvent("POST", "/accounts/acct_test/crons", {
-      authorization: "Bearer admin-secret",
-    }, {
-      name: "Daily",
-      agentId: "agent_main",
-      input: "Run maintenance.",
-      scheduleExpression: "rate(1 day)",
-    }));
-
-    expect(response.status).toBe(400);
-    expect(await responseJson(response)).toEqual({ error: "Cron job agentId must reference an active agent" });
   });
 });
 

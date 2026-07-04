@@ -9,17 +9,13 @@ import {
   type AccountRecord,
   type StorageProvider,
 } from "../src/shared/storage/index.ts";
-import { coreRequest, responseJson } from "./helpers/http.ts";
+import { coreRequest } from "./helpers/http.ts";
 
 const ORIGINAL_ENV = { ...process.env };
 
 beforeEach(() => {
   process.env.ADMIN_ACCOUNT_SECRET = "admin-secret";
   process.env.SERVICE_AUTH_SECRET = "service-secret";
-  process.env.CRONS_TABLE_NAME = "crons";
-  process.env.CRON_SCHEDULER_TARGET_ARN = "arn:aws:lambda:us-east-1:123456789012:function:test";
-  process.env.CRON_SCHEDULER_ROLE_ARN = "arn:aws:iam::123456789012:role/test";
-  process.env.CRON_SCHEDULER_GROUP_NAME = "test-group";
   resetStorageForTests();
 });
 
@@ -29,20 +25,19 @@ afterEach(() => {
 });
 
 describe("account-management deployment key auth", () => {
-  it("keeps cron self routes allowed for deployment keys; skill and tool routes are no longer core's", async () => {
+  it("no longer serves skill, tool, or cron routes for deployment keys — they are Convex config-plane routes", async () => {
     setStorageForTests(deploymentStorage());
     const { handler } = await import("../src/accounts/handler.ts");
 
-    // Skills and tools CRUD moved to the Convex config plane — the account
-    // handler no longer serves them for any principal.
+    // Skills, tools, and cron CRUD moved to the Convex config plane — the
+    // account handler no longer serves them for any principal.
     const skillsResponse = await handler(event("GET", "/v1/skills"));
     const toolsResponse = await handler(event("GET", "/v1/tools"));
     const cronsResponse = await handler(event("GET", "/v1/crons"));
 
     expect(skillsResponse.status).toBe(403);
     expect(toolsResponse.status).toBe(403);
-    expect(cronsResponse.status).toBe(200);
-    expect(await responseJson(cronsResponse)).toEqual({ crons: [] });
+    expect(cronsResponse.status).toBe(403);
   });
 });
 
@@ -74,11 +69,6 @@ function deploymentStorage(): StorageProvider {
           projectSlug: "demo",
           environmentSlug: "development",
         };
-      },
-    },
-    crons: {
-      async list() {
-        return [];
       },
     },
   } as unknown as StorageProvider;
