@@ -8,6 +8,7 @@
 
 import { v } from "convex/values";
 import { internalAction } from "./_generated/server";
+import { isPlainObject } from "./model/objects";
 import {
     createJsonSkillFiles,
     createOrReplaceSkill,
@@ -102,11 +103,11 @@ export const remove = internalAction({
  * @throws when the body or source is invalid
  */
 async function resolveSkillBundleFiles(input: unknown): Promise<SkillBundleFile[]> {
-    if (!input || typeof input !== "object") {
+    if (!isPlainObject(input)) {
         throw new Error("Request body must be an object");
     }
 
-    const record = input as Record<string, unknown>;
+    const record = input;
     switch (record.source) {
         case "json": {
             if (typeof record.name !== "string" || typeof record.description !== "string" || typeof record.content !== "string") {
@@ -121,10 +122,10 @@ async function resolveSkillBundleFiles(input: unknown): Promise<SkillBundleFile[
             }
 
             return record.files.map((item) => {
-                if (!item || typeof item !== "object") {
+                if (!isPlainObject(item)) {
                     throw new Error("Each file must be an object");
                 }
-                const candidate = item as Record<string, unknown>;
+                const candidate = item;
                 if (typeof candidate.path !== "string" || typeof candidate.contentBase64 !== "string") {
                     throw new Error("Each file requires path and contentBase64");
                 }
