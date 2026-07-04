@@ -1199,6 +1199,9 @@ function badRequestResponse(err: unknown): Response {
   if (err instanceof DirectNotFoundError) {
     return errorResponse(404, err.message);
   }
+  if (err instanceof StatusUrlConfigError) {
+    return errorResponse(500, err.message);
+  }
   return errorResponse(400, err instanceof Error ? err.message : "Invalid request");
 }
 
@@ -1217,7 +1220,7 @@ function isStatusPath(rawPath: string): boolean {
 function buildStatusUrl(publicEventId: string, agentId: string): string | null {
   const baseUrl = getHarnessPublicUrl();
   if (!baseUrl) {
-    return null;
+    throw new StatusUrlConfigError("PUBLIC_BASE_URL is not configured");
   }
 
   return `${baseUrl}/status/${encodeURIComponent(publicEventId)}?agentId=${encodeURIComponent(agentId)}`;
@@ -1296,6 +1299,8 @@ function parseDirectIngressEvent(rawEvent: unknown): DirectIngressEvent {
 }
 
 class DirectNotFoundError extends Error { }
+
+class StatusUrlConfigError extends Error { }
 
 function createTelegramChannelFromConfig(config: AgentConfig): ChannelAdapter | null {
   const channel = config.channels?.telegram;
