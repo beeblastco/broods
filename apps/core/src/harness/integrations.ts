@@ -616,10 +616,7 @@ async function handleChannelWebhook(
           conversationKey: parsed.conversationKey,
         })
       ));
-      return new Response(response.body ?? "", {
-        status: response.statusCode ?? 200,
-        headers: response.headers ?? {},
-      });
+      return toResponse(response);
     }
 
     if (parsed.kind === "context") {
@@ -654,10 +651,7 @@ async function handleChannelWebhook(
             : {}),
         })
       ));
-      return new Response(response.body ?? "", {
-        status: response.statusCode ?? 200,
-        headers: response.headers ?? {},
-      });
+      return toResponse(response);
     }
 
     // The promise is deferred by one microtask so this request's scoped context
@@ -699,10 +693,7 @@ async function handleChannelWebhook(
         handlers,
       )
     ));
-    return new Response(response.body ?? "", {
-      status: response.statusCode ?? 200,
-      headers: response.headers ?? {},
-    });
+    return toResponse(response);
   } catch (err) {
     logError("Failed to process webhook request", {
       channel: adapter.name,
@@ -1198,6 +1189,9 @@ function badRequestResponse(err: unknown): Response {
   if (err instanceof DirectNotFoundError) {
     return errorResponse(404, err.message);
   }
+  if (err instanceof StatusUrlConfigError) {
+    return errorResponse(500, err.message);
+  }
   return errorResponse(400, err instanceof Error ? err.message : "Invalid request");
 }
 
@@ -1216,7 +1210,7 @@ function isStatusPath(rawPath: string): boolean {
 function buildStatusUrl(publicEventId: string, agentId: string): string {
   const baseUrl = getHarnessPublicUrl();
   if (!baseUrl) {
-    throw new Error("PUBLIC_BASE_URL is not configured");
+    throw new StatusUrlConfigError("PUBLIC_BASE_URL is not configured");
   }
 
   return `${baseUrl}/status/${encodeURIComponent(publicEventId)}?agentId=${encodeURIComponent(agentId)}`;
@@ -1295,6 +1289,8 @@ function parseDirectIngressEvent(rawEvent: unknown): DirectIngressEvent {
 }
 
 class DirectNotFoundError extends Error { }
+
+class StatusUrlConfigError extends Error { }
 
 function createTelegramChannelFromConfig(config: AgentConfig): ChannelAdapter | null {
   const channel = config.channels?.telegram;
