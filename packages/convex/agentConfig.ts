@@ -109,6 +109,9 @@ export const create = mutation({
 
         const now = Date.now();
         const trimmedName = name.trim();
+        if (provider === "custom" && !customBaseUrl?.trim()) {
+            throw new Error("customBaseUrl is required for the custom provider");
+        }
         const configId = await ctx.db.insert("agentConfigs", {
             authId: authUser.id,
             name: trimmedName,

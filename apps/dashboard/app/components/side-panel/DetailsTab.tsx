@@ -290,7 +290,7 @@ export function DetailsTab({
         setTimeout(() => setCopiedField(null), 2000);
     }
 
-    /** Auto-saves the provider/model pair; no-ops while the model id is empty. */
+    /** Auto-saves provider/model/base-URL settings; no-ops when required values are empty. */
     function saveModel(provider: AgentProvider, modelId: string, customBaseUrl = editCustomBaseUrl) {
         const trimmed = modelId.trim();
         if (!trimmed) {

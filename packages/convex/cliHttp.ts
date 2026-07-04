@@ -500,11 +500,13 @@ async function syncToolResources(
             bundle: stringField(config.bundle, `tool:${resource.name}.bundle`),
         }, { requireBundle: true });
         const current = existing.get(resource.name);
-        const bundleStorageKey = await ctx.runAction(internal.awsBundles.putToolBundle, {
-            accountId: accountId,
-            sha256: upload.sha256,
-            bundle: upload.bundle,
-        });
+        const bundleStorageKey = current?.sha256 === upload.sha256
+            ? current.bundleStorageKey
+            : await ctx.runAction(internal.awsBundles.putToolBundle, {
+                accountId: accountId,
+                sha256: upload.sha256,
+                bundle: upload.bundle,
+            });
         if (current) {
             await ctx.runMutation(internal.accountTools.update, {
                 accountId: accountId,

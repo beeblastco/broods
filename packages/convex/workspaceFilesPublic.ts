@@ -81,7 +81,7 @@ export const migrateLegacy = action({
                 const response = await fetch(url);
                 if (!response.ok) continue;
                 const bytes = new Uint8Array(await response.arrayBuffer());
-                if (bytes.byteLength > 512 * 1024) continue;
+                if (bytes.byteLength > MAX_FILE_BYTES) continue;
                 await uploadWorkspaceFile(workspace, {
                     path: file.path,
                     contentBase64: Buffer.from(bytes).toString("base64"),
