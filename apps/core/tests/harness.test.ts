@@ -14,7 +14,9 @@ const originalDynamoSend = dynamo.send;
 const googleModelMock = mock((modelId: string) => ({ provider: "google", modelId }));
 const createGoogleMock = mock((_options: unknown) => googleModelMock);
 const openAIModelMock = mock((modelId: string) => ({ provider: "openai", modelId }));
-const createOpenAIMock = mock((_options: unknown) => openAIModelMock);
+const openAIChatModelMock = mock((modelId: string) => ({ provider: "custom.chat", modelId }));
+const openAIProviderMock = Object.assign(openAIModelMock, { chat: openAIChatModelMock });
+const createOpenAIMock = mock((_options: unknown) => openAIProviderMock);
 const anthropicModelMock = mock((modelId: string) => ({ provider: "anthropic", modelId }));
 const createAnthropicMock = mock((_options: unknown) => anthropicModelMock);
 const bedrockModelMock = mock((modelId: string) => ({ provider: "bedrock", modelId }));
@@ -415,6 +417,7 @@ afterEach(() => {
   googleModelMock.mockClear();
   createGoogleMock.mockClear();
   openAIModelMock.mockClear();
+  openAIChatModelMock.mockClear();
   createOpenAIMock.mockClear();
   anthropicModelMock.mockClear();
   createAnthropicMock.mockClear();
@@ -1585,6 +1588,56 @@ describe("runAgentLoop", () => {
     expect(openAIModelMock).toHaveBeenCalledWith("gpt-5.4");
     expect(streamTextMock.mock.calls[0]?.[0]).toMatchObject({
       model: { provider: "openai", modelId: "gpt-5.4" },
+    });
+  });
+
+  it("creates a custom OpenAI-compatible provider from agent provider config", async () => {
+    installHarnessEnv();
+    const { runAgentLoop } = await import("../src/harness/harness.ts");
+
+    const stream = await runAgentLoop({
+      conversationKey: "direct:conversation",
+      eventId: "direct-event",
+      filesystemNamespace: () => "fs-test",
+      resolvedWorkspaces: () => [],
+      statelessSandbox: () => undefined,
+      statelessPermissionMode: () => "ask",
+      persistModelMessages: async () => { },
+      loadRefreshedSystemPromptParts: async () => ({
+        systemContextSnapshot: { cursor: null, messages: [] },
+        system: [],
+      }),
+    } as never, {
+      messages: [{ role: "user", content: "hello" }],
+      system: [],
+      ephemeralSystem: [],
+      systemContextSnapshot: { cursor: null, messages: [] },
+    }, {
+      provider: {
+        custom: {
+          apiKey: "custom-key",
+          base_url: "https://llm.example/v1",
+          headers: { "X-Tenant": "tenant-1" },
+        },
+      },
+      model: {
+        provider: "custom",
+        modelId: "gpt-oss-120b",
+      },
+    });
+
+    await stream.consumeStream();
+
+    expect(createOpenAIMock).toHaveBeenCalledWith({
+      apiKey: "custom-key",
+      baseURL: "https://llm.example/v1",
+      headers: { "X-Tenant": "tenant-1" },
+      name: "custom",
+    });
+    expect(openAIModelMock).not.toHaveBeenCalledWith("gpt-oss-120b");
+    expect(openAIChatModelMock).toHaveBeenCalledWith("gpt-oss-120b");
+    expect(streamTextMock.mock.calls[0]?.[0]).toMatchObject({
+      model: { provider: "custom.chat", modelId: "gpt-oss-120b" },
     });
   });
 

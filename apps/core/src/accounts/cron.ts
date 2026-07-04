@@ -24,7 +24,7 @@ export class CronsUnavailableError extends Error {
 export function assertCronsAvailable(): void {
   if (
     !isCronsConfigured() ||
-    !optionalEnv("CRON_SCHEDULER_TARGET_FUNCTION_ARN") ||
+    !optionalEnv("CRON_SCHEDULER_TARGET_ARN") ||
     !optionalEnv("CRON_SCHEDULER_ROLE_ARN") ||
     !optionalEnv("CRON_SCHEDULER_GROUP_NAME")
   ) {
@@ -84,7 +84,7 @@ export function schedulerGroupName(): string {
 
 function scheduleTarget(job: CronRecord) {
   return {
-    Arn: requireEnv("CRON_SCHEDULER_TARGET_FUNCTION_ARN"),
+    Arn: requireEnv("CRON_SCHEDULER_TARGET_ARN"),
     RoleArn: requireEnv("CRON_SCHEDULER_ROLE_ARN"),
     Input: JSON.stringify({
       kind: "cron",

@@ -7,7 +7,9 @@
 
 import { httpAction, type ActionCtx } from "./_generated/server";
 import { internal } from "./_generated/api";
+import type { Id } from "./_generated/dataModel";
 import type { CliManifest, GeneratedIds } from "./cliTypes";
+import { normalizeAccountToolUpload } from "./model/accountTools";
 
 type RouteParts =
     | { kind: "manifest"; project: string; environment: string }
@@ -116,7 +118,7 @@ export const handle = httpAction(async (ctx, req) => {
                 return json({ error: "Manifest project/environment must match the request path" }, 400);
             }
             const originalManifest = manifest as CliManifest;
-            const externalIds = await syncExternalResources(accountId, originalManifest, body.prune === true);
+            const externalIds = await syncExternalResources(ctx, accountId, originalManifest, body.prune === true);
             await ctx.runMutation(internal.cliSync.recordExternalResourcesBySecretHash, {
                 secretHash: secretHash,
                 project: route.project,
@@ -435,6 +437,7 @@ function json(body: unknown, status = 200): Response {
 type ExternalIds = Pick<GeneratedIds, "skills" | "tools">;
 
 async function syncExternalResources(
+    ctx: ActionCtx,
     accountId: string,
     manifest: CliManifest,
     prune: boolean,
@@ -445,7 +448,7 @@ async function syncExternalResources(
     if (!hasExternalResources) return { skills: {}, tools: {} };
 
     const skills = await syncSkillResources(accountId, manifest);
-    const tools = await syncToolResources(accountId, manifest, prune);
+    const tools = await syncToolResources(ctx, accountId as Id<"accounts">, manifest, prune);
 
     return { skills, tools };
 }
@@ -475,48 +478,65 @@ async function syncSkillResources(
 }
 
 async function syncToolResources(
-    accountId: string,
+    ctx: ActionCtx,
+    accountId: Id<"accounts">,
     manifest: CliManifest,
     prune: boolean,
 ): Promise<Record<string, string>> {
     const desired = manifest.resources.filter((entry) => entry.kind === "tool");
     if (desired.length === 0) return {};
-    const existingResponse = await accountManageFetchWithServiceToken(accountId, "/accounts/me/tools", { method: "GET" });
-    const existingPayload = await existingResponse.json() as {
-        tools?: Array<{ toolId: string; name: string; status?: string }>;
-    };
-    const existing = new Map((existingPayload.tools ?? []).map((tool) => [tool.name, tool]));
+    const existingTools = await ctx.runQuery(internal.accountTools.list, { accountId: accountId });
+    const existing = new Map(existingTools.map((tool) => [tool.name, tool]));
     const desiredNames = new Set(desired.map((resource) => resource.name));
     const ids: Record<string, string> = {};
 
     for (const resource of desired) {
         const config = asRecord(resource.config, `tool:${resource.name}`);
-        const body = JSON.stringify({
+        const upload = await normalizeAccountToolUpload({
             name: resource.name,
             description: stringField(config.description ?? resource.description, `tool:${resource.name}.description`),
             inputSchema: asRecord(config.inputSchema, `tool:${resource.name}.inputSchema`),
             ...(config.defaultConfig !== undefined ? { defaultConfig: asRecord(config.defaultConfig, `tool:${resource.name}.defaultConfig`) } : {}),
             bundle: stringField(config.bundle, `tool:${resource.name}.bundle`),
-        });
+        }, { requireBundle: true });
         const current = existing.get(resource.name);
-        const response = current
-            ? await accountManageFetchWithServiceToken(accountId, `/accounts/me/tools/${encodeURIComponent(current.toolId)}`, {
-                method: "PATCH",
-                body,
-            })
-            : await accountManageFetchWithServiceToken(accountId, "/accounts/me/tools", {
-                method: "POST",
-                body,
+        const bundleStorageKey = await ctx.runAction(internal.awsBundles.putToolBundle, {
+            accountId: accountId,
+            sha256: upload.sha256,
+            bundle: upload.bundle,
+        });
+        if (current) {
+            await ctx.runMutation(internal.accountTools.update, {
+                accountId: accountId,
+                toolId: current._id,
+                name: upload.name,
+                description: upload.description,
+                inputSchema: upload.inputSchema,
+                bundleStorageKey: bundleStorageKey,
+                sha256: upload.sha256,
+                ...(upload.defaultConfig !== undefined ? { defaultConfig: upload.defaultConfig } : {}),
             });
-        const payload = await response.json() as { toolId: string };
-        ids[resource.name] = payload.toolId;
+            ids[resource.name] = current._id;
+        } else {
+            const toolId = await ctx.runMutation(internal.accountTools.create, {
+                accountId: accountId,
+                name: upload.name,
+                description: upload.description,
+                inputSchema: upload.inputSchema,
+                bundleStorageKey: bundleStorageKey,
+                sha256: upload.sha256,
+                ...(upload.defaultConfig !== undefined ? { defaultConfig: upload.defaultConfig } : {}),
+            });
+            ids[resource.name] = toolId;
+        }
     }
 
     if (prune === true) {
         for (const tool of existing.values()) {
             if (!desiredNames.has(tool.name)) {
-                await accountManageFetchWithServiceToken(accountId, `/accounts/me/tools/${encodeURIComponent(tool.toolId)}`, {
-                    method: "DELETE",
+                await ctx.runMutation(internal.accountTools.remove, {
+                    accountId: accountId,
+                    toolId: tool._id,
                 });
             }
         }

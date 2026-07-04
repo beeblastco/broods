@@ -94,6 +94,22 @@ export const myAgent = defineAgent({
 | Bedrock | `bedrock` | `region`, `apiKey` |
 | Gateway | `gateway` | `apiKey` |
 | MiniMax | `minimax` | `apiKey` |
+| OpenAI-compatible custom endpoint | `custom` | `apiKey`, `base_url` |
+
+Use `custom` for providers that expose an OpenAI-compatible Chat Completions API:
+
+```ts
+provider: {
+  custom: {
+    apiKey: env.CUSTOM_PROVIDER_API_KEY,
+    base_url: "https://llm.example.com/v1",
+  },
+},
+model: {
+  provider: "custom",
+  modelId: "gpt-oss-120b",
+},
+```
 
 ### Reasoning / Thinking Tokens
 

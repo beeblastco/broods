@@ -20,6 +20,7 @@ const agentProviderValidator = v.union(
     v.literal("anthropic"),
     v.literal("minimax"),
     v.literal("gateway"),
+    v.literal("custom"),
 );
 
 const agentConfigDoc = v.object({
@@ -86,13 +87,14 @@ export const create = mutation({
         name: v.string(),
         provider: v.optional(agentProviderValidator),
         modelId: v.optional(v.string()),
+        customBaseUrl: v.optional(v.string()),
         description: v.optional(v.string()),
         systemPrompt: v.optional(v.string()),
         position: v.optional(v.object({ x: v.number(), y: v.number() })),
     },
     returns: v.id("agentConfigs"),
     handler: async (ctx, args) => {
-        const { projectId, environmentId, name, provider, modelId, description, systemPrompt, position } = args;
+        const { projectId, environmentId, name, provider, modelId, customBaseUrl, description, systemPrompt, position } = args;
 
         const authUser = await authKit.getAuthUser(ctx);
         if (!authUser) throw new Error("User not found or not authenticated");
@@ -117,6 +119,18 @@ export const create = mutation({
             provider,
             modelId: modelId?.trim() || "gpt-4.1-mini",
             systemPrompt: systemPrompt?.trim() || undefined,
+            ...(provider === "custom" && customBaseUrl?.trim()
+                ? {
+                    extraConfig: {
+                        provider: {
+                            custom: {
+                                base_url: customBaseUrl.trim(),
+                                baseURL: customBaseUrl.trim(),
+                            },
+                        },
+                    },
+                }
+                : {}),
             memoryToolEnabled: true,
             searchToolEnabled: false,
             updatedAt: now,

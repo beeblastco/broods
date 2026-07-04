@@ -7,6 +7,7 @@
  */
 
 import {
+  CopyObjectCommand,
   DeleteObjectCommand,
   GetObjectCommand,
   HeadObjectCommand,
@@ -76,6 +77,52 @@ export async function writeS3Object(
   );
 
   return size;
+}
+
+/**
+ * Copy an object while replacing metadata with core-compatible posix metadata.
+ * @param sourceBucket source bucket
+ * @param sourceKey source object key
+ * @param destinationBucket destination bucket
+ * @param destinationKey destination object key
+ * @param options content type and executable flag
+ */
+export async function copyS3Object(
+  sourceBucket: string,
+  sourceKey: string,
+  destinationBucket: string,
+  destinationKey: string,
+  options: { contentType?: string; executable?: boolean } = {},
+): Promise<void> {
+  const client = await s3Client();
+  await client.send(
+    new CopyObjectCommand({
+      Bucket: destinationBucket,
+      Key: destinationKey,
+      CopySource: `${sourceBucket}/${encodeURIComponent(sourceKey).replace(/%2F/g, "/")}`,
+      MetadataDirective: "REPLACE",
+      Metadata: posixMetadata(destinationKey.endsWith("/") ? "directory" : "file", options.executable === true),
+      ...(options.contentType ? { ContentType: options.contentType } : {}),
+    }),
+  );
+}
+
+/**
+ * Ensure S3 directory marker objects exist for every parent directory of a key.
+ * @param bucket target bucket
+ * @param key file key whose parent directories should exist
+ */
+export async function ensureS3DirectoryMarkers(bucket: string, key: string): Promise<void> {
+  const parts = key.split("/").filter(Boolean);
+  parts.pop();
+
+  let prefix = "";
+  for (const part of parts) {
+    prefix = prefix ? `${prefix}/${part}` : part;
+    await writeS3Object(bucket, `${prefix}/`, "", {
+      contentType: "application/x-directory",
+    });
+  }
 }
 
 /**

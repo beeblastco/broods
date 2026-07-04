@@ -50,6 +50,7 @@ import {
   type RuntimeVariable,
 } from "@/app/lib/runtimeVariables";
 import { includesSkillRef } from "@/app/lib/skillRefs";
+import { isPlainObject } from "@/app/lib/utils";
 import { api } from "@broods/convex/_generated/api";
 import type { Id } from "@broods/convex/_generated/dataModel";
 import { useStore, type Node } from "@xyflow/react";
@@ -537,13 +538,35 @@ export const NodeSidePanel = memo(function NodeSidePanel({
   async function handleSaveModelSettings(next: {
     provider: AgentProvider;
     modelId: string;
+    customBaseUrl?: string;
   }) {
     if (!agentConfigId) return;
+
+    const base = agentConfig ? toNestedAgentConfig(agentConfig) as Record<string, unknown> : {};
+    const currentProvider = isPlainObject(base.provider) ? base.provider : {};
+    const nextProviderConfig = { ...currentProvider };
+    if (next.provider === "custom") {
+      nextProviderConfig.custom = {
+        ...(isPlainObject(currentProvider.custom) ? currentProvider.custom : {}),
+        base_url: next.customBaseUrl,
+        baseURL: next.customBaseUrl,
+      };
+    }
+    const patch = fromNestedAgentConfig({
+      ...base,
+      model: {
+        ...(isPlainObject(base.model) ? base.model : {}),
+        provider: next.provider,
+        modelId: next.modelId,
+      },
+      provider: nextProviderConfig,
+    });
 
     await updateConfig({
       configId: agentConfigId,
       provider: next.provider,
       modelId: next.modelId,
+      extraConfig: patch.extraConfig,
     });
   }
 

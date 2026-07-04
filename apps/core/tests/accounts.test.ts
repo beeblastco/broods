@@ -188,6 +188,11 @@ describe("agent config", () => {
         gateway: {
           apiKey: "gateway-key",
         },
+        custom: {
+          apiKey: "custom-key",
+          base_url: "https://llm.example/v1",
+          name: "tenant-llm",
+        },
       },
       model: {
         provider: "google",
@@ -224,6 +229,12 @@ describe("agent config", () => {
         gateway: {
           apiKey: "gateway-key",
         },
+        custom: {
+          apiKey: "custom-key",
+          base_url: "https://llm.example/v1",
+          baseURL: "https://llm.example/v1",
+          name: "tenant-llm",
+        },
       },
       model: {
         provider: "google",
@@ -245,7 +256,7 @@ describe("agent config", () => {
       model: {
         provider: 12,
       },
-    })).toThrow("config.model.provider must be one of: google, openai, anthropic, bedrock, gateway, minimax");
+    })).toThrow("config.model.provider must be one of: google, openai, anthropic, bedrock, gateway, minimax, custom");
 
     for (const key of ["options", "thinking", "thinkingConfig", "unknownSetting"]) {
       expect(() => normalizeAgentConfig({
@@ -296,6 +307,23 @@ describe("agent config", () => {
         system: [{ role: "user", content: "wrong role" }],
       },
     })).toThrow("config.agent.system must be a string, SystemModelMessage, or SystemModelMessage[]");
+
+    expect(() => normalizeAgentConfig({
+      provider: {
+        custom: {
+          apiKey: "custom-key",
+        },
+      },
+    })).toThrow("config.provider.custom.base_url is required");
+
+    expect(() => normalizeAgentConfig({
+      provider: {
+        custom: {
+          apiKey: "custom-key",
+          base_url: "http://127.0.0.1:11434/v1",
+        },
+      },
+    })).toThrow("config.provider.custom.base_url must use https");
 
     expect(() => normalizeAgentConfig({
       provider: {

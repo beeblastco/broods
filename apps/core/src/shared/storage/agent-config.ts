@@ -555,18 +555,25 @@ function normalizeProviderSettings(providerName: AccountModelProviderName, value
 
   const config = value as Record<string, unknown>;
   assertOptionalString(config.apiKey, `config.provider.${providerName}.apiKey`);
+  assertOptionalString(config.base_url, `config.provider.${providerName}.base_url`);
   assertOptionalString(config.baseURL, `config.provider.${providerName}.baseURL`);
-  if (typeof config.baseURL === "string") {
-    assertPublicHttpsUrl(config.baseURL, `config.provider.${providerName}.baseURL`);
+  const baseURL = providerBaseURL(config);
+  if (providerName === "custom" && !baseURL) {
+    throw new Error("config.provider.custom.base_url is required");
+  }
+  if (baseURL) {
+    const label = typeof config.base_url === "string" ? "base_url" : "baseURL";
+    assertPublicHttpsUrl(baseURL, `config.provider.${providerName}.${label}`);
+    config.baseURL = baseURL;
   }
   if (config.headers !== undefined && !isStringRecord(config.headers)) {
     throw new Error(`config.provider.${providerName}.headers must be an object with string values`);
   }
 
-  if (providerName === "openai") {
-    assertOptionalString(config.organization, "config.provider.openai.organization");
-    assertOptionalString(config.project, "config.provider.openai.project");
-    assertOptionalString(config.name, "config.provider.openai.name");
+  if (providerName === "openai" || providerName === "custom") {
+    assertOptionalString(config.organization, `config.provider.${providerName}.organization`);
+    assertOptionalString(config.project, `config.provider.${providerName}.project`);
+    assertOptionalString(config.name, `config.provider.${providerName}.name`);
   }
 
   if (providerName === "bedrock") {
@@ -575,6 +582,16 @@ function normalizeProviderSettings(providerName: AccountModelProviderName, value
     assertOptionalString(config.secretAccessKey, "config.provider.bedrock.secretAccessKey");
     assertOptionalString(config.sessionToken, "config.provider.bedrock.sessionToken");
   }
+}
+
+function providerBaseURL(config: Record<string, unknown>): string | undefined {
+  const raw = typeof config.base_url === "string" ? config.base_url : config.baseURL;
+  if (typeof raw !== "string") {
+    return undefined;
+  }
+  const trimmed = raw.trim();
+
+  return trimmed || undefined;
 }
 
 // The concrete sandbox/workspace configs live in their own account-scoped tables;

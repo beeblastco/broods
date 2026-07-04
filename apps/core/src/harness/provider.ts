@@ -40,6 +40,8 @@ export function resolveConfiguredModel(agentConfig: AgentConfig): ResolvedModelP
       return resolveProviderModel(providerName, createGoogle(providerConfig as never), modelId);
     case "openai":
       return resolveProviderModel(providerName, createOpenAI(providerConfig as never), modelId);
+    case "custom":
+      return resolveOpenAICompatibleModel(providerName, providerConfig, modelId);
     case "anthropic":
       return resolveProviderModel(providerName, createAnthropic(providerConfig as never), modelId);
     case "bedrock":
@@ -90,6 +92,25 @@ function resolveProviderModel(
   };
 }
 
+function resolveOpenAICompatibleModel(
+  providerName: AccountModelProviderName,
+  providerConfig: AgentProviderSettings,
+  modelId: string,
+): ResolvedModelProvider {
+  const { base_url: _baseUrl, ...openAIConfig } = providerConfig;
+  const provider = createOpenAI({
+    ...(openAIConfig as Record<string, unknown>),
+    baseURL: customProviderBaseURL(providerConfig),
+    name: typeof providerConfig.name === "string" ? providerConfig.name : providerName,
+  });
+
+  return {
+    providerName,
+    provider,
+    model: provider.chat(modelId),
+  };
+}
+
 function requireModelProvider(agentConfig: AgentConfig): AccountModelProviderName {
   const provider = agentConfig.model?.provider;
   if (!provider) {
@@ -117,7 +138,20 @@ function requireProviderSettings(
   if (!providerConfig.apiKey) {
     throw new Error(`config.provider.${providerName}.apiKey is required`);
   }
+  if (providerName === "custom" && !customProviderBaseURL(providerConfig)) {
+    throw new Error("config.provider.custom.base_url is required");
+  }
   return providerConfig;
+}
+
+function customProviderBaseURL(providerConfig: AgentProviderSettings): string | undefined {
+  const raw = typeof providerConfig.base_url === "string" ? providerConfig.base_url : providerConfig.baseURL;
+  if (typeof raw !== "string") {
+    return undefined;
+  }
+  const trimmed = raw.trim();
+
+  return trimmed || undefined;
 }
 
 // Parse the structure output to vercel-ai sdk type

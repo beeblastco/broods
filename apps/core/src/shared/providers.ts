@@ -10,6 +10,7 @@ export const ACCOUNT_MODEL_PROVIDERS = {
   bedrock: true,
   gateway: true,
   minimax: true,
+  custom: true,
 } as const;
 
 export type AccountModelProviderName = keyof typeof ACCOUNT_MODEL_PROVIDERS;
