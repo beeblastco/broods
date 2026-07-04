@@ -27,7 +27,12 @@ export const handle = httpAction(async (ctx, req) => {
                 return await handleWorkspaceFilesRoute(ctx, req, account._id, route.workspaceId);
         }
     } catch (err) {
-        return json({ error: err instanceof Error ? err.message : "Request failed" }, 400);
+        if (isClientInputError(err)) {
+            return json({ error: err.message }, 400);
+        }
+        console.error("config HTTP request failed", err);
+
+        return json({ error: "Internal server error" }, 500);
     }
 });
 
@@ -280,6 +285,34 @@ function toPublicAccountTool(record: Doc<"accountTools">): Record<string, unknow
 
 function methodNotAllowed(allowedMethods: string[]): Response {
     return json({ error: "Method not allowed", allowedMethods: allowedMethods }, 405);
+}
+
+function isClientInputError(error: unknown): error is Error {
+    if (!(error instanceof Error)) return false;
+    if (error instanceof SyntaxError) return true;
+    return [
+        "tool.",
+        "Request body",
+        "source must",
+        "files must",
+        "Each file",
+        "JSON skills",
+        "Skill ",
+        "Duplicate skill ",
+        "Invalid skill ",
+        "SKILL.md ",
+        "GitHub skill URL ",
+        "GitHub archive ",
+        "url must ",
+        "path ",
+        "path and ",
+        "contentBase64 ",
+        "Invalid workspace path",
+        "Invalid destination path",
+        "Workspace uploads ",
+        "Workspace file not found",
+        "Workspace path not found",
+    ].some((prefix) => error.message.startsWith(prefix));
 }
 
 function json(body: unknown, status = 200): Response {

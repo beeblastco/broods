@@ -85,21 +85,14 @@ export async function createOrReplaceSkill(accountId: string, input: SkillBundle
  * @returns the stored skill, or null when it does not exist
  */
 export async function getSkill(accountId: string, skillName: string): Promise<StoredSkill | null> {
-    validateSkillName(skillName);
-    const skillPath = `${accountId}/${skillName}`;
-    const markdown = await readS3Text(skillsBucketName(), `${skillPath}/${SKILL_FILE}`).catch(() => null);
-    if (markdown == null) {
-        return null;
-    }
-
-    const metadata = parseSkillMarkdown(markdown);
-    const objects = await listS3Prefix(skillsBucketName(), `${skillPath}/`);
+    const metadata = await getSkillMetadata(accountId, skillName);
+    if (!metadata) return null;
+    const objects = await listS3Prefix(skillsBucketName(), `${metadata.path}/`);
 
     return {
         ...metadata,
-        path: skillPath,
         files: objects.map((object) => ({
-            path: object.key.slice(`${skillPath}/`.length),
+            path: object.key.slice(`${metadata.path}/`.length),
             ...(object.size !== undefined ? { size: object.size } : {}),
         })),
     };
@@ -121,12 +114,27 @@ export async function listAccountSkills(accountId: string): Promise<SkillMetadat
     }
 
     const skills = await Promise.all([...skillNames].map((skillName) =>
-        getSkill(accountId, skillName).catch(() => null)
+        getSkillMetadata(accountId, skillName).catch(() => null)
     ));
 
     return skills
-        .filter((skill): skill is StoredSkill => skill !== null)
-        .map(({ name, description, path }) => ({ name: name, description: description, path: path }));
+        .filter((skill): skill is SkillMetadata => skill !== null);
+}
+
+/**
+ * Load only SKILL.md metadata for list endpoints.
+ * @param accountId account id owning the skill
+ * @param skillName the skill name (without account prefix)
+ * @returns metadata, or null when SKILL.md is missing or malformed
+ */
+async function getSkillMetadata(accountId: string, skillName: string): Promise<SkillMetadata | null> {
+    validateSkillName(skillName);
+    const skillPath = `${accountId}/${skillName}`;
+    const markdown = await readS3Text(skillsBucketName(), `${skillPath}/${SKILL_FILE}`).catch(() => null);
+    if (markdown == null) return null;
+    const metadata = parseSkillMarkdown(markdown);
+
+    return { ...metadata, path: skillPath };
 }
 
 /**

@@ -128,6 +128,7 @@ Root provider webhooks are not accepted. Provider webhook URLs must include the 
 sequenceDiagram
   participant U as Account owner
   participant M as account-manage
+  participant C as Convex config-plane
   participant A as AccountConfig table
   participant S as Skills S3 bucket
 
@@ -140,9 +141,9 @@ sequenceDiagram
   M->>A: store encrypted agent config
   M-->>U: agent + agentId
 
-  U->>M: POST /v1/skills (Bearer account secret)
-  M->>S: validate + store skill bundle
-  M-->>U: path
+  U->>C: POST /v1/skills (Bearer account secret)
+  C->>S: validate + store skill bundle
+  C-->>U: path
 
   U->>M: PATCH /v1/agents/{agentId}
   M->>A: resolve secretHash

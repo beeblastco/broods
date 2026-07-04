@@ -147,9 +147,10 @@ async function handleAccountRequest(request: CoreRequest): Promise<Response> {
             );
         }
 
-        // Skills, tools, and workspace files CRUD moved to the Convex config
+        // Skills, tools, and workspace-file CRUD moved to the Convex config
         // plane (configHttp.ts, epic #85 phase 9); the gateway routes those
-        // paths there. Core keeps only their runtime read paths.
+        // paths there. Runtime reads stay in src/shared/skills.ts, uploaded
+        // tool bundle loading, and workspace mount/S3 read helpers.
         const selfCronCollection = rawPath === "/v1/crons";
         const selfCronRunsMatch = rawPath.match(/^\/v1\/crons\/([^/]+)\/runs$/);
         const selfCronMatch = rawPath.match(/^\/v1\/crons\/([^/]+)$/);

@@ -15,6 +15,7 @@ import {
     fetchGitHubSkillFiles,
     getSkill,
     listAccountSkills,
+    validateSkillBundle,
     type SkillBundleFile,
 } from "./model/skills";
 
@@ -31,7 +32,7 @@ const storedSkill = v.object({
  * or github), replacing an existing skill of the same name.
  * @param accountId account id owning the skill
  * @param input the create-skill request body (source discriminated)
- * @param expectedName when set, the SKILL.md name must match or the write is rolled back
+ * @param expectedName when set, the SKILL.md name must match before writing
  * @returns the stored skill's metadata and manifest
  */
 export const createSkill = internalAction({
@@ -42,13 +43,13 @@ export const createSkill = internalAction({
     },
     returns: storedSkill,
     handler: async (_ctx, args) => {
-        const skill = await createOrReplaceSkill(args.accountId, await resolveSkillBundleFiles(args.input));
-        if (args.expectedName !== undefined && skill.name !== args.expectedName) {
-            await deleteSkill(args.accountId, skill.name).catch(() => {});
+        const files = await resolveSkillBundleFiles(args.input);
+        const { metadata } = validateSkillBundle(files);
+        if (args.expectedName !== undefined && metadata.name !== args.expectedName) {
             throw new Error("Skill name in SKILL.md must match the requested skill name");
         }
 
-        return skill;
+        return await createOrReplaceSkill(args.accountId, files);
     },
 });
 
