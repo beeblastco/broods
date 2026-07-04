@@ -16,7 +16,7 @@ import { api } from "@broods/convex/_generated/api";
 import type { Doc, Id } from "@broods/convex/_generated/dataModel";
 import { useQuery } from "convex/react";
 import { Check, Copy, Eye, EyeOff, KeyRound, RefreshCw, Wifi } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 
 /**
  * Public (hash-free) view of an environment's runtime deployment, as returned by
@@ -120,12 +120,6 @@ export function DetailsTab({
     const [editModelId, setEditModelId] = useState(agentConfig?.modelId ?? "");
     const [editCustomBaseUrl, setEditCustomBaseUrl] = useState(readCustomBaseUrl(agentConfig));
     const schemaFileInputRef = useRef<HTMLInputElement | null>(null);
-
-    useEffect(() => {
-        setEditProvider(selectedProvider);
-        setEditModelId(agentConfig?.modelId ?? "");
-        setEditCustomBaseUrl(readCustomBaseUrl(agentConfig));
-    }, [selectedProvider, agentConfig]);
 
     // Built-in tool configs derived from agentConfig (reads extraConfig.tools, falls back to flat columns)
     const allTools = agentConfig
