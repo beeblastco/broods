@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import {
   buildCoreRunBody,
+  isConfigHttpPath,
   isCoreHttpPathForTest,
   isSessionInitFrame,
   gatewayLimitsFromEnv,
@@ -119,9 +120,25 @@ test("proxies runtime HTTP paths used by the SDK", () => {
   expect(isCoreHttpPathForTest("/")).toBe(true);
   expect(isCoreHttpPathForTest("/async")).toBe(true);
   expect(isCoreHttpPathForTest("/status/request-1")).toBe(true);
-  expect(isCoreHttpPathForTest("/accounts/me/crons")).toBe(true);
+  expect(isCoreHttpPathForTest("/v1/crons")).toBe(true);
   expect(isCoreHttpPathForTest("/v1/demo/agents/development/env_123/async")).toBe(true);
   expect(isCoreHttpPathForTest("/healthz")).toBe(false);
+});
+
+test("routes config-plane CRUD to Convex, not core", () => {
+  // Skills, tools, and workspace files are Convex config-plane routes.
+  expect(isConfigHttpPath("/v1/skills")).toBe(true);
+  expect(isConfigHttpPath("/v1/skills/my-skill")).toBe(true);
+  expect(isConfigHttpPath("/v1/tools")).toBe(true);
+  expect(isConfigHttpPath("/v1/tools/tool_123")).toBe(true);
+  expect(isConfigHttpPath("/v1/workspaces/ws_123/files")).toBe(true);
+
+  // Exact depth only: scoped agent invocations and other resources stay core.
+  expect(isConfigHttpPath("/v1/skills/agents/development/env_123")).toBe(false);
+  expect(isConfigHttpPath("/v1/workspaces")).toBe(false);
+  expect(isConfigHttpPath("/v1/workspaces/ws_123")).toBe(false);
+  expect(isConfigHttpPath("/v1/crons")).toBe(false);
+  expect(isConfigHttpPath("/v1/agents/agent_1")).toBe(false);
 });
 
 test("routes a runtime key to the matching core upstream", async () => {

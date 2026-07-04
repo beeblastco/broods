@@ -16,7 +16,6 @@ import {
     normalizeUpdateAccountInput,
     toPublicAccount,
     toPublicAgent,
-    toPublicAccountTool,
     toPublicSandboxConfig,
     toPublicWorkspaceConfig,
     type AccountRecord,
@@ -51,15 +50,7 @@ import {
 } from "../shared/sandbox-cleanup.ts";
 import { workspaceNamespace, workspaceNamespaceOwnsReservationKey } from "../shared/workspaces.ts";
 import { isPlainObject } from "../shared/object.ts";
-import {
-    createOrReplaceSkill,
-    deleteAccountSkills,
-    deleteSkill,
-    getSkill,
-    listAccountSkills,
-    type SkillMetadata,
-    type StoredSkill,
-} from "./skills.ts";
+import { deleteAccountSkills } from "./skills.ts";
 import { enforceAccountSignupRateLimit, RateLimitExceededError } from "./rate-limit.ts";
 import {
     assertCronsAvailable,
@@ -69,7 +60,6 @@ import {
     schedulerGroupName,
     updateCronSchedule,
 } from "./cron.ts";
-import { createAccountTool, updateAccountTool } from "./account-tools.ts";
 import { logError, logInfo, logWarn } from "../shared/log.ts";
 import {
     forceFlushOtel,
@@ -78,14 +68,6 @@ import {
     setObservabilityContext,
     runWithObservabilityScope,
 } from "../shared/otel.ts";
-import {
-    deleteWorkspacePath,
-    listWorkspaceFiles,
-    renameWorkspacePath,
-    uploadWorkspaceFile,
-    workspaceFileDownloadUrl,
-} from "./workspace-files.ts";
-
 export async function handler(request: CoreRequest): Promise<Response> {
     // Request-private observability scope so concurrent tenants in the shared
     // container process cannot clobber each other's log redaction/routing.
@@ -134,28 +116,28 @@ async function handleAccountRequest(request: CoreRequest): Promise<Response> {
             return await handleInternalObservabilityLog(auth.account.accountId, request);
         }
 
-        if (method === "GET" && rawPath === "/accounts/me") {
+        if (method === "GET" && rawPath === "/v1/account") {
             const account = requireAccountAuth(auth);
             return jsonResponse(200, { account: toPublicAccount(account) });
         }
 
-        if (method === "PATCH" && rawPath === "/accounts/me") {
+        if (method === "PATCH" && rawPath === "/v1/account") {
             const account = requireAccountAuth(auth);
             return updateAccountResponse(account.accountId, parseAccountPatch(request));
         }
 
-        if (method === "POST" && rawPath === "/accounts/me/rotate-secret") {
+        if (method === "POST" && rawPath === "/v1/account/rotate-secret") {
             const account = requireAccountAuth(auth);
             return rotateSecretResponse(account.accountId);
         }
 
-        if (method === "DELETE" && rawPath === "/accounts/me") {
+        if (method === "DELETE" && rawPath === "/v1/account") {
             const account = requireAccountAuth(auth);
             return deleteAccountResponse(account);
         }
 
-        const selfAgentCollection = rawPath === "/accounts/me/agents";
-        const selfAgentMatch = rawPath.match(/^\/accounts\/me\/agents\/([^/]+)$/);
+        const selfAgentCollection = rawPath === "/v1/agents";
+        const selfAgentMatch = rawPath.match(/^\/v1\/agents\/([^/]+)$/);
         if (selfAgentCollection || selfAgentMatch?.[1]) {
             const account = requireAccountAuth(auth);
             return await withAgentObservability(
@@ -165,19 +147,13 @@ async function handleAccountRequest(request: CoreRequest): Promise<Response> {
             );
         }
 
-        const selfSkillCollection = rawPath === "/accounts/me/skills";
-        const selfSkillMatch = rawPath.match(/^\/accounts\/me\/skills\/([^/]+)$/);
-        if (selfSkillCollection || selfSkillMatch?.[1]) {
-            // The Convex CLI sync (`broods dev`) pushes skill manifests with the
-            // account-scoped service token. Deployment runtime keys are intentionally
-            // excluded: they can run agents, not mutate account skill bundles.
-            const account = requireAccountAuth(auth, { allowServiceToken: true });
-            return await handleSkillRoute(method, account.accountId, selfSkillMatch?.[1], request);
-        }
-
-        const selfCronCollection = rawPath === "/accounts/me/crons";
-        const selfCronRunsMatch = rawPath.match(/^\/accounts\/me\/crons\/([^/]+)\/runs$/);
-        const selfCronMatch = rawPath.match(/^\/accounts\/me\/crons\/([^/]+)$/);
+        // Skills, tools, and workspace-file CRUD moved to the Convex config
+        // plane (configHttp.ts, epic #85 phase 9); the gateway routes those
+        // paths there. Runtime reads stay in src/shared/skills.ts, uploaded
+        // tool bundle loading, and workspace mount/S3 read helpers.
+        const selfCronCollection = rawPath === "/v1/crons";
+        const selfCronRunsMatch = rawPath.match(/^\/v1\/crons\/([^/]+)\/runs$/);
+        const selfCronMatch = rawPath.match(/^\/v1\/crons\/([^/]+)$/);
         if (selfCronCollection || selfCronMatch?.[1] || selfCronRunsMatch?.[1]) {
             const account = requireAccountAuth(auth, { allowServiceToken: true, allowDeployment: true });
             return await handleCronRoute(method, account.accountId, selfCronMatch?.[1] ?? selfCronRunsMatch?.[1], request, {
@@ -185,24 +161,14 @@ async function handleAccountRequest(request: CoreRequest): Promise<Response> {
             });
         }
 
-        const selfToolCollection = rawPath === "/accounts/me/tools";
-        const selfToolMatch = rawPath.match(/^\/accounts\/me\/tools\/([^/]+)$/);
-        if (selfToolCollection || selfToolMatch?.[1]) {
-            // The Convex CLI sync pushes tool manifests with the account-scoped
-            // service token. Deployment runtime keys are intentionally excluded:
-            // they can run agents, not mutate uploaded account tools.
-            const account = requireAccountAuth(auth, { allowServiceToken: true });
-            return await handleToolRoute(method, account.accountId, selfToolMatch?.[1], request);
-        }
-
-        const selfPolicyCollection = rawPath === "/accounts/me/policies";
-        const selfPolicyMatch = rawPath.match(/^\/accounts\/me\/policies\/([^/]+)$/);
+        const selfPolicyCollection = rawPath === "/v1/policies";
+        const selfPolicyMatch = rawPath.match(/^\/v1\/policies\/([^/]+)$/);
         if (selfPolicyCollection || selfPolicyMatch?.[1]) {
             const account = requireAccountAuth(auth, { allowServiceToken: true });
             return await handlePolicyRoute(method, account.accountId, selfPolicyMatch?.[1], request);
         }
 
-        const selfSandboxLifecycleMatch = rawPath.match(/^\/accounts\/me\/sandboxes\/([^/]+)\/(suspend|resume|terminate|snapshot|refresh|exec|terminal)$/);
+        const selfSandboxLifecycleMatch = rawPath.match(/^\/v1\/sandboxes\/([^/]+)\/(suspend|resume|terminate|snapshot|refresh|exec|terminal)$/);
         if (selfSandboxLifecycleMatch?.[1] && selfSandboxLifecycleMatch[2]) {
             // Driven by the dashboard via the sandboxPublic Convex actions, which
             // authenticate with the shared service token.
@@ -216,26 +182,15 @@ async function handleAccountRequest(request: CoreRequest): Promise<Response> {
             );
         }
 
-        const selfSandboxCollection = rawPath === "/accounts/me/sandboxes";
-        const selfSandboxMatch = rawPath.match(/^\/accounts\/me\/sandboxes\/([^/]+)$/);
+        const selfSandboxCollection = rawPath === "/v1/sandboxes";
+        const selfSandboxMatch = rawPath.match(/^\/v1\/sandboxes\/([^/]+)$/);
         if (selfSandboxCollection || selfSandboxMatch?.[1]) {
             const account = requireAccountAuth(auth);
             return await handleSandboxRoute(method, account.accountId, selfSandboxMatch?.[1], request);
         }
 
-        const selfWorkspaceFilesMatch = rawPath.match(/^\/accounts\/me\/workspaces\/([^/]+)\/files$/);
-        if (selfWorkspaceFilesMatch?.[1]) {
-            const account = requireAccountAuth(auth, { allowServiceToken: true });
-            return await handleWorkspaceFilesRoute(
-                method,
-                account.accountId,
-                decodeURIComponent(selfWorkspaceFilesMatch[1]),
-                request,
-            );
-        }
-
-        const selfWorkspaceCollection = rawPath === "/accounts/me/workspaces";
-        const selfWorkspaceMatch = rawPath.match(/^\/accounts\/me\/workspaces\/([^/]+)$/);
+        const selfWorkspaceCollection = rawPath === "/v1/workspaces";
+        const selfWorkspaceMatch = rawPath.match(/^\/v1\/workspaces\/([^/]+)$/);
         if (selfWorkspaceCollection || selfWorkspaceMatch?.[1]) {
             const account = requireAccountAuth(auth);
             return await handleWorkspaceRoute(method, account.accountId, selfWorkspaceMatch?.[1], request);
@@ -288,19 +243,9 @@ async function handleAccountRequest(request: CoreRequest): Promise<Response> {
             );
         }
 
-        const adminSkillMatch = rawPath.match(/^\/accounts\/([^/]+)\/skills(?:\/([^/]+))?$/);
-        if (adminSkillMatch?.[1]) {
-            return await handleSkillRoute(method, decodeURIComponent(adminSkillMatch[1]), adminSkillMatch[2], request);
-        }
-
         const adminCronMatch = rawPath.match(/^\/accounts\/([^/]+)\/crons(?:\/([^/]+))?$/);
         if (adminCronMatch?.[1]) {
             return await handleCronRoute(method, decodeURIComponent(adminCronMatch[1]), adminCronMatch[2], request);
-        }
-
-        const adminToolMatch = rawPath.match(/^\/accounts\/([^/]+)\/tools(?:\/([^/]+))?$/);
-        if (adminToolMatch?.[1]) {
-            return await handleToolRoute(method, decodeURIComponent(adminToolMatch[1]), adminToolMatch[2], request);
         }
 
         const adminPolicyMatch = rawPath.match(/^\/accounts\/([^/]+)\/policies(?:\/([^/]+))?$/);
@@ -311,16 +256,6 @@ async function handleAccountRequest(request: CoreRequest): Promise<Response> {
         const adminSandboxMatch = rawPath.match(/^\/accounts\/([^/]+)\/sandboxes(?:\/([^/]+))?$/);
         if (adminSandboxMatch?.[1]) {
             return await handleSandboxRoute(method, decodeURIComponent(adminSandboxMatch[1]), adminSandboxMatch[2], request);
-        }
-
-        const adminWorkspaceFilesMatch = rawPath.match(/^\/accounts\/([^/]+)\/workspaces\/([^/]+)\/files$/);
-        if (adminWorkspaceFilesMatch?.[1] && adminWorkspaceFilesMatch[2]) {
-            return await handleWorkspaceFilesRoute(
-                method,
-                decodeURIComponent(adminWorkspaceFilesMatch[1]),
-                decodeURIComponent(adminWorkspaceFilesMatch[2]),
-                request,
-            );
         }
 
         const adminWorkspaceMatch = rawPath.match(/^\/accounts\/([^/]+)\/workspaces(?:\/([^/]+))?$/);
@@ -432,40 +367,6 @@ function requiredLogField(body: Record<string, unknown>, field: string): string 
     }
 
     return value;
-}
-
-async function handleWorkspaceFilesRoute(
-    method: string,
-    accountId: string,
-    workspaceId: string,
-    request: CoreRequest,
-): Promise<Response> {
-    const workspace = await getStorage().workspaceConfigs.getById(accountId, workspaceId);
-    if (!workspace) return errorResponse(404, "Workspace not found");
-
-    if (method === "GET") {
-        const path = request.query.get("path") ?? undefined;
-        if (path) {
-            return jsonResponse(200, { url: await workspaceFileDownloadUrl(accountId, workspaceId, path) });
-        }
-        return jsonResponse(200, { files: await listWorkspaceFiles(accountId, workspaceId) });
-    }
-    if (method === "POST") {
-        const file = await uploadWorkspaceFile(accountId, workspaceId, parseJsonBody(request) as never);
-        return jsonResponse(201, { file: file });
-    }
-    if (method === "PATCH") {
-        const body = parseJsonBody(request) as { path?: unknown; newPath?: unknown };
-        const renamed = await renameWorkspacePath(accountId, workspaceId, body.path, body.newPath);
-        return jsonResponse(200, { renamed: renamed });
-    }
-    if (method === "DELETE") {
-        const body = parseJsonBody(request) as { path?: unknown };
-        const deleted = await deleteWorkspacePath(accountId, workspaceId, body.path);
-        return jsonResponse(200, { deleted: deleted });
-    }
-
-    return errorResponse(405, "Method not allowed", { allowedMethods: ["GET", "POST", "PATCH", "DELETE"] });
 }
 
 async function handleCronRoute(
@@ -986,45 +887,6 @@ async function sandboxReservationBelongsToAccount(
     );
 }
 
-async function handleToolRoute(
-    method: string,
-    accountId: string,
-    rawToolId: string | undefined,
-    request: CoreRequest,
-): Promise<Response> {
-    const toolId = rawToolId ? decodeURIComponent(rawToolId) : undefined;
-    const accountTools = getStorage().accountTools;
-
-    if (!toolId) {
-        if (method === "GET") {
-            const records = await accountTools.list(accountId);
-            return jsonResponse(200, { tools: records.map((record) => toPublicAccountTool(record)) });
-        }
-        if (method === "POST") {
-            const toolRecord = await createAccountTool(accountId, parseJsonBody(request));
-            return jsonResponse(201, toolRecord);
-        }
-        return errorResponse(405, "Method not allowed", { method, allowedMethods: ["GET", "POST"] });
-    }
-
-    if (method === "GET") {
-        const record = await accountTools.getById(accountId, toolId);
-        return record && record.status === "active"
-            ? jsonResponse(200, toPublicAccountTool(record))
-            : errorResponse(404, "Tool not found");
-    }
-    if (method === "PATCH") {
-        const record = await updateAccountTool(accountId, toolId, parseJsonBody(request));
-        return record ? jsonResponse(200, record) : errorResponse(404, "Tool not found");
-    }
-    if (method === "DELETE") {
-        const deleted = await accountTools.remove(accountId, toolId);
-        return deleted ? jsonResponse(200, { deleted: true }) : errorResponse(404, "Tool not found");
-    }
-
-    return errorResponse(405, "Method not allowed", { method, allowedMethods: ["GET", "PATCH", "DELETE"] });
-}
-
 async function handlePolicyRoute(
     method: string,
     accountId: string,
@@ -1106,46 +968,6 @@ async function handleWorkspaceRoute(
     }
 
     return errorResponse(405, "Method not allowed", { method, allowedMethods: ["GET", "PATCH", "DELETE"] });
-}
-
-async function handleSkillRoute(
-    method: string,
-    accountId: string,
-    rawSkillName: string | undefined,
-    request: CoreRequest,
-): Promise<Response> {
-    const skillName = rawSkillName ? decodeURIComponent(rawSkillName) : undefined;
-
-    if (!skillName) {
-        if (method === "GET") {
-            const skills = await listAccountSkills(accountId);
-            return jsonResponse(200, { skills: skills.map(toSkillResponse) });
-        }
-        if (method === "POST") {
-            const skill = await createOrReplaceSkill(accountId, parseJsonBody(request));
-            return jsonResponse(201, toSkillResponse(skill));
-        }
-        return errorResponse(405, "Method not allowed", { method, allowedMethods: ["GET", "POST"] });
-    }
-
-    if (method === "GET") {
-        const skill = await getSkill(accountId, skillName);
-        return skill ? jsonResponse(200, toSkillResponse(skill)) : errorResponse(404, "Skill not found");
-    }
-    if (method === "PUT") {
-        const skill = await createOrReplaceSkill(accountId, parseJsonBody(request));
-        if (skill.name !== skillName) {
-            await deleteSkill(accountId, skill.name).catch(() => { });
-            throw new Error("Skill name in SKILL.md must match the URL skillName");
-        }
-        return jsonResponse(200, toSkillResponse(skill));
-    }
-    if (method === "DELETE") {
-        const deleted = await deleteSkill(accountId, skillName);
-        return deleted ? jsonResponse(200, { deleted: true }) : errorResponse(404, "Skill not found");
-    }
-
-    return errorResponse(405, "Method not allowed", { method, allowedMethods: ["GET", "PUT", "DELETE"] });
 }
 
 async function updateAccountResponse(accountId: string, input: unknown): Promise<Response> {
@@ -1230,15 +1052,6 @@ function toCreateAgentResponse(agent: AgentRecord): Record<string, unknown> {
         agentId: agent.agentId,
         name: agent.name,
         ...(agent.description ? { description: agent.description } : {}),
-    };
-}
-
-function toSkillResponse(skill: SkillMetadata | StoredSkill): Record<string, unknown> {
-    return {
-        path: skill.path,
-        name: skill.name,
-        description: skill.description,
-        ...("files" in skill ? { files: skill.files } : {}),
     };
 }
 

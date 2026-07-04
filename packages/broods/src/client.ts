@@ -294,7 +294,7 @@ export class BroodsClient {
   }
 
   async createCron(input: CreateClientCronInput): Promise<Cron> {
-    const response = await this.fetchJson(`${this.baseUrl}/accounts/me/crons`, {
+    const response = await this.fetchJson(`${this.baseUrl}/v1/crons`, {
       method: "POST",
       headers: this.apiKeyHeaders(),
       body: JSON.stringify(resolveCronInput(input)),
@@ -306,7 +306,7 @@ export class BroodsClient {
   }
 
   async listCrons(): Promise<Cron[]> {
-    const response = await this.fetchJson(`${this.baseUrl}/accounts/me/crons`, {
+    const response = await this.fetchJson(`${this.baseUrl}/v1/crons`, {
       method: "GET",
       headers: this.apiKeyHeaders(),
     });
@@ -319,7 +319,7 @@ export class BroodsClient {
   }
 
   async getCron(cronId: string): Promise<Cron | null> {
-    const response = await this.fetchJson(`${this.baseUrl}/accounts/me/crons/${encodeURIComponent(cronId)}`, {
+    const response = await this.fetchJson(`${this.baseUrl}/v1/crons/${encodeURIComponent(cronId)}`, {
       method: "GET",
       headers: this.apiKeyHeaders(),
     });
@@ -335,7 +335,7 @@ export class BroodsClient {
     if (options.limit !== undefined) params.set("limit", String(options.limit));
     const suffix = params.size > 0 ? `?${params}` : "";
     const response = await this.fetchJson(
-      `${this.baseUrl}/accounts/me/crons/${encodeURIComponent(cronId)}/runs${suffix}`,
+      `${this.baseUrl}/v1/crons/${encodeURIComponent(cronId)}/runs${suffix}`,
       {
         method: "GET",
         headers: this.apiKeyHeaders(),
@@ -350,7 +350,7 @@ export class BroodsClient {
   }
 
   async updateCron(cronId: string, patch: UpdateCronInput): Promise<Cron> {
-    const response = await this.fetchJson(`${this.baseUrl}/accounts/me/crons/${encodeURIComponent(cronId)}`, {
+    const response = await this.fetchJson(`${this.baseUrl}/v1/crons/${encodeURIComponent(cronId)}`, {
       method: "PATCH",
       headers: this.apiKeyHeaders(),
       body: JSON.stringify(patch),
@@ -362,7 +362,7 @@ export class BroodsClient {
   }
 
   async deleteCron(cronId: string): Promise<boolean> {
-    const response = await this.fetchJson(`${this.baseUrl}/accounts/me/crons/${encodeURIComponent(cronId)}`, {
+    const response = await this.fetchJson(`${this.baseUrl}/v1/crons/${encodeURIComponent(cronId)}`, {
       method: "DELETE",
       headers: this.apiKeyHeaders(),
     });

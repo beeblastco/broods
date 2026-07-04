@@ -1086,7 +1086,7 @@ describe("agent config", () => {
 
   it("rejects runtime config updates on account records", async () => {
     expect(() => normalizeUpdateAccountInput({ config: { model: { provider: "google" } } } as never)).toThrow(
-      "Agent config must be updated through /accounts/me/agents/{agentId}",
+      "Agent config must be updated through /v1/agents/{agentId}",
     );
   });
 

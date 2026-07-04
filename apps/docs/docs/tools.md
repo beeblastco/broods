@@ -6,7 +6,7 @@ External tools are enabled per agent through `config.tools`. Built-in keys use t
 
 ```mermaid
 flowchart LR
-  Upload["POST /accounts/me/tools<br/>bundle + manifest"] --> Store["AccountTool metadata + S3 bundle"]
+  Upload["POST /v1/tools<br/>bundle + manifest"] --> Store["AccountTool metadata + S3 bundle"]
   Config["config.tools.<name or toolId><br/>async"] --> Registry["tools/index.ts"]
   Store --> Registry
   Registry --> Wrap["AsyncToolCoordinator"]
@@ -23,11 +23,11 @@ flowchart LR
 
 | Tool | File | External dependency | Config key |
 | --- | --- | --- | --- |
-| `tavilySearch` | [`functions/harness-processing/tools/tavily.tool.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/functions/harness-processing/tools/tavily.tool.ts) | Tavily AI SDK search | `config.tools.tavilySearch` |
-| `tavilyExtract` | [`functions/harness-processing/tools/tavily.tool.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/functions/harness-processing/tools/tavily.tool.ts) | Tavily AI SDK extract | `config.tools.tavilyExtract` |
-| `googleSearch` | [`functions/harness-processing/tools/google-search.tool.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/functions/harness-processing/tools/google-search.tool.ts) | Google provider-defined tool | `config.tools.googleSearch` |
-| `handoffs` | [`functions/harness-processing/tools/handoffs.tool.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/functions/harness-processing/tools/handoffs.tool.ts) | Pancake tags + Zalo staff ping | `config.tools.handoffs` (`pancake.scenarioTagIds.{order,pending}`, `zalo.{botToken,notifyUserIds}`) |
-| `async_status` | [`functions/harness-processing/tools/async-status.tool.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/functions/harness-processing/tools/async-status.tool.ts) | — (auto-registered, see below) | — |
+| `tavilySearch` | [`src/harness/tools/tavily.tool.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/src/harness/tools/tavily.tool.ts) | Tavily AI SDK search | `config.tools.tavilySearch` |
+| `tavilyExtract` | [`src/harness/tools/tavily.tool.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/src/harness/tools/tavily.tool.ts) | Tavily AI SDK extract | `config.tools.tavilyExtract` |
+| `googleSearch` | [`src/harness/tools/google-search.tool.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/src/harness/tools/google-search.tool.ts) | Google provider-defined tool | `config.tools.googleSearch` |
+| `handoffs` | [`src/harness/tools/handoffs.tool.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/src/harness/tools/handoffs.tool.ts) | Pancake tags + Zalo staff ping | `config.tools.handoffs` (`pancake.scenarioTagIds.{order,pending}`, `zalo.{botToken,notifyUserIds}`) |
+| `async_status` | [`src/harness/tools/async-status.tool.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/src/harness/tools/async-status.tool.ts) | — (auto-registered, see below) | — |
 | Uploaded custom tool | S3 bundle + account tool metadata | sandbox tool runner | `config.tools.<toolId>` |
 
 `async_status` is not configured directly: it is registered automatically whenever any `config.tools` entry has `async: true` or a workspace has a persistent sandbox. It is the model-facing polling surface for the async lifecycle described below (`statusId` + actions `status`/`logs`/`stop`).
@@ -36,7 +36,7 @@ Sandbox tools come from a referenced `sandbox` (+ `workspaces`) — see [Workspa
 
 ## Runtime Behavior
 
-`functions/harness-processing/harness.ts` resolves the configured model and calls `createTools()` from [`functions/harness-processing/tools/index.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/functions/harness-processing/tools/index.ts).
+`src/harness/harness.ts` resolves the configured model and calls `createTools()` from [`src/harness/tools/index.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/src/harness/tools/index.ts).
 
 Tool registry path:
 
@@ -75,7 +75,7 @@ sequenceDiagram
 
 ### Resident Worker
 
-The long-lived Node worker ([`custom-tool-worker.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/functions/harness-processing/tools/custom-tool-worker.ts)) is started inside the persistent sandbox on first use:
+The long-lived Node worker ([`custom-tool-worker.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/src/harness/tools/custom-tool-worker.ts)) is started inside the persistent sandbox on first use:
 
 ```text
 harness-processing -> exec into sandbox -> warm worker (unix-socket HTTP) -> cached module -> execute(ctx,input)
@@ -302,24 +302,24 @@ export const myAgent = defineAgent({
 });
 ```
 
-The raw account-management API does not run a build step. When calling it directly, provide an already-bundled JavaScript module. See the [API Reference](/api-reference) `POST /accounts/me/tools` for the raw shape.
+The raw account-management API does not run a build step. When calling it directly, provide an already-bundled JavaScript module. See the [API Reference](/api-reference) `POST /v1/tools` for the raw shape.
 
 Tool management endpoints (raw API):
 
-- `GET /accounts/me/tools`
-- `GET /accounts/me/tools/{toolId}`
-- `PATCH /accounts/me/tools/{toolId}`
-- `DELETE /accounts/me/tools/{toolId}`
+- `GET /v1/tools`
+- `GET /v1/tools/{toolId}`
+- `PATCH /v1/tools/{toolId}`
+- `DELETE /v1/tools/{toolId}`
 
 ## Add a Built-In Tool
 
-1. Create `functions/harness-processing/tools/<name>.tool.ts`.
+1. Create `apps/core/src/harness/tools/<name>.tool.ts`.
 2. Add the standard file header docstring.
 3. Export a default tool factory, or named factories when one provider module exposes several tools.
 4. Keep the model-facing schema and external service call in that tool file.
-5. Import the factory in [`functions/harness-processing/tools/index.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/functions/harness-processing/tools/index.ts).
+5. Import the factory in [`src/harness/tools/index.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/src/harness/tools/index.ts).
 6. Add the factory to the static `toolFactories` map with the exact model-facing tool name.
-7. Add config validation in [`functions/_shared/storage/agent-config.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/functions/_shared/storage/agent-config.ts) only for options the account can set.
+7. Add config validation in [`src/shared/storage/agent-config.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/src/shared/storage/agent-config.ts) only for options the account can set.
 8. Optionally set `config.tools.<name>.async: true` for slow local `execute` tools. Built-in async tools always run in the current Lambda; uploaded async tools are waited on for SSE and detached automatically for `/async`, channels, and NATS.
 9. Update the [API Reference](/api-reference) `AgentConfig.tools` schema, and focused tests/examples when the public config shape changes.
 
@@ -371,7 +371,7 @@ export default function exampleLookupTool(context: ToolContext): ToolSet {
 
 ## Design Rules
 
-- Keep external tool logic in `functions/harness-processing/tools/<name>.tool.ts`.
+- Keep external tool logic in `apps/core/src/harness/tools/<name>.tool.ts`.
 - Do not add a new Lambda, queue, or worker for ordinary built-in external-service tools.
 - Use `async: true` only when the tool has a local `execute`; provider-defined tools without `execute` remain provider-managed.
 - Do not expose request lifecycle choices in agent config; the platform chooses wait vs detached from tool type and request path.

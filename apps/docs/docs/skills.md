@@ -2,12 +2,12 @@
 
 Skills are account-owned instruction bundles that an agent can load only when a user request needs them. They are useful for domain playbooks, workflow rules, formatting standards, customer support procedures, or tool-specific operating notes that should not live permanently in every system prompt.
 
-Skills are stored by `account-manage` in the S3 skills bucket under `<accountId>/<skill-name>`. Runtime traffic goes through `harness-processing`: `session.ts` lists the configured skill metadata, `tools/index.ts` exposes `load_skill`, and `functions/harness-processing/skills.ts` loads the selected bundle into refreshed system context.
+Skills are stored by the Convex config plane in the S3 skills bucket under `<accountId>/<skill-name>`. Runtime traffic goes through core's harness: `session.ts` lists the configured skill metadata, `tools/index.ts` exposes `load_skill`, and `src/shared/skills.ts` loads the selected bundle into refreshed system context.
 
 ```mermaid
 flowchart LR
-  Owner["Account owner"] -->|"POST /accounts/me/skills"| Manage["account-manage"]
-  Manage -->|"validate bundle"| SkillStore["S3 skills bucket<br/>&lt;accountId&gt;/&lt;skill-name&gt;"]
+  Owner["Account owner"] -->|"POST /v1/skills"| Config["Convex config plane"]
+  Config -->|"validate bundle"| SkillStore["S3 skills bucket<br/>&lt;accountId&gt;/&lt;skill-name&gt;"]
   Owner -->|"agent config<br/>skills.allowed"| AgentConfig["DynamoDB AgentConfig"]
   AgentConfig --> Session["session.ts"]
   SkillStore -->|"metadata only"| Session
@@ -149,7 +149,7 @@ export const myAgent = defineAgent({
 
 The CLI bundles the folder, validates that `SKILL.md` exists, and uploads it on sync.
 
-The raw account API also accepts `json`, `files`, and `github` sources. See the [API Reference](/api-reference) `POST /accounts/me/skills` for the raw shape.
+The raw account API also accepts `json`, `files`, and `github` sources. See the [API Reference](/api-reference) `POST /v1/skills` for the raw shape.
 
 :::warning GitHub imports
 
@@ -187,10 +187,9 @@ Use [`packages/demos/skill-loads.ts`](https://github.com/beeblastco/broods/blob/
 
 ## Design Rules
 
-- Keep skill CRUD in `functions/account-manage/skills.ts`.
-- Keep shared validation and S3 path rules in `functions/_shared/skills.ts`.
-- Keep runtime prompt loading in `functions/harness-processing/skills.ts`.
-- Keep the model-facing `load_skill` schema in `functions/harness-processing/tools/load-skill.tool.ts`.
+- Keep skill CRUD in the Convex config plane (`packages/convex/configHttp.ts` and `packages/convex/model/skills.ts`).
+- Keep shared runtime validation and S3 path rules in `apps/core/src/shared/skills.ts`.
+- Keep the model-facing `load_skill` schema in `apps/core/src/harness/tools/load-skill.tool.ts`.
 - Do not put tool credentials or channel secrets inside skill bundles.
 - Use skill descriptions as routing hints; keep detailed instructions inside `SKILL.md`.
 - Prefer resource files for large examples or reference tables so the model can load them only when needed.

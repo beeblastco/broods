@@ -33,17 +33,37 @@ export interface CoreServer {
   drain: () => Promise<void>;
 }
 
+// Account-resource routes under /v1. Patterns are exact-depth (not prefixes)
+// so scoped agent invocations like /v1/{project}/agents/{env}/{endpoint} fall
+// through to the harness even when a project slug shadows a resource name.
+// Skills, tools, and workspace-files CRUD live in the Convex config plane
+// (the gateway routes them there), so they are not core routes at all.
+const ACCOUNT_RESOURCE_PATTERNS: RegExp[] = [
+  /^\/v1\/account(?:\/rotate-secret)?$/,
+  /^\/v1\/crons(?:\/[^/]+(?:\/runs)?)?$/,
+  /^\/v1\/policies(?:\/[^/]+)?$/,
+  /^\/v1\/sandboxes(?:\/[^/]+(?:\/(?:suspend|resume|terminate|snapshot|refresh|exec|terminal))?)?$/,
+  /^\/v1\/workspaces(?:\/[^/]+)?$/,
+];
+
 /**
- * account-manage owns the /accounts surface plus the observability-log internal
- * leaf; everything else (direct API, status, async, webhooks, /v1 endpoints) is
- * the harness.
+ * account-manage owns signup + admin (/accounts), the /v1 account-resource
+ * CRUD surface, and the observability-log internal leaf; everything else
+ * (direct API, status, async, webhooks, agent invocation) is the harness.
  */
-function routesToAccountManage(pathname: string): boolean {
-  return (
-    pathname === "/accounts" ||
-    pathname.startsWith("/accounts/") ||
-    pathname === "/v1/internal/observability-log"
-  );
+function routesToAccountManage(method: string, pathname: string): boolean {
+  if (pathname === "/accounts" || pathname.startsWith("/accounts/")) {
+    return true;
+  }
+  if (pathname === "/v1/internal/observability-log" || pathname === "/v1/agents") {
+    return true;
+  }
+  // /v1/agents/{id}: POST invokes the agent (harness); other methods are CRUD.
+  if (/^\/v1\/agents\/[^/]+$/.test(pathname) && method !== "POST") {
+    return true;
+  }
+
+  return ACCOUNT_RESOURCE_PATTERNS.some((pattern) => pattern.test(pathname));
 }
 
 export function createCoreServer(options: CoreServerOptions): CoreServer {
@@ -87,7 +107,7 @@ export function createCoreServer(options: CoreServerOptions): CoreServer {
       };
 
       try {
-        return routesToAccountManage(url.pathname)
+        return routesToAccountManage(request.method, url.pathname)
           ? await options.accountHandler(coreRequest, ctx)
           : await options.harnessHandler(coreRequest, ctx);
       } catch (err) {

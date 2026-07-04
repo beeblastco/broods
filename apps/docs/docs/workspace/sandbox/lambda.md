@@ -141,7 +141,7 @@ See [Best Practice → Background jobs](best-practice.md#background-jobs--async_
 ## Config
 
 ```jsonc
-// POST /accounts/me/sandboxes
+// POST /v1/sandboxes
 {
   "name": "default",
   "config": {

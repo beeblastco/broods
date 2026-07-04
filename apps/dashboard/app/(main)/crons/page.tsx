@@ -3,7 +3,7 @@
 /**
  * Cron jobs management page. Lists the active org's scheduled agent runs and
  * lets the user create, edit, and remove them. CRUD goes through Convex
- * actions that proxy to broods's /accounts/me/crons HTTP endpoints
+ * actions that proxy to broods's /v1/crons HTTP endpoints
  * to keep EventBridge Scheduler in sync.
  */
 

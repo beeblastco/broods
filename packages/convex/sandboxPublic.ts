@@ -90,7 +90,7 @@ async function callLifecycle(
     }
 
     const { url, secret } = getServiceEnv();
-    const res = await fetch(`${url}/accounts/me/sandboxes/${encodeURIComponent(sandboxId)}/${op}`, {
+    const res = await fetch(`${url}/v1/sandboxes/${encodeURIComponent(sandboxId)}/${op}`, {
         method: "POST",
         headers: headers(account.accountId, secret),
         body: JSON.stringify({ reservationKey: reservationKey, actor: await actor(ctx), ...extra }),

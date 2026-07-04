@@ -1,6 +1,6 @@
 /**
  * Account-management sandbox/workspace CRUD endpoint tests.
- * Drive the /accounts/me/{sandboxes,workspaces} routes through the HTTP handler
+ * Drive the /v1/{sandboxes,workspaces} routes through the HTTP handler
  * with an in-memory store backed by the real normalizers, so routing, secret
  * redaction (sandbox), and validation errors are exercised end to end.
  */
@@ -127,7 +127,7 @@ describe("account-manage sandbox endpoints", () => {
   it("creates a sandbox and redacts envVars + secret option keys on the wire", async () => {
     setStorageForTests(createFakeStorage());
 
-    const response = await handler(createEvent("POST", "/accounts/me/sandboxes", AUTH, {
+    const response = await handler(createEvent("POST", "/v1/sandboxes", AUTH, {
       name: "builder",
       config: {
         provider: "lambda",
@@ -148,32 +148,32 @@ describe("account-manage sandbox endpoints", () => {
   it("lists, fetches, updates, and deletes a sandbox", async () => {
     setStorageForTests(createFakeStorage());
 
-    const created = await responseJson(await handler(createEvent("POST", "/accounts/me/sandboxes", AUTH, {
+    const created = await responseJson(await handler(createEvent("POST", "/v1/sandboxes", AUTH, {
       name: "builder",
       config: { provider: "lambda", permissionMode: "ask" },
     }))) as SandboxConfigRecord;
     const id = created.sandboxId;
 
-    const list = await responseJson(await handler(createEvent("GET", "/accounts/me/sandboxes", AUTH))) as {
+    const list = await responseJson(await handler(createEvent("GET", "/v1/sandboxes", AUTH))) as {
       sandboxes: SandboxConfigRecord[];
     };
     expect(list.sandboxes.map((s) => s.sandboxId)).toEqual([id]);
 
-    const fetched = await handler(createEvent("GET", `/accounts/me/sandboxes/${id}`, AUTH));
+    const fetched = await handler(createEvent("GET", `/v1/sandboxes/${id}`, AUTH));
     expect(fetched.status).toBe(200);
     expect((await responseJson(fetched) as SandboxConfigRecord).config.permissionMode).toBe("ask");
 
-    const updated = await handler(createEvent("PATCH", `/accounts/me/sandboxes/${id}`, AUTH, {
+    const updated = await handler(createEvent("PATCH", `/v1/sandboxes/${id}`, AUTH, {
       config: { permissionMode: "bypass" },
     }));
     expect(updated.status).toBe(200);
     expect((await responseJson(updated) as SandboxConfigRecord).config.permissionMode).toBe("bypass");
 
-    const deleted = await handler(createEvent("DELETE", `/accounts/me/sandboxes/${id}`, AUTH));
+    const deleted = await handler(createEvent("DELETE", `/v1/sandboxes/${id}`, AUTH));
     expect(deleted.status).toBe(200);
     expect(await responseJson(deleted)).toEqual({ deleted: true });
 
-    const missing = await handler(createEvent("GET", `/accounts/me/sandboxes/${id}`, AUTH));
+    const missing = await handler(createEvent("GET", `/v1/sandboxes/${id}`, AUTH));
     expect(missing.status).toBe(404);
     expect(await responseJson(missing)).toEqual({ error: "Sandbox not found" });
   });
@@ -181,7 +181,7 @@ describe("account-manage sandbox endpoints", () => {
   it("returns 400 for an invalid sandbox provider", async () => {
     setStorageForTests(createFakeStorage());
 
-    const response = await handler(createEvent("POST", "/accounts/me/sandboxes", AUTH, {
+    const response = await handler(createEvent("POST", "/v1/sandboxes", AUTH, {
       name: "broken",
       config: { provider: "fargate" },
     }));
@@ -192,21 +192,21 @@ describe("account-manage sandbox endpoints", () => {
 
   it("rejects unauthenticated sandbox requests", async () => {
     setStorageForTests(createFakeStorage());
-    const response = await handler(createEvent("GET", "/accounts/me/sandboxes"));
+    const response = await handler(createEvent("GET", "/v1/sandboxes"));
     expect(response.status).toBe(401);
   });
 
   it("rejects lifecycle actions for reservation keys not owned by the account/config", async () => {
     process.env.SERVICE_AUTH_SECRET = "service-secret";
     setStorageForTests(createFakeStorage());
-    const created = await responseJson(await handler(createEvent("POST", "/accounts/me/sandboxes", AUTH, {
+    const created = await responseJson(await handler(createEvent("POST", "/v1/sandboxes", AUTH, {
       name: "persistent",
       config: { provider: "sandbox", persistent: true, options: { workdirUrl: "https://workdir.example.com", apiKey: "tenant-key" } },
     }))) as SandboxConfigRecord;
 
     const response = await handler(createEvent(
       "POST",
-      `/accounts/me/sandboxes/${created.sandboxId}/terminate`,
+      `/v1/sandboxes/${created.sandboxId}/terminate`,
       { authorization: "Bearer service-secret", "x-account-id": ACCOUNT_ID },
       { reservationKey: "fs-not-owned-by-this-account" },
     ));
@@ -222,14 +222,14 @@ describe("account-manage sandbox endpoints", () => {
     globalThis.fetch = fetchMock as unknown as typeof fetch;
     setStorageForTests(createFakeStorage());
     const reservationKey = "fs-0123456789abcdef0123456789abcdef01234567";
-    const created = await responseJson(await handler(createEvent("POST", "/accounts/me/sandboxes", AUTH, {
+    const created = await responseJson(await handler(createEvent("POST", "/v1/sandboxes", AUTH, {
       name: "persistent",
       config: { provider: "sandbox", persistent: true, options: { reservationKey } },
     }))) as SandboxConfigRecord;
 
     const response = await handler(createEvent(
       "POST",
-      `/accounts/me/sandboxes/${created.sandboxId}/exec`,
+      `/v1/sandboxes/${created.sandboxId}/exec`,
       { authorization: "Bearer service-secret", "x-account-id": ACCOUNT_ID },
       { reservationKey, code: "exit 7", timeoutSeconds: 9999, outputLimitBytes: 999999 },
     ));
@@ -256,14 +256,14 @@ describe("account-manage sandbox endpoints", () => {
     globalThis.fetch = fetchMock as unknown as typeof fetch;
     setStorageForTests(createFakeStorage());
     const reservationKey = "fs-0123456789abcdef0123456789abcdef01234567";
-    const created = await responseJson(await handler(createEvent("POST", "/accounts/me/sandboxes", AUTH, {
+    const created = await responseJson(await handler(createEvent("POST", "/v1/sandboxes", AUTH, {
       name: "persistent",
       config: { provider: "sandbox", persistent: true, options: { reservationKey } },
     }))) as SandboxConfigRecord;
 
     const response = await handler(createEvent(
       "POST",
-      `/accounts/me/sandboxes/${created.sandboxId}/terminal`,
+      `/v1/sandboxes/${created.sandboxId}/terminal`,
       { authorization: "Bearer service-secret", "x-account-id": ACCOUNT_ID },
       { reservationKey },
     ));
@@ -286,14 +286,14 @@ describe("account-manage sandbox endpoints", () => {
     process.env.SERVICE_AUTH_SECRET = "service-secret";
     setStorageForTests(createFakeStorage());
     const reservationKey = "fs-0123456789abcdef0123456789abcdef01234567";
-    const created = await responseJson(await handler(createEvent("POST", "/accounts/me/sandboxes", AUTH, {
+    const created = await responseJson(await handler(createEvent("POST", "/v1/sandboxes", AUTH, {
       name: "persistent",
       config: { provider: "lambda", persistent: true, options: { reservationKey } },
     }))) as SandboxConfigRecord;
 
     const response = await handler(createEvent(
       "POST",
-      `/accounts/me/sandboxes/${created.sandboxId}/terminal`,
+      `/v1/sandboxes/${created.sandboxId}/terminal`,
       { authorization: "Bearer service-secret", "x-account-id": ACCOUNT_ID },
       { reservationKey },
     ));
@@ -316,14 +316,14 @@ describe("account-manage sandbox endpoints", () => {
     microvmShellTokenError = "MicroVM must have been run with the SHELL_INGRESS network connector attached";
     setStorageForTests(createFakeStorage());
     const reservationKey = "fs-0123456789abcdef0123456789abcdef01234567";
-    const created = await responseJson(await handler(createEvent("POST", "/accounts/me/sandboxes", AUTH, {
+    const created = await responseJson(await handler(createEvent("POST", "/v1/sandboxes", AUTH, {
       name: "persistent",
       config: { provider: "lambda", persistent: true, options: { reservationKey } },
     }))) as SandboxConfigRecord;
 
     const response = await handler(createEvent(
       "POST",
-      `/accounts/me/sandboxes/${created.sandboxId}/terminal`,
+      `/v1/sandboxes/${created.sandboxId}/terminal`,
       { authorization: "Bearer service-secret", "x-account-id": ACCOUNT_ID },
       { reservationKey },
     ));
@@ -336,14 +336,14 @@ describe("account-manage sandbox endpoints", () => {
     process.env.SERVICE_AUTH_SECRET = "service-secret";
     setStorageForTests(createFakeStorage());
     const reservationKey = "fs-0123456789abcdef0123456789abcdef01234567";
-    const created = await responseJson(await handler(createEvent("POST", "/accounts/me/sandboxes", AUTH, {
+    const created = await responseJson(await handler(createEvent("POST", "/v1/sandboxes", AUTH, {
       name: "persistent",
       config: { provider: "e2b", persistent: true, network: { mode: "allow-all" }, options: { reservationKey } },
     }))) as SandboxConfigRecord;
 
     const response = await handler(createEvent(
       "POST",
-      `/accounts/me/sandboxes/${created.sandboxId}/terminal`,
+      `/v1/sandboxes/${created.sandboxId}/terminal`,
       { authorization: "Bearer service-secret", "x-account-id": ACCOUNT_ID },
       { reservationKey },
     ));
@@ -358,7 +358,7 @@ describe("account-manage workspace endpoints", () => {
     delete process.env.FILESYSTEM_BUCKET_NAME;
     setStorageForTests(createFakeStorage());
 
-    const created = await handler(createEvent("POST", "/accounts/me/workspaces", AUTH, {
+    const created = await handler(createEvent("POST", "/v1/workspaces", AUTH, {
       name: "notes",
       description: "shared notes",
       config: { storage: { provider: "s3" }, harness: { enabled: true } },
@@ -368,24 +368,24 @@ describe("account-manage workspace endpoints", () => {
     expect(record.workspaceId).toMatch(/^ws_/);
     expect(record.config).toEqual({ storage: { provider: "s3" }, harness: { enabled: true } });
 
-    const list = await responseJson(await handler(createEvent("GET", "/accounts/me/workspaces", AUTH))) as {
+    const list = await responseJson(await handler(createEvent("GET", "/v1/workspaces", AUTH))) as {
       workspaces: WorkspaceConfigRecord[];
     };
     expect(list.workspaces).toHaveLength(1);
 
-    const updated = await handler(createEvent("PATCH", `/accounts/me/workspaces/${record.workspaceId}`, AUTH, {
+    const updated = await handler(createEvent("PATCH", `/v1/workspaces/${record.workspaceId}`, AUTH, {
       config: { harness: { enabled: false } },
     }));
     expect((await responseJson(updated) as WorkspaceConfigRecord).config.harness).toEqual({ enabled: false });
 
-    const deleted = await handler(createEvent("DELETE", `/accounts/me/workspaces/${record.workspaceId}`, AUTH));
+    const deleted = await handler(createEvent("DELETE", `/v1/workspaces/${record.workspaceId}`, AUTH));
     expect(await responseJson(deleted)).toEqual({ deleted: true });
   });
 
   it("returns 400 for an unsupported storage provider", async () => {
     setStorageForTests(createFakeStorage());
 
-    const response = await handler(createEvent("POST", "/accounts/me/workspaces", AUTH, {
+    const response = await handler(createEvent("POST", "/v1/workspaces", AUTH, {
       name: "broken",
       config: { storage: { provider: "vercel" } },
     }));
@@ -396,27 +396,27 @@ describe("account-manage workspace endpoints", () => {
 
   it("returns 404 when updating a missing workspace", async () => {
     setStorageForTests(createFakeStorage());
-    const response = await handler(createEvent("PATCH", "/accounts/me/workspaces/ws_missing", AUTH, { name: "x" }));
+    const response = await handler(createEvent("PATCH", "/v1/workspaces/ws_missing", AUTH, { name: "x" }));
     expect(response.status).toBe(404);
     expect(await responseJson(response)).toEqual({ error: "Workspace not found" });
   });
 
-  it("allows the Convex service token to reach workspace file routes", async () => {
+  it("no longer serves workspace file routes (moved to the Convex config plane)", async () => {
     process.env.SERVICE_AUTH_SECRET = "service-secret";
     setStorageForTests(createFakeStorage());
-    const created = await responseJson(await handler(createEvent("POST", "/accounts/me/workspaces", AUTH, {
+    const created = await responseJson(await handler(createEvent("POST", "/v1/workspaces", AUTH, {
       name: "notes",
       config: { storage: { provider: "s3" } },
     }))) as WorkspaceConfigRecord;
 
     const response = await handler(createEvent(
-      "PUT",
-      `/accounts/me/workspaces/${created.workspaceId}/files`,
+      "GET",
+      `/v1/workspaces/${created.workspaceId}/files`,
       { authorization: "Bearer service-secret", "x-account-id": ACCOUNT_ID },
     ));
 
-    expect(response.status).toBe(405);
-    expect(await responseJson(response)).toMatchObject({ error: "Method not allowed" });
+    expect(response.status).toBe(403);
+    expect(await responseJson(response)).toEqual({ error: "Forbidden" });
   });
 });
 

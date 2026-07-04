@@ -9,6 +9,7 @@ import { authKit } from "./auth";
 import { exchange as cliAuthExchange } from "./cliAuthHttp";
 import { handle as cliHttp } from "./cliHttp";
 import { handle as cliOnboardingHttp } from "./cliOnboardingHttp";
+import { handle as configHttp } from "./configHttp";
 
 const http = httpRouter();
 
@@ -80,5 +81,22 @@ http.route({
     method: "DELETE",
     handler: cliHttp,
 });
+
+// Public config-plane surface (epic #85 phase 9): skills, tools, and
+// workspace files CRUD, forwarded here by the gateway. Bearer account auth.
+http.route({ path: "/v1/skills", method: "GET", handler: configHttp });
+http.route({ path: "/v1/skills", method: "POST", handler: configHttp });
+http.route({ pathPrefix: "/v1/skills/", method: "GET", handler: configHttp });
+http.route({ pathPrefix: "/v1/skills/", method: "PUT", handler: configHttp });
+http.route({ pathPrefix: "/v1/skills/", method: "DELETE", handler: configHttp });
+http.route({ path: "/v1/tools", method: "GET", handler: configHttp });
+http.route({ path: "/v1/tools", method: "POST", handler: configHttp });
+http.route({ pathPrefix: "/v1/tools/", method: "GET", handler: configHttp });
+http.route({ pathPrefix: "/v1/tools/", method: "PATCH", handler: configHttp });
+http.route({ pathPrefix: "/v1/tools/", method: "DELETE", handler: configHttp });
+http.route({ pathPrefix: "/v1/workspaces/", method: "GET", handler: configHttp });
+http.route({ pathPrefix: "/v1/workspaces/", method: "POST", handler: configHttp });
+http.route({ pathPrefix: "/v1/workspaces/", method: "PATCH", handler: configHttp });
+http.route({ pathPrefix: "/v1/workspaces/", method: "DELETE", handler: configHttp });
 
 export default http;

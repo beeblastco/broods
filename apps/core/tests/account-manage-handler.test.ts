@@ -60,7 +60,7 @@ describe("account management HTTP handler", () => {
   });
 
   it("returns JSON errors for missing auth", async () => {
-    const response = await handler(createEvent("GET", "/accounts/me"));
+    const response = await handler(createEvent("GET", "/v1/account"));
 
     expect(response.status).toBe(401);
     expect(await responseJson(response)).toEqual({ error: "Unauthorized" });
@@ -185,10 +185,10 @@ describe("account management HTTP handler", () => {
     const serviceTokenRejection = { error: "Service token is not allowed for this account endpoint" };
 
     for (const path of [
-      "/accounts/me",
-      "/accounts/me/agents",
-      "/accounts/me/sandboxes",
-      "/accounts/me/workspaces",
+      "/v1/account",
+      "/v1/agents",
+      "/v1/sandboxes",
+      "/v1/workspaces",
     ]) {
       const response = await handler(createEvent("GET", path, serviceHeaders));
       expect(response.status).toBe(400);
@@ -198,12 +198,12 @@ describe("account management HTTP handler", () => {
     // Skill/tool sync routes accept the account-scoped service token (the Convex CLI
     // sync path); the request gets past auth (downstream listing may fail without S3,
     // but it is never the service-token rejection).
-    for (const path of ["/accounts/me/skills", "/accounts/me/tools"]) {
+    for (const path of ["/v1/skills", "/v1/tools"]) {
       const response = await handler(createEvent("GET", path, serviceHeaders));
       expect(await responseJson(response)).not.toEqual(serviceTokenRejection);
     }
 
-    const cronResponse = await handler(createEvent("GET", "/accounts/me/crons", serviceHeaders));
+    const cronResponse = await handler(createEvent("GET", "/v1/crons", serviceHeaders));
     expect(cronResponse.status).toBe(200);
     expect(await responseJson(cronResponse)).toEqual({ crons: [] });
   });
@@ -243,7 +243,7 @@ describe("account management HTTP handler", () => {
       },
     }));
 
-    const response = await handler(createEvent("GET", "/accounts/me/crons", {
+    const response = await handler(createEvent("GET", "/v1/crons", {
       authorization: "Bearer fp_agent_test",
     }));
 

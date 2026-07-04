@@ -65,7 +65,7 @@ export function toPublicAccount(account: AccountRecord): PublicAccountRecord {
 
 export function normalizeCreateAccountInput(value: unknown): CreateAccountInput {
   if (!isPlainObject(value)) throw new Error("Request body must include username");
-  if ("config" in value) throw new Error("Agent config is created through /accounts/me/agents");
+  if ("config" in value) throw new Error("Agent config is created through /v1/agents");
   const username = requireString(value.username, "username");
   const description = optionalString(value.description, "description");
   return { username, ...(description ? { description } : {}) };
@@ -73,7 +73,7 @@ export function normalizeCreateAccountInput(value: unknown): CreateAccountInput 
 
 export function normalizeUpdateAccountInput(value: unknown): UpdateAccountInput {
   if (!isPlainObject(value)) throw new Error("Request body must be an object");
-  if ("config" in value) throw new Error("Agent config must be updated through /accounts/me/agents/{agentId}");
+  if ("config" in value) throw new Error("Agent config must be updated through /v1/agents/{agentId}");
   const v = value as Record<string, unknown>;
   const normalized: UpdateAccountInput = {
     ...(v.username !== undefined ? { username: requireString(v.username, "username") } : {}),

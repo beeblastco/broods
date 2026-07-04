@@ -1,7 +1,7 @@
 "use node";
 /**
  * Public action wrappers for cron CRUD. These proxy to broods's
- * /accounts/me/crons HTTP endpoints so EventBridge Scheduler stays in
+ * /v1/crons HTTP endpoints so EventBridge Scheduler stays in
  * sync with Convex. Cherry-coke never touches AWS directly.
  */
 
@@ -48,7 +48,7 @@ export const create = action({
         if (!account) throw new Error("No active org / account not provisioned");
 
         const { url, secret } = getServiceEnv();
-        const res = await fetch(`${url}/accounts/me/crons`, {
+        const res = await fetch(`${url}/v1/crons`, {
             method: "POST",
             headers: headers(account.accountId, secret),
             body: JSON.stringify(args),
@@ -83,7 +83,7 @@ export const update = action({
         if (!account) throw new Error("No active org / account not provisioned");
 
         const { url, secret } = getServiceEnv();
-        const res = await fetch(`${url}/accounts/me/crons/${cronId}`, {
+        const res = await fetch(`${url}/v1/crons/${cronId}`, {
             method: "PATCH",
             headers: headers(account.accountId, secret),
             body: JSON.stringify(patch),
@@ -106,7 +106,7 @@ export const remove = action({
         if (!account) throw new Error("No active org / account not provisioned");
 
         const { url, secret } = getServiceEnv();
-        const res = await fetch(`${url}/accounts/me/crons/${args.cronId}`, {
+        const res = await fetch(`${url}/v1/crons/${args.cronId}`, {
             method: "DELETE",
             headers: headers(account.accountId, secret),
         });

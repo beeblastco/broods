@@ -52,8 +52,13 @@ skill bundles, tool bundles, and workspace files in S3, and (Stage 3) account
 cron schedules. `model/aws.ts` assumes `ConvexAwsRole` (created by
 `apps/core/sst.config.ts`) from a minimal bootstrap IAM user whose only
 permission is `sts:AssumeRole`. Node-only AWS code lives in `model/` and the
-`"use node"` action files (`awsBundles.ts`, `awsSkills.ts`, `skillsPublic.ts`,
-`workspaceFilesPublic.ts`).
+`"use node"` action files (`awsBundles.ts`, `awsSkills.ts`,
+`awsWorkspaceFiles.ts`, `skillsPublic.ts`, `workspaceFilesPublic.ts`).
+
+`configHttp.ts` serves the public config API on this deployment's
+`.convex.site` host — `/v1/skills*`, `/v1/tools*`, and
+`/v1/workspaces/{id}/files` with account Bearer auth — replacing core's former
+routes; the gateway forwards those paths here (`BROODS_CONFIG_URL`).
 
 Deployment environment variables:
 

@@ -463,20 +463,10 @@ async function syncSkillResources(
         const config = asRecord(resource.config, `skill:${resource.name}`);
         const files = config.files;
         if (!Array.isArray(files)) throw new Error(`skill:${resource.name}.files must be an array`);
-        const skill = await ctx.runAction(internal.awsSkills.putSkillBundle, {
+        const skill = await ctx.runAction(internal.awsSkills.createSkill, {
             accountId: accountId,
             expectedName: resource.name,
-            files: files.map((file, index) => {
-                const entry = asRecord(file, `skill:${resource.name}.files[${index}]`);
-                if (typeof entry.path !== "string" || typeof entry.contentBase64 !== "string") {
-                    throw new Error(`skill:${resource.name}.files[${index}] requires path and contentBase64`);
-                }
-                return {
-                    path: entry.path,
-                    contentBase64: entry.contentBase64,
-                    ...(typeof entry.contentType === "string" ? { contentType: entry.contentType } : {}),
-                };
-            }),
+            input: { source: "files", files: files },
         });
         ids[resource.name] = skill.path;
     }
@@ -671,7 +661,7 @@ async function listCrons(token: string): Promise<CronResponse[]> {
 async function listCronsWithFetch(
     fetchCron: (path: string, init: RequestInit) => Promise<Response>,
 ): Promise<CronResponse[]> {
-    const response = await fetchCron("/accounts/me/crons", { method: "GET" });
+    const response = await fetchCron("/v1/crons", { method: "GET" });
     const payload = await response.json() as { crons?: CronResponse[] };
     return Array.isArray(payload.crons) ? payload.crons : [];
 }
@@ -687,7 +677,7 @@ async function createCronWithFetch(
     fetchCron: (path: string, init: RequestInit) => Promise<Response>,
     job: DesiredCron,
 ): Promise<CronResponse> {
-    const response = await fetchCron("/accounts/me/crons", {
+    const response = await fetchCron("/v1/crons", {
         method: "POST",
         body: JSON.stringify(cronBody(job)),
     });
@@ -708,7 +698,7 @@ async function updateCronWithFetch(
     cronId: string,
     job: DesiredCron,
 ): Promise<void> {
-    await fetchCron(`/accounts/me/crons/${encodeURIComponent(cronId)}`, {
+    await fetchCron(`/v1/crons/${encodeURIComponent(cronId)}`, {
         method: "PATCH",
         body: JSON.stringify(cronBody(job)),
     });
@@ -722,7 +712,7 @@ async function deleteCronWithFetch(
     fetchCron: (path: string, init: RequestInit) => Promise<Response>,
     cronId: string,
 ): Promise<void> {
-    await fetchCron(`/accounts/me/crons/${encodeURIComponent(cronId)}`, {
+    await fetchCron(`/v1/crons/${encodeURIComponent(cronId)}`, {
         method: "DELETE",
     });
 }
@@ -792,7 +782,7 @@ async function deleteCronByNameWithServiceToken(accountId: string, name: string)
     const existing = await listCronsWithFetch((path, init) => accountManageFetchWithServiceToken(accountId, path, init));
     const cron = existing.find((job) => job.name === name);
     if (!cron) return;
-    await accountManageFetchWithServiceToken(accountId, `/accounts/me/crons/${encodeURIComponent(cron.cronId)}`, {
+    await accountManageFetchWithServiceToken(accountId, `/v1/crons/${encodeURIComponent(cron.cronId)}`, {
         method: "DELETE",
     });
 }
