@@ -12,6 +12,12 @@ export const USER_CONFIG_PATH = join(homedir(), ".broods", "config.json");
 
 export interface StoredAuthConfig {
   dashboardUrl: string;
+  /**
+   * Base URL of the Convex control plane serving the /api/cli/* routes.
+   * Absent in legacy logins, which reach the same routes through the
+   * dashboard's proxy at `dashboardUrl`.
+   */
+  controlUrl?: string;
   token: string;
   createdAt: string;
   user?: {
@@ -32,10 +38,11 @@ export interface StoredAuthConfig {
 
 export async function readStoredAuth(): Promise<StoredAuthConfig | null> {
   const envToken = process.env.BROODS_TOKEN;
-  const envUrl = process.env.BROODS_DASHBOARD_URL;
+  const envUrl = process.env.BROODS_DASHBOARD_URL ?? process.env.BROODS_CONTROL_URL;
   if (envToken && envUrl) {
     return {
       dashboardUrl: envUrl,
+      ...(process.env.BROODS_CONTROL_URL ? { controlUrl: process.env.BROODS_CONTROL_URL } : {}),
       token: envToken,
       createdAt: new Date().toISOString(),
     };
@@ -55,4 +62,13 @@ export async function writeStoredAuth(config: StoredAuthConfig): Promise<void> {
 
 export function stripTrailingSlash(value: string): string {
   return value.replace(/\/+$/, "");
+}
+
+/**
+ * The base URL the CLI control-plane client should call. Legacy logins have no
+ * controlUrl and fall back to the dashboard, whose /api/cli/* proxy forwards to
+ * the same Convex routes.
+ */
+export function controlUrlFromAuth(auth: Pick<StoredAuthConfig, "dashboardUrl" | "controlUrl">): string {
+  return stripTrailingSlash(auth.controlUrl ?? auth.dashboardUrl);
 }
