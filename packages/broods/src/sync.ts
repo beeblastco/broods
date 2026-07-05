@@ -7,10 +7,10 @@ import { stripTrailingSlash } from "./config.ts";
 
 export interface SyncClientOptions {
   /**
-   * Base URL serving the /api/cli/* control-plane routes: the Convex
-   * deployment directly, or a dashboard URL whose proxy forwards to it.
+   * Base URL serving the /v1/cli/* control-plane routes: the Convex
+   * deployment directly, or the gateway's unified domain in front of it.
    */
-  controlUrl: string;
+  baseUrl: string;
   token: string;
   fetch?: typeof fetch;
 }
@@ -70,12 +70,12 @@ export interface DiffEntry {
 }
 
 export class BroodsSyncClient {
-  private readonly controlUrl: string;
+  private readonly baseUrl: string;
   private readonly token: string;
   private readonly fetchImpl: typeof fetch;
 
   constructor(options: SyncClientOptions) {
-    this.controlUrl = stripTrailingSlash(options.controlUrl);
+    this.baseUrl = stripTrailingSlash(options.baseUrl);
     this.token = options.token;
     this.fetchImpl = options.fetch ?? fetch;
   }
@@ -170,7 +170,7 @@ export class BroodsSyncClient {
   }
 
   async getOnboarding(): Promise<CliOnboardingContext> {
-    const response = await this.fetchImpl(`${this.controlUrl}/api/cli/onboarding`, {
+    const response = await this.fetchImpl(`${this.baseUrl}/v1/cli/onboarding`, {
       method: "GET",
       headers: {
         Authorization: `Bearer ${this.token}`,
@@ -182,7 +182,7 @@ export class BroodsSyncClient {
   }
 
   async selectOnboardingOrg(orgId: string): Promise<CliOnboardingContext> {
-    const response = await this.fetchImpl(`${this.controlUrl}/api/cli/onboarding`, {
+    const response = await this.fetchImpl(`${this.baseUrl}/v1/cli/onboarding`, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${this.token}`,
@@ -196,7 +196,7 @@ export class BroodsSyncClient {
   }
 
   async createOnboardingOrg(name: string): Promise<CliOnboardingContext> {
-    const response = await this.fetchImpl(`${this.controlUrl}/api/cli/onboarding`, {
+    const response = await this.fetchImpl(`${this.baseUrl}/v1/cli/onboarding`, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${this.token}`,
@@ -210,7 +210,7 @@ export class BroodsSyncClient {
   }
 
   private async request(project: string, environment: string, suffix: string, init: RequestInit): Promise<Response> {
-    const url = `${this.controlUrl}/api/cli/projects/${encodeURIComponent(project)}` +
+    const url = `${this.baseUrl}/v1/cli/projects/${encodeURIComponent(project)}` +
       `/environments/${encodeURIComponent(environment)}${suffix}`;
     return await this.fetchImpl(url, {
       ...init,

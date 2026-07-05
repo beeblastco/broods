@@ -128,6 +128,11 @@ test("proxies runtime HTTP paths used by the SDK", () => {
 
 test("routes config-plane CRUD to Convex, not core", () => {
   // Account metadata/rotation plus agents, skills, tools, workspace files, crons, workspaces, sandboxes, and policies are Convex config-plane routes.
+  for (const method of ["GET", "POST", "PUT"]) {
+    expect(isConfigHttpPath("/v1/cli/onboarding", method)).toBe(true);
+    expect(isConfigHttpPath("/v1/cli/projects/p/environments/e/manifest", method)).toBe(true);
+  }
+  expect(isConfigHttpPath("/v1/clix", "GET")).toBe(false);
   expect(isConfigHttpPath("/v1/account", "GET")).toBe(true);
   expect(isConfigHttpPath("/v1/account", "PATCH")).toBe(true);
   expect(isConfigHttpPath("/v1/account/rotate-secret", "POST")).toBe(true);

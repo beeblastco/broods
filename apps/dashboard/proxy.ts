@@ -1,6 +1,5 @@
 import { authkitProxy } from "@workos-inc/authkit-nextjs";
 import type { NextFetchEvent, NextRequest } from "next/server";
-import { NextResponse } from "next/server";
 
 const redirectUri = process.env.NEXT_PUBLIC_WORKOS_REDIRECT_URI ?? "http://localhost:3000/auth/callback";
 const authProxy = authkitProxy({
@@ -19,10 +18,6 @@ const authProxy = authkitProxy({
  * WorkOS AuthKit middleware for session management.
  */
 export default function proxy(request: NextRequest, event: NextFetchEvent) {
-    if (request.nextUrl.pathname.startsWith("/api/cli/")) {
-        return NextResponse.next();
-    }
-
     return authProxy(request, event);
 }
 

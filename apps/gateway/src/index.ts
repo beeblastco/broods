@@ -1249,6 +1249,10 @@ export const isCoreHttpPathForTest = isCoreHttpPath;
  */
 export function isConfigHttpPath(pathname: string, method = "GET"): boolean {
   const upperMethod = method.toUpperCase();
+  // CLI control plane (user-token auth) -- same Convex HTTP surface, exposed
+  // through the gateway so one public domain serves both planes.
+  if (pathname === "/v1/cli" || pathname.startsWith("/v1/cli/")) return true;
+
   if (pathname === "/v1/account") return upperMethod === "GET" || upperMethod === "PATCH";
   if (pathname === "/v1/account/rotate-secret") return upperMethod === "POST";
   if (pathname === "/accounts") return upperMethod === "GET";

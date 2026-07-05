@@ -68,7 +68,6 @@ Use `apps/core/.env` for local SST inputs only:
 - `ENABLE_WEBSOCKET` - Set to `true` to enable WebSocket gateway worker invocations.
 - `NATS_URL` - Required when `ENABLE_WEBSOCKET=true`; ignored by the deployed Lambda when WebSocket is disabled. The transport is chosen by scheme: `wss://`/`ws://` (WebSocket, e.g. `wss://nats.beeblast.co` from the out-of-cluster Lambda) or `nats://`/`tls://` (core TCP, for future in-cluster callers).
 - `NATS_TOKEN` - Token-auth credential for the NATS server; optional (omit for an unauthenticated server).
-- `BROODS_WEBSOCKET_URL` - Optional SDK/demo override for WebSocket clients using a non-default or self-hosted gateway. The hosted SDK default is `gateway.broods.app`.
 - `OPA_BASE_URL` - Optional OPA REST endpoint for runtime policy decisions. The Lambdas run outside the cluster, so the hosted stages use the exposed `https://opa.beeblast.co` endpoint; `http://127.0.0.1:8181` only works against a locally running OPA.
 - `OPA_API_TOKEN` - Bearer token for the OPA REST API. Required when the endpoint enforces token authentication (the hosted `opa.beeblast.co` does); sent as an `Authorization: Bearer` header.
 

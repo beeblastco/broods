@@ -19,7 +19,6 @@ import type {
 const DEFAULT_CONNECT_TIMEOUT_MS = 2000;
 const WS_CONNECTING = 0;
 const WS_OPEN = 1;
-const LAMBDA_FUNCTION_URL_HOST_RE = /\.lambda-url\.[a-z0-9-]+\.on\.aws$/i;
 
 export type WebSocketRunInput = {
   agent?: AgentReference;
@@ -78,7 +77,6 @@ export class BroodsWebSocketClient {
   constructor(options: BroodsWebSocketClientOptions = {}) {
     loadBroodsRuntimeConfig();
     this.baseUrl = normalizeWebSocketServiceUrl(options.baseUrl ||
-      process.env.BROODS_WEBSOCKET_URL ||
       options.host ||
       process.env.BROODS_BASE_URL ||
       process.env.BROODS_HOST ||
@@ -297,14 +295,6 @@ function normalizeWebSocketServiceUrl(value: string): string {
 }
 
 function webSocketAccessError(baseUrl: string): Error {
-  const host = new URL(baseUrl).hostname;
-  if (LAMBDA_FUNCTION_URL_HOST_RE.test(host)) {
-    return new Error(
-      `Cannot access the WebSocket service at ${baseUrl}. AWS Lambda Function URLs do not support WebSocket upgrades; ` +
-      "set BROODS_WEBSOCKET_URL or BROODS_HOST to the deployed WebSocket gateway URL instead.",
-    );
-  }
-
   return new Error(`Cannot access the WebSocket service at ${baseUrl}.`);
 }
 

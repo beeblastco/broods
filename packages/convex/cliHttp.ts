@@ -257,7 +257,7 @@ function parseRoute(pathname: string): RouteParts | null {
     const parts = pathname.split("/").filter(Boolean).map(decodeURIComponent);
     if (
         parts.length === 7 &&
-        parts[0] === "api" &&
+        parts[0] === "v1" &&
         parts[1] === "cli" &&
         parts[2] === "projects" &&
         parts[4] === "environments" &&
@@ -267,7 +267,7 @@ function parseRoute(pathname: string): RouteParts | null {
     }
     if (
         parts.length === 8 &&
-        parts[0] === "api" &&
+        parts[0] === "v1" &&
         parts[1] === "cli" &&
         parts[2] === "projects" &&
         parts[4] === "environments" &&
@@ -277,7 +277,7 @@ function parseRoute(pathname: string): RouteParts | null {
     }
     if (
         parts.length === 7 &&
-        parts[0] === "api" &&
+        parts[0] === "v1" &&
         parts[1] === "cli" &&
         parts[2] === "projects" &&
         parts[4] === "environments" &&
@@ -287,7 +287,7 @@ function parseRoute(pathname: string): RouteParts | null {
     }
     if (
         parts.length === 7 &&
-        parts[0] === "api" &&
+        parts[0] === "v1" &&
         parts[1] === "cli" &&
         parts[2] === "projects" &&
         parts[4] === "environments" &&
@@ -297,7 +297,7 @@ function parseRoute(pathname: string): RouteParts | null {
     }
     if (
         parts.length === 7 &&
-        parts[0] === "api" &&
+        parts[0] === "v1" &&
         parts[1] === "cli" &&
         parts[2] === "projects" &&
         parts[4] === "environments" &&
@@ -307,7 +307,7 @@ function parseRoute(pathname: string): RouteParts | null {
     }
     if (
         parts.length === 9 &&
-        parts[0] === "api" &&
+        parts[0] === "v1" &&
         parts[1] === "cli" &&
         parts[2] === "projects" &&
         parts[4] === "environments" &&
