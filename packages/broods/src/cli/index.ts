@@ -12,7 +12,7 @@ import { tmpdir } from "node:os";
 import { performance } from "node:perf_hooks";
 import { collectEnvRefNames, compileProject } from "../manifest.ts";
 import type { CliManifest } from "../contracts.ts";
-import { controlUrlFromAuth, GENERATED_DIR, PROJECT_DIR, USER_CONFIG_PATH } from "../config.ts";
+import { GENERATED_DIR, PROJECT_DIR, USER_CONFIG_PATH } from "../config.ts";
 import { writeGeneratedFiles } from "../codegen.ts";
 import { type CliOnboardingContext, type CliOnboardingOrg, type CliOnboardingProject, diffManifests, BroodsSyncClient, type RemoteManifestResponse } from "../sync.ts";
 import { BroodsClient, DEFAULT_CORE_BASE_URL } from "../client.ts";
@@ -59,7 +59,7 @@ Commands:
 
 Options:
   --dashboard-url <url> Dashboard base URL for login and deep links (default: ${DEFAULT_DASHBOARD_URL})
-  --control-url <url>   Control-plane base URL for sync/env calls (default: discovered at login)
+  --base-url <url>      broods API base URL for sync/env calls (default: discovered at login)
   --project <name>      Project name override (default: package name or folder)
   --env <name>          Target environment override
   --region <region>     Broods service region preference (default: ${DEFAULT_SERVICE_REGION})
@@ -149,7 +149,6 @@ async function login(args: string[]): Promise<void> {
   const environment = optionValue(args, "--env") ?? process.env.BROODS_ENVIRONMENT ?? "development";
   await writeLocalEnvDefaults({
     dashboardUrl: auth.dashboardUrl ?? dashboardUrl,
-    controlUrl: auth.controlUrl,
     project: project,
     environment: environment,
     region: optionValue(args, "--region") ?? process.env.BROODS_REGION ?? DEFAULT_SERVICE_REGION,
@@ -162,7 +161,7 @@ async function login(args: string[]): Promise<void> {
   if (user) console.log(`User: ${user}`);
   if (org) console.log(`Org: ${org}`);
   if (account) console.log(`Account: ${account}`);
-  await writeRuntimeKeyForLogin(controlUrlFromAuth(auth), auth.token, project, environment);
+  await writeRuntimeKeyForLogin(auth.baseUrl, auth.token, project, environment);
 }
 
 /**
@@ -171,13 +170,13 @@ async function login(args: string[]): Promise<void> {
  * is not deployed yet, because login itself should still succeed.
  */
 async function writeRuntimeKeyForLogin(
-  controlUrl: string,
+  baseUrl: string,
   token: string,
   project: string,
   environment: string,
 ): Promise<void> {
   try {
-    const client = new BroodsSyncClient({ controlUrl: controlUrl, token: token });
+    const client = new BroodsSyncClient({ baseUrl: baseUrl, token: token });
     const key = await client.getRuntimeKey(project, environment);
     if (key?.apiKey) {
       await writeEnvValue("BROODS_API_KEY", key.apiKey);
@@ -194,8 +193,8 @@ async function diff(args: string[]): Promise<void> {
     environment: optionValue(args, "--env"),
     command: "dev",
   });
-  const auth = await requireAuth(optionValue(args, "--dashboard-url") ?? config.dashboardUrl, optionValue(args, "--control-url") ?? config.controlUrl);
-  const client = new BroodsSyncClient({ controlUrl: controlUrlFromAuth(auth), token: auth.token });
+  const auth = await requireAuth(optionValue(args, "--base-url") ?? config.baseUrl);
+  const client = new BroodsSyncClient({ baseUrl: auth.baseUrl, token: auth.token });
   const remote = await client.getManifest(manifest.project, manifest.environment);
   printDiffEntries(diffManifests(manifest, remote?.manifest ?? null));
 }
@@ -207,14 +206,13 @@ async function deploy(args: string[]): Promise<void> {
     command: "deploy",
     useRuntimeEnvironment: false,
   });
-  const auth = await requireAuth(optionValue(args, "--dashboard-url") ?? config.dashboardUrl, optionValue(args, "--control-url") ?? config.controlUrl);
-  const client = new BroodsSyncClient({ controlUrl: controlUrlFromAuth(auth), token: auth.token });
+  const auth = await requireAuth(optionValue(args, "--base-url") ?? config.baseUrl);
+  const client = new BroodsSyncClient({ baseUrl: auth.baseUrl, token: auth.token });
   const result = await client.putManifest(manifest, hasFlag(args, "--prune"), hasFlag(args, "--rotate-key"));
   await writeGeneratedFiles(manifest, result.ids, process.cwd(), resourceAliases, result.deployment, channels);
   await ensureGitIgnore();
   console.log(`Synced ${result.manifest.resources.length} resources to ${manifest.project}/${manifest.environment}`);
   await applyDeploymentKey(result.deployment);
-  if (auth.controlUrl) await writeEnvValue("BROODS_CONTROL_URL", auth.controlUrl);
   printChannelEndpoints(channels, result);
   printSyncWarnings(result);
 }
@@ -412,7 +410,7 @@ async function ensureLocalDevDefaults(args: string[]): Promise<void> {
 
   if (process.stdin.isTTY && needsProject) {
     const auth = await requireAuthOrLogin(dashboardUrl);
-    const client = new BroodsSyncClient({ controlUrl: controlUrlFromAuth(auth), token: auth.token });
+    const client = new BroodsSyncClient({ baseUrl: auth.baseUrl, token: auth.token });
     const context = await getOnboardingContextOrFallback(client, auth);
     const selectedContext = await selectOnboardingOrg(client, context);
     project = await selectOnboardingProject(selectedContext, project);
@@ -440,7 +438,7 @@ async function ensureLocalDevDefaults(args: string[]): Promise<void> {
 
 async function requireAuthOrLogin(dashboardUrl: string) {
   try {
-    return await requireAuth(dashboardUrl);
+    return await requireAuth();
   } catch (error) {
     if (!process.stdin.isTTY) throw error;
     printWarning("No CLI login found. Starting browser login.");
@@ -570,15 +568,15 @@ async function syncDev(args: string[]): Promise<RemoteManifestResponse> {
     environment: optionValue(args, "--env"),
     command: "dev",
   });
-  const auth = await requireAuth(optionValue(args, "--dashboard-url") ?? config.dashboardUrl, optionValue(args, "--control-url") ?? config.controlUrl);
-  const client = new BroodsSyncClient({ controlUrl: controlUrlFromAuth(auth), token: auth.token });
+  const auth = await requireAuth(optionValue(args, "--base-url") ?? config.baseUrl);
+  const client = new BroodsSyncClient({ baseUrl: auth.baseUrl, token: auth.token });
   const remote = await client.getManifest(manifest.project, manifest.environment);
   const diff = diffManifests(manifest, remote?.manifest ?? null);
   printDiffEntries(diff.filter((entry) => entry.operation !== "delete"));
 
   // Push any `env.NAME` values from .env.local up first, so this sync's configs
   // resolve them and the missing-env warning only fires for genuinely-absent vars.
-  await syncLocalEnvVars(client, manifest, envSyncScopeKey(controlUrlFromAuth(auth), auth.token));
+  await syncLocalEnvVars(client, manifest, envSyncScopeKey(auth.baseUrl, auth.token));
 
   // Push creates/updates (and canvas wiring) immediately, undeleted.
   let result = await client.putManifest(manifest, false);
@@ -682,8 +680,8 @@ async function syncLocalEnvVars(client: BroodsSyncClient, manifest: CliManifest,
 
 type EnvSyncCache = Record<string, Record<string, string>>;
 
-function envSyncScopeKey(dashboardUrl: string, token: string): string {
-  return `${dashboardUrl}:${createHash("sha256").update(token).digest("hex").slice(0, 16)}`;
+function envSyncScopeKey(baseUrl: string, token: string): string {
+  return `${baseUrl}:${createHash("sha256").update(token).digest("hex").slice(0, 16)}`;
 }
 
 function envCacheKey(scopeKey: string, project: string, environment: string): string {
@@ -739,7 +737,7 @@ async function printDevTarget(args: string[]): Promise<void> {
     environment: optionValue(args, "--env"),
     command: "dev",
   });
-  const auth = await requireAuth(optionValue(args, "--dashboard-url") ?? config.dashboardUrl, optionValue(args, "--control-url") ?? config.controlUrl);
+  const auth = await requireAuth(optionValue(args, "--base-url") ?? config.baseUrl);
   printDeploymentTarget({
     project: manifest.project,
     environment: manifest.environment,
@@ -786,9 +784,9 @@ async function envCommand(args: string[]): Promise<void> {
     environment: optionValue(args, "--env"),
     command: "dev",
   });
-  const auth = await requireAuth(optionValue(args, "--dashboard-url") ?? config.dashboardUrl, optionValue(args, "--control-url") ?? config.controlUrl);
-  const client = new BroodsSyncClient({ controlUrl: controlUrlFromAuth(auth), token: auth.token });
-  const scopeKey = envSyncScopeKey(controlUrlFromAuth(auth), auth.token);
+  const auth = await requireAuth(optionValue(args, "--base-url") ?? config.baseUrl);
+  const client = new BroodsSyncClient({ baseUrl: auth.baseUrl, token: auth.token });
+  const scopeKey = envSyncScopeKey(auth.baseUrl, auth.token);
   const target = `${manifest.project}/${manifest.environment}`;
 
   if (isList) {
@@ -988,8 +986,8 @@ async function loadAgentsWithIds(args: string[]): Promise<{
     environment: optionValue(args, "--env"),
     command: "dev",
   });
-  const auth = await requireAuth(optionValue(args, "--dashboard-url") ?? config.dashboardUrl, optionValue(args, "--control-url") ?? config.controlUrl);
-  const remote = await new BroodsSyncClient({ controlUrl: controlUrlFromAuth(auth), token: auth.token })
+  const auth = await requireAuth(optionValue(args, "--base-url") ?? config.baseUrl);
+  const remote = await new BroodsSyncClient({ baseUrl: auth.baseUrl, token: auth.token })
     .getManifest(manifest.project, manifest.environment);
   const agents = manifest.resources
     .filter((resource) => resource.kind === "agent")
@@ -1078,14 +1076,14 @@ async function run(args: string[]): Promise<void> {
     environment: optionValue(args, "--env"),
     command: "dev",
   });
-  const auth = await requireAuth(optionValue(args, "--dashboard-url") ?? config.dashboardUrl, optionValue(args, "--control-url") ?? config.controlUrl);
+  const auth = await requireAuth(optionValue(args, "--base-url") ?? config.baseUrl);
   const agent = manifest.resources.find((resource) => resource.kind === "agent" && resource.name === agentName);
   if (!agent) throw new Error(`Unknown local agent: ${agentName}`);
-  const remote = await new BroodsSyncClient({ controlUrl: controlUrlFromAuth(auth), token: auth.token })
+  const remote = await new BroodsSyncClient({ baseUrl: auth.baseUrl, token: auth.token })
     .getManifest(manifest.project, manifest.environment);
   const agentId = remote?.ids.agents[agentName];
   if (!agentId) throw new Error(`Agent ${agentName} is not synced yet. Run broods dev --once or broods deploy first.`);
-  const runtimeKey = await new BroodsSyncClient({ controlUrl: controlUrlFromAuth(auth), token: auth.token })
+  const runtimeKey = await new BroodsSyncClient({ baseUrl: auth.baseUrl, token: auth.token })
     .getRuntimeKey(manifest.project, manifest.environment)
     .catch(() => null);
   if (runtimeKey?.apiKey) {
@@ -1152,7 +1150,6 @@ async function ensureGitIgnore(): Promise<void> {
 
 async function writeLocalEnvDefaults(options: {
   dashboardUrl: string;
-  controlUrl?: string;
   project: string;
   environment: string;
   region: string;
@@ -1163,7 +1160,6 @@ async function writeLocalEnvDefaults(options: {
   const values = parseEnv(current);
   const nextValues = {
     BROODS_DASHBOARD_URL: options.dashboardUrl,
-    ...(options.controlUrl ? { BROODS_CONTROL_URL: options.controlUrl } : {}),
     BROODS_PROJECT: options.project,
     BROODS_ENVIRONMENT: options.environment,
     BROODS_REGION: options.region,

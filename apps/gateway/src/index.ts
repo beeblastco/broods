@@ -1249,8 +1249,12 @@ export const isCoreHttpPathForTest = isCoreHttpPath;
  */
 export function isConfigHttpPath(pathname: string, method = "GET"): boolean {
   const upperMethod = method.toUpperCase();
+  // Exact /v1/account stays method-gated: DELETE is core's runtime teardown.
   if (pathname === "/v1/account") return upperMethod === "GET" || upperMethod === "PATCH";
-  if (pathname === "/v1/account/rotate-secret") return upperMethod === "POST";
+  // Everything under /v1/account/ is the Convex account control plane:
+  // rotate-secret (account-secret auth) plus the user-token routes the CLI and
+  // dashboard share (auth exchange, onboarding, the account's projects).
+  if (pathname.startsWith("/v1/account/")) return true;
   if (pathname === "/accounts") return upperMethod === "GET";
   if (/^\/accounts\/[^/]+$/.test(pathname)) {
     return upperMethod === "GET" || upperMethod === "PATCH";

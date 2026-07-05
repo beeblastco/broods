@@ -41,43 +41,43 @@ registerRoutes(http, components.stripe, {
 });
 
 http.route({
-    pathPrefix: "/api/cli/projects/",
+    pathPrefix: "/v1/account/projects/",
     method: "POST",
     handler: cliHttp,
 });
 
 http.route({
-    path: "/api/cli/auth/exchange",
+    path: "/v1/account/auth/exchange",
     method: "POST",
     handler: cliAuthExchange,
 });
 
 http.route({
-    path: "/api/cli/onboarding",
+    path: "/v1/account/onboarding",
     method: "GET",
     handler: cliOnboardingHttp,
 });
 
 http.route({
-    path: "/api/cli/onboarding",
+    path: "/v1/account/onboarding",
     method: "POST",
     handler: cliOnboardingHttp,
 });
 
 http.route({
-    pathPrefix: "/api/cli/projects/",
+    pathPrefix: "/v1/account/projects/",
     method: "GET",
     handler: cliHttp,
 });
 
 http.route({
-    pathPrefix: "/api/cli/projects/",
+    pathPrefix: "/v1/account/projects/",
     method: "PUT",
     handler: cliHttp,
 });
 
 http.route({
-    pathPrefix: "/api/cli/projects/",
+    pathPrefix: "/v1/account/projects/",
     method: "DELETE",
     handler: cliHttp,
 });

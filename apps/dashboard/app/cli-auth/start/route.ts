@@ -6,7 +6,6 @@ import { withAuth } from "@workos-inc/authkit-nextjs";
 import { api } from "@broods/convex/_generated/api";
 import { ConvexHttpClient } from "convex/browser";
 import { NextRequest, NextResponse } from "next/server";
-import { convexSiteUrl } from "../../lib/cliProxy";
 
 export const dynamic = "force-dynamic";
 
@@ -33,9 +32,10 @@ export async function GET(request: NextRequest): Promise<Response> {
         const target = new URL(callback);
         target.searchParams.set("code", code);
         target.searchParams.set("state", state);
-        // Advertise the Convex control plane so the CLI exchanges the code and
-        // syncs there directly, skipping this dashboard's /api/cli proxy.
-        target.searchParams.set("control_url", convexSiteUrl().origin);
+        // BROODS_BASE_URL advertises the unified public domain (the gateway,
+        // which proxies /v1/account/* to Convex); without it we point the CLI at
+        // the Convex deployment directly.
+        target.searchParams.set("base_url", advertisedBaseUrl());
 
         return NextResponse.redirect(target);
     } catch (error) {
@@ -70,6 +70,18 @@ function isRetryableLoginRace(error: unknown): boolean {
 
 function wait(ms: number): Promise<void> {
     return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** Public base URL the CLI should call for the /v1/account/* control-plane routes. */
+function advertisedBaseUrl(): string {
+    const explicit = process.env.BROODS_BASE_URL;
+    if (explicit) {
+        return new URL(explicit).origin;
+    }
+    const convexUrl = process.env.NEXT_PUBLIC_CONVEX_URL;
+    if (!convexUrl) throw new Error("BROODS_BASE_URL or NEXT_PUBLIC_CONVEX_URL is required");
+
+    return new URL(convexUrl.replace(".convex.cloud", ".convex.site")).origin;
 }
 
 function isLocalCallback(value: string): boolean {

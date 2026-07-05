@@ -13,7 +13,7 @@ const LOGIN_TIMEOUT_MS = 3 * 60 * 1000;
 
 interface LoginCallback {
   code: string;
-  controlUrl?: string;
+  baseUrl: string;
 }
 
 export function optionValue(args: string[], name: string): string | undefined {
@@ -29,17 +29,16 @@ export function isPlainObject(value: unknown): value is Record<string, unknown> 
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-export async function requireAuth(dashboardUrl?: string, controlUrl?: string): Promise<StoredAuthConfig> {
+export async function requireAuth(baseUrl?: string): Promise<StoredAuthConfig> {
   loadBroodsRuntimeConfig();
   const auth = await readStoredAuth();
   if (!auth) {
-    throw new Error("Run `broods login` first, or set BROODS_TOKEN and BROODS_DASHBOARD_URL.");
+    throw new Error("Run `broods login` first, or set BROODS_TOKEN and BROODS_BASE_URL.");
   }
 
   return {
     ...auth,
-    ...(dashboardUrl ? { dashboardUrl: dashboardUrl } : {}),
-    ...(controlUrl ? { controlUrl: controlUrl } : {}),
+    ...(baseUrl ? { baseUrl: stripTrailingSlash(baseUrl) } : {}),
   };
 }
 
@@ -126,11 +125,9 @@ export async function loginWithBrowser(dashboardUrl: string): Promise<StoredAuth
     openBrowser(startUrl);
     console.log(`Opening ${startUrl}`);
     const login = await waitWithTimeout(code.promise, LOGIN_TIMEOUT_MS);
-    // Exchange directly against the Convex control plane when the dashboard
-    // advertised it; older dashboards omit control_url and the dashboard's
-    // /api/cli proxy forwards the exchange to the same route.
-    const exchangeBase = login.controlUrl ?? stripTrailingSlash(dashboardUrl);
-    const response = await fetch(`${exchangeBase}/api/cli/auth/exchange`, {
+    // The dashboard advertises the API base URL in the callback; the
+    // exchange and all later sync/env calls go there directly.
+    const response = await fetch(`${login.baseUrl}/v1/account/auth/exchange`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ code: login.code }),
@@ -140,15 +137,13 @@ export async function loginWithBrowser(dashboardUrl: string): Promise<StoredAuth
     }
     const payload = await response.json() as {
       token: string;
-      controlUrl?: string;
       user?: StoredAuthConfig["user"];
       org?: StoredAuthConfig["org"];
       account?: StoredAuthConfig["account"];
     };
-    const controlUrl = login.controlUrl ?? (payload.controlUrl ? stripTrailingSlash(payload.controlUrl) : undefined);
     const auth = {
+      baseUrl: login.baseUrl,
       dashboardUrl: stripTrailingSlash(dashboardUrl),
-      ...(controlUrl ? { controlUrl: controlUrl } : {}),
       token: payload.token,
       createdAt: new Date().toISOString(),
       ...(payload.user ? { user: payload.user } : {}),
@@ -189,15 +184,23 @@ function waitForCallback(expectedState: string): Promise<{
         const url = new URL(req.url ?? "/", "http://127.0.0.1");
         const state = url.searchParams.get("state");
         const code = url.searchParams.get("code");
-        const controlUrl = url.searchParams.get("control_url");
+        const baseUrl = url.searchParams.get("base_url");
         if (state !== expectedState || !code) {
           res.writeHead(400).end("Invalid broods login callback.");
+          return;
+        }
+        if (!baseUrl) {
+          res.writeHead(400).end("Login callback omitted base_url; update the dashboard deployment.");
+          callbackReject(new Error(
+            "Login callback did not advertise the API base URL (base_url). " +
+            "Deploy a dashboard build that includes the Convex-direct CLI auth flow.",
+          ));
           return;
         }
         res.writeHead(200, { "Content-Type": "text/plain" }).end("broods CLI login complete. You can close this tab.");
         callbackResolve({
           code: code,
-          ...(controlUrl ? { controlUrl: stripTrailingSlash(controlUrl) } : {}),
+          baseUrl: stripTrailingSlash(baseUrl),
         });
       } catch (error) {
         callbackReject(error);

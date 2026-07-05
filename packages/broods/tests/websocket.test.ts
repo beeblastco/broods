@@ -50,7 +50,6 @@ afterEach(() => {
   delete process.env.BROODS_BASE_URL;
   delete process.env.BROODS_HOST;
   delete process.env.BROODS_API_KEY;
-  delete process.env.BROODS_WEBSOCKET_URL;
 });
 
 test("websocket client accepts host as a shorthand for the core service URL", () => {
@@ -118,45 +117,16 @@ test("websocket client can be constructed without options", () => {
   );
 });
 
-test("websocket client lets the gateway URL override an HTTP core host", () => {
-  process.env.BROODS_WEBSOCKET_URL = "wss://ws.example";
+test("websocket client lets BROODS_BASE_URL override the default service URL", () => {
+  process.env.BROODS_BASE_URL = "https://gateway.example";
   const client = new BroodsWebSocketClient({
-    host: "neqw2f4jkhicsoyybmb5lckebm0fsrgb.lambda-url.eu-west-1.on.aws",
     apiKey: "test-key",
     WebSocket: FakeWebSocket,
   });
 
   expect(client.buildUrl({ endpointId: "agent_1" })).toBe(
-    "wss://ws.example/v1/agents/agent_1/ws?token=test-key",
+    "wss://gateway.example/v1/agents/agent_1/ws?token=test-key",
   );
-});
-
-test("websocket client explains Lambda Function URL upgrade failures", async () => {
-  class FailingWebSocket extends FakeWebSocket {
-    constructor(url: string) {
-      super(url);
-      queueMicrotask(() => this.onerror?.({}));
-    }
-  }
-  let error: Error | undefined;
-  const client = new BroodsWebSocketClient({
-    host: "https://neqw2f4jkhicsoyybmb5lckebm0fsrgb.lambda-url.eu-west-1.on.aws",
-    apiKey: "test-key",
-    WebSocket: FailingWebSocket,
-  });
-
-  client.subscribe({
-    endpointId: "agent_1",
-    events: [{ role: "user", content: [{ type: "text", text: "hello" }] }],
-  }, {
-    onError(nextError) {
-      error = nextError;
-    },
-  });
-  await Promise.resolve();
-  await Promise.resolve();
-
-  expect(error?.message).toContain("AWS Lambda Function URLs do not support WebSocket upgrades");
 });
 
 test("websocket client subscribes to the core service and forwards server messages", async () => {

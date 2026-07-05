@@ -12,8 +12,8 @@ bun run start
 Use `.env.local` for local runtime settings. SDK clients automatically read the
 runtime key from `BROODS_API_KEY`, which `bun run dev`/`bun run deploy`
 writes for the selected environment.
-The WebSocket demo uses the SDK default runtime host, `gateway.broods.app`; only
-set `BROODS_WEBSOCKET_URL` for a non-default or self-hosted gateway.
+WebSocket demos use the same `BROODS_BASE_URL` or `BROODS_HOST` override as
+HTTP clients. The hosted SDK default is `gateway.broods.app`.
 
 ## Run against a local core
 
