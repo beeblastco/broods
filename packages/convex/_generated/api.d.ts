@@ -43,6 +43,7 @@ import type * as messages from "../messages.js";
 import type * as migrations from "../migrations.js";
 import type * as model_accountTools from "../model/accountTools.js";
 import type * as model_agentConfigCodec from "../model/agentConfigCodec.js";
+import type * as model_agentRules from "../model/agentRules.js";
 import type * as model_agentRuntimeSecrets from "../model/agentRuntimeSecrets.js";
 import type * as model_agentSync from "../model/agentSync.js";
 import type * as model_aws from "../model/aws.js";
@@ -126,6 +127,7 @@ declare const fullApi: ApiFromModules<{
   migrations: typeof migrations;
   "model/accountTools": typeof model_accountTools;
   "model/agentConfigCodec": typeof model_agentConfigCodec;
+  "model/agentRules": typeof model_agentRules;
   "model/agentRuntimeSecrets": typeof model_agentRuntimeSecrets;
   "model/agentSync": typeof model_agentSync;
   "model/aws": typeof model_aws;

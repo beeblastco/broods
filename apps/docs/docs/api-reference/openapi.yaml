@@ -12,14 +12,14 @@ info:
     > - Advanced integrations that need direct account-management access
     > - Admin operations using `AdminAccountSecret`
 
-    Agents and rotate-secret are also reachable by admins as `/accounts/{accountId}/...` with the `AdminAccountSecret` bearer token; behavior and shapes are identical. Skills, tools, workspace files, crons, workspaces, sandboxes, and policies are served by the config plane behind the same gateway host and have no admin path variants.
+    Account administration and rotate-secret are reachable by admins as `/accounts/{accountId}/...` with the `AdminAccountSecret` bearer token. Agent CRUD is account-authenticated under `/v1/agents*`. Agents, skills, tools, workspace files, crons, workspaces, sandboxes, and policies are served by the config plane behind the same gateway host and have no admin path variants.
   version: 0.1.0
 
 servers:
   - url: https://gateway.broods.app
     description: Managed gateway (default SDK host)
   - url: http://localhost:3000
-    description: Locally-run core container (`cd apps/core && bun run serve`; skills/tools/workspace-files/crons/workspaces/sandboxes/policies CRUD routes are served by the Convex config plane, not a local core)
+    description: Locally-run core container (`cd apps/core && bun run serve`; agents/skills/tools/workspace-files/crons/workspaces/sandboxes/policies CRUD routes are served by the Convex config plane, not a local core)
 
 security:
   - BearerAuth: []
@@ -777,7 +777,7 @@ paths:
       tags:
         - Agents
       summary: Create agent
-      description: Create a new agent under the authenticated account. The `agentId` in the response is required for all runtime requests.
+      description: Create a new agent under the authenticated account. Agent CRUD is served by the config plane and config is encrypted at rest. The `agentId` in the response is required for all runtime requests.
       security:
         - BearerAuth: []
       requestBody:
@@ -854,6 +854,7 @@ paths:
       tags:
         - Agents
       summary: List agents
+      description: List config-plane agents for the authenticated account. Returned configs are decrypted server-side and redacted before response.
       security:
         - BearerAuth: []
       responses:
@@ -874,6 +875,7 @@ paths:
       tags:
         - Agents
       summary: Get agent
+      description: Get one config-plane agent. Returned config is decrypted server-side and redacted before response.
       security:
         - BearerAuth: []
       parameters:
@@ -894,7 +896,7 @@ paths:
       tags:
         - Agents
       summary: Update agent
-      description: Config patch is a deep merge. Redacted secret placeholders (`********`) preserve existing secrets. Set a field to `null` to delete it.
+      description: Config patch is a deep merge against encrypted config-plane storage. Redacted secret placeholders (`********`) preserve existing secrets. Set a config field to `null` to delete it. Set `description` to `null` to clear it. `status` accepts `active` or `disabled` for compatibility; config-plane responses currently report existing agents as `active`.
       security:
         - BearerAuth: []
       parameters:
@@ -913,7 +915,14 @@ paths:
                 name:
                   type: string
                 description:
+                  type:
+                    - string
+                    - 'null'
+                status:
                   type: string
+                  enum:
+                    - active
+                    - disabled
                 config:
                   $ref: '#/components/schemas/AgentConfig'
       responses:

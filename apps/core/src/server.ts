@@ -36,9 +36,9 @@ export interface CoreServer {
 // Account-resource routes under /v1. Patterns are exact-depth (not prefixes)
 // so scoped agent invocations like /v1/{project}/agents/{env}/{endpoint} fall
 // through to the harness even when a project slug shadows a resource name.
-// Skills, tools, workspace-files, cron, workspace, sandbox-config, and policy
-// CRUD live in the Convex config plane (the gateway routes them there), so
-// they are not core routes at all. Sandbox lifecycle verbs stay in core.
+// Agent, skills, tools, workspace-files, cron, workspace, sandbox-config, and
+// policy CRUD live in the Convex config plane (the gateway routes them there),
+// so they are not core routes at all. Sandbox lifecycle verbs stay in core.
 const ACCOUNT_RESOURCE_PATTERNS: RegExp[] = [
   /^\/v1\/account(?:\/rotate-secret)?$/,
   /^\/v1\/sandboxes\/[^/]+\/(?:suspend|resume|terminate|snapshot|refresh|exec|terminal)$/,
@@ -49,15 +49,11 @@ const ACCOUNT_RESOURCE_PATTERNS: RegExp[] = [
  * CRUD surface, and the observability-log internal leaf; everything else
  * (direct API, status, async, webhooks, agent invocation) is the harness.
  */
-function routesToAccountManage(method: string, pathname: string): boolean {
+function routesToAccountManage(_method: string, pathname: string): boolean {
   if (pathname === "/accounts" || pathname.startsWith("/accounts/")) {
     return true;
   }
-  if (pathname === "/v1/internal/observability-log" || pathname === "/v1/agents") {
-    return true;
-  }
-  // /v1/agents/{id}: POST invokes the agent (harness); other methods are CRUD.
-  if (/^\/v1\/agents\/[^/]+$/.test(pathname) && method !== "POST") {
+  if (pathname === "/v1/internal/observability-log") {
     return true;
   }
 

@@ -126,7 +126,12 @@ test("proxies runtime HTTP paths used by the SDK", () => {
 });
 
 test("routes config-plane CRUD to Convex, not core", () => {
-  // Skills, tools, workspace files, crons, workspaces, sandboxes, and policies are Convex config-plane routes.
+  // Agents, skills, tools, workspace files, crons, workspaces, sandboxes, and policies are Convex config-plane routes.
+  expect(isConfigHttpPath("/v1/agents", "GET")).toBe(true);
+  expect(isConfigHttpPath("/v1/agents", "POST")).toBe(true);
+  expect(isConfigHttpPath("/v1/agents/agent_1", "GET")).toBe(true);
+  expect(isConfigHttpPath("/v1/agents/agent_1", "PATCH")).toBe(true);
+  expect(isConfigHttpPath("/v1/agents/agent_1", "DELETE")).toBe(true);
   expect(isConfigHttpPath("/v1/skills")).toBe(true);
   expect(isConfigHttpPath("/v1/skills/my-skill")).toBe(true);
   expect(isConfigHttpPath("/v1/tools")).toBe(true);
@@ -148,7 +153,12 @@ test("routes config-plane CRUD to Convex, not core", () => {
   expect(isConfigHttpPath("/v1/sandboxes/sbx_1/exec")).toBe(false);
   expect(isConfigHttpPath("/v1/sandboxes/sbx_1/terminal")).toBe(false);
   expect(isConfigHttpPath("/v1/policies/agents/development/env_123")).toBe(false);
-  expect(isConfigHttpPath("/v1/agents/agent_1")).toBe(false);
+  expect(isConfigHttpPath("/v1/agents/agent_1", "POST")).toBe(false);
+  expect(isConfigHttpPath("/v1/agents/agent_1/ws", "GET")).toBe(false);
+  expect(isConfigHttpPath("/v1/agents/agent_1/async", "POST")).toBe(false);
+  expect(isConfigHttpPath("/v1/demo/agents/development/env_123", "POST")).toBe(false);
+  expect(isConfigHttpPath("/v1/demo/agents/development/env_123/async", "POST")).toBe(false);
+  expect(isConfigHttpPath("/v1/demo/agents/development/env_123/ws", "GET")).toBe(false);
 });
 
 test("routes a runtime key to the matching core upstream", async () => {

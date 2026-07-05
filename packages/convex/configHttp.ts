@@ -1,10 +1,9 @@
 /**
- * Public config-plane HTTP surface (epic #85 phase 9): skills, tools,
- * workspace files, and cron CRUD served straight from Convex, replacing
- * core's former /v1/{skills,tools,crons} and /v1/workspaces/{id}/files
- * routes. The gateway forwards these paths here; response shapes match the
- * retired core handlers so the public API contract is unchanged. Auth is the
- * account Bearer secret.
+ * Public config-plane HTTP surface (epic #85 phase 9): agents, skills, tools,
+ * workspace files, crons, workspaces, sandboxes, and policies served straight
+ * from Convex. The gateway forwards these paths here; response shapes match
+ * the retired core handlers so the public API contract is unchanged. Auth is
+ * the account Bearer secret.
  */
 
 import { httpAction, type ActionCtx } from "./_generated/server";
@@ -12,6 +11,12 @@ import { internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
 import { normalizeAccountToolUpload } from "./model/accountTools";
 import { decryptAgentConfigBlob, encryptAgentConfigBlob } from "./model/agentConfigCodec";
+import {
+    normalizeCreateAgentInput,
+    normalizeUpdateAgentInput,
+    toPublicAgentResponse,
+    type AgentConfig,
+} from "./model/agentRules";
 import { parseCronRunsLimit, toCronResponse, toCronRunResponse } from "./model/cronRules";
 import {
     normalizeCreateAgentPolicyInput,
@@ -53,16 +58,38 @@ export const handle = httpAction(async (ctx, req) => {
                 return await handleSandboxConfigRoute(ctx, req, account._id, route.sandboxId);
             case "policies":
                 return await handlePolicyConfigRoute(ctx, req, account._id, route.policyId);
+            case "agents":
+                return await handleAgentConfigRoute(ctx, req, account._id, route.agentId);
         }
     } catch (err) {
         if (isClientInputError(err)) {
-            return json({ error: err.message }, 400);
+            return json({ error: err.message }, clientErrorStatus(err));
         }
         console.error("config HTTP request failed", err);
 
         return json({ error: "Internal server error" }, 500);
     }
 });
+
+/**
+ * Map a client-input error to its HTTP status. Core returned 401 for
+ * foreign-account skill paths and 404 for dangling agent references
+ * (errorResponseForError); everything else is a plain 400.
+ * @param error the recognized client-input error
+ * @returns the HTTP status core used for this message
+ */
+function clientErrorStatus(error: Error): number {
+    if (error.message.startsWith("Skill path belongs to another account:")) return 401;
+    if (
+        error.message.startsWith("Skill not found:") ||
+        error.message.startsWith("Subagent not found:") ||
+        error.message.startsWith("Agent policy not found:")
+    ) {
+        return 404;
+    }
+
+    return 400;
+}
 
 type ConfigRoute =
     | { kind: "skills"; name?: string }
@@ -71,7 +98,8 @@ type ConfigRoute =
     | { kind: "crons"; cronId?: string; runs: boolean }
     | { kind: "workspaces"; workspaceId?: string }
     | { kind: "sandboxes"; sandboxId?: string }
-    | { kind: "policies"; policyId?: string };
+    | { kind: "policies"; policyId?: string }
+    | { kind: "agents"; agentId?: string };
 
 /**
  * Parse a config-plane pathname into its route parts.
@@ -97,6 +125,9 @@ function parseRoute(pathname: string): ConfigRoute | null {
     const policies = pathname.match(/^\/v1\/policies(?:\/([^/]+))?$/);
     if (policies) return { kind: "policies", ...(policies[1] ? { policyId: decodeURIComponent(policies[1]) } : {}) };
 
+    const agents = pathname.match(/^\/v1\/agents(?:\/([^/]+))?$/);
+    if (agents) return { kind: "agents", ...(agents[1] ? { agentId: decodeURIComponent(agents[1]) } : {}) };
+
     const cronRuns = pathname.match(/^\/v1\/crons\/([^/]+)\/runs$/);
     if (cronRuns?.[1]) return { kind: "crons", cronId: decodeURIComponent(cronRuns[1]), runs: true };
 
@@ -120,6 +151,105 @@ async function requireAccount(ctx: ActionCtx, req: Request): Promise<Doc<"accoun
     const secretHash = [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 
     return await ctx.runQuery(internal.accounts.getBySecretHash, { secretHash: secretHash });
+}
+
+/**
+ * Agent CRUD: list/create on the collection, get/patch/delete by id.
+ * Mirrors core's former handleAgentRoute contract.
+ */
+async function handleAgentConfigRoute(
+    ctx: ActionCtx,
+    req: Request,
+    accountId: Id<"accounts">,
+    agentId?: string,
+): Promise<Response> {
+    if (!agentId) {
+        if (req.method === "GET") {
+            const records: Doc<"agents">[] = await ctx.runQuery(internal.agents.list, { accountId: accountId });
+            const agents = await Promise.all(records.map(async (record) =>
+                toPublicAgentResponse(record, await decryptAgentConfig(record))
+            ));
+
+            return json({ agents: agents });
+        }
+        if (req.method === "POST") {
+            const input = normalizeCreateAgentInput(await req.json());
+            await validateAgentReferences(ctx, accountId, input.config);
+            const encrypted = await encryptAgentConfig(input.config);
+            const createdId: Id<"agents"> = await ctx.runMutation(internal.agents.create, {
+                accountId: accountId,
+                name: input.name,
+                description: input.description,
+                encryptedConfig: encrypted.ciphertext,
+                encryptionIv: encrypted.iv,
+                encryptionTag: encrypted.tag,
+            });
+            const created: Doc<"agents"> | null = await ctx.runQuery(internal.agents.getById, {
+                accountId: accountId,
+                agentId: createdId,
+            });
+            if (!created) throw new Error("Failed to fetch created agent");
+
+            return json({
+                accountId: created.accountId,
+                agentId: created._id,
+                name: created.name,
+                ...(created.description ? { description: created.description } : {}),
+            }, 201);
+        }
+
+        return methodNotAllowed(["GET", "POST"]);
+    }
+
+    if (req.method === "GET") {
+        const record: Doc<"agents"> | null = await ctx.runQuery(internal.agents.getById, {
+            accountId: accountId,
+            agentId: agentId,
+        });
+
+        return record ? json(toPublicAgentResponse(record, await decryptAgentConfig(record))) : json({ error: "Agent not found" }, 404);
+    }
+    if (req.method === "PATCH") {
+        const existing: Doc<"agents"> | null = await ctx.runQuery(internal.agents.getById, {
+            accountId: accountId,
+            agentId: agentId,
+        });
+        if (!existing) return json({ error: "Agent not found" }, 404);
+        const existingConfig = await decryptAgentConfig(existing);
+        const patch = normalizeUpdateAgentInput(existingConfig, await req.json());
+        await validateAgentReferences(ctx, accountId, patch.config);
+        const encrypted = await encryptAgentConfig(patch.config);
+        await ctx.runMutation(internal.agents.update, {
+            accountId: accountId,
+            agentId: agentId,
+            ...(patch.name !== undefined ? { name: patch.name } : {}),
+            // Null is dropped, not forwarded: core's adapter has always done
+            // `?? undefined` here, so PATCH {description: null} is a no-op
+            // for agents (unlike policies, where null clears).
+            ...(patch.description !== undefined ? { description: patch.description ?? undefined } : {}),
+            encryptedConfig: encrypted.ciphertext,
+            encryptionIv: encrypted.iv,
+            encryptionTag: encrypted.tag,
+        });
+        const updated: Doc<"agents"> | null = await ctx.runQuery(internal.agents.getById, {
+            accountId: accountId,
+            agentId: agentId,
+        });
+
+        return updated ? json(toPublicAgentResponse(updated, await decryptAgentConfig(updated))) : json({ error: "Agent not found" }, 404);
+    }
+    if (req.method === "DELETE") {
+        const existing: Doc<"agents"> | null = await ctx.runQuery(internal.agents.getById, {
+            accountId: accountId,
+            agentId: agentId,
+        });
+        if (!existing) return json({ error: "Agent not found" }, 404);
+        await ctx.runMutation(internal.agents.remove, { accountId: accountId, agentId: agentId });
+
+        return json({ deleted: true });
+    }
+
+    return methodNotAllowed(["GET", "PATCH", "DELETE"]);
 }
 
 /**
@@ -667,6 +797,67 @@ function toPublicAccountTool(record: Doc<"accountTools">): Record<string, unknow
     };
 }
 
+async function validateAgentReferences(ctx: ActionCtx, accountId: Id<"accounts">, config: AgentConfig): Promise<void> {
+    await validateAgentSkillPaths(ctx, accountId, config);
+    await validateAgentSubagentIds(ctx, accountId, config);
+    await validateAgentPolicyIds(ctx, accountId, config);
+}
+
+async function validateAgentSkillPaths(ctx: ActionCtx, accountId: Id<"accounts">, config: AgentConfig): Promise<void> {
+    for (const skillPath of config.skills?.allowed ?? []) {
+        const parts = skillPath.split("/");
+        if (parts.length !== 2 || !parts[0] || !parts[1]) {
+            throw new Error(`Invalid skill path: ${skillPath}`);
+        }
+        if (parts[0] !== accountId) {
+            throw new Error(`Skill path belongs to another account: ${skillPath}`);
+        }
+        const skill: unknown | null = await ctx.runAction(internal.awsSkills.get, {
+            accountId: accountId,
+            skillName: parts[1],
+        });
+        if (!skill) throw new Error(`Skill not found: ${skillPath}`);
+    }
+}
+
+async function validateAgentSubagentIds(ctx: ActionCtx, accountId: Id<"accounts">, config: AgentConfig): Promise<void> {
+    for (const agentId of config.subagent?.allowed ?? []) {
+        const agent: Doc<"agents"> | null = await ctx.runQuery(internal.agents.getById, {
+            accountId: accountId,
+            agentId: agentId,
+        });
+        if (!agent) throw new Error(`Subagent not found: ${agentId}`);
+    }
+}
+
+async function validateAgentPolicyIds(ctx: ActionCtx, accountId: Id<"accounts">, config: AgentConfig): Promise<void> {
+    for (const policyId of config.policy?.policyIds ?? []) {
+        const policy: Doc<"agentPolicies"> | null = await ctx.runQuery(internal.agentPolicies.getById, {
+            accountId: accountId,
+            policyId: policyId,
+        });
+        if (!policy) throw new Error(`Agent policy not found: ${policyId}`);
+    }
+}
+
+async function decryptAgentConfig(doc: Doc<"agents">): Promise<AgentConfig> {
+    if (!doc.encryptedConfig || !doc.encryptionIv || !doc.encryptionTag) {
+        return {};
+    }
+    const decrypted = await decryptAgentConfigBlob({
+        ciphertext: doc.encryptedConfig,
+        iv: doc.encryptionIv,
+        tag: doc.encryptionTag,
+    }, configEncryptionSecret());
+    if (!decrypted) throw new Error("Failed to decrypt agent config");
+
+    return decrypted as AgentConfig;
+}
+
+async function encryptAgentConfig(config: AgentConfig): Promise<{ ciphertext: string; iv: string; tag: string }> {
+    return await encryptAgentConfigBlob(config, configEncryptionSecret());
+}
+
 async function decryptSandboxConfig(doc: Doc<"sandboxConfigs">): Promise<SandboxConfig> {
     if (!doc.encryptedConfig || !doc.encryptionIv || !doc.encryptionTag) {
         return { provider: "lambda", permissionMode: "ask" };
@@ -745,6 +936,11 @@ function isClientInputError(error: unknown): error is Error {
         "Skill ",
         "Duplicate skill ",
         "Invalid skill ",
+        "Invalid skill path:",
+        "Skill path belongs",
+        "Skill not found:",
+        "Subagent not found:",
+        "Agent policy not found:",
         "SKILL.md ",
         "GitHub skill URL ",
         "GitHub archive ",

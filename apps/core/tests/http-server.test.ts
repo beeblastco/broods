@@ -131,16 +131,18 @@ describe("core http server", () => {
     harnessResponse = async () => new Response(null, { status: 204 });
 
     // Resource CRUD still owned by core plus sandbox lifecycle → account handler.
-    for (const path of ["/v1/agents", "/v1/sandboxes/sbx/exec"]) {
+    for (const path of ["/v1/sandboxes/sbx/exec"]) {
       const before = accountCaptured.length;
       await fetch(`${baseUrl}${path}`);
       expect(accountCaptured.length).toBe(before + 1);
     }
 
-    // Skills, tools, workspace files, cron, policy, workspace, and sandbox
+    // Agent, skills, tools, workspace files, cron, policy, workspace, and sandbox
     // config CRUD are Convex config-plane routes (gateway-forwarded); a core
     // hit falls through to the harness 404 path.
     for (const path of [
+      "/v1/agents",
+      "/v1/agents/my-agent",
       "/v1/skills",
       "/v1/tools/tool-1",
       "/v1/workspaces/ws/files",
@@ -154,11 +156,7 @@ describe("core http server", () => {
       expect(captured.length).toBe(before + 1);
     }
 
-    // Method split on /v1/agents/{id}: POST invokes (harness), GET reads config (account).
-    const accountBefore = accountCaptured.length;
-    await fetch(`${baseUrl}/v1/agents/my-agent`);
-    expect(accountCaptured.length).toBe(accountBefore + 1);
-
+    // Method split on /v1/agents/{id}: POST invokes (harness), non-POST CRUD is config-plane.
     const harnessBefore = captured.length;
     await fetch(`${baseUrl}/v1/agents/my-agent`, { method: "POST", body: "{}" });
     await fetch(`${baseUrl}/v1/agents/my-agent/async`, { method: "POST", body: "{}" });
