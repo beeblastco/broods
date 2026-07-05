@@ -26,7 +26,7 @@ export interface CoreRequest {
   cookies: string[];
   /**
    * Client IP from the rightmost X-Forwarded-For hop (the proxy-appended peer),
-   * or the socket address. Feeds security controls like the signup rate limiter,
+   * or the socket address. Feeds security controls and abuse attribution,
    * so it must not be the spoofable leftmost XFF entry.
    */
   clientIp: string;
@@ -43,9 +43,6 @@ export interface RequestContext {
   deadlineMs: number;
   waitUntil(promise: Promise<unknown>): void;
 }
-
-/** The signature every request handler implements. */
-export type CoreHandler = (request: CoreRequest, ctx: RequestContext) => Promise<Response>;
 
 export function jsonResponse(
   status: number,

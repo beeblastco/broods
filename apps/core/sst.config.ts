@@ -257,7 +257,6 @@ export default $config({
       workspaceConfigs: resourceName("workspace-configs", stage, region),
       agentPolicies: resourceName("agent-policies", stage, region),
       accountTools: resourceName("account-tools", stage, region),
-      accountSignupRateLimits: resourceName("account-signup-rate-limits", stage, region),
       crons: resourceName("crons", stage, region),
       cronSchedules: resourceName("cron-schedules", stage, region),
       harnessProcessing: resourceName("harness-processing", stage, region),
@@ -295,20 +294,6 @@ export default $config({
             },
           },
         });
-
-    const accountSignupRateLimitTable = new sst.aws.Dynamo("AccountSignupRateLimit", {
-      fields: {
-        rateLimitKey: "string",
-      },
-      primaryIndex: { hashKey: "rateLimitKey" },
-      ttl: "expiresAt",
-      deletionProtection: isProduction,
-      transform: {
-        table: {
-          name: names.accountSignupRateLimits,
-        },
-      },
-    });
 
     const agentConfigsTable = useConvexStorage
       ? null
@@ -1207,10 +1192,6 @@ export default $config({
         ],
       },
       {
-        actions: ["dynamodb:UpdateItem"],
-        resources: [accountSignupRateLimitTable.arn],
-      },
-      {
         actions: ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"],
         resources: [`${filesystemBucketArn}/*`],
       },
@@ -1282,8 +1263,6 @@ export default $config({
         SKILLS_BUCKET_NAME: names.skills,
         TOOL_BUNDLES_BUCKET_NAME: names.toolBundles,
         ...(microvmArtifactsBucket ? { MICROVM_ARTIFACTS_BUCKET_NAME: names.microvmArtifacts } : {}),
-        ACCOUNT_SIGNUP_RATE_LIMIT_TABLE_NAME: accountSignupRateLimitTable.name,
-        ACCOUNT_SIGNUP_RATE_LIMIT_PER_HOUR: "5",
         ADMIN_ACCOUNT_SECRET,
         ACCOUNT_CONFIG_ENCRYPTION_SECRET,
         SERVICE_AUTH_SECRET,
@@ -1405,7 +1384,6 @@ export default $config({
       accountToolsTableName: accountToolsTable?.name,
       agentPoliciesTableName: agentPoliciesTable?.name,
       cronsTableName: cronsTable?.name,
-      accountSignupRateLimitTableName: accountSignupRateLimitTable.name,
       conversationsTableName: conversationsTable.name,
       processedEventsTableName: processedEventsTable.name,
       asyncAgentResultTableName: asyncAgentResultTable.name,
