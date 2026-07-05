@@ -6,18 +6,12 @@
 import { context as otelContextApi } from "@opentelemetry/api";
 import { resolveBearerAuth, type AuthContext } from "../shared/auth.ts";
 import {
-    AgentSkillAuthorizationError,
-    AgentSkillNotFoundError,
-    AgentPolicyNotFoundError,
-    AgentSubagentNotFoundError,
     getStorage,
     isCronsConfigured,
     normalizeCreateAccountInput,
     normalizeUpdateAccountInput,
     toPublicAccount,
-    toPublicAgent,
     type AccountRecord,
-    type AgentRecord,
 } from "../shared/storage/index.ts";
 import {
     errorResponse,
@@ -118,18 +112,7 @@ async function handleAccountRequest(request: CoreRequest): Promise<Response> {
             return deleteAccountResponse(account);
         }
 
-        const selfAgentCollection = rawPath === "/v1/agents";
-        const selfAgentMatch = rawPath.match(/^\/v1\/agents\/([^/]+)$/);
-        if (selfAgentCollection || selfAgentMatch?.[1]) {
-            const account = requireAccountAuth(auth);
-            return await withAgentObservability(
-                account.accountId,
-                selfAgentMatch?.[1] ? decodeURIComponent(selfAgentMatch[1]) : undefined,
-                () => handleAgentRoute(method, account.accountId, selfAgentMatch?.[1], request),
-            );
-        }
-
-        // Skills, tools, workspace-file, cron, workspace, sandbox-config, and
+        // Agent, skills, tools, workspace-file, cron, workspace, sandbox-config, and
         // policy CRUD moved to the Convex config plane (configHttp.ts, epic
         // #85 phase 9); the gateway routes those paths there. Runtime reads
         // stay in src/shared/skills.ts, uploaded tool bundle loading,
@@ -188,16 +171,6 @@ async function handleAccountRequest(request: CoreRequest): Promise<Response> {
             return rotateSecretResponse(decodeURIComponent(rotateMatch[1]));
         }
 
-        const adminAgentMatch = rawPath.match(/^\/accounts\/([^/]+)\/agents(?:\/([^/]+))?$/);
-        if (adminAgentMatch?.[1]) {
-            const accountId = decodeURIComponent(adminAgentMatch[1]);
-            return await withAgentObservability(
-                accountId,
-                adminAgentMatch[2] ? decodeURIComponent(adminAgentMatch[2]) : undefined,
-                () => handleAgentRoute(method, accountId, adminAgentMatch[2], request),
-            );
-        }
-
         return errorResponse(404, "Not found");
     } catch (err) {
         logError("Account manage request failed", {
@@ -214,25 +187,6 @@ async function handleAccountRequest(request: CoreRequest): Promise<Response> {
         }
         return errorResponseForError(err);
     }
-}
-
-async function withAgentObservability<T>(
-    accountId: string,
-    agentId: string | undefined,
-    operation: () => Promise<T>,
-): Promise<T> {
-    if (!agentId) return operation();
-    const deployment = await getStorage().agentDeployments.getByAgentId?.(accountId, agentId);
-    if (!deployment) return operation();
-
-    return withObservabilityScope({
-        accountId: accountId,
-        project: deployment.projectSlug,
-        environment: deployment.environmentSlug,
-        endpointId: deployment.endpointId,
-        agentId: agentId,
-        conversationKey: `service:account-manage:${agentId}`,
-    }, operation);
 }
 
 async function withObservabilityScope<T>(
@@ -302,108 +256,6 @@ function requiredLogField(body: Record<string, unknown>, field: string): string 
     }
 
     return value;
-}
-
-
-async function handleAgentRoute(
-    method: string,
-    accountId: string,
-    rawAgentId: string | undefined,
-    request: CoreRequest,
-): Promise<Response> {
-    const agentId = rawAgentId ? decodeURIComponent(rawAgentId) : undefined;
-    logInfo("Account agent route received", {
-        method,
-        accountId,
-        agentId,
-        hasAgentId: Boolean(agentId),
-    });
-
-    const agents = getStorage().agents;
-    if (!agentId) {
-        if (method === "GET") {
-            const records = await agents.list(accountId);
-            logInfo("Account agents listed", {
-                accountId,
-                count: records.length,
-            });
-            return jsonResponse(200, { agents: records.map(toPublicAgent) });
-        }
-        if (method === "POST") {
-            logInfo("Account agent create started", {
-                accountId,
-            });
-            const agent = await agents.create(accountId, parseJsonBody(request) as never);
-            logInfo("Account agent create completed", {
-                accountId,
-                agentId: agent.agentId,
-                name: agent.name,
-            });
-            return jsonResponse(201, toCreateAgentResponse(agent));
-        }
-        return errorResponse(405, "Method not allowed", { method, allowedMethods: ["GET", "POST"] });
-    }
-
-    if (method === "GET") {
-        logInfo("Account agent get started", {
-            accountId,
-            agentId,
-        });
-        const agent = await agents.getById(accountId, agentId);
-        logInfo("Account agent get completed", {
-            accountId,
-            agentId,
-            found: Boolean(agent),
-            name: agent?.name,
-            hasModelProvider: Boolean(agent?.config.model?.provider),
-            toolNames: Object.keys(agent?.config.tools ?? {}),
-            channelNames: Object.keys(agent?.config.channels ?? {}),
-        });
-        return agent ? jsonResponse(200, toPublicAgent(agent)) : errorResponse(404, "Agent not found");
-    }
-    if (method === "PATCH") {
-        const patch = parseJsonBody(request) as Record<string, unknown>;
-        const patchConfig = patch.config && typeof patch.config === "object" && !Array.isArray(patch.config)
-            ? patch.config as Record<string, unknown>
-            : undefined;
-        logInfo("Account agent patch started", {
-            accountId,
-            agentId,
-            patchKeys: Object.keys(patch),
-            configKeys: Object.keys(patchConfig ?? {}),
-            hasModelProviderPatch: Boolean((patchConfig?.model as Record<string, unknown> | undefined)?.provider),
-            hasHandoffsPatch: Boolean((patchConfig?.tools as Record<string, unknown> | undefined)?.handoffs),
-            channelNamesPatch: Object.keys((patchConfig?.channels as Record<string, unknown> | undefined) ?? {}),
-        });
-        const agent = await agents.update(accountId, agentId, patch as never);
-        logInfo("Account agent patch completed", {
-            accountId,
-            agentId,
-            found: Boolean(agent),
-            name: agent?.name,
-            hasModelProvider: Boolean(agent?.config.model?.provider),
-            toolNames: Object.keys(agent?.config.tools ?? {}),
-            channelNames: Object.keys(agent?.config.channels ?? {}),
-            handoffsHasPancake: Boolean(agent?.config.tools?.handoffs?.pancake),
-            handoffsHasZalo: Boolean(agent?.config.tools?.handoffs?.zalo),
-        });
-        return agent ? jsonResponse(200, toPublicAgent(agent)) : errorResponse(404, "Agent not found");
-    }
-    if (method === "DELETE") {
-        logInfo("Account agent delete started", {
-            accountId,
-            agentId,
-        });
-        const deleted = await agents.remove(accountId, agentId);
-        logInfo("Account agent delete completed", {
-            accountId,
-            agentId,
-            deleted,
-        });
-        return deleted ? jsonResponse(200, { deleted: true }) : errorResponse(404, "Agent not found");
-    }
-
-    return errorResponse(405, "Method not allowed", { method, allowedMethods: ["GET", "PATCH", "DELETE"] });
 }
 
 /**
@@ -771,18 +623,6 @@ function toCreateAccountResponse(account: AccountRecord): Record<string, unknown
     };
 }
 
-function toCreateAgentResponse(agent: AgentRecord): Record<string, unknown> {
-    return {
-        accountId: agent.accountId,
-        agentId: agent.agentId,
-        name: agent.name,
-        ...(agent.description ? { description: agent.description } : {}),
-    };
-}
-
-
-
-
 async function deleteAccountCrons(accountId: string): Promise<number> {
     if (!isCronsConfigured()) {
         return 0;
@@ -804,18 +644,6 @@ function parseAccountPatch(request: CoreRequest): unknown {
 function errorResponseForError(err: unknown): Response {
     if (err instanceof AccountEndpointUnauthorizedError) {
         return errorResponse(401, err.message);
-    }
-    if (err instanceof AgentSkillAuthorizationError) {
-        return errorResponse(401, err.message);
-    }
-    if (err instanceof AgentSkillNotFoundError) {
-        return errorResponse(404, err.message);
-    }
-    if (err instanceof AgentSubagentNotFoundError) {
-        return errorResponse(404, err.message);
-    }
-    if (err instanceof AgentPolicyNotFoundError) {
-        return errorResponse(404, err.message);
     }
     return errorResponse(400, err instanceof Error ? err.message : "Invalid request");
 }

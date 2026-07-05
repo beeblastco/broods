@@ -232,7 +232,7 @@ export function createGatewayServer(options: GatewayServerOptions): Bun.Server<G
 
       // Config-plane CRUD is served by the Convex HTTP actions, not core
       // (epic #85 phase 9).
-      if (isConfigHttpPath(url.pathname)) {
+      if (isConfigHttpPath(url.pathname, request.method)) {
         if (!configBaseUrl) {
           return json({ error: "Config plane is not configured (BROODS_CONFIG_URL)" }, { status: 503 });
         }
@@ -1246,7 +1246,13 @@ export const isCoreHttpPathForTest = isCoreHttpPath;
  * patterns (mirroring core's router) so scoped agent invocations like
  * /v1/skills/agents/{env}/{endpoint} still reach core.
  */
-export function isConfigHttpPath(pathname: string): boolean {
+export function isConfigHttpPath(pathname: string, method = "GET"): boolean {
+  const upperMethod = method.toUpperCase();
+  if (pathname === "/v1/agents") return upperMethod === "GET" || upperMethod === "POST";
+  if (/^\/v1\/agents\/[^/]+$/.test(pathname)) {
+    return upperMethod === "GET" || upperMethod === "PATCH" || upperMethod === "DELETE";
+  }
+
   return /^\/v1\/skills(?:\/[^/]+)?$/.test(pathname) ||
     /^\/v1\/tools(?:\/[^/]+)?$/.test(pathname) ||
     /^\/v1\/workspaces\/[^/]+\/files$/.test(pathname) ||

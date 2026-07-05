@@ -57,7 +57,7 @@ the `"use node"` action files (`awsBundles.ts`, `awsSkills.ts`,
 `workspaceFilesPublic.ts`).
 
 `configHttp.ts` serves the public config API on this deployment's
-`.convex.site` host — `/v1/skills*`, `/v1/tools*`,
+`.convex.site` host — `/v1/agents*`, `/v1/skills*`, `/v1/tools*`,
 `/v1/workspaces/{id}/files`, `/v1/crons*`, `/v1/workspaces*`,
 `/v1/sandboxes*` (CRUD only; lifecycle verbs stay in core), and
 `/v1/policies*` with account Bearer auth — replacing core's former routes; the
@@ -87,7 +87,7 @@ Deployment environment variables:
   `cronSchedulerRoleArn`).
 - `CRON_SCHEDULER_GROUP_NAME` — the stage's schedule group (sst output
   `cronScheduleGroupName`).
-- `ACCOUNT_CONFIG_ENCRYPTION_SECRET` — AES-GCM secret for sandbox config CRUD.
+- `ACCOUNT_CONFIG_ENCRYPTION_SECRET` — AES-GCM secret for agent and sandbox config CRUD.
 - `BROODS_ACCOUNT_MANAGE_URL` / `BROODS_SERVICE_AUTH_SECRET` — core
   account-manage URL and shared bearer secret used for sandbox delete cleanup.
 

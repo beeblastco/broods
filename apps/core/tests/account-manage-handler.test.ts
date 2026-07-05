@@ -176,6 +176,8 @@ describe("account management HTTP handler", () => {
     }
 
     for (const path of [
+      "/accounts/acct_test/agents",
+      "/accounts/acct_test/agents/agent_1",
       "/accounts/acct_test/policies",
       "/accounts/acct_test/sandboxes",
       "/accounts/acct_test/workspaces",
@@ -190,21 +192,14 @@ describe("account management HTTP handler", () => {
 
   it("rejects service tokens on non-cron account endpoints", async () => {
     process.env.SERVICE_AUTH_SECRET = "service-secret";
-    setStorageForTests(createFakeStorage({
-      agents: {
-        async getById() { return fakeAgent({ status: "active" }); },
-      },
-    }));
+    setStorageForTests(createFakeStorage({}));
     const serviceHeaders = {
       authorization: "Bearer service-secret",
       "x-account-id": "acct_test",
     };
     const serviceTokenRejection = { error: "Service token is not allowed for this account endpoint" };
 
-    for (const path of [
-      "/v1/account",
-      "/v1/agents",
-    ]) {
+    for (const path of ["/v1/account"]) {
       const response = await handler(createEvent("GET", path, serviceHeaders));
       expect(response.status).toBe(400);
       expect(await responseJson(response)).toEqual(serviceTokenRejection);

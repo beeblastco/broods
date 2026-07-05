@@ -82,9 +82,14 @@ http.route({
     handler: cliHttp,
 });
 
-// Public config-plane surface (epic #85 phase 9): skills, tools, workspace
-// files, crons, workspaces, sandbox configs, and policies, forwarded here by
+// Public config-plane surface (epic #85 phase 9): agents, skills, tools,
+// workspace files, crons, workspaces, sandbox configs, and policies, forwarded here by
 // the gateway. Bearer account auth.
+http.route({ path: "/v1/agents", method: "GET", handler: configHttp });
+http.route({ path: "/v1/agents", method: "POST", handler: configHttp });
+http.route({ pathPrefix: "/v1/agents/", method: "GET", handler: configHttp });
+http.route({ pathPrefix: "/v1/agents/", method: "PATCH", handler: configHttp });
+http.route({ pathPrefix: "/v1/agents/", method: "DELETE", handler: configHttp });
 http.route({ path: "/v1/skills", method: "GET", handler: configHttp });
 http.route({ path: "/v1/skills", method: "POST", handler: configHttp });
 http.route({ pathPrefix: "/v1/skills/", method: "GET", handler: configHttp });
