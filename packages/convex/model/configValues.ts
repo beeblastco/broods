@@ -50,6 +50,11 @@ function mergeConfigValue(existing: unknown, patch: unknown): unknown {
     const existingObject = isPlainObject(existing) ? existing : {};
     const merged = { ...existingObject };
     for (const [key, value] of Object.entries(patch)) {
+        // JSON.parse creates "__proto__" as an own key; assigning it below
+        // would rewrite the merged object's prototype instead of a property.
+        if (key === "__proto__" || key === "constructor" || key === "prototype") {
+            continue;
+        }
         const mergedValue = mergeConfigValue(existingObject[key], value);
         if (mergedValue === undefined) {
             delete merged[key];

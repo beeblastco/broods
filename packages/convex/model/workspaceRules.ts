@@ -110,7 +110,7 @@ export function normalizeUpdateWorkspaceConfigInput(
     return {
         ...(value.name !== undefined ? { name: requireString(value.name, "name") } : {}),
         ...(value.description !== undefined
-            ? { description: value.description === null ? null : optionalString(value.description, "description") ?? null }
+            ? { description: value.description === null ? null : optionalString(value.description, "description") }
             : {}),
         config: config,
     };

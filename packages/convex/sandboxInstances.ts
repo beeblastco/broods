@@ -165,7 +165,10 @@ export const isControllable = internalQuery({
 });
 
 /**
- * Internal list of mirrored sandbox instances for one account.
+ * Internal list of mirrored sandbox instances for one account. Rows are
+ * deleted on termination and live counts are bounded by the per-workspace
+ * sandbox concurrency limits, so the 1000-row take is a generous ceiling,
+ * not a pagination seam.
  * @param accountId the owning account
  * @returns the account's instance rows
  */

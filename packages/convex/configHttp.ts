@@ -197,11 +197,13 @@ async function handleWorkspaceConfigRoute(
         });
         if (!existing) return json({ error: "Workspace not found" }, 404);
         if (!existing.config?.storage?.bucket) {
-            // Only purge managed workspace files; bring-your-own buckets are customer-owned.
+            // Only purge managed workspace files; bring-your-own buckets are
+            // customer-owned. A purge failure fails the DELETE (matching core)
+            // so the record is never removed while its files linger.
             await ctx.runAction(internal.awsWorkspaceFiles.purge, {
                 accountId: accountId,
                 workspaceId: existing._id,
-            }).catch(() => 0);
+            });
         }
         // Tear down any reserved sandbox bound to this workspace's namespace
         // (reservation keys are the namespace or namespace-prefixed).
