@@ -354,9 +354,11 @@ function auditActorForAuth(auth: ConfigAuth): ConfigAuditActor {
 
 /**
  * Write one audit event through the internal mutation exposed for HTTP actions.
+ * The config write has already committed by the time this runs, so audit
+ * failures are logged and swallowed — they must not turn a committed change
+ * into a 500 (a client retry of a POST would then duplicate the resource).
  * @param ctx Convex action context
  * @param event sanitized event metadata
- * @returns null
  */
 async function writeAudit(
     ctx: ActionCtx,
@@ -371,17 +373,24 @@ async function writeAudit(
         detailsJson?: string;
     },
 ): Promise<void> {
-    const eventId: Id<"configAuditEvents"> = await ctx.runMutation(internal.configAuditEvents.record, {
-        accountId: event.accountId,
-        projectId: event.projectId,
-        environmentId: event.environmentId,
-        actor: event.actor,
-        action: event.action,
-        resource: event.resource,
-        summary: event.summary,
-        detailsJson: event.detailsJson,
-    });
-    void eventId;
+    try {
+        await ctx.runMutation(internal.configAuditEvents.record, {
+            accountId: event.accountId,
+            projectId: event.projectId,
+            environmentId: event.environmentId,
+            actor: event.actor,
+            action: event.action,
+            resource: event.resource,
+            summary: event.summary,
+            detailsJson: event.detailsJson,
+        });
+    } catch (err) {
+        console.warn("config audit write failed", {
+            action: event.action,
+            resourceKind: event.resource.kind,
+            error: err instanceof Error ? err.message : String(err),
+        });
+    }
 }
 
 /**
