@@ -1284,6 +1284,7 @@ function isClientInputError(error: unknown): error is Error {
         "Workspace file not found",
         "Workspace path not found",
         "name must",
+        "username must",
         "agentId must",
         "Agent config ",
         "description must",
