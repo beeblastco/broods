@@ -127,7 +127,7 @@ export async function loginWithBrowser(dashboardUrl: string): Promise<StoredAuth
     const login = await waitWithTimeout(code.promise, LOGIN_TIMEOUT_MS);
     // The dashboard advertises the API base URL in the callback; the
     // exchange and all later sync/env calls go there directly.
-    const response = await fetch(`${login.baseUrl}/v1/cli/auth/exchange`, {
+    const response = await fetch(`${login.baseUrl}/v1/account/auth/exchange`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ code: login.code }),

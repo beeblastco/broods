@@ -258,7 +258,7 @@ function parseRoute(pathname: string): RouteParts | null {
     if (
         parts.length === 7 &&
         parts[0] === "v1" &&
-        parts[1] === "cli" &&
+        parts[1] === "account" &&
         parts[2] === "projects" &&
         parts[4] === "environments" &&
         parts[6] === "manifest"
@@ -268,7 +268,7 @@ function parseRoute(pathname: string): RouteParts | null {
     if (
         parts.length === 8 &&
         parts[0] === "v1" &&
-        parts[1] === "cli" &&
+        parts[1] === "account" &&
         parts[2] === "projects" &&
         parts[4] === "environments" &&
         parts[6] === "env"
@@ -278,7 +278,7 @@ function parseRoute(pathname: string): RouteParts | null {
     if (
         parts.length === 7 &&
         parts[0] === "v1" &&
-        parts[1] === "cli" &&
+        parts[1] === "account" &&
         parts[2] === "projects" &&
         parts[4] === "environments" &&
         parts[6] === "logs"
@@ -288,7 +288,7 @@ function parseRoute(pathname: string): RouteParts | null {
     if (
         parts.length === 7 &&
         parts[0] === "v1" &&
-        parts[1] === "cli" &&
+        parts[1] === "account" &&
         parts[2] === "projects" &&
         parts[4] === "environments" &&
         parts[6] === "runtime-key"
@@ -298,7 +298,7 @@ function parseRoute(pathname: string): RouteParts | null {
     if (
         parts.length === 7 &&
         parts[0] === "v1" &&
-        parts[1] === "cli" &&
+        parts[1] === "account" &&
         parts[2] === "projects" &&
         parts[4] === "environments" &&
         parts[6] === "env"
@@ -308,7 +308,7 @@ function parseRoute(pathname: string): RouteParts | null {
     if (
         parts.length === 9 &&
         parts[0] === "v1" &&
-        parts[1] === "cli" &&
+        parts[1] === "account" &&
         parts[2] === "projects" &&
         parts[4] === "environments" &&
         parts[6] === "resources" &&

@@ -7,7 +7,7 @@ import { stripTrailingSlash } from "./config.ts";
 
 export interface SyncClientOptions {
   /**
-   * Base URL serving the /v1/cli/* control-plane routes: the Convex
+   * Base URL serving the /v1/account/* control-plane routes: the Convex
    * deployment directly, or the gateway's unified domain in front of it.
    */
   baseUrl: string;
@@ -170,7 +170,7 @@ export class BroodsSyncClient {
   }
 
   async getOnboarding(): Promise<CliOnboardingContext> {
-    const response = await this.fetchImpl(`${this.baseUrl}/v1/cli/onboarding`, {
+    const response = await this.fetchImpl(`${this.baseUrl}/v1/account/onboarding`, {
       method: "GET",
       headers: {
         Authorization: `Bearer ${this.token}`,
@@ -182,7 +182,7 @@ export class BroodsSyncClient {
   }
 
   async selectOnboardingOrg(orgId: string): Promise<CliOnboardingContext> {
-    const response = await this.fetchImpl(`${this.baseUrl}/v1/cli/onboarding`, {
+    const response = await this.fetchImpl(`${this.baseUrl}/v1/account/onboarding`, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${this.token}`,
@@ -196,7 +196,7 @@ export class BroodsSyncClient {
   }
 
   async createOnboardingOrg(name: string): Promise<CliOnboardingContext> {
-    const response = await this.fetchImpl(`${this.baseUrl}/v1/cli/onboarding`, {
+    const response = await this.fetchImpl(`${this.baseUrl}/v1/account/onboarding`, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${this.token}`,
@@ -210,7 +210,7 @@ export class BroodsSyncClient {
   }
 
   private async request(project: string, environment: string, suffix: string, init: RequestInit): Promise<Response> {
-    const url = `${this.baseUrl}/v1/cli/projects/${encodeURIComponent(project)}` +
+    const url = `${this.baseUrl}/v1/account/projects/${encodeURIComponent(project)}` +
       `/environments/${encodeURIComponent(environment)}${suffix}`;
     return await this.fetchImpl(url, {
       ...init,

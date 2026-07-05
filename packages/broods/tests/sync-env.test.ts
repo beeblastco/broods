@@ -25,7 +25,7 @@ test("listEnv GETs the env collection and returns variable names", async () => {
 
   expect(variables).toEqual([{ name: "OPENAI_API_KEY", updatedAt: 1 }]);
   expect(calls[0]).toEqual({
-    url: "https://convex.example.com/v1/cli/projects/demo-app/environments/development/env",
+    url: "https://convex.example.com/v1/account/projects/demo-app/environments/development/env",
     method: "GET",
   });
 });
@@ -57,7 +57,7 @@ test("getRuntimeKey recovers the environment runtime key", async () => {
     environmentSlug: "development",
   });
   expect(calls[0]).toEqual({
-    url: "https://convex.example.com/v1/cli/projects/demo-app/environments/development/runtime-key",
+    url: "https://convex.example.com/v1/account/projects/demo-app/environments/development/runtime-key",
     method: "GET",
   });
 });
@@ -75,7 +75,7 @@ test("getEnv GETs the named env var and returns its value", async () => {
 
   expect(value).toBe("sk-secret");
   expect(calls[0]).toEqual({
-    url: "https://convex.example.com/v1/cli/projects/demo-app/environments/development/env/OPENAI_API_KEY",
+    url: "https://convex.example.com/v1/account/projects/demo-app/environments/development/env/OPENAI_API_KEY",
     method: "GET",
   });
 });
@@ -92,7 +92,7 @@ test("removeEnv DELETEs the named env var", async () => {
   await client.removeEnv("demo-app", "development", "OPENAI_API_KEY");
 
   expect(calls[0]).toEqual({
-    url: "https://convex.example.com/v1/cli/projects/demo-app/environments/development/env/OPENAI_API_KEY",
+    url: "https://convex.example.com/v1/account/projects/demo-app/environments/development/env/OPENAI_API_KEY",
     method: "DELETE",
   });
 });

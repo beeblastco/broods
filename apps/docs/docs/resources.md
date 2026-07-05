@@ -521,7 +521,7 @@ These values can be overridden by CLI flags (`--project`, `--env`) or `.env.loca
 
 `dashboardUrl` is only where `broods login` opens the browser and where deep links point. Sync, env, and deploy calls go to the broods API base URL discovered during login (`baseUrl` in stored auth), overridable via `baseUrl` here, `BROODS_BASE_URL`, or `--base-url`. The same `BROODS_BASE_URL` also drives runtime SDK clients -- one public endpoint serves both planes.
 
-Breaking change: `BROODS_CONTROL_URL`, `--control-url`, and the dashboard `/api/cli/*` proxy are gone, and the control-plane routes moved from `/api/cli/*` to `/v1/cli/*`. Environment-based auth now requires both `BROODS_TOKEN` and `BROODS_BASE_URL`; `BROODS_DASHBOARD_URL` no longer works for auth. Existing logins must run `broods login` again.
+Breaking change: `BROODS_CONTROL_URL`, `--control-url`, and the dashboard `/api/cli/*` proxy are gone, and the control-plane routes moved from `/api/cli/*` to `/v1/account/*`. Environment-based auth now requires both `BROODS_TOKEN` and `BROODS_BASE_URL`; `BROODS_DASHBOARD_URL` no longer works for auth. Existing logins must run `broods login` again.
 
 ## Validation
 

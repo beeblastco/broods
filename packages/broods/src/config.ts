@@ -12,7 +12,7 @@ export const USER_CONFIG_PATH = join(homedir(), ".broods", "config.json");
 
 export interface StoredAuthConfig {
   /**
-   * Base URL of the Convex control plane serving the /v1/cli/* routes
+   * Base URL of the Convex control plane serving the /v1/account/* routes
    * (the Convex deployment directly, or the gateway's unified domain).
    * All sync/env/deploy calls go here.
    */

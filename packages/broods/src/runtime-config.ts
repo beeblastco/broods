@@ -14,7 +14,7 @@ import { USER_CONFIG_PATH, stripTrailingSlash } from "./config.ts";
 export interface BroodsRuntimeConfig {
   /** Dashboard UI base URL; only used for browser login and deep links. */
   dashboardUrl?: string;
-  /** Convex control-plane base URL for /v1/cli/* calls. */
+  /** Convex control-plane base URL for /v1/account/* calls. */
   baseUrl?: string;
   token?: string;
   project?: string;

@@ -33,7 +33,7 @@ export async function GET(request: NextRequest): Promise<Response> {
         target.searchParams.set("code", code);
         target.searchParams.set("state", state);
         // BROODS_BASE_URL advertises the unified public domain (the gateway,
-        // which proxies /v1/cli/* to Convex); without it we point the CLI at
+        // which proxies /v1/account/* to Convex); without it we point the CLI at
         // the Convex deployment directly.
         target.searchParams.set("base_url", advertisedBaseUrl());
 
@@ -72,7 +72,7 @@ function wait(ms: number): Promise<void> {
     return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-/** Public base URL the CLI should call for the /v1/cli/* control-plane routes. */
+/** Public base URL the CLI should call for the /v1/account/* control-plane routes. */
 function advertisedBaseUrl(): string {
     const explicit = process.env.BROODS_BASE_URL;
     if (explicit) {
