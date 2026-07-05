@@ -58,11 +58,15 @@ the `"use node"` action files (`awsBundles.ts`, `awsSkills.ts`,
 
 `configHttp.ts` serves the public config API on this deployment's
 `.convex.site` host — `/v1/skills*`, `/v1/tools*`,
-`/v1/workspaces/{id}/files`, and `/v1/crons*` with account Bearer auth —
-replacing core's former routes; the gateway forwards those paths here
-(`BROODS_CONFIG_URL`). Cron execution stays in core: schedules invoke the
-configured target with `{kind: "cron", accountId, cronId}` and core's harness
-runs the agent.
+`/v1/workspaces/{id}/files`, `/v1/crons*`, `/v1/workspaces*`,
+`/v1/sandboxes*` (CRUD only; lifecycle verbs stay in core), and
+`/v1/policies*` with account Bearer auth — replacing core's former routes; the
+gateway forwards those paths here (`BROODS_CONFIG_URL`). Cron execution stays
+in core: schedules invoke the configured target with
+`{kind: "cron", accountId, cronId}` and core's harness runs the agent.
+Sandbox config CRUD requires `ACCOUNT_CONFIG_ENCRYPTION_SECRET`.
+`BROODS_ACCOUNT_MANAGE_URL` and `BROODS_SERVICE_AUTH_SECRET` are reused to
+terminate reserved sandbox instances before deleting a sandbox config.
 
 Deployment environment variables:
 
@@ -83,6 +87,9 @@ Deployment environment variables:
   `cronSchedulerRoleArn`).
 - `CRON_SCHEDULER_GROUP_NAME` — the stage's schedule group (sst output
   `cronScheduleGroupName`).
+- `ACCOUNT_CONFIG_ENCRYPTION_SECRET` — AES-GCM secret for sandbox config CRUD.
+- `BROODS_ACCOUNT_MANAGE_URL` / `BROODS_SERVICE_AUTH_SECRET` — core
+  account-manage URL and shared bearer secret used for sandbox delete cleanup.
 
 ## Workflow
 

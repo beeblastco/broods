@@ -16,9 +16,8 @@ import {
     s3ObjectExists,
     writeS3Object,
 } from "./s3";
+import { workspaceNamespace } from "./workspaceRules";
 
-const FILESYSTEM_NAMESPACE_PREFIX = "fs-";
-const HASH_HEX_LENGTH = 40;
 export const MAX_WORKSPACE_FILE_BYTES = 512 * 1024;
 
 /**
@@ -136,6 +135,16 @@ export async function deleteWorkspacePath(accountId: string, workspaceId: string
 }
 
 /**
+ * Delete every object under a workspace's managed S3 namespace.
+ * @param accountId account owning the workspace
+ * @param workspaceId workspace config id
+ * @returns the number of objects deleted
+ */
+export async function purgeWorkspaceFilesystem(accountId: string, workspaceId: string): Promise<number> {
+    return await deleteS3Prefix(filesystemBucketName(), await workspacePrefix(accountId, workspaceId));
+}
+
+/**
  * Rename a file or folder prefix inside a workspace's S3 namespace.
  * @param accountId account owning the workspace
  * @param workspaceId the workspace config id
@@ -177,19 +186,14 @@ export async function renameWorkspacePath(
 
 /**
  * Derive the hashed S3 namespace prefix for a workspace, matching core.
- * Uses Web Crypto (not node:crypto) so this model bundles for any runtime.
+ * The derivation lives in workspaceRules (any-runtime) so configHttp can
+ * compute reservation-key namespaces without pulling in this module's S3 deps.
  * @param accountId account owning the workspace
  * @param workspaceId the workspace config id
  * @returns the `fs-…` namespace prefix
  */
 async function workspacePrefix(accountId: string, workspaceId: string): Promise<string> {
-    const digest = await crypto.subtle.digest(
-        "SHA-256",
-        new TextEncoder().encode(`filesystem-namespace\0${accountId}:${workspaceId}`),
-    );
-    const hex = [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
-
-    return `${FILESYSTEM_NAMESPACE_PREFIX}${hex.slice(0, HASH_HEX_LENGTH)}`;
+    return await workspaceNamespace(accountId, workspaceId);
 }
 
 /**

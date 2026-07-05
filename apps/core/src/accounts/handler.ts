@@ -16,8 +16,6 @@ import {
     normalizeUpdateAccountInput,
     toPublicAccount,
     toPublicAgent,
-    toPublicSandboxConfig,
-    toPublicWorkspaceConfig,
     type AccountRecord,
     type AgentRecord,
 } from "../shared/storage/index.ts";
@@ -38,14 +36,7 @@ import { removeSandboxInstance, setSandboxInstanceStatus } from "../shared/stora
 import { recordSandboxAuditEvent, type SandboxAuditActor } from "../shared/storage/convex/sandbox-audit-events.ts";
 import { upsertSandboxSnapshot } from "../shared/storage/convex/sandbox-snapshots.ts";
 import { workspaceSandboxLimits } from "../shared/sandbox.ts";
-import {
-    deleteAccountRuntimeData,
-    deleteWorkspaceFilesystem,
-} from "./cleanup.ts";
-import {
-    releaseReservedSandboxes,
-    releaseSandboxConfigInstances,
-} from "../shared/sandbox-cleanup.ts";
+import { deleteAccountRuntimeData } from "./cleanup.ts";
 import { workspaceNamespace, workspaceNamespaceOwnsReservationKey } from "../shared/workspaces.ts";
 import { isPlainObject } from "../shared/object.ts";
 import { deleteAccountSkills } from "./skills.ts";
@@ -138,18 +129,13 @@ async function handleAccountRequest(request: CoreRequest): Promise<Response> {
             );
         }
 
-        // Skills, tools, workspace-file, and cron CRUD moved to the Convex
-        // config plane (configHttp.ts, epic #85 phase 9); the gateway routes
-        // those paths there. Runtime reads stay in src/shared/skills.ts,
-        // uploaded tool bundle loading, workspace mount/S3 read helpers, and
-        // the harness cron-run leaf; account deletion still sweeps leftover
+        // Skills, tools, workspace-file, cron, workspace, sandbox-config, and
+        // policy CRUD moved to the Convex config plane (configHttp.ts, epic
+        // #85 phase 9); the gateway routes those paths there. Runtime reads
+        // stay in src/shared/skills.ts, uploaded tool bundle loading,
+        // workspace mount/S3 read helpers, sandbox lifecycle verbs, and the
+        // harness cron-run leaf; account deletion still sweeps leftover
         // schedules (deleteAccountCrons).
-        const selfPolicyCollection = rawPath === "/v1/policies";
-        const selfPolicyMatch = rawPath.match(/^\/v1\/policies\/([^/]+)$/);
-        if (selfPolicyCollection || selfPolicyMatch?.[1]) {
-            const account = requireAccountAuth(auth, { allowServiceToken: true });
-            return await handlePolicyRoute(method, account.accountId, selfPolicyMatch?.[1], request);
-        }
 
         const selfSandboxLifecycleMatch = rawPath.match(/^\/v1\/sandboxes\/([^/]+)\/(suspend|resume|terminate|snapshot|refresh|exec|terminal)$/);
         if (selfSandboxLifecycleMatch?.[1] && selfSandboxLifecycleMatch[2]) {
@@ -163,20 +149,6 @@ async function handleAccountRequest(request: CoreRequest): Promise<Response> {
                 selfSandboxLifecycleMatch[2] as SandboxLifecycleAction,
                 request,
             );
-        }
-
-        const selfSandboxCollection = rawPath === "/v1/sandboxes";
-        const selfSandboxMatch = rawPath.match(/^\/v1\/sandboxes\/([^/]+)$/);
-        if (selfSandboxCollection || selfSandboxMatch?.[1]) {
-            const account = requireAccountAuth(auth);
-            return await handleSandboxRoute(method, account.accountId, selfSandboxMatch?.[1], request);
-        }
-
-        const selfWorkspaceCollection = rawPath === "/v1/workspaces";
-        const selfWorkspaceMatch = rawPath.match(/^\/v1\/workspaces\/([^/]+)$/);
-        if (selfWorkspaceCollection || selfWorkspaceMatch?.[1]) {
-            const account = requireAccountAuth(auth);
-            return await handleWorkspaceRoute(method, account.accountId, selfWorkspaceMatch?.[1], request);
         }
 
         if (auth.kind !== "admin") {
@@ -224,21 +196,6 @@ async function handleAccountRequest(request: CoreRequest): Promise<Response> {
                 adminAgentMatch[2] ? decodeURIComponent(adminAgentMatch[2]) : undefined,
                 () => handleAgentRoute(method, accountId, adminAgentMatch[2], request),
             );
-        }
-
-        const adminPolicyMatch = rawPath.match(/^\/accounts\/([^/]+)\/policies(?:\/([^/]+))?$/);
-        if (adminPolicyMatch?.[1]) {
-            return await handlePolicyRoute(method, decodeURIComponent(adminPolicyMatch[1]), adminPolicyMatch[2], request);
-        }
-
-        const adminSandboxMatch = rawPath.match(/^\/accounts\/([^/]+)\/sandboxes(?:\/([^/]+))?$/);
-        if (adminSandboxMatch?.[1]) {
-            return await handleSandboxRoute(method, decodeURIComponent(adminSandboxMatch[1]), adminSandboxMatch[2], request);
-        }
-
-        const adminWorkspaceMatch = rawPath.match(/^\/accounts\/([^/]+)\/workspaces(?:\/([^/]+))?$/);
-        if (adminWorkspaceMatch?.[1]) {
-            return await handleWorkspaceRoute(method, decodeURIComponent(adminWorkspaceMatch[1]), adminWorkspaceMatch[2], request);
         }
 
         return errorResponse(404, "Not found");
@@ -444,49 +401,6 @@ async function handleAgentRoute(
             deleted,
         });
         return deleted ? jsonResponse(200, { deleted: true }) : errorResponse(404, "Agent not found");
-    }
-
-    return errorResponse(405, "Method not allowed", { method, allowedMethods: ["GET", "PATCH", "DELETE"] });
-}
-
-async function handleSandboxRoute(
-    method: string,
-    accountId: string,
-    rawSandboxId: string | undefined,
-    request: CoreRequest,
-): Promise<Response> {
-    const sandboxId = rawSandboxId ? decodeURIComponent(rawSandboxId) : undefined;
-    const sandboxConfigs = getStorage().sandboxConfigs;
-
-    if (!sandboxId) {
-        if (method === "GET") {
-            const records = await sandboxConfigs.list(accountId);
-            return jsonResponse(200, { sandboxes: records.map((record) => toPublicSandboxConfig(record)) });
-        }
-        if (method === "POST") {
-            const record = await sandboxConfigs.create(accountId, parseJsonBody(request) as never);
-            return jsonResponse(201, toPublicSandboxConfig(record));
-        }
-        return errorResponse(405, "Method not allowed", { method, allowedMethods: ["GET", "POST"] });
-    }
-
-    if (method === "GET") {
-        const record = await sandboxConfigs.getById(accountId, sandboxId);
-        return record ? jsonResponse(200, toPublicSandboxConfig(record)) : errorResponse(404, "Sandbox not found");
-    }
-    if (method === "PATCH") {
-        const record = await sandboxConfigs.update(accountId, sandboxId, parseJsonBody(request) as never);
-        return record ? jsonResponse(200, toPublicSandboxConfig(record)) : errorResponse(404, "Sandbox not found");
-    }
-    if (method === "DELETE") {
-        // Capture the config before deleting: releasing reserved daytona/e2b
-        // sandboxes needs its credentials, which vanish with the record.
-        const record = await sandboxConfigs.getById(accountId, sandboxId);
-        const deleted = await sandboxConfigs.remove(accountId, sandboxId);
-        if (deleted && record) {
-            await releaseSandboxConfigInstances(accountId, record.config).catch(() => {});
-        }
-        return deleted ? jsonResponse(200, { deleted: true }) : errorResponse(404, "Sandbox not found");
     }
 
     return errorResponse(405, "Method not allowed", { method, allowedMethods: ["GET", "PATCH", "DELETE"] });
@@ -791,89 +705,6 @@ async function sandboxReservationBelongsToAccount(
     return workspaces.some((workspace) =>
         workspaceNamespaceOwnsReservationKey(workspaceNamespace(accountId, workspace.workspaceId), reservationKey)
     );
-}
-
-async function handlePolicyRoute(
-    method: string,
-    accountId: string,
-    rawPolicyId: string | undefined,
-    request: CoreRequest,
-): Promise<Response> {
-    const policyId = rawPolicyId ? decodeURIComponent(rawPolicyId) : undefined;
-    const policies = getStorage().agentPolicies;
-
-    if (!policyId) {
-        if (method === "GET") {
-            const records = await policies.list(accountId);
-            return jsonResponse(200, { policies: records });
-        }
-        if (method === "POST") {
-            const record = await policies.create(accountId, parseJsonBody(request) as never);
-            return jsonResponse(201, record);
-        }
-        return errorResponse(405, "Method not allowed", { method, allowedMethods: ["GET", "POST"] });
-    }
-
-    if (method === "GET") {
-        const record = await policies.getById(accountId, policyId);
-        return record ? jsonResponse(200, record) : errorResponse(404, "Policy not found");
-    }
-    if (method === "PATCH") {
-        const record = await policies.update(accountId, policyId, parseJsonBody(request) as never);
-        return record ? jsonResponse(200, record) : errorResponse(404, "Policy not found");
-    }
-    if (method === "DELETE") {
-        const deleted = await policies.remove(accountId, policyId);
-        return deleted ? jsonResponse(200, { deleted: true }) : errorResponse(404, "Policy not found");
-    }
-
-    return errorResponse(405, "Method not allowed", { method, allowedMethods: ["GET", "PATCH", "DELETE"] });
-}
-
-async function handleWorkspaceRoute(
-    method: string,
-    accountId: string,
-    rawWorkspaceId: string | undefined,
-    request: CoreRequest,
-): Promise<Response> {
-    const workspaceId = rawWorkspaceId ? decodeURIComponent(rawWorkspaceId) : undefined;
-    const workspaceConfigs = getStorage().workspaceConfigs;
-
-    if (!workspaceId) {
-        if (method === "GET") {
-            const records = await workspaceConfigs.list(accountId);
-            return jsonResponse(200, { workspaces: records.map((record) => toPublicWorkspaceConfig(record)) });
-        }
-        if (method === "POST") {
-            const record = await workspaceConfigs.create(accountId, parseJsonBody(request) as never);
-            return jsonResponse(201, toPublicWorkspaceConfig(record));
-        }
-        return errorResponse(405, "Method not allowed", { method, allowedMethods: ["GET", "POST"] });
-    }
-
-    if (method === "GET") {
-        const record = await workspaceConfigs.getById(accountId, workspaceId);
-        return record ? jsonResponse(200, toPublicWorkspaceConfig(record)) : errorResponse(404, "Workspace not found");
-    }
-    if (method === "PATCH") {
-        const record = await workspaceConfigs.update(accountId, workspaceId, parseJsonBody(request) as never);
-        return record ? jsonResponse(200, toPublicWorkspaceConfig(record)) : errorResponse(404, "Workspace not found");
-    }
-    if (method === "DELETE") {
-        const record = await workspaceConfigs.getById(accountId, workspaceId);
-        if (!record) {
-            return errorResponse(404, "Workspace not found");
-        }
-        await deleteWorkspaceFilesystem(accountId, workspaceId, record.config.storage);
-        const deleted = await workspaceConfigs.remove(accountId, workspaceId);
-        if (deleted) {
-            // Tear down any reserved sandbox bound to this workspace's namespace.
-            await releaseReservedSandboxes(accountId, [workspaceNamespace(accountId, workspaceId)]).catch(() => {});
-        }
-        return deleted ? jsonResponse(200, { deleted: true }) : errorResponse(404, "Workspace not found");
-    }
-
-    return errorResponse(405, "Method not allowed", { method, allowedMethods: ["GET", "PATCH", "DELETE"] });
 }
 
 async function updateAccountResponse(accountId: string, input: unknown): Promise<Response> {

@@ -79,7 +79,7 @@ type ObservabilitySocketState = {
 
 type GatewayServerOptions = {
   coreBaseUrls: string[];
-  /** Convex HTTP-actions base URL serving the config plane (skills/tools/workspace files). */
+  /** Convex HTTP-actions base URL serving the config plane. */
   configBaseUrl?: string;
   port?: number;
   host?: string;
@@ -230,8 +230,8 @@ export function createGatewayServer(options: GatewayServerOptions): Bun.Server<G
         }
       }
 
-      // Config-plane CRUD (skills, tools, workspace files) is served by the
-      // Convex HTTP actions, not core (epic #85 phase 9).
+      // Config-plane CRUD is served by the Convex HTTP actions, not core
+      // (epic #85 phase 9).
       if (isConfigHttpPath(url.pathname)) {
         if (!configBaseUrl) {
           return json({ error: "Config plane is not configured (BROODS_CONFIG_URL)" }, { status: 503 });
@@ -1250,6 +1250,9 @@ export function isConfigHttpPath(pathname: string): boolean {
   return /^\/v1\/skills(?:\/[^/]+)?$/.test(pathname) ||
     /^\/v1\/tools(?:\/[^/]+)?$/.test(pathname) ||
     /^\/v1\/workspaces\/[^/]+\/files$/.test(pathname) ||
+    /^\/v1\/workspaces(?:\/[^/]+)?$/.test(pathname) ||
+    /^\/v1\/sandboxes(?:\/[^/]+)?$/.test(pathname) ||
+    /^\/v1\/policies(?:\/[^/]+)?$/.test(pathname) ||
     /^\/v1\/crons(?:\/[^/]+(?:\/runs)?)?$/.test(pathname);
 }
 

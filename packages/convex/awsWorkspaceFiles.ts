@@ -11,6 +11,7 @@ import { internalAction } from "./_generated/server";
 import {
     deleteWorkspacePath,
     listWorkspaceFiles,
+    purgeWorkspaceFilesystem,
     renameWorkspacePath,
     uploadWorkspaceFile,
     workspaceFileDownloadUrl,
@@ -90,6 +91,20 @@ export const removePath = internalAction({
     returns: v.number(),
     handler: async (_ctx, args) => {
         return await deleteWorkspacePath(args.accountId, args.workspaceId, args.path);
+    },
+});
+
+/**
+ * Purge all files in a managed workspace filesystem namespace.
+ * @param accountId account owning the workspace
+ * @param workspaceId workspace config id
+ * @returns the number of objects deleted
+ */
+export const purge = internalAction({
+    args: { accountId: v.id("accounts"), workspaceId: v.id("workspaceConfigs") },
+    returns: v.number(),
+    handler: async (_ctx, args) => {
+        return await purgeWorkspaceFilesystem(args.accountId, args.workspaceId);
     },
 });
 

@@ -11,7 +11,25 @@ import { httpAction, type ActionCtx } from "./_generated/server";
 import { internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
 import { normalizeAccountToolUpload } from "./model/accountTools";
+import { decryptAgentConfigBlob, encryptAgentConfigBlob } from "./model/agentConfigCodec";
 import { parseCronRunsLimit, toCronResponse, toCronRunResponse } from "./model/cronRules";
+import {
+    normalizeCreateAgentPolicyInput,
+    normalizeUpdateAgentPolicyInput,
+    toPublicAgentPolicyResponse,
+} from "./model/policyRules";
+import {
+    normalizeCreateSandboxConfigInput,
+    normalizeUpdateSandboxConfigInput,
+    toPublicSandboxConfigResponse,
+    type SandboxConfig,
+} from "./model/sandboxRules";
+import {
+    normalizeCreateWorkspaceConfigInput,
+    normalizeUpdateWorkspaceConfigInput,
+    toPublicWorkspaceConfigResponse,
+    workspaceNamespace,
+} from "./model/workspaceRules";
 
 export const handle = httpAction(async (ctx, req) => {
     try {
@@ -29,6 +47,12 @@ export const handle = httpAction(async (ctx, req) => {
                 return await handleWorkspaceFilesRoute(ctx, req, account._id, route.workspaceId);
             case "crons":
                 return await handleCronRoute(ctx, req, account._id, route.cronId, route.runs);
+            case "workspaces":
+                return await handleWorkspaceConfigRoute(ctx, req, account._id, route.workspaceId);
+            case "sandboxes":
+                return await handleSandboxConfigRoute(ctx, req, account._id, route.sandboxId);
+            case "policies":
+                return await handlePolicyConfigRoute(ctx, req, account._id, route.policyId);
         }
     } catch (err) {
         if (isClientInputError(err)) {
@@ -44,7 +68,10 @@ type ConfigRoute =
     | { kind: "skills"; name?: string }
     | { kind: "tools"; toolId?: string }
     | { kind: "workspaceFiles"; workspaceId: string }
-    | { kind: "crons"; cronId?: string; runs: boolean };
+    | { kind: "crons"; cronId?: string; runs: boolean }
+    | { kind: "workspaces"; workspaceId?: string }
+    | { kind: "sandboxes"; sandboxId?: string }
+    | { kind: "policies"; policyId?: string };
 
 /**
  * Parse a config-plane pathname into its route parts.
@@ -60,6 +87,15 @@ function parseRoute(pathname: string): ConfigRoute | null {
 
     const files = pathname.match(/^\/v1\/workspaces\/([^/]+)\/files$/);
     if (files?.[1]) return { kind: "workspaceFiles", workspaceId: decodeURIComponent(files[1]) };
+
+    const workspaces = pathname.match(/^\/v1\/workspaces(?:\/([^/]+))?$/);
+    if (workspaces) return { kind: "workspaces", ...(workspaces[1] ? { workspaceId: decodeURIComponent(workspaces[1]) } : {}) };
+
+    const sandboxes = pathname.match(/^\/v1\/sandboxes(?:\/([^/]+))?$/);
+    if (sandboxes) return { kind: "sandboxes", ...(sandboxes[1] ? { sandboxId: decodeURIComponent(sandboxes[1]) } : {}) };
+
+    const policies = pathname.match(/^\/v1\/policies(?:\/([^/]+))?$/);
+    if (policies) return { kind: "policies", ...(policies[1] ? { policyId: decodeURIComponent(policies[1]) } : {}) };
 
     const cronRuns = pathname.match(/^\/v1\/crons\/([^/]+)\/runs$/);
     if (cronRuns?.[1]) return { kind: "crons", cronId: decodeURIComponent(cronRuns[1]), runs: true };
@@ -84,6 +120,274 @@ async function requireAccount(ctx: ActionCtx, req: Request): Promise<Doc<"accoun
     const secretHash = [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 
     return await ctx.runQuery(internal.accounts.getBySecretHash, { secretHash: secretHash });
+}
+
+/**
+ * Workspace config CRUD: list/create on the collection, get/patch/delete by id.
+ * Mirrors core's former handleWorkspaceRoute contract.
+ */
+async function handleWorkspaceConfigRoute(
+    ctx: ActionCtx,
+    req: Request,
+    accountId: Id<"accounts">,
+    workspaceId?: string,
+): Promise<Response> {
+    if (!workspaceId) {
+        if (req.method === "GET") {
+            const records: Doc<"workspaceConfigs">[] = await ctx.runQuery(internal.workspaceConfigs.list, { accountId: accountId });
+
+            return json({ workspaces: records.map((record) => toPublicWorkspaceConfigResponse(record)) });
+        }
+        if (req.method === "POST") {
+            const input = normalizeCreateWorkspaceConfigInput(await req.json());
+            const createdId: Id<"workspaceConfigs"> = await ctx.runMutation(internal.workspaceConfigs.create, {
+                accountId: accountId,
+                name: input.name,
+                description: input.description,
+                config: input.config,
+            });
+            const created: Doc<"workspaceConfigs"> | null = await ctx.runQuery(internal.workspaceConfigs.getById, {
+                accountId: accountId,
+                workspaceId: createdId,
+            });
+            if (!created) throw new Error("Failed to fetch created workspace config");
+
+            return json(toPublicWorkspaceConfigResponse(created), 201);
+        }
+
+        return methodNotAllowed(["GET", "POST"]);
+    }
+
+    if (req.method === "GET") {
+        const record: Doc<"workspaceConfigs"> | null = await ctx.runQuery(internal.workspaceConfigs.getById, {
+            accountId: accountId,
+            workspaceId: workspaceId,
+        });
+
+        return record ? json(toPublicWorkspaceConfigResponse(record)) : json({ error: "Workspace not found" }, 404);
+    }
+    if (req.method === "PATCH") {
+        const existing: Doc<"workspaceConfigs"> | null = await ctx.runQuery(internal.workspaceConfigs.getById, {
+            accountId: accountId,
+            workspaceId: workspaceId,
+        });
+        if (!existing) return json({ error: "Workspace not found" }, 404);
+        const patch = normalizeUpdateWorkspaceConfigInput(
+            existing.config ?? { storage: { provider: "s3" } },
+            await req.json(),
+        );
+        await ctx.runMutation(internal.workspaceConfigs.update, {
+            accountId: accountId,
+            workspaceId: workspaceId,
+            ...(patch.name !== undefined ? { name: patch.name } : {}),
+            ...(patch.description !== undefined ? { description: patch.description ?? undefined } : {}),
+            config: patch.config,
+        });
+        const updated: Doc<"workspaceConfigs"> | null = await ctx.runQuery(internal.workspaceConfigs.getById, {
+            accountId: accountId,
+            workspaceId: workspaceId,
+        });
+
+        return updated ? json(toPublicWorkspaceConfigResponse(updated)) : json({ error: "Workspace not found" }, 404);
+    }
+    if (req.method === "DELETE") {
+        const existing: Doc<"workspaceConfigs"> | null = await ctx.runQuery(internal.workspaceConfigs.getById, {
+            accountId: accountId,
+            workspaceId: workspaceId,
+        });
+        if (!existing) return json({ error: "Workspace not found" }, 404);
+        if (!existing.config?.storage?.bucket) {
+            // Only purge managed workspace files; bring-your-own buckets are
+            // customer-owned. A purge failure fails the DELETE (matching core)
+            // so the record is never removed while its files linger.
+            await ctx.runAction(internal.awsWorkspaceFiles.purge, {
+                accountId: accountId,
+                workspaceId: existing._id,
+            });
+        }
+        // Tear down any reserved sandbox bound to this workspace's namespace
+        // (reservation keys are the namespace or namespace-prefixed).
+        const namespace = await workspaceNamespace(accountId, existing._id);
+        await terminateReservedInstances(ctx, accountId, (instance) =>
+            instance.reservationKey === namespace || instance.reservationKey.startsWith(`${namespace}/`),
+        ).catch(() => undefined);
+        await ctx.runMutation(internal.workspaceConfigs.remove, { accountId: accountId, workspaceId: workspaceId });
+
+        return json({ deleted: true });
+    }
+
+    return methodNotAllowed(["GET", "PATCH", "DELETE"]);
+}
+
+/**
+ * Sandbox config CRUD: stores encrypted config blobs and redacts secrets on read.
+ * Mirrors core's former handleSandboxRoute contract.
+ */
+async function handleSandboxConfigRoute(
+    ctx: ActionCtx,
+    req: Request,
+    accountId: Id<"accounts">,
+    sandboxId?: string,
+): Promise<Response> {
+    if (!sandboxId) {
+        if (req.method === "GET") {
+            const records: Doc<"sandboxConfigs">[] = await ctx.runQuery(internal.sandboxConfigs.list, { accountId: accountId });
+            const sandboxes = await Promise.all(records.map(async (record) =>
+                toPublicSandboxConfigResponse(record, await decryptSandboxConfig(record))
+            ));
+
+            return json({ sandboxes: sandboxes });
+        }
+        if (req.method === "POST") {
+            const input = normalizeCreateSandboxConfigInput(await req.json());
+            const encrypted = await encryptSandboxConfig(input.config);
+            const createdId: Id<"sandboxConfigs"> = await ctx.runMutation(internal.sandboxConfigs.create, {
+                accountId: accountId,
+                name: input.name,
+                description: input.description,
+                encryptedConfig: encrypted.ciphertext,
+                encryptionIv: encrypted.iv,
+                encryptionTag: encrypted.tag,
+            });
+            const created: Doc<"sandboxConfigs"> | null = await ctx.runQuery(internal.sandboxConfigs.getById, {
+                accountId: accountId,
+                sandboxId: createdId,
+            });
+            if (!created) throw new Error("Failed to fetch created sandbox config");
+
+            return json(toPublicSandboxConfigResponse(created, await decryptSandboxConfig(created)), 201);
+        }
+
+        return methodNotAllowed(["GET", "POST"]);
+    }
+
+    if (req.method === "GET") {
+        const record: Doc<"sandboxConfigs"> | null = await ctx.runQuery(internal.sandboxConfigs.getById, {
+            accountId: accountId,
+            sandboxId: sandboxId,
+        });
+
+        return record ? json(toPublicSandboxConfigResponse(record, await decryptSandboxConfig(record))) : json({ error: "Sandbox not found" }, 404);
+    }
+    if (req.method === "PATCH") {
+        const existing: Doc<"sandboxConfigs"> | null = await ctx.runQuery(internal.sandboxConfigs.getById, {
+            accountId: accountId,
+            sandboxId: sandboxId,
+        });
+        if (!existing) return json({ error: "Sandbox not found" }, 404);
+        const existingConfig = await decryptSandboxConfig(existing);
+        const patch = normalizeUpdateSandboxConfigInput(existingConfig, await req.json());
+        const encrypted = await encryptSandboxConfig(patch.config);
+        await ctx.runMutation(internal.sandboxConfigs.update, {
+            accountId: accountId,
+            sandboxId: sandboxId,
+            ...(patch.name !== undefined ? { name: patch.name } : {}),
+            ...(patch.description !== undefined ? { description: patch.description ?? undefined } : {}),
+            encryptedConfig: encrypted.ciphertext,
+            encryptionIv: encrypted.iv,
+            encryptionTag: encrypted.tag,
+        });
+        const updated: Doc<"sandboxConfigs"> | null = await ctx.runQuery(internal.sandboxConfigs.getById, {
+            accountId: accountId,
+            sandboxId: sandboxId,
+        });
+
+        return updated ? json(toPublicSandboxConfigResponse(updated, await decryptSandboxConfig(updated))) : json({ error: "Sandbox not found" }, 404);
+    }
+    if (req.method === "DELETE") {
+        const existing: Doc<"sandboxConfigs"> | null = await ctx.runQuery(internal.sandboxConfigs.getById, {
+            accountId: accountId,
+            sandboxId: sandboxId,
+        });
+        if (!existing) return json({ error: "Sandbox not found" }, 404);
+        await terminateReservedInstances(ctx, accountId, (instance) => instance.sandboxConfigId === existing._id)
+            .catch(() => undefined);
+        await ctx.runMutation(internal.sandboxConfigs.remove, { accountId: accountId, sandboxId: sandboxId });
+
+        return json({ deleted: true });
+    }
+
+    return methodNotAllowed(["GET", "PATCH", "DELETE"]);
+}
+
+/**
+ * Agent policy CRUD: list/create on the collection, get/patch/delete by id.
+ * Mirrors core's former handlePolicyRoute contract.
+ */
+async function handlePolicyConfigRoute(
+    ctx: ActionCtx,
+    req: Request,
+    accountId: Id<"accounts">,
+    policyId?: string,
+): Promise<Response> {
+    if (!policyId) {
+        if (req.method === "GET") {
+            const records: Doc<"agentPolicies">[] = await ctx.runQuery(internal.agentPolicies.list, { accountId: accountId });
+
+            return json({ policies: records.map((record) => toPublicAgentPolicyResponse(record)) });
+        }
+        if (req.method === "POST") {
+            const input = normalizeCreateAgentPolicyInput(await req.json());
+            const createdId: Id<"agentPolicies"> = await ctx.runMutation(internal.agentPolicies.createInternal, {
+                accountId: accountId,
+                name: input.name,
+                description: input.description,
+                document: input.document,
+            });
+            const created: Doc<"agentPolicies"> | null = await ctx.runQuery(internal.agentPolicies.getById, {
+                accountId: accountId,
+                policyId: createdId,
+            });
+            if (!created) throw new Error("Failed to fetch created agent policy");
+
+            return json(toPublicAgentPolicyResponse(created), 201);
+        }
+
+        return methodNotAllowed(["GET", "POST"]);
+    }
+
+    if (req.method === "GET") {
+        const record: Doc<"agentPolicies"> | null = await ctx.runQuery(internal.agentPolicies.getById, {
+            accountId: accountId,
+            policyId: policyId,
+        });
+
+        return record ? json(toPublicAgentPolicyResponse(record)) : json({ error: "Policy not found" }, 404);
+    }
+    if (req.method === "PATCH") {
+        const existing: Doc<"agentPolicies"> | null = await ctx.runQuery(internal.agentPolicies.getById, {
+            accountId: accountId,
+            policyId: policyId,
+        });
+        if (!existing) return json({ error: "Policy not found" }, 404);
+        const patch = normalizeUpdateAgentPolicyInput(await req.json());
+        await ctx.runMutation(internal.agentPolicies.updateInternal, {
+            accountId: accountId,
+            policyId: policyId,
+            ...(patch.name !== undefined ? { name: patch.name } : {}),
+            ...(patch.description !== undefined ? { description: patch.description } : {}),
+            ...(patch.document !== undefined ? { document: patch.document } : {}),
+            ...(patch.status !== undefined ? { status: patch.status } : {}),
+        });
+        const updated: Doc<"agentPolicies"> | null = await ctx.runQuery(internal.agentPolicies.getById, {
+            accountId: accountId,
+            policyId: policyId,
+        });
+
+        return updated ? json(toPublicAgentPolicyResponse(updated)) : json({ error: "Policy not found" }, 404);
+    }
+    if (req.method === "DELETE") {
+        const existing: Doc<"agentPolicies"> | null = await ctx.runQuery(internal.agentPolicies.getById, {
+            accountId: accountId,
+            policyId: policyId,
+        });
+        if (!existing) return json({ error: "Policy not found" }, 404);
+        await ctx.runMutation(internal.agentPolicies.removeInternal, { accountId: accountId, policyId: policyId });
+
+        return json({ deleted: true });
+    }
+
+    return methodNotAllowed(["GET", "PATCH", "DELETE"]);
 }
 
 /**
@@ -363,6 +667,67 @@ function toPublicAccountTool(record: Doc<"accountTools">): Record<string, unknow
     };
 }
 
+async function decryptSandboxConfig(doc: Doc<"sandboxConfigs">): Promise<SandboxConfig> {
+    if (!doc.encryptedConfig || !doc.encryptionIv || !doc.encryptionTag) {
+        return { provider: "lambda", permissionMode: "ask" };
+    }
+    const decrypted = await decryptAgentConfigBlob({
+        ciphertext: doc.encryptedConfig,
+        iv: doc.encryptionIv,
+        tag: doc.encryptionTag,
+    }, configEncryptionSecret());
+
+    return decrypted ? decrypted as unknown as SandboxConfig : { provider: "lambda", permissionMode: "ask" };
+}
+
+async function encryptSandboxConfig(config: SandboxConfig): Promise<{ ciphertext: string; iv: string; tag: string }> {
+    return await encryptAgentConfigBlob(config as unknown as Record<string, unknown>, configEncryptionSecret());
+}
+
+function configEncryptionSecret(): string {
+    const secret = process.env.ACCOUNT_CONFIG_ENCRYPTION_SECRET;
+    if (!secret) throw new Error("ACCOUNT_CONFIG_ENCRYPTION_SECRET is required");
+
+    return secret;
+}
+
+/**
+ * Terminate reserved sandbox instances matching a predicate through core's
+ * lifecycle route (which owns the decrypted provider credentials). Best-effort:
+ * skips rows without a sandboxConfigId and swallows per-instance failures.
+ */
+async function terminateReservedInstances(
+    ctx: ActionCtx,
+    accountId: Id<"accounts">,
+    matches: (instance: Doc<"sandboxInstances">) => boolean,
+): Promise<void> {
+    const url = process.env.BROODS_ACCOUNT_MANAGE_URL;
+    const secret = process.env.BROODS_SERVICE_AUTH_SECRET;
+    if (!url || !secret) return;
+
+    const instances: Doc<"sandboxInstances">[] = await ctx.runQuery(internal.sandboxInstances.listForAccount, {
+        accountId: accountId,
+    });
+    const baseUrl = url.replace(/\/+$/, "");
+    await Promise.all(instances
+        .filter((instance) =>
+            instance.sandboxConfigId !== undefined &&
+            (instance.status === "running" || instance.status === "suspended") &&
+            matches(instance)
+        )
+        .map(async (instance) => {
+            await fetch(`${baseUrl}/v1/sandboxes/${encodeURIComponent(instance.sandboxConfigId as string)}/terminate`, {
+                method: "POST",
+                headers: {
+                    Authorization: `Bearer ${secret}`,
+                    "X-Account-Id": accountId,
+                    "Content-Type": "application/json",
+                },
+                body: JSON.stringify({ reservationKey: instance.reservationKey }),
+            }).catch(() => undefined);
+        }));
+}
+
 function methodNotAllowed(allowedMethods: string[]): Response {
     return json({ error: "Method not allowed", allowedMethods: allowedMethods }, 405);
 }
@@ -387,6 +752,9 @@ function isClientInputError(error: unknown): error is Error {
         "path ",
         "path and ",
         "contentBase64 ",
+        "config must",
+        "config.",
+        "e2b ",
         "Invalid workspace path",
         "Invalid destination path",
         "Workspace uploads ",
@@ -399,6 +767,12 @@ function isClientInputError(error: unknown): error is Error {
         "scheduleExpression must",
         "timezone ",
         "status must",
+        "policy ",
+        "Policy document",
+        "Policy rule",
+        "Policy does not belong",
+        "Sandbox config does not belong",
+        "Workspace config does not belong",
         "events must",
         "Provide exactly one of",
         "limit must",

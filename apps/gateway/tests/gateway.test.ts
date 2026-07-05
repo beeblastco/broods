@@ -126,12 +126,18 @@ test("proxies runtime HTTP paths used by the SDK", () => {
 });
 
 test("routes config-plane CRUD to Convex, not core", () => {
-  // Skills, tools, workspace files, and crons are Convex config-plane routes.
+  // Skills, tools, workspace files, crons, workspaces, sandboxes, and policies are Convex config-plane routes.
   expect(isConfigHttpPath("/v1/skills")).toBe(true);
   expect(isConfigHttpPath("/v1/skills/my-skill")).toBe(true);
   expect(isConfigHttpPath("/v1/tools")).toBe(true);
   expect(isConfigHttpPath("/v1/tools/tool_123")).toBe(true);
+  expect(isConfigHttpPath("/v1/workspaces")).toBe(true);
+  expect(isConfigHttpPath("/v1/workspaces/ws_123")).toBe(true);
   expect(isConfigHttpPath("/v1/workspaces/ws_123/files")).toBe(true);
+  expect(isConfigHttpPath("/v1/sandboxes")).toBe(true);
+  expect(isConfigHttpPath("/v1/sandboxes/sbx_1")).toBe(true);
+  expect(isConfigHttpPath("/v1/policies")).toBe(true);
+  expect(isConfigHttpPath("/v1/policies/pol_1")).toBe(true);
   expect(isConfigHttpPath("/v1/crons")).toBe(true);
   expect(isConfigHttpPath("/v1/crons/cron_123")).toBe(true);
   expect(isConfigHttpPath("/v1/crons/cron_123/runs")).toBe(true);
@@ -139,8 +145,9 @@ test("routes config-plane CRUD to Convex, not core", () => {
   // Exact depth only: scoped agent invocations and other resources stay core.
   expect(isConfigHttpPath("/v1/skills/agents/development/env_123")).toBe(false);
   expect(isConfigHttpPath("/v1/crons/agents/development/env_123")).toBe(false);
-  expect(isConfigHttpPath("/v1/workspaces")).toBe(false);
-  expect(isConfigHttpPath("/v1/workspaces/ws_123")).toBe(false);
+  expect(isConfigHttpPath("/v1/sandboxes/sbx_1/exec")).toBe(false);
+  expect(isConfigHttpPath("/v1/sandboxes/sbx_1/terminal")).toBe(false);
+  expect(isConfigHttpPath("/v1/policies/agents/development/env_123")).toBe(false);
   expect(isConfigHttpPath("/v1/agents/agent_1")).toBe(false);
 });
 
