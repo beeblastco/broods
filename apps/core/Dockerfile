@@ -24,7 +24,7 @@ COPY package.json bun.lock ./
 COPY packages/convex ./packages/convex
 COPY apps/core ./apps/core
 # Compile at the amd64 target: the k3s cluster nodes are amd64.
-RUN cd apps/core && bun run scripts/system-prompt.ts \
+RUN cd apps/core && bun run scripts/compaction-prompt.ts \
     && bun build --compile --target=bun-linux-x64 --minify src/server.ts --outfile /out/core-server
 
 FROM alpine:3.22 AS runner

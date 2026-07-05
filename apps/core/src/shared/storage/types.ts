@@ -205,7 +205,7 @@ export interface CronStore {
 
 /**
  * The remaining persistence concerns — conversations/messages, async agent
- * results, async tool results, dedupe, and signup rate limits — are
+ * results, async tool results, and dedupe — are
  * intentionally NOT part of StorageProvider yet. Two reasons:
  *
  * 1. Cherry-coke's Convex schema doesn't match broods's DDB schema
@@ -213,7 +213,7 @@ export interface CronStore {
  *    composite-key event table in DDB; asyncToolResult needs a GSI +
  *    dispatch-group fan-in that the unified Convex asyncResults table
  *    doesn't model).
- * 2. Dedupe and rate-limits depend on DDB-specific semantics (TTL +
+ * 2. Dedupe depends on DDB-specific semantics (TTL +
  *    conditional writes) that Convex doesn't expose cleanly.
  *
  * They stay in their current modules under functions/harness/

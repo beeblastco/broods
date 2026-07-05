@@ -34,7 +34,6 @@ import { deleteAccountRuntimeData } from "./cleanup.ts";
 import { workspaceNamespace, workspaceNamespaceOwnsReservationKey } from "../shared/workspaces.ts";
 import { isPlainObject } from "../shared/object.ts";
 import { deleteAccountSkills } from "./skills.ts";
-import { enforceAccountSignupRateLimit, RateLimitExceededError } from "./rate-limit.ts";
 import { deleteCronSchedule } from "./cron.ts";
 import { logError, logInfo, logWarn } from "../shared/log.ts";
 import {
@@ -66,7 +65,6 @@ async function handleAccountRequest(request: CoreRequest): Promise<Response> {
         }
 
         if (method === "POST" && rawPath === "/accounts") {
-            await enforceAccountSignupRateLimit(request);
             const body = parseJsonBody(request);
             const created = await getStorage().accounts.create(normalizeCreateAccountInput(body));
             return jsonResponse(201, {
@@ -180,11 +178,6 @@ async function handleAccountRequest(request: CoreRequest): Promise<Response> {
             errorName: err instanceof Error ? err.name : undefined,
             stack: err instanceof Error ? err.stack : undefined,
         });
-        if (err instanceof RateLimitExceededError) {
-            return errorResponse(429, "Rate limit exceeded", {}, {
-                "Retry-After": String(err.retryAfterSeconds),
-            });
-        }
         return errorResponseForError(err);
     }
 }

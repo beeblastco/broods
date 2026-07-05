@@ -48,4 +48,3 @@ DynamoDB:
 - **Async agent results** (`harness-processing/async-agent-result.ts`)
 - **Async tool results** (`harness-processing/async-tool-result.ts`)
 - **Dedupe** (`storage/dedupe.ts` — `ProcessedEvents` table)
-- **Account signup rate limits** (`account-manage/rate-limit.ts`)

@@ -7,11 +7,11 @@
     "node": ">=22"
   },
   "scripts": {
-    "postinstall": "bun run scripts/system-prompt.ts && sst install",
-    "dev": "bun run scripts/system-prompt.ts && sst dev",
-    "serve": "bun run scripts/system-prompt.ts && bun run src/server.ts",
+    "postinstall": "bun run scripts/compaction-prompt.ts && sst install",
+    "dev": "bun run scripts/compaction-prompt.ts && sst dev",
+    "serve": "bun run scripts/compaction-prompt.ts && bun run src/server.ts",
     "build": "bun run scripts/build.ts",
-    "check": "bun run scripts/system-prompt.ts && bunx tsc --noEmit",
+    "check": "bun run scripts/compaction-prompt.ts && bunx tsc --noEmit",
     "test": "bun test --max-concurrency=1",
     "daytona:s3-snapshot": "bun run scripts/daytona-s3-snapshot.ts",
     "deploy": "bun run build && sst deploy",

@@ -5,10 +5,10 @@
  */
 
 import { $ } from "bun";
-import { syncSystemPromptModule } from "./system-prompt.ts";
+import { syncCompactionPromptModule } from "./compaction-prompt.ts";
 
 await $`rm -rf dist`;
-await syncSystemPromptModule();
+await syncCompactionPromptModule();
 
 console.log("Building core server...");
 await $`bun build --compile --minify src/server.ts --outfile dist/core-server`;
