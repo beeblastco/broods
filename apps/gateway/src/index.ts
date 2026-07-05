@@ -1231,6 +1231,7 @@ function isCoreHttpPath(pathname: string): boolean {
   return pathname === "/" ||
     pathname === "/async" ||
     pathname.startsWith("/status/") ||
+    pathname === "/accounts" ||
     pathname.startsWith("/accounts/") ||
     pathname.startsWith("/webhooks/") ||
     pathname.startsWith("/async-tools/") ||
@@ -1248,6 +1249,14 @@ export const isCoreHttpPathForTest = isCoreHttpPath;
  */
 export function isConfigHttpPath(pathname: string, method = "GET"): boolean {
   const upperMethod = method.toUpperCase();
+  if (pathname === "/v1/account") return upperMethod === "GET" || upperMethod === "PATCH";
+  if (pathname === "/v1/account/rotate-secret") return upperMethod === "POST";
+  if (pathname === "/accounts") return upperMethod === "GET";
+  if (/^\/accounts\/[^/]+$/.test(pathname)) {
+    return upperMethod === "GET" || upperMethod === "PATCH";
+  }
+  if (/^\/accounts\/[^/]+\/rotate-secret$/.test(pathname)) return upperMethod === "POST";
+
   if (pathname === "/v1/agents") return upperMethod === "GET" || upperMethod === "POST";
   if (/^\/v1\/agents\/[^/]+$/.test(pathname)) {
     return upperMethod === "GET" || upperMethod === "PATCH" || upperMethod === "DELETE";

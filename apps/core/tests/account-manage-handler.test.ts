@@ -59,8 +59,8 @@ describe("account management HTTP handler", () => {
     expect(await responseJson(response)).toEqual({ status: "ok" });
   });
 
-  it("returns JSON errors for missing auth", async () => {
-    const response = await handler(createEvent("GET", "/v1/account"));
+  it("returns JSON errors for missing auth on retained account delete", async () => {
+    const response = await handler(createEvent("DELETE", "/v1/account"));
 
     expect(response.status).toBe(401);
     expect(await responseJson(response)).toEqual({ error: "Unauthorized" });
@@ -114,33 +114,33 @@ describe("account management HTTP handler", () => {
     });
   });
 
-  it("returns rotated one-time secret as secret", async () => {
+  it("no longer serves account metadata or rotation routes", async () => {
     process.env.ADMIN_ACCOUNT_SECRET = "admin-secret";
-    setStorageForTests(createFakeStorage({
-      async rotateSecret() {
-        return {
-          account: fakeAccount(),
-          secret: "fp_acct_rotated",
-        };
-      },
-    }));
+    process.env.SERVICE_AUTH_SECRET = "service-secret";
+    setStorageForTests(createFakeStorage({}));
 
-    const response = await handler(createEvent("POST", "/accounts/acct_test/rotate-secret", {
+    for (const path of ["/accounts", "/accounts/acct_test", "/accounts/acct_test/rotate-secret"]) {
+      const adminResponse = await handler(createEvent(path.endsWith("rotate-secret") ? "POST" : "GET", path, {
+        authorization: "Bearer admin-secret",
+      }));
+      expect(adminResponse.status).toBe(404);
+      expect(await responseJson(adminResponse)).toEqual({ error: "Not found" });
+    }
+
+    const adminPatchResponse = await handler(createEvent("PATCH", "/accounts/acct_test", {
       authorization: "Bearer admin-secret",
-    }));
+    }, { username: "next" }));
+    expect(adminPatchResponse.status).toBe(404);
+    expect(await responseJson(adminPatchResponse)).toEqual({ error: "Not found" });
 
-    expect(response.status).toBe(200);
-    expect(await responseJson(response)).toEqual({
-      account: {
-        accountId: "acct_test",
-        username: "company-a",
-        description: "Company A account",
-        status: "active",
-        createdAt: "2026-05-01T00:00:00.000Z",
-        updatedAt: "2026-05-01T00:00:00.000Z",
-      },
-      secret: "fp_acct_rotated",
-    });
+    for (const path of ["/v1/account", "/v1/account/rotate-secret"]) {
+      const serviceResponse = await handler(createEvent(path.endsWith("rotate-secret") ? "POST" : "GET", path, {
+        authorization: "Bearer service-secret",
+        "x-account-id": "acct_test",
+      }));
+      expect(serviceResponse.status).toBe(403);
+      expect(await responseJson(serviceResponse)).toEqual({ error: "Forbidden" });
+    }
   });
 
   it("returns JSON not found errors for authenticated admin requests", async () => {
@@ -190,7 +190,7 @@ describe("account management HTTP handler", () => {
     }
   });
 
-  it("rejects service tokens on non-cron account endpoints", async () => {
+  it("rejects service tokens on retained account delete", async () => {
     process.env.SERVICE_AUTH_SECRET = "service-secret";
     setStorageForTests(createFakeStorage({}));
     const serviceHeaders = {
@@ -199,11 +199,9 @@ describe("account management HTTP handler", () => {
     };
     const serviceTokenRejection = { error: "Service token is not allowed for this account endpoint" };
 
-    for (const path of ["/v1/account"]) {
-      const response = await handler(createEvent("GET", path, serviceHeaders));
-      expect(response.status).toBe(400);
-      expect(await responseJson(response)).toEqual(serviceTokenRejection);
-    }
+    const response = await handler(createEvent("DELETE", "/v1/account", serviceHeaders));
+    expect(response.status).toBe(400);
+    expect(await responseJson(response)).toEqual(serviceTokenRejection);
   });
 });
 

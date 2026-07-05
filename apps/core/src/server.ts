@@ -17,28 +17,38 @@ const DEFAULT_REQUEST_BUDGET_MS = 10 * 60 * 1000;
 // Account-resource routes under /v1. Patterns are exact-depth (not prefixes)
 // so scoped agent invocations like /v1/{project}/agents/{env}/{endpoint} fall
 // through to the harness even when a project slug shadows a resource name.
-// Agent, skills, tools, workspace-files, cron, workspace, sandbox-config, and
-// policy CRUD live in the Convex config plane (the gateway routes them there),
-// so they are not core routes at all. Sandbox lifecycle verbs stay in core.
+// Account metadata/rotation plus agent, skills, tools, workspace-files, cron,
+// workspace, sandbox-config, and policy CRUD live in the Convex config plane
+// (the gateway routes them there), so they are not core routes at all. Account
+// signup/delete and sandbox lifecycle verbs stay in core.
 const ACCOUNT_RESOURCE_PATTERNS: RegExp[] = [
-  /^\/v1\/account(?:\/rotate-secret)?$/,
   /^\/v1\/sandboxes\/[^/]+\/(?:suspend|resume|terminate|snapshot|refresh|exec|terminal)$/,
 ];
 
 /**
- * account-manage owns signup + admin (/accounts), the /v1 account-resource
- * CRUD surface, and the observability-log internal leaf; everything else
- * (direct API, status, async, webhooks, agent invocation) is the harness.
+ * account-manage owns signup, account delete, sandbox lifecycle, and the
+ * observability-log internal leaf; everything else (direct API, status, async,
+ * webhooks, agent invocation, and config-plane CRUD) is the harness.
  */
-export function routesToAccountManage(_method: string, pathname: string): boolean {
-  if (pathname === "/accounts" || pathname.startsWith("/accounts/")) {
-    return true;
+export function routesToAccountManage(method: string, pathname: string): boolean {
+  const upperMethod = method.toUpperCase();
+  if (pathname === "/accounts") {
+    return upperMethod === "POST";
+  }
+  if (/^\/accounts\/[^/]+$/.test(pathname)) {
+    return upperMethod === "DELETE";
+  }
+  if (pathname === "/v1/account") {
+    return upperMethod === "DELETE";
   }
   if (pathname === "/v1/internal/observability-log") {
     return true;
   }
+  if (ACCOUNT_RESOURCE_PATTERNS.some((pattern) => pattern.test(pathname))) {
+    return upperMethod === "POST";
+  }
 
-  return ACCOUNT_RESOURCE_PATTERNS.some((pattern) => pattern.test(pathname));
+  return false;
 }
 
 /** Builds the transport-neutral request the handlers speak from a Bun Request. */

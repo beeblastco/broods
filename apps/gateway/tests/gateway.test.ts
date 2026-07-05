@@ -118,6 +118,7 @@ test("normalizes and de-duplicates unified gateway core upstreams", () => {
 
 test("proxies runtime HTTP paths used by the SDK", () => {
   expect(isCoreHttpPathForTest("/")).toBe(true);
+  expect(isCoreHttpPathForTest("/accounts")).toBe(true);
   expect(isCoreHttpPathForTest("/async")).toBe(true);
   expect(isCoreHttpPathForTest("/status/request-1")).toBe(true);
   expect(isCoreHttpPathForTest("/v1/crons")).toBe(true);
@@ -126,7 +127,14 @@ test("proxies runtime HTTP paths used by the SDK", () => {
 });
 
 test("routes config-plane CRUD to Convex, not core", () => {
-  // Agents, skills, tools, workspace files, crons, workspaces, sandboxes, and policies are Convex config-plane routes.
+  // Account metadata/rotation plus agents, skills, tools, workspace files, crons, workspaces, sandboxes, and policies are Convex config-plane routes.
+  expect(isConfigHttpPath("/v1/account", "GET")).toBe(true);
+  expect(isConfigHttpPath("/v1/account", "PATCH")).toBe(true);
+  expect(isConfigHttpPath("/v1/account/rotate-secret", "POST")).toBe(true);
+  expect(isConfigHttpPath("/accounts", "GET")).toBe(true);
+  expect(isConfigHttpPath("/accounts/acct_1", "GET")).toBe(true);
+  expect(isConfigHttpPath("/accounts/acct_1", "PATCH")).toBe(true);
+  expect(isConfigHttpPath("/accounts/acct_1/rotate-secret", "POST")).toBe(true);
   expect(isConfigHttpPath("/v1/agents", "GET")).toBe(true);
   expect(isConfigHttpPath("/v1/agents", "POST")).toBe(true);
   expect(isConfigHttpPath("/v1/agents/agent_1", "GET")).toBe(true);
@@ -148,6 +156,14 @@ test("routes config-plane CRUD to Convex, not core", () => {
   expect(isConfigHttpPath("/v1/crons/cron_123/runs")).toBe(true);
 
   // Exact depth only: scoped agent invocations and other resources stay core.
+  expect(isConfigHttpPath("/v1/account", "DELETE")).toBe(false);
+  expect(isConfigHttpPath("/accounts", "POST")).toBe(false);
+  expect(isConfigHttpPath("/accounts/acct_1", "DELETE")).toBe(false);
+  expect(isConfigHttpPath("/accounts/acct_1/rotate-secret", "GET")).toBe(false);
+  expect(isConfigHttpPath("/accounts/acct_1/agents", "GET")).toBe(false);
+  expect(isConfigHttpPath("/accounts/acct_1/rotate-secret/extra", "POST")).toBe(false);
+  expect(isConfigHttpPath("/v1/account/rotate-secret", "DELETE")).toBe(false);
+  expect(isConfigHttpPath("/v1/account/extra", "GET")).toBe(false);
   expect(isConfigHttpPath("/v1/skills/agents/development/env_123")).toBe(false);
   expect(isConfigHttpPath("/v1/crons/agents/development/env_123")).toBe(false);
   expect(isConfigHttpPath("/v1/sandboxes/sbx_1/exec")).toBe(false);

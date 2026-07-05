@@ -9,6 +9,7 @@
 import { httpAction, type ActionCtx } from "./_generated/server";
 import { internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
+import { createAccountSecret, hashAccountSecret } from "./model/accountSecrets";
 import { normalizeAccountToolUpload } from "./model/accountTools";
 import { decryptAgentConfigBlob, encryptAgentConfigBlob } from "./model/agentConfigCodec";
 import {
@@ -35,9 +36,13 @@ import {
     toPublicWorkspaceConfigResponse,
     workspaceNamespace,
 } from "./model/workspaceRules";
+import { isPlainObject } from "./model/objects";
 
 export const handle = httpAction(async (ctx, req) => {
     try {
+        const accountRoute = parseAccountRoute(new URL(req.url).pathname);
+        if (accountRoute) return await handleAccountRoute(ctx, req, accountRoute);
+
         const account = await requireAccount(ctx, req);
         if (!account) return json({ error: "Unauthorized" }, 401);
         const route = parseRoute(new URL(req.url).pathname);
@@ -89,6 +94,331 @@ function clientErrorStatus(error: Error): number {
     }
 
     return 400;
+}
+
+type AccountHttpRoute =
+    | { kind: "self" }
+    | { kind: "selfRotate" }
+    | { kind: "adminList" }
+    | { kind: "adminRecord"; accountId: string }
+    | { kind: "adminRotate"; accountId: string }
+    | { kind: "adminUnknown" };
+
+type ConfigAuth =
+    | { kind: "admin" }
+    | { kind: "account"; account: Doc<"accounts">; viaServiceToken?: boolean }
+    | { kind: "deployment" };
+
+type AccountUpdateInput = {
+    username?: string;
+    description?: string | null;
+};
+
+/**
+ * Parse account config-plane pathnames, including unknown admin subpaths.
+ * @param pathname request pathname
+ * @returns parsed account route, or null when not account HTTP
+ */
+function parseAccountRoute(pathname: string): AccountHttpRoute | null {
+    if (pathname === "/v1/account") return { kind: "self" };
+    if (pathname === "/v1/account/rotate-secret") return { kind: "selfRotate" };
+    if (pathname === "/accounts") return { kind: "adminList" };
+    if (!pathname.startsWith("/accounts/")) return null;
+
+    const record = pathname.match(/^\/accounts\/([^/]+)$/);
+    if (record?.[1]) return { kind: "adminRecord", accountId: decodeURIComponent(record[1]) };
+
+    const rotate = pathname.match(/^\/accounts\/([^/]+)\/rotate-secret$/);
+    if (rotate?.[1]) return { kind: "adminRotate", accountId: decodeURIComponent(rotate[1]) };
+
+    return { kind: "adminUnknown" };
+}
+
+/**
+ * Handle account self-management and admin account config routes.
+ * @param ctx Convex action context
+ * @param req incoming HTTP request
+ * @param route parsed account route
+ * @returns HTTP response matching core account-management payloads
+ */
+async function handleAccountRoute(ctx: ActionCtx, req: Request, route: AccountHttpRoute): Promise<Response> {
+    if (route.kind === "self" || route.kind === "selfRotate") {
+        const account = await requireSelfAccount(ctx, req);
+        if (account instanceof Response) return account;
+
+        if (route.kind === "self") {
+            if (req.method === "GET") return json({ account: toPublicAccount(account) });
+            if (req.method === "PATCH") return await updateAccountResponse(ctx, account._id, await parseJsonRequest(req));
+
+            return methodNotAllowed(["GET", "PATCH"]);
+        }
+
+        if (req.method === "POST") return await rotateAccountSecretResponse(ctx, account._id);
+
+        return methodNotAllowed(["POST"]);
+    }
+
+    const admin = await requireAdminAuth(ctx, req);
+    if (admin instanceof Response) return admin;
+
+    if (route.kind === "adminUnknown") return json({ error: "Not found" }, 404);
+
+    if (route.kind === "adminList") {
+        if (req.method !== "GET") return methodNotAllowed(["GET"]);
+        const accounts: Doc<"accounts">[] = await ctx.runQuery(internal.accounts.list, {});
+
+        return json({ accounts: accounts.map((account) => toPublicAccount(account)) });
+    }
+
+    if (route.kind === "adminRecord") {
+        if (req.method === "GET") {
+            const account: Doc<"accounts"> | null = await getAccountById(ctx, route.accountId);
+
+            return account ? json({ account: toPublicAccount(account) }) : json({ error: "Account not found" }, 404);
+        }
+        if (req.method === "PATCH") return await updateAccountResponse(ctx, route.accountId, await parseJsonRequest(req));
+
+        return methodNotAllowed(["GET", "PATCH"]);
+    }
+
+    if (req.method === "POST") return await rotateAccountSecretResponse(ctx, route.accountId);
+
+    return methodNotAllowed(["POST"]);
+}
+
+/**
+ * Require account-secret auth for `/v1/account*` routes with core parity.
+ * @param ctx Convex action context
+ * @param req incoming HTTP request
+ * @returns active account or an error response
+ */
+async function requireSelfAccount(ctx: ActionCtx, req: Request): Promise<Doc<"accounts"> | Response> {
+    const auth = await resolveBearerAuth(ctx, req);
+    if (!auth) return json({ error: "Unauthorized" }, 401);
+    if (auth.kind === "admin") return json({ error: "Admin must use account-specific endpoints" }, 400);
+    if (auth.kind === "deployment") return json({ error: "Unauthorized" }, 401);
+    if (auth.viaServiceToken === true) {
+        return json({ error: "Service token is not allowed for this account endpoint" }, 400);
+    }
+
+    return auth.account;
+}
+
+/**
+ * Require the admin bearer secret for `/accounts*` routes.
+ * @param ctx Convex action context
+ * @param req incoming HTTP request
+ * @returns true or an error response
+ */
+async function requireAdminAuth(ctx: ActionCtx, req: Request): Promise<true | Response> {
+    const auth = await resolveBearerAuth(ctx, req);
+    if (!auth) return json({ error: "Unauthorized" }, 401);
+    if (auth.kind !== "admin") return json({ error: "Forbidden" }, 403);
+
+    return true;
+}
+
+/**
+ * Resolve Bearer auth into admin, account, service-account, or deployment auth.
+ * @param ctx Convex action context
+ * @param req incoming HTTP request
+ * @returns auth context or null for missing/unknown/disabled credentials
+ */
+async function resolveBearerAuth(ctx: ActionCtx, req: Request): Promise<ConfigAuth | null> {
+    const token = bearerToken(req);
+    if (!token) return null;
+    const tokenHash = await hashAccountSecret(token);
+
+    const adminSecret = process.env.ADMIN_ACCOUNT_SECRET;
+    if (adminSecret && digestEqual(tokenHash, await hashAccountSecret(adminSecret))) {
+        return { kind: "admin" };
+    }
+
+    const serviceSecret = process.env.BROODS_SERVICE_AUTH_SECRET ?? process.env.SERVICE_AUTH_SECRET;
+    if (serviceSecret && digestEqual(tokenHash, await hashAccountSecret(serviceSecret))) {
+        const accountId = req.headers.get("X-Account-Id") ?? req.headers.get("x-account-id") ?? "";
+        const account: Doc<"accounts"> | null = accountId ? await getAccountById(ctx, accountId) : null;
+        return account && account.status === "active"
+            ? { kind: "account", account: account, viaServiceToken: true }
+            : null;
+    }
+
+    const deployment: {
+        accountId: Id<"accounts">;
+        endpointId: string;
+        projectSlug: string;
+        environmentSlug: string;
+    } | null = await ctx.runQuery(internal.agentDeployments.getByApiKeyHash, { apiKeyHash: tokenHash });
+    if (deployment) return { kind: "deployment" };
+
+    const account: Doc<"accounts"> | null = await ctx.runQuery(internal.accounts.getBySecretHash, { secretHash: tokenHash });
+    return account && account.status === "active" ? { kind: "account", account: account } : null;
+}
+
+/**
+ * Extract a Bearer token from a request.
+ * @param req incoming HTTP request
+ * @returns token string, or null when absent/malformed
+ */
+function bearerToken(req: Request): string | null {
+    const header = req.headers.get("Authorization") ?? "";
+    const match = header.match(/^Bearer\s+(.+)$/i);
+
+    return match?.[1]?.trim() || null;
+}
+
+/**
+ * Compare two already-hashed secrets without comparing plaintext values.
+ * @param left first hex digest
+ * @param right second hex digest
+ * @returns true when digests are equal
+ */
+function digestEqual(left: string, right: string): boolean {
+    if (left.length !== right.length) return false;
+    let diff = 0;
+    for (let i = 0; i < left.length; i += 1) {
+        diff |= left.charCodeAt(i) ^ right.charCodeAt(i);
+    }
+
+    return diff === 0;
+}
+
+/**
+ * Fetch an account id while treating malformed ids as not found.
+ * @param ctx Convex action context
+ * @param accountId account id string from the route
+ * @returns account document or null
+ */
+async function getAccountById(ctx: ActionCtx, accountId: string): Promise<Doc<"accounts"> | null> {
+    try {
+        const account: Doc<"accounts"> | null = await ctx.runQuery(internal.accounts.getById, {
+            accountId: accountId as Id<"accounts">,
+        });
+
+        return account;
+    } catch {
+        return null;
+    }
+}
+
+/**
+ * Read and parse a JSON request body with core's empty-body and syntax strings.
+ * @param req incoming HTTP request
+ * @returns parsed JSON value or empty object
+ */
+async function parseJsonRequest(req: Request): Promise<unknown> {
+    const text = await req.text();
+    if (!text.trim()) return {};
+    try {
+        return JSON.parse(text);
+    } catch (err) {
+        throw new Error(`Invalid request JSON: ${err instanceof Error ? err.message : String(err)}`);
+    }
+}
+
+/**
+ * Normalize account metadata patches with core's error strings.
+ * @param value raw JSON body
+ * @returns normalized account update input
+ */
+function normalizeAccountUpdateInput(value: unknown): AccountUpdateInput {
+    if (!isPlainObject(value)) throw new Error("Request body must be an object");
+    if ("config" in value) throw new Error("Agent config must be updated through /v1/agents/{agentId}");
+    const normalized: AccountUpdateInput = {
+        ...(value.username !== undefined ? { username: requireString(value.username, "username") } : {}),
+        ...(value.description !== undefined
+            ? { description: value.description === null ? null : optionalString(value.description, "description") }
+            : {}),
+    };
+    if (Object.keys(normalized).length === 0) {
+        throw new Error("Request body must include username or description");
+    }
+
+    return normalized;
+}
+
+/**
+ * Require a trimmed non-empty string.
+ * @param value raw value
+ * @param name field name for error messages
+ * @returns trimmed string
+ */
+function requireString(value: unknown, name: string): string {
+    if (typeof value !== "string" || value.trim().length === 0) {
+        throw new Error(`${name} must be a non-empty string`);
+    }
+
+    return value.trim();
+}
+
+/**
+ * Normalize an optional string field, omitting empty strings.
+ * @param value raw value
+ * @param name field name for error messages
+ * @returns trimmed string or undefined
+ */
+function optionalString(value: unknown, name: string): string | undefined {
+    if (value === undefined) return undefined;
+    if (typeof value !== "string") throw new Error(`${name} must be a string`);
+    const trimmed = value.trim();
+
+    return trimmed.length > 0 ? trimmed : undefined;
+}
+
+/**
+ * Update an account and return the public response wrapper.
+ * @param ctx Convex action context
+ * @param accountId account id to update
+ * @param input raw update body
+ * @returns update response
+ */
+async function updateAccountResponse(ctx: ActionCtx, accountId: string, input: unknown): Promise<Response> {
+    const existing = await getAccountById(ctx, accountId);
+    if (!existing) return json({ error: "Account not found" }, 404);
+    const patch = normalizeAccountUpdateInput(input);
+    await ctx.runMutation(internal.accounts.update, {
+        accountId: existing._id,
+        ...(patch.username !== undefined ? { username: patch.username } : {}),
+        ...(patch.description !== undefined ? { description: patch.description } : {}),
+    });
+    const updated: Doc<"accounts"> | null = await ctx.runQuery(internal.accounts.getById, { accountId: existing._id });
+
+    return updated ? json({ account: toPublicAccount(updated) }) : json({ error: "Account not found" }, 404);
+}
+
+/**
+ * Rotate an account secret hash and return the one-time plaintext secret.
+ * @param ctx Convex action context
+ * @param accountId account id to rotate
+ * @returns rotate-secret response
+ */
+async function rotateAccountSecretResponse(ctx: ActionCtx, accountId: string): Promise<Response> {
+    const existing = await getAccountById(ctx, accountId);
+    if (!existing) return json({ error: "Account not found" }, 404);
+    const secret = createAccountSecret();
+    await ctx.runMutation(internal.accounts.update, {
+        accountId: existing._id,
+        secretHash: await hashAccountSecret(secret),
+    });
+    const updated: Doc<"accounts"> | null = await ctx.runQuery(internal.accounts.getById, { accountId: existing._id });
+
+    return updated ? json({ account: toPublicAccount(updated), secret: secret }) : json({ error: "Account not found" }, 404);
+}
+
+/**
+ * Project an account document to the public account response shape.
+ * @param account account document
+ * @returns public account record
+ */
+function toPublicAccount(account: Doc<"accounts">): Record<string, unknown> {
+    return {
+        accountId: account._id,
+        username: account.username,
+        ...(account.description ? { description: account.description } : {}),
+        status: account.status,
+        createdAt: new Date(account.createdAt).toISOString(),
+        updatedAt: new Date(account.updatedAt).toISOString(),
+    };
 }
 
 type ConfigRoute =
@@ -144,13 +474,9 @@ function parseRoute(pathname: string): ConfigRoute | null {
  * @returns the account document, or null when the token is missing or unknown
  */
 async function requireAccount(ctx: ActionCtx, req: Request): Promise<Doc<"accounts"> | null> {
-    const header = req.headers.get("Authorization") ?? "";
-    const match = header.match(/^Bearer\s+(.+)$/i);
-    if (!match?.[1]) return null;
-    const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(match[1]));
-    const secretHash = [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+    const auth = await resolveBearerAuth(ctx, req);
 
-    return await ctx.runQuery(internal.accounts.getBySecretHash, { secretHash: secretHash });
+    return auth?.kind === "account" && auth.viaServiceToken !== true ? auth.account : null;
 }
 
 /**
@@ -936,6 +1262,7 @@ function isClientInputError(error: unknown): error is Error {
         "Skill ",
         "Duplicate skill ",
         "Invalid skill ",
+        "Invalid request JSON:",
         "Invalid skill path:",
         "Skill path belongs",
         "Skill not found:",
@@ -957,7 +1284,9 @@ function isClientInputError(error: unknown): error is Error {
         "Workspace file not found",
         "Workspace path not found",
         "name must",
+        "username must",
         "agentId must",
+        "Agent config ",
         "description must",
         "conversationKey must",
         "scheduleExpression must",

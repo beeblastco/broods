@@ -41,6 +41,7 @@ import type * as logs from "../logs.js";
 import type * as logsHelpers from "../logsHelpers.js";
 import type * as messages from "../messages.js";
 import type * as migrations from "../migrations.js";
+import type * as model_accountSecrets from "../model/accountSecrets.js";
 import type * as model_accountTools from "../model/accountTools.js";
 import type * as model_agentConfigCodec from "../model/agentConfigCodec.js";
 import type * as model_agentRules from "../model/agentRules.js";
@@ -125,6 +126,7 @@ declare const fullApi: ApiFromModules<{
   logsHelpers: typeof logsHelpers;
   messages: typeof messages;
   migrations: typeof migrations;
+  "model/accountSecrets": typeof model_accountSecrets;
   "model/accountTools": typeof model_accountTools;
   "model/agentConfigCodec": typeof model_agentConfigCodec;
   "model/agentRules": typeof model_agentRules;
