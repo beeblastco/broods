@@ -13,6 +13,8 @@ import { USER_CONFIG_PATH, stripTrailingSlash } from "./config.ts";
 
 export interface BroodsRuntimeConfig {
   dashboardUrl?: string;
+  /** Convex control-plane base URL for /api/cli/* calls; falls back to dashboardUrl. */
+  controlUrl?: string;
   token?: string;
   project?: string;
   environment?: string;
@@ -47,6 +49,7 @@ export function loadBroodsRuntimeConfig(cwd = process.cwd()): BroodsRuntimeConfi
 
   return {
     dashboardUrl: process.env.BROODS_DASHBOARD_URL ?? stored?.dashboardUrl,
+    controlUrl: process.env.BROODS_CONTROL_URL ?? stored?.controlUrl,
     token: process.env.BROODS_TOKEN ?? stored?.token,
     project: process.env.BROODS_PROJECT,
     environment: process.env.BROODS_ENVIRONMENT,
@@ -128,15 +131,17 @@ function unquoteEnvValue(value: string): string {
  * constructor can use it without awaiting. Returns null when the file is absent
  * or malformed.
  */
-function readStoredAuthSync(): { dashboardUrl: string; token: string } | null {
+function readStoredAuthSync(): { dashboardUrl: string; controlUrl?: string; token: string } | null {
   try {
     const value = JSON.parse(readFileSync(USER_CONFIG_PATH, "utf8")) as {
       dashboardUrl?: unknown;
+      controlUrl?: unknown;
       token?: unknown;
     };
     if (typeof value.dashboardUrl !== "string" || typeof value.token !== "string") return null;
     return {
       dashboardUrl: stripTrailingSlash(value.dashboardUrl),
+      ...(typeof value.controlUrl === "string" ? { controlUrl: stripTrailingSlash(value.controlUrl) } : {}),
       token: value.token,
     };
   } catch {

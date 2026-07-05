@@ -6,6 +6,7 @@ import { withAuth } from "@workos-inc/authkit-nextjs";
 import { api } from "@broods/convex/_generated/api";
 import { ConvexHttpClient } from "convex/browser";
 import { NextRequest, NextResponse } from "next/server";
+import { convexSiteUrl } from "../../lib/cliProxy";
 
 export const dynamic = "force-dynamic";
 
@@ -32,6 +33,9 @@ export async function GET(request: NextRequest): Promise<Response> {
         const target = new URL(callback);
         target.searchParams.set("code", code);
         target.searchParams.set("state", state);
+        // Advertise the Convex control plane so the CLI exchanges the code and
+        // syncs there directly, skipping this dashboard's /api/cli proxy.
+        target.searchParams.set("control_url", convexSiteUrl().origin);
 
         return NextResponse.redirect(target);
     } catch (error) {

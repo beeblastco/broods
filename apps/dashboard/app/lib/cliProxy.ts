@@ -39,7 +39,8 @@ export async function proxyCliRequest(req: NextRequest): Promise<Response> {
     });
 }
 
-function convexSiteUrl(): URL {
+/** Base URL of the Convex HTTP surface serving the /api/cli/* control-plane routes. */
+export function convexSiteUrl(): URL {
     const explicit = process.env.CONVEX_SITE_URL;
     if (explicit) return new URL(explicit);
     const convexUrl = process.env.NEXT_PUBLIC_CONVEX_URL;

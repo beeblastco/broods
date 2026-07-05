@@ -519,6 +519,8 @@ export default defineBroods({
 
 These values can be overridden by CLI flags (`--project`, `--env`) or `.env.local`.
 
+`dashboardUrl` is where `broods login` opens the browser and where deep links point. Sync, env, and deploy calls go to the control plane, whose URL the CLI discovers during login (`controlUrl` in the stored auth, overridable via `controlUrl` here, `BROODS_CONTROL_URL`, or `--control-url`). Logins created before control-plane discovery fall back to routing those calls through the dashboard.
+
 ## Validation
 
 The CLI validates resource configs at compile time:

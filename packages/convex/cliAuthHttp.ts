@@ -16,11 +16,17 @@ export const exchange = httpAction(async (ctx, req) => {
             return json({ error: "Request body must include code" }, 400);
         }
 
-        const result = await ctx.runMutation(internal.cliAuth.exchangeLoginCode, {
+        const result: Record<string, unknown> = await ctx.runMutation(internal.cliAuth.exchangeLoginCode, {
             code: body.code,
         });
 
-        return json(result);
+        // Advertise the deployment's public HTTP origin so CLIs that exchanged
+        // through the dashboard proxy still learn the direct control-plane URL.
+        // CONVEX_SITE_URL is built in on Convex Cloud; self-hosted deployments
+        // behind a proxy must set it, since req.url may carry an internal origin.
+        const controlUrl = process.env.CONVEX_SITE_URL ?? new URL(req.url).origin;
+
+        return json({ ...result, controlUrl: controlUrl });
     } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
 
