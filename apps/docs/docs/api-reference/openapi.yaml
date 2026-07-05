@@ -12,7 +12,7 @@ info:
     > - Advanced integrations that need direct account-management access
     > - Admin operations using `AdminAccountSecret`
 
-    Account administration and rotate-secret are reachable by admins as `/accounts/{accountId}/...` with the `AdminAccountSecret` bearer token. Agent CRUD is account-authenticated under `/v1/agents*`. Agents, skills, tools, workspace files, crons, workspaces, sandboxes, and policies are served by the config plane behind the same gateway host and have no admin path variants.
+    Account metadata and secret rotation are served by the config plane behind the same gateway host; account signup and delete stay in core for public signup and runtime cleanup. Account administration and rotate-secret are reachable by admins as `/accounts/{accountId}/...` with the `AdminAccountSecret` bearer token. Agent CRUD is account-authenticated under `/v1/agents*`. Agents, skills, tools, workspace files, crons, workspaces, sandboxes, and policies are served by the config plane and have no admin path variants.
   version: 0.1.0
 
 servers:
@@ -545,9 +545,15 @@ paths:
                       - accountId: acct_abc123
                         username: company-a
                         description: Company A account
+                        status: active
+                        createdAt: '2026-05-01T00:00:00.000Z'
+                        updatedAt: '2026-05-01T00:00:00.000Z'
                       - accountId: acct_def456
                         username: company-b
                         description: Company B account
+                        status: active
+                        createdAt: '2026-05-01T00:00:00.000Z'
+                        updatedAt: '2026-05-01T00:00:00.000Z'
 
   /accounts/{accountId}:
     get:
@@ -637,8 +643,11 @@ paths:
                       asyncAgentResultDeleted: 2
                       asyncToolResultDeleted: 3
                       filesystemObjectsDeleted: 8
+                      reservedSandboxesReleased: 0
                       agentsDeleted: 1
                       skillObjectsDeleted: 4
+                      cronsDeleted: 0
+                      accountToolsDeleted: 0
 
   /accounts/{accountId}/rotate-secret:
     post:
@@ -671,6 +680,9 @@ paths:
                     account:
                       accountId: acct_abc123
                       username: company-a
+                      status: active
+                      createdAt: '2026-05-01T00:00:00.000Z'
+                      updatedAt: '2026-05-01T00:00:00.000Z'
                     secret: fp_acct_new...
 
   /v1/account:
@@ -726,9 +738,13 @@ paths:
               examples:
                 updated:
                   value:
-                    accountId: acct_abc123
-                    username: company-a
-                    description: Updated account purpose
+                    account:
+                      accountId: acct_abc123
+                      username: company-a
+                      description: Updated account purpose
+                      status: active
+                      createdAt: '2026-05-01T00:00:00.000Z'
+                      updatedAt: '2026-05-02T00:00:00.000Z'
 
     delete:
       tags:
@@ -770,6 +786,9 @@ paths:
                     account:
                       accountId: acct_abc123
                       username: company-a
+                      status: active
+                      createdAt: '2026-05-01T00:00:00.000Z'
+                      updatedAt: '2026-05-01T00:00:00.000Z'
                     secret: fp_acct_new...
 
   /v1/agents:
@@ -2387,6 +2406,8 @@ components:
             asyncToolResultDeleted:
               type: integer
             filesystemObjectsDeleted:
+              type: integer
+            reservedSandboxesReleased:
               type: integer
             agentsDeleted:
               type: integer

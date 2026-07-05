@@ -9,8 +9,6 @@ import {
     getStorage,
     isCronsConfigured,
     normalizeCreateAccountInput,
-    normalizeUpdateAccountInput,
-    toPublicAccount,
     type AccountRecord,
 } from "../shared/storage/index.ts";
 import {
@@ -90,21 +88,6 @@ async function handleAccountRequest(request: CoreRequest): Promise<Response> {
             return await handleInternalObservabilityLog(auth.account.accountId, request);
         }
 
-        if (method === "GET" && rawPath === "/v1/account") {
-            const account = requireAccountAuth(auth);
-            return jsonResponse(200, { account: toPublicAccount(account) });
-        }
-
-        if (method === "PATCH" && rawPath === "/v1/account") {
-            const account = requireAccountAuth(auth);
-            return updateAccountResponse(account.accountId, parseAccountPatch(request));
-        }
-
-        if (method === "POST" && rawPath === "/v1/account/rotate-secret") {
-            const account = requireAccountAuth(auth);
-            return rotateSecretResponse(account.accountId);
-        }
-
         if (method === "DELETE" && rawPath === "/v1/account") {
             const account = requireAccountAuth(auth);
             return deleteAccountResponse(account);
@@ -136,25 +119,9 @@ async function handleAccountRequest(request: CoreRequest): Promise<Response> {
             return errorResponse(403, "Forbidden");
         }
 
-        if (method === "GET" && rawPath === "/accounts") {
-            const accounts = await getStorage().accounts.list();
-            return jsonResponse(200, { accounts: accounts.map(toPublicAccount) });
-        }
-
         const accountMatch = rawPath.match(/^\/accounts\/([^/]+)$/);
         if (accountMatch?.[1]) {
             const accountId = decodeURIComponent(accountMatch[1]);
-            if (method === "GET") {
-                const account = await getStorage().accounts.getById(accountId);
-                return account
-                    ? jsonResponse(200, { account: toPublicAccount(account) })
-                    : errorResponse(404, "Account not found");
-            }
-
-            if (method === "PATCH") {
-                return updateAccountResponse(accountId, parseAccountPatch(request));
-            }
-
             if (method === "DELETE") {
                 const account = await getStorage().accounts.getById(accountId);
                 if (!account) {
@@ -162,11 +129,6 @@ async function handleAccountRequest(request: CoreRequest): Promise<Response> {
                 }
                 return deleteAccountResponse(account);
             }
-        }
-
-        const rotateMatch = rawPath.match(/^\/accounts\/([^/]+)\/rotate-secret$/);
-        if (method === "POST" && rotateMatch?.[1]) {
-            return rotateSecretResponse(decodeURIComponent(rotateMatch[1]));
         }
 
         return errorResponse(404, "Not found");
@@ -552,23 +514,6 @@ async function sandboxReservationBelongsToAccount(
     );
 }
 
-async function updateAccountResponse(accountId: string, input: unknown): Promise<Response> {
-    const account = await getStorage().accounts.update(accountId, normalizeUpdateAccountInput(input));
-    return account
-        ? jsonResponse(200, { account: toPublicAccount(account) })
-        : errorResponse(404, "Account not found");
-}
-
-async function rotateSecretResponse(accountId: string): Promise<Response> {
-    const rotated = await getStorage().accounts.rotateSecret(accountId);
-    return rotated
-        ? jsonResponse(200, {
-            account: toPublicAccount(rotated.account),
-            secret: rotated.secret,
-        })
-        : errorResponse(404, "Account not found");
-}
-
 async function deleteAccountResponse(account: Extract<AuthContext, { kind: "account" }>["account"]): Promise<Response> {
     const cleanup = await deleteAccountRuntimeData(account);
     const [agentsDeleted, skillObjectsDeleted, cronsDeleted, accountToolsDeleted] = await Promise.all([
@@ -628,10 +573,6 @@ async function deleteAccountCrons(accountId: string): Promise<number> {
         await cronsStore.remove(accountId, cron.cronId);
     }));
     return crons.length;
-}
-
-function parseAccountPatch(request: CoreRequest): unknown {
-    return parseJsonBody(request);
 }
 
 function errorResponseForError(err: unknown): Response {

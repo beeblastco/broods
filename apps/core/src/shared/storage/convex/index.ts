@@ -240,8 +240,11 @@ const accounts: AccountStore = {
   async rotateSecret() {
     throw new Error(NOT_SUPPORTED_IN_CONVEX_MODE);
   },
-  async remove() {
-    throw new Error(NOT_SUPPORTED_IN_CONVEX_MODE);
+  async remove(accountId) {
+    await getConvexClient().mutation(internal.accounts.remove, {
+      accountId: accountId as any,
+    });
+    return true;
   },
 };
 

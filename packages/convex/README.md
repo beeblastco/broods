@@ -57,12 +57,16 @@ the `"use node"` action files (`awsBundles.ts`, `awsSkills.ts`,
 `workspaceFilesPublic.ts`).
 
 `configHttp.ts` serves the public config API on this deployment's
-`.convex.site` host — `/v1/agents*`, `/v1/skills*`, `/v1/tools*`,
-`/v1/workspaces/{id}/files`, `/v1/crons*`, `/v1/workspaces*`,
+`.convex.site` host — account metadata and rotation (`GET/PATCH /v1/account`,
+`POST /v1/account/rotate-secret`, `GET /accounts`,
+`GET/PATCH /accounts/{accountId}`, and
+`POST /accounts/{accountId}/rotate-secret`), `/v1/agents*`, `/v1/skills*`,
+`/v1/tools*`, `/v1/workspaces/{id}/files`, `/v1/crons*`, `/v1/workspaces*`,
 `/v1/sandboxes*` (CRUD only; lifecycle verbs stay in core), and
-`/v1/policies*` with account Bearer auth — replacing core's former routes; the
-gateway forwards those paths here (`BROODS_CONFIG_URL`). Cron execution stays
-in core: schedules invoke the configured target with
+`/v1/policies*` — replacing core's former routes; the gateway forwards those
+paths here (`BROODS_CONFIG_URL`). Public signup (`POST /accounts`) and account
+delete (`DELETE /v1/account`, `DELETE /accounts/{accountId}`) stay in core.
+Cron execution stays in core: schedules invoke the configured target with
 `{kind: "cron", accountId, cronId}` and core's harness runs the agent.
 Sandbox config CRUD requires `ACCOUNT_CONFIG_ENCRYPTION_SECRET`.
 `BROODS_ACCOUNT_MANAGE_URL` and `BROODS_SERVICE_AUTH_SECRET` are reused to
@@ -88,6 +92,8 @@ Deployment environment variables:
 - `CRON_SCHEDULER_GROUP_NAME` — the stage's schedule group (sst output
   `cronScheduleGroupName`).
 - `ACCOUNT_CONFIG_ENCRYPTION_SECRET` — AES-GCM secret for agent and sandbox config CRUD.
+- `ADMIN_ACCOUNT_SECRET` — admin bearer secret accepted by account admin HTTP
+  routes in `configHttp.ts`.
 - `BROODS_ACCOUNT_MANAGE_URL` / `BROODS_SERVICE_AUTH_SECRET` — core
   account-manage URL and shared bearer secret used for sandbox delete cleanup.
 

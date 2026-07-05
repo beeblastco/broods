@@ -81,25 +81,21 @@ describe("toCoreRequest", () => {
 });
 
 describe("routesToAccountManage", () => {
-  it("routes signup/admin, account self-management, sandbox lifecycle, and the observability leaf to account-manage", () => {
-    for (const path of [
-      "/accounts",
-      "/accounts/acct_1/rotate-secret",
-      "/v1/account",
-      "/v1/account/rotate-secret",
-      "/v1/sandboxes/sbx/exec",
-      "/v1/sandboxes/sbx/terminate",
-      "/v1/internal/observability-log",
-    ]) {
-      expect(routesToAccountManage("GET", path)).toBe(true);
-    }
+  it("routes signup, account delete, sandbox lifecycle, and the observability leaf to account-manage", () => {
+    expect(routesToAccountManage("POST", "/accounts")).toBe(true);
+    expect(routesToAccountManage("DELETE", "/accounts/acct_1")).toBe(true);
+    expect(routesToAccountManage("DELETE", "/v1/account")).toBe(true);
+    expect(routesToAccountManage("POST", "/v1/sandboxes/sbx/exec")).toBe(true);
+    expect(routesToAccountManage("POST", "/v1/sandboxes/sbx/terminate")).toBe(true);
+    expect(routesToAccountManage("POST", "/v1/internal/observability-log")).toBe(true);
   });
 
   it("routes config-plane CRUD paths and invocations to the harness", () => {
-    // Agent, skills, tools, workspace files, cron, policy, workspace, and sandbox
-    // config CRUD are Convex config-plane routes (gateway-forwarded); a core
-    // hit falls through to the harness 404 path. Invocations are harness-owned.
-    for (const path of [
+    // Account metadata/rotation plus agent, skills, tools, workspace files,
+    // cron, policy, workspace, and sandbox config CRUD are Convex config-plane
+    // routes (gateway-forwarded); a core hit falls through to the harness 404
+    // path. Invocations are harness-owned.
+    const configPlanePaths = [
       "/v1/agents",
       "/v1/agents/my-agent",
       "/v1/agents/my-agent/async",
@@ -115,9 +111,17 @@ describe("routesToAccountManage", () => {
       "/v1/internal/observability-scope",
       "/",
       "/status",
-    ]) {
+    ];
+    for (const path of configPlanePaths) {
       expect(routesToAccountManage("POST", path)).toBe(false);
     }
+    expect(routesToAccountManage("GET", "/accounts")).toBe(false);
+    expect(routesToAccountManage("GET", "/accounts/acct_1")).toBe(false);
+    expect(routesToAccountManage("PATCH", "/accounts/acct_1")).toBe(false);
+    expect(routesToAccountManage("POST", "/accounts/acct_1/rotate-secret")).toBe(false);
+    expect(routesToAccountManage("GET", "/v1/account")).toBe(false);
+    expect(routesToAccountManage("PATCH", "/v1/account")).toBe(false);
+    expect(routesToAccountManage("POST", "/v1/account/rotate-secret")).toBe(false);
   });
 });
 

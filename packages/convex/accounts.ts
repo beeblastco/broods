@@ -89,7 +89,7 @@ export const update = internalMutation({
     args: {
         accountId: v.id("accounts"),
         username: v.optional(v.string()),
-        description: v.optional(v.string()),
+        description: v.optional(v.union(v.string(), v.null())),
         status: v.optional(statusValidator),
         secretHash: v.optional(v.string()),
     },
@@ -103,7 +103,7 @@ export const update = internalMutation({
 
         await ctx.db.patch(accountId, {
             ...(patch.username !== undefined && { username: patch.username }),
-            ...(patch.description !== undefined && { description: patch.description }),
+            ...(patch.description !== undefined && { description: patch.description ?? undefined }),
             ...(patch.status !== undefined && { status: patch.status }),
             ...(patch.secretHash !== undefined && { secretHash: patch.secretHash }),
             updatedAt: Date.now(),
