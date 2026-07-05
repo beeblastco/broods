@@ -11,7 +11,11 @@ import type { CliManifestResource, GeneratedIds } from "./cliTypes";
 import { internalMutation, internalQuery, type MutationCtx, type QueryCtx } from "./_generated/server";
 import { ensureEnvironmentDeployment } from "./agentDeployments";
 import { normalizePolicyDocument } from "./agentPolicies";
-import { scheduleServiceLog } from "./observability";
+import {
+    auditDetailsJson,
+    insertConfigAuditEvent,
+    type ConfigAuditActor,
+} from "./model/auditEvents";
 import {
     ensureAgentsRowForConfig,
     pushEncryptedConfigToAgentRow,
@@ -75,6 +79,8 @@ const warningsValidator = v.object({
     missingEnv: v.array(v.string()),
     missingPolicies: v.array(v.string()),
 });
+
+const cliAuditActorKindValidator = v.union(v.literal("cli"), v.literal("deployKey"));
 
 type CliResource = CliManifestResource;
 type Ids = GeneratedIds;
@@ -255,6 +261,8 @@ export const ensureRuntimeKeyBySecretHash = internalMutation({
         auditSync: v.optional(v.object({
             resourceCount: v.number(),
             prune: v.boolean(),
+            actorKind: cliAuditActorKindValidator,
+            actorId: v.optional(v.string()),
         })),
     },
     returns: v.union(v.null(), v.object({
@@ -281,15 +289,25 @@ export const ensureRuntimeKeyBySecretHash = internalMutation({
             rotate: args.rotate === true,
         });
         if (args.auditSync) {
-            await scheduleServiceLog(ctx, {
+            const actor: ConfigAuditActor = {
+                kind: args.auditSync.actorKind,
+                id: args.auditSync.actorId,
+            };
+            await insertConfigAuditEvent(ctx.db, {
+                accountId: account._id,
                 projectId: projectDoc._id,
                 environmentId: environmentDoc._id,
-                eventType: "service.manifest.synced",
-                message: "CLI manifest synchronized",
-                data: {
+                actor: actor,
+                action: "synced",
+                resource: {
+                    kind: "manifest",
+                    name: `${args.project}/${args.environment}`,
+                },
+                summary: "CLI manifest synchronized",
+                detailsJson: auditDetailsJson({
                     resourceCount: args.auditSync.resourceCount,
                     prune: args.auditSync.prune,
-                },
+                }),
             });
         }
 

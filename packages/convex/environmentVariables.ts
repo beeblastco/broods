@@ -5,13 +5,19 @@
 
 import { v } from "convex/values";
 import type { Id } from "./_generated/dataModel";
-import { mutation, query } from "./_generated/server";
+import { mutation, query, type MutationCtx } from "./_generated/server";
 import { authKit } from "./auth";
 import { getOwnedEnvironment } from "./model/ownership/environment";
 import { decryptAgentConfigBlob, encryptAgentConfigBlob } from "./model/agentConfigCodec";
 import { refreshAgentConfigsForEnvironmentVariable } from "./model/agentSync";
 import { refreshSandboxConfigsForEnvironmentVariable } from "./model/sandboxConfigSync";
-import { scheduleServiceLog } from "./observability";
+import {
+    accountIdForProject,
+    auditDetailsJson,
+    dashboardAuditActor,
+    insertConfigAuditEvent,
+    type ConfigAuditActor,
+} from "./model/auditEvents";
 
 const environmentVariableDoc = v.object({
     _id: v.id("environmentVariables"),
@@ -49,6 +55,38 @@ function maskEnvironmentVariable(variable: {
         value: "********",
         updatedAt: variable.updatedAt,
     };
+}
+
+/** Record an environment-variable mutation without storing plaintext values. */
+async function recordEnvironmentVariableAudit(
+    ctx: MutationCtx,
+    actor: ConfigAuditActor,
+    input: {
+        projectId: Id<"projects">;
+        environmentId: Id<"environments">;
+        variableId?: Id<"environmentVariables">;
+        action: string;
+        name: string;
+        summary: string;
+    },
+): Promise<void> {
+    const accountId = await accountIdForProject(ctx, input.projectId);
+    if (!accountId) return;
+
+    await insertConfigAuditEvent(ctx.db, {
+        accountId: accountId,
+        projectId: input.projectId,
+        environmentId: input.environmentId,
+        actor: actor,
+        action: input.action,
+        resource: {
+            kind: "environmentVariable",
+            id: input.variableId,
+            name: input.name,
+        },
+        summary: input.summary,
+        detailsJson: auditDetailsJson({ name: input.name }),
+    });
 }
 
 export const list = query({
@@ -137,12 +175,13 @@ export const set = mutation({
                 trimmedName,
                 value,
             );
-            await scheduleServiceLog(ctx, {
+            await recordEnvironmentVariableAudit(ctx, dashboardAuditActor(user), {
                 projectId: projectId,
                 environmentId: environmentId,
-                eventType: "service.environment.variable.updated",
-                message: "Environment variable updated",
-                data: { name: trimmedName },
+                variableId: existing._id,
+                action: "updated",
+                name: trimmedName,
+                summary: "Environment variable updated",
             });
 
             return existing._id;
@@ -172,12 +211,13 @@ export const set = mutation({
             trimmedName,
             value,
         );
-        await scheduleServiceLog(ctx, {
+        await recordEnvironmentVariableAudit(ctx, dashboardAuditActor(user), {
             projectId: projectId,
             environmentId: environmentId,
-            eventType: "service.environment.variable.created",
-            message: "Environment variable created",
-            data: { name: trimmedName },
+            variableId: variableId,
+            action: "created",
+            name: trimmedName,
+            summary: "Environment variable created",
         });
 
         return variableId;
@@ -266,12 +306,13 @@ export const remove = mutation({
             variable.name,
             undefined,
         );
-        await scheduleServiceLog(ctx, {
+        await recordEnvironmentVariableAudit(ctx, dashboardAuditActor(user), {
             projectId: variable.projectId,
             environmentId: variable.environmentId,
-            eventType: "service.environment.variable.deleted",
-            message: "Environment variable deleted",
-            data: { name: variable.name },
+            variableId: variableId,
+            action: "deleted",
+            name: variable.name,
+            summary: "Environment variable deleted",
         });
 
         return variableId;

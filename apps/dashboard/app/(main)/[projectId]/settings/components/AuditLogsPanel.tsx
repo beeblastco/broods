@@ -2,14 +2,15 @@
 
 /**
  * Audit Logs panel: scheduled tasks (cron jobs), memories (file system), and event logs.
- * UI-only scaffold — wire to backend queries when implemented.
+ * Scheduled tasks and memories are still mocked; event logs read Convex.
  */
 import { Section } from "@/app/components/Section";
-import { Button } from "@/app/components/ui/button";
 import { Separator } from "@/app/components/ui/separator";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/app/components/ui/tabs";
 import { cn } from "@/app/lib/utils";
+import { api } from "@broods/convex/_generated/api";
 import type { Id } from "@broods/convex/_generated/dataModel";
+import { useQuery } from "convex/react";
 import { ChevronRight, Clock, FileText, FolderOpen, RefreshCw, Zap } from "lucide-react";
 import { useState } from "react";
 
@@ -30,14 +31,6 @@ const MOCK_MEMORIES = [
   { id: "2", name: "telegram-conversations/", type: "folder", size: "48 files", updated: "1h ago" },
   { id: "3", name: "project-knowledge.md", type: "file", size: "4.2 KB", updated: "Yesterday" },
   { id: "4", name: "team-preferences.json", type: "file", size: "1.1 KB", updated: "2d ago" },
-];
-
-const MOCK_EVENTS = [
-  { id: "1", level: "info", message: "Agent 'summarizer' completed task", agent: "summarizer", ts: "2m ago" },
-  { id: "2", level: "info", message: "Webhook delivered to https://api.example.com/hook", agent: "notifier", ts: "8m ago" },
-  { id: "3", level: "warn", message: "Tool call retried (attempt 2/3): google-search", agent: "researcher", ts: "15m ago" },
-  { id: "4", level: "error", message: "Rate limit hit on anthropic provider", agent: "summarizer", ts: "1h ago" },
-  { id: "5", level: "info", message: "Cron 'daily-digest' triggered agent run", agent: "summarizer", ts: "2h ago" },
 ];
 
 function ScheduledTasksView() {
@@ -127,40 +120,57 @@ function MemoriesView() {
   );
 }
 
-function EventLogsView() {
-  const levelClass: Record<string, string> = {
-    info: "text-muted-foreground",
-    warn: "text-amber-500",
-    error: "text-destructive",
-  };
+function actorLabel(actor: { kind: string; id?: string; email?: string; name?: string }) {
+  return actor.email ?? actor.name ?? actor.id ?? actor.kind;
+}
+
+function resourceLabel(resource: { kind: string; id?: string; name?: string }) {
+  return resource.name ? `${resource.kind}: ${resource.name}` : resource.id ? `${resource.kind}: ${resource.id}` : resource.kind;
+}
+
+function EventLogsView({ projectId, environmentId }: Props) {
+  const events = useQuery(api.configAuditEvents.listRecent, {
+    projectId: projectId,
+    environmentId: environmentId ?? undefined,
+    limit: 100,
+  });
+
+  if (events === undefined) {
+    return <p className="text-sm text-muted-foreground">Loading events...</p>;
+  }
+
+  if (events.length === 0) {
+    return <p className="text-sm text-muted-foreground">No audit events yet.</p>;
+  }
 
   return (
     <div>
       <div className="divide-y divide-border rounded-lg border border-border">
-        {MOCK_EVENTS.map((ev) => (
-          <div key={ev.id} className="flex items-start gap-3 px-4 py-2.5">
-            <span className={cn("mt-px shrink-0 font-mono text-[10px] uppercase tracking-wide w-8", levelClass[ev.level])}>
-              {ev.level}
+        {events.map((event) => (
+          <div key={event._id} className="flex items-start gap-3 px-4 py-2.5">
+            <span className="mt-px w-20 shrink-0 truncate font-mono text-[10px] text-muted-foreground">
+              {event.action}
             </span>
             <div className="min-w-0 flex-1">
-              <p className="text-xs text-foreground">{ev.message}</p>
+              <p className="text-xs text-foreground">{event.summary}</p>
               <p className="text-[10px] text-muted-foreground">
-                agent: <span className="font-mono">{ev.agent}</span>
+                <span className="font-mono">{resourceLabel(event.resource)}</span>
+                <span> · </span>
+                <span>{actorLabel(event.actor)}</span>
               </p>
             </div>
-            <span className="shrink-0 text-[10px] text-muted-foreground">{ev.ts}</span>
+            <span className="shrink-0 text-[10px] text-muted-foreground">
+              {new Date(event._creationTime).toLocaleString()}
+            </span>
           </div>
         ))}
       </div>
-      <Button variant="ghost" size="sm" className="mt-2 cursor-pointer text-xs text-muted-foreground">
-        Load more
-      </Button>
     </div>
   );
 }
 
 /** Audit Logs panel with shadcn Tabs: Scheduled Tasks, Memories, Event Logs. */
-export function AuditLogsPanel({ environmentId }: Props) {
+export function AuditLogsPanel({ projectId, environmentId }: Props) {
   if (!environmentId) {
     return (
       <Section description="Audit logs and memory for this environment.">
@@ -196,7 +206,7 @@ export function AuditLogsPanel({ environmentId }: Props) {
           <MemoriesView />
         </TabsContent>
         <TabsContent value="events" className="mt-4">
-          <EventLogsView />
+          <EventLogsView projectId={projectId} environmentId={environmentId} />
         </TabsContent>
       </Tabs>
     </Section>
