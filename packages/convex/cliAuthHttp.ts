@@ -20,9 +20,13 @@ export const exchange = httpAction(async (ctx, req) => {
             code: body.code,
         });
 
-        // Echo this deployment's own HTTP origin so CLIs that exchanged through
-        // the dashboard proxy still learn the direct control-plane URL.
-        return json({ ...result, controlUrl: new URL(req.url).origin });
+        // Advertise the deployment's public HTTP origin so CLIs that exchanged
+        // through the dashboard proxy still learn the direct control-plane URL.
+        // CONVEX_SITE_URL is built in on Convex Cloud; self-hosted deployments
+        // behind a proxy must set it, since req.url may carry an internal origin.
+        const controlUrl = process.env.CONVEX_SITE_URL ?? new URL(req.url).origin;
+
+        return json({ ...result, controlUrl: controlUrl });
     } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
 

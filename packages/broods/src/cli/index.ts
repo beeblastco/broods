@@ -148,7 +148,7 @@ async function login(args: string[]): Promise<void> {
   const project = optionValue(args, "--project") ?? process.env.BROODS_PROJECT ?? inferProjectName(process.cwd());
   const environment = optionValue(args, "--env") ?? process.env.BROODS_ENVIRONMENT ?? "development";
   await writeLocalEnvDefaults({
-    dashboardUrl: auth.dashboardUrl,
+    dashboardUrl: auth.dashboardUrl ?? dashboardUrl,
     controlUrl: auth.controlUrl,
     project: project,
     environment: environment,
@@ -743,7 +743,7 @@ async function printDevTarget(args: string[]): Promise<void> {
   printDeploymentTarget({
     project: manifest.project,
     environment: manifest.environment,
-    dashboardUrl: auth.dashboardUrl,
+    dashboardUrl: auth.dashboardUrl ?? DEFAULT_DASHBOARD_URL,
   });
 }
 

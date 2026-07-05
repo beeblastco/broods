@@ -11,7 +11,11 @@ export const GENERATED_DIR = "_generated";
 export const USER_CONFIG_PATH = join(homedir(), ".broods", "config.json");
 
 export interface StoredAuthConfig {
-  dashboardUrl: string;
+  /**
+   * Base URL of the dashboard UI. Absent only for env-based auth that supplies
+   * BROODS_CONTROL_URL without BROODS_DASHBOARD_URL.
+   */
+  dashboardUrl?: string;
   /**
    * Base URL of the Convex control plane serving the /api/cli/* routes.
    * Absent in legacy logins, which reach the same routes through the
@@ -38,11 +42,12 @@ export interface StoredAuthConfig {
 
 export async function readStoredAuth(): Promise<StoredAuthConfig | null> {
   const envToken = process.env.BROODS_TOKEN;
-  const envUrl = process.env.BROODS_DASHBOARD_URL ?? process.env.BROODS_CONTROL_URL;
-  if (envToken && envUrl) {
+  const envDashboardUrl = process.env.BROODS_DASHBOARD_URL;
+  const envControlUrl = process.env.BROODS_CONTROL_URL;
+  if (envToken && (envDashboardUrl || envControlUrl)) {
     return {
-      dashboardUrl: envUrl,
-      ...(process.env.BROODS_CONTROL_URL ? { controlUrl: process.env.BROODS_CONTROL_URL } : {}),
+      ...(envDashboardUrl ? { dashboardUrl: envDashboardUrl } : {}),
+      ...(envControlUrl ? { controlUrl: envControlUrl } : {}),
       token: envToken,
       createdAt: new Date().toISOString(),
     };
@@ -70,5 +75,10 @@ export function stripTrailingSlash(value: string): string {
  * the same Convex routes.
  */
 export function controlUrlFromAuth(auth: Pick<StoredAuthConfig, "dashboardUrl" | "controlUrl">): string {
-  return stripTrailingSlash(auth.controlUrl ?? auth.dashboardUrl);
+  const base = auth.controlUrl ?? auth.dashboardUrl;
+  if (!base) {
+    throw new Error("Stored auth has no control or dashboard URL. Run `broods login` again.");
+  }
+
+  return stripTrailingSlash(base);
 }

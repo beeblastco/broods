@@ -38,6 +38,7 @@ test("BROODS_CONTROL_URL with BROODS_TOKEN yields env auth carrying the control 
 
   expect(auth?.token).toBe("tok");
   expect(auth?.controlUrl).toBe("https://control.example.com");
+  expect(auth?.dashboardUrl).toBeUndefined();
   expect(controlUrlFromAuth(auth!)).toBe("https://control.example.com");
 });
 
