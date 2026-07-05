@@ -3,7 +3,6 @@
  * Keep account CRUD orchestration here and shared account storage in _shared.
  */
 
-import { context as otelContextApi } from "@opentelemetry/api";
 import { resolveBearerAuth, type AuthContext } from "../shared/auth.ts";
 import {
     getStorage,
@@ -34,13 +33,8 @@ import { isPlainObject } from "../shared/object.ts";
 import { deleteAccountSkills } from "./skills.ts";
 import { deleteCronSchedule } from "./cron.ts";
 import { logError, logInfo, logWarn } from "../shared/log.ts";
-import {
-    forceFlushOtel,
-    getObservabilityContext,
-    mintTraceId,
-    setObservabilityContext,
-    runWithObservabilityScope,
-} from "../shared/otel.ts";
+import { runWithObservabilityScope } from "../shared/otel.ts";
+
 export async function handler(request: CoreRequest): Promise<Response> {
     // Request-private observability scope so concurrent tenants in the shared
     // container process cannot clobber each other's log redaction/routing.
@@ -78,14 +72,6 @@ async function handleAccountRequest(request: CoreRequest): Promise<Response> {
                 rawPath,
             });
             return errorResponse(401, "Unauthorized");
-        }
-
-        if (method === "POST" && rawPath === "/v1/internal/observability-log") {
-            if (auth.kind !== "account" || auth.viaServiceToken !== true) {
-                return errorResponse(403, "Forbidden");
-            }
-
-            return await handleInternalObservabilityLog(auth.account.accountId, request);
         }
 
         if (method === "DELETE" && rawPath === "/v1/account") {
@@ -142,75 +128,6 @@ async function handleAccountRequest(request: CoreRequest): Promise<Response> {
         });
         return errorResponseForError(err);
     }
-}
-
-async function withObservabilityScope<T>(
-    scope: {
-        accountId: string;
-        project: string;
-        environment: string;
-        endpointId: string;
-        agentId: string;
-        conversationKey: string;
-    },
-    operation: () => Promise<T>,
-): Promise<T> {
-    const previous = getObservabilityContext();
-    setObservabilityContext({
-        ...scope,
-        traceId: mintTraceId(),
-        otelContext: otelContextApi.active(),
-        secretValues: [],
-    });
-
-    try {
-        return await operation();
-    } finally {
-        await forceFlushOtel();
-        setObservabilityContext(previous);
-    }
-}
-
-async function handleInternalObservabilityLog(
-    accountId: string,
-    request: CoreRequest,
-): Promise<Response> {
-    const body = parseJsonBody(request) as Record<string, unknown>;
-    const project = requiredLogField(body, "project");
-    const environment = requiredLogField(body, "environment");
-    const endpointId = requiredLogField(body, "endpointId");
-    const eventType = requiredLogField(body, "eventType");
-    const message = requiredLogField(body, "message");
-    const agentId = typeof body.agentId === "string" ? body.agentId : "service";
-    const data = body.data && typeof body.data === "object" && !Array.isArray(body.data)
-        ? body.data as Record<string, unknown>
-        : {};
-
-    return withObservabilityScope({
-        accountId: accountId,
-        project: project,
-        environment: environment,
-        endpointId: endpointId,
-        agentId: agentId,
-        conversationKey: `service:convex:${eventType}`,
-    }, async () => {
-        logInfo(message, {
-            ...data,
-            eventType: eventType,
-            source: "convex",
-        });
-
-        return jsonResponse(202, { accepted: true });
-    });
-}
-
-function requiredLogField(body: Record<string, unknown>, field: string): string {
-    const value = body[field];
-    if (typeof value !== "string" || !value.trim()) {
-        throw new Error(`${field} is required`);
-    }
-
-    return value;
 }
 
 /**

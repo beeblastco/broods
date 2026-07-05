@@ -4,10 +4,16 @@
 
 import { v } from "convex/values";
 import type { Id } from "./_generated/dataModel";
-import { mutation, query } from "./_generated/server";
+import { mutation, query, type MutationCtx } from "./_generated/server";
 import { ensureAgentsRowForConfig, pushEncryptedConfigToAgentRow, syncAgentRowFields } from "./model/agentSync";
-import { scheduleServiceLog } from "./observability";
 import { authKit } from "./auth";
+import {
+    accountIdForProject,
+    auditDetailsJson,
+    dashboardAuditActor,
+    insertConfigAuditEvent,
+    type ConfigAuditActor,
+} from "./model/auditEvents";
 import { getOwnedEnvironment } from "./model/ownership/environment";
 import { getOwnedProject } from "./model/ownership/project";
 import { saveAgentRuntimeSecrets } from "./model/agentRuntimeSecrets";
@@ -64,6 +70,42 @@ async function canAccessAgentConfig(
     config: { projectId: Id<"projects"> },
 ): Promise<boolean> {
     return Boolean(await getOwnedProject(ctx, authId, config.projectId));
+}
+
+/**
+ * Record a dashboard agent config mutation when the project has a provisioned account.
+ */
+async function recordAgentConfigAudit(
+    ctx: MutationCtx,
+    actor: ConfigAuditActor,
+    input: {
+        projectId: Id<"projects">;
+        environmentId: Id<"environments">;
+        action: string;
+        agentId?: string;
+        configId: Id<"agentConfigs">;
+        name?: string;
+        summary: string;
+        details?: Record<string, unknown>;
+    },
+): Promise<void> {
+    const accountId = await accountIdForProject(ctx, input.projectId);
+    if (!accountId) return;
+
+    await insertConfigAuditEvent(ctx.db, {
+        accountId: accountId,
+        projectId: input.projectId,
+        environmentId: input.environmentId,
+        actor: actor,
+        action: input.action,
+        resource: {
+            kind: "agent",
+            id: input.agentId ?? input.configId,
+            name: input.name,
+        },
+        summary: input.summary,
+        detailsJson: input.details ? auditDetailsJson(input.details) : undefined,
+    });
 }
 
 export const getById = query({
@@ -183,13 +225,15 @@ export const create = mutation({
         await ensureAgentsRowForConfig(ctx, configId, authUser.id);
         await pushEncryptedConfigToAgentRow(ctx, configId);
         const created = await ctx.db.get(configId);
-        await scheduleServiceLog(ctx, {
+        await recordAgentConfigAudit(ctx, dashboardAuditActor(authUser), {
             projectId: projectId,
             environmentId: environmentId,
-            eventType: "service.agent.created",
-            message: "Agent configuration created",
+            action: "created",
             agentId: created?.agentId,
-            data: { configId: configId, name: trimmedName },
+            configId: configId,
+            name: trimmedName,
+            summary: "Agent configuration created",
+            details: { configId: configId },
         });
 
         return configId;
@@ -257,13 +301,15 @@ export const update = mutation({
         });
         await pushEncryptedConfigToAgentRow(ctx, configId);
         const updated = await ctx.db.get(configId);
-        await scheduleServiceLog(ctx, {
+        await recordAgentConfigAudit(ctx, dashboardAuditActor(user), {
             projectId: existing.projectId,
             environmentId: existing.environmentId,
-            eventType: "service.agent.config.updated",
-            message: "Agent configuration updated",
+            action: "updated",
             agentId: updated?.agentId,
-            data: { configId: configId, changedFields: Object.keys(patch).sort() },
+            configId: configId,
+            name: updated?.name ?? existing.name,
+            summary: "Agent configuration updated",
+            details: { configId: configId, changedFields: Object.keys(patch).sort() },
         });
 
         return configId;
@@ -419,13 +465,15 @@ export const remove = mutation({
             }
         }
 
-        await scheduleServiceLog(ctx, {
+        await recordAgentConfigAudit(ctx, dashboardAuditActor(authUser), {
             projectId: existing.projectId,
             environmentId: existing.environmentId,
-            eventType: "service.agent.deleted",
-            message: "Agent configuration deleted",
+            action: "deleted",
             agentId: existing.agentId,
-            data: { configId: configId, name: existing.name },
+            configId: configId,
+            name: existing.name,
+            summary: "Agent configuration deleted",
+            details: { configId: configId },
         });
         await ctx.db.delete(configId);
 

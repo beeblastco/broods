@@ -36,6 +36,11 @@ import {
     toPublicWorkspaceConfigResponse,
     workspaceNamespace,
 } from "./model/workspaceRules";
+import {
+    auditDetailsJson,
+    type ConfigAuditActor,
+    type ConfigAuditResource,
+} from "./model/auditEvents";
 import { isPlainObject } from "./model/objects";
 
 export const handle = httpAction(async (ctx, req) => {
@@ -43,28 +48,30 @@ export const handle = httpAction(async (ctx, req) => {
         const accountRoute = parseAccountRoute(new URL(req.url).pathname);
         if (accountRoute) return await handleAccountRoute(ctx, req, accountRoute);
 
-        const account = await requireAccount(ctx, req);
-        if (!account) return json({ error: "Unauthorized" }, 401);
+        const accountAuth = await requireAccount(ctx, req);
+        if (accountAuth instanceof Response) return accountAuth;
+        const account = accountAuth.account;
+        const actor = auditActorForAuth(accountAuth);
         const route = parseRoute(new URL(req.url).pathname);
         if (!route) return json({ error: "Not found" }, 404);
 
         switch (route.kind) {
             case "skills":
-                return await handleSkillRoute(ctx, req, account._id, route.name);
+                return await handleSkillRoute(ctx, req, account._id, actor, route.name);
             case "tools":
-                return await handleToolRoute(ctx, req, account._id, route.toolId);
+                return await handleToolRoute(ctx, req, account._id, actor, route.toolId);
             case "workspaceFiles":
-                return await handleWorkspaceFilesRoute(ctx, req, account._id, route.workspaceId);
+                return await handleWorkspaceFilesRoute(ctx, req, account._id, actor, route.workspaceId);
             case "crons":
-                return await handleCronRoute(ctx, req, account._id, route.cronId, route.runs);
+                return await handleCronRoute(ctx, req, account._id, actor, route.cronId, route.runs);
             case "workspaces":
-                return await handleWorkspaceConfigRoute(ctx, req, account._id, route.workspaceId);
+                return await handleWorkspaceConfigRoute(ctx, req, account._id, actor, route.workspaceId);
             case "sandboxes":
-                return await handleSandboxConfigRoute(ctx, req, account._id, route.sandboxId);
+                return await handleSandboxConfigRoute(ctx, req, account._id, actor, route.sandboxId);
             case "policies":
-                return await handlePolicyConfigRoute(ctx, req, account._id, route.policyId);
+                return await handlePolicyConfigRoute(ctx, req, account._id, actor, route.policyId);
             case "agents":
-                return await handleAgentConfigRoute(ctx, req, account._id, route.agentId);
+                return await handleAgentConfigRoute(ctx, req, account._id, actor, route.agentId);
         }
     } catch (err) {
         if (isClientInputError(err)) {
@@ -143,17 +150,19 @@ function parseAccountRoute(pathname: string): AccountHttpRoute | null {
  */
 async function handleAccountRoute(ctx: ActionCtx, req: Request, route: AccountHttpRoute): Promise<Response> {
     if (route.kind === "self" || route.kind === "selfRotate") {
-        const account = await requireSelfAccount(ctx, req);
-        if (account instanceof Response) return account;
+        const accountAuth = await requireSelfAccount(ctx, req);
+        if (accountAuth instanceof Response) return accountAuth;
+        const account = accountAuth.account;
+        const actor = auditActorForAuth(accountAuth);
 
         if (route.kind === "self") {
             if (req.method === "GET") return json({ account: toPublicAccount(account) });
-            if (req.method === "PATCH") return await updateAccountResponse(ctx, account._id, await parseJsonRequest(req));
+            if (req.method === "PATCH") return await updateAccountResponse(ctx, account._id, actor, await parseJsonRequest(req));
 
             return methodNotAllowed(["GET", "PATCH"]);
         }
 
-        if (req.method === "POST") return await rotateAccountSecretResponse(ctx, account._id);
+        if (req.method === "POST") return await rotateAccountSecretResponse(ctx, account._id, actor);
 
         return methodNotAllowed(["POST"]);
     }
@@ -176,12 +185,12 @@ async function handleAccountRoute(ctx: ActionCtx, req: Request, route: AccountHt
 
             return account ? json({ account: toPublicAccount(account) }) : json({ error: "Account not found" }, 404);
         }
-        if (req.method === "PATCH") return await updateAccountResponse(ctx, route.accountId, await parseJsonRequest(req));
+        if (req.method === "PATCH") return await updateAccountResponse(ctx, route.accountId, { kind: "admin" }, await parseJsonRequest(req));
 
         return methodNotAllowed(["GET", "PATCH"]);
     }
 
-    if (req.method === "POST") return await rotateAccountSecretResponse(ctx, route.accountId);
+    if (req.method === "POST") return await rotateAccountSecretResponse(ctx, route.accountId, { kind: "admin" });
 
     return methodNotAllowed(["POST"]);
 }
@@ -192,16 +201,16 @@ async function handleAccountRoute(ctx: ActionCtx, req: Request, route: AccountHt
  * @param req incoming HTTP request
  * @returns active account or an error response
  */
-async function requireSelfAccount(ctx: ActionCtx, req: Request): Promise<Doc<"accounts"> | Response> {
+async function requireSelfAccount(ctx: ActionCtx, req: Request): Promise<Extract<ConfigAuth, { kind: "account" }> | Response> {
     const auth = await resolveBearerAuth(ctx, req);
-    if (!auth) return json({ error: "Unauthorized" }, 401);
+    if (!auth) return await unauthorizedResponse(ctx, req);
     if (auth.kind === "admin") return json({ error: "Admin must use account-specific endpoints" }, 400);
     if (auth.kind === "deployment") return json({ error: "Unauthorized" }, 401);
     if (auth.viaServiceToken === true) {
         return json({ error: "Service token is not allowed for this account endpoint" }, 400);
     }
 
-    return auth.account;
+    return auth;
 }
 
 /**
@@ -212,7 +221,7 @@ async function requireSelfAccount(ctx: ActionCtx, req: Request): Promise<Doc<"ac
  */
 async function requireAdminAuth(ctx: ActionCtx, req: Request): Promise<true | Response> {
     const auth = await resolveBearerAuth(ctx, req);
-    if (!auth) return json({ error: "Unauthorized" }, 401);
+    if (!auth) return await unauthorizedResponse(ctx, req);
     if (auth.kind !== "admin") return json({ error: "Forbidden" }, 403);
 
     return true;
@@ -281,6 +290,107 @@ function digestEqual(left: string, right: string): boolean {
     }
 
     return diff === 0;
+}
+
+/**
+ * Apply failed-auth rate limiting before returning a 401 for unknown credentials.
+ * @param ctx Convex action context
+ * @param req incoming HTTP request
+ * @returns 401 or 429 response
+ */
+async function unauthorizedResponse(ctx: ActionCtx, req: Request): Promise<Response> {
+    const result: { blocked: boolean; retryAfterMs?: number } = await ctx.runMutation(
+        internal.configHttpAuthFailures.recordFailure,
+        {
+            key: await authFailureKey(req),
+            now: Date.now(),
+            windowMs: 5 * 60 * 1000,
+            maxFailures: 20,
+            blockMs: 15 * 60 * 1000,
+        },
+    );
+    if (!result.blocked) return json({ error: "Unauthorized" }, 401);
+    const retryAfterSeconds = Math.max(1, Math.ceil((result.retryAfterMs ?? 0) / 1000));
+
+    return new Response(JSON.stringify({ error: "Too many unauthorized attempts" }), {
+        status: 429,
+        headers: {
+            "Content-Type": "application/json",
+            "Retry-After": String(retryAfterSeconds),
+        },
+    });
+}
+
+/**
+ * Build the failed-auth limiter key from rightmost XFF and token hash prefix.
+ * @param req incoming HTTP request
+ * @returns limiter key
+ */
+async function authFailureKey(req: Request): Promise<string> {
+    const forwarded = req.headers.get("x-forwarded-for") ?? "";
+    const ip = forwarded
+        .split(",")
+        .map((entry) => entry.trim())
+        .filter(Boolean)
+        .pop() ?? "unknown";
+    const token = bearerToken(req);
+    const tokenHashPrefix = token ? (await hashAccountSecret(token)).slice(0, 8) : "missing";
+
+    return `${ip}:${tokenHashPrefix}`;
+}
+
+/**
+ * Convert resolved HTTP auth into audit actor metadata.
+ * @param auth resolved config HTTP auth
+ * @returns actor metadata for audit rows
+ */
+function auditActorForAuth(auth: ConfigAuth): ConfigAuditActor {
+    if (auth.kind === "admin") return { kind: "admin" };
+    if (auth.kind === "deployment") return { kind: "deployKey" };
+    if (auth.viaServiceToken === true) return { kind: "service" };
+
+    return { kind: "apiAccountSecret", id: auth.account._id };
+}
+
+/**
+ * Write one audit event through the internal mutation exposed for HTTP actions.
+ * The config write has already committed by the time this runs, so audit
+ * failures are logged and swallowed — they must not turn a committed change
+ * into a 500 (a client retry of a POST would then duplicate the resource).
+ * @param ctx Convex action context
+ * @param event sanitized event metadata
+ */
+async function writeAudit(
+    ctx: ActionCtx,
+    event: {
+        accountId: Id<"accounts">;
+        projectId?: Id<"projects">;
+        environmentId?: Id<"environments">;
+        actor: ConfigAuditActor;
+        action: string;
+        resource: ConfigAuditResource;
+        summary: string;
+        detailsJson?: string;
+    },
+): Promise<void> {
+    try {
+        await ctx.runMutation(internal.configAuditEvents.record, {
+            accountId: event.accountId,
+            projectId: event.projectId,
+            environmentId: event.environmentId,
+            actor: event.actor,
+            action: event.action,
+            resource: event.resource,
+            summary: event.summary,
+            detailsJson: event.detailsJson,
+        });
+    } catch (err) {
+        console.warn("config audit write failed", {
+            action: event.action,
+            resourceKind: event.resource.kind,
+            error: err instanceof Error ? err.message : String(err),
+        });
+    }
 }
 
 /**
@@ -372,7 +482,12 @@ function optionalString(value: unknown, name: string): string | undefined {
  * @param input raw update body
  * @returns update response
  */
-async function updateAccountResponse(ctx: ActionCtx, accountId: string, input: unknown): Promise<Response> {
+async function updateAccountResponse(
+    ctx: ActionCtx,
+    accountId: string,
+    actor: ConfigAuditActor,
+    input: unknown,
+): Promise<Response> {
     const existing = await getAccountById(ctx, accountId);
     if (!existing) return json({ error: "Account not found" }, 404);
     const patch = normalizeAccountUpdateInput(input);
@@ -382,6 +497,16 @@ async function updateAccountResponse(ctx: ActionCtx, accountId: string, input: u
         ...(patch.description !== undefined ? { description: patch.description } : {}),
     });
     const updated: Doc<"accounts"> | null = await ctx.runQuery(internal.accounts.getById, { accountId: existing._id });
+    if (updated) {
+        await writeAudit(ctx, {
+            accountId: existing._id,
+            actor: actor,
+            action: "updated",
+            resource: { kind: "account", id: existing._id, name: updated.username },
+            summary: "Account metadata updated",
+            detailsJson: auditDetailsJson({ changedFields: Object.keys(patch).sort() }),
+        });
+    }
 
     return updated ? json({ account: toPublicAccount(updated) }) : json({ error: "Account not found" }, 404);
 }
@@ -392,7 +517,11 @@ async function updateAccountResponse(ctx: ActionCtx, accountId: string, input: u
  * @param accountId account id to rotate
  * @returns rotate-secret response
  */
-async function rotateAccountSecretResponse(ctx: ActionCtx, accountId: string): Promise<Response> {
+async function rotateAccountSecretResponse(
+    ctx: ActionCtx,
+    accountId: string,
+    actor: ConfigAuditActor,
+): Promise<Response> {
     const existing = await getAccountById(ctx, accountId);
     if (!existing) return json({ error: "Account not found" }, 404);
     const secret = createAccountSecret();
@@ -401,6 +530,15 @@ async function rotateAccountSecretResponse(ctx: ActionCtx, accountId: string): P
         secretHash: await hashAccountSecret(secret),
     });
     const updated: Doc<"accounts"> | null = await ctx.runQuery(internal.accounts.getById, { accountId: existing._id });
+    if (updated) {
+        await writeAudit(ctx, {
+            accountId: existing._id,
+            actor: actor,
+            action: "secret-rotated",
+            resource: { kind: "account", id: existing._id, name: updated.username },
+            summary: "Account secret rotated",
+        });
+    }
 
     return updated ? json({ account: toPublicAccount(updated), secret: secret }) : json({ error: "Account not found" }, 404);
 }
@@ -473,10 +611,12 @@ function parseRoute(pathname: string): ConfigRoute | null {
  * @param req the incoming request
  * @returns the account document, or null when the token is missing or unknown
  */
-async function requireAccount(ctx: ActionCtx, req: Request): Promise<Doc<"accounts"> | null> {
+async function requireAccount(ctx: ActionCtx, req: Request): Promise<Extract<ConfigAuth, { kind: "account" }> | Response> {
     const auth = await resolveBearerAuth(ctx, req);
+    if (!auth) return await unauthorizedResponse(ctx, req);
+    if (auth.kind === "account" && auth.viaServiceToken !== true) return auth;
 
-    return auth?.kind === "account" && auth.viaServiceToken !== true ? auth.account : null;
+    return json({ error: "Unauthorized" }, 401);
 }
 
 /**
@@ -487,6 +627,7 @@ async function handleAgentConfigRoute(
     ctx: ActionCtx,
     req: Request,
     accountId: Id<"accounts">,
+    actor: ConfigAuditActor,
     agentId?: string,
 ): Promise<Response> {
     if (!agentId) {
@@ -515,6 +656,14 @@ async function handleAgentConfigRoute(
                 agentId: createdId,
             });
             if (!created) throw new Error("Failed to fetch created agent");
+            await writeAudit(ctx, {
+                accountId: accountId,
+                actor: actor,
+                action: "created",
+                resource: { kind: "agent", id: created._id, name: created.name },
+                summary: "Agent created",
+                detailsJson: auditDetailsJson({ agentId: created._id }),
+            });
 
             return json({
                 accountId: created.accountId,
@@ -561,6 +710,16 @@ async function handleAgentConfigRoute(
             accountId: accountId,
             agentId: agentId,
         });
+        if (updated) {
+            await writeAudit(ctx, {
+                accountId: accountId,
+                actor: actor,
+                action: "updated",
+                resource: { kind: "agent", id: updated._id, name: updated.name },
+                summary: "Agent updated",
+                detailsJson: auditDetailsJson({ agentId: updated._id }),
+            });
+        }
 
         return updated ? json(toPublicAgentResponse(updated, await decryptAgentConfig(updated))) : json({ error: "Agent not found" }, 404);
     }
@@ -571,6 +730,14 @@ async function handleAgentConfigRoute(
         });
         if (!existing) return json({ error: "Agent not found" }, 404);
         await ctx.runMutation(internal.agents.remove, { accountId: accountId, agentId: agentId });
+        await writeAudit(ctx, {
+            accountId: accountId,
+            actor: actor,
+            action: "deleted",
+            resource: { kind: "agent", id: existing._id, name: existing.name },
+            summary: "Agent deleted",
+            detailsJson: auditDetailsJson({ agentId: existing._id }),
+        });
 
         return json({ deleted: true });
     }
@@ -586,6 +753,7 @@ async function handleWorkspaceConfigRoute(
     ctx: ActionCtx,
     req: Request,
     accountId: Id<"accounts">,
+    actor: ConfigAuditActor,
     workspaceId?: string,
 ): Promise<Response> {
     if (!workspaceId) {
@@ -607,6 +775,16 @@ async function handleWorkspaceConfigRoute(
                 workspaceId: createdId,
             });
             if (!created) throw new Error("Failed to fetch created workspace config");
+            await writeAudit(ctx, {
+                accountId: accountId,
+                projectId: created.projectId,
+                environmentId: created.environmentId,
+                actor: actor,
+                action: "created",
+                resource: { kind: "workspace", id: created._id, name: created.name },
+                summary: "Workspace created",
+                detailsJson: auditDetailsJson({ workspaceId: created._id }),
+            });
 
             return json(toPublicWorkspaceConfigResponse(created), 201);
         }
@@ -643,6 +821,18 @@ async function handleWorkspaceConfigRoute(
             accountId: accountId,
             workspaceId: workspaceId,
         });
+        if (updated) {
+            await writeAudit(ctx, {
+                accountId: accountId,
+                projectId: updated.projectId,
+                environmentId: updated.environmentId,
+                actor: actor,
+                action: "updated",
+                resource: { kind: "workspace", id: updated._id, name: updated.name },
+                summary: "Workspace updated",
+                detailsJson: auditDetailsJson({ workspaceId: updated._id }),
+            });
+        }
 
         return updated ? json(toPublicWorkspaceConfigResponse(updated)) : json({ error: "Workspace not found" }, 404);
     }
@@ -668,6 +858,16 @@ async function handleWorkspaceConfigRoute(
             instance.reservationKey === namespace || instance.reservationKey.startsWith(`${namespace}/`),
         ).catch(() => undefined);
         await ctx.runMutation(internal.workspaceConfigs.remove, { accountId: accountId, workspaceId: workspaceId });
+        await writeAudit(ctx, {
+            accountId: accountId,
+            projectId: existing.projectId,
+            environmentId: existing.environmentId,
+            actor: actor,
+            action: "deleted",
+            resource: { kind: "workspace", id: existing._id, name: existing.name },
+            summary: "Workspace deleted",
+            detailsJson: auditDetailsJson({ workspaceId: existing._id }),
+        });
 
         return json({ deleted: true });
     }
@@ -683,6 +883,7 @@ async function handleSandboxConfigRoute(
     ctx: ActionCtx,
     req: Request,
     accountId: Id<"accounts">,
+    actor: ConfigAuditActor,
     sandboxId?: string,
 ): Promise<Response> {
     if (!sandboxId) {
@@ -710,6 +911,16 @@ async function handleSandboxConfigRoute(
                 sandboxId: createdId,
             });
             if (!created) throw new Error("Failed to fetch created sandbox config");
+            await writeAudit(ctx, {
+                accountId: accountId,
+                projectId: created.projectId,
+                environmentId: created.environmentId,
+                actor: actor,
+                action: "created",
+                resource: { kind: "sandbox", id: created._id, name: created.name },
+                summary: "Sandbox config created",
+                detailsJson: auditDetailsJson({ sandboxId: created._id }),
+            });
 
             return json(toPublicSandboxConfigResponse(created, await decryptSandboxConfig(created)), 201);
         }
@@ -747,6 +958,18 @@ async function handleSandboxConfigRoute(
             accountId: accountId,
             sandboxId: sandboxId,
         });
+        if (updated) {
+            await writeAudit(ctx, {
+                accountId: accountId,
+                projectId: updated.projectId,
+                environmentId: updated.environmentId,
+                actor: actor,
+                action: "updated",
+                resource: { kind: "sandbox", id: updated._id, name: updated.name },
+                summary: "Sandbox config updated",
+                detailsJson: auditDetailsJson({ sandboxId: updated._id }),
+            });
+        }
 
         return updated ? json(toPublicSandboxConfigResponse(updated, await decryptSandboxConfig(updated))) : json({ error: "Sandbox not found" }, 404);
     }
@@ -759,6 +982,16 @@ async function handleSandboxConfigRoute(
         await terminateReservedInstances(ctx, accountId, (instance) => instance.sandboxConfigId === existing._id)
             .catch(() => undefined);
         await ctx.runMutation(internal.sandboxConfigs.remove, { accountId: accountId, sandboxId: sandboxId });
+        await writeAudit(ctx, {
+            accountId: accountId,
+            projectId: existing.projectId,
+            environmentId: existing.environmentId,
+            actor: actor,
+            action: "deleted",
+            resource: { kind: "sandbox", id: existing._id, name: existing.name },
+            summary: "Sandbox config deleted",
+            detailsJson: auditDetailsJson({ sandboxId: existing._id }),
+        });
 
         return json({ deleted: true });
     }
@@ -774,6 +1007,7 @@ async function handlePolicyConfigRoute(
     ctx: ActionCtx,
     req: Request,
     accountId: Id<"accounts">,
+    actor: ConfigAuditActor,
     policyId?: string,
 ): Promise<Response> {
     if (!policyId) {
@@ -795,6 +1029,16 @@ async function handlePolicyConfigRoute(
                 policyId: createdId,
             });
             if (!created) throw new Error("Failed to fetch created agent policy");
+            await writeAudit(ctx, {
+                accountId: accountId,
+                projectId: created.projectId,
+                environmentId: created.environmentId,
+                actor: actor,
+                action: "created",
+                resource: { kind: "policy", id: created._id, name: created.name },
+                summary: "Policy created",
+                detailsJson: auditDetailsJson({ policyId: created._id }),
+            });
 
             return json(toPublicAgentPolicyResponse(created), 201);
         }
@@ -829,6 +1073,18 @@ async function handlePolicyConfigRoute(
             accountId: accountId,
             policyId: policyId,
         });
+        if (updated) {
+            await writeAudit(ctx, {
+                accountId: accountId,
+                projectId: updated.projectId,
+                environmentId: updated.environmentId,
+                actor: actor,
+                action: "updated",
+                resource: { kind: "policy", id: updated._id, name: updated.name },
+                summary: "Policy updated",
+                detailsJson: auditDetailsJson({ policyId: updated._id }),
+            });
+        }
 
         return updated ? json(toPublicAgentPolicyResponse(updated)) : json({ error: "Policy not found" }, 404);
     }
@@ -839,6 +1095,16 @@ async function handlePolicyConfigRoute(
         });
         if (!existing) return json({ error: "Policy not found" }, 404);
         await ctx.runMutation(internal.agentPolicies.removeInternal, { accountId: accountId, policyId: policyId });
+        await writeAudit(ctx, {
+            accountId: accountId,
+            projectId: existing.projectId,
+            environmentId: existing.environmentId,
+            actor: actor,
+            action: "deleted",
+            resource: { kind: "policy", id: existing._id, name: existing.name },
+            summary: "Policy deleted",
+            detailsJson: auditDetailsJson({ policyId: existing._id }),
+        });
 
         return json({ deleted: true });
     }
@@ -850,7 +1116,13 @@ async function handlePolicyConfigRoute(
  * Skills CRUD: list/create on the collection, get/replace/delete by name.
  * Mirrors core's former handleSkillRoute contract.
  */
-async function handleSkillRoute(ctx: ActionCtx, req: Request, accountId: Id<"accounts">, name?: string): Promise<Response> {
+async function handleSkillRoute(
+    ctx: ActionCtx,
+    req: Request,
+    accountId: Id<"accounts">,
+    actor: ConfigAuditActor,
+    name?: string,
+): Promise<Response> {
     if (!name) {
         if (req.method === "GET") {
             const skills = await ctx.runAction(internal.awsSkills.list, { accountId: accountId });
@@ -861,6 +1133,19 @@ async function handleSkillRoute(ctx: ActionCtx, req: Request, accountId: Id<"acc
             const skill = await ctx.runAction(internal.awsSkills.createSkill, {
                 accountId: accountId,
                 input: await req.json(),
+            });
+            const skillRecord: Record<string, unknown> = isPlainObject(skill) ? skill : {};
+            const skillName = typeof skillRecord.name === "string"
+                ? skillRecord.name
+                : typeof skillRecord.path === "string"
+                    ? skillRecord.path
+                    : "skill";
+            await writeAudit(ctx, {
+                accountId: accountId,
+                actor: actor,
+                action: "created",
+                resource: { kind: "skill", id: typeof skillRecord.path === "string" ? skillRecord.path : undefined, name: skillName },
+                summary: "Skill created",
             });
 
             return json(skill, 201);
@@ -880,11 +1165,27 @@ async function handleSkillRoute(ctx: ActionCtx, req: Request, accountId: Id<"acc
             input: await req.json(),
             expectedName: name,
         });
+        await writeAudit(ctx, {
+            accountId: accountId,
+            actor: actor,
+            action: "updated",
+            resource: { kind: "skill", id: name, name: name },
+            summary: "Skill updated",
+        });
 
         return json(skill);
     }
     if (req.method === "DELETE") {
         const deleted = await ctx.runAction(internal.awsSkills.remove, { accountId: accountId, skillName: name });
+        if (deleted) {
+            await writeAudit(ctx, {
+                accountId: accountId,
+                actor: actor,
+                action: "deleted",
+                resource: { kind: "skill", id: name, name: name },
+                summary: "Skill deleted",
+            });
+        }
 
         return deleted ? json({ deleted: true }) : json({ error: "Skill not found" }, 404);
     }
@@ -897,7 +1198,13 @@ async function handleSkillRoute(ctx: ActionCtx, req: Request, accountId: Id<"acc
  * bytes go to S3 via awsBundles; metadata lives in the accountTools table.
  * Mirrors core's former handleToolRoute contract.
  */
-async function handleToolRoute(ctx: ActionCtx, req: Request, accountId: Id<"accounts">, toolId?: string): Promise<Response> {
+async function handleToolRoute(
+    ctx: ActionCtx,
+    req: Request,
+    accountId: Id<"accounts">,
+    actor: ConfigAuditActor,
+    toolId?: string,
+): Promise<Response> {
     if (!toolId) {
         if (req.method === "GET") {
             const records = await ctx.runQuery(internal.accountTools.list, { accountId: accountId });
@@ -921,6 +1228,16 @@ async function handleToolRoute(ctx: ActionCtx, req: Request, accountId: Id<"acco
                 ...(upload.defaultConfig !== undefined ? { defaultConfig: upload.defaultConfig } : {}),
             });
             const created = await ctx.runQuery(internal.accountTools.getById, { accountId: accountId, toolId: createdId });
+            if (created) {
+                await writeAudit(ctx, {
+                    accountId: accountId,
+                    actor: actor,
+                    action: "created",
+                    resource: { kind: "tool", id: created._id, name: created.name },
+                    summary: "Tool created",
+                    detailsJson: auditDetailsJson({ toolId: created._id, sha256: created.sha256 }),
+                });
+            }
 
             return json(toPublicAccountTool(created!), 201);
         }
@@ -956,6 +1273,16 @@ async function handleToolRoute(ctx: ActionCtx, req: Request, accountId: Id<"acco
             ...(upload.defaultConfig !== undefined ? { defaultConfig: upload.defaultConfig } : {}),
         });
         const updated = await ctx.runQuery(internal.accountTools.getById, { accountId: accountId, toolId: toolId });
+        if (updated) {
+            await writeAudit(ctx, {
+                accountId: accountId,
+                actor: actor,
+                action: "updated",
+                resource: { kind: "tool", id: updated._id, name: updated.name },
+                summary: "Tool updated",
+                detailsJson: auditDetailsJson({ toolId: updated._id, sha256: updated.sha256 }),
+            });
+        }
 
         return updated ? json(toPublicAccountTool(updated)) : json({ error: "Tool not found" }, 404);
     }
@@ -963,6 +1290,14 @@ async function handleToolRoute(ctx: ActionCtx, req: Request, accountId: Id<"acco
         const existing = await ctx.runQuery(internal.accountTools.getById, { accountId: accountId, toolId: toolId });
         if (!existing || existing.status !== "active") return json({ error: "Tool not found" }, 404);
         await ctx.runMutation(internal.accountTools.remove, { accountId: accountId, toolId: toolId });
+        await writeAudit(ctx, {
+            accountId: accountId,
+            actor: actor,
+            action: "deleted",
+            resource: { kind: "tool", id: existing._id, name: existing.name },
+            summary: "Tool deleted",
+            detailsJson: auditDetailsJson({ toolId: existing._id }),
+        });
 
         return json({ deleted: true });
     }
@@ -978,6 +1313,7 @@ async function handleWorkspaceFilesRoute(
     ctx: ActionCtx,
     req: Request,
     accountId: Id<"accounts">,
+    actor: ConfigAuditActor,
     workspaceId: string,
 ): Promise<Response> {
     const workspace = await ctx.runQuery(internal.workspaceConfigs.getById, {
@@ -1006,6 +1342,16 @@ async function handleWorkspaceFilesRoute(
             contentBase64: body.contentBase64,
             ...(typeof body.contentType === "string" ? { contentType: body.contentType } : {}),
         });
+        await writeAudit(ctx, {
+            accountId: accountId,
+            projectId: workspace.projectId,
+            environmentId: workspace.environmentId,
+            actor: actor,
+            action: "file-uploaded",
+            resource: { kind: "workspaceFile", id: workspace._id, name: body.path },
+            summary: "Workspace file uploaded",
+            detailsJson: auditDetailsJson({ workspaceId: workspace._id, path: body.path }),
+        });
 
         return json({ file: file }, 201);
     }
@@ -1019,6 +1365,16 @@ async function handleWorkspaceFilesRoute(
             path: body.path,
             newPath: body.newPath,
         });
+        await writeAudit(ctx, {
+            accountId: accountId,
+            projectId: workspace.projectId,
+            environmentId: workspace.environmentId,
+            actor: actor,
+            action: "file-updated",
+            resource: { kind: "workspaceFile", id: workspace._id, name: body.newPath },
+            summary: "Workspace file updated",
+            detailsJson: auditDetailsJson({ workspaceId: workspace._id, path: body.path, newPath: body.newPath }),
+        });
 
         return json({ renamed: renamed });
     }
@@ -1026,6 +1382,18 @@ async function handleWorkspaceFilesRoute(
         const body = await req.json() as { path?: unknown };
         if (typeof body.path !== "string") return json({ error: "path is required" }, 400);
         const deleted = await ctx.runAction(internal.awsWorkspaceFiles.removePath, { ...target, path: body.path });
+        if (deleted) {
+            await writeAudit(ctx, {
+                accountId: accountId,
+                projectId: workspace.projectId,
+                environmentId: workspace.environmentId,
+                actor: actor,
+                action: "file-deleted",
+                resource: { kind: "workspaceFile", id: workspace._id, name: body.path },
+                summary: "Workspace file deleted",
+                detailsJson: auditDetailsJson({ workspaceId: workspace._id, path: body.path }),
+            });
+        }
 
         return json({ deleted: deleted });
     }
@@ -1042,6 +1410,7 @@ async function handleCronRoute(
     ctx: ActionCtx,
     req: Request,
     accountId: Id<"accounts">,
+    actor: ConfigAuditActor,
     cronId: string | undefined,
     runs: boolean,
 ): Promise<Response> {
@@ -1070,6 +1439,21 @@ async function handleCronRoute(
                 accountId: accountId,
                 input: await req.json(),
             });
+            const cronRecord = isPlainObject(cron) ? cron : {};
+            await writeAudit(ctx, {
+                accountId: accountId,
+                actor: actor,
+                action: "created",
+                resource: {
+                    kind: "cron",
+                    id: typeof cronRecord.cronId === "string" ? cronRecord.cronId : undefined,
+                    name: typeof cronRecord.name === "string" ? cronRecord.name : undefined,
+                },
+                summary: "Cron job created",
+                detailsJson: typeof cronRecord.cronId === "string"
+                    ? auditDetailsJson({ cronId: cronRecord.cronId })
+                    : undefined,
+            });
 
             return json(cron, 201);
         }
@@ -1090,11 +1474,43 @@ async function handleCronRoute(
             cronId: cronId,
             patch: await req.json(),
         });
+        if (cron) {
+            const cronRecord = isPlainObject(cron) ? cron : {};
+            await writeAudit(ctx, {
+                accountId: accountId,
+                actor: actor,
+                action: "updated",
+                resource: {
+                    kind: "cron",
+                    id: typeof cronRecord.cronId === "string" ? cronRecord.cronId : cronId,
+                    name: typeof cronRecord.name === "string" ? cronRecord.name : undefined,
+                },
+                summary: "Cron job updated",
+                detailsJson: auditDetailsJson({ cronId: cronId }),
+            });
+        }
 
         return cron ? json(cron) : json({ error: "Cron job not found" }, 404);
     }
     if (req.method === "DELETE") {
+        const existing = await ctx
+            .runQuery(internal.cron.getById, { accountId: accountId, cronId: cronId as Id<"crons"> })
+            .catch(() => null);
         const deleted = await ctx.runAction(internal.awsCrons.remove, { accountId: accountId, cronId: cronId });
+        if (deleted) {
+            await writeAudit(ctx, {
+                accountId: accountId,
+                actor: actor,
+                action: "deleted",
+                resource: {
+                    kind: "cron",
+                    id: existing?._id ?? cronId,
+                    name: existing?.name,
+                },
+                summary: "Cron job deleted",
+                detailsJson: auditDetailsJson({ cronId: cronId }),
+            });
+        }
 
         return deleted ? json({ deleted: true }) : json({ error: "Cron job not found" }, 404);
     }

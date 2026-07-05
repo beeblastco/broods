@@ -156,6 +156,12 @@ export const handle = httpAction(async (ctx, req) => {
                 auditSync: {
                     resourceCount: originalManifest.resources.length,
                     prune: body.prune === true,
+                    actorKind: "deployKeyId" in authResult ? "deployKey" : "cli",
+                    actorId: "deployKeyId" in authResult
+                        ? authResult.deployKeyId
+                        : "cliTokenId" in authResult
+                            ? authResult.cliTokenId
+                            : accountId,
                 },
             });
 

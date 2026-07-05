@@ -81,13 +81,12 @@ describe("toCoreRequest", () => {
 });
 
 describe("routesToAccountManage", () => {
-  it("routes signup, account delete, sandbox lifecycle, and the observability leaf to account-manage", () => {
+  it("routes signup, account delete, and sandbox lifecycle to account-manage", () => {
     expect(routesToAccountManage("POST", "/accounts")).toBe(true);
     expect(routesToAccountManage("DELETE", "/accounts/acct_1")).toBe(true);
     expect(routesToAccountManage("DELETE", "/v1/account")).toBe(true);
     expect(routesToAccountManage("POST", "/v1/sandboxes/sbx/exec")).toBe(true);
     expect(routesToAccountManage("POST", "/v1/sandboxes/sbx/terminate")).toBe(true);
-    expect(routesToAccountManage("POST", "/v1/internal/observability-log")).toBe(true);
   });
 
   it("routes config-plane CRUD paths and invocations to the harness", () => {
@@ -106,6 +105,7 @@ describe("routesToAccountManage", () => {
       "/v1/workspaces/ws",
       "/v1/policies/pol-1",
       "/v1/sandboxes/sbx",
+      "/v1/internal/observability-log",
       // Scoped invocation falls through even when the project slug shadows a resource name.
       "/v1/skills/agents/prod/endpoint-1",
       "/v1/internal/observability-scope",

@@ -26,7 +26,9 @@ Sensitive config (agent configs, sandbox credentials) is stored as encrypted
 blobs — core encrypts before writing; the dashboard never reads the plaintext.
 Environment variables are the exception: their values can be revealed on demand
 by the environment owner (`environmentVariables.reveal` / CLI `env get`), and
-each reveal is recorded in the `environmentVariableReveals` audit table.
+each reveal is recorded in the `environmentVariableReveals` audit table. Config
+mutations write account-visible rows to `configAuditEvents`, which the dashboard
+reads reactively.
 Environment runtime API keys are also stored AES-GCM encrypted alongside their
 authentication hash. Owners can recover them through the dashboard or CLI login
 without rotating.
@@ -69,7 +71,7 @@ delete (`DELETE /v1/account`, `DELETE /accounts/{accountId}`) stay in core.
 Cron execution stays in core: schedules invoke the configured target with
 `{kind: "cron", accountId, cronId}` and core's harness runs the agent.
 Sandbox config CRUD requires `ACCOUNT_CONFIG_ENCRYPTION_SECRET`.
-`BROODS_ACCOUNT_MANAGE_URL` and `BROODS_SERVICE_AUTH_SECRET` are reused to
+`BROODS_ACCOUNT_MANAGE_URL` and `BROODS_SERVICE_AUTH_SECRET` are used to
 terminate reserved sandbox instances before deleting a sandbox config.
 
 Deployment environment variables:

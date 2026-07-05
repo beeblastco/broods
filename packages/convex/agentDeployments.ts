@@ -9,11 +9,16 @@
  */
 
 import { v } from "convex/values";
-import { scheduleServiceLog } from "./observability";
 import type { Id } from "./_generated/dataModel";
 import { internalQuery, mutation, query, type MutationCtx } from "./_generated/server";
 import { authKit } from "./auth";
 import { decryptAgentConfigBlob, encryptAgentConfigBlob } from "./model/agentConfigCodec";
+import {
+    auditDetailsJson,
+    dashboardAuditActor,
+    insertConfigAuditEvent,
+    type ConfigAuditActor,
+} from "./model/auditEvents";
 import { getOwnedEnvironment } from "./model/ownership/environment";
 import { getProjectForRole } from "./model/ownership/project";
 
@@ -224,6 +229,34 @@ async function resolveEnvironmentContext(
     };
 }
 
+/** Record a dashboard deployment mutation without storing runtime keys. */
+async function recordDeploymentAudit(
+    ctx: MutationCtx,
+    actor: ConfigAuditActor,
+    input: {
+        accountId: Id<"accounts">;
+        projectId: Id<"projects">;
+        environmentId: Id<"environments">;
+        action: string;
+        endpointId: string;
+        summary: string;
+    },
+): Promise<void> {
+    await insertConfigAuditEvent(ctx.db, {
+        accountId: input.accountId,
+        projectId: input.projectId,
+        environmentId: input.environmentId,
+        actor: actor,
+        action: input.action,
+        resource: {
+            kind: "deployment",
+            id: input.endpointId,
+        },
+        summary: input.summary,
+        detailsJson: auditDetailsJson({ endpointId: input.endpointId }),
+    });
+}
+
 /** The environment's active deployment for display (no secret material). */
 export const getForEnvironment = query({
     args: { projectId: v.id("projects"), environmentId: v.id("environments") },
@@ -312,12 +345,13 @@ export const ensureForEnvironment = mutation({
             projectSlug: context.projectSlug,
             environmentSlug: context.environmentSlug,
         });
-        await scheduleServiceLog(ctx, {
+        await recordDeploymentAudit(ctx, dashboardAuditActor(authUser), {
+            accountId: context.account._id,
             projectId: projectId,
             environmentId: environmentId,
-            eventType: "service.deployment.ready",
-            message: "Environment runtime deployment is ready",
-            data: { endpointId: result.endpointId },
+            action: "ready",
+            endpointId: result.endpointId,
+            summary: "Environment runtime deployment is ready",
         });
 
         return toEnsureReturn(result);
@@ -348,12 +382,13 @@ export const rotate = mutation({
             environmentSlug: context.environmentSlug,
             rotate: true,
         });
-        await scheduleServiceLog(ctx, {
+        await recordDeploymentAudit(ctx, dashboardAuditActor(authUser), {
+            accountId: context.account._id,
             projectId: projectId,
             environmentId: environmentId,
-            eventType: "service.deployment.key.rotated",
-            message: "Environment runtime key rotated",
-            data: { endpointId: result.endpointId },
+            action: "key-rotated",
+            endpointId: result.endpointId,
+            summary: "Environment runtime key rotated",
         });
 
         return toEnsureReturn(result);

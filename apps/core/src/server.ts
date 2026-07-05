@@ -26,9 +26,9 @@ const ACCOUNT_RESOURCE_PATTERNS: RegExp[] = [
 ];
 
 /**
- * account-manage owns signup, account delete, sandbox lifecycle, and the
- * observability-log internal leaf; everything else (direct API, status, async,
- * webhooks, agent invocation, and config-plane CRUD) is the harness.
+ * account-manage owns signup, account delete, and sandbox lifecycle; everything
+ * else (direct API, status, async, webhooks, agent invocation, and config-plane
+ * CRUD) is the harness.
  */
 export function routesToAccountManage(method: string, pathname: string): boolean {
   const upperMethod = method.toUpperCase();
@@ -40,9 +40,6 @@ export function routesToAccountManage(method: string, pathname: string): boolean
   }
   if (pathname === "/v1/account") {
     return upperMethod === "DELETE";
-  }
-  if (pathname === "/v1/internal/observability-log") {
-    return true;
   }
   if (ACCOUNT_RESOURCE_PATTERNS.some((pattern) => pattern.test(pathname))) {
     return upperMethod === "POST";
