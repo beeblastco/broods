@@ -165,6 +165,22 @@ export const isControllable = internalQuery({
 });
 
 /**
+ * Internal list of mirrored sandbox instances for one account.
+ * @param accountId the owning account
+ * @returns the account's instance rows
+ */
+export const listForAccount = internalQuery({
+    args: { accountId: v.id("accounts") },
+    returns: v.array(sandboxInstanceDoc),
+    handler: async (ctx, args) => {
+        return await ctx.db
+            .query("sandboxInstances")
+            .withIndex("by_accountId", (q) => q.eq("accountId", args.accountId))
+            .take(1000);
+    },
+});
+
+/**
  * Records a lifecycle transition (suspend/resume) for an instance, stamping the
  * matching timestamp. No-op when the key is unknown or belongs to another
  * account. Called by broods after the provider lifecycle call succeeds.

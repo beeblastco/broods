@@ -83,7 +83,8 @@ http.route({
 });
 
 // Public config-plane surface (epic #85 phase 9): skills, tools, workspace
-// files, and cron CRUD, forwarded here by the gateway. Bearer account auth.
+// files, crons, workspaces, sandbox configs, and policies, forwarded here by
+// the gateway. Bearer account auth.
 http.route({ path: "/v1/skills", method: "GET", handler: configHttp });
 http.route({ path: "/v1/skills", method: "POST", handler: configHttp });
 http.route({ pathPrefix: "/v1/skills/", method: "GET", handler: configHttp });
@@ -94,10 +95,22 @@ http.route({ path: "/v1/tools", method: "POST", handler: configHttp });
 http.route({ pathPrefix: "/v1/tools/", method: "GET", handler: configHttp });
 http.route({ pathPrefix: "/v1/tools/", method: "PATCH", handler: configHttp });
 http.route({ pathPrefix: "/v1/tools/", method: "DELETE", handler: configHttp });
+http.route({ path: "/v1/workspaces", method: "GET", handler: configHttp });
+http.route({ path: "/v1/workspaces", method: "POST", handler: configHttp });
 http.route({ pathPrefix: "/v1/workspaces/", method: "GET", handler: configHttp });
 http.route({ pathPrefix: "/v1/workspaces/", method: "POST", handler: configHttp });
 http.route({ pathPrefix: "/v1/workspaces/", method: "PATCH", handler: configHttp });
 http.route({ pathPrefix: "/v1/workspaces/", method: "DELETE", handler: configHttp });
+http.route({ path: "/v1/sandboxes", method: "GET", handler: configHttp });
+http.route({ path: "/v1/sandboxes", method: "POST", handler: configHttp });
+http.route({ pathPrefix: "/v1/sandboxes/", method: "GET", handler: configHttp });
+http.route({ pathPrefix: "/v1/sandboxes/", method: "PATCH", handler: configHttp });
+http.route({ pathPrefix: "/v1/sandboxes/", method: "DELETE", handler: configHttp });
+http.route({ path: "/v1/policies", method: "GET", handler: configHttp });
+http.route({ path: "/v1/policies", method: "POST", handler: configHttp });
+http.route({ pathPrefix: "/v1/policies/", method: "GET", handler: configHttp });
+http.route({ pathPrefix: "/v1/policies/", method: "PATCH", handler: configHttp });
+http.route({ pathPrefix: "/v1/policies/", method: "DELETE", handler: configHttp });
 http.route({ path: "/v1/crons", method: "GET", handler: configHttp });
 http.route({ path: "/v1/crons", method: "POST", handler: configHttp });
 http.route({ pathPrefix: "/v1/crons/", method: "GET", handler: configHttp });

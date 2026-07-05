@@ -130,16 +130,25 @@ describe("core http server", () => {
   it("routes /v1 account resources to the account handler and invocations to the harness", async () => {
     harnessResponse = async () => new Response(null, { status: 204 });
 
-    // Resource CRUD → account handler.
-    for (const path of ["/v1/agents", "/v1/policies/pol-1", "/v1/sandboxes/sbx/exec", "/v1/workspaces/ws"]) {
+    // Resource CRUD still owned by core plus sandbox lifecycle → account handler.
+    for (const path of ["/v1/agents", "/v1/sandboxes/sbx/exec"]) {
       const before = accountCaptured.length;
       await fetch(`${baseUrl}${path}`);
       expect(accountCaptured.length).toBe(before + 1);
     }
 
-    // Skills, tools, workspace files, and cron CRUD are Convex config-plane
-    // routes (gateway-forwarded); a core hit falls through to the harness 404 path.
-    for (const path of ["/v1/skills", "/v1/tools/tool-1", "/v1/workspaces/ws/files", "/v1/crons/abc/runs"]) {
+    // Skills, tools, workspace files, cron, policy, workspace, and sandbox
+    // config CRUD are Convex config-plane routes (gateway-forwarded); a core
+    // hit falls through to the harness 404 path.
+    for (const path of [
+      "/v1/skills",
+      "/v1/tools/tool-1",
+      "/v1/workspaces/ws/files",
+      "/v1/crons/abc/runs",
+      "/v1/workspaces/ws",
+      "/v1/policies/pol-1",
+      "/v1/sandboxes/sbx",
+    ]) {
       const before = captured.length;
       await fetch(`${baseUrl}${path}`);
       expect(captured.length).toBe(before + 1);

@@ -165,13 +165,27 @@ describe("account management HTTP handler", () => {
     expect(adminResponse.status).toBe(404);
     expect(await responseJson(adminResponse)).toEqual({ error: "Not found" });
 
-    // Account-authenticated /v1/crons falls through to the admin gate.
-    const serviceResponse = await handler(createEvent("GET", "/v1/crons", {
-      authorization: "Bearer service-secret",
-      "x-account-id": "acct_test",
-    }));
-    expect(serviceResponse.status).toBe(403);
-    expect(await responseJson(serviceResponse)).toEqual({ error: "Forbidden" });
+    // Account-authenticated config-plane CRUD routes fall through to the admin gate.
+    for (const path of ["/v1/crons", "/v1/policies", "/v1/sandboxes", "/v1/workspaces"]) {
+      const serviceResponse = await handler(createEvent("GET", path, {
+        authorization: "Bearer service-secret",
+        "x-account-id": "acct_test",
+      }));
+      expect(serviceResponse.status).toBe(403);
+      expect(await responseJson(serviceResponse)).toEqual({ error: "Forbidden" });
+    }
+
+    for (const path of [
+      "/accounts/acct_test/policies",
+      "/accounts/acct_test/sandboxes",
+      "/accounts/acct_test/workspaces",
+    ]) {
+      const removedAdminResponse = await handler(createEvent("GET", path, {
+        authorization: "Bearer admin-secret",
+      }));
+      expect(removedAdminResponse.status).toBe(404);
+      expect(await responseJson(removedAdminResponse)).toEqual({ error: "Not found" });
+    }
   });
 
   it("rejects service tokens on non-cron account endpoints", async () => {
@@ -190,8 +204,6 @@ describe("account management HTTP handler", () => {
     for (const path of [
       "/v1/account",
       "/v1/agents",
-      "/v1/sandboxes",
-      "/v1/workspaces",
     ]) {
       const response = await handler(createEvent("GET", path, serviceHeaders));
       expect(response.status).toBe(400);

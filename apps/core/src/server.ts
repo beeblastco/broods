@@ -36,13 +36,12 @@ export interface CoreServer {
 // Account-resource routes under /v1. Patterns are exact-depth (not prefixes)
 // so scoped agent invocations like /v1/{project}/agents/{env}/{endpoint} fall
 // through to the harness even when a project slug shadows a resource name.
-// Skills, tools, workspace-files, and cron CRUD live in the Convex config
-// plane (the gateway routes them there), so they are not core routes at all.
+// Skills, tools, workspace-files, cron, workspace, sandbox-config, and policy
+// CRUD live in the Convex config plane (the gateway routes them there), so
+// they are not core routes at all. Sandbox lifecycle verbs stay in core.
 const ACCOUNT_RESOURCE_PATTERNS: RegExp[] = [
   /^\/v1\/account(?:\/rotate-secret)?$/,
-  /^\/v1\/policies(?:\/[^/]+)?$/,
-  /^\/v1\/sandboxes(?:\/[^/]+(?:\/(?:suspend|resume|terminate|snapshot|refresh|exec|terminal))?)?$/,
-  /^\/v1\/workspaces(?:\/[^/]+)?$/,
+  /^\/v1\/sandboxes\/[^/]+\/(?:suspend|resume|terminate|snapshot|refresh|exec|terminal)$/,
 ];
 
 /**
