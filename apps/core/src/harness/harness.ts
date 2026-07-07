@@ -453,8 +453,8 @@ export async function runAgentLoop(
 
   // Finalize-once guard: usage is written exactly once per task and the root OTel
   // span is ended once. Finalization happens after terminal logs/replies so those
-  // records retain tenant/trace context, then explicitly flushes before Lambda can
-  // freeze the process.
+  // records retain tenant/trace context, then explicitly flushes before returning
+  // to avoid losing buffered telemetry during shutdown or suspension.
   let usageFinalized = false;
   let finishObserved = false;
   let taskUsage: LanguageModelUsage | undefined;
@@ -598,8 +598,8 @@ export async function runAgentLoop(
       await rootPublished;
       await Promise.allSettled([forceFlushOtel(), flushObservabilityNats()]);
     } finally {
-      // Lambda execution environments are reused, so never retain one task's
-      // tenant, trace, or secret values after its exporters have flushed.
+      // The container process is reused, so never retain one task's tenant,
+      // trace, or secret values after its exporters have flushed.
       setObservabilityContext(parentObservabilityContext);
     }
   };

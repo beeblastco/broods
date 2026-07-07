@@ -1,6 +1,6 @@
 /**
  * ConvexHttpClient wrapper. Reads CONVEX_URL + CONVEX_DEPLOY_KEY from env
- * and caches a singleton client per Lambda invocation. Only loaded when
+ * and caches a singleton client in the process. Only loaded when
  * STORAGE_PROVIDER=convex.
  *
  * Deploy-key auth: use `setAdminAuth`, not `setAuth`. `setAuth` is for

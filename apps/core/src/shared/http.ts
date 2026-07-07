@@ -1,7 +1,7 @@
 /**
  * The core HTTP contract every handler speaks, plus generic request/response
  * helpers. Handlers take a CoreRequest + RequestContext and return a Web
- * Response; the transport edge (functions/server/) builds the CoreRequest from
+ * Response; the transport edge (`src/server.ts`) builds the CoreRequest from
  * a real request. Keep route-specific logic out of here.
  */
 
@@ -35,7 +35,7 @@ export interface CoreRequest {
 /**
  * Per-request execution context. `waitUntil` registers post-response background
  * work (e.g. a channel webhook that acks then processes) that the server drains
- * before shutdown — the same role the Lambda runtime's response-tail once served.
+ * before shutdown.
  */
 export interface RequestContext {
   requestId: string;

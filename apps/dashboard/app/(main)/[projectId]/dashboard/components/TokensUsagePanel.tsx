@@ -78,9 +78,9 @@ function numericAttribute(span: ObservabilitySpanRow, key: string): number {
   return typeof value === "number" ? value : 0;
 }
 
-// A turn can't outlive the Lambda (15-min ceiling). A task still "running" past
-// this never reported its terminal span (crash/freeze), so excluding it keeps a
-// dead task from inflating the live total forever.
+// A task still "running" past this likely never reported its terminal span
+// (crash/freeze), so excluding it keeps a dead task from inflating the live total
+// forever.
 const STALE_RUNNING_TASK_MS = 20 * 60 * 1000;
 
 /**

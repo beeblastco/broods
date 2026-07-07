@@ -18,7 +18,7 @@ cp apps/core/.env.example apps/core/.env
 ```bash
 bun run check            # typecheck core + convex + SDK + demos
 bun run test             # core unit tests (max-concurrency 1)
-bun run build            # build Lambda binaries
+bun run build            # build the core Bun container binary
 bun run demo stream.ts   # run a demo script (loads packages/demos/.env)
 ```
 
@@ -34,7 +34,7 @@ bun run demo stream.ts   # run a demo script (loads packages/demos/.env)
 
 - Open an issue first to align on the approach.
 - Read the workspace-specific `AGENTS.md` before editing files in that workspace:
-  - `apps/core/AGENTS.md` — Lambda runtime, tools, channels, SST
+  - `apps/core/AGENTS.md` — Bun container runtime, tools, channels, SST
   - `apps/dashboard/AGENTS.md` — Next.js dashboard, WorkOS auth
   - `packages/convex/AGENTS.md` — Convex schema, functions, auth
   - `AGENTS.md` (root) — monorepo-wide rules
@@ -51,9 +51,9 @@ bun run demo stream.ts   # run a demo script (loads packages/demos/.env)
 
 ## Adding Features
 
-- **New channel** — create `apps/core/functions/_shared/<channel>-channel.ts` implementing `ChannelAdapter`, then wire it into `apps/core/functions/harness-processing/integrations.ts`. Keep channel-specific logic inside the channel module.
-- **New tool** — create `apps/core/functions/harness-processing/tools/<name>.tool.ts`, export a default factory, register it in `apps/core/functions/harness-processing/tools/index.ts`, and add config validation in `apps/core/functions/_shared/storage/agent-config.ts`.
-- **New command** — add an entry to `apps/core/functions/_shared/commands.ts`.
+- **New channel** — create `apps/core/src/shared/<channel>-channel.ts` implementing `ChannelAdapter`, then wire it into `apps/core/src/harness/integrations.ts`. Keep channel-specific logic inside the channel module.
+- **New tool** — create `apps/core/src/harness/tools/<name>.tool.ts`, export a default factory, register it in `apps/core/src/harness/tools/index.ts`, and add config validation in `apps/core/src/shared/storage/agent-config.ts`.
+- **New command** — add an entry to `apps/core/src/shared/commands.ts`.
 
 ## Cross-Workspace Rules
 

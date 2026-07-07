@@ -510,7 +510,7 @@ function nodeHeredoc(code: string): string {
 }
 
 function parseRunnerOutput(stdout: string): RunnerResult | null {
-  // Uploaded tools may log arbitrary stdout. The marker lets the Lambda find the
+  // Uploaded tools may log arbitrary stdout. The marker lets the harness find the
   // runner's final structured JSON line without treating user logs as protocol.
   const line = stdout
     .split(/\r?\n/)
@@ -585,7 +585,7 @@ function customToolReservationKey(accountId: string, toolId: string): string {
  * uploaded tool, so the reserved sandbox is created/resumed and Ready while the
  * model is still producing its first response — the real call then lands on a
  * warm sandbox (~0.8s) instead of paying create-on-first-use. Fire-and-forget; only
- * runs in the deployed Lambda (it would otherwise hit a real sandbox host from tests/local).
+ * runs in the deployed runtime (it would otherwise hit a real sandbox host from tests/local).
  */
 export function prewarmAccountTool(
   accountId: string,

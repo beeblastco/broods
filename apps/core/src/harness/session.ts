@@ -111,7 +111,7 @@ interface SubagentMetadata {
 /**
  * Shared fields for every stored conversation event.
  * `version` gives us a migration hook for future schema changes, and
- * `sourceEventId` ties projected rows back to the inbound Lambda/webhook event
+ * `sourceEventId` ties projected rows back to the inbound request/webhook event
  * that created them for dedupe/debugging.
  */
 interface StoredEventBase {

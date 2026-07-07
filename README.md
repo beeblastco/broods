@@ -68,7 +68,7 @@ For self-hosted deployments, point `BROODS_HOST` or `BROODS_BASE_URL` at your ga
 
 ```text
 apps/
-  core/         # SST app — Lambdas, account management, agent loop
+  core/         # SST-provisioned AWS data plane + Bun container runtime
   dashboard/    # Next.js dashboard
   docs/         # Docusaurus docs
 packages/
@@ -118,7 +118,7 @@ Contributions are welcome. Open an issue first to align on the approach, then se
 bun install      # install all workspaces
 bun run check    # typecheck core + convex + SDK + demos
 bun run test     # core unit tests
-bun run build    # build Lambda binaries
+bun run build    # build the core Bun container binary
 ```
 
 CI runs on every PR via `.github/workflows/ci.yaml`.

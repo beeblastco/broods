@@ -57,7 +57,7 @@ broods run my-agent "Hello"  # one-off run with pretty streaming
 
 ## Self-Hosted Configuration
 
-For self-hosted deployments, `sst.config.ts` is the source of truth for infra names, tags, region, Lambda resources, DynamoDB tables, S3 bucket, and SST secrets.
+For self-hosted deployments, `sst.config.ts` is the source of truth for infra names, tags, region, the AWS data plane, MicroVM sandbox integration, DynamoDB tables, S3 bucket, and SST secrets.
 
 Use `apps/core/.env` for local SST inputs only:
 
@@ -66,9 +66,9 @@ Use `apps/core/.env` for local SST inputs only:
 - `AWS_ACCOUNT_ID`, `PROJECT_NAME`, `PROJECT_OWNER_EMAIL` - Required by `sst.config.ts`; no in-source defaults.
 - `ENABLE_DIRECT_API` - Deploys as `false` unless set to `true`; enables direct sync and async POST access to `harness-processing`.
 - `ENABLE_WEBSOCKET` - Set to `true` to enable WebSocket gateway worker invocations.
-- `NATS_URL` - Required when `ENABLE_WEBSOCKET=true`; ignored by the deployed Lambda when WebSocket is disabled. The transport is chosen by scheme: `wss://`/`ws://` (WebSocket, e.g. `wss://nats.beeblast.co` from the out-of-cluster Lambda) or `nats://`/`tls://` (core TCP, for future in-cluster callers).
+- `NATS_URL` - Required when `ENABLE_WEBSOCKET=true`; ignored by the deployed core container when WebSocket is disabled. The transport is chosen by scheme: `wss://`/`ws://` (WebSocket, e.g. `wss://nats.beeblast.co` from an out-of-cluster caller) or `nats://`/`tls://` (core TCP, for in-cluster callers).
 - `NATS_TOKEN` - Token-auth credential for the NATS server; optional (omit for an unauthenticated server).
-- `OPA_BASE_URL` - Optional OPA REST endpoint for runtime policy decisions. The Lambdas run outside the cluster, so the hosted stages use the exposed `https://opa.beeblast.co` endpoint; `http://127.0.0.1:8181` only works against a locally running OPA.
+- `OPA_BASE_URL` - Optional OPA REST endpoint for runtime policy decisions. The core container needs a reachable OPA endpoint; hosted stages use the exposed `https://opa.beeblast.co` endpoint, while `http://127.0.0.1:8181` only works against a locally running OPA.
 - `OPA_API_TOKEN` - Bearer token for the OPA REST API. Required when the endpoint enforces token authentication (the hosted `opa.beeblast.co` does); sent as an `Authorization: Bearer` header.
 
 Runtime secrets are SST secrets. Generate your own secret and set

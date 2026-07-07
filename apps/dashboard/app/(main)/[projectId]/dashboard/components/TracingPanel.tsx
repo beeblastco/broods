@@ -105,9 +105,9 @@ function spanKey(span: ObservabilitySpanRow): string {
   return `${span.traceId}:${span.spanId}`;
 }
 
-// A turn can't outlive the Lambda (~15-min ceiling). A root task/subtask still
-// "running" past this never reported its terminal span (crash/freeze or a lost
-// publish), so we treat it as finished — otherwise the spinner spins forever.
+// A root task/subtask still "running" past this likely never reported its
+// terminal span (crash/freeze or a lost publish), so we treat it as finished —
+// otherwise the spinner spins forever.
 const TASK_MAX_RUNTIME_MS = 16 * 60 * 1000;
 
 /** Whether a root task/subtask is genuinely still running (bounded by freshness). */

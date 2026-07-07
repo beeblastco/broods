@@ -1,5 +1,5 @@
 /**
- * OTel trace/log exporters for the harness, plus the per-invocation
+ * OTel trace/log exporters for the harness, plus the per-request
  * observability context store. A no-op when OTEL_EXPORTER_OTLP_ENDPOINT is unset;
  * never throws into the agent path.
  */
@@ -30,13 +30,12 @@ export interface ObservabilityContext {
 }
 
 // The observability context (per-tenant secretValues for log redaction + NATS
-// routing tags) must be request-scoped. Under Lambda's one-request-per-process
-// model a module global was safe, but the self-hosted container serves many
-// tenants concurrently in one process, so a global would let one request's
+// routing tags) must be request-scoped. The self-hosted container serves many
+// tenants concurrently in one process, so a module global would let one request's
 // secrets/tags clobber another's mid-flight. Each container entry point opens a
 // scope via runWithObservabilityScope; setters write into that request's cell.
-// When no scope is active (e.g. the Lambda runtime, which never opens one) the
-// module global is used, preserving the previous single-tenant behaviour.
+// When no scope is active, the module global is used as a narrow fallback for
+// tests and legacy direct call sites.
 interface ObservabilityCell {
   current: ObservabilityContext | null;
 }
@@ -161,7 +160,7 @@ export function observabilityAttributes(
   };
 }
 
-/** Flush buffered logs and spans before Lambda returns and freezes the process. */
+/** Flush buffered logs and spans before the request returns or the process exits. */
 export async function forceFlushOtel(): Promise<void> {
   await Promise.allSettled([
     _tracerProvider?.forceFlush() ?? Promise.resolve(),

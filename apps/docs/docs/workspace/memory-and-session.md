@@ -109,7 +109,7 @@ flowchart LR
 
 ## Runtime Behavior
 
-[`Session`](https://github.com/beeblastco/broods/blob/dev/apps/core/functions/harness-processing/session.ts) owns the runtime path:
+[`Session`](https://github.com/beeblastco/broods/blob/dev/apps/core/src/harness/session.ts) owns the runtime path:
 
 - `claim()` deduplicates an inbound event in `ProcessedEvents`.
 - `acquireConversationLease()` serializes work per conversation.
@@ -117,12 +117,12 @@ flowchart LR
 - `appendIngressEvents()` persists incoming user, assistant, tool, and persisted system messages.
 - `createTurnContext()` loads conversation entries, builds system prompt parts, runs compaction when configured, and prunes model-visible messages.
 - `resolvedWorkspaces()` (backed by `resolveAgentRuntime()` in
-  `functions/_shared/workspaces.ts`) resolves account-scoped workspace and sandbox records,
+  `src/shared/workspaces.ts`) resolves account-scoped workspace and sandbox records,
   applies per-workspace sandbox overrides, and hashes `accountId:workspaceId` with
   `normalizeFilesystemNamespace()`.
 - `filesystemNamespace()` returns the default workspace namespace for existing single-workspace callers.
 
-The namespace helper is in [`functions/_shared/runtime-keys.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/functions/_shared/runtime-keys.ts). The config interface and validation live in [`functions/_shared/storage/agent-config.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/functions/_shared/storage/agent-config.ts).
+The namespace helper is in [`src/shared/runtime-keys.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/src/shared/runtime-keys.ts). The config interface and validation live in [`src/shared/storage/agent-config.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/src/shared/storage/agent-config.ts).
 
 ## Configure It
 

@@ -79,7 +79,7 @@ export interface WorkspaceSandboxLimits {
 
 /**
  * Per-call sandbox limits for a provider. Defaults and output caps are universal
- * (they protect the harness Lambda); the timeout/memory *maxima* are provider-aware
+ * (they protect the harness runtime); the timeout/memory *maxima* are provider-aware
  * because lambda (MicroVM) caps memory at the 8 GB largest size — the other
  * persistent providers are operator-sized. Output truncation always applies (output
  * is read back into the harness regardless of provider).

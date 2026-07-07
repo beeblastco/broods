@@ -163,7 +163,7 @@ sequenceDiagram
 
 For sync SSE, `handler.ts` creates one `SubagentCoordinator` for the request and passes its dispatcher into `harness.ts`. `harness.ts` exposes that dispatcher through the `run_subagent` tool. The tool dispatches child runs and returns task ids immediately.
 
-Child runs are Promise-concurrent inside the same Lambda invocation. They are not separate Lambda workers. The active parent model stream continues after the tool result, so the parent can keep answering, call other tools, or finish its current pass.
+Child runs are Promise-concurrent inside the same request or worker. They are not separate worker processes. The active parent model stream continues after the tool result, so the parent can keep answering, call other tools, or finish its current pass.
 
 If a child finishes while the parent model is still streaming, the result is queued in memory by the coordinator. It is not injected into the active model call because AI SDK model context cannot be changed mid-generation. After the parent stream ends, `runParentContinuationLoop()` waits for all outstanding child work from the current batch to finish, injects the queued child results into the parent conversation together, and starts one parent model pass on the same SSE response.
 
@@ -182,10 +182,10 @@ The subagent handoff is the bridge between parent passes:
 - return `0` when no subagents are pending, allowing the SSE response to close
 - wait for all outstanding child work when children are still running
 - emit heartbeat comments during SSE waits
-- inject completed results and timeout notices together near the Lambda deadline so the parent can produce a partial continuation
+- inject completed results and timeout notices together near the request or worker deadline so the parent can produce a partial continuation
 
 ## Async And Channels
 
-`/async`, NATS WebSocket worker, and channel/webhook requests use the same coordinator loop without SSE comment heartbeats. They still wait for in-process subagents because child runs currently execute inside the same Lambda invocation. When batched child results are injected, the parent model runs a continuation before the async result, WebSocket worker, or channel reply is settled.
+`/async`, NATS WebSocket worker, and channel/webhook requests use the same coordinator loop without SSE comment heartbeats. They still wait for in-process subagents because child runs currently execute inside the same request or worker. When batched child results are injected, the parent model runs a continuation before the async result, WebSocket worker, or channel reply is settled.
 
-`AsyncAgentResult` still stores subagent task status for polling, but the SSE continuation path does not need separate child Lambda processors.
+`AsyncAgentResult` still stores subagent task status for polling, but the SSE continuation path does not need separate child processors.

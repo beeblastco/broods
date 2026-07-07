@@ -1,5 +1,5 @@
 /**
- * Main Lambda handling logic for harness-processing.
+ * Harness-processing request handler for the Bun container runtime.
  * Keep request orchestration, session setup, and response shaping here.
  */
 
@@ -107,10 +107,9 @@ export async function handler(
   event: CoreRequest | AsyncWorkerInvocation | NatsWorkerInvocation | CronInvocation,
   context?: RequestContext,
 ): Promise<Response> {
-  // Each invocation (a Lambda call, an HTTP request, or an in-process worker in
-  // the container) gets a request-private observability scope so concurrent
-  // tenants in the shared container process cannot clobber each other's log
-  // redaction secrets or NATS routing tags.
+  // Each HTTP request or in-process worker gets a request-private observability
+  // scope so concurrent tenants in the shared container process cannot clobber
+  // each other's log redaction secrets or NATS routing tags.
   return runWithObservabilityScope(() => handleRequest(event, context));
 }
 
@@ -385,7 +384,7 @@ function continuationResponse(settled: AsyncToolResultRecord, outcome: Continuat
 }
 
 /**
- * Handle the direct SSE request invoke to the Lambda function.
+ * Handle a direct SSE request.
  */
 async function handleDirectRequest(event: DirectInboundEvent, context?: RequestContext): Promise<Response> {
   if (event.connectionId) {
@@ -436,8 +435,8 @@ async function handleDirectRequest(event: DirectInboundEvent, context?: RequestC
 }
 
 /**
- * Handle the direct Async request invoke to the Lambda function.
- * Return a 204 Accepted response and trigger AsyncWorkerRequest.
+ * Handle a direct async request.
+ * Return a 202 Accepted response and trigger an in-process async worker.
  */
 async function handleAsyncRequest(event: AsyncDirectInboundEvent): Promise<Response> {
   if (!hasRunnableDirectEvents(event)) {
@@ -474,8 +473,8 @@ async function handleAsyncRequest(event: AsyncDirectInboundEvent): Promise<Respo
 }
 
 /**
- * Handle the AsyncWorkerRequest invoke to the Lambda function.
- * Publish the final result into DynamoDB.
+ * Handle an in-process async worker request.
+ * Publish the final result into storage.
  */
 async function handleAsyncWorkerRequest(event: DirectInboundEvent, context?: RequestContext): Promise<void> {
   try {
@@ -581,7 +580,7 @@ async function handleAsyncWorkerRequest(event: DirectInboundEvent, context?: Req
 }
 
 /**
- * Handle the NatsWorkerRequest invoke to the Lambda function.
+ * Handle an in-process NATS worker request.
  * Publish the streaming event to NATS subject.
  */
 async function handleNatsWorkerRequest(event: DirectInboundEvent, context?: RequestContext): Promise<void> {
@@ -700,7 +699,7 @@ async function handleNatsWorkerRequest(event: DirectInboundEvent, context?: Requ
 }
 
 /**
- * Handle the integration channel webhook request to the Lambda function.
+ * Handle an integration channel webhook request.
  * Publish the final result back to the channel integration sendText() function.
  */
 async function handleChannelRequest(event: ChannelInboundEvent, context?: RequestContext): Promise<void> {
@@ -988,7 +987,7 @@ async function handleChannelContext(event: ChannelContextEvent): Promise<void> {
 }
 
 /**
- * Handle the status request invoke to the Lambda function.
+ * Handle a status request.
  */
 async function handleStatusRequest(event: StatusInboundEvent): Promise<Response> {
   const result = await getAsyncAgentResult(event.eventId);
@@ -1130,7 +1129,7 @@ async function pushReplyToChannel(event: DirectInboundEvent, text: string): Prom
 }
 
 /**
- * Invokes the harness-processing Lambda asynchronously to process a direct API async request.
+ * Dispatches an in-process harness worker for a direct API async request.
  * Used for background processing of non-streaming requests.
  */
 async function invokeAsyncWorker(event: DirectInboundEvent): Promise<void> {
@@ -1162,7 +1161,7 @@ async function invokeAsyncToolContinuationWorker(
 }
 
 /**
- * Invokes the harness-processing Lambda asynchronously to handle NATS-based WebSocket streaming.
+ * Dispatches an in-process harness worker for NATS-based WebSocket streaming.
  * Used for real-time streaming responses to connected clients.
  */
 async function invokeNatsWorker(event: DirectInboundEvent): Promise<void> {
@@ -1505,10 +1504,10 @@ async function runAgentLoopUntilSubagentsIdle(
 /**
  * Runs parent model passes until there is no runnable injected work.
  *
- * Heartbeats are emitted only while this Lambda waits on in-process subagents,
- * built-in async tools, or uploaded async tools on SSE. Detached uploaded async
- * tools do not add pending work here, so the Lambda can exit after sealing the
- * group.
+ * Heartbeats are emitted only while this request or worker waits on in-process
+ * subagents, built-in async tools, or uploaded async tools on SSE. Detached
+ * uploaded async tools do not add pending work here, so the request or worker can
+ * return after sealing the group.
  */
 async function runParentContinuationLoop(options: {
   session: Session;
@@ -1560,9 +1559,9 @@ async function runParentContinuationLoop(options: {
       // step that are still running in the background. Wait for them to settle
       // before returning so each child finalizes — publishing AND flushing its
       // terminal span. Otherwise the abandoned children spin "running" forever in
-      // the dashboard: their running span was stored durably, but the Lambda froze
-      // before the terminal one was ever flushed. Bounded by the same deadline
-      // budget as the success path.
+      // the dashboard: their running span was stored durably, but the request or
+      // worker returned before the terminal one was ever flushed. Bounded by the
+      // same deadline budget as the success path.
       if (options.subagentCoordinator.pendingCount > 0) {
         await options.subagentCoordinator.waitForIdle({ onHeartbeat: options.onHeartbeat });
       }
@@ -1612,9 +1611,9 @@ async function runParentContinuationLoop(options: {
  * After the parent stream ends, subagent and async-tool results may already be
  * queued, still be running, or be absent. This helper waits for outstanding
  * in-process work, emits wait heartbeats while waiting, and injects
- * parent-visible completions plus timeout notices near the Lambda deadline.
+ * parent-visible completions plus timeout notices near the request or worker deadline.
  * Detached uploaded async tools do not add in-memory pending work, so waiting
- * here only holds the Lambda for subagents, built-in async tools, and uploaded
+ * here only holds the request or worker for subagents, built-in async tools, and uploaded
  * async tools on SSE.
  */
 async function waitAndDrainAsyncWork(

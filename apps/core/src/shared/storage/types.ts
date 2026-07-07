@@ -1,6 +1,6 @@
 /**
  * Domain-shaped StorageProvider interface and record types.
- * The provider abstracts persistence so the same Lambda binary can talk to
+ * The provider abstracts persistence so the same core binary can talk to
  * DynamoDB (OSS / self-host default) or Convex (SaaS deployment).
  *
  * Method names mirror the Convex submodule (getById, getBySecretHash, create,

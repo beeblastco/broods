@@ -1,7 +1,7 @@
 /**
  * Storage factory. Reads STORAGE_PROVIDER from env (default "dynamodb")
  * and lazily loads the matching provider so the unused provider's deps
- * are not pulled into the Lambda bundle / runtime.
+ * are not pulled into the container binary/runtime.
  */
 
 import { optionalEnv } from "../env.ts";

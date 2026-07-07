@@ -1,7 +1,7 @@
 /**
  * Wire types for the public account-manage and harness APIs. These mirror
  * the deployed API contract (docs/api-reference/openapi.yaml is the source
- * of truth); they are intentionally independent of the Lambda internals so
+ * of truth); they are intentionally independent of the runtime internals so
  * the SDK keeps working when the runtime is ported.
  */
 

@@ -52,7 +52,7 @@ Current implementation:
 - AES-256-GCM encrypts the config before DynamoDB write.
 - `ACCOUNT_CONFIG_ENCRYPTION_SECRET` comes from SST secrets.
 - DynamoDB stores encrypted config, not readable provider credentials.
-- Lambdas decrypt config only when they need selected agent runtime settings.
+- The core runtime decrypts config only when it needs selected agent runtime settings.
 
 ## API Responses
 
@@ -76,7 +76,7 @@ This keeps the product easy to run and change:
 ## Limits
 
 - `ACCOUNT_CONFIG_ENCRYPTION_SECRET` must be protected.
-- Lambdas with the encryption secret and table access can decrypt config.
+- Any runtime with the encryption secret and table access can decrypt config.
 - Key rotation needs a migration.
 - This protects against accidental table-read exposure, not compromised application code.
 - Third-party sandbox providers such as E2B, Daytona, and Vercel run outside the AWS Lambda sandbox boundary. Configure them with isolated mounts, minimal environment variables, provider-side egress controls, and no account/provider secrets unless a workload explicitly needs them. Daytona S3 mounts receive short-lived credentials from the dedicated `sandbox-s3mount` IAM role, scoped to the workspace's own key prefix — never the harness runtime's credentials.

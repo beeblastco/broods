@@ -139,7 +139,7 @@ export interface SandboxCpuSample {
 
 // A detached, long-running job started inside a persistent sandbox. The work
 // outlives the harness request: it runs in the sandbox (workdir sandbox / daytona
-// session / e2b background command), not in the Lambda. Identified by `jobId`.
+// session / e2b background command), not in the core runtime. Identified by `jobId`.
 export type SandboxJobState = "running" | "completed" | "failed" | "unknown";
 
 export interface SandboxJobHandle {

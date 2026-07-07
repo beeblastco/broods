@@ -7,7 +7,7 @@ it so the dashboard, Loki, and Tempo all see a single correlated stream per tena
 
 ## The three sinks
 
-`functions/_shared/log.ts` `emit()` is the single place every line is redacted, then
+`src/shared/log.ts` `emit()` is the single place every line is redacted, then
 written to:
 
 ```mermaid
@@ -45,7 +45,7 @@ dashboard stream all correlate:
 
 `account_id` · `project` · `environment` · `endpoint_id` · `agent_id` · `conversation_key` · `trace_id`
 
-NATS subjects encode the routable subset (`functions/_shared/nats.ts`):
+NATS subjects encode the routable subset (`src/shared/nats.ts`):
 
 ```text
 v1.<accountId>.<project>.<base64url(environment)>.{logs|traces}.<endpointId>
@@ -65,7 +65,7 @@ three reach the same per-tenant view** with no change to the executor code.
 
 ```mermaid
 flowchart TD
-  subgraph harness["harness-processing (Lambda)"]
+  subgraph harness["harness-processing (Bun container)"]
     Exec["bash / read / write / edit tool result"] --> Log["log.ts emit()"]
     Life["sandbox lifecycle<br/>acquire / suspend / resume / terminate"] --> Log
   end

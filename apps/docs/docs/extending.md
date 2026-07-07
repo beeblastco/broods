@@ -12,7 +12,7 @@ Use [Channels](channels/index.md) for Telegram, GitHub, Slack, Discord, or any n
 
 ## Add a Command
 
-1. Add a new entry to the `commands` array in [`functions/_shared/commands.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/functions/_shared/commands.ts).
+1. Add a new entry to the `commands` array in [`src/shared/commands.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/src/shared/commands.ts).
 2. Include aliases, description, and an execute function.
 3. Use the channel-agnostic `ChannelActions` interface from shared code.
 

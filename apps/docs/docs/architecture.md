@@ -189,8 +189,8 @@ flowchart TD
 
   Async --> Pending["async-agent-result.ts<br/>processing"]
   Pending --> AsyncTable["AsyncAgentResult"]
-  Async --> SelfInvoke["Lambda async self-invocation"]
-  SelfInvoke --> Session
+  Async --> Worker["in-process async worker dispatch"]
+  Worker --> Session
   Agent --> Complete["async-agent-result.ts<br/>completed / failed"]
   Complete --> AsyncTable
 
@@ -199,7 +199,7 @@ flowchart TD
   Status --> AsyncTable
 ```
 
-The async path starts inside `harness-processing`: `POST /async` creates `AsyncAgentResult`, returns a status URL, and starts an internal Lambda Event invocation. Subagents and built-in async tools run inside that Lambda. Uploaded custom tools always execute in the `sandbox` provider; uploaded async tools are waited on for SSE, but `/async`, channel, and NATS turns launch them as detached sandbox work that completes through `/sandbox-jobs/{resultId}/complete`.
+The async path starts inside `harness-processing`: `POST /async` creates `AsyncAgentResult`, returns a status URL, and dispatches an in-process worker. Subagents and built-in async tools run inside that worker. Uploaded custom tools always execute in the `sandbox` provider; uploaded async tools are waited on for SSE, but `/async`, channel, and NATS turns launch them as detached sandbox work that completes through `/sandbox-jobs/{resultId}/complete`.
 
 ```mermaid
 flowchart TD
@@ -266,7 +266,7 @@ landed after the original connection closed.
 
 ```mermaid
 flowchart TD
-  Harness["harness-processing Lambda"] -->|"nc.publish (one publish)"| Subj["subject<br/>v1.acct.agent.ws.response.convToken"]
+  Harness["harness-processing worker"] -->|"nc.publish (one publish)"| Subj["subject<br/>v1.acct.agent.ws.response.convToken"]
   Subj -->|"live fan-out"| GWlive["core subscribe<br/>(connected client)"]
   Subj -->|"captured (stored once)"| NATS["WS_RESPONSES stream<br/>(durable buffer)"]
   NATS -->|"JetStream consumer<br/>replay from seq / time"| GWreplay["reconnecting / late client"]
@@ -275,14 +275,14 @@ flowchart TD
 ```
 
 The gateway (the **caller's** service) owns client auth, the subscription, and
-the `nats-worker` Lambda invocation. Lambda does **one core publish** per chunk;
+the `nats-worker` request. The worker does **one core publish** per chunk;
 the bound `WS_RESPONSES` stream captures that same message for replay.
 
 NATS subject patterns:
 
 | Subject | Direction | Purpose |
 | --------- | ----------- | --------- |
-| `v1.{accountId}.{agentId}.ws.response.{convToken}` | Lambda → Gateway | Vercel AI SDK stream events (`step-start`, `text`, `tool-call`, `finish`, `error`, …) |
+| `v1.{accountId}.{agentId}.ws.response.{convToken}` | Core → Gateway | Vercel AI SDK stream events (`step-start`, `text`, `tool-call`, `finish`, `error`, …) |
 
 `convToken = base64url(publicConversationKey)` — a single NATS-safe token.
 
@@ -311,7 +311,7 @@ Notes:
   publishing stays on the fast path.
 - **Transport (by URL scheme):** `connectNats` in `nats.ts` selects the client
   from `NATS_URL`: `wss://`/`ws://` → WebSocket (`nats.ws`) for out-of-cluster
-  callers like Lambda (the cluster exposes only a `wss://` ingress externally);
+  callers (the cluster exposes only a `wss://` ingress externally);
   `nats://`/`tls://` → core TCP (`nats`) for in-cluster callers on the internal
   network (lower latency; core `4222` is not exposed externally). Moving a service
   in-cluster is then a `NATS_URL` change, not a code change. `NATS_TOKEN` carries
@@ -345,14 +345,14 @@ Notes:
 > **Infra (lives in the infra repo, applied via CI/CD):** the cluster NATS runs
 > JetStream with a **WebSocket listener + Traefik ingress** at `wss://nats.beeblast.co`
 > (token auth via the `nats-auth` secret) and a file-backed JetStream PVC — so the
-> Lambda connects over `wss://` today. For production durability, enable JetStream
+> Out-of-cluster callers connect over `wss://` today. For production durability, enable JetStream
 > **clustering** (`replicas: 3`, which multiplies storage by 3). Core `4222` stays
 > cluster-internal for future in-cluster callers (see the Transport note above).
 
 ## Deferred delivery & resume (background jobs)
 
-A detached sandbox job outlives the Lambda that launched it, so its result has to
-be delivered in a *later* invocation and routed back to wherever the turn came
+A detached sandbox job can outlive the request or worker that launched it, so its result has to
+be delivered in a *later* continuation and routed back to wherever the turn came
 from. The mechanism is a small **delivery descriptor carried on the Session and
 persisted with the job**, so no live connection state needs to survive — only an
 identifier the next invocation can rebuild from.
@@ -441,4 +441,4 @@ Agents control model selection, channel credentials, optional skills, subagents,
 
 On the production stage the config domains (accounts, agents, sandboxes, workspaces, tools, cron jobs) are stored in Convex instead of DynamoDB; runtime tables (conversations, dedup, async results) stay in DynamoDB on every stage.
 
-Built-in tool execution is inline in `harness-processing`. Uploaded custom tools execute in the `sandbox` (workdir) provider. `async: true` only changes the lifecycle: built-in async stays in the current Lambda, uploaded async waits on SSE, and uploaded async detaches automatically on `/async`, channel, and NATS turns. Subagents are in-process child agent loops; they do not require child Lambda workers.
+Built-in tool execution is inline in `harness-processing`. Uploaded custom tools execute in the `sandbox` (workdir) provider. `async: true` only changes the lifecycle: built-in async stays in the current request or worker, uploaded async waits on SSE, and uploaded async detaches automatically on `/async`, channel, and NATS turns. Subagents are in-process child agent loops; they do not require child workers.

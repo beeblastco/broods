@@ -110,7 +110,7 @@ export async function createTools(context: Omit<ToolContext, "config">, agentCon
   const hasBackgroundWorkspace = workspaces.some((workspace) => sandboxSupportsBackgroundJobs(workspace.sandbox));
   // eventId identifies the turn that spawned the job (stored as parentEventId on the
   // async-tool-result record); conversationKey identifies which conversation to resume
-  // when the job completes in a future Lambda invocation. delivery carries the
+  // when the job completes in a future continuation worker. delivery carries the
   // originating channel/WebSocket so the result is pushed back there, not just polled.
   const backgroundContext = hasBackgroundWorkspace && context.session
     ? {

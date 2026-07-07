@@ -1,17 +1,16 @@
 /**
- * Lambda cold-start timing. The module graph loads during the INIT phase, so the
- * first handler entry marks the boundary between init (cold start) and request
- * work. The first agent run in this execution environment consumes the window to
- * emit it as a phase span; warm invocations and later runs see nothing.
+ * Container cold-start timing. The module graph loads before the first handler
+ * entry, so the first handler entry marks the boundary between init and request
+ * work. The first agent run in this process consumes the window to emit it as a
+ * phase span; warm requests and later runs see nothing.
  */
 
-// Process spawn approximated from uptime at module load (during INIT).
+// Process spawn approximated from uptime at module load.
 const PROCESS_START_MS = Date.now() - Math.round(process.uptime() * 1000);
 
-// Upper bound on a real init window. AWS caps the INIT phase well under this; a
-// larger gap means the container initialized, then idled in the pool before its
-// first request (e.g. provisioned concurrency). That idle is not this request's
-// latency, so clamp it — otherwise the cold-start span balloons the whole trace.
+// Upper bound on a real init window. A larger gap means the container initialized,
+// then idled before its first request. That idle is not this request's latency,
+// so clamp it — otherwise the cold-start span balloons the whole trace.
 const MAX_COLD_START_MS = 60_000;
 
 let coldStartWindow: { startMs: number; endMs: number } | undefined;

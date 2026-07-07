@@ -22,7 +22,7 @@ contract.
 > A namespace's files live directly under `<namespace>/` in the managed bucket. The
 > harness-side S3 reads/writes and the sandbox's own `mount-s3` mount must use the same
 > layout, so both go through `workspaceNamespacePrefix()` in
-> `functions/_shared/sandbox.ts` — change the layout there and both move together. The
+> `src/shared/sandbox.ts` — change the layout there and both move together. The
 > `<namespace>/` segment is also the tenant-isolation boundary the per-mount IAM session
 > policy is scoped to.
 
@@ -45,7 +45,7 @@ flowchart TD
 
 Every S3-backed provider mounts the selected prefix at the workspace directory for the run with `mount-s3`. The Lambda MicroVM provider mounts inside the VM from its `/run` lifecycle hook; the `sandbox`/workdir and Daytona providers mount per run (`mountAwsS3Buckets: true`, or any workspace with `storage` for the `sandbox` provider). E2B and Vercel do not currently support S3 workspaces in this harness; attaching an S3 workspace to those sandboxes fails fast instead of silently using provider-native filesystem state.
 
-The mount target + credentials are resolved one way for every S3 provider (`functions/harness-processing/sandbox/s3-mount.ts`): the managed bucket is partitioned by `<namespace>/`; a [bring-your-own bucket](#bring-your-own-bucket) uses its own bucket/prefix and short-lived assume-role credentials. When a workspace has `isolation: true`, channel, direct API, and cron runs mount the workspace root; conversation-scoped channel runs mount the configured child alias folder.
+The mount target + credentials are resolved one way for every S3 provider (`src/harness/sandbox/s3-mount.ts`): the managed bucket is partitioned by `<namespace>/`; a [bring-your-own bucket](#bring-your-own-bucket) uses its own bucket/prefix and short-lived assume-role credentials. When a workspace has `isolation: true`, channel, direct API, and cron runs mount the workspace root; conversation-scoped channel runs mount the configured child alias folder.
 
 The dashboard workspace **Files** tab lists and mutates this same S3 namespace through
 the authenticated Convex config-plane API. Uploads, renames, and deletes therefore
@@ -95,7 +95,7 @@ So pick the door by **who last wrote the file**, not by how much time has passed
 | Reading… | Last writer | Read via | Rationale |
 | --- | --- | --- | --- |
 | Agent-written workspace files (agent-created files, agent-edited `MEMORY.md`) | sandbox, through the mount | **Sandbox mount** — `bash`, `read`, `glob`, `grep` | the S3 API is stale for up to ~2 min, so it can miss very recent sandbox writes |
-| Harness-written workspace files (`.stage.json` manifest, the staged copy `load_skill` wrote, sandbox artifact write-back) | harness, via S3 | **S3 API** (`functions/_shared/s3.ts`) | already in the bucket and instantly correct through both doors; no sandbox round-trip needed |
+| Harness-written workspace files (`.stage.json` manifest, the staged copy `load_skill` wrote, sandbox artifact write-back) | harness, via S3 | **S3 API** (`src/shared/s3.ts`) | already in the bucket and instantly correct through both doors; no sandbox round-trip needed |
 | Account skill bucket (the skill "origin") | harness, via S3 | **S3 API** | a separate bucket, never mounted |
 
 The agent always reads through the mount (its `bash` tool *is* the mount), so it always sees its own writes instantly regardless of elapsed time. The S3-API-vs-mount decision only applies to **harness-side reads**.

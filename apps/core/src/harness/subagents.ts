@@ -252,7 +252,7 @@ export class SubagentCoordinator {
    *
    * This method intentionally does not await `runTask`. The parent model gets
    * task ids back immediately while the promise keeps progressing in the same
-   * Lambda invocation. Completion or failure is normalized into the coordinator
+   * request or worker. Completion or failure is normalized into the coordinator
    * queue so the parent loop can inject it later.
    */
   private startTask(task: ResolvedSubagentTask, subagentParent?: SubagentParentContext): void {

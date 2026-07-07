@@ -41,10 +41,10 @@ flowchart TD
 
 Webhook handling is split deliberately:
 
-- [`functions/harness-processing/integrations.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/functions/harness-processing/integrations.ts) owns routing, account/agent lookup, adapter selection, provider ACKs, and normalized channel events.
-- [`functions/harness-processing/handler.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/functions/harness-processing/handler.ts) owns session setup, command dispatch, agent execution, and final reply handling.
-- [`functions/_shared/channels.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/functions/_shared/channels.ts) owns the shared channel contracts.
-- `functions/_shared/<channel>-channel.ts` owns provider-specific authentication, parsing, formatting, and reply API calls.
+- [`src/harness/integrations.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/src/harness/integrations.ts) owns routing, account/agent lookup, adapter selection, provider ACKs, and normalized channel events.
+- [`src/harness/handler.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/src/harness/handler.ts) owns session setup, command dispatch, agent execution, and final reply handling.
+- [`src/shared/channels.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/src/shared/channels.ts) owns the shared channel contracts.
+- `src/shared/<channel>-channel.ts` owns provider-specific authentication, parsing, formatting, and reply API calls.
 
 ---
 
@@ -52,12 +52,12 @@ Webhook handling is split deliberately:
 
 | Channel | Runtime adapter | Chat SDK package | Required config | Documentation |
 | --- | --- | --- | --- | --- |
-| `telegram` | [`functions/_shared/telegram-channel.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/functions/_shared/telegram-channel.ts) | [`@chat-adapter/telegram`](https://www.npmjs.com/package/@chat-adapter/telegram) | `botToken`, `webhookSecret`, `allowedChatIds` | [Telegram Details](telegram.md) |
-| `github` | [`functions/_shared/github-channel.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/functions/_shared/github-channel.ts) | [`@chat-adapter/github`](https://www.npmjs.com/package/@chat-adapter/github) | `webhookSecret`, `appId`, `privateKey` (+ optional `userName` for @-mention gating) | [GitHub Details](github.md) |
-| `slack` | [`functions/_shared/slack-channel.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/functions/_shared/slack-channel.ts) | [`@chat-adapter/slack`](https://www.npmjs.com/package/@chat-adapter/slack) | `botToken`, `signingSecret` | [Slack Details](slack.md) |
-| `discord` | [`functions/_shared/discord-channel.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/functions/_shared/discord-channel.ts) | [`@chat-adapter/discord`](https://www.npmjs.com/package/@chat-adapter/discord) | `botToken`, `publicKey` | [Discord Details](discord.md) |
-| `pancake` | [`functions/_shared/pancake-channel.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/functions/_shared/pancake-channel.ts) | Broods-native | `pageId`, `pageAccessToken`, `webhookSecret` | [Pancake Details](pancake.md) |
-| `zalo` | [`functions/_shared/zalo-channel.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/functions/_shared/zalo-channel.ts) | Broods-native | `botToken`, `webhookSecret`, `allowedUserIds` | [Zalo Details](zalo.md) |
+| `telegram` | [`src/shared/telegram-channel.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/src/shared/telegram-channel.ts) | [`@chat-adapter/telegram`](https://www.npmjs.com/package/@chat-adapter/telegram) | `botToken`, `webhookSecret`, `allowedChatIds` | [Telegram Details](telegram.md) |
+| `github` | [`src/shared/github-channel.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/src/shared/github-channel.ts) | [`@chat-adapter/github`](https://www.npmjs.com/package/@chat-adapter/github) | `webhookSecret`, `appId`, `privateKey` (+ optional `userName` for @-mention gating) | [GitHub Details](github.md) |
+| `slack` | [`src/shared/slack-channel.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/src/shared/slack-channel.ts) | [`@chat-adapter/slack`](https://www.npmjs.com/package/@chat-adapter/slack) | `botToken`, `signingSecret` | [Slack Details](slack.md) |
+| `discord` | [`src/shared/discord-channel.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/src/shared/discord-channel.ts) | [`@chat-adapter/discord`](https://www.npmjs.com/package/@chat-adapter/discord) | `botToken`, `publicKey` | [Discord Details](discord.md) |
+| `pancake` | [`src/shared/pancake-channel.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/src/shared/pancake-channel.ts) | Broods-native | `pageId`, `pageAccessToken`, `webhookSecret` | [Pancake Details](pancake.md) |
+| `zalo` | [`src/shared/zalo-channel.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/src/shared/zalo-channel.ts) | Broods-native | `botToken`, `webhookSecret`, `allowedUserIds` | [Zalo Details](zalo.md) |
 
 ---
 
@@ -96,7 +96,7 @@ Runnable examples live under `packages/demos/channel-*`. Provider registration i
 
 Every channel gets these behaviors from the shared pipeline, not from the adapter:
 
-- **Bot commands** — command-capable channels (Slack, Discord, and Telegram) route supported `/command` input through [`functions/_shared/commands.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/functions/_shared/commands.ts) instead of the agent: `/new` and `/clear` clear the conversation context, and `/help` lists commands. GitHub, Pancake, and Zalo treat slash-looking message text as agent input.
+- **Bot commands** — command-capable channels (Slack, Discord, and Telegram) route supported `/command` input through [`src/shared/commands.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/src/shared/commands.ts) instead of the agent: `/new` and `/clear` clear the conversation context, and `/help` lists commands. GitHub, Pancake, and Zalo treat slash-looking message text as agent input.
 - **Typing + reaction** — an accepted message immediately triggers a fire-and-forget typing indicator and a reaction where the channel supports it. Telegram and Slack reaction emoji are configurable; GitHub uses 👀; Pancake/Zalo are no-op.
 - **Tool approval auto-deny** — tools configured with `needsApproval` are automatically denied on channel turns with the reason `Tool approval is only supported through the direct API.`
 - **Error replies** — if processing fails, the channel receives `Error: <message>` as the reply.
@@ -124,7 +124,7 @@ Channel markdown formatting is delegated to the Chat SDK adapters for Slack, Tel
 
 ## Channel Contract
 
-Each channel implements `ChannelAdapter` from [`functions/_shared/channels.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/functions/_shared/channels.ts):
+Each channel implements `ChannelAdapter` from [`src/shared/channels.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/src/shared/channels.ts):
 
 | Method | Purpose |
 | --- | --- |
@@ -156,12 +156,12 @@ The normalized `InboundMessage` contains:
 
 ## Add a Channel
 
-1. Add config types to [`functions/_shared/storage/agent-config.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/functions/_shared/storage/agent-config.ts).
+1. Add config types to [`src/shared/storage/agent-config.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/src/shared/storage/agent-config.ts).
 2. Validate the new `config.channels.<channel>` fields in `normalizeChannelsConfig()`.
-3. Create `functions/_shared/<channel>-channel.ts`.
+3. Create `src/shared/<channel>-channel.ts`.
 4. Implement `ChannelAdapter`.
 5. Use a Chat SDK adapter when the provider is supported; keep provider-specific reply formatting and send logic inside the channel module only for unsupported providers or Broods-specific event normalization.
-6. Import the channel factory in [`functions/harness-processing/integrations.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/functions/harness-processing/integrations.ts).
+6. Import the channel factory in [`src/harness/integrations.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/src/harness/integrations.ts).
 7. Add `create<Channel>ChannelFromConfig()` and include it in `createChannelRegistry()`.
 8. Document the webhook URL as `/webhooks/{accountId}/{agentId}/{channel}`.
 9. Update the SDK constructor, [API Reference](/api-reference), and focused tests/examples when the public config changes.

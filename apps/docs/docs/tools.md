@@ -12,7 +12,7 @@ flowchart LR
   Registry --> Wrap["AsyncToolCoordinator"]
   Wrap --> Model["streamText tools"]
   Model --> Call["model calls tool"]
-  Call --> BuiltIn["built-in<br/>Lambda execute"]
+  Call --> BuiltIn["built-in<br/>inline execute"]
   Call --> UploadedSse["uploaded + SSE<br/>wait for runner result"]
   Call --> UploadedDetached["uploaded + detached path<br/>runner completes by callback"]
   UploadedSse --> Runner["sandbox tool runner"]
@@ -53,7 +53,7 @@ Built-in local tools execute during the current `harness-processing` request. Up
 
 Runners get a network egress policy allowing the public internet only — host IPs, the node metadata service, and other private ranges are blocked, so uploaded tool code can call external APIs and the result callback but nothing on the private network.
 
-Each call prefers the **resident worker**: a long-lived in-sandbox Node process serving HTTP over a unix socket (`/invoke` + `/health`), started on first use and reused across calls. The Lambda sends the tool input, merged config, the bundle (inlined base64 when ≤ 64 KB, otherwise a short-lived signed URL), bundle hash, and async metadata. The worker verifies the cached bundle under `/cache/tools/<sha256>` first, downloads only on cache miss, verifies the downloaded hash, imports the default export, calls `execute(ctx, input)`, and returns NDJSON frames. A short `exec` heredoc runner remains as fallback when the worker produces no frames. `$HOME/.cache/tools` and `/tmp/cache/tools` are fallback cache roots for images that do not expose `/cache/tools`.
+Each call prefers the **resident worker**: a long-lived in-sandbox Node process serving HTTP over a unix socket (`/invoke` + `/health`), started on first use and reused across calls. The harness sends the tool input, merged config, the bundle (inlined base64 when ≤ 64 KB, otherwise a short-lived signed URL), bundle hash, and async metadata. The worker verifies the cached bundle under `/cache/tools/<sha256>` first, downloads only on cache miss, verifies the downloaded hash, imports the default export, calls `execute(ctx, input)`, and returns NDJSON frames. A short `exec` heredoc runner remains as fallback when the worker produces no frames. `$HOME/.cache/tools` and `/tmp/cache/tools` are fallback cache roots for images that do not expose `/cache/tools`.
 
 ```mermaid
 sequenceDiagram
@@ -104,15 +104,15 @@ SSE fullStream: tool-result(preliminary) … tool-result(preliminary) … tool-r
 
 When `config.tools.<name>.async` is `true`, the platform chooses the lifecycle from the tool type and request path:
 
-| Tool type | Request path | Tool code runs in | Lambda waits? | Result completion | Model continuation |
+| Tool type | Request path | Tool code runs in | Request/worker waits? | Result completion | Model continuation |
 | --- | --- | --- | --- | --- | --- |
-| Built-in sync | all paths | `harness-processing` Lambda | Yes | tool `execute()` return value | same active agent loop |
-| Built-in async | all paths | `harness-processing` Lambda | Yes | tool `execute()` return value | same active agent loop injects result |
+| Built-in sync | all paths | `harness-processing` | Yes | tool `execute()` return value | same active agent loop |
+| Built-in async | all paths | `harness-processing` | Yes | tool `execute()` return value | same active agent loop injects result |
 | Uploaded sync | all paths | sandbox runner | Yes | runner returns final result | same active agent loop |
-| Uploaded async | SSE | sandbox runner | Yes | runner returns final result | same SSE Lambda injects result and streams final answer |
-| Uploaded async | `/async`, channel, NATS | sandbox background runner | No | token-authenticated completion endpoint | new continuation Lambda injects result |
+| Uploaded async | SSE | sandbox runner | Yes | runner returns final result | same SSE request injects result and streams final answer |
+| Uploaded async | `/async`, channel, NATS | sandbox background runner | No | token-authenticated completion endpoint | new continuation worker injects result |
 
-SSE is the only path that must wait for uploaded async tools. The open SSE response belongs to the current Lambda invocation, so a later callback cannot write to that response without a separate broker/reconnect protocol. Detached paths already have a polling, channel, or NATS delivery target, so uploaded async tools are launched as sandbox background work and complete through the existing settle-and-continue pipeline.
+SSE is the only path that must wait for uploaded async tools. The open SSE response belongs to the current request, so a later callback cannot write to that response without a separate broker/reconnect protocol. Detached paths already have a polling, channel, or NATS delivery target, so uploaded async tools are launched as sandbox background work and complete through the existing settle-and-continue pipeline.
 
 ```mermaid
 sequenceDiagram
@@ -132,7 +132,7 @@ sequenceDiagram
     P->>C: tool call
     C->>D: processing row + delivery metadata + dispatch group
     C->>W: launch sandbox background runner
-    C-->>H: pending result, Lambda can exit
+    C-->>H: pending result, request/worker can return
     W->>H: POST /sandbox-jobs/\{resultId\}/complete
     H->>D: settle result row
     H->>P: continue after dispatch group is sealed and all siblings settled
@@ -320,7 +320,7 @@ Tool management endpoints (raw API):
 5. Import the factory in [`src/harness/tools/index.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/src/harness/tools/index.ts).
 6. Add the factory to the static `toolFactories` map with the exact model-facing tool name.
 7. Add config validation in [`src/shared/storage/agent-config.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/src/shared/storage/agent-config.ts) only for options the account can set.
-8. Optionally set `config.tools.<name>.async: true` for slow local `execute` tools. Built-in async tools always run in the current Lambda; uploaded async tools are waited on for SSE and detached automatically for `/async`, channels, and NATS.
+8. Optionally set `config.tools.<name>.async: true` for slow local `execute` tools. Built-in async tools always run in the current request or worker; uploaded async tools are waited on for SSE and detached automatically for `/async`, channels, and NATS.
 9. Update the [API Reference](/api-reference) `AgentConfig.tools` schema, and focused tests/examples when the public config shape changes.
 
 Keep the factory small. It should read `context.config`, resolve any API key, return a `ToolSet`, and leave unrelated orchestration to `harness.ts`.

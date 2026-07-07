@@ -28,7 +28,7 @@
  *
  * Transport is selected by the `NATS_URL` scheme via {@link connectNats}:
  *   - `wss://` / `ws://` -> WebSocket (`nats.ws`), for out-of-cluster callers
- *     like this Lambda (the cluster exposes only a `wss://` ingress externally).
+ *     like a locally run core server (the cluster exposes only a `wss://` ingress externally).
  *   - `nats://` / `tls://` -> core TCP (`nats`), for in-cluster callers on the
  *     internal network (lower latency; core 4222 isn't exposed externally).
  * Moving a service in-cluster is then just a `NATS_URL` change, not a code change.
@@ -111,7 +111,7 @@ const ENCODER = new TextEncoder();
 
 /**
  * Connect to NATS, picking the transport from the URL scheme: `wss://`/`ws://`
- * use the WebSocket client (out-of-cluster callers like Lambda), anything else
+ * use the WebSocket client (out-of-cluster callers), anything else
  * (`nats://`/`tls://`) uses the core TCP client (in-cluster callers, lower
  * latency). Both ship the same base client + JetStream API, so the returned
  * connection is interchangeable for every helper here. Pass `token` for
@@ -369,8 +369,9 @@ export async function readObservabilityStream(options: {
 
 /**
  * Flush the shared observability connection so fire-and-forget log/span publishes
- * reach the server (where the OBSERVABILITY stream stores them) before Lambda
- * freezes the process. Best-effort; a flush failure never affects the run.
+ * reach the server (where the OBSERVABILITY stream stores them) before the
+ * request returns or the process shuts down. Best-effort; a flush failure never
+ * affects the run.
  */
 export async function flushObservabilityNats(): Promise<void> {
   if (!_obsNatsConn) return;
