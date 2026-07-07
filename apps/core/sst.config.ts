@@ -981,7 +981,7 @@ export default $config({
     const cronRunRule = new aws.cloudwatch.EventRule("CronRunRule", {
       name: resourceName("cron-run", stage, region),
       eventBusName: cronRunBus.name,
-      eventPattern: JSON.stringify({ source: ["broods.crons"] }),
+      eventPattern: JSON.stringify({ source: ["broods.crons"], "detail-type": ["cron-run"] }),
     });
     new aws.cloudwatch.EventTarget("CronRunRuleTarget", {
       rule: cronRunRule.name,
