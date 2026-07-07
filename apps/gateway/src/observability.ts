@@ -524,11 +524,23 @@ function cleanupObservabilityStream(
   }
 }
 
+// Slow consumers shed live volume instead of dying: when a socket's send buffer
+// backs up past this threshold, droppable frames (log/span) are skipped so the
+// connection stays under Bun's backpressure close limit. Gaps are recoverable
+// via backfill; control frames (ready/error/backfill) are never shed.
+export const OBS_SHED_BUFFERED_BYTES = 512 * 1024;
+
 function sendObs(
   socket: Bun.ServerWebSocket<ObservabilityGatewayData>,
   payload: ObservabilityServerMessage,
 ): void {
   if (socket.readyState !== WebSocket.OPEN) return;
+  if (
+    (payload.type === "log" || payload.type === "span") &&
+    socket.getBufferedAmount() > OBS_SHED_BUFFERED_BYTES
+  ) {
+    return;
+  }
 
   try {
     socket.send(JSON.stringify(payload));
