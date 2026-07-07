@@ -137,7 +137,7 @@ async function handleRequest(
     return new Response(null, { status: 204 });
   }
 
-  if (event.path === "/v1/internal/cron-run") {
+  if (event.path === "/v1/cron-runs") {
     return handleCronHttpRequest(event);
   }
 

@@ -80,18 +80,16 @@ bun run deploy
 
 Deploy outputs include:
 
-- `accountServiceUrl`
-- `agentServiceUrl`
 - DynamoDB table names (dev/community stages; `undefined` on production, which stores config domains in Convex)
 - `filesystemBucketName`, `skillsBucketName`, `toolBundlesBucketName`
-- sandbox Lambda function names and `cronScheduleGroupName`
+- `cronScheduleGroupName`, `cronSchedulerTargetArn`, and `cronSchedulerRoleArn`
 
 ### Using the CLI with Self-Hosted
 
 After self-hosted deploy, use the same CLI workflow but point it at your deployment:
 
 ```bash
-export BROODS_BASE_URL="https://your-deployment.lambda-url.eu-west-1.on.aws"
+export BROODS_BASE_URL="https://gateway.your-domain.example"
 broods init
 broods login --dashboard-url https://your-dashboard.example.com
 broods dev
@@ -100,10 +98,10 @@ broods deploy
 
 ### Account Setup (Self-Hosted)
 
-Create an account through the account-management Function URL with the admin secret:
+Create an account through the gateway with the admin secret:
 
 ```bash
-curl -X POST "$ACCOUNT_SERVICE_URL/accounts" \
+curl -X POST "$BROODS_BASE_URL/accounts" \
   -H "Authorization: Bearer $ADMIN_ACCOUNT_SECRET" \
   -H "Content-Type: application/json" \
   -d '{ "username": "company-a", "description": "Company A account" }'
@@ -111,25 +109,25 @@ curl -X POST "$ACCOUNT_SERVICE_URL/accounts" \
 
 Store the returned `secret` securely.
 
-Provider webhooks use the deployed harness-processing URL:
+Provider webhooks use the deployed gateway URL:
 
 ```text
-{AGENT_SERVICE_URL}/webhooks/{accountId}/{agentId}/telegram
-{AGENT_SERVICE_URL}/webhooks/{accountId}/{agentId}/github
-{AGENT_SERVICE_URL}/webhooks/{accountId}/{agentId}/slack
-{AGENT_SERVICE_URL}/webhooks/{accountId}/{agentId}/discord
-{AGENT_SERVICE_URL}/webhooks/{accountId}/{agentId}/pancake
-{AGENT_SERVICE_URL}/webhooks/{accountId}/{agentId}/zalo
+{BROODS_BASE_URL}/webhooks/{accountId}/{agentId}/telegram
+{BROODS_BASE_URL}/webhooks/{accountId}/{agentId}/github
+{BROODS_BASE_URL}/webhooks/{accountId}/{agentId}/slack
+{BROODS_BASE_URL}/webhooks/{accountId}/{agentId}/discord
+{BROODS_BASE_URL}/webhooks/{accountId}/{agentId}/pancake
+{BROODS_BASE_URL}/webhooks/{accountId}/{agentId}/zalo
 ```
 
 Reference the [API Reference](/api-reference) for the complete agent config shape.
 
 ## Live Probes
 
-Each demo script reads its environment from its own folder — copy the matching `.env.example` and fill in the service URLs from the deploy output plus your model/tool keys.
+Each demo script reads its environment from its own folder — copy the matching `.env.example` and fill in `BROODS_BASE_URL` plus your model/tool keys.
 
 ```bash
-curl "$AGENT_SERVICE_URL"
+curl "$BROODS_BASE_URL"
 cd packages/demos/account && bun index.ts
 cd packages/demos/stream && bun index.ts
 cd packages/demos/async && bun index.ts

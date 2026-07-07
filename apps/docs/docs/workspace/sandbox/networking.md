@@ -41,12 +41,12 @@ than accepted-but-ignored.
 
 ## Egress and background-job auto-delivery
 
-Detached background jobs POST their result back to the harness Function URL when they
+Detached background jobs POST their result back to the gateway/core URL from `PUBLIC_BASE_URL` when they
 finish (see [Best practice → Background jobs](best-practice.md#background-jobs--async_status)).
 That push-back needs outbound egress:
 
-> Auto-delivery requires the sandbox to reach the harness Function URL. Set
-> `network.mode: "allow-all"` or include the Function URL in a provider-supported
+> Auto-delivery requires the sandbox to reach the gateway/core URL. Set
+> `network.mode: "allow-all"` or include that URL in a provider-supported
 > allowlist. Without egress the job still runs and `async_status` polling still works —
 > only the automatic push-back is skipped.
 

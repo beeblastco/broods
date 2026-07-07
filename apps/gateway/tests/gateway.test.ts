@@ -160,6 +160,7 @@ test("routes config-plane CRUD to Convex, not core", () => {
   expect(isConfigHttpPath("/v1/crons")).toBe(true);
   expect(isConfigHttpPath("/v1/crons/cron_123")).toBe(true);
   expect(isConfigHttpPath("/v1/crons/cron_123/runs")).toBe(true);
+  expect(isConfigHttpPath("/v1/cron-runs", "POST")).toBe(false);
 
   // Exact depth only: scoped agent invocations and other resources stay core.
   expect(isConfigHttpPath("/v1/account", "DELETE")).toBe(false);

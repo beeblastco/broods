@@ -138,7 +138,7 @@ and a job that is killed when the sandbox is recreated/scaled-to-0 reports as `f
 stamps the launching boot id, so a stale `.running` marker is never read as "running
 forever"). The idle scale-down never pauses a sandbox while a job is still running.
 
-> **Network note:** auto-delivery requires the sandbox to reach the harness Function URL —
+> **Network note:** auto-delivery requires the sandbox to reach the gateway/core URL from `PUBLIC_BASE_URL` —
 > see [Networking → auto-delivery](networking.md#egress-and-background-job-auto-delivery).
 > Without egress the job still runs and `async_status` polling still works; only the
 > automatic push-back is skipped.

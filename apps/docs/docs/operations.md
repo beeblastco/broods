@@ -122,34 +122,31 @@ bun run deploy
 
 Deploy outputs include:
 
-- `accountServiceUrl`
-- `agentServiceUrl`
 - DynamoDB table names (dev/community stages; `undefined` on production, which stores config domains in Convex)
 - `filesystemBucketName`, `skillsBucketName`, `toolBundlesBucketName`
-- sandbox Lambda function names and `cronScheduleGroupName`
+- `cronScheduleGroupName`, `cronSchedulerTargetArn`, and `cronSchedulerRoleArn`
 
 ## Container Runtime (Phase 9a)
 
-The core also ships as a single container image, `ghcr.io/beeblastco/broods-core`, built from `apps/core/Dockerfile` by the `Build Core Image` workflow (`dev` and `main` tags). One Bun process serves both `harness-processing` and `account-manage`, routed by the request `Host` header (`ACCOUNT_MANAGE_HOSTS` lists the account-manage hostnames). The container runs against the same AWS data plane as the Lambdas — DynamoDB, S3, Convex, NATS, OPA — using an IAM access key for the per-stage `core-runtime` user that SST creates with the union of the two Lambda roles' permissions.
+The core ships as a single container image, `ghcr.io/beeblastco/broods-core`, built from `apps/core/Dockerfile` by the `Build Core Image` workflow (`dev` and `main` tags). One Bun process serves both harness and account routes through the gateway. The container runs against the AWS data plane — DynamoDB, S3, Convex, NATS, OPA, Scheduler, and sandboxes — using an IAM access key for the per-stage `core-runtime` user that SST creates.
 
 ```mermaid
 flowchart LR
     Client((Client)) -->|HTTPS| Ingress[Traefik ingress]
-    Ingress -->|core host| Pod[broods-core pod\nBun.serve]
-    Ingress -->|core-account host| Pod
-    Pod -->|synthesized Function URL event| Handlers[harness-processing +\naccount-manage handlers]
+    Ingress --> Gateway[broods gateway]
+    Gateway --> Pod[broods-core pod\nBun.serve]
+    Pod --> Handlers[harness + account handlers]
     Handlers --> Data[(DynamoDB / S3 / Convex\nNATS / OPA / sandboxes)]
-    Lambda[Lambda Function URLs\nunchanged default path] --> Data
 ```
 
-Differences from the Lambda path, all internal to the container entry (`functions/server/`):
+Runtime notes:
 
-- Async self-invocations run in-process (capped by `MAX_INPROCESS_WORKERS`) instead of Lambda `Event` invokes.
-- Background-job callbacks use `PUBLIC_BASE_URL` instead of Function URL discovery.
-- The invocation deadline is synthesized from `REQUEST_TIMEOUT_BUDGET_MS` (default 10 minutes, matching the Lambda timeout).
-- Cron schedule CRUD lives in the Convex config plane (`packages/convex/awsCrons.ts`); schedules keep targeting the harness (`CRON_SCHEDULER_TARGET_ARN` on the Convex deployment) until the cron-run API-destination cutover.
+- Async self-invocations run in-process (capped by `MAX_INPROCESS_WORKERS`).
+- Background-job callbacks use `PUBLIC_BASE_URL`.
+- The invocation deadline is synthesized from `REQUEST_TIMEOUT_BUDGET_MS` (default 10 minutes).
+- Cron schedules target the EventBridge API destination from SST output `cronSchedulerTargetArn`, which POSTs to `${PUBLIC_BASE_URL}/v1/cron-runs` through the gateway. The Convex deployment env vars stay `CRON_SCHEDULER_TARGET_ARN`, `CRON_SCHEDULER_ROLE_ARN`, and `CRON_SCHEDULER_GROUP_NAME`; flip `CRON_SCHEDULER_TARGET_ARN` to the API-destination ARN at cutover with no code change.
 
-The Lambda path stays the production default until pod parity is proven; the pods are deployed from the infra repo (`kubernetes/charts/releases/core-dev.yaml` / `core.yaml`) at `core[.dev].broods.app` and `core-account[.dev].broods.app`.
+The pods are deployed from the infra repo (`kubernetes/charts/releases/core-dev.yaml` / `core.yaml`) behind the gateway.
 
 ## Post-Deploy Account Setup (Self-Hosted)
 
@@ -158,7 +155,7 @@ When self-hosting, the CLI still handles tenant configuration. After `broods dep
 If you need to create an account manually (e.g. for automated testing), use the admin `AdminAccountSecret`:
 
 ```bash
-curl -X POST "$ACCOUNT_SERVICE_URL/accounts" \
+curl -X POST "$BROODS_BASE_URL/accounts" \
   -H "Authorization: Bearer $ADMIN_ACCOUNT_SECRET" \
   -H "Content-Type: application/json" \
   -d '{"username": "company-a"}'
@@ -217,18 +214,17 @@ Or verify the harness URL directly:
 Example scripts use these environment variables:
 
 ```bash
-export AGENT_SERVICE_URL=<agentServiceUrl>
-export ACCOUNT_SERVICE_URL=<accountServiceUrl>
+export BROODS_BASE_URL=<gatewayUrl>
 export ACCOUNT_GOOGLE_API_KEY=<googleApiKey>
 export ACCOUNT_TAVILY_API_KEY=<tavilyApiKey>
 ```
 
-Each script creates a temporary account through `ACCOUNT_SERVICE_URL/accounts` using `ADMIN_ACCOUNT_SECRET`, runs the probe with the returned account secret, then deletes the test account through `DELETE /v1/account` in a cleanup step.
+Each script creates a temporary account through `BROODS_BASE_URL/accounts` using `ADMIN_ACCOUNT_SECRET`, runs the probe with the returned account secret, then deletes the test account through `DELETE /v1/account` in a cleanup step.
 
 Confirm the harness URL is live:
 
 ```bash
-curl "$AGENT_SERVICE_URL"
+curl "$BROODS_BASE_URL"
 ```
 
 Expected response:

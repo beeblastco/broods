@@ -7,7 +7,8 @@ flowchart TD
   Owner["Account owner / SDK"] -->|"create / update / delete cron job"| Config["Convex config plane<br/>(configHttp + awsCrons)"]
   Config --> Jobs["crons table (Convex)"]
   Config --> Scheduler["EventBridge Scheduler<br/>schedule lifecycle"]
-  Scheduler -->|"accountId + cronId"| Harness["core harness<br/>(cron-run)"]
+  Scheduler -->|"HTTPS API destination"| Gateway["gateway"]
+  Gateway --> Harness["core harness<br/>(POST /v1/cron-runs)"]
   Harness --> Jobs
   Harness -->|"internal async worker event"| Harness
   Harness --> Results["AsyncAgentResult + Conversations"]
@@ -76,7 +77,7 @@ export const weeklyDigest = defineCron({
 Create a cron job directly via the account API:
 
 ```bash
-curl -X POST "$ACCOUNT_SERVICE_URL/v1/crons" \
+curl -X POST "$BROODS_BASE_URL/v1/crons" \
   -H "Authorization: Bearer $ACCOUNT_SECRET" \
   -H "Content-Type: application/json" \
   -d '{
@@ -104,7 +105,7 @@ Supported schedule expressions are AWS EventBridge Scheduler expressions: `cron(
 Pause a job:
 
 ```bash
-curl -X PATCH "$ACCOUNT_SERVICE_URL/v1/crons/$CRON_ID" \
+curl -X PATCH "$BROODS_BASE_URL/v1/crons/$CRON_ID" \
   -H "Authorization: Bearer $ACCOUNT_SECRET" \
   -H "Content-Type: application/json" \
   -d '{ "status": "paused" }'
@@ -113,7 +114,7 @@ curl -X PATCH "$ACCOUNT_SERVICE_URL/v1/crons/$CRON_ID" \
 Delete a job:
 
 ```bash
-curl -X DELETE "$ACCOUNT_SERVICE_URL/v1/crons/$CRON_ID" \
+curl -X DELETE "$BROODS_BASE_URL/v1/crons/$CRON_ID" \
   -H "Authorization: Bearer $ACCOUNT_SECRET"
 ```
 

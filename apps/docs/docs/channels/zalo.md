@@ -39,7 +39,7 @@ Register the agent-scoped webhook URL with Zalo:
 curl "https://bot-api.zaloplatforms.com/bot<YOUR_ZALO_BOT_TOKEN>/setWebhook" \
   -H "Content-Type: application/json" \
   -d '{
-    "url": "'"$AGENT_SERVICE_URL"'/webhooks/<ACCOUNT_ID>/<AGENT_ID>/zalo",
+    "url": "'"$BROODS_BASE_URL"'/webhooks/<ACCOUNT_ID>/<AGENT_ID>/zalo",
     "secret_token": "YOUR_WEBHOOK_SECRET"
   }'
 ```

@@ -14,7 +14,7 @@ Use the Chat SDK docs for provider capability details: [Platform Adapters](https
 Customers interact with the provider bot, app, or webhook. They do not receive account secrets. The webhook URL always includes the account, agent, and channel:
 
 ```bash
-{AGENT_SERVICE_URL}/webhooks/{accountId}/{agentId}/{channel}
+{BROODS_BASE_URL}/webhooks/{accountId}/{agentId}/{channel}
 ```
 
 ## Runtime Flow
