@@ -7,7 +7,8 @@ flowchart TD
   Owner["Account owner / SDK"] -->|"create / update / delete cron job"| Config["Convex config plane<br/>(configHttp + awsCrons)"]
   Config --> Jobs["crons table (Convex)"]
   Config --> Scheduler["EventBridge Scheduler<br/>schedule lifecycle"]
-  Scheduler -->|"HTTPS API destination"| Gateway["gateway"]
+  Scheduler --> Bus["cron-runs event bus"]
+  Bus -->|"HTTPS API destination"| Gateway["gateway"]
   Gateway --> Harness["core harness<br/>(POST /v1/cron-runs)"]
   Harness --> Jobs
   Harness -->|"internal async worker event"| Harness

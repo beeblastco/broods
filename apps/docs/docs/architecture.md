@@ -42,7 +42,7 @@ flowchart TD
 
 Runtime boundary:
 
-- SST provisions the AWS data plane, IAM, Scheduler, and cron API destination; the container deployment lives in the infra repo.
+- SST provisions the AWS data plane, IAM, Scheduler, and the cron-runs bus + API destination; the container deployment lives in the infra repo.
 - Handlers receive `CoreRequest` and return Web `Response` objects.
 - `ctx.waitUntil(...)` lets channel webhooks acknowledge quickly, then continue work after the HTTP response.
 
@@ -84,7 +84,8 @@ flowchart TD
   AgentStore -->|config resolved before session<br/>passed into session for speed| Session
   Handler --> AsyncAgentResult["DynamoDB: AsyncAgentResult"]
   AsyncTools --> AsyncToolResult["DynamoDB: AsyncToolResult"]
-  Scheduler -->|"HTTPS API destination"| Gateway
+  Scheduler --> CronBus["cron-runs event bus"]
+  CronBus -->|"HTTPS API destination"| Gateway
   Core --> Crons["Convex: crons"]
   Session --> Workspace["S3: account-scoped workspace files"]
   SkillStore -->|"Load skills metadata"| Session
@@ -217,13 +218,14 @@ Direct sync and async POST access is controlled by `ENABLE_DIRECT_API`. Deploys 
 
 ## Cron Jobs
 
-Cron jobs are included in the default stack as a small scheduled-agent add-on, not a workflow DSL. The Convex config plane owns cron job create, update, delete, and list operations (`/v1/crons`, forwarded there by the gateway): it stores the account-scoped cron job in the `crons` table and creates, updates, or deletes the matching EventBridge Scheduler schedule. EventBridge Scheduler invokes the HTTPS API destination, which POSTs `{ kind: "cron", accountId, cronId }` through the gateway to the core harness, and the harness starts the configured agent asynchronously.
+Cron jobs are included in the default stack as a small scheduled-agent add-on, not a workflow DSL. The Convex config plane owns cron job create, update, delete, and list operations (`/v1/crons`, forwarded there by the gateway): it stores the account-scoped cron job in the `crons` table and creates, updates, or deletes the matching EventBridge Scheduler schedule. EventBridge Scheduler publishes onto the cron-runs event bus, whose rule forwards the event to the HTTPS API destination; the destination POSTs `{ kind: "cron", accountId, cronId }` through the gateway to the core harness, and the harness starts the configured agent asynchronously.
 
 ```mermaid
 flowchart TD
   Config["Convex config plane<br/>cron create/update/delete/list"] --> Jobs["Convex: crons"]
   Config --> Scheduler["EventBridge Scheduler<br/>schedule lifecycle"]
-  Scheduler -->|"HTTPS API destination"| Gateway["gateway"]
+  Scheduler --> CronBus["cron-runs event bus"]
+  CronBus -->|"HTTPS API destination"| Gateway["gateway"]
   Gateway --> Harness["core harness<br/>(POST /v1/cron-runs)"]
   Harness --> Jobs
   Harness -->|"internal async worker event"| Harness

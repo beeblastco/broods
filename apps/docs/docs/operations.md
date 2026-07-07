@@ -144,7 +144,7 @@ Runtime notes:
 - Async self-invocations run in-process (capped by `MAX_INPROCESS_WORKERS`).
 - Background-job callbacks use `PUBLIC_BASE_URL`.
 - The invocation deadline is synthesized from `REQUEST_TIMEOUT_BUDGET_MS` (default 10 minutes).
-- Cron schedules target the EventBridge API destination from SST output `cronSchedulerTargetArn`, which POSTs to `${PUBLIC_BASE_URL}/v1/cron-runs` through the gateway. The Convex deployment env vars stay `CRON_SCHEDULER_TARGET_ARN`, `CRON_SCHEDULER_ROLE_ARN`, and `CRON_SCHEDULER_GROUP_NAME`; flip `CRON_SCHEDULER_TARGET_ARN` to the API-destination ARN at cutover with no code change.
+- Cron schedules publish onto the cron-runs event bus from SST output `cronSchedulerTargetArn`; the bus rule forwards to the API destination, which POSTs to `${PUBLIC_BASE_URL}/v1/cron-runs` through the gateway. The Convex deployment env vars stay `CRON_SCHEDULER_TARGET_ARN`, `CRON_SCHEDULER_ROLE_ARN`, and `CRON_SCHEDULER_GROUP_NAME`; flip `CRON_SCHEDULER_TARGET_ARN` to the bus ARN at cutover with no code change.
 
 The pods are deployed from the infra repo (`kubernetes/charts/releases/core-dev.yaml` / `core.yaml`) behind the gateway.
 

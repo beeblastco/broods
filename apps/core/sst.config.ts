@@ -925,9 +925,15 @@ export default $config({
       }),
     });
 
-    // Cron schedules invoke core over HTTPS: EventBridge connection carries the
-    // service token, the API destination POSTs the CronInvocation JSON to the
-    // gateway, which proxies /v1/cron-runs to the core harness.
+    // Cron schedules invoke core over HTTPS. EventBridge Scheduler cannot
+    // target an API destination directly (CreateSchedule rejects the ARN), so
+    // schedules publish onto a dedicated bus (templated PutEvents target) and
+    // a rule forwards the event detail — the CronInvocation JSON — to the API
+    // destination, which POSTs it to the gateway /v1/cron-runs with the
+    // service token. Source/DetailType constants match awsCrons.ts.
+    const cronRunBus = new aws.cloudwatch.EventBus("CronRunBus", {
+      name: resourceName("cron-runs", stage, region),
+    });
     const cronRunConnection = new aws.cloudwatch.EventConnection("CronRunConnection", {
       name: resourceName("cron-run", stage, region),
       authorizationType: "API_KEY",
@@ -944,9 +950,21 @@ export default $config({
       invocationEndpoint: `${PUBLIC_BASE_URL}/v1/cron-runs`,
       httpMethod: "POST",
     });
-
-    new aws.iam.RolePolicy("CronSchedulerRolePolicy", {
-      role: cronSchedulerRole.id,
+    const cronRunInvokeRole = new aws.iam.Role("CronRunInvokeRole", {
+      name: resourceName("cron-run-invoke", stage, region),
+      assumeRolePolicy: JSON.stringify({
+        Version: "2012-10-17",
+        Statement: [
+          {
+            Effect: "Allow",
+            Principal: { Service: "events.amazonaws.com" },
+            Action: "sts:AssumeRole",
+          },
+        ],
+      }),
+    });
+    new aws.iam.RolePolicy("CronRunInvokeRolePolicy", {
+      role: cronRunInvokeRole.id,
       policy: cronRunApiDestination.arn.apply((arn) =>
         JSON.stringify({
           Version: "2012-10-17",
@@ -954,6 +972,36 @@ export default $config({
             {
               Effect: "Allow",
               Action: ["events:InvokeApiDestination"],
+              Resource: [arn],
+            },
+          ],
+        }),
+      ),
+    });
+    const cronRunRule = new aws.cloudwatch.EventRule("CronRunRule", {
+      name: resourceName("cron-run", stage, region),
+      eventBusName: cronRunBus.name,
+      eventPattern: JSON.stringify({ source: ["broods.crons"] }),
+    });
+    new aws.cloudwatch.EventTarget("CronRunRuleTarget", {
+      rule: cronRunRule.name,
+      eventBusName: cronRunBus.name,
+      arn: cronRunApiDestination.arn,
+      roleArn: cronRunInvokeRole.arn,
+      // Deliver only the event detail so the core leaf receives the exact
+      // {kind, accountId, cronId} payload.
+      inputPath: "$.detail",
+    });
+
+    new aws.iam.RolePolicy("CronSchedulerRolePolicy", {
+      role: cronSchedulerRole.id,
+      policy: cronRunBus.arn.apply((arn) =>
+        JSON.stringify({
+          Version: "2012-10-17",
+          Statement: [
+            {
+              Effect: "Allow",
+              Action: ["events:PutEvents"],
               Resource: [arn],
             },
           ],
@@ -1233,8 +1281,9 @@ export default $config({
       asyncAgentResultTableName: asyncAgentResultTable.name,
       asyncToolResultTableName: asyncToolResultTable.name,
       cronScheduleGroupName: cronScheduleGroup.name,
-      // Convex awsCrons.ts uses this verbatim as the schedule Target Arn.
-      cronSchedulerTargetArn: cronRunApiDestination.arn,
+      // Convex awsCrons.ts uses this verbatim as the schedule Target Arn (the
+      // cron-runs event bus; the bus rule forwards to the API destination).
+      cronSchedulerTargetArn: cronRunBus.arn,
       cronSchedulerRoleArn: cronSchedulerRole.arn,
       filesystemBucketName: filesystemBucket.name,
       skillsBucketName: skillsBucket.name,
