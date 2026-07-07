@@ -21,7 +21,7 @@ COPY apps/core/src/shared/nats.ts ./apps/core/src/shared/nats.ts
 COPY apps/core/src/shared/object.ts ./apps/core/src/shared/object.ts
 COPY apps/core/src/shared/terminal-ticket.ts ./apps/core/src/shared/terminal-ticket.ts
 COPY apps/gateway ./apps/gateway
-RUN bun build apps/gateway/src/index.ts --compile --minify --outfile /out/gateway
+RUN bun build apps/gateway/src/main.ts --compile --minify --outfile /out/gateway
 
 FROM alpine:3.22 AS runner
 WORKDIR /app
