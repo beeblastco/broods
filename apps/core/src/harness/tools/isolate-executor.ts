@@ -122,14 +122,19 @@ async function acquireIsolateSlot(): Promise<() => void> {
     activeIsolateRuns += 1;
     return releaseIsolateSlot;
   }
+  // The releasing run hands its slot to the woken waiter directly (no decrement),
+  // so a concurrent fast-path acquire cannot sneak in and exceed the cap.
   await new Promise<void>((resolve) => isolateWaiters.push(resolve));
-  activeIsolateRuns += 1;
   return releaseIsolateSlot;
 }
 
 function releaseIsolateSlot(): void {
+  const next = isolateWaiters.shift();
+  if (next) {
+    next();
+    return;
+  }
   activeIsolateRuns = Math.max(0, activeIsolateRuns - 1);
-  isolateWaiters.shift()?.();
 }
 
 function isolateRunnerNode(): string {

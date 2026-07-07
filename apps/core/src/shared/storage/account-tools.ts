@@ -129,7 +129,9 @@ export function normalizeAccountToolUpload(input: unknown, options: { requireBun
 
   if (value.runtime !== undefined) {
     result.runtime = normalizeRuntime(value.runtime);
-  } else if (result.bundle !== undefined) {
+  } else if (options.requireBundle && result.bundle !== undefined) {
+    // Infer the tier only on create/full sync. A bundle-only PATCH keeps the
+    // stored runtime so it cannot silently flip an explicitly chosen tier.
     result.runtime = inferAccountToolRuntime(result.bundle);
   }
 

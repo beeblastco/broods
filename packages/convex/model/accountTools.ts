@@ -14,6 +14,10 @@ export interface AccountToolUploadInput {
     defaultConfig?: unknown;
 }
 
+/**
+ * Execution tier for an uploaded tool bundle: "isolate" runs in core's V8
+ * isolate, "sandbox" delegates to the workdir sandbox provider.
+ */
 export type AccountToolRuntime = "isolate" | "sandbox";
 
 export interface NormalizedAccountToolUpload {
@@ -93,7 +97,9 @@ export async function normalizeAccountToolUpload(
 
     if (value.runtime !== undefined) {
         result.runtime = normalizeRuntime(value.runtime);
-    } else if (result.bundle !== undefined) {
+    } else if (options.requireBundle && result.bundle !== undefined) {
+        // Infer the tier only on create/full sync. A bundle-only PATCH keeps the
+        // stored runtime so it cannot silently flip an explicitly chosen tier.
         result.runtime = inferAccountToolRuntime(result.bundle);
     }
 
@@ -185,8 +191,15 @@ function normalizeDefaultConfig(value: unknown): Record<string, unknown> {
     return value;
 }
 
+/**
+ * Validate an explicit runtime tier value from an upload.
+ * @param value raw runtime field from the upload body
+ * @returns the validated tier
+ * @throws when the value is not "isolate" or "sandbox"
+ */
 function normalizeRuntime(value: unknown): AccountToolRuntime {
     if (value === "isolate" || value === "sandbox") return value;
+
     throw new Error('tool.runtime must be "isolate" or "sandbox"');
 }
 

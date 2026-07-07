@@ -12,6 +12,8 @@ const accountToolDoc = v.object({
     _creationTime: v.number(),
 });
 
+const runtimeValidator = v.union(v.literal("isolate"), v.literal("sandbox"));
+
 export const getById = internalQuery({
     args: {
         accountId: v.id("accounts"),
@@ -49,7 +51,7 @@ export const create = internalMutation({
         inputSchema: v.any(),
         bundleStorageKey: v.string(),
         sha256: v.string(),
-        runtime: v.optional(v.union(v.literal("isolate"), v.literal("sandbox"))),
+        runtime: v.optional(runtimeValidator),
         defaultConfig: v.optional(v.any()),
     },
     returns: v.id("accountTools"),
@@ -86,7 +88,7 @@ export const update = internalMutation({
         inputSchema: v.optional(v.any()),
         bundleStorageKey: v.optional(v.string()),
         sha256: v.optional(v.string()),
-        runtime: v.optional(v.union(v.literal("isolate"), v.literal("sandbox"))),
+        runtime: v.optional(runtimeValidator),
         defaultConfig: v.optional(v.any()),
     },
     returns: v.null(),

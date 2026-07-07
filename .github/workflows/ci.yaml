@@ -47,6 +47,16 @@ jobs:
       - name: Typecheck
         run: bun run check
 
+      - name: Prepare isolate runner
+        # The real isolated-vm tests in apps/core/tests/isolate-executor.test.ts
+        # skip unless BROODS_TEST_ISOLATE_RUNNER_PATH points at a runner with the
+        # native addon built (Bun cannot load it; the tests spawn node).
+        run: |
+          mkdir -p /tmp/broods-ivm-test
+          cp apps/core/src/harness/tools/isolate-runner/runner.mjs /tmp/broods-ivm-test/
+          npm install --prefix /tmp/broods-ivm-test isolated-vm@7.0.0
+          echo "BROODS_TEST_ISOLATE_RUNNER_PATH=/tmp/broods-ivm-test/runner.mjs" >> "$GITHUB_ENV"
+
       - name: Run unit tests
         run: bun run test
 

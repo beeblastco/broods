@@ -23,6 +23,10 @@ const DENY_CIDRS = [
   "100.64.0.0/10",
 ];
 
+// Wall-clock deadline for the whole run; ctx.fetch caps each bridge call at the
+// remaining budget. Declared before the entry dispatch below assigns it.
+let runDeadlineAt = 0;
+
 if (process.argv[2] === "--fetch-bridge") {
   await runFetchBridgeHelper();
 } else {
@@ -32,13 +36,15 @@ if (process.argv[2] === "--fetch-bridge") {
 async function runToolRequest() {
   let isolate;
   let timedOut = false;
+  const timeoutMs = Number(process.env.ISOLATE_RUNNER_TIMEOUT_SECONDS || 30) * 1000;
+  runDeadlineAt = Date.now() + timeoutMs;
   const timeout = setTimeout(() => {
     timedOut = true;
     try {
       isolate?.dispose();
     } catch {}
     writeFrame({ t: "error", error: "custom tool isolate execution timed out" });
-  }, Number(process.env.ISOLATE_RUNNER_TIMEOUT_SECONDS || 30) * 1000);
+  }, timeoutMs);
 
   try {
     const payload = JSON.parse(await readAllStdin());
@@ -107,7 +113,7 @@ async function runToolRequest() {
       {
         promise: true,
         copy: true,
-        timeout: Number(process.env.ISOLATE_RUNNER_TIMEOUT_SECONDS || 30) * 1000,
+        timeout: timeoutMs,
       },
     );
     if (!timedOut) writeFrame({ t: "final", result });
@@ -123,10 +129,17 @@ async function runToolRequest() {
 }
 
 function bridgeFetchSync(url, init) {
+  // spawnSync blocks the event loop, so the runner's own timeout timer cannot
+  // fire mid-fetch. Cap each fetch at the remaining run deadline so ctx.fetch
+  // cannot stretch the run past ISOLATE_RUNNER_TIMEOUT_SECONDS.
+  const remainingMs = runDeadlineAt > 0 ? runDeadlineAt - Date.now() : FETCH_TIMEOUT_MS;
+  if (remainingMs <= 0) {
+    throw new Error("custom tool isolate execution timed out");
+  }
   const child = spawnSync(process.execPath, [fileURLToPath(import.meta.url), "--fetch-bridge"], {
     input: JSON.stringify({ url, init }),
     encoding: "utf8",
-    timeout: FETCH_TIMEOUT_MS,
+    timeout: Math.min(FETCH_TIMEOUT_MS, remainingMs),
     maxBuffer: BODY_LIMIT_BYTES + 64 * 1024,
     env: process.env,
   });
