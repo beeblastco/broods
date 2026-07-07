@@ -219,6 +219,58 @@ describe("isolate runner", () => {
     expect(result.frames.at(-1)).toEqual({ t: "error", error: "custom tool isolate execution timed out" });
     expect(result.exitCode).toBe(1);
   });
+
+  realRunnerIt("provides timers, console, and a global fetch to the bundle", async () => {
+    const result = await runRealRunner(
+      `export default { name: "runtime_surface", async *execute(ctx, input) {
+        console.log("hello from the isolate");
+        const started = Date.now();
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        yield { waitedMs: Date.now() - started >= 10 };
+        const cancelled = setTimeout(() => { throw new Error("should not fire"); }, 5);
+        clearTimeout(cancelled);
+        await new Promise((resolve) => setTimeout(resolve, 15));
+        yield {
+          waited: true,
+          hasFetch: typeof fetch === "function",
+          fetchIsCtxFetch: fetch === ctx.fetch,
+          hasMicrotask: typeof queueMicrotask === "function",
+        };
+      } };`,
+      { toolName: "runtime_surface", input: {} },
+    );
+
+    expect(result.frames).toEqual([
+      { t: "chunk", output: { waitedMs: true } },
+      {
+        t: "chunk",
+        output: { waited: true, hasFetch: true, fetchIsCtxFetch: true, hasMicrotask: true },
+      },
+      {
+        t: "final",
+        result: { waited: true, hasFetch: true, fetchIsCtxFetch: true, hasMicrotask: true },
+      },
+    ]);
+    expect(result.stderr).toContain("[tool:log] hello from the isolate");
+  });
+
+  realRunnerIt("supports setInterval with clearInterval", async () => {
+    const result = await runRealRunner(
+      `export default { name: "interval_tool", async execute() {
+        let ticks = 0;
+        await new Promise((resolve) => {
+          const id = setInterval(() => {
+            ticks += 1;
+            if (ticks >= 3) { clearInterval(id); resolve(); }
+          }, 5);
+        });
+        return { ticks };
+      } };`,
+      { toolName: "interval_tool", input: {} },
+    );
+
+    expect(result.frames).toEqual([{ t: "final", result: { ticks: 3 } }]);
+  });
 });
 
 async function runRealRunner(

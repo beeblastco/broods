@@ -27,6 +27,11 @@ const DENY_CIDRS = [
 // remaining budget. Declared before the entry dispatch below assigns it.
 let runDeadlineAt = 0;
 
+// A timer sleep resolving after the isolate is disposed (timeout/final) rejects
+// when it tries to re-enter the dead isolate. All real outcomes are already on
+// stdout as frames by then — never let that teardown noise crash the runner.
+process.on("unhandledRejection", () => {});
+
 if (process.argv[2] === "--fetch-bridge") {
   await runFetchBridgeHelper();
 } else {
@@ -57,21 +62,82 @@ async function runToolRequest() {
     isolate = new ivm.Isolate({ memoryLimit: 128 });
     const context = await isolate.createContext();
     await context.global.set("globalThis", context.global.derefInto());
+    // Besides ctx/input, inject the minimal runtime surface tool bundles
+    // reasonably assume in a fresh V8 isolate: timers, queueMicrotask, console
+    // (host stderr — stdout is the frame protocol), and a global fetch aliased
+    // to the same SSRF-guarded bridge as ctx.fetch. Timers cannot await the
+    // host (promises do not cross the isolate boundary): the isolate registers
+    // the id, the host arms a real timer, and on expiry re-enters the isolate
+    // through the __fireTimer reference.
+    let fireTimer;
     await context.evalClosure(
-      `globalThis.__ctx = {
+      `const __fetch = async (url, init) => $2(url, init ?? {});
+      globalThis.__ctx = {
         config: $0,
         asyncTool: null,
         env: {},
-        fetch: async (url, init) => $2(url, init ?? {}),
+        fetch: __fetch,
       };
-      globalThis.__input = $1;`,
+      globalThis.__input = $1;
+      globalThis.fetch = __fetch;
+      let __nextTimer = 1;
+      const __timers = new Map();
+      globalThis.__fireTimer = (id) => {
+        const timer = __timers.get(id);
+        if (!timer) return;
+        if (!timer.repeat) __timers.delete(id);
+        timer.cb();
+      };
+      globalThis.setTimeout = (fn, ms, ...args) => {
+        const id = __nextTimer++;
+        __timers.set(id, { repeat: false, cb: () => fn(...args) });
+        $3(id, Math.max(0, Number(ms) || 0));
+        return id;
+      };
+      globalThis.clearTimeout = (id) => { __timers.delete(id); };
+      globalThis.setInterval = (fn, ms, ...args) => {
+        const id = __nextTimer++;
+        const delay = Math.max(0, Number(ms) || 0);
+        __timers.set(id, {
+          repeat: true,
+          cb: () => {
+            fn(...args);
+            if (__timers.has(id)) $3(id, delay);
+          },
+        });
+        $3(id, delay);
+        return id;
+      };
+      globalThis.clearInterval = (id) => { __timers.delete(id); };
+      globalThis.queueMicrotask = (fn) => { void Promise.resolve().then(fn); };
+      const __log = (level) => (...args) => $4(level, args.map(String).join(" "));
+      globalThis.console = {
+        log: __log("log"),
+        info: __log("info"),
+        warn: __log("warn"),
+        error: __log("error"),
+        debug: () => {},
+      };`,
       [
         new ivm.ExternalCopy(asPlainRecord(payload.config, "config")).copyInto(),
         new ivm.ExternalCopy(payload.input).copyInto(),
         new ivm.Callback((url, init) => bridgeFetchSync(url, init), { sync: true }),
+        // unref: stray timers must not keep the runner alive after the final
+        // frame; a fire on a disposed isolate rejects and is swallowed.
+        new ivm.Callback(
+          (id, ms) => {
+            const timer = setTimeout(() => {
+              fireTimer?.apply(undefined, [id]).catch(() => {});
+            }, Math.min(ms, 60_000));
+            timer.unref?.();
+          },
+          { ignored: true },
+        ),
+        new ivm.Callback((level, line) => process.stderr.write(`[tool:${level}] ${line}\n`), { ignored: true }),
       ],
       { timeout: 1_000 },
     );
+    fireTimer = await context.global.get("__fireTimer", { reference: true });
 
     const module = await isolate.compileModule(bundleSource.toString("utf8"), { filename: "tool.mjs" });
     await module.instantiate(context, (specifier) => {

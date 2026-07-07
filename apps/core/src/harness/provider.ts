@@ -10,7 +10,7 @@ import { createGoogle } from "@ai-sdk/google";
 import { createOpenAI } from "@ai-sdk/openai";
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import { createMinimax } from "vercel-minimax-ai-provider";
-import { jsonSchema, Output, type LanguageModel } from "ai";
+import { jsonSchema, Output, wrapLanguageModel, type LanguageModel, type LanguageModelMiddleware } from "ai";
 import type {
   AgentConfig,
   AccountModelProviderName,
@@ -93,6 +93,25 @@ function resolveProviderModel(
   };
 }
 
+// vLLM-style chat templates often accept only a single system message, and
+// OVH's Qwen endpoints fail SOFT on extras: HTTP 200 with an immediately-empty
+// stream (`data: [DONE]`), which surfaces as "Model returned empty response".
+// The harness legitimately sends two (the base prompt + the dynamic context
+// snapshot), so fold every system message into one before the request leaves.
+export const mergeSystemMessagesMiddleware: LanguageModelMiddleware = {
+  transformParams: async ({ params }) => {
+    const systems = params.prompt.filter((message) => message.role === "system");
+    if (systems.length <= 1) return params;
+    return {
+      ...params,
+      prompt: [
+        { role: "system", content: systems.map((message) => message.content).join("\n\n") },
+        ...params.prompt.filter((message) => message.role !== "system"),
+      ],
+    };
+  },
+};
+
 function resolveOpenAICompatibleModel(
   providerName: AccountModelProviderName,
   providerConfig: AgentProviderSettings,
@@ -112,7 +131,7 @@ function resolveOpenAICompatibleModel(
   return {
     providerName,
     provider,
-    model: provider(modelId),
+    model: wrapLanguageModel({ model: provider(modelId), middleware: mergeSystemMessagesMiddleware }),
   };
 }
 
