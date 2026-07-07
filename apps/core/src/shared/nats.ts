@@ -121,8 +121,18 @@ export async function connectNats(options: {
   servers: string;
   token?: string;
   timeout?: number;
+  // -1 = retry forever. Long-lived relays (the gateway) pass -1; short-lived
+  // callers keep the nats.js default (10 attempts, then the connection closes).
+  maxReconnectAttempts?: number;
 }): Promise<NatsConnection> {
-  const connectOptions = { servers: options.servers, token: options.token, timeout: options.timeout ?? 5000 };
+  const connectOptions = {
+    servers: options.servers,
+    token: options.token,
+    timeout: options.timeout ?? 5000,
+    ...(options.maxReconnectAttempts !== undefined
+      ? { maxReconnectAttempts: options.maxReconnectAttempts }
+      : {}),
+  };
   const useWebSocket = /^wss?:\/\//i.test(options.servers);
   const connection = useWebSocket ? await connectWebSocket(connectOptions) : await connectTcp(connectOptions);
   return connection as unknown as NatsConnection;

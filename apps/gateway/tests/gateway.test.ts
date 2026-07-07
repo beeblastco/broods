@@ -27,9 +27,14 @@ import {
   terminalServiceSecretsFromEnv,
 } from "../src/terminal.ts";
 import {
+  RateLimiter,
+  allowedOriginPatternsFromEnv,
+  clientIp,
   gatewayLimitsFromEnv,
+  isOriginAllowed,
   mapWithConcurrency,
   normalizedCoreBaseUrls,
+  websocketToken,
 } from "../src/utils.ts";
 import { sealTerminalTicket } from "../../core/src/shared/terminal-ticket.ts";
 import {
@@ -464,6 +469,7 @@ test("observability relay skips malformed and below-threshold log messages", asy
   const sent: unknown[] = [];
   const socket = {
     readyState: WebSocket.OPEN,
+    getBufferedAmount: () => 0,
     send: (value: string) => sent.push(JSON.parse(value)),
   } as unknown as Bun.ServerWebSocket<
     import("../src/observability.ts").ObservabilityGatewayData
@@ -864,4 +870,98 @@ test("terminal upstream filters only the first session_init frame", () => {
   } finally {
     globalThis.WebSocket = originalWebSocket;
   }
+});
+
+test("origin allow-list: defaults cover broods.app, wildcards, and non-browser clients", () => {
+  const defaults = allowedOriginPatternsFromEnv({});
+  expect(isOriginAllowed(null, defaults)).toBe(true);
+  expect(isOriginAllowed("", defaults)).toBe(true);
+  expect(isOriginAllowed("https://dashboard.broods.app", defaults)).toBe(true);
+  expect(isOriginAllowed("https://dashboard.dev.broods.app", defaults)).toBe(true);
+  expect(isOriginAllowed("https://broods.app", defaults)).toBe(true);
+  expect(isOriginAllowed("http://localhost:3000", defaults)).toBe(true);
+  expect(isOriginAllowed("https://evil.example.com", defaults)).toBe(false);
+  expect(isOriginAllowed("https://broods.app.evil.com", defaults)).toBe(false);
+  expect(isOriginAllowed("not a url", defaults)).toBe(false);
+
+  const custom = allowedOriginPatternsFromEnv({
+    GATEWAY_ALLOWED_ORIGINS: "app.example.com, *.internal.example.com",
+  });
+  expect(isOriginAllowed("https://app.example.com", custom)).toBe(true);
+  expect(isOriginAllowed("https://x.internal.example.com", custom)).toBe(true);
+  expect(isOriginAllowed("https://dashboard.broods.app", custom)).toBe(false);
+  expect(isOriginAllowed("https://anything.example", ["*"])).toBe(true);
+});
+
+test("rate limiter: bounds a window, probes without counting, and resets", async () => {
+  const limiter = new RateLimiter(3, 50);
+  expect(limiter.allow("ip-1")).toBe(true);
+  expect(limiter.allow("ip-1")).toBe(true);
+  expect(limiter.allow("ip-1")).toBe(true);
+  expect(limiter.allow("ip-1")).toBe(false);
+  expect(limiter.blocked("ip-1")).toBe(true);
+  expect(limiter.blocked("ip-1")).toBe(true);
+  expect(limiter.allow("ip-2")).toBe(true);
+  expect(limiter.blocked("ip-2")).toBe(false);
+
+  await new Promise((resolve) => setTimeout(resolve, 60));
+  expect(limiter.blocked("ip-1")).toBe(false);
+  expect(limiter.allow("ip-1")).toBe(true);
+});
+
+test("websocket token prefers the Authorization header over the query param", () => {
+  const url = new URL("https://gateway.example.com/ws?token=from-query");
+  const withHeader = new Request(url, {
+    headers: { authorization: "Bearer from-header" },
+  });
+  expect(websocketToken(withHeader, url)).toBe("from-header");
+  expect(websocketToken(new Request(url), url)).toBe("from-query");
+
+  const bare = new URL("https://gateway.example.com/ws");
+  expect(websocketToken(new Request(bare), bare)).toBe("");
+});
+
+test("client ip prefers x-real-ip, then x-forwarded-for, then the socket address", () => {
+  const withRealIp = new Request("https://gateway.example.com/", {
+    headers: { "x-real-ip": "203.0.113.7", "x-forwarded-for": "198.51.100.1, 10.0.0.1" },
+  });
+  expect(clientIp(withRealIp, "127.0.0.1")).toBe("203.0.113.7");
+
+  const withForwarded = new Request("https://gateway.example.com/", {
+    headers: { "x-forwarded-for": "198.51.100.1, 10.0.0.1" },
+  });
+  expect(clientIp(withForwarded, "127.0.0.1")).toBe("198.51.100.1");
+  expect(clientIp(new Request("https://gateway.example.com/"), "127.0.0.1")).toBe("127.0.0.1");
+  expect(clientIp(new Request("https://gateway.example.com/"), undefined)).toBe("unknown");
+});
+
+test("proxyHttp returns 502 when every upstream is unreachable", async () => {
+  const response = await proxyHttp(
+    new Request("https://gateway.example.com/v1/agents"),
+    ["http://127.0.0.1:9", "http://127.0.0.1:1"],
+  );
+  expect(response.status).toBe(502);
+  expect(await response.json()).toEqual({ error: "Upstream is unreachable" });
+});
+
+test("observability relay sheds droppable frames when the socket buffer is backed up", async () => {
+  const encoder = new TextEncoder();
+  const sent: unknown[] = [];
+  const socket = {
+    readyState: WebSocket.OPEN,
+    getBufferedAmount: () => 10 * 1024 * 1024,
+    send: (value: string) => sent.push(JSON.parse(value)),
+  } as unknown as Bun.ServerWebSocket<
+    import("../src/observability.ts").ObservabilityGatewayData
+  >;
+  const messages = async function* () {
+    yield {
+      data: encoder.encode(
+        JSON.stringify({ ts: 1, level: "ERROR", eventType: "error", message: "shed me" }),
+      ),
+    };
+  };
+
+  await relayNatsMessages(socket, messages(), "logs", { logsMinLevel: "INFO" });
+  expect(sent).toEqual([]);
 });
