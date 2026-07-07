@@ -51,8 +51,8 @@ Runtime boundary:
 
 ```mermaid
 flowchart TD
-  Owner["Account owner"] -->|"POST /accounts<br/>agents + skills APIs"| ManageUrl["account-manage<br/>Function URL"]
-  Admin["Admin"] -->|"Bearer AdminAccountSecret"| ManageUrl
+  Owner["Account owner"] -->|"agents + skills APIs"| ManageUrl["account-manage<br/>Function URL"]
+  Admin["Admin"] -->|"Bearer AdminAccountSecret<br/>POST /accounts"| ManageUrl
   Direct["Direct API client"] -->|"Bearer account secret<br/>POST / or /async"| HarnessUrl["harness-processing<br/>Function URL"]
   Status["Status poller"] -->|"Bearer account secret<br/>GET /status/\{eventId\}"| HarnessUrl
   Provider["Telegram / GitHub / Slack / Discord / Pancake / Zalo"] -->|"/webhooks/\{accountId\}/\{agentId\}/\{channel\}"| HarnessUrl
@@ -132,7 +132,7 @@ sequenceDiagram
   participant A as AccountConfig table
   participant S as Skills S3 bucket
 
-  U->>M: POST /accounts { username, description? }
+  U->>M: POST /accounts { username, description? } (Bearer AdminAccountSecret)
   M->>M: generate accountId + secret
   M->>A: store secretHash + metadata
   M-->>U: account + one-time secret

@@ -12,7 +12,7 @@ info:
     > - Advanced integrations that need direct account-management access
     > - Admin operations using `AdminAccountSecret`
 
-    Account metadata and secret rotation are served by the config plane behind the same gateway host; account signup and delete stay in core for public signup and runtime cleanup. Account administration and rotate-secret are reachable by admins as `/accounts/{accountId}/...` with the `AdminAccountSecret` bearer token. Agent CRUD is account-authenticated under `/v1/agents*`. Agents, skills, tools, workspace files, crons, workspaces, sandboxes, and policies are served by the config plane and have no admin path variants.
+    Account metadata and secret rotation are served by the config plane behind the same gateway host; account creation and delete stay in core for admin-controlled provisioning and runtime cleanup. Account creation, administration, and rotate-secret are reachable by admins with the `AdminAccountSecret` bearer token. Agent CRUD is account-authenticated under `/v1/agents*`. Agents, skills, tools, workspace files, crons, workspaces, sandboxes, and policies are served by the config plane and have no admin path variants.
   version: 0.1.0
 
 servers:
@@ -471,8 +471,9 @@ paths:
       tags:
         - Accounts
       summary: Create account
-      description: Public endpoint to create a new account. IP-rate-limited. Store `secret` securely — it is not recoverable.
-      security: []
+      description: Admin-only endpoint to create a new account. Store `secret` securely — it is not recoverable.
+      security:
+        - AdminAuth: []
       requestBody:
         required: true
         content:
@@ -516,8 +517,10 @@ paths:
                       username: company-a
                       description: Company A account
                     secret: fp_acct_xyz789...
-        '429':
-          description: Rate limited
+        '401':
+          description: Missing or invalid bearer token
+        '403':
+          description: Bearer token is valid but is not the admin secret
 
     get:
       tags:
