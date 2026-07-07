@@ -66,8 +66,9 @@ the `"use node"` action files (`awsBundles.ts`, `awsSkills.ts`,
 `/v1/tools*`, `/v1/workspaces/{id}/files`, `/v1/crons*`, `/v1/workspaces*`,
 `/v1/sandboxes*` (CRUD only; lifecycle verbs stay in core), and
 `/v1/policies*` — replacing core's former routes; the gateway forwards those
-paths here (`BROODS_CONFIG_URL`). Public signup (`POST /accounts`) and account
-delete (`DELETE /v1/account`, `DELETE /accounts/{accountId}`) stay in core.
+paths here (`BROODS_CONFIG_URL`). Admin-gated account creation
+(`POST /accounts`) and account delete (`DELETE /v1/account`,
+`DELETE /accounts/{accountId}`) stay in core.
 Cron execution stays in core: schedules invoke the configured target with
 `{kind: "cron", accountId, cronId}` and core's harness runs the agent.
 Sandbox config CRUD requires `ACCOUNT_CONFIG_ENCRYPTION_SECRET`.

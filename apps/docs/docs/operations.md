@@ -87,7 +87,7 @@ Treat `AdminAccountSecret` and `AccountConfigEncryptionSecret` as stable product
 
 Provider API keys are account-specific, not global SST secrets. Each account-owned agent configures its provider API key in `config.provider.<provider>.apiKey`. Similarly, tool API keys like Tavily are configured per agent in `config.tools.<tool>.apiKey`. This allows different users to use their own API keys.
 
-Public account creation is throttled by `ACCOUNT_SIGNUP_RATE_LIMIT_PER_HOUR`, currently set to `5` in `sst.config.ts`.
+Manual account creation through `POST /accounts` requires `AdminAccountSecret`; normal hosted onboarding uses the dashboard-authenticated Convex config plane.
 
 WebSocket gateway support is application infrastructure, not agent configuration. `sst.config.ts` fails early when `ENABLE_WEBSOCKET=true` is set without `NATS_URL`. At runtime, `harness-processing` also rejects `nats-worker` invocations unless WebSocket is enabled and the NATS connection can be established.
 
@@ -223,7 +223,7 @@ export ACCOUNT_GOOGLE_API_KEY=<googleApiKey>
 export ACCOUNT_TAVILY_API_KEY=<tavilyApiKey>
 ```
 
-Each script creates a temporary account through `ACCOUNT_SERVICE_URL/accounts`, runs the probe with the returned account secret, then deletes the test account through `DELETE /v1/account` in a cleanup step.
+Each script creates a temporary account through `ACCOUNT_SERVICE_URL/accounts` using `ADMIN_ACCOUNT_SECRET`, runs the probe with the returned account secret, then deletes the test account through `DELETE /v1/account` in a cleanup step.
 
 Confirm the harness URL is live:
 

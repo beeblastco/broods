@@ -100,10 +100,11 @@ broods deploy
 
 ### Account Setup (Self-Hosted)
 
-Create an account through the account-management Function URL:
+Create an account through the account-management Function URL with the admin secret:
 
 ```bash
 curl -X POST "$ACCOUNT_SERVICE_URL/accounts" \
+  -H "Authorization: Bearer $ADMIN_ACCOUNT_SECRET" \
   -H "Content-Type: application/json" \
   -d '{ "username": "company-a", "description": "Company A account" }'
 ```

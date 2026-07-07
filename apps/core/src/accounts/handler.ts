@@ -56,15 +56,6 @@ async function handleAccountRequest(request: CoreRequest): Promise<Response> {
             return jsonResponse(200, { status: "ok" });
         }
 
-        if (method === "POST" && rawPath === "/accounts") {
-            const body = parseJsonBody(request);
-            const created = await getStorage().accounts.create(normalizeCreateAccountInput(body));
-            return jsonResponse(201, {
-                account: toCreateAccountResponse(created.account),
-                secret: created.secret,
-            });
-        }
-
         const auth = await resolveBearerAuth(headers);
         if (!auth) {
             logWarn("Account manage request unauthorized", {
@@ -103,6 +94,15 @@ async function handleAccountRequest(request: CoreRequest): Promise<Response> {
 
         if (auth.kind !== "admin") {
             return errorResponse(403, "Forbidden");
+        }
+
+        if (method === "POST" && rawPath === "/accounts") {
+            const body = parseJsonBody(request);
+            const created = await getStorage().accounts.create(normalizeCreateAccountInput(body));
+            return jsonResponse(201, {
+                account: toCreateAccountResponse(created.account),
+                secret: created.secret,
+            });
         }
 
         const accountMatch = rawPath.match(/^\/accounts\/([^/]+)$/);

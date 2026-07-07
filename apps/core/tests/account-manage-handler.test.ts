@@ -1,10 +1,10 @@
 import { afterEach, describe, expect, it } from "bun:test";
 import { handler } from "../src/accounts/handler.ts";
 import type { CoreRequest } from "../src/shared/http.ts";
+import { hashAccountSecret } from "../src/shared/storage/accounts.ts";
 import { resetStorageForTests, setStorageForTests } from "../src/shared/storage/index.ts";
 
 const originalAdminSecret = process.env.ADMIN_ACCOUNT_SECRET;
-const originalSignupLimit = process.env.ACCOUNT_SIGNUP_RATE_LIMIT_PER_HOUR;
 const originalServiceSecret = process.env.SERVICE_AUTH_SECRET;
 const originalCronsTable = process.env.CRONS_TABLE_NAME;
 const originalSchedulerRoleArn = process.env.CRON_SCHEDULER_ROLE_ARN;
@@ -16,11 +16,6 @@ afterEach(() => {
     delete process.env.ADMIN_ACCOUNT_SECRET;
   } else {
     process.env.ADMIN_ACCOUNT_SECRET = originalAdminSecret;
-  }
-  if (originalSignupLimit === undefined) {
-    delete process.env.ACCOUNT_SIGNUP_RATE_LIMIT_PER_HOUR;
-  } else {
-    process.env.ACCOUNT_SIGNUP_RATE_LIMIT_PER_HOUR = originalSignupLimit;
   }
   if (originalServiceSecret === undefined) {
     delete process.env.SERVICE_AUTH_SECRET;
@@ -66,8 +61,49 @@ describe("account management HTTP handler", () => {
     expect(await responseJson(response)).toEqual({ error: "Unauthorized" });
   });
 
-  it("returns create account one-time secret as secret", async () => {
-    process.env.ACCOUNT_SIGNUP_RATE_LIMIT_PER_HOUR = "0";
+  it("requires bearer auth to create an account", async () => {
+    setStorageForTests(createFakeStorage({
+      async create() {
+        throw new Error("create should not be called");
+      },
+    }));
+
+    const response = await handler(createEvent("POST", "/accounts", {}, {
+      username: "company-a",
+      description: "Company A account",
+    }));
+
+    expect(response.status).toBe(401);
+    expect(await responseJson(response)).toEqual({ error: "Unauthorized" });
+  });
+
+  it("rejects account-secret auth when creating an account", async () => {
+    process.env.ADMIN_ACCOUNT_SECRET = "admin-secret";
+    const accountSecret = "fp_acct_existing";
+    setStorageForTests(createFakeStorage({
+      accounts: {
+        async getBySecretHash(secretHash: string) {
+          return secretHash === hashAccountSecret(accountSecret) ? fakeAccount() : null;
+        },
+        async create() {
+          throw new Error("create should not be called");
+        },
+      },
+    }));
+
+    const response = await handler(createEvent("POST", "/accounts", {
+      authorization: `Bearer ${accountSecret}`,
+    }, {
+      username: "company-a",
+      description: "Company A account",
+    }));
+
+    expect(response.status).toBe(403);
+    expect(await responseJson(response)).toEqual({ error: "Forbidden" });
+  });
+
+  it("returns create account one-time secret as secret for admin auth", async () => {
+    process.env.ADMIN_ACCOUNT_SECRET = "admin-secret";
     setStorageForTests(createFakeStorage({
       async create() {
         return {
@@ -77,7 +113,9 @@ describe("account management HTTP handler", () => {
       },
     }));
 
-    const response = await handler(createEvent("POST", "/accounts", {}, {
+    const response = await handler(createEvent("POST", "/accounts", {
+      authorization: "Bearer admin-secret",
+    }, {
       username: "company-a",
       description: "Company A account",
     }));
