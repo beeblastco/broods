@@ -201,6 +201,7 @@ export const accountToolsFields = {
     inputSchema: v.any(),
     bundleStorageKey: v.string(),
     sha256: v.string(),
+    runtime: v.optional(v.union(v.literal("isolate"), v.literal("sandbox"))),
     defaultConfig: v.optional(v.any()),
     status: v.union(v.literal("active"), v.literal("deleted")),
     createdAt: v.number(),

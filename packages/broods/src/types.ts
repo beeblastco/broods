@@ -101,4 +101,5 @@ export interface CustomTool {
   name: string;
   description: string;
   sha256: string;
+  runtime?: "isolate" | "sandbox";
 }
