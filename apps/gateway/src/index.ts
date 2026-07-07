@@ -428,10 +428,23 @@ async function proxyHttp(request: Request, coreBaseUrls: string[]): Promise<Resp
       body,
       redirect: "manual",
     });
-    if (response.status !== 401) return response;
+    if (response.status !== 401) return stripEncodingHeaders(response);
   }
 
-  return response ?? json({ error: "No core upstream is configured" }, { status: 503 });
+  return response ? stripEncodingHeaders(response) : json({ error: "No core upstream is configured" }, { status: 503 });
+}
+
+// fetch() hands us an already-decompressed body but keeps the upstream's
+// Content-Encoding/Content-Length headers. Forwarding those with the
+// decompressed bytes makes the edge (Cloudflare/traefik) abort the response
+// stream, so drop them and let the server re-frame the body.
+function stripEncodingHeaders(response: Response): Response {
+  if (!response.headers.has("content-encoding")) return response;
+  const headers = new Headers(response.headers);
+  headers.delete("content-encoding");
+  headers.delete("content-length");
+  headers.delete("transfer-encoding");
+  return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
 }
 
 async function streamNatsResponses(
