@@ -8,6 +8,7 @@ import { createAnthropic } from "@ai-sdk/anthropic";
 import { createGateway } from "@ai-sdk/gateway";
 import { createGoogle } from "@ai-sdk/google";
 import { createOpenAI } from "@ai-sdk/openai";
+import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import { createMinimax } from "vercel-minimax-ai-provider";
 import { jsonSchema, Output, type LanguageModel } from "ai";
 import type {
@@ -98,16 +99,20 @@ function resolveOpenAICompatibleModel(
   modelId: string,
 ): ResolvedModelProvider {
   const { base_url: _baseUrl, ...openAIConfig } = providerConfig;
-  const provider = createOpenAI({
+  // @ai-sdk/openai-compatible instead of @ai-sdk/openai: vLLM-style endpoints
+  // return thinking text in `reasoning`/`reasoning_content` fields, which only
+  // the compatible provider parses into reasoning parts (#115).
+  const provider = createOpenAICompatible({
     ...(openAIConfig as Record<string, unknown>),
-    baseURL: customProviderBaseURL(providerConfig),
+    baseURL: customProviderBaseURL(providerConfig) ?? "",
     name: typeof providerConfig.name === "string" ? providerConfig.name : providerName,
+    includeUsage: true,
   });
 
   return {
     providerName,
     provider,
-    model: provider.chat(modelId),
+    model: provider(modelId),
   };
 }
 
