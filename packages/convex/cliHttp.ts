@@ -494,6 +494,7 @@ async function syncToolResources(
             name: resource.name,
             description: stringField(config.description ?? resource.description, `tool:${resource.name}.description`),
             inputSchema: asRecord(config.inputSchema, `tool:${resource.name}.inputSchema`),
+            ...(config.runtime !== undefined ? { runtime: stringField(config.runtime, `tool:${resource.name}.runtime`) } : {}),
             ...(config.defaultConfig !== undefined ? { defaultConfig: asRecord(config.defaultConfig, `tool:${resource.name}.defaultConfig`) } : {}),
             bundle: stringField(config.bundle, `tool:${resource.name}.bundle`),
         }, { requireBundle: true });
@@ -514,6 +515,7 @@ async function syncToolResources(
                 inputSchema: upload.inputSchema,
                 bundleStorageKey: bundleStorageKey,
                 sha256: upload.sha256,
+                runtime: upload.runtime,
                 ...(upload.defaultConfig !== undefined ? { defaultConfig: upload.defaultConfig } : {}),
             });
             ids[resource.name] = current._id;
@@ -525,6 +527,7 @@ async function syncToolResources(
                 inputSchema: upload.inputSchema,
                 bundleStorageKey: bundleStorageKey,
                 sha256: upload.sha256,
+                runtime: upload.runtime,
                 ...(upload.defaultConfig !== undefined ? { defaultConfig: upload.defaultConfig } : {}),
             });
             ids[resource.name] = toolId;

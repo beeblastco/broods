@@ -35,20 +35,21 @@ const RUNNER_OUTPUT_LIMIT_BYTES = 1024 * 1024;
 // npm-bundled) tools fall back to the signed URL the sandbox fetches itself.
 const MAX_INLINE_BUNDLE_BYTES = 64 * 1024;
 
-interface ExecuteAccountToolOptions {
+export interface ExecuteAccountToolOptions {
   accountId: string;
   tool: AccountToolRecord;
   input: unknown;
   config: AgentToolConfig;
   options?: unknown;
   createExecutor?: typeof createSandboxExecutor;
+  isolateExecutor?: (options: ExecuteAccountToolOptions) => AsyncGenerator<unknown, void, void>;
   // Reports the tool sandbox's CPU (role "tool") for usage metering. Only the
   // one-shot runner path carries a cgroup CPU figure; the resident-worker fast
   // path does not, so it is not metered.
   onSandboxCpu?: (sample: SandboxCpuSample) => void;
 }
 
-interface DetachedAsyncToolMetadata {
+export interface DetachedAsyncToolMetadata {
   resultId: string;
   completePath: string;
   completionToken: string;
@@ -56,7 +57,7 @@ interface DetachedAsyncToolMetadata {
   [key: string]: unknown;
 }
 
-interface RunnerPayload {
+export interface RunnerPayload {
   // Exactly one source is set: bundleSourceB64 for inlined small bundles,
   // bundleUrl for large ones the sandbox downloads via the signed URL.
   bundleSourceB64?: string;
@@ -91,6 +92,14 @@ export async function executeAccountToolInSandbox(options: ExecuteAccountToolOpt
   return last;
 }
 
+export async function executeAccountTool(options: ExecuteAccountToolOptions): Promise<unknown> {
+  let last: unknown;
+  for await (const output of streamAccountTool(options)) {
+    last = output;
+  }
+  return last;
+}
+
 /**
  * Streaming entry used by the AI SDK tool adapter (account-tool.tool.ts). A bundle
  * whose execute is an async generator streams each yield (surfaced as a preliminary
@@ -99,6 +108,17 @@ export async function executeAccountToolInSandbox(options: ExecuteAccountToolOpt
  * async-iterable and streams it (an async function would resolve to the iterator
  * and the SDK would not stream). Detached async tools are launched, not streamed.
  */
+export async function* streamAccountTool(options: ExecuteAccountToolOptions): AsyncGenerator<unknown, void, void> {
+  const asyncTool = extractAsyncToolMetadata(options.options);
+  if (isDetachedAsyncTool(asyncTool) || options.tool.runtime === "sandbox") {
+    yield* streamAccountToolInSandbox(options);
+    return;
+  }
+
+  const isolateExecutor = options.isolateExecutor ?? (await import("./isolate-executor.ts")).streamAccountToolInIsolate;
+  yield* isolateExecutor(options);
+}
+
 export async function* streamAccountToolInSandbox({
   accountId,
   tool,
@@ -199,7 +219,7 @@ async function* streamWorkerInvoke(
 
 // Push/pull buffer that parses incoming NDJSON text into worker frames as whole
 // lines arrive, and lets a consumer await the next frame until the stream closes.
-class FrameQueue {
+export class FrameQueue {
   #buffer = "";
   #frames: WorkerFrame[] = [];
   #waiters: Array<() => void> = [];
@@ -318,13 +338,14 @@ async function startAccountToolInSandboxBackground({
   return { type: "text", value: `Started async tool ${asyncTool.resultId}` }; // statusId (model-facing) === resultId; this text is overridden by the async wrapper's toModelOutput
 }
 
-async function createRunnerPayload(options: {
+export async function createRunnerPayload(options: {
   bucket: string;
   tool: AccountToolRecord;
   input: unknown;
   config: AgentToolConfig;
   asyncTool: unknown;
   detachedCompletion?: RunnerPayload["detachedCompletion"];
+  forceInline?: boolean;
 }): Promise<RunnerPayload> {
   const base: RunnerPayload = {
     expectedSha256: options.tool.sha256,
@@ -335,7 +356,7 @@ async function createRunnerPayload(options: {
     ...(options.detachedCompletion ? { detachedCompletion: options.detachedCompletion } : {}),
   };
   const bytes = await readS3Bytes(options.bucket, options.tool.bundleStorageKey);
-  if (bytes.byteLength <= MAX_INLINE_BUNDLE_BYTES) {
+  if (options.forceInline || bytes.byteLength <= MAX_INLINE_BUNDLE_BYTES) {
     return { ...base, bundleSourceB64: Buffer.from(bytes).toString("base64") };
   }
   return { ...base, bundleUrl: await getS3ObjectUrl(options.bucket, options.tool.bundleStorageKey) };
@@ -499,7 +520,7 @@ function parseRunnerOutput(stdout: string): RunnerResult | null {
   return JSON.parse(line.slice(RESULT_MARKER.length));
 }
 
-function mergeToolConfig(
+export function mergeToolConfig(
   defaultConfig: Record<string, unknown> | undefined,
   agentConfig: unknown,
 ): Record<string, unknown> {
@@ -511,12 +532,12 @@ function mergeToolConfig(
   };
 }
 
-function extractAsyncToolMetadata(options: unknown): unknown {
+export function extractAsyncToolMetadata(options: unknown): unknown {
   if (!options || typeof options !== "object") return undefined;
   return (options as { asyncTool?: unknown }).asyncTool;
 }
 
-function isDetachedAsyncTool(value: unknown): value is DetachedAsyncToolMetadata {
+export function isDetachedAsyncTool(value: unknown): value is DetachedAsyncToolMetadata {
   return Boolean(
     value &&
     typeof value === "object" &&
@@ -527,7 +548,7 @@ function isDetachedAsyncTool(value: unknown): value is DetachedAsyncToolMetadata
   );
 }
 
-function customToolExecutorConfig(): Parameters<typeof createSandboxExecutor>[0] {
+export function customToolExecutorConfig(): Parameters<typeof createSandboxExecutor>[0] {
   // createSandboxExecutor only creates a local client object. Sandbox lookup,
   // first-use creation, and idle resume happen inside executor.run/runBackground.
   // Untrusted uploaded tool code runs in the self-hosted Firecracker `sandbox`

@@ -637,6 +637,7 @@ interface ConvexAccountToolDoc {
   inputSchema: AccountToolRecord["inputSchema"];
   bundleStorageKey: string;
   sha256: string;
+  runtime?: "isolate" | "sandbox";
   defaultConfig?: Record<string, unknown>;
   status: "active" | "deleted";
   createdAt: number;
@@ -654,6 +655,7 @@ function accountToolFromConvex(doc: ConvexAccountToolDoc | null): AccountToolRec
     inputSchema: doc.inputSchema,
     bundleStorageKey: doc.bundleStorageKey,
     sha256: doc.sha256,
+    runtime: doc.runtime === "isolate" ? "isolate" : "sandbox",
     ...(doc.defaultConfig !== undefined ? { defaultConfig: doc.defaultConfig } : {}),
     status: doc.status,
     createdAt: new Date(doc.createdAt).toISOString(),
@@ -775,6 +777,7 @@ const accountTools: AccountToolStore = {
       inputSchema: normalized.inputSchema as any,
       bundleStorageKey: normalized.bundleStorageKey,
       sha256: normalized.sha256,
+      runtime: normalized.runtime ?? "sandbox",
       defaultConfig: normalized.defaultConfig,
     })) as string;
     const created = await this.getById(accountId, id);

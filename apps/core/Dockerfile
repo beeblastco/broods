@@ -27,15 +27,24 @@ COPY apps/core ./apps/core
 RUN cd apps/core && bun run scripts/compaction-prompt.ts \
     && bun build --compile --target=bun-linux-x64 --minify src/server.ts --outfile /out/core-server
 
+FROM node:22-alpine AS isolate-deps
+WORKDIR /app/isolate-runner
+RUN apk add --no-cache build-base python3 \
+    && npm init -y \
+    && npm i isolated-vm@7.0.0
+
 FROM alpine:3.22 AS runner
 WORKDIR /app
 ENV NODE_ENV=production \
     HOSTNAME=0.0.0.0 \
-    PORT=3000
-RUN apk add --no-cache ca-certificates libgcc libstdc++ \
+    PORT=3000 \
+    ISOLATE_RUNNER_PATH=/app/isolate-runner/runner.mjs
+RUN apk add --no-cache ca-certificates libgcc libstdc++ nodejs \
     && addgroup --system --gid 1001 core \
     && adduser --system --uid 1001 core
 COPY --from=builder --chown=1001:1001 /out/core-server ./core-server
+COPY --from=isolate-deps --chown=1001:1001 /app/isolate-runner/node_modules ./isolate-runner/node_modules
+COPY --chown=1001:1001 apps/core/src/harness/tools/isolate-runner/ ./isolate-runner/
 USER 1001
 EXPOSE 3000
 CMD ["./core-server"]

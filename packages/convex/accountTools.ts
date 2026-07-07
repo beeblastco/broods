@@ -12,6 +12,8 @@ const accountToolDoc = v.object({
     _creationTime: v.number(),
 });
 
+const runtimeValidator = v.union(v.literal("isolate"), v.literal("sandbox"));
+
 export const getById = internalQuery({
     args: {
         accountId: v.id("accounts"),
@@ -49,6 +51,7 @@ export const create = internalMutation({
         inputSchema: v.any(),
         bundleStorageKey: v.string(),
         sha256: v.string(),
+        runtime: v.optional(runtimeValidator),
         defaultConfig: v.optional(v.any()),
     },
     returns: v.id("accountTools"),
@@ -67,6 +70,7 @@ export const create = internalMutation({
             inputSchema: args.inputSchema,
             bundleStorageKey: args.bundleStorageKey,
             sha256: args.sha256,
+            runtime: args.runtime ?? "sandbox",
             defaultConfig: args.defaultConfig,
             status: "active",
             createdAt: now,
@@ -84,6 +88,7 @@ export const update = internalMutation({
         inputSchema: v.optional(v.any()),
         bundleStorageKey: v.optional(v.string()),
         sha256: v.optional(v.string()),
+        runtime: v.optional(runtimeValidator),
         defaultConfig: v.optional(v.any()),
     },
     returns: v.null(),
@@ -103,6 +108,7 @@ export const update = internalMutation({
             ...(args.inputSchema !== undefined ? { inputSchema: args.inputSchema } : {}),
             ...(args.bundleStorageKey !== undefined ? { bundleStorageKey: args.bundleStorageKey } : {}),
             ...(args.sha256 !== undefined ? { sha256: args.sha256 } : {}),
+            ...(args.runtime !== undefined ? { runtime: args.runtime } : {}),
             ...(args.defaultConfig !== undefined
                 ? { defaultConfig: args.defaultConfig === null ? undefined : args.defaultConfig }
                 : {}),
