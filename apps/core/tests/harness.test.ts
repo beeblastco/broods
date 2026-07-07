@@ -17,6 +17,8 @@ const openAIModelMock = mock((modelId: string) => ({ provider: "openai", modelId
 const openAIChatModelMock = mock((modelId: string) => ({ provider: "custom.chat", modelId }));
 const openAIProviderMock = Object.assign(openAIModelMock, { chat: openAIChatModelMock });
 const createOpenAIMock = mock((_options: unknown) => openAIProviderMock);
+const openAICompatibleModelMock = mock((modelId: string) => ({ provider: "custom.chat", modelId }));
+const createOpenAICompatibleMock = mock((_options: unknown) => openAICompatibleModelMock);
 const anthropicModelMock = mock((modelId: string) => ({ provider: "anthropic", modelId }));
 const createAnthropicMock = mock((_options: unknown) => anthropicModelMock);
 const bedrockModelMock = mock((modelId: string) => ({ provider: "bedrock", modelId }));
@@ -386,6 +388,10 @@ mock.module("@ai-sdk/openai", () => ({
   createOpenAI: createOpenAIMock,
 }));
 
+mock.module("@ai-sdk/openai-compatible", () => ({
+  createOpenAICompatible: createOpenAICompatibleMock,
+}));
+
 mock.module("@ai-sdk/anthropic", () => ({
   createAnthropic: createAnthropicMock,
 }));
@@ -419,6 +425,8 @@ afterEach(() => {
   openAIModelMock.mockClear();
   openAIChatModelMock.mockClear();
   createOpenAIMock.mockClear();
+  openAICompatibleModelMock.mockClear();
+  createOpenAICompatibleMock.mockClear();
   anthropicModelMock.mockClear();
   createAnthropicMock.mockClear();
   bedrockModelMock.mockClear();
@@ -1628,14 +1636,15 @@ describe("runAgentLoop", () => {
 
     await stream.consumeStream();
 
-    expect(createOpenAIMock).toHaveBeenCalledWith({
+    expect(createOpenAICompatibleMock).toHaveBeenCalledWith({
       apiKey: "custom-key",
       baseURL: "https://llm.example/v1",
       headers: { "X-Tenant": "tenant-1" },
       name: "custom",
+      includeUsage: true,
     });
-    expect(openAIModelMock).not.toHaveBeenCalledWith("gpt-oss-120b");
-    expect(openAIChatModelMock).toHaveBeenCalledWith("gpt-oss-120b");
+    expect(createOpenAIMock).not.toHaveBeenCalled();
+    expect(openAICompatibleModelMock).toHaveBeenCalledWith("gpt-oss-120b");
     expect(streamTextMock.mock.calls[0]?.[0]).toMatchObject({
       model: { provider: "custom.chat", modelId: "gpt-oss-120b" },
     });
