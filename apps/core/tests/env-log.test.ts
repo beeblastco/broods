@@ -4,7 +4,7 @@
  */
 
 import { afterEach, describe, expect, it } from "bun:test";
-import { booleanEnv, optionalEnv, requireEnv } from "../functions/_shared/env.ts";
+import { booleanEnv, optionalEnv, requireEnv } from "../src/shared/env.ts";
 import {
   collectSecretValues,
   logError,
@@ -12,8 +12,8 @@ import {
   logWarn,
   redact,
   redactSensitiveText,
-} from "../functions/_shared/log.ts";
-import { forceFlushOtel, observabilityAttributes } from "../functions/_shared/otel.ts";
+} from "../src/shared/log.ts";
+import { forceFlushOtel, observabilityAttributes } from "../src/shared/otel.ts";
 
 const ORIGINAL_ENV = { ...process.env };
 const REAL_DATE = Date;

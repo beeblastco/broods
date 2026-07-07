@@ -372,7 +372,7 @@ test("client creates cron jobs using agent references", async () => {
 
   expect(cron.cronId).toBe("cron_1");
   expect(requests).toEqual([{
-    url: "https://core.example/accounts/me/crons",
+    url: "https://core.example/v1/crons",
     body: {
       name: "daily",
       agentId: "agent_1",
@@ -399,8 +399,8 @@ test("client sends cron job APIs to the configured base URL", async () => {
   await client.listCronRuns("cron_1", { limit: 5 });
 
   expect(urls).toEqual([
-    "https://app.example/accounts/me/crons",
-    "https://app.example/accounts/me/crons/cron_1/runs?limit=5",
+    "https://app.example/v1/crons",
+    "https://app.example/v1/crons/cron_1/runs?limit=5",
   ]);
 });
 

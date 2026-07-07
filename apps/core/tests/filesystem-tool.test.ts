@@ -63,7 +63,7 @@ const readS3TextMock = mock(async (_bucket: string, _key: string) => "");
 const listS3PrefixMock = mock(async (_bucket: string, _prefix: string) =>
   [] as Array<{ key: string; lastModified?: string }>);
 
-mock.module("../functions/_shared/s3.ts", () => ({
+mock.module("../src/shared/s3.ts", () => ({
   readS3Text: readS3TextMock,
   listS3Prefix: listS3PrefixMock,
   isMissingS3Error: (error: unknown) =>
@@ -147,7 +147,7 @@ async function approvalStatus(toolName: string, input: Record<string, unknown>, 
   statelessSandbox?: unknown;
   statelessPermissionMode?: unknown;
 }) {
-  const { compatibilityApprovalStatus } = await import("../functions/harness-processing/policy.ts");
+  const { compatibilityApprovalStatus } = await import("../src/harness/policy.ts");
   return compatibilityApprovalStatus(toolName, input, {
     configuredApprovals: new Map(),
     workspaces: (ctx.workspaces ?? []) as never,
@@ -163,7 +163,7 @@ function lastSandboxExec() {
 }
 
 async function tool(name: "bash" | "read" | "write" | "edit" | "glob" | "grep", ctx: never) {
-  const mod = await import(`../functions/harness-processing/tools/${name}.tool.ts`);
+  const mod = await import(`../src/harness/tools/${name}.tool.ts`);
   return mod.default(ctx)[name] as { execute(input: Record<string, unknown>): Promise<{ type: string; value: string }> };
 }
 
@@ -215,7 +215,7 @@ describe("sandbox tool set", () => {
   });
 
   it("treats persistent Lambda MicroVM sandboxes as background-capable", async () => {
-    const { sandboxSupportsBackgroundJobs } = await import("../functions/harness-processing/tools/filesystem-utils.ts");
+    const { sandboxSupportsBackgroundJobs } = await import("../src/harness/tools/filesystem-utils.ts");
     expect(sandboxSupportsBackgroundJobs({ provider: "lambda", persistent: true } as never)).toBe(true);
   });
 
@@ -404,7 +404,7 @@ describe("write/edit approval policy", () => {
 
 describe("toWorkspaceRelative", () => {
   it("normalizes leading slashes and dots to workspace-relative paths", async () => {
-    const { toWorkspaceRelative } = await import("../functions/harness-processing/tools/filesystem-utils.ts");
+    const { toWorkspaceRelative } = await import("../src/harness/tools/filesystem-utils.ts");
     expect(toWorkspaceRelative("/src/index.ts")).toBe("src/index.ts");
     expect(toWorkspaceRelative("./src/./index.ts")).toBe("src/index.ts");
     expect(toWorkspaceRelative("")).toBe(".");
@@ -413,7 +413,7 @@ describe("toWorkspaceRelative", () => {
   });
 
   it("rejects directory traversal anywhere in the path", async () => {
-    const { toWorkspaceRelative } = await import("../functions/harness-processing/tools/filesystem-utils.ts");
+    const { toWorkspaceRelative } = await import("../src/harness/tools/filesystem-utils.ts");
     for (const path of ["../etc/passwd", "a/../../b", "..", "/a/b/..", "a/.."]) {
       expect(() => toWorkspaceRelative(path)).toThrow("directory traversal not allowed");
     }

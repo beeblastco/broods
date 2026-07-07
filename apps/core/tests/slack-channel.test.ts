@@ -5,7 +5,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, setSystemTime } from "bun:test";
 import { createHmac } from "node:crypto";
-import { createSlackChannel, toSlackStream } from "../functions/_shared/slack-channel.ts";
+import { createSlackChannel, toSlackStream } from "../src/shared/slack-channel.ts";
 
 describe("slack channel adapter", () => {
   beforeEach(() => {

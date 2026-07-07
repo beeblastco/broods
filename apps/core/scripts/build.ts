@@ -1,40 +1,15 @@
+/**
+ * Builds the self-hosted core server binary — the same entry the container runs
+ * (apps/core/Dockerfile). Compiles at the host's default target; the Docker
+ * build compiles at the amd64 cluster target.
+ */
+
 import { $ } from "bun";
-import { access, readdir } from "node:fs/promises";
-import { syncSystemPromptModule } from "./system-prompt.ts";
-
-const FUNCTIONS_DIR = new URL("../functions/", import.meta.url);
-
-const functionNames = await findFunctionNames();
+import { syncCompactionPromptModule } from "./compaction-prompt.ts";
 
 await $`rm -rf dist`;
-await syncSystemPromptModule();
+await syncCompactionPromptModule();
 
-if (functionNames.length === 0) {
-  console.log("No function folders found. Add a bootstrap.ts under functions/<name>/.");
-  process.exit(0);
-}
-
-for (const functionName of functionNames) {
-  console.log(`Building ${functionName}...`);
-  await $`bun build --compile --target bun-linux-arm64 ./functions/${functionName}/bootstrap.ts --outfile dist/${functionName}/bootstrap`;
-}
-
-console.log("All functions built successfully.");
-
-async function findFunctionNames() {
-  const entries = await readdir(FUNCTIONS_DIR, { withFileTypes: true });
-  const names = await Promise.all(
-    entries
-      .filter((entry) => entry.isDirectory())
-      .map(async (entry) => {
-        try {
-          await access(new URL(`${entry.name}/bootstrap.ts`, FUNCTIONS_DIR));
-          return entry.name;
-        } catch {
-          return null;
-        }
-      }),
-  );
-
-  return names.filter((name): name is string => name !== null).sort();
-}
+console.log("Building core server...");
+await $`bun build --compile --minify src/server.ts --outfile dist/core-server`;
+console.log("Core server built at dist/core-server.");

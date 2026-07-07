@@ -14,23 +14,23 @@ import type {
   AgentTelegramChannelConfig,
   AgentZaloChannelConfig,
   AgentWorkspaceRef,
-} from "../../../apps/core/functions/_shared/storage/agent-config.ts";
+} from "../../../apps/core/src/shared/storage/agent-config.ts";
 import type {
   CreateCronInput,
   CronLastStatus,
   CronStatus,
   UpdateCronInput,
-} from "../../../apps/core/functions/_shared/storage/cron.ts";
+} from "../../../apps/core/src/shared/storage/cron.ts";
 import type {
   SandboxConfig,
-} from "../../../apps/core/functions/_shared/storage/sandbox-config.ts";
+} from "../../../apps/core/src/shared/storage/sandbox-config.ts";
 import type {
   WorkspaceConfig,
-} from "../../../apps/core/functions/_shared/storage/workspace-config.ts";
+} from "../../../apps/core/src/shared/storage/workspace-config.ts";
 import type {
   AgentPolicyConfig,
   AgentPolicyDocument,
-} from "../../../apps/core/functions/_shared/storage/agent-policy.ts";
+} from "../../../apps/core/src/shared/storage/agent-policy.ts";
 
 export type Id<TableName extends string = string> = string & { readonly __tableName?: TableName };
 export type Doc<TableName extends string = string> = Record<string, unknown> & { readonly _id: Id<TableName> };

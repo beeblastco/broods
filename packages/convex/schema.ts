@@ -505,6 +505,67 @@ export const environmentVariableRevealsFields = {
     revealedAt: v.number(),
 };
 
+/** Actor metadata for account-visible configuration audit events. */
+export const configAuditActorKindValidator = v.union(
+    v.literal("dashboardUser"),
+    v.literal("apiAccountSecret"),
+    v.literal("admin"),
+    v.literal("service"),
+    v.literal("cli"),
+    v.literal("deployKey"),
+);
+
+/** Resource types recorded in the account-visible configuration audit feed. */
+export const configAuditResourceKindValidator = v.union(
+    v.literal("account"),
+    v.literal("agent"),
+    v.literal("skill"),
+    v.literal("tool"),
+    v.literal("workspace"),
+    v.literal("workspaceFile"),
+    v.literal("cron"),
+    v.literal("sandbox"),
+    v.literal("policy"),
+    v.literal("environmentVariable"),
+    v.literal("deployment"),
+    v.literal("webhook"),
+    v.literal("manifest"),
+    v.literal("unknown"),
+);
+
+/**
+ * Account-visible audit feed for configuration mutations. Details are capped
+ * before insert and must never carry plaintext secrets or config blobs.
+ */
+export const configAuditEventsFields = {
+    accountId: v.id("accounts"),
+    projectId: v.optional(v.id("projects")),
+    environmentId: v.optional(v.id("environments")),
+    actor: v.object({
+        kind: configAuditActorKindValidator,
+        id: v.optional(v.string()),
+        email: v.optional(v.string()),
+        name: v.optional(v.string()),
+    }),
+    action: v.string(),
+    resource: v.object({
+        kind: configAuditResourceKindValidator,
+        id: v.optional(v.string()),
+        name: v.optional(v.string()),
+    }),
+    summary: v.string(),
+    detailsJson: v.optional(v.string()),
+};
+
+/** Failed-auth counters for config HTTP routes. */
+export const configHttpAuthFailuresFields = {
+    key: v.string(),
+    windowStart: v.number(),
+    count: v.number(),
+    blockedUntil: v.optional(v.number()),
+    updatedAt: v.number(),
+};
+
 /** Conversation thread between an account's caller and one of its agents. */
 export const conversationsFields = {
     accountId: v.id("accounts"),
@@ -568,7 +629,7 @@ export const asyncResultsFields = {
 
 /**
  * Per-account scheduled agent runs. Mirrors broods's CronRecord
- * (functions/_shared/cron.ts) so the SaaS dashboard can manage them
+ * (src/shared/cron.ts) so the SaaS dashboard can manage them
  * directly via Convex live queries. The schedulerName / schedulerGroupName
  * are still the AWS EventBridge Scheduler identifiers — Convex stores them
  * for visibility but broods Lambda is what actually invokes EBS.
@@ -782,6 +843,12 @@ export default defineSchema({
     environmentVariableReveals: defineTable(environmentVariableRevealsFields)
         .index("by_environmentId", ["environmentId"])
         .index("by_environmentVariableId", ["environmentVariableId"]),
+    configAuditEvents: defineTable(configAuditEventsFields)
+        .index("by_account", ["accountId"])
+        .index("by_account_project_environment", ["accountId", "projectId", "environmentId"]),
+    configHttpAuthFailures: defineTable(configHttpAuthFailuresFields)
+        .index("by_key", ["key"])
+        .index("by_updatedAt", ["updatedAt"]),
     conversations: defineTable(conversationsFields)
         .index("by_accountId", ["accountId"])
         .index("by_accountId_and_agentId", ["accountId", "agentId"]),

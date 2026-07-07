@@ -7,7 +7,9 @@
 
 import { httpAction, type ActionCtx } from "./_generated/server";
 import { internal } from "./_generated/api";
+import type { Id } from "./_generated/dataModel";
 import type { CliManifest, GeneratedIds } from "./cliTypes";
+import { normalizeAccountToolUpload } from "./model/accountTools";
 
 type RouteParts =
     | { kind: "manifest"; project: string; environment: string }
@@ -46,9 +48,9 @@ export const handle = httpAction(async (ctx, req) => {
         if (!route) return json({ error: "Not found" }, 404);
 
         // Resolve the token to an account secret hash, enforcing deploy-key scope
-        // against the route's project/environment. `scoped` keys can't forward to
-        // broods's cron API (which only knows the org secret), so cron sync
-        // is skipped for them — `forwardToken` is null in that case.
+        // against the route's project/environment. Cron sync runs natively
+        // against the crons table + EventBridge Scheduler (awsCrons), so it
+        // works for org secrets and scoped deploy keys alike.
         const resolved = await ctx.runQuery(internal.cliSync.resolveCliAuth, {
             tokenHash: auth.secretHash,
             project: route.project,
@@ -66,7 +68,6 @@ export const handle = httpAction(async (ctx, req) => {
         } : null);
         if (!authResult) return json({ error: "Invalid or out-of-scope deploy token" }, 401);
         const secretHash = authResult.secretHash;
-        const forwardToken = authResult.scoped ? null : auth.token;
         const accountId = authResult.accountId;
 
         if (route.kind === "manifest" && req.method === "GET") {
@@ -116,7 +117,7 @@ export const handle = httpAction(async (ctx, req) => {
                 return json({ error: "Manifest project/environment must match the request path" }, 400);
             }
             const originalManifest = manifest as CliManifest;
-            const externalIds = await syncExternalResources(accountId, originalManifest, body.prune === true);
+            const externalIds = await syncExternalResources(ctx, accountId, originalManifest, body.prune === true);
             await ctx.runMutation(internal.cliSync.recordExternalResourcesBySecretHash, {
                 secretHash: secretHash,
                 project: route.project,
@@ -138,9 +139,7 @@ export const handle = httpAction(async (ctx, req) => {
                 manifest: originalManifest,
             });
 
-            const cronIds = forwardToken
-                ? await syncCrons(forwardToken, syncManifest, result.ids, body.prune === true)
-                : await syncCronsWithServiceToken(accountId, syncManifest, result.ids, body.prune === true);
+            const cronIds = await syncCrons(ctx, accountId, syncManifest, result.ids, body.prune === true);
             const refreshed = await ctx.runQuery(internal.cliSync.getManifestBySecretHash, {
                 secretHash: secretHash,
                 project: route.project,
@@ -157,6 +156,12 @@ export const handle = httpAction(async (ctx, req) => {
                 auditSync: {
                     resourceCount: originalManifest.resources.length,
                     prune: body.prune === true,
+                    actorKind: "deployKeyId" in authResult ? "deployKey" : "cli",
+                    actorId: "deployKeyId" in authResult
+                        ? authResult.deployKeyId
+                        : "cliTokenId" in authResult
+                            ? authResult.cliTokenId
+                            : accountId,
                 },
             });
 
@@ -225,9 +230,7 @@ export const handle = httpAction(async (ctx, req) => {
 
         if (route.kind === "resource" && req.method === "DELETE") {
             if (route.resourceKind === "cron") {
-                // Scoped deploy keys can't manage broods cron jobs; no-op for them.
-                if (forwardToken) await deleteCronByName(forwardToken, route.name);
-                else await deleteCronByNameWithServiceToken(accountId, route.name);
+                await deleteCronByName(ctx, accountId, route.name);
             } else {
                 await ctx.runMutation(internal.cliSync.deleteResourceBySecretHash, {
                     secretHash: secretHash,
@@ -254,8 +257,8 @@ function parseRoute(pathname: string): RouteParts | null {
     const parts = pathname.split("/").filter(Boolean).map(decodeURIComponent);
     if (
         parts.length === 7 &&
-        parts[0] === "api" &&
-        parts[1] === "cli" &&
+        parts[0] === "v1" &&
+        parts[1] === "account" &&
         parts[2] === "projects" &&
         parts[4] === "environments" &&
         parts[6] === "manifest"
@@ -264,8 +267,8 @@ function parseRoute(pathname: string): RouteParts | null {
     }
     if (
         parts.length === 8 &&
-        parts[0] === "api" &&
-        parts[1] === "cli" &&
+        parts[0] === "v1" &&
+        parts[1] === "account" &&
         parts[2] === "projects" &&
         parts[4] === "environments" &&
         parts[6] === "env"
@@ -274,8 +277,8 @@ function parseRoute(pathname: string): RouteParts | null {
     }
     if (
         parts.length === 7 &&
-        parts[0] === "api" &&
-        parts[1] === "cli" &&
+        parts[0] === "v1" &&
+        parts[1] === "account" &&
         parts[2] === "projects" &&
         parts[4] === "environments" &&
         parts[6] === "logs"
@@ -284,8 +287,8 @@ function parseRoute(pathname: string): RouteParts | null {
     }
     if (
         parts.length === 7 &&
-        parts[0] === "api" &&
-        parts[1] === "cli" &&
+        parts[0] === "v1" &&
+        parts[1] === "account" &&
         parts[2] === "projects" &&
         parts[4] === "environments" &&
         parts[6] === "runtime-key"
@@ -294,8 +297,8 @@ function parseRoute(pathname: string): RouteParts | null {
     }
     if (
         parts.length === 7 &&
-        parts[0] === "api" &&
-        parts[1] === "cli" &&
+        parts[0] === "v1" &&
+        parts[1] === "account" &&
         parts[2] === "projects" &&
         parts[4] === "environments" &&
         parts[6] === "env"
@@ -304,8 +307,8 @@ function parseRoute(pathname: string): RouteParts | null {
     }
     if (
         parts.length === 9 &&
-        parts[0] === "api" &&
-        parts[1] === "cli" &&
+        parts[0] === "v1" &&
+        parts[1] === "account" &&
         parts[2] === "projects" &&
         parts[4] === "environments" &&
         parts[6] === "resources" &&
@@ -435,6 +438,7 @@ function json(body: unknown, status = 200): Response {
 type ExternalIds = Pick<GeneratedIds, "skills" | "tools">;
 
 async function syncExternalResources(
+    ctx: ActionCtx,
     accountId: string,
     manifest: CliManifest,
     prune: boolean,
@@ -444,14 +448,15 @@ async function syncExternalResources(
     );
     if (!hasExternalResources) return { skills: {}, tools: {} };
 
-    const skills = await syncSkillResources(accountId, manifest);
-    const tools = await syncToolResources(accountId, manifest, prune);
+    const skills = await syncSkillResources(ctx, accountId as Id<"accounts">, manifest);
+    const tools = await syncToolResources(ctx, accountId as Id<"accounts">, manifest, prune);
 
     return { skills, tools };
 }
 
 async function syncSkillResources(
-    accountId: string,
+    ctx: ActionCtx,
+    accountId: Id<"accounts">,
     manifest: CliManifest,
 ): Promise<Record<string, string>> {
     const ids: Record<string, string> = {};
@@ -459,64 +464,79 @@ async function syncSkillResources(
         const config = asRecord(resource.config, `skill:${resource.name}`);
         const files = config.files;
         if (!Array.isArray(files)) throw new Error(`skill:${resource.name}.files must be an array`);
-        const response = await accountManageFetchWithServiceToken(
-            accountId,
-            `/accounts/me/skills/${encodeURIComponent(resource.name)}`,
-            {
-                method: "PUT",
-                body: JSON.stringify({ source: "files", files }),
-            },
-        );
-        const payload = await response.json() as { path?: string };
-        ids[resource.name] = payload.path ?? `${accountId}/${resource.name}`;
+        const skill = await ctx.runAction(internal.awsSkills.createSkill, {
+            accountId: accountId,
+            expectedName: resource.name,
+            input: { source: "files", files: files },
+        });
+        ids[resource.name] = skill.path;
     }
 
     return ids;
 }
 
 async function syncToolResources(
-    accountId: string,
+    ctx: ActionCtx,
+    accountId: Id<"accounts">,
     manifest: CliManifest,
     prune: boolean,
 ): Promise<Record<string, string>> {
     const desired = manifest.resources.filter((entry) => entry.kind === "tool");
     if (desired.length === 0) return {};
-    const existingResponse = await accountManageFetchWithServiceToken(accountId, "/accounts/me/tools", { method: "GET" });
-    const existingPayload = await existingResponse.json() as {
-        tools?: Array<{ toolId: string; name: string; status?: string }>;
-    };
-    const existing = new Map((existingPayload.tools ?? []).map((tool) => [tool.name, tool]));
+    const existingTools = await ctx.runQuery(internal.accountTools.list, { accountId: accountId });
+    const existing = new Map(existingTools.map((tool) => [tool.name, tool]));
     const desiredNames = new Set(desired.map((resource) => resource.name));
     const ids: Record<string, string> = {};
 
     for (const resource of desired) {
         const config = asRecord(resource.config, `tool:${resource.name}`);
-        const body = JSON.stringify({
+        const upload = await normalizeAccountToolUpload({
             name: resource.name,
             description: stringField(config.description ?? resource.description, `tool:${resource.name}.description`),
             inputSchema: asRecord(config.inputSchema, `tool:${resource.name}.inputSchema`),
             ...(config.defaultConfig !== undefined ? { defaultConfig: asRecord(config.defaultConfig, `tool:${resource.name}.defaultConfig`) } : {}),
             bundle: stringField(config.bundle, `tool:${resource.name}.bundle`),
-        });
+        }, { requireBundle: true });
         const current = existing.get(resource.name);
-        const response = current
-            ? await accountManageFetchWithServiceToken(accountId, `/accounts/me/tools/${encodeURIComponent(current.toolId)}`, {
-                method: "PATCH",
-                body,
-            })
-            : await accountManageFetchWithServiceToken(accountId, "/accounts/me/tools", {
-                method: "POST",
-                body,
+        const bundleStorageKey = current?.sha256 === upload.sha256
+            ? current.bundleStorageKey
+            : await ctx.runAction(internal.awsBundles.putToolBundle, {
+                accountId: accountId,
+                sha256: upload.sha256,
+                bundle: upload.bundle,
             });
-        const payload = await response.json() as { toolId: string };
-        ids[resource.name] = payload.toolId;
+        if (current) {
+            await ctx.runMutation(internal.accountTools.update, {
+                accountId: accountId,
+                toolId: current._id,
+                name: upload.name,
+                description: upload.description,
+                inputSchema: upload.inputSchema,
+                bundleStorageKey: bundleStorageKey,
+                sha256: upload.sha256,
+                ...(upload.defaultConfig !== undefined ? { defaultConfig: upload.defaultConfig } : {}),
+            });
+            ids[resource.name] = current._id;
+        } else {
+            const toolId = await ctx.runMutation(internal.accountTools.create, {
+                accountId: accountId,
+                name: upload.name,
+                description: upload.description,
+                inputSchema: upload.inputSchema,
+                bundleStorageKey: bundleStorageKey,
+                sha256: upload.sha256,
+                ...(upload.defaultConfig !== undefined ? { defaultConfig: upload.defaultConfig } : {}),
+            });
+            ids[resource.name] = toolId;
+        }
     }
 
     if (prune === true) {
         for (const tool of existing.values()) {
             if (!desiredNames.has(tool.name)) {
-                await accountManageFetchWithServiceToken(accountId, `/accounts/me/tools/${encodeURIComponent(tool.toolId)}`, {
-                    method: "DELETE",
+                await ctx.runMutation(internal.accountTools.remove, {
+                    accountId: accountId,
+                    toolId: tool._id,
                 });
             }
         }
@@ -560,29 +580,20 @@ function rewriteExternalConfigRefs(config: Record<string, unknown>, ids: Externa
     return result;
 }
 
+/**
+ * Reconcile manifest cron resources against the account's cron jobs using the
+ * Convex-native cron plane (crons table + EventBridge Scheduler via awsCrons).
+ */
 async function syncCrons(
-    token: string,
+    ctx: ActionCtx,
+    accountId: Id<"accounts">,
     manifest: CliManifest,
     ids: GeneratedIds,
     prune: boolean,
-): Promise<Record<string, string>> {
-    return syncCronsWithFetch(
-        manifest,
-        ids,
-        prune,
-        (path, init) => accountManageFetch(token, path, init),
-    );
-}
-
-async function syncCronsWithFetch(
-    manifest: CliManifest,
-    ids: GeneratedIds,
-    prune: boolean,
-    fetchCron: (path: string, init: RequestInit) => Promise<Response>,
 ): Promise<Record<string, string>> {
     const desired = desiredCrons(manifest, ids.agents ?? {});
     if (desired.length === 0 && prune !== true) return {};
-    const existing = await listCronsWithFetch(fetchCron);
+    const existing = await ctx.runQuery(internal.cron.list, { accountId: accountId });
     const existingByName = new Map(existing.map((job) => [job.name, job]));
     const desiredNames = new Set(desired.map((job) => job.name));
     const cronIds: Record<string, string> = {};
@@ -590,19 +601,26 @@ async function syncCronsWithFetch(
     for (const job of desired) {
         const existingJob = existingByName.get(job.name);
         if (existingJob) {
-            await updateCronWithFetch(fetchCron, existingJob.cronId, job);
-            cronIds[job.resourceName] = existingJob.cronId;
+            await ctx.runAction(internal.awsCrons.update, {
+                accountId: accountId,
+                cronId: existingJob._id,
+                patch: cronBody(job),
+            });
+            cronIds[job.resourceName] = existingJob._id;
         } else {
-            const created = await createCronWithFetch(fetchCron, job);
+            const created = await ctx.runAction(internal.awsCrons.create, {
+                accountId: accountId,
+                input: cronBody(job),
+            }) as { cronId: string };
             cronIds[job.resourceName] = created.cronId;
         }
     }
 
     if (prune === true) {
-        const environmentAgentIds = new Set(Object.values(ids.agents ?? {}));
+        const environmentAgentIds = new Set<string>(Object.values(ids.agents ?? {}));
         for (const job of existing) {
             if (!environmentAgentIds.has(job.agentId) || desiredNames.has(job.name)) continue;
-            await deleteCronWithFetch(fetchCron, job.cronId);
+            await ctx.runAction(internal.awsCrons.remove, { accountId: accountId, cronId: job._id });
         }
     }
 
@@ -635,137 +653,14 @@ function desiredCrons(
         });
 }
 
-async function listCrons(token: string): Promise<CronResponse[]> {
-    return listCronsWithFetch((path, init) => accountManageFetch(token, path, init));
-}
-
-async function listCronsWithFetch(
-    fetchCron: (path: string, init: RequestInit) => Promise<Response>,
-): Promise<CronResponse[]> {
-    const response = await fetchCron("/accounts/me/crons", { method: "GET" });
-    const payload = await response.json() as { crons?: CronResponse[] };
-    return Array.isArray(payload.crons) ? payload.crons : [];
-}
-
-async function createCron(
-    token: string,
-    job: DesiredCron,
-): Promise<CronResponse> {
-    return createCronWithFetch((path, init) => accountManageFetch(token, path, init), job);
-}
-
-async function createCronWithFetch(
-    fetchCron: (path: string, init: RequestInit) => Promise<Response>,
-    job: DesiredCron,
-): Promise<CronResponse> {
-    const response = await fetchCron("/accounts/me/crons", {
-        method: "POST",
-        body: JSON.stringify(cronBody(job)),
-    });
-    const payload = await response.json() as CronResponse | { cron?: CronResponse };
-    return "cron" in payload && payload.cron ? payload.cron : payload as CronResponse;
-}
-
-async function updateCron(
-    token: string,
-    cronId: string,
-    job: DesiredCron,
-): Promise<void> {
-    await updateCronWithFetch((path, init) => accountManageFetch(token, path, init), cronId, job);
-}
-
-async function updateCronWithFetch(
-    fetchCron: (path: string, init: RequestInit) => Promise<Response>,
-    cronId: string,
-    job: DesiredCron,
-): Promise<void> {
-    await fetchCron(`/accounts/me/crons/${encodeURIComponent(cronId)}`, {
-        method: "PATCH",
-        body: JSON.stringify(cronBody(job)),
-    });
-}
-
-async function deleteCron(token: string, cronId: string): Promise<void> {
-    await deleteCronWithFetch((path, init) => accountManageFetch(token, path, init), cronId);
-}
-
-async function deleteCronWithFetch(
-    fetchCron: (path: string, init: RequestInit) => Promise<Response>,
-    cronId: string,
-): Promise<void> {
-    await fetchCron(`/accounts/me/crons/${encodeURIComponent(cronId)}`, {
-        method: "DELETE",
-    });
-}
-
-async function deleteCronByName(token: string, name: string): Promise<void> {
-    const existing = await listCrons(token);
+/**
+ * Delete a manifest-managed cron job by its configured name, if present.
+ */
+async function deleteCronByName(ctx: ActionCtx, accountId: Id<"accounts">, name: string): Promise<void> {
+    const existing = await ctx.runQuery(internal.cron.list, { accountId: accountId });
     const cron = existing.find((job) => job.name === name);
     if (!cron) return;
-    await deleteCron(token, cron.cronId);
-}
-
-async function accountManageFetch(token: string, path: string, init: RequestInit): Promise<Response> {
-    const baseUrl = process.env.BROODS_ACCOUNT_MANAGE_URL;
-    if (!baseUrl) throw new Error("BROODS_ACCOUNT_MANAGE_URL is required to sync cron jobs");
-    const response = await fetch(`${baseUrl.replace(/\/+$/, "")}${path}`, {
-        ...init,
-        headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${token}`,
-            ...init.headers,
-        },
-    });
-    if (!response.ok) {
-        throw new Error(`Broods account-manage cron sync failed: ${response.status} ${await response.text()}`);
-    }
-
-    return response;
-}
-
-async function accountManageFetchWithServiceToken(accountId: string, path: string, init: RequestInit): Promise<Response> {
-    const baseUrl = process.env.BROODS_ACCOUNT_MANAGE_URL;
-    const token = process.env.BROODS_SERVICE_AUTH_SECRET;
-    if (!baseUrl || !token) {
-        throw new Error("BROODS_ACCOUNT_MANAGE_URL and BROODS_SERVICE_AUTH_SECRET are required");
-    }
-    const response = await fetch(`${baseUrl.replace(/\/+$/, "")}${path}`, {
-        ...init,
-        headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${token}`,
-            "X-Account-Id": accountId,
-            ...init.headers,
-        },
-    });
-    if (!response.ok) {
-        throw new Error(`Broods account-manage service call failed: ${response.status} ${await response.text()}`);
-    }
-
-    return response;
-}
-
-async function syncCronsWithServiceToken(
-    accountId: string,
-    manifest: CliManifest,
-    ids: GeneratedIds,
-    prune: boolean,
-): Promise<Record<string, string>> {
-    return syncCronsWithFetch(
-        manifest,
-        ids,
-        prune,
-        (path, init) => accountManageFetchWithServiceToken(accountId, path, init),
-    );
-}
-
-async function deleteCronByNameWithServiceToken(accountId: string, name: string): Promise<void> {
-    const existing = await listCronsWithFetch((path, init) => accountManageFetchWithServiceToken(accountId, path, init));
-    const cron = existing.find((job) => job.name === name);
-    if (!cron) return;
-    await accountManageFetchWithServiceToken(accountId, `/accounts/me/crons/${encodeURIComponent(cron.cronId)}`, {
-        method: "DELETE",
-    });
+    await ctx.runAction(internal.awsCrons.remove, { accountId: accountId, cronId: cron._id });
 }
 
 function cronBody(job: DesiredCron): Record<string, unknown> {

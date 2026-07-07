@@ -12,7 +12,10 @@ import { join, resolve } from "node:path";
 import { USER_CONFIG_PATH, stripTrailingSlash } from "./config.ts";
 
 export interface BroodsRuntimeConfig {
+  /** Dashboard UI base URL; only used for browser login and deep links. */
   dashboardUrl?: string;
+  /** Convex control-plane base URL for /v1/account/* calls. */
+  baseUrl?: string;
   token?: string;
   project?: string;
   environment?: string;
@@ -47,6 +50,7 @@ export function loadBroodsRuntimeConfig(cwd = process.cwd()): BroodsRuntimeConfi
 
   return {
     dashboardUrl: process.env.BROODS_DASHBOARD_URL ?? stored?.dashboardUrl,
+    baseUrl: process.env.BROODS_BASE_URL ?? stored?.baseUrl,
     token: process.env.BROODS_TOKEN ?? stored?.token,
     project: process.env.BROODS_PROJECT,
     environment: process.env.BROODS_ENVIRONMENT,
@@ -124,19 +128,21 @@ function unquoteEnvValue(value: string): string {
 }
 
 /**
- * Reads the CLI-stored auth (dashboard URL + token) synchronously so the client
- * constructor can use it without awaiting. Returns null when the file is absent
- * or malformed.
+ * Reads the CLI-stored auth (Convex URL + token) synchronously so the client
+ * constructor can use it without awaiting. Returns null when the file is
+ * absent, malformed, or predates the Convex-direct control plane.
  */
-function readStoredAuthSync(): { dashboardUrl: string; token: string } | null {
+function readStoredAuthSync(): { baseUrl: string; dashboardUrl?: string; token: string } | null {
   try {
     const value = JSON.parse(readFileSync(USER_CONFIG_PATH, "utf8")) as {
+      baseUrl?: unknown;
       dashboardUrl?: unknown;
       token?: unknown;
     };
-    if (typeof value.dashboardUrl !== "string" || typeof value.token !== "string") return null;
+    if (typeof value.baseUrl !== "string" || typeof value.token !== "string") return null;
     return {
-      dashboardUrl: stripTrailingSlash(value.dashboardUrl),
+      baseUrl: stripTrailingSlash(value.baseUrl),
+      ...(typeof value.dashboardUrl === "string" ? { dashboardUrl: stripTrailingSlash(value.dashboardUrl) } : {}),
       token: value.token,
     };
   } catch {

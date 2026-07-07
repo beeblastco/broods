@@ -1,61 +1,31 @@
 /**
- * Container HTTP bridge tests.
- * Cover HTTP-to-Lambda-event synthesis, host routing, SSE streaming, and
- * afterResponse ordering for the self-hosted core server here.
+ * Core server helper tests.
+ * server.ts is a flat Bun.serve script; its logic lives in exported pure
+ * helpers — CoreRequest synthesis, path routing, and waitUntil draining —
+ * which are covered here without starting a server.
  */
 
-import { afterAll, describe, expect, it } from "bun:test";
-import type { LambdaFunctionURLEvent } from "aws-lambda";
-import type { LambdaInvocation, LambdaResponse } from "../functions/_shared/runtime.ts";
-import { createCoreServer, type CoreServer } from "../functions/server/http-server.ts";
+import { describe, expect, it } from "bun:test";
+import { drainInFlight, routesToAccountManage, toCoreRequest, waitUntil } from "../src/server.ts";
 
-interface CapturedInvocation {
-  event: LambdaFunctionURLEvent;
-  context: LambdaInvocation | undefined;
-}
-
-const captured: CapturedInvocation[] = [];
-const accountCaptured: CapturedInvocation[] = [];
-let harnessResponse: () => Promise<LambdaResponse> = async () => ({ statusCode: 204 });
-
-const core: CoreServer = createCoreServer({
-  harnessHandler: async (event, context) => {
-    captured.push({ event, context });
-    return harnessResponse();
-  },
-  accountHandler: async (event, context) => {
-    accountCaptured.push({ event, context });
-    return { statusCode: 200, body: JSON.stringify({ from: "account" }) };
-  },
-  accountManageHosts: ["core-account.test.broods.app"],
-  requestBudgetMs: 90_000,
-  port: 0,
-});
-
-const baseUrl = `http://127.0.0.1:${core.server.port}`;
-
-afterAll(async () => {
-  await core.server.stop(true);
-});
-
-function lastInvocation(): CapturedInvocation {
-  const invocation = captured.at(-1);
-  if (!invocation) throw new Error("No harness invocation captured");
-  return invocation;
-}
-
-describe("core http server", () => {
-  it("serves the health endpoint without invoking handlers", async () => {
-    const before = captured.length + accountCaptured.length;
-    const res = await fetch(`${baseUrl}/healthz`);
-    expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ status: "ok" });
-    expect(captured.length + accountCaptured.length).toBe(before);
+async function buildCoreRequest(
+  input: { url?: string; method?: string; headers?: Record<string, string>; body?: string },
+  socketAddress?: string,
+) {
+  const url = new URL(input.url ?? "http://127.0.0.1/");
+  const request = new Request(url.toString(), {
+    method: input.method ?? "GET",
+    headers: input.headers,
+    ...(input.body !== undefined ? { body: input.body } : {}),
   });
 
-  it("synthesizes the Lambda Function URL event shape", async () => {
-    harnessResponse = async () => ({ statusCode: 204 });
-    const res = await fetch(`${baseUrl}/webhooks/acct/agent/telegram?limit=2&q=a%20b`, {
+  return toCoreRequest(request, url, socketAddress);
+}
+
+describe("toCoreRequest", () => {
+  it("builds the CoreRequest shape", async () => {
+    const request = await buildCoreRequest({
+      url: "http://127.0.0.1/webhooks/acct/agent/telegram?limit=2&q=a%20b",
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -64,147 +34,115 @@ describe("core http server", () => {
       },
       body: JSON.stringify({ hello: "world" }),
     });
-    expect(res.status).toBe(204);
 
-    const { event, context } = lastInvocation();
-    expect(event.version).toBe("2.0");
-    expect(event.rawPath).toBe("/webhooks/acct/agent/telegram");
-    expect(event.rawQueryString).toBe("limit=2&q=a%20b");
-    expect(event.queryStringParameters).toEqual({ limit: "2", q: "a b" });
-    expect(event.requestContext.http.method).toBe("POST");
+    expect(request.path).toBe("/webhooks/acct/agent/telegram");
+    expect(request.search).toBe("limit=2&q=a%20b");
+    expect(request.query.get("limit")).toBe("2");
+    expect(request.query.get("q")).toBe("a b");
+    expect(request.method).toBe("POST");
     // Rightmost XFF entry (the proxy-appended peer), not the spoofable leftmost.
-    expect(event.requestContext.http.sourceIp).toBe("10.0.0.1");
-    // Header keys are lowercased, matching the Lambda Function URL envelope.
-    expect(event.headers["x-custom-header"]).toBe("Value-Kept");
-    expect(event.headers["content-type"]).toBe("application/json");
-    expect(event.isBase64Encoded).toBe(true);
-    expect(JSON.parse(Buffer.from(event.body!, "base64").toString("utf8"))).toEqual({ hello: "world" });
-
-    expect(context?.requestId).toBe(event.requestContext.requestId);
-    expect(context?.deadlineMs).toBeGreaterThan(Date.now() + 60_000);
-    expect(context?.deadlineMs).toBeLessThanOrEqual(Date.now() + 90_000);
+    expect(request.clientIp).toBe("10.0.0.1");
+    expect(request.headers["x-custom-header"]).toBe("Value-Kept");
+    expect(request.headers["content-type"]).toBe("application/json");
+    expect(JSON.parse(request.body)).toEqual({ hello: "world" });
   });
 
-  it("derives sourceIp from the rightmost X-Forwarded-For entry (proxy-appended, unspoofable)", async () => {
-    harnessResponse = async () => ({ statusCode: 204 });
-    await fetch(`${baseUrl}/`, {
+  it("derives clientIp from the rightmost X-Forwarded-For entry (proxy-appended, unspoofable)", async () => {
+    // Client prepends spoofed entries; traefik appends the real peer last.
+    const request = await buildCoreRequest({
       method: "POST",
-      // Client prepends spoofed entries; traefik appends the real peer last.
       headers: { "x-forwarded-for": "1.1.1.1, 2.2.2.2, 203.0.113.7" },
       body: "{}",
     });
-    expect(lastInvocation().event.requestContext.http.sourceIp).toBe("203.0.113.7");
+    expect(request.clientIp).toBe("203.0.113.7");
   });
 
-  it("splits the Cookie header into the Function URL cookies array", async () => {
-    harnessResponse = async () => ({ statusCode: 204 });
-    await fetch(`${baseUrl}/`, {
+  it("falls back to the socket address without X-Forwarded-For", async () => {
+    const request = await buildCoreRequest({}, "192.0.2.4");
+    expect(request.clientIp).toBe("192.0.2.4");
+  });
+
+  it("splits the Cookie header into the cookies array", async () => {
+    const request = await buildCoreRequest({
       method: "POST",
       headers: { Cookie: "session=abc; theme=dark" },
       body: "{}",
     });
-    const { event } = lastInvocation();
-    expect(event.cookies).toEqual(["session=abc", "theme=dark"]);
+    expect(request.cookies).toEqual(["session=abc", "theme=dark"]);
   });
 
-  it("keeps binary bodies byte-exact through base64", async () => {
-    harnessResponse = async () => ({ statusCode: 204 });
-    const payload = new Uint8Array([0, 255, 1, 128, 10, 13, 0]);
-    await fetch(`${baseUrl}/`, { method: "POST", body: payload });
+  it("passes UTF-8 request bodies through as text and uses empty string when bodyless", async () => {
+    const withBody = await buildCoreRequest({ method: "POST", body: "hello\nworld" });
+    expect(withBody.body).toBe("hello\nworld");
 
-    const { event } = lastInvocation();
-    expect(event.isBase64Encoded).toBe(true);
-    expect([...Buffer.from(event.body!, "base64")]).toEqual([...payload]);
+    const bodyless = await buildCoreRequest({ url: "http://127.0.0.1/status" });
+    expect(bodyless.body).toBe("");
+  });
+});
+
+describe("routesToAccountManage", () => {
+  it("routes signup, account delete, and sandbox lifecycle to account-manage", () => {
+    expect(routesToAccountManage("POST", "/accounts")).toBe(true);
+    expect(routesToAccountManage("DELETE", "/accounts/acct_1")).toBe(true);
+    expect(routesToAccountManage("DELETE", "/v1/account")).toBe(true);
+    expect(routesToAccountManage("POST", "/v1/sandboxes/sbx/exec")).toBe(true);
+    expect(routesToAccountManage("POST", "/v1/sandboxes/sbx/terminate")).toBe(true);
   });
 
-  it("omits the body for bodyless requests", async () => {
-    harnessResponse = async () => ({ statusCode: 204 });
-    await fetch(`${baseUrl}/status`);
-    const { event } = lastInvocation();
-    expect(event.body).toBeUndefined();
-    expect(event.isBase64Encoded).toBe(false);
-  });
-
-  it("routes account-manage hosts to the account handler", async () => {
-    const res = await fetch(`${baseUrl}/accounts/me`, {
-      headers: { Host: "core-account.test.broods.app" },
-    });
-    expect(await res.json()).toEqual({ from: "account" });
-    expect(accountCaptured.at(-1)?.event.requestContext.domainName).toBe("core-account.test.broods.app");
-  });
-
-  it("streams SSE chunks incrementally and maps headers and cookies", async () => {
-    let release!: () => void;
-    const gate = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    harnessResponse = async () => ({
-      statusCode: 200,
-      headers: { "Content-Type": "text/event-stream" },
-      cookies: ["a=1", "b=2"],
-      body: new ReadableStream<Uint8Array>({
-        async start(controller) {
-          controller.enqueue(new TextEncoder().encode("data: first\n\n"));
-          await gate;
-          controller.enqueue(new TextEncoder().encode("data: second\n\n"));
-          controller.close();
-        },
-      }),
-    });
-
-    const res = await fetch(`${baseUrl}/`, { method: "POST", body: "{}" });
-    expect(res.status).toBe(200);
-    expect(res.headers.get("content-type")).toBe("text/event-stream");
-    expect(res.headers.getSetCookie()).toEqual(["a=1", "b=2"]);
-
-    const reader = res.body!.getReader();
-    const decoder = new TextDecoder();
-    const first = await reader.read();
-    expect(decoder.decode(first.value)).toContain("data: first");
-    // The second chunk must not have been delivered before the gate opens.
-    release();
-    let rest = "";
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      rest += decoder.decode(value);
+  it("routes config-plane CRUD paths and invocations to the harness", () => {
+    // Account metadata/rotation plus agent, skills, tools, workspace files,
+    // cron, policy, workspace, and sandbox config CRUD are Convex config-plane
+    // routes (gateway-forwarded); a core hit falls through to the harness 404
+    // path. Invocations are harness-owned.
+    const configPlanePaths = [
+      "/v1/agents",
+      "/v1/agents/my-agent",
+      "/v1/agents/my-agent/async",
+      "/v1/skills",
+      "/v1/tools/tool-1",
+      "/v1/workspaces/ws/files",
+      "/v1/crons/abc/runs",
+      "/v1/workspaces/ws",
+      "/v1/policies/pol-1",
+      "/v1/sandboxes/sbx",
+      "/v1/internal/observability-log",
+      // Scoped invocation falls through even when the project slug shadows a resource name.
+      "/v1/skills/agents/prod/endpoint-1",
+      "/v1/internal/observability-scope",
+      "/",
+      "/status",
+    ];
+    for (const path of configPlanePaths) {
+      expect(routesToAccountManage("POST", path)).toBe(false);
     }
-    expect(rest).toContain("data: second");
+    expect(routesToAccountManage("GET", "/accounts")).toBe(false);
+    expect(routesToAccountManage("GET", "/accounts/acct_1")).toBe(false);
+    expect(routesToAccountManage("PATCH", "/accounts/acct_1")).toBe(false);
+    expect(routesToAccountManage("POST", "/accounts/acct_1/rotate-secret")).toBe(false);
+    expect(routesToAccountManage("GET", "/v1/account")).toBe(false);
+    expect(routesToAccountManage("PATCH", "/v1/account")).toBe(false);
+    expect(routesToAccountManage("POST", "/v1/account/rotate-secret")).toBe(false);
   });
+});
 
-  it("does not drain until afterResponse work settles", async () => {
-    let releaseAfter!: () => void;
+describe("waitUntil drain", () => {
+  it("does not drain until tracked work settles, and swallows failures", async () => {
+    let release!: () => void;
     let afterDone = false;
-    harnessResponse = async () => ({
-      statusCode: 200,
-      body: "ack",
-      afterResponse: new Promise<void>((resolve) => {
-        releaseAfter = resolve;
-      }).then(() => {
-        afterDone = true;
-      }),
-    });
+    waitUntil(new Promise<void>((resolve) => {
+      release = resolve;
+    }).then(() => {
+      afterDone = true;
+    }));
+    waitUntil(Promise.reject(new Error("boom")));
 
-    const res = await fetch(`${baseUrl}/`, { method: "POST", body: "{}" });
-    expect(await res.text()).toBe("ack");
-
-    const drained = core.drain().then(() => "drained" as const);
+    const drained = drainInFlight().then(() => "drained" as const);
     const raced = await Promise.race([drained, Bun.sleep(50).then(() => "pending" as const)]);
     expect(raced).toBe("pending");
     expect(afterDone).toBe(false);
 
-    releaseAfter();
+    release();
     await drained;
     expect(afterDone).toBe(true);
-  });
-
-  it("returns 500 when a handler throws", async () => {
-    harnessResponse = async () => {
-      throw new Error("boom");
-    };
-    const res = await fetch(`${baseUrl}/`, { method: "POST", body: "{}" });
-    expect(res.status).toBe(500);
-    expect(await res.json()).toEqual({ error: "Internal server error" });
-    harnessResponse = async () => ({ statusCode: 204 });
   });
 });

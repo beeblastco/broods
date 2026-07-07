@@ -13,7 +13,7 @@ import {
   runWithObservabilityScope,
   setObservabilityContext,
   type ObservabilityContext,
-} from "../functions/_shared/otel.ts";
+} from "../src/shared/otel.ts";
 
 function ctx(accountId: string): ObservabilityContext {
   return {

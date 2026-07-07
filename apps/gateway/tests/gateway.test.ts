@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import {
   buildCoreRunBody,
+  isConfigHttpPath,
   isCoreHttpPathForTest,
   isSessionInitFrame,
   gatewayLimitsFromEnv,
@@ -14,7 +15,7 @@ import {
   lokiLogEntry,
   websocketMessageForNatsData,
 } from "../src/index.ts";
-import { sealTerminalTicket } from "../../core/functions/_shared/terminal-ticket.ts";
+import { sealTerminalTicket } from "../../core/src/shared/terminal-ticket.ts";
 import {
   isObservabilityClientMessage,
   MAX_OBSERVABILITY_BACKFILL,
@@ -117,11 +118,71 @@ test("normalizes and de-duplicates unified gateway core upstreams", () => {
 
 test("proxies runtime HTTP paths used by the SDK", () => {
   expect(isCoreHttpPathForTest("/")).toBe(true);
+  expect(isCoreHttpPathForTest("/accounts")).toBe(true);
   expect(isCoreHttpPathForTest("/async")).toBe(true);
   expect(isCoreHttpPathForTest("/status/request-1")).toBe(true);
-  expect(isCoreHttpPathForTest("/accounts/me/crons")).toBe(true);
+  expect(isCoreHttpPathForTest("/v1/crons")).toBe(true);
   expect(isCoreHttpPathForTest("/v1/demo/agents/development/env_123/async")).toBe(true);
   expect(isCoreHttpPathForTest("/healthz")).toBe(false);
+});
+
+test("routes config-plane CRUD to Convex, not core", () => {
+  // Account metadata/rotation plus agents, skills, tools, workspace files, crons, workspaces, sandboxes, and policies are Convex config-plane routes.
+  for (const method of ["GET", "POST", "PUT"]) {
+    expect(isConfigHttpPath("/v1/account/onboarding", method)).toBe(true);
+    expect(isConfigHttpPath("/v1/account/projects/p/environments/e/manifest", method)).toBe(true);
+  }
+  expect(isConfigHttpPath("/v1/accountx", "GET")).toBe(false);
+  expect(isConfigHttpPath("/v1/account", "DELETE")).toBe(false);
+  expect(isConfigHttpPath("/v1/account", "GET")).toBe(true);
+  expect(isConfigHttpPath("/v1/account", "PATCH")).toBe(true);
+  expect(isConfigHttpPath("/v1/account/rotate-secret", "POST")).toBe(true);
+  expect(isConfigHttpPath("/accounts", "GET")).toBe(true);
+  expect(isConfigHttpPath("/accounts/acct_1", "GET")).toBe(true);
+  expect(isConfigHttpPath("/accounts/acct_1", "PATCH")).toBe(true);
+  expect(isConfigHttpPath("/accounts/acct_1/rotate-secret", "POST")).toBe(true);
+  expect(isConfigHttpPath("/v1/agents", "GET")).toBe(true);
+  expect(isConfigHttpPath("/v1/agents", "POST")).toBe(true);
+  expect(isConfigHttpPath("/v1/agents/agent_1", "GET")).toBe(true);
+  expect(isConfigHttpPath("/v1/agents/agent_1", "PATCH")).toBe(true);
+  expect(isConfigHttpPath("/v1/agents/agent_1", "DELETE")).toBe(true);
+  expect(isConfigHttpPath("/v1/skills")).toBe(true);
+  expect(isConfigHttpPath("/v1/skills/my-skill")).toBe(true);
+  expect(isConfigHttpPath("/v1/tools")).toBe(true);
+  expect(isConfigHttpPath("/v1/tools/tool_123")).toBe(true);
+  expect(isConfigHttpPath("/v1/workspaces")).toBe(true);
+  expect(isConfigHttpPath("/v1/workspaces/ws_123")).toBe(true);
+  expect(isConfigHttpPath("/v1/workspaces/ws_123/files")).toBe(true);
+  expect(isConfigHttpPath("/v1/sandboxes")).toBe(true);
+  expect(isConfigHttpPath("/v1/sandboxes/sbx_1")).toBe(true);
+  expect(isConfigHttpPath("/v1/policies")).toBe(true);
+  expect(isConfigHttpPath("/v1/policies/pol_1")).toBe(true);
+  expect(isConfigHttpPath("/v1/crons")).toBe(true);
+  expect(isConfigHttpPath("/v1/crons/cron_123")).toBe(true);
+  expect(isConfigHttpPath("/v1/crons/cron_123/runs")).toBe(true);
+  expect(isConfigHttpPath("/v1/cron-runs", "POST")).toBe(false);
+
+  // Exact depth only: scoped agent invocations and other resources stay core.
+  expect(isConfigHttpPath("/v1/account", "DELETE")).toBe(false);
+  expect(isConfigHttpPath("/accounts", "POST")).toBe(false);
+  expect(isConfigHttpPath("/accounts/acct_1", "DELETE")).toBe(false);
+  expect(isConfigHttpPath("/accounts/acct_1/rotate-secret", "GET")).toBe(false);
+  expect(isConfigHttpPath("/accounts/acct_1/agents", "GET")).toBe(false);
+  expect(isConfigHttpPath("/accounts/acct_1/rotate-secret/extra", "POST")).toBe(false);
+  // The whole /v1/account/ subtree is Convex's; core only owns the exact-path DELETE.
+  expect(isConfigHttpPath("/v1/account/rotate-secret", "POST")).toBe(true);
+  expect(isConfigHttpPath("/v1/account/auth/exchange", "POST")).toBe(true);
+  expect(isConfigHttpPath("/v1/skills/agents/development/env_123")).toBe(false);
+  expect(isConfigHttpPath("/v1/crons/agents/development/env_123")).toBe(false);
+  expect(isConfigHttpPath("/v1/sandboxes/sbx_1/exec")).toBe(false);
+  expect(isConfigHttpPath("/v1/sandboxes/sbx_1/terminal")).toBe(false);
+  expect(isConfigHttpPath("/v1/policies/agents/development/env_123")).toBe(false);
+  expect(isConfigHttpPath("/v1/agents/agent_1", "POST")).toBe(false);
+  expect(isConfigHttpPath("/v1/agents/agent_1/ws", "GET")).toBe(false);
+  expect(isConfigHttpPath("/v1/agents/agent_1/async", "POST")).toBe(false);
+  expect(isConfigHttpPath("/v1/demo/agents/development/env_123", "POST")).toBe(false);
+  expect(isConfigHttpPath("/v1/demo/agents/development/env_123/async", "POST")).toBe(false);
+  expect(isConfigHttpPath("/v1/demo/agents/development/env_123/ws", "GET")).toBe(false);
 });
 
 test("routes a runtime key to the matching core upstream", async () => {

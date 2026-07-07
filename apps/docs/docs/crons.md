@@ -1,13 +1,15 @@
 # Cron Jobs
 
-Cron jobs start account agents on a schedule. They are included in the default infrastructure as a small add-on surface on top of the existing account and harness services.
+Cron jobs start account agents on a schedule. Cron CRUD lives in the Convex config plane (`/v1/crons` is forwarded there by the gateway); execution stays in the core harness, invoked by EventBridge Scheduler.
 
 ```mermaid
 flowchart TD
-  Owner["Account owner / SDK"] -->|"create / update / delete cron job"| Manage["account-manage"]
-  Manage --> Jobs["Cron store<br/>(Convex or DynamoDB)"]
-  Manage --> Scheduler["EventBridge Scheduler<br/>schedule lifecycle"]
-  Scheduler -->|"accountId + cronId"| Harness["harness-processing"]
+  Owner["Account owner / SDK"] -->|"create / update / delete cron job"| Config["Convex config plane<br/>(configHttp + awsCrons)"]
+  Config --> Jobs["crons table (Convex)"]
+  Config --> Scheduler["EventBridge Scheduler<br/>schedule lifecycle"]
+  Scheduler --> Bus["cron-runs event bus"]
+  Bus -->|"HTTPS API destination"| Gateway["gateway"]
+  Gateway --> Harness["core harness<br/>(POST /v1/cron-runs)"]
   Harness --> Jobs
   Harness -->|"internal async worker event"| Harness
   Harness --> Results["AsyncAgentResult + Conversations"]
@@ -76,7 +78,7 @@ export const weeklyDigest = defineCron({
 Create a cron job directly via the account API:
 
 ```bash
-curl -X POST "$ACCOUNT_SERVICE_URL/accounts/me/crons" \
+curl -X POST "$BROODS_BASE_URL/v1/crons" \
   -H "Authorization: Bearer $ACCOUNT_SECRET" \
   -H "Content-Type: application/json" \
   -d '{
@@ -104,7 +106,7 @@ Supported schedule expressions are AWS EventBridge Scheduler expressions: `cron(
 Pause a job:
 
 ```bash
-curl -X PATCH "$ACCOUNT_SERVICE_URL/accounts/me/crons/$CRON_ID" \
+curl -X PATCH "$BROODS_BASE_URL/v1/crons/$CRON_ID" \
   -H "Authorization: Bearer $ACCOUNT_SECRET" \
   -H "Content-Type: application/json" \
   -d '{ "status": "paused" }'
@@ -113,11 +115,11 @@ curl -X PATCH "$ACCOUNT_SERVICE_URL/accounts/me/crons/$CRON_ID" \
 Delete a job:
 
 ```bash
-curl -X DELETE "$ACCOUNT_SERVICE_URL/accounts/me/crons/$CRON_ID" \
+curl -X DELETE "$BROODS_BASE_URL/v1/crons/$CRON_ID" \
   -H "Authorization: Bearer $ACCOUNT_SECRET"
 ```
 
-List jobs with `GET /accounts/me/crons` or fetch one with `GET /accounts/me/crons/{cronId}`. Responses include the run state: `status`, `lastInvokedAt`, `lastStatus`, and `lastError`. Paused jobs are skipped at invoke time.
+List jobs with `GET /v1/crons` or fetch one with `GET /v1/crons/{cronId}`. Responses include the run state: `status`, `lastInvokedAt`, `lastStatus`, and `lastError`. Paused jobs are skipped at invoke time.
 
 ## SDK and Dynamic Creation
 

@@ -6,9 +6,9 @@
  */
 
 import { describe, expect, it } from "bun:test";
-import { optionalEnv } from "../functions/_shared/env.ts";
-import { dynamoStorageProvider } from "../functions/_shared/storage/dynamo/index.ts";
-import type { StorageProvider } from "../functions/_shared/storage/types.ts";
+import { optionalEnv } from "../src/shared/env.ts";
+import { dynamoStorageProvider } from "../src/shared/storage/dynamo/index.ts";
+import type { StorageProvider } from "../src/shared/storage/types.ts";
 
 const providers: Array<[string, StorageProvider]> = [
   ["dynamodb", dynamoStorageProvider],
@@ -16,7 +16,7 @@ const providers: Array<[string, StorageProvider]> = [
 
 const convexAvailable = Boolean(optionalEnv("CONVEX_URL") && optionalEnv("CONVEX_DEPLOY_KEY"));
 if (convexAvailable) {
-  const { convexStorageProvider } = require("../functions/_shared/storage/convex/index.ts");
+  const { convexStorageProvider } = require("../src/shared/storage/convex/index.ts");
   providers.push(["convex", convexStorageProvider as StorageProvider]);
 }
 
@@ -35,13 +35,13 @@ describe("StorageProvider", () => {
     const originalProvider = process.env.STORAGE_PROVIDER;
     try {
       process.env.STORAGE_PROVIDER = "dynamodb";
-      const { getStorage, resetStorageForTests } = await import("../functions/_shared/storage/index.ts");
+      const { getStorage, resetStorageForTests } = await import("../src/shared/storage/index.ts");
       resetStorageForTests();
       expect(getStorage().kind).toBe("dynamodb");
     } finally {
       if (originalProvider === undefined) delete process.env.STORAGE_PROVIDER;
       else process.env.STORAGE_PROVIDER = originalProvider;
-      const { resetStorageForTests } = await import("../functions/_shared/storage/index.ts");
+      const { resetStorageForTests } = await import("../src/shared/storage/index.ts");
       resetStorageForTests();
     }
   });
@@ -50,13 +50,13 @@ describe("StorageProvider", () => {
     const originalProvider = process.env.STORAGE_PROVIDER;
     try {
       process.env.STORAGE_PROVIDER = "redis";
-      const { getStorage, resetStorageForTests } = await import("../functions/_shared/storage/index.ts");
+      const { getStorage, resetStorageForTests } = await import("../src/shared/storage/index.ts");
       resetStorageForTests();
       expect(() => getStorage()).toThrow(/Unknown STORAGE_PROVIDER/);
     } finally {
       if (originalProvider === undefined) delete process.env.STORAGE_PROVIDER;
       else process.env.STORAGE_PROVIDER = originalProvider;
-      const { resetStorageForTests } = await import("../functions/_shared/storage/index.ts");
+      const { resetStorageForTests } = await import("../src/shared/storage/index.ts");
       resetStorageForTests();
     }
   });
@@ -105,7 +105,7 @@ describe("StorageProvider", () => {
      * through it end-to-end.
      */
     it("getStorage().accounts.* routes through the injected provider", async () => {
-      const { getStorage, resetStorageForTests, setStorageForTests } = await import("../functions/_shared/storage/index.ts");
+      const { getStorage, resetStorageForTests, setStorageForTests } = await import("../src/shared/storage/index.ts");
 
       const fakeAccounts = new Map<string, any>();
       const fakeProvider = {

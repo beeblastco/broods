@@ -4,7 +4,7 @@
  */
 
 import { afterEach, describe, expect, it, mock } from "bun:test";
-import { createAgentLifecycleEmitter, toLifecycleValue } from "../functions/harness-processing/lifecycle.ts";
+import { createAgentLifecycleEmitter, toLifecycleValue } from "../src/harness/lifecycle.ts";
 
 const originalFetch = globalThis.fetch;
 

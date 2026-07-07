@@ -14,9 +14,9 @@ import {
   QueryCommand,
   type AttributeValue,
 } from "@aws-sdk/client-dynamodb";
-import { dynamo, fromAttributeValue } from "../functions/_shared/storage/dynamo/client.ts";
-import { dynamoSandboxConfigStore } from "../functions/_shared/storage/dynamo/sandbox-configs.ts";
-import { dynamoWorkspaceConfigStore } from "../functions/_shared/storage/dynamo/workspace-configs.ts";
+import { dynamo, fromAttributeValue } from "../src/shared/storage/dynamo/client.ts";
+import { dynamoSandboxConfigStore } from "../src/shared/storage/dynamo/sandbox-configs.ts";
+import { dynamoWorkspaceConfigStore } from "../src/shared/storage/dynamo/workspace-configs.ts";
 
 const originalSend = dynamo.send;
 const originalSecret = process.env.ACCOUNT_CONFIG_ENCRYPTION_SECRET;

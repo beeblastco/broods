@@ -2,7 +2,7 @@ import { rm } from "node:fs/promises";
 import { join } from "node:path";
 
 const roots = [
-  "../../apps/core/functions/_shared",
+  "../../apps/core/src/shared",
   "../convex",
 ];
 

@@ -5,7 +5,7 @@
 
 import { afterEach, describe, expect, it, mock } from "bun:test";
 import { DeleteItemCommand, GetItemCommand, QueryCommand, UpdateItemCommand, type AttributeValue } from "@aws-sdk/client-dynamodb";
-import { dynamo, toAttributeValue } from "../functions/_shared/storage/dynamo/client.ts";
+import { dynamo, toAttributeValue } from "../src/shared/storage/dynamo/client.ts";
 
 const ORIGINAL_ENV = { ...process.env };
 const originalSend = dynamo.send;
@@ -22,8 +22,8 @@ describe("agent persistence", () => {
     process.env.AGENT_CONFIGS_TABLE_NAME = "agent-configs";
     process.env.ACCOUNT_CONFIG_ENCRYPTION_SECRET = "test-secret";
     dynamo.send = sendMock as never;
-    const { validateAgentSubagentIds } = await import("../functions/_shared/storage/index.ts");
-    const { encryptAgentConfig } = await import("../functions/_shared/storage/index.ts");
+    const { validateAgentSubagentIds } = await import("../src/shared/storage/index.ts");
+    const { encryptAgentConfig } = await import("../src/shared/storage/index.ts");
 
     sendMock.mockImplementation(async (command: unknown) => {
       if (command instanceof GetItemCommand) {
@@ -50,8 +50,8 @@ describe("agent persistence", () => {
     process.env.AGENT_CONFIGS_TABLE_NAME = "agent-configs";
     process.env.ACCOUNT_CONFIG_ENCRYPTION_SECRET = "test-secret";
     dynamo.send = sendMock as never;
-    const { AgentSubagentNotFoundError } = await import("../functions/_shared/storage/index.ts");
-    const { encryptAgentConfig } = await import("../functions/_shared/storage/index.ts");
+    const { AgentSubagentNotFoundError } = await import("../src/shared/storage/index.ts");
+    const { encryptAgentConfig } = await import("../src/shared/storage/index.ts");
 
     sendMock.mockImplementation(async (command: unknown) => {
       if (command instanceof GetItemCommand) {
@@ -84,9 +84,9 @@ describe("agent persistence", () => {
     process.env.AGENT_CONFIGS_TABLE_NAME = "agent-configs";
     process.env.ACCOUNT_CONFIG_ENCRYPTION_SECRET = "test-secret";
     dynamo.send = sendMock as never;
-    const { getStorage, resetStorageForTests } = await import("../functions/_shared/storage/index.ts");
+    const { getStorage, resetStorageForTests } = await import("../src/shared/storage/index.ts");
     resetStorageForTests();
-    const { encryptAgentConfig } = await import("../functions/_shared/storage/index.ts");
+    const { encryptAgentConfig } = await import("../src/shared/storage/index.ts");
     const encryptedConfig = toAttributeValue(encryptAgentConfig({}));
     const pages = [
       {
@@ -152,9 +152,9 @@ describe("agent persistence", () => {
     process.env.AGENT_CONFIGS_TABLE_NAME = "agent-configs";
     process.env.ACCOUNT_CONFIG_ENCRYPTION_SECRET = "test-secret";
     dynamo.send = sendMock as never;
-    const { getStorage, resetStorageForTests } = await import("../functions/_shared/storage/index.ts");
+    const { getStorage, resetStorageForTests } = await import("../src/shared/storage/index.ts");
     resetStorageForTests();
-    const { encryptAgentConfig } = await import("../functions/_shared/storage/index.ts");
+    const { encryptAgentConfig } = await import("../src/shared/storage/index.ts");
     const staleConfig = encryptAgentConfig({
       model: {
         provider: "minimax",

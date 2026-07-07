@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { createDiscordChannel } from "../functions/_shared/discord-channel.ts";
+import { createDiscordChannel } from "../src/shared/discord-channel.ts";
 
 const TEST_DISCORD_PUBLIC_KEY = "0".repeat(64);
 

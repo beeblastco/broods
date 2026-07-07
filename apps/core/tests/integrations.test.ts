@@ -1,7 +1,5 @@
-import { describe, expect, it } from "bun:test";
-import type { LambdaFunctionURLEvent } from "aws-lambda";
-import type { AuthContext } from "../functions/_shared/auth.ts";
-import type { LambdaResponse } from "../functions/_shared/runtime.ts";
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import type { AuthContext } from "../src/shared/auth.ts";
 import {
   createIncomingEventRouter,
   type AsyncDirectInboundEvent,
@@ -9,7 +7,8 @@ import {
   type ChannelInboundEvent,
   type DirectInboundEvent,
   type StatusInboundEvent,
-} from "../functions/harness-processing/integrations.ts";
+} from "../src/harness/integrations.ts";
+import { coreRequest } from "./helpers/http.ts";
 
 const TEST_ACCOUNT = {
   accountId: "acct_test",
@@ -59,6 +58,17 @@ const TEST_AGENT_PRIVATE = {
   name: "Private agent",
   config: TEST_ACCOUNT.config,
 };
+
+const ORIGINAL_PUBLIC_BASE_URL = process.env.PUBLIC_BASE_URL;
+
+beforeEach(() => {
+  process.env.PUBLIC_BASE_URL = "https://gateway.broods.app";
+});
+
+afterEach(() => {
+  if (ORIGINAL_PUBLIC_BASE_URL === undefined) delete process.env.PUBLIC_BASE_URL;
+  else process.env.PUBLIC_BASE_URL = ORIGINAL_PUBLIC_BASE_URL;
+});
 
 describe("direct API ingress", () => {
 
@@ -704,7 +714,7 @@ describe("direct API ingress", () => {
     expect(response.statusCode).toBe(202);
     expect(handledEvents).toHaveLength(1);
     expect(handledEvents[0]?.eventId).toBe("acct:acct_test:agent:agent_test:api:one");
-    expect(handledEvents[0]?.statusUrl).toBe("https://example.lambda-url.aws/status/one?agentId=agent_test");
+    expect(handledEvents[0]?.statusUrl).toBe("https://gateway.broods.app/status/one?agentId=agent_test");
   });
 
   it("routes async direct API requests with an env-scoped runtime key", async () => {
@@ -749,7 +759,7 @@ describe("direct API ingress", () => {
     expect(response.statusCode).toBe(202);
     expect(handledEvents).toHaveLength(1);
     expect(handledEvents[0]?.eventId).toBe("acct:acct_test:agent:agent_test:api:one");
-    expect(handledEvents[0]?.statusUrl).toBe("https://example.lambda-url.aws/status/one?agentId=agent_test");
+    expect(handledEvents[0]?.statusUrl).toBe("https://gateway.broods.app/status/one?agentId=agent_test");
   });
 
   it("routes scoped async direct API requests with an env-scoped runtime key", async () => {
@@ -945,20 +955,32 @@ function createHandlers(overrides: Partial<{
   handleChannelRequest(event: ChannelInboundEvent): Promise<void>;
 }> = {}) {
   return {
-    handleDirectRequest: overrides.handleDirectRequest ?? (async () => ({
-      statusCode: 200,
-      headers: { "Content-Type": "text/plain; charset=utf-8" },
-      body: "ok",
-    })),
-    handleAsyncRequest: overrides.handleAsyncRequest,
-    handleStatusRequest: overrides.handleStatusRequest,
-    handleAsyncToolCompletionRequest: overrides.handleAsyncToolCompletionRequest,
+    handleDirectRequest: async (event: DirectInboundEvent) =>
+      responseFromShape(await (overrides.handleDirectRequest ?? defaultDirectHandler)(event)),
+    handleAsyncRequest: overrides.handleAsyncRequest
+      ? async (event: AsyncDirectInboundEvent) => responseFromShape(await overrides.handleAsyncRequest!(event))
+      : undefined,
+    handleStatusRequest: overrides.handleStatusRequest
+      ? async (event: StatusInboundEvent) => responseFromShape(await overrides.handleStatusRequest!(event))
+      : undefined,
+    handleAsyncToolCompletionRequest: overrides.handleAsyncToolCompletionRequest
+      ? async (event: AsyncToolCompletionInboundEvent) =>
+        responseFromShape(await overrides.handleAsyncToolCompletionRequest!(event))
+      : undefined,
     handleChannelRequest: overrides.handleChannelRequest ?? (async () => {}),
   };
 }
 
+async function defaultDirectHandler(): Promise<ResponseShape> {
+  return {
+    statusCode: 200,
+    headers: { "Content-Type": "text/plain; charset=utf-8" },
+    body: "ok",
+  };
+}
+
 async function routeIncomingEvent(
-  event: LambdaFunctionURLEvent,
+  event: ReturnType<typeof coreRequest>,
   handlers: ReturnType<typeof createHandlers>,
   options: {
     directApiEnabled?: boolean;
@@ -980,7 +1002,7 @@ async function routeIncomingEvent(
   });
 
   const response = await router(event, handlers);
-  return response as ResponseShape & LambdaResponse;
+  return responseToShape(response);
 }
 
 function createEvent(
@@ -994,7 +1016,7 @@ function createEvent(
     isBase64Encoded: boolean;
     addDefaultAgentId: boolean;
   }> = {},
-): LambdaFunctionURLEvent {
+): ReturnType<typeof coreRequest> {
   const rawPath = options.rawPath ?? "/";
   const normalizedBody = options.addDefaultAgentId !== false &&
     body &&
@@ -1004,33 +1026,12 @@ function createEvent(
     ? { agentId: "agent_test", ...body as Record<string, unknown> }
     : body;
 
-  return {
-    version: "2.0",
-    routeKey: "$default",
-    rawPath,
-    rawQueryString: options.rawQueryString ?? "",
+  return coreRequest(
+    options.method ?? "POST",
+    options.rawQueryString ? `${rawPath}?${options.rawQueryString}` : rawPath,
     headers,
-    requestContext: {
-      accountId: "123456789012",
-      apiId: "api-id",
-      domainName: "example.lambda-url.aws",
-      domainPrefix: "example",
-      http: {
-        method: options.method ?? "POST",
-        path: rawPath,
-        protocol: "HTTP/1.1",
-        sourceIp: "127.0.0.1",
-        userAgent: "bun:test",
-      },
-      requestId: "request-id",
-      routeKey: "$default",
-      stage: "$default",
-      time: "24/Apr/2026:00:00:00 +0000",
-      timeEpoch: Date.now(),
-    },
-    body: options.rawBody ?? JSON.stringify(normalizedBody),
-    isBase64Encoded: options.isBase64Encoded ?? false,
-  };
+    options.rawBody ?? JSON.stringify(normalizedBody),
+  );
 }
 
 interface ResponseShape {
@@ -1041,4 +1042,24 @@ interface ResponseShape {
 
 function responseJson(response: ResponseShape): Record<string, unknown> {
   return JSON.parse(response.body ?? "{}") as Record<string, unknown>;
+}
+
+function responseFromShape(response: ResponseShape): Response {
+  return new Response(response.body, {
+    status: response.statusCode,
+    headers: response.headers,
+  });
+}
+
+async function responseToShape(response: Response): Promise<ResponseShape> {
+  const headers: Record<string, string> = {};
+  response.headers.forEach((value, key) => {
+    headers[key] = value;
+  });
+
+  return {
+    statusCode: response.status,
+    headers,
+    body: await response.text(),
+  };
 }

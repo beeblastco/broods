@@ -1,7 +1,8 @@
 "use node";
 /**
- * Authenticated proxy for mounted workspace files. S3 remains the single source
- * of truth while the service credential and account scope stay server-side.
+ * Authenticated dashboard actions for mounted workspace files. S3 is the
+ * single source of truth for runtime workspace contents; the shared ops live
+ * in model/workspaceFs (also used by the config HTTP surface).
  */
 
 import { v } from "convex/values";
@@ -9,6 +10,14 @@ import type { Id } from "./_generated/dataModel";
 import { internal } from "./_generated/api";
 import { action, type ActionCtx } from "./_generated/server";
 import { authKit } from "./auth";
+import {
+    MAX_WORKSPACE_FILE_BYTES,
+    deleteWorkspacePath,
+    listWorkspaceFiles,
+    renameWorkspacePath,
+    uploadWorkspaceFile,
+    workspaceFileDownloadUrl,
+} from "./model/workspaceFs";
 
 const fileEntry = v.object({
     path: v.string(),
@@ -49,9 +58,9 @@ export const migrateLegacy = action({
             projectId: args.projectId,
             nodeId: args.nodeId,
         });
-        if (legacyFiles.length === 0) return (await readWorkspaceFiles(workspace)).files;
-        const current = await readWorkspaceFiles(workspace);
-        const existingPaths = new Set(current.files.map((file) => file.path));
+        if (legacyFiles.length === 0) return await listWorkspaceFiles(workspace.accountId, workspace.workspaceId);
+        const current = await listWorkspaceFiles(workspace.accountId, workspace.workspaceId);
+        const existingPaths = new Set(current.map((file) => file.path));
         let changed = false;
 
         for (const file of legacyFiles) {
@@ -66,8 +75,8 @@ export const migrateLegacy = action({
                 const response = await fetch(url);
                 if (!response.ok) continue;
                 const bytes = new Uint8Array(await response.arrayBuffer());
-                if (bytes.byteLength > 512 * 1024) continue;
-                await callWorkspaceApi(workspace, "POST", {
+                if (bytes.byteLength > MAX_WORKSPACE_FILE_BYTES) continue;
+                await uploadWorkspaceFile(workspace.accountId, workspace.workspaceId, {
                     path: file.path,
                     contentBase64: Buffer.from(bytes).toString("base64"),
                     contentType: response.headers.get("content-type") ?? undefined,
@@ -80,7 +89,7 @@ export const migrateLegacy = action({
             });
         }
 
-        return changed ? (await readWorkspaceFiles(workspace)).files : current.files;
+        return changed ? await listWorkspaceFiles(workspace.accountId, workspace.workspaceId) : current;
     },
 });
 
@@ -91,7 +100,7 @@ export const list = action({
     handler: async (ctx, args) => {
         const workspace = await resolveWorkspace(ctx, args);
 
-        return (await readWorkspaceFiles(workspace)).files;
+        return await listWorkspaceFiles(workspace.accountId, workspace.workspaceId);
     },
 });
 
@@ -107,20 +116,12 @@ export const upload = action({
     returns: fileEntry,
     handler: async (ctx, args) => {
         const workspace = await resolveWorkspace(ctx, args);
-        const response = await callWorkspaceApi(workspace, "POST", {
+
+        return await uploadWorkspaceFile(workspace.accountId, workspace.workspaceId, {
             path: args.path,
             contentBase64: args.contentBase64,
             contentType: args.contentType,
         });
-        const body = await response.json() as { file: {
-            path: string;
-            name: string;
-            isFolder: boolean;
-            sizeBytes?: number;
-            updatedAt?: string;
-        } };
-
-        return body.file;
     },
 });
 
@@ -130,7 +131,7 @@ export const remove = action({
     returns: v.null(),
     handler: async (ctx, args) => {
         const workspace = await resolveWorkspace(ctx, args);
-        await callWorkspaceApi(workspace, "DELETE", { path: args.path });
+        await deleteWorkspacePath(workspace.accountId, workspace.workspaceId, args.path);
 
         return null;
     },
@@ -147,7 +148,7 @@ export const rename = action({
     returns: v.null(),
     handler: async (ctx, args) => {
         const workspace = await resolveWorkspace(ctx, args);
-        await callWorkspaceApi(workspace, "PATCH", { path: args.path, newPath: args.newPath });
+        await renameWorkspacePath(workspace.accountId, workspace.workspaceId, args.path, args.newPath);
 
         return null;
     },
@@ -159,10 +160,8 @@ export const getDownloadUrl = action({
     returns: v.string(),
     handler: async (ctx, args) => {
         const workspace = await resolveWorkspace(ctx, args);
-        const response = await callWorkspaceApi(workspace, "GET", undefined, args.path);
-        const body = await response.json() as { url: string };
 
-        return body.url;
+        return await workspaceFileDownloadUrl(workspace.accountId, workspace.workspaceId, args.path);
     },
 });
 
@@ -179,47 +178,4 @@ async function resolveWorkspace(
     if (!workspace) throw new Error("Workspace not found");
 
     return workspace;
-}
-
-async function callWorkspaceApi(
-    workspace: RuntimeWorkspace,
-    method: string,
-    body?: Record<string, unknown>,
-    path?: string,
-): Promise<Response> {
-    const url = process.env.BROODS_ACCOUNT_MANAGE_URL;
-    const secret = process.env.BROODS_SERVICE_AUTH_SECRET;
-    if (!url || !secret) throw new Error("Workspace file service is not configured");
-    const endpoint = `${url.replace(/\/+$/, "")}/accounts/me/workspaces/${encodeURIComponent(workspace.workspaceId)}/files` +
-        (path ? `?path=${encodeURIComponent(path)}` : "");
-    const response = await fetch(endpoint, {
-        method: method,
-        headers: {
-            "Authorization": `Bearer ${secret}`,
-            "X-Account-Id": workspace.accountId,
-            ...(body ? { "Content-Type": "application/json" } : {}),
-        },
-        ...(body ? { body: JSON.stringify(body) } : {}),
-    });
-    if (!response.ok) throw new Error(`Workspace file request failed (${response.status}): ${await response.text()}`);
-
-    return response;
-}
-
-async function readWorkspaceFiles(workspace: RuntimeWorkspace): Promise<{ files: Array<{
-    path: string;
-    name: string;
-    isFolder: boolean;
-    sizeBytes?: number;
-    updatedAt?: string;
-}> }> {
-    const response = await callWorkspaceApi(workspace, "GET");
-
-    return await response.json() as { files: Array<{
-        path: string;
-        name: string;
-        isFolder: boolean;
-        sizeBytes?: number;
-        updatedAt?: string;
-    }> };
 }

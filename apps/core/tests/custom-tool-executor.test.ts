@@ -4,13 +4,13 @@
  */
 
 import { beforeEach, describe, expect, it, mock } from "bun:test";
-import type { AccountToolRecord } from "../functions/_shared/storage/index.ts";
+import type { AccountToolRecord } from "../src/shared/storage/index.ts";
 import type {
   SandboxExecutor,
   SandboxExecutorConfig,
   SandboxJobHandle,
   SandboxRunResult,
-} from "../functions/harness-processing/sandbox/types.ts";
+} from "../src/harness/sandbox/types.ts";
 
 const bundle = "export default { name: 'test_async', async execute() { return { ok: true }; } };";
 const getS3ObjectUrlMock = mock(async () => "https://tool-bundles.example/account-tools/acct_test/bundles/hash.mjs?sig=test");
@@ -41,7 +41,7 @@ const createWorkerExecutorMock = mock((_config: SandboxExecutorConfig): SandboxE
   execInReservedPod: execInReservedPodMock as unknown as SandboxExecutor["execInReservedPod"],
 }));
 
-mock.module("../functions/_shared/s3.ts", () => ({
+mock.module("../src/shared/s3.ts", () => ({
   getS3ObjectUrl: getS3ObjectUrlMock,
   readS3Bytes: readS3BytesMock,
   readS3Text: mock(async () => ""),
@@ -52,8 +52,8 @@ mock.module("../functions/_shared/s3.ts", () => ({
   isMissingS3Error: mock(() => false),
 }));
 
-mock.module("../functions/harness-processing/self-url.ts", () => ({
-  getHarnessPublicUrl: mock(async () => "https://agent.example"),
+mock.module("../src/harness/self-url.ts", () => ({
+  getHarnessPublicUrl: mock(() => process.env.PUBLIC_BASE_URL?.replace(/\/+$/, "") ?? "https://agent.example"),
 }));
 
 beforeEach(() => {
@@ -69,7 +69,7 @@ beforeEach(() => {
 
 describe("executeAccountToolInSandbox", () => {
   it("loads a bundle, verifies its hash, and delegates execution to the sandbox executor", async () => {
-    const { executeAccountToolInSandbox } = await import("../functions/harness-processing/tools/custom-tool-executor.ts");
+    const { executeAccountToolInSandbox } = await import("../src/harness/tools/custom-tool-executor.ts");
 
     const result = await executeAccountToolInSandbox({
       accountId: "acct_test",
@@ -111,7 +111,7 @@ describe("executeAccountToolInSandbox", () => {
 
   it("falls back to a signed URL for bundles too large to inline", async () => {
     readS3BytesMock.mockImplementationOnce(async () => new Uint8Array(65 * 1024));
-    const { executeAccountToolInSandbox } = await import("../functions/harness-processing/tools/custom-tool-executor.ts");
+    const { executeAccountToolInSandbox } = await import("../src/harness/tools/custom-tool-executor.ts");
 
     await executeAccountToolInSandbox({
       accountId: "acct_test",
@@ -128,7 +128,7 @@ describe("executeAccountToolInSandbox", () => {
   });
 
   it("uses the resident worker when the executor exposes execInReservedPod", async () => {
-    const { executeAccountToolInSandbox } = await import("../functions/harness-processing/tools/custom-tool-executor.ts");
+    const { executeAccountToolInSandbox } = await import("../src/harness/tools/custom-tool-executor.ts");
 
     const result = await executeAccountToolInSandbox({
       accountId: "acct_test",
@@ -149,7 +149,7 @@ describe("executeAccountToolInSandbox", () => {
 
   it("falls back to the one-shot runner when the worker is unreachable", async () => {
     execInReservedPodMock.mockImplementationOnce(async () => ({ stdout: "", stderr: "connection refused", exitCode: 7 }));
-    const { executeAccountToolInSandbox } = await import("../functions/harness-processing/tools/custom-tool-executor.ts");
+    const { executeAccountToolInSandbox } = await import("../src/harness/tools/custom-tool-executor.ts");
 
     const result = await executeAccountToolInSandbox({
       accountId: "acct_test",
@@ -167,7 +167,7 @@ describe("executeAccountToolInSandbox", () => {
 
   it("surfaces a worker tool error without falling back", async () => {
     execInReservedPodMock.mockImplementationOnce(async () => ({ stdout: JSON.stringify({ t: "error", error: "boom" }) + "\n", stderr: "", exitCode: 0 }));
-    const { executeAccountToolInSandbox } = await import("../functions/harness-processing/tools/custom-tool-executor.ts");
+    const { executeAccountToolInSandbox } = await import("../src/harness/tools/custom-tool-executor.ts");
 
     await expect(executeAccountToolInSandbox({
       accountId: "acct_test",
@@ -181,7 +181,7 @@ describe("executeAccountToolInSandbox", () => {
   });
 
   it("starts uploaded async tools as sandbox background work when completion metadata is detached", async () => {
-    const { executeAccountToolInSandbox } = await import("../functions/harness-processing/tools/custom-tool-executor.ts");
+    const { executeAccountToolInSandbox } = await import("../src/harness/tools/custom-tool-executor.ts");
 
     const result = await executeAccountToolInSandbox({
       accountId: "acct_test",
@@ -222,7 +222,7 @@ describe("executeAccountToolInSandbox", () => {
       durationMs: 10,
       provider: "sandbox",
     }));
-    const { executeAccountToolInSandbox } = await import("../functions/harness-processing/tools/custom-tool-executor.ts");
+    const { executeAccountToolInSandbox } = await import("../src/harness/tools/custom-tool-executor.ts");
 
     await expect(executeAccountToolInSandbox({
       accountId: "acct_test",
@@ -237,7 +237,7 @@ describe("executeAccountToolInSandbox", () => {
 
 describe("custom tool worker helpers", () => {
   it("builds an ensure-and-invoke command over the unix socket", async () => {
-    const { buildWorkerInvokeCommand } = await import("../functions/harness-processing/tools/custom-tool-worker.ts");
+    const { buildWorkerInvokeCommand } = await import("../src/harness/tools/custom-tool-worker.ts");
     const [bin, flag, script] = buildWorkerInvokeCommand();
     expect(bin).toBe("bash");
     expect(flag).toBe("-lc");
@@ -248,7 +248,7 @@ describe("custom tool worker helpers", () => {
   });
 
   it("parses NDJSON worker frames and rejects non-protocol output", async () => {
-    const { parseWorkerFrame } = await import("../functions/harness-processing/tools/custom-tool-worker.ts");
+    const { parseWorkerFrame } = await import("../src/harness/tools/custom-tool-worker.ts");
     expect(parseWorkerFrame('{"t":"chunk","output":1}')).toEqual({ t: "chunk", output: 1 });
     expect(parseWorkerFrame('  {"t":"final","result":2}\n')).toEqual({ t: "final", result: 2 });
     expect(parseWorkerFrame('{"t":"end"}')).toEqual({ t: "end" });
@@ -271,7 +271,7 @@ describe("streamAccountToolInSandbox", () => {
       opts?.onStdout?.(frames);
       return Promise.resolve({ stdout: frames, stderr: "", exitCode: 0 });
     }) as never);
-    const { streamAccountToolInSandbox } = await import("../functions/harness-processing/tools/custom-tool-executor.ts");
+    const { streamAccountToolInSandbox } = await import("../src/harness/tools/custom-tool-executor.ts");
 
     const outputs: unknown[] = [];
     for await (const output of streamAccountToolInSandbox({

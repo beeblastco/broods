@@ -106,7 +106,7 @@ export const myAgent = defineAgent({
 });
 ```
 
-The CLI compiles these into a manifest, resolves references, and syncs them. You can also create records via the raw account API — see the [API Reference](/api-reference) for `POST /accounts/me/sandboxes` and `POST /accounts/me/workspaces`.
+The CLI compiles these into a manifest, resolves references, and syncs them. You can also create records via the raw account API — see the [API Reference](/api-reference) for `POST /v1/sandboxes` and `POST /v1/workspaces`.
 
 ## Tool surface
 

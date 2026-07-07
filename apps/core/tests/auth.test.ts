@@ -5,10 +5,10 @@
 
 import { createHash } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import type { AgentRecord } from "../functions/_shared/storage/agents.ts";
-import { hashAccountSecret, type AccountRecord } from "../functions/_shared/storage/accounts.ts";
-import { resetStorageForTests, setStorageForTests, type StorageProvider } from "../functions/_shared/storage/index.ts";
-import { extractBearerToken, resolveBearerAuth } from "../functions/_shared/auth.ts";
+import type { AgentRecord } from "../src/shared/storage/agents.ts";
+import { hashAccountSecret, type AccountRecord } from "../src/shared/storage/accounts.ts";
+import { resetStorageForTests, setStorageForTests, type StorageProvider } from "../src/shared/storage/index.ts";
+import { extractBearerToken, resolveBearerAuth } from "../src/shared/auth.ts";
 
 const ACCOUNT: AccountRecord = {
   accountId: "acct_1",

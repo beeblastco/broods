@@ -24,7 +24,7 @@ import type { Id } from "@broods/convex/_generated/dataModel";
 import { useMutation } from "convex/react";
 import { useState } from "react";
 
-type AgentProvider = "openai" | "google" | "bedrock" | "anthropic" | "minimax" | "gateway";
+type AgentProvider = "openai" | "google" | "bedrock" | "anthropic" | "minimax" | "gateway" | "custom";
 
 const providerOptions: Array<{ value: AgentProvider; label: string; modelPlaceholder: string }> = [
     { value: "openai", label: "OpenAI", modelPlaceholder: "gpt-4.1-mini" },
@@ -33,6 +33,7 @@ const providerOptions: Array<{ value: AgentProvider; label: string; modelPlaceho
     { value: "anthropic", label: "Anthropic", modelPlaceholder: "claude-sonnet-4-5-20250929" },
     { value: "minimax", label: "MiniMax", modelPlaceholder: "MiniMax-M2.7" },
     { value: "gateway", label: "Gateway", modelPlaceholder: "openai/gpt-4.1-mini" },
+    { value: "custom", label: "Custom OpenAI-compatible", modelPlaceholder: "gpt-oss-120b" },
 ];
 
 export function CreateAgentConfigDialog({
@@ -53,6 +54,7 @@ export function CreateAgentConfigDialog({
     const [name, setName] = useState("");
     const [provider, setProvider] = useState<AgentProvider>("openai");
     const [modelId, setModelId] = useState("");
+    const [customBaseUrl, setCustomBaseUrl] = useState("");
     const [description, setDescription] = useState("");
     const [systemPrompt, setSystemPrompt] = useState("");
     const [isCreating, setIsCreating] = useState(false);
@@ -61,6 +63,7 @@ export function CreateAgentConfigDialog({
         setName("");
         setProvider("openai");
         setModelId("");
+        setCustomBaseUrl("");
         setDescription("");
         setSystemPrompt("");
         setIsCreating(false);
@@ -82,6 +85,7 @@ export function CreateAgentConfigDialog({
                 name: name.trim(),
                 provider: provider,
                 modelId: modelId.trim(),
+                customBaseUrl: provider === "custom" ? customBaseUrl.trim() : undefined,
                 description: description.trim() || undefined,
                 systemPrompt: systemPrompt.trim() || undefined,
                 position: initialCanvasPosition ?? undefined,
@@ -151,6 +155,17 @@ export function CreateAgentConfigDialog({
                                 placeholder={providerOptions.find((option) => option.value === provider)?.modelPlaceholder ?? "gpt-4.1-mini"}
                             />
                         </div>
+                        {provider === "custom" && (
+                            <div className="grid gap-2">
+                                <Label htmlFor="agent-base-url">Base URL</Label>
+                                <Input
+                                    id="agent-base-url"
+                                    value={customBaseUrl}
+                                    onChange={(event) => setCustomBaseUrl(event.target.value)}
+                                    placeholder="https://api.example.com/v1"
+                                />
+                            </div>
+                        )}
                         <p className="text-xs text-muted-foreground">
                             Agents are private by default. Enable public access later in the Details tab when you are ready to deploy.
                         </p>
@@ -183,7 +198,7 @@ export function CreateAgentConfigDialog({
                         </Button>
                         <Button
                             type="submit"
-                            disabled={!name.trim() || !modelId.trim() || !environmentId || isCreating}
+                            disabled={!name.trim() || !modelId.trim() || !environmentId || (provider === "custom" && !customBaseUrl.trim()) || isCreating}
                         >
                             {isCreating ? "Creating..." : "Create"}
                         </Button>

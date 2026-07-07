@@ -62,7 +62,7 @@ jobs:
       - name: Run unit tests
         run: bun run test
 
-      - name: Build Lambda binaries
+      - name: Build core server binary
         run: bun run build
 
   deploy:
@@ -109,8 +109,6 @@ jobs:
       ACCOUNT_BEDROCK_SECRET_ACCESS_KEY: ${{ secrets.ACCOUNT_BEDROCK_SECRET_ACCESS_KEY }}
       ACCOUNT_BEDROCK_SESSION_TOKEN: ${{ secrets.ACCOUNT_BEDROCK_SESSION_TOKEN }}
       ACCOUNT_GATEWAY_API_KEY: ${{ secrets.ACCOUNT_GATEWAY_API_KEY }}
-      ENABLE_DIRECT_API: ${{ vars.ENABLE_DIRECT_API || 'false' }}
-      ENABLE_WEBSOCKET: ${{ vars.ENABLE_WEBSOCKET || 'false' }}
       # Create the image-based sandbox Lambdas only after the arm64 image is in a target's
       # regional ECR repo. When a target's flag is true but the image is missing, this
       # workflow bootstraps the region by running one repo-only SST deploy, mirroring the
@@ -123,18 +121,6 @@ jobs:
       SANDBOX_IMAGE_READY_PRODUCTION_EU_WEST_1: ${{ vars.SANDBOX_IMAGE_READY_PRODUCTION_EU_WEST_1 || vars.SANDBOX_IMAGE_READY_PRODUCTION || 'false' }}
       SANDBOX_IMAGE_READY_PRODUCTION_AP_SOUTHEAST_1: ${{ vars.SANDBOX_IMAGE_READY_PRODUCTION_AP_SOUTHEAST_1 || vars.SANDBOX_IMAGE_READY_PRODUCTION || 'false' }}
       SANDBOX_IMAGE_SOURCE_REGION: ${{ vars.SANDBOX_IMAGE_SOURCE_REGION || 'eu-west-1' }}
-      NATS_URL: ${{ secrets.NATS_URL }}
-      NATS_TOKEN: ${{ secrets.NATS_TOKEN }}
-      # Durable Lambda logs/traces. The endpoint is non-secret; the Basic auth
-      # header must remain an environment/repository secret.
-      OTEL_EXPORTER_OTLP_ENDPOINT: ${{ vars.OTEL_EXPORTER_OTLP_ENDPOINT || 'https://otel.beeblast.co' }}
-      OTEL_EXPORTER_OTLP_HEADERS: ${{ secrets.OTEL_EXPORTER_OTLP_HEADERS }}
-      DAYTONA_API_KEY: ${{ secrets.DAYTONA_API_KEY }}
-      DAYTONA_ORGANIZATION_ID: ${{ vars.DAYTONA_ORGANIZATION_ID }}
-      DAYTONA_API_URL: ${{ vars.DAYTONA_API_URL }}
-      DAYTONA_TARGET: ${{ vars.DAYTONA_TARGET }}
-      DAYTONA_S3_SNAPSHOT_NAME: ${{ vars.DAYTONA_S3_SNAPSHOT_NAME }}
-      DAYTONA_S3_SNAPSHOT_BASE_IMAGE: ${{ vars.DAYTONA_S3_SNAPSHOT_BASE_IMAGE }}
       # Convex storage provider. Resolved per environment (production on main,
       # development otherwise). A stage uses Convex when both are set, else DynamoDB.
       CONVEX_URL: ${{ secrets.CONVEX_URL }}
@@ -190,13 +176,8 @@ jobs:
             exit 1
           fi
 
-          if [[ "${ENABLE_WEBSOCKET:-false}" == "true" && -z "${NATS_URL:-}" ]]; then
-            echo "NATS_URL must be set when ENABLE_WEBSOCKET=true" >&2
-            exit 1
-          fi
-
-          if [[ -z "${OTEL_EXPORTER_OTLP_ENDPOINT:-}" || -z "${OTEL_EXPORTER_OTLP_HEADERS:-}" ]]; then
-            echo "OTEL_EXPORTER_OTLP_ENDPOINT and OTEL_EXPORTER_OTLP_HEADERS are required for durable observability" >&2
+          if [[ -z "${AWS_ACCOUNT_ID:-}" ]]; then
+            echo "Missing required repository variable: AWS_ACCOUNT_ID" >&2
             exit 1
           fi
 
@@ -222,9 +203,6 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile --ignore-scripts
 
-      - name: Build Lambda binaries
-        run: bun run build
-
       - name: Setup crane
         uses: imjasonh/setup-crane@v0.4
 
@@ -245,18 +223,10 @@ jobs:
         working-directory: apps/core
         env:
           # Plain env vars read directly by sst.config.ts (no SST secret store).
-          # The `|| secrets.SST_SECRET_*` fallback preserves the existing secret
-          # values so encrypted Convex data (account config / sandbox creds) stays
-          # decryptable whether or not the clean-named secrets have been created.
-          ADMIN_ACCOUNT_SECRET: ${{ secrets.ADMIN_ACCOUNT_SECRET || secrets.SST_SECRET_ADMINACCOUNTSECRET }}
-          ACCOUNT_CONFIG_ENCRYPTION_SECRET: ${{ secrets.ACCOUNT_CONFIG_ENCRYPTION_SECRET || secrets.SST_SECRET_ACCOUNTCONFIGENCRYPTIONSECRET }}
-          # Optional trusted server-side caller token; empty default keeps deploys working.
+          # Required by sst.config.ts for cron API destination auth.
           SERVICE_AUTH_SECRET: ${{ secrets.SERVICE_AUTH_SECRET }}
-          DAYTONA_API_KEY: ${{ secrets.DAYTONA_API_KEY }}
-          WORKDIR_URL: ${{ vars.WORKDIR_URL }}
-          WORKDIR_API_KEY: ${{ secrets.WORKDIR_API_KEY }}
-          OPA_BASE_URL: ${{ vars.OPA_BASE_URL }}
-          OPA_API_TOKEN: ${{ secrets.OPA_API_TOKEN }}
+          # Public gateway URL used by the cron API destination and runtime callbacks.
+          PUBLIC_BASE_URL: ${{ vars.PUBLIC_BASE_URL }}
         shell: bash
         run: |
           set -euo pipefail
@@ -327,8 +297,8 @@ jobs:
           }
 
           for name in \
-            ADMIN_ACCOUNT_SECRET \
-            ACCOUNT_CONFIG_ENCRYPTION_SECRET
+            SERVICE_AUTH_SECRET \
+            PUBLIC_BASE_URL
           do
             if [[ -z "${!name:-}" ]]; then
               echo "Missing required environment value: $name" >&2

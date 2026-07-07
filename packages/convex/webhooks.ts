@@ -12,10 +12,16 @@ import { mutation, query } from "./_generated/server";
 import type { MutationCtx } from "./_generated/server";
 import { authKit } from "./auth";
 import { ensureAgentsRowForConfig, pushEncryptedConfigToAgentRow } from "./model/agentSync";
+import {
+    accountIdForProject,
+    auditDetailsJson,
+    dashboardAuditActor,
+    insertConfigAuditEvent,
+    type ConfigAuditActor,
+} from "./model/auditEvents";
 import { isPlainObject } from "./model/objects";
 import { getOwnedEnvironment } from "./model/ownership/environment";
 import { getOwnedProject } from "./model/ownership/project";
-import { scheduleServiceLog } from "./observability";
 
 /** One outbound webhook configured on an agent (URL/secret usually resolve from env vars). */
 const webhookRow = v.object({
@@ -111,7 +117,7 @@ async function mutateAgentWebhooks(
     await pushEncryptedConfigToAgentRow(ctx, agentConfigId);
 }
 
-async function requireUser(ctx: MutationCtx): Promise<{ id: string }> {
+async function requireUser(ctx: MutationCtx): Promise<{ id: string; email?: string | null; name?: string | null }> {
     // Check authenticated user
     const user = await authKit.getAuthUser(ctx);
     if (!user) {
@@ -121,22 +127,32 @@ async function requireUser(ctx: MutationCtx): Promise<{ id: string }> {
     return user;
 }
 
-async function scheduleWebhookLog(
+async function recordWebhookAudit(
     ctx: MutationCtx,
+    actor: ConfigAuditActor,
     agentConfigId: Id<"agentConfigs">,
-    eventType: string,
-    message: string,
+    action: string,
+    summary: string,
     data?: Record<string, unknown>,
 ): Promise<void> {
     const config = await ctx.db.get(agentConfigId);
     if (!config) return;
-    await scheduleServiceLog(ctx, {
+    const accountId = await accountIdForProject(ctx, config.projectId);
+    if (!accountId) return;
+
+    await insertConfigAuditEvent(ctx.db, {
+        accountId: accountId,
         projectId: config.projectId,
         environmentId: config.environmentId,
-        eventType: eventType,
-        message: message,
-        agentId: config.agentId,
-        data: { agentConfigId: agentConfigId, ...data },
+        actor: actor,
+        action: action,
+        resource: {
+            kind: "webhook",
+            id: `${agentConfigId}:${typeof data?.index === "number" ? data.index : "new"}`,
+            name: config.name,
+        },
+        summary: summary,
+        detailsJson: auditDetailsJson({ agentConfigId: agentConfigId, agentId: config.agentId, ...data }),
     });
 }
 
@@ -164,7 +180,7 @@ export const addAgentWebhook = mutation({
                 events: events ?? [],
             },
         ]);
-        await scheduleWebhookLog(ctx, agentConfigId, "service.webhook.created", "Agent webhook created", {
+        await recordWebhookAudit(ctx, dashboardAuditActor(user), agentConfigId, "created", "Agent webhook created", {
             events: events ?? [],
             enabled: enabled !== false,
         });
@@ -189,7 +205,7 @@ export const setAgentWebhookEnabled = mutation({
         await mutateAgentWebhooks(ctx, user.id, agentConfigId, (webhooks) =>
             webhooks.map((webhook, i) => (i === index ? { ...webhook, enabled: enabled } : webhook)),
         );
-        await scheduleWebhookLog(ctx, agentConfigId, "service.webhook.updated", "Agent webhook updated", {
+        await recordWebhookAudit(ctx, dashboardAuditActor(user), agentConfigId, "updated", "Agent webhook updated", {
             index: index,
             enabled: enabled,
         });
@@ -213,7 +229,7 @@ export const removeAgentWebhook = mutation({
         await mutateAgentWebhooks(ctx, user.id, agentConfigId, (webhooks) =>
             webhooks.filter((_, i) => i !== index),
         );
-        await scheduleWebhookLog(ctx, agentConfigId, "service.webhook.deleted", "Agent webhook deleted", {
+        await recordWebhookAudit(ctx, dashboardAuditActor(user), agentConfigId, "deleted", "Agent webhook deleted", {
             index: index,
         });
 

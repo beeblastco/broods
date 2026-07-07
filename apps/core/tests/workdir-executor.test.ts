@@ -80,7 +80,7 @@ const deleteSandboxInstanceMock = mock(async () => {
   storedSandboxExternalId = null;
 });
 
-mock.module("../functions/harness-processing/sandbox/instance-store.ts", () => ({
+mock.module("../src/harness/sandbox/instance-store.ts", () => ({
   getSandboxExternalId: getSandboxExternalIdMock,
   claimSandboxInstance: claimSandboxInstanceMock,
   saveSandboxInstance: saveSandboxInstanceMock,
@@ -112,7 +112,7 @@ function createBody(): Record<string, unknown> {
 }
 
 async function newExecutor(config: Record<string, unknown>) {
-  const { WorkdirSandboxExecutor } = await import("../functions/harness-processing/sandbox/workdir-executor.ts");
+  const { WorkdirSandboxExecutor } = await import("../src/harness/sandbox/workdir-executor.ts");
   const options = config.options && typeof config.options === "object" && !Array.isArray(config.options)
     ? { ...(config.options as Record<string, unknown>) }
     : undefined;
@@ -149,17 +149,17 @@ afterEach(() => {
 describe("createSandboxExecutor (sandbox provider)", () => {
   it("creates the WorkdirSandboxExecutor for provider 'sandbox'", () => {
     process.env.WORKDIR_URL = BASE;
-    const { createSandboxExecutor } = require("../functions/harness-processing/sandbox/index.ts");
+    const { createSandboxExecutor } = require("../src/harness/sandbox/index.ts");
     expect(createSandboxExecutor({ provider: "sandbox" }).constructor.name).toBe("WorkdirSandboxExecutor");
   });
 
   it("throws when no workdir base URL is configured", () => {
-    const { createSandboxExecutor } = require("../functions/harness-processing/sandbox/index.ts");
+    const { createSandboxExecutor } = require("../src/harness/sandbox/index.ts");
     expect(() => createSandboxExecutor({ provider: "sandbox" })).toThrow(/WORKDIR_URL/);
   });
 
   it("requires a tenant API key when a tenant workdir URL is configured", async () => {
-    const { WorkdirSandboxExecutor } = await import("../functions/harness-processing/sandbox/workdir-executor.ts");
+    const { WorkdirSandboxExecutor } = await import("../src/harness/sandbox/workdir-executor.ts");
     expect(() => new WorkdirSandboxExecutor({
       provider: "sandbox",
       options: { workdirUrl: BASE },
@@ -167,7 +167,7 @@ describe("createSandboxExecutor (sandbox provider)", () => {
   });
 
   it("rejects unsafe tenant workdir URLs", async () => {
-    const { WorkdirSandboxExecutor } = await import("../functions/harness-processing/sandbox/workdir-executor.ts");
+    const { WorkdirSandboxExecutor } = await import("../src/harness/sandbox/workdir-executor.ts");
     expect(() => new WorkdirSandboxExecutor({
       provider: "sandbox",
       options: { workdirUrl: "http://127.0.0.1:7777", apiKey: "tenant-key" },

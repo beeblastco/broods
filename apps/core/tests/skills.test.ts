@@ -14,7 +14,7 @@ import {
   skillInstructionsFromMarkdown,
   validateSkillBundle,
   type SkillBundleFile,
-} from "../functions/_shared/skills.ts";
+} from "../src/shared/skills.ts";
 
 function bundleFile(path: string, content: string | Uint8Array): SkillBundleFile {
   return { path, bytes: typeof content === "string" ? new TextEncoder().encode(content) : content };

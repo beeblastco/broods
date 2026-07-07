@@ -39,7 +39,7 @@ type OutputFormatConfig = {
     description?: string;
 };
 
-export type AgentProvider = "openai" | "google" | "bedrock" | "anthropic" | "minimax" | "gateway";
+export type AgentProvider = "openai" | "google" | "bedrock" | "anthropic" | "minimax" | "gateway" | "custom";
 type RuntimeVariable = { key: string; value: string };
 
 const providerOptions: Array<{ value: AgentProvider; label: string }> = [
@@ -49,6 +49,7 @@ const providerOptions: Array<{ value: AgentProvider; label: string }> = [
     { value: "anthropic", label: "Anthropic" },
     { value: "minimax", label: "MiniMax" },
     { value: "gateway", label: "Gateway" },
+    { value: "custom", label: "Custom OpenAI-compatible" },
 ];
 
 const DEFAULT_OUTPUT_SCHEMA: Record<string, unknown> = {
@@ -96,7 +97,7 @@ export function DetailsTab({
     isSavingKey?: boolean;
     selectedProvider: AgentProvider;
     runtimeVariables: RuntimeVariable[];
-    onSaveModelSettings?: (next: { provider: AgentProvider; modelId: string }) => Promise<void>;
+    onSaveModelSettings?: (next: { provider: AgentProvider; modelId: string; customBaseUrl?: string }) => Promise<void>;
     onUpdateToolConfig?: (toolName: string, config: Record<string, unknown> | null) => Promise<void>;
     onUpdateChannelConfig?: (kind: string, config: Record<string, unknown> | null) => Promise<void>;
     onUpdateModelReasoning?: (next: { budgetTokens?: number; effort?: string }) => Promise<void>;
@@ -117,6 +118,7 @@ export function DetailsTab({
     const [outputSchemaError, setOutputSchemaError] = useState<string | null>(null);
     const [editProvider, setEditProvider] = useState<AgentProvider>(selectedProvider);
     const [editModelId, setEditModelId] = useState(agentConfig?.modelId ?? "");
+    const [editCustomBaseUrl, setEditCustomBaseUrl] = useState(readCustomBaseUrl(agentConfig));
     const schemaFileInputRef = useRef<HTMLInputElement | null>(null);
 
     // Built-in tool configs derived from agentConfig (reads extraConfig.tools, falls back to flat columns)
@@ -288,14 +290,22 @@ export function DetailsTab({
         setTimeout(() => setCopiedField(null), 2000);
     }
 
-    /** Auto-saves the provider/model pair; no-ops while the model id is empty. */
-    function saveModel(provider: AgentProvider, modelId: string) {
+    /** Auto-saves provider/model/base-URL settings; no-ops when required values are empty. */
+    function saveModel(provider: AgentProvider, modelId: string, customBaseUrl = editCustomBaseUrl) {
         const trimmed = modelId.trim();
         if (!trimmed) {
             return;
         }
+        const trimmedBaseUrl = customBaseUrl.trim();
+        if (provider === "custom" && !trimmedBaseUrl) {
+            return;
+        }
 
-        void onSaveModelSettings?.({ provider: provider, modelId: trimmed });
+        void onSaveModelSettings?.({
+            provider: provider,
+            modelId: trimmed,
+            ...(provider === "custom" ? { customBaseUrl: trimmedBaseUrl } : {}),
+        });
     }
 
     function updatePolicy(next: Record<string, unknown>) {
@@ -356,7 +366,7 @@ export function DetailsTab({
                             onValueChange={(value) => {
                                 const nextProvider = value as AgentProvider;
                                 setEditProvider(nextProvider);
-                                saveModel(nextProvider, editModelId);
+                                saveModel(nextProvider, editModelId, editCustomBaseUrl);
                             }}
                         >
                             <SelectTrigger className="h-8 w-full cursor-pointer text-xs">
@@ -380,6 +390,18 @@ export function DetailsTab({
                                 if (event.key === "Enter") saveModel(editProvider, editModelId);
                             }}
                         />
+                        {editProvider === "custom" && (
+                            <Input
+                                value={editCustomBaseUrl}
+                                onChange={(event) => setEditCustomBaseUrl(event.target.value)}
+                                className="h-8 text-xs"
+                                placeholder="https://api.example.com/v1"
+                                onBlur={() => saveModel(editProvider, editModelId, editCustomBaseUrl)}
+                                onKeyDown={(event) => {
+                                    if (event.key === "Enter") saveModel(editProvider, editModelId, editCustomBaseUrl);
+                                }}
+                            />
+                        )}
                         {openAiVariableRequired && (
                             <p className="text-xs text-destructive">
                                 Add <code>OPENAI_API_KEY</code> in the Variables tab before running the agent.
@@ -958,4 +980,13 @@ export function DetailsTab({
             )}
         </div>
     );
+}
+
+function readCustomBaseUrl(agentConfig: Doc<"agentConfigs"> | null | undefined): string {
+    const extraConfig = isPlainObject(agentConfig?.extraConfig) ? agentConfig.extraConfig : {};
+    const provider = isPlainObject(extraConfig.provider) ? extraConfig.provider : {};
+    const custom = isPlainObject(provider.custom) ? provider.custom : {};
+    const value = typeof custom.base_url === "string" ? custom.base_url : custom.baseURL;
+
+    return typeof value === "string" ? value : "";
 }

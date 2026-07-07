@@ -4,7 +4,7 @@
  */
 
 import { describe, expect, it } from "bun:test";
-import { createZaloChannel } from "../functions/_shared/zalo-channel.ts";
+import { createZaloChannel } from "../src/shared/zalo-channel.ts";
 
 describe("zalo channel adapter", () => {
   it("authenticates matching webhook secrets and rejects mismatches", () => {

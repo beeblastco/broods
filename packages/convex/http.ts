@@ -9,6 +9,7 @@ import { authKit } from "./auth";
 import { exchange as cliAuthExchange } from "./cliAuthHttp";
 import { handle as cliHttp } from "./cliHttp";
 import { handle as cliOnboardingHttp } from "./cliOnboardingHttp";
+import { handle as configHttp } from "./configHttp";
 
 const http = httpRouter();
 
@@ -40,45 +41,92 @@ registerRoutes(http, components.stripe, {
 });
 
 http.route({
-    pathPrefix: "/api/cli/projects/",
+    pathPrefix: "/v1/account/projects/",
     method: "POST",
     handler: cliHttp,
 });
 
 http.route({
-    path: "/api/cli/auth/exchange",
+    path: "/v1/account/auth/exchange",
     method: "POST",
     handler: cliAuthExchange,
 });
 
 http.route({
-    path: "/api/cli/onboarding",
+    path: "/v1/account/onboarding",
     method: "GET",
     handler: cliOnboardingHttp,
 });
 
 http.route({
-    path: "/api/cli/onboarding",
+    path: "/v1/account/onboarding",
     method: "POST",
     handler: cliOnboardingHttp,
 });
 
 http.route({
-    pathPrefix: "/api/cli/projects/",
+    pathPrefix: "/v1/account/projects/",
     method: "GET",
     handler: cliHttp,
 });
 
 http.route({
-    pathPrefix: "/api/cli/projects/",
+    pathPrefix: "/v1/account/projects/",
     method: "PUT",
     handler: cliHttp,
 });
 
 http.route({
-    pathPrefix: "/api/cli/projects/",
+    pathPrefix: "/v1/account/projects/",
     method: "DELETE",
     handler: cliHttp,
 });
+
+// Public config-plane surface (epic #85 phase 9): account metadata/rotation,
+// agents, skills, tools, workspace files, crons, workspaces, sandbox configs,
+// and policies, forwarded here by the gateway.
+http.route({ path: "/v1/account", method: "GET", handler: configHttp });
+http.route({ path: "/v1/account", method: "PATCH", handler: configHttp });
+http.route({ path: "/v1/account/rotate-secret", method: "POST", handler: configHttp });
+http.route({ path: "/accounts", method: "GET", handler: configHttp });
+http.route({ pathPrefix: "/accounts/", method: "GET", handler: configHttp });
+http.route({ pathPrefix: "/accounts/", method: "PATCH", handler: configHttp });
+http.route({ pathPrefix: "/accounts/", method: "POST", handler: configHttp });
+http.route({ path: "/v1/agents", method: "GET", handler: configHttp });
+http.route({ path: "/v1/agents", method: "POST", handler: configHttp });
+http.route({ pathPrefix: "/v1/agents/", method: "GET", handler: configHttp });
+http.route({ pathPrefix: "/v1/agents/", method: "PATCH", handler: configHttp });
+http.route({ pathPrefix: "/v1/agents/", method: "DELETE", handler: configHttp });
+http.route({ path: "/v1/skills", method: "GET", handler: configHttp });
+http.route({ path: "/v1/skills", method: "POST", handler: configHttp });
+http.route({ pathPrefix: "/v1/skills/", method: "GET", handler: configHttp });
+http.route({ pathPrefix: "/v1/skills/", method: "PUT", handler: configHttp });
+http.route({ pathPrefix: "/v1/skills/", method: "DELETE", handler: configHttp });
+http.route({ path: "/v1/tools", method: "GET", handler: configHttp });
+http.route({ path: "/v1/tools", method: "POST", handler: configHttp });
+http.route({ pathPrefix: "/v1/tools/", method: "GET", handler: configHttp });
+http.route({ pathPrefix: "/v1/tools/", method: "PATCH", handler: configHttp });
+http.route({ pathPrefix: "/v1/tools/", method: "DELETE", handler: configHttp });
+http.route({ path: "/v1/workspaces", method: "GET", handler: configHttp });
+http.route({ path: "/v1/workspaces", method: "POST", handler: configHttp });
+http.route({ pathPrefix: "/v1/workspaces/", method: "GET", handler: configHttp });
+http.route({ pathPrefix: "/v1/workspaces/", method: "POST", handler: configHttp });
+http.route({ pathPrefix: "/v1/workspaces/", method: "PATCH", handler: configHttp });
+http.route({ pathPrefix: "/v1/workspaces/", method: "DELETE", handler: configHttp });
+http.route({ path: "/v1/sandboxes", method: "GET", handler: configHttp });
+http.route({ path: "/v1/sandboxes", method: "POST", handler: configHttp });
+http.route({ pathPrefix: "/v1/sandboxes/", method: "GET", handler: configHttp });
+http.route({ pathPrefix: "/v1/sandboxes/", method: "PATCH", handler: configHttp });
+http.route({ pathPrefix: "/v1/sandboxes/", method: "DELETE", handler: configHttp });
+http.route({ path: "/v1/policies", method: "GET", handler: configHttp });
+http.route({ path: "/v1/policies", method: "POST", handler: configHttp });
+http.route({ pathPrefix: "/v1/policies/", method: "GET", handler: configHttp });
+http.route({ pathPrefix: "/v1/policies/", method: "PATCH", handler: configHttp });
+http.route({ pathPrefix: "/v1/policies/", method: "DELETE", handler: configHttp });
+http.route({ path: "/v1/crons", method: "GET", handler: configHttp });
+http.route({ path: "/v1/crons", method: "POST", handler: configHttp });
+http.route({ pathPrefix: "/v1/crons/", method: "GET", handler: configHttp });
+http.route({ pathPrefix: "/v1/crons/", method: "PATCH", handler: configHttp });
+http.route({ pathPrefix: "/v1/crons/", method: "DELETE", handler: configHttp });
 
 export default http;

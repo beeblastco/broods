@@ -134,14 +134,14 @@ terminated after the request**, the job keeps running — and it is snapshotted/
 the VM across suspend/resume (the boot id is unchanged, so a resumed job is still "running").
 See [Best Practice → Background jobs](best-practice.md#background-jobs--async_status).
 
-> Auto-delivery (the completion callback) needs egress to the harness Function URL — use
-> `network.mode: "allow-all"` or allow the Function URL. Without egress the job still runs and
+> Auto-delivery (the completion callback) needs egress to the gateway/core URL from `PUBLIC_BASE_URL` — use
+> `network.mode: "allow-all"` or allow that URL. Without egress the job still runs and
 > `async_status` polling still works; only the automatic push-back is skipped.
 
 ## Config
 
 ```jsonc
-// POST /accounts/me/sandboxes
+// POST /v1/sandboxes
 {
   "name": "default",
   "config": {

@@ -1,6 +1,7 @@
 /// <reference path="./.sst/platform/config.d.ts" />
 
-// SST infrastructure for the account-managed harness: one streaming runtime Lambda and one account-management Lambda.
+// SST provisions the AWS data plane, container runtime IAM user, and cron API destination.
+// The runtime itself is the Bun container deployed from the infra repo.
 // AWS account + project identity for resource names, IAM role ARNs, and tags.
 // No in-source defaults — provided via repo vars / local env (see .env.example).
 // CI injects them into the validate + deploy jobs; forks must set them to run
@@ -9,48 +10,25 @@ const AWS_ACCOUNT_ID = requiredEnv("AWS_ACCOUNT_ID");
 const PROJECT_NAME = requiredEnv("PROJECT_NAME");
 const PROJECT_OWNER_EMAIL = requiredEnv("PROJECT_OWNER_EMAIL");
 const AWS_PROFILE = process.env.CI ? undefined : (process.env.AWS_PROFILE ?? "default");
-const ENABLE_DIRECT_API = parseBooleanEnv("ENABLE_DIRECT_API", false);
-const ENABLE_WEBSOCKET = parseBooleanEnv("ENABLE_WEBSOCKET", false);
 // Whether to import (vs first-create) the region-scoped sandbox ECR repo. The 4 image-based
 // sandbox Lambdas this used to gate are gone — the "lambda" provider is now an AWS Lambda
 // MicroVM (MicrovmSandboxExecutor) whose image is built from an S3 zip, not pulled from ECR.
 // The ECR repo is retained transitionally (the lambda-sanbdox container image still publishes
 // there); its teardown belongs to the Phase 4 infra cleanup. See docs/workspace/sandbox/lambda.md.
 const SANDBOX_IMAGE_READY = parseBooleanEnv("SANDBOX_IMAGE_READY", false);
-const NATS_URL = process.env.NATS_URL?.trim();
-// Token-auth credential for the NATS server; omit for an unauthenticated server.
-const NATS_TOKEN = process.env.NATS_TOKEN?.trim();
-// OpenTelemetry OTLP push target for durable logs/traces (otel.beeblast.co,
-// http/protobuf). The endpoint is 401-gated, so OTEL_EXPORTER_OTLP_HEADERS
-// carries the `Authorization=Basic ...` credential. Both are injected via CI —
-// no inline default. When unset, otel.ts no-ops and only stdout/NATS emit.
-const OTEL_EXPORTER_OTLP_ENDPOINT = process.env.OTEL_EXPORTER_OTLP_ENDPOINT?.trim();
-const OTEL_EXPORTER_OTLP_HEADERS = process.env.OTEL_EXPORTER_OTLP_HEADERS?.trim();
 // Convex storage provider credentials. Always set for production; also set for
 // any other stage (e.g. dev) that opts into Convex storage. When present the
-// stage runs the Convex provider instead of DynamoDB (see `useConvexStorage`).
+// stage skips the per-account DynamoDB config tables (see `useConvexStorage`).
+// Runtime credentials live on the container (infra repo), not here.
 const CONVEX_URL = process.env.CONVEX_URL?.trim();
 const CONVEX_DEPLOY_KEY = process.env.CONVEX_DEPLOY_KEY?.trim();
-const DAYTONA_ORGANIZATION_ID = process.env.DAYTONA_ORGANIZATION_ID?.trim();
-const DAYTONA_API_URL = process.env.DAYTONA_API_URL?.trim();
-const DAYTONA_TARGET = process.env.DAYTONA_TARGET?.trim();
-// Secrets formerly held in the SST secret store are now plain environment
-// variables injected by CI from GitHub Actions secrets (see deploy.yaml). No
-// `sst.Secret` indirection. Required ones use `!` (CI validates they are set
-// before deploy); optional provider creds default to empty so stages that do
-// not use them still deploy.
-const ADMIN_ACCOUNT_SECRET = requiredEnv("ADMIN_ACCOUNT_SECRET");
-const ACCOUNT_CONFIG_ENCRYPTION_SECRET = requiredEnv("ACCOUNT_CONFIG_ENCRYPTION_SECRET");
-const SERVICE_AUTH_SECRET = process.env.SERVICE_AUTH_SECRET ?? "";
-const DAYTONA_API_KEY = process.env.DAYTONA_API_KEY ?? "";
-const WORKDIR_URL = process.env.WORKDIR_URL?.trim() ?? "";
-const WORKDIR_API_KEY = process.env.WORKDIR_API_KEY ?? "";
-const OPA_BASE_URL = process.env.OPA_BASE_URL?.trim();
-const OPA_API_TOKEN = process.env.OPA_API_TOKEN ?? "";
-
-if (ENABLE_WEBSOCKET && !NATS_URL) {
-  throw new Error("NATS_URL must be set when ENABLE_WEBSOCKET=true");
-}
+// Service token shared with the core container; the EventBridge cron connection
+// sends it as the Authorization bearer so core accepts the cron POSTs.
+const SERVICE_AUTH_SECRET = requiredEnv("SERVICE_AUTH_SECRET");
+// Public base URL of the gateway (e.g. https://gateway.broods.app). EventBridge
+// cron API destination POSTs to `${PUBLIC_BASE_URL}/v1/cron-runs`, and the
+// container reads the same value at runtime for callbacks/status URLs.
+const PUBLIC_BASE_URL = requiredEnv("PUBLIC_BASE_URL");
 
 function awsRegion(): string {
   const region = process.env.AWS_REGION ?? process.env.AWS_DEFAULT_REGION;
@@ -134,20 +112,8 @@ function ecrRepositoryExists(name: string, region: string): boolean {
   }
 }
 
-const LAMBDA_ASSUME_ROLE = JSON.stringify({
-  Version: "2012-10-17",
-  Statement: [
-    {
-      Effect: "Allow",
-      Principal: { Service: "lambda.amazonaws.com" },
-      Action: "sts:AssumeRole",
-    },
-  ],
-});
-
-// SST's `permissions` shorthand -> a raw IAM policy doc. Used by the sandbox
-// functions, which run from a pre-built ECR image and so can't use sst.aws.Function
-// (it has no `image` arg and always builds a zip). $jsonStringify resolves Outputs.
+// SST's `permissions` shorthand -> a raw IAM policy doc, for the container
+// runtime user and the Convex config-plane role. $jsonStringify resolves Outputs.
 function permissionsPolicy(perms: { actions: string[]; resources: $util.Input<string>[] }[]) {
   return $jsonStringify({
     Version: "2012-10-17",
@@ -169,8 +135,6 @@ function denyUnlessProjectPrincipal(stage: string, region: string) {
         test: "StringNotLikeIfExists",
         variable: "aws:PrincipalArn",
         values: [
-          `arn:aws:iam::${AWS_ACCOUNT_ID}:role/${PROJECT_NAME}-${stage}-AccountManageRole-*`,
-          `arn:aws:iam::${AWS_ACCOUNT_ID}:role/${PROJECT_NAME}-${stage}-HarnessProcessingRole-*`,
           // Scoped role assumed by the harness for provider-sandbox mount-s3 credentials.
           `arn:aws:iam::${AWS_ACCOUNT_ID}:role/${resourceName("sandbox-s3mount", stage, region)}`,
           `arn:aws:iam::${AWS_ACCOUNT_ID}:role/${resourceName("microvm-build", stage, region)}`,
@@ -178,6 +142,9 @@ function denyUnlessProjectPrincipal(stage: string, region: string) {
           // Self-hosted container runtime user (epic #85 phase 9a) — without
           // this entry every pod S3 call gets an explicit deny.
           `arn:aws:iam::${AWS_ACCOUNT_ID}:user/${resourceName("core-runtime", stage, region)}`,
+          // Convex config-plane role (epic #85 phase 9) — Convex node actions own
+          // the skills/tool-bundle/workspace S3 objects directly after assuming it.
+          `arn:aws:iam::${AWS_ACCOUNT_ID}:role/${resourceName("convex-aws", stage, region)}`,
           `arn:aws:iam::${AWS_ACCOUNT_ID}:role/github-actions-ecr-push`,
           `arn:aws:iam::${AWS_ACCOUNT_ID}:role/github-actions-aws-infra-deploy`,
           `arn:aws:iam::${AWS_ACCOUNT_ID}:role/github-actions-aws-sst-infra-deploy`,
@@ -233,13 +200,6 @@ export default $config({
     if (isProduction && !useConvexStorage) {
       throw new Error("Production stage requires CONVEX_URL and CONVEX_DEPLOY_KEY env vars");
     }
-    const storageEnv: Record<string, string> = useConvexStorage
-      ? {
-          STORAGE_PROVIDER: "convex",
-          CONVEX_URL: CONVEX_URL!,
-          CONVEX_DEPLOY_KEY: CONVEX_DEPLOY_KEY!,
-        }
-      : { STORAGE_PROVIDER: "dynamodb" };
     const names = {
       conversations: resourceName("conversations", stage, region),
       chatSdkState: resourceName("chat-sdk-state", stage, region),
@@ -254,11 +214,8 @@ export default $config({
       workspaceConfigs: resourceName("workspace-configs", stage, region),
       agentPolicies: resourceName("agent-policies", stage, region),
       accountTools: resourceName("account-tools", stage, region),
-      accountSignupRateLimits: resourceName("account-signup-rate-limits", stage, region),
       crons: resourceName("crons", stage, region),
       cronSchedules: resourceName("cron-schedules", stage, region),
-      harnessProcessing: resourceName("harness-processing", stage, region),
-      accountManage: resourceName("account-manage", stage, region),
       filesystem: accountRegionalBucketName("filesystem", stage, region),
       skills: accountRegionalBucketName("skills", stage, region),
       toolBundles: accountRegionalBucketName("tool-bundles", stage, region),
@@ -266,10 +223,6 @@ export default $config({
       microvmBuildRole: resourceName("microvm-build", stage, region),
       microvmExecutionRole: resourceName("microvm-execution", stage, region),
     };
-
-    // ADMIN_ACCOUNT_SECRET, ACCOUNT_CONFIG_ENCRYPTION_SECRET, SERVICE_AUTH_SECRET, and
-    // DAYTONA_API_KEY are read from the environment above (CI-injected) — no
-    // `sst.Secret` resources.
 
     // accounts / agents / crons DDB tables are skipped on production —
     // those domains live in Convex on SaaS. Tables stay for dev / community
@@ -292,20 +245,6 @@ export default $config({
             },
           },
         });
-
-    const accountSignupRateLimitTable = new sst.aws.Dynamo("AccountSignupRateLimit", {
-      fields: {
-        rateLimitKey: "string",
-      },
-      primaryIndex: { hashKey: "rateLimitKey" },
-      ttl: "expiresAt",
-      deletionProtection: isProduction,
-      transform: {
-        table: {
-          name: names.accountSignupRateLimits,
-        },
-      },
-    });
 
     const agentConfigsTable = useConvexStorage
       ? null
@@ -793,8 +732,8 @@ export default $config({
       }),
     });
 
-    // Also granted to the self-hosted container runtime user (CoreRuntimeUser
-    // below), so the pod tracks the Lambda role permissions automatically.
+    // Harness-side permissions for the container runtime user (CoreRuntimeUser
+    // below); the account-manage set follows further down.
     const harnessPermissions = [
       {
         actions: ["sts:AssumeRole"],
@@ -891,12 +830,6 @@ export default $config({
             },
           ]
         : []),
-      {
-        // Self-invoke (async worker) + read its own Function URL so background
-        // jobs know where to POST their completion callback.
-        actions: ["lambda:InvokeFunction", "lambda:GetFunctionUrlConfig"],
-        resources: [`arn:aws:lambda:${region}:${AWS_ACCOUNT_ID}:function:${names.harnessProcessing}`],
-      },
       ...(microvmBuildRole && microvmExecutionRole
         ? [
             {
@@ -974,77 +907,6 @@ export default $config({
         : []),
     ];
 
-    const harnessProcessing = new sst.aws.Function("HarnessProcessing", {
-      name: names.harnessProcessing,
-      runtime: "provided.al2023",
-      architecture: "arm64",
-      bundle: "dist/harness-processing",
-      handler: "bootstrap",
-      description: "Runs the streaming and async direct API agent loop with channel webhook support.",
-      timeout: "10 minutes",
-      memory: "256 MB",
-      streaming: true,
-      url: {
-        authorization: "none",
-      },
-      logging: { format: "json", retention: "1 month" },
-      environment: {
-        ...storageEnv,
-        CONVERSATIONS_TABLE_NAME: conversationsTable.name,
-        CHAT_SDK_STATE_TABLE_NAME: chatSdkStateTable.name,
-        PROCESSED_EVENTS_TABLE_NAME: processedEventsTable.name,
-        ASYNC_AGENT_RESULT_TABLE_NAME: asyncAgentResultTable.name,
-        ASYNC_TOOL_RESULT_TABLE_NAME: asyncToolResultTable.name,
-        PERSISTENT_SANDBOX_INSTANCE_TABLE_NAME: persistentSandboxInstanceTable.name,
-        ...(accountConfigsTable ? { ACCOUNT_CONFIGS_TABLE_NAME: accountConfigsTable.name } : {}),
-        ...(agentConfigsTable ? { AGENT_CONFIGS_TABLE_NAME: agentConfigsTable.name } : {}),
-        ...(sandboxConfigsTable ? { SANDBOX_CONFIGS_TABLE_NAME: sandboxConfigsTable.name } : {}),
-        ...(workspaceConfigsTable ? { WORKSPACE_CONFIGS_TABLE_NAME: workspaceConfigsTable.name } : {}),
-        ...(accountToolsTable ? { ACCOUNT_TOOLS_TABLE_NAME: accountToolsTable.name } : {}),
-        ...(agentPoliciesTable ? { AGENT_POLICIES_TABLE_NAME: agentPoliciesTable.name } : {}),
-        ACCOUNT_SECRET_INDEX_NAME: "SecretHashIndex",
-        ACCOUNT_CONFIG_ENCRYPTION_SECRET,
-        SERVICE_AUTH_SECRET,
-        FILESYSTEM_BUCKET_NAME: names.filesystem,
-        SKILLS_BUCKET_NAME: names.skills,
-        TOOL_BUNDLES_BUCKET_NAME: names.toolBundles,
-        ...(microvmBuildRole && microvmExecutionRole
-          ? {
-              MICROVM_ARTIFACTS_BUCKET_NAME: names.microvmArtifacts,
-              MICROVM_BUILD_ROLE_ARN: microvmBuildRole.arn,
-              MICROVM_EXECUTION_ROLE_ARN: microvmExecutionRole.arn,
-              MICROVM_LOG_GROUP_NAME: microvmLogGroupName,
-              // The "lambda" sandbox provider (MicrovmSandboxExecutor) runs MicroVMs from
-              // this image. The ARN is name-based and deterministic, so it is valid before
-              // the image exists; the lambda-sanbdox microvm-image CI publishes the image
-              // under this exact name (its MICROVM_IMAGE_NAME default). Omit
-              // MICROVM_IMAGE_VERSION so RunMicrovm resolves the ACTIVE version. Restricted/
-              // deny-all egress additionally needs a VPC egress connector ARN in
-              // MICROVM_EGRESS_NETWORK_CONNECTOR_ARN (provisioned later).
-              MICROVM_IMAGE_IDENTIFIER: `arn:aws:lambda:${region}:${AWS_ACCOUNT_ID}:microvm-image:lambda-microvm-agent-sandbox`,
-            }
-          : {}),
-        ENABLE_DIRECT_API: ENABLE_DIRECT_API ? "true" : "false",
-        ENABLE_WEBSOCKET: ENABLE_WEBSOCKET ? "true" : "false",
-        ...(cronsTable ? { CRONS_TABLE_NAME: cronsTable.name } : {}),
-        ...(NATS_URL ? { NATS_URL } : {}),
-        ...(NATS_TOKEN ? { NATS_TOKEN } : {}),
-        ...(OTEL_EXPORTER_OTLP_ENDPOINT ? { OTEL_EXPORTER_OTLP_ENDPOINT } : {}),
-        ...(OTEL_EXPORTER_OTLP_HEADERS ? { OTEL_EXPORTER_OTLP_HEADERS } : {}),
-        ...(usageTable ? { USAGE_TABLE_NAME: usageTable.name } : {}),
-        DAYTONA_API_KEY,
-        ...(WORKDIR_URL ? { WORKDIR_URL } : {}),
-        ...(WORKDIR_API_KEY ? { WORKDIR_API_KEY } : {}),
-        ...(OPA_BASE_URL ? { OPA_BASE_URL } : {}),
-        ...(OPA_API_TOKEN ? { OPA_API_TOKEN } : {}),
-        SANDBOX_MOUNT_ROLE_ARN: sandboxS3MountRole.arn,
-        ...(DAYTONA_ORGANIZATION_ID ? { DAYTONA_ORGANIZATION_ID } : {}),
-        ...(DAYTONA_API_URL ? { DAYTONA_API_URL } : {}),
-        ...(DAYTONA_TARGET ? { DAYTONA_TARGET } : {}),
-      },
-      permissions: harnessPermissions,
-    });
-
     const cronScheduleGroup = new aws.scheduler.ScheduleGroup("CronScheduleGroup", {
       name: names.cronSchedules,
     });
@@ -1063,15 +925,83 @@ export default $config({
       }),
     });
 
-    new aws.iam.RolePolicy("CronSchedulerRolePolicy", {
-      role: cronSchedulerRole.id,
-      policy: harnessProcessing.arn.apply((arn) =>
+    // Cron schedules invoke core over HTTPS. EventBridge Scheduler cannot
+    // target an API destination directly (CreateSchedule rejects the ARN), so
+    // schedules publish onto a dedicated bus (templated PutEvents target) and
+    // a rule forwards the event detail — the CronInvocation JSON — to the API
+    // destination, which POSTs it to the gateway /v1/cron-runs with the
+    // service token. Source/DetailType constants match awsCrons.ts.
+    const cronRunBus = new aws.cloudwatch.EventBus("CronRunBus", {
+      name: resourceName("cron-runs", stage, region),
+    });
+    const cronRunConnection = new aws.cloudwatch.EventConnection("CronRunConnection", {
+      name: resourceName("cron-run", stage, region),
+      authorizationType: "API_KEY",
+      authParameters: {
+        apiKey: {
+          key: "Authorization",
+          value: `Bearer ${SERVICE_AUTH_SECRET}`,
+        },
+      },
+    });
+    const cronRunApiDestination = new aws.cloudwatch.EventApiDestination("CronRunApiDestination", {
+      name: resourceName("cron-run", stage, region),
+      connectionArn: cronRunConnection.arn,
+      invocationEndpoint: `${PUBLIC_BASE_URL}/v1/cron-runs`,
+      httpMethod: "POST",
+    });
+    const cronRunInvokeRole = new aws.iam.Role("CronRunInvokeRole", {
+      name: resourceName("cron-run-invoke", stage, region),
+      assumeRolePolicy: JSON.stringify({
+        Version: "2012-10-17",
+        Statement: [
+          {
+            Effect: "Allow",
+            Principal: { Service: "events.amazonaws.com" },
+            Action: "sts:AssumeRole",
+          },
+        ],
+      }),
+    });
+    new aws.iam.RolePolicy("CronRunInvokeRolePolicy", {
+      role: cronRunInvokeRole.id,
+      policy: cronRunApiDestination.arn.apply((arn) =>
         JSON.stringify({
           Version: "2012-10-17",
           Statement: [
             {
               Effect: "Allow",
-              Action: ["lambda:InvokeFunction"],
+              Action: ["events:InvokeApiDestination"],
+              Resource: [arn],
+            },
+          ],
+        }),
+      ),
+    });
+    const cronRunRule = new aws.cloudwatch.EventRule("CronRunRule", {
+      name: resourceName("cron-run", stage, region),
+      eventBusName: cronRunBus.name,
+      eventPattern: JSON.stringify({ source: ["broods.crons"], "detail-type": ["cron-run"] }),
+    });
+    new aws.cloudwatch.EventTarget("CronRunRuleTarget", {
+      rule: cronRunRule.name,
+      eventBusName: cronRunBus.name,
+      arn: cronRunApiDestination.arn,
+      roleArn: cronRunInvokeRole.arn,
+      // Deliver only the event detail so the core leaf receives the exact
+      // {kind, accountId, cronId} payload.
+      inputPath: "$.detail",
+    });
+
+    new aws.iam.RolePolicy("CronSchedulerRolePolicy", {
+      role: cronSchedulerRole.id,
+      policy: cronRunBus.arn.apply((arn) =>
+        JSON.stringify({
+          Version: "2012-10-17",
+          Statement: [
+            {
+              Effect: "Allow",
+              Action: ["events:PutEvents"],
               Resource: [arn],
             },
           ],
@@ -1204,10 +1134,6 @@ export default $config({
         ],
       },
       {
-        actions: ["dynamodb:UpdateItem"],
-        resources: [accountSignupRateLimitTable.arn],
-      },
-      {
         actions: ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"],
         resources: [`${filesystemBucketArn}/*`],
       },
@@ -1245,62 +1171,9 @@ export default $config({
         : []),
     ];
 
-    const accountManage = new sst.aws.Function("AccountManage", {
-      name: names.accountManage,
-      runtime: "provided.al2023",
-      architecture: "arm64",
-      bundle: "dist/account-manage",
-      handler: "bootstrap",
-      description: "Manages accounts, account secrets, and account-level harness configuration.",
-      timeout: "10 seconds",
-      memory: "128 MB",
-      streaming: true,
-      // Can configure additional service for authentication, here we keep it simple
-      url: {
-        authorization: "none",
-      },
-      logging: { format: "json", retention: "1 month" },
-      environment: {
-        ...storageEnv,
-        ...(accountConfigsTable ? { ACCOUNT_CONFIGS_TABLE_NAME: accountConfigsTable.name } : {}),
-        ...(agentConfigsTable ? { AGENT_CONFIGS_TABLE_NAME: agentConfigsTable.name } : {}),
-        ...(sandboxConfigsTable ? { SANDBOX_CONFIGS_TABLE_NAME: sandboxConfigsTable.name } : {}),
-        ...(workspaceConfigsTable ? { WORKSPACE_CONFIGS_TABLE_NAME: workspaceConfigsTable.name } : {}),
-        ...(accountToolsTable ? { ACCOUNT_TOOLS_TABLE_NAME: accountToolsTable.name } : {}),
-        ...(agentPoliciesTable ? { AGENT_POLICIES_TABLE_NAME: agentPoliciesTable.name } : {}),
-        ACCOUNT_SECRET_INDEX_NAME: "SecretHashIndex",
-        CONVERSATIONS_TABLE_NAME: conversationsTable.name,
-        CHAT_SDK_STATE_TABLE_NAME: chatSdkStateTable.name,
-        PROCESSED_EVENTS_TABLE_NAME: processedEventsTable.name,
-        ASYNC_AGENT_RESULT_TABLE_NAME: asyncAgentResultTable.name,
-        ASYNC_TOOL_RESULT_TABLE_NAME: asyncToolResultTable.name,
-        PERSISTENT_SANDBOX_INSTANCE_TABLE_NAME: persistentSandboxInstanceTable.name,
-        FILESYSTEM_BUCKET_NAME: names.filesystem,
-        SKILLS_BUCKET_NAME: names.skills,
-        TOOL_BUNDLES_BUCKET_NAME: names.toolBundles,
-        ...(microvmArtifactsBucket ? { MICROVM_ARTIFACTS_BUCKET_NAME: names.microvmArtifacts } : {}),
-        ACCOUNT_SIGNUP_RATE_LIMIT_TABLE_NAME: accountSignupRateLimitTable.name,
-        ACCOUNT_SIGNUP_RATE_LIMIT_PER_HOUR: "5",
-        ADMIN_ACCOUNT_SECRET,
-        ACCOUNT_CONFIG_ENCRYPTION_SECRET,
-        SERVICE_AUTH_SECRET,
-        ...(NATS_URL ? { NATS_URL } : {}),
-        ...(NATS_TOKEN ? { NATS_TOKEN } : {}),
-        ...(OTEL_EXPORTER_OTLP_ENDPOINT ? { OTEL_EXPORTER_OTLP_ENDPOINT } : {}),
-        ...(OTEL_EXPORTER_OTLP_HEADERS ? { OTEL_EXPORTER_OTLP_HEADERS } : {}),
-        ...(cronsTable ? { CRONS_TABLE_NAME: cronsTable.name } : {}),
-        ...(WORKDIR_URL ? { WORKDIR_URL } : {}),
-        ...(WORKDIR_API_KEY ? { WORKDIR_API_KEY } : {}),
-        CRON_SCHEDULER_TARGET_FUNCTION_ARN: harnessProcessing.arn,
-        CRON_SCHEDULER_ROLE_ARN: cronSchedulerRole.arn,
-        CRON_SCHEDULER_GROUP_NAME: cronScheduleGroup.name,
-      },
-      permissions: accountManagePermissions,
-    });
-
     // IAM principal for the self-hosted container runtime (epic #85 phase 9a):
-    // one pod runs both handlers, so the user gets the union of the two Lambda
-    // roles' permissions, generated from the same arrays so it cannot drift.
+    // one pod runs both handlers, so the user gets the union of the harness and
+    // account permission sets, generated from the same arrays so it cannot drift.
     // The access key is minted out of band (`aws iam create-access-key`) and
     // delivered to the cluster as a k8s Secret — never in Pulumi state or git.
     // Two managed policies instead of one inline: IAM caps inline user policies
@@ -1325,9 +1198,77 @@ export default $config({
       policyArn: coreRuntimeAccountPolicy.arn,
     });
 
+    // AWS access for the Convex config plane (epic #85 phase 9 — state plane owns
+    // AWS directly, no core proxy). Convex node actions assume ConvexAwsRole with a
+    // minimal bootstrap user's static key (minted out of band, stored in the Convex
+    // deployment env as AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY + CONVEX_AWS_ROLE_ARN)
+    // and get short-lived credentials scoped to: the skills/tool-bundle/workspace S3
+    // buckets, and EventBridge Scheduler for account cron jobs (targeting core's
+    // cron-run endpoint). The role ARN is also allow-listed in
+    // denyUnlessProjectPrincipal so its S3 calls are not denied.
+    const convexAwsPermissions = [
+      {
+        actions: ["s3:GetObject", "s3:PutObject", "s3:DeleteObject", "s3:HeadObject"],
+        resources: [`${skillsBucketArn}/*`, `${toolBundlesBucketArn}/*`, `${filesystemBucketArn}/*`],
+      },
+      {
+        actions: ["s3:ListBucket"],
+        resources: [skillsBucketArn, toolBundlesBucketArn, filesystemBucketArn],
+      },
+      {
+        actions: [
+          "scheduler:CreateSchedule",
+          "scheduler:UpdateSchedule",
+          "scheduler:DeleteSchedule",
+          "scheduler:GetSchedule",
+        ],
+        resources: [$interpolate`arn:aws:scheduler:${region}:${AWS_ACCOUNT_ID}:schedule/${cronScheduleGroup.name}/*`],
+      },
+      {
+        // Convex creates schedules that run as the cron scheduler role.
+        actions: ["iam:PassRole"],
+        resources: [cronSchedulerRole.arn],
+      },
+    ];
+    const convexAwsRole = new aws.iam.Role("ConvexAwsRole", {
+      name: resourceName("convex-aws", stage, region),
+      assumeRolePolicy: JSON.stringify({
+        Version: "2012-10-17",
+        Statement: [
+          {
+            Effect: "Allow",
+            Principal: { AWS: `arn:aws:iam::${AWS_ACCOUNT_ID}:user/${resourceName("convex-bootstrap", stage, region)}` },
+            Action: "sts:AssumeRole",
+            Condition: { StringEquals: { "sts:ExternalId": "broods-convex" } },
+          },
+        ],
+      }),
+    });
+    const convexAwsPolicy = new aws.iam.Policy("ConvexAwsPolicy", {
+      name: resourceName("convex-aws", stage, region),
+      policy: permissionsPolicy(convexAwsPermissions),
+    });
+    new aws.iam.RolePolicyAttachment("ConvexAwsPolicyAttachment", {
+      role: convexAwsRole.name,
+      policyArn: convexAwsPolicy.arn,
+    });
+    // Bootstrap identity Convex uses to assume the role above. It can do nothing
+    // except assume that role; the access key is created out of band and never
+    // stored in Pulumi state or git.
+    const convexBootstrapUser = new aws.iam.User("ConvexBootstrapUser", {
+      name: resourceName("convex-bootstrap", stage, region),
+    });
+    new aws.iam.UserPolicy("ConvexBootstrapAssumePolicy", {
+      user: convexBootstrapUser.name,
+      policy: convexAwsRole.arn.apply((arn) =>
+        JSON.stringify({
+          Version: "2012-10-17",
+          Statement: [{ Effect: "Allow", Action: "sts:AssumeRole", Resource: arn }],
+        }),
+      ),
+    });
+
     return {
-      agentServiceUrl: harnessProcessing.url,
-      accountServiceUrl: accountManage.url,
       accountConfigsTableName: accountConfigsTable?.name,
       agentConfigsTableName: agentConfigsTable?.name,
       sandboxConfigsTableName: sandboxConfigsTable?.name,
@@ -1335,12 +1276,15 @@ export default $config({
       accountToolsTableName: accountToolsTable?.name,
       agentPoliciesTableName: agentPoliciesTable?.name,
       cronsTableName: cronsTable?.name,
-      accountSignupRateLimitTableName: accountSignupRateLimitTable.name,
       conversationsTableName: conversationsTable.name,
       processedEventsTableName: processedEventsTable.name,
       asyncAgentResultTableName: asyncAgentResultTable.name,
       asyncToolResultTableName: asyncToolResultTable.name,
       cronScheduleGroupName: cronScheduleGroup.name,
+      // Convex awsCrons.ts uses this verbatim as the schedule Target Arn (the
+      // cron-runs event bus; the bus rule forwards to the API destination).
+      cronSchedulerTargetArn: cronRunBus.arn,
+      cronSchedulerRoleArn: cronSchedulerRole.arn,
       filesystemBucketName: filesystemBucket.name,
       skillsBucketName: skillsBucket.name,
       toolBundlesBucketName: toolBundlesBucket.name,
@@ -1348,6 +1292,8 @@ export default $config({
       microvmBuildRoleArn: microvmBuildRole?.arn,
       microvmExecutionRoleArn: microvmExecutionRole?.arn,
       coreRuntimeUserName: coreRuntimeUser.name,
+      convexAwsRoleArn: convexAwsRole.arn,
+      convexBootstrapUserName: convexBootstrapUser.name,
     };
   },
 });

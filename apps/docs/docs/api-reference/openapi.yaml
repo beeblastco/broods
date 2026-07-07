@@ -12,19 +12,14 @@ info:
     > - Advanced integrations that need direct account-management access
     > - Admin operations using `AdminAccountSecret`
 
-    Every `/accounts/me/...` sub-resource (agents, skills, crons, tools, sandboxes, workspaces, rotate-secret) is also reachable by admins as `/accounts/{accountId}/...` with the `AdminAccountSecret` bearer token; behavior and shapes are identical.
+    Account metadata and secret rotation are served by the config plane behind the same gateway host; account creation and delete stay in core for admin-controlled provisioning and runtime cleanup. Account creation, administration, and rotate-secret are reachable by admins with the `AdminAccountSecret` bearer token. Agent CRUD is account-authenticated under `/v1/agents*`. Agents, skills, tools, workspace files, crons, workspaces, sandboxes, and policies are served by the config plane and have no admin path variants.
   version: 0.1.0
 
 servers:
-  - url: https://{functionUrl}.lambda-url.{region}.on.aws
-    description: Deployed Function URL
-    variables:
-      functionUrl:
-        default: your-function-url
-        description: Your deployed Function URL ID
-      region:
-        default: eu-west-1
-        description: AWS deployment region
+  - url: https://gateway.broods.app
+    description: Managed gateway (default SDK host)
+  - url: http://localhost:3000
+    description: Locally-run core container (`cd apps/core && bun run serve`; agents/skills/tools/workspace-files/crons/workspaces/sandboxes/policies CRUD routes are served by the Convex config plane, not a local core)
 
 security:
   - BearerAuth: []
@@ -224,7 +219,7 @@ paths:
               examples:
                 accepted:
                   value:
-                    statusUrl: https://your-function-url.lambda-url.eu-west-1.on.aws/status/async-unique-id?agentId=agent_abc123
+                    statusUrl: https://gateway.broods.app/status/async-unique-id?agentId=agent_abc123
         '403':
           description: Agent has not opted into public access (secure by default)
           content:
@@ -476,8 +471,9 @@ paths:
       tags:
         - Accounts
       summary: Create account
-      description: Public endpoint to create a new account. IP-rate-limited. Store `secret` securely — it is not recoverable.
-      security: []
+      description: Admin-only endpoint to create a new account. Store `secret` securely — it is not recoverable.
+      security:
+        - AdminAuth: []
       requestBody:
         required: true
         content:
@@ -521,8 +517,10 @@ paths:
                       username: company-a
                       description: Company A account
                     secret: fp_acct_xyz789...
-        '429':
-          description: Rate limited
+        '401':
+          description: Missing or invalid bearer token
+        '403':
+          description: Bearer token is valid but is not the admin secret
 
     get:
       tags:
@@ -550,9 +548,15 @@ paths:
                       - accountId: acct_abc123
                         username: company-a
                         description: Company A account
+                        status: active
+                        createdAt: '2026-05-01T00:00:00.000Z'
+                        updatedAt: '2026-05-01T00:00:00.000Z'
                       - accountId: acct_def456
                         username: company-b
                         description: Company B account
+                        status: active
+                        createdAt: '2026-05-01T00:00:00.000Z'
+                        updatedAt: '2026-05-01T00:00:00.000Z'
 
   /accounts/{accountId}:
     get:
@@ -642,8 +646,11 @@ paths:
                       asyncAgentResultDeleted: 2
                       asyncToolResultDeleted: 3
                       filesystemObjectsDeleted: 8
+                      reservedSandboxesReleased: 0
                       agentsDeleted: 1
                       skillObjectsDeleted: 4
+                      cronsDeleted: 0
+                      accountToolsDeleted: 0
 
   /accounts/{accountId}/rotate-secret:
     post:
@@ -676,9 +683,12 @@ paths:
                     account:
                       accountId: acct_abc123
                       username: company-a
+                      status: active
+                      createdAt: '2026-05-01T00:00:00.000Z'
+                      updatedAt: '2026-05-01T00:00:00.000Z'
                     secret: fp_acct_new...
 
-  /accounts/me:
+  /v1/account:
     get:
       tags:
         - Accounts
@@ -731,9 +741,13 @@ paths:
               examples:
                 updated:
                   value:
-                    accountId: acct_abc123
-                    username: company-a
-                    description: Updated account purpose
+                    account:
+                      accountId: acct_abc123
+                      username: company-a
+                      description: Updated account purpose
+                      status: active
+                      createdAt: '2026-05-01T00:00:00.000Z'
+                      updatedAt: '2026-05-02T00:00:00.000Z'
 
     delete:
       tags:
@@ -750,7 +764,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/DeleteResponse'
 
-  /accounts/me/rotate-secret:
+  /v1/account/rotate-secret:
     post:
       tags:
         - Accounts
@@ -775,14 +789,17 @@ paths:
                     account:
                       accountId: acct_abc123
                       username: company-a
+                      status: active
+                      createdAt: '2026-05-01T00:00:00.000Z'
+                      updatedAt: '2026-05-01T00:00:00.000Z'
                     secret: fp_acct_new...
 
-  /accounts/me/agents:
+  /v1/agents:
     post:
       tags:
         - Agents
       summary: Create agent
-      description: Create a new agent under the authenticated account. The `agentId` in the response is required for all runtime requests.
+      description: Create a new agent under the authenticated account. Agent CRUD is served by the config plane and config is encrypted at rest. The `agentId` in the response is required for all runtime requests.
       security:
         - BearerAuth: []
       requestBody:
@@ -859,6 +876,7 @@ paths:
       tags:
         - Agents
       summary: List agents
+      description: List config-plane agents for the authenticated account. Returned configs are decrypted server-side and redacted before response.
       security:
         - BearerAuth: []
       responses:
@@ -874,11 +892,12 @@ paths:
                     items:
                       $ref: '#/components/schemas/Agent'
 
-  /accounts/me/agents/{agentId}:
+  /v1/agents/{agentId}:
     get:
       tags:
         - Agents
       summary: Get agent
+      description: Get one config-plane agent. Returned config is decrypted server-side and redacted before response.
       security:
         - BearerAuth: []
       parameters:
@@ -899,7 +918,7 @@ paths:
       tags:
         - Agents
       summary: Update agent
-      description: Config patch is a deep merge. Redacted secret placeholders (`********`) preserve existing secrets. Set a field to `null` to delete it.
+      description: Config patch is a deep merge against encrypted config-plane storage. Redacted secret placeholders (`********`) preserve existing secrets. Set a config field to `null` to delete it. Set `description` to `null` to clear it. `status` accepts `active` or `disabled` for compatibility; config-plane responses currently report existing agents as `active`.
       security:
         - BearerAuth: []
       parameters:
@@ -918,7 +937,14 @@ paths:
                 name:
                   type: string
                 description:
+                  type:
+                    - string
+                    - 'null'
+                status:
                   type: string
+                  enum:
+                    - active
+                    - disabled
                 config:
                   $ref: '#/components/schemas/AgentConfig'
       responses:
@@ -945,7 +971,7 @@ paths:
         '200':
           description: Agent deleted
 
-  /accounts/me/sandboxes:
+  /v1/sandboxes:
     post:
       tags:
         - Sandboxes
@@ -1042,7 +1068,7 @@ paths:
       responses:
         '200': { description: List of sandboxes }
 
-  /accounts/me/sandboxes/{sandboxId}:
+  /v1/sandboxes/{sandboxId}:
     get:
       tags: [Sandboxes]
       summary: Get sandbox
@@ -1081,7 +1107,7 @@ paths:
       responses:
         '200': { description: Deleted }
 
-  /accounts/me/sandboxes/{sandboxId}/suspend:
+  /v1/sandboxes/{sandboxId}/suspend:
     post:
       tags: [Sandboxes]
       summary: Suspend sandbox instance
@@ -1103,7 +1129,7 @@ paths:
         '403': { description: Reservation does not belong to this account or sandbox config }
         '409': { description: Provider does not support suspend }
 
-  /accounts/me/sandboxes/{sandboxId}/resume:
+  /v1/sandboxes/{sandboxId}/resume:
     post:
       tags: [Sandboxes]
       summary: Resume sandbox instance
@@ -1125,7 +1151,7 @@ paths:
         '403': { description: Reservation does not belong to this account or sandbox config }
         '409': { description: Provider does not support resume }
 
-  /accounts/me/sandboxes/{sandboxId}/terminate:
+  /v1/sandboxes/{sandboxId}/terminate:
     post:
       tags: [Sandboxes]
       summary: Terminate sandbox instance
@@ -1147,7 +1173,7 @@ paths:
         '403': { description: Reservation does not belong to this account or sandbox config }
         '409': { description: Provider does not support terminate }
 
-  /accounts/me/sandboxes/{sandboxId}/snapshot:
+  /v1/sandboxes/{sandboxId}/snapshot:
     post:
       tags: [Sandboxes]
       summary: Snapshot sandbox instance
@@ -1170,7 +1196,7 @@ paths:
         '403': { description: Reservation does not belong to this account or sandbox config }
         '409': { description: Provider does not support snapshot }
 
-  /accounts/me/sandboxes/{sandboxId}/terminal:
+  /v1/sandboxes/{sandboxId}/terminal:
     post:
       tags: [Sandboxes]
       summary: Mint a live terminal ticket
@@ -1209,7 +1235,7 @@ paths:
         '404': { description: No reserved instance for this reservation key }
         '409': { description: Provider does not support a live terminal, or the MicroVM was launched without shell ingress }
 
-  /accounts/me/workspaces:
+  /v1/workspaces:
     post:
       tags:
         - Workspaces
@@ -1256,7 +1282,7 @@ paths:
       responses:
         '200': { description: List of workspaces }
 
-  /accounts/me/workspaces/{workspaceId}:
+  /v1/workspaces/{workspaceId}:
     get:
       tags: [Workspaces]
       summary: Get workspace
@@ -1283,7 +1309,7 @@ paths:
       responses:
         '200': { description: Deleted }
 
-  /accounts/me/workspaces/{workspaceId}/files:
+  /v1/workspaces/{workspaceId}/files:
     get:
       tags: [Workspaces]
       summary: List workspace files or create a download URL
@@ -1351,7 +1377,7 @@ paths:
       responses:
         '200': { description: File or folder deleted }
 
-  /accounts/me/tools:
+  /v1/tools:
     post:
       tags: [Tools]
       summary: Create uploaded custom tool
@@ -1387,7 +1413,7 @@ paths:
                     items:
                       $ref: '#/components/schemas/AccountTool'
 
-  /accounts/me/tools/{toolId}:
+  /v1/tools/{toolId}:
     get:
       tags: [Tools]
       summary: Get uploaded custom tool
@@ -1429,7 +1455,7 @@ paths:
       responses:
         '200': { description: Deleted }
 
-  /accounts/me/policies:
+  /v1/policies:
     post:
       tags: [Policies]
       summary: Create agent policy
@@ -1465,7 +1491,7 @@ paths:
                     items:
                       $ref: '#/components/schemas/AgentPolicy'
 
-  /accounts/me/policies/{policyId}:
+  /v1/policies/{policyId}:
     get:
       tags: [Policies]
       summary: Get agent policy
@@ -1508,7 +1534,7 @@ paths:
         '200': { description: Deleted }
         '404': { description: Not found }
 
-  /accounts/me/skills:
+  /v1/skills:
     post:
       tags:
         - Skills
@@ -1595,7 +1621,7 @@ paths:
                     items:
                       $ref: '#/components/schemas/Skill'
 
-  /accounts/me/skills/{skillName}:
+  /v1/skills/{skillName}:
     get:
       tags:
         - Skills
@@ -1691,7 +1717,7 @@ paths:
         '200':
           description: Skill deleted
 
-  /accounts/me/crons:
+  /v1/crons:
     post:
       tags:
         - Cron Jobs
@@ -1743,7 +1769,7 @@ paths:
                     items:
                       $ref: '#/components/schemas/Cron'
 
-  /accounts/me/crons/{cronId}:
+  /v1/crons/{cronId}:
     get:
       tags:
         - Cron Jobs
@@ -2384,6 +2410,8 @@ components:
               type: integer
             filesystemObjectsDeleted:
               type: integer
+            reservedSandboxesReleased:
+              type: integer
             agentsDeleted:
               type: integer
             skillObjectsDeleted:
@@ -2416,7 +2444,7 @@ components:
           description: "Opt the agent into the public runtime endpoint (SSE/WebSocket via the environment runtime key). Off by default — secured. When false/unset, public-key requests for this agent are refused with HTTP 403 (code public_access_disabled); internal callers and channel webhooks are unaffected."
         sandbox:
           type: string
-          description: Id of the agent-level sandbox config (POST /accounts/me/sandboxes). Powers stateless bash and is the default sandbox for workspaces that don't set their own.
+          description: Id of the agent-level sandbox config (POST /v1/sandboxes). Powers stateless bash and is the default sandbox for workspaces that don't set their own.
         workspaces:
           type: array
           description: References to account-scoped workspace configs. Agents sharing a workspaceId share files.

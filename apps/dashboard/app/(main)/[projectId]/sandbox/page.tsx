@@ -5,7 +5,7 @@
  * live instances, their snapshots/images, and the read-only Security/Networking
  * policy posture. Instances are mirrored from broods's runtime into Convex;
  * suspend/resume/terminate/snapshot go through Convex actions that proxy to
- * broods's /accounts/me/sandboxes endpoints.
+ * broods's /v1/sandboxes endpoints.
  */
 
 import { useEnvironment } from "@/app/hooks/useEnvironment";

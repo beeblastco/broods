@@ -1,36 +1,16 @@
-"use node";
 /**
- * Public action wrappers for cron CRUD. These proxy to broods's
- * /accounts/me/crons HTTP endpoints so EventBridge Scheduler stays in
- * sync with Convex. Cherry-coke never touches AWS directly.
+ * Public action wrappers for cron CRUD used by the dashboard. These call the
+ * Convex-native cron plane (awsCrons) directly, so the crons table and
+ * EventBridge Scheduler stay in sync without proxying through core.
  */
 
 import { v } from "convex/values";
-import { api } from "./_generated/api";
+import { api, internal } from "./_generated/api";
 import { action } from "./_generated/server";
 
 const STATUS_VALIDATOR = v.union(v.literal("active"), v.literal("paused"));
 
-function getServiceEnv(): { url: string; secret: string } {
-    const url = process.env.BROODS_ACCOUNT_MANAGE_URL;
-    const secret = process.env.BROODS_SERVICE_AUTH_SECRET;
-    if (!url || !secret) {
-        throw new Error(
-            "BROODS_ACCOUNT_MANAGE_URL or BROODS_SERVICE_AUTH_SECRET missing",
-        );
-    }
-    return { url: url.replace(/\/+$/, ""), secret: secret };
-}
-
-function headers(accountId: string, secret: string): HeadersInit {
-    return {
-        Authorization: `Bearer ${secret}`,
-        "X-Account-Id": accountId,
-        "Content-Type": "application/json",
-    };
-}
-
-/** Creates a cron job via broods (HTTP -> EBS + Convex dual-write). */
+/** Creates a cron job (crons row + EventBridge schedule) for the active org. */
 export const create = action({
     args: {
         name: v.string(),
@@ -47,23 +27,16 @@ export const create = action({
         const account = await ctx.runQuery(api.org.getActiveAccount, {});
         if (!account) throw new Error("No active org / account not provisioned");
 
-        const { url, secret } = getServiceEnv();
-        const res = await fetch(`${url}/accounts/me/crons`, {
-            method: "POST",
-            headers: headers(account.accountId, secret),
-            body: JSON.stringify(args),
-        });
-        if (!res.ok) {
-            throw new Error(
-                `Broods create cron failed: ${res.status} ${await res.text()}`,
-            );
-        }
-        const { cron } = (await res.json()) as { cron: { cronId: string } };
+        const cron = await ctx.runAction(internal.awsCrons.create, {
+            accountId: account.accountId,
+            input: args,
+        }) as { cronId: string };
+
         return { cronId: cron.cronId };
     },
 });
 
-/** Updates a cron job via broods. */
+/** Updates a cron job and its EventBridge schedule for the active org. */
 export const update = action({
     args: {
         cronId: v.string(),
@@ -82,22 +55,18 @@ export const update = action({
         const account = await ctx.runQuery(api.org.getActiveAccount, {});
         if (!account) throw new Error("No active org / account not provisioned");
 
-        const { url, secret } = getServiceEnv();
-        const res = await fetch(`${url}/accounts/me/crons/${cronId}`, {
-            method: "PATCH",
-            headers: headers(account.accountId, secret),
-            body: JSON.stringify(patch),
+        const updated = await ctx.runAction(internal.awsCrons.update, {
+            accountId: account.accountId,
+            cronId: cronId,
+            patch: patch,
         });
-        if (!res.ok) {
-            throw new Error(
-                `Broods update cron failed: ${res.status} ${await res.text()}`,
-            );
-        }
+        if (!updated) throw new Error("Cron job not found");
+
         return null;
     },
 });
 
-/** Removes a cron job via broods. */
+/** Removes a cron job and its EventBridge schedule for the active org. */
 export const remove = action({
     args: { cronId: v.string() },
     returns: v.null(),
@@ -105,16 +74,12 @@ export const remove = action({
         const account = await ctx.runQuery(api.org.getActiveAccount, {});
         if (!account) throw new Error("No active org / account not provisioned");
 
-        const { url, secret } = getServiceEnv();
-        const res = await fetch(`${url}/accounts/me/crons/${args.cronId}`, {
-            method: "DELETE",
-            headers: headers(account.accountId, secret),
+        const removed = await ctx.runAction(internal.awsCrons.remove, {
+            accountId: account.accountId,
+            cronId: args.cronId,
         });
-        if (!res.ok) {
-            throw new Error(
-                `Broods delete cron failed: ${res.status} ${await res.text()}`,
-            );
-        }
+        if (!removed) throw new Error("Cron job not found");
+
         return null;
     },
 });

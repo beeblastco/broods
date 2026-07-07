@@ -4,14 +4,14 @@
  */
 
 import { afterEach, describe, expect, it } from "bun:test";
-import { normalizeFilesystemNamespace } from "../functions/_shared/runtime-keys.ts";
+import { normalizeFilesystemNamespace } from "../src/shared/runtime-keys.ts";
 import {
   isolatedWorkspaceNamespace,
   resolveAgentRuntime,
   workspaceNamespace,
   workspaceNamespaceOwnsReservationKey,
-} from "../functions/_shared/workspaces.ts";
-import { setStorageForTests } from "../functions/_shared/storage/index.ts";
+} from "../src/shared/workspaces.ts";
+import { setStorageForTests } from "../src/shared/storage/index.ts";
 
 afterEach(() => {
   setStorageForTests(null);

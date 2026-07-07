@@ -16,7 +16,7 @@ export const exchange = httpAction(async (ctx, req) => {
             return json({ error: "Request body must include code" }, 400);
         }
 
-        const result = await ctx.runMutation(internal.cliAuth.exchangeLoginCode, {
+        const result: Record<string, unknown> = await ctx.runMutation(internal.cliAuth.exchangeLoginCode, {
             code: body.code,
         });
 

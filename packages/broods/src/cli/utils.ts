@@ -11,6 +11,11 @@ import { loadBroodsRuntimeConfig } from "../runtime-config.ts";
 
 const LOGIN_TIMEOUT_MS = 3 * 60 * 1000;
 
+interface LoginCallback {
+  code: string;
+  baseUrl: string;
+}
+
 export function optionValue(args: string[], name: string): string | undefined {
   const index = args.indexOf(name);
   return index >= 0 ? args[index + 1] : undefined;
@@ -24,13 +29,17 @@ export function isPlainObject(value: unknown): value is Record<string, unknown> 
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-export async function requireAuth(dashboardUrl?: string): Promise<StoredAuthConfig> {
+export async function requireAuth(baseUrl?: string): Promise<StoredAuthConfig> {
   loadBroodsRuntimeConfig();
   const auth = await readStoredAuth();
   if (!auth) {
-    throw new Error("Run `broods login` first, or set BROODS_TOKEN and BROODS_DASHBOARD_URL.");
+    throw new Error("Run `broods login` first, or set BROODS_TOKEN and BROODS_BASE_URL.");
   }
-  return dashboardUrl ? { ...auth, dashboardUrl: dashboardUrl } : auth;
+
+  return {
+    ...auth,
+    ...(baseUrl ? { baseUrl: stripTrailingSlash(baseUrl) } : {}),
+  };
 }
 
 export async function promptSecret(label: string): Promise<string> {
@@ -115,11 +124,13 @@ export async function loginWithBrowser(dashboardUrl: string): Promise<StoredAuth
     await assertCliAuthRouteExists(startUrl);
     openBrowser(startUrl);
     console.log(`Opening ${startUrl}`);
-    const loginCode = await waitWithTimeout(code.promise, LOGIN_TIMEOUT_MS);
-    const response = await fetch(`${stripTrailingSlash(dashboardUrl)}/api/cli/auth/exchange`, {
+    const login = await waitWithTimeout(code.promise, LOGIN_TIMEOUT_MS);
+    // The dashboard advertises the API base URL in the callback; the
+    // exchange and all later sync/env calls go there directly.
+    const response = await fetch(`${login.baseUrl}/v1/account/auth/exchange`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ code: loginCode }),
+      body: JSON.stringify({ code: login.code }),
     });
     if (!response.ok) {
       throw new Error(`Login exchange failed: ${response.status} ${await response.text()}`);
@@ -131,6 +142,7 @@ export async function loginWithBrowser(dashboardUrl: string): Promise<StoredAuth
       account?: StoredAuthConfig["account"];
     };
     const auth = {
+      baseUrl: login.baseUrl,
       dashboardUrl: stripTrailingSlash(dashboardUrl),
       token: payload.token,
       createdAt: new Date().toISOString(),
@@ -163,7 +175,7 @@ async function assertCliAuthRouteExists(startUrl: string): Promise<void> {
 }
 
 function waitForCallback(expectedState: string): Promise<{
-  code: { callbackUrl: string; promise: Promise<string> };
+  code: { callbackUrl: string; promise: Promise<LoginCallback> };
   close: () => void;
 }> {
   return new Promise((resolve, reject) => {
@@ -172,20 +184,32 @@ function waitForCallback(expectedState: string): Promise<{
         const url = new URL(req.url ?? "/", "http://127.0.0.1");
         const state = url.searchParams.get("state");
         const code = url.searchParams.get("code");
+        const baseUrl = url.searchParams.get("base_url");
         if (state !== expectedState || !code) {
           res.writeHead(400).end("Invalid broods login callback.");
           return;
         }
+        if (!baseUrl) {
+          res.writeHead(400).end("Login callback omitted base_url; update the dashboard deployment.");
+          callbackReject(new Error(
+            "Login callback did not advertise the API base URL (base_url). " +
+            "Deploy a dashboard build that includes the Convex-direct CLI auth flow.",
+          ));
+          return;
+        }
         res.writeHead(200, { "Content-Type": "text/plain" }).end("broods CLI login complete. You can close this tab.");
-        callbackResolve(code);
+        callbackResolve({
+          code: code,
+          baseUrl: stripTrailingSlash(baseUrl),
+        });
       } catch (error) {
         callbackReject(error);
       }
     });
 
-    let callbackResolve!: (code: string) => void;
+    let callbackResolve!: (callback: LoginCallback) => void;
     let callbackReject!: (error: unknown) => void;
-    const promise = new Promise<string>((res, rej) => {
+    const promise = new Promise<LoginCallback>((res, rej) => {
       callbackResolve = res;
       callbackReject = rej;
     });

@@ -24,7 +24,7 @@ describe("handoffs tool", () => {
       }
       return jsonResponse({ ok: true, result: { message_id: `zalo-${fetchCalls.length}` } });
     }) as never;
-    const { default: handoffsTool } = await import("../functions/harness-processing/tools/handoffs.tool.ts");
+    const { default: handoffsTool } = await import("../src/harness/tools/handoffs.tool.ts");
 
     const tools = handoffsTool(createToolContext());
 
@@ -82,7 +82,7 @@ describe("handoffs tool", () => {
       }
       return jsonResponse({ ok: true, result: { message_id: "zalo-1" } });
     }) as never;
-    const { default: handoffsTool } = await import("../functions/harness-processing/tools/handoffs.tool.ts");
+    const { default: handoffsTool } = await import("../src/harness/tools/handoffs.tool.ts");
 
     const tools = handoffsTool(createToolContext({
       config: {
@@ -118,7 +118,7 @@ describe("handoffs tool", () => {
   it("requires phoneNumber for order handoffs before external calls", async () => {
     const fetchMock = mock(async () => jsonResponse({ success: true }));
     globalThis.fetch = fetchMock as never;
-    const { default: handoffsTool } = await import("../functions/harness-processing/tools/handoffs.tool.ts");
+    const { default: handoffsTool } = await import("../src/harness/tools/handoffs.tool.ts");
     const tools = handoffsTool(createToolContext());
 
     await expect(executeHandoffs(tools.handoffs, {
@@ -130,7 +130,7 @@ describe("handoffs tool", () => {
 
   it("fails clearly when required handoff config is missing", async () => {
     globalThis.fetch = mock(async () => jsonResponse({ success: true })) as never;
-    const { default: handoffsTool } = await import("../functions/harness-processing/tools/handoffs.tool.ts");
+    const { default: handoffsTool } = await import("../src/harness/tools/handoffs.tool.ts");
     const tools = handoffsTool(createToolContext({ config: {} }));
 
     await expect(executeHandoffs(tools.handoffs, {
@@ -151,7 +151,7 @@ describe("handoffs tool", () => {
       }
       return jsonResponse({ ok: false, description: "blocked" }, 400);
     }) as never;
-    const { default: handoffsTool } = await import("../functions/harness-processing/tools/handoffs.tool.ts");
+    const { default: handoffsTool } = await import("../src/harness/tools/handoffs.tool.ts");
     const tools = handoffsTool(createToolContext());
 
     await expect(executeHandoffs(tools.handoffs, {
@@ -161,7 +161,7 @@ describe("handoffs tool", () => {
   });
 
   it("rejects non-Pancake conversations", async () => {
-    const { default: handoffsTool } = await import("../functions/harness-processing/tools/handoffs.tool.ts");
+    const { default: handoffsTool } = await import("../src/harness/tools/handoffs.tool.ts");
     const tools = handoffsTool(createToolContext({
       conversationKey: "acct:acct_test:agent:agent_test:direct:conversation",
     }));

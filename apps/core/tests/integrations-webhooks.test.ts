@@ -1,14 +1,15 @@
 import { afterEach, describe, expect, it, mock } from "bun:test";
-import type { LambdaFunctionURLEvent } from "aws-lambda";
 import {
-  createIncomingEventRouter,
+  createIncomingEventRouter as createCoreIncomingEventRouter,
   type ChannelInboundEvent,
   type DirectInboundEvent,
-} from "../functions/harness-processing/integrations.ts";
+  type IntegrationRoutingOptions,
+} from "../src/harness/integrations.ts";
 import {
   getObservabilityContext,
   setObservabilityContext,
-} from "../functions/_shared/otel.ts";
+} from "../src/shared/otel.ts";
+import { coreRequest } from "./helpers/http.ts";
 
 const TEST_ACCOUNT = {
   accountId: "acct_test",
@@ -350,19 +351,46 @@ function createHandlers(overrides: Partial<{
   handleChannelRequest(event: ChannelInboundEvent): Promise<void>;
 }> = {}) {
   return {
-    handleDirectRequest: overrides.handleDirectRequest ?? (async () => ({
-      statusCode: 200,
-      headers: { "Content-Type": "text/plain; charset=utf-8" },
-      body: "ok",
-    })),
+    handleDirectRequest: async (event: DirectInboundEvent) =>
+      responseFromShape(await (overrides.handleDirectRequest ?? defaultDirectHandler)(event)),
     handleChannelRequest: overrides.handleChannelRequest ?? (async () => { }),
+  };
+}
+
+async function defaultDirectHandler(): Promise<ResponseShape> {
+  return {
+    statusCode: 200,
+    headers: { "Content-Type": "text/plain; charset=utf-8" },
+    body: "ok",
+  };
+}
+
+function createIncomingEventRouter(options: IntegrationRoutingOptions = {}) {
+  return async (
+    request: ReturnType<typeof coreRequest>,
+    handlers: ReturnType<typeof createHandlers>,
+  ): Promise<ResponseShape> => {
+    const waitUntilPromises: Promise<unknown>[] = [];
+    const router = createCoreIncomingEventRouter({
+      ...options,
+      waitUntil: (promise) => {
+        waitUntilPromises.push(Promise.resolve(promise));
+        options.waitUntil?.(promise);
+      },
+    });
+    const response = await router(request, handlers);
+    const shape = await responseToShape(response);
+    if (waitUntilPromises.length > 0) {
+      shape.afterResponse = Promise.all(waitUntilPromises).then(() => undefined);
+    }
+    return shape;
   };
 }
 
 function createPancakeEvent(overrides: {
   conversation?: Record<string, unknown>;
   message?: Record<string, unknown>;
-} = {}): LambdaFunctionURLEvent {
+} = {}): ReturnType<typeof coreRequest> {
   return createTelegramEvent({
     page_id: "page-1",
     event_type: "messaging",
@@ -394,7 +422,7 @@ function createZaloEvent(
   headers: Record<string, string> = {
     "x-bot-api-secret-token": "zalo-secret",
   },
-): LambdaFunctionURLEvent {
+): ReturnType<typeof coreRequest> {
   return createTelegramEvent(body, headers, "/webhooks/acct_test/agent_test/zalo");
 }
 
@@ -405,34 +433,13 @@ function createTelegramEvent(
   },
   rawPath = "/webhooks/acct_test/agent_test/telegram",
   rawQueryString = "",
-): LambdaFunctionURLEvent {
-  return {
-    version: "2.0",
-    routeKey: "$default",
-    rawPath,
-    rawQueryString,
+): ReturnType<typeof coreRequest> {
+  return coreRequest(
+    "POST",
+    rawQueryString ? `${rawPath}?${rawQueryString}` : rawPath,
     headers,
-    requestContext: {
-      accountId: "123456789012",
-      apiId: "api-id",
-      domainName: "example.lambda-url.aws",
-      domainPrefix: "example",
-      http: {
-        method: "POST",
-        path: rawPath,
-        protocol: "HTTP/1.1",
-        sourceIp: "127.0.0.1",
-        userAgent: "bun:test",
-      },
-      requestId: "request-id",
-      routeKey: "$default",
-      stage: "$default",
-      time: "24/Apr/2026:00:00:00 +0000",
-      timeEpoch: Date.now(),
-    },
-    body: JSON.stringify(body),
-    isBase64Encoded: false,
-  };
+    body,
+  );
 }
 
 function telegramUpdate() {
@@ -465,6 +472,7 @@ interface ResponseShape {
   statusCode?: number;
   headers?: Record<string, string>;
   body?: string;
+  afterResponse?: Promise<void>;
 }
 
 function responseJson(response: { body?: unknown }): Record<string, unknown> {
@@ -473,4 +481,23 @@ function responseJson(response: { body?: unknown }): Record<string, unknown> {
   }
 
   return JSON.parse(response.body) as Record<string, unknown>;
+}
+
+function responseFromShape(response: ResponseShape): Response {
+  return new Response(response.body, {
+    status: response.statusCode,
+    headers: response.headers,
+  });
+}
+
+async function responseToShape(response: Response): Promise<ResponseShape> {
+  const headers: Record<string, string> = {};
+  response.headers.forEach((value, key) => {
+    headers[key] = value;
+  });
+  return {
+    statusCode: response.status,
+    headers,
+    body: await response.text(),
+  };
 }

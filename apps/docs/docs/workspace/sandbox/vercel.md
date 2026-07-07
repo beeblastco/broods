@@ -87,8 +87,7 @@ unavailable.
 ## Background Jobs
 
 Persistent Vercel sandboxes support `bash` background jobs and `async_status` using the
-harness job-control scripts also used by Daytona and the `sandbox` provider. Auto-delivery still needs egress to the harness
-Function URL; with `deny-all` the job runs, but completion must be fetched by polling.
+harness job-control scripts also used by Daytona and the `sandbox` provider. Auto-delivery still needs egress to the gateway/core URL from `PUBLIC_BASE_URL`; with `deny-all` the job runs, but completion must be fetched by polling.
 
 ## Troubleshooting
 

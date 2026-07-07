@@ -51,6 +51,8 @@ export interface BroodsProjectConfig {
     [name: string]: string | undefined;
   };
   dashboardUrl?: string;
+  /** Convex control-plane base URL for sync/env calls; defaults to the URL discovered at login. */
+  baseUrl?: string;
 }
 
 export interface BroodsConfigDefinition {

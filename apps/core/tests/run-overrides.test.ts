@@ -4,8 +4,8 @@
  */
 
 import { describe, expect, it } from "bun:test";
-import { parseRunOverrides } from "../functions/harness-processing/integrations.ts";
-import { applyRunOverrides, type AgentConfig } from "../functions/_shared/storage/index.ts";
+import { parseRunOverrides } from "../src/harness/integrations.ts";
+import { applyRunOverrides, type AgentConfig } from "../src/shared/storage/index.ts";
 
 describe("parseRunOverrides", () => {
   it("returns undefined when overrides are absent", () => {

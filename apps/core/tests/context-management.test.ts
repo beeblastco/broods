@@ -37,7 +37,7 @@ mock.module("ai", () => ({
   generateText: generateTextMock,
 }));
 
-mock.module("../functions/_shared/s3.ts", () => ({
+mock.module("../src/shared/s3.ts", () => ({
   isMissingS3Error: (error: unknown) =>
     typeof error === "object" &&
     error !== null &&
@@ -71,7 +71,7 @@ const testStorage = () => ({
   },
 }) as never;
 
-const { setStorageForTests } = await import("../functions/_shared/storage/index.ts");
+const { setStorageForTests } = await import("../src/shared/storage/index.ts");
 setStorageForTests(testStorage());
 
 afterEach(() => {
@@ -100,7 +100,7 @@ describe("session system context", () => {
     process.env.CONVERSATIONS_TABLE_NAME = "conversations";
     process.env.PROCESSED_EVENTS_TABLE_NAME = "processed-events";
     process.env.FILESYSTEM_BUCKET_NAME = "filesystem";
-    const { Session } = await import("../functions/harness-processing/session.ts");
+    const { Session } = await import("../src/harness/session.ts");
     const session = new Session("event", "conversation", "acct", "agent", {
       agent: {
         system: "Agent-specific prompt.",
@@ -119,7 +119,7 @@ describe("session system context", () => {
     process.env.CONVERSATIONS_TABLE_NAME = "conversations";
     process.env.PROCESSED_EVENTS_TABLE_NAME = "processed-events";
     process.env.FILESYSTEM_BUCKET_NAME = "filesystem";
-    const { Session } = await import("../functions/harness-processing/session.ts");
+    const { Session } = await import("../src/harness/session.ts");
     const session = new Session("event", "conversation", "acct", "agent", {
       agent: {
         system: [{
@@ -143,7 +143,7 @@ describe("session system context", () => {
     process.env.CONVERSATIONS_TABLE_NAME = "conversations";
     process.env.PROCESSED_EVENTS_TABLE_NAME = "processed-events";
     process.env.FILESYSTEM_BUCKET_NAME = "filesystem";
-    const { Session } = await import("../functions/harness-processing/session.ts");
+    const { Session } = await import("../src/harness/session.ts");
     const session = new Session("event", "conversation", "acct", "agent", {
       subagent: {
         enabled: true,
@@ -164,7 +164,7 @@ describe("session system context", () => {
     process.env.PROCESSED_EVENTS_TABLE_NAME = "processed-events";
     process.env.FILESYSTEM_BUCKET_NAME = "filesystem";
     readS3TextMock.mockResolvedValue("Remember stable project facts.");
-    const { Session } = await import("../functions/harness-processing/session.ts");
+    const { Session } = await import("../src/harness/session.ts");
 
     const enabledSession = new Session("event", "conversation", "acct", "agent", {
       workspaces: [{ name: "default", workspaceId: "ws_a" }],
@@ -190,7 +190,7 @@ describe("session system context", () => {
     process.env.FILESYSTEM_BUCKET_NAME = "filesystem";
     readS3TextMock.mockResolvedValue("Keep this in context.");
     workspaceHarnessEnabled = false;
-    const { Session } = await import("../functions/harness-processing/session.ts");
+    const { Session } = await import("../src/harness/session.ts");
     const disabledSession = new Session("event", "conversation", "acct", "agent", {
       workspaces: [{ name: "default", workspaceId: "ws_a" }],
     });
@@ -203,7 +203,7 @@ describe("session system context", () => {
 
 describe("session pruning", () => {
   it("keeps non-reasoning messages unchanged when pruning is disabled", async () => {
-    const { pruneSessionMessages } = await import("../functions/harness-processing/pruning.ts");
+    const { pruneSessionMessages } = await import("../src/harness/pruning.ts");
     const messages = [
       { role: "user", content: "hello" },
       { role: "assistant", content: "hi" },
@@ -213,7 +213,7 @@ describe("session pruning", () => {
   });
 
   it("strips completed assistant reasoning even when pruning is disabled", async () => {
-    const { pruneSessionMessages } = await import("../functions/harness-processing/pruning.ts");
+    const { pruneSessionMessages } = await import("../src/harness/pruning.ts");
     const messages = [
       { role: "user", content: "hello" },
       {
@@ -235,7 +235,7 @@ describe("session pruning", () => {
   });
 
   it("keeps approval tool calls when the latest message is an approval response", async () => {
-    const { pruneSessionMessages } = await import("../functions/harness-processing/pruning.ts");
+    const { pruneSessionMessages } = await import("../src/harness/pruning.ts");
     const messages = [
       { role: "user", content: "delete a file" },
       {
@@ -292,7 +292,7 @@ describe("session compaction", () => {
   };
 
   it("does not compact when disabled", async () => {
-    const { compactSessionContext } = await import("../functions/harness-processing/compaction.ts");
+    const { compactSessionContext } = await import("../src/harness/compaction.ts");
 
     const result = await compactSessionContext({
       conversationKey: "conversation",
@@ -306,7 +306,7 @@ describe("session compaction", () => {
   });
 
   it("uses the configured model when enabled context exceeds the limit", async () => {
-    const { compactSessionContext, isCompactionSummaryMessage } = await import("../functions/harness-processing/compaction.ts");
+    const { compactSessionContext, isCompactionSummaryMessage } = await import("../src/harness/compaction.ts");
 
     const result = await compactSessionContext({
       conversationKey: "conversation",
@@ -327,7 +327,7 @@ describe("session compaction", () => {
   });
 
   it("includes previous compaction summaries when compacting again", async () => {
-    const { compactSessionContext } = await import("../functions/harness-processing/compaction.ts");
+    const { compactSessionContext } = await import("../src/harness/compaction.ts");
     const priorSummary = {
       role: "system",
       content: "<session-compaction-summary>\nEarlier summary.\n</session-compaction-summary>",
@@ -351,7 +351,7 @@ describe("session compaction", () => {
   });
 
   it("strips reasoning before building compaction prompts", async () => {
-    const { compactSessionContext } = await import("../functions/harness-processing/compaction.ts");
+    const { compactSessionContext } = await import("../src/harness/compaction.ts");
 
     await compactSessionContext({
       conversationKey: "conversation",
@@ -380,7 +380,7 @@ describe("session compaction", () => {
     process.env.CONVERSATIONS_TABLE_NAME = "conversations";
     process.env.PROCESSED_EVENTS_TABLE_NAME = "processed-events";
     process.env.FILESYSTEM_BUCKET_NAME = "filesystem";
-    const { selectPostCompactionPendingMessages } = await import("../functions/harness-processing/session.ts");
+    const { selectPostCompactionPendingMessages } = await import("../src/harness/session.ts");
     const approvalRequest = {
       role: "assistant",
       content: [
@@ -414,7 +414,7 @@ describe("session compaction", () => {
   });
 
   it("does not compact pending approval resumes", async () => {
-    const { compactSessionContext } = await import("../functions/harness-processing/compaction.ts");
+    const { compactSessionContext } = await import("../src/harness/compaction.ts");
 
     const result = await compactSessionContext({
       conversationKey: "conversation",

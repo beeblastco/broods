@@ -327,7 +327,7 @@ export async function backSyncCanvasFromAgentRow(
 
 /**
  * Reverse-update sync: when an `agents` row is updated via API (PATCH
- * /accounts/me/agents/<id>), decrypt the new blob and refresh the linked
+ * /v1/agents/<id>), decrypt the new blob and refresh the linked
  * `agentConfigs` flat fields + extraConfig so the canvas Details/Config tabs
  * reflect what the API caller just changed. No-op if no linked config or no
  * decryptable blob.

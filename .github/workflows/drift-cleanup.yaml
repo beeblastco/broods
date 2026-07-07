@@ -78,25 +78,13 @@ jobs:
       # Mirrors deploy.yaml env block for SST/Pulumi to compose the same
       # identity, runtime, and Convex credentials it sees on a normal deploy.
       CI: 'true'
-      ADMIN_ACCOUNT_SECRET: ${{ secrets.ADMIN_ACCOUNT_SECRET || secrets.SST_SECRET_ADMINACCOUNTSECRET }}
-      ACCOUNT_CONFIG_ENCRYPTION_SECRET: ${{ secrets.ACCOUNT_CONFIG_ENCRYPTION_SECRET || secrets.SST_SECRET_ACCOUNTCONFIGENCRYPTIONSECRET }}
       SERVICE_AUTH_SECRET: ${{ secrets.SERVICE_AUTH_SECRET }}
-      DAYTONA_API_KEY: ${{ secrets.DAYTONA_API_KEY }}
-      WORKDIR_URL: ${{ vars.WORKDIR_URL }}
-      WORKDIR_API_KEY: ${{ secrets.WORKDIR_API_KEY }}
-      OPA_BASE_URL: ${{ vars.OPA_BASE_URL }}
-      OPA_API_TOKEN: ${{ secrets.OPA_API_TOKEN }}
-      OTEL_EXPORTER_OTLP_ENDPOINT: ${{ vars.OTEL_EXPORTER_OTLP_ENDPOINT || 'https://otel.beeblast.co' }}
-      OTEL_EXPORTER_OTLP_HEADERS: ${{ secrets.OTEL_EXPORTER_OTLP_HEADERS }}
-      ENABLE_DIRECT_API: ${{ vars.ENABLE_DIRECT_API || 'false' }}
-      ENABLE_WEBSOCKET: ${{ vars.ENABLE_WEBSOCKET || 'false' }}
+      PUBLIC_BASE_URL: ${{ vars.PUBLIC_BASE_URL }}
+      CONVEX_URL: ${{ secrets.CONVEX_URL }}
+      CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
       # Do NOT pass SANDBOX_IMAGE_READY_* for drift cleanup — drift should
       # only reconcile state, not bootstrap sandbox images. The deploy
       # workflow owns that mirror step.
-      NATS_URL: ${{ secrets.NATS_URL }}
-      NATS_TOKEN: ${{ secrets.NATS_TOKEN }}
-      CONVEX_URL: ${{ secrets.CONVEX_URL }}
-      CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
 
     steps:
       - name: Checkout repository
@@ -119,16 +107,6 @@ jobs:
         # --ignore-scripts keeps `sst install` from running here; sst is
         # invoked via bunx below.
         run: bun install --frozen-lockfile --ignore-scripts
-
-      - name: Build Lambda binaries
-        # MUST run before refresh/diff. sst.config.ts points both Functions at
-        # the prebuilt `dist/<fn>` bundles, and `sst refresh`/`sst diff` write
-        # `dist/<fn>/resource.enc` (the linked-resource blob) into those dirs
-        # while evaluating the config. Without the `dist/<fn>` directories the
-        # evaluation fails on the very first refresh with
-        # "open dist/harness-processing/resource.enc: no such file or directory".
-        # Mirrors deploy.yaml's build step so the artefacts match a real deploy.
-        run: bun run build
 
       - name: Detect drift (refresh + diff)
         id: detect

@@ -17,9 +17,9 @@ COPY --from=deps /app/apps/core/node_modules ./apps/core/node_modules
 COPY --from=deps /app/apps/gateway/node_modules ./apps/gateway/node_modules
 COPY package.json bun.lock ./
 COPY packages/broods ./packages/broods
-COPY apps/core/functions/_shared/nats.ts ./apps/core/functions/_shared/nats.ts
-COPY apps/core/functions/_shared/object.ts ./apps/core/functions/_shared/object.ts
-COPY apps/core/functions/_shared/terminal-ticket.ts ./apps/core/functions/_shared/terminal-ticket.ts
+COPY apps/core/src/shared/nats.ts ./apps/core/src/shared/nats.ts
+COPY apps/core/src/shared/object.ts ./apps/core/src/shared/object.ts
+COPY apps/core/src/shared/terminal-ticket.ts ./apps/core/src/shared/terminal-ticket.ts
 COPY apps/gateway ./apps/gateway
 RUN bun build apps/gateway/src/index.ts --compile --minify --outfile /out/gateway
 

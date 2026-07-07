@@ -12,7 +12,8 @@ import {
   UpdateItemCommand,
   type AttributeValue,
 } from "@aws-sdk/client-dynamodb";
-import { dynamo } from "../functions/_shared/storage/dynamo/client.ts";
+import { dynamo } from "../src/shared/storage/dynamo/client.ts";
+import { coreRequest } from "./helpers/http.ts";
 
 const ORIGINAL_ENV = { ...process.env };
 const originalSend = dynamo.send;
@@ -28,7 +29,7 @@ describe("cron job persistence", () => {
   it("creates account-scoped cron job records", async () => {
     process.env.CRONS_TABLE_NAME = "crons";
     dynamo.send = sendMock as never;
-    const { getStorage, resetStorageForTests } = await import("../functions/_shared/storage/index.ts");
+    const { getStorage, resetStorageForTests } = await import("../src/shared/storage/index.ts");
     resetStorageForTests();
 
     const cron = await getStorage().crons.create("acct_test", {
@@ -60,7 +61,7 @@ describe("cron job persistence", () => {
   it("lists cron jobs by account", async () => {
     process.env.CRONS_TABLE_NAME = "crons";
     dynamo.send = sendMock as never;
-    const { getStorage, resetStorageForTests } = await import("../functions/_shared/storage/index.ts");
+    const { getStorage, resetStorageForTests } = await import("../src/shared/storage/index.ts");
     resetStorageForTests();
     sendMock.mockImplementation(async (command: unknown) => {
       if (command instanceof QueryCommand) {
@@ -82,7 +83,7 @@ describe("cron job persistence", () => {
   it("updates and deletes cron jobs", async () => {
     process.env.CRONS_TABLE_NAME = "crons";
     dynamo.send = sendMock as never;
-    const { getStorage, resetStorageForTests } = await import("../functions/_shared/storage/index.ts");
+    const { getStorage, resetStorageForTests } = await import("../src/shared/storage/index.ts");
     resetStorageForTests();
     sendMock.mockImplementation(async (command: unknown) => {
       if (command instanceof UpdateItemCommand) {
@@ -111,7 +112,7 @@ describe("cron job persistence", () => {
   it("loads one cron job by account and id", async () => {
     process.env.CRONS_TABLE_NAME = "crons";
     dynamo.send = sendMock as never;
-    const { getStorage, resetStorageForTests } = await import("../functions/_shared/storage/index.ts");
+    const { getStorage, resetStorageForTests } = await import("../src/shared/storage/index.ts");
     resetStorageForTests();
     sendMock.mockImplementation(async (command: unknown) => {
       if (command instanceof GetItemCommand) {
@@ -130,7 +131,7 @@ describe("cron job persistence", () => {
   it("records and lists cron job run history", async () => {
     process.env.CRONS_TABLE_NAME = "crons";
     dynamo.send = sendMock as never;
-    const { getStorage, resetStorageForTests } = await import("../functions/_shared/storage/index.ts");
+    const { getStorage, resetStorageForTests } = await import("../src/shared/storage/index.ts");
     resetStorageForTests();
     let runItem: Record<string, AttributeValue> | undefined;
     sendMock.mockImplementation(async (command: unknown) => {
@@ -160,6 +161,59 @@ describe("cron job persistence", () => {
     expect(queryCommand.input.ExpressionAttributeValues?.[":prefix"]).toEqual({ S: "run#cron_one#" });
   });
 });
+
+describe("cron run HTTP leaf", () => {
+  it("rejects non-POST cron run requests", async () => {
+    setHarnessHandlerEnv();
+    const { handler } = await import("../src/harness/handler.ts");
+
+    const response = await handler(coreRequest("GET", "/v1/cron-runs"));
+
+    expect(response.status).toBe(405);
+  });
+
+  it("rejects cron run requests with missing or wrong service bearer", async () => {
+    setHarnessHandlerEnv();
+    process.env.SERVICE_AUTH_SECRET = "service-secret";
+    const { handler } = await import("../src/harness/handler.ts");
+
+    const missingResponse = await handler(coreRequest("POST", "/v1/cron-runs", {}, {
+      kind: "cron",
+      accountId: "acct_test",
+      cronId: "cron_one",
+    }));
+    const wrongResponse = await handler(coreRequest("POST", "/v1/cron-runs", {
+      authorization: "Bearer wrong-secret",
+    }, {
+      kind: "cron",
+      accountId: "acct_test",
+      cronId: "cron_one",
+    }));
+
+    expect(missingResponse.status).toBe(401);
+    expect(wrongResponse.status).toBe(401);
+  });
+
+  it("rejects non-cron cron run payloads", async () => {
+    setHarnessHandlerEnv();
+    process.env.SERVICE_AUTH_SECRET = "service-secret";
+    const { handler } = await import("../src/harness/handler.ts");
+
+    const response = await handler(coreRequest("POST", "/v1/cron-runs", {
+      authorization: "Bearer service-secret",
+    }, { kind: "not-cron" }));
+
+    expect(response.status).toBe(400);
+  });
+});
+
+function setHarnessHandlerEnv(): void {
+  process.env.CONVERSATIONS_TABLE_NAME = "conversations";
+  process.env.CHAT_SDK_STATE_TABLE_NAME = "chat-sdk-state";
+  process.env.PROCESSED_EVENTS_TABLE_NAME = "processed-events";
+  process.env.ASYNC_AGENT_RESULT_TABLE_NAME = "async-agent-result";
+  process.env.ASYNC_TOOL_RESULT_TABLE_NAME = "async-tool-result";
+}
 
 function cronItem(accountId: string, cronId: string): Record<string, AttributeValue> {
   return {

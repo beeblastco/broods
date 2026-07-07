@@ -4,7 +4,7 @@
  */
 
 import { describe, expect, it } from "bun:test";
-import { assertPublicHttpsUrl } from "../functions/_shared/http.ts";
+import { assertPublicHttpsUrl } from "../src/shared/http.ts";
 
 describe("assertPublicHttpsUrl", () => {
   it("accepts public https URLs", () => {

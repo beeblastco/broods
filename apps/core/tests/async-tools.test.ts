@@ -6,7 +6,7 @@
 import { afterEach, describe, expect, it, mock } from "bun:test";
 import { PutItemCommand, UpdateItemCommand } from "@aws-sdk/client-dynamodb";
 import { jsonSchema, tool, type UserModelMessage } from "ai";
-import { dynamo } from "../functions/_shared/storage/dynamo/client.ts";
+import { dynamo } from "../src/shared/storage/dynamo/client.ts";
 
 process.env.ASYNC_TOOL_RESULT_TABLE_NAME = "async-tool-result";
 
@@ -24,7 +24,7 @@ afterEach(() => {
 describe("AsyncToolCoordinator", () => {
   it("returns a pending result immediately and injects the completed output later", async () => {
     dynamo.send = sendMock as never;
-    const { AsyncToolCoordinator } = await import("../functions/harness-processing/async-tools.ts");
+    const { AsyncToolCoordinator } = await import("../src/harness/async-tools.ts");
     const persistModelMessages = mock(async (_messages: UserModelMessage[]) => []);
     let finishTool!: (value: unknown) => void;
     const coordinator = new AsyncToolCoordinator({
@@ -81,7 +81,7 @@ describe("AsyncToolCoordinator", () => {
 
   it("keeps provider-defined tools without local execute unchanged", async () => {
     dynamo.send = sendMock as never;
-    const { AsyncToolCoordinator } = await import("../functions/harness-processing/async-tools.ts");
+    const { AsyncToolCoordinator } = await import("../src/harness/async-tools.ts");
     const coordinator = new AsyncToolCoordinator({
       conversationKey: "conversation-1",
       eventId: "event-1",
@@ -108,7 +108,7 @@ describe("AsyncToolCoordinator", () => {
 
   it("injects timeout failures for pending async tool calls", async () => {
     dynamo.send = sendMock as never;
-    const { AsyncToolCoordinator } = await import("../functions/harness-processing/async-tools.ts");
+    const { AsyncToolCoordinator } = await import("../src/harness/async-tools.ts");
     const persistModelMessages = mock(async (_messages: UserModelMessage[]) => []);
     const coordinator = new AsyncToolCoordinator({
       conversationKey: "conversation-1",
@@ -146,7 +146,7 @@ describe("AsyncToolCoordinator", () => {
 
   it("detaches uploaded async tools on delivered request paths", async () => {
     dynamo.send = sendMock as never;
-    const { AsyncToolCoordinator } = await import("../functions/harness-processing/async-tools.ts");
+    const { AsyncToolCoordinator } = await import("../src/harness/async-tools.ts");
     const persistModelMessages = mock(async (_messages: UserModelMessage[]) => []);
     let asyncToolMetadata: {
       resultId?: string;
@@ -225,7 +225,7 @@ describe("AsyncToolCoordinator", () => {
 
   it("waits for built-in tools but detaches uploaded tools in delivered request paths", async () => {
     dynamo.send = sendMock as never;
-    const { AsyncToolCoordinator } = await import("../functions/harness-processing/async-tools.ts");
+    const { AsyncToolCoordinator } = await import("../src/harness/async-tools.ts");
     const coordinator = new AsyncToolCoordinator({
       conversationKey: "conversation-1",
       eventId: "event-1",

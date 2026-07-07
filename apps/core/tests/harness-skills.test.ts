@@ -4,7 +4,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
-import type { S3ObjectInfo } from "../functions/_shared/s3.ts";
+import type { S3ObjectInfo } from "../src/shared/s3.ts";
 
 const ORIGINAL_ENV = { ...process.env };
 const s3Writes: Array<{ bucket: string; key: string; body: string | Uint8Array; options?: Record<string, unknown> }> = [];
@@ -47,7 +47,7 @@ const deleteS3ObjectMock = mock(async (bucket: string, key: string) => {
   s3Deletes.push({ bucket, key });
 });
 
-mock.module("../functions/_shared/s3.ts", () => ({
+mock.module("../src/shared/s3.ts", () => ({
   s3ObjectExists: s3ObjectExistsMock,
   isMissingS3Error: (error: unknown) =>
     error instanceof Error && error.message === "NoSuchKey",
@@ -86,7 +86,7 @@ function createSkillMarkdown(name: string, description: string, content = "# Ins
 
 describe("listConfiguredSkillMetadata", () => {
   it("returns empty array when skills are not enabled", async () => {
-    const { listConfiguredSkillMetadata } = await import("../functions/harness-processing/skills.ts");
+    const { listConfiguredSkillMetadata } = await import("../src/harness/skills.ts");
 
     const result = await listConfiguredSkillMetadata("acct_test", {
       skills: { enabled: false },
@@ -96,7 +96,7 @@ describe("listConfiguredSkillMetadata", () => {
   });
 
   it("returns empty array when skills config is undefined", async () => {
-    const { listConfiguredSkillMetadata } = await import("../functions/harness-processing/skills.ts");
+    const { listConfiguredSkillMetadata } = await import("../src/harness/skills.ts");
 
     const result = await listConfiguredSkillMetadata("acct_test", {});
 
@@ -104,7 +104,7 @@ describe("listConfiguredSkillMetadata", () => {
   });
 
   it("returns empty array when accountId is undefined", async () => {
-    const { listConfiguredSkillMetadata } = await import("../functions/harness-processing/skills.ts");
+    const { listConfiguredSkillMetadata } = await import("../src/harness/skills.ts");
 
     const result = await listConfiguredSkillMetadata(undefined, {
       skills: { enabled: true, allowed: ["acct_test/my-skill"] },
@@ -114,7 +114,7 @@ describe("listConfiguredSkillMetadata", () => {
   });
 
   it("returns empty array when allowed skills list is empty", async () => {
-    const { listConfiguredSkillMetadata } = await import("../functions/harness-processing/skills.ts");
+    const { listConfiguredSkillMetadata } = await import("../src/harness/skills.ts");
 
     const result = await listConfiguredSkillMetadata("acct_test", {
       skills: { enabled: true, allowed: [] },
@@ -129,7 +129,7 @@ describe("listConfiguredSkillMetadata", () => {
     s3ObjectExistsMock.mockResolvedValue(true);
     readS3TextMock.mockResolvedValue(skillContent);
 
-    const { listConfiguredSkillMetadata } = await import("../functions/harness-processing/skills.ts");
+    const { listConfiguredSkillMetadata } = await import("../src/harness/skills.ts");
 
     const result = await listConfiguredSkillMetadata("acct_test", {
       skills: { enabled: true, allowed: ["acct_test/my-skill"] },
@@ -149,7 +149,7 @@ describe("listConfiguredSkillMetadata", () => {
       throw new Error("NoSuchKey");
     });
 
-    const { listConfiguredSkillMetadata } = await import("../functions/harness-processing/skills.ts");
+    const { listConfiguredSkillMetadata } = await import("../src/harness/skills.ts");
 
     const result = await listConfiguredSkillMetadata("acct_test", {
       skills: { enabled: true, allowed: ["acct_test/missing-skill"] },
@@ -161,7 +161,7 @@ describe("listConfiguredSkillMetadata", () => {
   it("throws when skill path belongs to another account", async () => {
     s3ObjectExistsMock.mockResolvedValue(true);
 
-    const { listConfiguredSkillMetadata } = await import("../functions/harness-processing/skills.ts");
+    const { listConfiguredSkillMetadata } = await import("../src/harness/skills.ts");
 
     await expect(
       listConfiguredSkillMetadata("acct_test", {
@@ -171,7 +171,7 @@ describe("listConfiguredSkillMetadata", () => {
   });
 
   it("throws when skill path is invalid", async () => {
-    const { listConfiguredSkillMetadata } = await import("../functions/harness-processing/skills.ts");
+    const { listConfiguredSkillMetadata } = await import("../src/harness/skills.ts");
 
     await expect(
       listConfiguredSkillMetadata("acct_test", {
@@ -189,7 +189,7 @@ describe("listConfiguredSkillMetadata", () => {
       throw new Error("NoSuchKey");
     });
 
-    const { listConfiguredSkillMetadata } = await import("../functions/harness-processing/skills.ts");
+    const { listConfiguredSkillMetadata } = await import("../src/harness/skills.ts");
 
     const result = await listConfiguredSkillMetadata("acct_test", {
       skills: { enabled: true, allowed: ["acct_test/skill-one", "acct_test/missing-skill"] },
@@ -202,7 +202,7 @@ describe("listConfiguredSkillMetadata", () => {
 
 describe("loadConfiguredSkillPrompt", () => {
   it("throws when skill path is not in allowed list", async () => {
-    const { loadConfiguredSkillPrompt } = await import("../functions/harness-processing/skills.ts");
+    const { loadConfiguredSkillPrompt } = await import("../src/harness/skills.ts");
 
     await expect(
       loadConfiguredSkillPrompt(["acct_test/allowed-skill"], "acct_test/other-skill"),
@@ -217,7 +217,7 @@ describe("loadConfiguredSkillPrompt", () => {
       throw new Error("NoSuchKey");
     });
 
-    const { loadConfiguredSkillPrompt } = await import("../functions/harness-processing/skills.ts");
+    const { loadConfiguredSkillPrompt } = await import("../src/harness/skills.ts");
 
     const result = await loadConfiguredSkillPrompt(["acct_test/test-skill"], "acct_test/test-skill");
 
@@ -243,7 +243,7 @@ describe("loadConfiguredSkillPrompt", () => {
       throw new Error("NoSuchKey");
     });
 
-    const { loadConfiguredSkillPrompt } = await import("../functions/harness-processing/skills.ts");
+    const { loadConfiguredSkillPrompt } = await import("../src/harness/skills.ts");
 
     const result = await loadConfiguredSkillPrompt(
       ["acct_test/resource-skill"],
@@ -268,7 +268,7 @@ describe("loadConfiguredSkillPrompt", () => {
       throw new Error("NoSuchKey");
     });
 
-    const { loadConfiguredSkillPrompt } = await import("../functions/harness-processing/skills.ts");
+    const { loadConfiguredSkillPrompt } = await import("../src/harness/skills.ts");
 
     const result = await loadConfiguredSkillPrompt(
       ["acct_test/dedup-skill"],
@@ -285,7 +285,7 @@ describe("loadConfiguredSkillPrompt", () => {
 
     readS3TextMock.mockResolvedValue(skillContent);
 
-    const { loadConfiguredSkillPrompt } = await import("../functions/harness-processing/skills.ts");
+    const { loadConfiguredSkillPrompt } = await import("../src/harness/skills.ts");
 
     const result = await loadConfiguredSkillPrompt(["acct_test/byte-skill"], "acct_test/byte-skill");
 
@@ -325,7 +325,7 @@ describe("loadConfiguredSkillPrompt", () => {
       return new TextEncoder().encode(skillContent);
     });
 
-    const { loadConfiguredSkillPrompt } = await import("../functions/harness-processing/skills.ts");
+    const { loadConfiguredSkillPrompt } = await import("../src/harness/skills.ts");
 
     const result = await loadConfiguredSkillPrompt(
       ["acct_test/script-skill"],
@@ -378,7 +378,7 @@ describe("loadConfiguredSkillPrompt", () => {
       return [];
     });
 
-    const { loadConfiguredSkillPrompt } = await import("../functions/harness-processing/skills.ts");
+    const { loadConfiguredSkillPrompt } = await import("../src/harness/skills.ts");
 
     const result = await loadConfiguredSkillPrompt(
       ["acct_test/refresh-skill"],
@@ -402,7 +402,7 @@ describe("loadConfiguredSkillPrompt", () => {
   });
 
   it("throws when skill path is invalid", async () => {
-    const { loadConfiguredSkillPrompt } = await import("../functions/harness-processing/skills.ts");
+    const { loadConfiguredSkillPrompt } = await import("../src/harness/skills.ts");
 
     await expect(
       loadConfiguredSkillPrompt(["invalid"], "invalid"),
@@ -414,7 +414,7 @@ describe("loadConfiguredSkillPrompt", () => {
       throw new Error("NoSuchKey");
     });
 
-    const { loadConfiguredSkillPrompt } = await import("../functions/harness-processing/skills.ts");
+    const { loadConfiguredSkillPrompt } = await import("../src/harness/skills.ts");
 
     await expect(
       loadConfiguredSkillPrompt(["acct_test/missing-skill"], "acct_test/missing-skill"),
@@ -424,7 +424,7 @@ describe("loadConfiguredSkillPrompt", () => {
 
 describe("listSkillMetadataForConfig", () => {
   it("returns empty array when no skill paths provided", async () => {
-    const { listSkillMetadataForConfig } = await import("../functions/harness-processing/skills.ts");
+    const { listSkillMetadataForConfig } = await import("../src/harness/skills.ts");
 
     const result = await listSkillMetadataForConfig("acct_test", []);
 
@@ -437,7 +437,7 @@ describe("listSkillMetadataForConfig", () => {
     s3ObjectExistsMock.mockResolvedValue(true);
     readS3TextMock.mockResolvedValue(skillContent);
 
-    const { listSkillMetadataForConfig } = await import("../functions/harness-processing/skills.ts");
+    const { listSkillMetadataForConfig } = await import("../src/harness/skills.ts");
 
     const result = await listSkillMetadataForConfig("acct_test", ["acct_test/existing-skill"]);
 
@@ -455,7 +455,7 @@ describe("listSkillMetadataForConfig", () => {
       throw new Error("NoSuchKey");
     });
 
-    const { listSkillMetadataForConfig } = await import("../functions/harness-processing/skills.ts");
+    const { listSkillMetadataForConfig } = await import("../src/harness/skills.ts");
 
     const result = await listSkillMetadataForConfig("acct_test", ["acct_test/missing-skill"]);
 
@@ -465,7 +465,7 @@ describe("listSkillMetadataForConfig", () => {
   it("throws when skill path belongs to another account", async () => {
     s3ObjectExistsMock.mockResolvedValue(true);
 
-    const { listSkillMetadataForConfig } = await import("../functions/harness-processing/skills.ts");
+    const { listSkillMetadataForConfig } = await import("../src/harness/skills.ts");
 
     await expect(
       listSkillMetadataForConfig("acct_test", ["acct_other/foreign-skill"]),
@@ -473,7 +473,7 @@ describe("listSkillMetadataForConfig", () => {
   });
 
   it("throws when skill path is invalid format", async () => {
-    const { listSkillMetadataForConfig } = await import("../functions/harness-processing/skills.ts");
+    const { listSkillMetadataForConfig } = await import("../src/harness/skills.ts");
 
     await expect(
       listSkillMetadataForConfig("acct_test", ["no-slash"]),
@@ -491,7 +491,7 @@ describe("listSkillMetadataForConfig", () => {
       throw new Error("NoSuchKey");
     });
 
-    const { listSkillMetadataForConfig } = await import("../functions/harness-processing/skills.ts");
+    const { listSkillMetadataForConfig } = await import("../src/harness/skills.ts");
 
     const result = await listSkillMetadataForConfig("acct_test", [
       "acct_test/alpha-skill",
@@ -506,7 +506,7 @@ describe("listSkillMetadataForConfig", () => {
   it("throws when skill does not exist in S3", async () => {
     s3ObjectExistsMock.mockResolvedValue(false);
 
-    const { listSkillMetadataForConfig } = await import("../functions/harness-processing/skills.ts");
+    const { listSkillMetadataForConfig } = await import("../src/harness/skills.ts");
 
     await expect(
       listSkillMetadataForConfig("acct_test", ["acct_test/nonexistent-skill"]),
@@ -523,7 +523,7 @@ describe("loadSkillContent", () => {
       throw new Error("NoSuchKey");
     });
 
-    const { loadSkillContent } = await import("../functions/harness-processing/skills.ts");
+    const { loadSkillContent } = await import("../src/harness/skills.ts");
 
     const result = await loadSkillContent("acct_test/load-skill");
 
@@ -549,7 +549,7 @@ describe("loadSkillContent", () => {
       throw new Error("NoSuchKey");
     });
 
-    const { loadSkillContent } = await import("../functions/harness-processing/skills.ts");
+    const { loadSkillContent } = await import("../src/harness/skills.ts");
 
     const result = await loadSkillContent("acct_test/resourceful-skill", ["helper.js"]);
 
@@ -560,7 +560,7 @@ describe("loadSkillContent", () => {
   });
 
   it("throws when skill path is invalid", async () => {
-    const { loadSkillContent } = await import("../functions/harness-processing/skills.ts");
+    const { loadSkillContent } = await import("../src/harness/skills.ts");
 
     await expect(loadSkillContent("not/a/valid/path")).rejects.toThrow(
       "Invalid skill path: not/a/valid/path",
@@ -568,7 +568,7 @@ describe("loadSkillContent", () => {
   });
 
   it("throws when skill path has too many segments", async () => {
-    const { loadSkillContent } = await import("../functions/harness-processing/skills.ts");
+    const { loadSkillContent } = await import("../src/harness/skills.ts");
 
     await expect(loadSkillContent("acct/skill/extra")).rejects.toThrow(
       "Invalid skill path: acct/skill/extra",
@@ -576,7 +576,7 @@ describe("loadSkillContent", () => {
   });
 
   it("throws when skill name is invalid", async () => {
-    const { loadSkillContent } = await import("../functions/harness-processing/skills.ts");
+    const { loadSkillContent } = await import("../src/harness/skills.ts");
 
     await expect(loadSkillContent("acct/Invalid-Name")).rejects.toThrow(
       "Invalid skill path: acct/Invalid-Name",
@@ -588,7 +588,7 @@ describe("loadSkillContent", () => {
       throw new Error("NoSuchKey");
     });
 
-    const { loadSkillContent } = await import("../functions/harness-processing/skills.ts");
+    const { loadSkillContent } = await import("../src/harness/skills.ts");
 
     await expect(loadSkillContent("acct_test/missing-skill")).rejects.toThrow();
   });
@@ -596,7 +596,7 @@ describe("loadSkillContent", () => {
   it("throws when skill markdown is malformed", async () => {
     readS3TextMock.mockResolvedValue("This is not valid skill markdown");
 
-    const { loadSkillContent } = await import("../functions/harness-processing/skills.ts");
+    const { loadSkillContent } = await import("../src/harness/skills.ts");
 
     await expect(loadSkillContent("acct_test/bad-skill")).rejects.toThrow(
       "SKILL.md must start with YAML frontmatter",
@@ -608,7 +608,7 @@ describe("loadSkillContent", () => {
 
     readS3TextMock.mockResolvedValue(skillContent);
 
-    const { loadSkillContent } = await import("../functions/harness-processing/skills.ts");
+    const { loadSkillContent } = await import("../src/harness/skills.ts");
 
     await expect(
       loadSkillContent("acct_test/safe-skill", ["../etc/passwd"]),
@@ -625,7 +625,7 @@ describe("loadSkillContent", () => {
       throw new Error("NoSuchKey");
     });
 
-    const { loadSkillContent } = await import("../functions/harness-processing/skills.ts");
+    const { loadSkillContent } = await import("../src/harness/skills.ts");
 
     const result = await loadSkillContent("acct_test/size-skill", ["extra.txt"]);
 
@@ -639,7 +639,7 @@ describe("loadSkillContent", () => {
 
     readS3TextMock.mockResolvedValue(skillContent);
 
-    const { loadSkillContent } = await import("../functions/harness-processing/skills.ts");
+    const { loadSkillContent } = await import("../src/harness/skills.ts");
 
     const result = await loadSkillContent("acct_test/empty-resources", []);
 
@@ -652,7 +652,7 @@ describe("loadSkillContent", () => {
 
     readS3TextMock.mockResolvedValue(skillContent);
 
-    const { loadSkillContent } = await import("../functions/harness-processing/skills.ts");
+    const { loadSkillContent } = await import("../src/harness/skills.ts");
 
     const result = await loadSkillContent("acct_test/undefined-resources");
 
@@ -662,7 +662,7 @@ describe("loadSkillContent", () => {
 
 describe("SkillMetadata re-export", () => {
   it("exports skill-related functions", async () => {
-    const skills = await import("../functions/harness-processing/skills.ts");
+    const skills = await import("../src/harness/skills.ts");
 
     expect(typeof skills.listConfiguredSkillMetadata).toBe("function");
     expect(typeof skills.loadConfiguredSkillPrompt).toBe("function");
@@ -675,7 +675,7 @@ describe("formatLoadedSkillPrompt output structure", () => {
 
     readS3TextMock.mockResolvedValue(skillContent);
 
-    const { loadConfiguredSkillPrompt } = await import("../functions/harness-processing/skills.ts");
+    const { loadConfiguredSkillPrompt } = await import("../src/harness/skills.ts");
 
     const result = await loadConfiguredSkillPrompt(["acct_test/xml-skill"], "acct_test/xml-skill");
     const promptContent = result.prompt.content as string;
@@ -694,7 +694,7 @@ describe("formatLoadedSkillPrompt output structure", () => {
       throw new Error("NoSuchKey");
     });
 
-    const { loadConfiguredSkillPrompt } = await import("../functions/harness-processing/skills.ts");
+    const { loadConfiguredSkillPrompt } = await import("../src/harness/skills.ts");
 
     const result = await loadConfiguredSkillPrompt(
       ["acct_test/heading-skill"],
@@ -712,7 +712,7 @@ describe("formatLoadedSkillPrompt output structure", () => {
 
     readS3TextMock.mockResolvedValue(skillContent);
 
-    const { loadConfiguredSkillPrompt } = await import("../functions/harness-processing/skills.ts");
+    const { loadConfiguredSkillPrompt } = await import("../src/harness/skills.ts");
 
     const result = await loadConfiguredSkillPrompt(["acct_test/trim-skill"], "acct_test/trim-skill");
     const promptContent = result.prompt.content as string;

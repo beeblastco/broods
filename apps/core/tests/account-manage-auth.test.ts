@@ -8,17 +8,14 @@ import {
   setStorageForTests,
   type AccountRecord,
   type StorageProvider,
-} from "../functions/_shared/storage/index.ts";
+} from "../src/shared/storage/index.ts";
+import { coreRequest } from "./helpers/http.ts";
 
 const ORIGINAL_ENV = { ...process.env };
 
 beforeEach(() => {
   process.env.ADMIN_ACCOUNT_SECRET = "admin-secret";
   process.env.SERVICE_AUTH_SECRET = "service-secret";
-  process.env.CRONS_TABLE_NAME = "crons";
-  process.env.CRON_SCHEDULER_TARGET_FUNCTION_ARN = "arn:aws:lambda:us-east-1:123456789012:function:test";
-  process.env.CRON_SCHEDULER_ROLE_ARN = "arn:aws:iam::123456789012:role/test";
-  process.env.CRON_SCHEDULER_GROUP_NAME = "test-group";
   resetStorageForTests();
 });
 
@@ -28,18 +25,19 @@ afterEach(() => {
 });
 
 describe("account-management deployment key auth", () => {
-  it("rejects deployment runtime keys on skill and tool self routes but keeps cron self routes allowed", async () => {
+  it("no longer serves skill, tool, or cron routes for deployment keys — they are Convex config-plane routes", async () => {
     setStorageForTests(deploymentStorage());
-    const { handler } = await import("../functions/account-manage/handler.ts");
+    const { handler } = await import("../src/accounts/handler.ts");
 
-    const skillsResponse = await handler(event("GET", "/accounts/me/skills"));
-    const toolsResponse = await handler(event("GET", "/accounts/me/tools"));
-    const cronsResponse = await handler(event("GET", "/accounts/me/crons"));
+    // Skills, tools, and cron CRUD moved to the Convex config plane — the
+    // account handler no longer serves them for any principal.
+    const skillsResponse = await handler(event("GET", "/v1/skills"));
+    const toolsResponse = await handler(event("GET", "/v1/tools"));
+    const cronsResponse = await handler(event("GET", "/v1/crons"));
 
-    expect(skillsResponse.statusCode).toBe(401);
-    expect(toolsResponse.statusCode).toBe(401);
-    expect(cronsResponse.statusCode).toBe(200);
-    expect(responseJson(cronsResponse)).toEqual({ crons: [] });
+    expect(skillsResponse.status).toBe(403);
+    expect(toolsResponse.status).toBe(403);
+    expect(cronsResponse.status).toBe(403);
   });
 });
 
@@ -73,28 +71,9 @@ function deploymentStorage(): StorageProvider {
         };
       },
     },
-    crons: {
-      async list() {
-        return [];
-      },
-    },
   } as unknown as StorageProvider;
 }
 
 function event(method: string, rawPath: string) {
-  return {
-    rawPath: rawPath,
-    headers: { authorization: "Bearer runtime-key" },
-    requestContext: {
-      http: { method: method },
-    },
-  } as never;
-}
-
-function responseJson(response: { body?: unknown }): Record<string, unknown> {
-  if (typeof response.body !== "string") {
-    throw new Error("Expected string response body");
-  }
-
-  return JSON.parse(response.body) as Record<string, unknown>;
+  return coreRequest(method, rawPath, { authorization: "Bearer runtime-key" });
 }

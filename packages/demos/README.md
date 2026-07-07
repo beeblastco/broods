@@ -12,8 +12,30 @@ bun run start
 Use `.env.local` for local runtime settings. SDK clients automatically read the
 runtime key from `BROODS_API_KEY`, which `bun run dev`/`bun run deploy`
 writes for the selected environment.
-The WebSocket demo uses the SDK default runtime host, `gateway.broods.app`; only
-set `BROODS_WEBSOCKET_URL` for a non-default or self-hosted gateway.
+WebSocket demos use the same `BROODS_BASE_URL` or `BROODS_HOST` override as
+HTTP clients. The hosted SDK default is `gateway.broods.app`.
+
+## Run against a local core
+
+The core now runs as a single container (`apps/core`, off Lambda) — you can run
+it on your machine against the **real** Convex/DynamoDB backend (the databases
+don't change), then aim the demos at it:
+
+```bash
+# 1. Start the core locally (serves http://localhost:3000, path-routed).
+cd apps/core && bun run serve          # fill apps/core/.env first — see its .env.example
+
+# 2. In the demo's .env.local (or packages/demos/.env), point the SDK at it:
+#    BROODS_BASE_URL=http://localhost:3000
+#    BROODS_API_KEY=fp_agent_...        # a runtime key for the demo account
+
+# 3. Run the demo from its own folder.
+cd packages/demos/basic-stream && bun run start
+```
+
+The SDK resolves its target from `BROODS_BASE_URL` / `BROODS_HOST` (falling back
+to `gateway.broods.app`), so this swaps only the base URL — see
+`packages/demos/.env.example`.
 
 - `basic-stream`: stream an agent over SSE.
 - `basic-async`: start `/async`, then poll by the returned status id.

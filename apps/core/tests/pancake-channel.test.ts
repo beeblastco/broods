@@ -5,7 +5,7 @@
 
 import { createHash } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
-import { createPancakeChannel } from "../functions/_shared/pancake-channel.ts";
+import { createPancakeChannel } from "../src/shared/pancake-channel.ts";
 
 const ORIGINAL_FETCH = globalThis.fetch;
 

@@ -68,7 +68,6 @@ Use `apps/core/.env` for local SST inputs only:
 - `ENABLE_WEBSOCKET` - Set to `true` to enable WebSocket gateway worker invocations.
 - `NATS_URL` - Required when `ENABLE_WEBSOCKET=true`; ignored by the deployed Lambda when WebSocket is disabled. The transport is chosen by scheme: `wss://`/`ws://` (WebSocket, e.g. `wss://nats.beeblast.co` from the out-of-cluster Lambda) or `nats://`/`tls://` (core TCP, for future in-cluster callers).
 - `NATS_TOKEN` - Token-auth credential for the NATS server; optional (omit for an unauthenticated server).
-- `BROODS_WEBSOCKET_URL` - Optional SDK/demo override for WebSocket clients using a non-default or self-hosted gateway. The hosted SDK default is `gateway.broods.app`.
 - `OPA_BASE_URL` - Optional OPA REST endpoint for runtime policy decisions. The Lambdas run outside the cluster, so the hosted stages use the exposed `https://opa.beeblast.co` endpoint; `http://127.0.0.1:8181` only works against a locally running OPA.
 - `OPA_API_TOKEN` - Bearer token for the OPA REST API. Required when the endpoint enforces token authentication (the hosted `opa.beeblast.co` does); sent as an `Authorization: Bearer` header.
 
@@ -88,7 +87,7 @@ Treat `AdminAccountSecret` and `AccountConfigEncryptionSecret` as stable product
 
 Provider API keys are account-specific, not global SST secrets. Each account-owned agent configures its provider API key in `config.provider.<provider>.apiKey`. Similarly, tool API keys like Tavily are configured per agent in `config.tools.<tool>.apiKey`. This allows different users to use their own API keys.
 
-Public account creation is throttled by `ACCOUNT_SIGNUP_RATE_LIMIT_PER_HOUR`, currently set to `5` in `sst.config.ts`.
+Manual account creation through `POST /accounts` requires `AdminAccountSecret`; normal hosted onboarding uses the dashboard-authenticated Convex config plane.
 
 WebSocket gateway support is application infrastructure, not agent configuration. `sst.config.ts` fails early when `ENABLE_WEBSOCKET=true` is set without `NATS_URL`. At runtime, `harness-processing` also rejects `nats-worker` invocations unless WebSocket is enabled and the NATS connection can be established.
 
@@ -123,34 +122,31 @@ bun run deploy
 
 Deploy outputs include:
 
-- `accountServiceUrl`
-- `agentServiceUrl`
 - DynamoDB table names (dev/community stages; `undefined` on production, which stores config domains in Convex)
 - `filesystemBucketName`, `skillsBucketName`, `toolBundlesBucketName`
-- sandbox Lambda function names and `cronScheduleGroupName`
+- `cronScheduleGroupName`, `cronSchedulerTargetArn`, and `cronSchedulerRoleArn`
 
 ## Container Runtime (Phase 9a)
 
-The core also ships as a single container image, `ghcr.io/beeblastco/broods-core`, built from `apps/core/Dockerfile` by the `Build Core Image` workflow (`dev` and `main` tags). One Bun process serves both `harness-processing` and `account-manage`, routed by the request `Host` header (`ACCOUNT_MANAGE_HOSTS` lists the account-manage hostnames). The container runs against the same AWS data plane as the Lambdas — DynamoDB, S3, Convex, NATS, OPA — using an IAM access key for the per-stage `core-runtime` user that SST creates with the union of the two Lambda roles' permissions.
+The core ships as a single container image, `ghcr.io/beeblastco/broods-core`, built from `apps/core/Dockerfile` by the `Build Core Image` workflow (`dev` and `main` tags). One Bun process serves both harness and account routes through the gateway. The container runs against the AWS data plane — DynamoDB, S3, Convex, NATS, OPA, Scheduler, and sandboxes — using an IAM access key for the per-stage `core-runtime` user that SST creates.
 
 ```mermaid
 flowchart LR
     Client((Client)) -->|HTTPS| Ingress[Traefik ingress]
-    Ingress -->|core host| Pod[broods-core pod\nBun.serve]
-    Ingress -->|core-account host| Pod
-    Pod -->|synthesized Function URL event| Handlers[harness-processing +\naccount-manage handlers]
+    Ingress --> Gateway[broods gateway]
+    Gateway --> Pod[broods-core pod\nBun.serve]
+    Pod --> Handlers[harness + account handlers]
     Handlers --> Data[(DynamoDB / S3 / Convex\nNATS / OPA / sandboxes)]
-    Lambda[Lambda Function URLs\nunchanged default path] --> Data
 ```
 
-Differences from the Lambda path, all internal to the container entry (`functions/server/`):
+Runtime notes:
 
-- Async self-invocations run in-process (capped by `MAX_INPROCESS_WORKERS`) instead of Lambda `Event` invokes.
-- Background-job callbacks use `PUBLIC_BASE_URL` instead of Function URL discovery.
-- The invocation deadline is synthesized from `REQUEST_TIMEOUT_BUDGET_MS` (default 10 minutes, matching the Lambda timeout).
-- Cron schedules keep targeting the harness Lambda; cron cutover is a later phase.
+- Async self-invocations run in-process (capped by `MAX_INPROCESS_WORKERS`).
+- Background-job callbacks use `PUBLIC_BASE_URL`.
+- The invocation deadline is synthesized from `REQUEST_TIMEOUT_BUDGET_MS` (default 10 minutes).
+- Cron schedules publish onto the cron-runs event bus from SST output `cronSchedulerTargetArn`; the bus rule forwards to the API destination, which POSTs to `${PUBLIC_BASE_URL}/v1/cron-runs` through the gateway. The Convex deployment env vars stay `CRON_SCHEDULER_TARGET_ARN`, `CRON_SCHEDULER_ROLE_ARN`, and `CRON_SCHEDULER_GROUP_NAME`; flip `CRON_SCHEDULER_TARGET_ARN` to the bus ARN at cutover with no code change.
 
-The Lambda path stays the production default until pod parity is proven; the pods are deployed from the infra repo (`kubernetes/charts/releases/core-dev.yaml` / `core.yaml`) at `core[.dev].broods.app` and `core-account[.dev].broods.app`.
+The pods are deployed from the infra repo (`kubernetes/charts/releases/core-dev.yaml` / `core.yaml`) behind the gateway.
 
 ## Post-Deploy Account Setup (Self-Hosted)
 
@@ -159,7 +155,7 @@ When self-hosting, the CLI still handles tenant configuration. After `broods dep
 If you need to create an account manually (e.g. for automated testing), use the admin `AdminAccountSecret`:
 
 ```bash
-curl -X POST "$ACCOUNT_SERVICE_URL/accounts" \
+curl -X POST "$BROODS_BASE_URL/accounts" \
   -H "Authorization: Bearer $ADMIN_ACCOUNT_SECRET" \
   -H "Content-Type: application/json" \
   -d '{"username": "company-a"}'
@@ -191,7 +187,7 @@ The environment runtime key is encrypted at rest and recoverable by the owning u
 
 Logs and traces are published once to NATS and captured by a durable `OBSERVABILITY` JetStream stream (bound to the `*.logs.>` / `*.traces.>` subjects). See [Observability](observability.md) for the full pipeline, including how sandbox (MicroVM + workdir) logs route into the same per-tenant view. On (re)connect the gateway replays the recent window from that stream and then tails live, so the dashboard shows full-fidelity recent activity even for a run that happened while no tab was open — JetStream replay, not the slower/lossier core subscribe it replaced. Loki (logs) and Tempo (traces) remain the long-term store for history older than the replay window; the refresh control reloads from them. Because Tempo truncates large attributes on ingest, the dashboard prefers the richer/terminal copy of a span when the same span arrives from both sources, so a reload never downgrades a payload.
 
-Tracing shows active and completed tasks with a started-time column, model input, reasoning, response, tool calls, tool input, and the tool output returned to the model. Each model step is decomposed into **time to first token** (queue/prefill wait), **streaming** (model token generation only), and **tool wait** (tool execution, also shown as the child tool spans) — streaming never folds in tool-execution time, so a slow tool can't be mistaken for slow generation. Channel webhooks and account-management operations resolve the same environment scope as direct agent calls, while dashboard configuration mutations emit scoped service audit events through the account-management service.
+Tracing shows active and completed tasks with a started-time column, model input, reasoning, response, tool calls, tool input, and the tool output returned to the model. Each model step is decomposed into **time to first token** (queue/prefill wait), **streaming** (model token generation only), and **tool wait** (tool execution, also shown as the child tool spans) — streaming never folds in tool-execution time, so a slow tool can't be mistaken for slow generation. Channel webhooks and account-management operations resolve the same environment scope as direct agent calls. Configuration mutations now write to Convex `configAuditEvents`, and the dashboard Settings → Audit Logs tab reads that feed reactively; the former core service-audit leaf has been removed.
 
 > Bringing your own custom domain to replace the generated endpoint URL is tracked as a future enhancement.
 
@@ -218,18 +214,17 @@ Or verify the harness URL directly:
 Example scripts use these environment variables:
 
 ```bash
-export AGENT_SERVICE_URL=<agentServiceUrl>
-export ACCOUNT_SERVICE_URL=<accountServiceUrl>
+export BROODS_BASE_URL=<gatewayUrl>
 export ACCOUNT_GOOGLE_API_KEY=<googleApiKey>
 export ACCOUNT_TAVILY_API_KEY=<tavilyApiKey>
 ```
 
-Each script creates a temporary account through `ACCOUNT_SERVICE_URL/accounts`, runs the probe with the returned account secret, then deletes the test account through `DELETE /accounts/me` in a cleanup step.
+Each script creates a temporary account through `BROODS_BASE_URL/accounts` using `ADMIN_ACCOUNT_SECRET`, runs the probe with the returned account secret, then deletes the test account through `DELETE /v1/account` in a cleanup step.
 
 Confirm the harness URL is live:
 
 ```bash
-curl "$AGENT_SERVICE_URL"
+curl "$BROODS_BASE_URL"
 ```
 
 Expected response:

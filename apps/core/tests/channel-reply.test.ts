@@ -6,8 +6,8 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { sendChannelReply } from "../functions/harness-processing/integrations.ts";
-import type { AgentConfig } from "../functions/_shared/storage/index.ts";
+import { sendChannelReply } from "../src/harness/integrations.ts";
+import type { AgentConfig } from "../src/shared/storage/index.ts";
 
 type FetchInput = string | URL | Request;
 

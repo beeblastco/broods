@@ -165,7 +165,7 @@ mock.module("@vercel/sandbox", () => ({
   },
 }));
 
-mock.module("../functions/harness-processing/sandbox/instance-store.ts", () => ({
+mock.module("../src/harness/sandbox/instance-store.ts", () => ({
   getSandboxExternalId: getSandboxExternalIdMock,
   claimSandboxInstance: claimSandboxInstanceMock,
   saveSandboxInstance: saveSandboxInstanceMock,
@@ -253,20 +253,20 @@ const CHILD_NS = `${NS}/issues/fs-76543210fedcba9876543210fedcba9876543210`;
 
 describe("createSandboxExecutor", () => {
   it("requires an explicit provider and never silently defaults", () => {
-    const { createSandboxExecutor } = require("../functions/harness-processing/sandbox/index.ts");
+    const { createSandboxExecutor } = require("../src/harness/sandbox/index.ts");
     expect(() => createSandboxExecutor({})).toThrow(/provider/);
     expect(createSandboxExecutor({ provider: "lambda" }).constructor.name).toBe("MicrovmSandboxExecutor");
   });
 
   it("creates E2B, Daytona, and Vercel executor adapters", () => {
-    const { createSandboxExecutor } = require("../functions/harness-processing/sandbox/index.ts");
+    const { createSandboxExecutor } = require("../src/harness/sandbox/index.ts");
     expect(createSandboxExecutor({ provider: "e2b" }).constructor.name).toBe("E2BSandboxExecutor");
     expect(createSandboxExecutor({ provider: "daytona" }).constructor.name).toBe("DaytonaSandboxExecutor");
     expect(createSandboxExecutor({ provider: "vercel" }).constructor.name).toBe("VercelSandboxExecutor");
   });
 
   it("runs a MicroVM and mounts the workspace via the run-hook payload when a namespace is present", async () => {
-    const { createSandboxExecutor } = require("../functions/harness-processing/sandbox/index.ts");
+    const { createSandboxExecutor } = require("../src/harness/sandbox/index.ts");
     const executor = createSandboxExecutor({ provider: "lambda" });
 
     const result = await executor.run({
@@ -306,7 +306,7 @@ describe("createSandboxExecutor", () => {
   });
 
   it("uses a flat MicroVM local namespace while mounting the hierarchical storage prefix", async () => {
-    const { createSandboxExecutor } = require("../functions/harness-processing/sandbox/index.ts");
+    const { createSandboxExecutor } = require("../src/harness/sandbox/index.ts");
     const executor = createSandboxExecutor({ provider: "lambda", persistent: true });
 
     await executor.run({
@@ -339,7 +339,7 @@ describe("createSandboxExecutor", () => {
   });
 
   it("launches from the config snapshot pin, overriding the MICROVM_IMAGE_IDENTIFIER default", async () => {
-    const { createSandboxExecutor } = require("../functions/harness-processing/sandbox/index.ts");
+    const { createSandboxExecutor } = require("../src/harness/sandbox/index.ts");
     const executor = createSandboxExecutor({
       provider: "lambda",
       snapshot: "arn:aws:lambda:us-east-1:123456789012:microvm-image:curated",
@@ -351,7 +351,7 @@ describe("createSandboxExecutor", () => {
   });
 
   it("runs a stateless MicroVM with default internet egress and no workspace mount", async () => {
-    const { createSandboxExecutor } = require("../functions/harness-processing/sandbox/index.ts");
+    const { createSandboxExecutor } = require("../src/harness/sandbox/index.ts");
     const executor = createSandboxExecutor({ provider: "lambda", network: { mode: "allow-all" } });
 
     await executor.run({ code: "echo ok", timeoutSeconds: 30, outputLimitBytes: 4096 });
@@ -365,7 +365,7 @@ describe("createSandboxExecutor", () => {
   });
 
   it("mints a native shell connection target for a reserved MicroVM", async () => {
-    const { microvmShellConnection, MICROVM_SHELL_AUTH_HEADER } = require("../functions/harness-processing/sandbox/microvm-executor.ts");
+    const { microvmShellConnection, MICROVM_SHELL_AUTH_HEADER } = require("../src/harness/sandbox/microvm-executor.ts");
 
     const shell = await microvmShellConnection("microvm-1");
 
@@ -378,7 +378,7 @@ describe("createSandboxExecutor", () => {
 
   it("reconnects to a reserved MicroVM for a persistent run and never terminates it", async () => {
     storedSandboxExternalId = "microvm-1";
-    const { createSandboxExecutor } = require("../functions/harness-processing/sandbox/index.ts");
+    const { createSandboxExecutor } = require("../src/harness/sandbox/index.ts");
     const executor = createSandboxExecutor({ provider: "lambda", persistent: true });
 
     const result = await executor.run({
@@ -399,7 +399,7 @@ describe("createSandboxExecutor", () => {
       { microvmId: "microvm-1", state: "SUSPENDED" },
       { microvmId: "microvm-1", endpoint: "microvm-1.lambda-microvm.us-east-1.on.aws", state: "RUNNING" },
     ];
-    const { createSandboxExecutor } = require("../functions/harness-processing/sandbox/index.ts");
+    const { createSandboxExecutor } = require("../src/harness/sandbox/index.ts");
     const executor = createSandboxExecutor({ provider: "lambda", persistent: true });
 
     await executor.run({
@@ -417,7 +417,7 @@ describe("createSandboxExecutor", () => {
     microvmGetResponses = [
       Object.assign(new Error("MicroVM does not exist"), { name: "ResourceNotFoundException" }),
     ];
-    const { createSandboxExecutor } = require("../functions/harness-processing/sandbox/index.ts");
+    const { createSandboxExecutor } = require("../src/harness/sandbox/index.ts");
     const executor = createSandboxExecutor({ provider: "lambda", persistent: true });
 
     const result = await executor.run({
@@ -437,7 +437,7 @@ describe("createSandboxExecutor", () => {
     microvmGetResponses = [
       Object.assign(new Error("Rate exceeded"), { name: "ThrottlingException" }),
     ];
-    const { createSandboxExecutor } = require("../functions/harness-processing/sandbox/index.ts");
+    const { createSandboxExecutor } = require("../src/harness/sandbox/index.ts");
     const executor = createSandboxExecutor({ provider: "lambda", persistent: true });
 
     await expect(executor.run({
@@ -454,14 +454,14 @@ describe("createSandboxExecutor", () => {
     microvmGetResponses = [
       Object.assign(new Error("MicroVM does not exist"), { name: "ResourceNotFoundException" }),
     ];
-    const { createSandboxExecutor } = require("../functions/harness-processing/sandbox/index.ts");
+    const { createSandboxExecutor } = require("../src/harness/sandbox/index.ts");
     const executor = createSandboxExecutor({ provider: "lambda", persistent: true });
 
     await expect(executor.getInstanceInfo({ namespace: NS })).resolves.toBeNull();
   });
 
   it("fails persistent MicroVM runs when a lifecycle hook exits nonzero", async () => {
-    const { createSandboxExecutor } = require("../functions/harness-processing/sandbox/index.ts");
+    const { createSandboxExecutor } = require("../src/harness/sandbox/index.ts");
     microvmExecPayload = {
       ...microvmExecPayload,
       ok: false,
@@ -478,7 +478,7 @@ describe("createSandboxExecutor", () => {
 
   it("launches a detached background job in the persistent MicroVM and returns a jobId", async () => {
     storedSandboxExternalId = "microvm-1";
-    const { createSandboxExecutor } = require("../functions/harness-processing/sandbox/index.ts");
+    const { createSandboxExecutor } = require("../src/harness/sandbox/index.ts");
     const executor = createSandboxExecutor({ provider: "lambda", persistent: true });
 
     const handle = await executor.runBackground({
@@ -502,7 +502,7 @@ describe("createSandboxExecutor", () => {
   });
 
   it("passes the egress network connector for a restricted MicroVM network", async () => {
-    const { createSandboxExecutor } = require("../functions/harness-processing/sandbox/index.ts");
+    const { createSandboxExecutor } = require("../src/harness/sandbox/index.ts");
     const executor = createSandboxExecutor({
       provider: "lambda",
       network: { mode: "restricted", allowDomains: ["api.example.com"], allowCidrs: ["10.0.0.0/8"] },
@@ -517,7 +517,7 @@ describe("createSandboxExecutor", () => {
 
   it("fails closed when a restricted MicroVM network has no egress connector", async () => {
     delete process.env.MICROVM_EGRESS_NETWORK_CONNECTOR_ARN;
-    const { createSandboxExecutor } = require("../functions/harness-processing/sandbox/index.ts");
+    const { createSandboxExecutor } = require("../src/harness/sandbox/index.ts");
     const executor = createSandboxExecutor({ provider: "lambda", network: { mode: "restricted", allowDomains: ["api.example.com"] } });
 
     await expect(executor.run({ code: "echo ok", timeoutSeconds: 30, outputLimitBytes: 4096 }))
@@ -526,7 +526,7 @@ describe("createSandboxExecutor", () => {
   });
 
   it("applies the harness output limit to MicroVM responses", async () => {
-    const { createSandboxExecutor } = require("../functions/harness-processing/sandbox/index.ts");
+    const { createSandboxExecutor } = require("../src/harness/sandbox/index.ts");
     microvmExecPayload = {
       ...microvmExecPayload,
       stdout: "abcdef",
@@ -542,7 +542,7 @@ describe("createSandboxExecutor", () => {
   });
 
   it("does not synthesize an S3 workspace cwd for E2B commands", async () => {
-    const { createSandboxExecutor } = require("../functions/harness-processing/sandbox/index.ts");
+    const { createSandboxExecutor } = require("../src/harness/sandbox/index.ts");
     const executor = createSandboxExecutor({
       provider: "e2b",
       envVars: { MY_API_BASE: "https://api.example.com" },
@@ -570,7 +570,7 @@ describe("createSandboxExecutor", () => {
   });
 
   it("does not synthesize a workspace cwd for stateless E2B commands", async () => {
-    const { createSandboxExecutor } = require("../functions/harness-processing/sandbox/index.ts");
+    const { createSandboxExecutor } = require("../src/harness/sandbox/index.ts");
     const executor = createSandboxExecutor({ provider: "e2b" });
 
     await executor.run({ code: "echo user", timeoutSeconds: 30, outputLimitBytes: 4096 });
@@ -586,7 +586,7 @@ describe("createSandboxExecutor", () => {
   });
 
   it("launches persistent E2B background jobs with the native command API", async () => {
-    const { E2BSandboxExecutor } = await import("../functions/harness-processing/sandbox/e2b-executor.ts");
+    const { E2BSandboxExecutor } = await import("../src/harness/sandbox/e2b-executor.ts");
     const executor = new E2BSandboxExecutor({
       provider: "e2b",
       persistent: true,
@@ -612,7 +612,7 @@ describe("createSandboxExecutor", () => {
   });
 
   it("runs Daytona commands as-is and mounts the workspace bucket", async () => {
-    const { createSandboxExecutor } = require("../functions/harness-processing/sandbox/index.ts");
+    const { createSandboxExecutor } = require("../src/harness/sandbox/index.ts");
     const executor = createSandboxExecutor({
       provider: "daytona",
       envVars: { MY_API_BASE: "https://api.example.com" },
@@ -662,7 +662,7 @@ describe("createSandboxExecutor", () => {
   });
 
   it("requires a tenant API key when a tenant Daytona API URL is configured", async () => {
-    const { createSandboxExecutor } = require("../functions/harness-processing/sandbox/index.ts");
+    const { createSandboxExecutor } = require("../src/harness/sandbox/index.ts");
     const executor = createSandboxExecutor({
       provider: "daytona",
       options: { apiUrl: "https://tenant-daytona.example.com" },
@@ -674,7 +674,7 @@ describe("createSandboxExecutor", () => {
   });
 
   it("rejects unsafe tenant Daytona API URLs", async () => {
-    const { createSandboxExecutor } = require("../functions/harness-processing/sandbox/index.ts");
+    const { createSandboxExecutor } = require("../src/harness/sandbox/index.ts");
     const executor = createSandboxExecutor({
       provider: "daytona",
       options: { apiUrl: "https://169.254.169.254", apiKey: "tenant-key" },
@@ -686,7 +686,7 @@ describe("createSandboxExecutor", () => {
   });
 
   it("passes tenant Daytona API URLs only with tenant credentials", async () => {
-    const { createSandboxExecutor } = require("../functions/harness-processing/sandbox/index.ts");
+    const { createSandboxExecutor } = require("../src/harness/sandbox/index.ts");
     const executor = createSandboxExecutor({
       provider: "daytona",
       options: { apiUrl: "https://tenant-daytona.example.com", apiKey: "tenant-key" },
@@ -701,7 +701,7 @@ describe("createSandboxExecutor", () => {
   });
 
   it("rejects Daytona S3 mounts without a namespace before assuming the mount role", async () => {
-    const { createSandboxExecutor } = require("../functions/harness-processing/sandbox/index.ts");
+    const { createSandboxExecutor } = require("../src/harness/sandbox/index.ts");
     const stsCallCount = stsSendMock.mock.calls.length;
     const executor = createSandboxExecutor({
       provider: "daytona",
@@ -724,7 +724,7 @@ describe("createSandboxExecutor", () => {
   });
 
   it("mounts a Daytona bring-your-own bucket via the workspace storage assume-role", async () => {
-    const { createSandboxExecutor } = require("../functions/harness-processing/sandbox/index.ts");
+    const { createSandboxExecutor } = require("../src/harness/sandbox/index.ts");
     const executor = createSandboxExecutor({
       provider: "daytona",
       storage: {
@@ -764,7 +764,7 @@ describe("createSandboxExecutor", () => {
   });
 
   it("runs Vercel commands and adapts async command output", async () => {
-    const { createSandboxExecutor } = require("../functions/harness-processing/sandbox/index.ts");
+    const { createSandboxExecutor } = require("../src/harness/sandbox/index.ts");
     const executor = createSandboxExecutor({
       provider: "vercel",
       network: { mode: "restricted", allowDomains: ["api.example.com"], allowCidrs: ["10.0.0.0/8"] },
@@ -798,7 +798,7 @@ describe("createSandboxExecutor", () => {
   });
 
   it("runs Vercel lifecycle hooks explicitly for persistent sandboxes", async () => {
-    const { VercelSandboxExecutor } = await import("../functions/harness-processing/sandbox/vercel-executor.ts");
+    const { VercelSandboxExecutor } = await import("../src/harness/sandbox/vercel-executor.ts");
     const executor = new VercelSandboxExecutor({
       provider: "vercel",
       persistent: true,
@@ -834,7 +834,7 @@ describe("createSandboxExecutor", () => {
 
 describe("background job scripts", () => {
   it("builds a detached launch script with markers, a job cap, and parses status output", async () => {
-    const { launchScript, statusScript, parseJobStatus } = await import("../functions/harness-processing/sandbox/jobs.ts");
+    const { launchScript, statusScript, parseJobStatus } = await import("../src/harness/sandbox/jobs.ts");
     const launch = launchScript("/home/node/.jobs", "job_x", "/mnt/workspaces/ns", "echo hi", { maxConcurrentJobs: 10 });
     // The running marker records the boot id so a recreated sandbox is detectable.
     expect(launch).toContain("/proc/sys/kernel/random/boot_id");
@@ -851,7 +851,7 @@ describe("background job scripts", () => {
   });
 
   it("bakes a token-gated completion callback into the launch wrapper", async () => {
-    const { launchScript } = await import("../functions/harness-processing/sandbox/jobs.ts");
+    const { launchScript } = await import("../src/harness/sandbox/jobs.ts");
     const launch = launchScript("/home/node/.jobs", "job_y", "/mnt/workspaces/ns", "echo hi", {
       maxConcurrentJobs: 10,
       callback: { url: "https://fn.example/sandbox-jobs/async_tool_1/complete", token: "tok-123" },
@@ -867,7 +867,7 @@ describe("background job scripts", () => {
   });
 
   it("reports a job killed by sandbox recreation as failed, not running forever", async () => {
-    const { statusScript } = await import("../functions/harness-processing/sandbox/jobs.ts");
+    const { statusScript } = await import("../src/harness/sandbox/jobs.ts");
     const status = statusScript("/home/node/.jobs", "job_x");
     // Boot-id mismatch or a dead pid (no exit recorded) both resolve to a failure code.
     expect(status).toContain("boot_id");
@@ -878,7 +878,7 @@ describe("background job scripts", () => {
 
 describe("isSandboxGoneError", () => {
   it("treats not-found / gone errors as terminal (drop the instance row)", async () => {
-    const { isSandboxGoneError } = await import("../functions/harness-processing/sandbox/utils.ts");
+    const { isSandboxGoneError } = await import("../src/harness/sandbox/utils.ts");
     expect(isSandboxGoneError({ statusCode: 404 })).toBe(true);
     expect(isSandboxGoneError({ status: 410 })).toBe(true);
     expect(isSandboxGoneError(new Error("Sandbox not found"))).toBe(true);
@@ -886,7 +886,7 @@ describe("isSandboxGoneError", () => {
   });
 
   it("treats auth / transient errors as non-terminal (keep the row, try next config)", async () => {
-    const { isSandboxGoneError } = await import("../functions/harness-processing/sandbox/utils.ts");
+    const { isSandboxGoneError } = await import("../src/harness/sandbox/utils.ts");
     expect(isSandboxGoneError({ statusCode: 401 })).toBe(false);
     expect(isSandboxGoneError({ statusCode: 403 })).toBe(false);
     expect(isSandboxGoneError(new Error("connection reset"))).toBe(false);
@@ -896,14 +896,14 @@ describe("isSandboxGoneError", () => {
 
 describe("isNoRunnersError", () => {
   it("matches provider capacity / no-runner errors", async () => {
-    const { isNoRunnersError } = await import("../functions/harness-processing/sandbox/utils.ts");
+    const { isNoRunnersError } = await import("../src/harness/sandbox/utils.ts");
     expect(isNoRunnersError(new Error("No available runners"))).toBe(true);
     expect(isNoRunnersError(new Error("no runner found for snapshot"))).toBe(true);
     expect(isNoRunnersError("No available runners")).toBe(true);
   });
 
   it("does not match unrelated errors", async () => {
-    const { isNoRunnersError } = await import("../functions/harness-processing/sandbox/utils.ts");
+    const { isNoRunnersError } = await import("../src/harness/sandbox/utils.ts");
     expect(isNoRunnersError(new Error("connection reset"))).toBe(false);
     expect(isNoRunnersError({ statusCode: 404 })).toBe(false);
     expect(isNoRunnersError(undefined)).toBe(false);
@@ -912,7 +912,7 @@ describe("isNoRunnersError", () => {
 
 describe("classifyVercelError", () => {
   it("turns 401/403 auth failures into an actionable VERCEL_TOKEN message", async () => {
-    const { classifyVercelError } = await import("../functions/harness-processing/sandbox/vercel-executor.ts");
+    const { classifyVercelError } = await import("../src/harness/sandbox/vercel-executor.ts");
     // The SDK's documented bare-string form.
     expect(classifyVercelError(new Error("Status code 403 is not ok")).message).toContain("HTTP 403");
     expect(classifyVercelError(new Error("Status code 403 is not ok")).message).toContain("VERCEL_TOKEN");
@@ -921,7 +921,7 @@ describe("classifyVercelError", () => {
   });
 
   it("passes through unrelated errors without misclassifying stray 401/403 numbers", async () => {
-    const { classifyVercelError } = await import("../functions/harness-processing/sandbox/vercel-executor.ts");
+    const { classifyVercelError } = await import("../src/harness/sandbox/vercel-executor.ts");
     const stray = classifyVercelError(new Error("operation failed after 403 attempts"));
     expect(stray.message).toBe("operation failed after 403 attempts");
     expect(stray.message).not.toContain("VERCEL_TOKEN");
@@ -931,7 +931,7 @@ describe("classifyVercelError", () => {
 
 describe("workspaceNamespacePrefix", () => {
   it("prefixes namespaces with the sandbox mount root so harness and mount agree", async () => {
-    const { workspaceNamespacePrefix } = await import("../functions/_shared/sandbox.ts");
+    const { workspaceNamespacePrefix } = await import("../src/shared/sandbox.ts");
     // Must match SandboxS3FilesAccessPoint.rootDirectories[].path in sst.config.ts.
     expect(workspaceNamespacePrefix("fs-abc")).toBe("fs-abc");
   });
