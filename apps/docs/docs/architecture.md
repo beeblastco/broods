@@ -1,6 +1,6 @@
 # Architecture and Workflows
 
-The deployed system is a multi-account serverless agent harness. Accounts are managed by `account-manage`; runtime traffic is handled by `harness-processing`.
+The deployed system is a multi-account serverless agent harness. The Bun core container serves account-management, harness, webhook, async, and cron execution routes behind the gateway.
 
 ## Monorepo Layout
 
@@ -9,7 +9,7 @@ The repository is a Bun-workspaces monorepo. The core SST app is self-contained 
 ```mermaid
 flowchart LR
   subgraph apps
-    Core["apps/core<br/>SST app — Lambdas, scripts, tests"]
+    Core["apps/core<br/>SST app + Bun runtime"]
     Dash["apps/dashboard<br/>Next.js dashboard"]
     Docs["apps/docs<br/>Docusaurus site"]
   end
@@ -22,53 +22,53 @@ flowchart LR
   Dash -->|"deploys + imports _generated API"| Cvx
   Core -->|"STORAGE_PROVIDER=convex<br/>ConvexHttpClient"| Cvx
   Demos -->|"imports"| Sdk
-  Sdk -->|"HTTP to deployed Function URLs"| Core
+  Sdk -->|"HTTP to gateway/core URL"| Core
 ```
 
 All file paths below are relative to `apps/core/`.
 
 ## Runtime Layer
 
-Both Lambdas use the Bun custom runtime and `startStreamingRuntime()` from `functions/_shared/runtime.ts`.
+The core runtime is one Bun container (`src/server.ts`). It turns each HTTP request into a transport-neutral `CoreRequest`, routes by path to the account or harness handler, and streams the Web `Response` back through the gateway.
 
 ```mermaid
 flowchart TD
-  Aws["AWS Lambda service"] -->|"provided.al2023"| Bun["Bun custom runtime binary"]
-  Bun --> Boot["functions/*/bootstrap.ts"]
-  Boot --> Runtime["startStreamingRuntime(handler)"]
-  Runtime --> Handler["handler(event)"]
-  Handler --> Response["LambdaResponse<br/>status, headers, body, afterResponse"]
-  Response --> Runtime
+  Gateway["gateway"] --> Server["Bun.serve<br/>src/server.ts"]
+  Server -->|"CoreRequest by path"| Account["account handler"]
+  Server -->|"CoreRequest by path"| Harness["harness handler"]
+  Account --> Response["Web Response"]
+  Harness --> Response
 ```
 
 Runtime boundary:
 
-- SST points Lambda `handler` to `bootstrap`.
-- The runtime passes the full Function URL event envelope into each handler.
-- `afterResponse` lets channel webhooks acknowledge quickly, then continue work after the HTTP response.
+- SST provisions the AWS data plane, IAM, Scheduler, and the cron-runs bus + API destination; the container deployment lives in the infra repo.
+- Handlers receive `CoreRequest` and return Web `Response` objects.
+- `ctx.waitUntil(...)` lets channel webhooks acknowledge quickly, then continue work after the HTTP response.
 
 ## High-Level Architecture
 
 ```mermaid
 flowchart TD
-  Owner["Account owner"] -->|"agents + skills APIs"| ManageUrl["account-manage<br/>Function URL"]
-  Admin["Admin"] -->|"Bearer AdminAccountSecret<br/>POST /accounts"| ManageUrl
-  Direct["Direct API client"] -->|"Bearer account secret<br/>POST / or /async"| HarnessUrl["harness-processing<br/>Function URL"]
-  Status["Status poller"] -->|"Bearer account secret<br/>GET /status/\{eventId\}"| HarnessUrl
-  Provider["Telegram / GitHub / Slack / Discord / Pancake / Zalo"] -->|"/webhooks/\{accountId\}/\{agentId\}/\{channel\}"| HarnessUrl
+  Owner["Account owner"] -->|"agents + skills APIs"| Gateway["gateway"]
+  Admin["Admin"] -->|"Bearer AdminAccountSecret<br/>POST /accounts"| Gateway
+  Direct["Direct API client"] -->|"Bearer account secret<br/>POST / or /async"| Gateway
+  Status["Status poller"] -->|"Bearer account secret<br/>GET /status/\{eventId\}"| Gateway
+  Provider["Telegram / GitHub / Slack / Discord / Pancake / Zalo"] -->|"/webhooks/\{accountId\}/\{agentId\}/\{channel\}"| Gateway
   WSClient["WebSocket client"] <-->|"wss://gateway"| WSGateway["WebSocket Gateway<br/>(caller's service)"]
-  WSGateway -->|"Lambda Event invocation"| HarnessUrl
-  HarnessUrl -->|"core publish (captured by stream)"| NATS["NATS JetStream"]
+  Gateway --> Core["Bun core container"]
+  WSGateway --> Gateway
+  Core -->|"core publish (captured by stream)"| NATS["NATS JetStream"]
   NATS -->|"conversation-scoped<br/>replay on reconnect"| WSGateway
 
-  ManageUrl --> AccountStore["DynamoDB: AccountConfig<br/>account metadata + secretHash"]
-  ManageUrl --> AgentStore["DynamoDB: AgentConfig<br/>encrypted agent configs"]
+  Core --> AccountStore["DynamoDB: AccountConfig<br/>account metadata + secretHash"]
+  Core --> AgentStore["DynamoDB: AgentConfig<br/>encrypted agent configs"]
   ConfigPlane["Convex config plane<br/>skills / tools / files / crons CRUD"] -->|"Manage Skills"| SkillStore["S3: Skills<br/>account-scoped skill bundles"]
   ConfigPlane -->|"Manage Cron Jobs"| Crons["Convex: crons"]
   ConfigPlane -->|"Create/update/delete schedules"| Scheduler["EventBridge Scheduler"]
-  AccountStore -->|Authentication| HarnessUrl
-  AgentStore -->|agentId config lookup| HarnessUrl
-  HarnessUrl --> Integrations["integrations.ts<br/>account auth + routing"]
+  AccountStore -->|Authentication| Core
+  AgentStore -->|agentId config lookup| Core
+  Core --> Integrations["integrations.ts<br/>account auth + routing"]
   Integrations --> Handler["handler.ts<br/>orchestration"]
   Handler --> Session["session.ts<br/>conversation state + prompt assembly"]
   Session --> Harness["harness.ts<br/>model/tool loop"]
@@ -84,8 +84,9 @@ flowchart TD
   AgentStore -->|config resolved before session<br/>passed into session for speed| Session
   Handler --> AsyncAgentResult["DynamoDB: AsyncAgentResult"]
   AsyncTools --> AsyncToolResult["DynamoDB: AsyncToolResult"]
-  Scheduler -->|"cron event"| HarnessUrl
-  HarnessUrl --> Crons["Convex: crons"]
+  Scheduler --> CronBus["cron-runs event bus"]
+  CronBus -->|"HTTPS API destination"| Gateway
+  Core --> Crons["Convex: crons"]
   Session --> Workspace["S3: account-scoped workspace files"]
   SkillStore -->|"Load skills metadata"| Session
   Harness -->|"Access skills"| SkillStore 
@@ -217,13 +218,15 @@ Direct sync and async POST access is controlled by `ENABLE_DIRECT_API`. Deploys 
 
 ## Cron Jobs
 
-Cron jobs are included in the default stack as a small scheduled-agent add-on, not a workflow DSL. The Convex config plane owns cron job create, update, delete, and list operations (`/v1/crons`, forwarded there by the gateway): it stores the account-scoped cron job in the `crons` table and creates, updates, or deletes the matching EventBridge Scheduler schedule. EventBridge Scheduler wakes the core harness with `{ kind: "cron", accountId, cronId }`, and the harness starts the configured agent asynchronously.
+Cron jobs are included in the default stack as a small scheduled-agent add-on, not a workflow DSL. The Convex config plane owns cron job create, update, delete, and list operations (`/v1/crons`, forwarded there by the gateway): it stores the account-scoped cron job in the `crons` table and creates, updates, or deletes the matching EventBridge Scheduler schedule. EventBridge Scheduler publishes onto the cron-runs event bus, whose rule forwards the event to the HTTPS API destination; the destination POSTs `{ kind: "cron", accountId, cronId }` through the gateway to the core harness, and the harness starts the configured agent asynchronously.
 
 ```mermaid
 flowchart TD
   Config["Convex config plane<br/>cron create/update/delete/list"] --> Jobs["Convex: crons"]
   Config --> Scheduler["EventBridge Scheduler<br/>schedule lifecycle"]
-  Scheduler -->|"cron event"| Harness["core harness (cron-run)"]
+  Scheduler --> CronBus["cron-runs event bus"]
+  CronBus -->|"HTTPS API destination"| Gateway["gateway"]
+  Gateway --> Harness["core harness<br/>(POST /v1/cron-runs)"]
   Harness --> Jobs
   Harness -->|"internal async worker event"| Harness
   Harness --> AsyncAgentResult["AsyncAgentResult"]
@@ -235,7 +238,7 @@ Developers who need custom chaining, cleanup, polling, or external workflow beha
 
 ```mermaid
 flowchart TD
-  Provider["Provider webhook"] -->|"POST /webhooks/\{accountId\}/\{agentId\}/\{channel\}"| Url["harness-processing URL"]
+  Provider["Provider webhook"] -->|"POST /webhooks/\{accountId\}/\{agentId\}/\{channel\}"| Url["gateway/core URL"]
   Url --> Load["load account + agent config"]
   Load --> Adapter["build channel adapter from agent config"]
   Adapter --> Auth["verify provider-native auth"]
@@ -425,7 +428,7 @@ Agents control model selection, channel credentials, optional skills, subagents,
 - `AgentConfig`: account-owned encrypted runtime config payloads.
 - `SandboxConfig` / `WorkspaceConfig`: account-scoped sandbox and workspace records referenced from agent config by id.
 - `AccountTool`: uploaded custom tool records (bundles live in the ToolBundles S3 bucket).
-- `Crons`: scheduled agent runs managed by `account-manage`.
+- `Crons`: scheduled agent runs managed by the Convex config plane.
 - `Conversations`: normalized model messages by account-scoped `conversationKey`.
 - `ProcessedEvents`: dedup markers and short-lived conversation lease records.
 - `AsyncAgentResult`: async direct API and subagent state for `/status/{eventId}` polling.

@@ -4,8 +4,10 @@
  * Node-runtime internal actions for account cron jobs (epic #85 phase 9,
  * stage 3): Convex owns the crons table writes and the matching EventBridge
  * Scheduler schedules directly, replacing core's former /v1/crons plane.
- * Schedules invoke the configured target (CRON_SCHEDULER_TARGET_ARN) with the
- * same {kind: "cron", accountId, cronId} payload core's scheduler wiring used.
+ * Schedules publish the {kind: "cron", accountId, cronId} payload onto the
+ * cron-runs event bus (CRON_SCHEDULER_TARGET_ARN); the bus rule provisioned in
+ * apps/core/sst.config.ts forwards it to the API destination that POSTs the
+ * gateway /v1/cron-runs.
  */
 
 import { randomBytes } from "node:crypto";
@@ -29,8 +31,8 @@ import {
 
 /**
  * Resolved EventBridge Scheduler target configuration from the deployment
- * environment: the invocation target ARN (the harness today, the cron-run API
- * destination after cutover), the role schedules assume, and the group name.
+ * environment: the cron-runs event bus ARN, the role schedules assume, and
+ * the group name.
  */
 interface SchedulerTarget {
     targetArn: string;
@@ -221,6 +223,9 @@ function scheduleTarget(target: SchedulerTarget, job: Doc<"crons">) {
     return {
         Arn: target.targetArn,
         RoleArn: target.roleArn,
+        // Templated EventBridge PutEvents target: Input becomes the event
+        // detail; Source must match the cron-run bus rule in sst.config.ts.
+        EventBridgeParameters: { DetailType: "cron-run", Source: "broods.crons" },
         Input: JSON.stringify({ kind: "cron", accountId: job.accountId, cronId: job._id }),
     };
 }

@@ -139,7 +139,7 @@ async function dispatchBackground(
     ? { url: `${baseUrl}/sandbox-jobs/${encodeURIComponent(resultId)}/complete`, token: completionToken }
     : undefined;
   if (!callback && !sandboxSupportsJobControls(ws.sandbox)) {
-    return toolError("Error: this sandbox requires AGENT_SERVICE_URL or Lambda Function URL for background job completion");
+    return toolError("Error: this sandbox requires PUBLIC_BASE_URL for background job completion");
   }
 
   // Create + seal the tracking row BEFORE launching so a fast job's callback can

@@ -344,7 +344,7 @@ async function createRunnerPayload(options: {
 async function sandboxJobCompletionUrl(completePath: string): Promise<string> {
   const baseUrl = await getHarnessPublicUrl();
   if (!baseUrl) {
-    throw new Error("custom async tool completion requires AGENT_SERVICE_URL or Lambda Function URL");
+    throw new Error("custom async tool completion requires PUBLIC_BASE_URL");
   }
   return new URL(completePath, ensureTrailingSlash(baseUrl)).toString();
 }
