@@ -42,6 +42,7 @@ function recordToItem(record: AccountToolRecord): Record<string, AttributeValue>
     inputSchema: toAttributeValue(record.inputSchema),
     bundleStorageKey: { S: record.bundleStorageKey },
     sha256: { S: record.sha256 },
+    runtime: { S: record.runtime },
     ...(record.defaultConfig !== undefined ? { defaultConfig: toAttributeValue(record.defaultConfig) } : {}),
     status: { S: record.status },
     createdAt: { S: record.createdAt },
@@ -71,6 +72,7 @@ function itemToRecord(item: Record<string, AttributeValue>): AccountToolRecord |
     inputSchema: fromAttributeValue(item.inputSchema) as AccountToolRecord["inputSchema"],
     bundleStorageKey,
     sha256,
+    runtime: item.runtime?.S === "isolate" ? "isolate" : "sandbox",
     ...(item.defaultConfig ? { defaultConfig: fromAttributeValue(item.defaultConfig) as Record<string, unknown> } : {}),
     status: status === "deleted" ? "deleted" : "active",
     createdAt,
@@ -125,6 +127,7 @@ export const dynamoAccountToolStore: AccountToolStore = {
       inputSchema: normalized.inputSchema,
       bundleStorageKey: normalized.bundleStorageKey,
       sha256: normalized.sha256,
+      runtime: normalized.runtime ?? "sandbox",
       ...(normalized.defaultConfig !== undefined ? { defaultConfig: normalized.defaultConfig } : {}),
       status: "active",
       createdAt: now,
@@ -177,6 +180,10 @@ export const dynamoAccountToolStore: AccountToolStore = {
     if (patch.sha256 !== undefined) {
       setExpressions.push("sha256 = :sha256");
       values[":sha256"] = { S: patch.sha256 };
+    }
+    if (patch.runtime !== undefined) {
+      setExpressions.push("runtime = :runtime");
+      values[":runtime"] = { S: patch.runtime };
     }
     if (patch.defaultConfig !== undefined) {
       if (patch.defaultConfig === null) removeExpressions.push("defaultConfig");

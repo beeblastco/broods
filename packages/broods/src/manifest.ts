@@ -591,6 +591,7 @@ async function normalizeConfig(resource: AnyResource, projectRoot: string): Prom
       path: string;
       description: string;
       inputSchema: Record<string, unknown>;
+      runtime?: "isolate" | "sandbox";
       defaultConfig?: Record<string, unknown>;
     }, projectRoot);
   }
@@ -680,6 +681,7 @@ async function normalizeToolConfig(
     path: string;
     description: string;
     inputSchema: Record<string, unknown>;
+    runtime?: "isolate" | "sandbox";
     defaultConfig?: Record<string, unknown>;
   },
   projectRoot: string,
@@ -712,6 +714,7 @@ async function normalizeToolConfig(
     path: manifestPath,
     description: config.description,
     inputSchema: config.inputSchema,
+    ...(config.runtime !== undefined ? { runtime: config.runtime } : {}),
     ...(config.defaultConfig !== undefined ? { defaultConfig: config.defaultConfig } : {}),
     bundle: bundle,
     sha256: sha256Hex(bundle),

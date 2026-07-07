@@ -1225,6 +1225,7 @@ async function handleToolRoute(
                 inputSchema: upload.inputSchema,
                 bundleStorageKey: bundleStorageKey,
                 sha256: upload.sha256,
+                runtime: upload.runtime,
                 ...(upload.defaultConfig !== undefined ? { defaultConfig: upload.defaultConfig } : {}),
             });
             const created = await ctx.runQuery(internal.accountTools.getById, { accountId: accountId, toolId: createdId });
@@ -1270,6 +1271,7 @@ async function handleToolRoute(
             ...(upload.description !== undefined ? { description: upload.description } : {}),
             ...(upload.inputSchema !== undefined ? { inputSchema: upload.inputSchema } : {}),
             ...(bundleStorageKey !== undefined ? { bundleStorageKey: bundleStorageKey, sha256: upload.sha256 } : {}),
+            ...(upload.runtime !== undefined ? { runtime: upload.runtime } : {}),
             ...(upload.defaultConfig !== undefined ? { defaultConfig: upload.defaultConfig } : {}),
         });
         const updated = await ctx.runQuery(internal.accountTools.getById, { accountId: accountId, toolId: toolId });
@@ -1531,6 +1533,7 @@ function toPublicAccountTool(record: Doc<"accountTools">): Record<string, unknow
         description: record.description,
         inputSchema: record.inputSchema,
         sha256: record.sha256,
+        runtime: record.runtime ?? "sandbox",
         ...(record.defaultConfig !== undefined ? { defaultConfig: record.defaultConfig } : {}),
         status: record.status,
         createdAt: new Date(record.createdAt).toISOString(),

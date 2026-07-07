@@ -8,6 +8,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { isPlainObject } from "../object.ts";
 
 export type AccountToolStatus = "active" | "deleted";
+export type AccountToolRuntime = "isolate" | "sandbox";
 
 export interface AccountToolRecord {
   accountId: string;
@@ -17,6 +18,7 @@ export interface AccountToolRecord {
   inputSchema: JSONSchema7;
   bundleStorageKey: string;
   sha256: string;
+  runtime: AccountToolRuntime;
   defaultConfig?: Record<string, unknown>;
   status: AccountToolStatus;
   createdAt: string;
@@ -30,6 +32,7 @@ export interface CreateAccountToolInput {
   inputSchema: JSONSchema7;
   bundleStorageKey: string;
   sha256: string;
+  runtime?: AccountToolRuntime;
   defaultConfig?: Record<string, unknown>;
 }
 
@@ -39,6 +42,7 @@ export interface UpdateAccountToolInput {
   inputSchema?: JSONSchema7;
   bundleStorageKey?: string;
   sha256?: string;
+  runtime?: AccountToolRuntime;
   defaultConfig?: Record<string, unknown> | null;
 }
 
@@ -47,6 +51,7 @@ export interface AccountToolUploadInput {
   description?: unknown;
   inputSchema?: unknown;
   bundle?: unknown;
+  runtime?: unknown;
   defaultConfig?: unknown;
 }
 
@@ -56,6 +61,7 @@ export interface NormalizedAccountToolUpload {
   inputSchema?: JSONSchema7;
   bundle?: string;
   sha256?: string;
+  runtime?: AccountToolRuntime;
   defaultConfig?: Record<string, unknown>;
 }
 
@@ -66,6 +72,7 @@ export interface PublicAccountToolRecord {
   description: string;
   inputSchema: JSONSchema7;
   sha256: string;
+  runtime: AccountToolRuntime;
   defaultConfig?: Record<string, unknown>;
   status: AccountToolStatus;
   createdAt: string;
@@ -75,6 +82,8 @@ export interface PublicAccountToolRecord {
 
 const MODEL_TOOL_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_-]{0,63}$/;
 const MAX_BUNDLE_BYTES = 512 * 1024;
+const NODE_BUILTIN_IMPORT_PATTERN = /(?:import\s+(?:[\s\S]*?\s+from\s*)?["']node:|import\s*\(\s*["']node:)/;
+const BARE_IMPORT_PATTERN = /(?:^|[\n;])\s*import\s+(?:[\s\S]*?\s+from\s*)?["'](?!\.{1,2}\/|\/|node:)[^"']+["']|import\s*\(\s*["'](?!\.{1,2}\/|\/|node:)[^"']+["']\s*\)/;
 
 /** Accept DynamoDB public ids and native Convex document ids during migration/sync. */
 export function isAccountToolId(value: string): boolean {
@@ -118,6 +127,12 @@ export function normalizeAccountToolUpload(input: unknown, options: { requireBun
     throw new Error("tool.bundle is required");
   }
 
+  if (value.runtime !== undefined) {
+    result.runtime = normalizeRuntime(value.runtime);
+  } else if (result.bundle !== undefined) {
+    result.runtime = inferAccountToolRuntime(result.bundle);
+  }
+
   if (value.defaultConfig !== undefined) {
     result.defaultConfig = normalizeDefaultConfig(value.defaultConfig);
   }
@@ -132,6 +147,7 @@ export function normalizeCreateAccountToolInput(input: CreateAccountToolInput): 
     inputSchema: normalizeInputSchema(input.inputSchema),
     bundleStorageKey: normalizeStorageKey(input.bundleStorageKey),
     sha256: normalizeSha256(input.sha256),
+    runtime: input.runtime ? normalizeRuntime(input.runtime) : "sandbox",
     ...(input.defaultConfig !== undefined ? { defaultConfig: normalizeDefaultConfig(input.defaultConfig) } : {}),
   };
 }
@@ -143,6 +159,7 @@ export function normalizeUpdateAccountToolInput(input: UpdateAccountToolInput): 
   if (input.inputSchema !== undefined) patch.inputSchema = normalizeInputSchema(input.inputSchema);
   if (input.bundleStorageKey !== undefined) patch.bundleStorageKey = normalizeStorageKey(input.bundleStorageKey);
   if (input.sha256 !== undefined) patch.sha256 = normalizeSha256(input.sha256);
+  if (input.runtime !== undefined) patch.runtime = normalizeRuntime(input.runtime);
   if (input.defaultConfig !== undefined) {
     patch.defaultConfig = input.defaultConfig === null ? null : normalizeDefaultConfig(input.defaultConfig);
   }
@@ -161,12 +178,32 @@ export function toPublicAccountTool(record: AccountToolRecord): PublicAccountToo
     description: record.description,
     inputSchema: record.inputSchema,
     sha256: record.sha256,
+    runtime: record.runtime,
     ...(record.defaultConfig !== undefined ? { defaultConfig: record.defaultConfig } : {}),
     status: record.status,
     createdAt: record.createdAt,
     updatedAt: record.updatedAt,
     ...(record.deletedAt ? { deletedAt: record.deletedAt } : {}),
   };
+}
+
+/**
+ * Cheap upload-time heuristic for choosing the default execution tier. Bundles
+ * that mention Node-only globals, node: imports, require(), or bare package
+ * imports need the existing sandbox tier; pure relative-import-free bundles can
+ * run in the V8 isolate tier.
+ */
+export function inferAccountToolRuntime(bundleSource: string): AccountToolRuntime {
+  if (
+    /\brequire\s*\(/.test(bundleSource) ||
+    NODE_BUILTIN_IMPORT_PATTERN.test(bundleSource) ||
+    /\bprocess\./.test(bundleSource) ||
+    /\b__dirname\b/.test(bundleSource) ||
+    BARE_IMPORT_PATTERN.test(bundleSource)
+  ) {
+    return "sandbox";
+  }
+  return "isolate";
 }
 
 function normalizeToolName(value: unknown): string {
@@ -213,6 +250,11 @@ function normalizeDefaultConfig(value: unknown): Record<string, unknown> {
     throw new Error("tool.defaultConfig must be an object");
   }
   return value as Record<string, unknown>;
+}
+
+function normalizeRuntime(value: unknown): AccountToolRuntime {
+  if (value === "isolate" || value === "sandbox") return value;
+  throw new Error('tool.runtime must be "isolate" or "sandbox"');
 }
 
 function normalizeStorageKey(value: unknown): string {

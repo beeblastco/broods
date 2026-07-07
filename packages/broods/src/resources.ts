@@ -106,6 +106,7 @@ export interface ToolDefinitionConfig {
   path: string;
   description: string;
   inputSchema: Record<string, unknown>;
+  runtime?: "isolate" | "sandbox";
   defaultConfig?: Record<string, unknown>;
 }
 

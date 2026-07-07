@@ -406,6 +406,7 @@ describe("createTools", () => {
       inputSchema: { type: "object", properties: {}, additionalProperties: false },
       bundleStorageKey: "account-tools/acct_test/bundles/hash.mjs",
       sha256: "a".repeat(64),
+      runtime: "sandbox",
       defaultConfig: { fromDefault: true },
       status: "active",
       createdAt: "2026-06-06T00:00:00.000Z",

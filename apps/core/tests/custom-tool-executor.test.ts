@@ -303,6 +303,7 @@ function accountToolRecord(hash: string): AccountToolRecord {
     inputSchema: { type: "object", properties: {} },
     bundleStorageKey: "account-tools/acct_test/bundles/hash.mjs",
     sha256: hash,
+    runtime: "sandbox",
     defaultConfig: { fromDefault: true },
     status: "active",
     createdAt: "2026-06-06T00:00:00.000Z",
