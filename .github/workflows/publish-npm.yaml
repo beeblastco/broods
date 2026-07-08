@@ -17,7 +17,9 @@ concurrency:
 
 jobs:
   publish:
-    if: ${{ github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.actor == 'github-actions[bot]') }}
+    # main-only; dispatching already requires write access, so manual re-runs
+    # (e.g. after a transient publish failure) are allowed too.
+    if: ${{ github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -35,9 +37,9 @@ jobs:
           node-version: "24"
           registry-url: "https://registry.npmjs.org"
 
-      - name: Update npm
-        run: npm install -g npm@latest
-
+      # NOTE: no `npm install -g npm@latest` here — overwriting the bundled npm
+      # in the hosted toolcache left it half-installed once ("Cannot find
+      # module 'sigstore'" during the provenance publish).
       - name: Install dependencies
         run: bun install --frozen-lockfile --ignore-scripts
 
