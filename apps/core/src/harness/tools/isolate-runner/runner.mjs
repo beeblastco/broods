@@ -261,16 +261,27 @@ async function runIsolateJob(isolate, payload, { timeoutMs, emitChunk }) {
         timeout: 5_000,
       });
     }
-    const execute = await definition.get("execute", { reference: true });
-    if (!execute || execute.typeof !== "function") {
-      throw new Error("custom tool bundle default export must expose execute(ctx, input)");
-    }
-    const definitionName = await definition.get("name", { copy: true });
-    if (definitionName && definitionName !== payload.toolName) {
-      throw new Error("custom tool bundle name does not match uploaded manifest");
+    // Hook bundles export handlers keyed by event name (default[event](ctx, event));
+    // tool bundles export execute(ctx, input). Resolve the entry accordingly.
+    let entry;
+    if (typeof payload.hookEvent === "string") {
+      entry = await definition.get(payload.hookEvent, { reference: true });
+      if (!entry || entry.typeof !== "function") {
+        // No handler for this event on this bundle: no mutation.
+        return undefined;
+      }
+    } else {
+      entry = await definition.get("execute", { reference: true });
+      if (!entry || entry.typeof !== "function") {
+        throw new Error("custom tool bundle default export must expose execute(ctx, input)");
+      }
+      const definitionName = await definition.get("name", { copy: true });
+      if (definitionName && definitionName !== payload.toolName) {
+        throw new Error("custom tool bundle name does not match uploaded manifest");
+      }
     }
 
-    await context.global.set("__execute", execute.derefInto());
+    await context.global.set("__execute", entry.derefInto());
     await context.global.set("__emitChunk", new ivm.Callback((output) => emitChunk(output), { sync: true }));
     return await context.eval(
       `(async () => {

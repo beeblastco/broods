@@ -63,6 +63,27 @@ describe("agent config", () => {
     });
   });
 
+  it("validates code hooks and subagent visibility config", () => {
+    // hooks.code accepts a hookId reference with an optional event filter.
+    expect(normalizeAgentConfig({
+      hooks: { code: [{ hookId: "hook_abc", events: ["agent.started", "channel.message.sending"] }] },
+    }).hooks?.code).toEqual([{ hookId: "hook_abc", events: ["agent.started", "channel.message.sending"] }]);
+    expect(() => normalizeAgentConfig({ hooks: { code: "x" } })).toThrow(
+      "config.hooks.code must be an array",
+    );
+    expect(() => normalizeAgentConfig({ hooks: { code: [{ events: ["agent.started"] }] } })).toThrow(
+      "config.hooks.code[0].hookId is required",
+    );
+    expect(() => normalizeAgentConfig({ hooks: { code: [{ hookId: "hook_a", events: ["nope"] }] } })).toThrow(
+      /config.hooks.code\[0\].events must be an array of:/,
+    );
+    // subagent.visibility is a closed enum.
+    expect(normalizeAgentConfig({ subagent: { visibility: "result" } }).subagent?.visibility).toBe("result");
+    expect(() => normalizeAgentConfig({ subagent: { visibility: "loud" } })).toThrow(
+      "config.subagent.visibility must be one of: full, result, none",
+    );
+  });
+
   it("validates runtime numeric config as positive bounded integers", () => {
     expect(() => normalizeAgentConfig({ agent: { maxTurn: 0 } })).toThrow(
       "config.agent.maxTurn must be an integer from 1 to 100",
