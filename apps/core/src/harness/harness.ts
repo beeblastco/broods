@@ -11,6 +11,7 @@ import {
   type LanguageModelUsage,
   type ModelMessage,
   type StepResult,
+  type SystemModelMessage,
   type ToolCallPart,
   type ToolApprovalRequestOutput,
   type ToolSet,
@@ -25,6 +26,7 @@ import {
 } from "@opentelemetry/api";
 import type { AgentConfig } from "../shared/storage/index.ts";
 import { collectSecretValues, logError, logInfo, logWarn, redact, redactSensitiveText } from "../shared/log.ts";
+import { isPlainObject } from "../shared/object.ts";
 import { recordUsageTask } from "../shared/telemetry.ts";
 import { extractCacheWriteTokens, usageTokenTotals } from "./usage-metering.ts";
 import {
@@ -49,6 +51,7 @@ import { stripReasoningFromMessages } from "./pruning.ts";
 import type { Session, TurnContextSnapshot } from "./session.ts";
 import type { RunAsyncToolDispatch } from "./async-tools.ts";
 import { createAgentLifecycleEmitter, toLifecycleValue } from "./lifecycle.ts";
+import { createAgentHookDispatcher, wrapToolsWithHooks, type HookDispatcher } from "./hook-dispatcher.ts";
 import { createTools } from "./tools/index.ts";
 import { createPolicyToolApproval, createRuntimeToolApproval } from "./policy.ts";
 import type { SandboxCpuSample } from "./sandbox/types.ts";
@@ -141,6 +144,9 @@ export interface AgentLoopOptions {
   dispatchAsyncTools?: RunAsyncToolDispatch;
   // Present when this run is a subagent; nests its trace under the parent.
   subagentParent?: SubagentParentContext;
+  // Request-shared hook dispatcher (one storage load + one ctx.state per
+  // request); the loop builds its own when the handler does not pass one.
+  hooks?: HookDispatcher;
 }
 
 export async function runAgentLoop(
@@ -155,6 +161,7 @@ export async function runAgentLoop(
   let systemContextSnapshot = turnContext.systemContextSnapshot;
   const configuredModel = resolveConfiguredModel(agentConfig);
   const lifecycle = createAgentLifecycleEmitter(session, agentConfig);
+  const hooks = options.hooks ?? await createAgentHookDispatcher(session.accountId, agentConfig);
 
   // Task-scoped usage accumulators — written by hooks/callbacks, read at finalize.
   let taskCacheWriteTokens = 0;
@@ -329,7 +336,7 @@ export async function runAgentLoop(
 
   const configuredApprovals = new Map<string, true>();
   const policyToolIdsByName = new Map<string, string>();
-  const tools = {
+  const builtTools = {
     ...await createTools({
       accountId: session.accountId,
       conversationKey: session.conversationKey,
@@ -361,6 +368,9 @@ export async function runAgentLoop(
         : {}),
     }, agentConfig),
   } satisfies ToolSet;
+  // Wrap tool execution so tool.call.started hooks can deny/edit args and
+  // tool.result hooks can transform output (no-op when no such hooks exist).
+  const tools = wrapToolsWithHooks(builtTools, hooks);
   const policyToolApproval = await createPolicyToolApproval(agentConfig, {
     accountId: session.accountId,
     project: session.projectSlug,
@@ -609,6 +619,15 @@ export async function runAgentLoop(
     modelId: agentConfig.model?.modelId,
     messageCount: turnContext.messages.length,
   });
+  // A user agent.started hook may inject system instructions or replace the
+  // message list before the model runs. Fold its result into the turn context.
+  if (hooks.hasHooksFor("agent.started")) {
+    const mutation = await hooks.runMutation("agent.started", {
+      system: turnContext.system.map((message) => message.content).join("\n\n"),
+      messages: toLifecycleValue(turnContext.messages),
+    });
+    applyAgentStartedMutation(turnContext, mutation);
+  }
 
   logInfo(`Agent loop started: ${configuredModel.providerName}/${agentConfig.model?.modelId ?? "unknown"} with ${turnContext.messages.length} message(s), ${Object.keys(tools).length} tool(s)`, {
     eventType: "model.invocation.started",
@@ -892,6 +911,14 @@ export async function runAgentLoop(
         toolResultCount: toolResults.length,
         warningCount: warnings?.length ?? 0,
       });
+      // agent.step.finished is observe-only for hooks (side effects, no mutation).
+      if (hooks.hasHooksFor("agent.step.finished")) {
+        await hooks.runMutation("agent.step.finished", {
+          stepNumber: stepNumber,
+          finishReason: finishReason,
+          toolCallCount: toolCalls.length,
+        });
+      }
       await Promise.all(toolResults.map((toolResult) =>
         lifecycle.emit("tool.result", {
           stepNumber: stepNumber,
@@ -1134,12 +1161,19 @@ export async function runAgentLoop(
             toolUsage: toLifecycleValue(tools.toolUsage),
             toolCalls: toLifecycleValue(tools.toolCalls),
           });
+          // Runs so a hook can react to a pending approval (notify/log). Honoring
+          // a returned { approve } to auto-resolve is a follow-up: it re-enters the
+          // approval continuation flow, which stays owned by the handler.
+          if (hooks.hasHooksFor("agent.approval.required")) {
+            await hooks.runMutation("agent.approval.required", { approvals: toLifecycleValue(approvals) });
+          }
           await reply?.onApprovalRequired?.(approvals);
           return;
         }
 
         if (modelOutput) {
           finalResponse = await modelOutput.parseCompleteOutput({ text }, { response, usage, finishReason }) as JSONValue;
+          finalResponse = await foldAgentFinished(hooks, finalResponse, finishReason);
           await reply?.onFinalText(finalResponse);
           await lifecycle.emit("agent.finished", {
             finishReason: finishReason,
@@ -1153,8 +1187,8 @@ export async function runAgentLoop(
           return;
         }
 
-        finalResponse = finalText;
-        await reply?.onFinalText(finalText);
+        finalResponse = await foldAgentFinished(hooks, finalText, finishReason);
+        await reply?.onFinalText(finalResponse);
         await lifecycle.emit("agent.finished", {
           finishReason: finishReason,
           stepCount: stepCount,
@@ -1162,7 +1196,7 @@ export async function runAgentLoop(
           toolsUsed: toLifecycleValue(tools.toolsUsed),
           toolUsage: toLifecycleValue(tools.toolUsage),
           toolCalls: toLifecycleValue(tools.toolCalls),
-          response: finalText,
+          response: toLifecycleValue(finalResponse),
         });
       } catch (err) {
         const errorText = errorMessage(err);
@@ -1187,6 +1221,10 @@ export async function runAgentLoop(
           toolUsage: toLifecycleValue(tools.toolUsage),
           toolCalls: toLifecycleValue(tools.toolCalls),
         });
+        // agent.failed is observe-only for hooks (side effects, no mutation).
+        if (hooks.hasHooksFor("agent.failed")) {
+          await hooks.runMutation("agent.failed", { error: errorText });
+        }
         await reply?.onErrorText(errorText).catch(() => { });
       } finally {
         await finalizeUsage(
@@ -1317,6 +1355,55 @@ function toolOutputErrorText(output: unknown): string | undefined {
   return maybeOutput.type === "error-text" && typeof maybeOutput.value === "string"
     ? maybeOutput.value
     : undefined;
+}
+
+// Fold an agent.started hook return into the turn context: `system` is appended
+// as a system message (also to ephemeralSystem so it survives prepareStep
+// refreshes), and `messages` replaces the conversation the model sees.
+function applyAgentStartedMutation(
+  turnContext: TurnContextSnapshot,
+  mutation: Record<string, unknown> | undefined,
+): void {
+  if (!mutation) {
+    return;
+  }
+  if (typeof mutation.system === "string" && mutation.system.trim().length > 0) {
+    const message: SystemModelMessage = { role: "system", content: mutation.system };
+    turnContext.system = [...turnContext.system, message];
+    turnContext.ephemeralSystem = [...turnContext.ephemeralSystem, message];
+  }
+  // Hooks are non-fatal, so a malformed messages override is dropped rather
+  // than passed to streamText where it would fail the run.
+  if (Array.isArray(mutation.messages) && mutation.messages.every(isModelMessageShape)) {
+    turnContext.messages = mutation.messages as ModelMessage[];
+  } else if (mutation.messages !== undefined) {
+    logWarn("Ignoring agent.started hook messages override: entries are not model messages");
+  }
+}
+
+function isModelMessageShape(entry: unknown): boolean {
+  return isPlainObject(entry)
+    && typeof entry.role === "string"
+    && ["system", "user", "assistant", "tool"].includes(entry.role)
+    && entry.content !== undefined;
+}
+
+// Fold an agent.finished hook's { output } into the final response. On the
+// streaming (SSE) path the tokens are already sent, so this changes the
+// delivered/stored final result, not the already-streamed text.
+async function foldAgentFinished(
+  hooks: HookDispatcher,
+  response: JSONValue,
+  finishReason: string,
+): Promise<JSONValue> {
+  if (!hooks.hasHooksFor("agent.finished")) {
+    return response;
+  }
+  const mutation = await hooks.runMutation("agent.finished", {
+    finishReason,
+    response: toLifecycleValue(response),
+  });
+  return mutation && "output" in mutation ? (mutation.output as JSONValue) : response;
 }
 
 function extractApprovalRequests(steps: Array<StepResult<ToolSet>>): ApprovalRequestOutput[] {

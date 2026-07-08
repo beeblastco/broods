@@ -16,9 +16,17 @@ import type {
   AgentTelegramChannelConfig,
   AgentPolicyConfig,
   AgentPolicyDocument,
+  AgentHookEventName,
+  AgentWebhookHookConfig,
   CreateCronInput,
   SandboxConfig,
   WorkspaceConfig,
+  TelegramSource,
+  GitHubSource,
+  SlackSource,
+  DiscordSource,
+  PancakeSource,
+  ZaloSource,
 } from "./contracts.ts";
 
 const RESOURCE_MARKER = Symbol.for("broods.resource");
@@ -156,12 +164,8 @@ export interface PancakeChannelInput extends ChannelIdentityInput {
   pageAccessToken: ChannelSecret;
   webhookSecret: ChannelSecret;
   senderId?: string | EnvRef;
-  ignoreTagIds?: readonly (string | EnvRef)[];
 }
 
-type PancakeChannelDefinitionConfig = Omit<PancakeChannelInput, "ignoreTagIds"> & {
-  options?: { ignoreTagIds?: readonly (string | EnvRef)[] };
-};
 export interface ZaloChannelInput extends ChannelIdentityInput {
   botToken: ChannelSecret;
   webhookSecret: ChannelSecret;
@@ -172,7 +176,7 @@ export type TelegramChannelDefinition = ChannelDefinition<"telegram", TelegramCh
 export type GitHubChannelDefinition = ChannelDefinition<"github", GitHubChannelInput>;
 export type SlackChannelDefinition = ChannelDefinition<"slack", SlackChannelInput>;
 export type DiscordChannelDefinition = ChannelDefinition<"discord", DiscordChannelInput>;
-export type PancakeChannelDefinition = ChannelDefinition<"pancake", PancakeChannelDefinitionConfig>;
+export type PancakeChannelDefinition = ChannelDefinition<"pancake", PancakeChannelInput>;
 export type ZaloChannelDefinition = ChannelDefinition<"zalo", ZaloChannelInput>;
 export type AnyChannelDefinition =
   | TelegramChannelDefinition
@@ -208,6 +212,79 @@ export type AgentSkillsDefinitionConfig = Omit<NonNullable<AgentConfig["skills"]
   allowed?: readonly (SkillResource | string)[];
 };
 
+export interface HookContext {
+  fetch: typeof fetch;
+  config: Record<string, unknown>;
+  /**
+   * Mutable per-request scratchpad shared across this agent request's hooks.
+   * Seed it in an early hook (e.g. `onStart`) and read or modify it later —
+   * every loop hook, `onSubagentFinish`, and the reply's `onMessageSending`
+   * see the same state. Keep it JSON-serializable. `onMessageReceived`,
+   * delayed background replies, and each subagent's own run get fresh state.
+   */
+  state: Record<string, unknown>;
+}
+
+type Handler<Event, Result> = (
+  ctx: HookContext,
+  event: Event,
+) => Result | void | Promise<Result | void>;
+
+/**
+ * Channel-specific routing data attached to an inbound message. Inherited from
+ * the core channel adapters (via contracts.ts) so an `onMessageReceived` hook
+ * that narrows on `event.channel` always sees exactly what core emits (e.g.
+ * Pancake `tagIds`).
+ */
+export type TelegramMessageSource = TelegramSource;
+export type GitHubMessageSource = GitHubSource;
+export type SlackMessageSource = SlackSource;
+export type DiscordMessageSource = DiscordSource;
+export type PancakeMessageSource = PancakeSource;
+export type ZaloMessageSource = ZaloSource;
+
+/**
+ * Inbound channel message passed to `onMessageReceived`, discriminated on
+ * `channel` so each variant exposes its channel's strongly-typed `source`.
+ */
+export type ChannelMessageReceived =
+  | { channel: "telegram"; text: string; source: TelegramMessageSource }
+  | { channel: "github"; text: string; source: GitHubMessageSource }
+  | { channel: "slack"; text: string; source: SlackMessageSource }
+  | { channel: "discord"; text: string; source: DiscordMessageSource }
+  | { channel: "pancake"; text: string; source: PancakeMessageSource }
+  | { channel: "zalo"; text: string; source: ZaloMessageSource };
+
+/**
+ * Inline agent hook callbacks. Handlers are serialized with `.toString()`,
+ * bundled into one account hook, and run in a fresh V8 isolate. Keep them
+ * self-contained: use only `ctx`, `event`, and JavaScript globals. Do not rely
+ * on imports or closure variables. Arrow functions and function expressions are
+ * preferred so the serialized source is valid as an object-literal value.
+ *
+ * Subagent runs fire hooks too: a registered subagent runs its own hooks, a
+ * prompt-only (virtual) subagent inherits this bundle — always with fresh
+ * `ctx.state`. `onSubagentFinish` fires on the parent with the parent's state.
+ */
+export interface AgentHooks {
+  onStart?: Handler<{ system: string; messages: unknown[] }, { system?: string; messages?: unknown[] }>;
+  onStepFinish?: Handler<{ stepNumber: number; finishReason: string; toolCallCount: number }, void>;
+  onToolCall?: Handler<
+    { toolName: string; input: unknown },
+    { decision?: "allow" | "deny"; args?: Record<string, unknown>; denyReason?: string }
+  >;
+  onToolResult?: Handler<{ toolName: string; output: unknown }, { output?: unknown }>;
+  onFinish?: Handler<{ finishReason: string; response: unknown }, { output?: unknown }>;
+  onApproval?: Handler<{ approvals: unknown }, { approve?: boolean }>;
+  onError?: Handler<{ error: string }, void>;
+  onSubagentFinish?: Handler<{ taskId: string; result: unknown }, { visibleResult?: unknown }>;
+  onMessageReceived?: Handler<
+    ChannelMessageReceived,
+    { drop?: boolean; text?: string }
+  >;
+  onMessageSending?: Handler<{ channel: ChannelType; text: string }, { drop?: boolean; text?: string }>;
+}
+
 export type AgentPolicyDefinitionConfig = Omit<AgentPolicyConfig, "policyIds"> & {
   policies?: readonly (PolicyResource | string)[];
 };
@@ -221,8 +298,9 @@ export type AgentPolicyDefinitionConfig = Omit<AgentPolicyConfig, "policyIds"> &
  * gains a new top-level field that should be code-definable.
  */
 export type AgentDefinitionConfig =
-  & EnvRefString<Pick<AgentConfig, "agent" | "model" | "provider" | "session" | "hooks" | "tools">>
+  & EnvRefString<Pick<AgentConfig, "agent" | "model" | "provider" | "session" | "tools">>
   & {
+    hooks?: AgentHooks & { webhooks?: readonly EnvRefString<AgentWebhookHookConfig>[] };
     channels?: readonly AnyChannelDefinition[];
     sandbox?: SandboxResource | string;
     workspaces?: readonly AgentWorkspaceInput[];
@@ -341,11 +419,7 @@ export function defineDiscordChannel(config: DiscordChannelInput): DiscordChanne
 }
 
 export function definePancakeChannel(config: PancakeChannelInput): PancakeChannelDefinition {
-  const { ignoreTagIds, ...channelConfig } = config;
-  return defineChannel("pancake", {
-    ...channelConfig,
-    ...(ignoreTagIds === undefined ? {} : { options: { ignoreTagIds } }),
-  });
+  return defineChannel("pancake", config);
 }
 
 export function defineZaloChannel(config: ZaloChannelInput): ZaloChannelDefinition {

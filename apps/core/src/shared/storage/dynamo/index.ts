@@ -5,6 +5,7 @@
  */
 
 import type { StorageProvider } from "../types.ts";
+import { dynamoAccountHookStore } from "./account-hooks.ts";
 import { dynamoAccountToolStore } from "./account-tools.ts";
 import { dynamoAgentPolicyStore } from "./agent-policies.ts";
 import { dynamoAccountStore } from "./accounts.ts";
@@ -30,11 +31,13 @@ export const dynamoStorageProvider: StorageProvider = {
   sandboxConfigs: dynamoSandboxConfigStore,
   workspaceConfigs: dynamoWorkspaceConfigStore,
   accountTools: dynamoAccountToolStore,
+  accountHooks: dynamoAccountHookStore,
   agentPolicies: dynamoAgentPolicyStore,
   usage: dynamoUsageStore,
 };
 
 export {
+  dynamoAccountHookStore,
   dynamoAccountToolStore,
   dynamoAgentPolicyStore,
   dynamoAccountStore,

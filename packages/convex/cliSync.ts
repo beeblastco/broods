@@ -43,6 +43,7 @@ const resourceValidator = v.object({
         v.literal("cron"),
         v.literal("skill"),
         v.literal("tool"),
+        v.literal("hook"),
         v.literal("policy"),
     ),
     name: v.string(),
@@ -64,6 +65,7 @@ const idsValidator = v.object({
     crons: v.record(v.string(), v.string()),
     skills: v.record(v.string(), v.string()),
     tools: v.record(v.string(), v.string()),
+    hooks: v.record(v.string(), v.string()),
     policies: v.record(v.string(), v.string()),
 });
 
@@ -230,6 +232,7 @@ export const syncManifestBySecretHash = internalMutation({
             crons: {},
             skills: externalIds.skills,
             tools: externalIds.tools,
+            hooks: externalIds.hooks,
             policies: policyIds,
         };
         const resources = await resourcesForEnvironment(ctx, account._id, projectDoc._id, environmentDoc._id);
@@ -331,6 +334,7 @@ export const recordExternalResourcesBySecretHash = internalMutation({
         ids: v.object({
             skills: v.record(v.string(), v.string()),
             tools: v.record(v.string(), v.string()),
+            hooks: v.record(v.string(), v.string()),
         }),
         prune: v.optional(v.boolean()),
     },
@@ -346,13 +350,23 @@ export const recordExternalResourcesBySecretHash = internalMutation({
                 q.eq("projectId", projectDoc._id).eq("environmentId", environmentDoc._id),
             )
             .collect();
-        const desired = args.resources.filter((entry) => entry.kind === "skill" || entry.kind === "tool");
+        const desired = args.resources.filter((entry) => entry.kind === "skill" || entry.kind === "tool" || entry.kind === "hook");
         const desiredKeys = new Set(desired.map((entry) => `${entry.kind}:${resourceName(entry.name)}`));
 
         for (const resource of desired) {
             const name = resourceName(resource.name);
-            const kind: "skill" | "tool" = resource.kind === "skill" ? "skill" : "tool";
-            const externalId = resource.kind === "skill" ? args.ids.skills[name] : args.ids.tools[name];
+            let kind: "skill" | "tool" | "hook";
+            let externalId: string | undefined;
+            if (resource.kind === "skill") {
+                kind = "skill";
+                externalId = args.ids.skills[name];
+            } else if (resource.kind === "tool") {
+                kind = "tool";
+                externalId = args.ids.tools[name];
+            } else {
+                kind = "hook";
+                externalId = args.ids.hooks[name];
+            }
             if (!externalId) throw new Error(`${resource.kind}:${name} did not return an external id`);
             const current = existing.find((entry) => entry.kind === kind && entry.name === name);
             const row = {
@@ -1896,6 +1910,9 @@ async function resourcesForEnvironment(
     const toolNames = Object.fromEntries(externalResources
         .filter((entry) => entry.kind === "tool")
         .map((entry) => [entry.externalId, entry.name]));
+    const hookNames = Object.fromEntries(externalResources
+        .filter((entry) => entry.kind === "hook")
+        .map((entry) => [entry.externalId, entry.name]));
     const policyNames = Object.fromEntries(policies
         .filter((entry) => entry.managedBy === "cli" && entry.status === "active")
         .map((entry) => [entry._id, entry.name]));
@@ -1932,7 +1949,7 @@ async function resourcesForEnvironment(
                 searchToolEnabled: agent.searchToolEnabled,
                 searchToolConfig: agent.searchToolConfig as Record<string, unknown> | undefined,
                 extraConfig: agent.extraConfig as Record<string, unknown> | undefined,
-            }), workspaceNames, sandboxNames, agentNames, skillNames, toolNames, policyNames),
+            }), workspaceNames, sandboxNames, agentNames, skillNames, toolNames, hookNames, policyNames),
         })),
         ...policies.filter((policy) => policy.managedBy === "cli" && policy.status === "active").map((policy): CliResource => ({
             kind: "policy",
@@ -2021,6 +2038,7 @@ async function idsForEnvironment(
         )),
         skills: externalIds.skills,
         tools: externalIds.tools,
+        hooks: externalIds.hooks,
         policies: Object.fromEntries(policies
             .filter((entry) => entry.managedBy === "cli" && entry.status === "active")
             .map((entry) => [entry.name, entry._id])),
@@ -2031,7 +2049,7 @@ async function externalIdsForEnvironment(
     ctx: QueryCtx | MutationCtx,
     projectId: Id<"projects">,
     environmentId: Id<"environments">,
-): Promise<{ skills: Record<string, string>; tools: Record<string, string> }> {
+): Promise<{ skills: Record<string, string>; tools: Record<string, string>; hooks: Record<string, string> }> {
     const resources = await ctx.db
         .query("cliExternalResources")
         .withIndex("by_projectId_and_environmentId", (q) =>
@@ -2045,6 +2063,9 @@ async function externalIdsForEnvironment(
             .map((entry) => [entry.name, entry.externalId])),
         tools: Object.fromEntries(resources
             .filter((entry) => entry.kind === "tool")
+            .map((entry) => [entry.name, entry.externalId])),
+        hooks: Object.fromEntries(resources
+            .filter((entry) => entry.kind === "hook")
             .map((entry) => [entry.name, entry.externalId])),
     };
 }
@@ -2221,6 +2242,7 @@ function rewriteIdsToNames(
     agentNames: Record<string, string> = {},
     skillNames: Record<string, string> = {},
     toolNames: Record<string, string> = {},
+    hookNames: Record<string, string> = {},
     policyNames: Record<string, string> = {},
 ): Record<string, unknown> {
     const result = { ...config };
@@ -2265,6 +2287,19 @@ function rewriteIdsToNames(
             toolNames[key] ?? key,
             value,
         ]));
+    }
+    if (isPlainObject(result.hooks) && Array.isArray(result.hooks.code)) {
+        result.hooks = {
+            ...result.hooks,
+            code: result.hooks.code.map((entry) => {
+                if (!isPlainObject(entry)) return entry;
+                const hookId = typeof entry.hookId === "string" && hookNames[entry.hookId]
+                    ? hookNames[entry.hookId]
+                    : entry.hookId;
+
+                return { ...entry, hookId: hookId };
+            }),
+        };
     }
     if (isPlainObject(result.policy) && Array.isArray(result.policy.policyIds)) {
         result.policy = {

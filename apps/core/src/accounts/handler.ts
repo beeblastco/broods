@@ -70,7 +70,7 @@ async function handleAccountRequest(request: CoreRequest): Promise<Response> {
             return deleteAccountResponse(account);
         }
 
-        // Agent, skills, tools, workspace-file, cron, workspace, sandbox-config, and
+        // Agent, skills, tools, hooks, workspace-file, cron, workspace, sandbox-config, and
         // policy CRUD moved to the Convex config plane (configHttp.ts, epic
         // #85 phase 9); the gateway routes those paths there. Runtime reads
         // stay in src/shared/skills.ts, uploaded tool bundle loading,
@@ -433,14 +433,15 @@ async function sandboxReservationBelongsToAccount(
 
 async function deleteAccountResponse(account: Extract<AuthContext, { kind: "account" }>["account"]): Promise<Response> {
     const cleanup = await deleteAccountRuntimeData(account);
-    const [agentsDeleted, skillObjectsDeleted, cronsDeleted, accountToolsDeleted] = await Promise.all([
+    const [agentsDeleted, skillObjectsDeleted, cronsDeleted, accountToolsDeleted, accountHooksDeleted] = await Promise.all([
         getStorage().agents.removeAllForAccount(account.accountId),
         deleteAccountSkills(account.accountId),
         deleteAccountCrons(account.accountId),
         getStorage().accountTools.removeAllForAccount(account.accountId),
+        getStorage().accountHooks.removeAllForAccount(account.accountId),
     ]);
     await getStorage().accounts.remove(account.accountId);
-    return jsonResponse(200, { deleted: true, cleanup: { ...cleanup, agentsDeleted, skillObjectsDeleted, cronsDeleted, accountToolsDeleted } });
+    return jsonResponse(200, { deleted: true, cleanup: { ...cleanup, agentsDeleted, skillObjectsDeleted, cronsDeleted, accountToolsDeleted, accountHooksDeleted } });
 }
 
 

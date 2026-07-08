@@ -169,6 +169,7 @@ export function isConfigHttpPath(pathname: string, method = "GET"): boolean {
   return (
     /^\/v1\/skills(?:\/[^/]+)?$/.test(pathname) ||
     /^\/v1\/tools(?:\/[^/]+)?$/.test(pathname) ||
+    /^\/v1\/hooks(?:\/[^/]+)?$/.test(pathname) ||
     /^\/v1\/workspaces\/[^/]+\/files$/.test(pathname) ||
     /^\/v1\/workspaces(?:\/[^/]+)?$/.test(pathname) ||
     /^\/v1\/sandboxes(?:\/[^/]+)?$/.test(pathname) ||

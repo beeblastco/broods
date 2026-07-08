@@ -21,6 +21,7 @@ import {
   scopedDirectEventId,
 } from "../shared/runtime-keys.ts";
 import { runAgentLoop, type ToolApprovalSummary } from "./harness.ts";
+import { applyMessageSendingHook, createAgentHookDispatcher, type HookDispatcher } from "./hook-dispatcher.ts";
 import {
   routeIncomingEvent,
   sendChannelReply,
@@ -789,6 +790,9 @@ async function handleChannelRequest(event: ChannelInboundEvent, context?: Reques
     // here — after the in-flight reply — so a fast follow-up is answered in order.
     let incoming: ConversationIngressEvent[] = ownEvents;
     let ephemeralSystem: SystemModelMessage[] = [];
+    // One dispatcher for the whole channel request — every drained turn, its
+    // subagent finishes, and the outbound sending hook share it (and ctx.state).
+    const hooks = await createAgentHookDispatcher(event.accountId, event.agentConfig ?? {});
     while (true) {
       if (incoming.length > 0) {
         try {
@@ -864,11 +868,21 @@ async function handleChannelRequest(event: ChannelInboundEvent, context?: Reques
           if (streamed && typeof response === "string") {
             return;
           }
-          const text = formatChannelFinalText(
+          const formatted = formatChannelFinalText(
             typeof response === "string" ? response : JSON.stringify(response, null, 2),
             traceId,
             event,
           );
+          // An onMessageSending hook may drop or rewrite the outbound channel reply.
+          const text = await applyMessageSendingHook(hooks, event.channelName, formatted);
+          if (text === null) {
+            logInfo("Channel reply dropped by onMessageSending hook", {
+              channel: event.channelName,
+              eventId: session.eventId,
+              conversationKey: session.conversationKey,
+            });
+            return;
+          }
           logInfo("Channel reply sending", {
             channel: event.channelName,
             accountId: event.accountId,
@@ -916,7 +930,7 @@ async function handleChannelRequest(event: ChannelInboundEvent, context?: Reques
           });
           await session.persistModelMessages([createChannelApprovalDenial(approvals)]);
         },
-      });
+      }, hooks);
 
       if (result.didFail) {
         logError("Channel agent loop failed", {
@@ -1114,7 +1128,6 @@ async function pushReplyToChannel(event: DirectInboundEvent, text: string): Prom
     await sendChannelReply({
       config: event.agentConfig,
       accountId: event.accountId,
-      agentId: event.agentId,
       channelName: event.replyTarget.channelName,
       source: event.replyTarget.source,
       text,
@@ -1462,6 +1475,7 @@ async function runAgentLoopUntilSubagentsIdle(
     onApprovalRequired?(approvals: ToolApprovalSummary[]): Promise<void>;
     streamMessage?(stream: AgentLoopStream): Promise<void>;
   },
+  hooks?: HookDispatcher,
 ): Promise<{ didFail: boolean; failureText: string | null; hasDetachedCallbacks: boolean; traceId?: string }> {
   const subagentCoordinator = new SubagentCoordinator(session, agentConfig, waitUntilMs(context));
   const asyncToolCoordinator = new AsyncToolCoordinator(session, waitUntilMs(context), session.delivery ?? { kind: "async" });
@@ -1471,6 +1485,7 @@ async function runAgentLoopUntilSubagentsIdle(
     asyncToolCoordinator: asyncToolCoordinator,
     initialTurnContext: initialTurnContext,
     agentConfig: agentConfig,
+    ...(hooks ? { hooks } : {}),
     consumeStream: reply.streamMessage ?? (async (stream) => {
       await stream.consumeStream();
     }),
@@ -1515,6 +1530,7 @@ async function runParentContinuationLoop(options: {
   asyncToolCoordinator: AsyncToolCoordinator;
   initialTurnContext: DirectTurn["turnContext"];
   agentConfig: DirectInboundEvent["agentConfig"];
+  hooks?: HookDispatcher;
   consumeStream(stream: AgentLoopStream): Promise<void>;
   onLoopErrorText?(error: string): Promise<void>;
   onApprovalRequired?(approvals: ToolApprovalSummary[]): Promise<void>;
@@ -1523,6 +1539,11 @@ async function runParentContinuationLoop(options: {
   let turnContext = options.initialTurnContext;
   let finalResponse: JSONValue | undefined;
   let traceId: string | undefined;
+
+  // One hook dispatcher for the whole parent request: every loop iteration and
+  // the subagent-finish fire-points share a single ctx.state and one storage load.
+  const hooks = options.hooks ?? await createAgentHookDispatcher(options.session.accountId, options.agentConfig);
+  options.subagentCoordinator.attachHooks(hooks);
 
   while (true) {
     let approvals: ToolApprovalSummary[] = [];
@@ -1540,6 +1561,7 @@ async function runParentContinuationLoop(options: {
     }, {
       dispatchSubagents: options.subagentCoordinator.dispatch,
       dispatchAsyncTools: options.asyncToolCoordinator.dispatch,
+      hooks: hooks,
     });
     traceId = stream.traceId();
 

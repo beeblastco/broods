@@ -1,28 +1,22 @@
 import { defineAgent, definePancakeChannel, env } from "broods";
 
-// Pancake channel supports an optional `ignoreTagIds` parameter which allows you to specify a list of tag IDs. 
-// If a message contains any of these tags, the agent will ignore the message and not respond to it. 
-// This can be useful for filtering out certain types of messages or for preventing the agent from responding to messages that are not relevant to its purpose.
-const ignoreTagIds: string[] = (env.PANCAKE_IGNORE_TAG_IDS as string | undefined)?.split(",").map((value) => value.trim()).filter(Boolean) ?? [];
-
 export const pancake = definePancakeChannel({
   pageId: env.PANCAKE_PAGE_ID,
   pageAccessToken: env.PANCAKE_PAGE_ACCESS_TOKEN,
   webhookSecret: env.PANCAKE_WEBHOOK_SECRET,
   senderId: env.PANCAKE_SENDER_ID,
-  ...(ignoreTagIds.length > 0 ? { ignoreTagIds } : {}),
 });
 
 export const agent = defineAgent({
   name: "pancake-channel-agent",
   config: {
-    provider: { 
-      minimax: { 
+    provider: {
+      minimax: {
         apiKey: env.MINIMAX_API_KEY,
-      } 
+      }
     },
     model: {
-      provider: "minimax", 
+      provider: "minimax",
       modelId: "MiniMax-M3",
     },
     agent: {
@@ -36,6 +30,20 @@ export const agent = defineAgent({
         includeAnswer: true,
         maxResults: 5,
         topic: "news",
+      },
+    },
+    // Human-handoff filter: drop inbound messages on conversations a staff member
+    // has taken over (tagged in Pancake) so the agent stays quiet. This replaces
+    // the old baked-in `ignoreTagIds` channel option — the same behavior, now
+    // owned by you. Handlers run in an isolate and must be self-contained, so the
+    // handoff tag ids are inlined rather than read from env or a closure.
+    hooks: {
+      onMessageReceived: (ctx, event) => {
+        if (event.channel !== "pancake") return undefined;
+        const handoffTagIds = ["order-tag", "pending-tag"];
+        const tagIds = event.source.tagIds ?? [];
+
+        return tagIds.some((tagId) => handoffTagIds.includes(tagId)) ? { drop: true } : undefined;
       },
     },
     channels: [pancake],

@@ -21,6 +21,7 @@ export type ConfigAuditResource = {
         | "agent"
         | "skill"
         | "tool"
+        | "hook"
         | "workspace"
         | "workspaceFile"
         | "cron"

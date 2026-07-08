@@ -14,6 +14,7 @@ import {
 } from "../shared/runtime-keys.ts";
 import { runAgentLoop, type SubagentParentContext } from "./harness.ts";
 import { createAgentLifecycleEmitter, type AgentLifecycleEmitter, toLifecycleValue } from "./lifecycle.ts";
+import { createAgentHookDispatcher, type HookDispatcher } from "./hook-dispatcher.ts";
 import { Session } from "./session.ts";
 import {
   createPendingAsyncAgentResult,
@@ -39,6 +40,9 @@ interface SubagentCompletion {
   status: "completed" | "failed";
   response?: JSONValue;
   error?: string;
+  // What the parent actually sees, after subagent.visibility + an onSubagentFinish
+  // hook. Undefined => render the raw response.
+  visibleResult?: JSONValue;
 }
 
 interface ResolvedSubagentTask {
@@ -60,8 +64,9 @@ interface ResolvedSubagentTask {
 export class SubagentCoordinator {
   private readonly completions: SubagentCompletion[] = [];
   private readonly pending = new Map<string, Promise<void>>();
-  private readonly pendingMetadata = new Map<string, Omit<SubagentCompletion, "status" | "response" | "error">>();
+  private readonly pendingMetadata = new Map<string, Omit<SubagentCompletion, "status" | "response" | "error" | "visibleResult">>();
   private readonly waiters = new Set<() => void>();
+  private hooksPromise?: Promise<HookDispatcher>;
 
   constructor(
     private readonly parentSession: Session,
@@ -413,7 +418,20 @@ export class SubagentCoordinator {
       return;
     }
 
-    this.completions.push(completion);
+    // Decide what the parent sees from this child: an onSubagentFinish hook wins;
+    // otherwise subagent.visibility ("none" hides it, "result"/"full" show it).
+    let inject = true;
+    if (completion.status === "completed") {
+      const hookVisible = await this.runSubagentFinishHook(completion);
+      if (hookVisible !== undefined) {
+        completion.visibleResult = hookVisible;
+      } else if ((this.parentAgentConfig.subagent?.visibility ?? "result") === "none") {
+        inject = false;
+      }
+    }
+    if (inject) {
+      this.completions.push(completion);
+    }
     this.notifyCompletion();
     logInfo("Subagent task completed", {
       parentEventId: this.parentSession.eventId,
@@ -429,6 +447,30 @@ export class SubagentCoordinator {
       ...(completion.response !== undefined ? { response: toLifecycleValue(completion.response) } : {}),
       ...(completion.error ? { error: completion.error } : {}),
     });
+  }
+
+  /** Share the request's hook dispatcher so onSubagentFinish sees the same ctx.state as the loop hooks. */
+  attachHooks(hooks: HookDispatcher): void {
+    this.hooksPromise = Promise.resolve(hooks);
+  }
+
+  private getHooks(): Promise<HookDispatcher> {
+    if (!this.hooksPromise) {
+      this.hooksPromise = createAgentHookDispatcher(this.parentSession.accountId, this.parentAgentConfig);
+    }
+    return this.hooksPromise;
+  }
+
+  // Runs an onSubagentFinish (subagent.task.finished) hook and returns what it
+  // wants the parent to see, or undefined when there is no such hook / no override.
+  private async runSubagentFinishHook(completion: SubagentCompletion): Promise<JSONValue | undefined> {
+    const hooks = await this.getHooks();
+    const mutation = await hooks.runMutation("subagent.task.finished", {
+      taskId: completion.taskId,
+      agentId: completion.agentId,
+      result: completion.response === undefined ? null : toLifecycleValue(completion.response),
+    });
+    return mutation?.visibleResult as JSONValue | undefined;
   }
 
   private nextStateChange(): Promise<void> {
@@ -500,8 +542,9 @@ function completionToParentMessage(completion: SubagentCompletion): UserModelMes
     `conversationKey: ${completion.conversationKey}`,
     `status: ${completion.status}`,
   ].join("\n");
+  const visible = completion.visibleResult ?? completion.response;
   const result = completion.status === "completed"
-    ? completion.response === undefined ? "(no result)" : formatModelValue(completion.response)
+    ? visible === undefined ? "(no result)" : formatModelValue(visible)
     : completion.error;
 
   return {

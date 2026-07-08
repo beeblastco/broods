@@ -4,7 +4,7 @@
  */
 
 import { createHash } from "node:crypto";
-import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { createPancakeChannel } from "../src/shared/pancake-channel.ts";
 
 const ORIGINAL_FETCH = globalThis.fetch;
@@ -120,49 +120,17 @@ describe("pancake channel adapter", () => {
     })))).toEqual({ kind: "ignore" });
   });
 
-  it("uses configured scenario handoff tags to ignore human-owned conversations", async () => {
-    const adapter = createPancakeChannel("page-1", "page-token", "hook-secret", undefined, {
-      accountId: "acct_test",
-      agentId: "agent_test",
-      configOptions: {
-        ignoreTagIds: ["order-tag", "pending-tag"],
-      },
-    });
-
-    globalThis.fetch = mock(async () => {
-      throw new Error("Pancake handoff tag check should not call fetch");
-    }) as never;
+  it("surfaces conversation tag ids on the parsed source so hooks can filter", async () => {
+    const adapter = createPancakeChannel("page-1", "page-token", "hook-secret");
 
     const parsed = await adapter.parse(createPancakeRequest(validPayload({
-      conversation: { tags: ["order-tag"] },
+      conversation: { tags: ["order-tag", "pending-tag"] },
     })));
 
-    expect(parsed).toEqual({
-      kind: "ignore",
-      response: { statusCode: 200 },
-    });
-
-    const pendingParsed = await adapter.parse(createPancakeRequest(validPayload({
-      conversation: { tags: ["pending-tag"] },
-    })));
-    expect(pendingParsed).toEqual({
-      kind: "ignore",
-      response: { statusCode: 200 },
-    });
-  });
-
-  it("continues normally when scenario handoff tags are absent", async () => {
-    const adapter = createPancakeChannel("page-1", "page-token", "hook-secret", undefined, {
-      configOptions: {
-        ignoreTagIds: ["order-tag", "pending-tag"],
-      },
-    });
-
-    const parsed = await adapter.parse(createPancakeRequest(validPayload({
-      conversation: { tags: ["other-tag"] },
-    })));
-
-    expect(parsed.kind).toBe("message");
+    if (parsed.kind !== "message") {
+      throw new Error("Expected Pancake message event to be accepted");
+    }
+    expect(parsed.message.source).toMatchObject({ tagIds: ["order-tag", "pending-tag"] });
   });
 
   it("authenticates only requests carrying the webhook secret query parameter", async () => {

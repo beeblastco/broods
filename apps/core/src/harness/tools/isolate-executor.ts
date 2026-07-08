@@ -22,11 +22,25 @@ const RUNNER_OUTPUT_LIMIT_BYTES = 1024 * 1024;
 export async function* streamAccountToolInIsolate(
   options: ExecuteAccountToolOptions,
 ): AsyncGenerator<unknown, void, void> {
+  const runPayload = await buildRunPayload(options);
+  yield* streamIsolatePayload(options.accountId, runPayload);
+}
+
+/**
+ * Run a pre-built runner payload (tool or hook) in the isolate, tenant-scoped by
+ * accountId, and stream its frames. Tool bundles run execute(ctx, input); hook
+ * bundles (payload.hookEvent set) run the matching event handler. Used by the
+ * custom-tool path above and by harness/hook-runner.ts.
+ */
+export async function* streamIsolatePayload(
+  accountId: string | undefined,
+  runPayload: Record<string, unknown>,
+): AsyncGenerator<unknown, void, void> {
   if (isolatePoolEnabled()) {
-    yield* streamViaPool(options);
+    yield* streamViaPool(accountId, runPayload);
     return;
   }
-  yield* streamViaOneShot(options);
+  yield* streamViaOneShot(runPayload);
 }
 
 function isolatePoolEnabled(): boolean {
@@ -51,11 +65,10 @@ async function buildRunPayload({
 let activeIsolateRuns = 0;
 const isolateWaiters: Array<() => void> = [];
 
-async function* streamViaOneShot(options: ExecuteAccountToolOptions): AsyncGenerator<unknown, void, void> {
+async function* streamViaOneShot(runPayload: Record<string, unknown>): AsyncGenerator<unknown, void, void> {
   const release = await acquireIsolateSlot();
   let child: ChildProcessWithoutNullStreams | undefined;
   try {
-    const runPayload = await buildRunPayload(options);
     child = spawn(isolateRunnerNode(), [isolateRunnerPath()], {
       stdio: ["pipe", "pipe", "pipe"],
       env: process.env,
@@ -321,9 +334,11 @@ function releaseWorker(worker: IsolateWorker, tenantId: string): void {
 
 let callCounter = 0;
 
-async function* streamViaPool(options: ExecuteAccountToolOptions): AsyncGenerator<unknown, void, void> {
-  const tenantId = options.accountId;
-  const runPayload = await buildRunPayload(options);
+async function* streamViaPool(
+  accountId: string | undefined,
+  runPayload: Record<string, unknown>,
+): AsyncGenerator<unknown, void, void> {
+  const tenantId = accountId ?? "anonymous";
   const worker = await acquireWorker(tenantId);
   const callId = String((callCounter += 1));
   const request = { t: "run", callId, tenantId, payload: runPayload };

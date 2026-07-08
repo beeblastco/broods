@@ -275,7 +275,6 @@ export const pancake = definePancakeChannel({
   pageAccessToken: env.PANCAKE_PAGE_ACCESS_TOKEN,
   webhookSecret: env.PANCAKE_WEBHOOK_SECRET,
   senderId: "staff-1",
-  ignoreTagIds: ["handoff"],
 });
 export const zalo = defineZaloChannel({
   botToken: env.ZALO_BOT_TOKEN,
@@ -298,7 +297,7 @@ export const support = defineAgent({
       github: { allowedRepos: ["owner/repo"], apiUrl: "https://github.example/api/v3" },
       slack: { allowedChannelIds: ["C123"], reactionEmoji: "white_check_mark", apiUrl: "https://slack.example/api/" },
       discord: { allowedGuildIds: ["G123"], apiUrl: "https://discord.example/api/v10" },
-      pancake: { senderId: "staff-1", options: { ignoreTagIds: ["handoff"] } },
+      pancake: { senderId: "staff-1" },
       zalo: { allowedUserIds: ["user-1"] },
     },
   });
@@ -584,6 +583,83 @@ export const support = defineAgent({
   });
 });
 
+test("compileProject emits inline agent hooks as one synthetic hook bundle", async () => {
+  const cwd = await fixtureProject("", `
+import { defineAgent, env } from "${RESOURCES_MODULE}";
+export const support = defineAgent({
+  name: "support",
+  config: {
+    hooks: {
+      onStart: (ctx, event: { system: string; messages: unknown[] }) => ({
+        system: event.system + "\\n\\nBe terse.",
+      }),
+      onToolCall: (_ctx, event) =>
+        event.toolName === "bash"
+          ? { decision: "deny", denyReason: "no shell" }
+          : { decision: "allow" },
+      webhooks: [{
+        url: env.MOCK_WEBHOOK_URL,
+        secret: env.MOCK_WEBHOOK_SECRET,
+        events: ["agent.started"],
+      }],
+    },
+  },
+});
+`);
+
+  const { manifest } = await compileProject({ cwd, command: "dev" });
+  const hook = manifest.resources.find((resource) => resource.kind === "hook");
+  const agent = manifest.resources.find((resource) => resource.kind === "agent");
+  const bundle = (hook?.config as { bundle?: unknown }).bundle;
+  expect(hook?.name).toBe("support-hooks");
+  expect(hook?.description).toBe("Inline hooks for agent support");
+  expect(hook?.config).toMatchObject({
+    events: ["agent.started", "tool.call.started"],
+  });
+  expect(typeof bundle).toBe("string");
+  expect(bundle as string).toContain('export default');
+  expect(bundle as string).toContain('"agent.started"');
+  expect(bundle as string).toContain('"tool.call.started"');
+  expect(bundle as string).not.toContain("event: { system: string");
+  expect(typeof (hook?.config as { sha256?: unknown }).sha256).toBe("string");
+  expect(agent?.config).toMatchObject({
+    hooks: {
+      webhooks: [{
+        url: { __beeblastEnv: true, name: "MOCK_WEBHOOK_URL" },
+        secret: { __beeblastEnv: true, name: "MOCK_WEBHOOK_SECRET" },
+      }],
+      code: [{ hookId: "support-hooks" }],
+    },
+  });
+});
+
+test("compileProject serializes method-shorthand hooks into valid function expressions", async () => {
+  const cwd = await fixtureProject("", `
+import { defineAgent } from "${RESOURCES_MODULE}";
+export const support = defineAgent({
+  name: "support",
+  config: {
+    hooks: {
+      onStart(_ctx, event: { system: string; messages: unknown[] }) {
+        return { system: event.system + "\\n\\nBe terse." };
+      },
+      async onFinish(_ctx, event) {
+        return { output: event.response };
+      },
+    },
+  },
+});
+`);
+
+  const { manifest } = await compileProject({ cwd, command: "dev" });
+  const hook = manifest.resources.find((resource) => resource.kind === "hook");
+  const bundle = (hook?.config as { bundle: string }).bundle;
+  // Shorthand `onStart(ctx) {}` toString is not a valid expression on its own;
+  // the manifest must emit it as a function expression or the bundle won't parse.
+  expect(bundle).toContain('"agent.started": function onStart');
+  expect(bundle).toContain('"agent.finished": async function onFinish');
+});
+
 test("collectEnvRefNames returns the sorted, de-duplicated env.NAME references", async () => {
   const cwd = await fixtureProject("", `
 import { defineAgent, env } from "${RESOURCES_MODULE}";
@@ -699,6 +775,7 @@ export const myAgent = defineAgent({
     crons: {},
     skills: {},
     tools: {},
+    hooks: {},
   }, cwd, resourceAliases);
 
   const api = await readFile(join(cwd, "broods", "_generated", "api.ts"), "utf8");
@@ -745,6 +822,7 @@ export const oneMinuteCron = defineCron({
     crons: { "one-minute-cron-test": "cron_1" },
     skills: {},
     tools: {},
+    hooks: {},
   }, cwd, resourceAliases);
 
   const api = await readFile(join(cwd, "broods", "_generated", "api.ts"), "utf8");
@@ -1181,6 +1259,7 @@ test("writeGeneratedFiles creates Convex-style typed resource references", async
     crons: {},
     skills: {},
     tools: {},
+    hooks: {},
   }, cwd);
 
   const api = await readFile(join(cwd, "broods", "_generated", "api.ts"), "utf8");
@@ -1203,7 +1282,7 @@ export const support = defineAgent({ name: "support", config: { channels: [githu
 `);
   const { manifest, resourceAliases, channels } = await compileProject({ cwd, command: "dev" });
   await writeGeneratedFiles(manifest, {
-    agents: { support: "agent/123" }, workspaces: {}, sandboxes: {}, crons: {}, skills: {}, tools: {},
+    agents: { support: "agent/123" }, workspaces: {}, sandboxes: {}, crons: {}, skills: {}, tools: {}, hooks: {},
   }, cwd, resourceAliases, {
     accountId: "account/123",
     endpointId: "endpoint-1",
@@ -1236,6 +1315,7 @@ export const myAgent = defineAgent({
     crons: {},
     skills: {},
     tools: {},
+    hooks: {},
   }, cwd, resourceAliases);
 
   const api = await readFile(join(cwd, "broods", "_generated", "api.ts"), "utf8");

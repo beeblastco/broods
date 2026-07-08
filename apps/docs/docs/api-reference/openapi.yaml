@@ -3127,15 +3127,6 @@ components:
             senderId:
               type: string
               description: Optional staff user ID for replies
-            options:
-              type: object
-              description: Optional Pancake adapter settings.
-              properties:
-                ignoreTagIds:
-                  type: array
-                  items:
-                    type: string
-                  description: Conversation tag IDs that mark human handoff; tagged conversations are ignored.
             workspaceScope:
               type: object
               description: Hierarchical workspace isolation scope for workspaces with `isolation: true`.

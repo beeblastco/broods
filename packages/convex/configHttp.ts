@@ -1,6 +1,6 @@
 /**
  * Public config-plane HTTP surface (epic #85 phase 9): agents, skills, tools,
- * workspace files, crons, workspaces, sandboxes, and policies served straight
+ * hooks, workspace files, crons, workspaces, sandboxes, and policies served straight
  * from Convex. The gateway forwards these paths here; response shapes match
  * the retired core handlers so the public API contract is unchanged. Auth is
  * the account Bearer secret.
@@ -10,6 +10,7 @@ import { httpAction, type ActionCtx } from "./_generated/server";
 import { internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
 import { createAccountSecret, hashAccountSecret } from "./model/accountSecrets";
+import { normalizeAccountHookUpload } from "./model/accountHooks";
 import { normalizeAccountToolUpload } from "./model/accountTools";
 import { decryptAgentConfigBlob, encryptAgentConfigBlob } from "./model/agentConfigCodec";
 import {
@@ -60,6 +61,8 @@ export const handle = httpAction(async (ctx, req) => {
                 return await handleSkillRoute(ctx, req, account._id, actor, route.name);
             case "tools":
                 return await handleToolRoute(ctx, req, account._id, actor, route.toolId);
+            case "hooks":
+                return await handleHookRoute(ctx, req, account._id, actor, route.hookId);
             case "workspaceFiles":
                 return await handleWorkspaceFilesRoute(ctx, req, account._id, actor, route.workspaceId);
             case "crons":
@@ -562,6 +565,7 @@ function toPublicAccount(account: Doc<"accounts">): Record<string, unknown> {
 type ConfigRoute =
     | { kind: "skills"; name?: string }
     | { kind: "tools"; toolId?: string }
+    | { kind: "hooks"; hookId?: string }
     | { kind: "workspaceFiles"; workspaceId: string }
     | { kind: "crons"; cronId?: string; runs: boolean }
     | { kind: "workspaces"; workspaceId?: string }
@@ -580,6 +584,9 @@ function parseRoute(pathname: string): ConfigRoute | null {
 
     const tools = pathname.match(/^\/v1\/tools(?:\/([^/]+))?$/);
     if (tools) return { kind: "tools", ...(tools[1] ? { toolId: decodeURIComponent(tools[1]) } : {}) };
+
+    const hooks = pathname.match(/^\/v1\/hooks(?:\/([^/]+))?$/);
+    if (hooks) return { kind: "hooks", ...(hooks[1] ? { hookId: decodeURIComponent(hooks[1]) } : {}) };
 
     const files = pathname.match(/^\/v1\/workspaces\/([^/]+)\/files$/);
     if (files?.[1]) return { kind: "workspaceFiles", workspaceId: decodeURIComponent(files[1]) };
@@ -1308,6 +1315,115 @@ async function handleToolRoute(
 }
 
 /**
+ * Hooks CRUD: list/create on the collection, get/patch/delete by id. Bundle
+ * bytes go to S3 via awsBundles; metadata lives in the accountHooks table.
+ */
+async function handleHookRoute(
+    ctx: ActionCtx,
+    req: Request,
+    accountId: Id<"accounts">,
+    actor: ConfigAuditActor,
+    hookId?: string,
+): Promise<Response> {
+    if (!hookId) {
+        if (req.method === "GET") {
+            const records = await ctx.runQuery(internal.accountHooks.list, { accountId: accountId });
+
+            return json({ hooks: records.map((record) => toPublicAccountHook(record)) });
+        }
+        if (req.method === "POST") {
+            const upload = await normalizeAccountHookUpload(await req.json(), { requireBundle: true });
+            const bundleStorageKey = await ctx.runAction(internal.awsBundles.putHookBundle, {
+                accountId: accountId,
+                sha256: upload.sha256,
+                bundle: upload.bundle,
+            });
+            const createdId = await ctx.runMutation(internal.accountHooks.create, {
+                accountId: accountId,
+                name: upload.name,
+                ...(upload.description !== undefined ? { description: upload.description } : {}),
+                events: upload.events,
+                bundleStorageKey: bundleStorageKey,
+                sha256: upload.sha256,
+            });
+            const created = await ctx.runQuery(internal.accountHooks.getById, { accountId: accountId, hookId: createdId });
+            if (created) {
+                await writeAudit(ctx, {
+                    accountId: accountId,
+                    actor: actor,
+                    action: "created",
+                    resource: { kind: "hook", id: created._id, name: created.name },
+                    summary: "Hook created",
+                    detailsJson: auditDetailsJson({ hookId: created._id, sha256: created.sha256 }),
+                });
+            }
+
+            return json(toPublicAccountHook(created!), 201);
+        }
+
+        return methodNotAllowed(["GET", "POST"]);
+    }
+
+    if (req.method === "GET") {
+        const record = await ctx.runQuery(internal.accountHooks.getById, { accountId: accountId, hookId: hookId });
+
+        return record && record.status === "active"
+            ? json(toPublicAccountHook(record))
+            : json({ error: "Hook not found" }, 404);
+    }
+    if (req.method === "PATCH") {
+        const existing = await ctx.runQuery(internal.accountHooks.getById, { accountId: accountId, hookId: hookId });
+        if (!existing || existing.status !== "active") return json({ error: "Hook not found" }, 404);
+        const upload = await normalizeAccountHookUpload(await req.json(), { requireBundle: false });
+        const bundleStorageKey = upload.bundle !== undefined && upload.sha256 !== undefined
+            ? await ctx.runAction(internal.awsBundles.putHookBundle, {
+                accountId: accountId,
+                sha256: upload.sha256,
+                bundle: upload.bundle,
+            })
+            : undefined;
+        await ctx.runMutation(internal.accountHooks.update, {
+            accountId: accountId,
+            hookId: hookId,
+            ...(upload.name !== undefined ? { name: upload.name } : {}),
+            ...(upload.description !== undefined ? { description: upload.description } : {}),
+            ...(upload.events !== undefined ? { events: upload.events } : {}),
+            ...(bundleStorageKey !== undefined ? { bundleStorageKey: bundleStorageKey, sha256: upload.sha256 } : {}),
+        });
+        const updated = await ctx.runQuery(internal.accountHooks.getById, { accountId: accountId, hookId: hookId });
+        if (updated) {
+            await writeAudit(ctx, {
+                accountId: accountId,
+                actor: actor,
+                action: "updated",
+                resource: { kind: "hook", id: updated._id, name: updated.name },
+                summary: "Hook updated",
+                detailsJson: auditDetailsJson({ hookId: updated._id, sha256: updated.sha256 }),
+            });
+        }
+
+        return updated ? json(toPublicAccountHook(updated)) : json({ error: "Hook not found" }, 404);
+    }
+    if (req.method === "DELETE") {
+        const existing = await ctx.runQuery(internal.accountHooks.getById, { accountId: accountId, hookId: hookId });
+        if (!existing || existing.status !== "active") return json({ error: "Hook not found" }, 404);
+        await ctx.runMutation(internal.accountHooks.remove, { accountId: accountId, hookId: hookId });
+        await writeAudit(ctx, {
+            accountId: accountId,
+            actor: actor,
+            action: "deleted",
+            resource: { kind: "hook", id: existing._id, name: existing.name },
+            summary: "Hook deleted",
+            detailsJson: auditDetailsJson({ hookId: existing._id }),
+        });
+
+        return json({ deleted: true });
+    }
+
+    return methodNotAllowed(["GET", "PATCH", "DELETE"]);
+}
+
+/**
  * Workspace files: list/presign on GET, upload on POST, rename on PATCH,
  * delete on DELETE. Mirrors core's former handleWorkspaceFilesRoute contract.
  */
@@ -1535,6 +1651,26 @@ function toPublicAccountTool(record: Doc<"accountTools">): Record<string, unknow
         sha256: record.sha256,
         runtime: record.runtime ?? "sandbox",
         ...(record.defaultConfig !== undefined ? { defaultConfig: record.defaultConfig } : {}),
+        status: record.status,
+        createdAt: new Date(record.createdAt).toISOString(),
+        updatedAt: new Date(record.updatedAt).toISOString(),
+        ...(record.deletedAt ? { deletedAt: new Date(record.deletedAt).toISOString() } : {}),
+    };
+}
+
+/**
+ * Map an accountHooks document to the public hook shape.
+ * @param record the accountHooks document
+ * @returns the public record with hookId and ISO timestamps
+ */
+function toPublicAccountHook(record: Doc<"accountHooks">): Record<string, unknown> {
+    return {
+        accountId: record.accountId,
+        hookId: record._id,
+        name: record.name,
+        ...(record.description !== undefined ? { description: record.description } : {}),
+        events: record.events,
+        sha256: record.sha256,
         status: record.status,
         createdAt: new Date(record.createdAt).toISOString(),
         updatedAt: new Date(record.updatedAt).toISOString(),

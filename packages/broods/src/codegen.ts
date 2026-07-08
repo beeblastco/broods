@@ -56,6 +56,7 @@ function idsForManifest(ids: GeneratedIds, manifest: CliManifest): GeneratedIds 
     crons: pickIds(ids.crons, namesByKind.crons),
     skills: pickIds(ids.skills, namesByKind.skills),
     tools: pickIds(ids.tools, namesByKind.tools),
+    hooks: {},
     policies: pickIds(ids.policies, namesByKind.policies),
   };
 }

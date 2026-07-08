@@ -299,5 +299,6 @@ function createFakeStorage(overrides: Record<string, unknown>) {
       ...(overrides.agentDeployments as Record<string, unknown> | undefined),
     },
     accountTools: {} as never,
+    accountHooks: {} as never,
   } as never;
 }

@@ -186,6 +186,7 @@ async function runIsolateJob(isolate, payload, { timeoutMs, emitChunk }) {
         asyncTool: null,
         env: {},
         fetch: __fetch,
+        state: $5,
       };
       globalThis.__input = $1;
       globalThis.fetch = __fetch;
@@ -243,6 +244,10 @@ async function runIsolateJob(isolate, payload, { timeoutMs, emitChunk }) {
           { ignored: true },
         ),
         new ivm.Callback((level, line) => process.stderr.write(`[tool:${level}] ${line}\n`), { ignored: true }),
+        // Mutable per-run scratchpad for hooks (ctx.state); read back out after a
+        // hook runs so the host can thread it into the next fire-point. Empty for
+        // tools, which are stateless single calls.
+        new ivm.ExternalCopy(asPlainRecord(payload.state, "state")).copyInto(),
       ],
       { timeout: 1_000 },
     );
@@ -261,17 +266,44 @@ async function runIsolateJob(isolate, payload, { timeoutMs, emitChunk }) {
         timeout: 5_000,
       });
     }
-    const execute = await definition.get("execute", { reference: true });
-    if (!execute || execute.typeof !== "function") {
-      throw new Error("custom tool bundle default export must expose execute(ctx, input)");
-    }
-    const definitionName = await definition.get("name", { copy: true });
-    if (definitionName && definitionName !== payload.toolName) {
-      throw new Error("custom tool bundle name does not match uploaded manifest");
+    // Hook bundles export handlers keyed by event name (default[event](ctx, event));
+    // tool bundles export execute(ctx, input). Resolve the entry accordingly.
+    let entry;
+    if (typeof payload.hookEvent === "string") {
+      entry = await definition.get(payload.hookEvent, { reference: true });
+      if (!entry || entry.typeof !== "function") {
+        // No handler for this event: no mutation, state unchanged. Same
+        // { result, state } shape as a real hook run so the host parses one shape.
+        return { result: undefined, state: payload.state ?? {} };
+      }
+    } else {
+      entry = await definition.get("execute", { reference: true });
+      if (!entry || entry.typeof !== "function") {
+        throw new Error("custom tool bundle default export must expose execute(ctx, input)");
+      }
+      const definitionName = await definition.get("name", { copy: true });
+      if (definitionName && definitionName !== payload.toolName) {
+        throw new Error("custom tool bundle name does not match uploaded manifest");
+      }
     }
 
-    await context.global.set("__execute", execute.derefInto());
+    await context.global.set("__execute", entry.derefInto());
     await context.global.set("__emitChunk", new ivm.Callback((output) => emitChunk(output), { sync: true }));
+    if (typeof payload.hookEvent === "string") {
+      // A hook returns a single value; also read back ctx.state so the host can
+      // persist any run-scoped state the hook mutated for the next fire-point.
+      return await context.eval(
+        `(async () => {
+          const result = await globalThis.__execute(globalThis.__ctx, globalThis.__input);
+          return { result, state: globalThis.__ctx.state };
+        })()`,
+        {
+          promise: true,
+          copy: true,
+          timeout: timeoutMs,
+        },
+      );
+    }
     return await context.eval(
       `(async () => {
         const value = globalThis.__execute(globalThis.__ctx, globalThis.__input);

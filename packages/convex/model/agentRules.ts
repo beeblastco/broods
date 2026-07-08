@@ -5,6 +5,7 @@
 
 import { mergeConfigObjects, redactConfigSecrets } from "./configValues";
 import { isPlainObject, isStringRecord } from "./objects";
+import { AGENT_HOOK_EVENT_NAMES, type AgentHookEventName } from "./accountHooks";
 
 export type AgentStatus = "active" | "disabled";
 export type AccountModelProviderName = "google" | "openai" | "anthropic" | "bedrock" | "gateway" | "minimax" | "custom";
@@ -366,6 +367,27 @@ function normalizeHooksConfig(value: unknown): void {
         if (!Array.isArray(config.webhooks)) throw new Error("config.hooks.webhooks must be an array");
         config.webhooks.forEach((webhook, index) => normalizeWebhookHookConfig(webhook, `config.hooks.webhooks[${index}]`));
     }
+    if (config.code !== undefined) {
+        if (!Array.isArray(config.code)) throw new Error("config.hooks.code must be an array");
+        config.code.forEach((hook, index) => normalizeCodeHookConfig(hook, `config.hooks.code[${index}]`));
+    }
+}
+
+function normalizeCodeHookConfig(value: unknown, path: string): void {
+    if (!isPlainObject(value)) throw new Error(`${path} must be an object`);
+    const config = value as Record<string, unknown>;
+    if (typeof config.hookId !== "string" || config.hookId.trim().length === 0) {
+        throw new Error(`${path}.hookId is required`);
+    }
+    assertOptionalBoolean(config.enabled, `${path}.enabled`);
+    if (
+        config.events !== undefined &&
+        (!Array.isArray(config.events) || !config.events.every((event) =>
+            typeof event === "string" && AGENT_HOOK_EVENT_NAMES.includes(event as AgentHookEventName)
+        ))
+    ) {
+        throw new Error(`${path}.events must be an array of: ${AGENT_HOOK_EVENT_NAMES.join(", ")}`);
+    }
 }
 
 function normalizeWebhookHookConfig(value: unknown, path: string): void {
@@ -565,9 +587,6 @@ function normalizePancakeConfig(value: unknown): void {
     assertOptionalString(config.pageAccessToken, "config.channels.pancake.pageAccessToken");
     assertOptionalString(config.webhookSecret, "config.channels.pancake.webhookSecret");
     assertOptionalString(config.senderId, "config.channels.pancake.senderId");
-    if (config.options !== undefined && !isPlainObject(config.options)) throw new Error("config.channels.pancake.options must be an object");
-    const options = isPlainObject(config.options) ? config.options : {};
-    assertOptionalStringArray(options.ignoreTagIds, "config.channels.pancake.options.ignoreTagIds");
 }
 
 function normalizeZaloConfig(value: unknown): void {

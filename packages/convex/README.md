@@ -63,7 +63,7 @@ the `"use node"` action files (`awsBundles.ts`, `awsSkills.ts`,
 `POST /v1/account/rotate-secret`, `GET /accounts`,
 `GET/PATCH /accounts/{accountId}`, and
 `POST /accounts/{accountId}/rotate-secret`), `/v1/agents*`, `/v1/skills*`,
-`/v1/tools*`, `/v1/workspaces/{id}/files`, `/v1/crons*`, `/v1/workspaces*`,
+`/v1/tools*`, `/v1/hooks*`, `/v1/workspaces/{id}/files`, `/v1/crons*`, `/v1/workspaces*`,
 `/v1/sandboxes*` (CRUD only; lifecycle verbs stay in core), and
 `/v1/policies*` — replacing core's former routes; the gateway forwards those
 paths here (`BROODS_CONFIG_URL`). Admin-gated account creation

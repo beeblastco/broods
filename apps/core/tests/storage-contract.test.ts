@@ -29,6 +29,7 @@ describe("StorageProvider", () => {
     expect(typeof dynamoStorageProvider.crons.list).toBe("function");
     expect(typeof dynamoStorageProvider.sandboxConfigs.list).toBe("function");
     expect(typeof dynamoStorageProvider.workspaceConfigs.list).toBe("function");
+    expect(typeof dynamoStorageProvider.accountHooks.list).toBe("function");
   });
 
   it("factory respects STORAGE_PROVIDER env", async () => {

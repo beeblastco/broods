@@ -150,6 +150,11 @@ const sidebars: SidebarsConfig = {
         },
         {
           type: 'doc',
+          id: 'hooks',
+          label: 'Code Hooks',
+        },
+        {
+          type: 'doc',
           id: 'tools',
           label: 'External Tool',
         },

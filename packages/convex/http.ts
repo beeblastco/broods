@@ -83,7 +83,7 @@ http.route({
 });
 
 // Public config-plane surface (epic #85 phase 9): account metadata/rotation,
-// agents, skills, tools, workspace files, crons, workspaces, sandbox configs,
+// agents, skills, tools, hooks, workspace files, crons, workspaces, sandbox configs,
 // and policies, forwarded here by the gateway.
 http.route({ path: "/v1/account", method: "GET", handler: configHttp });
 http.route({ path: "/v1/account", method: "PATCH", handler: configHttp });
@@ -107,6 +107,11 @@ http.route({ path: "/v1/tools", method: "POST", handler: configHttp });
 http.route({ pathPrefix: "/v1/tools/", method: "GET", handler: configHttp });
 http.route({ pathPrefix: "/v1/tools/", method: "PATCH", handler: configHttp });
 http.route({ pathPrefix: "/v1/tools/", method: "DELETE", handler: configHttp });
+http.route({ path: "/v1/hooks", method: "GET", handler: configHttp });
+http.route({ path: "/v1/hooks", method: "POST", handler: configHttp });
+http.route({ pathPrefix: "/v1/hooks/", method: "GET", handler: configHttp });
+http.route({ pathPrefix: "/v1/hooks/", method: "PATCH", handler: configHttp });
+http.route({ pathPrefix: "/v1/hooks/", method: "DELETE", handler: configHttp });
 http.route({ path: "/v1/workspaces", method: "GET", handler: configHttp });
 http.route({ path: "/v1/workspaces", method: "POST", handler: configHttp });
 http.route({ pathPrefix: "/v1/workspaces/", method: "GET", handler: configHttp });

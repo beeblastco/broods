@@ -6,7 +6,7 @@ import { pathToFileURL } from "node:url";
 import { createHash } from "node:crypto";
 import { readdir, readFile } from "node:fs/promises";
 import { basename, isAbsolute, join, relative, resolve } from "node:path";
-import type { CliManifest, CliManifestResource } from "./contracts.ts";
+import type { AgentHookEventName, CliManifest, CliManifestResource } from "./contracts.ts";
 import { GENERATED_DIR, PROJECT_DIR } from "./config.ts";
 import { loadBroodsRuntimeConfig } from "./runtime-config.ts";
 import {
@@ -15,6 +15,7 @@ import {
   isResource,
   type AnyChannelDefinition,
   type AnyResource,
+  type AgentHooks,
   type BroodsConfigDefinition,
   type BroodsProjectConfig,
   type PolicyResource,
@@ -66,6 +67,20 @@ const UNSAFE_BUNDLE_FILE_NAMES = [
   /^id_(?:rsa|dsa|ecdsa|ed25519)(?:\.pub)?$/i,
   /\.(?:pem|key|p12|pfx)$/i,
 ];
+const INLINE_AGENT_HOOK_EVENTS = {
+  onStart: "agent.started",
+  onStepFinish: "agent.step.finished",
+  onToolCall: "tool.call.started",
+  onToolResult: "tool.result",
+  onFinish: "agent.finished",
+  onApproval: "agent.approval.required",
+  onError: "agent.failed",
+  onSubagentFinish: "subagent.task.finished",
+  onMessageReceived: "channel.message.received",
+  onMessageSending: "channel.message.sending",
+} as const satisfies Record<keyof AgentHooks, AgentHookEventName>;
+
+type InlineAgentHookName = keyof typeof INLINE_AGENT_HOOK_EVENTS;
 
 export async function compileProject(options: CompileOptions = {}): Promise<CompiledProject> {
   const cwd = options.cwd ?? process.cwd();
@@ -91,9 +106,9 @@ export async function compileProject(options: CompileOptions = {}): Promise<Comp
     options.environment ?? (options.useRuntimeEnvironment === false ? undefined : process.env.BROODS_ENVIRONMENT),
     options.command ?? "dev",
   );
-  const manifestResources = (await Promise.all(resources.map((resource) => toManifestResource(resource, root)))).sort((a, b) =>
-    `${a.kind}:${a.name}`.localeCompare(`${b.kind}:${b.name}`),
-  );
+  const manifestResources = (await Promise.all(resources.map((resource) => toManifestResources(resource, root))))
+    .flat()
+    .sort((a, b) => `${a.kind}:${a.name}`.localeCompare(`${b.kind}:${b.name}`));
 
   return {
     config: config,
@@ -544,44 +559,29 @@ function isValidIdentifier(value: string): boolean {
   return /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(value);
 }
 
-async function toManifestResource(resource: AnyResource, projectRoot: string): Promise<CliManifestResource> {
-  return {
+async function toManifestResources(resource: AnyResource, projectRoot: string): Promise<CliManifestResource[]> {
+  if (resource.kind === "agent") {
+    const normalized = normalizeAgentConfig(resource, projectRoot);
+    return [
+      ...(normalized.hookResource ? [normalized.hookResource] : []),
+      {
+        kind: resource.kind,
+        name: resource.name,
+        ...(resource.description ? { description: resource.description } : {}),
+        config: normalized.config,
+      },
+    ];
+  }
+
+  return [{
     kind: resource.kind,
     name: resource.name,
     ...(resource.description ? { description: resource.description } : {}),
     config: await normalizeConfig(resource, projectRoot),
-  };
+  }];
 }
 
 async function normalizeConfig(resource: AnyResource, projectRoot: string): Promise<unknown> {
-  if (resource.kind === "agent") {
-    const config = { ...(resource.config as Record<string, unknown>) };
-    if (config.channels !== undefined) {
-      if (!Array.isArray(config.channels)) {
-        throw new Error(`Agent "${resource.name}" config.channels must be an array of channel definitions`);
-      }
-      config.channels = Object.fromEntries(config.channels.map((channel) => {
-        if (!isChannelDefinition(channel)) {
-          throw new Error(`Agent "${resource.name}" config.channels must contain channel definitions`);
-        }
-        const channelId = `${resource.name}${capitalize(channel.type)}Channel`;
-        return [channel.type, { id: channelId, ...channel.config }];
-      }));
-    }
-    if (isResource(config.sandbox)) {
-      config.sandbox = config.sandbox.name;
-    }
-    if (Array.isArray(config.workspaces)) {
-      config.workspaces = config.workspaces.map((workspace) => normalizeWorkspaceRef(workspace, resource.name));
-    }
-    if (config.policy !== undefined) {
-      const policy = normalizeAgentPolicyConfig(config.policy, resource.name);
-      if (policy) config.policy = policy;
-      else delete config.policy;
-    }
-    return rewriteValues(config);
-  }
-
   if (resource.kind === "skill") {
     return await normalizeSkillConfig(resource.config as { path: string }, projectRoot);
   }
@@ -618,6 +618,147 @@ async function normalizeConfig(resource: AnyResource, projectRoot: string): Prom
   }
 
   return rewriteValues(resource.config);
+}
+
+function normalizeAgentConfig(
+  resource: Extract<AnyResource, { kind: "agent" }>,
+  _projectRoot: string,
+): { config: unknown; hookResource?: CliManifestResource } {
+  const config = { ...(resource.config as Record<string, unknown>) };
+  const inlineHooks = normalizeInlineAgentHooks(resource.name, config.hooks);
+  if (inlineHooks) {
+    config.hooks = inlineHooks.agentHooksConfig;
+  } else if (config.hooks !== undefined) {
+    config.hooks = stripInlineHookKeys(config.hooks, resource.name);
+  }
+  if (config.channels !== undefined) {
+    if (!Array.isArray(config.channels)) {
+      throw new Error(`Agent "${resource.name}" config.channels must be an array of channel definitions`);
+    }
+    config.channels = Object.fromEntries(config.channels.map((channel) => {
+      if (!isChannelDefinition(channel)) {
+        throw new Error(`Agent "${resource.name}" config.channels must contain channel definitions`);
+      }
+      const channelId = `${resource.name}${capitalize(channel.type)}Channel`;
+      return [channel.type, { id: channelId, ...channel.config }];
+    }));
+  }
+  if (isResource(config.sandbox)) {
+    config.sandbox = config.sandbox.name;
+  }
+  if (Array.isArray(config.workspaces)) {
+    config.workspaces = config.workspaces.map((workspace) => normalizeWorkspaceRef(workspace, resource.name));
+  }
+  if (config.policy !== undefined) {
+    const policy = normalizeAgentPolicyConfig(config.policy, resource.name);
+    if (policy) config.policy = policy;
+    else delete config.policy;
+  }
+
+  return {
+    config: rewriteValues(config),
+    ...(inlineHooks?.hookResource ? { hookResource: inlineHooks.hookResource } : {}),
+  };
+}
+
+function normalizeInlineAgentHooks(
+  agentName: string,
+  hooks: unknown,
+): { agentHooksConfig: Record<string, unknown>; hookResource: CliManifestResource } | undefined {
+  if (hooks === undefined) return undefined;
+  if (!hooks || typeof hooks !== "object" || Array.isArray(hooks)) {
+    throw new Error(`Agent "${agentName}" config.hooks must be an object`);
+  }
+  const hookConfig = hooks as Record<string, unknown>;
+  const entries = (Object.keys(INLINE_AGENT_HOOK_EVENTS) as InlineAgentHookName[])
+    .flatMap((name) => {
+      const handler = hookConfig[name];
+      if (handler === undefined) return [];
+      if (typeof handler !== "function") {
+        throw new Error(`Agent "${agentName}" config.hooks.${name} must be a function`);
+      }
+      return [{
+        name,
+        event: INLINE_AGENT_HOOK_EVENTS[name],
+        source: toHookFunctionExpression(handler.toString()),
+      }];
+    });
+
+  if (entries.length === 0) return undefined;
+
+  const hookName = `${agentName}-hooks`;
+  const bundle = transpileInlineHookBundle(agentName, entries);
+  const bundleSize = Buffer.byteLength(bundle);
+  if (bundleSize > MAX_BUNDLE_FILE_BYTES) {
+    throw new Error(`Agent "${agentName}" hook bundle is too large (${bundleSize} bytes, max ${MAX_BUNDLE_FILE_BYTES})`);
+  }
+  const events = entries.map((entry) => entry.event);
+  const agentHooksConfig = stripInlineHookKeys(hookConfig, agentName);
+  agentHooksConfig.code = [{ hookId: hookName }];
+
+  return {
+    agentHooksConfig,
+    hookResource: {
+      kind: "hook",
+      name: hookName,
+      description: `Inline hooks for agent ${agentName}`,
+      config: {
+        events,
+        bundle,
+        sha256: sha256Hex(bundle),
+      },
+    },
+  };
+}
+
+function stripInlineHookKeys(hooks: unknown, agentName: string): Record<string, unknown> {
+  if (!hooks || typeof hooks !== "object" || Array.isArray(hooks)) {
+    throw new Error(`Agent "${agentName}" config.hooks must be an object`);
+  }
+  const entries = Object.entries(hooks as Record<string, unknown>);
+  for (const [key] of entries) {
+    if (key === "webhooks" || key in INLINE_AGENT_HOOK_EVENTS) continue;
+    throw new Error(
+      `Agent "${agentName}" config.hooks.${key} is not supported. ` +
+        `Use inline hook callbacks or hooks.webhooks.`,
+    );
+  }
+  const result = Object.fromEntries(entries.filter(([key]) => key === "webhooks"));
+  return result;
+}
+
+// `handler.toString()` on an object-method-shorthand hook (`onStart(ctx) {}`)
+// yields `onStart(ctx) {}`, which is not a valid expression when emitted as an
+// object-literal value in the bundle. Prefix `function ` to make it a named
+// function expression; arrows and function expressions pass through untouched.
+function toHookFunctionExpression(source: string): string {
+  const trimmed = source.trim();
+  if (
+    /^(async\s+)?function\b/.test(trimmed) // function expression
+    || /^(async\s*)?\(/.test(trimmed) // (args) => arrow
+    || /^(async\s+)?[A-Za-z_$][\w$]*\s*=>/.test(trimmed) // single-arg arrow
+  ) {
+    return trimmed;
+  }
+  if (/^(async\s+)?[A-Za-z_$][\w$]*\s*\(/.test(trimmed)) {
+    return trimmed.replace(/^(async\s+)?/, "$1function ");
+  }
+  return trimmed;
+}
+
+function transpileInlineHookBundle(
+  agentName: string,
+  entries: Array<{ event: AgentHookEventName; source: string }>,
+): string {
+  const moduleSource = `export default {\n${
+    entries.map((entry) => `  ${JSON.stringify(entry.event)}: ${entry.source},`).join("\n")
+  }\n};\n`;
+  try {
+    return new Bun.Transpiler({ loader: "ts" }).transformSync(moduleSource);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`Agent "${agentName}" inline hooks failed to transpile: ${message}`);
+  }
 }
 
 function normalizeAgentPolicyConfig(config: unknown, agentName: string): Record<string, unknown> | undefined {
