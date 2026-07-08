@@ -202,6 +202,7 @@ class IsolateWorker {
     };
     this.child.once("error", (error) => die(error instanceof Error ? error : new Error(String(error))));
     this.child.once("exit", () => die(new Error("custom tool isolate worker exited")));
+    this.child.stdin.once("error", (error) => die(error instanceof Error ? error : new Error(String(error))));
   }
 
   #onData(chunk: string): void {
@@ -337,7 +338,10 @@ async function* streamViaPool(options: ExecuteAccountToolOptions): AsyncGenerato
   // Guard against a wedged worker: if no terminal frame lands within the run
   // deadline plus grace, kill it (its exit fails the call) and let the pool
   // respawn a replacement.
-  const guard = setTimeout(() => worker.kill(), runnerTimeoutMs() + 2_000);
+  let terminalReceived = false;
+  const guard = setTimeout(() => {
+    if (!terminalReceived) worker.kill();
+  }, runnerTimeoutMs() + 2_000);
   try {
     for await (const frame of worker.runCall(request)) {
       if (frame.t === "meter") {
@@ -349,13 +353,16 @@ async function* streamViaPool(options: ExecuteAccountToolOptions): AsyncGenerato
         continue;
       }
       if (frame.t === "final") {
+        terminalReceived = true;
         yield frame.result;
         return;
       }
       if (frame.t === "end") {
+        terminalReceived = true;
         return;
       }
       if (frame.t === "error") {
+        terminalReceived = true;
         throw new Error(frame.error || "custom tool isolate execution failed");
       }
     }

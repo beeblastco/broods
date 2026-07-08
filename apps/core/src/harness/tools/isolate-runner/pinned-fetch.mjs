@@ -102,7 +102,7 @@ function requestPinned(parsed, pinned, init, state) {
     throwIfAborted(state.signal);
     const client = parsed.protocol === "https:" ? https : http;
     const headers = normalizeRequestHeaders(init.headers);
-    headers.Host = parsed.hostname;
+    headers.Host = parsed.host;
     const request = client.request({
       protocol: parsed.protocol,
       hostname: pinned.address,
@@ -193,6 +193,17 @@ function writeRequestBody(request, body) {
   throw new Error("ctx.fetch init body must be a string or bytes");
 }
 
+function isIpv6LinkLocal(normalized) {
+  // fe80::/10 range: first 10 bits are 1111111010
+  // fe80 = 1111 1110 1000 0000 through febf = 1111 1110 1011 1111
+  const firstGroup = normalized.split(":")[0];
+  if (!firstGroup) return false;
+  const value = Number.parseInt(firstGroup, 16);
+  if (!Number.isFinite(value)) return false;
+  // fe80 (0xfe80 = 65152) through febf (0xfebf = 65215)
+  return value >= 0xfe80 && value <= 0xfebf;
+}
+
 export function isDeniedAddress(address) {
   if (address.includes(":")) {
     const normalized = address.toLowerCase();
@@ -202,7 +213,7 @@ export function isDeniedAddress(address) {
     if (mapped) return isDeniedAddress(mapped[1]);
     return normalized === "::" ||
       normalized === "::1" ||
-      normalized.startsWith("fe80:") ||
+      isIpv6LinkLocal(normalized) ||
       normalized.startsWith("fc") ||
       normalized.startsWith("fd");
   }

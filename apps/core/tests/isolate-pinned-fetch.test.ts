@@ -24,6 +24,8 @@ describe("isDeniedAddress", () => {
     expect(isDeniedAddress("::")).toBe(true);
     expect(isDeniedAddress("::1")).toBe(true);
     expect(isDeniedAddress("fe80::1")).toBe(true);
+    expect(isDeniedAddress("fe90::1")).toBe(true);
+    expect(isDeniedAddress("febf::1")).toBe(true);
     expect(isDeniedAddress("fc00::1")).toBe(true);
     expect(isDeniedAddress("fd00::1")).toBe(true);
   });

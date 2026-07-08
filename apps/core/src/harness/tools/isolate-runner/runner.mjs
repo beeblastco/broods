@@ -28,11 +28,14 @@ if (process.argv[2] === "--fetch-bridge") {
 }
 
 function memoryLimitMb() {
-  return Number(process.env.ISOLATE_MEMORY_LIMIT_MB || 128);
+  const value = Number(process.env.ISOLATE_MEMORY_LIMIT_MB);
+  return Number.isFinite(value) && value > 0 ? value : 128;
 }
 
 function runTimeoutMs() {
-  return Number(process.env.ISOLATE_RUNNER_TIMEOUT_SECONDS || 30) * 1000;
+  const value = Number(process.env.ISOLATE_RUNNER_TIMEOUT_SECONDS);
+  const seconds = Number.isFinite(value) && value > 0 ? value : 30;
+  return seconds * 1000;
 }
 
 // One-shot legacy mode: spawn per call, throwaway isolate. Kept as the fallback
@@ -76,7 +79,8 @@ async function runToolRequest() {
 // between calls. Isolates are never shared across tenants; a tripped isolate is
 // disposed and evicted. Mirrors Convex Funrun's per-tenant isolate reuse.
 async function runPoolWorker() {
-  const cacheCap = Math.max(1, Number(process.env.ISOLATE_TENANT_CACHE_PER_WORKER || 4));
+  const cacheCapRaw = Number(process.env.ISOLATE_TENANT_CACHE_PER_WORKER);
+  const cacheCap = Number.isFinite(cacheCapRaw) && cacheCapRaw > 0 ? Math.max(1, cacheCapRaw) : 4;
   const cache = new Map(); // tenantId -> { isolate, lastCpu: bigint }
   writeFrame({ t: "ready" });
   for await (const line of readLines(process.stdin)) {
