@@ -38,7 +38,7 @@ For self-hosted deployments, point the client at your own core service:
 
 ```ts
 const client = new BroodsClient({
-  baseUrl: "https://your-deployment.lambda-url.eu-west-1.on.aws",
+  baseUrl: "https://core.your-domain.example",
   apiKey: "fp_env_...",
 });
 ```
