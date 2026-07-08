@@ -30,17 +30,19 @@ const HOOK_BUNDLE = `export default {
 
 const bundleSha = createHash("sha256").update(HOOK_BUNDLE, "utf8").digest("hex");
 
-// Stub only the S3 byte fetch; everything else (isolate exec, sanitize, wrap) is real.
-mock.module("../src/shared/s3.ts", () => ({
-  ...realS3,
-  readS3Bytes: async () => new TextEncoder().encode(HOOK_BUNDLE) as Uint8Array,
-}));
-
 const runnerPath = process.env.BROODS_TEST_ISOLATE_RUNNER_PATH;
 // isolate-executor reads ISOLATE_RUNNER_PATH; point it at the test runner (whose
 // dir has isolated-vm installed) so the in-core execution path uses it.
 if (runnerPath) {
   process.env.ISOLATE_RUNNER_PATH = runnerPath;
+  // Stub only the S3 byte fetch; everything else (isolate exec, sanitize, wrap)
+  // is real. mock.module is process-global in bun test, so keep it behind the
+  // runner gate — when the suite is skipped the override must not leak into
+  // other test files that mock the same module.
+  mock.module("../src/shared/s3.ts", () => ({
+    ...realS3,
+    readS3Bytes: async () => new TextEncoder().encode(HOOK_BUNDLE) as Uint8Array,
+  }));
 }
 const realRunnerIt = runnerPath ? it : it.skip;
 
@@ -90,6 +92,22 @@ describe("code hooks end-to-end (real isolate)", () => {
     const finished = await dispatcher.runMutation("agent.finished", { finishReason: "stop", response: "hi" });
 
     expect(finished).toEqual({ output: "calls=1" });
+  });
+
+  realRunnerIt("serializes overlapping hook runs so concurrent ctx.state writes are not lost", async () => {
+    process.env.TOOL_BUNDLES_BUCKET_NAME = "test-bundles";
+    const { createHookDispatcher } = await import("../src/harness/hook-dispatcher.ts");
+    const dispatcher = createHookDispatcher("acct_test", indexFor(["agent.started", "agent.finished"]));
+
+    // Parallel tool calls / subagent finishes can enter runMutation concurrently;
+    // both increments must land instead of the last writer clobbering the first.
+    await Promise.all([
+      dispatcher.runMutation("agent.started", { system: "a", messages: [] }),
+      dispatcher.runMutation("agent.started", { system: "b", messages: [] }),
+    ]);
+    const finished = await dispatcher.runMutation("agent.finished", { finishReason: "stop", response: "hi" });
+
+    expect(finished).toEqual({ output: "calls=2" });
   });
 
   realRunnerIt("shapes subagent visibility and drops/rewrites channel messages", async () => {

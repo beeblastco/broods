@@ -26,6 +26,7 @@ import {
 } from "@opentelemetry/api";
 import type { AgentConfig } from "../shared/storage/index.ts";
 import { collectSecretValues, logError, logInfo, logWarn, redact, redactSensitiveText } from "../shared/log.ts";
+import { isPlainObject } from "../shared/object.ts";
 import { recordUsageTask } from "../shared/telemetry.ts";
 import { extractCacheWriteTokens, usageTokenTotals } from "./usage-metering.ts";
 import {
@@ -1371,9 +1372,20 @@ function applyAgentStartedMutation(
     turnContext.system = [...turnContext.system, message];
     turnContext.ephemeralSystem = [...turnContext.ephemeralSystem, message];
   }
-  if (Array.isArray(mutation.messages)) {
+  // Hooks are non-fatal, so a malformed messages override is dropped rather
+  // than passed to streamText where it would fail the run.
+  if (Array.isArray(mutation.messages) && mutation.messages.every(isModelMessageShape)) {
     turnContext.messages = mutation.messages as ModelMessage[];
+  } else if (mutation.messages !== undefined) {
+    logWarn("Ignoring agent.started hook messages override: entries are not model messages");
   }
+}
+
+function isModelMessageShape(entry: unknown): boolean {
+  return isPlainObject(entry)
+    && typeof entry.role === "string"
+    && ["system", "user", "assistant", "tool"].includes(entry.role)
+    && entry.content !== undefined;
 }
 
 // Fold an agent.finished hook's { output } into the final response. On the

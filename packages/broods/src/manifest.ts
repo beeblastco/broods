@@ -680,7 +680,7 @@ function normalizeInlineAgentHooks(
       return [{
         name,
         event: INLINE_AGENT_HOOK_EVENTS[name],
-        source: handler.toString(),
+        source: toHookFunctionExpression(handler.toString()),
       }];
     });
 
@@ -725,6 +725,25 @@ function stripInlineHookKeys(hooks: unknown, agentName: string): Record<string, 
   }
   const result = Object.fromEntries(entries.filter(([key]) => key === "webhooks"));
   return result;
+}
+
+// `handler.toString()` on an object-method-shorthand hook (`onStart(ctx) {}`)
+// yields `onStart(ctx) {}`, which is not a valid expression when emitted as an
+// object-literal value in the bundle. Prefix `function ` to make it a named
+// function expression; arrows and function expressions pass through untouched.
+function toHookFunctionExpression(source: string): string {
+  const trimmed = source.trim();
+  if (
+    /^(async\s+)?function\b/.test(trimmed) // function expression
+    || /^(async\s*)?\(/.test(trimmed) // (args) => arrow
+    || /^(async\s+)?[A-Za-z_$][\w$]*\s*=>/.test(trimmed) // single-arg arrow
+  ) {
+    return trimmed;
+  }
+  if (/^(async\s+)?[A-Za-z_$][\w$]*\s*\(/.test(trimmed)) {
+    return trimmed.replace(/^(async\s+)?/, "$1function ");
+  }
+  return trimmed;
 }
 
 function transpileInlineHookBundle(

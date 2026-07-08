@@ -54,6 +54,9 @@ export function createHookDispatcher(
   // empty, threaded into each hook, and replaced with what the hook left behind
   // so a later fire-point sees what an earlier one stored.
   let runState: Record<string, unknown> = {};
+  // Fire-points can overlap (parallel tool calls, a subagent finishing mid-step);
+  // hook runs queue on this chain so no two read-modify-write runState at once.
+  let queue: Promise<unknown> = Promise.resolve();
   return {
     hasHooksFor: (event) => index.has(event),
     async runMutation(event, payload) {
@@ -61,16 +64,20 @@ export function createHookDispatcher(
       if (!records || records.length === 0) {
         return undefined;
       }
-      // Hooks run in config order; later hooks' fields override earlier ones.
-      let merged: Record<string, unknown> | undefined;
-      for (const record of records) {
-        const { mutation, state } = await runCodeHook({ accountId, record, event, payload, state: runState });
-        runState = state;
-        if (mutation) {
-          merged = { ...(merged ?? {}), ...mutation };
+      const run = queue.then(async () => {
+        // Hooks run in config order; later hooks' fields override earlier ones.
+        let merged: Record<string, unknown> | undefined;
+        for (const record of records) {
+          const { mutation, state } = await runCodeHook({ accountId, record, event, payload, state: runState });
+          runState = state;
+          if (mutation) {
+            merged = { ...(merged ?? {}), ...mutation };
+          }
         }
-      }
-      return merged;
+        return merged;
+      });
+      queue = run.catch(() => undefined);
+      return run;
     },
   };
 }

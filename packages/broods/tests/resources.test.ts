@@ -633,6 +633,33 @@ export const support = defineAgent({
   });
 });
 
+test("compileProject serializes method-shorthand hooks into valid function expressions", async () => {
+  const cwd = await fixtureProject("", `
+import { defineAgent } from "${RESOURCES_MODULE}";
+export const support = defineAgent({
+  name: "support",
+  config: {
+    hooks: {
+      onStart(_ctx, event: { system: string; messages: unknown[] }) {
+        return { system: event.system + "\\n\\nBe terse." };
+      },
+      async onFinish(_ctx, event) {
+        return { output: event.response };
+      },
+    },
+  },
+});
+`);
+
+  const { manifest } = await compileProject({ cwd, command: "dev" });
+  const hook = manifest.resources.find((resource) => resource.kind === "hook");
+  const bundle = (hook?.config as { bundle: string }).bundle;
+  // Shorthand `onStart(ctx) {}` toString is not a valid expression on its own;
+  // the manifest must emit it as a function expression or the bundle won't parse.
+  expect(bundle).toContain('"agent.started": function onStart');
+  expect(bundle).toContain('"agent.finished": async function onFinish');
+});
+
 test("collectEnvRefNames returns the sorted, de-duplicated env.NAME references", async () => {
   const cwd = await fixtureProject("", `
 import { defineAgent, env } from "${RESOURCES_MODULE}";

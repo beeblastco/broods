@@ -790,6 +790,9 @@ async function handleChannelRequest(event: ChannelInboundEvent, context?: Reques
     // here — after the in-flight reply — so a fast follow-up is answered in order.
     let incoming: ConversationIngressEvent[] = ownEvents;
     let ephemeralSystem: SystemModelMessage[] = [];
+    // One dispatcher for the whole channel request — every drained turn, its
+    // subagent finishes, and the outbound sending hook share it (and ctx.state).
+    const hooks = await createAgentHookDispatcher(event.accountId, event.agentConfig ?? {});
     while (true) {
       if (incoming.length > 0) {
         try {
@@ -837,10 +840,6 @@ async function handleChannelRequest(event: ChannelInboundEvent, context?: Reques
         eventId: session.eventId,
         error: error instanceof Error ? error.message : String(error),
       });
-
-      // One dispatcher for the whole channel request: the agent loop, subagent
-      // finishes, and the outbound sending hook share it (and its ctx.state).
-      const hooks = await createAgentHookDispatcher(event.accountId, event.agentConfig ?? {});
 
       const result = await runAgentLoopUntilSubagentsIdle(session, turnContext, event.agentConfig ?? {}, context, {
         ...(event.channel.stream
