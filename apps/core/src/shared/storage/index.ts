@@ -187,3 +187,17 @@ export {
   type PublicAccountToolRecord,
   type UpdateAccountToolInput,
 } from "./account-tools.ts";
+export {
+  accountHookBundleStorageKey,
+  normalizeAccountHookUpload,
+  normalizeCreateAccountHookInput,
+  normalizeUpdateAccountHookInput,
+  toPublicAccountHook,
+  type AccountHookRecord,
+  type AccountHookStatus,
+  type AccountHookUploadInput,
+  type CreateAccountHookInput,
+  type NormalizedAccountHookUpload,
+  type PublicAccountHookRecord,
+  type UpdateAccountHookInput,
+} from "./account-hooks.ts";

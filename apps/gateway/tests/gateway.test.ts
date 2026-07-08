@@ -259,7 +259,7 @@ test("proxies runtime HTTP paths used by the SDK", () => {
 });
 
 test("routes config-plane CRUD to Convex, not core", () => {
-  // Account metadata/rotation plus agents, skills, tools, workspace files, crons, workspaces, sandboxes, and policies are Convex config-plane routes.
+  // Account metadata/rotation plus agents, skills, tools, hooks, workspace files, crons, workspaces, sandboxes, and policies are Convex config-plane routes.
   for (const method of ["GET", "POST", "PUT"]) {
     expect(isConfigHttpPath("/v1/account/onboarding", method)).toBe(true);
     expect(
@@ -287,6 +287,8 @@ test("routes config-plane CRUD to Convex, not core", () => {
   expect(isConfigHttpPath("/v1/skills/my-skill")).toBe(true);
   expect(isConfigHttpPath("/v1/tools")).toBe(true);
   expect(isConfigHttpPath("/v1/tools/tool_123")).toBe(true);
+  expect(isConfigHttpPath("/v1/hooks")).toBe(true);
+  expect(isConfigHttpPath("/v1/hooks/hook_123")).toBe(true);
   expect(isConfigHttpPath("/v1/workspaces")).toBe(true);
   expect(isConfigHttpPath("/v1/workspaces/ws_123")).toBe(true);
   expect(isConfigHttpPath("/v1/workspaces/ws_123/files")).toBe(true);
@@ -312,6 +314,7 @@ test("routes config-plane CRUD to Convex, not core", () => {
   expect(isConfigHttpPath("/v1/account/rotate-secret", "POST")).toBe(true);
   expect(isConfigHttpPath("/v1/account/auth/exchange", "POST")).toBe(true);
   expect(isConfigHttpPath("/v1/skills/agents/development/env_123")).toBe(false);
+  expect(isConfigHttpPath("/v1/hooks/agents/development/env_123")).toBe(false);
   expect(isConfigHttpPath("/v1/crons/agents/development/env_123")).toBe(false);
   expect(isConfigHttpPath("/v1/sandboxes/sbx_1/exec")).toBe(false);
   expect(isConfigHttpPath("/v1/sandboxes/sbx_1/terminal")).toBe(false);

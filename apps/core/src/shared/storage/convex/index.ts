@@ -42,6 +42,11 @@ import {
   type AccountToolRecord,
 } from "../account-tools.ts";
 import {
+  normalizeCreateAccountHookInput,
+  normalizeUpdateAccountHookInput,
+  type AccountHookRecord,
+} from "../account-hooks.ts";
+import {
   normalizeCreateAgentPolicyInput,
   normalizeUpdateAgentPolicyInput,
   type AgentPolicyRecord,
@@ -63,6 +68,7 @@ import type {
   AgentRecord,
   AccountStore,
   AgentPolicyStore,
+  AccountHookStore,
   AccountToolStore,
   AgentStore,
   CronRecord,
@@ -690,6 +696,37 @@ function agentPolicyFromConvex(doc: ConvexAgentPolicyDoc | null): AgentPolicyRec
   };
 }
 
+interface ConvexAccountHookDoc {
+  _id: string;
+  accountId: string;
+  name: string;
+  description?: string;
+  events: AccountHookRecord["events"];
+  bundleStorageKey: string;
+  sha256: string;
+  status: "active" | "deleted";
+  createdAt: number;
+  updatedAt: number;
+  deletedAt?: number;
+}
+
+function accountHookFromConvex(doc: ConvexAccountHookDoc | null): AccountHookRecord | null {
+  if (!doc) return null;
+  return {
+    accountId: doc.accountId,
+    hookId: doc._id,
+    name: doc.name,
+    ...(doc.description !== undefined ? { description: doc.description } : {}),
+    events: doc.events,
+    bundleStorageKey: doc.bundleStorageKey,
+    sha256: doc.sha256,
+    status: doc.status,
+    createdAt: new Date(doc.createdAt).toISOString(),
+    updatedAt: new Date(doc.updatedAt).toISOString(),
+    ...(doc.deletedAt ? { deletedAt: new Date(doc.deletedAt).toISOString() } : {}),
+  };
+}
+
 const agentPolicies: AgentPolicyStore = {
   async getById(accountId, policyId) {
     const doc = await getConvexClient().query(internal.agentPolicies.getById, {
@@ -809,6 +846,59 @@ const accountTools: AccountToolStore = {
   },
 };
 
+const accountHooks: AccountHookStore = {
+  async getById(accountId, hookId) {
+    const doc = await getConvexClient().query(internal.accountHooks.getById, {
+      accountId: accountId as any,
+      hookId: hookId as any,
+    });
+    return accountHookFromConvex(doc as ConvexAccountHookDoc | null);
+  },
+  async list(accountId) {
+    const docs = (await getConvexClient().query(internal.accountHooks.list, {
+      accountId: accountId as any,
+    })) as ConvexAccountHookDoc[];
+    return docs.map((d) => accountHookFromConvex(d)!).filter(Boolean);
+  },
+  async create(accountId, input) {
+    const normalized = normalizeCreateAccountHookInput(input);
+    const id = (await getConvexClient().mutation(internal.accountHooks.create, {
+      accountId: accountId as any,
+      name: normalized.name,
+      description: normalized.description,
+      events: normalized.events,
+      bundleStorageKey: normalized.bundleStorageKey,
+      sha256: normalized.sha256,
+    })) as string;
+    const created = await this.getById(accountId, id);
+    if (!created) throw new Error("Failed to fetch created account hook");
+    return created;
+  },
+  async update(accountId, hookId, rawPatch) {
+    const patch = normalizeUpdateAccountHookInput(rawPatch);
+    await getConvexClient().mutation(internal.accountHooks.update, {
+      accountId: accountId as any,
+      hookId: hookId as any,
+      ...patch,
+    } as any);
+    return this.getById(accountId, hookId);
+  },
+  async remove(accountId, hookId) {
+    await getConvexClient().mutation(internal.accountHooks.remove, {
+      accountId: accountId as any,
+      hookId: hookId as any,
+    });
+    return true;
+  },
+  async removeAllForAccount(accountId) {
+    const list = await this.list(accountId);
+    for (const hookRecord of list) {
+      await this.remove(accountId, hookRecord.hookId);
+    }
+    return list.length;
+  },
+};
+
 export const convexStorageProvider: StorageProvider = {
   kind: "convex",
   accounts,
@@ -819,5 +909,6 @@ export const convexStorageProvider: StorageProvider = {
   workspaceConfigs,
   agentPolicies,
   accountTools,
+  accountHooks,
   usage,
 };

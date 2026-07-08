@@ -173,7 +173,7 @@ export const cliExternalResourcesFields = {
     accountId: v.id("accounts"),
     projectId: v.id("projects"),
     environmentId: v.id("environments"),
-    kind: v.union(v.literal("skill"), v.literal("tool")),
+    kind: v.union(v.literal("skill"), v.literal("tool"), v.literal("hook")),
     name: v.string(),
     description: v.optional(v.string()),
     externalId: v.string(),
@@ -203,6 +203,35 @@ export const accountToolsFields = {
     sha256: v.string(),
     runtime: v.optional(v.union(v.literal("isolate"), v.literal("sandbox"))),
     defaultConfig: v.optional(v.any()),
+    status: v.union(v.literal("active"), v.literal("deleted")),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+    deletedAt: v.optional(v.number()),
+};
+
+export const accountHookEventValidator = v.union(
+    v.literal("agent.started"),
+    v.literal("agent.step.finished"),
+    v.literal("agent.finished"),
+    v.literal("agent.failed"),
+    v.literal("agent.approval.required"),
+    v.literal("tool.call.started"),
+    v.literal("tool.call.finished"),
+    v.literal("tool.result"),
+    v.literal("subagent.task.started"),
+    v.literal("subagent.task.finished"),
+    v.literal("channel.message.received"),
+    v.literal("channel.message.sending"),
+);
+
+/** Account-owned code hook metadata; bundle bytes live in the tool bundles S3 bucket. */
+export const accountHooksFields = {
+    accountId: v.id("accounts"),
+    name: v.string(),
+    description: v.optional(v.string()),
+    events: v.array(accountHookEventValidator),
+    bundleStorageKey: v.string(),
+    sha256: v.string(),
     status: v.union(v.literal("active"), v.literal("deleted")),
     createdAt: v.number(),
     updatedAt: v.number(),
@@ -522,6 +551,7 @@ export const configAuditResourceKindValidator = v.union(
     v.literal("agent"),
     v.literal("skill"),
     v.literal("tool"),
+    v.literal("hook"),
     v.literal("workspace"),
     v.literal("workspaceFile"),
     v.literal("cron"),
@@ -808,6 +838,9 @@ export default defineSchema({
     accounts: defineTable(accountsFields).index("by_orgId", ["orgId"]).index("by_secretHash", ["secretHash"]),
     agents: defineTable(agentsFields).index("by_accountId", ["accountId"]),
     accountTools: defineTable(accountToolsFields)
+        .index("by_accountId", ["accountId"])
+        .index("by_accountId_and_status", ["accountId", "status"]),
+    accountHooks: defineTable(accountHooksFields)
         .index("by_accountId", ["accountId"])
         .index("by_accountId_and_status", ["accountId", "status"]),
     agentPolicies: defineTable(agentPoliciesFields)

@@ -214,6 +214,7 @@ export default $config({
       workspaceConfigs: resourceName("workspace-configs", stage, region),
       agentPolicies: resourceName("agent-policies", stage, region),
       accountTools: resourceName("account-tools", stage, region),
+      accountHooks: resourceName("account-hooks", stage, region),
       crons: resourceName("crons", stage, region),
       cronSchedules: resourceName("cron-schedules", stage, region),
       filesystem: accountRegionalBucketName("filesystem", stage, region),
@@ -308,6 +309,22 @@ export default $config({
           transform: {
             table: {
               name: names.accountTools,
+            },
+          },
+        });
+
+    const accountHooksTable = useConvexStorage
+      ? null
+      : new sst.aws.Dynamo("AccountHook", {
+          fields: {
+            accountId: "string",
+            hookId: "string",
+          },
+          primaryIndex: { hashKey: "accountId", rangeKey: "hookId" },
+          deletionProtection: false,
+          transform: {
+            table: {
+              name: names.accountHooks,
             },
           },
         });
@@ -783,6 +800,14 @@ export default $config({
             },
           ]
         : []),
+      ...(accountHooksTable
+        ? [
+            {
+              actions: ["dynamodb:GetItem", "dynamodb:Query"],
+              resources: [accountHooksTable.arn],
+            },
+          ]
+        : []),
       ...(agentPoliciesTable
         ? [
             {
@@ -1082,6 +1107,20 @@ export default $config({
             },
           ]
         : []),
+      ...(accountHooksTable
+        ? [
+            {
+              actions: [
+                "dynamodb:DeleteItem",
+                "dynamodb:GetItem",
+                "dynamodb:PutItem",
+                "dynamodb:Query",
+                "dynamodb:UpdateItem",
+              ],
+              resources: [accountHooksTable.arn],
+            },
+          ]
+        : []),
       ...(agentPoliciesTable
         ? [
             {
@@ -1274,6 +1313,7 @@ export default $config({
       sandboxConfigsTableName: sandboxConfigsTable?.name,
       workspaceConfigsTableName: workspaceConfigsTable?.name,
       accountToolsTableName: accountToolsTable?.name,
+      accountHooksTableName: accountHooksTable?.name,
       agentPoliciesTableName: agentPoliciesTable?.name,
       cronsTableName: cronsTable?.name,
       conversationsTableName: conversationsTable.name,

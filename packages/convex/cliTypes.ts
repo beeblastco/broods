@@ -7,7 +7,7 @@
  */
 
 export type CliManifestResource = {
-    kind: "agent" | "workspace" | "sandbox" | "cron" | "skill" | "tool" | "policy";
+    kind: "agent" | "workspace" | "sandbox" | "cron" | "skill" | "tool" | "hook" | "policy";
     name: string;
     description?: string;
     config: unknown;
@@ -20,6 +20,7 @@ export type GeneratedIds = {
     crons: Record<string, string>;
     skills: Record<string, string>;
     tools: Record<string, string>;
+    hooks: Record<string, string>;
     policies: Record<string, string>;
 };
 

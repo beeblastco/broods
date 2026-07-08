@@ -47,6 +47,11 @@ import type {
   UpdateAccountToolInput,
 } from "./account-tools.ts";
 import type {
+  AccountHookRecord,
+  CreateAccountHookInput,
+  UpdateAccountHookInput,
+} from "./account-hooks.ts";
+import type {
   AgentPolicyRecord,
   CreateAgentPolicyInput,
   UpdateAgentPolicyInput,
@@ -75,6 +80,9 @@ export type {
   AccountToolRecord,
   CreateAccountToolInput,
   UpdateAccountToolInput,
+  AccountHookRecord,
+  CreateAccountHookInput,
+  UpdateAccountHookInput,
   AgentPolicyRecord,
   CreateAgentPolicyInput,
   UpdateAgentPolicyInput,
@@ -251,6 +259,16 @@ export interface AccountToolStore {
   removeAllForAccount(accountId: string): Promise<number>;
 }
 
+/** Account-owned isolate code hooks. */
+export interface AccountHookStore {
+  getById(accountId: string, hookId: string): Promise<AccountHookRecord | null>;
+  list(accountId: string): Promise<AccountHookRecord[]>;
+  create(accountId: string, input: CreateAccountHookInput): Promise<AccountHookRecord>;
+  update(accountId: string, hookId: string, patch: UpdateAccountHookInput): Promise<AccountHookRecord | null>;
+  remove(accountId: string, hookId: string): Promise<boolean>;
+  removeAllForAccount(accountId: string): Promise<number>;
+}
+
 /** Account-scoped reusable runtime authorization policies. */
 export interface AgentPolicyStore {
   getById(accountId: string, policyId: string): Promise<AgentPolicyRecord | null>;
@@ -279,6 +297,7 @@ export interface StorageProvider {
   sandboxConfigs: SandboxConfigStore;
   workspaceConfigs: WorkspaceConfigStore;
   accountTools: AccountToolStore;
+  accountHooks: AccountHookStore;
   agentPolicies: AgentPolicyStore;
   usage: UsageStore;
 }

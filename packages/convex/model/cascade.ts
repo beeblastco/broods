@@ -21,6 +21,7 @@ export async function deleteAccountContents(
     const accountScoped = [
         "agents",
         "accountTools",
+        "accountHooks",
         "sandboxConfigs",
         "workspaceConfigs",
         "skills",

@@ -9,6 +9,7 @@ import { httpAction, type ActionCtx } from "./_generated/server";
 import { internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
 import type { CliManifest, GeneratedIds } from "./cliTypes";
+import { normalizeAccountHookUpload } from "./model/accountHooks";
 import { normalizeAccountToolUpload } from "./model/accountTools";
 
 type RouteParts =
@@ -435,7 +436,7 @@ function json(body: unknown, status = 200): Response {
     });
 }
 
-type ExternalIds = Pick<GeneratedIds, "skills" | "tools">;
+type ExternalIds = Pick<GeneratedIds, "skills" | "tools" | "hooks">;
 
 async function syncExternalResources(
     ctx: ActionCtx,
@@ -444,14 +445,15 @@ async function syncExternalResources(
     prune: boolean,
 ): Promise<ExternalIds> {
     const hasExternalResources = manifest.resources.some((entry) =>
-        entry.kind === "skill" || entry.kind === "tool",
+        entry.kind === "skill" || entry.kind === "tool" || entry.kind === "hook",
     );
-    if (!hasExternalResources) return { skills: {}, tools: {} };
+    if (!hasExternalResources) return { skills: {}, tools: {}, hooks: {} };
 
     const skills = await syncSkillResources(ctx, accountId as Id<"accounts">, manifest);
     const tools = await syncToolResources(ctx, accountId as Id<"accounts">, manifest, prune);
+    const hooks = await syncHookResources(ctx, accountId as Id<"accounts">, manifest, prune);
 
-    return { skills, tools };
+    return { skills, tools, hooks };
 }
 
 async function syncSkillResources(
@@ -548,6 +550,77 @@ async function syncToolResources(
     return ids;
 }
 
+async function syncHookResources(
+    ctx: ActionCtx,
+    accountId: Id<"accounts">,
+    manifest: CliManifest,
+    prune: boolean,
+): Promise<Record<string, string>> {
+    const desired = manifest.resources.filter((entry) => entry.kind === "hook");
+    if (desired.length === 0) return {};
+    const existingHooks = await ctx.runQuery(internal.accountHooks.list, { accountId: accountId });
+    const existing = new Map(existingHooks.map((hook) => [hook.name, hook]));
+    const desiredNames = new Set(desired.map((resource) => resource.name));
+    const ids: Record<string, string> = {};
+
+    for (const resource of desired) {
+        const config = asRecord(resource.config, `hook:${resource.name}`);
+        const events = config.events;
+        if (!Array.isArray(events)) throw new Error(`hook:${resource.name}.events must be an array`);
+        const upload = await normalizeAccountHookUpload({
+            name: resource.name,
+            ...(config.description !== undefined || resource.description !== undefined
+                ? { description: stringField(config.description ?? resource.description, `hook:${resource.name}.description`) }
+                : {}),
+            events: events,
+            bundle: stringField(config.bundle, `hook:${resource.name}.bundle`),
+        }, { requireBundle: true });
+        const current = existing.get(resource.name);
+        const bundleStorageKey = current?.sha256 === upload.sha256
+            ? current.bundleStorageKey
+            : await ctx.runAction(internal.awsBundles.putHookBundle, {
+                accountId: accountId,
+                sha256: upload.sha256,
+                bundle: upload.bundle,
+            });
+        if (current) {
+            await ctx.runMutation(internal.accountHooks.update, {
+                accountId: accountId,
+                hookId: current._id,
+                name: upload.name,
+                ...(upload.description !== undefined ? { description: upload.description } : {}),
+                events: upload.events,
+                bundleStorageKey: bundleStorageKey,
+                sha256: upload.sha256,
+            });
+            ids[resource.name] = current._id;
+        } else {
+            const hookId = await ctx.runMutation(internal.accountHooks.create, {
+                accountId: accountId,
+                name: upload.name,
+                ...(upload.description !== undefined ? { description: upload.description } : {}),
+                events: upload.events,
+                bundleStorageKey: bundleStorageKey,
+                sha256: upload.sha256,
+            });
+            ids[resource.name] = hookId;
+        }
+    }
+
+    if (prune === true) {
+        for (const hook of existing.values()) {
+            if (!desiredNames.has(hook.name)) {
+                await ctx.runMutation(internal.accountHooks.remove, {
+                    accountId: accountId,
+                    hookId: hook._id,
+                });
+            }
+        }
+    }
+
+    return ids;
+}
+
 function rewriteExternalResourceRefs(manifest: CliManifest, ids: ExternalIds): CliManifest {
     return {
         ...manifest,
@@ -578,6 +651,21 @@ function rewriteExternalConfigRefs(config: Record<string, unknown>, ids: Externa
             ids.tools[key] ?? key,
             value,
         ]));
+    }
+    if (asOptionalRecord(result.hooks) && Array.isArray(asOptionalRecord(result.hooks)?.code)) {
+        const hooks = asOptionalRecord(result.hooks)!;
+        result.hooks = {
+            ...hooks,
+            code: (hooks.code as unknown[]).map((entry) => {
+                if (!asOptionalRecord(entry)) return entry;
+                const hook = asOptionalRecord(entry)!;
+                const hookId = typeof hook.hookId === "string" && ids.hooks[hook.hookId]
+                    ? ids.hooks[hook.hookId]
+                    : hook.hookId;
+
+                return { ...hook, hookId: hookId };
+            }),
+        };
     }
 
     return result;

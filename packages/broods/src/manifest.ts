@@ -596,6 +596,13 @@ async function normalizeConfig(resource: AnyResource, projectRoot: string): Prom
     }, projectRoot);
   }
 
+  if (resource.kind === "hook") {
+    return await normalizeHookConfig(resource.config as {
+      path: string;
+      events: string[];
+    }, projectRoot);
+  }
+
   if (resource.kind === "policy") {
     const config = { ...(resource.config as Record<string, unknown>) };
     config.version = config.version ?? 1;
@@ -721,6 +728,45 @@ async function normalizeToolConfig(
   };
 }
 
+async function normalizeHookConfig(
+  config: {
+    path: string;
+    events: string[];
+  },
+  projectRoot: string,
+): Promise<Record<string, unknown>> {
+  const bundlePath = resolveContainedResourcePath(projectRoot, config.path, "Hook");
+  const manifestPath = relative(projectRoot, bundlePath).split("\\").join("/");
+  assertSafeBundlePath(manifestPath, "Hook");
+  const sourceSize = Buffer.byteLength(await readFile(bundlePath));
+  if (sourceSize > MAX_BUNDLE_FILE_BYTES) {
+    throw new Error(`Hook source ${manifestPath} is too large (${sourceSize} bytes, max ${MAX_BUNDLE_FILE_BYTES})`);
+  }
+  const build = await Bun.build({
+    entrypoints: [bundlePath],
+    root: projectRoot,
+    target: "node",
+    format: "esm",
+    minify: false,
+  });
+  if (!build.success || build.outputs.length !== 1) {
+    const details = build.logs.map((entry) => entry.message).filter(Boolean).join("; ");
+    throw new Error(`Hook bundle ${manifestPath} failed to build${details ? `: ${details}` : ""}`);
+  }
+  const bundle = await build.outputs[0]!.text();
+  const bundleSize = Buffer.byteLength(bundle);
+  if (bundleSize > MAX_BUNDLE_FILE_BYTES) {
+    throw new Error(`Hook bundle ${manifestPath} is too large (${bundleSize} bytes, max ${MAX_BUNDLE_FILE_BYTES})`);
+  }
+
+  return {
+    path: manifestPath,
+    events: config.events,
+    bundle: bundle,
+    sha256: sha256Hex(bundle),
+  };
+}
+
 /**
  * Normalizes one agent `workspaces` entry into the manifest wire shape
  * `{ name, workspaceId, sandbox? }`. Accepts a bare `defineWorkspace(...)`
@@ -748,7 +794,7 @@ function normalizeWorkspaceRef(entry: unknown, agentName: string): Record<string
   throw new Error(`Agent ${agentName} workspaces must be defineWorkspace(...) resources or { workspace, sandbox } refs`);
 }
 
-function resolveContainedResourcePath(projectRoot: string, resourcePath: string, kind: "Skill" | "Tool"): string {
+function resolveContainedResourcePath(projectRoot: string, resourcePath: string, kind: "Skill" | "Tool" | "Hook"): string {
   if (resourcePath.trim().length === 0) throw new Error(`${kind} path is required`);
   if (resourcePath.includes("\0")) throw new Error(`${kind} path must not contain null bytes`);
   const root = resolve(projectRoot);
@@ -818,7 +864,7 @@ function shouldSkipBundleEntry(name: string): boolean {
   return name.startsWith(".") || SKIPPED_BUNDLE_DIRECTORIES.has(name);
 }
 
-function assertSafeBundlePath(path: string, kind: "Skill" | "Tool"): void {
+function assertSafeBundlePath(path: string, kind: "Skill" | "Tool" | "Hook"): void {
   if (isUnsafeBundlePath(path)) {
     throw new Error(`${kind} bundle path ${path} looks like a hidden file or secret and will not be bundled`);
   }

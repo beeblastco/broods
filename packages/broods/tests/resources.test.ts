@@ -584,6 +584,42 @@ export const support = defineAgent({
   });
 });
 
+test("compileProject keeps uploaded hook bundles and code hook refs", async () => {
+  const cwd = await fixtureProject("", `
+import { defineAgent, defineHook } from "${RESOURCES_MODULE}";
+export const audit = defineHook({
+  name: "audit_hook",
+  description: "Lifecycle audit hook",
+  config: {
+    path: "hooks/audit.ts",
+    events: ["agent.started", "channel.message.received"],
+  },
+});
+export const support = defineAgent({
+  name: "support",
+  config: { hooks: { code: [{ hookId: audit, enabled: true }] } },
+});
+`);
+  await mkdir(join(cwd, "broods", "hooks"), { recursive: true });
+  await writeFile(
+    join(cwd, "broods", "hooks", "audit.ts"),
+    "export function onAgentStarted() { return { metadata: { audited: true } }; }\n",
+  );
+
+  const { manifest } = await compileProject({ cwd, command: "dev" });
+  const hook = manifest.resources.find((resource) => resource.kind === "hook");
+  const agent = manifest.resources.find((resource) => resource.kind === "agent");
+  expect(hook?.description).toBe("Lifecycle audit hook");
+  expect(hook?.config).toMatchObject({
+    path: "hooks/audit.ts",
+    events: ["agent.started", "channel.message.received"],
+  });
+  expect(typeof (hook?.config as { bundle?: unknown }).bundle).toBe("string");
+  expect(agent?.config).toMatchObject({
+    hooks: { code: [{ hookId: "audit_hook", enabled: true }] },
+  });
+});
+
 test("collectEnvRefNames returns the sorted, de-duplicated env.NAME references", async () => {
   const cwd = await fixtureProject("", `
 import { defineAgent, env } from "${RESOURCES_MODULE}";
@@ -699,6 +735,7 @@ export const myAgent = defineAgent({
     crons: {},
     skills: {},
     tools: {},
+    hooks: {},
   }, cwd, resourceAliases);
 
   const api = await readFile(join(cwd, "broods", "_generated", "api.ts"), "utf8");
@@ -745,6 +782,7 @@ export const oneMinuteCron = defineCron({
     crons: { "one-minute-cron-test": "cron_1" },
     skills: {},
     tools: {},
+    hooks: {},
   }, cwd, resourceAliases);
 
   const api = await readFile(join(cwd, "broods", "_generated", "api.ts"), "utf8");
@@ -1181,6 +1219,7 @@ test("writeGeneratedFiles creates Convex-style typed resource references", async
     crons: {},
     skills: {},
     tools: {},
+    hooks: {},
   }, cwd);
 
   const api = await readFile(join(cwd, "broods", "_generated", "api.ts"), "utf8");
@@ -1203,7 +1242,7 @@ export const support = defineAgent({ name: "support", config: { channels: [githu
 `);
   const { manifest, resourceAliases, channels } = await compileProject({ cwd, command: "dev" });
   await writeGeneratedFiles(manifest, {
-    agents: { support: "agent/123" }, workspaces: {}, sandboxes: {}, crons: {}, skills: {}, tools: {},
+    agents: { support: "agent/123" }, workspaces: {}, sandboxes: {}, crons: {}, skills: {}, tools: {}, hooks: {},
   }, cwd, resourceAliases, {
     accountId: "account/123",
     endpointId: "endpoint-1",
@@ -1236,6 +1275,7 @@ export const myAgent = defineAgent({
     crons: {},
     skills: {},
     tools: {},
+    hooks: {},
   }, cwd, resourceAliases);
 
   const api = await readFile(join(cwd, "broods", "_generated", "api.ts"), "utf8");

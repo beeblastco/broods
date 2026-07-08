@@ -8,6 +8,7 @@
  * @module
  */
 
+import type * as accountHooks from "../accountHooks.js";
 import type * as accountTools from "../accountTools.js";
 import type * as accounts from "../accounts.js";
 import type * as agentConfig from "../agentConfig.js";
@@ -43,6 +44,7 @@ import type * as logs from "../logs.js";
 import type * as logsHelpers from "../logsHelpers.js";
 import type * as messages from "../messages.js";
 import type * as migrations from "../migrations.js";
+import type * as model_accountHooks from "../model/accountHooks.js";
 import type * as model_accountSecrets from "../model/accountSecrets.js";
 import type * as model_accountTools from "../model/accountTools.js";
 import type * as model_agentConfigCodec from "../model/agentConfigCodec.js";
@@ -95,6 +97,7 @@ import type {
 } from "convex/server";
 
 declare const fullApi: ApiFromModules<{
+  accountHooks: typeof accountHooks;
   accountTools: typeof accountTools;
   accounts: typeof accounts;
   agentConfig: typeof agentConfig;
@@ -130,6 +133,7 @@ declare const fullApi: ApiFromModules<{
   logsHelpers: typeof logsHelpers;
   messages: typeof messages;
   migrations: typeof migrations;
+  "model/accountHooks": typeof model_accountHooks;
   "model/accountSecrets": typeof model_accountSecrets;
   "model/accountTools": typeof model_accountTools;
   "model/agentConfigCodec": typeof model_agentConfigCodec;
