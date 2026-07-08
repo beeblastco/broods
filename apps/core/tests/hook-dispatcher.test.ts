@@ -1,12 +1,12 @@
 /**
- * Hook dispatch wiring tests: the tool-execute wrapper (deny / edit args /
- * transform output) and the per-run dispatcher's multi-hook merge. Isolate
- * execution itself is covered in hook-runner.test.ts; here runCodeHook is mocked.
+ * Tool-execute wrapper tests: a tool.call.started hook can deny or edit args and
+ * a tool.result hook can transform output. Real isolate execution + the
+ * config→dispatcher→isolate→mutation path are covered in hooks-integration.test.ts
+ * and hook-runner.test.ts; here the dispatcher is a local fake.
  */
 
-import { describe, expect, it, mock } from "bun:test";
+import { describe, expect, it } from "bun:test";
 import type { ToolSet } from "ai";
-import type { AccountHookRecord } from "../src/shared/storage/account-hooks.ts";
 import type { AgentHookEventName } from "../src/shared/storage/agent-config.ts";
 import type { HookDispatcher } from "../src/harness/hook-dispatcher.ts";
 import { wrapToolsWithHooks } from "../src/harness/hook-dispatcher.ts";
@@ -63,38 +63,3 @@ describe("wrapToolsWithHooks", () => {
     expect(result).toEqual({ value: 99 });
   });
 });
-
-describe("createHookDispatcher", () => {
-  it("runs every registered hook for an event and merges their mutations", async () => {
-    const runCodeHook = mock(async ({ record }: { record: AccountHookRecord }) =>
-      record.hookId === "hook_1" ? { system: "from-1", messages: ["a"] } : { system: "from-2" },
-    );
-    mock.module("../src/harness/hook-runner.ts", () => ({ runCodeHook }));
-    const { createHookDispatcher } = await import("../src/harness/hook-dispatcher.ts");
-
-    const index = new Map<AgentHookEventName, AccountHookRecord[]>([
-      ["agent.started", [hookRecord("hook_1"), hookRecord("hook_2")]],
-    ]);
-    const dispatcher = createHookDispatcher("acct_test", index);
-
-    expect(dispatcher.hasHooksFor("agent.started")).toBe(true);
-    expect(dispatcher.hasHooksFor("tool.result")).toBe(false);
-    // hook_2 runs after hook_1, so its `system` wins; hook_1's `messages` remains.
-    expect(await dispatcher.runMutation("agent.started", {})).toEqual({ system: "from-2", messages: ["a"] });
-    expect(runCodeHook).toHaveBeenCalledTimes(2);
-  });
-});
-
-function hookRecord(hookId: string): AccountHookRecord {
-  return {
-    accountId: "acct_test",
-    hookId,
-    name: hookId,
-    events: ["agent.started"],
-    bundleStorageKey: `account-hooks/acct_test/bundles/${hookId}.mjs`,
-    sha256: "a".repeat(64),
-    status: "active",
-    createdAt: "2026-07-08T00:00:00.000Z",
-    updatedAt: "2026-07-08T00:00:00.000Z",
-  };
-}

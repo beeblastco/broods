@@ -116,7 +116,7 @@ export function wrapToolsWithHooks(tools: ToolSet, hooks: HookDispatcher): ToolS
       if (wantsStart) {
         const mutation = await hooks.runMutation("tool.call.started", {
           toolName: name,
-          toolCall: toLifecycleValue({ toolName: name, input }),
+          input: toLifecycleValue(input),
         });
         if (mutation) {
           if (mutation.decision === "deny") {
@@ -132,7 +132,7 @@ export function wrapToolsWithHooks(tools: ToolSet, hooks: HookDispatcher): ToolS
       if (wantsResult) {
         const mutation = await hooks.runMutation("tool.result", {
           toolName: name,
-          toolResult: toLifecycleValue({ toolName: name, output: result as JSONValue }),
+          output: toLifecycleValue(result as JSONValue),
         });
         if (mutation && "output" in mutation) {
           result = mutation.output;

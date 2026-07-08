@@ -16,7 +16,7 @@ import type { AgentHookEventName } from "../src/shared/storage/agent-config.ts";
 const HOOK_BUNDLE = `export default {
   "agent.started": (ctx, event) => ({ system: event.system + "\\n\\n[injected by policy hook]" }),
   "tool.call.started": (ctx, event) =>
-    event.toolCall.toolName === "bash"
+    event.toolName === "bash"
       ? { decision: "deny", denyReason: "shell disabled by policy hook" }
       : { decision: "allow" },
 };`;
