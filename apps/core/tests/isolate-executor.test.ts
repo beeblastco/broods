@@ -273,6 +273,130 @@ describe("isolate runner", () => {
   });
 });
 
+describe("isolate pooled worker (--pool)", () => {
+  realRunnerIt("emits ready, streams chunks, meters, and returns final", async () => {
+    const { byCall, ready } = await runPoolRunner([
+      {
+        callId: "1",
+        tenantId: "acct_a",
+        toolName: "streamer",
+        source: "export default { name: 'streamer', async *execute() { yield { step: 1 }; yield { step: 2 }; } };",
+      },
+    ]);
+
+    expect(ready).toEqual({ t: "ready" });
+    const frames = byCall.get("1")!;
+    expect(frames.filter((f) => f.t === "chunk")).toEqual([
+      { t: "chunk", callId: "1", output: { step: 1 } },
+      { t: "chunk", callId: "1", output: { step: 2 } },
+    ]);
+    expect(frames.find((f) => f.t === "final")).toEqual({ t: "final", callId: "1", result: { step: 2 } });
+    const meter = frames.find((f) => f.t === "meter");
+    expect(meter?.tenantId).toBe("acct_a");
+    expect(typeof meter?.cpuMs).toBe("number");
+  });
+
+  realRunnerIt("gives each call a fresh context on a reused tenant isolate (no state leak)", async () => {
+    const source = "export default { name: 'counter', execute() { globalThis.__n = (globalThis.__n || 0) + 1; return { n: globalThis.__n }; } };";
+    const { byCall } = await runPoolRunner([
+      { callId: "1", tenantId: "acct_a", toolName: "counter", source },
+      { callId: "2", tenantId: "acct_a", toolName: "counter", source },
+    ]);
+
+    // Same tenant reuses the isolate, but the fresh context resets globals, so
+    // the second call must NOT observe the first call's write.
+    expect(byCall.get("1")!.find((f) => f.t === "final")).toEqual({ t: "final", callId: "1", result: { n: 1 } });
+    expect(byCall.get("2")!.find((f) => f.t === "final")).toEqual({ t: "final", callId: "2", result: { n: 1 } });
+  });
+
+  realRunnerIt("does not leak globals across tenants", async () => {
+    const writer = "export default { name: 'w', execute() { globalThis.__secret = 'A'; return { wrote: true }; } };";
+    const reader = "export default { name: 'r', execute() { return { secret: globalThis.__secret ?? null }; } };";
+    const { byCall } = await runPoolRunner([
+      { callId: "1", tenantId: "acct_a", toolName: "w", source: writer },
+      { callId: "2", tenantId: "acct_b", toolName: "r", source: reader },
+    ]);
+
+    expect(byCall.get("2")!.find((f) => f.t === "final")).toEqual({ t: "final", callId: "2", result: { secret: null } });
+  });
+
+  realRunnerIt("surfaces thrown errors and poisoned-isolate recovery on the next call", async () => {
+    const { byCall } = await runPoolRunner([
+      { callId: "1", tenantId: "acct_a", toolName: "boom", source: "export default { name: 'boom', execute() { throw new Error('boom'); } };" },
+      { callId: "2", tenantId: "acct_a", toolName: "ok", source: "export default { name: 'ok', execute() { return { ok: true }; } };" },
+    ]);
+
+    expect(byCall.get("1")!.find((f) => f.t === "error")).toEqual({ t: "error", callId: "1", error: "boom" });
+    // The tripped isolate is disposed + evicted; the next same-tenant call still works.
+    expect(byCall.get("2")!.find((f) => f.t === "final")).toEqual({ t: "final", callId: "2", result: { ok: true } });
+  });
+});
+
+async function runPoolRunner(
+  requests: Array<{ callId: string; tenantId: string; toolName: string; source: string; input?: unknown }>,
+  env?: Record<string, string>,
+): Promise<{ byCall: Map<string, Array<{ t: string; [key: string]: unknown }>>; ready: unknown; stderr: string }> {
+  const child = spawn("node", [runnerPath!, "--pool"], {
+    stdio: ["pipe", "pipe", "pipe"],
+    env: { ...process.env, ...env },
+  });
+  const frames: Array<{ t: string; [key: string]: unknown }> = [];
+  let wake: (() => void) | null = null;
+  let buffer = "";
+  let stderr = "";
+  child.stdout.setEncoding("utf8");
+  child.stdout.on("data", (chunk: string) => {
+    buffer += chunk;
+    let index: number;
+    while ((index = buffer.indexOf("\n")) >= 0) {
+      const line = buffer.slice(0, index);
+      buffer = buffer.slice(index + 1);
+      if (!line.trim()) continue;
+      frames.push(JSON.parse(line));
+      wake?.();
+      wake = null;
+    }
+  });
+  child.stderr.setEncoding("utf8");
+  child.stderr.on("data", (chunk: string) => {
+    stderr += chunk;
+  });
+
+  const next = async (): Promise<{ t: string; [key: string]: unknown }> => {
+    while (!frames.length) await new Promise<void>((resolve) => (wake = resolve));
+    return frames.shift()!;
+  };
+
+  try {
+    const ready = await next();
+    const byCall = new Map<string, Array<{ t: string; [key: string]: unknown }>>();
+    for (const request of requests) {
+      child.stdin.write(JSON.stringify({
+        t: "run",
+        callId: request.callId,
+        tenantId: request.tenantId,
+        payload: {
+          bundleSourceB64: Buffer.from(request.source).toString("base64"),
+          expectedSha256: sha256(request.source),
+          toolName: request.toolName,
+          input: request.input ?? {},
+          config: {},
+        },
+      }) + "\n");
+      const collected: Array<{ t: string; [key: string]: unknown }> = [];
+      while (true) {
+        const frame = await next();
+        collected.push(frame);
+        if (frame.t === "final" || frame.t === "error" || frame.t === "end") break;
+      }
+      byCall.set(request.callId, collected);
+    }
+    return { byCall, ready, stderr };
+  } finally {
+    child.kill();
+  }
+}
+
 async function runRealRunner(
   source: string,
   options: {

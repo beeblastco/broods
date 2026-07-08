@@ -2,36 +2,67 @@
  * Node-hosted V8 isolate execution for pure account-uploaded tool bundles.
  * Bun cannot load isolated-vm, so core spawns a Node runner and speaks the same
  * NDJSON frame protocol as the resident sandbox worker.
+ *
+ * Two paths share this file: the legacy one-shot spawner (a fresh runner per
+ * call) and, behind ISOLATE_POOL, a pool of long-lived hardened workers that
+ * keep a tenant-keyed warm isolate cache (Convex-Funrun style) — reuse the
+ * isolate within a tenant, fresh context per call, so cold starts and per-call
+ * process spawns disappear. The pool is opt-in until it has soaked in dev.
  */
 
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { logInfo } from "../../shared/log.ts";
 import { optionalEnv, positiveIntegerEnv, requireEnv } from "../../shared/env.ts";
 import { FrameQueue, createRunnerPayload, type ExecuteAccountToolOptions } from "./custom-tool-executor.ts";
 
 const DEFAULT_TIMEOUT_SECONDS = 30;
 const RUNNER_OUTPUT_LIMIT_BYTES = 1024 * 1024;
 
-let activeIsolateRuns = 0;
-const isolateWaiters: Array<() => void> = [];
+export async function* streamAccountToolInIsolate(
+  options: ExecuteAccountToolOptions,
+): AsyncGenerator<unknown, void, void> {
+  if (isolatePoolEnabled()) {
+    yield* streamViaPool(options);
+    return;
+  }
+  yield* streamViaOneShot(options);
+}
 
-export async function* streamAccountToolInIsolate({
+function isolatePoolEnabled(): boolean {
+  return optionalEnv("ISOLATE_POOL") === "1";
+}
+
+function runnerTimeoutMs(): number {
+  return positiveIntegerEnv("ISOLATE_RUNNER_TIMEOUT_SECONDS", DEFAULT_TIMEOUT_SECONDS) * 1000;
+}
+
+async function buildRunPayload({
   tool,
   input,
   config,
-}: ExecuteAccountToolOptions): AsyncGenerator<unknown, void, void> {
+}: ExecuteAccountToolOptions): Promise<Record<string, unknown>> {
+  const bucket = requireEnv("TOOL_BUNDLES_BUCKET_NAME");
+  const payload = await createRunnerPayload({ bucket, tool, input, config, asyncTool: null, forceInline: true });
+  return {
+    bundleSourceB64: payload.bundleSourceB64,
+    expectedSha256: payload.expectedSha256,
+    toolName: payload.toolName,
+    input: payload.input,
+    config: payload.config,
+  };
+}
+
+// --- Legacy one-shot path (default until ISOLATE_POOL flips on) ----------------
+
+let activeIsolateRuns = 0;
+const isolateWaiters: Array<() => void> = [];
+
+async function* streamViaOneShot(options: ExecuteAccountToolOptions): AsyncGenerator<unknown, void, void> {
   const release = await acquireIsolateSlot();
   let child: ChildProcessWithoutNullStreams | undefined;
   try {
-    const bucket = requireEnv("TOOL_BUNDLES_BUCKET_NAME");
-    const payload = await createRunnerPayload({
-      bucket,
-      tool,
-      input,
-      config,
-      asyncTool: null,
-      forceInline: true,
-    });
+    const runPayload = await buildRunPayload(options);
     child = spawn(isolateRunnerNode(), [isolateRunnerPath()], {
       stdio: ["pipe", "pipe", "pipe"],
       env: process.env,
@@ -41,7 +72,7 @@ export async function* streamAccountToolInIsolate({
     let stderr = "";
     let stdoutBytes = 0;
     let sawFrame = false;
-    const timeoutMs = positiveIntegerEnv("ISOLATE_RUNNER_TIMEOUT_SECONDS", DEFAULT_TIMEOUT_SECONDS) * 1000;
+    const timeoutMs = runnerTimeoutMs();
     const timeout = setTimeout(() => {
       queue.push(JSON.stringify({ t: "error", error: "custom tool isolate execution timed out" }) + "\n");
       queue.close();
@@ -81,13 +112,7 @@ export async function* streamAccountToolInIsolate({
       queue.close();
     });
 
-    child.stdin.end(JSON.stringify({
-      bundleSourceB64: payload.bundleSourceB64,
-      expectedSha256: payload.expectedSha256,
-      toolName: payload.toolName,
-      input: payload.input,
-      config: payload.config,
-    }) + "\n");
+    child.stdin.end(JSON.stringify(runPayload) + "\n");
 
     for await (const frame of queue.frames()) {
       sawFrame = true;
@@ -135,6 +160,209 @@ function releaseIsolateSlot(): void {
     return;
   }
   activeIsolateRuns = Math.max(0, activeIsolateRuns - 1);
+}
+
+// --- Pooled path (ISOLATE_POOL=1): long-lived tenant-scoped warm workers -------
+
+type IsolateFrame = { t: string; callId?: string; output?: unknown; result?: unknown; error?: string; toolName?: string; cpuMs?: number };
+
+/**
+ * One long-lived runner process. Serves a single call at a time; between calls
+ * it keeps its tenant-keyed isolate cache warm. Frames from stdout route to the
+ * active call's sink; a `ready` frame resolves startup.
+ */
+class IsolateWorker {
+  readonly child: ChildProcessWithoutNullStreams;
+  readonly tenants = new Set<string>();
+  busy = false;
+  alive = true;
+  ready: Promise<void>;
+
+  #buffer = "";
+  #stdoutBytes = 0;
+  #sink: { push: (frame: IsolateFrame) => void; fail: (error: Error) => void } | null = null;
+  #resolveReady!: () => void;
+
+  constructor() {
+    this.ready = new Promise<void>((resolve) => {
+      this.#resolveReady = resolve;
+    });
+    this.child = spawn(isolateRunnerNode(), [isolateRunnerPath(), "--pool"], {
+      stdio: ["pipe", "pipe", "pipe"],
+      env: process.env,
+    });
+    this.child.stdout.setEncoding("utf8");
+    this.child.stdout.on("data", (chunk: string) => this.#onData(chunk));
+    this.child.stderr.setEncoding("utf8");
+    this.child.stderr.on("data", () => {});
+    const die = (error: Error) => {
+      this.alive = false;
+      this.#resolveReady();
+      this.#sink?.fail(error);
+    };
+    this.child.once("error", (error) => die(error instanceof Error ? error : new Error(String(error))));
+    this.child.once("exit", () => die(new Error("custom tool isolate worker exited")));
+  }
+
+  #onData(chunk: string): void {
+    this.#stdoutBytes += Buffer.byteLength(chunk);
+    if (this.#stdoutBytes > RUNNER_OUTPUT_LIMIT_BYTES) {
+      this.kill();
+      this.#sink?.fail(new Error("custom tool isolate output exceeded limit"));
+      return;
+    }
+    this.#buffer += chunk;
+    let index: number;
+    while ((index = this.#buffer.indexOf("\n")) >= 0) {
+      const line = this.#buffer.slice(0, index);
+      this.#buffer = this.#buffer.slice(index + 1);
+      if (!line.trim()) continue;
+      let frame: IsolateFrame;
+      try {
+        frame = JSON.parse(line) as IsolateFrame;
+      } catch {
+        continue;
+      }
+      if (frame.t === "ready") {
+        this.#resolveReady();
+        continue;
+      }
+      this.#sink?.push(frame);
+    }
+  }
+
+  async *runCall(request: Record<string, unknown>): AsyncGenerator<IsolateFrame, void, void> {
+    this.#stdoutBytes = 0;
+    const frames: IsolateFrame[] = [];
+    let done = false;
+    let failure: Error | null = null;
+    let wake: (() => void) | null = null;
+    this.#sink = {
+      push: (frame) => {
+        frames.push(frame);
+        if (frame.t === "final" || frame.t === "error" || frame.t === "end") done = true;
+        wake?.();
+        wake = null;
+      },
+      fail: (error) => {
+        failure = error;
+        done = true;
+        wake?.();
+        wake = null;
+      },
+    };
+    try {
+      this.child.stdin.write(JSON.stringify(request) + "\n");
+      while (true) {
+        if (frames.length) {
+          yield frames.shift()!;
+          continue;
+        }
+        if (failure) throw failure;
+        if (done) return;
+        await new Promise<void>((resolve) => {
+          wake = resolve;
+        });
+      }
+    } finally {
+      this.#sink = null;
+    }
+  }
+
+  kill(): void {
+    this.alive = false;
+    try {
+      this.child.kill("SIGKILL");
+    } catch {}
+  }
+}
+
+const pool: IsolateWorker[] = [];
+const poolWaiters: Array<() => void> = [];
+
+function poolSize(): number {
+  return positiveIntegerEnv("ISOLATE_WORKER_POOL_SIZE", positiveIntegerEnv("ISOLATE_RUNNER_CONCURRENCY", 8));
+}
+
+function ensurePool(): void {
+  for (let i = 0; i < pool.length; i += 1) {
+    const worker = pool[i];
+    if (worker && !worker.alive) pool[i] = new IsolateWorker();
+  }
+  while (pool.length < poolSize()) pool.push(new IsolateWorker());
+}
+
+/** Pre-spawn the worker pool so the first real call skips Node startup. */
+export async function prewarmIsolatePool(): Promise<void> {
+  if (!isolatePoolEnabled()) return;
+  ensurePool();
+  await Promise.all(pool.map((worker) => worker.ready.catch(() => {})));
+}
+
+async function acquireWorker(tenantId: string): Promise<IsolateWorker> {
+  while (true) {
+    ensurePool();
+    const worker =
+      pool.find((candidate) => !candidate.busy && candidate.alive && candidate.tenants.has(tenantId)) ??
+      pool.find((candidate) => !candidate.busy && candidate.alive);
+    if (worker) {
+      worker.busy = true;
+      await worker.ready.catch(() => {});
+      if (!worker.alive) {
+        worker.busy = false;
+        continue;
+      }
+      return worker;
+    }
+    await new Promise<void>((resolve) => poolWaiters.push(resolve));
+  }
+}
+
+function releaseWorker(worker: IsolateWorker, tenantId: string): void {
+  worker.busy = false;
+  if (worker.alive) worker.tenants.add(tenantId);
+  const next = poolWaiters.shift();
+  if (next) next();
+}
+
+let callCounter = 0;
+
+async function* streamViaPool(options: ExecuteAccountToolOptions): AsyncGenerator<unknown, void, void> {
+  const tenantId = options.accountId;
+  const runPayload = await buildRunPayload(options);
+  const worker = await acquireWorker(tenantId);
+  const callId = String((callCounter += 1));
+  const request = { t: "run", callId, tenantId, payload: runPayload };
+
+  // Guard against a wedged worker: if no terminal frame lands within the run
+  // deadline plus grace, kill it (its exit fails the call) and let the pool
+  // respawn a replacement.
+  const guard = setTimeout(() => worker.kill(), runnerTimeoutMs() + 2_000);
+  try {
+    for await (const frame of worker.runCall(request)) {
+      if (frame.t === "meter") {
+        logInfo("isolate.usage", { accountId: tenantId, toolName: frame.toolName, cpuMs: frame.cpuMs });
+        continue;
+      }
+      if (frame.t === "chunk") {
+        yield frame.output;
+        continue;
+      }
+      if (frame.t === "final") {
+        yield frame.result;
+        return;
+      }
+      if (frame.t === "end") {
+        return;
+      }
+      if (frame.t === "error") {
+        throw new Error(frame.error || "custom tool isolate execution failed");
+      }
+    }
+  } finally {
+    clearTimeout(guard);
+    releaseWorker(worker, tenantId);
+  }
 }
 
 function isolateRunnerNode(): string {
