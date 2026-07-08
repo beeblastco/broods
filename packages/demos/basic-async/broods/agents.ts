@@ -4,13 +4,14 @@ export const search = defineAgent({
   name: "async-search",
   config: {
     provider: {
-      minimax: { 
-        apiKey: env.MINIMAX_API_KEY 
+      custom: {
+        apiKey: env.AI_API_KEY,
+        base_url: env.AI_BASE_URL,
       },
     },
     model: {
-      provider: "minimax",
-      modelId: "MiniMax-M3",
+      provider: "custom",
+      modelId: "Qwen3.6-27B",
     },
     agent: {
       system: "You are a helpful assistant.",

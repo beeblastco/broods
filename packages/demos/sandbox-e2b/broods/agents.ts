@@ -22,13 +22,14 @@ export const e2bAgent = defineAgent({
   name: "e2b-agent",
   config: {
     provider: {
-      minimax: {
-        apiKey: env.MINIMAX_API_KEY
+      custom: {
+        apiKey: env.AI_API_KEY,
+        base_url: env.AI_BASE_URL,
       },
     },
     model: {
-      provider: "minimax",
-      modelId: "MiniMax-M3",
+      provider: "custom",
+      modelId: "Qwen3.6-27B",
     },
     agent: {
       system: "You are a helpful assistant with access to a sandbox environment where you can run code and access the internet. Use the tools available to you to answer the user's question.",

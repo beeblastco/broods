@@ -10,7 +10,7 @@ export const hookedAgent = defineAgent({
     provider: {
       custom: {
         apiKey: env.AI_API_KEY,
-        base_url: "https://oai.endpoints.kepler.ai.cloud.ovh.net/v1",
+        base_url: env.AI_BASE_URL,
       },
     },
     model: {

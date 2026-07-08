@@ -20,13 +20,14 @@ export const writer = defineAgent({
   name: "writer",
   config: {
     provider: {
-      minimax: {
-        apiKey: env.MINIMAX_API_KEY
+      custom: {
+        apiKey: env.AI_API_KEY,
+        base_url: env.AI_BASE_URL,
       },
     },
     model: {
-      provider: "minimax",
-      modelId: "MiniMax-M3",
+      provider: "custom",
+      modelId: "Qwen3.6-27B",
     },
     sandbox: writerSandbox,
     workspaces: [sharedWorkspace],
@@ -38,13 +39,14 @@ export const readerMount = defineAgent({
   name: "reader-mount",
   config: {
     provider: {
-      minimax: {
-        apiKey: env.MINIMAX_API_KEY
+      custom: {
+        apiKey: env.AI_API_KEY,
+        base_url: env.AI_BASE_URL,
       },
     },
     model: {
-      provider: "minimax",
-      modelId: "MiniMax-M3",
+      provider: "custom",
+      modelId: "Qwen3.6-27B",
     },
     workspaces: [sharedWorkspace],
     publicAccess: true,
@@ -55,13 +57,14 @@ export const readerS3 = defineAgent({
   name: "reader-s3",
   config: {
     provider: {
-      minimax: {
-        apiKey: env.MINIMAX_API_KEY
+      custom: {
+        apiKey: env.AI_API_KEY,
+        base_url: env.AI_BASE_URL,
       },
     },
     model: {
-      provider: "minimax",
-      modelId: "MiniMax-M3",
+      provider: "custom",
+      modelId: "Qwen3.6-27B",
     },
     workspaces: [{ workspace: sharedWorkspace, sandbox: null }],
     publicAccess: true,
