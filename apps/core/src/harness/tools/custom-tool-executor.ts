@@ -8,6 +8,7 @@
  */
 
 import { requireEnv } from "../../shared/env.ts";
+import { isPlainObject } from "../../shared/object.ts";
 import { readS3Bytes } from "../../shared/s3.ts";
 import type { AccountToolRecord, AgentToolConfig } from "../../shared/storage/index.ts";
 
@@ -94,25 +95,21 @@ function mergeToolConfig(
 ): Record<string, unknown> {
   return {
     ...(defaultConfig ?? {}),
-    ...(agentConfig && typeof agentConfig === "object" && !Array.isArray(agentConfig)
-      ? agentConfig as Record<string, unknown>
-      : {}),
+    ...(isPlainObject(agentConfig) ? agentConfig : {}),
   };
 }
 
 function extractAsyncToolMetadata(options: unknown): unknown {
-  if (!options || typeof options !== "object") return undefined;
-  return (options as { asyncTool?: unknown }).asyncTool;
+  return isPlainObject(options) ? options.asyncTool : undefined;
 }
 
 function isDetachedAsyncTool(value: unknown): value is DetachedAsyncToolMetadata {
-  return Boolean(
-    value &&
-    typeof value === "object" &&
-    (value as { detached?: unknown }).detached === true &&
-    typeof (value as { resultId?: unknown }).resultId === "string" &&
-    typeof (value as { completePath?: unknown }).completePath === "string" &&
-    typeof (value as { completionToken?: unknown }).completionToken === "string",
+  return (
+    isPlainObject(value) &&
+    value.detached === true &&
+    typeof value.resultId === "string" &&
+    typeof value.completePath === "string" &&
+    typeof value.completionToken === "string"
   );
 }
 

@@ -301,7 +301,11 @@ async function runPoolRunner(
       const line = buffer.slice(0, index);
       buffer = buffer.slice(index + 1);
       if (!line.trim()) continue;
-      frames.push(JSON.parse(line));
+      try {
+        frames.push(JSON.parse(line));
+      } catch {
+        continue; // ignore any non-protocol stdout noise instead of crashing the run
+      }
       wake?.();
       wake = null;
     }
