@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, mock } from "bun:test";
+import { afterEach, describe, expect, it } from "bun:test";
 import {
   createIncomingEventRouter as createCoreIncomingEventRouter,
   type ChannelInboundEvent,
@@ -48,40 +48,6 @@ const PANCAKE_AGENT = {
         pageId: "page-1",
         pageAccessToken: "page-token",
         webhookSecret: "pancake-secret",
-        options: {
-          ignoreTagIds: ["order-tag", "pending-tag"],
-        },
-      },
-    },
-  },
-};
-
-const PANCAKE_HANDOFF_AGENT = {
-  ...PANCAKE_AGENT,
-  config: {
-    channels: {
-      pancake: {
-        pageId: "page-1",
-        pageAccessToken: "page-token",
-        webhookSecret: "pancake-secret",
-        options: {
-          ignoreTagIds: ["order-tag", "pending-tag"],
-        },
-      },
-    },
-    tools: {
-      handoffs: {
-        enabled: true,
-        pancake: {
-          scenarioTagIds: {
-            order: "order-tag",
-            pending: "pending-tag",
-          },
-        },
-        zalo: {
-          botToken: "zalo-token",
-          notifyUserIds: ["sale-1"],
-        },
       },
     },
   },
@@ -308,29 +274,6 @@ describe("account webhook ingress", () => {
     expect(responseJson(response)).toEqual({ error: "zalo integration is not configured" });
   });
 
-  it("lets Pancake scenario handoff tags ignore human-owned conversations", async () => {
-    const handledEvents: ChannelInboundEvent[] = [];
-    globalThis.fetch = mock(async () => {
-      throw new Error("Pancake handoff tag check should not call fetch");
-    }) as never;
-    const routeIncomingEvent = createIncomingEventRouter({
-      accountLoader: async () => TEST_ACCOUNT,
-      agentLoader: async () => PANCAKE_HANDOFF_AGENT,
-    });
-
-    const response = await routeIncomingEvent(createPancakeEvent({
-      conversation: { tags: ["pending-tag"] },
-    }), createHandlers({
-      handleChannelRequest: async (event) => {
-        handledEvents.push(event);
-      },
-    }));
-
-    expect(response.statusCode).toBe(200);
-    expect(response.afterResponse).toBeUndefined();
-    expect(handledEvents).toHaveLength(0);
-  });
-
   it("uses account webhook routing only; root provider webhooks are not accepted", async () => {
     const routeIncomingEvent = createIncomingEventRouter({
       accountLoader: async () => TEST_ACCOUNT,
@@ -387,10 +330,7 @@ function createIncomingEventRouter(options: IntegrationRoutingOptions = {}) {
   };
 }
 
-function createPancakeEvent(overrides: {
-  conversation?: Record<string, unknown>;
-  message?: Record<string, unknown>;
-} = {}): ReturnType<typeof coreRequest> {
+function createPancakeEvent(): ReturnType<typeof coreRequest> {
   return createTelegramEvent({
     page_id: "page-1",
     event_type: "messaging",
@@ -400,7 +340,6 @@ function createPancakeEvent(overrides: {
         type: "INBOX",
         tags: [],
         from: { id: "customer-1", name: "Ada" },
-        ...overrides.conversation,
       },
       message: {
         id: "message-1",
@@ -409,7 +348,6 @@ function createPancakeEvent(overrides: {
         message: "hello pancake",
         type: "INBOX",
         from: { id: "customer-1", name: "Ada", page_customer_id: "page-customer-1" },
-        ...overrides.message,
       },
     },
   }, {

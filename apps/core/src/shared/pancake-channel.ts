@@ -1,9 +1,10 @@
 /**
  * Pancake channel adapter.
  * Keep Pancake webhook normalization and outbound message API calls here.
- * 
- * Pancake channle have options:
- * - handoff tags id which will skip processing based on specific tags `PancakeHandoffOptions`
+ *
+ * Per-conversation policy (e.g. skipping human-owned conversations by tag) is
+ * not baked in: the parsed source carries `tagIds` so a user `onMessageReceived`
+ * hook can decide to drop the message.
  */
 
 import { createHash } from "node:crypto";
@@ -13,7 +14,6 @@ import type {
   ChannelAdapter,
   ChannelParseResult,
   ChannelRequest,
-  ParsedChannelMessage,
 } from "./channels.ts";
 import { logInfo, logWarn } from "./log.ts";
 import { PANCAKE_INTEGRATION_PREFIX } from "./runtime-keys.ts";
@@ -71,25 +71,12 @@ export interface PancakeSource {
   tagIds?: string[];
 }
 
-export interface PancakeHandoffOptions {
-  tagIds: string[];
-}
-
-export interface PancakeChannelOptions {
-  accountId?: string;
-  agentId?: string;
-  configOptions?: Record<string, unknown>;
-}
-
 export function createPancakeChannel(
   pageId: string,
   pageAccessToken: string,
   webhookSecret: string,
   senderId?: string,
-  options: PancakeChannelOptions = {},
 ): ChannelAdapter {
-  const handoff = resolvePancakeHandoffOptions(options.configOptions);
-
   return {
     name: "pancake",
 
@@ -105,26 +92,13 @@ export function createPancakeChannel(
     },
 
     parse(req): ChannelParseResult | Promise<ChannelParseResult> {
-      const parsed = parsePancakeWebhook(req, pageId);
-      if (parsed.kind !== "message" || !handoff) {
-        return parsed;
-      }
-
-      return applyPancakeHandoffTag(handoff, parsed);
+      return parsePancakeWebhook(req, pageId);
     },
 
     actions(msg): ChannelActions {
       return createPancakeActions(pageAccessToken, toPancakeSource(msg.source), senderId);
     },
   };
-}
-
-function resolvePancakeHandoffOptions(configOptions: Record<string, unknown> | undefined): PancakeHandoffOptions | null {
-  const tagIds = normalizePancakeTagIds(configOptions?.ignoreTagIds);
-  if (tagIds.length === 0) {
-    return null;
-  }
-  return { tagIds };
 }
 
 function parsePancakeWebhook(req: ChannelRequest, pageId: string): ChannelParseResult {
@@ -218,27 +192,6 @@ function parsePancakeWebhook(req: ChannelRequest, pageId: string): ChannelParseR
         tagIds: normalizePancakeTagIds(conversation.tags),
       } satisfies PancakeSource,
     },
-  };
-}
-
-function applyPancakeHandoffTag(
-  config: PancakeHandoffOptions,
-  parsed: ParsedChannelMessage,
-): ChannelParseResult {
-  const tagIds = normalizePancakeTagIds(parsed.message.source.tagIds);
-  const matchedTagId = config.tagIds.find((tagId) => tagIds.includes(tagId));
-  if (!matchedTagId) {
-    return parsed;
-  }
-
-  logInfo("Pancake handoff tag skipped agent reply", {
-    conversationKey: parsed.message.conversationKey,
-    tagId: matchedTagId,
-  });
-
-  return {
-    kind: "ignore",
-    response: parsed.ack ?? { statusCode: 200 },
   };
 }
 

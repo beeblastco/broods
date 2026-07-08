@@ -43,6 +43,8 @@ const runnerPath = process.env.BROODS_TEST_ISOLATE_RUNNER_PATH;
 const realRunnerIt = runnerPath ? it : it.skip;
 
 describe("isolate runner hook mode", () => {
+  // Hook mode returns { result, state }: the handler's value plus ctx.state read
+  // back out. state is {} here since these handlers do not touch it.
   realRunnerIt("invokes the handler for the fired event and returns its value", async () => {
     const result = await runHookRunner(
       `export default {
@@ -52,7 +54,7 @@ describe("isolate runner hook mode", () => {
       "agent.started",
       { system: "Base." },
     );
-    expect(result.frames).toEqual([{ t: "final", result: { system: "Base. Be terse." } }]);
+    expect(result.frames).toEqual([{ t: "final", result: { result: { system: "Base. Be terse." }, state: {} } }]);
   });
 
   realRunnerIt("routes each event to its own handler", async () => {
@@ -61,18 +63,29 @@ describe("isolate runner hook mode", () => {
       "tool.call.started": (ctx, event) => ({ decision: event.toolCall.toolName === "bash" ? "deny" : "allow" }),
     };`;
     const denied = await runHookRunner(source, "tool.call.started", { toolCall: { toolName: "bash" } });
-    expect(denied.frames).toEqual([{ t: "final", result: { decision: "deny" } }]);
+    expect(denied.frames).toEqual([{ t: "final", result: { result: { decision: "deny" }, state: {} } }]);
     const allowed = await runHookRunner(source, "tool.call.started", { toolCall: { toolName: "read" } });
-    expect(allowed.frames).toEqual([{ t: "final", result: { decision: "allow" } }]);
+    expect(allowed.frames).toEqual([{ t: "final", result: { result: { decision: "allow" }, state: {} } }]);
   });
 
-  realRunnerIt("returns undefined (no mutation) when the bundle has no handler for the event", async () => {
+  realRunnerIt("exposes ctx.state and returns it after the hook mutates it", async () => {
+    const result = await runHookRunner(
+      `export default { "agent.started": (ctx) => { ctx.state.seen = (ctx.state.seen ?? 0) + 1; return { system: "s" }; } };`,
+      "agent.started",
+      { system: "Base." },
+      { seen: 4 },
+    );
+    expect(result.frames).toEqual([{ t: "final", result: { result: { system: "s" }, state: { seen: 5 } } }]);
+  });
+
+  realRunnerIt("returns no mutation and unchanged state when the bundle has no handler for the event", async () => {
     const result = await runHookRunner(
       `export default { "agent.started": () => ({ system: "x" }) };`,
       "agent.finished",
       { output: "done" },
+      { kept: true },
     );
-    expect(result.frames).toEqual([{ t: "final", result: undefined }]);
+    expect(result.frames).toEqual([{ t: "final", result: { state: { kept: true } } }]);
   });
 
   realRunnerIt("surfaces a thrown hook as an error frame", async () => {
@@ -90,6 +103,7 @@ async function runHookRunner(
   source: string,
   hookEvent: string,
   payload: unknown,
+  state: Record<string, unknown> = {},
 ): Promise<{ frames: unknown[]; exitCode: number | null; stderr: string }> {
   const child = spawn("node", [runnerPath!], { stdio: ["pipe", "pipe", "pipe"], env: { ...process.env } });
   let stdout = "";
@@ -105,6 +119,7 @@ async function runHookRunner(
     hookEvent,
     input: payload,
     config: {},
+    state,
   }) + "\n");
   const exitCode = await new Promise<number | null>((resolve, reject) => {
     child.once("error", reject);

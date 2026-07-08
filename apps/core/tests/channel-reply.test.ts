@@ -44,7 +44,6 @@ describe("sendChannelReply", () => {
     await sendChannelReply({
       config,
       accountId: "acct-1",
-      agentId: "agent-1",
       channelName: "telegram",
       source: { chatId: 555, messageId: "555:100", threadId: "telegram:555" },
       text: "background job done",
@@ -66,7 +65,6 @@ describe("sendChannelReply", () => {
       sendChannelReply({
         config: {},
         accountId: "acct-1",
-        agentId: "agent-1",
         channelName: "telegram",
         source: { chatId: 555, messageId: "555:100", threadId: "telegram:555" },
         text: "hello",

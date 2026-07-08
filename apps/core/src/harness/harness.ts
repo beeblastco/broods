@@ -143,6 +143,9 @@ export interface AgentLoopOptions {
   dispatchAsyncTools?: RunAsyncToolDispatch;
   // Present when this run is a subagent; nests its trace under the parent.
   subagentParent?: SubagentParentContext;
+  // Request-shared hook dispatcher (one storage load + one ctx.state per
+  // request); the loop builds its own when the handler does not pass one.
+  hooks?: HookDispatcher;
 }
 
 export async function runAgentLoop(
@@ -157,7 +160,7 @@ export async function runAgentLoop(
   let systemContextSnapshot = turnContext.systemContextSnapshot;
   const configuredModel = resolveConfiguredModel(agentConfig);
   const lifecycle = createAgentLifecycleEmitter(session, agentConfig);
-  const hooks = await createAgentHookDispatcher(session.accountId, agentConfig);
+  const hooks = options.hooks ?? await createAgentHookDispatcher(session.accountId, agentConfig);
 
   // Task-scoped usage accumulators — written by hooks/callbacks, read at finalize.
   let taskCacheWriteTokens = 0;

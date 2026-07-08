@@ -50,6 +50,10 @@ export function createHookDispatcher(
   accountId: string,
   index: Map<AgentHookEventName, AccountHookRecord[]>,
 ): HookDispatcher {
+  // ctx.state: a mutable scratchpad shared by every hook in this run. Seeded
+  // empty, threaded into each hook, and replaced with what the hook left behind
+  // so a later fire-point sees what an earlier one stored.
+  let runState: Record<string, unknown> = {};
   return {
     hasHooksFor: (event) => index.has(event),
     async runMutation(event, payload) {
@@ -60,7 +64,8 @@ export function createHookDispatcher(
       // Hooks run in config order; later hooks' fields override earlier ones.
       let merged: Record<string, unknown> | undefined;
       for (const record of records) {
-        const mutation = await runCodeHook({ accountId, record, event, payload });
+        const { mutation, state } = await runCodeHook({ accountId, record, event, payload, state: runState });
+        runState = state;
         if (mutation) {
           merged = { ...(merged ?? {}), ...mutation };
         }
@@ -143,6 +148,24 @@ export function wrapToolsWithHooks(tools: ToolSet, hooks: HookDispatcher): ToolS
     wrapped[name] = { ...tool, execute } as ToolSet[string];
   }
   return wrapped;
+}
+
+/**
+ * Runs channel.message.sending hooks on an outbound reply. Returns null when a
+ * hook drops the message, otherwise the (possibly rewritten) text. Shared by
+ * every reply-delivery path so outbound policy cannot silently miss one.
+ */
+export async function applyMessageSendingHook(
+  hooks: HookDispatcher,
+  channel: string,
+  text: string,
+): Promise<string | null> {
+  const mutation = await hooks.runMutation("channel.message.sending", { channel, text });
+  if (mutation?.drop === true) {
+    return null;
+  }
+
+  return typeof mutation?.text === "string" ? mutation.text : text;
 }
 
 /** Resolve the active hook records referenced by the run's config.hooks.code. */

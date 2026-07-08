@@ -708,10 +708,6 @@ describe("agent config", () => {
           pageId: "page-1",
           pageAccessToken: "page-token",
           senderId: "sender-1",
-          options: {
-            mode: "retail",
-            ignoreTagIds: ["order-tag", "pending-tag"],
-          },
         },
       },
     })).toEqual({
@@ -721,10 +717,6 @@ describe("agent config", () => {
           pageId: "page-1",
           pageAccessToken: "page-token",
           senderId: "sender-1",
-          options: {
-            mode: "retail",
-            ignoreTagIds: ["order-tag", "pending-tag"],
-          },
         },
       },
     });
@@ -737,54 +729,6 @@ describe("agent config", () => {
         },
       },
     })).toThrow("config.channels.pancake.pageAccessToken must be a string");
-
-    expect(() => normalizeAgentConfig({
-      channels: {
-        pancake: {
-          id: "pancakeChannel",
-          pageId: "page-1",
-          pageAccessToken: "page-token",
-          options: "bad",
-        },
-      },
-    })).toThrow("config.channels.pancake.options must be an object");
-
-    expect(() => normalizeAgentConfig({
-      channels: {
-        pancake: {
-          id: "pancakeChannel",
-          pageId: "page-1",
-          pageAccessToken: "page-token",
-          options: {
-            ignoreTagIds: [123],
-          },
-        },
-      },
-    })).toThrow("config.channels.pancake.options.ignoreTagIds must be an array of strings");
-
-    expect(normalizeAgentConfig({
-      channels: {
-        pancake: {
-          id: "pancakeChannel",
-          pageId: "page-1",
-          pageAccessToken: "page-token",
-          options: {
-            customerSpecific: true,
-          },
-        },
-      },
-    })).toEqual({
-      channels: {
-        pancake: {
-          id: "pancakeChannel",
-          pageId: "page-1",
-          pageAccessToken: "page-token",
-          options: {
-            customerSpecific: true,
-          },
-        },
-      },
-    });
   });
 
   it("validates channel workspace scope", () => {

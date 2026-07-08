@@ -36,6 +36,15 @@ import type {
   AgentPolicyDocument,
 } from "../../../apps/core/src/shared/storage/agent-policy.ts";
 
+// Per-channel inbound `source` shapes, inherited from the channel adapters so
+// the SDK hook typings cannot drift from what core actually emits.
+export type { TelegramSource } from "../../../apps/core/src/shared/telegram-channel.ts";
+export type { GitHubSource } from "../../../apps/core/src/shared/github-channel.ts";
+export type { SlackSource } from "../../../apps/core/src/shared/slack-channel.ts";
+export type { DiscordSource } from "../../../apps/core/src/shared/discord-channel.ts";
+export type { PancakeSource } from "../../../apps/core/src/shared/pancake-channel.ts";
+export type { ZaloSource } from "../../../apps/core/src/shared/zalo-channel.ts";
+
 export type Id<TableName extends string = string> = string & { readonly __tableName?: TableName };
 export type Doc<TableName extends string = string> = Record<string, unknown> & { readonly _id: Id<TableName> };
 

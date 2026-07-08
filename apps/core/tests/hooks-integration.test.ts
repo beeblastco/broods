@@ -14,11 +14,18 @@ import type { AccountHookRecord } from "../src/shared/storage/account-hooks.ts";
 import type { AgentHookEventName } from "../src/shared/storage/agent-config.ts";
 
 const HOOK_BUNDLE = `export default {
-  "agent.started": (ctx, event) => ({ system: event.system + "\\n\\n[injected by policy hook]" }),
+  "agent.started": (ctx, event) => {
+    ctx.state.calls = (ctx.state.calls ?? 0) + 1;
+    return { system: event.system + "\\n\\n[injected by policy hook]" };
+  },
+  "agent.finished": (ctx, event) => ({ output: "calls=" + (ctx.state.calls ?? 0) }),
   "tool.call.started": (ctx, event) =>
     event.toolName === "bash"
       ? { decision: "deny", denyReason: "shell disabled by policy hook" }
       : { decision: "allow" },
+  "subagent.task.finished": (ctx, event) => ({ visibleResult: "summary of " + event.taskId }),
+  "channel.message.received": (ctx, event) =>
+    event.text === "spam" ? { drop: true } : { text: event.text.toUpperCase() },
 };`;
 
 const bundleSha = createHash("sha256").update(HOOK_BUNDLE, "utf8").digest("hex");
@@ -71,6 +78,31 @@ describe("code hooks end-to-end (real isolate)", () => {
     const allowed = await (wrapped.read!.execute as (i: unknown, o: unknown) => Promise<unknown>)({ path: "a.txt" }, {});
     expect(readRan).toBe(true);
     expect(allowed).toBe("file contents");
+  });
+
+  realRunnerIt("threads ctx.state across hooks in one run", async () => {
+    process.env.TOOL_BUNDLES_BUCKET_NAME = "test-bundles";
+    const { createHookDispatcher } = await import("../src/harness/hook-dispatcher.ts");
+    const dispatcher = createHookDispatcher("acct_test", indexFor(["agent.started", "agent.finished"]));
+
+    // First hook seeds ctx.state.calls; the second reads what it left behind.
+    await dispatcher.runMutation("agent.started", { system: "You are helpful.", messages: [] });
+    const finished = await dispatcher.runMutation("agent.finished", { finishReason: "stop", response: "hi" });
+
+    expect(finished).toEqual({ output: "calls=1" });
+  });
+
+  realRunnerIt("shapes subagent visibility and drops/rewrites channel messages", async () => {
+    process.env.TOOL_BUNDLES_BUCKET_NAME = "test-bundles";
+    const { createHookDispatcher } = await import("../src/harness/hook-dispatcher.ts");
+    const dispatcher = createHookDispatcher("acct_test", indexFor(["subagent.task.finished", "channel.message.received"]));
+
+    expect(await dispatcher.runMutation("subagent.task.finished", { taskId: "t1", result: "long output" }))
+      .toEqual({ visibleResult: "summary of t1" });
+    expect(await dispatcher.runMutation("channel.message.received", { channel: "telegram", text: "spam" }))
+      .toEqual({ drop: true });
+    expect(await dispatcher.runMutation("channel.message.received", { channel: "telegram", text: "hi" }))
+      .toEqual({ text: "HI" });
   });
 });
 

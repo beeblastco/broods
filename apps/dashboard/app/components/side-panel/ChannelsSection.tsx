@@ -83,7 +83,6 @@ const CHANNELS: ChannelKind[] = [
             { key: "pageId", label: "Page ID", type: "text", required: true },
             { key: "pageAccessToken", label: "Page access token", type: "secret", required: true },
             { key: "senderId", label: "Sender ID", type: "text" },
-            { key: "ignoreTagIds", label: "Ignore tag IDs", type: "stringList", path: ["options", "ignoreTagIds"], placeholder: "order-tag, …" },
         ],
     },
     {

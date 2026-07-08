@@ -48,6 +48,8 @@ import {
 } from "../shared/http.ts";
 import { collectSecretValues, logError, logInfo, logWarn } from "../shared/log.ts";
 import { isPlainObject } from "../shared/object.ts";
+import { applyMessageSendingHook, createAgentHookDispatcher } from "./hook-dispatcher.ts";
+import { toLifecycleValue } from "./lifecycle.ts";
 import {
   getObservabilityContext,
   mintTraceId,
@@ -381,10 +383,7 @@ async function handleHttpRequest(
       return notFoundResponse();
     }
 
-    const accountChannelRegistry = createChannelRegistry(agent.config, {
-      accountId: account.accountId,
-      agentId,
-    });
+    const accountChannelRegistry = createChannelRegistry(agent.config);
     const accountChannel = accountChannelRegistry.webhookChannels.find((channel) =>
       channel.name === channelName && channel.canHandle(channelRequest)
     );
@@ -806,12 +805,39 @@ async function processChannelMessage(
       source: event.source,
     });
 
+    // An onMessageReceived hook may drop or rewrite the inbound message before it
+    // reaches the agent (spam filter, redaction). Cheap when unused: the
+    // dispatcher is a no-op unless the agent configured code hooks.
+    let content = event.content;
+    if (event.agentConfig) {
+      const hooks = await createAgentHookDispatcher(event.accountId, event.agentConfig);
+      const mutation = await hooks.runMutation("channel.message.received", {
+        channel: event.channelName,
+        text: extractText(event.content),
+        // Channel-specific routing data (e.g. Pancake `tagIds`) so a hook can
+        // key on it — the replacement for the old baked-in tag skip.
+        source: toLifecycleValue(event.source),
+      });
+      if (mutation?.drop === true) {
+        logInfo("Channel message dropped by onMessageReceived hook", {
+          channel: event.channelName,
+          eventId: event.eventId,
+          conversationKey: event.conversationKey,
+        });
+        return;
+      }
+      if (typeof mutation?.text === "string") {
+        content = mutation.text;
+      }
+    }
+
     event.channel.sendTyping().catch(() => { });
     event.channel.reactToMessage().catch(() => { });
 
     await handlers.handleChannelRequest({
       ...event,
-      commandToken: resolveCommandToken(event.content, event.source, event.channelName) ?? undefined,
+      content,
+      commandToken: resolveCommandToken(content, event.source, event.channelName) ?? undefined,
     });
     logInfo("Channel message processing completed", {
       channel: event.channelName,
@@ -881,15 +907,12 @@ function directApiDisabledResponse(): Response {
   return errorResponse(404, "Direct API is disabled");
 }
 
-function createChannelRegistry(
-  config: AgentConfig,
-  scope: { accountId: string; agentId: string },
-): ChannelRegistry {
+function createChannelRegistry(config: AgentConfig): ChannelRegistry {
   const telegramChannel = createTelegramChannelFromConfig(config);
   const githubChannel = createGitHubChannelFromConfig(config);
   const slackChannel = createSlackChannelFromConfig(config);
   const discordChannel = createDiscordChannelFromConfig(config);
-  const pancakeChannel = createPancakeChannelFromConfig(config, scope);
+  const pancakeChannel = createPancakeChannelFromConfig(config);
   const zaloChannel = createZaloChannelFromConfig(config);
 
   return {
@@ -915,28 +938,32 @@ function createChannelRegistry(
 export async function sendChannelReply(options: {
   config: AgentConfig;
   accountId: string;
-  agentId: string;
   channelName: string;
   source: Record<string, unknown>;
   text: string;
 }): Promise<void> {
-  const registry = createChannelRegistry(options.config, {
-    accountId: options.accountId,
-    agentId: options.agentId,
-  });
+  const registry = createChannelRegistry(options.config);
   const adapter = registry.webhookChannels.find((channel) => channel.name === options.channelName);
   if (!adapter) {
     throw new Error(`Channel ${options.channelName} is not configured for this agent`);
+  }
+
+  // Outbound policy applies to delayed replies too, not just the sync path.
+  const hooks = await createAgentHookDispatcher(options.accountId, options.config);
+  const text = await applyMessageSendingHook(hooks, options.channelName, options.text);
+  if (text === null) {
+    logInfo("Channel reply dropped by onMessageSending hook", { channel: options.channelName });
+    return;
   }
 
   const message: InboundMessage = {
     eventId: "",
     conversationKey: "",
     channelName: options.channelName,
-    content: options.text,
+    content: text,
     source: options.source,
   };
-  await adapter.actions(message).sendText(options.text);
+  await adapter.actions(message).sendText(text);
 }
 
 type PublicEndpointPath = {
@@ -1367,10 +1394,7 @@ function createDiscordChannelFromConfig(config: AgentConfig): ChannelAdapter | n
   );
 }
 
-function createPancakeChannelFromConfig(
-  config: AgentConfig,
-  scope: { accountId: string; agentId: string },
-): ChannelAdapter | null {
+function createPancakeChannelFromConfig(config: AgentConfig): ChannelAdapter | null {
   const channel = config.channels?.pancake;
   if (!channel?.pageId || !channel.pageAccessToken || !channel.webhookSecret) {
     return null;
@@ -1381,11 +1405,6 @@ function createPancakeChannelFromConfig(
     channel.pageAccessToken,
     channel.webhookSecret,
     channel.senderId,
-    {
-      accountId: scope.accountId,
-      agentId: scope.agentId,
-      configOptions: channel.options,
-    },
   );
 }
 

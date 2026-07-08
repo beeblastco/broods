@@ -275,7 +275,6 @@ export const pancake = definePancakeChannel({
   pageAccessToken: env.PANCAKE_PAGE_ACCESS_TOKEN,
   webhookSecret: env.PANCAKE_WEBHOOK_SECRET,
   senderId: "staff-1",
-  ignoreTagIds: ["handoff"],
 });
 export const zalo = defineZaloChannel({
   botToken: env.ZALO_BOT_TOKEN,
@@ -298,7 +297,7 @@ export const support = defineAgent({
       github: { allowedRepos: ["owner/repo"], apiUrl: "https://github.example/api/v3" },
       slack: { allowedChannelIds: ["C123"], reactionEmoji: "white_check_mark", apiUrl: "https://slack.example/api/" },
       discord: { allowedGuildIds: ["G123"], apiUrl: "https://discord.example/api/v10" },
-      pancake: { senderId: "staff-1", options: { ignoreTagIds: ["handoff"] } },
+      pancake: { senderId: "staff-1" },
       zalo: { allowedUserIds: ["user-1"] },
     },
   });

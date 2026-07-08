@@ -1,6 +1,6 @@
 # Pancake
 
-Pancake is an omni-channel customer service and inbox management platform. The Pancake channel adapter allows your agent to handle messages (`INBOX`) and post/page comments (`COMMENT`) directly from Pancake, and can skip conversations carrying any configured ignore tag so staff can take over in Pancake.
+Pancake is an omni-channel customer service and inbox management platform. The Pancake channel adapter allows your agent to handle messages (`INBOX`) and post/page comments (`COMMENT`) directly from Pancake.
 
 ## Configuration
 
@@ -18,7 +18,6 @@ export const pancake = definePancakeChannel({
   pageAccessToken: env.PANCAKE_PAGE_ACCESS_TOKEN,
   webhookSecret: env.PANCAKE_WEBHOOK_SECRET,
   senderId: env.PANCAKE_SENDER_ID,
-  ignoreTagIds: ["123"],
 });
 
 export const myAgent = defineAgent({
@@ -35,8 +34,6 @@ export const myAgent = defineAgent({
 - `pageAccessToken` (Required): The access token generated within Pancake to authorize API calls.
 - `webhookSecret` (Required): A random value you generate. Pancake does not sign its webhooks, so the secret rides on the webhook URL instead and every request is checked against it.
 - `senderId` (Optional): The ID of the staff/user in Pancake who sends the replies. If set, responses sent by the agent will appear as sent by this user.
-- `options` (Optional):
-  - `ignoreTagIds` (Optional): Array of Pancake conversation tag IDs that mark a conversation as human handoff. When any of these tags is present, the webhook event is ignored.
 
 Register the webhook URL in Pancake with the secret as a query parameter — requests without a matching `secret` are rejected with `401`:
 
@@ -46,24 +43,38 @@ https://<agent-service-url>/webhooks/<accountId>/<agentId>/pancake?secret=<webho
 
 ---
 
-## Human Handoff Tags
+## Human Handoff (skipping tagged conversations)
 
-When human staff need to take over a conversation, add one of the configured ignore tags in Pancake. The adapter checks the tag IDs already included in the Pancake webhook payload.
+The channel adapter stays generic: it does not decide which conversations to skip. Instead, every inbound message carries the conversation's Pancake tag IDs on `event.source.tagIds`, and you filter in a [`onMessageReceived` code hook](../hooks.md) — so the policy is yours to own and change.
 
-### How it Works
+When staff take over a conversation in Pancake, add a tag; the hook drops the message and the agent stays quiet:
 
-When `options.ignoreTagIds` is configured, every incoming message webhook checks `conversation.tags`:
+```ts title="broods/index.ts"
+export const myAgent = defineAgent({
+  name: "my-agent",
+  config: {
+    channels: [pancake],
+    hooks: {
+      // Drop inbound messages on conversations a human has taken over. `event`
+      // is discriminated on `channel`, so after narrowing `event.source` is the
+      // strongly-typed Pancake source (with `tagIds`).
+      onMessageReceived: (ctx, event) => {
+        if (event.channel !== "pancake") return undefined;
+        const handoffTagIds = ["order-tag", "pending-tag"];
+        const tagIds = event.source.tagIds ?? [];
+
+        return tagIds.some((tagId) => handoffTagIds.includes(tagId)) ? { drop: true } : undefined;
+      },
+    },
+  },
+});
+```
 
 ```mermaid
 flowchart TD
-    Webhook[Incoming Message Webhook] --> CheckHandoff{Ignore Tags Configured?}
-    CheckHandoff -- No --> ExecuteAgent[Run Agent Loop & Send Reply]
-    CheckHandoff -- Yes --> ReadTags[Read conversation.tags]
-    ReadTags --> HasTag{Any ignore tag present?}
-    HasTag -- No --> ExecuteAgent
-    HasTag -- Yes --> SkipAgent[Ignore Event - Staff Handle Manually]
+    Webhook[Incoming Message Webhook] --> Hook{onMessageReceived hook?}
+    Hook -- No hook / no match --> ExecuteAgent[Run Agent Loop & Send Reply]
+    Hook -- Returns drop --> SkipAgent[Ignore Event - Staff Handle Manually]
 ```
 
-1. **No ignore tag**: The agent operates normally and automatically handles responses.
-2. **Ignore tag present**: The adapter ignores the event and returns `200 OK` to Pancake, bypassing the agent run entirely. This allows human operators to respond manually in the Pancake dashboard without interference from the agent.
-3. **Return to auto mode**: Remove the tag in Pancake. The next customer message can run the agent again.
+Remove the tag in Pancake to return the conversation to auto mode; the next customer message runs the agent again. Hooks run in the hardened V8 isolate and must be self-contained (no imports or closure variables), so inline the tag IDs rather than reading them from a closure or env var.

@@ -344,7 +344,6 @@ export interface AgentPancakeChannelConfig {
   pageAccessToken?: string;
   webhookSecret?: string;
   senderId?: string;
-  options?: Record<string, unknown>;
   workspaceScope?: AgentChannelWorkspaceScope;
   [key: string]: unknown;
 }
@@ -1059,11 +1058,6 @@ function normalizePancakeConfig(value: unknown): void {
   assertOptionalString(config.pageAccessToken, "config.channels.pancake.pageAccessToken");
   assertOptionalString(config.webhookSecret, "config.channels.pancake.webhookSecret");
   assertOptionalString(config.senderId, "config.channels.pancake.senderId");
-  if (config.options !== undefined && !isPlainObject(config.options)) {
-    throw new Error("config.channels.pancake.options must be an object");
-  }
-  const options = isPlainObject(config.options) ? config.options : {};
-  assertOptionalStringArray(options.ignoreTagIds, "config.channels.pancake.options.ignoreTagIds");
 }
 
 function normalizeZaloConfig(value: unknown): void {
