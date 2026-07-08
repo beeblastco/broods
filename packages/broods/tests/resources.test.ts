@@ -19,6 +19,7 @@ afterEach(async () => {
   }
   tempDirs = [];
   delete process.env.BROODS_DASHBOARD_URL;
+  delete process.env.BROODS_BASE_URL;
   delete process.env.BROODS_TOKEN;
   delete process.env.BROODS_PROJECT;
   delete process.env.BROODS_ENVIRONMENT;
@@ -1333,6 +1334,9 @@ test("runtime config loads .env.local without manual client wiring", async () =>
   tempDirs.push(cwd);
   await writeFile(join(cwd, ".env.local"), [
     "BROODS_DASHBOARD_URL=https://dashboard.dev.broods.app",
+    // Pin baseUrl too: without it the field falls back to ~/.broods/config.json
+    // stored auth, which exists on logged-in dev machines but not in CI.
+    "BROODS_BASE_URL=https://gateway.dev.broods.app",
     "BROODS_TOKEN=fp_cli_test",
     "BROODS_PROJECT=sandbox-stateless",
     "BROODS_ENVIRONMENT=development",
@@ -1343,6 +1347,7 @@ test("runtime config loads .env.local without manual client wiring", async () =>
 
   expect(config).toEqual({
     dashboardUrl: "https://dashboard.dev.broods.app",
+    baseUrl: "https://gateway.dev.broods.app",
     token: "fp_cli_test",
     project: "sandbox-stateless",
     environment: "development",
