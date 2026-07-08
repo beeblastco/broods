@@ -10,6 +10,7 @@ import type {
   AgentHooksConfig,
   AgentChannelWorkspaceScope,
   AgentChannelsConfig,
+  AgentWebhookHookConfig,
   AgentDiscordChannelConfig,
   AgentGitHubChannelConfig,
   AgentPancakeChannelConfig,
@@ -45,6 +46,7 @@ export type {
   AgentHooksConfig,
   AgentChannelWorkspaceScope,
   AgentChannelsConfig,
+  AgentWebhookHookConfig,
   AgentDiscordChannelConfig,
   AgentGitHubChannelConfig,
   AgentPancakeChannelConfig,
@@ -69,7 +71,7 @@ export type WorkspaceConfigDoc = Doc<"workspaceConfigs">;
 export type SandboxConfigDoc = Doc<"sandboxConfigs">;
 export type CronDoc = Doc<"crons">;
 
-export type CliResourceKind = "agent" | "workspace" | "sandbox" | "cron" | "skill" | "tool" | "hook" | "policy";
+export type CliResourceKind = "agent" | "workspace" | "sandbox" | "cron" | "skill" | "tool" | "policy";
 
 // Manifest wire types come from the backend's canonical leaf module so the
 // CLI/SDK can't silently drift from the server contract.

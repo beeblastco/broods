@@ -584,39 +584,53 @@ export const support = defineAgent({
   });
 });
 
-test("compileProject keeps uploaded hook bundles and code hook refs", async () => {
+test("compileProject emits inline agent hooks as one synthetic hook bundle", async () => {
   const cwd = await fixtureProject("", `
-import { defineAgent, defineHook } from "${RESOURCES_MODULE}";
-export const audit = defineHook({
-  name: "audit_hook",
-  description: "Lifecycle audit hook",
-  config: {
-    path: "hooks/audit.ts",
-    events: ["agent.started", "channel.message.received"],
-  },
-});
+import { defineAgent, env } from "${RESOURCES_MODULE}";
 export const support = defineAgent({
   name: "support",
-  config: { hooks: { code: [{ hookId: audit, enabled: true }] } },
+  config: {
+    hooks: {
+      onStart: (ctx, event: { system: string; messages: unknown[] }) => ({
+        system: event.system + "\\n\\nBe terse.",
+      }),
+      onToolCall: (_ctx, event) =>
+        event.toolName === "bash"
+          ? { decision: "deny", denyReason: "no shell" }
+          : { decision: "allow" },
+      webhooks: [{
+        url: env.MOCK_WEBHOOK_URL,
+        secret: env.MOCK_WEBHOOK_SECRET,
+        events: ["agent.started"],
+      }],
+    },
+  },
 });
 `);
-  await mkdir(join(cwd, "broods", "hooks"), { recursive: true });
-  await writeFile(
-    join(cwd, "broods", "hooks", "audit.ts"),
-    "export function onAgentStarted() { return { metadata: { audited: true } }; }\n",
-  );
 
   const { manifest } = await compileProject({ cwd, command: "dev" });
   const hook = manifest.resources.find((resource) => resource.kind === "hook");
   const agent = manifest.resources.find((resource) => resource.kind === "agent");
-  expect(hook?.description).toBe("Lifecycle audit hook");
+  const bundle = (hook?.config as { bundle?: unknown }).bundle;
+  expect(hook?.name).toBe("support-hooks");
+  expect(hook?.description).toBe("Inline hooks for agent support");
   expect(hook?.config).toMatchObject({
-    path: "hooks/audit.ts",
-    events: ["agent.started", "channel.message.received"],
+    events: ["agent.started", "tool.call.started"],
   });
-  expect(typeof (hook?.config as { bundle?: unknown }).bundle).toBe("string");
+  expect(typeof bundle).toBe("string");
+  expect(bundle as string).toContain('export default');
+  expect(bundle as string).toContain('"agent.started"');
+  expect(bundle as string).toContain('"tool.call.started"');
+  expect(bundle as string).not.toContain("event: { system: string");
+  expect(typeof (hook?.config as { sha256?: unknown }).sha256).toBe("string");
   expect(agent?.config).toMatchObject({
-    hooks: { code: [{ hookId: "audit_hook", enabled: true }] },
+    hooks: {
+      webhooks: [{
+        url: { __beeblastEnv: true, name: "MOCK_WEBHOOK_URL" },
+        secret: { __beeblastEnv: true, name: "MOCK_WEBHOOK_SECRET" },
+      }],
+      code: [{ hookId: "support-hooks" }],
+    },
   });
 });
 

@@ -83,7 +83,6 @@ export interface ResourceApi {
   readonly crons?: Record<string, unknown>;
   readonly skills?: Record<string, unknown>;
   readonly tools?: Record<string, unknown>;
-  readonly hooks?: Record<string, unknown>;
   readonly policies?: Record<string, unknown>;
 }
 

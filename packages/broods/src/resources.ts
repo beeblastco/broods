@@ -9,7 +9,6 @@
 
 import type {
   AgentConfig,
-  AgentCodeHookConfig,
   AgentChannelWorkspaceScope,
   AgentDiscordChannelConfig,
   AgentGitHubChannelConfig,
@@ -18,7 +17,7 @@ import type {
   AgentPolicyConfig,
   AgentPolicyDocument,
   AgentHookEventName,
-  AgentHooksConfig,
+  AgentWebhookHookConfig,
   CreateCronInput,
   SandboxConfig,
   WorkspaceConfig,
@@ -63,7 +62,7 @@ export interface BroodsConfigDefinition {
   readonly config: BroodsProjectConfig;
 }
 
-export type ResourceKind = "agent" | "workspace" | "sandbox" | "cron" | "skill" | "tool" | "hook" | "policy";
+export type ResourceKind = "agent" | "workspace" | "sandbox" | "cron" | "skill" | "tool" | "policy";
 
 export interface ResourceDefinition<
   Kind extends ResourceKind,
@@ -111,15 +110,6 @@ export interface ToolDefinitionConfig {
   inputSchema: Record<string, unknown>;
   runtime?: "isolate" | "sandbox";
   defaultConfig?: Record<string, unknown>;
-}
-
-export interface HookDefinitionConfig {
-  /**
-   * JavaScript module file exporting the code hook bundle. Relative paths are
-   * resolved from the `broods/` project directory.
-   */
-  path: string;
-  events: readonly AgentHookEventName[];
 }
 
 export type PolicyDefinitionConfig = Omit<AgentPolicyDocument, "version"> & {
@@ -220,13 +210,41 @@ export type AgentSkillsDefinitionConfig = Omit<NonNullable<AgentConfig["skills"]
   allowed?: readonly (SkillResource | string)[];
 };
 
-export type AgentCodeHookDefinitionConfig = Omit<AgentCodeHookConfig, "hookId"> & {
-  hookId: HookResource | string;
-};
+export interface HookContext {
+  fetch: typeof fetch;
+  config: Record<string, unknown>;
+}
 
-export type AgentHooksDefinitionConfig = Omit<EnvRefString<AgentHooksConfig>, "code"> & {
-  code?: readonly AgentCodeHookDefinitionConfig[];
-};
+type Handler<Event, Result> = (
+  ctx: HookContext,
+  event: Event,
+) => Result | void | Promise<Result | void>;
+
+/**
+ * Inline agent hook callbacks. Handlers are serialized with `.toString()`,
+ * bundled into one account hook, and run in a fresh V8 isolate. Keep them
+ * self-contained: use only `ctx`, `event`, and JavaScript globals. Do not rely
+ * on imports or closure variables. Arrow functions and function expressions are
+ * preferred so the serialized source is valid as an object-literal value.
+ */
+export interface AgentHooks {
+  onStart?: Handler<{ system: string; messages: unknown[] }, { system?: string; messages?: unknown[] }>;
+  onStepFinish?: Handler<{ stepNumber: number; finishReason: string; toolCallCount: number }, void>;
+  onToolCall?: Handler<
+    { toolName: string; input: unknown },
+    { decision?: "allow" | "deny"; args?: Record<string, unknown>; denyReason?: string }
+  >;
+  onToolResult?: Handler<{ toolName: string; output: unknown }, { output?: unknown }>;
+  onFinish?: Handler<{ finishReason: string; response: unknown }, { output?: unknown }>;
+  onApproval?: Handler<{ approvals: unknown }, { approve?: boolean }>;
+  onError?: Handler<{ error: string }, void>;
+  onSubagentFinish?: Handler<{ taskId: string; result: unknown }, { visibleResult?: unknown }>;
+  onMessageReceived?: Handler<
+    { channel: string; text: string },
+    { drop?: boolean; text?: string; metadata?: Record<string, unknown> }
+  >;
+  onMessageSending?: Handler<{ channel: string; text: string }, { drop?: boolean; text?: string }>;
+}
 
 export type AgentPolicyDefinitionConfig = Omit<AgentPolicyConfig, "policyIds"> & {
   policies?: readonly (PolicyResource | string)[];
@@ -243,7 +261,7 @@ export type AgentPolicyDefinitionConfig = Omit<AgentPolicyConfig, "policyIds"> &
 export type AgentDefinitionConfig =
   & EnvRefString<Pick<AgentConfig, "agent" | "model" | "provider" | "session" | "tools">>
   & {
-    hooks?: AgentHooksDefinitionConfig;
+    hooks?: AgentHooks & { webhooks?: readonly EnvRefString<AgentWebhookHookConfig>[] };
     channels?: readonly AnyChannelDefinition[];
     sandbox?: SandboxResource | string;
     workspaces?: readonly AgentWorkspaceInput[];
@@ -268,7 +286,6 @@ export type WorkspaceResource<Name extends string = string> = ResourceDefinition
 export type SandboxResource<Name extends string = string> = ResourceDefinition<"sandbox", Name, SandboxDefinitionConfig>;
 export type SkillResource<Name extends string = string> = ResourceDefinition<"skill", Name, SkillDefinitionConfig>;
 export type ToolResource<Name extends string = string> = ResourceDefinition<"tool", Name, ToolDefinitionConfig>;
-export type HookResource<Name extends string = string> = ResourceDefinition<"hook", Name, HookDefinitionConfig>;
 export type PolicyResource<Name extends string = string> = ResourceDefinition<"policy", Name, PolicyDefinitionConfig>;
 export type CronResource<Name extends string = string> = ResourceDefinition<"cron", Name, CronDefinitionConfig>;
 
@@ -279,7 +296,6 @@ export type AnyResource =
   | CronResource
   | SkillResource
   | ToolResource
-  | HookResource
   | PolicyResource;
 
 /**
@@ -407,12 +423,6 @@ export function defineTool<const Name extends string>(
   input: ResourceDefinitionInput<Name, ToolDefinitionConfig>,
 ): ToolResource<Name> {
   return defineResource("tool", input);
-}
-
-export function defineHook<const Name extends string>(
-  input: ResourceDefinitionInput<Name, HookDefinitionConfig>,
-): HookResource<Name> {
-  return defineResource("hook", input);
 }
 
 export function definePolicy<const Name extends string>(
