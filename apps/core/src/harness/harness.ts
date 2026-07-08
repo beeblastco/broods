@@ -11,6 +11,7 @@ import {
   type LanguageModelUsage,
   type ModelMessage,
   type StepResult,
+  type SystemModelMessage,
   type ToolCallPart,
   type ToolApprovalRequestOutput,
   type ToolSet,
@@ -49,6 +50,7 @@ import { stripReasoningFromMessages } from "./pruning.ts";
 import type { Session, TurnContextSnapshot } from "./session.ts";
 import type { RunAsyncToolDispatch } from "./async-tools.ts";
 import { createAgentLifecycleEmitter, toLifecycleValue } from "./lifecycle.ts";
+import { createAgentHookDispatcher, wrapToolsWithHooks } from "./hook-dispatcher.ts";
 import { createTools } from "./tools/index.ts";
 import { createPolicyToolApproval, createRuntimeToolApproval } from "./policy.ts";
 import type { SandboxCpuSample } from "./sandbox/types.ts";
@@ -155,6 +157,7 @@ export async function runAgentLoop(
   let systemContextSnapshot = turnContext.systemContextSnapshot;
   const configuredModel = resolveConfiguredModel(agentConfig);
   const lifecycle = createAgentLifecycleEmitter(session, agentConfig);
+  const hooks = await createAgentHookDispatcher(session.accountId, agentConfig);
 
   // Task-scoped usage accumulators — written by hooks/callbacks, read at finalize.
   let taskCacheWriteTokens = 0;
@@ -329,7 +332,7 @@ export async function runAgentLoop(
 
   const configuredApprovals = new Map<string, true>();
   const policyToolIdsByName = new Map<string, string>();
-  const tools = {
+  const builtTools = {
     ...await createTools({
       accountId: session.accountId,
       conversationKey: session.conversationKey,
@@ -361,6 +364,9 @@ export async function runAgentLoop(
         : {}),
     }, agentConfig),
   } satisfies ToolSet;
+  // Wrap tool execution so tool.call.started hooks can deny/edit args and
+  // tool.result hooks can transform output (no-op when no such hooks exist).
+  const tools = wrapToolsWithHooks(builtTools, hooks);
   const policyToolApproval = await createPolicyToolApproval(agentConfig, {
     accountId: session.accountId,
     project: session.projectSlug,
@@ -609,6 +615,15 @@ export async function runAgentLoop(
     modelId: agentConfig.model?.modelId,
     messageCount: turnContext.messages.length,
   });
+  // A user agent.started hook may inject system instructions or replace the
+  // message list before the model runs. Fold its result into the turn context.
+  if (hooks.hasHooksFor("agent.started")) {
+    const mutation = await hooks.runMutation("agent.started", {
+      system: turnContext.system.map((message) => message.content).join("\n\n"),
+      messages: toLifecycleValue(turnContext.messages),
+    });
+    applyAgentStartedMutation(turnContext, mutation);
+  }
 
   logInfo(`Agent loop started: ${configuredModel.providerName}/${agentConfig.model?.modelId ?? "unknown"} with ${turnContext.messages.length} message(s), ${Object.keys(tools).length} tool(s)`, {
     eventType: "model.invocation.started",
@@ -1317,6 +1332,26 @@ function toolOutputErrorText(output: unknown): string | undefined {
   return maybeOutput.type === "error-text" && typeof maybeOutput.value === "string"
     ? maybeOutput.value
     : undefined;
+}
+
+// Fold an agent.started hook return into the turn context: `system` is appended
+// as a system message (also to ephemeralSystem so it survives prepareStep
+// refreshes), and `messages` replaces the conversation the model sees.
+function applyAgentStartedMutation(
+  turnContext: TurnContextSnapshot,
+  mutation: Record<string, unknown> | undefined,
+): void {
+  if (!mutation) {
+    return;
+  }
+  if (typeof mutation.system === "string" && mutation.system.trim().length > 0) {
+    const message: SystemModelMessage = { role: "system", content: mutation.system };
+    turnContext.system = [...turnContext.system, message];
+    turnContext.ephemeralSystem = [...turnContext.ephemeralSystem, message];
+  }
+  if (Array.isArray(mutation.messages)) {
+    turnContext.messages = mutation.messages as ModelMessage[];
+  }
 }
 
 function extractApprovalRequests(steps: Array<StepResult<ToolSet>>): ApprovalRequestOutput[] {
