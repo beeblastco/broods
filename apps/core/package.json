@@ -23,7 +23,7 @@
     "@types/node": "^25.9.1"
   },
   "peerDependencies": {
-    "typescript": "^6.0.3"
+    "typescript": "^7.0.2"
   },
   "dependencies": {
     "@ai-sdk/amazon-bedrock": "^5.0.8",

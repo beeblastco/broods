@@ -1,14 +1,20 @@
 {
-  "extends": "@docusaurus/tsconfig",
+  // Inlined from @docusaurus/tsconfig (3.10.1): the shipped preset still sets
+  // `baseUrl`, which TypeScript 7 removed (TS5102). Re-extend the preset once
+  // Docusaurus drops baseUrl.
   "compilerOptions": {
-    "lib": ["ESNext"],
+    "allowJs": true,
+    "esModuleInterop": true,
+    "lib": ["ESNext", "DOM"],
     "target": "ESNext",
     "module": "Preserve",
     "moduleResolution": "bundler",
     "jsx": "react-jsx",
     "noEmit": true,
     "skipLibCheck": true,
-    "baseUrl": "."
+    "paths": {
+      "@site/*": ["./*"]
+    }
   },
   "include": ["docusaurus.config.ts", "sidebar.ts", "docs/**/*.ts", "docs/**/*.tsx"],
   "exclude": ["node_modules", "build", ".docusaurus"]
