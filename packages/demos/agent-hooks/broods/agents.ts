@@ -8,11 +8,14 @@ export const hookedAgent = defineAgent({
   name: "hooked-agent",
   config: {
     provider: {
-      minimax: { apiKey: env.MINIMAX_API_KEY },
+      custom: {
+        apiKey: env.AI_API_KEY,
+        base_url: "https://oai.endpoints.kepler.ai.cloud.ovh.net/v1",
+      },
     },
     model: {
-      provider: "minimax",
-      modelId: "MiniMax-M3",
+      provider: "custom",
+      modelId: "Qwen3.6-27B",
     },
     agent: {
       system: "You are a helpful assistant. Answer concisely.",
