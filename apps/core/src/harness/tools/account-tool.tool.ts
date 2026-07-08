@@ -22,7 +22,6 @@ export default function accountTool(record: AccountToolRecord, context: ToolCont
         input,
         config: context.config,
         options,
-        onSandboxCpu: context.onSandboxCpu,
       }),
     }),
   };

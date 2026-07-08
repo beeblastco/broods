@@ -6,22 +6,9 @@
 
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { lookup } from "node:dns/promises";
 import { fileURLToPath } from "node:url";
 import ivm from "isolated-vm";
-
-const BODY_LIMIT_BYTES = 5 * 1024 * 1024;
-const FETCH_TIMEOUT_MS = 30_000;
-const REDIRECT_LIMIT = 5;
-const DENY_CIDRS = [
-  "0.0.0.0/8",
-  "10.0.0.0/8",
-  "172.16.0.0/12",
-  "192.168.0.0/16",
-  "169.254.0.0/16",
-  "127.0.0.0/8",
-  "100.64.0.0/10",
-];
+import { guardedFetch, BODY_LIMIT_BYTES, FETCH_TIMEOUT_MS } from "./pinned-fetch.mjs";
 
 // Wall-clock deadline for the whole run; ctx.fetch caps each bridge call at the
 // remaining budget. Declared before the entry dispatch below assigns it.
@@ -34,14 +21,29 @@ process.on("unhandledRejection", () => {});
 
 if (process.argv[2] === "--fetch-bridge") {
   await runFetchBridgeHelper();
+} else if (process.argv[2] === "--pool") {
+  await runPoolWorker();
 } else {
   await runToolRequest();
 }
 
+function memoryLimitMb() {
+  const value = Number(process.env.ISOLATE_MEMORY_LIMIT_MB);
+  return Number.isFinite(value) && value > 0 ? value : 128;
+}
+
+function runTimeoutMs() {
+  const value = Number(process.env.ISOLATE_RUNNER_TIMEOUT_SECONDS);
+  const seconds = Number.isFinite(value) && value > 0 ? value : 30;
+  return seconds * 1000;
+}
+
+// One-shot legacy mode: spawn per call, throwaway isolate. Kept as the fallback
+// behind ISOLATE_POOL so the pooled worker can land + soak before it is default.
 async function runToolRequest() {
   let isolate;
   let timedOut = false;
-  const timeoutMs = Number(process.env.ISOLATE_RUNNER_TIMEOUT_SECONDS || 30) * 1000;
+  const timeoutMs = runTimeoutMs();
   runDeadlineAt = Date.now() + timeoutMs;
   const timeout = setTimeout(() => {
     timedOut = true;
@@ -53,14 +55,121 @@ async function runToolRequest() {
 
   try {
     const payload = JSON.parse(await readAllStdin());
-    const bundleSource = decodeBundle(payload);
-    const actualSha = createHash("sha256").update(bundleSource).digest("hex");
-    if (actualSha !== payload.expectedSha256) {
-      throw new Error("custom tool bundle hash mismatch inside isolate runner");
+    isolate = new ivm.Isolate({ memoryLimit: memoryLimitMb() });
+    const result = await runIsolateJob(isolate, payload, {
+      timeoutMs,
+      emitChunk: (output) => writeFrame({ t: "chunk", output }),
+    });
+    if (!timedOut) writeFrame({ t: "final", result });
+  } catch (error) {
+    if (!timedOut) writeFrame({ t: "error", error: errorMessage(error) });
+    process.exitCode = 1;
+  } finally {
+    clearTimeout(timeout);
+    try {
+      isolate?.dispose();
+    } catch {}
+  }
+}
+
+// Persistent pooled worker: a long-lived process the core pool checks out one
+// call at a time (no in-worker multiplexing). It keeps a tenant-keyed isolate
+// cache so same-tenant calls reuse a warm isolate (compile caches stay hot),
+// while every call gets a FRESH context (via runIsolateJob) so no state leaks
+// between calls. Isolates are never shared across tenants; a tripped isolate is
+// disposed and evicted. Mirrors Convex Funrun's per-tenant isolate reuse.
+async function runPoolWorker() {
+  const cacheCapRaw = Number(process.env.ISOLATE_TENANT_CACHE_PER_WORKER);
+  const cacheCap = Number.isFinite(cacheCapRaw) && cacheCapRaw > 0 ? Math.max(1, cacheCapRaw) : 4;
+  const cache = new Map(); // tenantId -> { isolate, lastCpu: bigint }
+  writeFrame({ t: "ready" });
+  for await (const line of readLines(process.stdin)) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    let request;
+    try {
+      request = JSON.parse(trimmed);
+    } catch {
+      continue;
+    }
+    if (!request || request.t !== "run") continue;
+    await handlePoolRun(request, cache, cacheCap);
+  }
+}
+
+async function handlePoolRun(request, cache, cacheCap) {
+  const { callId, tenantId, payload } = request;
+  const timeoutMs = runTimeoutMs();
+  let entry = cache.get(tenantId);
+  let poisoned = false;
+  let watchdog;
+  try {
+    if (!entry) {
+      entry = { isolate: new ivm.Isolate({ memoryLimit: memoryLimitMb() }), lastCpu: 0n };
+    }
+    // LRU touch + bound the per-worker isolate cache.
+    cache.delete(tenantId);
+    cache.set(tenantId, entry);
+    while (cache.size > cacheCap) {
+      const oldestKey = cache.keys().next().value;
+      const oldest = cache.get(oldestKey);
+      cache.delete(oldestKey);
+      try {
+        oldest?.isolate.dispose();
+      } catch {}
     }
 
-    isolate = new ivm.Isolate({ memoryLimit: 128 });
-    const context = await isolate.createContext();
+    const isolate = entry.isolate;
+    runDeadlineAt = Date.now() + timeoutMs;
+    // Watchdog covers the whole job (compile + evaluate + run), not just the run
+    // eval's own timeout: dispose the isolate if it blocks past the deadline.
+    watchdog = setTimeout(() => {
+      poisoned = true;
+      try {
+        isolate.dispose();
+      } catch {}
+    }, timeoutMs + 1_000);
+
+    const result = await runIsolateJob(isolate, payload, {
+      timeoutMs,
+      emitChunk: (output) => writeFrame({ t: "chunk", callId, output }),
+    });
+    clearTimeout(watchdog);
+    watchdog = undefined;
+
+    // Metering: the same CPU counter that bounds the isolate is the billing
+    // signal. cpuTime is cumulative per isolate, so bill the per-call delta.
+    const cpuNow = readCpuTimeNs(isolate);
+    const cpuMs = Number(cpuNow - entry.lastCpu) / 1e6;
+    entry.lastCpu = cpuNow;
+    writeFrame({ t: "meter", callId, tenantId, toolName: payload.toolName, cpuMs });
+    writeFrame({ t: "final", callId, result });
+  } catch (error) {
+    poisoned = true;
+    writeFrame({ t: "error", callId, error: errorMessage(error) });
+  } finally {
+    if (watchdog) clearTimeout(watchdog);
+    if (poisoned) {
+      try {
+        entry?.isolate.dispose();
+      } catch {}
+      cache.delete(tenantId);
+    }
+  }
+}
+
+// Runs one tool bundle on the given isolate in a FRESH context and returns its
+// result; the caller owns isolate lifetime and terminal frames. Shared by the
+// one-shot and pooled paths so the security-critical setup lives in one place.
+async function runIsolateJob(isolate, payload, { timeoutMs, emitChunk }) {
+  const bundleSource = decodeBundle(payload);
+  const actualSha = createHash("sha256").update(bundleSource).digest("hex");
+  if (actualSha !== payload.expectedSha256) {
+    throw new Error("custom tool bundle hash mismatch inside isolate runner");
+  }
+
+  const context = await isolate.createContext();
+  try {
     await context.global.set("globalThis", context.global.derefInto());
     // Besides ctx/input, inject the minimal runtime surface tool bundles
     // reasonably assume in a fresh V8 isolate: timers, queueMicrotask, console
@@ -123,7 +232,7 @@ async function runToolRequest() {
         new ivm.ExternalCopy(payload.input).copyInto(),
         new ivm.Callback((url, init) => bridgeFetchSync(url, init), { sync: true }),
         // unref: stray timers must not keep the runner alive after the final
-        // frame; a fire on a disposed isolate rejects and is swallowed.
+        // frame; a fire on a disposed/released context rejects and is swallowed.
         new ivm.Callback(
           (id, ms) => {
             const timer = setTimeout(() => {
@@ -162,8 +271,8 @@ async function runToolRequest() {
     }
 
     await context.global.set("__execute", execute.derefInto());
-    await context.global.set("__emitChunk", new ivm.Callback((output) => writeFrame({ t: "chunk", output }), { sync: true }));
-    const result = await context.eval(
+    await context.global.set("__emitChunk", new ivm.Callback((output) => emitChunk(output), { sync: true }));
+    return await context.eval(
       `(async () => {
         const value = globalThis.__execute(globalThis.__ctx, globalThis.__input);
         if (value != null && typeof value[Symbol.asyncIterator] === "function") {
@@ -182,16 +291,35 @@ async function runToolRequest() {
         timeout: timeoutMs,
       },
     );
-    if (!timedOut) writeFrame({ t: "final", result });
-  } catch (error) {
-    if (!timedOut) writeFrame({ t: "error", error: errorMessage(error) });
-    process.exitCode = 1;
   } finally {
-    clearTimeout(timeout);
+    // Free the context but keep the isolate warm for the next same-tenant call.
     try {
-      isolate?.dispose();
+      context.release();
     } catch {}
   }
+}
+
+// isolated-vm exposes cumulative isolate CPU time; normalize across versions
+// (bigint ns in v7, [seconds, nanoseconds] in older builds) to nanoseconds.
+function readCpuTimeNs(isolate) {
+  const value = isolate.cpuTime;
+  if (typeof value === "bigint") return value;
+  if (Array.isArray(value)) return BigInt(value[0]) * 1_000_000_000n + BigInt(value[1]);
+  return 0n;
+}
+
+async function* readLines(stream) {
+  stream.setEncoding("utf8");
+  let buffer = "";
+  for await (const chunk of stream) {
+    buffer += chunk;
+    let index;
+    while ((index = buffer.indexOf("\n")) >= 0) {
+      yield buffer.slice(0, index);
+      buffer = buffer.slice(index + 1);
+    }
+  }
+  if (buffer.length) yield buffer;
 }
 
 function bridgeFetchSync(url, init) {
@@ -225,144 +353,12 @@ function bridgeFetchSync(url, init) {
 async function runFetchBridgeHelper() {
   try {
     const { url, init } = JSON.parse(await readAllStdin());
-    const result = await guardedFetch(url, sanitizeFetchInit(init));
+    const result = await guardedFetch(url, init);
     process.stdout.write(JSON.stringify({ ok: true, result }));
   } catch (error) {
     process.stdout.write(JSON.stringify({ ok: false, error: errorMessage(error) }));
     process.exitCode = 1;
   }
-}
-
-async function guardedFetch(url, init, redirects = 0) {
-  if (redirects > REDIRECT_LIMIT) {
-    throw new Error("fetch redirect limit exceeded");
-  }
-  const parsed = validateHttpUrl(url);
-  await assertHostAllowed(parsed.hostname);
-  const response = await fetch(parsed, { ...init, redirect: "manual" });
-  if (isRedirect(response.status)) {
-    const location = response.headers.get("location");
-    if (!location) throw new Error("fetch redirect missing location");
-    return guardedFetch(new URL(location, parsed).toString(), init, redirects + 1);
-  }
-
-  return {
-    status: response.status,
-    headers: Object.fromEntries(response.headers.entries()),
-    bodyText: await readBodyText(response),
-  };
-}
-
-function validateHttpUrl(value) {
-  if (typeof value !== "string" && !(value instanceof URL)) {
-    throw new Error("ctx.fetch url must be a string or URL");
-  }
-  const parsed = new URL(value);
-  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-    throw new Error("ctx.fetch only supports http(s) URLs");
-  }
-  if (!parsed.hostname) {
-    throw new Error("ctx.fetch URL must include a hostname");
-  }
-  return parsed;
-}
-
-// NOTE (pre-multitenant hardening TODO): this validates the resolved IPs, but the
-// subsequent fetch() re-resolves DNS, so a hostile resolver can still rebind to a
-// denied address between the check and the connection. The full fix pins the
-// validated IP through an undici dispatcher with a fixed lookup; tracked for the PR.
-async function assertHostAllowed(hostname) {
-  const addresses = await lookup(hostname, { all: true, verbatim: false });
-  if (addresses.length === 0) {
-    throw new Error("ctx.fetch hostname did not resolve");
-  }
-  for (const address of addresses) {
-    if (isDeniedAddress(address.address)) {
-      throw new Error("ctx.fetch blocked private or metadata address");
-    }
-  }
-}
-
-function isDeniedAddress(address) {
-  if (address.includes(":")) {
-    const normalized = address.toLowerCase();
-    // IPv4-mapped IPv6 (::ffff:a.b.c.d) tunnels a v4 address past the v6 checks —
-    // evaluate the embedded v4 against the CIDR denylist instead.
-    const mapped = normalized.match(/^::ffff:(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/);
-    if (mapped) return isDeniedAddress(mapped[1]);
-    return normalized === "::" ||
-      normalized === "::1" ||
-      normalized.startsWith("fe80:") ||
-      normalized.startsWith("fc") ||
-      normalized.startsWith("fd");
-  }
-  const numeric = ipv4ToInt(address);
-  if (numeric === null) return true;
-  return DENY_CIDRS.some((cidr) => ipv4InCidr(numeric, cidr));
-}
-
-function ipv4ToInt(address) {
-  const parts = address.split(".");
-  if (parts.length !== 4) return null;
-  let value = 0;
-  for (const part of parts) {
-    const octet = Number(part);
-    if (!Number.isInteger(octet) || octet < 0 || octet > 255) return null;
-    value = (value << 8) + octet;
-  }
-  return value >>> 0;
-}
-
-function ipv4InCidr(address, cidr) {
-  const [base, bitsRaw] = cidr.split("/");
-  const bits = Number(bitsRaw);
-  const baseInt = ipv4ToInt(base);
-  if (baseInt === null || !Number.isInteger(bits)) return false;
-  const mask = bits === 0 ? 0 : (0xffffffff << (32 - bits)) >>> 0;
-  return (address & mask) === (baseInt & mask);
-}
-
-function isRedirect(status) {
-  return status === 301 || status === 302 || status === 303 || status === 307 || status === 308;
-}
-
-async function readBodyText(response) {
-  const reader = response.body?.getReader();
-  if (!reader) return "";
-  const chunks = [];
-  let total = 0;
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    total += value.byteLength;
-    if (total > BODY_LIMIT_BYTES) {
-      throw new Error("ctx.fetch response body exceeded 5MB");
-    }
-    chunks.push(value);
-  }
-  return new TextDecoder().decode(concatBytes(chunks, total));
-}
-
-function concatBytes(chunks, total) {
-  const result = new Uint8Array(total);
-  let offset = 0;
-  for (const chunk of chunks) {
-    result.set(chunk, offset);
-    offset += chunk.byteLength;
-  }
-  return result;
-}
-
-function sanitizeFetchInit(init) {
-  if (init == null) return {};
-  if (typeof init !== "object" || Array.isArray(init)) {
-    throw new Error("ctx.fetch init must be an object");
-  }
-  const result = {};
-  if (init.method !== undefined) result.method = String(init.method);
-  if (init.headers !== undefined) result.headers = init.headers;
-  if (init.body !== undefined) result.body = init.body;
-  return result;
 }
 
 function decodeBundle(payload) {

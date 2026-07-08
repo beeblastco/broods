@@ -4,57 +4,11 @@
  * at a runner.mjs whose directory has node_modules/isolated-vm installed.
  */
 
-import { beforeEach, describe, expect, it, mock } from "bun:test";
+import { describe, expect, it, mock } from "bun:test";
 import { spawn } from "node:child_process";
 import type { AccountToolRecord } from "../src/shared/storage/index.ts";
-import type {
-  SandboxExecutor,
-  SandboxExecutorConfig,
-  SandboxJobHandle,
-  SandboxRunResult,
-} from "../src/harness/sandbox/types.ts";
 
 const bundle = "export default { name: 'test_tool', async execute(ctx, input) { return { echo: input, config: ctx.config }; } };";
-const readS3BytesMock = mock(async () => new TextEncoder().encode(bundle) as Uint8Array);
-const getS3ObjectUrlMock = mock(async () => "https://tool-bundles.example/tool.mjs");
-const runMock = mock(async (): Promise<SandboxRunResult> => ({
-  ok: true,
-  runtime: "bash",
-  exitCode: 0,
-  stdout: '\n__CUSTOM_TOOL_RESULT__{"ok":true,"result":{"sandbox":true}}\n',
-  stderr: "",
-  durationMs: 10,
-  provider: "sandbox",
-}));
-const runBackgroundMock = mock(async (): Promise<SandboxJobHandle> => ({ jobId: "job_test" }));
-const createSandboxExecutorMock = mock((_config: SandboxExecutorConfig): SandboxExecutor => ({
-  run: runMock,
-  runBackground: runBackgroundMock,
-}));
-
-mock.module("../src/shared/s3.ts", () => ({
-  getS3ObjectUrl: getS3ObjectUrlMock,
-  readS3Bytes: readS3BytesMock,
-  readS3Text: mock(async () => ""),
-  s3ObjectExists: mock(async () => false),
-  listS3Prefix: mock(async () => []),
-  writeS3Object: mock(async () => 0),
-  deleteS3Prefix: mock(async () => 0),
-  isMissingS3Error: mock(() => false),
-}));
-
-mock.module("../src/harness/self-url.ts", () => ({
-  getHarnessPublicUrl: mock(() => "https://agent.example"),
-}));
-
-beforeEach(() => {
-  process.env.TOOL_BUNDLES_BUCKET_NAME = "tool-bundles";
-  readS3BytesMock.mockClear();
-  getS3ObjectUrlMock.mockClear();
-  runMock.mockClear();
-  runBackgroundMock.mockClear();
-  createSandboxExecutorMock.mockClear();
-});
 
 describe("custom tool runtime defaulting", () => {
   it("defaults pure bundles to isolate and Node-shaped bundles to sandbox", async () => {
@@ -96,22 +50,9 @@ describe("custom tool runtime defaulting", () => {
 });
 
 describe("streamAccountTool dispatcher", () => {
-  it("routes sandbox tools to the sandbox path", async () => {
-    const { streamAccountTool } = await import("../src/harness/tools/custom-tool-executor.ts");
-    const outputs: unknown[] = [];
-    for await (const output of streamAccountTool({
-      accountId: "acct_test",
-      tool: accountToolRecord("sandbox"),
-      input: {},
-      config: {},
-      createExecutor: createSandboxExecutorMock,
-    })) {
-      outputs.push(output);
-    }
-
-    expect(outputs).toEqual([{ sandbox: true }]);
-    expect(runMock).toHaveBeenCalledTimes(1);
-  });
+  async function drain(gen: AsyncGenerator<unknown, void, void>): Promise<void> {
+    for await (const _ of gen) { /* drain */ }
+  }
 
   it("routes isolate tools to the isolate path", async () => {
     const isolateExecutor = mock(async function* () {
@@ -124,7 +65,6 @@ describe("streamAccountTool dispatcher", () => {
       tool: accountToolRecord("isolate"),
       input: {},
       config: {},
-      createExecutor: createSandboxExecutorMock,
       isolateExecutor,
     })) {
       outputs.push(output);
@@ -132,16 +72,31 @@ describe("streamAccountTool dispatcher", () => {
 
     expect(outputs).toEqual([{ isolate: true }]);
     expect(isolateExecutor).toHaveBeenCalledTimes(1);
-    expect(runMock).not.toHaveBeenCalled();
   });
 
-  it("keeps detached async tools on the sandbox background path", async () => {
+  it("rejects sandbox-runtime tools with a deferred (#82) error", async () => {
     const isolateExecutor = mock(async function* () {
       yield { isolate: true };
     });
     const { streamAccountTool } = await import("../src/harness/tools/custom-tool-executor.ts");
-    const outputs: unknown[] = [];
-    for await (const output of streamAccountTool({
+
+    await expect(drain(streamAccountTool({
+      accountId: "acct_test",
+      tool: accountToolRecord("sandbox"),
+      input: {},
+      config: {},
+      isolateExecutor,
+    }))).rejects.toThrow(/not yet supported off Lambda/);
+    expect(isolateExecutor).not.toHaveBeenCalled();
+  });
+
+  it("rejects detached-async tools with a deferred (#82) error", async () => {
+    const isolateExecutor = mock(async function* () {
+      yield { isolate: true };
+    });
+    const { streamAccountTool } = await import("../src/harness/tools/custom-tool-executor.ts");
+
+    await expect(drain(streamAccountTool({
       accountId: "acct_test",
       tool: accountToolRecord("isolate"),
       input: {},
@@ -150,18 +105,12 @@ describe("streamAccountTool dispatcher", () => {
         asyncTool: {
           resultId: "async_tool_1",
           detached: true,
-          completePath: "/sandbox-jobs/async_tool_1/complete",
+          completePath: "/async-tools/async_tool_1/complete",
           completionToken: "tok_123",
         },
       },
-      createExecutor: createSandboxExecutorMock,
       isolateExecutor,
-    })) {
-      outputs.push(output);
-    }
-
-    expect(outputs).toEqual([{ type: "text", value: "Started async tool async_tool_1" }]);
-    expect(runBackgroundMock).toHaveBeenCalledTimes(1);
+    }))).rejects.toThrow(/not yet supported off Lambda/);
     expect(isolateExecutor).not.toHaveBeenCalled();
   });
 });
@@ -272,6 +221,134 @@ describe("isolate runner", () => {
     expect(result.frames).toEqual([{ t: "final", result: { ticks: 3 } }]);
   });
 });
+
+describe("isolate pooled worker (--pool)", () => {
+  realRunnerIt("emits ready, streams chunks, meters, and returns final", async () => {
+    const { byCall, ready } = await runPoolRunner([
+      {
+        callId: "1",
+        tenantId: "acct_a",
+        toolName: "streamer",
+        source: "export default { name: 'streamer', async *execute() { yield { step: 1 }; yield { step: 2 }; } };",
+      },
+    ]);
+
+    expect(ready).toEqual({ t: "ready" });
+    const frames = byCall.get("1")!;
+    expect(frames.filter((f) => f.t === "chunk")).toEqual([
+      { t: "chunk", callId: "1", output: { step: 1 } },
+      { t: "chunk", callId: "1", output: { step: 2 } },
+    ]);
+    expect(frames.find((f) => f.t === "final")).toEqual({ t: "final", callId: "1", result: { step: 2 } });
+    const meter = frames.find((f) => f.t === "meter");
+    expect(meter?.tenantId).toBe("acct_a");
+    expect(typeof meter?.cpuMs).toBe("number");
+  });
+
+  realRunnerIt("gives each call a fresh context on a reused tenant isolate (no state leak)", async () => {
+    const source = "export default { name: 'counter', execute() { globalThis.__n = (globalThis.__n || 0) + 1; return { n: globalThis.__n }; } };";
+    const { byCall } = await runPoolRunner([
+      { callId: "1", tenantId: "acct_a", toolName: "counter", source },
+      { callId: "2", tenantId: "acct_a", toolName: "counter", source },
+    ]);
+
+    // Same tenant reuses the isolate, but the fresh context resets globals, so
+    // the second call must NOT observe the first call's write.
+    expect(byCall.get("1")!.find((f) => f.t === "final")).toEqual({ t: "final", callId: "1", result: { n: 1 } });
+    expect(byCall.get("2")!.find((f) => f.t === "final")).toEqual({ t: "final", callId: "2", result: { n: 1 } });
+  });
+
+  realRunnerIt("does not leak globals across tenants", async () => {
+    const writer = "export default { name: 'w', execute() { globalThis.__secret = 'A'; return { wrote: true }; } };";
+    const reader = "export default { name: 'r', execute() { return { secret: globalThis.__secret ?? null }; } };";
+    const { byCall } = await runPoolRunner([
+      { callId: "1", tenantId: "acct_a", toolName: "w", source: writer },
+      { callId: "2", tenantId: "acct_b", toolName: "r", source: reader },
+    ]);
+
+    expect(byCall.get("2")!.find((f) => f.t === "final")).toEqual({ t: "final", callId: "2", result: { secret: null } });
+  });
+
+  realRunnerIt("surfaces thrown errors and poisoned-isolate recovery on the next call", async () => {
+    const { byCall } = await runPoolRunner([
+      { callId: "1", tenantId: "acct_a", toolName: "boom", source: "export default { name: 'boom', execute() { throw new Error('boom'); } };" },
+      { callId: "2", tenantId: "acct_a", toolName: "ok", source: "export default { name: 'ok', execute() { return { ok: true }; } };" },
+    ]);
+
+    expect(byCall.get("1")!.find((f) => f.t === "error")).toEqual({ t: "error", callId: "1", error: "boom" });
+    // The tripped isolate is disposed + evicted; the next same-tenant call still works.
+    expect(byCall.get("2")!.find((f) => f.t === "final")).toEqual({ t: "final", callId: "2", result: { ok: true } });
+  });
+});
+
+async function runPoolRunner(
+  requests: Array<{ callId: string; tenantId: string; toolName: string; source: string; input?: unknown }>,
+  env?: Record<string, string>,
+): Promise<{ byCall: Map<string, Array<{ t: string; [key: string]: unknown }>>; ready: unknown; stderr: string }> {
+  const child = spawn("node", [runnerPath!, "--pool"], {
+    stdio: ["pipe", "pipe", "pipe"],
+    env: { ...process.env, ...env },
+  });
+  const frames: Array<{ t: string; [key: string]: unknown }> = [];
+  let wake: (() => void) | null = null;
+  let buffer = "";
+  let stderr = "";
+  child.stdout.setEncoding("utf8");
+  child.stdout.on("data", (chunk: string) => {
+    buffer += chunk;
+    let index: number;
+    while ((index = buffer.indexOf("\n")) >= 0) {
+      const line = buffer.slice(0, index);
+      buffer = buffer.slice(index + 1);
+      if (!line.trim()) continue;
+      try {
+        frames.push(JSON.parse(line));
+      } catch {
+        continue; // ignore any non-protocol stdout noise instead of crashing the run
+      }
+      wake?.();
+      wake = null;
+    }
+  });
+  child.stderr.setEncoding("utf8");
+  child.stderr.on("data", (chunk: string) => {
+    stderr += chunk;
+  });
+
+  const next = async (): Promise<{ t: string; [key: string]: unknown }> => {
+    while (!frames.length) await new Promise<void>((resolve) => (wake = resolve));
+    return frames.shift()!;
+  };
+
+  try {
+    const ready = await next();
+    const byCall = new Map<string, Array<{ t: string; [key: string]: unknown }>>();
+    for (const request of requests) {
+      child.stdin.write(JSON.stringify({
+        t: "run",
+        callId: request.callId,
+        tenantId: request.tenantId,
+        payload: {
+          bundleSourceB64: Buffer.from(request.source).toString("base64"),
+          expectedSha256: sha256(request.source),
+          toolName: request.toolName,
+          input: request.input ?? {},
+          config: {},
+        },
+      }) + "\n");
+      const collected: Array<{ t: string; [key: string]: unknown }> = [];
+      while (true) {
+        const frame = await next();
+        collected.push(frame);
+        if (frame.t === "final" || frame.t === "error" || frame.t === "end") break;
+      }
+      byCall.set(request.callId, collected);
+    }
+    return { byCall, ready, stderr };
+  } finally {
+    child.kill();
+  }
+}
 
 async function runRealRunner(
   source: string,
