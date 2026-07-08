@@ -50,7 +50,7 @@ import { stripReasoningFromMessages } from "./pruning.ts";
 import type { Session, TurnContextSnapshot } from "./session.ts";
 import type { RunAsyncToolDispatch } from "./async-tools.ts";
 import { createAgentLifecycleEmitter, toLifecycleValue } from "./lifecycle.ts";
-import { createAgentHookDispatcher, wrapToolsWithHooks } from "./hook-dispatcher.ts";
+import { createAgentHookDispatcher, wrapToolsWithHooks, type HookDispatcher } from "./hook-dispatcher.ts";
 import { createTools } from "./tools/index.ts";
 import { createPolicyToolApproval, createRuntimeToolApproval } from "./policy.ts";
 import type { SandboxCpuSample } from "./sandbox/types.ts";
@@ -907,6 +907,14 @@ export async function runAgentLoop(
         toolResultCount: toolResults.length,
         warningCount: warnings?.length ?? 0,
       });
+      // agent.step.finished is observe-only for hooks (side effects, no mutation).
+      if (hooks.hasHooksFor("agent.step.finished")) {
+        await hooks.runMutation("agent.step.finished", {
+          stepNumber: stepNumber,
+          finishReason: finishReason,
+          toolCallCount: toolCalls.length,
+        });
+      }
       await Promise.all(toolResults.map((toolResult) =>
         lifecycle.emit("tool.result", {
           stepNumber: stepNumber,
@@ -1149,12 +1157,19 @@ export async function runAgentLoop(
             toolUsage: toLifecycleValue(tools.toolUsage),
             toolCalls: toLifecycleValue(tools.toolCalls),
           });
+          // Runs so a hook can react to a pending approval (notify/log). Honoring
+          // a returned { approve } to auto-resolve is a follow-up: it re-enters the
+          // approval continuation flow, which stays owned by the handler.
+          if (hooks.hasHooksFor("agent.approval.required")) {
+            await hooks.runMutation("agent.approval.required", { approvals: toLifecycleValue(approvals) });
+          }
           await reply?.onApprovalRequired?.(approvals);
           return;
         }
 
         if (modelOutput) {
           finalResponse = await modelOutput.parseCompleteOutput({ text }, { response, usage, finishReason }) as JSONValue;
+          finalResponse = await foldAgentFinished(hooks, finalResponse, finishReason);
           await reply?.onFinalText(finalResponse);
           await lifecycle.emit("agent.finished", {
             finishReason: finishReason,
@@ -1168,8 +1183,8 @@ export async function runAgentLoop(
           return;
         }
 
-        finalResponse = finalText;
-        await reply?.onFinalText(finalText);
+        finalResponse = await foldAgentFinished(hooks, finalText, finishReason);
+        await reply?.onFinalText(finalResponse);
         await lifecycle.emit("agent.finished", {
           finishReason: finishReason,
           stepCount: stepCount,
@@ -1177,7 +1192,7 @@ export async function runAgentLoop(
           toolsUsed: toLifecycleValue(tools.toolsUsed),
           toolUsage: toLifecycleValue(tools.toolUsage),
           toolCalls: toLifecycleValue(tools.toolCalls),
-          response: finalText,
+          response: toLifecycleValue(finalResponse),
         });
       } catch (err) {
         const errorText = errorMessage(err);
@@ -1202,6 +1217,10 @@ export async function runAgentLoop(
           toolUsage: toLifecycleValue(tools.toolUsage),
           toolCalls: toLifecycleValue(tools.toolCalls),
         });
+        // agent.failed is observe-only for hooks (side effects, no mutation).
+        if (hooks.hasHooksFor("agent.failed")) {
+          await hooks.runMutation("agent.failed", { error: errorText });
+        }
         await reply?.onErrorText(errorText).catch(() => { });
       } finally {
         await finalizeUsage(
@@ -1352,6 +1371,24 @@ function applyAgentStartedMutation(
   if (Array.isArray(mutation.messages)) {
     turnContext.messages = mutation.messages as ModelMessage[];
   }
+}
+
+// Fold an agent.finished hook's { output } into the final response. On the
+// streaming (SSE) path the tokens are already sent, so this changes the
+// delivered/stored final result, not the already-streamed text.
+async function foldAgentFinished(
+  hooks: HookDispatcher,
+  response: JSONValue,
+  finishReason: string,
+): Promise<JSONValue> {
+  if (!hooks.hasHooksFor("agent.finished")) {
+    return response;
+  }
+  const mutation = await hooks.runMutation("agent.finished", {
+    finishReason,
+    response: toLifecycleValue(response),
+  });
+  return mutation && "output" in mutation ? (mutation.output as JSONValue) : response;
 }
 
 function extractApprovalRequests(steps: Array<StepResult<ToolSet>>): ApprovalRequestOutput[] {
