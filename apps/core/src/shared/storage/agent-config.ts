@@ -44,6 +44,20 @@ const AGENT_LIFECYCLE_EVENT_NAMES = [
   "subagent.task.finished",
 ] as const satisfies readonly AgentLifecycleEventName[];
 
+// Channel hook events fire from integrations.ts (not the agent loop), so they
+// live outside AgentLifecycleEventName but share the code-hook vocabulary.
+const AGENT_CHANNEL_HOOK_EVENT_NAMES = [
+  "channel.message.received",
+  "channel.message.sending",
+] as const satisfies readonly AgentChannelHookEventName[];
+
+// Every event a user code hook can subscribe to: the agent-loop lifecycle plus
+// the channel points. Webhooks use AGENT_LIFECYCLE_EVENT_NAMES only.
+export const AGENT_HOOK_EVENT_NAMES = [
+  ...AGENT_LIFECYCLE_EVENT_NAMES,
+  ...AGENT_CHANNEL_HOOK_EVENT_NAMES,
+] as const satisfies readonly AgentHookEventName[];
+
 export interface AgentConfig {
   agent?: AgentBehaviorConfig;
   model?: AgentModelConfig;
@@ -125,6 +139,13 @@ export interface AgentSubagentConfig {
   allowed?: string[];
   context?: "new" | "inherited";
   mode?: "ephemeral" | "persistent";
+  /**
+   * Controls what the parent agent sees from a finished subagent (AI SDK
+   * "controlling what the model sees"): `full` = the child's whole transcript,
+   * `result` = only its final result (default), `none` = nothing. A
+   * `subagent.task.finished` code hook overrides this for custom shaping.
+   */
+  visibility?: "full" | "result" | "none";
   [key: string]: unknown;
 }
 
@@ -190,6 +211,24 @@ export interface AgentSessionCompactionConfig {
 export interface AgentHooksConfig {
   /** Outbound event webhooks. An agent may register several independent endpoints. */
   webhooks?: AgentWebhookHookConfig[];
+  /**
+   * Uploaded code hooks. Each entry references an accountHooks bundle by id; the
+   * bundle runs in the V8 isolate at the matching fire-points and its validated
+   * return is folded into mutable harness state.
+   */
+  code?: AgentCodeHookConfig[];
+  [key: string]: unknown;
+}
+
+export interface AgentCodeHookConfig {
+  hookId: string;
+  /**
+   * Optional narrowing of the events this reference reacts to. Omitted => the
+   * bundle's own declared `events` set. Any listed event outside the bundle's
+   * declared set is ignored at runtime.
+   */
+  events?: AgentHookEventName[];
+  enabled?: boolean;
   [key: string]: unknown;
 }
 
@@ -212,6 +251,14 @@ export type AgentLifecycleEventName =
   | "tool.result"
   | "subagent.task.started"
   | "subagent.task.finished";
+
+// Channel points a code hook can intercept (inbound message / before-send).
+export type AgentChannelHookEventName =
+  | "channel.message.received"
+  | "channel.message.sending";
+
+// The full set of events a user code hook can subscribe to.
+export type AgentHookEventName = AgentLifecycleEventName | AgentChannelHookEventName;
 
 export type AgentToolsConfig = Record<string, AgentToolConfig>;
 
@@ -696,6 +743,33 @@ function normalizeHooksConfig(value: unknown): void {
       normalizeWebhookHookConfig(webhook, `config.hooks.webhooks[${index}]`),
     );
   }
+  if (config.code !== undefined) {
+    if (!Array.isArray(config.code)) {
+      throw new Error("config.hooks.code must be an array");
+    }
+    config.code.forEach((hook, index) =>
+      normalizeCodeHookConfig(hook, `config.hooks.code[${index}]`),
+    );
+  }
+}
+
+function normalizeCodeHookConfig(value: unknown, path: string): void {
+  if (!isPlainObject(value)) {
+    throw new Error(`${path} must be an object`);
+  }
+
+  const config = value as Record<string, unknown>;
+  if (typeof config.hookId !== "string" || config.hookId.trim().length === 0) {
+    throw new Error(`${path}.hookId is required`);
+  }
+  assertOptionalBoolean(config.enabled, `${path}.enabled`);
+  if (config.events !== undefined) {
+    if (!Array.isArray(config.events) || !config.events.every((event) =>
+      typeof event === "string" && AGENT_HOOK_EVENT_NAMES.includes(event as AgentHookEventName)
+    )) {
+      throw new Error(`${path}.events must be an array of: ${AGENT_HOOK_EVENT_NAMES.join(", ")}`);
+    }
+  }
 }
 
 function normalizeWebhookHookConfig(value: unknown, path: string): void {
@@ -768,6 +842,7 @@ function normalizeSubagentConfig(value: unknown): void {
   assertOptionalStringArray(config.allowed, "config.subagent.allowed");
   assertOptionalEnum(config.context, "config.subagent.context", ["new", "inherited"]);
   assertOptionalEnum(config.mode, "config.subagent.mode", ["ephemeral", "persistent"]);
+  assertOptionalEnum(config.visibility, "config.subagent.visibility", ["full", "result", "none"]);
 }
 
 function normalizeToolConfig(toolName: string, value: unknown): void {
