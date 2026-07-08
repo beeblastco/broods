@@ -11,6 +11,7 @@ import type { JSONValue, ToolSet } from "ai";
 import { isPlainObject } from "../shared/object.ts";
 import type { AgentCodeHookConfig, AgentConfig, AgentHookEventName } from "../shared/storage/agent-config.ts";
 import type { AccountHookRecord } from "../shared/storage/account-hooks.ts";
+import { getStorage } from "../shared/storage/index.ts";
 import type { AgentLifecycleEventPayload } from "./lifecycle.ts";
 import { toLifecycleValue } from "./lifecycle.ts";
 import { runCodeHook } from "./hook-runner.ts";
@@ -144,16 +145,10 @@ export function wrapToolsWithHooks(tools: ToolSet, hooks: HookDispatcher): ToolS
   return wrapped;
 }
 
-/**
- * Resolve the referenced hook records from storage. STUB — returns [] until the
- * accountHooks storage adapter lands (built in parallel). Integration point:
- * replace the body with
- *   const store = getStorage().accountHooks;
- *   const records = await Promise.all(ids.map((id) => store.getById(accountId, id)));
- *   return records.filter((r): r is AccountHookRecord => r != null && r.status === "active");
- * once `getStorage().accountHooks` exists. Kept isolated so all fire-point
- * wiring compiles and is testable ahead of the storage adapter.
- */
-async function loadAgentHooks(_accountId: string, _refs: AgentCodeHookConfig[]): Promise<AccountHookRecord[]> {
-  return [];
+/** Resolve the active hook records referenced by the run's config.hooks.code. */
+async function loadAgentHooks(accountId: string, refs: AgentCodeHookConfig[]): Promise<AccountHookRecord[]> {
+  const ids = [...new Set(refs.map((ref) => ref.hookId))];
+  const store = getStorage().accountHooks;
+  const records = await Promise.all(ids.map((id) => store.getById(accountId, id)));
+  return records.filter((record): record is AccountHookRecord => record != null && record.status === "active");
 }

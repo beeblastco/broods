@@ -39,7 +39,7 @@ describe("wrapToolsWithHooks", () => {
     const wrapped = wrapToolsWithHooks(tools, dispatcherReturning((event) =>
       event === "tool.call.started" ? { decision: "deny", denyReason: "no shell" } : undefined,
     ));
-    await expect((wrapped.bash.execute as (i: unknown, o: unknown) => Promise<unknown>)({ cmd: "ls" }, {}))
+    await expect((wrapped.bash!.execute as (i: unknown, o: unknown) => Promise<unknown>)({ cmd: "ls" }, {}))
       .rejects.toThrow(/blocked by hook: no shell/);
   });
 
@@ -49,7 +49,7 @@ describe("wrapToolsWithHooks", () => {
     const wrapped = wrapToolsWithHooks(tools, dispatcherReturning((event) =>
       event === "tool.call.started" ? { decision: "allow", args: { query: "edited" } } : undefined,
     ));
-    const result = await (wrapped.search.execute as (i: unknown, o: unknown) => Promise<unknown>)({ query: "original" }, {});
+    const result = await (wrapped.search!.execute as (i: unknown, o: unknown) => Promise<unknown>)({ query: "original" }, {});
     expect(seen).toEqual({ query: "edited" });
     expect(result).toBe("ok");
   });
@@ -59,7 +59,7 @@ describe("wrapToolsWithHooks", () => {
     const wrapped = wrapToolsWithHooks(tools, dispatcherReturning((event) =>
       event === "tool.result" ? { output: { value: 99 } } : { decision: "allow" },
     ));
-    const result = await (wrapped.calc.execute as (i: unknown, o: unknown) => Promise<unknown>)({}, {});
+    const result = await (wrapped.calc!.execute as (i: unknown, o: unknown) => Promise<unknown>)({}, {});
     expect(result).toEqual({ value: 99 });
   });
 });
