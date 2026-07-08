@@ -4,57 +4,11 @@
  * at a runner.mjs whose directory has node_modules/isolated-vm installed.
  */
 
-import { beforeEach, describe, expect, it, mock } from "bun:test";
+import { describe, expect, it, mock } from "bun:test";
 import { spawn } from "node:child_process";
 import type { AccountToolRecord } from "../src/shared/storage/index.ts";
-import type {
-  SandboxExecutor,
-  SandboxExecutorConfig,
-  SandboxJobHandle,
-  SandboxRunResult,
-} from "../src/harness/sandbox/types.ts";
 
 const bundle = "export default { name: 'test_tool', async execute(ctx, input) { return { echo: input, config: ctx.config }; } };";
-const readS3BytesMock = mock(async () => new TextEncoder().encode(bundle) as Uint8Array);
-const getS3ObjectUrlMock = mock(async () => "https://tool-bundles.example/tool.mjs");
-const runMock = mock(async (): Promise<SandboxRunResult> => ({
-  ok: true,
-  runtime: "bash",
-  exitCode: 0,
-  stdout: '\n__CUSTOM_TOOL_RESULT__{"ok":true,"result":{"sandbox":true}}\n',
-  stderr: "",
-  durationMs: 10,
-  provider: "sandbox",
-}));
-const runBackgroundMock = mock(async (): Promise<SandboxJobHandle> => ({ jobId: "job_test" }));
-const createSandboxExecutorMock = mock((_config: SandboxExecutorConfig): SandboxExecutor => ({
-  run: runMock,
-  runBackground: runBackgroundMock,
-}));
-
-mock.module("../src/shared/s3.ts", () => ({
-  getS3ObjectUrl: getS3ObjectUrlMock,
-  readS3Bytes: readS3BytesMock,
-  readS3Text: mock(async () => ""),
-  s3ObjectExists: mock(async () => false),
-  listS3Prefix: mock(async () => []),
-  writeS3Object: mock(async () => 0),
-  deleteS3Prefix: mock(async () => 0),
-  isMissingS3Error: mock(() => false),
-}));
-
-mock.module("../src/harness/self-url.ts", () => ({
-  getHarnessPublicUrl: mock(() => "https://agent.example"),
-}));
-
-beforeEach(() => {
-  process.env.TOOL_BUNDLES_BUCKET_NAME = "tool-bundles";
-  readS3BytesMock.mockClear();
-  getS3ObjectUrlMock.mockClear();
-  runMock.mockClear();
-  runBackgroundMock.mockClear();
-  createSandboxExecutorMock.mockClear();
-});
 
 describe("custom tool runtime defaulting", () => {
   it("defaults pure bundles to isolate and Node-shaped bundles to sandbox", async () => {
@@ -96,22 +50,9 @@ describe("custom tool runtime defaulting", () => {
 });
 
 describe("streamAccountTool dispatcher", () => {
-  it("routes sandbox tools to the sandbox path", async () => {
-    const { streamAccountTool } = await import("../src/harness/tools/custom-tool-executor.ts");
-    const outputs: unknown[] = [];
-    for await (const output of streamAccountTool({
-      accountId: "acct_test",
-      tool: accountToolRecord("sandbox"),
-      input: {},
-      config: {},
-      createExecutor: createSandboxExecutorMock,
-    })) {
-      outputs.push(output);
-    }
-
-    expect(outputs).toEqual([{ sandbox: true }]);
-    expect(runMock).toHaveBeenCalledTimes(1);
-  });
+  async function drain(gen: AsyncGenerator<unknown, void, void>): Promise<void> {
+    for await (const _ of gen) { /* drain */ }
+  }
 
   it("routes isolate tools to the isolate path", async () => {
     const isolateExecutor = mock(async function* () {
@@ -124,7 +65,6 @@ describe("streamAccountTool dispatcher", () => {
       tool: accountToolRecord("isolate"),
       input: {},
       config: {},
-      createExecutor: createSandboxExecutorMock,
       isolateExecutor,
     })) {
       outputs.push(output);
@@ -132,16 +72,31 @@ describe("streamAccountTool dispatcher", () => {
 
     expect(outputs).toEqual([{ isolate: true }]);
     expect(isolateExecutor).toHaveBeenCalledTimes(1);
-    expect(runMock).not.toHaveBeenCalled();
   });
 
-  it("keeps detached async tools on the sandbox background path", async () => {
+  it("rejects sandbox-runtime tools with a deferred (#82) error", async () => {
     const isolateExecutor = mock(async function* () {
       yield { isolate: true };
     });
     const { streamAccountTool } = await import("../src/harness/tools/custom-tool-executor.ts");
-    const outputs: unknown[] = [];
-    for await (const output of streamAccountTool({
+
+    await expect(drain(streamAccountTool({
+      accountId: "acct_test",
+      tool: accountToolRecord("sandbox"),
+      input: {},
+      config: {},
+      isolateExecutor,
+    }))).rejects.toThrow(/not yet supported off Lambda/);
+    expect(isolateExecutor).not.toHaveBeenCalled();
+  });
+
+  it("rejects detached-async tools with a deferred (#82) error", async () => {
+    const isolateExecutor = mock(async function* () {
+      yield { isolate: true };
+    });
+    const { streamAccountTool } = await import("../src/harness/tools/custom-tool-executor.ts");
+
+    await expect(drain(streamAccountTool({
       accountId: "acct_test",
       tool: accountToolRecord("isolate"),
       input: {},
@@ -150,18 +105,12 @@ describe("streamAccountTool dispatcher", () => {
         asyncTool: {
           resultId: "async_tool_1",
           detached: true,
-          completePath: "/sandbox-jobs/async_tool_1/complete",
+          completePath: "/async-tools/async_tool_1/complete",
           completionToken: "tok_123",
         },
       },
-      createExecutor: createSandboxExecutorMock,
       isolateExecutor,
-    })) {
-      outputs.push(output);
-    }
-
-    expect(outputs).toEqual([{ type: "text", value: "Started async tool async_tool_1" }]);
-    expect(runBackgroundMock).toHaveBeenCalledTimes(1);
+    }))).rejects.toThrow(/not yet supported off Lambda/);
     expect(isolateExecutor).not.toHaveBeenCalled();
   });
 });

@@ -13,8 +13,8 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { logInfo } from "../../shared/log.ts";
-import { optionalEnv, positiveIntegerEnv, requireEnv } from "../../shared/env.ts";
-import { FrameQueue, createRunnerPayload, type ExecuteAccountToolOptions } from "./custom-tool-executor.ts";
+import { optionalEnv, positiveIntegerEnv } from "../../shared/env.ts";
+import { FrameQueue, createRunnerPayload, toolBundlesBucket, type ExecuteAccountToolOptions } from "./custom-tool-executor.ts";
 
 const DEFAULT_TIMEOUT_SECONDS = 30;
 const RUNNER_OUTPUT_LIMIT_BYTES = 1024 * 1024;
@@ -42,15 +42,8 @@ async function buildRunPayload({
   input,
   config,
 }: ExecuteAccountToolOptions): Promise<Record<string, unknown>> {
-  const bucket = requireEnv("TOOL_BUNDLES_BUCKET_NAME");
-  const payload = await createRunnerPayload({ bucket, tool, input, config, asyncTool: null, forceInline: true });
-  return {
-    bundleSourceB64: payload.bundleSourceB64,
-    expectedSha256: payload.expectedSha256,
-    toolName: payload.toolName,
-    input: payload.input,
-    config: payload.config,
-  };
+  const payload = await createRunnerPayload({ bucket: toolBundlesBucket(), tool, input, config });
+  return { ...payload };
 }
 
 // --- Legacy one-shot path (default until ISOLATE_POOL flips on) ----------------
