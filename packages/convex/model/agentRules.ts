@@ -282,7 +282,10 @@ function normalizeProviderSettings(providerName: AccountModelProviderName, value
     assertOptionalString(config.base_url, `config.provider.${providerName}.base_url`);
     assertOptionalString(config.baseURL, `config.provider.${providerName}.baseURL`);
     const baseURL = providerBaseURL(config);
-    if (providerName === "custom" && !baseURL) throw new Error("config.provider.custom.base_url is required");
+    if (providerName === "custom" && !baseURL) {
+        const hint = config.baseUrl !== undefined ? ` (found "baseUrl" — use "base_url" or "baseURL")` : "";
+        throw new Error(`config.provider.custom.base_url is required${hint}`);
+    }
     if (baseURL) {
         const label = typeof config.base_url === "string" ? "base_url" : "baseURL";
         assertPublicHttpsUrl(baseURL, `config.provider.${providerName}.${label}`);

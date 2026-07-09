@@ -171,8 +171,28 @@ type AgentModelOutputMetadata = {
 
 export type AgentProviderConfig = Partial<Record<AccountModelProviderName, AgentProviderSettings>>;
 
+/**
+ * Constructor settings for a model provider. The keys are an explicit allow-list
+ * (no open index signature) so a misspelled option — most commonly the camel
+ * `baseUrl` instead of the canonical `base_url`/`baseURL` — is a compile-time
+ * error in the SDK and is caught by `normalizeProviderSettings` at runtime.
+ * Keep this list in sync with `normalizeProviderSettings` and the SDK's
+ * `KNOWN_PROVIDER_SETTING_KEYS`.
+ */
 export interface AgentProviderSettings {
-  [key: string]: unknown;
+  apiKey?: string;
+  /** OpenAI-compatible endpoint (`custom`). Snake form, as documented. */
+  base_url?: string;
+  /** OpenAI-compatible endpoint (`custom`). AI-SDK form; the dashboard writes both. */
+  baseURL?: string;
+  headers?: Record<string, string>;
+  organization?: string;
+  project?: string;
+  name?: string;
+  region?: string;
+  accessKeyId?: string;
+  secretAccessKey?: string;
+  sessionToken?: string;
 }
 
 export interface AgentWorkspaceRef {
@@ -605,7 +625,7 @@ function normalizeProviderSettings(providerName: AccountModelProviderName, value
   assertOptionalString(config.baseURL, `config.provider.${providerName}.baseURL`);
   const baseURL = providerBaseURL(config);
   if (providerName === "custom" && !baseURL) {
-    throw new Error("config.provider.custom.base_url is required");
+    throw new Error(`config.provider.custom.base_url is required${baseUrlTypoHint(config)}`);
   }
   if (baseURL) {
     const label = typeof config.base_url === "string" ? "base_url" : "baseURL";
@@ -638,6 +658,14 @@ function providerBaseURL(config: Record<string, unknown>): string | undefined {
   const trimmed = raw.trim();
 
   return trimmed || undefined;
+}
+
+/**
+ * When the base URL is missing, surface the common camel-case typo so the error
+ * is actionable instead of a bare "required".
+ */
+function baseUrlTypoHint(config: Record<string, unknown>): string {
+  return config.baseUrl !== undefined ? ` (found "baseUrl" — use "base_url" or "baseURL")` : "";
 }
 
 // The concrete sandbox/workspace configs live in their own account-scoped tables;

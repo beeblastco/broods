@@ -28,6 +28,8 @@ describe("agent rules", () => {
     it("validates public provider URLs and output variants", () => {
         expect(() => normalizeAgentConfig({ provider: { custom: {} } }))
             .toThrow("config.provider.custom.base_url is required");
+        expect(() => normalizeAgentConfig({ provider: { custom: { baseUrl: "https://api.example.com" } } }))
+            .toThrow(`config.provider.custom.base_url is required (found "baseUrl" — use "base_url" or "baseURL")`);
         expect(() => normalizeAgentConfig({ provider: { custom: { base_url: "http://api.example.com" } } }))
             .toThrow("config.provider.custom.base_url must use https");
         expect(() => normalizeAgentConfig({ provider: { custom: { base_url: "https://localhost" } } }))
