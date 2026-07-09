@@ -33,6 +33,10 @@ export function PoliciesPanel({ projectId, environmentId }: Props) {
         api.agentPolicies.listForEnvironment,
         environmentId ? { projectId: projectId, environmentId: environmentId } : "skip",
     ) as Doc<"agentPolicies">[] | undefined;
+    const usageCounts = useQuery(
+        api.agentPolicies.usageCounts,
+        environmentId ? { projectId: projectId, environmentId: environmentId } : "skip",
+    ) as Record<string, number> | undefined;
     const createPolicy = useMutation(api.agentPolicies.create);
     const updatePolicy = useMutation(api.agentPolicies.update);
     const removePolicy = useMutation(api.agentPolicies.remove);
@@ -145,6 +149,11 @@ export function PoliciesPanel({ projectId, environmentId }: Props) {
                                     <p className="truncate text-xs text-muted-foreground">{policy.description}</p>
                                 )}
                             </div>
+                            <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
+                                {usageCounts === undefined
+                                    ? "…"
+                                    : `${usageCounts[policy._id] ?? 0} agent${(usageCounts[policy._id] ?? 0) === 1 ? "" : "s"}`}
+                            </span>
                             <Button
                                 variant="ghost"
                                 size="icon-xs"

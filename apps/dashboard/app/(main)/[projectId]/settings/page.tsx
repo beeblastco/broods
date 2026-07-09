@@ -9,12 +9,9 @@ import type { Doc, Id } from "@broods/convex/_generated/dataModel";
 import { useQuery } from "convex/react";
 import Link from "next/link";
 import { useParams, useSearchParams } from "next/navigation";
-import { AuditLogsPanel } from "./components/AuditLogsPanel";
-import { ConnectionsPanel } from "./components/ConnectionsPanel";
 import { DangerPanel } from "./components/DangerPanel";
 import { DeployKeysPanel } from "./components/DeployKeysPanel";
 import { EnvironmentsPanel } from "./components/EnvironmentsPanel";
-import { PluginsPanel } from "./components/PluginsPanel";
 import { PoliciesPanel } from "./components/PoliciesPanel";
 import { ProjectGeneralPanel } from "./components/ProjectGeneralPanel";
 import { WebhooksPanel } from "./components/WebhooksPanel";
@@ -24,10 +21,7 @@ type SettingsTab =
   | "environments"
   | "deploy"
   | "webhooks"
-  | "connections"
-  | "plugins"
   | "policies"
-  | "audit-logs"
   | "danger";
 
 const TABS: Array<{ id: SettingsTab; label: string; danger?: boolean }> = [
@@ -35,10 +29,7 @@ const TABS: Array<{ id: SettingsTab; label: string; danger?: boolean }> = [
   { id: "environments", label: "Environments" },
   { id: "deploy", label: "Deploy" },
   { id: "webhooks", label: "Webhooks" },
-  { id: "connections", label: "Channels" },
-  { id: "plugins", label: "Plugins" },
   { id: "policies", label: "Policies" },
-  { id: "audit-logs", label: "Audit Logs" },
   { id: "danger", label: "Danger Zone", danger: true },
 ];
 
@@ -91,21 +82,9 @@ export default function SettingsPage() {
         return (
           <WebhooksPanel projectId={projectId} environmentId={activeEnvId} />
         );
-      case "connections":
-        return (
-          <ConnectionsPanel projectId={projectId} environmentId={activeEnvId} />
-        );
-      case "plugins":
-        return (
-          <PluginsPanel projectId={projectId} environmentId={activeEnvId} />
-        );
       case "policies":
         return (
           <PoliciesPanel projectId={projectId} environmentId={activeEnvId} />
-        );
-      case "audit-logs":
-        return (
-          <AuditLogsPanel projectId={projectId} environmentId={activeEnvId} />
         );
       case "danger":
         return (
@@ -115,8 +94,6 @@ export default function SettingsPage() {
         return <ProjectGeneralPanel projectId={projectId} />;
     }
   };
-
-  const isPlugins = activeTab === "plugins";
 
   return (
     <div className="flex h-full">
@@ -128,7 +105,7 @@ export default function SettingsPage() {
         <nav className="flex flex-col gap-4 px-3">
           {/* Base settings group */}
           <div className="flex flex-col gap-0.5">
-            {TABS.filter((t) => ["general", "environments", "deploy", "webhooks"].includes(t.id)).map((t) => (
+            {TABS.filter((t) => !t.danger).map((t) => (
               <Button
                 key={t.id}
                 asChild
@@ -144,31 +121,6 @@ export default function SettingsPage() {
                 <Link href={tabHref(t.id)}>{t.label}</Link>
               </Button>
             ))}
-          </div>
-
-          {/* Connections Group */}
-          <div className="flex flex-col gap-1">
-            <div className="px-3 py-1 flex items-center gap-1.5">
-              <span className="text-xs font-semibold text-foreground/80">Connections</span>
-            </div>
-            <div className="flex flex-col gap-0.5 pl-3">
-              {TABS.filter((t) => ["connections", "plugins", "policies", "audit-logs"].includes(t.id)).map((t) => (
-                <Button
-                  key={t.id}
-                  asChild
-                  variant="ghost"
-                  size="sm"
-                  className={cn(
-                    "w-full select-none justify-start px-3 cursor-pointer active:bg-accent/70 h-8",
-                    activeTab === t.id
-                      ? "bg-accent text-foreground font-semibold"
-                      : "text-muted-foreground hover:bg-accent/50 hover:text-foreground",
-                  )}
-                >
-                  <Link href={tabHref(t.id)}>{t.label}</Link>
-                </Button>
-              ))}
-            </div>
           </div>
 
           {/* Danger zone group */}
@@ -194,21 +146,14 @@ export default function SettingsPage() {
       </aside>
 
       {/* Content area — min-w-0 lets long values truncate instead of widening the column */}
-      <div className={cn("flex min-w-0 flex-1 flex-col", isPlugins ? "h-full overflow-hidden" : "overflow-auto")}>
+      <div className="flex min-w-0 flex-1 flex-col overflow-auto">
         {/* Page title — aligned with sidebar header height */}
-        {!isPlugins && (
-          <div className="px-6 pt-9.25 pb-6 mx-auto w-full max-w-2xl shrink-0">
-            <h2 className="text-xl font-semibold text-foreground">
-              {activeLabel}
-            </h2>
-          </div>
-        )}
-        <div className={cn(
-          "w-full",
-          isPlugins
-            ? "flex-1 flex flex-col min-h-0 bg-background"
-            : "mx-auto w-full max-w-2xl px-6 pb-12"
-        )}>
+        <div className="px-6 pt-9.25 pb-6 mx-auto w-full max-w-2xl shrink-0">
+          <h2 className="text-xl font-semibold text-foreground">
+            {activeLabel}
+          </h2>
+        </div>
+        <div className="mx-auto w-full max-w-2xl px-6 pb-12">
           {renderPanel()}
         </div>
       </div>

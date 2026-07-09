@@ -28,7 +28,7 @@ export default function CronsPage() {
         <div className="mx-auto w-full max-w-5xl px-8 pt-9 pb-12">
             <div className="flex items-center justify-between pb-6">
                 <div>
-                    <h2 className="text-xl font-semibold text-foreground">Cron jobs</h2>
+                    <h2 className="text-xl font-semibold text-foreground">Scheduler</h2>
                     <p className="mt-1 text-xs text-muted-foreground">
                         Scheduled agent runs powered by AWS EventBridge Scheduler.
                     </p>
