@@ -676,8 +676,8 @@ export const support = defineAgent({
 export const billing = defineAgent({
   name: "billing",
   config: {
-    provider: { stripe: { apiKey: env("STRIPE_API_KEY"), webhook: env.OPENAI_API_KEY } },
-    model: { provider: "openai", modelId: "gpt-5-mini" },
+    provider: { custom: { apiKey: env("STRIPE_API_KEY"), baseURL: env.OPENAI_API_KEY } },
+    model: { provider: "custom", modelId: "gpt-5-mini" },
   },
 });
 `);

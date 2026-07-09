@@ -9,6 +9,7 @@
 
 import type {
   AgentConfig,
+  AgentProviderSettings,
   AgentChannelWorkspaceScope,
   AgentDiscordChannelConfig,
   AgentGitHubChannelConfig,
@@ -297,8 +298,45 @@ export type AgentPolicyDefinitionConfig = Omit<AgentPolicyConfig, "policyIds"> &
  * `workspace:` instead of `workspaces:`. Add a key here when core's `AgentConfig`
  * gains a new top-level field that should be code-definable.
  */
+/**
+ * SDK-facing model-provider constructor settings. Written as an explicit
+ * interface — NOT `EnvRefString<AgentProviderSettings>` — because TypeScript
+ * suppresses excess-property checks through mapped types, which would let a
+ * typo like the camel `baseUrl` (instead of `base_url`/`baseURL`) slip past
+ * `tsc`. Keep the keys in lockstep with core's `AgentProviderSettings`; the
+ * `_ProviderKeyParity` assertion below fails `broods check` if they drift.
+ * Every string field also accepts an `env(...)` reference.
+ */
+export interface ProviderSettingsInput {
+  apiKey?: string | EnvRef;
+  base_url?: string | EnvRef;
+  baseURL?: string | EnvRef;
+  headers?: Record<string, string | EnvRef>;
+  organization?: string | EnvRef;
+  project?: string | EnvRef;
+  name?: string | EnvRef;
+  region?: string | EnvRef;
+  accessKeyId?: string | EnvRef;
+  secretAccessKey?: string | EnvRef;
+  sessionToken?: string | EnvRef;
+}
+
+/** Per-provider settings; provider names stay synced with core's `AgentConfig`. */
+export type ProviderConfigInput = Partial<
+  Record<keyof NonNullable<AgentConfig["provider"]>, ProviderSettingsInput>
+>;
+
+// Compile-time guard: ProviderSettingsInput's keys must equal core's
+// AgentProviderSettings keys, so a new core provider setting cannot silently
+// bypass the SDK's excess-property checking. If this line fails to compile,
+// add/remove the key in ProviderSettingsInput to match AgentProviderSettings.
+type KeysEqual<A, B> = [keyof A] extends [keyof B] ? ([keyof B] extends [keyof A] ? true : false) : false;
+const _providerKeyParity: KeysEqual<ProviderSettingsInput, NonNullable<AgentProviderSettings>> = true;
+void _providerKeyParity;
+
 export type AgentDefinitionConfig =
-  & EnvRefString<Pick<AgentConfig, "agent" | "model" | "provider" | "session" | "tools">>
+  & EnvRefString<Pick<AgentConfig, "agent" | "model" | "session" | "tools">>
+  & { provider?: ProviderConfigInput }
   & {
     hooks?: AgentHooks & { webhooks?: readonly EnvRefString<AgentWebhookHookConfig>[] };
     channels?: readonly AnyChannelDefinition[];

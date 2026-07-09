@@ -111,6 +111,12 @@ model: {
 },
 ```
 
+The base URL key is `base_url` (or the AI-SDK spelling `baseURL`) — both are
+accepted. The camel-case `baseUrl` is **not**: the SDK rejects it at type-check
+time and `broods dev`/`deploy` throw a clear error before syncing, so the typo
+never reaches a run. Provider settings are a fixed allow-list, so any other
+misspelled option is reported the same way.
+
 ### Reasoning / Thinking Tokens
 
 Prefer the AI SDK v7 unified `reasoning` level in `config.model` — it is

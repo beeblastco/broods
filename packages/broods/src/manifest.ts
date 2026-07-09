@@ -620,11 +620,66 @@ async function normalizeConfig(resource: AnyResource, projectRoot: string): Prom
   return rewriteValues(resource.config);
 }
 
+// Supported providers and their constructor-setting keys — a local mirror of
+// core's `ACCOUNT_MODEL_PROVIDERS` / `normalizeProviderSettings` (kept as plain
+// values rather than a runtime import so core is not bundled into the SDK). Keep
+// in sync with core's `AgentProviderSettings`.
+const KNOWN_PROVIDER_NAMES = ["google", "openai", "anthropic", "bedrock", "gateway", "minimax", "custom"] as const;
+const KNOWN_PROVIDER_SETTING_KEYS = new Set([
+  "apiKey", "base_url", "baseURL", "headers",
+  "organization", "project", "name",
+  "region", "accessKeyId", "secretAccessKey", "sessionToken",
+]);
+
+/** Suggest the canonical key for a common misspelling, else "". */
+function suggestProviderKey(key: string): string {
+  const canonical = key.replace(/[^a-z0-9]/gi, "").toLowerCase();
+  if (canonical === "baseurl") return `"base_url" or "baseURL"`;
+  if (canonical === "apikey") return `"apiKey"`;
+
+  return "";
+}
+
+/**
+ * Validates each agent's `config.provider` at compile time so a misspelled
+ * option — most commonly the camel `baseUrl` instead of `base_url`/`baseURL` —
+ * throws inside the `broods dev` watcher (and `deploy`) instead of surfacing as
+ * a 400 at run time. Values may be `env(...)` refs, so only keys are checked.
+ */
+export function validateProviderConfig(agentName: string, provider: unknown): void {
+  if (provider === undefined || provider === null) return;
+  if (typeof provider !== "object" || Array.isArray(provider)) {
+    throw new Error(`Agent "${agentName}" config.provider must be an object`);
+  }
+  for (const [providerName, settings] of Object.entries(provider as Record<string, unknown>)) {
+    if (!(KNOWN_PROVIDER_NAMES as readonly string[]).includes(providerName)) {
+      throw new Error(
+        `Agent "${agentName}" config.provider.${providerName} is not a supported provider (expected one of: ${KNOWN_PROVIDER_NAMES.join(", ")})`,
+      );
+    }
+    if (typeof settings !== "object" || settings === null || Array.isArray(settings)) {
+      throw new Error(`Agent "${agentName}" config.provider.${providerName} must be an object`);
+    }
+    const record = settings as Record<string, unknown>;
+    for (const key of Object.keys(record)) {
+      if (KNOWN_PROVIDER_SETTING_KEYS.has(key)) continue;
+      const suggestion = suggestProviderKey(key);
+      throw new Error(
+        `Agent "${agentName}" config.provider.${providerName} has unknown option "${key}"${suggestion ? ` — did you mean ${suggestion}?` : ""}`,
+      );
+    }
+    if (providerName === "custom" && record.base_url === undefined && record.baseURL === undefined) {
+      throw new Error(`Agent "${agentName}" config.provider.custom.base_url is required (use "base_url" or "baseURL")`);
+    }
+  }
+}
+
 function normalizeAgentConfig(
   resource: Extract<AnyResource, { kind: "agent" }>,
   _projectRoot: string,
 ): { config: unknown; hookResource?: CliManifestResource } {
   const config = { ...(resource.config as Record<string, unknown>) };
+  validateProviderConfig(resource.name, config.provider);
   const inlineHooks = normalizeInlineAgentHooks(resource.name, config.hooks);
   if (inlineHooks) {
     config.hooks = inlineHooks.agentHooksConfig;

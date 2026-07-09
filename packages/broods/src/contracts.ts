@@ -17,6 +17,7 @@ import type {
   AgentSlackChannelConfig,
   AgentTelegramChannelConfig,
   AgentZaloChannelConfig,
+  AgentProviderSettings,
   AgentWorkspaceRef,
 } from "../../../apps/core/src/shared/storage/agent-config.ts";
 import type {
@@ -62,6 +63,7 @@ export type {
   AgentSlackChannelConfig,
   AgentTelegramChannelConfig,
   AgentZaloChannelConfig,
+  AgentProviderSettings,
   AgentWorkspaceRef,
   AgentPolicyConfig,
   AgentPolicyDocument,

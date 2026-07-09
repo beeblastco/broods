@@ -163,7 +163,10 @@ function requireProviderSettings(
     throw new Error(`config.provider.${providerName}.apiKey is required`);
   }
   if (providerName === "custom" && !customProviderBaseURL(providerConfig)) {
-    throw new Error("config.provider.custom.base_url is required");
+    const hint = (providerConfig as Record<string, unknown>).baseUrl !== undefined
+      ? ` (found "baseUrl" — use "base_url" or "baseURL")`
+      : "";
+    throw new Error(`config.provider.custom.base_url is required${hint}`);
   }
   return providerConfig;
 }
