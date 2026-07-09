@@ -19,6 +19,10 @@ const NAV_ITEMS = [
 ] as const;
 type ProjectNavSegment = (typeof NAV_ITEMS)[number]["segment"];
 
+// Org-scoped routes that sit alongside the project tabs but are not
+// project-prefixed (the scheduler/crons plane spans the whole org).
+const GLOBAL_NAV_ITEMS = [{ href: "/crons", label: "Scheduler" }] as const;
+
 const ROUTE_MODULE_PRELOADERS: Record<
   ProjectNavSegment,
   () => Promise<unknown>
@@ -73,13 +77,9 @@ function NavLinksInner() {
     return () => window.clearTimeout(timeoutId);
   }, [projectId, warmProjectRoute]);
 
-  if (!projectId) {
-    return null;
-  }
-
   return (
     <nav className="flex items-center gap-1">
-      {NAV_ITEMS.map(({ segment, label }) => {
+      {projectId && NAV_ITEMS.map(({ segment, label }) => {
         const href = `/${projectId}${segment}${envParam ? `?env=${envParam}` : ""}`;
         const isActive =
           segment === ""
@@ -93,6 +93,27 @@ function NavLinksInner() {
             onClick={() => router.push(href)}
             onMouseEnter={() => warmProjectRoute(segment)}
             onFocus={() => warmProjectRoute(segment)}
+            className={cn(
+              "cursor-pointer select-none rounded-md px-2.5 py-1.5 text-sm font-medium transition-colors active:bg-accent/70",
+              isActive
+                ? "bg-accent text-foreground"
+                : "text-muted-foreground hover:bg-accent hover:text-foreground",
+            )}
+          >
+            {label}
+          </button>
+        );
+      })}
+      {GLOBAL_NAV_ITEMS.map(({ href, label }) => {
+        const isActive = pathname.startsWith(href);
+
+        return (
+          <button
+            key={href}
+            type="button"
+            onClick={() => router.push(href)}
+            onMouseEnter={() => router.prefetch(href, FULL_ROUTE_PREFETCH)}
+            onFocus={() => router.prefetch(href, FULL_ROUTE_PREFETCH)}
             className={cn(
               "cursor-pointer select-none rounded-md px-2.5 py-1.5 text-sm font-medium transition-colors active:bg-accent/70",
               isActive

@@ -5,16 +5,13 @@
 import { v } from "convex/values";
 import { internal } from "./_generated/api";
 import type { Doc } from "./_generated/dataModel";
-import { internalMutation, query } from "./_generated/server";
-import { authKit } from "./auth";
+import { internalMutation } from "./_generated/server";
 import {
     accountIdForProject,
     insertConfigAuditEvent,
     type ConfigAuditActor,
     type ConfigAuditResource,
 } from "./model/auditEvents";
-import { getOwnedEnvironment } from "./model/ownership/environment";
-import { getOwnedProject } from "./model/ownership/project";
 import {
     configAuditActorKindValidator,
     configAuditEventsFields,
@@ -34,66 +31,9 @@ const auditResourceValidator = v.object({
     name: v.optional(v.string()),
 });
 
-const auditEventDoc = v.object({
-    ...configAuditEventsFields,
-    _id: v.id("configAuditEvents"),
-    _creationTime: v.number(),
-});
-
 const RETENTION_MS = 90 * 24 * 60 * 60 * 1000;
 const AUTH_FAILURE_RETENTION_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_PRUNE_BATCH_SIZE = 200;
-
-/**
- * List recent configuration audit events for a project/environment visible to the caller.
- * @returns newest matching audit events, capped at 500 rows.
- */
-export const listRecent = query({
-    args: {
-        projectId: v.id("projects"),
-        environmentId: v.optional(v.id("environments")),
-        limit: v.optional(v.number()),
-    },
-    returns: v.array(auditEventDoc),
-    handler: async (ctx, args) => {
-        // Check authenticated user
-        const user = await authKit.getAuthUser(ctx);
-        if (!user) {
-            throw new Error("User not found or not authenticated");
-        }
-
-        const project = await getOwnedProject(ctx, user.id, args.projectId);
-        if (!project) return [];
-        if (args.environmentId !== undefined) {
-            const environment = await getOwnedEnvironment(ctx, user.id, args.environmentId);
-            if (!environment || environment.projectId !== args.projectId) return [];
-        }
-
-        const accountId = await accountIdForProject(ctx, args.projectId);
-        if (!accountId) return [];
-        const limit = Math.min(Math.max(1, Math.floor(args.limit ?? 100)), 500);
-
-        if (args.environmentId !== undefined) {
-            return await ctx.db
-                .query("configAuditEvents")
-                .withIndex("by_account_project_environment", (q) =>
-                    q
-                        .eq("accountId", accountId)
-                        .eq("projectId", args.projectId)
-                        .eq("environmentId", args.environmentId!),
-                )
-                .order("desc")
-                .take(limit);
-        }
-
-        return await ctx.db
-            .query("configAuditEvents")
-            .withIndex("by_account", (q) => q.eq("accountId", accountId))
-            .filter((q) => q.eq(q.field("projectId"), args.projectId))
-            .order("desc")
-            .take(limit);
-    },
-});
 
 /**
  * Record one config audit event from HTTP actions.

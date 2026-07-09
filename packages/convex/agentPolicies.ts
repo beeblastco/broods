@@ -51,6 +51,50 @@ export const listForEnvironment = query({
 });
 
 /**
+ * Counts how many agent configs in an environment reference each policy.
+ * Policy assignments live in `extraConfig.policy.policyIds` on `agentConfigs`.
+ * @param projectId project containing the agents
+ * @param environmentId environment containing the agents
+ * @returns record mapping policy id to the number of agents referencing it
+ */
+export const usageCounts = query({
+    args: { projectId: v.id("projects"), environmentId: v.id("environments") },
+    returns: v.record(v.string(), v.number()),
+    handler: async (ctx, args) => {
+        // Check authenticated user
+        const user = await authKit.getAuthUser(ctx);
+        if (!user) {
+            throw new Error("User not found or not authenticated");
+        }
+
+        const project = await getOwnedProject(ctx, user.id, args.projectId);
+        if (!project) throw new Error("Project not found.");
+        const environment = await getOwnedEnvironment(ctx, user.id, args.environmentId);
+        if (!environment || environment.projectId !== args.projectId) throw new Error("Environment not found.");
+
+        const agents = await ctx.db
+            .query("agentConfigs")
+            .withIndex("by_projectId_and_environmentId", (q) =>
+                q.eq("projectId", args.projectId).eq("environmentId", args.environmentId))
+            .collect();
+
+        const counts: Record<string, number> = {};
+        for (const agent of agents) {
+            const extra = isPlainObject(agent.extraConfig) ? agent.extraConfig : {};
+            const policy = isPlainObject(extra.policy) ? extra.policy : {};
+            const policyIds = Array.isArray(policy.policyIds) ? policy.policyIds : [];
+            for (const policyId of policyIds) {
+                if (typeof policyId === "string") {
+                    counts[policyId] = (counts[policyId] ?? 0) + 1;
+                }
+            }
+        }
+
+        return counts;
+    },
+});
+
+/**
  * Creates a dashboard-owned policy in one environment.
  * @param args policy fields
  * @returns created policy id

@@ -82,10 +82,13 @@ jobs:
 
           # Convex schema/functions first, then the AWS data plane that calls
           # them, then the core runtime image (the k8s prod pod pulls :main),
-          # the gateway, the dashboard, and finally the SDK publish.
+          # the gateway, the dashboard, the docs site, and finally the SDK
+          # publish. `on: push` does not fire for the promote's bot push, so
+          # each of these must be dispatched explicitly.
           dispatch_and_wait deploy-convex.yaml
           dispatch_and_wait deploy.yaml
           dispatch_and_wait build-core.yaml
           dispatch_and_wait build-gateway.yaml
           dispatch_and_wait build-dashboard.yaml
+          dispatch_and_wait deploy-docs.yaml
           dispatch_and_wait publish-npm.yaml
