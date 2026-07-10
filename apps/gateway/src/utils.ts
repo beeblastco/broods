@@ -7,7 +7,6 @@ export type GatewayLimits = {
 };
 
 export const decoder = new TextDecoder();
-
 const maxBunIdleTimeoutSeconds = 255;
 
 export function json(
@@ -64,9 +63,6 @@ export function bearerToken(value: string | null): string | null {
   return match?.[1]?.trim() || null;
 }
 
-// Header-first WebSocket auth: browsers cannot set Authorization on upgrade
-// requests, so the query param stays as their fallback. Non-browser clients
-// (SDK, CLI) should send the header and never put tokens in URLs.
 export function websocketToken(request: Request, url: URL): string {
   return (
     bearerToken(request.headers.get("authorization")) ??
@@ -75,9 +71,6 @@ export function websocketToken(request: Request, url: URL): string {
   ).trim();
 }
 
-// Browser-origin allow-list for WebSocket upgrades. Patterns match the origin
-// hostname: exact ("dashboard.broods.app", "localhost") or wildcard suffix
-// ("*.broods.app"). Requests without an Origin header (SDK/CLI) always pass.
 export function allowedOriginPatternsFromEnv(
   env: Record<string, string | undefined> = process.env,
 ): string[] {
@@ -113,48 +106,6 @@ export function isOriginAllowed(
 
     return hostname === normalized;
   });
-}
-
-// Fixed-window per-key counter for upgrade attempts and auth failures. In-memory
-// and per-pod on purpose: the gateway is stateless and scales with replicas, so
-// each pod bounding its own share is enough to stop brute force and floods.
-export class RateLimiter {
-  #limit: number;
-  #windowMs: number;
-  #windows = new Map<string, { start: number; count: number }>();
-
-  constructor(limit: number, windowMs: number) {
-    this.#limit = limit;
-    this.#windowMs = windowMs;
-  }
-
-  allow(key: string): boolean {
-    const now = Date.now();
-    const window = this.#windows.get(key);
-    if (!window || now - window.start >= this.#windowMs) {
-      if (this.#windows.size > 10_000) this.#prune(now);
-      this.#windows.set(key, { start: now, count: 1 });
-      return true;
-    }
-
-    window.count += 1;
-    return window.count <= this.#limit;
-  }
-
-  // Read-only check: is this key already over the limit in the current window?
-  // Used to reject before doing expensive work without counting the probe itself.
-  blocked(key: string): boolean {
-    const window = this.#windows.get(key);
-    if (!window || Date.now() - window.start >= this.#windowMs) return false;
-
-    return window.count >= this.#limit;
-  }
-
-  #prune(now: number): void {
-    for (const [key, window] of this.#windows) {
-      if (now - window.start >= this.#windowMs) this.#windows.delete(key);
-    }
-  }
 }
 
 export function clientIp(

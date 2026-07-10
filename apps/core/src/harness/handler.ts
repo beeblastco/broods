@@ -55,17 +55,14 @@ import {
 } from "./async-tool-result.ts";
 
 type AgentLoopStream = Awaited<ReturnType<typeof runAgentLoop>>;
-
-const CONVERSATIONS_TABLE_NAME = requireEnv("CONVERSATIONS_TABLE_NAME");
-const AGENT_PROCESSING_FAILED = "Agent processing failed";
-const CONVERSATION_BUSY = "Conversation is already processing another turn. Try again when the current turn finishes.";
-const CHANNEL_APPROVAL_DENIAL_REASON = "Tool approval is only supported through the direct API.";
-const ENABLE_DIRECT_API = booleanEnv("ENABLE_DIRECT_API", true);
-const ENABLE_WEBSOCKET = booleanEnv("ENABLE_WEBSOCKET", false);
-const LAMBDA_TIMEOUT_SAFETY_MS = 5 * 60 * 1000;
-const DEFAULT_PARENT_WAIT_MS = 8 * 60 * 1000;
-const DEFAULT_DASHBOARD_URL = "https://dashboard.broods.app";
-const textEncoder = new TextEncoder();
+type ContinuationOutcome =
+  | { kind: "pending"; pendingCount: number }
+  | { kind: "ready"; invoked: boolean; publicEventId: string }
+  | { kind: "skip" };
+type InProcessWorkerRun = (
+  payload: AsyncWorkerInvocation | NatsWorkerInvocation,
+  context: RequestContext,
+) => Promise<unknown>;
 
 interface AsyncWorkerInvocation {
   kind: "direct-api-async-worker";
@@ -103,6 +100,25 @@ class ConversationBusyError extends Error {
     this.name = "ConversationBusyError";
   }
 }
+
+const CONVERSATIONS_TABLE_NAME = requireEnv("CONVERSATIONS_TABLE_NAME");
+const AGENT_PROCESSING_FAILED = "Agent processing failed";
+const CONVERSATION_BUSY = "Conversation is already processing another turn. Try again when the current turn finishes.";
+const CHANNEL_APPROVAL_DENIAL_REASON = "Tool approval is only supported through the direct API.";
+const ENABLE_DIRECT_API = booleanEnv("ENABLE_DIRECT_API", true);
+const ENABLE_WEBSOCKET = booleanEnv("ENABLE_WEBSOCKET", false);
+const LAMBDA_TIMEOUT_SAFETY_MS = 5 * 60 * 1000;
+const DEFAULT_PARENT_WAIT_MS = 8 * 60 * 1000;
+const DEFAULT_DASHBOARD_URL = "https://dashboard.broods.app";
+const MAX_INPROCESS_WORKERS = positiveIntegerEnv("MAX_INPROCESS_WORKERS", 8);
+const WORKER_TIMEOUT_BUDGET_MS = positiveIntegerEnv("WORKER_TIMEOUT_BUDGET_MS", 10 * 60 * 1000);
+const WORKER_SLOT_GRACE_MS = 5_000;
+const MAX_PENDING_WORKER_PAYLOADS = 1000;
+const textEncoder = new TextEncoder();
+const inProcessWorkers = new Set<Promise<void>>();
+const pendingWorkerPayloads: [AsyncWorkerInvocation | NatsWorkerInvocation, InProcessWorkerRun][] = [];
+
+let activeInProcessWorkers = 0;
 
 export async function handler(
   event: CoreRequest | AsyncWorkerInvocation | NatsWorkerInvocation | CronInvocation,
@@ -304,11 +320,6 @@ async function handleSandboxJobCompletionRequest(event: SandboxJobCompletionInbo
 
   return continuationResponse(settled, await continueAfterAsyncToolSettlement(settled));
 }
-
-type ContinuationOutcome =
-  | { kind: "pending"; pendingCount: number }
-  | { kind: "ready"; invoked: boolean; publicEventId: string }
-  | { kind: "skip" };
 
 /**
  * After a tool row settles, resume the conversation once every result in its
@@ -1192,24 +1203,6 @@ async function invokeHarnessWorker(payload: AsyncWorkerInvocation | NatsWorkerIn
   dispatchInProcessWorker(payload);
 }
 
-const MAX_INPROCESS_WORKERS = positiveIntegerEnv("MAX_INPROCESS_WORKERS", 8);
-const WORKER_TIMEOUT_BUDGET_MS = positiveIntegerEnv("WORKER_TIMEOUT_BUDGET_MS", 10 * 60 * 1000);
-// Grace beyond the worker's own deadline before its slot is force-reclaimed.
-const WORKER_SLOT_GRACE_MS = 5_000;
-// Bounds pathological bursts (each queued payload can carry full message
-// bodies); far above anything normal operation reaches.
-const MAX_PENDING_WORKER_PAYLOADS = 1000;
-type InProcessWorkerRun = (
-  payload: AsyncWorkerInvocation | NatsWorkerInvocation,
-  context: RequestContext,
-) => Promise<unknown>;
-const inProcessWorkers = new Set<Promise<void>>();
-const pendingWorkerPayloads: [AsyncWorkerInvocation | NatsWorkerInvocation, InProcessWorkerRun][] = [];
-let activeInProcessWorkers = 0;
-
-// Container replacement for the Lambda Event self-invoke: run the worker in
-// this process, capped like Lambda's concurrency and queued (never rejected)
-// when at capacity. Failures are logged, matching fire-and-forget semantics.
 export function dispatchInProcessWorker(
   payload: AsyncWorkerInvocation | NatsWorkerInvocation,
   run: InProcessWorkerRun = handler,

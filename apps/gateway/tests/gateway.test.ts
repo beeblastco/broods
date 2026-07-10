@@ -6,12 +6,12 @@ import {
   stopActiveRun,
   websocketMessageForNatsData,
 } from "../src/agent.ts";
+import { RateLimiter } from "../src/rate-limiter.ts";
 import {
   isConfigHttpPath,
-  isCoreHttpPathForTest,
-  proxyHttp,
-  resolveObservabilityScope,
-} from "../src/main.ts";
+  isCoreHttpRoute,
+} from "../src/routes.ts";
+import { proxyHttp, resolveObservabilityScope } from "../src/upstream.ts";
 import {
   lokiLogEntry,
   normalizeOtelId,
@@ -27,7 +27,6 @@ import {
   terminalServiceSecretsFromEnv,
 } from "../src/terminal.ts";
 import {
-  RateLimiter,
   allowedOriginPatternsFromEnv,
   clientIp,
   gatewayLimitsFromEnv,
@@ -247,15 +246,15 @@ test("normalizes and de-duplicates unified gateway core upstreams", () => {
 });
 
 test("proxies runtime HTTP paths used by the SDK", () => {
-  expect(isCoreHttpPathForTest("/")).toBe(true);
-  expect(isCoreHttpPathForTest("/accounts")).toBe(true);
-  expect(isCoreHttpPathForTest("/async")).toBe(true);
-  expect(isCoreHttpPathForTest("/status/request-1")).toBe(true);
-  expect(isCoreHttpPathForTest("/v1/crons")).toBe(true);
+  expect(isCoreHttpRoute("/")).toBe(true);
+  expect(isCoreHttpRoute("/accounts")).toBe(true);
+  expect(isCoreHttpRoute("/async")).toBe(true);
+  expect(isCoreHttpRoute("/status/request-1")).toBe(true);
+  expect(isCoreHttpRoute("/v1/crons")).toBe(true);
   expect(
-    isCoreHttpPathForTest("/v1/demo/agents/development/env_123/async"),
+    isCoreHttpRoute("/v1/demo/agents/development/env_123/async"),
   ).toBe(true);
-  expect(isCoreHttpPathForTest("/healthz")).toBe(false);
+  expect(isCoreHttpRoute("/healthz")).toBe(false);
 });
 
 test("routes config-plane CRUD to Convex, not core", () => {

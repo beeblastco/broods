@@ -36,6 +36,14 @@ import { deleteCronSchedule } from "./cron.ts";
 import { logError, logInfo, logWarn } from "../shared/log.ts";
 import { runWithObservabilityScope } from "../shared/otel.ts";
 
+type SandboxLifecycleAction = "suspend" | "resume" | "terminate" | "snapshot" | "refresh" | "exec" | "terminal";
+
+class AccountEndpointUnauthorizedError extends Error {
+    constructor() {
+        super("Unauthorized");
+    }
+}
+
 export async function handler(request: CoreRequest): Promise<Response> {
     // Request-private observability scope so concurrent tenants in the shared
     // container process cannot clobber each other's log redaction/routing.
@@ -130,14 +138,6 @@ async function handleAccountRequest(request: CoreRequest): Promise<Response> {
         return errorResponseForError(err);
     }
 }
-
-/**
- * Drives a reserved sandbox's suspend/resume/terminate lifecycle on behalf of the
- * dashboard. Loads the (decrypted) sandbox config so the provider credentials are
- * available, runs the provider lifecycle call, then mirrors the new status into
- * Convex so the live dashboard query reflects it.
- */
-type SandboxLifecycleAction = "suspend" | "resume" | "terminate" | "snapshot" | "refresh" | "exec" | "terminal";
 
 async function handleSandboxLifecycle(
     method: string,
@@ -382,39 +382,6 @@ async function handleSandboxLifecycle(
     return jsonResponse(200, { status: "terminated" });
 }
 
-function boundedInteger(value: unknown, defaultValue: number, max: number): number {
-    if (value === undefined || value === null) {
-        return defaultValue;
-    }
-    const parsed = typeof value === "number" ? value : Number(value);
-    if (!Number.isSafeInteger(parsed) || parsed < 1 || parsed > max) {
-        return defaultValue;
-    }
-
-    return parsed;
-}
-
-function sandboxAuditActor(value: unknown): SandboxAuditActor {
-    if (!isPlainObject(value)) {
-        return { source: "unknown" };
-    }
-    const source = value.source === "dashboard" || value.source === "agent" || value.source === "service"
-        ? value.source
-        : "unknown";
-
-    return {
-        source,
-        ...(typeof value.id === "string" && value.id.trim() ? { id: value.id.trim() } : {}),
-        ...(typeof value.email === "string" && value.email.trim() ? { email: value.email.trim() } : {}),
-        ...(typeof value.name === "string" && value.name.trim() ? { name: value.name.trim() } : {}),
-    };
-}
-
-/**
- * Authorizes dashboard lifecycle controls against reservations this account can
- * create: workspace namespaces owned by the account, or the config's explicit
- * stateless reservation key. Prevents arbitrary provider lifecycle calls.
- */
 async function sandboxReservationBelongsToAccount(
     accountId: string,
     config: { persistent?: boolean; options?: Record<string, unknown> },
@@ -447,6 +414,20 @@ async function deleteAccountResponse(account: Extract<AuthContext, { kind: "acco
 }
 
 
+async function deleteAccountCrons(accountId: string): Promise<number> {
+    if (!isCronsConfigured()) {
+        return 0;
+    }
+
+    const cronsStore = getStorage().crons;
+    const crons = await cronsStore.list(accountId);
+    await Promise.all(crons.map(async (cron) => {
+        await deleteCronSchedule(cron);
+        await cronsStore.remove(accountId, cron.cronId);
+    }));
+    return crons.length;
+}
+
 function requireAccountAuth(
     auth: AuthContext,
     options: { allowServiceToken?: boolean; allowDeployment?: boolean } = {},
@@ -467,12 +448,6 @@ function requireAccountAuth(
     return auth.account;
 }
 
-class AccountEndpointUnauthorizedError extends Error {
-    constructor() {
-        super("Unauthorized");
-    }
-}
-
 function toCreateAccountResponse(account: AccountRecord): Record<string, unknown> {
     return {
         accountId: account.accountId,
@@ -481,18 +456,32 @@ function toCreateAccountResponse(account: AccountRecord): Record<string, unknown
     };
 }
 
-async function deleteAccountCrons(accountId: string): Promise<number> {
-    if (!isCronsConfigured()) {
-        return 0;
+function boundedInteger(value: unknown, defaultValue: number, max: number): number {
+    if (value === undefined || value === null) {
+        return defaultValue;
+    }
+    const parsed = typeof value === "number" ? value : Number(value);
+    if (!Number.isSafeInteger(parsed) || parsed < 1 || parsed > max) {
+        return defaultValue;
     }
 
-    const cronsStore = getStorage().crons;
-    const crons = await cronsStore.list(accountId);
-    await Promise.all(crons.map(async (cron) => {
-        await deleteCronSchedule(cron);
-        await cronsStore.remove(accountId, cron.cronId);
-    }));
-    return crons.length;
+    return parsed;
+}
+
+function sandboxAuditActor(value: unknown): SandboxAuditActor {
+    if (!isPlainObject(value)) {
+        return { source: "unknown" };
+    }
+    const source = value.source === "dashboard" || value.source === "agent" || value.source === "service"
+        ? value.source
+        : "unknown";
+
+    return {
+        source,
+        ...(typeof value.id === "string" && value.id.trim() ? { id: value.id.trim() } : {}),
+        ...(typeof value.email === "string" && value.email.trim() ? { email: value.email.trim() } : {}),
+        ...(typeof value.name === "string" && value.name.trim() ? { name: value.name.trim() } : {}),
+    };
 }
 
 function errorResponseForError(err: unknown): Response {

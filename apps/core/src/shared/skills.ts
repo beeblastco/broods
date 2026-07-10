@@ -7,17 +7,6 @@ import { readS3Text, s3ObjectExists } from "./s3.ts";
 import { requireEnv } from "./env.ts";
 import path from "node:path";
 
-export const SKILL_FILE = "SKILL.md";
-const MAX_SKILL_NAME_LENGTH = 64;
-const MAX_SKILL_DESCRIPTION_LENGTH = 1024;
-const MAX_SKILL_BUNDLE_BYTES = 30 * 1024 * 1024;
-const MAX_SKILL_FILE_BYTES = 5 * 1024 * 1024;
-const TEXT_EXTENSIONS = new Set([
-  ".css", ".csv", ".html", ".js", ".json", ".md", ".mjs", ".py", ".sh", ".sql", ".svg",
-  ".toml", ".ts", ".tsx", ".txt", ".xml", ".yaml", ".yml",
-]);
-const EXECUTABLE_EXTENSIONS = new Set([".sh", ".bash", ".zsh", ".py", ".js", ".mjs", ".ts"]);
-
 export interface SkillMetadata {
   name: string;
   description: string;
@@ -29,6 +18,34 @@ export interface SkillBundleFile {
   bytes: Uint8Array;
   contentType?: string;
 }
+
+export interface ValidatedSkillBundle {
+  metadata: Omit<SkillMetadata, "path">;
+  files: SkillBundleFile[];
+}
+
+export class SkillAuthorizationError extends Error {
+  constructor(public readonly skillPath: string) {
+    super(`Skill path belongs to another account: ${skillPath}`);
+  }
+}
+
+export class SkillNotFoundError extends Error {
+  constructor(public readonly skillPath: string) {
+    super(`Skill not found: ${skillPath}`);
+  }
+}
+
+export const SKILL_FILE = "SKILL.md";
+const MAX_SKILL_NAME_LENGTH = 64;
+const MAX_SKILL_DESCRIPTION_LENGTH = 1024;
+const MAX_SKILL_BUNDLE_BYTES = 30 * 1024 * 1024;
+const MAX_SKILL_FILE_BYTES = 5 * 1024 * 1024;
+const TEXT_EXTENSIONS = new Set([
+  ".css", ".csv", ".html", ".js", ".json", ".md", ".mjs", ".py", ".sh", ".sql", ".svg",
+  ".toml", ".ts", ".tsx", ".txt", ".xml", ".yaml", ".yml",
+]);
+const EXECUTABLE_EXTENSIONS = new Set([".sh", ".bash", ".zsh", ".py", ".js", ".mjs", ".ts"]);
 
 export async function readSkillMarkdown(accountId: string, skillName: string): Promise<string | null> {
   validateSkillName(skillName);
@@ -68,11 +85,6 @@ export function parseSkillMarkdown(markdown: string): Omit<SkillMetadata, "path"
 
 export function skillInstructionsFromMarkdown(markdown: string): string {
   return markdown.replace(/^---\r?\n[\s\S]*?\r?\n---(?:\r?\n|$)/, "").trim();
-}
-
-export interface ValidatedSkillBundle {
-  metadata: Omit<SkillMetadata, "path">;
-  files: SkillBundleFile[];
 }
 
 export function validateSkillBundle(input: SkillBundleFile[]): ValidatedSkillBundle {
@@ -170,18 +182,6 @@ export function formatSkillPath(accountId: string, skillName: string): string {
   return `${accountId}/${skillName}`;
 }
 
-export class SkillAuthorizationError extends Error {
-  constructor(public readonly skillPath: string) {
-    super(`Skill path belongs to another account: ${skillPath}`);
-  }
-}
-
-export class SkillNotFoundError extends Error {
-  constructor(public readonly skillPath: string) {
-    super(`Skill not found: ${skillPath}`);
-  }
-}
-
 export function normalizeBundlePath(value: string): string {
   if (typeof value !== "string") {
     throw new Error("Skill file path must be a string");
@@ -225,6 +225,10 @@ export function validateSkillDescription(value: unknown): asserts value is strin
   }
 }
 
+export function skillsBucketName(): string {
+  return requireEnv("SKILLS_BUCKET_NAME");
+}
+
 function isSupportedTextFile(filePath: string, bytes: Uint8Array): boolean {
   if (!TEXT_EXTENSIONS.has(path.extname(filePath).toLowerCase())) {
     return false;
@@ -259,8 +263,4 @@ function assertSafeGitHubSegment(value: string, name: string): void {
   if (!/^[A-Za-z0-9_.-]+$/.test(value)) {
     throw new Error(`GitHub ${name} contains unsupported characters`);
   }
-}
-
-export function skillsBucketName(): string {
-  return requireEnv("SKILLS_BUCKET_NAME");
 }

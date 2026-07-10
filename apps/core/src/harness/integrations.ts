@@ -87,6 +87,13 @@ type DirectIngressEvent =
   | ToolModelMessage
   | (SystemModelMessage & { persist: false });
 
+type PublicEndpointPath = {
+  endpointId: string;
+  projectSlug?: string;
+  environmentSlug?: string;
+  mode: "sync" | "async";
+};
+
 export interface DirectInboundEvent {
   accountId: string;
   agentId: string;
@@ -200,6 +207,19 @@ export interface IntegrationRoutingOptions {
   waitUntil?: (promise: Promise<unknown>) => void;
 }
 
+interface HttpRoutingContext {
+  authResolver(headers: Record<string, string>): Promise<AuthContext | null>;
+  accountLoader(accountId: string): Promise<AccountRecord | null>;
+  agentLoader(accountId: string, agentId: string): Promise<AgentRecord | null>;
+  deploymentLoader(accountId: string, agentId: string): Promise<AgentDeploymentRecord | null>;
+  directApiEnabled: boolean;
+  waitUntil(promise: Promise<unknown>): void;
+}
+
+class DirectNotFoundError extends Error { }
+
+class StatusUrlConfigError extends Error { }
+
 export async function routeIncomingEvent(
   request: CoreRequest,
   handlers: IntegrationHandlers,
@@ -228,15 +248,6 @@ export function createIncomingEventRouter(options: IntegrationRoutingOptions = {
     directApiEnabled,
     waitUntil,
   });
-}
-
-interface HttpRoutingContext {
-  authResolver(headers: Record<string, string>): Promise<AuthContext | null>;
-  accountLoader(accountId: string): Promise<AccountRecord | null>;
-  agentLoader(accountId: string, agentId: string): Promise<AgentRecord | null>;
-  deploymentLoader(accountId: string, agentId: string): Promise<AgentDeploymentRecord | null>;
-  directApiEnabled: boolean;
-  waitUntil(promise: Promise<unknown>): void;
 }
 
 async function handleHttpRequest(
@@ -966,13 +977,6 @@ export async function sendChannelReply(options: {
   await adapter.actions(message).sendText(text);
 }
 
-type PublicEndpointPath = {
-  endpointId: string;
-  projectSlug?: string;
-  environmentSlug?: string;
-  mode: "sync" | "async";
-};
-
 function parsePublicEndpointPath(rawPath: string): PublicEndpointPath | null {
   const scoped = rawPath.match(/^\/v1\/([^/]+)\/agents\/([^/]+)\/([^/]+)(?:\/(async))?$/);
   if (scoped?.[1] && scoped[2] && scoped[3]) {
@@ -1324,10 +1328,6 @@ function parseDirectIngressEvent(rawEvent: unknown): DirectIngressEvent {
     persist: false,
   };
 }
-
-class DirectNotFoundError extends Error { }
-
-class StatusUrlConfigError extends Error { }
 
 function createTelegramChannelFromConfig(config: AgentConfig): ChannelAdapter | null {
   const channel = config.channels?.telegram;
