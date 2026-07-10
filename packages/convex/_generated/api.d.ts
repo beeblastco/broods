@@ -86,6 +86,8 @@ import type * as toolService from "../toolService.js";
 import type * as usage from "../usage.js";
 import type * as user from "../user.js";
 import type * as webhooks from "../webhooks.js";
+import type * as workosUserDeletion from "../workosUserDeletion.js";
+import type * as workosUserDeletionCleanup from "../workosUserDeletionCleanup.js";
 import type * as workspaceConfigs from "../workspaceConfigs.js";
 import type * as workspaceFiles from "../workspaceFiles.js";
 import type * as workspaceFilesPublic from "../workspaceFilesPublic.js";
@@ -175,6 +177,8 @@ declare const fullApi: ApiFromModules<{
   usage: typeof usage;
   user: typeof user;
   webhooks: typeof webhooks;
+  workosUserDeletion: typeof workosUserDeletion;
+  workosUserDeletionCleanup: typeof workosUserDeletionCleanup;
   workspaceConfigs: typeof workspaceConfigs;
   workspaceFiles: typeof workspaceFiles;
   workspaceFilesPublic: typeof workspaceFilesPublic;

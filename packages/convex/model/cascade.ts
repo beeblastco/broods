@@ -9,6 +9,27 @@ import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx } from "../_generated/server";
 import { deleteEnvironmentContents } from "../environment";
 
+const ACCOUNT_DELETE_BATCH_SIZE = 100;
+const accountScopedTables = [
+    "agents",
+    "accountTools",
+    "accountHooks",
+    "agentPolicies",
+    "sandboxConfigs",
+    "workspaceConfigs",
+    "sandboxInstances",
+    "sandboxSnapshots",
+    "sandboxAuditEvents",
+    "skills",
+    "asyncResults",
+    "conversations",
+    "messages",
+    "crons",
+    "cliAuthCodes",
+    "cliTokens",
+    "cliExternalResources",
+] as const;
+
 /**
  * Delete an account and every account-scoped row (agents, conversations, CLI
  * tokens, crons, runs, tool/sandbox/workspace configs, skills, async results).
@@ -18,22 +39,7 @@ export async function deleteAccountContents(
     ctx: MutationCtx,
     accountId: Id<"accounts">,
 ): Promise<void> {
-    const accountScoped = [
-        "agents",
-        "accountTools",
-        "accountHooks",
-        "sandboxConfigs",
-        "workspaceConfigs",
-        "skills",
-        "asyncResults",
-        "conversations",
-        "messages",
-        "crons",
-        "cliAuthCodes",
-        "cliTokens",
-        "cliExternalResources",
-    ] as const;
-    for (const table of accountScoped) {
+    for (const table of accountScopedTables) {
         const rows = await ctx.db
             .query(table)
             .withIndex("by_accountId", (q) => q.eq("accountId", accountId))
@@ -48,7 +54,95 @@ export async function deleteAccountContents(
         .collect();
     for (const run of cronRuns) await ctx.db.delete(run._id);
 
+    const auditEvents = await ctx.db
+        .query("configAuditEvents")
+        .withIndex("by_account", (q) => q.eq("accountId", accountId))
+        .collect();
+    for (const event of auditEvents) await ctx.db.delete(event._id);
+
+    const usageTasks = await ctx.db
+        .query("usageTasks")
+        .withIndex("by_accountId_and_finishedAt", (q) => q.eq("accountId", accountId))
+        .collect();
+    for (const task of usageTasks) await ctx.db.delete(task._id);
+
+    const usageRollups = await ctx.db
+        .query("usageRollups")
+        .withIndex("by_accountId_endpointId_bucketStart_modelProvider_modelId", (q) => q.eq("accountId", accountId))
+        .collect();
+    for (const rollup of usageRollups) await ctx.db.delete(rollup._id);
+
     await ctx.db.delete(accountId);
+}
+
+/**
+ * Deletes one bounded batch of account data. Call repeatedly until it returns
+ * true to avoid exceeding Convex transaction limits for high-volume accounts.
+ * @param accountId account whose rows are being removed
+ * @returns true once the account row itself has been deleted
+ */
+export async function deleteAccountContentsBatch(
+    ctx: MutationCtx,
+    accountId: Id<"accounts">,
+): Promise<boolean> {
+    const account = await ctx.db.get(accountId);
+    if (!account) return true;
+
+    for (const table of accountScopedTables) {
+        const rows = await ctx.db
+            .query(table)
+            .withIndex("by_accountId", (q) => q.eq("accountId", accountId))
+            .take(ACCOUNT_DELETE_BATCH_SIZE);
+        if (rows.length > 0) {
+            for (const row of rows) await ctx.db.delete(row._id);
+
+            return false;
+        }
+    }
+
+    const cronRuns = await ctx.db
+        .query("cronRuns")
+        .withIndex("by_accountId_and_cronId_and_startedAt", (q) => q.eq("accountId", accountId))
+        .take(ACCOUNT_DELETE_BATCH_SIZE);
+    if (cronRuns.length > 0) {
+        for (const run of cronRuns) await ctx.db.delete(run._id);
+
+        return false;
+    }
+
+    const auditEvents = await ctx.db
+        .query("configAuditEvents")
+        .withIndex("by_account", (q) => q.eq("accountId", accountId))
+        .take(ACCOUNT_DELETE_BATCH_SIZE);
+    if (auditEvents.length > 0) {
+        for (const event of auditEvents) await ctx.db.delete(event._id);
+
+        return false;
+    }
+
+    const usageTasks = await ctx.db
+        .query("usageTasks")
+        .withIndex("by_accountId_and_finishedAt", (q) => q.eq("accountId", accountId))
+        .take(ACCOUNT_DELETE_BATCH_SIZE);
+    if (usageTasks.length > 0) {
+        for (const task of usageTasks) await ctx.db.delete(task._id);
+
+        return false;
+    }
+
+    const usageRollups = await ctx.db
+        .query("usageRollups")
+        .withIndex("by_accountId_endpointId_bucketStart_modelProvider_modelId", (q) => q.eq("accountId", accountId))
+        .take(ACCOUNT_DELETE_BATCH_SIZE);
+    if (usageRollups.length > 0) {
+        for (const rollup of usageRollups) await ctx.db.delete(rollup._id);
+
+        return false;
+    }
+
+    await ctx.db.delete(accountId);
+
+    return true;
 }
 
 /**
@@ -142,6 +236,43 @@ export async function purgeUser(ctx: MutationCtx, user: Doc<"users">): Promise<v
         .collect();
     for (const membership of memberships) {
         if (!purgedOrgIds.has(membership.orgId)) await ctx.db.delete(membership._id);
+    }
+
+    // Personal CLI credentials must be revoked even when their org survives
+    // because it has other members.
+    const cliAuthCodes = await ctx.db
+        .query("cliAuthCodes")
+        .withIndex("by_authId", (q) => q.eq("authId", user.authId))
+        .collect();
+    for (const code of cliAuthCodes) await ctx.db.delete(code._id);
+
+    const cliTokens = await ctx.db
+        .query("cliTokens")
+        .withIndex("by_authId", (q) => q.eq("authId", user.authId))
+        .collect();
+    for (const token of cliTokens) await ctx.db.delete(token._id);
+
+    // Remove personal identifiers from retained shared-org audit records.
+    const dashboardReveals = await ctx.db
+        .query("environmentVariableReveals")
+        .withIndex("by_revealedByAuthId", (q) => q.eq("revealedByAuthId", user.authId))
+        .collect();
+    for (const reveal of dashboardReveals) await ctx.db.delete(reveal._id);
+
+    const cliReveals = await ctx.db
+        .query("environmentVariableReveals")
+        .withIndex("by_revealedByCliAuthId", (q) => q.eq("revealedByCliAuthId", user.authId))
+        .collect();
+    for (const reveal of cliReveals) await ctx.db.delete(reveal._id);
+
+    // Pre-org records belong to the original single-user model. They have no
+    // orgId, so they are safe to remove with their sole WorkOS owner.
+    const legacyProjects = await ctx.db
+        .query("projects")
+        .withIndex("by_authId", (q) => q.eq("authId", user.authId))
+        .collect();
+    for (const project of legacyProjects) {
+        if (!project.orgId) await purgeProject(ctx, project._id);
     }
 
     await ctx.db.delete(user._id);

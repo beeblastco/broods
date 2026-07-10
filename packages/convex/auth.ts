@@ -72,10 +72,16 @@ export const { authKitEvent } = authKit.events({
             console.warn(`User not found for deletion: ${event.data.id}`);
             return;
         }
-        // Full cascade: purge orgs the user solely owns (account, projects,
-        // environments, keys, files), drop their other memberships, then delete
-        // the user. Previously only the user row was removed, orphaning everything.
-        await purgeUser(ctx, user);
+        // WorkOS may redeliver a deletion event. Queue teardown once, so a
+        // duplicate delivery cannot race the core runtime cleanup or final purge.
+        if (user.workosDeletionRequestedAt) {
+            return;
+        }
+
+        await ctx.db.patch(user._id, { workosDeletionRequestedAt: Date.now() });
+        await ctx.scheduler.runAfter(0, internal.workosUserDeletionCleanup.run, {
+            authId: user.authId,
+        });
     },
     "session.created": async () => { },
     "session.revoked": async () => { },
