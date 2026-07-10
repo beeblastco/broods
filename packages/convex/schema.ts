@@ -299,6 +299,15 @@ export const agentsFields = {
     encryptedConfig: v.optional(v.string()),
     encryptionIv: v.optional(v.string()),
     encryptionTag: v.optional(v.string()),
+    /**
+     * Unresolved account-plane config retaining `${NAME}` placeholders (the
+     * form before account env vars are substituted into `encryptedConfig`).
+     * Kept so an account env-var change can re-resolve `encryptedConfig`
+     * without the client re-syncing this agent. Absent on legacy rows.
+     */
+    encryptedSourceConfig: v.optional(v.string()),
+    sourceEncryptionIv: v.optional(v.string()),
+    sourceEncryptionTag: v.optional(v.string()),
     createdAt: v.number(),
     updatedAt: v.number(),
 };
@@ -508,6 +517,16 @@ export const workspaceConfigsFields = {
 export const environmentVariablesFields = {
     projectId: v.id("projects"),
     environmentId: v.id("environments"),
+    name: v.string(),
+    ciphertext: v.string(),
+    iv: v.string(),
+    tag: v.string(),
+    updatedAt: v.number(),
+};
+
+/** Account-scoped runtime variables for the public config plane; values are write-only through the API. */
+export const accountEnvVarsFields = {
+    accountId: v.id("accounts"),
     name: v.string(),
     ciphertext: v.string(),
     iv: v.string(),
@@ -879,6 +898,8 @@ export default defineSchema({
     environmentVariables: defineTable(environmentVariablesFields)
         .index("by_projectId_and_environmentId", ["projectId", "environmentId"])
         .index("by_environmentId_and_name", ["environmentId", "name"]),
+    accountEnvVars: defineTable(accountEnvVarsFields)
+        .index("by_accountId_and_name", ["accountId", "name"]),
     environmentVariableReveals: defineTable(environmentVariableRevealsFields)
         .index("by_environmentId", ["environmentId"])
         .index("by_environmentVariableId", ["environmentVariableId"])

@@ -165,6 +165,10 @@ export function isConfigHttpPath(pathname: string, method = "GET"): boolean {
       upperMethod === "DELETE"
     );
   }
+  if (pathname === "/v1/env") return upperMethod === "GET";
+  if (/^\/v1\/env\/[^/]+$/.test(pathname)) {
+    return upperMethod === "PUT" || upperMethod === "DELETE";
+  }
 
   return (
     /^\/v1\/skills(?:\/[^/]+)?$/.test(pathname) ||
@@ -225,11 +229,16 @@ if (import.meta.main) {
       (url.pathname === "/" || url.pathname === "/healthz") &&
       request.method === "GET"
     ) {
-      return json({
-        status: "ok",
-        activeWebSockets: activeSocketCount,
-        maxWebSockets: limits.maxConnections,
-      });
+      // Health is public and read by browsers (the dashboard's agent-health
+      // indicator polls this from its own origin), so allow any origin here.
+      return json(
+        {
+          status: "ok",
+          activeWebSockets: activeSocketCount,
+          maxWebSockets: limits.maxConnections,
+        },
+        { headers: { "Access-Control-Allow-Origin": "*" } },
+      );
     }
 
     if (isWebSocketRequest(request)) {

@@ -12,7 +12,13 @@ import type { Doc, Id } from "./_generated/dataModel";
 import { createAccountSecret, hashAccountSecret } from "./model/accountSecrets";
 import { normalizeAccountHookUpload } from "./model/accountHooks";
 import { normalizeAccountToolUpload } from "./model/accountTools";
-import { decryptAgentConfigBlob, encryptAgentConfigBlob } from "./model/agentConfigCodec";
+import {
+    ACCOUNT_ENV_VAR_NAME_PATTERN,
+    collectEnvPlaceholderNames,
+    decryptAgentConfigBlob,
+    encryptAgentConfigBlob,
+    substituteAccountEnvPlaceholders,
+} from "./model/agentConfigCodec";
 import {
     normalizeCreateAgentInput,
     normalizeUpdateAgentInput,
@@ -75,6 +81,8 @@ export const handle = httpAction(async (ctx, req) => {
                 return await handlePolicyConfigRoute(ctx, req, account._id, actor, route.policyId);
             case "agents":
                 return await handleAgentConfigRoute(ctx, req, account._id, actor, route.agentId);
+            case "env":
+                return await handleAccountEnvVarRoute(ctx, req, account._id, actor, route.name);
         }
     } catch (err) {
         if (isClientInputError(err)) {
@@ -571,7 +579,8 @@ type ConfigRoute =
     | { kind: "workspaces"; workspaceId?: string }
     | { kind: "sandboxes"; sandboxId?: string }
     | { kind: "policies"; policyId?: string }
-    | { kind: "agents"; agentId?: string };
+    | { kind: "agents"; agentId?: string }
+    | { kind: "env"; name?: string };
 
 /**
  * Parse a config-plane pathname into its route parts.
@@ -579,6 +588,9 @@ type ConfigRoute =
  * @returns the parsed route, or null when the path is not a config route
  */
 function parseRoute(pathname: string): ConfigRoute | null {
+    const env = pathname.match(/^\/v1\/env(?:\/([^/]+))?$/);
+    if (env) return { kind: "env", ...(env[1] ? { name: decodeURIComponent(env[1]) } : {}) };
+
     const skills = pathname.match(/^\/v1\/skills(?:\/([^/]+))?$/);
     if (skills) return { kind: "skills", ...(skills[1] ? { name: decodeURIComponent(skills[1]) } : {}) };
 
@@ -641,22 +653,27 @@ async function handleAgentConfigRoute(
         if (req.method === "GET") {
             const records: Doc<"agents">[] = await ctx.runQuery(internal.agents.list, { accountId: accountId });
             const agents = await Promise.all(records.map(async (record) =>
-                toPublicAgentResponse(record, await decryptAgentConfig(record))
+                toPublicAgentResponse(record, await decryptAgentConfigForPublicRead(record))
             ));
 
             return json({ agents: agents });
         }
         if (req.method === "POST") {
             const input = normalizeCreateAgentInput(await req.json());
+            const config = await prepareAccountAgentConfig(ctx, accountId, input.config);
             await validateAgentReferences(ctx, accountId, input.config);
-            const encrypted = await encryptAgentConfig(input.config);
             const createdId: Id<"agents"> = await ctx.runMutation(internal.agents.create, {
                 accountId: accountId,
                 name: input.name,
                 description: input.description,
-                encryptedConfig: encrypted.ciphertext,
-                encryptionIv: encrypted.iv,
-                encryptionTag: encrypted.tag,
+                encryptedConfig: config.encrypted.ciphertext,
+                encryptionIv: config.encrypted.iv,
+                encryptionTag: config.encrypted.tag,
+                ...(config.source ? {
+                    encryptedSourceConfig: config.source.ciphertext,
+                    sourceEncryptionIv: config.source.iv,
+                    sourceEncryptionTag: config.source.tag,
+                } : {}),
             });
             const created: Doc<"agents"> | null = await ctx.runQuery(internal.agents.getById, {
                 accountId: accountId,
@@ -689,7 +706,7 @@ async function handleAgentConfigRoute(
             agentId: agentId,
         });
 
-        return record ? json(toPublicAgentResponse(record, await decryptAgentConfig(record))) : json({ error: "Agent not found" }, 404);
+        return record ? json(toPublicAgentResponse(record, await decryptAgentConfigForPublicRead(record))) : json({ error: "Agent not found" }, 404);
     }
     if (req.method === "PATCH") {
         const existing: Doc<"agents"> | null = await ctx.runQuery(internal.agents.getById, {
@@ -697,10 +714,10 @@ async function handleAgentConfigRoute(
             agentId: agentId,
         });
         if (!existing) return json({ error: "Agent not found" }, 404);
-        const existingConfig = await decryptAgentConfig(existing);
+        const existingConfig = await decryptAgentConfigForPublicRead(existing);
         const patch = normalizeUpdateAgentInput(existingConfig, await req.json());
+        const config = await prepareAccountAgentConfig(ctx, accountId, patch.config);
         await validateAgentReferences(ctx, accountId, patch.config);
-        const encrypted = await encryptAgentConfig(patch.config);
         await ctx.runMutation(internal.agents.update, {
             accountId: accountId,
             agentId: agentId,
@@ -709,9 +726,14 @@ async function handleAgentConfigRoute(
             // `?? undefined` here, so PATCH {description: null} is a no-op
             // for agents (unlike policies, where null clears).
             ...(patch.description !== undefined ? { description: patch.description ?? undefined } : {}),
-            encryptedConfig: encrypted.ciphertext,
-            encryptionIv: encrypted.iv,
-            encryptionTag: encrypted.tag,
+            encryptedConfig: config.encrypted.ciphertext,
+            encryptionIv: config.encrypted.iv,
+            encryptionTag: config.encrypted.tag,
+            ...(config.source ? {
+                encryptedSourceConfig: config.source.ciphertext,
+                sourceEncryptionIv: config.source.iv,
+                sourceEncryptionTag: config.source.tag,
+            } : { clearSourceConfig: true }),
         });
         const updated: Doc<"agents"> | null = await ctx.runQuery(internal.agents.getById, {
             accountId: accountId,
@@ -728,7 +750,7 @@ async function handleAgentConfigRoute(
             });
         }
 
-        return updated ? json(toPublicAgentResponse(updated, await decryptAgentConfig(updated))) : json({ error: "Agent not found" }, 404);
+        return updated ? json(toPublicAgentResponse(updated, await decryptAgentConfigForPublicRead(updated))) : json({ error: "Agent not found" }, 404);
     }
     if (req.method === "DELETE") {
         const existing: Doc<"agents"> | null = await ctx.runQuery(internal.agents.getById, {
@@ -750,6 +772,58 @@ async function handleAgentConfigRoute(
     }
 
     return methodNotAllowed(["GET", "PATCH", "DELETE"]);
+}
+
+/** Account-level environment variable CRUD; values remain write-only. */
+async function handleAccountEnvVarRoute(
+    ctx: ActionCtx,
+    req: Request,
+    accountId: Id<"accounts">,
+    actor: ConfigAuditActor,
+    name?: string,
+): Promise<Response> {
+    if (!name) {
+        if (req.method !== "GET") return methodNotAllowed(["GET"]);
+        const variables: Array<{ name: string; updatedAt: number }> = await ctx.runQuery(internal.accountEnvVars.list, {
+            accountId: accountId,
+        });
+
+        return json({ env: variables.map((variable) => ({ name: variable.name, updatedAt: variable.updatedAt })) });
+    }
+    validateAccountEnvVarName(name);
+    if (req.method === "PUT") {
+        const body = await req.json();
+        if (!isPlainObject(body) || typeof body.value !== "string" || body.value.length < 1 || body.value.length > 8192) {
+            throw new Error("env value must be a string from 1 to 8192 characters");
+        }
+        await ctx.runMutation(internal.accountEnvVars.set, { accountId: accountId, name: name, value: body.value });
+        // Values never reach the audit log — only the name of what changed.
+        await writeAudit(ctx, {
+            accountId: accountId,
+            actor: actor,
+            action: "updated",
+            resource: { kind: "environmentVariable", name: name },
+            summary: "Account env var set",
+        });
+
+        return json({ name: name });
+    }
+    if (req.method === "DELETE") {
+        const deleted: boolean = await ctx.runMutation(internal.accountEnvVars.remove, { accountId: accountId, name: name });
+        if (deleted) {
+            await writeAudit(ctx, {
+                accountId: accountId,
+                actor: actor,
+                action: "deleted",
+                resource: { kind: "environmentVariable", name: name },
+                summary: "Account env var deleted",
+            });
+        }
+
+        return json({ deleted: deleted });
+    }
+
+    return methodNotAllowed(["PUT", "DELETE"]);
 }
 
 /**
@@ -1735,6 +1809,51 @@ async function decryptAgentConfig(doc: Doc<"agents">): Promise<AgentConfig> {
     return decrypted as AgentConfig;
 }
 
+/** Decrypt the unresolved config when present so API reads and PATCHes preserve placeholders. */
+async function decryptAgentConfigForPublicRead(doc: Doc<"agents">): Promise<AgentConfig> {
+    if (!doc.encryptedSourceConfig || !doc.sourceEncryptionIv || !doc.sourceEncryptionTag) {
+        return await decryptAgentConfig(doc);
+    }
+    const decrypted = await decryptAgentConfigBlob({
+        ciphertext: doc.encryptedSourceConfig,
+        iv: doc.sourceEncryptionIv,
+        tag: doc.sourceEncryptionTag,
+    }, configEncryptionSecret());
+    if (!decrypted) throw new Error("Failed to decrypt agent source config");
+
+    return decrypted as AgentConfig;
+}
+
+type PreparedAccountAgentConfig = {
+    encrypted: { ciphertext: string; iv: string; tag: string };
+    source?: { ciphertext: string; iv: string; tag: string };
+};
+
+/** Resolve valid account env references on a normalized config, rejecting missing names on writes. */
+async function prepareAccountAgentConfig(
+    ctx: ActionCtx,
+    accountId: Id<"accounts">,
+    sourceConfig: AgentConfig,
+): Promise<PreparedAccountAgentConfig> {
+    const names = [...collectEnvPlaceholderNames(sourceConfig)].sort();
+    if (names.length === 0) return { encrypted: await encryptAgentConfig(sourceConfig) };
+    const values: Record<string, string> = await ctx.runQuery(internal.accountEnvVars.loadValues, { accountId: accountId });
+    const missing = names.filter((name) => !Object.prototype.hasOwnProperty.call(values, name));
+    if (missing.length > 0) throw new Error(`unknown env vars: ${missing.join(", ")}`);
+
+    return {
+        encrypted: await encryptAgentConfig(substituteAccountEnvPlaceholders(sourceConfig, values)),
+        source: await encryptAgentConfig(sourceConfig),
+    };
+}
+
+/** Validate the stable uppercase name accepted by account env-var routes and references. */
+function validateAccountEnvVarName(name: string): void {
+    if (!ACCOUNT_ENV_VAR_NAME_PATTERN.test(name) || name.length > 64) {
+        throw new Error("env name must match /^[A-Z][A-Z0-9_]*$/ and be at most 64 characters");
+    }
+}
+
 async function encryptAgentConfig(config: AgentConfig): Promise<{ ciphertext: string; iv: string; tag: string }> {
     return await encryptAgentConfigBlob(config, configEncryptionSecret());
 }
@@ -1857,6 +1976,9 @@ function isClientInputError(error: unknown): error is Error {
         "Provide exactly one of",
         "limit must",
         "Cron job agentId ",
+        "unknown env vars:",
+        "env name must",
+        "env value must",
     ].some((prefix) => error.message.startsWith(prefix));
 }
 

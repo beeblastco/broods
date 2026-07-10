@@ -283,6 +283,9 @@ test("routes config-plane CRUD to Convex, not core", () => {
   expect(isConfigHttpPath("/v1/agents/agent_1", "GET")).toBe(true);
   expect(isConfigHttpPath("/v1/agents/agent_1", "PATCH")).toBe(true);
   expect(isConfigHttpPath("/v1/agents/agent_1", "DELETE")).toBe(true);
+  expect(isConfigHttpPath("/v1/env", "GET")).toBe(true);
+  expect(isConfigHttpPath("/v1/env/OVH_API_KEY", "PUT")).toBe(true);
+  expect(isConfigHttpPath("/v1/env/OVH_API_KEY", "DELETE")).toBe(true);
   expect(isConfigHttpPath("/v1/skills")).toBe(true);
   expect(isConfigHttpPath("/v1/skills/my-skill")).toBe(true);
   expect(isConfigHttpPath("/v1/tools")).toBe(true);
@@ -322,6 +325,8 @@ test("routes config-plane CRUD to Convex, not core", () => {
     false,
   );
   expect(isConfigHttpPath("/v1/agents/agent_1", "POST")).toBe(false);
+  expect(isConfigHttpPath("/v1/env", "PUT")).toBe(false);
+  expect(isConfigHttpPath("/v1/env/OVH_API_KEY", "GET")).toBe(false);
   expect(isConfigHttpPath("/v1/agents/agent_1/ws", "GET")).toBe(false);
   expect(isConfigHttpPath("/v1/agents/agent_1/async", "POST")).toBe(false);
   expect(isConfigHttpPath("/v1/demo/agents/development/env_123", "POST")).toBe(

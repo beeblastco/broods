@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { BroodsAccountApiError, BroodsAccountClient } from "../src/account.ts";
+import { BroodsAccountApiError, BroodsAccountClient, envPlaceholder } from "../src/account.ts";
 
 type Call = { url: string; method: string; headers: Record<string, string>; body?: string };
 
@@ -64,6 +64,30 @@ test("createAgent posts JSON and unwraps the created record", async () => {
   expect(calls[0]?.method).toBe("POST");
   expect(calls[0]?.headers["Content-Type"]).toBe("application/json");
   expect(JSON.parse(calls[0]?.body ?? "{}")).toEqual({ name: "tenant-a", config: { publicAccess: true } });
+});
+
+test("account env vars: list, set, and delete use write-only config-plane routes", async () => {
+  const { client, calls } = mockClient([
+    { status: 200, body: { env: [{ name: "OVH_API_KEY", updatedAt: 123 }] } },
+    { status: 200, body: { name: "OVH_API_KEY" } },
+    { status: 200, body: { deleted: true } },
+  ]);
+
+  expect(await client.listEnvVars()).toEqual([{ name: "OVH_API_KEY", updatedAt: 123 }]);
+  await client.setEnvVar("OVH_API_KEY", "secret-value");
+  expect(await client.deleteEnvVar("OVH_API_KEY")).toBe(true);
+  expect(calls.map((call) => [call.method, call.url])).toEqual([
+    ["GET", "https://gateway.example.com/v1/env"],
+    ["PUT", "https://gateway.example.com/v1/env/OVH_API_KEY"],
+    ["DELETE", "https://gateway.example.com/v1/env/OVH_API_KEY"],
+  ]);
+  expect(JSON.parse(calls[1]?.body ?? "{}")).toEqual({ value: "secret-value" });
+});
+
+test("envPlaceholder validates account env-var names", () => {
+  expect(envPlaceholder("OVH_API_KEY")).toBe("${OVH_API_KEY}");
+  expect(() => envPlaceholder("lowercase")).toThrow();
+  expect(() => envPlaceholder("A".repeat(65))).toThrow();
 });
 
 test("unwraps list envelopes for crons, runs, workspaces, and files", async () => {

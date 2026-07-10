@@ -95,6 +95,9 @@ export const create = internalMutation({
         encryptedConfig: v.optional(v.string()),
         encryptionIv: v.optional(v.string()),
         encryptionTag: v.optional(v.string()),
+        encryptedSourceConfig: v.optional(v.string()),
+        sourceEncryptionIv: v.optional(v.string()),
+        sourceEncryptionTag: v.optional(v.string()),
     },
     returns: v.id("agents"),
     handler: async (ctx, args) => {
@@ -111,6 +114,9 @@ export const create = internalMutation({
             encryptedConfig: args.encryptedConfig,
             encryptionIv: args.encryptionIv,
             encryptionTag: args.encryptionTag,
+            encryptedSourceConfig: args.encryptedSourceConfig,
+            sourceEncryptionIv: args.sourceEncryptionIv,
+            sourceEncryptionTag: args.sourceEncryptionTag,
             createdAt: now,
             updatedAt: now,
         });
@@ -133,10 +139,14 @@ export const update = internalMutation({
         encryptedConfig: v.optional(v.string()),
         encryptionIv: v.optional(v.string()),
         encryptionTag: v.optional(v.string()),
+        encryptedSourceConfig: v.optional(v.string()),
+        sourceEncryptionIv: v.optional(v.string()),
+        sourceEncryptionTag: v.optional(v.string()),
+        clearSourceConfig: v.optional(v.boolean()),
     },
     returns: v.null(),
     handler: async (ctx, args) => {
-        const { accountId, agentId, ...patch } = args;
+        const { accountId, agentId, clearSourceConfig, ...patch } = args;
         const normalized = ctx.db.normalizeId("agents", agentId);
         if (!normalized) {
             throw new Error("Agent does not belong to the supplied accountId");
@@ -152,6 +162,14 @@ export const update = internalMutation({
             ...(patch.encryptedConfig !== undefined && { encryptedConfig: patch.encryptedConfig }),
             ...(patch.encryptionIv !== undefined && { encryptionIv: patch.encryptionIv }),
             ...(patch.encryptionTag !== undefined && { encryptionTag: patch.encryptionTag }),
+            ...(patch.encryptedSourceConfig !== undefined && { encryptedSourceConfig: patch.encryptedSourceConfig }),
+            ...(patch.sourceEncryptionIv !== undefined && { sourceEncryptionIv: patch.sourceEncryptionIv }),
+            ...(patch.sourceEncryptionTag !== undefined && { sourceEncryptionTag: patch.sourceEncryptionTag }),
+            ...(clearSourceConfig === true && {
+                encryptedSourceConfig: undefined,
+                sourceEncryptionIv: undefined,
+                sourceEncryptionTag: undefined,
+            }),
             updatedAt: Date.now(),
         });
 

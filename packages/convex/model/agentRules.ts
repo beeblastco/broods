@@ -289,7 +289,11 @@ function normalizeProviderSettings(providerName: AccountModelProviderName, value
     if (baseURL) {
         const label = typeof config.base_url === "string" ? "base_url" : "baseURL";
         assertPublicHttpsUrl(baseURL, `config.provider.${providerName}.${label}`);
+        // Canonicalize on `baseURL`: accepting both spellings but storing one
+        // prevents a stale `base_url` (which core prefers at runtime) from
+        // shadowing later `baseURL` updates.
         config.baseURL = baseURL;
+        delete config.base_url;
     }
     if (config.headers !== undefined && !isStringRecord(config.headers)) {
         throw new Error(`config.provider.${providerName}.headers must be an object with string values`);

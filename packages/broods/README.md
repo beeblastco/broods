@@ -59,7 +59,7 @@ such as Convex actions and Cloudflare Workers where the main SDK entry (which
 reads `.env` files from disk) cannot load:
 
 ```ts
-import { BroodsAccountClient } from "broods/account";
+import { BroodsAccountClient, envPlaceholder } from "broods/account";
 
 // baseUrl defaults to https://gateway.broods.app (override with BROODS_BASE_URL);
 // the secret falls back to BROODS_ACCOUNT_SECRET from the runtime's environment.
@@ -75,6 +75,13 @@ const created = await account.createAgent({
     agent: { system: "You are the tenant's sales assistant." },
     publicAccess: true,
   },
+});
+
+// Store an account secret once, then reference it from any dynamic agent.
+// Reads list only names/timestamps; secret values are never returned.
+await account.setEnvVar("OVH_API_KEY", process.env.OVH_API_KEY!);
+await account.updateAgent(created.agentId, {
+  config: { provider: { custom: { apiKey: envPlaceholder("OVH_API_KEY") } } },
 });
 await account.updateAgent(created.agentId, {
   config: { channels: { slack: { id: "conn-1", botToken: "xoxb-…" } } },

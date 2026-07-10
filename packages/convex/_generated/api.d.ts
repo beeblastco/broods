@@ -8,6 +8,7 @@
  * @module
  */
 
+import type * as accountEnvVars from "../accountEnvVars.js";
 import type * as accountHooks from "../accountHooks.js";
 import type * as accountTools from "../accountTools.js";
 import type * as accounts from "../accounts.js";
@@ -99,6 +100,7 @@ import type {
 } from "convex/server";
 
 declare const fullApi: ApiFromModules<{
+  accountEnvVars: typeof accountEnvVars;
   accountHooks: typeof accountHooks;
   accountTools: typeof accountTools;
   accounts: typeof accounts;
