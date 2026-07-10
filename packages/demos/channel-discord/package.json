@@ -1,9 +1,17 @@
 {
-  "name": "@broods/demo-channel-discord", "type": "module", "private": true,
+  "name": "@broods/demo-channel-discord",
+  "type": "module",
+  "private": true,
   "scripts": {
     "check": "tsc --noEmit",
-    "register": "bun register.ts"
+    "register": "bun register.ts",
+    "dev": "broods dev --project channel-discord",
+    "deploy": "broods deploy --project channel-discord"
   },
-  "dependencies": { "broods": "file:../../broods" },
-  "devDependencies": { "@types/bun": "^1.3.14" }
+  "dependencies": {
+    "broods": "file:../../broods"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.3.14"
+  }
 }

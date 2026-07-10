@@ -4,7 +4,9 @@
   "private": true,
   "scripts": {
     "check": "tsc --noEmit",
-    "register": "bun register.ts"
+    "register": "bun register.ts",
+    "dev": "broods dev",
+    "deploy": "broods deploy"
   },
   "dependencies": {
     "broods": "file:../../broods"

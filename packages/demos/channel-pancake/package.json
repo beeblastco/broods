@@ -1,8 +1,16 @@
 {
-  "name": "@broods/demo-channel-pancake", "type": "module", "private": true,
+  "name": "@broods/demo-channel-pancake",
+  "type": "module",
+  "private": true,
   "scripts": {
-    "check": "tsc --noEmit"
+    "check": "tsc --noEmit",
+    "dev": "broods dev --project channel-pancake",
+    "deploy": "broods deploy --project channel-pancake"
   },
-  "dependencies": { "broods": "file:../../broods" },
-  "devDependencies": { "@types/bun": "^1.3.14" }
+  "dependencies": {
+    "broods": "file:../../broods"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.3.14"
+  }
 }
