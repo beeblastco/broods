@@ -12,6 +12,14 @@
 
 import { isPlainObject } from "./objects";
 
+/** Account config-plane environment variable names accepted in `${NAME}` references. */
+export const ACCOUNT_ENV_VAR_NAME_PATTERN = /^[A-Z][A-Z0-9_]*$/;
+// Non-global so `.test()` carries no lastIndex state; global clones are built
+// where iteration/replacement needs them.
+const ACCOUNT_ENV_PLACEHOLDER_PATTERN = /\$\{([A-Z][A-Z0-9_]*)\}/;
+const ACCOUNT_ENV_PLACEHOLDER_PATTERN_G = new RegExp(ACCOUNT_ENV_PLACEHOLDER_PATTERN.source, "g");
+const ENV_PLACEHOLDER_PATTERN_G = /\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g;
+
 export interface FlatAgentConfig {
     name?: string;
     description?: string;
@@ -143,22 +151,61 @@ export function substituteEnvPlaceholders<T>(
     config: T,
     variables: Record<string, string>,
 ): T {
+    return substitutePlaceholders(config, variables, ENV_PLACEHOLDER_PATTERN_G);
+}
+
+/** Replace valid uppercase account env-var `${NAME}` placeholders recursively. */
+export function substituteAccountEnvPlaceholders<T>(
+    config: T,
+    variables: Record<string, string>,
+): T {
+    return substitutePlaceholders(config, variables, ACCOUNT_ENV_PLACEHOLDER_PATTERN_G);
+}
+
+function substitutePlaceholders<T>(
+    config: T,
+    variables: Record<string, string>,
+    pattern: RegExp,
+): T {
     if (typeof config === "string") {
-        return config.replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g, (match, key: string) => {
+        return config.replace(pattern, (match, key: string) => {
             return Object.prototype.hasOwnProperty.call(variables, key) ? variables[key] : match;
         }) as unknown as T;
     }
     if (Array.isArray(config)) {
-        return config.map((item) => substituteEnvPlaceholders(item, variables)) as unknown as T;
+        return config.map((item) => substitutePlaceholders(item, variables, pattern)) as unknown as T;
     }
     if (isPlainObject(config)) {
         const result: Record<string, unknown> = {};
         for (const [key, value] of Object.entries(config)) {
-            result[key] = substituteEnvPlaceholders(value, variables);
+            result[key] = substitutePlaceholders(value, variables, pattern);
         }
         return result as unknown as T;
     }
     return config;
+}
+
+/** Collect valid `${NAME}` references from strings nested anywhere in a config. */
+export function collectEnvPlaceholderNames(value: unknown, names = new Set<string>()): Set<string> {
+    if (typeof value === "string") {
+        for (const match of value.matchAll(ACCOUNT_ENV_PLACEHOLDER_PATTERN_G)) {
+            if (match[1]) names.add(match[1]);
+        }
+        return names;
+    }
+    if (Array.isArray(value)) {
+        for (const item of value) collectEnvPlaceholderNames(item, names);
+        return names;
+    }
+    if (isPlainObject(value)) {
+        for (const item of Object.values(value)) collectEnvPlaceholderNames(item, names);
+    }
+    return names;
+}
+
+/** True when a string contains a valid account env-var placeholder reference. */
+export function containsEnvPlaceholder(value: string): boolean {
+    return ACCOUNT_ENV_PLACEHOLDER_PATTERN.test(value);
 }
 
 /**

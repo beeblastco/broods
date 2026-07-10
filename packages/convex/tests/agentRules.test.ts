@@ -8,6 +8,7 @@ import {
     normalizeUpdateAgentInput,
     redactAgentConfig,
 } from "../model/agentRules";
+import { collectEnvPlaceholderNames, substituteAccountEnvPlaceholders } from "../model/agentConfigCodec";
 
 describe("agent rules", () => {
     it("normalizes empty configs and rejects non-objects", () => {
@@ -34,6 +35,11 @@ describe("agent rules", () => {
             .toThrow("config.provider.custom.base_url must use https");
         expect(() => normalizeAgentConfig({ provider: { custom: { base_url: "https://localhost" } } }))
             .toThrow("config.provider.custom.base_url must not point to a private or internal address");
+        expect(normalizeAgentConfig({ provider: { custom: { base_url: "https://api.example.com" } } }).provider)
+            .toEqual({ custom: { baseURL: "https://api.example.com" } });
+        expect(normalizeAgentConfig({
+            provider: { custom: { base_url: "https://old.example.com", baseURL: "https://api.example.com" } },
+        }).provider).toEqual({ custom: { baseURL: "https://old.example.com" } });
         expect(() => normalizeAgentConfig({ model: { output: { type: "object" } } }))
             .toThrow("config.model.output.schema must be an object");
         expect(() => normalizeAgentConfig({ model: { output: { type: "array" } } }))
@@ -69,6 +75,15 @@ describe("agent rules", () => {
         );
         expect(merged).toEqual({ provider: { openai: { apiKey: "secret" } }, skills: { allowed: ["acct/new"] } });
         expect(redactAgentConfig({ provider: { openai: { apiKey: "secret" } } })).toEqual({ provider: { openai: { apiKey: "********" } } });
+        expect(redactAgentConfig({ provider: { openai: { apiKey: "${OVH_API_KEY}" } } }))
+            .toEqual({ provider: { openai: { apiKey: "${OVH_API_KEY}" } } });
+    });
+
+    it("collects and substitutes only valid account env placeholders recursively", () => {
+        const source = { provider: { apiKey: "${OVH_API_KEY}" }, list: ["prefix-${REGION}", "${lowercase}"] };
+        expect([...collectEnvPlaceholderNames(source)].sort()).toEqual(["OVH_API_KEY", "REGION"]);
+        expect(substituteAccountEnvPlaceholders(source, { OVH_API_KEY: "secret", REGION: "eu" }))
+            .toEqual({ provider: { apiKey: "secret" }, list: ["prefix-eu", "${lowercase}"] });
     });
 
     it("normalizes create and update inputs", () => {

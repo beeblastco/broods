@@ -71,6 +71,22 @@ export interface CreateAgentResult {
   description?: string;
 }
 
+/** Write-only account environment variable metadata. */
+export interface AccountEnvVar {
+  name: string;
+  updatedAt: number;
+}
+
+const ACCOUNT_ENV_VAR_NAME_PATTERN = /^[A-Z][A-Z0-9_]*$/;
+
+/** Build a validated account env-var reference for use in an agent config. */
+export function envPlaceholder(name: string): string {
+  if (!ACCOUNT_ENV_VAR_NAME_PATTERN.test(name) || name.length > 64) {
+    throw new Error("envPlaceholder name must match /^[A-Z][A-Z0-9_]*$/ and be at most 64 characters.");
+  }
+  return `\${${name}}`;
+}
+
 /** Fields accepted by `PATCH /v1/agents/{id}`. `config` is deep-merged; `null` values delete keys. */
 export interface UpdateAgentInput {
   name?: string;
@@ -301,6 +317,23 @@ export class BroodsAccountClient {
 
   async deleteAgent(agentId: string): Promise<boolean> {
     const result = await this.request<{ deleted: boolean }>("DELETE", `/v1/agents/${encodeURIComponent(agentId)}`);
+    return result?.deleted ?? false;
+  }
+
+  /** List account environment variable names and update timestamps; values are never returned. */
+  async listEnvVars(): Promise<AccountEnvVar[]> {
+    const result = await this.request<{ env: AccountEnvVar[] }>("GET", "/v1/env");
+    return result?.env ?? [];
+  }
+
+  /** Create or replace one write-only account environment variable. */
+  async setEnvVar(name: string, value: string): Promise<void> {
+    await this.request<{ name: string }>("PUT", `/v1/env/${encodeURIComponent(name)}`, { value: value });
+  }
+
+  /** Delete one account environment variable. Returns false when it is already absent. */
+  async deleteEnvVar(name: string): Promise<boolean> {
+    const result = await this.request<{ deleted: boolean }>("DELETE", `/v1/env/${encodeURIComponent(name)}`);
     return result?.deleted ?? false;
   }
 

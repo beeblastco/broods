@@ -12,7 +12,7 @@ info:
     > - Advanced integrations that need direct account-management access
     > - Admin operations using `AdminAccountSecret`
 
-    Account metadata and secret rotation are served by the config plane behind the same gateway host; account creation and delete stay in core for admin-controlled provisioning and runtime cleanup. Account creation, administration, and rotate-secret are reachable by admins with the `AdminAccountSecret` bearer token. Agent CRUD is account-authenticated under `/v1/agents*`. Agents, skills, tools, workspace files, crons, workspaces, sandboxes, and policies are served by the config plane and have no admin path variants.
+    Account metadata and secret rotation are served by the config plane behind the same gateway host; account creation and delete stay in core for admin-controlled provisioning and runtime cleanup. Account creation, administration, and rotate-secret are reachable by admins with the `AdminAccountSecret` bearer token. Agent CRUD is account-authenticated under `/v1/agents*`. Account environment variables are write-only account secrets under `/v1/env*`, usable as `${NAME}` references in agent configs. Agents, env vars, skills, tools, workspace files, crons, workspaces, sandboxes, and policies are served by the config plane and have no admin path variants.
   version: 0.1.0
 
 servers:
@@ -31,6 +31,8 @@ tags:
     description: Account lifecycle, metadata, and secret rotation.
   - name: Agents
     description: Account-owned agent configuration.
+  - name: Environment Variables
+    description: Write-only account-scoped secrets referenced by dynamic agent configs.
   - name: Skills
     description: Account-owned skill package management.
   - name: Cron Jobs
@@ -795,6 +797,82 @@ paths:
                       createdAt: '2026-05-01T00:00:00.000Z'
                       updatedAt: '2026-05-01T00:00:00.000Z'
                     secret: fp_acct_new...
+
+  /v1/env:
+    get:
+      tags:
+        - Environment Variables
+      summary: List account environment variables
+      description: Lists variable names and update timestamps for the authenticated account. Secret values are never returned.
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Write-only account environment variable metadata
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [env]
+                properties:
+                  env:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/AccountEnvVar'
+
+  /v1/env/{name}:
+    put:
+      tags:
+        - Environment Variables
+      summary: Create or replace an account environment variable
+      description: Stores a write-only secret. Existing source-backed agents using `${NAME}` are re-resolved immediately.
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/AccountEnvVarName'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [value]
+              properties:
+                value:
+                  type: string
+                  minLength: 1
+                  maxLength: 8192
+      responses:
+        '200':
+          description: Variable stored
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [name]
+                properties:
+                  name:
+                    type: string
+    delete:
+      tags:
+        - Environment Variables
+      summary: Delete an account environment variable
+      description: Re-resolves source-backed agents; a now-missing placeholder remains literal in stored runtime config.
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/AccountEnvVarName'
+      responses:
+        '200':
+          description: Deletion result
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [deleted]
+                properties:
+                  deleted:
+                    type: boolean
 
   /v1/agents:
     post:
@@ -1878,7 +1956,26 @@ components:
       scheme: bearer
       description: AdminAccountSecret from SST secrets
 
+  parameters:
+    AccountEnvVarName:
+      name: name
+      in: path
+      required: true
+      schema:
+        type: string
+        pattern: '^[A-Z][A-Z0-9_]*$'
+        maxLength: 64
+
   schemas:
+    AccountEnvVar:
+      type: object
+      required: [name, updatedAt]
+      properties:
+        name:
+          type: string
+        updatedAt:
+          type: number
+
     DirectApiRequest:
       type: object
       required:
