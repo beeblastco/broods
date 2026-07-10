@@ -33,6 +33,23 @@ function Mono({ children }: { children: ReactNode }) {
     );
 }
 
+/** Clipboard copy with a transient confirmation shown only after the write actually succeeds. */
+function useCopy() {
+    const [copied, setCopied] = useState(false);
+
+    async function copy(text: string) {
+        try {
+            await navigator.clipboard.writeText(text);
+            setCopied(true);
+            setTimeout(() => setCopied(false), 1500);
+        } catch {
+            setCopied(false);
+        }
+    }
+
+    return { copied, copy };
+}
+
 /** Honeycomb progress: one hex cell per step — filled for the current, dimmed for the done, hollow for the rest. */
 function HexSteps({ step, count }: { step: number; count: number }) {
     return (
@@ -57,13 +74,7 @@ function HexSteps({ step, count }: { step: number; count: number }) {
 
 /** A one-line command block with a corner copy control. */
 function CommandBlock({ command }: { command: string }) {
-    const [copied, setCopied] = useState(false);
-
-    function copy() {
-        navigator.clipboard.writeText(command);
-        setCopied(true);
-        setTimeout(() => setCopied(false), 1500);
-    }
+    const { copied, copy } = useCopy();
 
     return (
         <div className="relative">
@@ -74,7 +85,7 @@ function CommandBlock({ command }: { command: string }) {
             <button
                 type="button"
                 title="Copy command"
-                onClick={copy}
+                onClick={() => copy(command)}
                 className="absolute right-1.5 top-1.5 flex size-7 cursor-pointer items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
             >
                 {copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
@@ -106,14 +117,8 @@ function DocsLink({ href, children }: { href: string; children: ReactNode }) {
 export function OnboardingDialog({ secret, onDone }: Props) {
     const [step, setStep] = useState(0);
     const [revealed, setRevealed] = useState(false);
-    const [copied, setCopied] = useState(false);
+    const { copied, copy } = useCopy();
     const masked = "•".repeat(Math.min(secret.length, 44));
-
-    function copySecret() {
-        navigator.clipboard.writeText(secret);
-        setCopied(true);
-        setTimeout(() => setCopied(false), 1500);
-    }
 
     const titles = ["Welcome to Broods", "Save your account secret", "Start your first project"];
     const descriptions = [
@@ -175,7 +180,7 @@ export function OnboardingDialog({ secret, onDone }: Props) {
                                     variant="outline"
                                     size="sm"
                                     className="h-9 shrink-0 cursor-pointer"
-                                    onClick={copySecret}
+                                    onClick={() => copy(secret)}
                                 >
                                     {copied ? <Check className="size-3.5 mr-1" /> : <Copy className="size-3.5 mr-1" />}
                                     {copied ? "Copied" : "Copy"}
