@@ -84,6 +84,7 @@ import { getConvexClient } from "./client.ts";
 
 const NOT_SUPPORTED_IN_CONVEX_MODE =
   "Operation not supported in convex storage mode — drive via cherry-coke orgLifecycle";
+const ACCOUNT_DELETE_MAX_BATCHES = 100_000;
 
 interface ConvexAccountDoc {
   _id: string;
@@ -247,10 +248,13 @@ const accounts: AccountStore = {
     throw new Error(NOT_SUPPORTED_IN_CONVEX_MODE);
   },
   async remove(accountId) {
-    await getConvexClient().mutation(internal.accounts.remove, {
-      accountId: accountId as any,
-    });
-    return true;
+    for (let batch = 0; batch < ACCOUNT_DELETE_MAX_BATCHES; batch += 1) {
+      const complete = await getConvexClient().mutation(internal.accounts.removeBatch, {
+        accountId: accountId as any,
+      });
+      if (complete) return true;
+    }
+    throw new Error(`Account deletion exceeded ${ACCOUNT_DELETE_MAX_BATCHES} Convex batches`);
   },
 };
 

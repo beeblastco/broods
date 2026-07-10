@@ -13,6 +13,10 @@ export const usersFields = {
     accountHandle: v.optional(v.string()),
     plan: v.union(v.literal("free"), v.literal("pro"), v.literal("enterprise")),
     deletionScheduledFor: v.optional(v.number()),
+    /** Set when a WorkOS deletion webhook has queued irreversible teardown. */
+    workosDeletionRequestedAt: v.optional(v.number()),
+    /** Number of runtime-cleanup retries after a WorkOS deletion webhook. */
+    workosDeletionAttempts: v.optional(v.number()),
     /** Org the user last switched to. Falls back to most recent membership when unset. */
     activeOrgId: v.optional(v.id("orgs")),
 };
@@ -821,7 +825,8 @@ export default defineSchema({
         .index("by_projectId_and_environmentId", ["projectId", "environmentId"]),
     cliAuthCodes: defineTable(cliAuthCodesFields)
         .index("by_codeHash", ["codeHash"])
-        .index("by_accountId", ["accountId"]),
+        .index("by_accountId", ["accountId"])
+        .index("by_authId", ["authId"]),
     cliTokens: defineTable(cliTokensFields)
         .index("by_tokenHash", ["tokenHash"])
         .index("by_accountId", ["accountId"])
@@ -876,7 +881,9 @@ export default defineSchema({
         .index("by_environmentId_and_name", ["environmentId", "name"]),
     environmentVariableReveals: defineTable(environmentVariableRevealsFields)
         .index("by_environmentId", ["environmentId"])
-        .index("by_environmentVariableId", ["environmentVariableId"]),
+        .index("by_environmentVariableId", ["environmentVariableId"])
+        .index("by_revealedByAuthId", ["revealedByAuthId"])
+        .index("by_revealedByCliAuthId", ["revealedByCliAuthId"]),
     configAuditEvents: defineTable(configAuditEventsFields)
         .index("by_account", ["accountId"])
         .index("by_account_project_environment", ["accountId", "projectId", "environmentId"]),

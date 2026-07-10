@@ -5,7 +5,7 @@
 
 import { v } from "convex/values";
 import { internalMutation, internalQuery } from "./_generated/server";
-import { deleteAccountContents } from "./model/cascade";
+import { deleteAccountContents, deleteAccountContentsBatch } from "./model/cascade";
 import { accountsFields } from "./schema";
 
 const accountDoc = v.object({
@@ -131,5 +131,14 @@ export const remove = internalMutation({
         await deleteAccountContents(ctx, accountId);
 
         return null;
+    },
+});
+
+/** Removes one bounded batch of an account's related rows. */
+export const removeBatch = internalMutation({
+    args: { accountId: v.id("accounts") },
+    returns: v.boolean(),
+    handler: async (ctx, args) => {
+        return await deleteAccountContentsBatch(ctx, args.accountId);
     },
 });

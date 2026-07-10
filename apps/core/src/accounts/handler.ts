@@ -31,6 +31,7 @@ import { deleteAccountRuntimeData } from "./cleanup.ts";
 import { workspaceNamespace, workspaceNamespaceOwnsReservationKey } from "../shared/workspaces.ts";
 import { isPlainObject } from "../shared/object.ts";
 import { deleteAccountSkills } from "./skills.ts";
+import { deleteAccountToolBundles } from "./bundles.ts";
 import { deleteCronSchedule } from "./cron.ts";
 import { logError, logInfo, logWarn } from "../shared/log.ts";
 import { runWithObservabilityScope } from "../shared/otel.ts";
@@ -432,16 +433,17 @@ async function sandboxReservationBelongsToAccount(
 }
 
 async function deleteAccountResponse(account: Extract<AuthContext, { kind: "account" }>["account"]): Promise<Response> {
-    const cleanup = await deleteAccountRuntimeData(account);
-    const [agentsDeleted, skillObjectsDeleted, cronsDeleted, accountToolsDeleted, accountHooksDeleted] = await Promise.all([
+    const [runtime, agentsDeleted, skillObjectsDeleted, toolBundleObjectsDeleted, cronsDeleted, accountToolsDeleted, accountHooksDeleted] = await Promise.all([
+        deleteAccountRuntimeData(account),
         getStorage().agents.removeAllForAccount(account.accountId),
         deleteAccountSkills(account.accountId),
+        deleteAccountToolBundles(account.accountId),
         deleteAccountCrons(account.accountId),
         getStorage().accountTools.removeAllForAccount(account.accountId),
         getStorage().accountHooks.removeAllForAccount(account.accountId),
     ]);
     await getStorage().accounts.remove(account.accountId);
-    return jsonResponse(200, { deleted: true, cleanup: { ...cleanup, agentsDeleted, skillObjectsDeleted, cronsDeleted, accountToolsDeleted, accountHooksDeleted } });
+    return jsonResponse(200, { deleted: true, cleanup: { ...runtime, agentsDeleted, skillObjectsDeleted, toolBundleObjectsDeleted, cronsDeleted, accountToolsDeleted, accountHooksDeleted } });
 }
 
 
