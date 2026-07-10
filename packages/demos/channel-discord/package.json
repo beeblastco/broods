@@ -2,9 +2,6 @@
   "name": "@broods/demo-channel-discord", "type": "module", "private": true,
   "scripts": {
     "check": "tsc --noEmit",
-    "dev": "broods dev --dashboard-url https://dashboard.dev.broods.app --project channel-discord",
-    "diff": "broods diff --dashboard-url https://dashboard.dev.broods.app --project channel-discord",
-    "deploy": "broods deploy --dashboard-url https://dashboard.dev.broods.app --project channel-discord",
     "register": "bun register.ts"
   },
   "dependencies": { "broods": "file:../../broods" },
