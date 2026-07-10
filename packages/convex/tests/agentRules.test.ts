@@ -77,6 +77,9 @@ describe("agent rules", () => {
         expect(redactAgentConfig({ provider: { openai: { apiKey: "secret" } } })).toEqual({ provider: { openai: { apiKey: "********" } } });
         expect(redactAgentConfig({ provider: { openai: { apiKey: "${OVH_API_KEY}" } } }))
             .toEqual({ provider: { openai: { apiKey: "${OVH_API_KEY}" } } });
+        // A secret mixing literal material with a placeholder is still a secret.
+        expect(redactAgentConfig({ provider: { openai: { apiKey: "sk_live_abc${OVH_API_KEY}" } } }))
+            .toEqual({ provider: { openai: { apiKey: "********" } } });
     });
 
     it("collects and substitutes only valid account env placeholders recursively", () => {
@@ -84,6 +87,11 @@ describe("agent rules", () => {
         expect([...collectEnvPlaceholderNames(source)].sort()).toEqual(["OVH_API_KEY", "REGION"]);
         expect(substituteAccountEnvPlaceholders(source, { OVH_API_KEY: "secret", REGION: "eu" }))
             .toEqual({ provider: { apiKey: "secret" }, list: ["prefix-eu", "${lowercase}"] });
+        // Dangerous keys are dropped, not copied, when rebuilding the config.
+        const polluted = JSON.parse('{"__proto__": {"x": 1}, "safe": "${REGION}"}');
+        const substituted = substituteAccountEnvPlaceholders(polluted, { REGION: "eu" }) as Record<string, unknown>;
+        expect(substituted).toEqual({ safe: "eu" });
+        expect(Object.getPrototypeOf(substituted)).toBe(Object.prototype);
     });
 
     it("normalizes create and update inputs", () => {

@@ -82,7 +82,7 @@ export const handle = httpAction(async (ctx, req) => {
             case "agents":
                 return await handleAgentConfigRoute(ctx, req, account._id, actor, route.agentId);
             case "env":
-                return await handleAccountEnvVarRoute(ctx, req, account._id, route.name);
+                return await handleAccountEnvVarRoute(ctx, req, account._id, actor, route.name);
         }
     } catch (err) {
         if (isClientInputError(err)) {
@@ -779,6 +779,7 @@ async function handleAccountEnvVarRoute(
     ctx: ActionCtx,
     req: Request,
     accountId: Id<"accounts">,
+    actor: ConfigAuditActor,
     name?: string,
 ): Promise<Response> {
     if (!name) {
@@ -796,11 +797,28 @@ async function handleAccountEnvVarRoute(
             throw new Error("env value must be a string from 1 to 8192 characters");
         }
         await ctx.runMutation(internal.accountEnvVars.set, { accountId: accountId, name: name, value: body.value });
+        // Values never reach the audit log — only the name of what changed.
+        await writeAudit(ctx, {
+            accountId: accountId,
+            actor: actor,
+            action: "updated",
+            resource: { kind: "environmentVariable", name: name },
+            summary: "Account env var set",
+        });
 
         return json({ name: name });
     }
     if (req.method === "DELETE") {
         const deleted: boolean = await ctx.runMutation(internal.accountEnvVars.remove, { accountId: accountId, name: name });
+        if (deleted) {
+            await writeAudit(ctx, {
+                accountId: accountId,
+                actor: actor,
+                action: "deleted",
+                resource: { kind: "environmentVariable", name: name },
+                summary: "Account env var deleted",
+            });
+        }
 
         return json({ deleted: deleted });
     }

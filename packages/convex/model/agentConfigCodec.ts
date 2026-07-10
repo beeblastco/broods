@@ -178,6 +178,8 @@ function substitutePlaceholders<T>(
     if (isPlainObject(config)) {
         const result: Record<string, unknown> = {};
         for (const [key, value] of Object.entries(config)) {
+            // Same prototype-pollution guard as the config merge helpers.
+            if (key === "__proto__" || key === "constructor" || key === "prototype") continue;
             result[key] = substitutePlaceholders(value, variables, pattern);
         }
         return result as unknown as T;
@@ -203,9 +205,13 @@ export function collectEnvPlaceholderNames(value: unknown, names = new Set<strin
     return names;
 }
 
-/** True when a string contains a valid account env-var placeholder reference. */
-export function containsEnvPlaceholder(value: string): boolean {
-    return ACCOUNT_ENV_PLACEHOLDER_PATTERN.test(value);
+/**
+ * True when a string consists ONLY of `${NAME}` placeholder tokens. Anchored
+ * on purpose: a value mixing literal content with a placeholder (e.g.
+ * `sk_live_abc${FOO}`) still carries secret material and must stay redacted.
+ */
+export function isEntirelyEnvPlaceholders(value: string): boolean {
+    return /^(\$\{[A-Z][A-Z0-9_]*\})+$/.test(value);
 }
 
 /**

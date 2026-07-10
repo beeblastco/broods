@@ -118,8 +118,12 @@ async function loadValuesForAccount(
             { ciphertext: row.ciphertext, iv: row.iv, tag: row.tag },
             secret,
         );
-        const value = decrypted?.value;
-        values[row.name] = typeof value === "string" ? value : "";
+        // Fail loudly: silently resolving to "" would bake an empty secret
+        // into an agent's live config instead of surfacing the corruption.
+        if (typeof decrypted?.value !== "string") {
+            throw new Error(`Failed to decrypt account env var "${row.name}"`);
+        }
+        values[row.name] = decrypted.value;
     }
 
     return values;

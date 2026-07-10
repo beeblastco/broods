@@ -6,7 +6,7 @@
  */
 
 import { isPlainObject } from "./objects";
-import { containsEnvPlaceholder } from "./agentConfigCodec";
+import { isEntirelyEnvPlaceholders } from "./agentConfigCodec";
 
 export const REDACTED_SECRET_VALUE = "********";
 
@@ -78,7 +78,7 @@ function redactSecrets(value: unknown): unknown {
     return Object.fromEntries(
         Object.entries(value).map(([key, entry]) => [
             key,
-            isSecretConfigKey(key) && typeof entry === "string" && !containsEnvPlaceholder(entry)
+            isSecretConfigKey(key) && typeof entry === "string" && !isEntirelyEnvPlaceholders(entry)
                 ? REDACTED_SECRET_VALUE
                 : redactSecrets(entry),
         ]),
