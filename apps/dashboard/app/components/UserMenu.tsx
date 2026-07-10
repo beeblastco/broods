@@ -131,7 +131,7 @@ export function UserMenu() {
         <DropdownMenuSeparator />
         <DropdownMenuItem className="cursor-pointer" asChild>
           <a
-            href="https://docs.beeblast.co/"
+            href="https://docs.broods.app/"
             target="_blank"
             rel="noopener noreferrer"
           >

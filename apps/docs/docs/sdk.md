@@ -224,6 +224,70 @@ await client.updateCron(cron.cronId, { status: "paused" });
 await client.deleteCron(cron.cronId);
 ```
 
+## Account Config Client (dynamic configuration)
+
+`broods dev` and `broods deploy` sync **predefined configs**: the resources you
+declare in your `broods/` folder are versioned with your code and pushed as a
+unit. If you instead need **dynamic config at runtime** — creating or mutating config
+while your app runs, e.g. provisioning one agent per customer in a multi-tenant
+product — use `BroodsAccountClient` from the separate `broods/account` entry
+point with your **account secret** (not the runtime API key). It is the complete
+typed client for the account config plane: agents, sandboxes (config +
+suspend/resume/terminate/snapshot/terminal), workspaces (config + file
+upload/rename/delete/download), tools, policies, skills, crons (+ run history),
+and the account itself (metadata, secret rotation, deletion).
+
+The entry point is dependency-free and built on plain `fetch`, so it works in
+edge runtimes (Convex actions, Cloudflare Workers) where the main `broods`
+entry cannot load — the main entry reads `.env` files from disk.
+
+```ts
+import { BroodsAccountClient } from "broods/account";
+
+// baseUrl defaults to https://gateway.broods.app (override with BROODS_BASE_URL
+// or the option); the secret falls back to BROODS_ACCOUNT_SECRET.
+const account = new BroodsAccountClient({
+  accountSecret: process.env.BROODS_ACCOUNT_SECRET,
+});
+
+// Upsert flow: get/update return null on 404, so no try/catch needed.
+const existing = await account.getAgent(savedAgentId);
+const agent = existing
+  ? await account.updateAgent(savedAgentId, { config })
+  : await account.createAgent({ name: `tenant-agent-${customerId}`, config });
+
+// Crons (with run history), workspaces, and files use the same client.
+await account.createCron({
+  name: "daily-digest",
+  agentId: agent.agentId,
+  input: "Summarize yesterday's conversations.",
+  scheduleExpression: "cron(0 8 * * ? *)",
+});
+const files = await account.listWorkspaceFiles(workspaceId);
+await account.uploadWorkspaceFile(workspaceId, { path: "memory/seed.md", contentBase64: "IyBTZWVk" });
+const runs = await account.listCronRuns(cronId, { limit: 20 });
+
+// Sandboxes, tools, policies, and skills round out the config plane.
+const sandbox = await account.createSandbox({
+  name: "reserved",
+  config: { provider: "lambda", persistent: true, permissionMode: "ask" },
+});
+await account.suspendSandbox(sandbox.sandboxId, reservationKey); // + resume/terminate/snapshot/terminal
+await account.createSkill({ source: "json", name: "triage", description: "Triage flow", content: "# Triage" });
+
+// Account self-management: metadata, one-time secret rotation, deletion.
+const { secret } = await account.rotateSecret();
+
+// Channel webhook URLs are per account + agent.
+const { accountId } = await account.getAccount();
+const url = account.webhookUrl(accountId, agent.agentId, "slack");
+```
+
+`PATCH` semantics: `config` deep-merges into the stored config and `null`
+values delete keys. Secrets inside configs are encrypted at rest and come back
+redacted (`********`) on reads. Errors other than 404 throw
+`BroodsAccountApiError` with the HTTP status code.
+
 ## Python (Coming Soon)
 
 A Python SDK is on the roadmap. Until then, use the HTTP endpoints directly:

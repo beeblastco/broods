@@ -2,7 +2,7 @@
 
 /** Protected layout that redirects unauthenticated users to /login. */
 import { Header } from "@/app/components/Header";
-import { OnboardingSecretBanner } from "@/app/components/OnboardingSecretBanner";
+import { OnboardingDialog } from "@/app/components/OnboardingDialog";
 import {
     clearOnboardingSecret,
     readOnboardingSecret,
@@ -27,8 +27,8 @@ export default function MainLayout({
     const profileSynced = useRef(false);
     const [onboardingSecret, setOnboardingSecret] = useState<string | null>(null);
 
-    // Surface the one-time account secret produced by first-login auto-provision,
-    // even after the home route redirects to a project.
+    // Surface the one-time account secret produced by first-login auto-provision
+    // in the onboarding dialog, even after the home route navigates away.
     useEffect(() => {
         const sync = () => setOnboardingSecret(readOnboardingSecret());
         sync();
@@ -69,9 +69,12 @@ export default function MainLayout({
         <div className="flex h-screen w-screen flex-col bg-background">
             <Header />
             {onboardingSecret && (
-                <OnboardingSecretBanner
+                <OnboardingDialog
                     secret={onboardingSecret}
-                    onDismiss={clearOnboardingSecret}
+                    onDone={() => {
+                        clearOnboardingSecret();
+                        router.push("/projects");
+                    }}
                 />
             )}
             <div className="flex-1 overflow-hidden">{children}</div>

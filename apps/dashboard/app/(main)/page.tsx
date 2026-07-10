@@ -28,13 +28,18 @@ export default function HomePage() {
                 const orgId = await getOrCreateOrg({});
 
                 // On first login (brand-new org with no backend account), auto-provision
-                // and surface the one-time secret in a dismissible banner. `provision`
-                // throws if an account already exists, which we treat as already-provisioned.
+                // and hand the one-time secret to the onboarding dialog, then land on the
+                // (empty) projects page — onboarding ends with `bunx broods dev`, which
+                // creates the first project. `provision` throws if an account already
+                // exists, which we treat as already-provisioned.
                 const account = await convex.query(api.org.getActiveAccount, {});
                 if (account === null) {
                     try {
                         const result = await provision({ orgId: orgId });
                         publishOnboardingSecret(result.secret);
+                        router.replace("/projects");
+
+                        return;
                     } catch (provisionErr) {
                         console.warn("Auto-provision skipped:", provisionErr);
                     }
