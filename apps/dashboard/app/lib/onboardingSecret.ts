@@ -1,15 +1,16 @@
 /**
  * Cross-route handoff for a freshly-provisioned one-time account secret. The
- * publisher (home bootstrap or org switcher) stores the plaintext briefly so a
- * banner rendered in the persistent main layout can surface it after the
- * publishing route navigates away. The secret is cleared once dismissed.
+ * publisher (home bootstrap or org switcher) stores the plaintext briefly so
+ * the onboarding dialog rendered in the persistent main layout can surface it
+ * after the publishing route navigates away. The secret is cleared once the
+ * flow completes.
  */
 
 const STORAGE_KEY = "fp:onboarding-secret";
 const EVENT_NAME = "fp:onboarding-secret";
 
 /**
- * Publishes a one-time secret so the onboarding banner can show it on the next
+ * Publishes a one-time secret so the onboarding dialog can show it on the next
  * (or current) route, then notifies any mounted listener.
  * @param secret the plaintext fp_acct_ secret to surface once
  */

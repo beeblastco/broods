@@ -9,6 +9,7 @@ export * from "./stream.ts";
 export * from "./websocket-contracts.ts";
 export * from "./observability-contracts.ts";
 export * from "./client.ts";
+export * from "./account.ts";
 export * from "./websocket.ts";
 export * from "./contracts.ts";
 export * from "./resources.ts";

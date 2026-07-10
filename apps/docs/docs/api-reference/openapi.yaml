@@ -41,6 +41,8 @@ tags:
     description: Account-owned workspace configs.
   - name: Tools
     description: Account-uploaded custom tool bundles.
+  - name: Policies
+    description: Account-owned reusable runtime authorization policies.
 
 paths:
   /:
@@ -1832,6 +1834,39 @@ paths:
         '200':
           description: Cron job deleted
 
+  /v1/crons/{cronId}/runs:
+    get:
+      tags:
+        - Cron Jobs
+      summary: List cron run history
+      description: Run history for a cron job, newest first. Returns an empty list when the cron job does not exist.
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: cronId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: limit
+          in: query
+          required: false
+          description: Maximum number of runs to return.
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Cron run history
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  runs:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/CronRun'
+
 components:
   securitySchemes:
     BearerAuth:
@@ -2322,6 +2357,32 @@ components:
           type: string
           enum: [started, completed, failed]
         lastError:
+          type: string
+
+    CronRun:
+      type: object
+      description: One recorded execution of a cron job.
+      properties:
+        accountId:
+          type: string
+        cronId:
+          type: string
+        runId:
+          type: string
+        eventId:
+          type: string
+        conversationKey:
+          type: string
+        status:
+          type: string
+          enum: [started, completed, failed]
+        result:
+          description: Agent run result payload, present on completed runs.
+        error:
+          type: string
+        startedAt:
+          type: string
+        completedAt:
           type: string
 
     CronCreate:
@@ -2867,6 +2928,10 @@ components:
         bundle:
           type: string
           description: Already-bundled JavaScript module source.
+        runtime:
+          type: string
+          enum: [isolate, sandbox]
+          description: Execution tier. Inferred from the bundle on create when omitted.
         defaultConfig:
           type: object
           description: Non-secret default runtime config.
@@ -2882,6 +2947,9 @@ components:
           type: object
         bundle:
           type: string
+        runtime:
+          type: string
+          enum: [isolate, sandbox]
         defaultConfig:
           type: object
 
@@ -2901,6 +2969,9 @@ components:
           type: object
         sha256:
           type: string
+        runtime:
+          type: string
+          enum: [isolate, sandbox]
         defaultConfig:
           type: object
         status:

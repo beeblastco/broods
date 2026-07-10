@@ -1,6 +1,6 @@
 {
   "name": "broods",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "description": "CLI + TypeScript SDK for the broods agent platform.",
   "type": "module",
   "license": "MIT",
@@ -27,6 +27,10 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./account": {
+      "types": "./dist/account.d.ts",
+      "import": "./dist/account.js"
     }
   },
   "main": "./dist/index.js",
