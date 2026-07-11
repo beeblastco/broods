@@ -81,6 +81,8 @@ export const handle = httpAction(async (ctx, req) => {
                 return await handlePolicyConfigRoute(ctx, req, account._id, actor, route.policyId);
             case "agents":
                 return await handleAgentConfigRoute(ctx, req, account._id, actor, route.agentId);
+            case "agentChannelDirectory":
+                return await handleAgentChannelDirectoryRoute(ctx, req, account._id, route.agentId, route.channelType);
             case "env":
                 return await handleAccountEnvVarRoute(ctx, req, account._id, actor, route.name);
         }
@@ -580,6 +582,7 @@ type ConfigRoute =
     | { kind: "sandboxes"; sandboxId?: string }
     | { kind: "policies"; policyId?: string }
     | { kind: "agents"; agentId?: string }
+    | { kind: "agentChannelDirectory"; agentId: string; channelType: string }
     | { kind: "env"; name?: string };
 
 /**
@@ -611,6 +614,15 @@ function parseRoute(pathname: string): ConfigRoute | null {
 
     const policies = pathname.match(/^\/v1\/policies(?:\/([^/]+))?$/);
     if (policies) return { kind: "policies", ...(policies[1] ? { policyId: decodeURIComponent(policies[1]) } : {}) };
+
+    const channelDirectory = pathname.match(/^\/v1\/agents\/([^/]+)\/channels\/([^/]+)\/directory$/);
+    if (channelDirectory?.[1] && channelDirectory[2]) {
+        return {
+            kind: "agentChannelDirectory",
+            agentId: decodeURIComponent(channelDirectory[1]),
+            channelType: decodeURIComponent(channelDirectory[2]),
+        };
+    }
 
     const agents = pathname.match(/^\/v1\/agents(?:\/([^/]+))?$/);
     if (agents) return { kind: "agents", ...(agents[1] ? { agentId: decodeURIComponent(agents[1]) } : {}) };
@@ -772,6 +784,99 @@ async function handleAgentConfigRoute(
     }
 
     return methodNotAllowed(["GET", "PATCH", "DELETE"]);
+}
+
+/**
+ * Live channel directory for an agent's configured messaging channel. The
+ * decrypted stored credential is used server-side to enumerate the workspace's
+ * channels and is never included in the response — callers only get channel
+ * ids/names, so dashboards can offer a pick-a-channel UX without asking users
+ * to re-paste tokens. Slack only for now.
+ */
+async function handleAgentChannelDirectoryRoute(
+    ctx: ActionCtx,
+    req: Request,
+    accountId: Id<"accounts">,
+    agentId: string,
+    channelType: string,
+): Promise<Response> {
+    if (req.method !== "GET") return methodNotAllowed(["GET"]);
+    const record: Doc<"agents"> | null = await ctx.runQuery(internal.agents.getById, {
+        accountId: accountId,
+        agentId: agentId,
+    });
+    if (!record) return json({ error: "Agent not found" }, 404);
+    if (channelType !== "slack") {
+        return json({ error: `Channel directory is not supported for ${channelType}`, reason: "unsupported_channel_type" }, 400);
+    }
+    // The resolved config (env placeholders substituted), not the public-read
+    // source config — this is the same view the runtime uses to post messages.
+    const config = await decryptAgentConfig(record);
+    const channels = isPlainObject(config.channels) ? config.channels : undefined;
+    const slack = channels && isPlainObject(channels.slack) ? channels.slack : undefined;
+    const botToken = typeof slack?.botToken === "string" ? slack.botToken.trim() : "";
+    if (!botToken) {
+        return json({ error: "config.channels.slack.botToken is not configured", reason: "not_configured" }, 409);
+    }
+
+    return await fetchSlackChannelDirectory(botToken);
+}
+
+type SlackDirectoryEntry = { id: string; name: string; isPrivate: boolean; isMember: boolean };
+
+/**
+ * Paginate Slack conversations.list (Tier 2, ~20 req/min) into a directory
+ * response. `truncated` is true when the defensive page cap was hit while
+ * Slack still reported another cursor.
+ */
+async function fetchSlackChannelDirectory(botToken: string): Promise<Response> {
+    const channels: SlackDirectoryEntry[] = [];
+    let cursor: string | undefined;
+    for (let page = 0; page < 10; page++) {
+        const url = new URL("https://slack.com/api/conversations.list");
+        url.searchParams.set("types", "public_channel,private_channel");
+        url.searchParams.set("exclude_archived", "true");
+        url.searchParams.set("limit", "200");
+        if (cursor) url.searchParams.set("cursor", cursor);
+        const response = await fetch(url.toString(), { headers: { Authorization: `Bearer ${botToken}` } });
+        if (response.status === 429) {
+            return json({ error: "Slack rate limit hit; retry shortly", reason: "ratelimited" }, 429);
+        }
+        let data: Record<string, unknown>;
+        try {
+            const parsed: unknown = await response.json();
+            data = isPlainObject(parsed) ? parsed : {};
+        } catch {
+            data = {};
+        }
+        if (data.ok !== true) {
+            const error = typeof data.error === "string" ? data.error : "unknown_error";
+            if (error === "missing_scope") {
+                return json({ error: "The Slack app is missing the channels:read scope", reason: "missing_scope" }, 502);
+            }
+            if (error === "invalid_auth" || error === "not_authed" || error === "account_inactive" || error === "token_revoked") {
+                return json({ error: "Slack rejected the stored bot token", reason: "invalid_auth" }, 502);
+            }
+
+            return json({ error: `Slack error: ${error}`, reason: "slack_error" }, 502);
+        }
+        const pageChannels = Array.isArray(data.channels) ? data.channels : [];
+        for (const entry of pageChannels) {
+            if (!isPlainObject(entry) || typeof entry.id !== "string" || typeof entry.name !== "string") continue;
+            channels.push({
+                id: entry.id,
+                name: entry.name,
+                isPrivate: entry.is_private === true,
+                isMember: entry.is_member === true,
+            });
+        }
+        const metadata = isPlainObject(data.response_metadata) ? data.response_metadata : undefined;
+        cursor = typeof metadata?.next_cursor === "string" && metadata.next_cursor.length > 0 ? metadata.next_cursor : undefined;
+        if (!cursor) break;
+    }
+    channels.sort((a, b) => a.name.localeCompare(b.name));
+
+    return json({ channels: channels, truncated: cursor !== undefined });
 }
 
 /** Account-level environment variable CRUD; values remain write-only. */

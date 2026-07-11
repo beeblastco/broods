@@ -22,6 +22,8 @@ export function isConfigHttpPath(pathname: string, method = "GET"): boolean {
     return upperMethod === "GET" || upperMethod === "POST";
   if (/^\/v1\/agents\/[^/]+$/.test(pathname))
     return ["GET", "PATCH", "DELETE"].includes(upperMethod);
+  if (/^\/v1\/agents\/[^/]+\/channels\/[^/]+\/directory$/.test(pathname))
+    return upperMethod === "GET";
   if (pathname === "/v1/env") return upperMethod === "GET";
   if (/^\/v1\/env\/[^/]+$/.test(pathname))
     return upperMethod === "PUT" || upperMethod === "DELETE";
