@@ -69,6 +69,7 @@ describe("sandbox config", () => {
 describe("sandbox config defaults & validation", () => {
   it("defaults to sandbox + ask when config is empty or null", () => {
     expect(normalizeSandboxConfig(undefined)).toEqual({ provider: "sandbox", permissionMode: "ask", network: { mode: "deny-all" } });
+    expect(normalizeSandboxConfig(null)).toEqual({ provider: "sandbox", permissionMode: "ask", network: { mode: "deny-all" } });
     expect(normalizeSandboxConfig({})).toEqual({ provider: "sandbox", permissionMode: "ask", network: { mode: "deny-all" } });
   });
 

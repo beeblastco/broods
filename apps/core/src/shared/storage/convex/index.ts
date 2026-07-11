@@ -484,7 +484,7 @@ function sandboxConfigFromConvex(doc: ConvexSandboxConfigDoc | null): SandboxCon
         iv: doc.encryptionIv,
         tag: doc.encryptionTag,
       }) as unknown as SandboxConfig)
-    : ({ provider: "sandbox", permissionMode: "ask" } as SandboxConfig);
+    : ({ provider: "sandbox", permissionMode: "ask", network: { mode: "deny-all" } } as SandboxConfig);
   return {
     accountId: doc.accountId,
     sandboxId: doc._id,
