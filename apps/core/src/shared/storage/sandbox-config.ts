@@ -17,8 +17,9 @@ import { isPlainObject, isStringRecord } from "../object.ts";
 import { mergeConfigObjects, redactConfigSecrets } from "./agent-config.ts";
 
 // "sandbox" is the self-hosted workdir (Firecracker) provider — the vanilla,
-// most-featured backend. `lambda` remains the default until the workdir/MicroVM
-// data planes are provisioned (see createSandboxExecutor).
+// most-featured backend and the default. Without config.options.workdirUrl/apiKey
+// it auto-wires to the platform workdir node (WORKDIR_URL/WORKDIR_API_KEY env),
+// billed to the platform (see workdirConnection in harness/sandbox).
 export type SandboxProvider = "sandbox" | "lambda" | "e2b" | "daytona" | "vercel";
 export type SandboxRuntimeName = "bash" | "python" | "node";
 export type SandboxPermissionMode = "edit" | "ask" | "bypass";
@@ -107,7 +108,7 @@ export interface UpdateSandboxConfigInput {
 
 export function normalizeSandboxConfig(value: unknown): SandboxConfig {
   if (value == null) {
-    return { provider: "lambda", permissionMode: "ask", network: { mode: "deny-all" } };
+    return { provider: "sandbox", permissionMode: "ask", network: { mode: "deny-all" } };
   }
   if (!isPlainObject(value)) {
     throw new Error("config must be an object");
@@ -123,7 +124,7 @@ export function normalizeSandboxConfig(value: unknown): SandboxConfig {
   assertOptionalBoolean(config.persistent, "config.persistent");
   const snapshot = optionalString(config.snapshot, "config.snapshot");
 
-  const provider = (config.provider as SandboxProvider | undefined) ?? "lambda";
+  const provider = (config.provider as SandboxProvider | undefined) ?? "sandbox";
   const network = normalizeNetwork(config.network);
   if (provider === "e2b" && network.mode !== "allow-all") {
     throw new Error("e2b cannot enforce egress restrictions; set config.network.mode to allow-all explicitly");

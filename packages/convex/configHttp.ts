@@ -1860,7 +1860,7 @@ async function encryptAgentConfig(config: AgentConfig): Promise<{ ciphertext: st
 
 async function decryptSandboxConfig(doc: Doc<"sandboxConfigs">): Promise<SandboxConfig> {
     if (!doc.encryptedConfig || !doc.encryptionIv || !doc.encryptionTag) {
-        return { provider: "lambda", permissionMode: "ask" };
+        return { provider: "sandbox", permissionMode: "ask" };
     }
     const decrypted = await decryptAgentConfigBlob({
         ciphertext: doc.encryptedConfig,
@@ -1868,7 +1868,7 @@ async function decryptSandboxConfig(doc: Doc<"sandboxConfigs">): Promise<Sandbox
         tag: doc.encryptionTag,
     }, configEncryptionSecret());
 
-    return decrypted ? decrypted as unknown as SandboxConfig : { provider: "lambda", permissionMode: "ask" };
+    return decrypted ? decrypted as unknown as SandboxConfig : { provider: "sandbox", permissionMode: "ask" };
 }
 
 async function encryptSandboxConfig(config: SandboxConfig): Promise<{ ciphertext: string; iv: string; tag: string }> {

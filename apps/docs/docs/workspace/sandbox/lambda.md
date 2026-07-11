@@ -1,6 +1,6 @@
 # Lambda (AWS Lambda MicroVM)
 
-The default sandbox provider. Each agent **session runs in one AWS Lambda MicroVM** — a
+The AWS Lambda MicroVM provider. Each agent **session runs in one AWS Lambda MicroVM** — a
 Firecracker-isolated, snapshot-resumable VM that boots the **lambda-sandbox image as a
 long-lived HTTP server**. Inside it are real `bash`, native `python3`, Node 22, `uv`, and
 `ripgrep` on PATH — no emulated shell, no WASM Python. The old four-function (mount × network)

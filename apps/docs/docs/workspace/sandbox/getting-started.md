@@ -20,7 +20,7 @@ import { defineSandbox, defineAgent, env } from "broods";
 export const sandbox = defineSandbox({
   name: "starter",
   config: {
-    provider: "sandbox",        // self-hosted workdir (the default-featured backend)
+    provider: "sandbox",        // self-hosted workdir (the default)
     network: { mode: "deny-all" },
     permissionMode: "bypass",
     timeout: 60,
