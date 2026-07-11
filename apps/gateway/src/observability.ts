@@ -51,6 +51,7 @@ const LOG_LEVEL_ORDER: Record<LogLevel, number> = {
 const LOKI_BACKFILL_WINDOW_MS = 90 * 24 * 60 * 60 * 1000;
 const OBS_REPLAY_WINDOW_MS = 30 * 60 * 1000;
 const TEMPO_DETAIL_CONCURRENCY = 6;
+export const OBS_SHED_BUFFERED_BYTES = 512 * 1024;
 const obsState = new WeakMap<
   Bun.ServerWebSocket<ObservabilityGatewayData>,
   ObservabilitySocketState
@@ -523,12 +524,6 @@ function cleanupObservabilityStream(
     state.tracesSub = null;
   }
 }
-
-// Slow consumers shed live volume instead of dying: when a socket's send buffer
-// backs up past this threshold, droppable frames (log/span) are skipped so the
-// connection stays under Bun's backpressure close limit. Gaps are recoverable
-// via backfill; control frames (ready/error/backfill) are never shed.
-export const OBS_SHED_BUFFERED_BYTES = 512 * 1024;
 
 function sendObs(
   socket: Bun.ServerWebSocket<ObservabilityGatewayData>,
