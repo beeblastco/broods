@@ -464,7 +464,7 @@ function supportsS3WorkspaceMount(sandbox: SandboxResource): boolean {
 }
 
 function sandboxProvider(sandbox: SandboxResource): string {
-  return typeof sandbox.config.provider === "string" ? sandbox.config.provider : "lambda";
+  return typeof sandbox.config.provider === "string" ? sandbox.config.provider : "sandbox";
 }
 
 function assertUniqueResources(resources: AnyResource[]): void {

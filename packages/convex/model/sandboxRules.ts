@@ -102,7 +102,7 @@ export function workspaceSandboxLimits(provider: SandboxProvider = "lambda"): Wo
  */
 export function normalizeSandboxConfig(value: unknown): SandboxConfig {
     if (value == null) {
-        return { provider: "lambda", permissionMode: "ask", network: { mode: "deny-all" } };
+        return { provider: "sandbox", permissionMode: "ask", network: { mode: "deny-all" } };
     }
     if (!isPlainObject(value)) {
         throw new Error("config must be an object");
@@ -118,7 +118,7 @@ export function normalizeSandboxConfig(value: unknown): SandboxConfig {
     assertOptionalBoolean(config.persistent, "config.persistent");
     const snapshot = optionalString(config.snapshot, "config.snapshot");
 
-    const provider = (config.provider as SandboxProvider | undefined) ?? "lambda";
+    const provider = (config.provider as SandboxProvider | undefined) ?? "sandbox";
     const network = normalizeNetwork(config.network);
     if (provider === "e2b" && network.mode !== "allow-all") {
         throw new Error("e2b cannot enforce egress restrictions; set config.network.mode to allow-all explicitly");

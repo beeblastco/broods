@@ -1072,7 +1072,7 @@ paths:
                 config:
                   type: object
                   properties:
-                    provider: { type: string, enum: [sandbox, lambda, e2b, daytona, vercel] }
+                    provider: { type: string, enum: [sandbox, lambda, e2b, daytona, vercel], default: sandbox, description: "Compute backend. Defaults to sandbox (the platform-hosted workdir backend — no baseUrl/apiKey needed; set options.workdirUrl + options.apiKey to target your own node)." }
                     network:
                       type: object
                       description: "Egress policy. Defaults to deny-all when omitted."

@@ -944,7 +944,7 @@ function supportsS3WorkspaceMount(sandbox: CliResource): boolean {
 
 function sandboxProvider(sandbox: CliResource): string {
     const provider = plainRecord(sandbox.config).provider;
-    return typeof provider === "string" ? provider : "lambda";
+    return typeof provider === "string" ? provider : "sandbox";
 }
 
 async function syncSandboxResources(

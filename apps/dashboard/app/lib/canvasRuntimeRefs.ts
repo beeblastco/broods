@@ -42,7 +42,7 @@ export function defaultRuntimeNodeData(type: string, label: string, id: string):
             label: label,
             status: "idle",
             resourceId: `sb_${id}`,
-            config: { provider: "lambda", permissionMode: "ask" },
+            config: { provider: "sandbox", permissionMode: "ask" },
         };
     }
 

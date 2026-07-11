@@ -21,7 +21,7 @@ const WORKSPACE_DEFAULT_CONFIG = {
 };
 
 const SANDBOX_DEFAULT_CONFIG = {
-    provider: "lambda",
+    provider: "sandbox",
     permissionMode: "ask",
 };
 
@@ -144,11 +144,11 @@ export function SandboxResourceDetailsTab({
                 <SectionHeader>Sandbox config</SectionHeader>
                 <SelectField
                     label="Provider"
-                    value={typeof config.provider === "string" ? config.provider : "lambda"}
+                    value={typeof config.provider === "string" ? config.provider : "sandbox"}
                     onValueChange={(provider) => setConfig({ provider: provider })}
                     options={[
-                        { value: "lambda", label: "AWS Lambda" },
                         { value: "sandbox", label: "Sandbox" },
+                        { value: "lambda", label: "AWS Lambda" },
                         { value: "e2b", label: "e2b" },
                         { value: "daytona", label: "Daytona" },
                     ]}
