@@ -57,7 +57,7 @@ Webhook handling is split deliberately:
 | `slack` | [`src/shared/slack-channel.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/src/shared/slack-channel.ts) | [`@chat-adapter/slack`](https://www.npmjs.com/package/@chat-adapter/slack) | `botToken`, `signingSecret` | [Slack Details](slack.md) |
 | `discord` | [`src/shared/discord-channel.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/src/shared/discord-channel.ts) | [`@chat-adapter/discord`](https://www.npmjs.com/package/@chat-adapter/discord) | `botToken`, `publicKey` | [Discord Details](discord.md) |
 | `pancake` | [`src/shared/pancake-channel.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/src/shared/pancake-channel.ts) | Broods-native | `pageId`, `pageAccessToken`, `webhookSecret` | [Pancake Details](pancake.md) |
-| `zalo` | [`src/shared/zalo-channel.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/src/shared/zalo-channel.ts) | Broods-native | `botToken`, `webhookSecret`, `allowedUserIds` | [Zalo Details](zalo.md) |
+| `zalo` | [`src/shared/zalo-channel.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/src/shared/zalo-channel.ts) | Broods-native | `botToken`, `webhookSecret` (+ optional `allowedUserIds`) | [Zalo Details](zalo.md) |
 
 ---
 

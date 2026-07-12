@@ -170,7 +170,7 @@ export interface PancakeChannelInput extends ChannelIdentityInput {
 export interface ZaloChannelInput extends ChannelIdentityInput {
   botToken: ChannelSecret;
   webhookSecret: ChannelSecret;
-  allowedUserIds: readonly (string | EnvRef)[];
+  allowedUserIds?: readonly (string | EnvRef)[];
 }
 
 export type TelegramChannelDefinition = ChannelDefinition<"telegram", TelegramChannelInput>;

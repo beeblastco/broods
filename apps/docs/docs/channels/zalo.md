@@ -16,7 +16,6 @@ import {
 export const zalo = defineZaloChannel({
   botToken: env.ZALO_BOT_TOKEN,
   webhookSecret: env.ZALO_WEBHOOK_SECRET,
-  allowedUserIds: ["123456789"],
 });
 
 export const myAgent = defineAgent({
@@ -29,7 +28,7 @@ export const myAgent = defineAgent({
 
 - `botToken` (Required): Bot token from Zalo Bot Platform.
 - `webhookSecret` (Required): Secret sent by Zalo in `X-Bot-Api-Secret-Token`. Must be 8 to 256 characters.
-- `allowedUserIds` (Required): Zalo user IDs allowed to trigger the agent.
+- `allowedUserIds` (Optional): Zalo user IDs allowed to trigger the agent. When omitted or empty, any user can send the agent a private text message.
 
 ## Webhook
 
@@ -50,7 +49,7 @@ curl "https://bot-api.zaloplatforms.com/bot<YOUR_ZALO_BOT_TOKEN>/setWebhook" \
 flowchart TD
   Zalo["Zalo Bot webhook"] --> Adapter["zalo-channel.ts"]
   Adapter --> Auth["Check X-Bot-Api-Secret-Token"]
-  Auth --> Allow["Check allowedUserIds"]
+  Auth --> Allow["Check allowedUserIds when configured"]
   Allow --> Agent["Run agent"]
   Agent --> Reply["sendMessage"]
   Reply --> Zalo
@@ -59,5 +58,5 @@ flowchart TD
 - Direct text messages are supported.
 - Outbound replies are split into 2000-character chunks for the Zalo Bot API text limit.
 - Typing indicators use `sendChatAction`.
-- Group messages, media, stickers, unsupported message types, bot-originated messages, and unknown senders are ignored.
+- Group messages, media, stickers, unsupported message types, and bot-originated messages are ignored. When `allowedUserIds` is configured, senders outside the list are also ignored.
 - Reactions are not supported by the official Zalo Bot API adapter.

@@ -62,6 +62,18 @@ describe("zalo channel adapter", () => {
     expect(parsed.message.content).toBe("wrapped");
   });
 
+  it("accepts any private sender when the allow list is omitted", async () => {
+    const adapter = createZaloChannel("bot-token", "zalo-secret");
+
+    expect((await adapter.parse(createZaloRequest(validUpdate({ senderId: "customer-1" })))).kind).toBe("message");
+  });
+
+  it("accepts any private sender when the allow list is empty", async () => {
+    const adapter = createZaloChannel("bot-token", "zalo-secret", new Set());
+
+    expect((await adapter.parse(createZaloRequest(validUpdate({ senderId: "customer-1" })))).kind).toBe("message");
+  });
+
   it("ignores unsupported events, groups, blank text, bot messages, and unknown senders", async () => {
     const adapter = createZaloChannel("bot-token", "zalo-secret", new Set(["user-1"]));
 
