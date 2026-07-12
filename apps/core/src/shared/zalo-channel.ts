@@ -57,7 +57,7 @@ export interface ZaloSource {
 export function createZaloChannel(
   botToken: string,
   webhookSecret: string,
-  allowedUserIds: Set<string>,
+  allowedUserIds?: ReadonlySet<string>,
 ): ChannelAdapter {
   return {
     name: "zalo",
@@ -86,7 +86,7 @@ export function createZaloChannel(
         return { kind: "ignore" };
       }
 
-      if (!allowedUserIds.has(senderId)) {
+      if (allowedUserIds?.size && !allowedUserIds.has(senderId)) {
         logWarn("Zalo sender not in allow list", { senderId });
         return { kind: "ignore" };
       }

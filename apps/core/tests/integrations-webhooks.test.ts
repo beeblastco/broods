@@ -262,6 +262,37 @@ describe("account webhook ingress", () => {
     });
   });
 
+  it("accepts Zalo webhook senders when allowedUserIds is omitted or empty", async () => {
+    const handledEvents: ChannelInboundEvent[] = [];
+    for (const allowedUserIds of [undefined, []]) {
+      const routeIncomingEvent = createIncomingEventRouter({
+        accountLoader: async () => TEST_ACCOUNT,
+        agentLoader: async () => ({
+          ...ZALO_AGENT,
+          config: {
+            channels: {
+              zalo: {
+                botToken: "zalo-token",
+                webhookSecret: "zalo-secret",
+                allowedUserIds,
+              },
+            },
+          },
+        }),
+      });
+
+      const response = await routeIncomingEvent(createZaloEvent(), createHandlers({
+        handleChannelRequest: async (event) => {
+          handledEvents.push(event);
+        },
+      }));
+
+      expect(response.statusCode).toBe(200);
+      await response.afterResponse;
+    }
+    expect(handledEvents).toHaveLength(2);
+  });
+
   it("returns 503 when Zalo is not configured", async () => {
     const routeIncomingEvent = createIncomingEventRouter({
       accountLoader: async () => TEST_ACCOUNT,

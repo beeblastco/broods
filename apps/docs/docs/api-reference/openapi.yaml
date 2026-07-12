@@ -3340,7 +3340,7 @@ components:
               type: array
               items:
                 type: string
-              description: Zalo user IDs allowed to trigger the agent.
+              description: Optional Zalo user IDs allowed to trigger the agent. When omitted or empty, any private sender is accepted.
             workspaceScope:
               type: object
               description: Hierarchical workspace isolation scope for workspaces with `isolation: true`.

@@ -1410,13 +1410,13 @@ function createPancakeChannelFromConfig(config: AgentConfig): ChannelAdapter | n
 
 function createZaloChannelFromConfig(config: AgentConfig): ChannelAdapter | null {
   const channel = config.channels?.zalo;
-  if (!channel?.botToken || !channel.webhookSecret || !channel.allowedUserIds) {
+  if (!channel?.botToken || !channel.webhookSecret) {
     return null;
   }
 
   return createZaloChannel(
     channel.botToken,
     channel.webhookSecret,
-    new Set(channel.allowedUserIds),
+    channel.allowedUserIds?.length ? new Set(channel.allowedUserIds) : undefined,
   );
 }
