@@ -49,6 +49,7 @@ import {
     type ConfigAuditResource,
 } from "./model/auditEvents";
 import { isPlainObject } from "./model/objects";
+import { fetchSlackChannelDirectory } from "./model/slackDirectory";
 
 export const handle = httpAction(async (ctx, req) => {
     try {
@@ -81,6 +82,8 @@ export const handle = httpAction(async (ctx, req) => {
                 return await handlePolicyConfigRoute(ctx, req, account._id, actor, route.policyId);
             case "agents":
                 return await handleAgentConfigRoute(ctx, req, account._id, actor, route.agentId);
+            case "agentChannelDirectory":
+                return await handleAgentChannelDirectoryRoute(ctx, req, account._id, route.agentId, route.channelType);
             case "env":
                 return await handleAccountEnvVarRoute(ctx, req, account._id, actor, route.name);
         }
@@ -580,6 +583,7 @@ type ConfigRoute =
     | { kind: "sandboxes"; sandboxId?: string }
     | { kind: "policies"; policyId?: string }
     | { kind: "agents"; agentId?: string }
+    | { kind: "agentChannelDirectory"; agentId: string; channelType: string }
     | { kind: "env"; name?: string };
 
 /**
@@ -611,6 +615,16 @@ function parseRoute(pathname: string): ConfigRoute | null {
 
     const policies = pathname.match(/^\/v1\/policies(?:\/([^/]+))?$/);
     if (policies) return { kind: "policies", ...(policies[1] ? { policyId: decodeURIComponent(policies[1]) } : {}) };
+
+    const channelDirectory = pathname.match(/^\/v1\/agents\/([^/]+)\/channels\/([^/]+)\/directory$/);
+    if (channelDirectory?.[1] && channelDirectory[2]) {
+
+        return {
+            kind: "agentChannelDirectory",
+            agentId: decodeURIComponent(channelDirectory[1]),
+            channelType: decodeURIComponent(channelDirectory[2]),
+        };
+    }
 
     const agents = pathname.match(/^\/v1\/agents(?:\/([^/]+))?$/);
     if (agents) return { kind: "agents", ...(agents[1] ? { agentId: decodeURIComponent(agents[1]) } : {}) };
@@ -772,6 +786,49 @@ async function handleAgentConfigRoute(
     }
 
     return methodNotAllowed(["GET", "PATCH", "DELETE"]);
+}
+
+/**
+ * Lists the live channel directory (id, name, privacy, bot membership) for an
+ * agent's configured messaging channel — Slack only for now. The decrypted
+ * stored credential is used server-side and never included in the response, so
+ * dashboards can offer a pick-a-channel UX without re-collecting tokens.
+ */
+async function handleAgentChannelDirectoryRoute(
+    ctx: ActionCtx,
+    req: Request,
+    accountId: Id<"accounts">,
+    agentId: string,
+    channelType: string,
+): Promise<Response> {
+    if (req.method !== "GET") return methodNotAllowed(["GET"]);
+    const record: Doc<"agents"> | null = await ctx.runQuery(internal.agents.getById, {
+        accountId: accountId,
+        agentId: agentId,
+    });
+    if (!record) return json({ error: "Agent not found" }, 404);
+    if (channelType !== "slack") {
+
+        return json({ error: `Channel directory is not supported for ${channelType}`, reason: "unsupported_channel_type" }, 400);
+    }
+    // The resolved config (env placeholders substituted), not the public-read
+    // source config — this is the same view the runtime uses to post messages.
+    const config = await decryptAgentConfig(record);
+    const channels = isPlainObject(config.channels) ? config.channels : undefined;
+    const slack = channels && isPlainObject(channels.slack) ? channels.slack : undefined;
+    const botToken = typeof slack?.botToken === "string" ? slack.botToken.trim() : "";
+    if (!botToken) {
+
+        return json({ error: "config.channels.slack.botToken is not configured", reason: "not_configured" }, 409);
+    }
+
+    const directory = await fetchSlackChannelDirectory(botToken);
+    if (!directory.ok) {
+
+        return json({ error: directory.error, reason: directory.reason }, directory.status);
+    }
+
+    return json({ channels: directory.channels, truncated: directory.truncated });
 }
 
 /** Account-level environment variable CRUD; values remain write-only. */
