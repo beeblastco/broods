@@ -20,18 +20,26 @@ export const SLACK_DIRECTORY_PAGE_CAP = 10;
 /** Upper bound for each Slack API call so a stalled request can't hang the action. */
 export const SLACK_DIRECTORY_TIMEOUT_MS = 15_000;
 
+/** End-to-end pagination budget so slow-but-responsive pages fail fast as a truncated result instead of hitting upstream action timeouts. */
+export const SLACK_DIRECTORY_TOTAL_BUDGET_MS = 45_000;
+
 /**
  * Paginate Slack conversations.list (Tier 2, ~20 req/min) into a directory
- * result. `truncated` is true when the page cap was hit while Slack still
- * reported another cursor; malformed entries are skipped rather than returned.
+ * result. `truncated` is true when the page cap or time budget was hit while
+ * Slack still reported another cursor; malformed entries are skipped rather
+ * than returned.
  */
 export async function fetchSlackChannelDirectory(
     botToken: string,
     fetchImpl: typeof fetch = fetch,
 ): Promise<SlackDirectoryResult> {
     const channels: SlackDirectoryEntry[] = [];
+    const deadline = Date.now() + SLACK_DIRECTORY_TOTAL_BUDGET_MS;
     let cursor: string | undefined;
     for (let page = 0; page < SLACK_DIRECTORY_PAGE_CAP; page++) {
+        // Later pages only run while the overall budget holds; what's already
+        // collected is returned as a truncated result below.
+        if (page > 0 && Date.now() >= deadline) break;
         const url = new URL("https://slack.com/api/conversations.list");
         url.searchParams.set("types", "public_channel,private_channel");
         url.searchParams.set("exclude_archived", "true");

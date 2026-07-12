@@ -4,6 +4,7 @@ import { describe, expect, it } from "bun:test";
 import {
     fetchSlackChannelDirectory,
     SLACK_DIRECTORY_PAGE_CAP,
+    SLACK_DIRECTORY_TOTAL_BUDGET_MS,
 } from "../model/slackDirectory";
 
 /** Builds a fetch stub that serves the given responses in order (repeating the last, rebuilt per call since bodies are single-use) and records each requested URL. */
@@ -84,6 +85,35 @@ describe("slack channel directory", () => {
         expect(urls).toHaveLength(SLACK_DIRECTORY_PAGE_CAP);
         expect(result.ok).toBe(true);
         if (result.ok) expect(result.truncated).toBe(true);
+    });
+
+    it("stops paginating when the total time budget is spent and reports truncation", async () => {
+        const realNow = Date.now;
+        let now = 1_000_000;
+        Date.now = () => now;
+        try {
+            const { impl, urls } = fetchStub([
+                () => {
+                    // Each page consumes over the whole budget, so page 2 never runs.
+                    now += SLACK_DIRECTORY_TOTAL_BUDGET_MS + 1;
+
+                    return slackJson({
+                        ok: true,
+                        channels: [{ id: "C1", name: "slow" }],
+                        response_metadata: { next_cursor: "more" },
+                    });
+                },
+            ]);
+            const result = await fetchSlackChannelDirectory("xoxb-test", impl);
+            expect(urls).toHaveLength(1);
+            expect(result.ok).toBe(true);
+            if (result.ok) {
+                expect(result.truncated).toBe(true);
+                expect(result.channels.map((c) => c.id)).toEqual(["C1"]);
+            }
+        } finally {
+            Date.now = realNow;
+        }
     });
 
     it("maps HTTP 429 to a ratelimited result", async () => {
