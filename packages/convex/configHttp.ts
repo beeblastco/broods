@@ -49,6 +49,7 @@ import {
     type ConfigAuditResource,
 } from "./model/auditEvents";
 import { isPlainObject } from "./model/objects";
+import { fetchSlackChannelDirectory } from "./model/slackDirectory";
 
 export const handle = httpAction(async (ctx, req) => {
     try {
@@ -821,83 +822,13 @@ async function handleAgentChannelDirectoryRoute(
         return json({ error: "config.channels.slack.botToken is not configured", reason: "not_configured" }, 409);
     }
 
-    return await fetchSlackChannelDirectory(botToken);
-}
+    const directory = await fetchSlackChannelDirectory(botToken);
+    if (!directory.ok) {
 
-/** One channel row in the directory response: Slack channel id/name plus privacy and bot-membership flags. */
-type SlackDirectoryEntry = { id: string; name: string; isPrivate: boolean; isMember: boolean };
-
-/** Upper bound for each Slack API call so a stalled request can't hang the action. */
-const SLACK_DIRECTORY_TIMEOUT_MS = 15_000;
-
-/**
- * Paginate Slack conversations.list (Tier 2, ~20 req/min) into a directory
- * response. `truncated` is true when the defensive page cap was hit while
- * Slack still reported another cursor.
- */
-async function fetchSlackChannelDirectory(botToken: string): Promise<Response> {
-    const channels: SlackDirectoryEntry[] = [];
-    let cursor: string | undefined;
-    for (let page = 0; page < 10; page++) {
-        const url = new URL("https://slack.com/api/conversations.list");
-        url.searchParams.set("types", "public_channel,private_channel");
-        url.searchParams.set("exclude_archived", "true");
-        url.searchParams.set("limit", "200");
-        if (cursor) url.searchParams.set("cursor", cursor);
-        let response: Response;
-        try {
-            response = await fetch(url.toString(), {
-                headers: { Authorization: `Bearer ${botToken}` },
-                // Guarded: AbortSignal.timeout may not exist in every runtime.
-                ...(typeof AbortSignal !== "undefined" && typeof AbortSignal.timeout === "function"
-                    ? { signal: AbortSignal.timeout(SLACK_DIRECTORY_TIMEOUT_MS) }
-                    : {}),
-            });
-        } catch {
-
-            return json({ error: "Slack did not respond in time", reason: "slack_error" }, 502);
-        }
-        if (response.status === 429) {
-
-            return json({ error: "Slack rate limit hit; retry shortly", reason: "ratelimited" }, 429);
-        }
-        let data: Record<string, unknown>;
-        try {
-            const parsed: unknown = await response.json();
-            data = isPlainObject(parsed) ? parsed : {};
-        } catch {
-            data = {};
-        }
-        if (data.ok !== true) {
-            const error = typeof data.error === "string" ? data.error : "unknown_error";
-            if (error === "missing_scope") {
-
-                return json({ error: "The Slack app is missing a scope required to list public/private channels", reason: "missing_scope" }, 502);
-            }
-            if (error === "invalid_auth" || error === "not_authed" || error === "account_inactive" || error === "token_revoked") {
-
-                return json({ error: "Slack rejected the stored bot token", reason: "invalid_auth" }, 502);
-            }
-
-            return json({ error: `Slack error: ${error}`, reason: "slack_error" }, 502);
-        }
-        const pageChannels = Array.isArray(data.channels) ? data.channels : [];
-        for (const entry of pageChannels) {
-            if (!isPlainObject(entry) || typeof entry.id !== "string" || typeof entry.name !== "string") continue;
-            channels.push({
-                id: entry.id,
-                name: entry.name,
-                isPrivate: entry.is_private === true,
-                isMember: entry.is_member === true,
-            });
-        }
-        const metadata = isPlainObject(data.response_metadata) ? data.response_metadata : undefined;
-        cursor = typeof metadata?.next_cursor === "string" && metadata.next_cursor.length > 0 ? metadata.next_cursor : undefined;
-        if (!cursor) break;
+        return json({ error: directory.error, reason: directory.reason }, directory.status);
     }
-    channels.sort((a, b) => a.name.localeCompare(b.name));
 
-    return json({ channels: channels, truncated: cursor !== undefined });
+    return json({ channels: directory.channels, truncated: directory.truncated });
 }
 
 /** Account-level environment variable CRUD; values remain write-only. */
