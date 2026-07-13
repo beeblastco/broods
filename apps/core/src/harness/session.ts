@@ -165,11 +165,19 @@ export class Session {
   ) { }
 
   async claim(): Promise<boolean> {
-    return runtimeMutation("claimEvent", { key: this.eventId, ttlSeconds: 86400 });
+    if (!this.accountId) {
+      throw new Error("Account ID is required for runtime claims");
+    }
+
+    return runtimeMutation("claimEvent", { accountId: this.accountId, key: this.eventId, ttlSeconds: 86400 });
   }
 
   async release(): Promise<void> {
-    await runtimeMutation("releaseClaim", { key: this.eventId });
+    if (!this.accountId) {
+      throw new Error("Account ID is required for runtime claims");
+    }
+
+    await runtimeMutation("releaseClaim", { accountId: this.accountId, key: this.eventId });
   }
 
   async acquireConversationLease(): Promise<boolean> {
@@ -182,9 +190,8 @@ export class Session {
 
   /**
    * Buffer ingress events for a conversation whose turn is already in progress so
-   * the lease holder can answer them after its current reply, instead of dropping
-   * them. Stored as a JSON-encoded list under a per-conversation key; the atomic
-   * `list_append` lets concurrent webhooks queue without clobbering each other.
+   * the lease holder can answer them after its current reply. The Convex mutation
+   * appends concurrent ingress transactionally without clobbering queued events.
    */
   async enqueuePendingIngress(events: ConversationIngressEvent[]): Promise<void> {
     if (events.length === 0) {
@@ -195,9 +202,8 @@ export class Session {
 
   /**
    * Atomically remove and return every buffered ingress event for this
-   * conversation. The delete-with-ALL_OLD is a single op, so a webhook enqueuing
-   * concurrently either lands in this batch or in the next item (picked up on the
-   * next drain) — nothing is lost or double-read.
+   * conversation. A concurrent enqueue either lands in this transaction's batch
+   * or remains queued for the next drain, so nothing is lost or double-read.
    */
   async takePendingIngress(): Promise<ConversationIngressEvent[]> {
     return runtimeMutation("takeIngress", { key: this.pendingIngressKey() });

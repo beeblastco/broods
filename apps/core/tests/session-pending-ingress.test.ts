@@ -34,6 +34,25 @@ afterEach(() => {
 });
 
 describe("Session pending ingress queue", () => {
+  it("passes the owning account to claim and release mutations", async () => {
+    mutationMock.mockResolvedValueOnce(true as never);
+    const session = newSession();
+
+    await expect(session.claim()).resolves.toBe(true);
+    await session.release();
+    expect(mutationMock.mock.calls).toEqual([
+      ["claimEvent", {
+        accountId: "acct",
+        key: "acct:acct:event-1",
+        ttlSeconds: 86400,
+      }],
+      ["releaseClaim", {
+        accountId: "acct",
+        key: "acct:acct:event-1",
+      }],
+    ]);
+  });
+
   it("enqueues structured events under the per-conversation pending key", async () => {
     const message: UserModelMessage = { role: "user", content: "second message" };
     await newSession().enqueuePendingIngress([message]);

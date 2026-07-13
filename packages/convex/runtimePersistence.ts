@@ -29,6 +29,25 @@ function accountIdFromKey(value: string): string {
 }
 
 /**
+ * Normalizes a claim key into its owning account namespace.
+ * @param accountId owning account ID
+ * @param key scoped or integration-provided claim key
+ * @returns account-scoped claim key
+ * @throws when an already-scoped key belongs to another account
+ */
+function claimKeyForAccount(accountId: string, key: string): string {
+  if (!key.startsWith("acct:")) {
+
+    return `acct:${accountId}:claim:${key}`;
+  }
+  if (accountIdFromKey(key) !== accountId) {
+    throw new Error("Runtime claim key does not belong to accountId");
+  }
+
+  return key;
+}
+
+/**
  * Requires an account to exist and remain active in the runtime-write transaction.
  * @param ctx Convex mutation context
  * @param accountId account ID embedded in the runtime row or key
@@ -95,17 +114,22 @@ const toolGroupDoc = v.object({
  * @returns whether this invocation acquired the claim
  */
 export const claimEvent = internalMutation({
-  args: { key: v.string(), ttlSeconds: v.number() },
+  args: {
+    accountId: v.id("accounts"),
+    key: v.string(),
+    ttlSeconds: v.number(),
+  },
   returns: v.boolean(),
   handler: async (ctx, args) => {
-    const accountId = args.key.startsWith("acct:")
-      ? accountIdFromKey(args.key)
-      : undefined;
-    if (accountId) await requireActiveAccount(ctx, accountId);
+    await requireActiveAccount(ctx, args.accountId);
+    const key = claimKeyForAccount(args.accountId, args.key);
     const existing = await ctx.db
       .query("runtimeClaims")
-      .withIndex("by_key", (q) => q.eq("key", args.key))
+      .withIndex("by_key", (q) => q.eq("key", key))
       .unique();
+    if (existing && existing.accountId !== args.accountId) {
+      throw new Error("Runtime claim does not belong to accountId");
+    }
     const now = Math.floor(Date.now() / 1000);
     if (existing && existing.expiresAt >= now) {
 
@@ -113,8 +137,8 @@ export const claimEvent = internalMutation({
     }
     if (existing) await ctx.db.delete(existing._id);
     await ctx.db.insert("runtimeClaims", {
-      accountId: accountId,
-      key: args.key,
+      accountId: args.accountId,
+      key: key,
       kind: "event",
       expiresAt: now + args.ttlSeconds,
     });
@@ -128,17 +152,18 @@ export const claimEvent = internalMutation({
  * @returns null after the release attempt
  */
 export const releaseClaim = internalMutation({
-  args: { key: v.string() },
+  args: { accountId: v.id("accounts"), key: v.string() },
   returns: v.null(),
   handler: async (ctx, args) => {
+    await requireActiveAccount(ctx, args.accountId);
+    const key = claimKeyForAccount(args.accountId, args.key);
     const row = await ctx.db
       .query("runtimeClaims")
-      .withIndex("by_key", (q) => q.eq("key", args.key))
+      .withIndex("by_key", (q) => q.eq("key", key))
       .unique();
-    const accountId = args.key.startsWith("acct:")
-      ? accountIdFromKey(args.key)
-      : row?.accountId;
-    if (accountId) await requireActiveAccount(ctx, accountId);
+    if (row && row.accountId !== args.accountId) {
+      throw new Error("Runtime claim does not belong to accountId");
+    }
     if (row?.kind === "event") await ctx.db.delete(row._id);
 
     return null;

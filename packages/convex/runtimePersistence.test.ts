@@ -39,12 +39,14 @@ describe("runtime persistence", () => {
     const conversationKey = conversationKeyFor(accountId);
     expect(
       await t.mutation(internal.runtimePersistence.claimEvent, {
+        accountId,
         key: `acct:${accountId}:event`,
         ttlSeconds: 60,
       }),
     ).toBe(true);
     expect(
       await t.mutation(internal.runtimePersistence.claimEvent, {
+        accountId,
         key: `acct:${accountId}:event`,
         ttlSeconds: 60,
       }),
@@ -376,11 +378,19 @@ describe("runtime persistence", () => {
     const accountId = await createActiveAccount(t);
     const conversationKey = conversationKeyFor(accountId);
     const eventKey = `acct:${accountId}:event:existing`;
+    const rawEventKey = "gh:delivery-existing";
+    const storedRawEventKey = `acct:${accountId}:claim:${rawEventKey}`;
     const parentEventId = `acct:${accountId}:parent`;
     const reservationKey = `acct:${accountId}:workspace:one`;
 
     await t.mutation(internal.runtimePersistence.claimEvent, {
+      accountId: accountId,
       key: eventKey,
+      ttlSeconds: 60,
+    });
+    await t.mutation(internal.runtimePersistence.claimEvent, {
+      accountId: accountId,
+      key: rawEventKey,
       ttlSeconds: 60,
     });
     await t.mutation(internal.runtimePersistence.acquireLease, {
@@ -430,11 +440,26 @@ describe("runtime persistence", () => {
     const blockedWrites = [
       () =>
         t.mutation(internal.runtimePersistence.claimEvent, {
+          accountId: accountId,
           key: `acct:${accountId}:event:new`,
           ttlSeconds: 60,
         }),
       () =>
-        t.mutation(internal.runtimePersistence.releaseClaim, { key: eventKey }),
+        t.mutation(internal.runtimePersistence.claimEvent, {
+          accountId: accountId,
+          key: "zalo:event:new",
+          ttlSeconds: 60,
+        }),
+      () =>
+        t.mutation(internal.runtimePersistence.releaseClaim, {
+          accountId: accountId,
+          key: eventKey,
+        }),
+      () =>
+        t.mutation(internal.runtimePersistence.releaseClaim, {
+          accountId: accountId,
+          key: rawEventKey,
+        }),
       () =>
         t.mutation(internal.runtimePersistence.acquireLease, {
           key: "new-lease",
@@ -532,6 +557,7 @@ describe("runtime persistence", () => {
     ).toMatchObject({
       claims: expect.arrayContaining([
         expect.objectContaining({ key: eventKey }),
+        expect.objectContaining({ key: storedRawEventKey }),
         expect.objectContaining({ key: "existing-lease" }),
         expect.objectContaining({ key: "existing-pending" }),
       ]),
