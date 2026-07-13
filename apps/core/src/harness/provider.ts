@@ -11,6 +11,7 @@ import { createOpenAI } from "@ai-sdk/openai";
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import { createMinimax } from "vercel-minimax-ai-provider";
 import { jsonSchema, Output, wrapLanguageModel, type LanguageModel, type LanguageModelMiddleware } from "ai";
+import type { LanguageModelV4StreamPart } from "@ai-sdk/provider";
 import type {
   AgentConfig,
   AccountModelProviderName,
@@ -112,6 +113,63 @@ export const mergeSystemMessagesMiddleware: LanguageModelMiddleware = {
   },
 };
 
+// The same endpoints have two streaming quirks the custom-provider path must
+// absorb. First, `reasoning`/`reasoning_content` chunks may carry a growing
+// snapshot of the whole reasoning text instead of an increment, which every
+// downstream consumer (Slack Thinking card, chat SDK streams, persisted
+// messages) doubles by appending. Second, usage omits
+// `completion_tokens_details.reasoning_tokens`, so reasoning tokens read as 0
+// even when most of the output was thinking. Rewrite snapshot deltas to their
+// new suffix, and when the endpoint reports no reasoning-token split, estimate
+// it from the reasoning/text character share of the reported output total.
+export const normalizeStreamDeltasMiddleware: LanguageModelMiddleware = {
+  wrapStream: async ({ doStream }) => {
+    const { stream, ...rest } = await doStream();
+    const accumulated = new Map<string, string>();
+    const chars = { "reasoning-delta": 0, "text-delta": 0 };
+
+    return {
+      ...rest,
+      stream: stream.pipeThrough(new TransformStream<LanguageModelV4StreamPart, LanguageModelV4StreamPart>({
+        transform(part, controller) {
+          if (part.type === "reasoning-delta" || part.type === "text-delta") {
+            const key = `${part.type}:${part.id}`;
+            const previous = accumulated.get(key) ?? "";
+            const delta = previous && part.delta.startsWith(previous)
+              ? part.delta.slice(previous.length)
+              : part.delta;
+            accumulated.set(key, previous + delta);
+            chars[part.type] += delta.length;
+            if (delta) {
+              controller.enqueue(delta === part.delta ? part : { ...part, delta });
+            }
+            return;
+          }
+
+          if (part.type === "finish" && chars["reasoning-delta"] > 0) {
+            const output = part.usage.outputTokens;
+            if (output.total && !output.reasoning) {
+              const reasoning = Math.round(
+                (output.total * chars["reasoning-delta"]) / (chars["reasoning-delta"] + chars["text-delta"]),
+              );
+              controller.enqueue({
+                ...part,
+                usage: {
+                  ...part.usage,
+                  outputTokens: { total: output.total, text: output.total - reasoning, reasoning },
+                },
+              });
+              return;
+            }
+          }
+
+          controller.enqueue(part);
+        },
+      })),
+    };
+  },
+};
+
 function resolveOpenAICompatibleModel(
   providerName: AccountModelProviderName,
   providerConfig: AgentProviderSettings,
@@ -131,7 +189,10 @@ function resolveOpenAICompatibleModel(
   return {
     providerName,
     provider,
-    model: wrapLanguageModel({ model: provider(modelId), middleware: mergeSystemMessagesMiddleware }),
+    model: wrapLanguageModel({
+      model: provider(modelId),
+      middleware: [mergeSystemMessagesMiddleware, normalizeStreamDeltasMiddleware],
+    }),
   };
 }
 

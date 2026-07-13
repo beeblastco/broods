@@ -873,7 +873,9 @@ export default defineSchema({
         .index("by_userId", ["userId"])
         .index("by_orgId_and_userId", ["orgId", "userId"]),
     accounts: defineTable(accountsFields).index("by_orgId", ["orgId"]).index("by_secretHash", ["secretHash"]),
-    agents: defineTable(agentsFields).index("by_accountId", ["accountId"]),
+    agents: defineTable(agentsFields)
+        .index("by_accountId", ["accountId"])
+        .index("by_accountId_and_name", ["accountId", "name"]),
     accountTools: defineTable(accountToolsFields)
         .index("by_accountId", ["accountId"])
         .index("by_accountId_and_status", ["accountId", "status"]),

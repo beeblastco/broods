@@ -117,6 +117,14 @@ time and `broods dev`/`deploy` throw a clear error before syncing, so the typo
 never reaches a run. Provider settings are a fixed allow-list, so any other
 misspelled option is reported the same way.
 
+The `custom` path also normalizes two vLLM-style endpoint quirks automatically:
+multiple system messages are folded into one before the request is sent, and
+streamed `reasoning`/`reasoning_content` chunks that arrive as cumulative
+snapshots are rewritten to true increments (so thinking text is never
+duplicated). When the endpoint reports no reasoning-token breakdown in usage,
+reasoning tokens are estimated from the reasoning/text character share of the
+output total, so usage tracking still shows thinking-token spend.
+
 ### Reasoning / Thinking Tokens
 
 Prefer the AI SDK v7 unified `reasoning` level in `config.model` — it is

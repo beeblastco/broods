@@ -87,6 +87,28 @@ export const list = internalQuery({
     },
 });
 
+/**
+ * Look up an account's agent by name. Names are unique per account (enforced
+ * on create/rename), so config-plane clients can adopt an existing agent
+ * instead of duplicating it.
+ * @param accountId owning account
+ * @param name agent name to look up
+ * @returns agent document or null
+ */
+export const getByName = internalQuery({
+    args: {
+        accountId: v.id("accounts"),
+        name: v.string(),
+    },
+    returns: v.union(agentDoc, v.null()),
+    handler: async (ctx, args) => {
+        return await ctx.db
+            .query("agents")
+            .withIndex("by_accountId_and_name", (q) => q.eq("accountId", args.accountId).eq("name", args.name))
+            .first();
+    },
+});
+
 export const create = internalMutation({
     args: {
         accountId: v.id("accounts"),
@@ -104,6 +126,16 @@ export const create = internalMutation({
         const account = await ctx.db.get(args.accountId);
         if (!account) {
             throw new Error(`Account not found: ${args.accountId}`);
+        }
+
+        // Serializable duplicate guard: racing creates conflict on this index
+        // read, so the retried transaction sees the winner's row and rejects.
+        const existing = await ctx.db
+            .query("agents")
+            .withIndex("by_accountId_and_name", (q) => q.eq("accountId", args.accountId).eq("name", args.name))
+            .first();
+        if (existing) {
+            throw new Error(`Agent name already exists: ${args.name}`);
         }
 
         const now = Date.now();
@@ -154,6 +186,16 @@ export const update = internalMutation({
         const agent = await ctx.db.get(normalized);
         if (!agent || agent.accountId !== accountId) {
             throw new Error("Agent does not belong to the supplied accountId");
+        }
+
+        if (patch.name !== undefined && patch.name !== agent.name) {
+            const existing = await ctx.db
+                .query("agents")
+                .withIndex("by_accountId_and_name", (q) => q.eq("accountId", accountId).eq("name", patch.name!))
+                .first();
+            if (existing) {
+                throw new Error(`Agent name already exists: ${patch.name}`);
+            }
         }
 
         await ctx.db.patch(normalized, {
