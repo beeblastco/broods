@@ -4,11 +4,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
-import {
-  BatchWriteItemCommand,
-  QueryCommand,
-} from "@aws-sdk/client-dynamodb";
-import { dynamo } from "../src/shared/storage/dynamo/client.ts";
+import { runtimePersistence } from "../src/shared/storage/convex/runtime.ts";
 import type { ChannelActions } from "../src/shared/channels.ts";
 import {
   commands,
@@ -18,14 +14,14 @@ import {
   resolveDiscordCommand,
 } from "../src/shared/commands.ts";
 
-const originalSend = dynamo.send;
+const originalMutation = runtimePersistence.mutation;
 
 beforeEach(() => {
-  dynamo.send = mock(() => Promise.resolve({ Items: [], LastEvaluatedKey: undefined })) as never;
+  runtimePersistence.mutation = mock(() => Promise.resolve(0)) as never;
 });
 
 afterEach(() => {
-  dynamo.send = originalSend;
+  runtimePersistence.mutation = originalMutation;
   mock.restore();
 });
 
@@ -40,12 +36,10 @@ function createMockChannelActions(overrides: Partial<ChannelActions> = {}): Chan
 
 function createCommandContext(overrides: Partial<{
   conversationKey: string;
-  conversationsTableName: string;
   channel: ChannelActions;
 }> = {}) {
   return {
     conversationKey: overrides.conversationKey ?? "test-convo",
-    conversationsTableName: overrides.conversationsTableName ?? "TestConversations",
     channel: overrides.channel ?? createMockChannelActions(),
   };
 }
@@ -158,12 +152,9 @@ describe("executeCommand", () => {
 
   it("sends a generic error message when command execution fails", async () => {
     const channel = createMockChannelActions();
-    const ctx = createCommandContext({
-      channel,
-      conversationsTableName: "BoomTable",
-    });
+    const ctx = createCommandContext({ channel });
 
-    dynamo.send = mock(() => Promise.reject(new Error("DynamoDB connection failed"))) as never;
+    runtimePersistence.mutation = mock(() => Promise.reject(new Error("Convex connection failed"))) as never;
 
     await executeCommand("/new", ctx);
 
@@ -172,12 +163,9 @@ describe("executeCommand", () => {
 
   it("handles non-Error exceptions during execution", async () => {
     const channel = createMockChannelActions();
-    const ctx = createCommandContext({
-      channel,
-      conversationsTableName: "StringErrorTable",
-    });
+    const ctx = createCommandContext({ channel });
 
-    dynamo.send = mock(() => Promise.reject("string error")) as never;
+    runtimePersistence.mutation = mock(() => Promise.reject("string error")) as never;
 
     await executeCommand("/new", ctx);
 
@@ -269,144 +257,16 @@ describe("getDiscordCommandRegistrations", () => {
 });
 
 describe("clearConversation via /new command", () => {
-  it("queries and deletes all conversation items across pagination", async () => {
-    const sendMock = mock()
-      .mockImplementationOnce(() =>
-        Promise.resolve({
-          Items: [
-            { conversationKey: { S: "key-1" }, createdAt: { N: "1000" } },
-            { conversationKey: { S: "key-1" }, createdAt: { N: "1001" } },
-          ],
-          LastEvaluatedKey: { conversationKey: { S: "key-1" }, createdAt: { N: "1001" } },
-        }),
-      )
-      .mockImplementationOnce(() =>
-        Promise.resolve({
-          Items: [
-            { conversationKey: { S: "key-1" }, createdAt: { N: "1002" } },
-          ],
-          LastEvaluatedKey: undefined,
-        }),
-      )
-      .mockImplementation(() =>
-        Promise.resolve({ UnprocessedItems: {} }),
-      );
-
-    dynamo.send = sendMock as never;
-
+  it("repeats bounded Convex deletes until the conversation is empty", async () => {
+    const mutationMock = mock()
+      .mockResolvedValueOnce(100)
+      .mockResolvedValueOnce(2)
+      .mockResolvedValueOnce(0);
+    runtimePersistence.mutation = mutationMock as never;
     const channel = createMockChannelActions();
-    const ctx = createCommandContext({
-      conversationKey: "key-1",
-      conversationsTableName: "TestTable",
-      channel,
-    });
-
-    await executeCommand("/new", ctx);
-
-    expect(sendMock).toHaveBeenCalledTimes(3);
-
-    const firstCall = sendMock.mock.calls[0]?.[0] as QueryCommand;
-    expect(firstCall.input.TableName).toBe("TestTable");
-    expect(firstCall.input.KeyConditionExpression).toBe("conversationKey = :conversationKey");
-
+    await executeCommand("/new", createCommandContext({ conversationKey: "key-1", channel }));
+    expect(mutationMock).toHaveBeenCalledTimes(3);
+    expect(mutationMock).toHaveBeenCalledWith("clearConversation", { conversationKey: "key-1" });
     expect(channel.sendText).toHaveBeenCalledWith("Context cleared. Starting fresh.");
-  });
-
-  it("handles empty query results gracefully", async () => {
-    const sendMock = mock(() =>
-      Promise.resolve({ Items: [], LastEvaluatedKey: undefined }),
-    );
-
-    dynamo.send = sendMock as never;
-
-    const channel = createMockChannelActions();
-    const ctx = createCommandContext({
-      conversationKey: "empty-key",
-      conversationsTableName: "TestTable",
-      channel,
-    });
-
-    await executeCommand("/new", ctx);
-
-    expect(sendMock).toHaveBeenCalledTimes(1);
-    expect(channel.sendText).toHaveBeenCalledWith("Context cleared. Starting fresh.");
-  });
-
-  it("retries unprocessed batch write items", async () => {
-    const sendMock = mock()
-      .mockImplementationOnce(() =>
-        Promise.resolve({
-          Items: [
-            { conversationKey: { S: "key-1" }, createdAt: { N: "1000" } },
-            { conversationKey: { S: "key-1" }, createdAt: { N: "1001" } },
-          ],
-          LastEvaluatedKey: undefined,
-        }),
-      )
-      .mockImplementationOnce(() =>
-        Promise.resolve({
-          UnprocessedItems: {
-            TestTable: [
-              { DeleteRequest: { Key: { conversationKey: { S: "key-1" }, createdAt: { N: "1001" } } } },
-            ],
-          },
-        }),
-      )
-      .mockImplementationOnce(() =>
-        Promise.resolve({ UnprocessedItems: {} }),
-      );
-
-    dynamo.send = sendMock as never;
-
-    const channel = createMockChannelActions();
-    const ctx = createCommandContext({
-      conversationKey: "key-1",
-      conversationsTableName: "TestTable",
-      channel,
-    });
-
-    await executeCommand("/new", ctx);
-
-    expect(sendMock).toHaveBeenCalledTimes(3);
-
-    const batchCall = sendMock.mock.calls[1]?.[0] as BatchWriteItemCommand;
-    expect(batchCall.input.RequestItems?.TestTable).toHaveLength(2);
-  });
-
-  it("deletes in chunks of 25 when query returns more than 25 items", async () => {
-    const items = Array.from({ length: 60 }, (_, i) => ({
-      conversationKey: { S: "key-1" },
-      createdAt: { N: String(i) },
-    }));
-
-    const sendMock = mock()
-      .mockImplementationOnce(() =>
-        Promise.resolve({ Items: items, LastEvaluatedKey: undefined }),
-      )
-      .mockImplementation(() =>
-        Promise.resolve({ UnprocessedItems: {} }),
-      );
-
-    dynamo.send = sendMock as never;
-
-    const channel = createMockChannelActions();
-    const ctx = createCommandContext({
-      conversationKey: "key-1",
-      conversationsTableName: "TestTable",
-      channel,
-    });
-
-    await executeCommand("/new", ctx);
-
-    expect(sendMock).toHaveBeenCalledTimes(4);
-
-    const firstBatchCall = sendMock.mock.calls[1]?.[0] as BatchWriteItemCommand;
-    expect(firstBatchCall.input.RequestItems?.TestTable).toHaveLength(25);
-
-    const secondBatchCall = sendMock.mock.calls[2]?.[0] as BatchWriteItemCommand;
-    expect(secondBatchCall.input.RequestItems?.TestTable).toHaveLength(25);
-
-    const thirdBatchCall = sendMock.mock.calls[3]?.[0] as BatchWriteItemCommand;
-    expect(thirdBatchCall.input.RequestItems?.TestTable).toHaveLength(10);
   });
 });

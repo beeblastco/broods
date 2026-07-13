@@ -346,6 +346,7 @@ function createIncomingEventRouter(options: IntegrationRoutingOptions = {}) {
   ): Promise<ResponseShape> => {
     const waitUntilPromises: Promise<unknown>[] = [];
     const router = createCoreIncomingEventRouter({
+      deploymentLoader: async () => null,
       ...options,
       waitUntil: (promise) => {
         waitUntilPromises.push(Promise.resolve(promise));

@@ -3,8 +3,8 @@
  * deploy-key ConvexHttpClient. Fire-and-forget safe — errors are caught and
  * logged; they never propagate into the agent execution path.
  *
- * endpointId, project, and environment are passed when present (Convex has
- * full per-env scope). DynamoDB ignores those fields; see dynamo/usage.ts.
+ * endpointId, project, and environment are passed when present for full
+ * deployment-scoped usage attribution.
  */
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports

@@ -1,13 +1,9 @@
 /**
- * Convex-backed StorageProvider. Used when STORAGE_PROVIDER=convex
- * (SaaS deployment). All calls go through ConvexHttpClient with a
+ * Convex-backed StorageProvider. All calls go through ConvexHttpClient with a
  * deploy-key admin auth header.
  *
- * Read paths (the auth path + harness reads) are fully implemented.
- * Account-create / rotate-secret are owned by the cherry-coke side
- * (orgLifecycle) and intentionally throw here — broods does not
- * create accounts in SaaS mode. Agent + cron writes are wired so
- * the harness can persist normally.
+ * Hosted account lifecycle normally runs through orgLifecycle. The admin-only
+ * core POST /accounts path remains supported for standalone accounts.
  */
 
 import {
@@ -52,6 +48,7 @@ import {
   type AgentPolicyRecord,
 } from "../agent-policy.ts";
 import { usage } from "./usage.ts";
+import { createAccountId, createAccountSecret, hashAccountSecret, normalizeCreateAccountInput, normalizeUpdateAccountInput } from "../accounts.ts";
 
 // ConvexHttpClient's typed `query`/`mutation` only accept public function
 // refs; the backend package exposes internalQuery / internalMutation, so we
@@ -82,8 +79,6 @@ import type {
 } from "../types.ts";
 import { getConvexClient } from "./client.ts";
 
-const NOT_SUPPORTED_IN_CONVEX_MODE =
-  "Operation not supported in convex storage mode — drive via cherry-coke orgLifecycle";
 const ACCOUNT_DELETE_MAX_BATCHES = 100_000;
 
 interface ConvexAccountDoc {
@@ -238,14 +233,31 @@ const accounts: AccountStore = {
     const docs = (await getConvexClient().query(internal.accounts.list, {})) as ConvexAccountDoc[];
     return docs.map((d) => accountFromConvex(d)!).filter(Boolean);
   },
-  async create() {
-    throw new Error(NOT_SUPPORTED_IN_CONVEX_MODE);
+  async create(input) {
+    const normalized = normalizeCreateAccountInput(input);
+    const secret = createAccountSecret();
+    const accountId = await getConvexClient().mutation(internal.accounts.create, {
+      orgId: `admin:${createAccountId()}`,
+      username: normalized.username,
+      description: normalized.description,
+      secretHash: hashAccountSecret(secret),
+      status: "active",
+    }) as string;
+    const account = await this.getById(accountId);
+    if (!account) throw new Error("Failed to fetch created account");
+    return { account, secret };
   },
-  async update() {
-    throw new Error(NOT_SUPPORTED_IN_CONVEX_MODE);
+  async update(accountId, rawPatch) {
+    const patch = normalizeUpdateAccountInput(rawPatch);
+    await getConvexClient().mutation(internal.accounts.update, { accountId: accountId as any, ...patch });
+    return this.getById(accountId);
   },
-  async rotateSecret() {
-    throw new Error(NOT_SUPPORTED_IN_CONVEX_MODE);
+  async rotateSecret(accountId) {
+    if (!await this.getById(accountId)) return null;
+    const secret = createAccountSecret();
+    await getConvexClient().mutation(internal.accounts.update, { accountId: accountId as any, secretHash: hashAccountSecret(secret) });
+    const account = await this.getById(accountId);
+    return account ? { account, secret } : null;
   },
   async remove(accountId) {
     for (let batch = 0; batch < ACCOUNT_DELETE_MAX_BATCHES; batch += 1) {

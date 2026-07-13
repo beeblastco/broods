@@ -74,6 +74,7 @@ import type * as modelPricing from "../modelPricing.js";
 import type * as org from "../org.js";
 import type * as orgLifecycle from "../orgLifecycle.js";
 import type * as orgMembers from "../orgMembers.js";
+import type * as runtimePersistence from "../runtimePersistence.js";
 import type * as project from "../project.js";
 import type * as sandboxAuditEvents from "../sandboxAuditEvents.js";
 import type * as sandboxConfigs from "../sandboxConfigs.js";
@@ -166,6 +167,7 @@ declare const fullApi: ApiFromModules<{
   org: typeof org;
   orgLifecycle: typeof orgLifecycle;
   orgMembers: typeof orgMembers;
+  runtimePersistence: typeof runtimePersistence;
   project: typeof project;
   sandboxAuditEvents: typeof sandboxAuditEvents;
   sandboxConfigs: typeof sandboxConfigs;

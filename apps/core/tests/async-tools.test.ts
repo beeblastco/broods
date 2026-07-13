@@ -4,26 +4,24 @@
  */
 
 import { afterEach, describe, expect, it, mock } from "bun:test";
-import { PutItemCommand, UpdateItemCommand } from "@aws-sdk/client-dynamodb";
 import { jsonSchema, tool, type UserModelMessage } from "ai";
-import { dynamo } from "../src/shared/storage/dynamo/client.ts";
+import { runtimePersistence } from "../src/shared/storage/convex/runtime.ts";
 
-process.env.ASYNC_TOOL_RESULT_TABLE_NAME = "async-tool-result";
-
-const originalSend = dynamo.send;
-const sendMock = mock(async (_command: unknown) => ({}));
+const originalMutation = runtimePersistence.mutation;
+const mutationMock = mock(async (name: string, _args: Record<string, unknown>) =>
+  name === "createAsyncToolResult" ? true : null);
 type TestToolExecute = {
   execute(input: unknown, options: { toolCallId: string; messages: []; context: undefined }): Promise<unknown>;
 };
 
 afterEach(() => {
-  dynamo.send = originalSend;
-  sendMock.mockReset();
+  runtimePersistence.mutation = originalMutation;
+  mutationMock.mockClear();
 });
 
 describe("AsyncToolCoordinator", () => {
   it("returns a pending result immediately and injects the completed output later", async () => {
-    dynamo.send = sendMock as never;
+    runtimePersistence.mutation = mutationMock as never;
     const { AsyncToolCoordinator } = await import("../src/harness/async-tools.ts");
     const persistModelMessages = mock(async (_messages: UserModelMessage[]) => []);
     let finishTool!: (value: unknown) => void;
@@ -63,15 +61,14 @@ describe("AsyncToolCoordinator", () => {
       status: "running",
     });
     expect(coordinator.pendingCount).toBe(1);
-    expect(sendMock.mock.calls[0]?.[0]).toBeInstanceOf(PutItemCommand);
+    expect(mutationMock.mock.calls[0]?.[0]).toBe("createAsyncToolResult");
 
     finishTool(undefined);
     await expect(coordinator.waitForIdle()).resolves.toBe("idle");
     await expect(coordinator.drainCompletionsToParent()).resolves.toBe(1);
 
-    expect(sendMock.mock.calls.some(([command]) =>
-      command instanceof UpdateItemCommand &&
-      command.input.ExpressionAttributeValues?.[":status"]?.S === "completed"
+    expect(mutationMock.mock.calls.some(([name, args]) =>
+      name === "updateAsyncToolResult" && args.status === "completed"
     )).toBe(true);
     const messages = persistModelMessages.mock.calls[0]?.[0] ?? [];
     expect(messageText(messages[0])).toContain("Async tool result injected into parent conversation.");
@@ -80,7 +77,7 @@ describe("AsyncToolCoordinator", () => {
   });
 
   it("keeps provider-defined tools without local execute unchanged", async () => {
-    dynamo.send = sendMock as never;
+    runtimePersistence.mutation = mutationMock as never;
     const { AsyncToolCoordinator } = await import("../src/harness/async-tools.ts");
     const coordinator = new AsyncToolCoordinator({
       conversationKey: "conversation-1",
@@ -103,11 +100,11 @@ describe("AsyncToolCoordinator", () => {
     }, new Map([["googleSearch", "built-in" as const]]));
 
     expect(tools.googleSearch as unknown).toBe(providerTool);
-    expect(sendMock).not.toHaveBeenCalled();
+    expect(mutationMock).not.toHaveBeenCalled();
   });
 
   it("injects timeout failures for pending async tool calls", async () => {
-    dynamo.send = sendMock as never;
+    runtimePersistence.mutation = mutationMock as never;
     const { AsyncToolCoordinator } = await import("../src/harness/async-tools.ts");
     const persistModelMessages = mock(async (_messages: UserModelMessage[]) => []);
     const coordinator = new AsyncToolCoordinator({
@@ -136,16 +133,15 @@ describe("AsyncToolCoordinator", () => {
     await expect(coordinator.waitForIdle()).resolves.toBe("timeout");
     await expect(coordinator.drainCompletionsAndTimeoutsToParent()).resolves.toBe(1);
 
-    expect(sendMock.mock.calls.some(([command]) =>
-      command instanceof UpdateItemCommand &&
-      command.input.ExpressionAttributeValues?.[":status"]?.S === "failed"
+    expect(mutationMock.mock.calls.some(([name, args]) =>
+      name === "updateAsyncToolResult" && args.status === "failed"
     )).toBe(true);
     const messages = persistModelMessages.mock.calls[0]?.[0] ?? [];
     expect(messageText(messages[0])).toContain("Async tool call is still pending near the parent request timeout.");
   });
 
   it("detaches uploaded async tools on delivered request paths", async () => {
-    dynamo.send = sendMock as never;
+    runtimePersistence.mutation = mutationMock as never;
     const { AsyncToolCoordinator } = await import("../src/harness/async-tools.ts");
     const persistModelMessages = mock(async (_messages: UserModelMessage[]) => []);
     let asyncToolMetadata: {
@@ -198,33 +194,19 @@ describe("AsyncToolCoordinator", () => {
     });
 
     expect(persistModelMessages).not.toHaveBeenCalled();
-    expect(sendMock.mock.calls.some(([command]) =>
-      command instanceof UpdateItemCommand &&
-      command.input.ExpressionAttributeValues?.[":status"]
-    )).toBe(false);
-    const putCommand = sendMock.mock.calls.find(([command]) => command instanceof PutItemCommand)?.[0];
-    expect(putCommand).toBeInstanceOf(PutItemCommand);
-    if (!(putCommand instanceof PutItemCommand)) {
-      throw new Error("Expected PutItemCommand");
-    }
-    expect(putCommand.input.Item?.delivery).toEqual({
-      M: {
-        kind: { S: "nats" },
-        connectionId: { S: "connection-1" },
-        publicEventId: { S: "event-public-1" },
-        publicConversationKey: { S: "conversation-public-1" },
-      },
+    expect(mutationMock.mock.calls.some(([name]) => name === "updateAsyncToolResult")).toBe(false);
+    const createArgs = mutationMock.mock.calls.find(([name]) => name === "createAsyncToolResult")?.[1];
+    expect(createArgs?.delivery).toEqual({
+      kind: "nats",
+      connectionId: "connection-1",
+      publicEventId: "event-public-1",
+      publicConversationKey: "conversation-public-1",
     });
-    expect(putCommand.input.Item?.completionToken?.S).toBe(asyncToolMetadata?.completionToken);
-    const groupCommand = sendMock.mock.calls.find(([command]) =>
-      command instanceof UpdateItemCommand &&
-      command.input.ExpressionAttributeValues?.[":itemType"]?.S === "detached-async-tool-group"
-    )?.[0];
-    expect(groupCommand).toBeInstanceOf(UpdateItemCommand);
+    expect(createArgs?.completionToken).toBe(asyncToolMetadata?.completionToken);
   });
 
   it("waits for built-in tools but detaches uploaded tools in delivered request paths", async () => {
-    dynamo.send = sendMock as never;
+    runtimePersistence.mutation = mutationMock as never;
     const { AsyncToolCoordinator } = await import("../src/harness/async-tools.ts");
     const coordinator = new AsyncToolCoordinator({
       conversationKey: "conversation-1",

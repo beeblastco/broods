@@ -1,7 +1,7 @@
 /**
  * ConvexHttpClient wrapper. Reads CONVEX_URL + CONVEX_DEPLOY_KEY from env
  * and caches a singleton client in the process. Only loaded when
- * STORAGE_PROVIDER=convex.
+ * Convex.
  *
  * Deploy-key auth: use `setAdminAuth`, not `setAuth`. `setAuth` is for
  * end-user JWTs; deploy keys (`prod:...|...` / `dev:...|...`) are admin

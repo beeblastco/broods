@@ -8,7 +8,7 @@ Skills are stored by the Convex config plane in the S3 skills bucket under `<acc
 flowchart LR
   Owner["Account owner"] -->|"POST /v1/skills"| Config["Convex config plane"]
   Config -->|"validate bundle"| SkillStore["S3 skills bucket<br/>&lt;accountId&gt;/&lt;skill-name&gt;"]
-  Owner -->|"agent config<br/>skills.allowed"| AgentConfig["DynamoDB AgentConfig"]
+  Owner -->|"agent config<br/>skills.allowed"| AgentConfig["Convex AgentConfig"]
   AgentConfig --> Session["session.ts"]
   SkillStore -->|"metadata only"| Session
   Session --> Prompt["available skills panel<br/>path + name + description"]

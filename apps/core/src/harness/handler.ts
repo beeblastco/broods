@@ -101,7 +101,6 @@ class ConversationBusyError extends Error {
   }
 }
 
-const CONVERSATIONS_TABLE_NAME = requireEnv("CONVERSATIONS_TABLE_NAME");
 const AGENT_PROCESSING_FAILED = "Agent processing failed";
 const CONVERSATION_BUSY = "Conversation is already processing another turn. Try again when the current turn finishes.";
 const CHANNEL_APPROVAL_DENIAL_REASON = "Tool approval is only supported through the direct API.";
@@ -759,7 +758,6 @@ async function handleChannelRequest(event: ChannelInboundEvent, context?: Reques
     try {
       await executeCommand(event.commandToken, {
         conversationKey: event.conversationKey,
-        conversationsTableName: CONVERSATIONS_TABLE_NAME,
         channel: event.channel,
       });
     } catch (err) {

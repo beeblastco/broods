@@ -1,6 +1,6 @@
 /**
  * Agent types, input normalization, skill/subagent validation, and the
- * public/redacted projection. Provider-agnostic — both DynamoDB and
+ * public/redacted projection. Provider-agnostic — both Convex and
  * Convex stores import the normalizer at their create/update entry
  * points so behaviour is symmetric across modes.
  */

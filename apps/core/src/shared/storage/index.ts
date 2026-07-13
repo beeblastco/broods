@@ -1,38 +1,15 @@
 /**
- * Storage factory. Reads STORAGE_PROVIDER from env (default "dynamodb")
- * and lazily loads the matching provider so the unused provider's deps
- * are not pulled into the container binary/runtime.
+ * Convex storage factory. Runtime and config persistence share one backend.
  */
 
-import { optionalEnv } from "../env.ts";
 import type { StorageProvider } from "./types.ts";
 
 let cached: StorageProvider | null = null;
 
 export function getStorage(): StorageProvider {
   if (cached) return cached;
-  const provider = (optionalEnv("STORAGE_PROVIDER") ?? "dynamodb").toLowerCase();
-
-  if (provider === "convex") {
-    // The Convex adapter lives in a private submodule mounted at ./convex.
-    // SaaS builds init the submodule so Bun bundles the real adapter.
-    // Community / OSS builds get a stub written by scripts/build.ts that
-    // exports a null provider — the check below throws a clear error if
-    // STORAGE_PROVIDER=convex is set on such a build.
-    const { convexStorageProvider } = require("./convex/index.ts");
-    if (!convexStorageProvider) {
-      throw new Error(
-        "STORAGE_PROVIDER=convex requires the broods-convex-adapter submodule. " +
-          "Run `git submodule update --init --recursive` (SaaS deployments only).",
-      );
-    }
-    cached = convexStorageProvider as StorageProvider;
-  } else if (provider === "dynamodb" || provider === "dynamo") {
-    const { dynamoStorageProvider } = require("./dynamo/index.ts");
-    cached = dynamoStorageProvider as StorageProvider;
-  } else {
-    throw new Error(`Unknown STORAGE_PROVIDER: ${provider}`);
-  }
+  const { convexStorageProvider } = require("./convex/index.ts");
+  cached = convexStorageProvider as StorageProvider;
 
   return cached!;
 }

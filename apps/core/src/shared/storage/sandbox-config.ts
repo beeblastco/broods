@@ -2,8 +2,8 @@
  * Sandbox config: account-scoped, reusable sandbox definitions referenced by
  * agents via `config.sandbox`. A sandbox is a collection of Claude-Code-style
  * tools (bash/read/write/edit/glob/grep) backed by a provider. Validation +
- * the public projection live here; the
- * DynamoDB / Convex stores call these at their create/update entry points.
+ * the public projection live here; the Convex store calls these at its
+ * create/update entry points.
  * Stored encrypted at rest because `envVars`/`options` may hold secrets.
  */
 

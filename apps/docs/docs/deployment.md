@@ -28,7 +28,11 @@ The CLI handles everything: compiling resources, bundling tools, uploading skill
 
 Deploy the full serverless infrastructure to your own AWS account for complete control.
 
-`sst.config.ts` is the source of truth for infra names, tags, region, the AWS data plane, MicroVM sandbox integration, DynamoDB tables, S3 bucket, and SST secrets.
+`sst.config.ts` is the source of truth for infra names, tags, region, the AWS data plane, MicroVM sandbox integration, S3 buckets, and SST secrets. `packages/convex/schema.ts` is the source of truth for persistent tables.
+
+## Convex-only storage cutover
+
+Issue #32 removes the runtime's legacy DynamoDB tables and adapters. Deployment creates new Convex runtime tables and starts them empty; DynamoDB-only conversation and operational rows are not copied automatically. Review retention/export needs before applying the infrastructure diff, because the deploy removes the legacy tables from desired state.
 
 ### Prerequisites
 
@@ -80,7 +84,6 @@ bun run deploy
 
 Deploy outputs include:
 
-- DynamoDB table names (dev/community stages; `undefined` on production, which stores config domains in Convex)
 - `filesystemBucketName`, `skillsBucketName`, `toolBundlesBucketName`
 - `cronScheduleGroupName`, `cronSchedulerTargetArn`, and `cronSchedulerRoleArn`
 

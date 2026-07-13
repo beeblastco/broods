@@ -1,8 +1,6 @@
 /**
  * Cron-job types, input normalization, and patch-merge helpers.
- * Provider-agnostic — both the DynamoDB and Convex stores import the
- * normalizer at their create/update entry points so behaviour is
- * symmetric across modes.
+ * Shared validation and patch helpers for the Convex cron store.
  */
 
 import type { ModelMessage } from "ai";
@@ -102,10 +100,7 @@ export interface NormalizedCronUpdate {
 }
 
 export function isCronsConfigured(): boolean {
-  return (
-    optionalEnv("CRONS_TABLE_NAME") !== undefined ||
-    optionalEnv("STORAGE_PROVIDER") === "convex"
-  );
+  return Boolean(optionalEnv("CONVEX_URL") && optionalEnv("CONVEX_DEPLOY_KEY"));
 }
 
 export function normalizeCreateCronInput(input: CreateCronInput): NormalizedCronCreate {

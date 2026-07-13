@@ -3,14 +3,6 @@
  * Keep event persistence, context projection, leases, and prompt loading here.
  */
 
-import {
-  DeleteItemCommand,
-  PutItemCommand,
-  QueryCommand,
-  UpdateItemCommand,
-  type AttributeValue,
-  type QueryCommandOutput,
-} from "@aws-sdk/client-dynamodb";
 import type {
   AssistantModelMessage,
   ModelMessage,
@@ -19,7 +11,6 @@ import type {
   UserModelMessage,
 } from "ai";
 import {
-  modelMessageSchema,
   systemModelMessageSchema,
 } from "ai";
 import type { AgentChannelWorkspaceScope, AgentConfig } from "../shared/storage/index.ts";
@@ -27,13 +18,7 @@ import { getStorage } from "../shared/storage/index.ts";
 import type { AsyncToolDelivery } from "./async-tool-result.ts";
 import { isMissingS3Error, readS3Text } from "../shared/s3.ts";
 import { resolveS3ReadTarget, workspaceReadContext } from "./sandbox/s3-mount.ts";
-import {
-  dynamo,
-  fromAttributeValue,
-  isConditionalCheckFailed,
-  toAttributeValue,
-} from "../shared/storage/dynamo/client.ts";
-import { requireEnv } from "../shared/env.ts";
+import { runtimeMutation, runtimeQuery } from "../shared/storage/convex/runtime.ts";
 import {
   channelScopeKeyFromConversation,
   conversationLeaseKey,
@@ -54,9 +39,6 @@ import { compactSessionContext, isCompactionSummaryMessage } from "./compaction.
 import { pruneSessionMessages } from "./pruning.ts";
 import type { SandboxExecutorConfig } from "./sandbox/types.ts";
 import type { SandboxPermissionMode } from "../shared/storage/index.ts";
-
-const CONVERSATIONS_TABLE_NAME = requireEnv("CONVERSATIONS_TABLE_NAME");
-const PROCESSED_EVENTS_TABLE_NAME = requireEnv("PROCESSED_EVENTS_TABLE_NAME");
 
 // Default conversation lease TTL of 15 minutes.
 const CONVERSATION_LEASE_TTL_SECONDS = 15 * 60;
@@ -91,7 +73,7 @@ export interface TurnContextTimings {
 
 export interface SystemContextSnapshot {
   // Highest conversation row already folded into the dynamic system-context view.
-  // `loadRefreshedSystemPromptParts` uses this as a DynamoDB cursor so each
+  // `loadRefreshedSystemPromptParts` uses this as a Convex cursor so each
   // prepareStep only loads newly persisted system messages instead of
   // rebuilding system context from the full conversation every time.
   cursor: string | null;
@@ -119,7 +101,7 @@ interface StoredEventBase {
   sourceEventId: string;
 }
 
-// Internal normalized shapes persisted in DynamoDB. We use AI SDK-style roles
+// Internal normalized shapes persisted in Convex. We use AI SDK-style roles
 // here as well so an event is effectively a stored model message plus metadata.
 interface StoredConversationEventBase<TMessage extends ModelMessage> extends StoredEventBase {
   message: TMessage;
@@ -131,7 +113,7 @@ type StoredConversationEvent =
   | StoredConversationEventBase<ToolModelMessage>
   | StoredConversationEventBase<SystemModelMessage>;
 
-// Query results need both the stored event payload and its DynamoDB sort key so
+// Query results need both the stored event payload and its ordered cursor so
 // we can build point-in-time snapshots and later fetch only prompt deltas after
 // a known cursor.
 interface StoredConversationEntry {
@@ -177,79 +159,19 @@ export class Session {
   ) { }
 
   async claim(): Promise<boolean> {
-    const ttl = Math.floor(Date.now() / 1000) + 86400;
-
-    try {
-      await dynamo.send(new PutItemCommand({
-        TableName: PROCESSED_EVENTS_TABLE_NAME,
-        Item: {
-          eventId: { S: this.eventId },
-          createdAt: { S: new Date().toISOString() },
-          expiresAt: { N: String(ttl) },
-        },
-        ConditionExpression: "attribute_not_exists(eventId)",
-      }));
-      return true;
-    } catch (err) {
-      if (isConditionalCheckFailed(err)) {
-        return false;
-      }
-      throw err;
-    }
+    return runtimeMutation("claimEvent", { key: this.eventId, ttlSeconds: 86400 });
   }
 
   async release(): Promise<void> {
-    await dynamo.send(new DeleteItemCommand({
-      TableName: PROCESSED_EVENTS_TABLE_NAME,
-      Key: { eventId: { S: this.eventId } },
-    }));
+    await runtimeMutation("releaseClaim", { key: this.eventId });
   }
 
   async acquireConversationLease(): Promise<boolean> {
-    const now = Math.floor(Date.now() / 1000);
-    const ttl = now + CONVERSATION_LEASE_TTL_SECONDS;
-
-    try {
-      await dynamo.send(new PutItemCommand({
-        TableName: PROCESSED_EVENTS_TABLE_NAME,
-        Item: {
-          eventId: { S: this.conversationLeaseKey() },
-          createdAt: { S: new Date().toISOString() },
-          expiresAt: { N: String(ttl) },
-          ownerEventId: { S: this.eventId },
-          conversationKey: { S: this.conversationKey },
-        },
-        ConditionExpression: "attribute_not_exists(eventId) OR expiresAt < :now",
-        ExpressionAttributeValues: {
-          ":now": { N: String(now) },
-        },
-      }));
-      return true;
-    } catch (err) {
-      if (isConditionalCheckFailed(err)) {
-        return false;
-      }
-      throw err;
-    }
+    return runtimeMutation("acquireLease", { key: this.conversationLeaseKey(), conversationKey: this.conversationKey, ownerEventId: this.eventId, ttlSeconds: CONVERSATION_LEASE_TTL_SECONDS });
   }
 
   async releaseConversationLease(): Promise<void> {
-    try {
-      await dynamo.send(new DeleteItemCommand({
-        TableName: PROCESSED_EVENTS_TABLE_NAME,
-        Key: { eventId: { S: this.conversationLeaseKey() } },
-        ConditionExpression: "ownerEventId = :ownerEventId",
-        ExpressionAttributeValues: {
-          ":ownerEventId": { S: this.eventId },
-        },
-      }));
-    } catch (err) {
-      if (isConditionalCheckFailed(err)) {
-        return;
-      }
-
-      throw err;
-    }
+    await runtimeMutation("releaseLease", { key: this.conversationLeaseKey(), ownerEventId: this.eventId });
   }
 
   /**
@@ -262,17 +184,7 @@ export class Session {
     if (events.length === 0) {
       return;
     }
-    const ttl = Math.floor(Date.now() / 1000) + CONVERSATION_LEASE_TTL_SECONDS;
-    await dynamo.send(new UpdateItemCommand({
-      TableName: PROCESSED_EVENTS_TABLE_NAME,
-      Key: { eventId: { S: this.pendingIngressKey() } },
-      UpdateExpression: "SET queued = list_append(if_not_exists(queued, :empty), :events), expiresAt = :ttl",
-      ExpressionAttributeValues: {
-        ":events": { L: events.map((event) => ({ S: JSON.stringify(event) })) },
-        ":empty": { L: [] },
-        ":ttl": { N: String(ttl) },
-      },
-    }));
+    await runtimeMutation("enqueueIngress", { key: this.pendingIngressKey(), conversationKey: this.conversationKey, events, ttlSeconds: CONVERSATION_LEASE_TTL_SECONDS });
   }
 
   /**
@@ -282,25 +194,7 @@ export class Session {
    * next drain) — nothing is lost or double-read.
    */
   async takePendingIngress(): Promise<ConversationIngressEvent[]> {
-    const result = await dynamo.send(new DeleteItemCommand({
-      TableName: PROCESSED_EVENTS_TABLE_NAME,
-      Key: { eventId: { S: this.pendingIngressKey() } },
-      ReturnValues: "ALL_OLD",
-    }));
-    const queued = result.Attributes?.queued?.L ?? [];
-    const events: ConversationIngressEvent[] = [];
-    for (const item of queued) {
-      if (typeof item.S !== "string") {
-        continue;
-      }
-      try {
-        events.push(JSON.parse(item.S) as ConversationIngressEvent);
-      } catch {
-        // Skip a malformed entry rather than failing the whole drain.
-      }
-    }
-
-    return events;
+    return runtimeMutation("takeIngress", { key: this.pendingIngressKey() });
   }
 
   async appendIngressEvents(events: ConversationIngressEvent[]): Promise<SystemModelMessage[]> {
@@ -314,7 +208,7 @@ export class Session {
         if (event.persist === false) {
           // Direct API system injections are one-turn instructions. They are
           // returned to the caller and included in the current turn's system
-          // prompt, but never written to DynamoDB.
+          // prompt, but never written to Convex.
           ephemeralSystem.push(message);
           continue;
         }
@@ -548,44 +442,15 @@ export class Session {
 
   private async persistStoredEvent(event: StoredConversationEvent): Promise<string> {
     const createdAt = this.nextCreatedAt();
-    await dynamo.send(new PutItemCommand({
-      TableName: CONVERSATIONS_TABLE_NAME,
-      Item: {
-        conversationKey: { S: this.conversationKey },
-        createdAt: { S: createdAt },
-        event: toAttributeValue(event),
-      },
-    }));
+    await runtimeMutation("appendConversationEvent", { conversationKey: this.conversationKey, cursor: createdAt, event });
     return createdAt;
   }
 
   private async loadConversationEntries(options: {
     afterCreatedAt?: string | null;
   } = {}): Promise<StoredConversationEntry[]> {
-    const keyConditionExpression = options.afterCreatedAt
-      ? "conversationKey = :conversationKey AND createdAt > :createdAt"
-      : "conversationKey = :conversationKey";
-    const items: NonNullable<QueryCommandOutput["Items"]> = [];
-    let exclusiveStartKey: QueryCommandOutput["LastEvaluatedKey"];
-    do {
-      const result: QueryCommandOutput = await dynamo.send(new QueryCommand({
-        TableName: CONVERSATIONS_TABLE_NAME,
-        KeyConditionExpression: keyConditionExpression,
-        ExpressionAttributeValues: {
-          ":conversationKey": { S: this.conversationKey },
-          ...(options.afterCreatedAt ? { ":createdAt": { S: options.afterCreatedAt } } : {}),
-        },
-        ConsistentRead: true,
-        ScanIndexForward: true,
-        ...(exclusiveStartKey ? { ExclusiveStartKey: exclusiveStartKey } : {}),
-      }));
-      items.push(...(result.Items ?? []));
-      exclusiveStartKey = result.LastEvaluatedKey;
-    } while (exclusiveStartKey);
-
-    return items
-      .map(itemToStoredConversationEntry)
-      .filter((entry): entry is StoredConversationEntry => entry != null);
+    const rows = await runtimeQuery<Array<{ cursor: string; event: StoredConversationEvent }>>("listConversationEvents", { conversationKey: this.conversationKey, afterCursor: options.afterCreatedAt ?? undefined });
+    return rows.map(row => ({ createdAt: row.cursor, event: row.event }));
   }
 
   private nextCreatedAt(): string {
@@ -816,7 +681,6 @@ Tool guidance:
 </subagent>`;
 }
 
-// DynamoDB row decoding.
 function agentSystemMessages(system: string | SystemModelMessage | SystemModelMessage[] | undefined): SystemModelMessage[] {
   if (system === undefined) {
     return [];
@@ -826,36 +690,6 @@ function agentSystemMessages(system: string | SystemModelMessage | SystemModelMe
   }
 
   return Array.isArray(system) ? system : [system];
-}
-
-function itemToStoredConversationEntry(item: Record<string, AttributeValue>): StoredConversationEntry | null {
-  const createdAt = item.createdAt?.S;
-  if (!createdAt) {
-    return null;
-  }
-
-  const event = item.event ? normalizeStoredConversationEvent(fromAttributeValue(item.event)) : null;
-  return event ? { createdAt, event } : null;
-}
-
-function normalizeStoredConversationEvent(value: unknown): StoredConversationEvent | null {
-  if (!value || typeof value !== "object") {
-    return null;
-  }
-
-  const candidate = value as {
-    sourceEventId?: string;
-    message?: unknown;
-  };
-
-  if (typeof candidate.sourceEventId !== "string") {
-    return null;
-  }
-
-  const parsedMessage = modelMessageSchema.safeParse(candidate.message);
-  return parsedMessage.success
-    ? createStoredEventFromModelMessage(parsedMessage.data, candidate.sourceEventId)
-    : null;
 }
 
 // Message persistence sanitization.

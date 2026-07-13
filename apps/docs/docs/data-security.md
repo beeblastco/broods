@@ -1,6 +1,6 @@
 # Data Security
 
-This is an experiment product, so the security model is simple by design. It avoids storing provider secrets as plain JSON in DynamoDB, but it is not a final production-grade secrets system.
+This is an experiment product, so the security model is simple by design. It avoids storing provider secrets as plain JSON in Convex, but it is not a final production-grade secrets system.
 
 ## What Is Stored
 
@@ -37,21 +37,21 @@ Workspace files, skill bundles, and uploaded tool bundles are stored as account-
 sequenceDiagram
   participant API as account-manage
   participant Crypto as AES-256-GCM
-  participant DDB as DynamoDB AgentConfig
+  participant CVX as Convex agents
   participant Harness as harness-processing
 
   API->>Crypto: encrypt config with ACCOUNT_CONFIG_ENCRYPTION_SECRET
-  Crypto->>DDB: store ciphertext + iv + auth tag
-  Harness->>DDB: load selected agent record
+  Crypto->>CVX: store ciphertext + iv + auth tag
+  Harness->>CVX: load selected agent record
   Harness->>Crypto: decrypt config
   Harness->>Harness: verify webhooks / send replies
 ```
 
 Current implementation:
 
-- AES-256-GCM encrypts the config before DynamoDB write.
+- AES-256-GCM encrypts the config before Convex write.
 - `ACCOUNT_CONFIG_ENCRYPTION_SECRET` comes from SST secrets.
-- DynamoDB stores encrypted config, not readable provider credentials.
+- Convex stores encrypted config, not readable provider credentials.
 - The core runtime decrypts config only when it needs selected agent runtime settings.
 
 ## API Responses
@@ -70,7 +70,7 @@ This keeps the product easy to run and change:
 
 - No extra Secrets Manager objects per account.
 - No KMS decrypt call on every config read.
-- Account metadata and agent runtime config stay in DynamoDB without per-provider secret resources.
+- Account metadata and agent runtime config stay in Convex without per-provider secret resources.
 - Good enough for an experiment product.
 
 ## Limits

@@ -85,7 +85,7 @@ const MAX_BUNDLE_BYTES = 512 * 1024;
 const NODE_BUILTIN_IMPORT_PATTERN = /(?:import\s+(?:[\s\S]*?\s+from\s*)?["']node:|import\s*\(\s*["']node:)/;
 const BARE_IMPORT_PATTERN = /(?:^|[\n;])\s*import\s+(?:[\s\S]*?\s+from\s*)?["'](?!\.{1,2}\/|\/|node:)[^"']+["']|import\s*\(\s*["'](?!\.{1,2}\/|\/|node:)[^"']+["']\s*\)/;
 
-/** Accept DynamoDB public ids and native Convex document ids during migration/sync. */
+/** Accept legacy public ids and native Convex document ids during migration/sync. */
 export function isAccountToolId(value: string): boolean {
   return /^tool_[A-Za-z0-9_-]+$/.test(value) || /^[a-z0-9]{32}$/.test(value);
 }

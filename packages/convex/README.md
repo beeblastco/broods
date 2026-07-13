@@ -20,7 +20,9 @@ Dashboard domain: `users`, `orgs`, `orgMembers`, `projects`, `environments`,
 Agent-platform domain (shared with core): `accounts`, `agents`,
 `sandboxConfigs`, `workspaceConfigs`, `environmentVariables`, `webhooks`,
 `conversations`, `messages`, `skills`, `workspaceFiles`, `asyncResults`,
-`crons`.
+`crons`. Core runtime coordination uses `runtimeConversationEvents`,
+`runtimeClaims`, `runtimeAsyncAgentResults`, `runtimeAsyncToolResults`,
+`runtimeAsyncToolGroups`, and `sandboxReservations`.
 
 Sensitive config (agent configs, sandbox credentials) is stored as encrypted
 blobs — core encrypts before writing; the dashboard never reads the plaintext.

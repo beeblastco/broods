@@ -4,7 +4,7 @@
  * S3-backed filesystem mounted into a sandbox; agents referencing the same
  * workspaceId share the same files. Holds no secrets, so it is stored in
  * plaintext (unlike sandbox config). Validation + the public projection live
- * here; the DynamoDB / Convex stores call these at create/update.
+ * here; the Convex store calls these at create/update.
  */
 
 import { mergeConfigObjects } from "./agent-config.ts";

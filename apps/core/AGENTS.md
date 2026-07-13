@@ -1,12 +1,12 @@
 # apps/core Agent Guide
 
-Scope: this file applies to `apps/core` (`@broods/core`) — the self-hosted AI agent harness: a single Bun container (Vercel AI SDK) serving the whole runtime behind the gateway. It is **off Lambda** (epic #85 phase 9); source lives under `src/` (not `functions/`). The AWS data plane (DynamoDB/S3/STS/Scheduler) and the MicroVM tool-exec backend stay. `sst.config.ts` provisions that data plane + the container's IAM user, not the runtime process itself.
+Scope: this file applies to `apps/core` (`@broods/core`) — the self-hosted AI agent harness: a single Bun container (Vercel AI SDK) serving the whole runtime behind the gateway. It is **off Lambda** (epic #85 phase 9); source lives under `src/` (not `functions/`). Convex persistence, the AWS data plane (S3/STS/Scheduler), and the MicroVM tool-exec backend stay. `sst.config.ts` provisions the AWS data plane + the container's IAM user, not the runtime process itself.
 
 Paths in this file are relative to `apps/core/` unless written with `../../`. If you started directly in this folder, also read `../../AGENTS.md` for the monorepo-wide rules.
 
 Dependent workspaces (in this monorepo):
 
-- `../../packages/convex` (`@broods/convex`): shared Convex backend. Core's storage adapter at `src/shared/storage/convex/` reads it; convex mode is active on **any stage that supplies both `CONVEX_URL` and `CONVEX_DEPLOY_KEY`** (production always does; dev does too since CI injects those secrets). Read `../../packages/convex/AGENTS.md` before changing Convex files.
+- `../../packages/convex` (`@broods/convex`): shared Convex backend. Core's storage adapter at `src/shared/storage/convex/` reads it; every stage requires both `CONVEX_URL` and `CONVEX_DEPLOY_KEY`. Read `../../packages/convex/AGENTS.md` before changing Convex files.
 - `../../packages/broods` (`broods`): CLI + SDK npm package that calls core through the gateway. Update its types/client when the public API or config shape changes.
 - `../../packages/demos`: runnable demo folders against the API (deployed gateway or a local `bun run serve` core), importing the SDK. Keep them in sync with config changes.
 - `../../apps/dashboard` (`@broods/dashboard`): Next.js dashboard sharing the Convex backend. Has its own AGENTS.md — read it before dashboard work.

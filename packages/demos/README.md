@@ -18,8 +18,8 @@ HTTP clients. The hosted SDK default is `gateway.broods.app`.
 ## Run against a local core
 
 The core now runs as a single container (`apps/core`, off Lambda) — you can run
-it on your machine against the **real** Convex/DynamoDB backend (the databases
-don't change), then aim the demos at it:
+it on your machine against the **real** Convex backend (the database
+doesn't change), then aim the demos at it:
 
 ```bash
 # 1. Start the core locally (serves http://localhost:3000, path-routed).

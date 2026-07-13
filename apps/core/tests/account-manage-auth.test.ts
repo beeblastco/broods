@@ -52,7 +52,7 @@ function deploymentStorage(): StorageProvider {
   };
 
   return {
-    kind: "dynamodb",
+    kind: "convex",
     accounts: {
       async getById(accountId: string) {
         return accountId === account.accountId ? account : null;

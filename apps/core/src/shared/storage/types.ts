@@ -1,15 +1,13 @@
 /**
  * Domain-shaped StorageProvider interface and record types.
- * The provider abstracts persistence so the same core binary can talk to
- * DynamoDB (OSS / self-host default) or Convex (SaaS deployment).
+ * Convex is the single persistence implementation behind these domain stores.
  *
  * Method names mirror the Convex submodule (getById, getBySecretHash, create,
- * update, remove, list) rather than DDB primitives. Records are re-exported
+ * update, remove, list). Records are re-exported
  * from the existing _shared/ modules — do not duplicate.
  *
  * Usage metering: see UsageTaskInput / UsageStore below. The active provider
- * writes one row per finished task. Convex uses full endpoint/project/env
- * scope; DynamoDB uses coarser account+agent scope.
+ * writes one row per finished task with full endpoint/project/environment scope.
  */
 
 import type {
@@ -92,17 +90,16 @@ export type {
  * Raw counts for one finished agent task. No dollar amounts — pricing is
  * computed at render time from a shared hardcoded table (plan §6d, §10a).
  *
- * endpointId / project / environment are optional: the Convex adapter uses
- * them for full per-env scope; the DynamoDB adapter ignores them (coarser
- * account+agent scope per plan §8d decision).
+ * endpointId / project / environment are optional for account-key traffic that
+ * is not associated with a dashboard deployment.
  */
 export interface UsageTaskInput {
   accountId: string;
-  /** Convex endpoint identifier — undefined in DynamoDB mode. */
+  /** Convex endpoint identifier when the task belongs to a deployment. */
   endpointId?: string;
-  /** Deployment project slug — undefined in DynamoDB mode. */
+  /** Deployment project slug when available. */
   project?: string;
-  /** Deployment environment slug — undefined in DynamoDB mode. */
+  /** Deployment environment slug when available. */
   environment?: string;
   agentId: string;
   conversationKey: string;
@@ -211,24 +208,6 @@ export interface CronStore {
   listRuns(accountId: string, cronId: string, limit?: number): Promise<CronRunRecord[]>;
 }
 
-/**
- * The remaining persistence concerns — conversations/messages, async agent
- * results, async tool results, and dedupe — are
- * intentionally NOT part of StorageProvider yet. Two reasons:
- *
- * 1. Cherry-coke's Convex schema doesn't match broods's DDB schema
- *    for these (conversations use a 1:N model in Convex but a flat
- *    composite-key event table in DDB; asyncToolResult needs a GSI +
- *    dispatch-group fan-in that the unified Convex asyncResults table
- *    doesn't model).
- * 2. Dedupe depends on DDB-specific semantics (TTL +
- *    conditional writes) that Convex doesn't expose cleanly.
- *
- * They stay in their current modules under functions/harness/
- * and run against DynamoDB on every stage. When cherry-coke and broods
- * agree on a shared schema, lift them into this file and add stores.
- */
-
 /** Account-scoped, reusable sandbox config records (encrypted at rest). */
 export interface SandboxConfigStore {
   getById(accountId: string, sandboxId: string): Promise<SandboxConfigRecord | null>;
@@ -282,14 +261,14 @@ export interface AgentPolicyStore {
 /**
  * Writes per-task usage counts. The active storage provider implements this;
  * it inserts one raw-count row per finished task and folds into a rollup
- * bucket (Convex: 5-min usageRollups; DynamoDB: ADD-atomic rollup item).
+ * 5-minute Convex usageRollups bucket.
  */
 export interface UsageStore {
   recordTask(input: UsageTaskInput): Promise<void>;
 }
 
 export interface StorageProvider {
-  readonly kind: "dynamodb" | "convex";
+  readonly kind: "convex";
   accounts: AccountStore;
   agents: AgentStore;
   agentDeployments: AgentDeploymentStore;

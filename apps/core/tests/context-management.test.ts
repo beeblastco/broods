@@ -56,7 +56,7 @@ mock.module("../src/shared/s3.ts", () => ({
 
 let workspaceHarnessEnabled = true;
 const testStorage = () => ({
-  kind: "dynamodb",
+  kind: "convex",
   agents: { getById: getAgentMock },
   sandboxConfigs: { getById: async () => null },
   workspaceConfigs: {

@@ -75,7 +75,7 @@ export interface PublicAccountHookRecord {
 const HOOK_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_-]{0,63}$/;
 const MAX_BUNDLE_BYTES = 512 * 1024;
 
-/** Accept DynamoDB public ids and native Convex document ids during migration/sync. */
+/** Accept legacy public ids and native Convex document ids during migration/sync. */
 export function isAccountHookId(value: string): boolean {
   return /^hook_[A-Za-z0-9_-]+$/.test(value) || /^[a-z0-9]{32}$/.test(value);
 }

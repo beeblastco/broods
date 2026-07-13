@@ -3,14 +3,13 @@
  * Cover model-loop edge cases without calling provider APIs.
  */
 
-import { afterEach, describe, expect, it, mock } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
 import * as actualAi from "ai";
-import { dynamo } from "../src/shared/storage/dynamo/client.ts";
+import { setStorageForTests, type StorageProvider, type UsageTaskInput } from "../src/shared/storage/index.ts";
 
 const ORIGINAL_ENV = { ...process.env };
 const ORIGINAL_STDOUT_WRITE = process.stdout.write.bind(process.stdout);
 const originalFetch = globalThis.fetch;
-const originalDynamoSend = dynamo.send;
 const googleModelMock = mock((modelId: string) => ({ provider: "google", modelId }));
 const createGoogleMock = mock((_options: unknown) => googleModelMock);
 const openAIModelMock = mock((modelId: string) => ({ provider: "openai", modelId }));
@@ -413,11 +412,15 @@ mock.module("ai", () => ({
   streamText: streamTextMock,
 }));
 
+beforeEach(() => {
+  setStorageForTests(usageStorage([]));
+});
+
 afterEach(() => {
   process.env = { ...ORIGINAL_ENV };
   process.stdout.write = ORIGINAL_STDOUT_WRITE;
   globalThis.fetch = originalFetch;
-  dynamo.send = originalDynamoSend;
+  setStorageForTests(null);
   streamTextScenario = "empty";
   streamTextMock.mockClear();
   googleModelMock.mockClear();
@@ -611,16 +614,8 @@ describe("runAgentLoop", () => {
   it("marks a hard stream termination as failed when no completion hook runs", async () => {
     streamTextScenario = "hard-throw";
     installHarnessEnv();
-    process.env.USAGE_TABLE_NAME = "usage-test";
-    const usageWrites: Array<{
-      input?: { TransactItems?: Array<{ Put?: { Item?: Record<string, { S?: string }> } }> };
-    }> = [];
-    dynamo.send = mock(async (command: {
-      input?: { TransactItems?: Array<{ Put?: { Item?: Record<string, { S?: string }> } }> };
-    }) => {
-      usageWrites.push(command);
-      return {};
-    }) as never;
+    const usageWrites: UsageTaskInput[] = [];
+    setStorageForTests(usageStorage(usageWrites));
     const { runAgentLoop } = await import("../src/harness/harness.ts");
     const stream = await runAgentLoop({
       conversationKey: "direct:conversation",
@@ -647,7 +642,7 @@ describe("runAgentLoop", () => {
     await expect(stream.consumeStream()).rejects.toThrow("stream transport failed");
     expect(stream.didFail()).toBe(true);
     expect(stream.failureText()).toBe("stream transport failed");
-    expect(usageWrites[0]?.input?.TransactItems?.[0]?.Put?.Item?.status?.S).toBe("failed");
+    expect(usageWrites[0]?.status).toBe("failed");
   });
 
   it("finalizes via ensureFinalized when a caller drains stream and onEnd never fires", async () => {
@@ -658,16 +653,8 @@ describe("runAgentLoop", () => {
     // ensureFinalized() is the safety net that path must call.
     streamTextScenario = "error-no-finish";
     installHarnessEnv();
-    process.env.USAGE_TABLE_NAME = "usage-test";
-    const usageWrites: Array<{
-      input?: { TransactItems?: Array<{ Put?: { Item?: Record<string, { S?: string }> } }> };
-    }> = [];
-    dynamo.send = mock(async (command: {
-      input?: { TransactItems?: Array<{ Put?: { Item?: Record<string, { S?: string }> } }> };
-    }) => {
-      usageWrites.push(command);
-      return {};
-    }) as never;
+    const usageWrites: UsageTaskInput[] = [];
+    setStorageForTests(usageStorage(usageWrites));
     const { runAgentLoop } = await import("../src/harness/harness.ts");
     const onErrorText = mock(async () => { });
 
@@ -710,7 +697,7 @@ describe("runAgentLoop", () => {
     await stream.ensureFinalized();
 
     expect(stream.didFail()).toBe(true);
-    expect(usageWrites[0]?.input?.TransactItems?.[0]?.Put?.Item?.status?.S).toBe("failed");
+    expect(usageWrites[0]?.status).toBe("failed");
 
     // Idempotent: a second call (and any later consumeStream) writes nothing more.
     await stream.ensureFinalized();
@@ -1863,6 +1850,22 @@ describe("runAgentLoop", () => {
     });
   });
 });
+
+function usageStorage(writes: UsageTaskInput[]): StorageProvider {
+  return {
+    kind: "convex",
+    accounts: null as never,
+    agents: null as never,
+    agentDeployments: null as never,
+    crons: null as never,
+    sandboxConfigs: null as never,
+    workspaceConfigs: null as never,
+    agentPolicies: null as never,
+    accountTools: null as never,
+    accountHooks: null as never,
+    usage: { async recordTask(input) { writes.push(input); } },
+  };
+}
 
 function installHarnessEnv(): void {
   process.env.MAX_AGENT_ITERATIONS = "3";

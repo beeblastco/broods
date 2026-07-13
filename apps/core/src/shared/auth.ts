@@ -2,7 +2,7 @@
  * Bearer-token auth: admin secret, service token (for cherry-coke
  * server-side actions), and account-secret hash lookup. Persistence is
  * reached via `getStorage().accounts.*` so the auth path is identical
- * across DynamoDB and Convex modes.
+ * through the Convex-backed account store.
  */
 
 import { createHash, timingSafeEqual } from "node:crypto";

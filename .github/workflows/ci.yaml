@@ -1,5 +1,5 @@
 # CI for community / OSS builds (PRs + non-main pushes).
-# Validates the core SST app (DynamoDB path), SDK/Convex types, gateway, and
+# Validates the core SST app (Convex path), SDK/Convex types, gateway, and
 # dashboard before branch deployment workflows are allowed to become the first
 # place cross-workspace failures appear.
 

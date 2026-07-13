@@ -491,7 +491,7 @@ function createToolContext(
 
 function storageWithAccountTool(accountTool: AccountToolRecord): StorageProvider {
   return {
-    kind: "dynamodb",
+    kind: "convex",
     accounts: {} as never,
     agents: {} as never,
     agentDeployments: {

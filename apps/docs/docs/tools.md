@@ -113,7 +113,7 @@ sequenceDiagram
   participant H as harness-processing
   participant P as Parent agent
   participant C as AsyncToolCoordinator
-  participant D as DynamoDB AsyncToolResult
+  participant D as Convex AsyncToolResult
   participant I as V8 isolate
 
   alt built-in async or non-detached uploaded isolate async

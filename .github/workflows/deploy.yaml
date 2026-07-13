@@ -2,8 +2,7 @@
 # `main` = SaaS production: PR CI already validated, skip re-validation and
 #   deploy directly to the active production region (Convex storage provider).
 # `dev` = OSS / community staging: re-validates (typecheck + test + build)
-#   before deploying. Uses Convex storage when the development environment
-#   provides CONVEX_URL + CONVEX_DEPLOY_KEY, otherwise DynamoDB.
+#   before deploying. Requires the development Convex credentials.
 
 name: Deploy
 
@@ -121,8 +120,8 @@ jobs:
       SANDBOX_IMAGE_READY_PRODUCTION_EU_WEST_1: ${{ vars.SANDBOX_IMAGE_READY_PRODUCTION_EU_WEST_1 || vars.SANDBOX_IMAGE_READY_PRODUCTION || 'false' }}
       SANDBOX_IMAGE_READY_PRODUCTION_AP_SOUTHEAST_1: ${{ vars.SANDBOX_IMAGE_READY_PRODUCTION_AP_SOUTHEAST_1 || vars.SANDBOX_IMAGE_READY_PRODUCTION || 'false' }}
       SANDBOX_IMAGE_SOURCE_REGION: ${{ vars.SANDBOX_IMAGE_SOURCE_REGION || 'eu-west-1' }}
-      # Convex storage provider. Resolved per environment (production on main,
-      # development otherwise). A stage uses Convex when both are set, else DynamoDB.
+      # Convex credentials resolved per environment (production on main,
+      # development otherwise); both values are required on every stage.
       CONVEX_URL: ${{ secrets.CONVEX_URL }}
       CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
     steps:
