@@ -68,6 +68,7 @@ import type * as model_sandboxConfigSync from "../model/sandboxConfigSync.js";
 import type * as model_sandboxRules from "../model/sandboxRules.js";
 import type * as model_skillRules from "../model/skillRules.js";
 import type * as model_skills from "../model/skills.js";
+import type * as model_slackDirectory from "../model/slackDirectory.js";
 import type * as model_workspaceFs from "../model/workspaceFs.js";
 import type * as model_workspaceRules from "../model/workspaceRules.js";
 import type * as modelPricing from "../modelPricing.js";
@@ -160,6 +161,7 @@ declare const fullApi: ApiFromModules<{
   "model/sandboxRules": typeof model_sandboxRules;
   "model/skillRules": typeof model_skillRules;
   "model/skills": typeof model_skills;
+  "model/slackDirectory": typeof model_slackDirectory;
   "model/workspaceFs": typeof model_workspaceFs;
   "model/workspaceRules": typeof model_workspaceRules;
   modelPricing: typeof modelPricing;

@@ -106,6 +106,7 @@ export const handle = httpAction(async (ctx, req) => {
  */
 function clientErrorStatus(error: Error): number {
     if (error.message.startsWith("Skill path belongs to another account:")) return 401;
+    if (error.message.startsWith("Agent name already exists:")) return 409;
     if (
         error.message.startsWith("Skill not found:") ||
         error.message.startsWith("Subagent not found:") ||
@@ -674,6 +675,15 @@ async function handleAgentConfigRoute(
         }
         if (req.method === "POST") {
             const input = normalizeCreateAgentInput(await req.json());
+            // Names identify agents to config-plane clients (lookup-before-create
+            // upserts), so a duplicate must 409 instead of silently forking.
+            const duplicate: Doc<"agents"> | null = await ctx.runQuery(internal.agents.getByName, {
+                accountId: accountId,
+                name: input.name,
+            });
+            if (duplicate) {
+                return json({ error: `Agent name already exists: ${input.name}`, agentId: duplicate._id }, 409);
+            }
             const config = await prepareAccountAgentConfig(ctx, accountId, input.config);
             await validateAgentReferences(ctx, accountId, input.config);
             const createdId: Id<"agents"> = await ctx.runMutation(internal.agents.create, {
@@ -730,6 +740,15 @@ async function handleAgentConfigRoute(
         if (!existing) return json({ error: "Agent not found" }, 404);
         const existingConfig = await decryptAgentConfigForPublicRead(existing);
         const patch = normalizeUpdateAgentInput(existingConfig, await req.json());
+        if (patch.name !== undefined && patch.name !== existing.name) {
+            const collision: Doc<"agents"> | null = await ctx.runQuery(internal.agents.getByName, {
+                accountId: accountId,
+                name: patch.name,
+            });
+            if (collision) {
+                return json({ error: `Agent name already exists: ${patch.name}`, agentId: collision._id }, 409);
+            }
+        }
         const config = await prepareAccountAgentConfig(ctx, accountId, patch.config);
         await validateAgentReferences(ctx, accountId, patch.config);
         await ctx.runMutation(internal.agents.update, {
@@ -1999,6 +2018,7 @@ function isClientInputError(error: unknown): error is Error {
         "Skill not found:",
         "Subagent not found:",
         "Agent policy not found:",
+        "Agent name already exists:",
         "SKILL.md ",
         "GitHub skill URL ",
         "GitHub archive ",

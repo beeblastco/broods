@@ -951,6 +951,17 @@ paths:
                     agentId: agent_xyz789
                     name: support-agent
                     description: Customer support agent
+        '409':
+          description: An agent with this name already exists in the account. The response includes the existing agent's id so clients can adopt it instead of duplicating.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                  agentId:
+                    type: string
 
     get:
       tags:
@@ -1034,6 +1045,17 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Agent'
+        '409':
+          description: Renaming to a name that already exists in the account. The response includes the existing agent's id.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                  agentId:
+                    type: string
 
     delete:
       tags:
