@@ -54,6 +54,10 @@ export const list = internalQuery({
     },
 });
 
+/**
+ * Creates an account with a unique organization binding.
+ * @returns the complete persisted account document
+ */
 export const create = internalMutation({
     args: {
         orgId: v.string(),
@@ -91,6 +95,10 @@ export const create = internalMutation({
     },
 });
 
+/**
+ * Updates an existing account's mutable fields.
+ * @returns the updated document, or null when the account does not exist
+ */
 export const update = internalMutation({
     args: {
         accountId: v.id("accounts"),
@@ -104,6 +112,7 @@ export const update = internalMutation({
         const { accountId, ...patch } = args;
         const account = await ctx.db.get(accountId);
         if (!account) {
+
             return null;
         }
 

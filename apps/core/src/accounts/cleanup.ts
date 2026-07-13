@@ -18,6 +18,8 @@ export interface AccountCleanupSummary {
   processedEventsDeleted: number;
   asyncAgentResultDeleted: number;
   asyncToolResultDeleted: number;
+  asyncToolGroupDeleted: number;
+  sandboxReservationDeleted: number;
   filesystemObjectsDeleted: number;
   reservedSandboxesReleased: number;
 }
@@ -25,9 +27,7 @@ export interface AccountCleanupSummary {
 export async function deleteAccountRuntimeData(
   account: AccountRecord,
 ): Promise<AccountCleanupSummary> {
-  const workspaces = await getStorage()
-    .workspaceConfigs.list(account.accountId)
-    .catch(() => []);
+  const workspaces = await getStorage().workspaceConfigs.list(account.accountId);
   const reservedSandboxesReleased = await releaseReservedSandboxes(
     account.accountId,
     workspaces.map((w) => workspaceNamespace(account.accountId, w.workspaceId)),
@@ -56,6 +56,8 @@ async function deleteConvexRuntimeRows(
     processedEventsDeleted: 0,
     asyncAgentResultDeleted: 0,
     asyncToolResultDeleted: 0,
+    asyncToolGroupDeleted: 0,
+    sandboxReservationDeleted: 0,
   };
   for (;;) {
     const batch = await runtimeMutation<
@@ -65,6 +67,8 @@ async function deleteConvexRuntimeRows(
     totals.processedEventsDeleted += batch.processedEventsDeleted;
     totals.asyncAgentResultDeleted += batch.asyncAgentResultDeleted;
     totals.asyncToolResultDeleted += batch.asyncToolResultDeleted;
+    totals.asyncToolGroupDeleted += batch.asyncToolGroupDeleted;
+    totals.sandboxReservationDeleted += batch.sandboxReservationDeleted;
     if (batch.totalDeleted === 0) return totals;
   }
 }

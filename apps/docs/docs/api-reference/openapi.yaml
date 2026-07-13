@@ -649,6 +649,8 @@ paths:
                       processedEventsDeleted: 14
                       asyncAgentResultDeleted: 2
                       asyncToolResultDeleted: 3
+                      asyncToolGroupDeleted: 1
+                      sandboxReservationDeleted: 2
                       filesystemObjectsDeleted: 8
                       reservedSandboxesReleased: 0
                       agentsDeleted: 1
@@ -2565,6 +2567,10 @@ components:
             asyncAgentResultDeleted:
               type: integer
             asyncToolResultDeleted:
+              type: integer
+            asyncToolGroupDeleted:
+              type: integer
+            sandboxReservationDeleted:
               type: integer
             filesystemObjectsDeleted:
               type: integer

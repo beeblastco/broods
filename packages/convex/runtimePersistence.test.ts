@@ -133,11 +133,49 @@ describe("runtime persistence", () => {
         input: {},
       }),
     ).toBe(false);
+    await t.run(async (ctx) => {
+      const group = await ctx.db
+        .query("runtimeAsyncToolGroups")
+        .withIndex("by_parentEventId", (q) =>
+          q.eq("parentEventId", "acct:test-account:parent"),
+        )
+        .unique();
+      if (!group) throw new Error("Expected async tool group");
+      await ctx.db.patch(group._id, { expiresAt: 1 });
+    });
+    expect(
+      await t.mutation(internal.runtimePersistence.createAsyncToolResult, {
+        resultId: "result-2",
+        parentEventId: "acct:test-account:parent",
+        conversationKey,
+        toolName: "bash",
+        toolCallId: "call-2",
+        input: {},
+        delivery: { kind: "async" },
+      }),
+    ).toBe(true);
+    expect(
+      await t.query(internal.runtimePersistence.getAsyncToolGroup, {
+        parentEventId: "acct:test-account:parent",
+      }),
+    ).toMatchObject({
+      resultIds: ["result-1", "result-2"],
+      sealed: false,
+      expiresAt: expect.any(Number),
+    });
+    const refreshedGroup = await t.query(
+      internal.runtimePersistence.getAsyncToolGroup,
+      { parentEventId: "acct:test-account:parent" },
+    );
+    expect(refreshedGroup?.expiresAt).toBeGreaterThan(1);
     const group = await t.mutation(
       internal.runtimePersistence.sealAsyncToolGroup,
       { parentEventId: "acct:test-account:parent" },
     );
-    expect(group).toMatchObject({ resultIds: ["result-1"], sealed: true });
+    expect(group).toMatchObject({
+      resultIds: ["result-1", "result-2"],
+      sealed: true,
+    });
     expect(
       await t.mutation(internal.runtimePersistence.updateAsyncToolResult, {
         resultId: "result-1",
@@ -182,18 +220,18 @@ describe("runtime persistence", () => {
     expect(persisted?.completionTokenHash).not.toBe("secret");
     await expect(
       t.mutation(internal.runtimePersistence.createAsyncToolResult, {
-        resultId: "result-2",
+        resultId: "result-3",
         parentEventId: "acct:test-account:parent",
         conversationKey,
         toolName: "bash",
-        toolCallId: "call-2",
+        toolCallId: "call-3",
         input: {},
         delivery: { kind: "async" },
       }),
     ).rejects.toThrow("sealed group");
     expect(
       await t.query(internal.runtimePersistence.getAsyncToolResult, {
-        resultId: "result-2",
+        resultId: "result-3",
       }),
     ).toBeNull();
     await t.mutation(internal.runtimePersistence.updateAsyncToolResult, {
@@ -279,16 +317,44 @@ describe("runtime persistence", () => {
       }
     });
 
-    let batches = 0;
+    const results = [];
     for (;;) {
       const result = await t.mutation(
         internal.runtimePersistence.deleteAccountRuntimeData,
         { accountId },
       );
-      batches += 1;
+      results.push(result);
       if (result.totalDeleted === 0) break;
     }
-    expect(batches).toBe(3);
+    expect(results).toEqual([
+      {
+        conversationsDeleted: 100,
+        processedEventsDeleted: 0,
+        asyncAgentResultDeleted: 0,
+        asyncToolResultDeleted: 0,
+        asyncToolGroupDeleted: 100,
+        sandboxReservationDeleted: 100,
+        totalDeleted: 300,
+      },
+      {
+        conversationsDeleted: 1,
+        processedEventsDeleted: 0,
+        asyncAgentResultDeleted: 0,
+        asyncToolResultDeleted: 0,
+        asyncToolGroupDeleted: 1,
+        sandboxReservationDeleted: 1,
+        totalDeleted: 3,
+      },
+      {
+        conversationsDeleted: 0,
+        processedEventsDeleted: 0,
+        asyncAgentResultDeleted: 0,
+        asyncToolResultDeleted: 0,
+        asyncToolGroupDeleted: 0,
+        sandboxReservationDeleted: 0,
+        totalDeleted: 0,
+      },
+    ]);
     expect(
       await t.run(async (ctx) => ({
         events: await ctx.db.query("runtimeConversationEvents").collect(),

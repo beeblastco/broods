@@ -72,7 +72,10 @@ const toolGroupDoc = v.object({
   _creationTime: v.number(),
 });
 
-/** Atomically claims a dedupe key until its expiry. */
+/**
+ * Atomically claims a dedupe key until its expiry.
+ * @returns whether this invocation acquired the claim
+ */
 export const claimEvent = internalMutation({
   args: { key: v.string(), ttlSeconds: v.number() },
   returns: v.boolean(),
@@ -100,7 +103,10 @@ export const claimEvent = internalMutation({
   },
 });
 
-/** Releases an event claim when processing must be retried. */
+/**
+ * Releases an event claim when processing must be retried.
+ * @returns null after the release attempt
+ */
 export const releaseClaim = internalMutation({
   args: { key: v.string() },
   returns: v.null(),
@@ -115,7 +121,10 @@ export const releaseClaim = internalMutation({
   },
 });
 
-/** Acquires an expired or absent conversation lease transactionally. */
+/**
+ * Acquires an expired or absent conversation lease transactionally.
+ * @returns whether this invocation acquired the lease
+ */
 export const acquireLease = internalMutation({
   args: {
     key: v.string(),
@@ -148,7 +157,10 @@ export const acquireLease = internalMutation({
   },
 });
 
-/** Releases a conversation lease only for its current owner. */
+/**
+ * Releases a conversation lease only for its current owner.
+ * @returns null after the release attempt
+ */
 export const releaseLease = internalMutation({
   args: { key: v.string(), ownerEventId: v.string() },
   returns: v.null(),
@@ -164,7 +176,10 @@ export const releaseLease = internalMutation({
   },
 });
 
-/** Appends ingress events to a conversation's transactional pending buffer. */
+/**
+ * Appends ingress events to a conversation's transactional pending buffer.
+ * @returns null after the events are queued
+ */
 export const enqueueIngress = internalMutation({
   args: {
     key: v.string(),
@@ -196,7 +211,10 @@ export const enqueueIngress = internalMutation({
   },
 });
 
-/** Atomically drains and removes a pending ingress buffer. */
+/**
+ * Atomically drains and removes a pending ingress buffer.
+ * @returns the queued ingress events, or an empty array when none exist
+ */
 export const takeIngress = internalMutation({
   args: { key: v.string() },
   returns: v.array(v.any()),
@@ -215,7 +233,10 @@ export const takeIngress = internalMutation({
   },
 });
 
-/** Appends one ordered event to a runtime conversation. */
+/**
+ * Appends one ordered event to a runtime conversation.
+ * @returns null after the event is persisted
+ */
 export const appendConversationEvent = internalMutation({
   args: { conversationKey: v.string(), cursor: v.string(), event: v.any() },
   returns: v.null(),
@@ -229,7 +250,10 @@ export const appendConversationEvent = internalMutation({
   },
 });
 
-/** Lists ordered conversation events after an optional cursor. */
+/**
+ * Lists ordered conversation events after an optional cursor.
+ * @returns the bounded ordered event page
+ */
 export const listConversationEvents = internalQuery({
   args: { conversationKey: v.string(), afterCursor: v.optional(v.string()) },
   returns: v.array(v.object({ cursor: v.string(), event: v.any() })),
@@ -249,7 +273,10 @@ export const listConversationEvents = internalQuery({
   },
 });
 
-/** Clears one bounded batch of conversation events for the reset command. */
+/**
+ * Clears one bounded batch of conversation events for the reset command.
+ * @returns the number of deleted events
+ */
 export const clearConversation = internalMutation({
   args: { conversationKey: v.string() },
   returns: v.number(),
@@ -266,7 +293,10 @@ export const clearConversation = internalMutation({
   },
 });
 
-/** Creates an idempotent processing row for async agent polling. */
+/**
+ * Creates an idempotent processing row for async agent polling.
+ * @returns whether a new result row was created
+ */
 export const createAsyncAgentResult = internalMutation({
   args: { eventId: v.string(), conversationKey: v.string() },
   returns: v.boolean(),
@@ -293,7 +323,10 @@ export const createAsyncAgentResult = internalMutation({
   },
 });
 
-/** Returns an async agent result by its globally scoped event id. */
+/**
+ * Looks up an async agent result by its globally scoped event ID.
+ * @returns the result document or null when it does not exist
+ */
 export const getAsyncAgentResult = internalQuery({
   args: { eventId: v.string() },
   returns: v.union(asyncAgentDoc, v.null()),
@@ -304,7 +337,10 @@ export const getAsyncAgentResult = internalQuery({
       .unique(),
 });
 
-/** Applies an async agent status, approval, response, or error transition. */
+/**
+ * Applies an async agent status, approval, response, or error transition.
+ * @returns null after the result is updated
+ */
 export const updateAsyncAgentResult = internalMutation({
   args: {
     eventId: v.string(),
@@ -333,7 +369,10 @@ export const updateAsyncAgentResult = internalMutation({
   },
 });
 
-/** Creates an async tool row and registers it in its fan-in group atomically. */
+/**
+ * Creates an async tool row and registers it in its fan-in group atomically.
+ * @returns whether a new result row was created
+ */
 export const createAsyncToolResult = internalMutation({
   args: {
     resultId: v.string(),
@@ -383,6 +422,7 @@ export const createAsyncToolResult = internalMutation({
       if (group && !group.resultIds.includes(args.resultId))
         await ctx.db.patch(group._id, {
           resultIds: [...group.resultIds, args.resultId],
+          expiresAt: Math.floor(Date.now() / 1000) + 7 * DAY_SECONDS,
         });
       else if (!group)
         await ctx.db.insert("runtimeAsyncToolGroups", {
@@ -398,7 +438,10 @@ export const createAsyncToolResult = internalMutation({
   },
 });
 
-/** Returns an async tool result without exposing its callback token separately. */
+/**
+ * Looks up an async tool result without exposing callback authorization.
+ * @returns the public result document or null when it does not exist
+ */
 export const getAsyncToolResult = internalQuery({
   args: { resultId: v.string() },
   returns: v.union(asyncToolDoc, v.null()),
@@ -411,7 +454,10 @@ export const getAsyncToolResult = internalQuery({
     return row ? hideCompletionTokenHash(row) : null;
   },
 });
-/** Verifies a supplied callback token without returning persisted authorization. */
+/**
+ * Verifies a supplied callback token without returning persisted authorization.
+ * @returns whether the supplied token matches the persisted digest
+ */
 export const getAsyncToolToken = internalQuery({
   args: { resultId: v.string(), completionToken: v.string() },
   returns: v.boolean(),
@@ -428,7 +474,10 @@ export const getAsyncToolToken = internalQuery({
     return row.completionTokenHash === (await sha256Hex(args.completionToken));
   },
 });
-/** Lists the bounded async tool siblings for one parent event. */
+/**
+ * Lists the bounded async tool siblings for one parent event.
+ * @returns the public sibling result documents
+ */
 export const listAsyncToolResults = internalQuery({
   args: { parentEventId: v.string() },
   returns: v.array(asyncToolDoc),
@@ -442,7 +491,10 @@ export const listAsyncToolResults = internalQuery({
         .take(1000)
     ).map(hideCompletionTokenHash),
 });
-/** Returns fan-in group registration and seal state for a parent event. */
+/**
+ * Looks up fan-in group registration and seal state for a parent event.
+ * @returns the fan-in group or null when it does not exist
+ */
 export const getAsyncToolGroup = internalQuery({
   args: { parentEventId: v.string() },
   returns: v.union(toolGroupDoc, v.null()),
@@ -454,7 +506,10 @@ export const getAsyncToolGroup = internalQuery({
       )
       .unique(),
 });
-/** Seals a fan-in group after every sibling has been registered. */
+/**
+ * Seals a fan-in group after every sibling has been registered.
+ * @returns the sealed group or null when it does not exist
+ */
 export const sealAsyncToolGroup = internalMutation({
   args: { parentEventId: v.string() },
   returns: v.union(toolGroupDoc, v.null()),
@@ -475,7 +530,11 @@ export const sealAsyncToolGroup = internalMutation({
   },
 });
 
-/** Settles or observes an async tool row with optional processing-only CAS semantics. */
+/**
+ * Settles or observes an async tool row with optional processing-only CAS
+ * semantics.
+ * @returns the updated public row, or null when the conditional update is rejected
+ */
 export const updateAsyncToolResult = internalMutation({
   args: {
     resultId: v.string(),
@@ -515,7 +574,10 @@ export const updateAsyncToolResult = internalMutation({
   },
 });
 
-/** Resolves the provider id for a persistent sandbox reservation. */
+/**
+ * Resolves the provider ID for a persistent sandbox reservation.
+ * @returns the provider ID or null when the reservation is absent
+ */
 export const getSandboxReservation = internalQuery({
   args: { provider: sandboxProviderValidator, reservationKey: v.string() },
   returns: v.union(v.string(), v.null()),
@@ -531,7 +593,10 @@ export const getSandboxReservation = internalQuery({
         .unique()
     )?.externalId ?? null,
 });
-/** Claims a new persistent sandbox reservation if it is still unmapped. */
+/**
+ * Claims a new persistent sandbox reservation if it is still unmapped.
+ * @returns whether the reservation was created
+ */
 export const claimSandboxReservation = internalMutation({
   args: {
     provider: sandboxProviderValidator,
@@ -561,7 +626,10 @@ export const claimSandboxReservation = internalMutation({
     return true;
   },
 });
-/** Refreshes or creates a persistent sandbox reservation mapping. */
+/**
+ * Refreshes or creates a persistent sandbox reservation mapping.
+ * @returns null after the mapping is saved
+ */
 export const saveSandboxReservation = internalMutation({
   args: {
     provider: sandboxProviderValidator,
@@ -593,7 +661,10 @@ export const saveSandboxReservation = internalMutation({
     return null;
   },
 });
-/** Deletes a reservation when its optional expected provider id still matches. */
+/**
+ * Deletes a reservation when its optional expected provider ID still matches.
+ * @returns null after the delete attempt
+ */
 export const deleteSandboxReservation = internalMutation({
   args: {
     provider: sandboxProviderValidator,
@@ -620,7 +691,10 @@ export const deleteSandboxReservation = internalMutation({
   },
 });
 
-/** Deletes one bounded batch of every runtime row owned by an account. */
+/**
+ * Deletes one bounded batch of every runtime row owned by an account.
+ * @returns per-table deletion counts and their total
+ */
 export const deleteAccountRuntimeData = internalMutation({
   args: { accountId: v.string() },
   returns: v.object({
@@ -628,6 +702,8 @@ export const deleteAccountRuntimeData = internalMutation({
     processedEventsDeleted: v.number(),
     asyncAgentResultDeleted: v.number(),
     asyncToolResultDeleted: v.number(),
+    asyncToolGroupDeleted: v.number(),
+    sandboxReservationDeleted: v.number(),
     totalDeleted: v.number(),
   }),
   handler: async (ctx, args) => {
@@ -670,6 +746,8 @@ export const deleteAccountRuntimeData = internalMutation({
       processedEventsDeleted: claimRows.length,
       asyncAgentResultDeleted: agentRows.length,
       asyncToolResultDeleted: toolRows.length,
+      asyncToolGroupDeleted: groupRows.length,
+      sandboxReservationDeleted: reservationRows.length,
       totalDeleted:
         conversationRows.length +
         claimRows.length +
@@ -681,7 +759,11 @@ export const deleteAccountRuntimeData = internalMutation({
   },
 });
 
-/** Deletes expired operational rows in bounded batches and continues until caught up. */
+/**
+ * Deletes expired operational rows in bounded batches and schedules
+ * continuation when needed.
+ * @returns the number of rows deleted in this batch
+ */
 export const pruneExpired = internalMutation({
   args: {},
   returns: v.number(),
