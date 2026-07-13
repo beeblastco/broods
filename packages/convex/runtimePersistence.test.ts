@@ -157,13 +157,45 @@ describe("runtime persistence", () => {
     expect(
       await t.query(internal.runtimePersistence.getAsyncToolToken, {
         resultId: "result-1",
+        completionToken: "secret",
       }),
-    ).toBe("secret");
+    ).toBe(true);
+    expect(
+      await t.query(internal.runtimePersistence.getAsyncToolToken, {
+        resultId: "result-1",
+        completionToken: "wrong-secret",
+      }),
+    ).toBe(false);
     expect(
       await t.query(internal.runtimePersistence.getAsyncToolResult, {
         resultId: "result-1",
       }),
-    ).not.toHaveProperty("completionToken");
+    ).not.toHaveProperty("completionTokenHash");
+    const persisted = await t.run(
+      async (ctx) =>
+        await ctx.db
+          .query("runtimeAsyncToolResults")
+          .withIndex("by_resultId", (q) => q.eq("resultId", "result-1"))
+          .unique(),
+    );
+    expect(persisted?.completionTokenHash).toBeDefined();
+    expect(persisted?.completionTokenHash).not.toBe("secret");
+    await expect(
+      t.mutation(internal.runtimePersistence.createAsyncToolResult, {
+        resultId: "result-2",
+        parentEventId: "acct:test-account:parent",
+        conversationKey,
+        toolName: "bash",
+        toolCallId: "call-2",
+        input: {},
+        delivery: { kind: "async" },
+      }),
+    ).rejects.toThrow("sealed group");
+    expect(
+      await t.query(internal.runtimePersistence.getAsyncToolResult, {
+        resultId: "result-2",
+      }),
+    ).toBeNull();
     await t.mutation(internal.runtimePersistence.updateAsyncToolResult, {
       resultId: "result-1",
       status: "completed",
@@ -178,20 +210,174 @@ describe("runtime persistence", () => {
 
   test("claims sandbox reservations and honors expected-id deletes", async () => {
     const t = convexTest(schema, modules);
-    const args = { provider: "sandbox" as const, reservationKey: "acct:test-account:workspace:one", externalId: "sandbox-1" };
-    expect(await t.mutation(internal.runtimePersistence.claimSandboxReservation, args)).toBe(true);
-    expect(await t.mutation(internal.runtimePersistence.claimSandboxReservation, args)).toBe(false);
+    const args = {
+      provider: "sandbox" as const,
+      reservationKey: "acct:test-account:workspace:one",
+      externalId: "sandbox-1",
+    };
+    expect(
+      await t.mutation(
+        internal.runtimePersistence.claimSandboxReservation,
+        args,
+      ),
+    ).toBe(true);
+    expect(
+      await t.mutation(
+        internal.runtimePersistence.claimSandboxReservation,
+        args,
+      ),
+    ).toBe(false);
     await t.mutation(internal.runtimePersistence.deleteSandboxReservation, {
-      provider: args.provider, reservationKey: args.reservationKey, expectedExternalId: "sandbox-2",
+      provider: args.provider,
+      reservationKey: args.reservationKey,
+      expectedExternalId: "sandbox-2",
     });
-    expect(await t.query(internal.runtimePersistence.getSandboxReservation, {
-      provider: args.provider, reservationKey: args.reservationKey,
-    })).toBe("sandbox-1");
+    expect(
+      await t.query(internal.runtimePersistence.getSandboxReservation, {
+        provider: args.provider,
+        reservationKey: args.reservationKey,
+      }),
+    ).toBe("sandbox-1");
     await t.mutation(internal.runtimePersistence.deleteSandboxReservation, {
-      provider: args.provider, reservationKey: args.reservationKey, expectedExternalId: "sandbox-1",
+      provider: args.provider,
+      reservationKey: args.reservationKey,
+      expectedExternalId: "sandbox-1",
     });
-    expect(await t.query(internal.runtimePersistence.getSandboxReservation, {
-      provider: args.provider, reservationKey: args.reservationKey,
-    })).toBeNull();
+    expect(
+      await t.query(internal.runtimePersistence.getSandboxReservation, {
+        provider: args.provider,
+        reservationKey: args.reservationKey,
+      }),
+    ).toBeNull();
+  });
+
+  test("deletes account runtime data across bounded batches", async () => {
+    const t = convexTest(schema, modules);
+    const accountId = "cleanup-account";
+    await t.run(async (ctx) => {
+      for (let index = 0; index < 101; index += 1) {
+        await ctx.db.insert("runtimeConversationEvents", {
+          accountId,
+          conversationKey: `acct:${accountId}:conversation:${index}`,
+          cursor: String(index).padStart(3, "0"),
+          event: { index },
+        });
+        await ctx.db.insert("runtimeAsyncToolGroups", {
+          accountId,
+          parentEventId: `acct:${accountId}:parent:${index}`,
+          resultIds: [`result-${index}`],
+          sealed: true,
+          expiresAt: 2_000_000_000,
+        });
+        await ctx.db.insert("sandboxReservations", {
+          accountId,
+          provider: "sandbox",
+          reservationKey: `acct:${accountId}:workspace:${index}`,
+          externalId: `sandbox-${index}`,
+          expiresAt: 2_000_000_000,
+        });
+      }
+    });
+
+    let batches = 0;
+    for (;;) {
+      const result = await t.mutation(
+        internal.runtimePersistence.deleteAccountRuntimeData,
+        { accountId },
+      );
+      batches += 1;
+      if (result.totalDeleted === 0) break;
+    }
+    expect(batches).toBe(3);
+    expect(
+      await t.run(async (ctx) => ({
+        events: await ctx.db.query("runtimeConversationEvents").collect(),
+        groups: await ctx.db.query("runtimeAsyncToolGroups").collect(),
+        reservations: await ctx.db.query("sandboxReservations").collect(),
+      })),
+    ).toEqual({ events: [], groups: [], reservations: [] });
+  });
+
+  test("prunes expired operational rows without removing live rows", async () => {
+    const t = convexTest(schema, modules);
+    const now = Math.floor(Date.now() / 1000);
+    await t.run(async (ctx) => {
+      for (const [suffix, expiresAt] of [
+        ["expired", now - 1],
+        ["live", now + 60],
+      ] as const) {
+        await ctx.db.insert("runtimeClaims", {
+          accountId: "prune-account",
+          key: `${suffix}-claim`,
+          kind: "event",
+          expiresAt,
+        });
+        await ctx.db.insert("runtimeAsyncAgentResults", {
+          accountId: "prune-account",
+          eventId: `${suffix}-agent`,
+          conversationKey: `acct:prune-account:${suffix}`,
+          status: "processing",
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+          expiresAt,
+        });
+        await ctx.db.insert("runtimeAsyncToolResults", {
+          accountId: "prune-account",
+          resultId: `${suffix}-tool`,
+          parentEventId: `${suffix}-parent`,
+          conversationKey: `acct:prune-account:${suffix}`,
+          toolName: "bash",
+          toolCallId: `${suffix}-call`,
+          input: {},
+          status: "processing",
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+          expiresAt,
+        });
+        await ctx.db.insert("runtimeAsyncToolGroups", {
+          accountId: "prune-account",
+          parentEventId: `${suffix}-parent`,
+          resultIds: [`${suffix}-tool`],
+          sealed: true,
+          expiresAt,
+        });
+        await ctx.db.insert("sandboxReservations", {
+          accountId: "prune-account",
+          provider: "sandbox",
+          reservationKey: `acct:prune-account:${suffix}`,
+          externalId: `${suffix}-sandbox`,
+          expiresAt,
+        });
+      }
+    });
+
+    expect(await t.mutation(internal.runtimePersistence.pruneExpired, {})).toBe(
+      5,
+    );
+    expect(
+      await t.run(async (ctx) => ({
+        claims: (await ctx.db.query("runtimeClaims").collect()).map(
+          (row) => row.key,
+        ),
+        agents: (await ctx.db.query("runtimeAsyncAgentResults").collect()).map(
+          (row) => row.eventId,
+        ),
+        tools: (await ctx.db.query("runtimeAsyncToolResults").collect()).map(
+          (row) => row.resultId,
+        ),
+        groups: (await ctx.db.query("runtimeAsyncToolGroups").collect()).map(
+          (row) => row.parentEventId,
+        ),
+        reservations: (await ctx.db.query("sandboxReservations").collect()).map(
+          (row) => row.externalId,
+        ),
+      })),
+    ).toEqual({
+      claims: ["live-claim"],
+      agents: ["live-agent"],
+      tools: ["live-tool"],
+      groups: ["live-parent"],
+      reservations: ["live-sandbox"],
+    });
   });
 });

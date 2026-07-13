@@ -39,7 +39,7 @@ export const provision = action({
         }
 
         const { secret, secretHash } = generateAccountSecret();
-        const accountId = await ctx.runMutation(internal.accounts.create, {
+        const account = await ctx.runMutation(internal.accounts.create, {
             orgId: args.orgId,
             username: org.slug,
             description: `Cherry-coke org ${org.name}`,
@@ -49,11 +49,11 @@ export const provision = action({
         const identity = await ctx.auth.getUserIdentity();
         console.log("AUDIT account secret provisioned", {
             orgId: args.orgId,
-            accountId: accountId,
+            accountId: account._id,
             actor: identity?.subject ?? "unknown",
         });
 
-        return { accountId: accountId, secret: secret };
+        return { accountId: account._id, secret: secret };
     },
 });
 

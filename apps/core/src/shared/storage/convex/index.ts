@@ -236,27 +236,39 @@ const accounts: AccountStore = {
   async create(input) {
     const normalized = normalizeCreateAccountInput(input);
     const secret = createAccountSecret();
-    const accountId = await getConvexClient().mutation(internal.accounts.create, {
+    const doc = await getConvexClient().mutation(internal.accounts.create, {
       orgId: `admin:${createAccountId()}`,
       username: normalized.username,
       description: normalized.description,
       secretHash: hashAccountSecret(secret),
       status: "active",
-    }) as string;
-    const account = await this.getById(accountId);
+    }) as ConvexAccountDoc;
+    const account = accountFromConvex(doc);
     if (!account) throw new Error("Failed to fetch created account");
     return { account, secret };
   },
   async update(accountId, rawPatch) {
     const patch = normalizeUpdateAccountInput(rawPatch);
-    await getConvexClient().mutation(internal.accounts.update, { accountId: accountId as any, ...patch });
-    return this.getById(accountId);
+    const doc = await getConvexClient().mutation(internal.accounts.update, {
+      accountId: accountId as any,
+      ...patch,
+    });
+    return accountFromConvex(doc as ConvexAccountDoc | null);
+  },
+  async disable(accountId) {
+    const doc = await getConvexClient().mutation(internal.accounts.update, {
+      accountId: accountId as any,
+      status: "disabled",
+    });
+    return accountFromConvex(doc as ConvexAccountDoc | null);
   },
   async rotateSecret(accountId) {
-    if (!await this.getById(accountId)) return null;
     const secret = createAccountSecret();
-    await getConvexClient().mutation(internal.accounts.update, { accountId: accountId as any, secretHash: hashAccountSecret(secret) });
-    const account = await this.getById(accountId);
+    const doc = await getConvexClient().mutation(internal.accounts.update, {
+      accountId: accountId as any,
+      secretHash: hashAccountSecret(secret),
+    });
+    const account = accountFromConvex(doc as ConvexAccountDoc | null);
     return account ? { account, secret } : null;
   },
   async remove(accountId) {

@@ -9,10 +9,10 @@ import {
 } from "../src/harness/async-agent-result.ts";
 import {
   createPendingAsyncToolResult,
-  getAsyncToolCompletionToken,
   getAsyncToolResult,
   sealDetachedAsyncToolGroup,
   settleAsyncToolResultFromCallback,
+  verifyAsyncToolCompletionToken,
 } from "../src/harness/async-tool-result.ts";
 
 const originalQuery = runtimePersistence.query;
@@ -68,13 +68,18 @@ describe("async tool result persistence", () => {
     }));
   });
 
-  it("reads callback tokens separately and settles with processing-only CAS", async () => {
-    queryMock.mockResolvedValueOnce("token-1" as never);
+  it("verifies callback tokens and settles with processing-only CAS", async () => {
+    queryMock.mockResolvedValueOnce(true as never);
     runtimePersistence.query = queryMock as never;
     runtimePersistence.mutation = mutationMock as never;
-    await expect(getAsyncToolCompletionToken("result-1")).resolves.toBe("token-1");
+    await expect(
+      verifyAsyncToolCompletionToken("result-1", "token-1"),
+    ).resolves.toBe(true);
     await settleAsyncToolResultFromCallback({ resultId: "result-1", status: "failed", error: "boom" });
-    expect(queryMock).toHaveBeenCalledWith("getAsyncToolToken", { resultId: "result-1" });
+    expect(queryMock).toHaveBeenCalledWith("getAsyncToolToken", {
+      resultId: "result-1",
+      completionToken: "token-1",
+    });
     expect(mutationMock).toHaveBeenCalledWith("updateAsyncToolResult", {
       resultId: "result-1", status: "failed", onlyWhenProcessing: true, error: "boom",
     });

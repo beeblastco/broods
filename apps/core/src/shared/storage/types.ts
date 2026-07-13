@@ -155,6 +155,7 @@ export interface AccountStore {
   getByOrgId?(orgId: string): Promise<AccountRecord | null>;
   create(input: CreateAccountInput): Promise<{ account: AccountRecord; secret: string }>;
   update(accountId: string, patch: UpdateAccountInput): Promise<AccountRecord | null>;
+  disable(accountId: string): Promise<AccountRecord | null>;
   rotateSecret(accountId: string): Promise<{ account: AccountRecord; secret: string } | null>;
   remove(accountId: string): Promise<boolean>;
   list(): Promise<AccountRecord[]>;

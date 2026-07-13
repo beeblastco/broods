@@ -400,8 +400,13 @@ async function sandboxReservationBelongsToAccount(
 }
 
 async function deleteAccountResponse(account: Extract<AuthContext, { kind: "account" }>["account"]): Promise<Response> {
+    const disabled = await getStorage().accounts.disable(account.accountId);
+    if (!disabled) {
+        return jsonResponse(404, { error: "Account not found" });
+    }
+
     const [runtime, agentsDeleted, skillObjectsDeleted, toolBundleObjectsDeleted, cronsDeleted, accountToolsDeleted, accountHooksDeleted] = await Promise.all([
-        deleteAccountRuntimeData(account),
+        deleteAccountRuntimeData(disabled),
         getStorage().agents.removeAllForAccount(account.accountId),
         deleteAccountSkills(account.accountId),
         deleteAccountToolBundles(account.accountId),

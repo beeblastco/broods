@@ -47,10 +47,11 @@ export function createPendingAsyncToolResult(options: {
 }): Promise<boolean> {
   return runtimeMutation("createAsyncToolResult", options);
 }
-export function getAsyncToolCompletionToken(
+export function verifyAsyncToolCompletionToken(
   resultId: string,
-): Promise<string | null> {
-  return runtimeQuery("getAsyncToolToken", { resultId });
+  completionToken: string,
+): Promise<boolean> {
+  return runtimeQuery("getAsyncToolToken", { resultId, completionToken });
 }
 export async function getDetachedAsyncToolGroup(
   parentEventId: string,
@@ -111,6 +112,7 @@ export async function markAsyncToolResultCompleted(options: {
     resultId: options.resultId,
     status: "completed",
     response: options.response,
+    onlyWhenProcessing: true,
   });
 }
 export async function markAsyncToolResultFailed(options: {

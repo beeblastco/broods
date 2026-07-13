@@ -44,7 +44,6 @@ import {
 import { SubagentCoordinator } from "./subagents.ts";
 import { AsyncToolCoordinator, completionToParentMessage } from "./async-tools.ts";
 import {
-  getAsyncToolCompletionToken,
   getDetachedAsyncToolGroup,
   getAsyncToolResult,
   listAsyncToolResultsByParentEvent,
@@ -52,6 +51,7 @@ import {
   settleAsyncToolResultFromCallback,
   type AsyncToolDelivery,
   type AsyncToolResultRecord,
+  verifyAsyncToolCompletionToken,
 } from "./async-tool-result.ts";
 
 type AgentLoopStream = Awaited<ReturnType<typeof runAgentLoop>>;
@@ -301,9 +301,8 @@ async function handleSandboxJobCompletionRequest(event: SandboxJobCompletionInbo
     return jsonResponse(409, { error: "Background job result is already settled", status: existing.status });
   }
 
-  const token = await getAsyncToolCompletionToken(event.resultId);
   // Missing/mismatched token reads as not-found so the endpoint is not a token oracle.
-  if (!token || !timingSafeStringEqual(event.token, token)) {
+  if (!await verifyAsyncToolCompletionToken(event.resultId, event.token)) {
     return jsonResponse(404, { error: "Background job result not found" });
   }
 

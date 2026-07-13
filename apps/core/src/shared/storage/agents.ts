@@ -1,8 +1,7 @@
 /**
  * Agent types, input normalization, skill/subagent validation, and the
- * public/redacted projection. Provider-agnostic — both Convex and
- * Convex stores import the normalizer at their create/update entry
- * points so behaviour is symmetric across modes.
+ * public/redacted projection. The Convex config plane and core storage adapter
+ * both import the normalizer at their create/update entry points.
  */
 
 import {

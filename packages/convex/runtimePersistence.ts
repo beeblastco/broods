@@ -14,9 +14,16 @@ import {
 
 const DAY_SECONDS = 24 * 60 * 60;
 
+/**
+ * Extracts the account ID from an account-scoped runtime key.
+ * @param value account-scoped runtime key
+ * @returns embedded account ID
+ * @throws when the key has no valid account prefix
+ */
 function accountIdFromKey(value: string): string {
   const match = /^acct:([^:]+):/.exec(value);
   if (!match?.[1]) throw new Error("Runtime key is not account scoped");
+
   return match[1];
 }
 
@@ -25,7 +32,10 @@ const asyncAgentDoc = v.object({
   _id: v.id("runtimeAsyncAgentResults"),
   _creationTime: v.number(),
 });
-const { completionToken: _completionToken, ...runtimeAsyncToolPublicFields } = runtimeAsyncToolResultsFields;
+const {
+  completionTokenHash: _completionTokenHash,
+  ...runtimeAsyncToolPublicFields
+} = runtimeAsyncToolResultsFields;
 const asyncToolDoc = v.object({
   ...runtimeAsyncToolPublicFields,
   _id: v.id("runtimeAsyncToolResults"),
@@ -33,9 +43,24 @@ const asyncToolDoc = v.object({
 });
 
 /** Removes callback authorization from general async-tool result reads. */
-function hideCompletionToken<T extends { completionToken?: string }>(row: T): Omit<T, "completionToken"> {
-  const { completionToken: _hidden, ...publicRow } = row;
+function hideCompletionTokenHash<T extends { completionTokenHash?: string }>(
+  row: T,
+): Omit<T, "completionTokenHash"> {
+  const { completionTokenHash: _hidden, ...publicRow } = row;
+
   return publicRow;
+}
+
+/** Hashes a high-entropy callback token before persistence or comparison. */
+async function sha256Hex(value: string): Promise<string> {
+  const digest = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(value),
+  );
+
+  return [...new Uint8Array(digest)]
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
 }
 const toolGroupDoc = v.object({
   accountId: v.string(),
@@ -57,7 +82,10 @@ export const claimEvent = internalMutation({
       .withIndex("by_key", (q) => q.eq("key", args.key))
       .unique();
     const now = Math.floor(Date.now() / 1000);
-    if (existing && existing.expiresAt >= now) return false;
+    if (existing && existing.expiresAt >= now) {
+
+      return false;
+    }
     if (existing) await ctx.db.delete(existing._id);
     await ctx.db.insert("runtimeClaims", {
       accountId: args.key.startsWith("acct:")
@@ -67,6 +95,7 @@ export const claimEvent = internalMutation({
       kind: "event",
       expiresAt: now + args.ttlSeconds,
     });
+
     return true;
   },
 });
@@ -81,6 +110,7 @@ export const releaseClaim = internalMutation({
       .withIndex("by_key", (q) => q.eq("key", args.key))
       .unique();
     if (row?.kind === "event") await ctx.db.delete(row._id);
+
     return null;
   },
 });
@@ -100,7 +130,10 @@ export const acquireLease = internalMutation({
       .withIndex("by_key", (q) => q.eq("key", args.key))
       .unique();
     const now = Math.floor(Date.now() / 1000);
-    if (existing && existing.expiresAt >= now) return false;
+    if (existing && existing.expiresAt >= now) {
+
+      return false;
+    }
     if (existing) await ctx.db.delete(existing._id);
     await ctx.db.insert("runtimeClaims", {
       accountId: accountIdFromKey(args.conversationKey),
@@ -110,6 +143,7 @@ export const acquireLease = internalMutation({
       conversationKey: args.conversationKey,
       expiresAt: now + args.ttlSeconds,
     });
+
     return true;
   },
 });
@@ -125,6 +159,7 @@ export const releaseLease = internalMutation({
       .unique();
     if (row?.kind === "lease" && row.ownerEventId === args.ownerEventId)
       await ctx.db.delete(row._id);
+
     return null;
   },
 });
@@ -156,6 +191,7 @@ export const enqueueIngress = internalMutation({
         conversationKey: args.conversationKey,
         ...patch,
       });
+
     return null;
   },
 });
@@ -169,8 +205,12 @@ export const takeIngress = internalMutation({
       .query("runtimeClaims")
       .withIndex("by_key", (q) => q.eq("key", args.key))
       .unique();
-    if (!row || row.kind !== "pendingIngress") return [];
+    if (!row || row.kind !== "pendingIngress") {
+
+      return [];
+    }
     await ctx.db.delete(row._id);
+
     return row.queued ?? [];
   },
 });
@@ -184,6 +224,7 @@ export const appendConversationEvent = internalMutation({
       accountId: accountIdFromKey(args.conversationKey),
       ...args,
     });
+
     return null;
   },
 });
@@ -203,6 +244,7 @@ export const listConversationEvents = internalQuery({
           : q.eq("conversationKey", args.conversationKey),
       );
     const rows = await query.take(8192);
+
     return rows.map((row) => ({ cursor: row.cursor, event: row.event }));
   },
 });
@@ -219,6 +261,7 @@ export const clearConversation = internalMutation({
       )
       .take(100);
     for (const row of rows) await ctx.db.delete(row._id);
+
     return rows.length;
   },
 });
@@ -232,7 +275,10 @@ export const createAsyncAgentResult = internalMutation({
       .query("runtimeAsyncAgentResults")
       .withIndex("by_eventId", (q) => q.eq("eventId", args.eventId))
       .unique();
-    if (existing) return false;
+    if (existing) {
+
+      return false;
+    }
     const now = new Date().toISOString();
     await ctx.db.insert("runtimeAsyncAgentResults", {
       accountId: accountIdFromKey(args.conversationKey),
@@ -242,6 +288,7 @@ export const createAsyncAgentResult = internalMutation({
       updatedAt: now,
       expiresAt: Math.floor(Date.now() / 1000) + 7 * DAY_SECONDS,
     });
+
     return true;
   },
 });
@@ -281,6 +328,7 @@ export const updateAsyncAgentResult = internalMutation({
       updatedAt: new Date().toISOString(),
       expiresAt: Math.floor(Date.now() / 1000) + 7 * DAY_SECONDS,
     });
+
     return null;
   },
 });
@@ -303,23 +351,35 @@ export const createAsyncToolResult = internalMutation({
       .query("runtimeAsyncToolResults")
       .withIndex("by_resultId", (q) => q.eq("resultId", args.resultId))
       .unique();
-    if (existing) return false;
+    if (existing) {
+
+      return false;
+    }
+    const group = args.delivery
+      ? await ctx.db
+          .query("runtimeAsyncToolGroups")
+          .withIndex("by_parentEventId", (q) =>
+            q.eq("parentEventId", args.parentEventId),
+          )
+          .unique()
+      : null;
+    if (group?.sealed) {
+      throw new Error("Cannot register an async tool result in a sealed group");
+    }
     const now = new Date().toISOString();
+    const { completionToken, ...persistedArgs } = args;
     await ctx.db.insert("runtimeAsyncToolResults", {
       accountId: accountIdFromKey(args.conversationKey),
-      ...args,
+      ...persistedArgs,
+      ...(completionToken
+        ? { completionTokenHash: await sha256Hex(completionToken) }
+        : {}),
       status: "processing",
       createdAt: now,
       updatedAt: now,
       expiresAt: Math.floor(Date.now() / 1000) + 7 * DAY_SECONDS,
     });
     if (args.delivery) {
-      const group = await ctx.db
-        .query("runtimeAsyncToolGroups")
-        .withIndex("by_parentEventId", (q) =>
-          q.eq("parentEventId", args.parentEventId),
-        )
-        .unique();
       if (group && !group.resultIds.includes(args.resultId))
         await ctx.db.patch(group._id, {
           resultIds: [...group.resultIds, args.resultId],
@@ -333,6 +393,7 @@ export const createAsyncToolResult = internalMutation({
           expiresAt: Math.floor(Date.now() / 1000) + 7 * DAY_SECONDS,
         });
     }
+
     return true;
   },
 });
@@ -346,32 +407,40 @@ export const getAsyncToolResult = internalQuery({
       .query("runtimeAsyncToolResults")
       .withIndex("by_resultId", (q) => q.eq("resultId", args.resultId))
       .unique();
-    return row ? hideCompletionToken(row) : null;
+
+    return row ? hideCompletionTokenHash(row) : null;
   },
 });
-/** Returns the isolated callback token for one async tool result. */
+/** Verifies a supplied callback token without returning persisted authorization. */
 export const getAsyncToolToken = internalQuery({
-  args: { resultId: v.string() },
-  returns: v.union(v.string(), v.null()),
-  handler: async (ctx, args) =>
-    (
-      await ctx.db
-        .query("runtimeAsyncToolResults")
-        .withIndex("by_resultId", (q) => q.eq("resultId", args.resultId))
-        .unique()
-    )?.completionToken ?? null,
+  args: { resultId: v.string(), completionToken: v.string() },
+  returns: v.boolean(),
+  handler: async (ctx, args) => {
+    const row = await ctx.db
+      .query("runtimeAsyncToolResults")
+      .withIndex("by_resultId", (q) => q.eq("resultId", args.resultId))
+      .unique();
+    if (!row?.completionTokenHash) {
+
+      return false;
+    }
+
+    return row.completionTokenHash === (await sha256Hex(args.completionToken));
+  },
 });
 /** Lists the bounded async tool siblings for one parent event. */
 export const listAsyncToolResults = internalQuery({
   args: { parentEventId: v.string() },
   returns: v.array(asyncToolDoc),
   handler: async (ctx, args) =>
-    (await ctx.db
-      .query("runtimeAsyncToolResults")
-      .withIndex("by_parentEventId", (q) =>
-        q.eq("parentEventId", args.parentEventId),
-      )
-      .take(1000)).map(hideCompletionToken),
+    (
+      await ctx.db
+        .query("runtimeAsyncToolResults")
+        .withIndex("by_parentEventId", (q) =>
+          q.eq("parentEventId", args.parentEventId),
+        )
+        .take(1000)
+    ).map(hideCompletionTokenHash),
 });
 /** Returns fan-in group registration and seal state for a parent event. */
 export const getAsyncToolGroup = internalQuery({
@@ -396,8 +465,12 @@ export const sealAsyncToolGroup = internalMutation({
         q.eq("parentEventId", args.parentEventId),
       )
       .unique();
-    if (!row) return null;
+    if (!row) {
+
+      return null;
+    }
     await ctx.db.patch(row._id, { sealed: true });
+
     return { ...row, sealed: true };
   },
 });
@@ -418,18 +491,27 @@ export const updateAsyncToolResult = internalMutation({
       .query("runtimeAsyncToolResults")
       .withIndex("by_resultId", (q) => q.eq("resultId", args.resultId))
       .unique();
-    if (!row || (args.onlyWhenProcessing && row.status !== "processing"))
+    if (!row || (args.onlyWhenProcessing && row.status !== "processing")) {
+
       return null;
+    }
     const patch = {
       status: args.status,
-      response: args.observed !== undefined && args.response === undefined ? row.response : args.response,
-      error: args.observed !== undefined && args.error === undefined ? row.error : args.error,
+      response:
+        args.observed !== undefined && args.response === undefined
+          ? row.response
+          : args.response,
+      error:
+        args.observed !== undefined && args.error === undefined
+          ? row.error
+          : args.error,
       observed: args.observed ?? row.observed,
       updatedAt: new Date().toISOString(),
       expiresAt: Math.floor(Date.now() / 1000) + 7 * DAY_SECONDS,
     };
     await ctx.db.patch(row._id, patch);
-    return hideCompletionToken({ ...row, ...patch });
+
+    return hideCompletionTokenHash({ ...row, ...patch });
   },
 });
 
@@ -466,12 +548,16 @@ export const claimSandboxReservation = internalMutation({
           .eq("reservationKey", args.reservationKey),
       )
       .unique();
-    if (row) return false;
+    if (row) {
+
+      return false;
+    }
     await ctx.db.insert("sandboxReservations", {
       accountId: accountIdFromKey(args.reservationKey),
       ...args,
       expiresAt: Math.floor(Date.now() / 1000) + 30 * DAY_SECONDS,
     });
+
     return true;
   },
 });
@@ -503,6 +589,7 @@ export const saveSandboxReservation = internalMutation({
         ...args,
         ...patch,
       });
+
     return null;
   },
 });
@@ -528,6 +615,7 @@ export const deleteSandboxReservation = internalMutation({
       (!args.expectedExternalId || row.externalId === args.expectedExternalId)
     )
       await ctx.db.delete(row._id);
+
     return null;
   },
 });
@@ -576,12 +664,19 @@ export const deleteAccountRuntimeData = internalMutation({
       ...reservationRows,
     ])
       await ctx.db.delete(row._id);
+
     return {
       conversationsDeleted: conversationRows.length,
       processedEventsDeleted: claimRows.length,
       asyncAgentResultDeleted: agentRows.length,
       asyncToolResultDeleted: toolRows.length,
-      totalDeleted: conversationRows.length + claimRows.length + agentRows.length + toolRows.length + groupRows.length + reservationRows.length,
+      totalDeleted:
+        conversationRows.length +
+        claimRows.length +
+        agentRows.length +
+        toolRows.length +
+        groupRows.length +
+        reservationRows.length,
     };
   },
 });
@@ -592,16 +687,46 @@ export const pruneExpired = internalMutation({
   returns: v.number(),
   handler: async (ctx) => {
     const now = Math.floor(Date.now() / 1000);
-    const claims = await ctx.db.query("runtimeClaims").withIndex("by_expiresAt", q => q.lt("expiresAt", now)).take(100);
-    const agentResults = await ctx.db.query("runtimeAsyncAgentResults").withIndex("by_expiresAt", q => q.lt("expiresAt", now)).take(100);
-    const toolResults = await ctx.db.query("runtimeAsyncToolResults").withIndex("by_expiresAt", q => q.lt("expiresAt", now)).take(100);
-    const groups = await ctx.db.query("runtimeAsyncToolGroups").withIndex("by_expiresAt", q => q.lt("expiresAt", now)).take(100);
-    const reservations = await ctx.db.query("sandboxReservations").withIndex("by_expiresAt", q => q.lt("expiresAt", now)).take(100);
-    const rows = [...claims, ...agentResults, ...toolResults, ...groups, ...reservations];
+    const claims = await ctx.db
+      .query("runtimeClaims")
+      .withIndex("by_expiresAt", (q) => q.lt("expiresAt", now))
+      .take(100);
+    const agentResults = await ctx.db
+      .query("runtimeAsyncAgentResults")
+      .withIndex("by_expiresAt", (q) => q.lt("expiresAt", now))
+      .take(100);
+    const toolResults = await ctx.db
+      .query("runtimeAsyncToolResults")
+      .withIndex("by_expiresAt", (q) => q.lt("expiresAt", now))
+      .take(100);
+    const groups = await ctx.db
+      .query("runtimeAsyncToolGroups")
+      .withIndex("by_expiresAt", (q) => q.lt("expiresAt", now))
+      .take(100);
+    const reservations = await ctx.db
+      .query("sandboxReservations")
+      .withIndex("by_expiresAt", (q) => q.lt("expiresAt", now))
+      .take(100);
+    const rows = [
+      ...claims,
+      ...agentResults,
+      ...toolResults,
+      ...groups,
+      ...reservations,
+    ];
     for (const row of rows) await ctx.db.delete(row._id);
-    if ([claims, agentResults, toolResults, groups, reservations].some(batch => batch.length === 100)) {
-      await ctx.scheduler.runAfter(0, internal.runtimePersistence.pruneExpired, {});
+    if (
+      [claims, agentResults, toolResults, groups, reservations].some(
+        (batch) => batch.length === 100,
+      )
+    ) {
+      await ctx.scheduler.runAfter(
+        0,
+        internal.runtimePersistence.pruneExpired,
+        {},
+      );
     }
+
     return rows.length;
   },
 });

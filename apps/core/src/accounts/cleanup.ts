@@ -37,12 +37,8 @@ export async function deleteAccountRuntimeData(
     deleteWorkspaceFilesystems(account.accountId, workspaces),
   ]);
   await Promise.all([
-    getStorage()
-      .sandboxConfigs.removeAllForAccount(account.accountId)
-      .catch(() => 0),
-    getStorage()
-      .workspaceConfigs.removeAllForAccount(account.accountId)
-      .catch(() => 0),
+    getStorage().sandboxConfigs.removeAllForAccount(account.accountId),
+    getStorage().workspaceConfigs.removeAllForAccount(account.accountId),
   ]);
   return { ...runtime, filesystemObjectsDeleted, reservedSandboxesReleased };
 }

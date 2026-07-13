@@ -62,7 +62,7 @@ export const create = internalMutation({
         secretHash: v.string(),
         status: v.optional(statusValidator),
     },
-    returns: v.id("accounts"),
+    returns: accountDoc,
     handler: async (ctx, args) => {
         const existing = await ctx.db
             .query("accounts")
@@ -73,7 +73,7 @@ export const create = internalMutation({
         }
 
         const now = Date.now();
-        return await ctx.db.insert("accounts", {
+        const accountId = await ctx.db.insert("accounts", {
             orgId: args.orgId,
             username: args.username,
             description: args.description,
@@ -82,6 +82,12 @@ export const create = internalMutation({
             createdAt: now,
             updatedAt: now,
         });
+        const account = await ctx.db.get(accountId);
+        if (!account) {
+            throw new Error("Failed to read created account");
+        }
+
+        return account;
     },
 });
 
@@ -93,12 +99,12 @@ export const update = internalMutation({
         status: v.optional(statusValidator),
         secretHash: v.optional(v.string()),
     },
-    returns: v.null(),
+    returns: v.union(accountDoc, v.null()),
     handler: async (ctx, args) => {
         const { accountId, ...patch } = args;
         const account = await ctx.db.get(accountId);
         if (!account) {
-            throw new Error(`Account not found: ${accountId}`);
+            return null;
         }
 
         await ctx.db.patch(accountId, {
@@ -109,7 +115,7 @@ export const update = internalMutation({
             updatedAt: Date.now(),
         });
 
-        return null;
+        return await ctx.db.get(accountId);
     },
 });
 
