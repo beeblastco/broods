@@ -121,6 +121,12 @@ interface StoredConversationEntry {
   event: StoredConversationEvent;
 }
 
+interface StoredConversationEventPage {
+  page: Array<{ cursor: string; event: StoredConversationEvent }>;
+  isDone: boolean;
+  continueCursor: string | null;
+}
+
 /**
  * Agent conversation session.
  * Owns persistence, leases, prompt assembly, and in-memory child turns.
@@ -449,8 +455,22 @@ export class Session {
   private async loadConversationEntries(options: {
     afterCreatedAt?: string | null;
   } = {}): Promise<StoredConversationEntry[]> {
-    const rows = await runtimeQuery<Array<{ cursor: string; event: StoredConversationEvent }>>("listConversationEvents", { conversationKey: this.conversationKey, afterCursor: options.afterCreatedAt ?? undefined });
-    return rows.map(row => ({ createdAt: row.cursor, event: row.event }));
+    const entries: StoredConversationEntry[] = [];
+    let afterCursor = options.afterCreatedAt ?? undefined;
+    for (;;) {
+      const result = await runtimeQuery<StoredConversationEventPage>("listConversationEvents", {
+        conversationKey: this.conversationKey,
+        afterCursor: afterCursor,
+      });
+      entries.push(...result.page.map((row) => ({ createdAt: row.cursor, event: row.event })));
+      if (result.isDone) {
+        return entries;
+      }
+      if (!result.continueCursor || result.continueCursor === afterCursor) {
+        throw new Error("Conversation event pagination did not advance");
+      }
+      afterCursor = result.continueCursor;
+    }
   }
 
   private nextCreatedAt(): string {

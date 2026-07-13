@@ -4,7 +4,7 @@
  */
 
 import { v } from "convex/values";
-import { internalMutation, internalQuery } from "./_generated/server";
+import { internalMutation, internalQuery, type MutationCtx } from "./_generated/server";
 import { internal } from "./_generated/api";
 import {
   runtimeAsyncAgentResultsFields,
@@ -13,6 +13,7 @@ import {
 } from "./schema";
 
 const DAY_SECONDS = 24 * 60 * 60;
+const CONVERSATION_EVENT_PAGE_SIZE = 512;
 
 /**
  * Extracts the account ID from an account-scoped runtime key.
@@ -25,6 +26,23 @@ function accountIdFromKey(value: string): string {
   if (!match?.[1]) throw new Error("Runtime key is not account scoped");
 
   return match[1];
+}
+
+/**
+ * Requires an account to exist and remain active in the runtime-write transaction.
+ * @param ctx Convex mutation context
+ * @param accountId account ID embedded in the runtime row or key
+ * @throws when the account is missing, disabled, or malformed
+ */
+async function requireActiveAccount(
+  ctx: MutationCtx,
+  accountId: string,
+): Promise<void> {
+  const normalized = ctx.db.normalizeId("accounts", accountId);
+  const account = normalized ? await ctx.db.get(normalized) : null;
+  if (!account || account.status !== "active") {
+    throw new Error(`Account is not active: ${accountId}`);
+  }
 }
 
 const asyncAgentDoc = v.object({
@@ -80,6 +98,10 @@ export const claimEvent = internalMutation({
   args: { key: v.string(), ttlSeconds: v.number() },
   returns: v.boolean(),
   handler: async (ctx, args) => {
+    const accountId = args.key.startsWith("acct:")
+      ? accountIdFromKey(args.key)
+      : undefined;
+    if (accountId) await requireActiveAccount(ctx, accountId);
     const existing = await ctx.db
       .query("runtimeClaims")
       .withIndex("by_key", (q) => q.eq("key", args.key))
@@ -91,9 +113,7 @@ export const claimEvent = internalMutation({
     }
     if (existing) await ctx.db.delete(existing._id);
     await ctx.db.insert("runtimeClaims", {
-      accountId: args.key.startsWith("acct:")
-        ? accountIdFromKey(args.key)
-        : undefined,
+      accountId: accountId,
       key: args.key,
       kind: "event",
       expiresAt: now + args.ttlSeconds,
@@ -115,6 +135,10 @@ export const releaseClaim = internalMutation({
       .query("runtimeClaims")
       .withIndex("by_key", (q) => q.eq("key", args.key))
       .unique();
+    const accountId = args.key.startsWith("acct:")
+      ? accountIdFromKey(args.key)
+      : row?.accountId;
+    if (accountId) await requireActiveAccount(ctx, accountId);
     if (row?.kind === "event") await ctx.db.delete(row._id);
 
     return null;
@@ -134,6 +158,8 @@ export const acquireLease = internalMutation({
   },
   returns: v.boolean(),
   handler: async (ctx, args) => {
+    const accountId = accountIdFromKey(args.conversationKey);
+    await requireActiveAccount(ctx, accountId);
     const existing = await ctx.db
       .query("runtimeClaims")
       .withIndex("by_key", (q) => q.eq("key", args.key))
@@ -145,7 +171,7 @@ export const acquireLease = internalMutation({
     }
     if (existing) await ctx.db.delete(existing._id);
     await ctx.db.insert("runtimeClaims", {
-      accountId: accountIdFromKey(args.conversationKey),
+      accountId: accountId,
       key: args.key,
       kind: "lease",
       ownerEventId: args.ownerEventId,
@@ -169,6 +195,10 @@ export const releaseLease = internalMutation({
       .query("runtimeClaims")
       .withIndex("by_key", (q) => q.eq("key", args.key))
       .unique();
+    const accountId = row?.accountId ?? (row?.conversationKey
+      ? accountIdFromKey(row.conversationKey)
+      : undefined);
+    if (accountId) await requireActiveAccount(ctx, accountId);
     if (row?.kind === "lease" && row.ownerEventId === args.ownerEventId)
       await ctx.db.delete(row._id);
 
@@ -189,6 +219,8 @@ export const enqueueIngress = internalMutation({
   },
   returns: v.null(),
   handler: async (ctx, args) => {
+    const accountId = accountIdFromKey(args.conversationKey);
+    await requireActiveAccount(ctx, accountId);
     const row = await ctx.db
       .query("runtimeClaims")
       .withIndex("by_key", (q) => q.eq("key", args.key))
@@ -200,7 +232,7 @@ export const enqueueIngress = internalMutation({
     if (row) await ctx.db.patch(row._id, patch);
     else
       await ctx.db.insert("runtimeClaims", {
-        accountId: accountIdFromKey(args.conversationKey),
+        accountId: accountId,
         key: args.key,
         kind: "pendingIngress",
         conversationKey: args.conversationKey,
@@ -227,6 +259,10 @@ export const takeIngress = internalMutation({
 
       return [];
     }
+    const accountId = row.accountId ?? (row.conversationKey
+      ? accountIdFromKey(row.conversationKey)
+      : undefined);
+    if (accountId) await requireActiveAccount(ctx, accountId);
     await ctx.db.delete(row._id);
 
     return row.queued ?? [];
@@ -241,8 +277,10 @@ export const appendConversationEvent = internalMutation({
   args: { conversationKey: v.string(), cursor: v.string(), event: v.any() },
   returns: v.null(),
   handler: async (ctx, args) => {
+    const accountId = accountIdFromKey(args.conversationKey);
+    await requireActiveAccount(ctx, accountId);
     await ctx.db.insert("runtimeConversationEvents", {
-      accountId: accountIdFromKey(args.conversationKey),
+      accountId: accountId,
       ...args,
     });
 
@@ -251,12 +289,16 @@ export const appendConversationEvent = internalMutation({
 });
 
 /**
- * Lists ordered conversation events after an optional cursor.
- * @returns the bounded ordered event page
+ * Lists one bounded page of ordered conversation events after an optional cursor.
+ * @returns page rows plus an exclusive cursor for the next page
  */
 export const listConversationEvents = internalQuery({
   args: { conversationKey: v.string(), afterCursor: v.optional(v.string()) },
-  returns: v.array(v.object({ cursor: v.string(), event: v.any() })),
+  returns: v.object({
+    page: v.array(v.object({ cursor: v.string(), event: v.any() })),
+    isDone: v.boolean(),
+    continueCursor: v.union(v.string(), v.null()),
+  }),
   handler: async (ctx, args) => {
     const query = ctx.db
       .query("runtimeConversationEvents")
@@ -267,9 +309,15 @@ export const listConversationEvents = internalQuery({
               .gt("cursor", args.afterCursor)
           : q.eq("conversationKey", args.conversationKey),
       );
-    const rows = await query.take(8192);
+    const rows = await query.take(CONVERSATION_EVENT_PAGE_SIZE + 1);
+    const page = rows.slice(0, CONVERSATION_EVENT_PAGE_SIZE);
+    const isDone = rows.length <= CONVERSATION_EVENT_PAGE_SIZE;
 
-    return rows.map((row) => ({ cursor: row.cursor, event: row.event }));
+    return {
+      page: page.map((row) => ({ cursor: row.cursor, event: row.event })),
+      isDone: isDone,
+      continueCursor: isDone ? null : (page.at(-1)?.cursor ?? null),
+    };
   },
 });
 
@@ -281,6 +329,7 @@ export const clearConversation = internalMutation({
   args: { conversationKey: v.string() },
   returns: v.number(),
   handler: async (ctx, args) => {
+    await requireActiveAccount(ctx, accountIdFromKey(args.conversationKey));
     const rows = await ctx.db
       .query("runtimeConversationEvents")
       .withIndex("by_conversationKey_and_cursor", (q) =>
@@ -301,6 +350,8 @@ export const createAsyncAgentResult = internalMutation({
   args: { eventId: v.string(), conversationKey: v.string() },
   returns: v.boolean(),
   handler: async (ctx, args) => {
+    const accountId = accountIdFromKey(args.conversationKey);
+    await requireActiveAccount(ctx, accountId);
     const existing = await ctx.db
       .query("runtimeAsyncAgentResults")
       .withIndex("by_eventId", (q) => q.eq("eventId", args.eventId))
@@ -311,7 +362,7 @@ export const createAsyncAgentResult = internalMutation({
     }
     const now = new Date().toISOString();
     await ctx.db.insert("runtimeAsyncAgentResults", {
-      accountId: accountIdFromKey(args.conversationKey),
+      accountId: accountId,
       ...args,
       status: "processing",
       createdAt: now,
@@ -356,6 +407,7 @@ export const updateAsyncAgentResult = internalMutation({
       .withIndex("by_eventId", (q) => q.eq("eventId", args.eventId))
       .unique();
     if (!row) throw new Error("Async agent result not found");
+    await requireActiveAccount(ctx, row.accountId);
     await ctx.db.patch(row._id, {
       status: args.status,
       response: args.response,
@@ -386,6 +438,8 @@ export const createAsyncToolResult = internalMutation({
   },
   returns: v.boolean(),
   handler: async (ctx, args) => {
+    const accountId = accountIdFromKey(args.conversationKey);
+    await requireActiveAccount(ctx, accountId);
     const existing = await ctx.db
       .query("runtimeAsyncToolResults")
       .withIndex("by_resultId", (q) => q.eq("resultId", args.resultId))
@@ -408,7 +462,7 @@ export const createAsyncToolResult = internalMutation({
     const now = new Date().toISOString();
     const { completionToken, ...persistedArgs } = args;
     await ctx.db.insert("runtimeAsyncToolResults", {
-      accountId: accountIdFromKey(args.conversationKey),
+      accountId: accountId,
       ...persistedArgs,
       ...(completionToken
         ? { completionTokenHash: await sha256Hex(completionToken) }
@@ -426,7 +480,7 @@ export const createAsyncToolResult = internalMutation({
         });
       else if (!group)
         await ctx.db.insert("runtimeAsyncToolGroups", {
-          accountId: accountIdFromKey(args.conversationKey),
+          accountId: accountId,
           parentEventId: args.parentEventId,
           resultIds: [args.resultId],
           sealed: false,
@@ -524,6 +578,7 @@ export const sealAsyncToolGroup = internalMutation({
 
       return null;
     }
+    await requireActiveAccount(ctx, row.accountId);
     await ctx.db.patch(row._id, { sealed: true });
 
     return { ...row, sealed: true };
@@ -550,6 +605,7 @@ export const updateAsyncToolResult = internalMutation({
       .query("runtimeAsyncToolResults")
       .withIndex("by_resultId", (q) => q.eq("resultId", args.resultId))
       .unique();
+    if (row) await requireActiveAccount(ctx, row.accountId);
     if (!row || (args.onlyWhenProcessing && row.status !== "processing")) {
 
       return null;
@@ -605,6 +661,8 @@ export const claimSandboxReservation = internalMutation({
   },
   returns: v.boolean(),
   handler: async (ctx, args) => {
+    const accountId = accountIdFromKey(args.reservationKey);
+    await requireActiveAccount(ctx, accountId);
     const row = await ctx.db
       .query("sandboxReservations")
       .withIndex("by_provider_and_reservationKey", (q) =>
@@ -618,7 +676,7 @@ export const claimSandboxReservation = internalMutation({
       return false;
     }
     await ctx.db.insert("sandboxReservations", {
-      accountId: accountIdFromKey(args.reservationKey),
+      accountId: accountId,
       ...args,
       expiresAt: Math.floor(Date.now() / 1000) + 30 * DAY_SECONDS,
     });
@@ -638,6 +696,8 @@ export const saveSandboxReservation = internalMutation({
   },
   returns: v.null(),
   handler: async (ctx, args) => {
+    const accountId = accountIdFromKey(args.reservationKey);
+    await requireActiveAccount(ctx, accountId);
     const row = await ctx.db
       .query("sandboxReservations")
       .withIndex("by_provider_and_reservationKey", (q) =>
@@ -653,7 +713,7 @@ export const saveSandboxReservation = internalMutation({
     if (row) await ctx.db.patch(row._id, patch);
     else
       await ctx.db.insert("sandboxReservations", {
-        accountId: accountIdFromKey(args.reservationKey),
+        accountId: accountId,
         ...args,
         ...patch,
       });
@@ -673,6 +733,7 @@ export const deleteSandboxReservation = internalMutation({
   },
   returns: v.null(),
   handler: async (ctx, args) => {
+    await requireActiveAccount(ctx, accountIdFromKey(args.reservationKey));
     const row = await ctx.db
       .query("sandboxReservations")
       .withIndex("by_provider_and_reservationKey", (q) =>
@@ -692,7 +753,8 @@ export const deleteSandboxReservation = internalMutation({
 });
 
 /**
- * Deletes one bounded batch of every runtime row owned by an account.
+ * Deletes one bounded batch of every runtime row owned by an account. This
+ * cleanup path intentionally accepts disabled or already-removed accounts.
  * @returns per-table deletion counts and their total
  */
 export const deleteAccountRuntimeData = internalMutation({
@@ -761,7 +823,8 @@ export const deleteAccountRuntimeData = internalMutation({
 
 /**
  * Deletes expired operational rows in bounded batches and schedules
- * continuation when needed.
+ * continuation when needed. This maintenance path intentionally bypasses the
+ * active-account guard.
  * @returns the number of rows deleted in this batch
  */
 export const pruneExpired = internalMutation({
