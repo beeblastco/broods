@@ -638,10 +638,6 @@ function validateConfigPatch(value: unknown, path: string): void {
         normalizeAgentConfig(withoutNulls);
         return;
     }
-    for (const [key, entry] of Object.entries(candidate)) {
-        if (entry == null || Array.isArray(entry) || !isPlainObject(entry)) continue;
-        validateConfigPatch(entry, `${path}.${key}`);
-    }
 }
 
 function removeNullConfigValues(value: Record<string, unknown>): Record<string, unknown> {
@@ -747,8 +743,8 @@ function assertOptionalPositiveInteger(value: unknown, name: string, max: number
 
 function assertOptionalStringArray(value: unknown, name: string): void {
     if (value === undefined) return;
-    if (!Array.isArray(value) || !value.every((entry) => typeof entry === "string")) {
-        throw new Error(`${name} must be an array of strings`);
+    if (!Array.isArray(value) || !value.every((entry) => typeof entry === "string" && entry.trim().length > 0)) {
+        throw new Error(`${name} must be an array of non-empty strings`);
     }
 }
 
@@ -775,7 +771,7 @@ function isSupportedConfigToolName(toolName: string): boolean {
 }
 
 function isAccountToolId(toolName: string): boolean {
-    return /^tool_[A-Za-z0-9_-]+$/.test(toolName) || /^[a-z0-9]{32}$/.test(toolName);
+    return /^tool_[A-Za-z0-9_-]+$/.test(toolName) || /^[a-z0-9]{20,}$/.test(toolName);
 }
 
 function requireAgentStatus(value: unknown): AgentStatus {

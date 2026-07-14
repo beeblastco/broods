@@ -99,6 +99,16 @@ async function sha256Hex(value: string): Promise<string> {
     .map((byte) => byte.toString(16).padStart(2, "0"))
     .join("");
 }
+
+/** Compares fixed-length hexadecimal digests without content-dependent exits. */
+function constantTimeDigestEqual(actual: string, expected: string): boolean {
+  let difference = actual.length ^ expected.length;
+  for (let index = 0; index < expected.length; index += 1) {
+    difference |= (actual.charCodeAt(index) || 0) ^ expected.charCodeAt(index);
+  }
+
+  return difference === 0;
+}
 const toolGroupDoc = v.object({
   accountId: v.string(),
   parentEventId: v.string(),
@@ -550,7 +560,10 @@ export const getAsyncToolToken = internalQuery({
       return false;
     }
 
-    return row.completionTokenHash === (await sha256Hex(args.completionToken));
+    return constantTimeDigestEqual(
+      row.completionTokenHash,
+      await sha256Hex(args.completionToken),
+    );
   },
 });
 /**

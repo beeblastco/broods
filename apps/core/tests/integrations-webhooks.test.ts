@@ -49,6 +49,10 @@ const PANCAKE_AGENT = {
         pageAccessToken: "page-token",
         webhookSecret: "pancake-secret",
       },
+      zalo: {
+        botToken: "zalo-handoff-token",
+        webhookSecret: "zalo-handoff-secret",
+      },
     },
   },
 };
@@ -213,6 +217,10 @@ describe("account webhook ingress", () => {
             pageId: "page-1",
             pageAccessToken: "page-token",
             webhookSecret: "pancake-secret",
+          },
+          zalo: {
+            botToken: "zalo-handoff-token",
+            webhookSecret: "zalo-handoff-secret",
           },
         },
       },

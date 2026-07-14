@@ -3,7 +3,7 @@
  * Runtime decisions are made by OPA using the same document/input shape.
  */
 
-import { isPlainObject } from "../object.ts";
+import { assertOptionalStringArray, isPlainObject } from "../object.ts";
 import { randomBytes } from "node:crypto";
 
 export const AGENT_POLICY_ACTIONS = [
@@ -260,12 +260,6 @@ function isConditionValue(value: unknown): value is AgentPolicyCondition["value"
 
 function assertOptionalBoolean(value: unknown, name: string): void {
   if (value !== undefined && typeof value !== "boolean") throw new Error(`${name} must be a boolean`);
-}
-
-function assertOptionalStringArray(value: unknown, name: string): void {
-  if (value !== undefined && (!Array.isArray(value) || !value.every((entry) => typeof entry === "string" && entry.trim().length > 0))) {
-    throw new Error(`${name} must be an array of non-empty strings`);
-  }
 }
 
 function assertOptionalEnum<T extends readonly string[]>(value: unknown, name: string, values: T): void {

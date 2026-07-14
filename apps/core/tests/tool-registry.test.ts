@@ -400,7 +400,7 @@ describe("createTools", () => {
     const approvalRequirements = new Map<string, true>();
     setCoreStoreForTests(storageWithAccountTool({
       accountId: "acct_test",
-      toolId: "qs78zwc4z4q5ysxm74fgrhd13s88xxtv",
+      toolId: "qs78zwc4z4q5ysxm74fgrhd13s88xxt",
       name: "test_async",
       description: "Uploaded async test tool.",
       inputSchema: { type: "object", properties: {}, additionalProperties: false },
@@ -429,7 +429,7 @@ describe("createTools", () => {
       { approvalRequirements },
     ) as never, {
       tools: {
-        qs78zwc4z4q5ysxm74fgrhd13s88xxtv: {
+        qs78zwc4z4q5ysxm74fgrhd13s88xxt: {
           enabled: true,
           async: true,
           needsApproval: true,

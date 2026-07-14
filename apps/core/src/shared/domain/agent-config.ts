@@ -13,7 +13,7 @@ import type { TelegramAdapterConfig } from "@chat-adapter/telegram";
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto";
 import { requireEnv } from "../env.ts";
 import { assertPublicHttpsUrl } from "../http.ts";
-import { isPlainObject, isStringRecord } from "../object.ts";
+import { assertOptionalStringArray, isPlainObject, isStringRecord } from "../object.ts";
 import { isAccountToolId } from "./account-tools.ts";
 import {
   normalizeAgentPolicyConfig,
@@ -429,9 +429,7 @@ export function toChannelRuntimeAgentConfig(config: AgentConfig, channelName: st
 
   return {
     ...runtimeConfig,
-    channels: {
-      [channelName]: channelConfig,
-    },
+    channels: config.channels,
   };
 }
 
@@ -1004,14 +1002,6 @@ function validateConfigPatch(value: unknown, path: string): void {
     normalizeAgentConfig(withoutNulls);
     return;
   }
-
-  for (const [key, entry] of Object.entries(candidate)) {
-    if (entry == null || Array.isArray(entry) || !isPlainObject(entry)) {
-      continue;
-    }
-
-    validateConfigPatch(entry, `${path}.${key}`);
-  }
 }
 
 function removeNullConfigValues(value: Record<string, unknown>): Record<string, unknown> {
@@ -1209,13 +1199,6 @@ function assertOptionalPositiveInteger(value: unknown, name: string, max: number
     value > max
   ) {
     throw new Error(`${name} must be an integer from 1 to ${max}`);
-  }
-}
-
-function assertOptionalStringArray(value: unknown, name: string): void {
-  if (value === undefined) return;
-  if (!Array.isArray(value) || !value.every((entry) => typeof entry === "string")) {
-    throw new Error(`${name} must be an array of strings`);
   }
 }
 

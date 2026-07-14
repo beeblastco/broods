@@ -405,7 +405,9 @@ async function sandboxReservationBelongsToAccount(
 }
 
 async function deleteAccountResponse(account: Extract<AuthContext, { kind: "account" }>["account"]): Promise<Response> {
-    const disabled = await getCoreStore().accounts.disable(account.accountId);
+    const disabled = account.status === "disabled"
+        ? account
+        : await getCoreStore().accounts.disable(account.accountId);
     if (!disabled) {
         return jsonResponse(404, { error: "Account not found" });
     }
