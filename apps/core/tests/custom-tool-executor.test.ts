@@ -6,7 +6,7 @@
  */
 
 import { describe, expect, it, mock } from "bun:test";
-import type { AccountToolRecord } from "../src/shared/storage/index.ts";
+import type { AccountToolRecord } from "../src/shared/domain/account-tools.ts";
 
 const bundleSource = "export default { name: 'echo', execute(ctx, input) { return input; } };";
 const readS3BytesMock = mock(async () => new TextEncoder().encode(bundleSource) as Uint8Array);
@@ -84,7 +84,7 @@ describe("runner frame protocol", () => {
 function accountToolRecord(): AccountToolRecord {
   return {
     accountId: "acct_test",
-    toolId: "tool_abc123",
+    toolId: "qs78zwc4z4q5ysxm74fgrhd13s88xxt",
     name: "echo",
     description: "Uploaded tool.",
     inputSchema: { type: "object", properties: {} },

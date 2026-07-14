@@ -253,7 +253,7 @@ paths:
       tags:
         - Direct API
       summary: Poll async status
-      description: Poll the status of an async job. Responses are backed by the account-scoped `AsyncAgentResult` DynamoDB record.
+      description: Poll the status of an async job. Responses are backed by the account-scoped `runtimeAsyncAgentResults` Convex record.
       parameters:
         - name: eventId
           in: path
@@ -649,6 +649,8 @@ paths:
                       processedEventsDeleted: 14
                       asyncAgentResultDeleted: 2
                       asyncToolResultDeleted: 3
+                      asyncToolGroupDeleted: 1
+                      sandboxReservationDeleted: 2
                       filesystemObjectsDeleted: 8
                       reservedSandboxesReleased: 0
                       agentsDeleted: 1
@@ -2070,7 +2072,7 @@ components:
                 $ref: '#/components/schemas/ContentBlock'
         persist:
           type: boolean
-          description: Must be `false` for system events. Request-local, not stored in DynamoDB.
+          description: Must be `false` for system events. Request-local, not stored in Convex.
 
     SystemRunEvent:
       type: object
@@ -2588,6 +2590,10 @@ components:
               type: integer
             asyncToolResultDeleted:
               type: integer
+            asyncToolGroupDeleted:
+              type: integer
+            sandboxReservationDeleted:
+              type: integer
             filesystemObjectsDeleted:
               type: integer
             reservedSandboxesReleased:
@@ -3079,7 +3085,7 @@ components:
           type: string
         toolId:
           type: string
-          example: tool_abc123
+          example: qs78zwc4z4q5ysxm74fgrhd13s88xxt
         name:
           type: string
         description:

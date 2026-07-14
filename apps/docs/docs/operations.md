@@ -57,7 +57,7 @@ broods run my-agent "Hello"  # one-off run with pretty streaming
 
 ## Self-Hosted Configuration
 
-For self-hosted deployments, `sst.config.ts` is the source of truth for infra names, tags, region, the AWS data plane, MicroVM sandbox integration, DynamoDB tables, S3 bucket, and SST secrets.
+For self-hosted deployments, `sst.config.ts` is the source of truth for infra names, tags, region, the AWS data plane, MicroVM sandbox integration, S3 buckets, and SST secrets. `packages/convex/schema.ts` owns persistent tables.
 
 Use `apps/core/.env` for local SST inputs only:
 
@@ -80,14 +80,14 @@ bunx sst secret set DaytonaApiKey <daytona-api-key>
 ```
 
 - `AdminAccountSecret` - Authenticates admin account-management requests.
-- `AccountConfigEncryptionSecret` - Encrypts agent config payloads in DynamoDB.
+- `AccountConfigEncryptionSecret` - Encrypts agent config payloads in Convex.
 - `DaytonaApiKey` - Daytona sandbox provider key; required by the deploy (no fallback).
 
 Treat `AdminAccountSecret` and `AccountConfigEncryptionSecret` as stable production secrets; rotating the encryption secret requires a re-encryption migration for existing agent configs.
 
 Provider API keys are account-specific, not global SST secrets. Each account-owned agent configures its provider API key in `config.provider.<provider>.apiKey`. Similarly, tool API keys like Tavily are configured per agent in `config.tools.<tool>.apiKey`. This allows different users to use their own API keys.
 
-Manual account creation through `POST /accounts` requires `AdminAccountSecret`; normal hosted onboarding uses the dashboard-authenticated Convex config plane.
+Manual account creation through `POST /accounts` requires `AdminAccountSecret` and creates a standalone Convex account with an admin-owned synthetic org id. Normal hosted onboarding continues to use the dashboard-authenticated Convex config plane and a real WorkOS organization.
 
 WebSocket gateway support is application infrastructure, not agent configuration. `sst.config.ts` fails early when `ENABLE_WEBSOCKET=true` is set without `NATS_URL`. At runtime, `harness-processing` also rejects `nats-worker` invocations unless WebSocket is enabled and the NATS connection can be established.
 
@@ -122,13 +122,12 @@ bun run deploy
 
 Deploy outputs include:
 
-- DynamoDB table names (dev/community stages; `undefined` on production, which stores config domains in Convex)
 - `filesystemBucketName`, `skillsBucketName`, `toolBundlesBucketName`
 - `cronScheduleGroupName`, `cronSchedulerTargetArn`, and `cronSchedulerRoleArn`
 
 ## Container Runtime (Phase 9a)
 
-The core ships as a single container image, `ghcr.io/beeblastco/broods-core`, built from `apps/core/Dockerfile` by the `Build Core Image` workflow (`dev` and `main` tags). One Bun process serves both harness and account routes through the gateway. The container runs against the AWS data plane — DynamoDB, S3, Convex, NATS, OPA, Scheduler, and sandboxes — using an IAM access key for the per-stage `core-runtime` user that SST creates.
+The core ships as a single container image, `ghcr.io/beeblastco/broods-core`, built from `apps/core/Dockerfile` by the `Build Core Image` workflow (`dev` and `main` tags). One Bun process serves both harness and account routes through the gateway. The container uses Convex plus S3, NATS, OPA, Scheduler, and sandbox providers; an IAM access key for the per-stage `core-runtime` user authorizes the remaining AWS data plane.
 
 ```mermaid
 flowchart LR
@@ -136,7 +135,7 @@ flowchart LR
     Ingress --> Gateway[broods gateway]
     Gateway --> Pod[broods-core pod\nBun.serve]
     Pod --> Handlers[harness + account handlers]
-    Handlers --> Data[(DynamoDB / S3 / Convex\nNATS / OPA / sandboxes)]
+    Handlers --> Data[(Convex / S3 / NATS\nOPA / Scheduler / sandboxes)]
 ```
 
 Runtime notes:

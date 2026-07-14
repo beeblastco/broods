@@ -4,8 +4,8 @@
  * release path.
  */
 
-import type { SandboxConfig } from "./storage/index.ts";
-import { getStorage } from "./storage/index.ts";
+import { getStorage } from "./storage.ts";
+import type { SandboxConfig } from "./domain/sandbox-config.ts";
 import { workspaceNamespace } from "./workspaces.ts";
 import { logWarn } from "./log.ts";
 import { deleteSandboxInstance } from "../harness/sandbox/instance-store.ts";
@@ -14,7 +14,7 @@ import { MicrovmSandboxExecutor } from "../harness/sandbox/microvm-executor.ts";
 import { DaytonaSandboxExecutor } from "../harness/sandbox/daytona-executor.ts";
 import { E2BSandboxExecutor } from "../harness/sandbox/e2b-executor.ts";
 import { VercelSandboxExecutor } from "../harness/sandbox/vercel-executor.ts";
-import { removeSandboxInstance } from "./storage/convex/sandbox-instances.ts";
+import { removeSandboxInstance } from "./convex/sandbox-instances.ts";
 
 type ReleasableSandboxProvider = "sandbox" | "lambda" | "daytona" | "e2b" | "vercel";
 

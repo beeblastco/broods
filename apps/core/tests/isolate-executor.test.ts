@@ -6,13 +6,13 @@
 
 import { describe, expect, it, mock } from "bun:test";
 import { spawn } from "node:child_process";
-import type { AccountToolRecord } from "../src/shared/storage/index.ts";
+import type { AccountToolRecord } from "../src/shared/domain/account-tools.ts";
 
 const bundle = "export default { name: 'test_tool', async execute(ctx, input) { return { echo: input, config: ctx.config }; } };";
 
 describe("custom tool runtime defaulting", () => {
   it("defaults pure bundles to isolate and Node-shaped bundles to sandbox", async () => {
-    const { normalizeAccountToolUpload } = await import("../src/shared/storage/account-tools.ts");
+    const { normalizeAccountToolUpload } = await import("../src/shared/domain/account-tools.ts");
 
     expect(normalizeAccountToolUpload({
       name: "pure",
@@ -37,7 +37,7 @@ describe("custom tool runtime defaulting", () => {
   });
 
   it("lets an explicit runtime override the scan", async () => {
-    const { normalizeAccountToolUpload } = await import("../src/shared/storage/account-tools.ts");
+    const { normalizeAccountToolUpload } = await import("../src/shared/domain/account-tools.ts");
 
     expect(normalizeAccountToolUpload({
       name: "explicit",
@@ -399,7 +399,7 @@ async function runRealRunner(
 function accountToolRecord(runtime: AccountToolRecord["runtime"]): AccountToolRecord {
   return {
     accountId: "acct_test",
-    toolId: "tool_abc123",
+    toolId: "qs78zwc4z4q5ysxm74fgrhd13s88xxt",
     name: "test_tool",
     description: "Uploaded tool.",
     inputSchema: { type: "object", properties: {} },

@@ -49,6 +49,10 @@ const PANCAKE_AGENT = {
         pageAccessToken: "page-token",
         webhookSecret: "pancake-secret",
       },
+      zalo: {
+        botToken: "zalo-handoff-token",
+        webhookSecret: "zalo-handoff-secret",
+      },
     },
   },
 };
@@ -214,6 +218,10 @@ describe("account webhook ingress", () => {
             pageAccessToken: "page-token",
             webhookSecret: "pancake-secret",
           },
+          zalo: {
+            botToken: "zalo-handoff-token",
+            webhookSecret: "zalo-handoff-secret",
+          },
         },
       },
       conversationKey: "acct:acct_test:agent:agent_test:pancake:page-1:conversation-1",
@@ -346,6 +354,7 @@ function createIncomingEventRouter(options: IntegrationRoutingOptions = {}) {
   ): Promise<ResponseShape> => {
     const waitUntilPromises: Promise<unknown>[] = [];
     const router = createCoreIncomingEventRouter({
+      deploymentLoader: async () => null,
       ...options,
       waitUntil: (promise) => {
         waitUntilPromises.push(Promise.resolve(promise));

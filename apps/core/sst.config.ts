@@ -16,9 +16,7 @@ const AWS_PROFILE = process.env.CI ? undefined : (process.env.AWS_PROFILE ?? "de
 // The ECR repo is retained transitionally (the lambda-sanbdox container image still publishes
 // there); its teardown belongs to the Phase 4 infra cleanup. See docs/workspace/sandbox/lambda.md.
 const SANDBOX_IMAGE_READY = parseBooleanEnv("SANDBOX_IMAGE_READY", false);
-// Convex storage provider credentials. Always set for production; also set for
-// any other stage (e.g. dev) that opts into Convex storage. When present the
-// stage skips the per-account DynamoDB config tables (see `useConvexStorage`).
+// Convex credentials are required for every stage and back all persistence.
 // Runtime credentials live on the container (infra repo), not here.
 const CONVEX_URL = process.env.CONVEX_URL?.trim();
 const CONVEX_DEPLOY_KEY = process.env.CONVEX_DEPLOY_KEY?.trim();
@@ -186,36 +184,14 @@ export default $config({
     const aws = await import("@pulumi/aws");
     const stage = $app.stage;
     const region = awsRegion();
-    // Production = SaaS = Convex storage. Other stages = DynamoDB (default).
-    // Async tools, dedupe, conversations still rely on DDB until those modules
-    // are lifted into the StorageProvider abstraction in a follow-up.
     const isProduction = isProductionStage(stage);
     const enableMicrovmPrereqs = microvmPrereqsEnabled(region);
-    // Convex storage is used whenever Convex credentials are supplied: always on
-    // production, and opt-in on any other stage (e.g. dev) by setting CONVEX_URL +
-    // CONVEX_DEPLOY_KEY. Stages without them fall back to DynamoDB. When a stage
-    // switches to Convex the per-account config tables below are dropped from the
-    // desired state, so the deploy also removes those DynamoDB tables.
+    // Convex credentials are mandatory because every persistence domain lives there.
     const useConvexStorage = Boolean(CONVEX_URL && CONVEX_DEPLOY_KEY);
-    if (isProduction && !useConvexStorage) {
-      throw new Error("Production stage requires CONVEX_URL and CONVEX_DEPLOY_KEY env vars");
+    if (!useConvexStorage) {
+      throw new Error("All stages require CONVEX_URL and CONVEX_DEPLOY_KEY env vars");
     }
     const names = {
-      conversations: resourceName("conversations", stage, region),
-      chatSdkState: resourceName("chat-sdk-state", stage, region),
-      processedEvents: resourceName("processed-events", stage, region),
-      asyncAgentResult: resourceName("async-agent-result", stage, region),
-      asyncToolResult: resourceName("async-tool-result", stage, region),
-      usage: resourceName("usage", stage, region),
-      persistentSandboxInstance: resourceName("persistent-sandbox-instance", stage, region),
-      accountConfigs: resourceName("account-configs", stage, region),
-      agentConfigs: resourceName("agent-configs", stage, region),
-      sandboxConfigs: resourceName("sandbox-configs", stage, region),
-      workspaceConfigs: resourceName("workspace-configs", stage, region),
-      agentPolicies: resourceName("agent-policies", stage, region),
-      accountTools: resourceName("account-tools", stage, region),
-      accountHooks: resourceName("account-hooks", stage, region),
-      crons: resourceName("crons", stage, region),
       cronSchedules: resourceName("cron-schedules", stage, region),
       filesystem: accountRegionalBucketName("filesystem", stage, region),
       skills: accountRegionalBucketName("skills", stage, region),
@@ -225,250 +201,6 @@ export default $config({
       microvmExecutionRole: resourceName("microvm-execution", stage, region),
     };
 
-    // accounts / agents / crons DDB tables are skipped on production —
-    // those domains live in Convex on SaaS. Tables stay for dev / community
-    // stages so the DynamoDB provider has somewhere to read/write.
-    const accountConfigsTable = useConvexStorage
-      ? null
-      : new sst.aws.Dynamo("AccountConfig", {
-          fields: {
-            accountId: "string",
-            secretHash: "string",
-          },
-          primaryIndex: { hashKey: "accountId" },
-          globalIndexes: {
-            SecretHashIndex: { hashKey: "secretHash" },
-          },
-          deletionProtection: false,
-          transform: {
-            table: {
-              name: names.accountConfigs,
-            },
-          },
-        });
-
-    const agentConfigsTable = useConvexStorage
-      ? null
-      : new sst.aws.Dynamo("AgentConfig", {
-          fields: {
-            accountId: "string",
-            agentId: "string",
-          },
-          primaryIndex: { hashKey: "accountId", rangeKey: "agentId" },
-          deletionProtection: false,
-          transform: {
-            table: {
-              name: names.agentConfigs,
-            },
-          },
-        });
-
-    // Account-scoped, reusable sandbox / workspace config records. Like agents,
-    // these live in Convex on production and DynamoDB elsewhere.
-    const sandboxConfigsTable = useConvexStorage
-      ? null
-      : new sst.aws.Dynamo("SandboxConfig", {
-          fields: {
-            accountId: "string",
-            sandboxId: "string",
-          },
-          primaryIndex: { hashKey: "accountId", rangeKey: "sandboxId" },
-          deletionProtection: false,
-          transform: {
-            table: {
-              name: names.sandboxConfigs,
-            },
-          },
-        });
-
-    const workspaceConfigsTable = useConvexStorage
-      ? null
-      : new sst.aws.Dynamo("WorkspaceConfig", {
-          fields: {
-            accountId: "string",
-            workspaceId: "string",
-          },
-          primaryIndex: { hashKey: "accountId", rangeKey: "workspaceId" },
-          deletionProtection: false,
-          transform: {
-            table: {
-              name: names.workspaceConfigs,
-            },
-          },
-        });
-
-    const accountToolsTable = useConvexStorage
-      ? null
-      : new sst.aws.Dynamo("AccountTool", {
-          fields: {
-            accountId: "string",
-            toolId: "string",
-          },
-          primaryIndex: { hashKey: "accountId", rangeKey: "toolId" },
-          deletionProtection: false,
-          transform: {
-            table: {
-              name: names.accountTools,
-            },
-          },
-        });
-
-    const accountHooksTable = useConvexStorage
-      ? null
-      : new sst.aws.Dynamo("AccountHook", {
-          fields: {
-            accountId: "string",
-            hookId: "string",
-          },
-          primaryIndex: { hashKey: "accountId", rangeKey: "hookId" },
-          deletionProtection: false,
-          transform: {
-            table: {
-              name: names.accountHooks,
-            },
-          },
-        });
-
-    const agentPoliciesTable = useConvexStorage
-      ? null
-      : new sst.aws.Dynamo("AgentPolicy", {
-          fields: {
-            accountId: "string",
-            policyId: "string",
-          },
-          primaryIndex: { hashKey: "accountId", rangeKey: "policyId" },
-          deletionProtection: false,
-          transform: {
-            table: {
-              name: names.agentPolicies,
-            },
-          },
-        });
-
-    const cronsTable = useConvexStorage
-      ? null
-      : new sst.aws.Dynamo("Cron", {
-          fields: {
-            accountId: "string",
-            cronId: "string",
-          },
-          primaryIndex: { hashKey: "accountId", rangeKey: "cronId" },
-          deletionProtection: false,
-          transform: {
-            table: {
-              name: names.crons,
-            },
-          },
-        });
-
-    const conversationsTable = new sst.aws.Dynamo("Conversations", {
-      fields: {
-        conversationKey: "string",
-        createdAt: "string",
-      },
-      primaryIndex: { hashKey: "conversationKey", rangeKey: "createdAt" },
-      deletionProtection: isProduction,
-      transform: {
-        table: {
-          name: names.conversations,
-        },
-      },
-    });
-
-    const chatSdkStateTable = new sst.aws.Dynamo("ChatSdkState", {
-      fields: {
-        pk: "string",
-        sk: "string",
-      },
-      primaryIndex: { hashKey: "pk", rangeKey: "sk" },
-      ttl: "expiresAt",
-      deletionProtection: isProduction,
-      transform: {
-        table: {
-          name: names.chatSdkState,
-        },
-      },
-    });
-
-    const processedEventsTable = new sst.aws.Dynamo("ProcessedEvents", {
-      fields: {
-        eventId: "string",
-      },
-      primaryIndex: { hashKey: "eventId" },
-      ttl: "expiresAt",
-      deletionProtection: isProduction,
-      transform: {
-        table: {
-          name: names.processedEvents,
-        },
-      },
-    });
-
-    // Per-task + rollup usage metering for DynamoDB-mode (OSS/self-host)
-    // deployments only; Convex-mode stages meter through the Convex provider, so
-    // this table (and USAGE_TABLE_NAME) is absent there. Composite pk/sk:
-    // pk=ACCOUNT#<id>, sk=TASK#<taskId> or ROLLUP#<agent>#<provider>#<model>#<bucket>.
-    const usageTable = useConvexStorage
-      ? null
-      : new sst.aws.Dynamo("Usage", {
-          fields: {
-            pk: "string",
-            sk: "string",
-          },
-          primaryIndex: { hashKey: "pk", rangeKey: "sk" },
-          deletionProtection: isProduction,
-          transform: {
-            table: {
-              name: names.usage,
-            },
-          },
-        });
-
-    const asyncAgentResultTable = new sst.aws.Dynamo("AsyncAgentResult", {
-      fields: {
-        eventId: "string",
-      },
-      primaryIndex: { hashKey: "eventId" },
-      ttl: "expiresAt",
-      deletionProtection: isProduction,
-      transform: {
-        table: {
-          name: names.asyncAgentResult,
-        },
-      },
-    });
-    const asyncToolResultTable = new sst.aws.Dynamo("AsyncToolResult", {
-      fields: {
-        resultId: "string",
-        parentEventId: "string",
-      },
-      primaryIndex: { hashKey: "resultId" },
-      globalIndexes: {
-        ParentEventIdIndex: { hashKey: "parentEventId" },
-      },
-      ttl: "expiresAt",
-      deletionProtection: isProduction,
-      transform: {
-        table: {
-          name: names.asyncToolResult,
-        },
-      },
-    });
-    // Maps a workspace namespace -> the long-lived (reserved) provider sandbox
-    // reserved for it, so a later request reconnects instead of recreating.
-    const persistentSandboxInstanceTable = new sst.aws.Dynamo("PersistentSandboxInstance", {
-      fields: {
-        instanceKey: "string",
-      },
-      primaryIndex: { hashKey: "instanceKey" },
-      ttl: "expiresAt",
-      deletionProtection: isProduction,
-      transform: {
-        table: {
-          name: names.persistentSandboxInstance,
-        },
-      },
-    });
     const filesystemBucketArn = `arn:aws:s3:::${names.filesystem}`;
     const skillsBucketArn = `arn:aws:s3:::${names.skills}`;
     const toolBundlesBucketArn = `arn:aws:s3:::${names.toolBundles}`;
@@ -760,101 +492,6 @@ export default $config({
         actions: ["kms:Decrypt"],
         resources: ["*"],
       },
-      ...(accountConfigsTable
-        ? [
-            {
-              actions: ["dynamodb:GetItem", "dynamodb:Query"],
-              resources: [accountConfigsTable.arn, $interpolate`${accountConfigsTable.arn}/index/SecretHashIndex`],
-            },
-          ]
-        : []),
-      ...(agentConfigsTable
-        ? [
-            {
-              actions: ["dynamodb:GetItem", "dynamodb:Query"],
-              resources: [agentConfigsTable.arn],
-            },
-          ]
-        : []),
-      ...(sandboxConfigsTable
-        ? [
-            {
-              actions: ["dynamodb:GetItem", "dynamodb:Query"],
-              resources: [sandboxConfigsTable.arn],
-            },
-          ]
-        : []),
-      ...(workspaceConfigsTable
-        ? [
-            {
-              actions: ["dynamodb:GetItem", "dynamodb:Query"],
-              resources: [workspaceConfigsTable.arn],
-            },
-          ]
-        : []),
-      ...(accountToolsTable
-        ? [
-            {
-              actions: ["dynamodb:GetItem", "dynamodb:Query"],
-              resources: [accountToolsTable.arn],
-            },
-          ]
-        : []),
-      ...(accountHooksTable
-        ? [
-            {
-              actions: ["dynamodb:GetItem", "dynamodb:Query"],
-              resources: [accountHooksTable.arn],
-            },
-          ]
-        : []),
-      ...(agentPoliciesTable
-        ? [
-            {
-              actions: ["dynamodb:GetItem", "dynamodb:Query"],
-              resources: [agentPoliciesTable.arn],
-            },
-          ]
-        : []),
-      {
-        actions: [
-          "dynamodb:BatchWriteItem",
-          "dynamodb:GetItem",
-          "dynamodb:Query",
-          "dynamodb:PutItem",
-          "dynamodb:UpdateItem",
-          "dynamodb:DeleteItem",
-        ],
-        resources: [conversationsTable.arn, processedEventsTable.arn, chatSdkStateTable.arn],
-      },
-      {
-        actions: ["dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:UpdateItem"],
-        resources: [asyncAgentResultTable.arn],
-      },
-      {
-        actions: ["dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:UpdateItem"],
-        resources: [asyncToolResultTable.arn],
-      },
-      {
-        actions: ["dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:UpdateItem", "dynamodb:DeleteItem"],
-        resources: [persistentSandboxInstanceTable.arn],
-      },
-      ...(cronsTable
-        ? [
-            {
-              actions: ["dynamodb:GetItem", "dynamodb:UpdateItem"],
-              resources: [cronsTable.arn],
-            },
-          ]
-        : []),
-      ...(usageTable
-        ? [
-            {
-              actions: ["dynamodb:PutItem", "dynamodb:UpdateItem"],
-              resources: [usageTable.arn],
-            },
-          ]
-        : []),
       ...(microvmBuildRole && microvmExecutionRole
         ? [
             {
@@ -1036,124 +673,6 @@ export default $config({
 
     // Also granted to CoreRuntimeUser below, same as harnessPermissions.
     const accountManagePermissions = [
-      ...(accountConfigsTable
-        ? [
-            {
-              actions: [
-                "dynamodb:DeleteItem",
-                "dynamodb:GetItem",
-                "dynamodb:PutItem",
-                "dynamodb:Query",
-                "dynamodb:Scan",
-                "dynamodb:UpdateItem",
-              ],
-              resources: [accountConfigsTable.arn, $interpolate`${accountConfigsTable.arn}/index/SecretHashIndex`],
-            },
-          ]
-        : []),
-      ...(agentConfigsTable
-        ? [
-            {
-              actions: [
-                "dynamodb:DeleteItem",
-                "dynamodb:GetItem",
-                "dynamodb:PutItem",
-                "dynamodb:Query",
-                "dynamodb:UpdateItem",
-              ],
-              resources: [agentConfigsTable.arn],
-            },
-          ]
-        : []),
-      ...(sandboxConfigsTable
-        ? [
-            {
-              actions: [
-                "dynamodb:DeleteItem",
-                "dynamodb:GetItem",
-                "dynamodb:PutItem",
-                "dynamodb:Query",
-                "dynamodb:UpdateItem",
-              ],
-              resources: [sandboxConfigsTable.arn],
-            },
-          ]
-        : []),
-      ...(workspaceConfigsTable
-        ? [
-            {
-              actions: [
-                "dynamodb:DeleteItem",
-                "dynamodb:GetItem",
-                "dynamodb:PutItem",
-                "dynamodb:Query",
-                "dynamodb:UpdateItem",
-              ],
-              resources: [workspaceConfigsTable.arn],
-            },
-          ]
-        : []),
-      ...(accountToolsTable
-        ? [
-            {
-              actions: [
-                "dynamodb:DeleteItem",
-                "dynamodb:GetItem",
-                "dynamodb:PutItem",
-                "dynamodb:Query",
-                "dynamodb:UpdateItem",
-              ],
-              resources: [accountToolsTable.arn],
-            },
-          ]
-        : []),
-      ...(accountHooksTable
-        ? [
-            {
-              actions: [
-                "dynamodb:DeleteItem",
-                "dynamodb:GetItem",
-                "dynamodb:PutItem",
-                "dynamodb:Query",
-                "dynamodb:UpdateItem",
-              ],
-              resources: [accountHooksTable.arn],
-            },
-          ]
-        : []),
-      ...(agentPoliciesTable
-        ? [
-            {
-              actions: [
-                "dynamodb:DeleteItem",
-                "dynamodb:GetItem",
-                "dynamodb:PutItem",
-                "dynamodb:Query",
-                "dynamodb:UpdateItem",
-              ],
-              resources: [agentPoliciesTable.arn],
-            },
-          ]
-        : []),
-      ...(cronsTable
-        ? [
-            {
-              actions: [
-                "dynamodb:DeleteItem",
-                "dynamodb:GetItem",
-                "dynamodb:PutItem",
-                "dynamodb:Query",
-                "dynamodb:UpdateItem",
-              ],
-              resources: [cronsTable.arn],
-            },
-          ]
-        : []),
-      {
-        // Read + drop reserved-sandbox instance rows when releasing on delete.
-        actions: ["dynamodb:GetItem", "dynamodb:DeleteItem"],
-        resources: [persistentSandboxInstanceTable.arn],
-      },
       {
         actions: ["scheduler:CreateSchedule", "scheduler:DeleteSchedule", "scheduler:UpdateSchedule"],
         resources: [$interpolate`arn:aws:scheduler:${region}:${AWS_ACCOUNT_ID}:schedule/${cronScheduleGroup.name}/*`],
@@ -1161,16 +680,6 @@ export default $config({
       {
         actions: ["iam:PassRole"],
         resources: [cronSchedulerRole.arn],
-      },
-      {
-        actions: ["dynamodb:BatchWriteItem", "dynamodb:DeleteItem", "dynamodb:Scan"],
-        resources: [
-          conversationsTable.arn,
-          chatSdkStateTable.arn,
-          processedEventsTable.arn,
-          asyncAgentResultTable.arn,
-          asyncToolResultTable.arn,
-        ],
       },
       {
         actions: ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"],
@@ -1308,18 +817,6 @@ export default $config({
     });
 
     return {
-      accountConfigsTableName: accountConfigsTable?.name,
-      agentConfigsTableName: agentConfigsTable?.name,
-      sandboxConfigsTableName: sandboxConfigsTable?.name,
-      workspaceConfigsTableName: workspaceConfigsTable?.name,
-      accountToolsTableName: accountToolsTable?.name,
-      accountHooksTableName: accountHooksTable?.name,
-      agentPoliciesTableName: agentPoliciesTable?.name,
-      cronsTableName: cronsTable?.name,
-      conversationsTableName: conversationsTable.name,
-      processedEventsTableName: processedEventsTable.name,
-      asyncAgentResultTableName: asyncAgentResultTable.name,
-      asyncToolResultTableName: asyncToolResultTable.name,
       cronScheduleGroupName: cronScheduleGroup.name,
       // Convex awsCrons.ts uses this verbatim as the schedule Target Arn (the
       // cron-runs event bus; the bus rule forwards to the API destination).

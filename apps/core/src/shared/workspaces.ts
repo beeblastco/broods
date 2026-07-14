@@ -9,16 +9,20 @@
  */
 
 import { normalizeFilesystemNamespace } from "./runtime-keys.ts";
-import { getStorage } from "./storage/index.ts";
+import { getStorage } from "./storage.ts";
 import type {
   AgentChannelWorkspaceScope,
   AgentConfig,
   AgentWorkspaceRef,
+} from "./domain/agent-config.ts";
+import type {
   SandboxConfig,
   SandboxConfigRecord,
+} from "./domain/sandbox-config.ts";
+import type {
   WorkspaceConfig,
-} from "./storage/index.ts";
-import type { WorkspaceStorageConfig } from "./storage/workspace-config.ts";
+  WorkspaceStorageConfig,
+} from "./domain/workspace-config.ts";
 import { resolveSandboxSpecs, type SandboxControlPlane } from "./sandbox-sizes.ts";
 
 // The effective sandbox for a workspace, with the workspace's storage identity and

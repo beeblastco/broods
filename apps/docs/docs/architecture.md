@@ -20,7 +20,7 @@ flowchart LR
   end
 
   Dash -->|"deploys + imports _generated API"| Cvx
-  Core -->|"STORAGE_PROVIDER=convex<br/>ConvexHttpClient"| Cvx
+  Core -->|"deploy-key authenticated<br/>ConvexHttpClient"| Cvx
   Demos -->|"imports"| Sdk
   Sdk -->|"HTTP to gateway/core URL"| Core
 ```
@@ -61,8 +61,8 @@ flowchart TD
   Core -->|"core publish (captured by stream)"| NATS["NATS JetStream"]
   NATS -->|"conversation-scoped<br/>replay on reconnect"| WSGateway
 
-  Core --> AccountStore["DynamoDB: AccountConfig<br/>account metadata + secretHash"]
-  Core --> AgentStore["DynamoDB: AgentConfig<br/>encrypted agent configs"]
+  Core --> AccountStore["Convex: accounts<br/>account metadata + secretHash"]
+  Core --> AgentStore["Convex: agents<br/>encrypted agent configs"]
   ConfigPlane["Convex config plane<br/>skills / tools / files / crons CRUD"] -->|"Manage Skills"| SkillStore["S3: Skills<br/>account-scoped skill bundles"]
   ConfigPlane -->|"Manage Cron Jobs"| Crons["Convex: crons"]
   ConfigPlane -->|"Create/update/delete schedules"| Scheduler["EventBridge Scheduler"]
@@ -79,11 +79,11 @@ flowchart TD
   Harness --> Subagents["subagents.ts<br/>parallel child runs + parent continuation"]
   Handler -->|"nats-worker publishes stream events"| NATS
 
-  Session --> Conversations["DynamoDB: Conversations"]
-  Session --> Processed["DynamoDB: ProcessedEvents"]
+  Session --> Conversations["Convex: runtimeConversationEvents"]
+  Session --> Processed["Convex: runtimeClaims"]
   AgentStore -->|config resolved before session<br/>passed into session for speed| Session
-  Handler --> AsyncAgentResult["DynamoDB: AsyncAgentResult"]
-  AsyncTools --> AsyncToolResult["DynamoDB: AsyncToolResult"]
+  Handler --> AsyncAgentResult["Convex: runtimeAsyncAgentResults"]
+  AsyncTools --> AsyncToolResult["Convex: runtimeAsyncToolResults + groups"]
   Scheduler --> CronBus["cron-runs event bus"]
   CronBus -->|"HTTPS API destination"| Gateway
   Core --> Crons["Convex: crons"]
@@ -359,7 +359,7 @@ identifier the next invocation can rebuild from.
 
 ```mermaid
 flowchart TD
-  Turn["turn runs (Session.delivery)<br/>channel { name, source } /<br/>nats { connectionId, convKey } /<br/>async (poll)"] -->|"bash background:true"| Row["DynamoDB: AsyncToolResult<br/>{ delivery, completionToken,<br/>conversationKey, parentEventId }"]
+  Turn["turn runs (Session.delivery)<br/>channel { name, source } /<br/>nats { connectionId, convKey } /<br/>async (poll)"] -->|"bash background:true"| Row["Convex: runtimeAsyncToolResults<br/>{ delivery, completionToken,<br/>conversationKey, parentEventId }"]
   Turn --> Job["detached job in sandbox"]
   Job -->|"on exit: POST /sandbox-jobs/&lt;id&gt;/complete<br/>(x-job-token)"| Settle["settle row"]
   Settle -->|"reinvoke worker<br/>(inject result, continue conversation)"| Resume["agent resumes where it left off"]
@@ -372,7 +372,7 @@ flowchart TD
 - **What's saved, and why it's safe.** `Session.delivery` (an `AsyncToolDelivery`)
   describes the origin: a chat channel (`{channelName, source}` — the routing
   payload only, *never* credentials), a WebSocket conversation, or plain async.
-  `bash background:true` copies it onto the `AsyncToolResult` row in DynamoDB
+  `bash background:true` copies it onto the `AsyncToolResult` row in Convex
   alongside the per-job `completionToken`. No account secret is stored or enters
   the sandbox; channel credentials are re-fetched (decrypted) from the agent
   config at delivery time.
@@ -439,6 +439,6 @@ Agents control model selection, channel credentials, optional skills, subagents,
 - S3 skills bucket: account-scoped skill bundles under `<accountId>/<skill-name>`.
 - S3 tool-bundles bucket: uploaded custom tool bundles.
 
-On the production stage the config domains (accounts, agents, sandboxes, workspaces, tools, cron jobs) are stored in Convex instead of DynamoDB; runtime tables (conversations, dedup, async results) stay in DynamoDB on every stage.
+Every stage stores config domains and runtime state in Convex. S3 remains the byte store for workspace files, skills, and tool bundles.
 
 Built-in tool execution is inline in `harness-processing`. Uploaded custom tools execute in the `sandbox` (workdir) provider. `async: true` only changes the lifecycle: built-in async stays in the current request or worker, uploaded async waits on SSE, and uploaded async detaches automatically on `/async`, channel, and NATS turns. Subagents are in-process child agent loops; they do not require child workers.

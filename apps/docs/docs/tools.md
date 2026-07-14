@@ -113,7 +113,7 @@ sequenceDiagram
   participant H as harness-processing
   participant P as Parent agent
   participant C as AsyncToolCoordinator
-  participant D as DynamoDB AsyncToolResult
+  participant D as Convex AsyncToolResult
   participant I as V8 isolate
 
   alt built-in async or non-detached uploaded isolate async
@@ -272,7 +272,7 @@ Tool management endpoints (raw API):
 4. Keep the model-facing schema and external service call in that tool file.
 5. Import the factory in [`src/harness/tools/index.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/src/harness/tools/index.ts).
 6. Add the factory to the static `toolFactories` map with the exact model-facing tool name.
-7. Add config validation in [`src/shared/storage/agent-config.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/src/shared/storage/agent-config.ts) only for options the account can set.
+7. Add config validation in [`src/shared/domain/agent-config.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/src/shared/domain/agent-config.ts) only for options the account can set.
 8. Optionally set `config.tools.<name>.async: true` for slow local `execute` tools. Built-in async tools always run in the current request or worker; uploaded isolate async tools are waited on for SSE and other non-detached paths. Uploaded detached async tools are deferred to #82.
 9. Update the [API Reference](/api-reference) `AgentConfig.tools` schema, and focused tests/examples when the public config shape changes.
 

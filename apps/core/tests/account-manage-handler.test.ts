@@ -1,8 +1,10 @@
-import { afterEach, describe, expect, it } from "bun:test";
+import { afterEach, describe, expect, it, mock } from "bun:test";
+import { S3Client } from "@aws-sdk/client-s3";
 import { handler } from "../src/accounts/handler.ts";
 import type { CoreRequest } from "../src/shared/http.ts";
-import { hashAccountSecret } from "../src/shared/storage/accounts.ts";
-import { resetStorageForTests, setStorageForTests } from "../src/shared/storage/index.ts";
+import { hashAccountSecret } from "../src/shared/domain/accounts.ts";
+import { resetStorageForTests, setStorageForTests } from "../src/shared/storage.ts";
+import { runtime } from "../src/shared/convex/runtime.ts";
 
 const originalAdminSecret = process.env.ADMIN_ACCOUNT_SECRET;
 const originalServiceSecret = process.env.SERVICE_AUTH_SECRET;
@@ -10,6 +12,10 @@ const originalCronsTable = process.env.CRONS_TABLE_NAME;
 const originalSchedulerRoleArn = process.env.CRON_SCHEDULER_ROLE_ARN;
 const originalSchedulerTargetArn = process.env.CRON_SCHEDULER_TARGET_ARN;
 const originalSchedulerGroupName = process.env.CRON_SCHEDULER_GROUP_NAME;
+const originalSkillsBucketName = process.env.SKILLS_BUCKET_NAME;
+const originalToolBundlesBucketName = process.env.TOOL_BUNDLES_BUCKET_NAME;
+const originalRuntimeMutate = runtime.mutate;
+const originalS3Send = S3Client.prototype.send;
 
 afterEach(() => {
   if (originalAdminSecret === undefined) {
@@ -42,6 +48,12 @@ afterEach(() => {
   } else {
     process.env.CRON_SCHEDULER_GROUP_NAME = originalSchedulerGroupName;
   }
+  if (originalSkillsBucketName === undefined) delete process.env.SKILLS_BUCKET_NAME;
+  else process.env.SKILLS_BUCKET_NAME = originalSkillsBucketName;
+  if (originalToolBundlesBucketName === undefined) delete process.env.TOOL_BUNDLES_BUCKET_NAME;
+  else process.env.TOOL_BUNDLES_BUCKET_NAME = originalToolBundlesBucketName;
+  runtime.mutate = originalRuntimeMutate;
+  S3Client.prototype.send = originalS3Send;
   setStorageForTests(null);
   resetStorageForTests();
 });
@@ -220,6 +232,65 @@ describe("account management HTTP handler", () => {
     expect(response.status).toBe(400);
     expect(await responseJson(response)).toEqual(serviceTokenRejection);
   });
+
+  it("lets a disabled owner retry self-delete without reopening other routes", async () => {
+    stubAccountDeletionDependencies();
+    const accountSecret = "fp_acct_retry";
+    const disabledAccount = {
+      ...fakeAccount(),
+      secretHash: hashAccountSecret(accountSecret),
+      status: "disabled" as const,
+    };
+    let disableCalls = 0;
+    setStorageForTests(createFakeStorage({
+      accounts: {
+        async getBySecretHash(secretHash: string) {
+          return secretHash === disabledAccount.secretHash ? disabledAccount : null;
+        },
+        async disable(accountId: string) {
+          expect(accountId).toBe(disabledAccount.accountId);
+          disableCalls += 1;
+          return null;
+        },
+      },
+    }));
+    const headers = { authorization: `Bearer ${accountSecret}` };
+
+    const normalResponse = await handler(createEvent("GET", "/missing", headers));
+    expect(normalResponse.status).toBe(401);
+
+    const retryResponse = await handler(createEvent("DELETE", "/v1/account", headers));
+    expect(retryResponse.status).toBe(200);
+    expect(await responseJson(retryResponse)).toEqual(successfulDeletionResponse());
+    expect(disableCalls).toBe(0);
+  });
+
+  it("keeps admin deletion available for an already-disabled account", async () => {
+    stubAccountDeletionDependencies();
+    process.env.ADMIN_ACCOUNT_SECRET = "admin-secret";
+    const disabledAccount = { ...fakeAccount(), status: "disabled" as const };
+    let disableCalls = 0;
+    setStorageForTests(createFakeStorage({
+      accounts: {
+        async getById(accountId: string) {
+          return accountId === disabledAccount.accountId ? disabledAccount : null;
+        },
+        async disable(accountId: string) {
+          expect(accountId).toBe(disabledAccount.accountId);
+          disableCalls += 1;
+          return null;
+        },
+      },
+    }));
+
+    const response = await handler(createEvent("DELETE", `/accounts/${disabledAccount.accountId}`, {
+      authorization: "Bearer admin-secret",
+    }));
+
+    expect(response.status).toBe(200);
+    expect(await responseJson(response)).toEqual(successfulDeletionResponse());
+    expect(disableCalls).toBe(0);
+  });
 });
 
 async function responseJson(response: Response): Promise<unknown> {
@@ -273,7 +344,6 @@ function fakeAgent(overrides: Partial<{ status: "active" | "disabled" }> = {}) {
 
 function createFakeStorage(overrides: Record<string, unknown>) {
   return {
-    kind: "fake",
     accounts: {
       async getById() { return fakeAccount(); },
       async getBySecretHash() { return null; },
@@ -287,6 +357,7 @@ function createFakeStorage(overrides: Record<string, unknown>) {
     },
     agents: {
       async getById() { return fakeAgent(); },
+      async removeAllForAccount() { return 0; },
       ...(overrides.agents as Record<string, unknown> | undefined),
     },
     crons: {
@@ -298,7 +369,62 @@ function createFakeStorage(overrides: Record<string, unknown>) {
       async getByApiKeyHash() { return null; },
       ...(overrides.agentDeployments as Record<string, unknown> | undefined),
     },
-    accountTools: {} as never,
-    accountHooks: {} as never,
+    sandboxConfigs: {
+      async removeAllForAccount() { return 0; },
+      ...(overrides.sandboxConfigs as Record<string, unknown> | undefined),
+    },
+    workspaceConfigs: {
+      async list() { return []; },
+      async removeAllForAccount() { return 0; },
+      ...(overrides.workspaceConfigs as Record<string, unknown> | undefined),
+    },
+    accountTools: {
+      async removeAllForAccount() { return 0; },
+      ...(overrides.accountTools as Record<string, unknown> | undefined),
+    },
+    accountHooks: {
+      async removeAllForAccount() { return 0; },
+      ...(overrides.accountHooks as Record<string, unknown> | undefined),
+    },
   } as never;
+}
+
+function stubAccountDeletionDependencies(): void {
+  process.env.SKILLS_BUCKET_NAME = "test-skills";
+  process.env.TOOL_BUNDLES_BUCKET_NAME = "test-tool-bundles";
+  S3Client.prototype.send = mock(async () => ({ Contents: [], IsTruncated: false })) as never;
+  runtime.mutate = mock(async (name) => {
+    expect(name).toBe("deleteAccountRuntimeData");
+    return {
+      conversationsDeleted: 0,
+      processedEventsDeleted: 0,
+      asyncAgentResultDeleted: 0,
+      asyncToolResultDeleted: 0,
+      asyncToolGroupDeleted: 0,
+      sandboxReservationDeleted: 0,
+      totalDeleted: 0,
+    };
+  }) as never;
+}
+
+function successfulDeletionResponse() {
+  return {
+    deleted: true,
+    cleanup: {
+      conversationsDeleted: 0,
+      processedEventsDeleted: 0,
+      asyncAgentResultDeleted: 0,
+      asyncToolResultDeleted: 0,
+      asyncToolGroupDeleted: 0,
+      sandboxReservationDeleted: 0,
+      filesystemObjectsDeleted: 0,
+      reservedSandboxesReleased: 0,
+      agentsDeleted: 0,
+      skillObjectsDeleted: 0,
+      toolBundleObjectsDeleted: 0,
+      cronsDeleted: 0,
+      accountToolsDeleted: 0,
+      accountHooksDeleted: 0,
+    },
+  };
 }

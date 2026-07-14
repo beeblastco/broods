@@ -20,7 +20,7 @@ COPY --from=deps /app/node_modules ./node_modules
 COPY --from=deps /app/apps/core/node_modules ./apps/core/node_modules
 COPY --from=deps /app/packages/convex/node_modules ./packages/convex/node_modules
 COPY package.json bun.lock ./
-# The storage adapter require()s @broods/convex/_generated/api (committed).
+# The storage provider require()s @broods/convex/_generated/api (committed).
 COPY packages/convex ./packages/convex
 COPY apps/core ./apps/core
 # Compile at the amd64 target: the k3s cluster nodes are amd64.

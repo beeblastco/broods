@@ -16,19 +16,19 @@ import {
 } from "ai";
 import { context as otelContextApi } from "@opentelemetry/api";
 import { resolveBearerAuth, type AuthContext } from "../shared/auth.ts";
+import { getStorage } from "../shared/storage.ts";
 import {
   applyRunOverrides,
-  getStorage,
   MODEL_CONFIG_SETTING_KEYS,
   RUN_OVERRIDE_RESERVED_MODEL_KEYS,
   toChannelRuntimeAgentConfig,
   toRuntimeAgentConfig,
-  type AccountRecord,
   type AgentChannelWorkspaceScope,
   type AgentConfig,
-  type AgentRecord,
   type RunOverrides,
-} from "../shared/storage/index.ts";
+} from "../shared/domain/agent-config.ts";
+import type { AccountRecord } from "../shared/domain/accounts.ts";
+import type { AgentRecord } from "../shared/domain/agents.ts";
 import type {
   ChannelActions,
   ChannelAdapter,
@@ -80,7 +80,7 @@ import {
 } from "./sandbox/s3-mount.ts";
 import type { ConversationIngressEvent } from "./session.ts";
 import { getHarnessPublicUrl } from "./self-url.ts";
-import type { AgentDeploymentRecord } from "../shared/storage/types.ts";
+import type { AgentDeploymentScope } from "../shared/storage.ts";
 
 type DirectIngressEvent =
   | UserModelMessage
@@ -201,7 +201,7 @@ export interface IntegrationRoutingOptions {
   authResolver?: (headers: Record<string, string>) => Promise<AuthContext | null>;
   accountLoader?: (accountId: string) => Promise<AccountRecord | null>;
   agentLoader?: (accountId: string, agentId: string) => Promise<AgentRecord | null>;
-  deploymentLoader?: (accountId: string, agentId: string) => Promise<AgentDeploymentRecord | null>;
+  deploymentLoader?: (accountId: string, agentId: string) => Promise<AgentDeploymentScope | null>;
   directApiEnabled?: boolean;
   /** Registers post-response background work (channel ack-then-process). */
   waitUntil?: (promise: Promise<unknown>) => void;
@@ -211,7 +211,7 @@ interface HttpRoutingContext {
   authResolver(headers: Record<string, string>): Promise<AuthContext | null>;
   accountLoader(accountId: string): Promise<AccountRecord | null>;
   agentLoader(accountId: string, agentId: string): Promise<AgentRecord | null>;
-  deploymentLoader(accountId: string, agentId: string): Promise<AgentDeploymentRecord | null>;
+  deploymentLoader(accountId: string, agentId: string): Promise<AgentDeploymentScope | null>;
   directApiEnabled: boolean;
   waitUntil(promise: Promise<unknown>): void;
 }
@@ -538,7 +538,7 @@ async function handleChannelWebhook(
   handlers: IntegrationHandlers,
   account: AccountRecord,
   agent: AgentRecord,
-  deployment: AgentDeploymentRecord | null,
+  deployment: AgentDeploymentScope | null,
   waitUntil: (promise: Promise<unknown>) => void,
 ): Promise<Response> {
   const previousObservabilityContext = getObservabilityContext();

@@ -6,7 +6,7 @@ Deploys run on push to two branches, plus manual `workflow_dispatch` with a stag
 
 | Branch | Stage | Notes |
 | --- | --- | --- |
-| `dev` | `dev` in `eu-west-1` by default | re-runs validation before deploying; DynamoDB or dev Convex storage |
+| `dev` | `dev` in `eu-west-1` by default | re-runs validation before deploying; requires the dev Convex deployment |
 | `main` | `production-eu-west-1` | skips re-validation; uses the production Convex deployment |
 
 A separate workflow (`deploy-docs.yaml`) builds the Docusaurus site on `main` pushes touching docs and syncs it to S3 + CloudFront (vars `DOCS_S3_BUCKET`, `DOCS_DOMAIN`).

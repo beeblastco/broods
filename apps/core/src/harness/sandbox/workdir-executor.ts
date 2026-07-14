@@ -38,7 +38,7 @@ import type {
 import { assertSafeTenantProviderUrl, configString, isSandboxGoneError, sandboxReservationKey, shellQuote, stringRecord, truncateText, workspacePath } from "./utils.ts";
 import { generateJobId, launchScript, lifecycleScript, logsScript, parseJobStatus, statusScript, stopScript } from "./jobs.ts";
 import { claimSandboxInstance, deleteSandboxInstance, getSandboxExternalId, saveSandboxInstance } from "./instance-store.ts";
-import { upsertSandboxInstance } from "../../shared/storage/convex/sandbox-instances.ts";
+import { upsertSandboxInstance } from "../../shared/convex/sandbox-instances.ts";
 import { workdirSizeResources } from "../../shared/sandbox-sizes.ts";
 
 const DEFAULT_WORKSPACE_ROOT = "/mnt/workspaces";

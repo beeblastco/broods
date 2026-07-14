@@ -5,9 +5,9 @@
 
 import { createHash } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import type { AgentRecord } from "../src/shared/storage/agents.ts";
-import { hashAccountSecret, type AccountRecord } from "../src/shared/storage/accounts.ts";
-import { resetStorageForTests, setStorageForTests, type StorageProvider } from "../src/shared/storage/index.ts";
+import type { AgentRecord } from "../src/shared/domain/agents.ts";
+import { hashAccountSecret, type AccountRecord } from "../src/shared/domain/accounts.ts";
+import { resetStorageForTests, setStorageForTests, type Storage } from "../src/shared/storage.ts";
 import { extractBearerToken, resolveBearerAuth } from "../src/shared/auth.ts";
 
 const ACCOUNT: AccountRecord = {
@@ -58,7 +58,7 @@ beforeEach(() => {
           }
           : null,
     },
-  } as unknown as StorageProvider);
+  } as unknown as Storage);
 });
 
 afterEach(() => {
@@ -123,15 +123,29 @@ describe("resolveBearerAuth", () => {
 
   it("rejects the service token for disabled accounts", async () => {
     accountsById.acct_1 = { ...ACCOUNT, status: "disabled" };
-    expect(await resolveBearerAuth({
+    const headers = {
       authorization: "Bearer service-secret",
       "x-account-id": "acct_1",
-    })).toBeNull();
+    };
+
+    expect(await resolveBearerAuth(headers)).toBeNull();
+    expect(await resolveBearerAuth(headers, { allowDisabledAccountSecret: true })).toBeNull();
   });
 
   it("rejects disabled accounts on the secret-hash path", async () => {
     accountsBySecretHash[ACCOUNT.secretHash] = { ...ACCOUNT, status: "disabled" };
     expect(await resolveBearerAuth({ authorization: "Bearer fp_acct_known-secret" })).toBeNull();
+  });
+
+  it("allows a disabled account secret only for an explicit deletion retry", async () => {
+    accountsBySecretHash[ACCOUNT.secretHash] = { ...ACCOUNT, status: "disabled" };
+    const headers = { authorization: "Bearer fp_acct_known-secret" };
+
+    expect(await resolveBearerAuth(headers)).toBeNull();
+    expect(await resolveBearerAuth(headers, { allowDisabledAccountSecret: true })).toMatchObject({
+      kind: "account",
+      account: { accountId: "acct_1", status: "disabled" },
+    });
   });
 });
 

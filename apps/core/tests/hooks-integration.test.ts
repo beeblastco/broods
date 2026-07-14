@@ -10,8 +10,8 @@ import { describe, expect, it, mock } from "bun:test";
 import { createHash } from "node:crypto";
 import type { ToolSet } from "ai";
 import * as realS3 from "../src/shared/s3.ts";
-import type { AccountHookRecord } from "../src/shared/storage/account-hooks.ts";
-import type { AgentHookEventName } from "../src/shared/storage/agent-config.ts";
+import type { AccountHookRecord } from "../src/shared/domain/account-hooks.ts";
+import type { AgentHookEventName } from "../src/shared/domain/agent-config.ts";
 
 const HOOK_BUNDLE = `export default {
   "agent.started": (ctx, event) => {
@@ -131,7 +131,7 @@ function fakeTool(execute: () => unknown): ToolSet[string] {
 function indexFor(events: AgentHookEventName[]): Map<AgentHookEventName, AccountHookRecord[]> {
   const record: AccountHookRecord = {
     accountId: "acct_test",
-    hookId: "hook_demo",
+    hookId: "k17zwc4z4q5ysxm74fgrhd13s88xxtv",
     name: "policy_hook",
     events,
     bundleStorageKey: "account-hooks/acct_test/bundles/x.mjs",

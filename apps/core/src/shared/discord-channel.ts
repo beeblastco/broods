@@ -92,7 +92,7 @@ interface DiscordSlashCommandContext {
 // Chat SDK's direct Discord webhook path is `handleWebhook()` + ChatInstance.
 // Broods cannot use that path wholesale because `integrations.ts` must first do
 // account/agent lookup, per-tenant config scoping, durable session setup, and
-// DynamoDB conversation history writes. The SDK also keeps the lower-level hooks
+// Convex conversation history writes. The SDK also keeps the lower-level hooks
 // we need protected (`verifySignature`, `parseSlashCommand`, and requestContext),
 // so this subclass is only a small access shim around the SDK implementation.
 // If those hooks become public in the SDK, remove this subclass and call the SDK

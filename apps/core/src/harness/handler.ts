@@ -8,8 +8,9 @@ import { extractBearerToken, timingSafeStringEqual } from "../shared/auth.ts";
 import { markHandlerEntry } from "../shared/cold-start.ts";
 import { formatChannelErrorText } from "../shared/channels.ts";
 import { executeCommand } from "../shared/commands.ts";
-import { toRuntimeAgentConfig } from "../shared/storage/index.ts";
-import { getStorage, type CronRecord } from "../shared/storage/index.ts";
+import { getStorage } from "../shared/storage.ts";
+import { toRuntimeAgentConfig } from "../shared/domain/agent-config.ts";
+import type { CronRecord } from "../shared/domain/cron.ts";
 import { booleanEnv, optionalEnv, positiveIntegerEnv, requireEnv } from "../shared/env.ts";
 import { errorResponse, jsonResponse, parseJsonBody, type CoreRequest, type RequestContext } from "../shared/http.ts";
 import { logError, logInfo, logWarn } from "../shared/log.ts";
@@ -44,7 +45,6 @@ import {
 import { SubagentCoordinator } from "./subagents.ts";
 import { AsyncToolCoordinator, completionToParentMessage } from "./async-tools.ts";
 import {
-  getAsyncToolCompletionToken,
   getDetachedAsyncToolGroup,
   getAsyncToolResult,
   listAsyncToolResultsByParentEvent,
@@ -52,6 +52,7 @@ import {
   settleAsyncToolResultFromCallback,
   type AsyncToolDelivery,
   type AsyncToolResultRecord,
+  verifyAsyncToolCompletionToken,
 } from "./async-tool-result.ts";
 
 type AgentLoopStream = Awaited<ReturnType<typeof runAgentLoop>>;
@@ -101,7 +102,6 @@ class ConversationBusyError extends Error {
   }
 }
 
-const CONVERSATIONS_TABLE_NAME = requireEnv("CONVERSATIONS_TABLE_NAME");
 const AGENT_PROCESSING_FAILED = "Agent processing failed";
 const CONVERSATION_BUSY = "Conversation is already processing another turn. Try again when the current turn finishes.";
 const CHANNEL_APPROVAL_DENIAL_REASON = "Tool approval is only supported through the direct API.";
@@ -302,9 +302,8 @@ async function handleSandboxJobCompletionRequest(event: SandboxJobCompletionInbo
     return jsonResponse(409, { error: "Background job result is already settled", status: existing.status });
   }
 
-  const token = await getAsyncToolCompletionToken(event.resultId);
   // Missing/mismatched token reads as not-found so the endpoint is not a token oracle.
-  if (!token || !timingSafeStringEqual(event.token, token)) {
+  if (!await verifyAsyncToolCompletionToken(event.resultId, event.token)) {
     return jsonResponse(404, { error: "Background job result not found" });
   }
 
@@ -759,7 +758,6 @@ async function handleChannelRequest(event: ChannelInboundEvent, context?: Reques
     try {
       await executeCommand(event.commandToken, {
         conversationKey: event.conversationKey,
-        conversationsTableName: CONVERSATIONS_TABLE_NAME,
         channel: event.channel,
       });
     } catch (err) {

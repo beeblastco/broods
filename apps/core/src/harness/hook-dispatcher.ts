@@ -9,9 +9,9 @@
 
 import type { JSONValue, ToolSet } from "ai";
 import { isPlainObject } from "../shared/object.ts";
-import type { AgentCodeHookConfig, AgentConfig, AgentHookEventName } from "../shared/storage/agent-config.ts";
-import type { AccountHookRecord } from "../shared/storage/account-hooks.ts";
-import { getStorage } from "../shared/storage/index.ts";
+import type { AgentCodeHookConfig, AgentConfig, AgentHookEventName } from "../shared/domain/agent-config.ts";
+import type { AccountHookRecord } from "../shared/domain/account-hooks.ts";
+import { getStorage } from "../shared/storage.ts";
 import type { AgentLifecycleEventPayload } from "./lifecycle.ts";
 import { toLifecycleValue } from "./lifecycle.ts";
 import { runCodeHook } from "./hook-runner.ts";

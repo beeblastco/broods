@@ -596,7 +596,7 @@ describe("createSandboxExecutor", () => {
 
     const handle = await executor.runBackground({
       code: "node runner.js",
-      reservationKey: "custom-tool:acct_1:tool_1",
+      reservationKey: "custom-tool:acct_1:qs78zwc4z4q5ysxm74fgrhd13s88xxt",
       jobId: "job_test",
       timeoutSeconds: 30,
       outputLimitBytes: 4096,

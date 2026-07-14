@@ -11,7 +11,7 @@
  * without importing across the _shared/harness boundary.
  */
 
-import type { SandboxNetworkMode, SandboxPermissionMode } from "./storage/sandbox-config.ts";
+import type { SandboxNetworkMode, SandboxPermissionMode } from "./domain/sandbox-config.ts";
 
 export type SandboxSize = "tiny" | "xsmall" | "small" | "medium" | "large";
 

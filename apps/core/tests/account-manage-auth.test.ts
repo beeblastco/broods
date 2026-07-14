@@ -6,9 +6,9 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import {
   resetStorageForTests,
   setStorageForTests,
-  type AccountRecord,
-  type StorageProvider,
-} from "../src/shared/storage/index.ts";
+  type Storage,
+} from "../src/shared/storage.ts";
+import type { AccountRecord } from "../src/shared/domain/accounts.ts";
 import { coreRequest } from "./helpers/http.ts";
 
 const ORIGINAL_ENV = { ...process.env };
@@ -41,7 +41,7 @@ describe("account-management deployment key auth", () => {
   });
 });
 
-function deploymentStorage(): StorageProvider {
+function deploymentStorage(): Storage {
   const account: AccountRecord = {
     accountId: "acct_test",
     username: "acct",
@@ -52,7 +52,6 @@ function deploymentStorage(): StorageProvider {
   };
 
   return {
-    kind: "dynamodb",
     accounts: {
       async getById(accountId: string) {
         return accountId === account.accountId ? account : null;
@@ -71,7 +70,7 @@ function deploymentStorage(): StorageProvider {
         };
       },
     },
-  } as unknown as StorageProvider;
+  } as unknown as Storage;
 }
 
 function event(method: string, rawPath: string) {

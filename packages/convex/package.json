@@ -11,7 +11,14 @@
         "deploy": "convex deploy",
         "codegen": "convex codegen",
         "check": "tsc --noEmit",
+        "test": "vitest run",
         "format": "prettier --write \"**/*.{ts,md,json}\""
+    },
+    "devDependencies": {
+        "@edge-runtime/vm": "^5.0.0",
+        "convex-test": "^0.0.54",
+        "vite": "^8.1.4",
+        "vitest": "^4.1.10"
     },
     "dependencies": {
         "@aws-sdk/client-s3": "3.1017.0",

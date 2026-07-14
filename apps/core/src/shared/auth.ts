@@ -2,7 +2,7 @@
  * Bearer-token auth: admin secret, service token (for cherry-coke
  * server-side actions), and account-secret hash lookup. Persistence is
  * reached via `getStorage().accounts.*` so the auth path is identical
- * across DynamoDB and Convex modes.
+ * through the Convex-backed account store.
  */
 
 import { createHash, timingSafeEqual } from "node:crypto";
@@ -10,8 +10,8 @@ import { optionalEnv } from "./env.ts";
 import {
   hashAccountSecret,
   type AccountRecord,
-} from "./storage/accounts.ts";
-import { getStorage } from "./storage/index.ts";
+} from "./domain/accounts.ts";
+import { getStorage } from "./storage.ts";
 
 export type AuthContext =
   | { kind: "admin" }
@@ -36,7 +36,10 @@ export function extractBearerToken(authorization: string | undefined): string | 
   return token;
 }
 
-export async function resolveBearerAuth(headers: Record<string, string>): Promise<AuthContext | null> {
+export async function resolveBearerAuth(
+  headers: Record<string, string>,
+  options: { allowDisabledAccountSecret?: boolean } = {},
+): Promise<AuthContext | null> {
   const token = extractBearerToken(headers.authorization);
   if (!token) return null;
 
@@ -72,7 +75,7 @@ export async function resolveBearerAuth(headers: Record<string, string>): Promis
   }
 
   const account = await getStorage().accounts.getBySecretHash(hashAccountSecret(token));
-  if (!account || account.status !== "active") return null;
+  if (!account || (account.status !== "active" && options.allowDisabledAccountSecret !== true)) return null;
   return { kind: "account", account };
 }
 

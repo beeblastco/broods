@@ -56,7 +56,6 @@ mock.module("../src/shared/s3.ts", () => ({
 
 let workspaceHarnessEnabled = true;
 const testStorage = () => ({
-  kind: "dynamodb",
   agents: { getById: getAgentMock },
   sandboxConfigs: { getById: async () => null },
   workspaceConfigs: {
@@ -71,7 +70,7 @@ const testStorage = () => ({
   },
 }) as never;
 
-const { setStorageForTests } = await import("../src/shared/storage/index.ts");
+const { setStorageForTests } = await import("../src/shared/storage.ts");
 setStorageForTests(testStorage());
 
 afterEach(() => {

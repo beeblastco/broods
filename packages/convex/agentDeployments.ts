@@ -24,6 +24,14 @@ import { getProjectForRole } from "./model/ownership/project";
 
 const DEPLOYMENT_KEY_PREFIX = "fp_agent_";
 
+/** Safe runtime deployment scope returned to core without stored credentials. */
+const agentDeploymentScopeValidator = v.object({
+    accountId: v.id("accounts"),
+    endpointId: v.string(),
+    projectSlug: v.string(),
+    environmentSlug: v.string(),
+});
+
 /** SHA-256 hex digest for one-time deployment API keys. */
 async function sha256Hex(value: string): Promise<string> {
     const hash = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
@@ -398,15 +406,7 @@ export const rotate = mutation({
 /** Resolve a runtime API key hash to the account and scope it invokes. */
 export const getByApiKeyHash = internalQuery({
     args: { apiKeyHash: v.string() },
-    returns: v.union(
-        v.object({
-            accountId: v.id("accounts"),
-            endpointId: v.string(),
-            projectSlug: v.string(),
-            environmentSlug: v.string(),
-        }),
-        v.null(),
-    ),
+    returns: v.union(agentDeploymentScopeValidator, v.null()),
     handler: async (ctx, { apiKeyHash }) => {
         const deployment = await ctx.db
             .query("agentDeployments")
@@ -432,15 +432,7 @@ export const getByAgentId = internalQuery({
         accountId: v.id("accounts"),
         agentId: v.string(),
     },
-    returns: v.union(
-        v.object({
-            accountId: v.id("accounts"),
-            endpointId: v.string(),
-            projectSlug: v.string(),
-            environmentSlug: v.string(),
-        }),
-        v.null(),
-    ),
+    returns: v.union(agentDeploymentScopeValidator, v.null()),
     handler: async (ctx, args) => {
         const runtimeAgentId = ctx.db.normalizeId("agents", args.agentId);
         if (!runtimeAgentId) return null;

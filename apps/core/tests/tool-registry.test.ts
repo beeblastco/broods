@@ -7,9 +7,9 @@ import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
 import {
   resetStorageForTests,
   setStorageForTests,
-  type AccountToolRecord,
-  type StorageProvider,
-} from "../src/shared/storage/index.ts";
+  type Storage,
+} from "../src/shared/storage.ts";
+import type { AccountToolRecord } from "../src/shared/domain/account-tools.ts";
 
 const tavilySearchMock = mock((options: unknown) => ({ provider: "tavilySearch", options }));
 const tavilyExtractMock = mock((options: unknown) => ({ provider: "tavilyExtract", options }));
@@ -400,7 +400,7 @@ describe("createTools", () => {
     const approvalRequirements = new Map<string, true>();
     setStorageForTests(storageWithAccountTool({
       accountId: "acct_test",
-      toolId: "qs78zwc4z4q5ysxm74fgrhd13s88xxtv",
+      toolId: "qs78zwc4z4q5ysxm74fgrhd13s88xxt",
       name: "test_async",
       description: "Uploaded async test tool.",
       inputSchema: { type: "object", properties: {}, additionalProperties: false },
@@ -429,7 +429,7 @@ describe("createTools", () => {
       { approvalRequirements },
     ) as never, {
       tools: {
-        qs78zwc4z4q5ysxm74fgrhd13s88xxtv: {
+        qs78zwc4z4q5ysxm74fgrhd13s88xxt: {
           enabled: true,
           async: true,
           needsApproval: true,
@@ -489,9 +489,8 @@ function createToolContext(
   } as never;
 }
 
-function storageWithAccountTool(accountTool: AccountToolRecord): StorageProvider {
+function storageWithAccountTool(accountTool: AccountToolRecord): Storage {
   return {
-    kind: "dynamodb",
     accounts: {} as never,
     agents: {} as never,
     agentDeployments: {
@@ -517,8 +516,8 @@ function storageWithAccountTool(accountTool: AccountToolRecord): StorageProvider
       removeAllForAccount: mock() as never,
     },
     accountHooks: {} as never,
-    usage: { async recordTask() {} },
-  } as StorageProvider;
+    taskUsage: { async record() {} },
+  } as Storage;
 }
 
 function sandboxContext(

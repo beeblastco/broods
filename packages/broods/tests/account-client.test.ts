@@ -193,16 +193,16 @@ test("sandbox lifecycle throws on a missing sandbox (404)", async () => {
 
 test("tools: create posts JSON with the bundle and delete returns the flag", async () => {
   const { client, calls } = mockClient([
-    { status: 201, body: { toolId: "tool_1", name: "sum", runtime: "isolate" } },
+    { status: 201, body: { toolId: "qs78zwc4z4q5ysxm74fgrhd13s88xxt", name: "sum", runtime: "isolate" } },
     { status: 200, body: { deleted: true } },
   ]);
 
   const created = await client.createTool({ name: "sum", description: "adds", inputSchema: {}, bundle: "export default {}" });
-  expect(created.toolId).toBe("tool_1");
+  expect(created.toolId).toBe("qs78zwc4z4q5ysxm74fgrhd13s88xxt");
   expect(calls[0]?.headers["Content-Type"]).toBe("application/json");
   expect(JSON.parse(calls[0]?.body ?? "{}").bundle).toBe("export default {}");
 
-  expect(await client.deleteTool("tool_1")).toBe(true);
+  expect(await client.deleteTool("qs78zwc4z4q5ysxm74fgrhd13s88xxt")).toBe(true);
 });
 
 test("policies: list/create unwrap and get returns null on 404", async () => {

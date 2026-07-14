@@ -5,18 +5,18 @@
 
 import { afterEach, describe, expect, it, mock } from "bun:test";
 import { coreRequest, responseJson } from "./helpers/http.ts";
-import { resetStorageForTests, setStorageForTests } from "../src/shared/storage/index.ts";
+import { resetStorageForTests, setStorageForTests } from "../src/shared/storage.ts";
 import {
   normalizeCreateSandboxConfigInput,
   normalizeUpdateSandboxConfigInput,
   type SandboxConfig,
   type SandboxConfigRecord,
-} from "../src/shared/storage/sandbox-config.ts";
+} from "../src/shared/domain/sandbox-config.ts";
 import {
   normalizeCreateWorkspaceConfigInput,
   normalizeUpdateWorkspaceConfigInput,
   type WorkspaceConfigRecord,
-} from "../src/shared/storage/workspace-config.ts";
+} from "../src/shared/domain/workspace-config.ts";
 import { openTerminalTicket, TERMINAL_WEBSOCKET_PATH } from "../src/shared/terminal-ticket.ts";
 
 const ACCOUNT_ID = "acct_test";
@@ -369,7 +369,6 @@ function createFakeStorage() {
   const stamp = "2026-05-01T00:00:00.000Z";
 
   return {
-    kind: "fake",
     accounts: {
       async getById() { return fakeAccount(); },
       async getBySecretHash() { return fakeAccount(); },

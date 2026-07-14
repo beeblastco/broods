@@ -1,5 +1,5 @@
 /**
- * Type contracts inherited from Convex and core storage/runtime modules.
+ * Type contracts inherited from Convex and core domain/runtime modules.
  * Keep this file type-only so the public SDK does not bundle backend code.
  */
 
@@ -19,23 +19,23 @@ import type {
   AgentZaloChannelConfig,
   AgentProviderSettings,
   AgentWorkspaceRef,
-} from "../../../apps/core/src/shared/storage/agent-config.ts";
+} from "../../../apps/core/src/shared/domain/agent-config.ts";
 import type {
   CreateCronInput,
   CronLastStatus,
   CronStatus,
   UpdateCronInput,
-} from "../../../apps/core/src/shared/storage/cron.ts";
+} from "../../../apps/core/src/shared/domain/cron.ts";
 import type {
   SandboxConfig,
-} from "../../../apps/core/src/shared/storage/sandbox-config.ts";
+} from "../../../apps/core/src/shared/domain/sandbox-config.ts";
 import type {
   WorkspaceConfig,
-} from "../../../apps/core/src/shared/storage/workspace-config.ts";
+} from "../../../apps/core/src/shared/domain/workspace-config.ts";
 import type {
   AgentPolicyConfig,
   AgentPolicyDocument,
-} from "../../../apps/core/src/shared/storage/agent-policy.ts";
+} from "../../../apps/core/src/shared/domain/agent-policy.ts";
 
 // Per-channel inbound `source` shapes, inherited from the channel adapters so
 // the SDK hook typings cannot drift from what core actually emits.

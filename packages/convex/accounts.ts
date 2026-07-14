@@ -1,6 +1,6 @@
 /**
  * Account CRUD + secret-hash lookup. Called by broods's
- * ConvexStorageProvider (via deploy key) and by the dashboard's org lifecycle.
+ * Convex core store (via deploy key) and by the dashboard's org lifecycle.
  */
 
 import { v } from "convex/values";
@@ -54,6 +54,10 @@ export const list = internalQuery({
     },
 });
 
+/**
+ * Creates an account with a unique organization binding.
+ * @returns the complete persisted account document
+ */
 export const create = internalMutation({
     args: {
         orgId: v.string(),
@@ -62,7 +66,7 @@ export const create = internalMutation({
         secretHash: v.string(),
         status: v.optional(statusValidator),
     },
-    returns: v.id("accounts"),
+    returns: accountDoc,
     handler: async (ctx, args) => {
         const existing = await ctx.db
             .query("accounts")
@@ -73,7 +77,7 @@ export const create = internalMutation({
         }
 
         const now = Date.now();
-        return await ctx.db.insert("accounts", {
+        const accountId = await ctx.db.insert("accounts", {
             orgId: args.orgId,
             username: args.username,
             description: args.description,
@@ -82,9 +86,19 @@ export const create = internalMutation({
             createdAt: now,
             updatedAt: now,
         });
+        const account = await ctx.db.get(accountId);
+        if (!account) {
+            throw new Error("Failed to read created account");
+        }
+
+        return account;
     },
 });
 
+/**
+ * Updates an existing account's mutable fields.
+ * @returns the updated document, or null when the account does not exist
+ */
 export const update = internalMutation({
     args: {
         accountId: v.id("accounts"),
@@ -93,12 +107,13 @@ export const update = internalMutation({
         status: v.optional(statusValidator),
         secretHash: v.optional(v.string()),
     },
-    returns: v.null(),
+    returns: v.union(accountDoc, v.null()),
     handler: async (ctx, args) => {
         const { accountId, ...patch } = args;
         const account = await ctx.db.get(accountId);
         if (!account) {
-            throw new Error(`Account not found: ${accountId}`);
+
+            return null;
         }
 
         await ctx.db.patch(accountId, {
@@ -109,7 +124,7 @@ export const update = internalMutation({
             updatedAt: Date.now(),
         });
 
-        return null;
+        return await ctx.db.get(accountId);
     },
 });
 

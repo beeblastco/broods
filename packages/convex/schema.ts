@@ -369,8 +369,8 @@ export const sandboxProviderValidator = v.union(
  * Live persistent-sandbox registry, mirrored from broods so the dashboard can
  * show running/suspended instances and drive suspend/resume/terminate through
  * Convex live queries. broods (the runtime) is authoritative — it owns the
- * provider lifecycle and the DynamoDB reconnection map, and dual-writes each
- * transition here; this table is the real-time view, not the source of truth.
+ * provider lifecycle and writes each transition here. Reservation reconnects
+ * use the authoritative `sandboxReservations` table.
  * One row per reserved sandbox, keyed by `reservationKey` (the broods
  * reconnection key, globally unique since it embeds the account + workspace).
  */
@@ -380,7 +380,7 @@ export const sandboxInstancesFields = {
     projectId: v.optional(v.id("projects")),
     environmentId: v.optional(v.id("environments")),
     provider: sandboxProviderValidator,
-    /** Stable reservation key broods reconnects by (mirror of the DynamoDB instanceKey). */
+    /** Stable reservation key used by broods reconnects. */
     reservationKey: v.string(),
     /** Sandbox config this instance was reserved from; lets the dashboard drive its write-path. */
     sandboxConfigId: v.optional(v.id("sandboxConfigs")),
@@ -681,6 +681,19 @@ export const asyncResultsFields = {
     updatedAt: v.number(),
 };
 
+/** Ordered AI SDK events for one runtime conversation. */
+export const runtimeConversationEventsFields = { accountId: v.string(), conversationKey: v.string(), cursor: v.string(), event: v.any() };
+/** Dedupe claims, conversation leases, and pending ingress buffers. */
+export const runtimeClaimsFields = { accountId: v.optional(v.string()), key: v.string(), kind: v.union(v.literal("event"), v.literal("lease"), v.literal("pendingIngress")), ownerEventId: v.optional(v.string()), conversationKey: v.optional(v.string()), queued: v.optional(v.array(v.any())), expiresAt: v.number() };
+/** Public async-agent polling and approval state. */
+export const runtimeAsyncAgentResultsFields = { accountId: v.string(), eventId: v.string(), conversationKey: v.string(), status: v.union(v.literal("processing"), v.literal("awaiting_approval"), v.literal("completed"), v.literal("failed")), response: v.optional(v.any()), error: v.optional(v.string()), approvals: v.optional(v.array(v.any())), createdAt: v.string(), updatedAt: v.string(), expiresAt: v.number() };
+/** Detached async tool state, including delivery and hashed callback authorization. */
+export const runtimeAsyncToolResultsFields = { accountId: v.string(), resultId: v.string(), parentEventId: v.string(), conversationKey: v.string(), toolName: v.string(), toolCallId: v.string(), input: v.any(), status: v.union(v.literal("processing"), v.literal("completed"), v.literal("failed")), response: v.optional(v.any()), error: v.optional(v.string()), delivery: v.optional(v.any()), completionTokenHash: v.optional(v.string()), observed: v.optional(v.boolean()), createdAt: v.string(), updatedAt: v.string(), expiresAt: v.number() };
+/** Transactional fan-in group for detached tool siblings. */
+export const runtimeAsyncToolGroupsFields = { accountId: v.string(), parentEventId: v.string(), resultIds: v.array(v.string()), sealed: v.boolean(), expiresAt: v.number() };
+/** Authoritative persistent-sandbox reservation mapping. */
+export const sandboxReservationsFields = { accountId: v.string(), provider: sandboxProviderValidator, reservationKey: v.string(), externalId: v.string(), expiresAt: v.number() };
+
 /**
  * Per-account scheduled agent runs. Mirrors broods's CronRecord
  * (src/shared/cron.ts) so the SaaS dashboard can manage them
@@ -726,7 +739,7 @@ export const cronRunsFields = {
  * computed at render from a hardcoded shared pricing table — only raw counts are
  * stored here.
  */
-export const usageTasksFields = {
+export const taskUsageFields = {
     accountId: v.id("accounts"),
     /** Per-deployment id (matches agentDeployments.endpointId); the dashboard join key. */
     endpointId: v.string(),
@@ -925,6 +938,12 @@ export default defineSchema({
         .index("by_projectId_nodeId_and_path", ["projectId", "nodeId", "path"])
         .index("by_authId", ["authId"]),
     asyncResults: defineTable(asyncResultsFields).index("by_accountId", ["accountId"]).index("by_eventId", ["eventId"]),
+    runtimeConversationEvents: defineTable(runtimeConversationEventsFields).index("by_conversationKey_and_cursor", ["conversationKey", "cursor"]).index("by_accountId", ["accountId"]),
+    runtimeClaims: defineTable(runtimeClaimsFields).index("by_key", ["key"]).index("by_accountId", ["accountId"]).index("by_expiresAt", ["expiresAt"]),
+    runtimeAsyncAgentResults: defineTable(runtimeAsyncAgentResultsFields).index("by_eventId", ["eventId"]).index("by_accountId", ["accountId"]).index("by_expiresAt", ["expiresAt"]),
+    runtimeAsyncToolResults: defineTable(runtimeAsyncToolResultsFields).index("by_resultId", ["resultId"]).index("by_parentEventId", ["parentEventId"]).index("by_accountId", ["accountId"]).index("by_expiresAt", ["expiresAt"]),
+    runtimeAsyncToolGroups: defineTable(runtimeAsyncToolGroupsFields).index("by_parentEventId", ["parentEventId"]).index("by_accountId", ["accountId"]).index("by_expiresAt", ["expiresAt"]),
+    sandboxReservations: defineTable(sandboxReservationsFields).index("by_provider_and_reservationKey", ["provider", "reservationKey"]).index("by_accountId", ["accountId"]).index("by_expiresAt", ["expiresAt"]),
     crons: defineTable(cronsFields)
         .index("by_accountId", ["accountId"])
         .index("by_accountId_and_agentId", ["accountId", "agentId"])
@@ -935,7 +954,7 @@ export default defineSchema({
         "cronId",
         "startedAt",
     ]),
-    usageTasks: defineTable(usageTasksFields)
+    taskUsage: defineTable(taskUsageFields)
         .index("by_endpointId_and_finishedAt", ["endpointId", "finishedAt"])
         .index("by_accountId_and_finishedAt", ["accountId", "finishedAt"])
         .index("by_accountId_and_taskId", ["accountId", "taskId"]),

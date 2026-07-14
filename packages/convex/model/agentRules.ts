@@ -383,8 +383,8 @@ function normalizeHooksConfig(value: unknown): void {
 function normalizeCodeHookConfig(value: unknown, path: string): void {
     if (!isPlainObject(value)) throw new Error(`${path} must be an object`);
     const config = value as Record<string, unknown>;
-    if (typeof config.hookId !== "string" || config.hookId.trim().length === 0) {
-        throw new Error(`${path}.hookId is required`);
+    if (typeof config.hookId !== "string" || !isNativeConvexDocumentId(config.hookId)) {
+        throw new Error(`${path}.hookId must be a native Convex document id`);
     }
     assertOptionalBoolean(config.enabled, `${path}.enabled`);
     if (
@@ -638,10 +638,6 @@ function validateConfigPatch(value: unknown, path: string): void {
         normalizeAgentConfig(withoutNulls);
         return;
     }
-    for (const [key, entry] of Object.entries(candidate)) {
-        if (entry == null || Array.isArray(entry) || !isPlainObject(entry)) continue;
-        validateConfigPatch(entry, `${path}.${key}`);
-    }
 }
 
 function removeNullConfigValues(value: Record<string, unknown>): Record<string, unknown> {
@@ -747,8 +743,8 @@ function assertOptionalPositiveInteger(value: unknown, name: string, max: number
 
 function assertOptionalStringArray(value: unknown, name: string): void {
     if (value === undefined) return;
-    if (!Array.isArray(value) || !value.every((entry) => typeof entry === "string")) {
-        throw new Error(`${name} must be an array of strings`);
+    if (!Array.isArray(value) || !value.every((entry) => typeof entry === "string" && entry.trim().length > 0)) {
+        throw new Error(`${name} must be an array of non-empty strings`);
     }
 }
 
@@ -775,7 +771,11 @@ function isSupportedConfigToolName(toolName: string): boolean {
 }
 
 function isAccountToolId(toolName: string): boolean {
-    return /^tool_[A-Za-z0-9_-]+$/.test(toolName) || /^[a-z0-9]{32}$/.test(toolName);
+    return isNativeConvexDocumentId(toolName);
+}
+
+function isNativeConvexDocumentId(value: string): boolean {
+    return /^[a-z0-9]{20,}$/.test(value);
 }
 
 function requireAgentStatus(value: unknown): AgentStatus {

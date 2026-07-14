@@ -7,7 +7,7 @@
 
 import { describe, expect, it } from "bun:test";
 import type { ToolSet } from "ai";
-import type { AgentHookEventName } from "../src/shared/storage/agent-config.ts";
+import type { AgentHookEventName } from "../src/shared/domain/agent-config.ts";
 import type { HookDispatcher } from "../src/harness/hook-dispatcher.ts";
 import { wrapToolsWithHooks } from "../src/harness/hook-dispatcher.ts";
 

@@ -4,8 +4,9 @@
  */
 
 import type { ModelMessage, SystemModelMessage, UserModelMessage, JSONValue } from "ai";
-import type { AgentConfig } from "../shared/storage/index.ts";
-import { getStorage, type AgentRecord } from "../shared/storage/index.ts";
+import type { AgentConfig } from "../shared/domain/agent-config.ts";
+import { getStorage } from "../shared/storage.ts";
+import type { AgentRecord } from "../shared/domain/agents.ts";
 import { logError, logInfo } from "../shared/log.ts";
 import { getObservabilityContext } from "../shared/otel.ts";
 import {

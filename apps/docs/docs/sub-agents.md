@@ -37,7 +37,7 @@ Defaults:
 - omit `subagent` or set `enabled: false` to disable `run_subagent`
 - omit `context` to use `"new"`
 - omit `mode` or set `"ephemeral"` for in-memory-only subagent conversations
-- set `mode: "persistent"` to save subagent conversations to DynamoDB and enable resuming
+- set `mode: "persistent"` to save subagent conversations to Convex and enable resuming
 - use `allowed: []` to allow only virtual one-shot subagents
 - add predefined agent ids to `allowed` when the parent should be able to choose specific account-owned agents
 
@@ -99,10 +99,10 @@ flowchart LR
   Parent["Parent model-visible messages"] -->|"context=inherited"| ChildMemory["Child prompt input<br/>in memory only"]
   Task["Task prompt"] --> ChildMemory
   Task -->|"context=new"| Fresh["Fresh child prompt input"]
-  ChildMemory -. "not copied" .-> DDB["DynamoDB conversation rows"]
+  ChildMemory -. "not copied" .-> CVX["Convex conversation rows"]
 ```
 
-Inherited context is passed directly to the child model call. It is not copied into the child conversation in DynamoDB. This keeps subagents cheap and avoids storing fake child history for one-shot work.
+Inherited context is passed directly to the child model call. It is not copied into the child conversation in Convex. This keeps subagents cheap and avoids storing fake child history for one-shot work.
 
 Reasoning cleanup happens at completed-turn boundaries internally. If a subagent inherits parent context, the dispatcher strips parent `reasoning` parts before passing that context to the child. When a child result is injected and the parent runs again, the next parent turn is rebuilt from persisted conversation state and completed-turn reasoning is stripped. A pending tool-approval resume is different: that step has not finished, so its assistant tool-call/approval request and reasoning are preserved for the approval response.
 
@@ -113,9 +113,9 @@ flowchart LR
   Parent["Parent Agent"] -->|"run_subagent without conversationKey"| System["System generates stable key"]
   System -->|"returns conversationKey"| Parent
   Parent -->|"run_subagent with conversationKey"| Resume["Resume existing conversation"]
-  Resume --> DDB["DynamoDB conversation rows"]
+  Resume --> CVX["Convex conversation rows"]
 
-  style DDB fill:#f9f,stroke:#333
+  style CVX fill:#f9f,stroke:#333
 ```
 
 When `mode: "persistent"` is configured:
@@ -124,7 +124,7 @@ When `mode: "persistent"` is configured:
 - the system generates a key with the `subagent-persistent-{uuid}` format for new conversations
 - the generated key is returned in the tool result alongside the `taskId`
 - the parent agent can pass that key in future `run_subagent` calls to resume the child conversation
-- resumed conversations load the existing child history from DynamoDB and append the new prompt
+- resumed conversations load the existing child history from Convex and append the new prompt
 - inherited parent context remains request-local model context and is not copied into the child conversation
 
 Ephemeral mode is the default. It keeps child model context in memory only and continues to use runtime-generated keys.

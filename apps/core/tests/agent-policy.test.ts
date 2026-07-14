@@ -3,7 +3,7 @@ import { policyInputForTool } from "../src/harness/policy.ts";
 import {
   normalizeAgentPolicyConfig,
   normalizeAgentPolicyDocument,
-} from "../src/shared/storage/agent-policy.ts";
+} from "../src/shared/domain/agent-policy.ts";
 import type { ResolvedWorkspace } from "../src/shared/workspaces.ts";
 
 const workspaces: ResolvedWorkspace[] = [{
@@ -84,11 +84,11 @@ describe("agent policy input", () => {
 
   it("maps uploaded tool model names to stable tool ids when provided", () => {
     expect(policyInputForTool("customer_lookup", { email: "a@example.com" }, [], {
-      toolIdsByName: new Map([["customer_lookup", "tool_abc123"]]),
+      toolIdsByName: new Map([["customer_lookup", "qs78zwc4z4q5ysxm74fgrhd13s88xxt"]]),
     })).toEqual({
       action: "tool.call",
       toolName: "customer_lookup",
-      toolId: "tool_abc123",
+      toolId: "qs78zwc4z4q5ysxm74fgrhd13s88xxt",
       tool: {
         input: { email: "a@example.com" },
         inputKeys: ["email"],

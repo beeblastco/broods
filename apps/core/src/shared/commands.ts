@@ -3,19 +3,12 @@
  * Keep channel-agnostic command logic here.
  */
 
-import {
-  BatchWriteItemCommand,
-  QueryCommand,
-  type AttributeValue,
-  type WriteRequest,
-} from "@aws-sdk/client-dynamodb";
 import type { ChannelActions } from "./channels.ts";
-import { dynamo } from "./storage/dynamo/client.ts";
+import { runtime } from "./convex/runtime.ts";
 import { logError } from "./log.ts";
 
 export interface CommandContext {
   conversationKey: string;
-  conversationsTableName: string;
   channel: ChannelActions;
 }
 
@@ -57,6 +50,7 @@ export interface DiscordCommandResolution {
 
 const DEFAULT_DISCORD_INTEGRATION_TYPES = [0];
 const DEFAULT_DISCORD_CONTEXTS = [0, 1];
+const CLEAR_CONVERSATION_MAX_BATCHES = 100;
 
 export const commands: CommandHandler[] = [
   {
@@ -67,8 +61,16 @@ export const commands: CommandHandler[] = [
       description: "Clear conversation context and start fresh",
     },
     async execute(ctx) {
-      await clearConversation(ctx.conversationKey, ctx.conversationsTableName);
-      return "Context cleared. Starting fresh.";
+      for (let batchNumber = 0; batchNumber < CLEAR_CONVERSATION_MAX_BATCHES; batchNumber += 1) {
+        const result = await runtime.mutate<{ deleted: number; hasMore: boolean }>("clearConversation", {
+          conversationKey: ctx.conversationKey,
+        });
+        if (!result.hasMore) return "Context cleared. Starting fresh.";
+      }
+
+      throw new Error(
+        `Conversation cleanup exceeded ${CLEAR_CONVERSATION_MAX_BATCHES} Convex batches; run /clear again to continue`,
+      );
     },
   },
   {
@@ -160,58 +162,4 @@ function getExecutableCommands(): Array<CommandHandler & { execute: NonNullable<
     (command): command is CommandHandler & { execute: NonNullable<CommandHandler["execute"]> } =>
       typeof command.execute === "function",
   );
-}
-
-async function clearConversation(
-  conversationKey: string,
-  tableName: string,
-): Promise<void> {
-  let exclusiveStartKey: Record<string, AttributeValue> | undefined;
-
-  do {
-    const page = await dynamo.send(
-      new QueryCommand({
-        TableName: tableName,
-        KeyConditionExpression: "conversationKey = :conversationKey",
-        ExpressionAttributeValues: {
-          ":conversationKey": { S: conversationKey },
-        },
-        ProjectionExpression: "conversationKey, createdAt",
-        ExclusiveStartKey: exclusiveStartKey,
-      }),
-    );
-
-    const items = page.Items ?? [];
-    for (let index = 0; index < items.length; index += 25) {
-      await deleteConversationChunk(tableName, items.slice(index, index + 25));
-    }
-
-    exclusiveStartKey = page.LastEvaluatedKey;
-  } while (exclusiveStartKey);
-}
-
-async function deleteConversationChunk(
-  tableName: string,
-  items: Record<string, AttributeValue>[],
-): Promise<void> {
-  let pending: WriteRequest[] = items.map((item) => ({
-    DeleteRequest: {
-      Key: {
-        conversationKey: item.conversationKey!,
-        createdAt: item.createdAt!,
-      },
-    },
-  }));
-
-  while (pending.length > 0) {
-    const result = await dynamo.send(
-      new BatchWriteItemCommand({
-        RequestItems: {
-          [tableName]: pending,
-        },
-      }),
-    );
-
-    pending = result.UnprocessedItems?.[tableName] ?? [];
-  }
 }

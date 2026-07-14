@@ -11,7 +11,7 @@ import {
   workspaceNamespace,
   workspaceNamespaceOwnsReservationKey,
 } from "../src/shared/workspaces.ts";
-import { setStorageForTests } from "../src/shared/storage/index.ts";
+import { setStorageForTests } from "../src/shared/storage.ts";
 
 afterEach(() => {
   setStorageForTests(null);

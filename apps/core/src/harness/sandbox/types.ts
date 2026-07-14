@@ -9,7 +9,7 @@
  */
 
 import type { Readable } from "node:stream";
-import type { WorkspaceStorageConfig } from "../../shared/storage/workspace-config.ts";
+import type { WorkspaceStorageConfig } from "../../shared/domain/workspace-config.ts";
 import type { SandboxControlPlane, SandboxRunMetadata, SandboxSize } from "../../shared/sandbox-sizes.ts";
 
 export type SandboxProvider = "sandbox" | "lambda" | "e2b" | "daytona" | "vercel";
@@ -25,7 +25,7 @@ export interface SandboxNetworkConfig {
   denyCidrs?: string[];
 }
 
-// Runtime subset of the persisted sandbox config (see storage/sandbox-config.ts)
+// Runtime subset of the persisted sandbox config (see domain/sandbox-config.ts)
 // that an executor needs. `provider` is required: normalizeSandboxConfig always
 // resolves one, so an executor config never carries an undefined provider.
 export interface SandboxExecutorConfig {
@@ -59,7 +59,7 @@ export interface SandboxExecutorConfig {
   // The workspace's storage identity (bucket / region / endpoint / prefix / auth),
   // attached per-workspace by the runtime resolver. Drives the S3 mount target and
   // credentials. Absent for stateless (no-workspace) runs. Storage is a property of
-  // the workspace, not the sandbox compute — see _shared/storage/workspace-config.
+  // the workspace, not the sandbox compute — see shared/domain/workspace-config.
   storage?: WorkspaceStorageConfig;
   // Account + sandbox identity attached by the runtime resolver so a freshly
   // reserved persistent instance mirrors itself into the Convex registry. Absent

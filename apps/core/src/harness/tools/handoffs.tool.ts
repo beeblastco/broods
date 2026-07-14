@@ -7,7 +7,7 @@
 
 import { jsonSchema, tool, type ToolSet } from "ai";
 import { logInfo, logWarn } from "../../shared/log.ts";
-import type { AgentChannelsConfig } from "../../shared/storage/index.ts";
+import type { AgentChannelsConfig } from "../../shared/domain/agent-config.ts";
 import type { ToolContext } from "./index.ts";
 
 const ZALO_API_BASE = "https://bot-api.zaloplatforms.com";

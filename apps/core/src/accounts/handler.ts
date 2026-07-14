@@ -1,15 +1,15 @@
 /**
  * Account management HTTP API.
- * Keep account CRUD orchestration here and shared account storage in _shared.
+ * Keep account orchestration here and shared records/persistence at their boundaries.
  */
 
 import { resolveBearerAuth, type AuthContext } from "../shared/auth.ts";
+import { getStorage } from "../shared/storage.ts";
+import { isCronsConfigured } from "../shared/domain/cron.ts";
 import {
-    getStorage,
-    isCronsConfigured,
     normalizeCreateAccountInput,
     type AccountRecord,
-} from "../shared/storage/index.ts";
+} from "../shared/domain/accounts.ts";
 import {
     errorResponse,
     jsonResponse,
@@ -23,9 +23,9 @@ import { MICROVM_SHELL_AUTH_HEADER, microvmShellConnection } from "../harness/sa
 import { getSandboxExternalId } from "../harness/sandbox/instance-store.ts";
 import { sealTerminalTicket, TERMINAL_TICKET_TTL_MS, TERMINAL_WEBSOCKET_PATH } from "../shared/terminal-ticket.ts";
 import { requireEnv } from "../shared/env.ts";
-import { removeSandboxInstance, setSandboxInstanceStatus } from "../shared/storage/convex/sandbox-instances.ts";
-import { recordSandboxAuditEvent, type SandboxAuditActor } from "../shared/storage/convex/sandbox-audit-events.ts";
-import { upsertSandboxSnapshot } from "../shared/storage/convex/sandbox-snapshots.ts";
+import { removeSandboxInstance, setSandboxInstanceStatus } from "../shared/convex/sandbox-instances.ts";
+import { recordSandboxAuditEvent, type SandboxAuditActor } from "../shared/convex/sandbox-audit-events.ts";
+import { upsertSandboxSnapshot } from "../shared/convex/sandbox-snapshots.ts";
 import { workspaceSandboxLimits } from "../shared/sandbox.ts";
 import { deleteAccountRuntimeData } from "./cleanup.ts";
 import { workspaceNamespace, workspaceNamespaceOwnsReservationKey } from "../shared/workspaces.ts";
@@ -65,7 +65,12 @@ async function handleAccountRequest(request: CoreRequest): Promise<Response> {
             return jsonResponse(200, { status: "ok" });
         }
 
-        const auth = await resolveBearerAuth(headers);
+        const auth = await resolveBearerAuth(headers, {
+            // Cleanup can fail after the account is disabled. Permit only the
+            // owning secret to retry self-deletion; all normal ingress remains
+            // subject to the active-account requirement.
+            allowDisabledAccountSecret: method === "DELETE" && rawPath === "/v1/account",
+        });
         if (!auth) {
             logWarn("Account manage request unauthorized", {
                 method,
@@ -400,8 +405,15 @@ async function sandboxReservationBelongsToAccount(
 }
 
 async function deleteAccountResponse(account: Extract<AuthContext, { kind: "account" }>["account"]): Promise<Response> {
+    const disabled = account.status === "disabled"
+        ? account
+        : await getStorage().accounts.disable(account.accountId);
+    if (!disabled) {
+        return jsonResponse(404, { error: "Account not found" });
+    }
+
     const [runtime, agentsDeleted, skillObjectsDeleted, toolBundleObjectsDeleted, cronsDeleted, accountToolsDeleted, accountHooksDeleted] = await Promise.all([
-        deleteAccountRuntimeData(account),
+        deleteAccountRuntimeData(disabled),
         getStorage().agents.removeAllForAccount(account.accountId),
         deleteAccountSkills(account.accountId),
         deleteAccountToolBundles(account.accountId),
