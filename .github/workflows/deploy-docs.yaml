@@ -44,8 +44,9 @@ jobs:
 
       - name: Install dependencies
         # Skip the postinstall (`sst install`): building the docs needs neither the
-        # SST providers nor project env vars. Same pattern as the deploy job.
-        run: bun install --frozen-lockfile --ignore-scripts
+        # SST providers nor project env vars. Hoisting also keeps Docusaurus theme
+        # packages on one shared React context for production rendering.
+        run: bun install --frozen-lockfile --ignore-scripts --linker hoisted
 
       - name: Build Docusaurus
         run: bun run docs:build
