@@ -11,7 +11,7 @@ import {
   resolveS3ReadTarget,
   workspaceReadContext,
 } from "../harness/sandbox/s3-mount.ts";
-import { runtimeMutation } from "../shared/storage/convex/runtime.ts";
+import { runtimeMutation } from "../shared/storage/runtime.ts";
 
 export interface AccountCleanupSummary {
   conversationsDeleted: number;

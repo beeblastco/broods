@@ -5,7 +5,7 @@
 
 import { afterEach, describe, expect, it, mock } from "bun:test";
 import { jsonSchema, tool, type UserModelMessage } from "ai";
-import { runtimePersistence } from "../src/shared/storage/convex/runtime.ts";
+import { runtimePersistence } from "../src/shared/storage/runtime.ts";
 
 const originalMutation = runtimePersistence.mutation;
 const mutationMock = mock(

@@ -1,6 +1,6 @@
 /** Webhook/event dedupe claims backed by Convex transactions. */
 
-import { runtimeMutation } from "./convex/runtime.ts";
+import { runtimeMutation } from "./runtime.ts";
 
 export interface DedupeStore {
   claim(accountId: string, eventId: string, ttlSeconds?: number): Promise<boolean>;

@@ -3,7 +3,7 @@
 import {
   runtimeMutation,
   runtimeQuery,
-} from "../../shared/storage/convex/runtime.ts";
+} from "../../shared/storage/runtime.ts";
 import type { SandboxProvider } from "./types.ts";
 export function getSandboxExternalId(
   provider: SandboxProvider,

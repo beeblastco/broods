@@ -23,9 +23,9 @@ import { MICROVM_SHELL_AUTH_HEADER, microvmShellConnection } from "../harness/sa
 import { getSandboxExternalId } from "../harness/sandbox/instance-store.ts";
 import { sealTerminalTicket, TERMINAL_TICKET_TTL_MS, TERMINAL_WEBSOCKET_PATH } from "../shared/terminal-ticket.ts";
 import { requireEnv } from "../shared/env.ts";
-import { removeSandboxInstance, setSandboxInstanceStatus } from "../shared/storage/convex/sandbox-instances.ts";
-import { recordSandboxAuditEvent, type SandboxAuditActor } from "../shared/storage/convex/sandbox-audit-events.ts";
-import { upsertSandboxSnapshot } from "../shared/storage/convex/sandbox-snapshots.ts";
+import { removeSandboxInstance, setSandboxInstanceStatus } from "../shared/storage/sandbox-instances.ts";
+import { recordSandboxAuditEvent, type SandboxAuditActor } from "../shared/storage/sandbox-audit-events.ts";
+import { upsertSandboxSnapshot } from "../shared/storage/sandbox-snapshots.ts";
 import { workspaceSandboxLimits } from "../shared/sandbox.ts";
 import { deleteAccountRuntimeData } from "./cleanup.ts";
 import { workspaceNamespace, workspaceNamespaceOwnsReservationKey } from "../shared/workspaces.ts";

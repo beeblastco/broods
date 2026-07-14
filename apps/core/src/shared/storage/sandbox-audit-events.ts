@@ -1,5 +1,5 @@
 /**
- * Convex mirror writes for sandbox lifecycle audit events. These are
+ * Storage mirror writes for sandbox lifecycle audit events. These are
  * best-effort: lifecycle calls should not fail if the audit mirror is
  * temporarily unavailable.
  */
@@ -7,8 +7,8 @@
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const internal: any = require("@broods/convex/_generated/api").internal;
 import { getConvexClient } from "./client.ts";
-import { logError } from "../../log.ts";
-import type { SandboxProvider } from "../sandbox-config.ts";
+import { logError } from "../log.ts";
+import type { SandboxProvider } from "./sandbox-config.ts";
 import type { SandboxInstanceStatus } from "./sandbox-instances.ts";
 
 /** Sandbox lifecycle actions represented in the audit stream. */

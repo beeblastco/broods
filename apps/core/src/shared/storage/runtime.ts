@@ -1,4 +1,4 @@
-/** Convex runtime-persistence calls shared by harness and account cleanup. */
+/** Runtime-persistence calls shared by the harness and account cleanup. */
 
 import { getConvexClient } from "./client.ts";
 

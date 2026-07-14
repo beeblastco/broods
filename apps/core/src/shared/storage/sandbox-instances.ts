@@ -1,5 +1,5 @@
 /**
- * Convex mirror writes for sandbox instance lifecycle. The account-manage
+ * Storage mirror writes for sandbox instance lifecycle. The account-manage
  * suspend/resume/terminate endpoints call these after the provider lifecycle
  * call succeeds so the dashboard's live sandboxInstances query reflects the new
  * state. Fire-and-forget safe — gated on convex mode and wrapped so a mirror
@@ -9,9 +9,9 @@
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const internal: any = require("@broods/convex/_generated/api").internal;
 import { getConvexClient } from "./client.ts";
-import { logError } from "../../log.ts";
-import type { SandboxControlPlane, SandboxRunMetadata } from "../../sandbox-sizes.ts";
-import type { SandboxProvider } from "../sandbox-config.ts";
+import { logError } from "../log.ts";
+import type { SandboxControlPlane, SandboxRunMetadata } from "../sandbox-sizes.ts";
+import type { SandboxProvider } from "./sandbox-config.ts";
 import { recordSandboxAuditEvent } from "./sandbox-audit-events.ts";
 
 /** Convex mode is active only when both env vars are present (see CLAUDE.md). */

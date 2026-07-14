@@ -4,7 +4,7 @@ import type { ToolApprovalSummary } from "./harness.ts";
 import {
   runtimeMutation,
   runtimeQuery,
-} from "../shared/storage/convex/runtime.ts";
+} from "../shared/storage/runtime.ts";
 export type AsyncAgentStatus =
   "processing" | "awaiting_approval" | "completed" | "failed";
 export interface AsyncAgentResultRecord {

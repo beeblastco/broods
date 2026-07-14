@@ -1,5 +1,5 @@
 /**
- * Convex storage factory. Runtime and config persistence share one backend.
+ * Storage factory. Runtime and config persistence share the Convex backend.
  */
 
 import type { StorageProvider } from "./types.ts";
@@ -8,8 +8,8 @@ let cached: StorageProvider | null = null;
 
 export function getStorage(): StorageProvider {
   if (cached) return cached;
-  const { convexStorageProvider } = require("./convex/index.ts");
-  cached = convexStorageProvider as StorageProvider;
+  const { storageProvider } = require("./provider.ts");
+  cached = storageProvider as StorageProvider;
 
   return cached!;
 }

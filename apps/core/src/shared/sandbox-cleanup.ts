@@ -14,7 +14,7 @@ import { MicrovmSandboxExecutor } from "../harness/sandbox/microvm-executor.ts";
 import { DaytonaSandboxExecutor } from "../harness/sandbox/daytona-executor.ts";
 import { E2BSandboxExecutor } from "../harness/sandbox/e2b-executor.ts";
 import { VercelSandboxExecutor } from "../harness/sandbox/vercel-executor.ts";
-import { removeSandboxInstance } from "./storage/convex/sandbox-instances.ts";
+import { removeSandboxInstance } from "./storage/sandbox-instances.ts";
 
 type ReleasableSandboxProvider = "sandbox" | "lambda" | "daytona" | "e2b" | "vercel";
 

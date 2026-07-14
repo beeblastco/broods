@@ -18,7 +18,7 @@ import { getStorage } from "../shared/storage/index.ts";
 import type { AsyncToolDelivery } from "./async-tool-result.ts";
 import { isMissingS3Error, readS3Text } from "../shared/s3.ts";
 import { resolveS3ReadTarget, workspaceReadContext } from "./sandbox/s3-mount.ts";
-import { runtimeMutation, runtimeQuery } from "../shared/storage/convex/runtime.ts";
+import { runtimeMutation, runtimeQuery } from "../shared/storage/runtime.ts";
 import {
   channelScopeKeyFromConversation,
   conversationLeaseKey,

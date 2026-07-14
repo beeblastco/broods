@@ -6,7 +6,7 @@ Shared Convex backend for the broods monorepo, used by two workspaces:
   dashboard Docker image build runs `convex deploy` from this directory) and
   calls the public functions through the generated `api`.
 - **`apps/core`** — does NOT deploy these functions; its storage adapter at
-  `apps/core/src/shared/storage/convex/` imports the generated
+  `apps/core/src/shared/storage/` imports the generated
   `internal` types and calls the functions remotely via `ConvexHttpClient`
   with a Convex deploy key. Convex is the sole runtime and configuration
   storage provider. Every stage must supply both `CONVEX_URL` and

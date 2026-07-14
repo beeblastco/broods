@@ -3,7 +3,7 @@
 import {
   runtimeMutation,
   runtimeQuery,
-} from "../shared/storage/convex/runtime.ts";
+} from "../shared/storage/runtime.ts";
 export type AsyncToolStatus = "processing" | "completed" | "failed";
 export type AsyncToolDelivery =
   | { kind: "async" }

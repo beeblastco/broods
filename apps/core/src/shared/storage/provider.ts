@@ -1,5 +1,5 @@
 /**
- * Convex-backed StorageProvider. All calls go through ConvexHttpClient with a
+ * StorageProvider backed by Convex. All calls go through ConvexHttpClient with a
  * deploy-key admin auth header.
  *
  * Hosted account lifecycle normally runs through orgLifecycle. The admin-only
@@ -11,44 +11,44 @@ import {
   decodeStoredAgentConfig,
   encryptConfigObject,
   decodeStoredConfigObject,
-} from "../agent-config.ts";
+} from "./agent-config.ts";
 import {
   normalizeCreateAgentInput,
   normalizeUpdateAgentInput,
-} from "../agents.ts";
+} from "./agents.ts";
 import {
   normalizeCreateCronInput,
   normalizeSchedulerGroupName,
   normalizeUpdateCronInput,
-} from "../cron.ts";
+} from "./cron.ts";
 import type { ModelMessage } from "ai";
 import {
   normalizeCreateSandboxConfigInput,
   normalizeUpdateSandboxConfigInput,
   type SandboxConfig,
-} from "../sandbox-config.ts";
+} from "./sandbox-config.ts";
 import {
   normalizeCreateWorkspaceConfigInput,
   normalizeUpdateWorkspaceConfigInput,
   type WorkspaceConfig,
-} from "../workspace-config.ts";
+} from "./workspace-config.ts";
 import {
   normalizeCreateAccountToolInput,
   normalizeUpdateAccountToolInput,
   type AccountToolRecord,
-} from "../account-tools.ts";
+} from "./account-tools.ts";
 import {
   normalizeCreateAccountHookInput,
   normalizeUpdateAccountHookInput,
   type AccountHookRecord,
-} from "../account-hooks.ts";
+} from "./account-hooks.ts";
 import {
   normalizeCreateAgentPolicyInput,
   normalizeUpdateAgentPolicyInput,
   type AgentPolicyRecord,
-} from "../agent-policy.ts";
+} from "./agent-policy.ts";
 import { usage } from "./usage.ts";
-import { createAccountId, createAccountSecret, hashAccountSecret, normalizeCreateAccountInput, normalizeUpdateAccountInput } from "../accounts.ts";
+import { createAccountId, createAccountSecret, hashAccountSecret, normalizeCreateAccountInput, normalizeUpdateAccountInput } from "./accounts.ts";
 
 // ConvexHttpClient's typed `query`/`mutation` only accept public function
 // refs; the backend package exposes internalQuery / internalMutation, so we
@@ -76,7 +76,7 @@ import type {
   StorageProvider,
   WorkspaceConfigRecord,
   WorkspaceConfigStore,
-} from "../types.ts";
+} from "./types.ts";
 import { getConvexClient } from "./client.ts";
 
 const ACCOUNT_DELETE_MAX_BATCHES = 100_000;
@@ -927,7 +927,7 @@ const accountHooks: AccountHookStore = {
   },
 };
 
-export const convexStorageProvider: StorageProvider = {
+export const storageProvider: StorageProvider = {
   kind: "convex",
   accounts,
   agents,
