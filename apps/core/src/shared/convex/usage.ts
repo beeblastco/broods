@@ -9,12 +9,12 @@
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const internal: any = require("@broods/convex/_generated/api").internal;
-import type { TaskUsageInput, TaskUsageStore } from "../storage.ts";
+import type { Storage } from "../storage.ts";
 import { getConvexClient } from "./client.ts";
 import { logError } from "../log.ts";
 
-export const taskUsage: TaskUsageStore = {
-  async record(input: TaskUsageInput): Promise<void> {
+export const taskUsage: Storage["taskUsage"] = {
+  async record(input): Promise<void> {
     try {
       await getConvexClient().mutation(internal.usage.recordTaskUsage, {
         accountId: input.accountId as any,

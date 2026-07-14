@@ -15,6 +15,14 @@ import type { AccountToolRecord } from "./domain/account-tools.ts";
 import type { AccountHookRecord } from "./domain/account-hooks.ts";
 import type { AgentPolicyRecord } from "./domain/agent-policy.ts";
 
+/** Safe deployment scope returned by Convex without stored credentials. */
+export interface AgentDeploymentScope {
+  accountId: string;
+  endpointId: string;
+  projectSlug: string;
+  environmentSlug: string;
+}
+
 /**
  * Raw counts for one finished agent task. No dollar amounts — pricing is
  * computed at render time from a shared hardcoded table (plan §6d, §10a).
@@ -74,7 +82,7 @@ export interface SandboxUsageEntry {
 }
 
 /** Account operations retained by core for auth, standalone creation, and cleanup. */
-export interface AccountStore {
+interface AccountStore {
   getById(accountId: string): Promise<AccountRecord | null>;
   getBySecretHash(secretHash: string): Promise<AccountRecord | null>;
   create(input: CreateAccountInput): Promise<{ account: AccountRecord; secret: string }>;
@@ -83,16 +91,9 @@ export interface AccountStore {
 }
 
 /** Agent reads plus the explicit deletion cleanup used by core. */
-export interface AgentStore {
+interface AgentStore {
   getById(accountId: string, agentId: string): Promise<AgentRecord | null>;
   removeAllForAccount(accountId: string): Promise<number>;
-}
-
-export interface AgentDeploymentRecord {
-  accountId: string;
-  endpointId: string;
-  projectSlug: string;
-  environmentSlug: string;
 }
 
 /**
@@ -100,14 +101,14 @@ export interface AgentDeploymentRecord {
  * API key hash. The key authorizes the account/environment scope; the agent is
  * chosen per request by id.
  */
-export interface AgentDeploymentStore {
-  getByApiKeyHash(apiKeyHash: string): Promise<AgentDeploymentRecord | null>;
+interface AgentDeploymentStore {
+  getByApiKeyHash(apiKeyHash: string): Promise<AgentDeploymentScope | null>;
   /** Resolve the environment deployment containing one linked runtime agent. */
-  getByAgentId?(accountId: string, agentId: string): Promise<AgentDeploymentRecord | null>;
+  getByAgentId?(accountId: string, agentId: string): Promise<AgentDeploymentScope | null>;
 }
 
 /** Account-scoped cron job schedules. */
-export interface CronStore {
+interface CronStore {
   getById(accountId: string, cronId: string): Promise<CronRecord | null>;
   list(accountId: string): Promise<CronRecord[]>;
   remove(accountId: string, cronId: string): Promise<boolean>;
@@ -120,33 +121,33 @@ export interface CronStore {
 }
 
 /** Account-scoped, reusable sandbox config records (encrypted at rest). */
-export interface SandboxConfigStore {
+interface SandboxConfigStore {
   getById(accountId: string, sandboxId: string): Promise<SandboxConfigRecord | null>;
   list(accountId: string): Promise<SandboxConfigRecord[]>;
   removeAllForAccount(accountId: string): Promise<number>;
 }
 
 /** Account-scoped, reusable workspace config records (plaintext, no secrets). */
-export interface WorkspaceConfigStore {
+interface WorkspaceConfigStore {
   getById(accountId: string, workspaceId: string): Promise<WorkspaceConfigRecord | null>;
   list(accountId: string): Promise<WorkspaceConfigRecord[]>;
   removeAllForAccount(accountId: string): Promise<number>;
 }
 
 /** Account-scoped uploaded custom tool metadata. */
-export interface AccountToolStore {
+interface AccountToolStore {
   getById(accountId: string, toolId: string): Promise<AccountToolRecord | null>;
   removeAllForAccount(accountId: string): Promise<number>;
 }
 
 /** Account-owned isolate code hooks. */
-export interface AccountHookStore {
+interface AccountHookStore {
   getById(accountId: string, hookId: string): Promise<AccountHookRecord | null>;
   removeAllForAccount(accountId: string): Promise<number>;
 }
 
 /** Account-scoped reusable runtime authorization policies. */
-export interface AgentPolicyStore {
+interface AgentPolicyStore {
   getById(accountId: string, policyId: string): Promise<AgentPolicyRecord | null>;
 }
 
@@ -155,7 +156,7 @@ export interface AgentPolicyStore {
  * it inserts one raw-count row per finished task and folds into a rollup
  * 5-minute Convex usageRollups bucket.
  */
-export interface TaskUsageStore {
+interface TaskUsageStore {
   record(input: TaskUsageInput): Promise<void>;
 }
 

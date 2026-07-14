@@ -38,17 +38,8 @@ import type { WorkspaceConfigRecord } from "../domain/workspace-config.ts";
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const internal: any = require("@broods/convex/_generated/api").internal;
 import type {
-  AgentDeploymentRecord,
-  AgentDeploymentStore,
-  AccountStore,
-  AgentPolicyStore,
-  AccountHookStore,
-  AccountToolStore,
-  AgentStore,
-  CronStore,
-  SandboxConfigStore,
+  AgentDeploymentScope,
   Storage,
-  WorkspaceConfigStore,
 } from "../storage.ts";
 import { getConvexClient } from "./client.ts";
 
@@ -163,7 +154,7 @@ function cronFromConvex(doc: ConvexCronDoc | null): CronRecord | null {
   };
 }
 
-const accounts: AccountStore = {
+const accounts: Storage["accounts"] = {
   async getById(accountId) {
     const doc = await getConvexClient().query(internal.accounts.getById, {
       accountId: accountId as any,
@@ -208,7 +199,7 @@ const accounts: AccountStore = {
   },
 };
 
-const agents: AgentStore = {
+const agents: Storage["agents"] = {
   async getById(accountId, agentId) {
     const doc = await getConvexClient().query(internal.agents.getById, {
       accountId: accountId as any,
@@ -230,23 +221,23 @@ const agents: AgentStore = {
   },
 };
 
-const agentDeployments: AgentDeploymentStore = {
+const agentDeployments: Storage["agentDeployments"] = {
   async getByApiKeyHash(apiKeyHash) {
     const doc = await getConvexClient().query(internal.agentDeployments.getByApiKeyHash, {
       apiKeyHash: apiKeyHash,
-    }) as AgentDeploymentRecord | null;
+    }) as AgentDeploymentScope | null;
     return doc;
   },
   async getByAgentId(accountId, agentId) {
     const doc = await getConvexClient().query(internal.agentDeployments.getByAgentId, {
       accountId: accountId as any,
       agentId: agentId,
-    }) as AgentDeploymentRecord | null;
+    }) as AgentDeploymentScope | null;
     return doc;
   },
 };
 
-const crons: CronStore = {
+const crons: Storage["crons"] = {
   async getById(accountId, cronId) {
     const doc = await getConvexClient().query(internal.cron.getById, {
       accountId: accountId as any,
@@ -382,7 +373,7 @@ function workspaceConfigFromConvex(doc: ConvexWorkspaceConfigDoc | null): Worksp
   };
 }
 
-const sandboxConfigs: SandboxConfigStore = {
+const sandboxConfigs: Storage["sandboxConfigs"] = {
   async getById(accountId, sandboxId) {
     const doc = await getConvexClient().query(internal.sandboxConfigs.getById, {
       accountId: accountId as any,
@@ -410,7 +401,7 @@ const sandboxConfigs: SandboxConfigStore = {
   },
 };
 
-const workspaceConfigs: WorkspaceConfigStore = {
+const workspaceConfigs: Storage["workspaceConfigs"] = {
   async getById(accountId, workspaceId) {
     const doc = await getConvexClient().query(internal.workspaceConfigs.getById, {
       accountId: accountId as any,
@@ -530,7 +521,7 @@ function accountHookFromConvex(doc: ConvexAccountHookDoc | null): AccountHookRec
   };
 }
 
-const agentPolicies: AgentPolicyStore = {
+const agentPolicies: Storage["agentPolicies"] = {
   async getById(accountId, policyId) {
     const doc = await getConvexClient().query(internal.agentPolicies.getById, {
       accountId: accountId as any,
@@ -541,7 +532,7 @@ const agentPolicies: AgentPolicyStore = {
   },
 };
 
-const accountTools: AccountToolStore = {
+const accountTools: Storage["accountTools"] = {
   async getById(accountId, toolId) {
     const doc = await getConvexClient().query(internal.accountTools.getById, {
       accountId: accountId as any,
@@ -563,7 +554,7 @@ const accountTools: AccountToolStore = {
   },
 };
 
-const accountHooks: AccountHookStore = {
+const accountHooks: Storage["accountHooks"] = {
   async getById(accountId, hookId) {
     const doc = await getConvexClient().query(internal.accountHooks.getById, {
       accountId: accountId as any,

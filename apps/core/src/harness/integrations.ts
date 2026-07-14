@@ -80,7 +80,7 @@ import {
 } from "./sandbox/s3-mount.ts";
 import type { ConversationIngressEvent } from "./session.ts";
 import { getHarnessPublicUrl } from "./self-url.ts";
-import type { AgentDeploymentRecord } from "../shared/storage.ts";
+import type { AgentDeploymentScope } from "../shared/storage.ts";
 
 type DirectIngressEvent =
   | UserModelMessage
@@ -201,7 +201,7 @@ export interface IntegrationRoutingOptions {
   authResolver?: (headers: Record<string, string>) => Promise<AuthContext | null>;
   accountLoader?: (accountId: string) => Promise<AccountRecord | null>;
   agentLoader?: (accountId: string, agentId: string) => Promise<AgentRecord | null>;
-  deploymentLoader?: (accountId: string, agentId: string) => Promise<AgentDeploymentRecord | null>;
+  deploymentLoader?: (accountId: string, agentId: string) => Promise<AgentDeploymentScope | null>;
   directApiEnabled?: boolean;
   /** Registers post-response background work (channel ack-then-process). */
   waitUntil?: (promise: Promise<unknown>) => void;
@@ -211,7 +211,7 @@ interface HttpRoutingContext {
   authResolver(headers: Record<string, string>): Promise<AuthContext | null>;
   accountLoader(accountId: string): Promise<AccountRecord | null>;
   agentLoader(accountId: string, agentId: string): Promise<AgentRecord | null>;
-  deploymentLoader(accountId: string, agentId: string): Promise<AgentDeploymentRecord | null>;
+  deploymentLoader(accountId: string, agentId: string): Promise<AgentDeploymentScope | null>;
   directApiEnabled: boolean;
   waitUntil(promise: Promise<unknown>): void;
 }
@@ -538,7 +538,7 @@ async function handleChannelWebhook(
   handlers: IntegrationHandlers,
   account: AccountRecord,
   agent: AgentRecord,
-  deployment: AgentDeploymentRecord | null,
+  deployment: AgentDeploymentScope | null,
   waitUntil: (promise: Promise<unknown>) => void,
 ): Promise<Response> {
   const previousObservabilityContext = getObservabilityContext();
