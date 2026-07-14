@@ -189,6 +189,33 @@ describe("runtime persistence", () => {
     });
   });
 
+  test("reports whether a bounded conversation clear has more events", async () => {
+    const t = runtimeTest();
+    const accountId = await createActiveAccount(t);
+    const conversationKey = conversationKeyFor(accountId);
+    await t.run(async (ctx) => {
+      for (let index = 0; index < 101; index += 1) {
+        await ctx.db.insert("runtimeConversationEvents", {
+          accountId: accountId,
+          conversationKey: conversationKey,
+          cursor: String(index).padStart(3, "0"),
+          event: { index: index },
+        });
+      }
+    });
+
+    expect(
+      await t.mutation(internal.runtimePersistence.clearConversation, {
+        conversationKey: conversationKey,
+      }),
+    ).toEqual({ deleted: 100, hasMore: true });
+    expect(
+      await t.mutation(internal.runtimePersistence.clearConversation, {
+        conversationKey: conversationKey,
+      }),
+    ).toEqual({ deleted: 1, hasMore: false });
+  });
+
   test("settles async tools once and seals fan-in groups", async () => {
     const t = runtimeTest();
     const accountId = await createActiveAccount(t);

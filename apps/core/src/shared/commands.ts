@@ -62,10 +62,10 @@ export const commands: CommandHandler[] = [
     },
     async execute(ctx) {
       for (let batchNumber = 0; batchNumber < CLEAR_CONVERSATION_MAX_BATCHES; batchNumber += 1) {
-        const deleted = await runtime.mutate<number>("clearConversation", {
+        const result = await runtime.mutate<{ deleted: number; hasMore: boolean }>("clearConversation", {
           conversationKey: ctx.conversationKey,
         });
-        if (deleted === 0) return "Context cleared. Starting fresh.";
+        if (!result.hasMore) return "Context cleared. Starting fresh.";
       }
 
       throw new Error(

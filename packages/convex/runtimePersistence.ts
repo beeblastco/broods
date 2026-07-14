@@ -14,6 +14,7 @@ import {
 
 const DAY_SECONDS = 24 * 60 * 60;
 const CONVERSATION_EVENT_PAGE_SIZE = 512;
+const CONVERSATION_CLEAR_BATCH_SIZE = 100;
 
 /**
  * Extracts the account ID from an account-scoped runtime key.
@@ -358,11 +359,14 @@ export const listConversationEvents = internalQuery({
 
 /**
  * Clears one bounded batch of conversation events for the reset command.
- * @returns the number of deleted events
+ * @returns the deleted event count and whether more events remain
  */
 export const clearConversation = internalMutation({
   args: { conversationKey: v.string() },
-  returns: v.number(),
+  returns: v.object({
+    deleted: v.number(),
+    hasMore: v.boolean(),
+  }),
   handler: async (ctx, args) => {
     await requireActiveAccount(ctx, accountIdFromKey(args.conversationKey));
     const rows = await ctx.db
@@ -370,10 +374,14 @@ export const clearConversation = internalMutation({
       .withIndex("by_conversationKey_and_cursor", (q) =>
         q.eq("conversationKey", args.conversationKey),
       )
-      .take(100);
-    for (const row of rows) await ctx.db.delete(row._id);
+      .take(CONVERSATION_CLEAR_BATCH_SIZE + 1);
+    const batch = rows.slice(0, CONVERSATION_CLEAR_BATCH_SIZE);
+    for (const row of batch) await ctx.db.delete(row._id);
 
-    return rows.length;
+    return {
+      deleted: batch.length,
+      hasMore: rows.length > CONVERSATION_CLEAR_BATCH_SIZE,
+    };
   },
 });
 

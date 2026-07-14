@@ -259,19 +259,46 @@ describe("getDiscordCommandRegistrations", () => {
 describe("clearConversation via /new command", () => {
   it("repeats bounded Convex deletes until the conversation is empty", async () => {
     const mutationMock = mock()
-      .mockResolvedValueOnce(100)
-      .mockResolvedValueOnce(2)
-      .mockResolvedValueOnce(0);
+      .mockResolvedValueOnce({ deleted: 100, hasMore: true })
+      .mockResolvedValueOnce({ deleted: 2, hasMore: false });
     runtime.mutate = mutationMock as never;
     const channel = createMockChannelActions();
     await executeCommand("/new", createCommandContext({ conversationKey: "key-1", channel }));
-    expect(mutationMock).toHaveBeenCalledTimes(3);
+    expect(mutationMock).toHaveBeenCalledTimes(2);
     expect(mutationMock).toHaveBeenCalledWith("clearConversation", { conversationKey: "key-1" });
     expect(channel.sendText).toHaveBeenCalledWith("Context cleared. Starting fresh.");
   });
 
+  it("reports success when the final allowed batch completes cleanup", async () => {
+    let calls = 0;
+    const mutationMock = mock(() => {
+      calls += 1;
+
+      return Promise.resolve({
+        deleted: 100,
+        hasMore: calls < 100,
+      });
+    });
+    runtime.mutate = mutationMock as never;
+    const channel = createMockChannelActions();
+
+    await executeCommand(
+      "/new",
+      createCommandContext({ conversationKey: "key-1", channel }),
+    );
+    expect(mutationMock).toHaveBeenCalledTimes(100);
+    expect(channel.sendText).toHaveBeenCalledWith(
+      "Context cleared. Starting fresh.",
+    );
+    expect(channel.sendText).not.toHaveBeenCalledWith(
+      "Something went wrong. Please try again.",
+    );
+  });
+
   it("returns an error when conversation cleanup does not converge", async () => {
-    const mutationMock = mock(() => Promise.resolve(100));
+    const mutationMock = mock(() =>
+      Promise.resolve({ deleted: 100, hasMore: true }),
+    );
     runtime.mutate = mutationMock as never;
     const channel = createMockChannelActions();
 
