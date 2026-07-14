@@ -5,7 +5,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
 import * as actualAi from "ai";
-import { setCoreStoreForTests, type CoreStore, type UsageTaskInput } from "../src/shared/core-store.ts";
+import { setStorageForTests, type CoreStorage, type UsageTaskInput } from "../src/shared/storage.ts";
 
 const ORIGINAL_ENV = { ...process.env };
 const ORIGINAL_STDOUT_WRITE = process.stdout.write.bind(process.stdout);
@@ -413,14 +413,14 @@ mock.module("ai", () => ({
 }));
 
 beforeEach(() => {
-  setCoreStoreForTests(usageStorage([]));
+  setStorageForTests(usageStorage([]));
 });
 
 afterEach(() => {
   process.env = { ...ORIGINAL_ENV };
   process.stdout.write = ORIGINAL_STDOUT_WRITE;
   globalThis.fetch = originalFetch;
-  setCoreStoreForTests(null);
+  setStorageForTests(null);
   streamTextScenario = "empty";
   streamTextMock.mockClear();
   googleModelMock.mockClear();
@@ -615,7 +615,7 @@ describe("runAgentLoop", () => {
     streamTextScenario = "hard-throw";
     installHarnessEnv();
     const usageWrites: UsageTaskInput[] = [];
-    setCoreStoreForTests(usageStorage(usageWrites));
+    setStorageForTests(usageStorage(usageWrites));
     const { runAgentLoop } = await import("../src/harness/harness.ts");
     const stream = await runAgentLoop({
       conversationKey: "direct:conversation",
@@ -654,7 +654,7 @@ describe("runAgentLoop", () => {
     streamTextScenario = "error-no-finish";
     installHarnessEnv();
     const usageWrites: UsageTaskInput[] = [];
-    setCoreStoreForTests(usageStorage(usageWrites));
+    setStorageForTests(usageStorage(usageWrites));
     const { runAgentLoop } = await import("../src/harness/harness.ts");
     const onErrorText = mock(async () => { });
 
@@ -1851,7 +1851,7 @@ describe("runAgentLoop", () => {
   });
 });
 
-function usageStorage(writes: UsageTaskInput[]): CoreStore {
+function usageStorage(writes: UsageTaskInput[]): CoreStorage {
   return {
     accounts: null as never,
     agents: null as never,

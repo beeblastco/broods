@@ -155,7 +155,7 @@ export interface AgentPolicyStore {
 }
 
 /**
- * Writes per-task usage counts. The Convex core store implements this;
+ * Writes per-task usage counts. The Convex storage adapter implements this;
  * it inserts one raw-count row per finished task and folds into a rollup
  * 5-minute Convex usageRollups bucket.
  */
@@ -163,7 +163,7 @@ export interface UsageStore {
   recordTask(input: UsageTaskInput): Promise<void>;
 }
 
-export interface CoreStore {
+export interface CoreStorage {
   accounts: AccountStore;
   agents: AgentStore;
   agentDeployments: AgentDeploymentStore;
@@ -176,23 +176,23 @@ export interface CoreStore {
   usage: UsageStore;
 }
 
-let cached: CoreStore | null = null;
+let cached: CoreStorage | null = null;
 
-/** Returns the process-wide Convex-backed core store. */
-export function getCoreStore(): CoreStore {
+/** Returns the process-wide Convex-backed storage boundary. */
+export function getStorage(): CoreStorage {
   if (cached) return cached;
-  const { convexCoreStore } = require("./convex/store.ts");
-  cached = convexCoreStore as CoreStore;
+  const { convexStorage } = require("./convex/storage.ts");
+  cached = convexStorage as CoreStorage;
 
   return cached;
 }
 
 /** Resets the cached store. Tests only. */
-export function resetCoreStoreForTests(): void {
+export function resetStorageForTests(): void {
   cached = null;
 }
 
 /** Injects a store for focused tests. */
-export function setCoreStoreForTests(store: CoreStore | null): void {
+export function setStorageForTests(store: CoreStorage | null): void {
   cached = store;
 }

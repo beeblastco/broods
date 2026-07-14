@@ -16,7 +16,7 @@ import {
 } from "ai";
 import { context as otelContextApi } from "@opentelemetry/api";
 import { resolveBearerAuth, type AuthContext } from "../shared/auth.ts";
-import { getCoreStore } from "../shared/core-store.ts";
+import { getStorage } from "../shared/storage.ts";
 import {
   applyRunOverrides,
   MODEL_CONFIG_SETTING_KEYS,
@@ -80,7 +80,7 @@ import {
 } from "./sandbox/s3-mount.ts";
 import type { ConversationIngressEvent } from "./session.ts";
 import { getHarnessPublicUrl } from "./self-url.ts";
-import type { AgentDeploymentRecord } from "../shared/core-store.ts";
+import type { AgentDeploymentRecord } from "../shared/storage.ts";
 
 type DirectIngressEvent =
   | UserModelMessage
@@ -230,10 +230,10 @@ export async function routeIncomingEvent(
 
 export function createIncomingEventRouter(options: IntegrationRoutingOptions = {}) {
   const authResolver = options.authResolver ?? resolveBearerAuth;
-  const accountLoader = options.accountLoader ?? ((accountId: string) => getCoreStore().accounts.getById(accountId));
-  const agentLoader = options.agentLoader ?? ((accountId: string, agentId: string) => getCoreStore().agents.getById(accountId, agentId));
+  const accountLoader = options.accountLoader ?? ((accountId: string) => getStorage().accounts.getById(accountId));
+  const agentLoader = options.agentLoader ?? ((accountId: string, agentId: string) => getStorage().agents.getById(accountId, agentId));
   const deploymentLoader = options.deploymentLoader ?? ((accountId: string, agentId: string) =>
-    getCoreStore().agentDeployments.getByAgentId?.(accountId, agentId) ?? Promise.resolve(null));
+    getStorage().agentDeployments.getByAgentId?.(accountId, agentId) ?? Promise.resolve(null));
   const directApiEnabled = options.directApiEnabled ?? true;
   const waitUntil = options.waitUntil ?? (() => {});
 
@@ -741,7 +741,7 @@ async function cleanupChannelWorkspaceScopes(options: {
     return;
   }
 
-  const storage = getCoreStore();
+  const storage = getStorage();
   let deleted = 0;
   let reservedSandboxesReleased = 0;
   for (const ref of options.agentConfig.workspaces ?? []) {

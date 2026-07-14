@@ -4,10 +4,10 @@
 
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import {
-  resetCoreStoreForTests,
-  setCoreStoreForTests,
-  type CoreStore,
-} from "../src/shared/core-store.ts";
+  resetStorageForTests,
+  setStorageForTests,
+  type CoreStorage,
+} from "../src/shared/storage.ts";
 import type { AccountRecord } from "../src/shared/domain/accounts.ts";
 import { coreRequest } from "./helpers/http.ts";
 
@@ -16,17 +16,17 @@ const ORIGINAL_ENV = { ...process.env };
 beforeEach(() => {
   process.env.ADMIN_ACCOUNT_SECRET = "admin-secret";
   process.env.SERVICE_AUTH_SECRET = "service-secret";
-  resetCoreStoreForTests();
+  resetStorageForTests();
 });
 
 afterEach(() => {
   process.env = { ...ORIGINAL_ENV };
-  resetCoreStoreForTests();
+  resetStorageForTests();
 });
 
 describe("account-management deployment key auth", () => {
   it("no longer serves skill, tool, or cron routes for deployment keys — they are Convex config-plane routes", async () => {
-    setCoreStoreForTests(deploymentStorage());
+    setStorageForTests(deploymentStorage());
     const { handler } = await import("../src/accounts/handler.ts");
 
     // Skills, tools, and cron CRUD moved to the Convex config plane — the
@@ -41,7 +41,7 @@ describe("account-management deployment key auth", () => {
   });
 });
 
-function deploymentStorage(): CoreStore {
+function deploymentStorage(): CoreStorage {
   const account: AccountRecord = {
     accountId: "acct_test",
     username: "acct",
@@ -70,7 +70,7 @@ function deploymentStorage(): CoreStore {
         };
       },
     },
-  } as unknown as CoreStore;
+  } as unknown as CoreStorage;
 }
 
 function event(method: string, rawPath: string) {

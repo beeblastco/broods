@@ -3,16 +3,16 @@
 import { afterEach, expect, it } from "bun:test";
 import { deleteAccountRuntimeData } from "../src/accounts/cleanup.ts";
 import {
-  resetCoreStoreForTests,
-  setCoreStoreForTests,
-} from "../src/shared/core-store.ts";
+  resetStorageForTests,
+  setStorageForTests,
+} from "../src/shared/storage.ts";
 
 afterEach(() => {
-  resetCoreStoreForTests();
+  resetStorageForTests();
 });
 
 it("propagates workspace listing failures before destructive cleanup", async () => {
-  setCoreStoreForTests({
+  setStorageForTests({
     workspaceConfigs: {
       async list() {
         throw new Error("workspace list unavailable");

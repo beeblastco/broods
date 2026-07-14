@@ -9,7 +9,7 @@
  */
 
 import type { ToolSet } from "ai";
-import { getCoreStore } from "../../shared/core-store.ts";
+import { getStorage } from "../../shared/storage.ts";
 import {
   type AgentConfig,
   type AccountModelProviderName,
@@ -207,7 +207,7 @@ export async function createTools(context: Omit<ToolContext, "config">, agentCon
       throw new Error(`config.tools.${toolId} requires an account-scoped session`);
     }
     const accountId = context.accountId;
-    const record = await getCoreStore().accountTools.getById(accountId, toolId);
+    const record = await getStorage().accountTools.getById(accountId, toolId);
     if (!record || record.status !== "active") {
       throw new Error(`config.tools.${toolId} references an unknown account tool`);
     }

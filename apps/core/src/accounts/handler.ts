@@ -4,7 +4,7 @@
  */
 
 import { resolveBearerAuth, type AuthContext } from "../shared/auth.ts";
-import { getCoreStore } from "../shared/core-store.ts";
+import { getStorage } from "../shared/storage.ts";
 import { isCronsConfigured } from "../shared/domain/cron.ts";
 import {
     normalizeCreateAccountInput,
@@ -112,7 +112,7 @@ async function handleAccountRequest(request: CoreRequest): Promise<Response> {
 
         if (method === "POST" && rawPath === "/accounts") {
             const body = parseJsonBody(request);
-            const created = await getCoreStore().accounts.create(normalizeCreateAccountInput(body));
+            const created = await getStorage().accounts.create(normalizeCreateAccountInput(body));
             return jsonResponse(201, {
                 account: toCreateAccountResponse(created.account),
                 secret: created.secret,
@@ -123,7 +123,7 @@ async function handleAccountRequest(request: CoreRequest): Promise<Response> {
         if (accountMatch?.[1]) {
             const accountId = decodeURIComponent(accountMatch[1]);
             if (method === "DELETE") {
-                const account = await getCoreStore().accounts.getById(accountId);
+                const account = await getStorage().accounts.getById(accountId);
                 if (!account) {
                     return errorResponse(404, "Account not found");
                 }
@@ -155,7 +155,7 @@ async function handleSandboxLifecycle(
         return errorResponse(405, "Method not allowed", { method, allowedMethods: ["POST"] });
     }
     const sandboxId = decodeURIComponent(rawSandboxId);
-    const record = await getCoreStore().sandboxConfigs.getById(accountId, sandboxId);
+    const record = await getStorage().sandboxConfigs.getById(accountId, sandboxId);
     if (!record) {
         return errorResponse(404, "Sandbox not found");
     }
@@ -398,7 +398,7 @@ async function sandboxReservationBelongsToAccount(
         return true;
     }
 
-    const workspaces = await getCoreStore().workspaceConfigs.list(accountId);
+    const workspaces = await getStorage().workspaceConfigs.list(accountId);
     return workspaces.some((workspace) =>
         workspaceNamespaceOwnsReservationKey(workspaceNamespace(accountId, workspace.workspaceId), reservationKey)
     );
@@ -407,21 +407,21 @@ async function sandboxReservationBelongsToAccount(
 async function deleteAccountResponse(account: Extract<AuthContext, { kind: "account" }>["account"]): Promise<Response> {
     const disabled = account.status === "disabled"
         ? account
-        : await getCoreStore().accounts.disable(account.accountId);
+        : await getStorage().accounts.disable(account.accountId);
     if (!disabled) {
         return jsonResponse(404, { error: "Account not found" });
     }
 
     const [runtime, agentsDeleted, skillObjectsDeleted, toolBundleObjectsDeleted, cronsDeleted, accountToolsDeleted, accountHooksDeleted] = await Promise.all([
         deleteAccountRuntimeData(disabled),
-        getCoreStore().agents.removeAllForAccount(account.accountId),
+        getStorage().agents.removeAllForAccount(account.accountId),
         deleteAccountSkills(account.accountId),
         deleteAccountToolBundles(account.accountId),
         deleteAccountCrons(account.accountId),
-        getCoreStore().accountTools.removeAllForAccount(account.accountId),
-        getCoreStore().accountHooks.removeAllForAccount(account.accountId),
+        getStorage().accountTools.removeAllForAccount(account.accountId),
+        getStorage().accountHooks.removeAllForAccount(account.accountId),
     ]);
-    await getCoreStore().accounts.remove(account.accountId);
+    await getStorage().accounts.remove(account.accountId);
     return jsonResponse(200, { deleted: true, cleanup: { ...runtime, agentsDeleted, skillObjectsDeleted, toolBundleObjectsDeleted, cronsDeleted, accountToolsDeleted, accountHooksDeleted } });
 }
 
@@ -431,7 +431,7 @@ async function deleteAccountCrons(accountId: string): Promise<number> {
         return 0;
     }
 
-    const cronsStore = getCoreStore().crons;
+    const cronsStore = getStorage().crons;
     const crons = await cronsStore.list(accountId);
     await Promise.all(crons.map(async (cron) => {
         await deleteCronSchedule(cron);

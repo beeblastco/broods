@@ -4,7 +4,7 @@
  * release path.
  */
 
-import { getCoreStore } from "./core-store.ts";
+import { getStorage } from "./storage.ts";
 import type { SandboxConfig } from "./domain/sandbox-config.ts";
 import { workspaceNamespace } from "./workspaces.ts";
 import { logWarn } from "./log.ts";
@@ -26,7 +26,7 @@ export async function releaseReservedSandboxes(accountId: string, namespaces: st
   if (namespaces.length === 0) {
     return 0;
   }
-  const configs = await getCoreStore().sandboxConfigs.list(accountId).catch(() => []);
+  const configs = await getStorage().sandboxConfigs.list(accountId).catch(() => []);
   const persistent = configs.map((record) => record.config).filter((config) => config.persistent === true);
   const sandbox = persistent.filter((config) => config.provider === "sandbox");
   const lambda = persistent.filter((config) => config.provider === "lambda");
@@ -60,7 +60,7 @@ export async function releaseSandboxConfigInstances(accountId: string, config: S
   if (config.persistent !== true || !isReleasableProvider(config.provider)) {
     return 0;
   }
-  const workspaceConfigs = await getCoreStore().workspaceConfigs.list(accountId).catch(() => []);
+  const workspaceConfigs = await getStorage().workspaceConfigs.list(accountId).catch(() => []);
   let released = 0;
   for (const workspace of workspaceConfigs) {
     const namespace = workspaceNamespace(accountId, workspace.workspaceId);

@@ -6,7 +6,7 @@
 
 import { afterAll, describe, expect, it } from "bun:test";
 import { createPolicyToolApproval, policyDecisionLogMessage } from "../src/harness/policy.ts";
-import { setCoreStoreForTests, type CoreStore } from "../src/shared/core-store.ts";
+import { setStorageForTests, type CoreStorage } from "../src/shared/storage.ts";
 
 const policyRecord = {
   accountId: "acct_1",
@@ -21,11 +21,11 @@ const policyRecord = {
   updatedAt: "2026-07-02T00:00:00Z",
 };
 
-setCoreStoreForTests({
+setStorageForTests({
   agentPolicies: {
     getById: async () => policyRecord,
   },
-} as unknown as CoreStore);
+} as unknown as CoreStorage);
 
 const seenAuthHeaders: Array<string | null> = [];
 const seenPolicyInputs: unknown[] = [];
@@ -52,7 +52,7 @@ process.env.OPA_API_TOKEN = "test-opa-token";
 
 afterAll(() => {
   server.stop(true);
-  setCoreStoreForTests(null);
+  setStorageForTests(null);
   delete process.env.OPA_BASE_URL;
   delete process.env.OPA_API_TOKEN;
 });

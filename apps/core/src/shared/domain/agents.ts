@@ -16,7 +16,7 @@ import {
   SkillNotFoundError,
 } from "../skills.ts";
 import { isPlainObject } from "../object.ts";
-import { getCoreStore } from "../core-store.ts";
+import { getStorage } from "../storage.ts";
 
 export type AgentStatus = "active" | "disabled";
 
@@ -93,7 +93,7 @@ export async function validateAgentSkillPaths(accountId: string, config: AgentCo
 
 export async function validateAgentSubagentIds(accountId: string, config: AgentConfig): Promise<void> {
   for (const agentId of config.subagent?.allowed ?? []) {
-    const agent = await getCoreStore().agents.getById(accountId, agentId);
+    const agent = await getStorage().agents.getById(accountId, agentId);
     if (!agent || agent.status !== "active") {
       throw new AgentSubagentNotFoundError(agentId);
     }
@@ -102,7 +102,7 @@ export async function validateAgentSubagentIds(accountId: string, config: AgentC
 
 export async function validateAgentPolicyIds(accountId: string, config: AgentConfig): Promise<void> {
   for (const policyId of config.policy?.policyIds ?? []) {
-    const policy = await getCoreStore().agentPolicies.getById(accountId, policyId);
+    const policy = await getStorage().agentPolicies.getById(accountId, policyId);
     if (!policy || policy.status !== "active") {
       throw new AgentPolicyNotFoundError(policyId);
     }

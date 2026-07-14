@@ -70,8 +70,8 @@ const testStorage = () => ({
   },
 }) as never;
 
-const { setCoreStoreForTests } = await import("../src/shared/core-store.ts");
-setCoreStoreForTests(testStorage());
+const { setStorageForTests } = await import("../src/shared/storage.ts");
+setStorageForTests(testStorage());
 
 afterEach(() => {
   process.env = { ...ORIGINAL_ENV };
@@ -87,11 +87,11 @@ afterEach(() => {
   readS3TextMock.mockClear();
   getAgentMock.mockClear();
   workspaceHarnessEnabled = true;
-  setCoreStoreForTests(testStorage());
+  setStorageForTests(testStorage());
 });
 
 afterAll(() => {
-  setCoreStoreForTests(null);
+  setStorageForTests(null);
 });
 
 describe("session system context", () => {

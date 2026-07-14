@@ -8,7 +8,7 @@ import { extractBearerToken, timingSafeStringEqual } from "../shared/auth.ts";
 import { markHandlerEntry } from "../shared/cold-start.ts";
 import { formatChannelErrorText } from "../shared/channels.ts";
 import { executeCommand } from "../shared/commands.ts";
-import { getCoreStore } from "../shared/core-store.ts";
+import { getStorage } from "../shared/storage.ts";
 import { toRuntimeAgentConfig } from "../shared/domain/agent-config.ts";
 import type { CronRecord } from "../shared/domain/cron.ts";
 import { booleanEnv, optionalEnv, positiveIntegerEnv, requireEnv } from "../shared/env.ts";
@@ -200,7 +200,7 @@ async function handleCronHttpRequest(request: CoreRequest): Promise<Response> {
  * Handle scheduled cron jobs invoked by EventBridge Scheduler.
  */
 async function handleScheduledCron(event: CronInvocation): Promise<void> {
-  const crons = getCoreStore().crons;
+  const crons = getStorage().crons;
   const job = await crons.getById(event.accountId, event.cronId);
   if (!job) {
     logInfo("Cron job skipped because it no longer exists", {
@@ -268,7 +268,7 @@ async function handleAsyncToolCompletionRequest(event: AsyncToolCompletionInboun
   }
 
   // Check if agent is valid
-  const agent = await getCoreStore().agents.getById(event.accountId, agentId);
+  const agent = await getStorage().agents.getById(event.accountId, agentId);
   if (!agent || agent.status !== "active") {
     return jsonResponse(404, { error: "Agent not found" });
   }
@@ -338,7 +338,7 @@ async function continueAfterAsyncToolSettlement(settled: AsyncToolResultRecord):
   if (!scope) {
     return { kind: "skip" };
   }
-  const agent = await getCoreStore().agents.getById(scope.accountId, scope.agentId);
+  const agent = await getStorage().agents.getById(scope.accountId, scope.agentId);
   if (!agent || agent.status !== "active") {
     return { kind: "skip" };
   }
@@ -519,7 +519,7 @@ async function handleAsyncWorkerRequest(event: DirectInboundEvent, context?: Req
             })
           ));
           if (event.cronRun) {
-            await getCoreStore().crons.completeRun(event.accountId, event.cronRun.cronId, event.cronRun.runId, response);
+            await getStorage().crons.completeRun(event.accountId, event.cronRun.cronId, event.cronRun.runId, response);
           }
           await pushReplyToChannel(event, formatChannelFinalText(
             typeof response === "string" ? response : JSON.stringify(response, null, 2),
@@ -531,7 +531,7 @@ async function handleAsyncWorkerRequest(event: DirectInboundEvent, context?: Req
           didSettle = true;
           await settleAsyncFailure(event, error);
           if (event.cronRun) {
-            await getCoreStore().crons.failRun(event.accountId, event.cronRun.cronId, event.cronRun.runId, error);
+            await getStorage().crons.failRun(event.accountId, event.cronRun.cronId, event.cronRun.runId, error);
           }
           await pushReplyToChannel(event, formatChannelFinalText(formatChannelErrorText(error), traceId, event));
         },
@@ -552,7 +552,7 @@ async function handleAsyncWorkerRequest(event: DirectInboundEvent, context?: Req
     if (result.didFail && !didSettle) {
       await settleAsyncFailure(event, result.failureText ?? AGENT_PROCESSING_FAILED);
       if (event.cronRun) {
-        await getCoreStore().crons.failRun(
+        await getStorage().crons.failRun(
           event.accountId,
           event.cronRun.cronId,
           event.cronRun.runId,
@@ -579,7 +579,7 @@ async function handleAsyncWorkerRequest(event: DirectInboundEvent, context?: Req
     });
     await settleAsyncFailure(event, err instanceof Error ? err.message : "Async request failed");
     if (event.cronRun) {
-      await getCoreStore().crons.failRun(
+      await getStorage().crons.failRun(
         event.accountId,
         event.cronRun.cronId,
         event.cronRun.runId,
@@ -1324,7 +1324,7 @@ function asyncToolContinuationEventId(parentEventId: string): string {
 
 async function startScheduledAgentRun(job: CronRecord): Promise<{ eventId: string; conversationKey: string }> {
   const event = await createCronDirectEvent(job);
-  const run = await getCoreStore().crons.createRun({
+  const run = await getStorage().crons.createRun({
     accountId: job.accountId,
     cronId: job.cronId,
     eventId: event.publicEventId,
@@ -1334,7 +1334,7 @@ async function startScheduledAgentRun(job: CronRecord): Promise<{ eventId: strin
   try {
     await invokeAsyncWorker(event);
   } catch (err) {
-    await getCoreStore().crons.failRun(
+    await getStorage().crons.failRun(
       job.accountId,
       job.cronId,
       run.runId,
@@ -1350,11 +1350,11 @@ async function startScheduledAgentRun(job: CronRecord): Promise<{ eventId: strin
 }
 
 async function createCronDirectEvent(job: CronRecord): Promise<DirectInboundEvent> {
-  const agent = await getCoreStore().agents.getById(job.accountId, job.agentId);
+  const agent = await getStorage().agents.getById(job.accountId, job.agentId);
   if (!agent || agent.status !== "active") {
     throw new Error(`Agent not found: ${job.agentId}`);
   }
-  const deployment = await getCoreStore().agentDeployments.getByAgentId?.(job.accountId, job.agentId);
+  const deployment = await getStorage().agentDeployments.getByAgentId?.(job.accountId, job.agentId);
 
   const publicEventId = `${job.cronId}-${crypto.randomUUID()}`;
   const publicConversationKey = job.conversationKey ?? `cron:${job.cronId}`;

@@ -5,10 +5,10 @@
 
 import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
 import {
-  resetCoreStoreForTests,
-  setCoreStoreForTests,
-  type CoreStore,
-} from "../src/shared/core-store.ts";
+  resetStorageForTests,
+  setStorageForTests,
+  type CoreStorage,
+} from "../src/shared/storage.ts";
 import type { AccountToolRecord } from "../src/shared/domain/account-tools.ts";
 
 const tavilySearchMock = mock((options: unknown) => ({ provider: "tavilySearch", options }));
@@ -25,11 +25,11 @@ beforeEach(() => {
   process.env.ASYNC_TOOL_RESULT_TABLE_NAME = "async-tool-results";
   tavilySearchMock.mockClear();
   tavilyExtractMock.mockClear();
-  resetCoreStoreForTests();
+  resetStorageForTests();
 });
 
 afterEach(() => {
-  resetCoreStoreForTests();
+  resetStorageForTests();
 });
 
 describe("createTools", () => {
@@ -398,7 +398,7 @@ describe("createTools", () => {
   it("registers uploaded account tools by toolId and wraps async by uploaded name", async () => {
     const { createTools } = await import("../src/harness/tools/index.ts");
     const approvalRequirements = new Map<string, true>();
-    setCoreStoreForTests(storageWithAccountTool({
+    setStorageForTests(storageWithAccountTool({
       accountId: "acct_test",
       toolId: "qs78zwc4z4q5ysxm74fgrhd13s88xxt",
       name: "test_async",
@@ -489,7 +489,7 @@ function createToolContext(
   } as never;
 }
 
-function storageWithAccountTool(accountTool: AccountToolRecord): CoreStore {
+function storageWithAccountTool(accountTool: AccountToolRecord): CoreStorage {
   return {
     accounts: {} as never,
     agents: {} as never,
@@ -517,7 +517,7 @@ function storageWithAccountTool(accountTool: AccountToolRecord): CoreStore {
     },
     accountHooks: {} as never,
     usage: { async recordTask() {} },
-  } as CoreStore;
+  } as CoreStorage;
 }
 
 function sandboxContext(

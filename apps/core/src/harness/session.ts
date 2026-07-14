@@ -14,7 +14,7 @@ import {
   systemModelMessageSchema,
 } from "ai";
 import type { AgentChannelWorkspaceScope, AgentConfig } from "../shared/domain/agent-config.ts";
-import { getCoreStore } from "../shared/core-store.ts";
+import { getStorage } from "../shared/storage.ts";
 import type { AsyncToolDelivery } from "./async-tool-result.ts";
 import { isMissingS3Error, readS3Text } from "../shared/s3.ts";
 import { resolveS3ReadTarget, workspaceReadContext } from "./sandbox/s3-mount.ts";
@@ -594,7 +594,7 @@ export class Session {
     if (!this.subagentMetadataPromise) {
       this.subagentMetadataPromise = Promise.all(
         (this.agentConfig.subagent.allowed ?? []).map(async (agentId) => {
-          const agent = await getCoreStore().agents.getById(this.accountId!, agentId);
+          const agent = await getStorage().agents.getById(this.accountId!, agentId);
           if (!agent || agent.status !== "active") {
             return null;
           }

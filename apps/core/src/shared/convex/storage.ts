@@ -1,5 +1,5 @@
 /**
- * CoreStore backed by Convex. All calls go through ConvexHttpClient with a
+ * Core storage backed by Convex. All calls go through ConvexHttpClient with a
  * deploy-key admin auth header.
  *
  * Hosted account lifecycle normally runs through orgLifecycle. The admin-only
@@ -47,9 +47,9 @@ import type {
   AgentStore,
   CronStore,
   SandboxConfigStore,
-  CoreStore,
+  CoreStorage,
   WorkspaceConfigStore,
-} from "../core-store.ts";
+} from "../storage.ts";
 import { getConvexClient } from "./client.ts";
 
 const ACCOUNT_DELETE_MAX_BATCHES = 100_000;
@@ -578,7 +578,7 @@ const accountHooks: AccountHookStore = {
   },
 };
 
-export const convexCoreStore: CoreStore = {
+export const convexStorage: CoreStorage = {
   accounts,
   agents,
   agentDeployments,

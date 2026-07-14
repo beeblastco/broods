@@ -8,7 +8,7 @@ import type { ToolApprovalConfiguration, ToolApprovalStatus, ToolSet } from "ai"
 import { httpPolicyClient, opaPolicy, shadow, type PolicyClient } from "@ai-sdk/policy-opa";
 import { optionalEnv } from "../shared/env.ts";
 import { logDebug, logInfo, logWarn } from "../shared/log.ts";
-import { getCoreStore } from "../shared/core-store.ts";
+import { getStorage } from "../shared/storage.ts";
 import type { AgentConfig } from "../shared/domain/agent-config.ts";
 import type {
   AgentPolicyMode,
@@ -35,7 +35,7 @@ export async function createPolicyToolApproval(
   const mode: AgentPolicyMode = agentConfig.policy?.mode ?? "audit";
   const policyIds = [...new Set(agentConfig.policy?.policyIds ?? [])];
   const records = await Promise.all(policyIds.map((policyId) =>
-    getCoreStore().agentPolicies.getById(baseInput.accountId!, policyId),
+    getStorage().agentPolicies.getById(baseInput.accountId!, policyId),
   ));
   const documents = records
     .filter((record): record is NonNullable<typeof record> => Boolean(record))

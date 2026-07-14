@@ -9,7 +9,7 @@
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const internal: any = require("@broods/convex/_generated/api").internal;
-import type { UsageStore, UsageTaskInput } from "../core-store.ts";
+import type { UsageStore, UsageTaskInput } from "../storage.ts";
 import { getConvexClient } from "./client.ts";
 import { logError } from "../log.ts";
 

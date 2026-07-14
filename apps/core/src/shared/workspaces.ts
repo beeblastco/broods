@@ -9,7 +9,7 @@
  */
 
 import { normalizeFilesystemNamespace } from "./runtime-keys.ts";
-import { getCoreStore } from "./core-store.ts";
+import { getStorage } from "./storage.ts";
 import type {
   AgentChannelWorkspaceScope,
   AgentConfig,
@@ -116,7 +116,7 @@ export async function resolveAgentRuntime(
   accountId: string | undefined,
   isolationScope: WorkspaceIsolationScope = {},
 ): Promise<ResolvedAgentRuntime> {
-  const storage = getCoreStore();
+  const storage = getStorage();
   const sandboxCache = new Map<string, WorkspaceSandboxConfig>();
 
   // Load (and memoize) a sandbox record so a sandbox shared across workspaces is
