@@ -220,6 +220,63 @@ describe("account management HTTP handler", () => {
     expect(response.status).toBe(400);
     expect(await responseJson(response)).toEqual(serviceTokenRejection);
   });
+
+  it("lets a disabled owner retry self-delete without reopening other routes", async () => {
+    const accountSecret = "fp_acct_retry";
+    const disabledAccount = {
+      ...fakeAccount(),
+      secretHash: hashAccountSecret(accountSecret),
+      status: "disabled" as const,
+    };
+    let disableCalls = 0;
+    setStorageForTests(createFakeStorage({
+      accounts: {
+        async getBySecretHash(secretHash: string) {
+          return secretHash === disabledAccount.secretHash ? disabledAccount : null;
+        },
+        async disable(accountId: string) {
+          expect(accountId).toBe(disabledAccount.accountId);
+          disableCalls += 1;
+          return null;
+        },
+      },
+    }));
+    const headers = { authorization: `Bearer ${accountSecret}` };
+
+    const normalResponse = await handler(createEvent("GET", "/missing", headers));
+    expect(normalResponse.status).toBe(401);
+
+    const retryResponse = await handler(createEvent("DELETE", "/v1/account", headers));
+    expect(retryResponse.status).toBe(404);
+    expect(await responseJson(retryResponse)).toEqual({ error: "Account not found" });
+    expect(disableCalls).toBe(1);
+  });
+
+  it("keeps admin deletion available for an already-disabled account", async () => {
+    process.env.ADMIN_ACCOUNT_SECRET = "admin-secret";
+    const disabledAccount = { ...fakeAccount(), status: "disabled" as const };
+    let disableCalls = 0;
+    setStorageForTests(createFakeStorage({
+      accounts: {
+        async getById(accountId: string) {
+          return accountId === disabledAccount.accountId ? disabledAccount : null;
+        },
+        async disable(accountId: string) {
+          expect(accountId).toBe(disabledAccount.accountId);
+          disableCalls += 1;
+          return null;
+        },
+      },
+    }));
+
+    const response = await handler(createEvent("DELETE", `/accounts/${disabledAccount.accountId}`, {
+      authorization: "Bearer admin-secret",
+    }));
+
+    expect(response.status).toBe(404);
+    expect(await responseJson(response)).toEqual({ error: "Account not found" });
+    expect(disableCalls).toBe(1);
+  });
 });
 
 async function responseJson(response: Response): Promise<unknown> {

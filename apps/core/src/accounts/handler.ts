@@ -65,7 +65,12 @@ async function handleAccountRequest(request: CoreRequest): Promise<Response> {
             return jsonResponse(200, { status: "ok" });
         }
 
-        const auth = await resolveBearerAuth(headers);
+        const auth = await resolveBearerAuth(headers, {
+            // Cleanup can fail after the account is disabled. Permit only the
+            // owning secret to retry self-deletion; all normal ingress remains
+            // subject to the active-account requirement.
+            allowDisabledAccountSecret: method === "DELETE" && rawPath === "/v1/account",
+        });
         if (!auth) {
             logWarn("Account manage request unauthorized", {
                 method,

@@ -36,7 +36,10 @@ export function extractBearerToken(authorization: string | undefined): string | 
   return token;
 }
 
-export async function resolveBearerAuth(headers: Record<string, string>): Promise<AuthContext | null> {
+export async function resolveBearerAuth(
+  headers: Record<string, string>,
+  options: { allowDisabledAccountSecret?: boolean } = {},
+): Promise<AuthContext | null> {
   const token = extractBearerToken(headers.authorization);
   if (!token) return null;
 
@@ -72,7 +75,7 @@ export async function resolveBearerAuth(headers: Record<string, string>): Promis
   }
 
   const account = await getStorage().accounts.getBySecretHash(hashAccountSecret(token));
-  if (!account || account.status !== "active") return null;
+  if (!account || (account.status !== "active" && options.allowDisabledAccountSecret !== true)) return null;
   return { kind: "account", account };
 }
 
