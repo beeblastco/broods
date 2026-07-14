@@ -913,7 +913,7 @@ export const pruneExpired = internalMutation({
     ) {
       await ctx.scheduler.runAfter(
         0,
-        internal.runtimePersistence.pruneExpired,
+        internal.runtime.pruneExpired,
         {},
       );
     }

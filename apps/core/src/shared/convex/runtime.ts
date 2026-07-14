@@ -4,7 +4,9 @@ import { getConvexClient } from "./client.ts";
 
 const internal: any = require("@broods/convex/_generated/api").internal;
 
-const runtimeQueries = {
+// Exported so tests can verify each reference against the actual registered
+// Convex module export as well as the exact function path sent to Convex.
+export const runtimeQueries = {
   getAsyncAgentResult: internal.runtime.getAsyncAgentResult,
   getAsyncToolGroup: internal.runtime.getAsyncToolGroup,
   getAsyncToolResult: internal.runtime.getAsyncToolResult,
@@ -14,7 +16,7 @@ const runtimeQueries = {
   listConversationEvents: internal.runtime.listConversationEvents,
 } as const;
 
-const runtimeMutations = {
+export const runtimeMutations = {
   acquireLease: internal.runtime.acquireLease,
   appendConversationEvent: internal.runtime.appendConversationEvent,
   claimEvent: internal.runtime.claimEvent,
