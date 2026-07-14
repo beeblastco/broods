@@ -1,6 +1,6 @@
 /**
  * Reactive reads for the dashboard usage panel. Queries the pre-aggregated
- * `usageRollups` table (written by `usage.recordTask`) so the panel streams
+ * `usageRollups` table (written by `usage.recordTaskUsage`) so the panel streams
  * live token/compute totals via Convex subscriptions. Durable/raw logs now
  * live in Loki and are streamed via the gateway (NATS + Loki backfill).
  */

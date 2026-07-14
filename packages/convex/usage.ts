@@ -13,12 +13,12 @@ import { internalMutation } from "./_generated/server";
 export const USAGE_BIN_MS = 5 * 60 * 1000;
 
 /**
- * Record one finished agent task: insert a `usageTasks` row and fold its
+ * Record one finished agent task: insert a `taskUsage` row and fold its
  * token/compute counts into the 5-minute `usageRollups` bucket. Deduplicated by
  * `(accountId, taskId)` so a Lambda retry never double-counts without allowing
  * one tenant's task identifier to suppress another tenant's usage.
  */
-export const recordTask = internalMutation({
+export const recordTaskUsage = internalMutation({
     args: {
         accountId: v.id("accounts"),
         endpointId: v.string(),
@@ -57,7 +57,7 @@ export const recordTask = internalMutation({
         // process) would otherwise insert a duplicate row and double-fold the
         // rollup. Skip if this task was already recorded.
         const already = await ctx.db
-            .query("usageTasks")
+            .query("taskUsage")
             .withIndex("by_accountId_and_taskId", (q) => q.eq("accountId", args.accountId).eq("taskId", args.taskId))
             .unique();
         if (already) {
@@ -76,7 +76,7 @@ export const recordTask = internalMutation({
         }
 
         // Insert per-task row for line-item cost history.
-        await ctx.db.insert("usageTasks", {
+        await ctx.db.insert("taskUsage", {
             accountId: args.accountId,
             endpointId: args.endpointId,
             agentId: args.agentId,

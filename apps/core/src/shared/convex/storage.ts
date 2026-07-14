@@ -16,7 +16,7 @@ import type { WorkspaceConfig } from "../domain/workspace-config.ts";
 import type { AccountToolRecord } from "../domain/account-tools.ts";
 import type { AccountHookRecord } from "../domain/account-hooks.ts";
 import type { AgentPolicyRecord } from "../domain/agent-policy.ts";
-import { usage } from "./usage.ts";
+import { taskUsage } from "./usage.ts";
 import {
   createAccountId,
   createAccountSecret,
@@ -588,5 +588,5 @@ export const convexStorage: Storage = {
   agentPolicies,
   accountTools,
   accountHooks,
-  usage,
+  taskUsage,
 };

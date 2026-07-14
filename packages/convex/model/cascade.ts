@@ -66,11 +66,11 @@ export async function deleteAccountContents(
         .collect();
     for (const event of auditEvents) await ctx.db.delete(event._id);
 
-    const usageTasks = await ctx.db
-        .query("usageTasks")
+    const taskUsage = await ctx.db
+        .query("taskUsage")
         .withIndex("by_accountId_and_finishedAt", (q) => q.eq("accountId", accountId))
         .collect();
-    for (const task of usageTasks) await ctx.db.delete(task._id);
+    for (const task of taskUsage) await ctx.db.delete(task._id);
 
     const usageRollups = await ctx.db
         .query("usageRollups")
@@ -126,12 +126,12 @@ export async function deleteAccountContentsBatch(
         return false;
     }
 
-    const usageTasks = await ctx.db
-        .query("usageTasks")
+    const taskUsage = await ctx.db
+        .query("taskUsage")
         .withIndex("by_accountId_and_finishedAt", (q) => q.eq("accountId", accountId))
         .take(ACCOUNT_DELETE_BATCH_SIZE);
-    if (usageTasks.length > 0) {
-        for (const task of usageTasks) await ctx.db.delete(task._id);
+    if (taskUsage.length > 0) {
+        for (const task of taskUsage) await ctx.db.delete(task._id);
 
         return false;
     }

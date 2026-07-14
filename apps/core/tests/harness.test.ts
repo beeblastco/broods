@@ -5,7 +5,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
 import * as actualAi from "ai";
-import { setStorageForTests, type Storage, type UsageTaskInput } from "../src/shared/storage.ts";
+import { setStorageForTests, type Storage, type TaskUsageInput } from "../src/shared/storage.ts";
 
 const ORIGINAL_ENV = { ...process.env };
 const ORIGINAL_STDOUT_WRITE = process.stdout.write.bind(process.stdout);
@@ -614,7 +614,7 @@ describe("runAgentLoop", () => {
   it("marks a hard stream termination as failed when no completion hook runs", async () => {
     streamTextScenario = "hard-throw";
     installHarnessEnv();
-    const usageWrites: UsageTaskInput[] = [];
+    const usageWrites: TaskUsageInput[] = [];
     setStorageForTests(usageStorage(usageWrites));
     const { runAgentLoop } = await import("../src/harness/harness.ts");
     const stream = await runAgentLoop({
@@ -653,7 +653,7 @@ describe("runAgentLoop", () => {
     // ensureFinalized() is the safety net that path must call.
     streamTextScenario = "error-no-finish";
     installHarnessEnv();
-    const usageWrites: UsageTaskInput[] = [];
+    const usageWrites: TaskUsageInput[] = [];
     setStorageForTests(usageStorage(usageWrites));
     const { runAgentLoop } = await import("../src/harness/harness.ts");
     const onErrorText = mock(async () => { });
@@ -1851,7 +1851,7 @@ describe("runAgentLoop", () => {
   });
 });
 
-function usageStorage(writes: UsageTaskInput[]): Storage {
+function usageStorage(writes: TaskUsageInput[]): Storage {
   return {
     accounts: null as never,
     agents: null as never,
@@ -1862,7 +1862,7 @@ function usageStorage(writes: UsageTaskInput[]): Storage {
     agentPolicies: null as never,
     accountTools: null as never,
     accountHooks: null as never,
-    usage: { async recordTask(input) { writes.push(input); } },
+    taskUsage: { async record(input) { writes.push(input); } },
   };
 }
 

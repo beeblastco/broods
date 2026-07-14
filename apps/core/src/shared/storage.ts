@@ -19,17 +19,13 @@ import type { AgentPolicyRecord } from "./domain/agent-policy.ts";
  * Raw counts for one finished agent task. No dollar amounts — pricing is
  * computed at render time from a shared hardcoded table (plan §6d, §10a).
  *
- * endpointId / project / environment are optional for account-key traffic that
- * is not associated with a dashboard deployment.
+ * endpointId is optional for account-key traffic that is not associated with
+ * a dashboard deployment.
  */
-export interface UsageTaskInput {
+export interface TaskUsageInput {
   accountId: string;
   /** Convex endpoint identifier when the task belongs to a deployment. */
   endpointId?: string;
-  /** Deployment project slug when available. */
-  project?: string;
-  /** Deployment environment slug when available. */
-  environment?: string;
   agentId: string;
   conversationKey: string;
   /** Equals session.eventId — unique per finished task. */
@@ -159,8 +155,8 @@ export interface AgentPolicyStore {
  * it inserts one raw-count row per finished task and folds into a rollup
  * 5-minute Convex usageRollups bucket.
  */
-export interface UsageStore {
-  recordTask(input: UsageTaskInput): Promise<void>;
+export interface TaskUsageStore {
+  record(input: TaskUsageInput): Promise<void>;
 }
 
 export interface Storage {
@@ -173,7 +169,7 @@ export interface Storage {
   accountTools: AccountToolStore;
   accountHooks: AccountHookStore;
   agentPolicies: AgentPolicyStore;
-  usage: UsageStore;
+  taskUsage: TaskUsageStore;
 }
 
 let cached: Storage | null = null;

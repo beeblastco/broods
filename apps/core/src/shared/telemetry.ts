@@ -10,17 +10,17 @@
 
 import { logError } from "./log.ts";
 import { getStorage } from "./storage.ts";
-import type { UsageTaskInput } from "./storage.ts";
+import type { TaskUsageInput } from "./storage.ts";
 
-export type { UsageTaskInput };
+export type { TaskUsageInput };
 
 /**
  * Record one finished-task usage row via the active storage boundary.
  * Fire-and-forget: errors are logged, never re-thrown.
  */
-export async function recordUsageTask(input: UsageTaskInput): Promise<void> {
+export async function recordTaskUsage(input: TaskUsageInput): Promise<void> {
   try {
-    await getStorage().usage.recordTask(input);
+    await getStorage().taskUsage.record(input);
   } catch (err) {
     logError("Usage write failed", {
       error: err instanceof Error ? err.message : String(err),

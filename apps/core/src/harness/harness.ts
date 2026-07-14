@@ -27,7 +27,7 @@ import {
 import type { AgentConfig } from "../shared/domain/agent-config.ts";
 import { collectSecretValues, logError, logInfo, logWarn, redact, redactSensitiveText } from "../shared/log.ts";
 import { isPlainObject } from "../shared/object.ts";
-import { recordUsageTask } from "../shared/telemetry.ts";
+import { recordTaskUsage } from "../shared/telemetry.ts";
 import { extractCacheWriteTokens, usageTokenTotals } from "./usage-metering.ts";
 import {
   getTracer,
@@ -577,7 +577,7 @@ export async function runAgentLoop(
     const rootPublished = publishSpan(rootSpanRow);
 
     try {
-      await recordUsageTask({
+      await recordTaskUsage({
         accountId: session.accountId ?? "",
         endpointId: session.endpointId,
         agentId: session.agentId ?? "unknown",

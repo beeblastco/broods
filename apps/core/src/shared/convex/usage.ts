@@ -1,5 +1,5 @@
 /**
- * UsageStore implementation. Calls internal.usage.recordTask via the
+ * TaskUsageStore implementation. Calls internal.usage.recordTaskUsage via the
  * deploy-key ConvexHttpClient. Fire-and-forget safe — errors are caught and
  * logged; they never propagate into the agent execution path.
  *
@@ -9,14 +9,14 @@
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const internal: any = require("@broods/convex/_generated/api").internal;
-import type { UsageStore, UsageTaskInput } from "../storage.ts";
+import type { TaskUsageInput, TaskUsageStore } from "../storage.ts";
 import { getConvexClient } from "./client.ts";
 import { logError } from "../log.ts";
 
-export const usage: UsageStore = {
-  async recordTask(input: UsageTaskInput): Promise<void> {
+export const taskUsage: TaskUsageStore = {
+  async record(input: TaskUsageInput): Promise<void> {
     try {
-      await getConvexClient().mutation(internal.usage.recordTask, {
+      await getConvexClient().mutation(internal.usage.recordTaskUsage, {
         accountId: input.accountId as any,
         endpointId: input.endpointId ?? "",
         agentId: input.agentId,

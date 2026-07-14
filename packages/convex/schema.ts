@@ -739,7 +739,7 @@ export const cronRunsFields = {
  * computed at render from a hardcoded shared pricing table — only raw counts are
  * stored here.
  */
-export const usageTasksFields = {
+export const taskUsageFields = {
     accountId: v.id("accounts"),
     /** Per-deployment id (matches agentDeployments.endpointId); the dashboard join key. */
     endpointId: v.string(),
@@ -954,7 +954,7 @@ export default defineSchema({
         "cronId",
         "startedAt",
     ]),
-    usageTasks: defineTable(usageTasksFields)
+    taskUsage: defineTable(taskUsageFields)
         .index("by_endpointId_and_finishedAt", ["endpointId", "finishedAt"])
         .index("by_accountId_and_finishedAt", ["accountId", "finishedAt"])
         .index("by_accountId_and_taskId", ["accountId", "taskId"]),

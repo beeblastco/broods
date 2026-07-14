@@ -516,7 +516,7 @@ function storageWithAccountTool(accountTool: AccountToolRecord): Storage {
       removeAllForAccount: mock() as never,
     },
     accountHooks: {} as never,
-    usage: { async recordTask() {} },
+    taskUsage: { async record() {} },
   } as Storage;
 }
 
