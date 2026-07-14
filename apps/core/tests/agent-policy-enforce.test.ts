@@ -6,7 +6,7 @@
 
 import { afterAll, describe, expect, it } from "bun:test";
 import { createPolicyToolApproval, policyDecisionLogMessage } from "../src/harness/policy.ts";
-import { setStorageForTests, type CoreStorage } from "../src/shared/storage.ts";
+import { setStorageForTests, type Storage } from "../src/shared/storage.ts";
 
 const policyRecord = {
   accountId: "acct_1",
@@ -25,7 +25,7 @@ setStorageForTests({
   agentPolicies: {
     getById: async () => policyRecord,
   },
-} as unknown as CoreStorage);
+} as unknown as Storage);
 
 const seenAuthHeaders: Array<string | null> = [];
 const seenPolicyInputs: unknown[] = [];

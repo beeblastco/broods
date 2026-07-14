@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import {
   resetStorageForTests,
   setStorageForTests,
-  type CoreStorage,
+  type Storage,
 } from "../src/shared/storage.ts";
 import type { AccountRecord } from "../src/shared/domain/accounts.ts";
 import { coreRequest } from "./helpers/http.ts";
@@ -41,7 +41,7 @@ describe("account-management deployment key auth", () => {
   });
 });
 
-function deploymentStorage(): CoreStorage {
+function deploymentStorage(): Storage {
   const account: AccountRecord = {
     accountId: "acct_test",
     username: "acct",
@@ -70,7 +70,7 @@ function deploymentStorage(): CoreStorage {
         };
       },
     },
-  } as unknown as CoreStorage;
+  } as unknown as Storage;
 }
 
 function event(method: string, rawPath: string) {

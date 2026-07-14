@@ -163,7 +163,7 @@ export interface UsageStore {
   recordTask(input: UsageTaskInput): Promise<void>;
 }
 
-export interface CoreStorage {
+export interface Storage {
   accounts: AccountStore;
   agents: AgentStore;
   agentDeployments: AgentDeploymentStore;
@@ -176,13 +176,13 @@ export interface CoreStorage {
   usage: UsageStore;
 }
 
-let cached: CoreStorage | null = null;
+let cached: Storage | null = null;
 
 /** Returns the process-wide Convex-backed storage boundary. */
-export function getStorage(): CoreStorage {
+export function getStorage(): Storage {
   if (cached) return cached;
   const { convexStorage } = require("./convex/storage.ts");
-  cached = convexStorage as CoreStorage;
+  cached = convexStorage as Storage;
 
   return cached;
 }
@@ -193,6 +193,6 @@ export function resetStorageForTests(): void {
 }
 
 /** Injects a store for focused tests. */
-export function setStorageForTests(store: CoreStorage | null): void {
+export function setStorageForTests(store: Storage | null): void {
   cached = store;
 }

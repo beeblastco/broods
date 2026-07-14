@@ -5,7 +5,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
 import * as actualAi from "ai";
-import { setStorageForTests, type CoreStorage, type UsageTaskInput } from "../src/shared/storage.ts";
+import { setStorageForTests, type Storage, type UsageTaskInput } from "../src/shared/storage.ts";
 
 const ORIGINAL_ENV = { ...process.env };
 const ORIGINAL_STDOUT_WRITE = process.stdout.write.bind(process.stdout);
@@ -1851,7 +1851,7 @@ describe("runAgentLoop", () => {
   });
 });
 
-function usageStorage(writes: UsageTaskInput[]): CoreStorage {
+function usageStorage(writes: UsageTaskInput[]): Storage {
   return {
     accounts: null as never,
     agents: null as never,

@@ -7,7 +7,7 @@ import { createHash } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import type { AgentRecord } from "../src/shared/domain/agents.ts";
 import { hashAccountSecret, type AccountRecord } from "../src/shared/domain/accounts.ts";
-import { resetStorageForTests, setStorageForTests, type CoreStorage } from "../src/shared/storage.ts";
+import { resetStorageForTests, setStorageForTests, type Storage } from "../src/shared/storage.ts";
 import { extractBearerToken, resolveBearerAuth } from "../src/shared/auth.ts";
 
 const ACCOUNT: AccountRecord = {
@@ -58,7 +58,7 @@ beforeEach(() => {
           }
           : null,
     },
-  } as unknown as CoreStorage);
+  } as unknown as Storage);
 });
 
 afterEach(() => {

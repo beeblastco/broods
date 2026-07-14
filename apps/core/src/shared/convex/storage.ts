@@ -47,7 +47,7 @@ import type {
   AgentStore,
   CronStore,
   SandboxConfigStore,
-  CoreStorage,
+  Storage,
   WorkspaceConfigStore,
 } from "../storage.ts";
 import { getConvexClient } from "./client.ts";
@@ -578,7 +578,7 @@ const accountHooks: AccountHookStore = {
   },
 };
 
-export const convexStorage: CoreStorage = {
+export const convexStorage: Storage = {
   accounts,
   agents,
   agentDeployments,

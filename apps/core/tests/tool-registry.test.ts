@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
 import {
   resetStorageForTests,
   setStorageForTests,
-  type CoreStorage,
+  type Storage,
 } from "../src/shared/storage.ts";
 import type { AccountToolRecord } from "../src/shared/domain/account-tools.ts";
 
@@ -489,7 +489,7 @@ function createToolContext(
   } as never;
 }
 
-function storageWithAccountTool(accountTool: AccountToolRecord): CoreStorage {
+function storageWithAccountTool(accountTool: AccountToolRecord): Storage {
   return {
     accounts: {} as never,
     agents: {} as never,
@@ -517,7 +517,7 @@ function storageWithAccountTool(accountTool: AccountToolRecord): CoreStorage {
     },
     accountHooks: {} as never,
     usage: { async recordTask() {} },
-  } as CoreStorage;
+  } as Storage;
 }
 
 function sandboxContext(
