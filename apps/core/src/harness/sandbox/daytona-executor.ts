@@ -24,7 +24,7 @@ import type {
 import { assertSafeTenantProviderUrl, configString, isNoRunnersError, isSandboxGoneError, sandboxReservationKey, shellQuote, truncateText, workspacePath } from "./utils.ts";
 import { generateJobId, launchScript, lifecycleScript, logsScript, parseJobStatus, statusScript, stopScript } from "./jobs.ts";
 import { claimSandboxInstance, deleteSandboxInstance, getSandboxExternalId, saveSandboxInstance } from "./instance-store.ts";
-import { upsertSandboxInstance } from "../../shared/storage/sandbox-instances.ts";
+import { upsertSandboxInstance } from "../../shared/convex/sandbox-instances.ts";
 
 export class DaytonaSandboxExecutor implements SandboxExecutor {
   readonly #config: SandboxExecutorConfig;

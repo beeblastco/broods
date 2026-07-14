@@ -2,7 +2,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
 import type { UserModelMessage } from "ai";
-import { runtimePersistence } from "../src/shared/storage/runtime.ts";
+import { runtimePersistence } from "../src/shared/convex/runtime.ts";
 import { Session } from "../src/harness/session.ts";
 
 const originalMutation = runtimePersistence.mutation;

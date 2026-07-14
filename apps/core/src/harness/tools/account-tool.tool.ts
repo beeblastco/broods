@@ -4,7 +4,7 @@
  */
 
 import { jsonSchema, tool, type ToolSet } from "ai";
-import type { AccountToolRecord } from "../../shared/storage/index.ts";
+import type { AccountToolRecord } from "../../shared/domain/account-tools.ts";
 import type { ToolContext } from "./index.ts";
 import { streamAccountTool } from "./custom-tool-executor.ts";
 

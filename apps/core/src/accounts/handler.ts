@@ -1,15 +1,15 @@
 /**
  * Account management HTTP API.
- * Keep account CRUD orchestration here and shared account storage in _shared.
+ * Keep account orchestration here and shared records/persistence at their boundaries.
  */
 
 import { resolveBearerAuth, type AuthContext } from "../shared/auth.ts";
+import { getCoreStore } from "../shared/core-store.ts";
+import { isCronsConfigured } from "../shared/domain/cron.ts";
 import {
-    getStorage,
-    isCronsConfigured,
     normalizeCreateAccountInput,
     type AccountRecord,
-} from "../shared/storage/index.ts";
+} from "../shared/domain/accounts.ts";
 import {
     errorResponse,
     jsonResponse,
@@ -23,9 +23,9 @@ import { MICROVM_SHELL_AUTH_HEADER, microvmShellConnection } from "../harness/sa
 import { getSandboxExternalId } from "../harness/sandbox/instance-store.ts";
 import { sealTerminalTicket, TERMINAL_TICKET_TTL_MS, TERMINAL_WEBSOCKET_PATH } from "../shared/terminal-ticket.ts";
 import { requireEnv } from "../shared/env.ts";
-import { removeSandboxInstance, setSandboxInstanceStatus } from "../shared/storage/sandbox-instances.ts";
-import { recordSandboxAuditEvent, type SandboxAuditActor } from "../shared/storage/sandbox-audit-events.ts";
-import { upsertSandboxSnapshot } from "../shared/storage/sandbox-snapshots.ts";
+import { removeSandboxInstance, setSandboxInstanceStatus } from "../shared/convex/sandbox-instances.ts";
+import { recordSandboxAuditEvent, type SandboxAuditActor } from "../shared/convex/sandbox-audit-events.ts";
+import { upsertSandboxSnapshot } from "../shared/convex/sandbox-snapshots.ts";
 import { workspaceSandboxLimits } from "../shared/sandbox.ts";
 import { deleteAccountRuntimeData } from "./cleanup.ts";
 import { workspaceNamespace, workspaceNamespaceOwnsReservationKey } from "../shared/workspaces.ts";
@@ -112,7 +112,7 @@ async function handleAccountRequest(request: CoreRequest): Promise<Response> {
 
         if (method === "POST" && rawPath === "/accounts") {
             const body = parseJsonBody(request);
-            const created = await getStorage().accounts.create(normalizeCreateAccountInput(body));
+            const created = await getCoreStore().accounts.create(normalizeCreateAccountInput(body));
             return jsonResponse(201, {
                 account: toCreateAccountResponse(created.account),
                 secret: created.secret,
@@ -123,7 +123,7 @@ async function handleAccountRequest(request: CoreRequest): Promise<Response> {
         if (accountMatch?.[1]) {
             const accountId = decodeURIComponent(accountMatch[1]);
             if (method === "DELETE") {
-                const account = await getStorage().accounts.getById(accountId);
+                const account = await getCoreStore().accounts.getById(accountId);
                 if (!account) {
                     return errorResponse(404, "Account not found");
                 }
@@ -155,7 +155,7 @@ async function handleSandboxLifecycle(
         return errorResponse(405, "Method not allowed", { method, allowedMethods: ["POST"] });
     }
     const sandboxId = decodeURIComponent(rawSandboxId);
-    const record = await getStorage().sandboxConfigs.getById(accountId, sandboxId);
+    const record = await getCoreStore().sandboxConfigs.getById(accountId, sandboxId);
     if (!record) {
         return errorResponse(404, "Sandbox not found");
     }
@@ -398,28 +398,28 @@ async function sandboxReservationBelongsToAccount(
         return true;
     }
 
-    const workspaces = await getStorage().workspaceConfigs.list(accountId);
+    const workspaces = await getCoreStore().workspaceConfigs.list(accountId);
     return workspaces.some((workspace) =>
         workspaceNamespaceOwnsReservationKey(workspaceNamespace(accountId, workspace.workspaceId), reservationKey)
     );
 }
 
 async function deleteAccountResponse(account: Extract<AuthContext, { kind: "account" }>["account"]): Promise<Response> {
-    const disabled = await getStorage().accounts.disable(account.accountId);
+    const disabled = await getCoreStore().accounts.disable(account.accountId);
     if (!disabled) {
         return jsonResponse(404, { error: "Account not found" });
     }
 
     const [runtime, agentsDeleted, skillObjectsDeleted, toolBundleObjectsDeleted, cronsDeleted, accountToolsDeleted, accountHooksDeleted] = await Promise.all([
         deleteAccountRuntimeData(disabled),
-        getStorage().agents.removeAllForAccount(account.accountId),
+        getCoreStore().agents.removeAllForAccount(account.accountId),
         deleteAccountSkills(account.accountId),
         deleteAccountToolBundles(account.accountId),
         deleteAccountCrons(account.accountId),
-        getStorage().accountTools.removeAllForAccount(account.accountId),
-        getStorage().accountHooks.removeAllForAccount(account.accountId),
+        getCoreStore().accountTools.removeAllForAccount(account.accountId),
+        getCoreStore().accountHooks.removeAllForAccount(account.accountId),
     ]);
-    await getStorage().accounts.remove(account.accountId);
+    await getCoreStore().accounts.remove(account.accountId);
     return jsonResponse(200, { deleted: true, cleanup: { ...runtime, agentsDeleted, skillObjectsDeleted, toolBundleObjectsDeleted, cronsDeleted, accountToolsDeleted, accountHooksDeleted } });
 }
 
@@ -429,7 +429,7 @@ async function deleteAccountCrons(accountId: string): Promise<number> {
         return 0;
     }
 
-    const cronsStore = getStorage().crons;
+    const cronsStore = getCoreStore().crons;
     const crons = await cronsStore.list(accountId);
     await Promise.all(crons.map(async (cron) => {
         await deleteCronSchedule(cron);

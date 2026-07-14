@@ -5,18 +5,18 @@
 
 import { afterEach, describe, expect, it, mock } from "bun:test";
 import { coreRequest, responseJson } from "./helpers/http.ts";
-import { resetStorageForTests, setStorageForTests } from "../src/shared/storage/index.ts";
+import { resetCoreStoreForTests, setCoreStoreForTests } from "../src/shared/core-store.ts";
 import {
   normalizeCreateSandboxConfigInput,
   normalizeUpdateSandboxConfigInput,
   type SandboxConfig,
   type SandboxConfigRecord,
-} from "../src/shared/storage/sandbox-config.ts";
+} from "../src/shared/domain/sandbox-config.ts";
 import {
   normalizeCreateWorkspaceConfigInput,
   normalizeUpdateWorkspaceConfigInput,
   type WorkspaceConfigRecord,
-} from "../src/shared/storage/workspace-config.ts";
+} from "../src/shared/domain/workspace-config.ts";
 import { openTerminalTicket, TERMINAL_WEBSOCKET_PATH } from "../src/shared/terminal-ticket.ts";
 
 const ACCOUNT_ID = "acct_test";
@@ -121,13 +121,13 @@ afterEach(() => {
   deleteSandboxInstanceMock.mockClear();
   microvmSendMock.mockClear();
   microvmShellTokenError = null;
-  setStorageForTests(null);
-  resetStorageForTests();
+  setCoreStoreForTests(null);
+  resetCoreStoreForTests();
 });
 
 describe("account-manage sandbox endpoints", () => {
   it("no longer serves sandbox config CRUD routes (moved to the Convex config plane)", async () => {
-    setStorageForTests(createFakeStorage());
+    setCoreStoreForTests(createFakeStorage());
 
     for (const [method, path] of [
       ["GET", "/v1/sandboxes"],
@@ -150,7 +150,7 @@ describe("account-manage sandbox endpoints", () => {
   });
 
   it("rejects unauthenticated sandbox requests", async () => {
-    setStorageForTests(createFakeStorage());
+    setCoreStoreForTests(createFakeStorage());
     const response = await handler(createEvent("GET", "/v1/sandboxes"));
     expect(response.status).toBe(401);
   });
@@ -294,7 +294,7 @@ describe("account-manage sandbox endpoints", () => {
 
 describe("account-manage workspace endpoints", () => {
   it("no longer serves workspace config CRUD routes (moved to the Convex config plane)", async () => {
-    setStorageForTests(createFakeStorage());
+    setCoreStoreForTests(createFakeStorage());
 
     for (const [method, path] of [
       ["GET", "/v1/workspaces"],
@@ -318,7 +318,7 @@ describe("account-manage workspace endpoints", () => {
 
   it("no longer serves workspace file routes (moved to the Convex config plane)", async () => {
     process.env.SERVICE_AUTH_SECRET = "service-secret";
-    setStorageForTests(createFakeStorage());
+    setCoreStoreForTests(createFakeStorage());
 
     const response = await handler(createEvent(
       "GET",
@@ -337,7 +337,7 @@ async function seedSandbox(config: SandboxConfig): Promise<SandboxConfigRecord> 
       create(accountId: string, input: unknown): Promise<SandboxConfigRecord>;
     };
   };
-  setStorageForTests(storage as never);
+  setCoreStoreForTests(storage as never);
 
   return await storage.sandboxConfigs.create(ACCOUNT_ID, { name: "persistent", config });
 }
@@ -369,7 +369,6 @@ function createFakeStorage() {
   const stamp = "2026-05-01T00:00:00.000Z";
 
   return {
-    kind: "fake",
     accounts: {
       async getById() { return fakeAccount(); },
       async getBySecretHash() { return fakeAccount(); },

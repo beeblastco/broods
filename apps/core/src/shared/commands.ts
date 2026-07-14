@@ -4,7 +4,7 @@
  */
 
 import type { ChannelActions } from "./channels.ts";
-import { runtimeMutation } from "./storage/runtime.ts";
+import { runtimeMutation } from "./convex/runtime.ts";
 import { logError } from "./log.ts";
 
 export interface CommandContext {

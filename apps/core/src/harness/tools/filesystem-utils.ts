@@ -19,7 +19,7 @@ import { createSandboxExecutor } from "../sandbox/index.ts";
 import type { SandboxCpuSample, SandboxExecutorConfig, SandboxJobCallback, SandboxJobHandle, SandboxRunResult, SandboxRuntime } from "../sandbox/types.ts";
 import type { SandboxRunMetadata } from "../../shared/sandbox-sizes.ts";
 import type { ResolvedWorkspace } from "../../shared/workspaces.ts";
-import type { SandboxPermissionMode } from "../../shared/storage/index.ts";
+import type { SandboxPermissionMode } from "../../shared/domain/sandbox-config.ts";
 import type { AsyncToolDelivery } from "../async-tool-result.ts";
 
 export const DEFAULT_WORKSPACE_ROOT = "/mnt/workspaces";

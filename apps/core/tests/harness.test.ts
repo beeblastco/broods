@@ -5,7 +5,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
 import * as actualAi from "ai";
-import { setStorageForTests, type StorageProvider, type UsageTaskInput } from "../src/shared/storage/index.ts";
+import { setCoreStoreForTests, type CoreStore, type UsageTaskInput } from "../src/shared/core-store.ts";
 
 const ORIGINAL_ENV = { ...process.env };
 const ORIGINAL_STDOUT_WRITE = process.stdout.write.bind(process.stdout);
@@ -413,14 +413,14 @@ mock.module("ai", () => ({
 }));
 
 beforeEach(() => {
-  setStorageForTests(usageStorage([]));
+  setCoreStoreForTests(usageStorage([]));
 });
 
 afterEach(() => {
   process.env = { ...ORIGINAL_ENV };
   process.stdout.write = ORIGINAL_STDOUT_WRITE;
   globalThis.fetch = originalFetch;
-  setStorageForTests(null);
+  setCoreStoreForTests(null);
   streamTextScenario = "empty";
   streamTextMock.mockClear();
   googleModelMock.mockClear();
@@ -615,7 +615,7 @@ describe("runAgentLoop", () => {
     streamTextScenario = "hard-throw";
     installHarnessEnv();
     const usageWrites: UsageTaskInput[] = [];
-    setStorageForTests(usageStorage(usageWrites));
+    setCoreStoreForTests(usageStorage(usageWrites));
     const { runAgentLoop } = await import("../src/harness/harness.ts");
     const stream = await runAgentLoop({
       conversationKey: "direct:conversation",
@@ -654,7 +654,7 @@ describe("runAgentLoop", () => {
     streamTextScenario = "error-no-finish";
     installHarnessEnv();
     const usageWrites: UsageTaskInput[] = [];
-    setStorageForTests(usageStorage(usageWrites));
+    setCoreStoreForTests(usageStorage(usageWrites));
     const { runAgentLoop } = await import("../src/harness/harness.ts");
     const onErrorText = mock(async () => { });
 
@@ -1851,9 +1851,8 @@ describe("runAgentLoop", () => {
   });
 });
 
-function usageStorage(writes: UsageTaskInput[]): StorageProvider {
+function usageStorage(writes: UsageTaskInput[]): CoreStore {
   return {
-    kind: "convex",
     accounts: null as never,
     agents: null as never,
     agentDeployments: null as never,

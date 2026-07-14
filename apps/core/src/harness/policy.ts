@@ -8,13 +8,13 @@ import type { ToolApprovalConfiguration, ToolApprovalStatus, ToolSet } from "ai"
 import { httpPolicyClient, opaPolicy, shadow, type PolicyClient } from "@ai-sdk/policy-opa";
 import { optionalEnv } from "../shared/env.ts";
 import { logDebug, logInfo, logWarn } from "../shared/log.ts";
-import {
-  getStorage,
-  type AgentConfig,
-  type AgentPolicyMode,
-  type PolicyDecisionInput,
-  type SandboxPermissionMode,
-} from "../shared/storage/index.ts";
+import { getCoreStore } from "../shared/core-store.ts";
+import type { AgentConfig } from "../shared/domain/agent-config.ts";
+import type {
+  AgentPolicyMode,
+  PolicyDecisionInput,
+} from "../shared/domain/agent-policy.ts";
+import type { SandboxPermissionMode } from "../shared/domain/sandbox-config.ts";
 import type { ResolvedWorkspace } from "../shared/workspaces.ts";
 import type { SandboxExecutorConfig } from "./sandbox/types.ts";
 import { bashNeedsApproval, editNeedsApproval, resolveWorkspace } from "./tools/filesystem-utils.ts";
@@ -35,7 +35,7 @@ export async function createPolicyToolApproval(
   const mode: AgentPolicyMode = agentConfig.policy?.mode ?? "audit";
   const policyIds = [...new Set(agentConfig.policy?.policyIds ?? [])];
   const records = await Promise.all(policyIds.map((policyId) =>
-    getStorage().agentPolicies.getById(baseInput.accountId!, policyId),
+    getCoreStore().agentPolicies.getById(baseInput.accountId!, policyId),
   ));
   const documents = records
     .filter((record): record is NonNullable<typeof record> => Boolean(record))

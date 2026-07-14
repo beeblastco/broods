@@ -1,7 +1,6 @@
 /**
  * Account types, id/secret/hash helpers, input normalization, and public
- * projection. Persistence lives in `./provider.ts` and is reached through
- * `getStorage().accounts.*`.
+ * projection. Persistence is reached through `../core-store.ts`.
  */
 
 import { createHash, randomBytes } from "node:crypto";

@@ -5,11 +5,11 @@
 
 import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
 import {
-  resetStorageForTests,
-  setStorageForTests,
-  type AccountToolRecord,
-  type StorageProvider,
-} from "../src/shared/storage/index.ts";
+  resetCoreStoreForTests,
+  setCoreStoreForTests,
+  type CoreStore,
+} from "../src/shared/core-store.ts";
+import type { AccountToolRecord } from "../src/shared/domain/account-tools.ts";
 
 const tavilySearchMock = mock((options: unknown) => ({ provider: "tavilySearch", options }));
 const tavilyExtractMock = mock((options: unknown) => ({ provider: "tavilyExtract", options }));
@@ -25,11 +25,11 @@ beforeEach(() => {
   process.env.ASYNC_TOOL_RESULT_TABLE_NAME = "async-tool-results";
   tavilySearchMock.mockClear();
   tavilyExtractMock.mockClear();
-  resetStorageForTests();
+  resetCoreStoreForTests();
 });
 
 afterEach(() => {
-  resetStorageForTests();
+  resetCoreStoreForTests();
 });
 
 describe("createTools", () => {
@@ -398,7 +398,7 @@ describe("createTools", () => {
   it("registers uploaded account tools by toolId and wraps async by uploaded name", async () => {
     const { createTools } = await import("../src/harness/tools/index.ts");
     const approvalRequirements = new Map<string, true>();
-    setStorageForTests(storageWithAccountTool({
+    setCoreStoreForTests(storageWithAccountTool({
       accountId: "acct_test",
       toolId: "qs78zwc4z4q5ysxm74fgrhd13s88xxtv",
       name: "test_async",
@@ -489,9 +489,8 @@ function createToolContext(
   } as never;
 }
 
-function storageWithAccountTool(accountTool: AccountToolRecord): StorageProvider {
+function storageWithAccountTool(accountTool: AccountToolRecord): CoreStore {
   return {
-    kind: "convex",
     accounts: {} as never,
     agents: {} as never,
     agentDeployments: {
@@ -518,7 +517,7 @@ function storageWithAccountTool(accountTool: AccountToolRecord): StorageProvider
     },
     accountHooks: {} as never,
     usage: { async recordTask() {} },
-  } as StorageProvider;
+  } as CoreStore;
 }
 
 function sandboxContext(

@@ -7,7 +7,7 @@
 
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { sendChannelReply } from "../src/harness/integrations.ts";
-import type { AgentConfig } from "../src/shared/storage/index.ts";
+import type { AgentConfig } from "../src/shared/domain/agent-config.ts";
 
 type FetchInput = string | URL | Request;
 

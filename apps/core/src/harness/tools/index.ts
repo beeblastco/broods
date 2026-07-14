@@ -9,13 +9,13 @@
  */
 
 import type { ToolSet } from "ai";
+import { getCoreStore } from "../../shared/core-store.ts";
 import {
   type AgentConfig,
   type AccountModelProviderName,
   type AgentToolConfig,
-  type SandboxPermissionMode,
-  getStorage,
-} from "../../shared/storage/index.ts";
+} from "../../shared/domain/agent-config.ts";
+import type { SandboxPermissionMode } from "../../shared/domain/sandbox-config.ts";
 import { logWarn } from "../../shared/log.ts";
 import type { Session } from "../session.ts";
 import type { ResolvedWorkspace } from "../../shared/workspaces.ts";
@@ -38,7 +38,7 @@ import { tavilyExtractTool, tavilySearchTool } from "./tavily.tool.ts";
 import asyncStatusTool from "./async-status.tool.ts";
 import accountTool from "./account-tool.tool.ts";
 import { sandboxSupportsBackgroundJobs, sandboxSupportsJobControls } from "./filesystem-utils.ts";
-import { isAccountToolId } from "../../shared/storage/account-tools.ts";
+import { isAccountToolId } from "../../shared/domain/account-tools.ts";
 
 // Runtime dependencies shared by tool factories. Model-facing input schemas
 // stay inside each individual tool file.
@@ -207,7 +207,7 @@ export async function createTools(context: Omit<ToolContext, "config">, agentCon
       throw new Error(`config.tools.${toolId} requires an account-scoped session`);
     }
     const accountId = context.accountId;
-    const record = await getStorage().accountTools.getById(accountId, toolId);
+    const record = await getCoreStore().accountTools.getById(accountId, toolId);
     if (!record || record.status !== "active") {
       throw new Error(`config.tools.${toolId} references an unknown account tool`);
     }

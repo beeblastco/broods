@@ -12,7 +12,7 @@ import {
   ensureS3DirectoryMarkers,
   listS3Prefix,
 } from "../shared/s3.ts";
-import type { AgentConfig } from "../shared/storage/index.ts";
+import type { AgentConfig } from "../shared/domain/agent-config.ts";
 import {
   assertAccountOwnsSkillPath,
   contentTypeForSkillPath,

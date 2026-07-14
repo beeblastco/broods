@@ -4,8 +4,8 @@
  * release path.
  */
 
-import type { SandboxConfig } from "./storage/index.ts";
-import { getStorage } from "./storage/index.ts";
+import { getCoreStore } from "./core-store.ts";
+import type { SandboxConfig } from "./domain/sandbox-config.ts";
 import { workspaceNamespace } from "./workspaces.ts";
 import { logWarn } from "./log.ts";
 import { deleteSandboxInstance } from "../harness/sandbox/instance-store.ts";
@@ -14,7 +14,7 @@ import { MicrovmSandboxExecutor } from "../harness/sandbox/microvm-executor.ts";
 import { DaytonaSandboxExecutor } from "../harness/sandbox/daytona-executor.ts";
 import { E2BSandboxExecutor } from "../harness/sandbox/e2b-executor.ts";
 import { VercelSandboxExecutor } from "../harness/sandbox/vercel-executor.ts";
-import { removeSandboxInstance } from "./storage/sandbox-instances.ts";
+import { removeSandboxInstance } from "./convex/sandbox-instances.ts";
 
 type ReleasableSandboxProvider = "sandbox" | "lambda" | "daytona" | "e2b" | "vercel";
 
@@ -26,7 +26,7 @@ export async function releaseReservedSandboxes(accountId: string, namespaces: st
   if (namespaces.length === 0) {
     return 0;
   }
-  const configs = await getStorage().sandboxConfigs.list(accountId).catch(() => []);
+  const configs = await getCoreStore().sandboxConfigs.list(accountId).catch(() => []);
   const persistent = configs.map((record) => record.config).filter((config) => config.persistent === true);
   const sandbox = persistent.filter((config) => config.provider === "sandbox");
   const lambda = persistent.filter((config) => config.provider === "lambda");
@@ -60,7 +60,7 @@ export async function releaseSandboxConfigInstances(accountId: string, config: S
   if (config.persistent !== true || !isReleasableProvider(config.provider)) {
     return 0;
   }
-  const workspaceConfigs = await getStorage().workspaceConfigs.list(accountId).catch(() => []);
+  const workspaceConfigs = await getCoreStore().workspaceConfigs.list(accountId).catch(() => []);
   let released = 0;
   for (const workspace of workspaceConfigs) {
     const namespace = workspaceNamespace(accountId, workspace.workspaceId);

@@ -1,6 +1,6 @@
 /**
  * Account CRUD + secret-hash lookup. Called by broods's
- * ConvexStorageProvider (via deploy key) and by the dashboard's org lifecycle.
+ * Convex core store (via deploy key) and by the dashboard's org lifecycle.
  */
 
 import { v } from "convex/values";

@@ -13,12 +13,12 @@ import type {
 import {
   systemModelMessageSchema,
 } from "ai";
-import type { AgentChannelWorkspaceScope, AgentConfig } from "../shared/storage/index.ts";
-import { getStorage } from "../shared/storage/index.ts";
+import type { AgentChannelWorkspaceScope, AgentConfig } from "../shared/domain/agent-config.ts";
+import { getCoreStore } from "../shared/core-store.ts";
 import type { AsyncToolDelivery } from "./async-tool-result.ts";
 import { isMissingS3Error, readS3Text } from "../shared/s3.ts";
 import { resolveS3ReadTarget, workspaceReadContext } from "./sandbox/s3-mount.ts";
-import { runtimeMutation, runtimeQuery } from "../shared/storage/runtime.ts";
+import { runtimeMutation, runtimeQuery } from "../shared/convex/runtime.ts";
 import {
   channelScopeKeyFromConversation,
   conversationLeaseKey,
@@ -38,7 +38,7 @@ import {
 import { compactSessionContext, isCompactionSummaryMessage } from "./compaction.ts";
 import { pruneSessionMessages } from "./pruning.ts";
 import type { SandboxExecutorConfig } from "./sandbox/types.ts";
-import type { SandboxPermissionMode } from "../shared/storage/index.ts";
+import type { SandboxPermissionMode } from "../shared/domain/sandbox-config.ts";
 
 // Default conversation lease TTL of 15 minutes.
 const CONVERSATION_LEASE_TTL_SECONDS = 15 * 60;
@@ -594,7 +594,7 @@ export class Session {
     if (!this.subagentMetadataPromise) {
       this.subagentMetadataPromise = Promise.all(
         (this.agentConfig.subagent.allowed ?? []).map(async (agentId) => {
-          const agent = await getStorage().agents.getById(this.accountId!, agentId);
+          const agent = await getCoreStore().agents.getById(this.accountId!, agentId);
           if (!agent || agent.status !== "active") {
             return null;
           }

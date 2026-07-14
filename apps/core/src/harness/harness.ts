@@ -24,7 +24,7 @@ import {
   type Context as OtelContext,
   type Span,
 } from "@opentelemetry/api";
-import type { AgentConfig } from "../shared/storage/index.ts";
+import type { AgentConfig } from "../shared/domain/agent-config.ts";
 import { collectSecretValues, logError, logInfo, logWarn, redact, redactSensitiveText } from "../shared/log.ts";
 import { isPlainObject } from "../shared/object.ts";
 import { recordUsageTask } from "../shared/telemetry.ts";

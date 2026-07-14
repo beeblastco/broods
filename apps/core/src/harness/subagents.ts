@@ -4,8 +4,9 @@
  */
 
 import type { ModelMessage, SystemModelMessage, UserModelMessage, JSONValue } from "ai";
-import type { AgentConfig } from "../shared/storage/index.ts";
-import { getStorage, type AgentRecord } from "../shared/storage/index.ts";
+import type { AgentConfig } from "../shared/domain/agent-config.ts";
+import { getCoreStore } from "../shared/core-store.ts";
+import type { AgentRecord } from "../shared/domain/agents.ts";
 import { logError, logInfo } from "../shared/log.ts";
 import { getObservabilityContext } from "../shared/otel.ts";
 import {
@@ -244,7 +245,7 @@ export class SubagentCoordinator {
       throw new Error(`Subagent is not allowed: ${agentId}`);
     }
 
-    const agent = await getStorage().agents.getById(accountId, agentId);
+    const agent = await getCoreStore().agents.getById(accountId, agentId);
     if (!agent || agent.status !== "active") {
       throw new Error(`Subagent not found: ${agentId}`);
     }

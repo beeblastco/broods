@@ -10,7 +10,8 @@
 import { requireEnv } from "../../shared/env.ts";
 import { isPlainObject } from "../../shared/object.ts";
 import { readS3Bytes } from "../../shared/s3.ts";
-import type { AccountToolRecord, AgentToolConfig } from "../../shared/storage/index.ts";
+import type { AccountToolRecord } from "../../shared/domain/account-tools.ts";
+import type { AgentToolConfig } from "../../shared/domain/agent-config.ts";
 
 export interface ExecuteAccountToolOptions {
   accountId: string;

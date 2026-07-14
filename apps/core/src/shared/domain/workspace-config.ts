@@ -3,8 +3,8 @@
  * agents via `config.workspaces[].workspaceId`. A workspace is the persistent
  * S3-backed filesystem mounted into a sandbox; agents referencing the same
  * workspaceId share the same files. Holds no secrets, so it is stored in
- * plaintext (unlike sandbox config). Validation + the public projection live
- * here; the Convex store calls these at create/update.
+ * plaintext (unlike sandbox config). Validation and the public projection live
+ * here.
  */
 
 import { mergeConfigObjects } from "./agent-config.ts";

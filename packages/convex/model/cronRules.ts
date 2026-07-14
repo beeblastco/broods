@@ -1,7 +1,7 @@
 /**
  * Cron-job input normalization and public response mapping for the Convex
  * config plane (epic #85 phase 9, stage 3). Ports core's former
- * src/shared/storage/cron.ts normalizer so the public /v1/crons contract is
+ * src/shared/domain/cron.ts normalizer so the public /v1/crons contract is
  * unchanged. Pure module — safe for the default Convex runtime; EventBridge
  * Scheduler calls live in awsCrons.ts.
  */

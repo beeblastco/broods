@@ -21,7 +21,7 @@ import type {
 import { configString, isSandboxGoneError, persistentSandboxName, sandboxReservationKey, shellQuote, stringRecord, truncateText, workspacePath } from "./utils.ts";
 import { generateJobId, launchScript, logsScript, parseJobStatus, statusScript, stopScript } from "./jobs.ts";
 import { claimSandboxInstance, deleteSandboxInstance, getSandboxExternalId, saveSandboxInstance } from "./instance-store.ts";
-import { upsertSandboxInstance } from "../../shared/storage/sandbox-instances.ts";
+import { upsertSandboxInstance } from "../../shared/convex/sandbox-instances.ts";
 
 type VercelSandboxClass = typeof import("@vercel/sandbox").Sandbox;
 

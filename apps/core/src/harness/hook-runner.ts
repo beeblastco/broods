@@ -12,8 +12,8 @@ import type { JSONValue } from "ai";
 import { logError } from "../shared/log.ts";
 import { isPlainObject } from "../shared/object.ts";
 import { readS3Bytes } from "../shared/s3.ts";
-import type { AgentHookEventName } from "../shared/storage/agent-config.ts";
-import type { AccountHookRecord } from "../shared/storage/account-hooks.ts";
+import type { AgentHookEventName } from "../shared/domain/agent-config.ts";
+import type { AccountHookRecord } from "../shared/domain/account-hooks.ts";
 import { streamIsolatePayload } from "./tools/isolate-executor.ts";
 import { toolBundlesBucket } from "./tools/custom-tool-executor.ts";
 

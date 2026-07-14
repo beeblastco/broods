@@ -11,7 +11,7 @@ const internal: any = require("@broods/convex/_generated/api").internal;
 import { getConvexClient } from "./client.ts";
 import { logError } from "../log.ts";
 import type { SandboxControlPlane, SandboxRunMetadata } from "../sandbox-sizes.ts";
-import type { SandboxProvider } from "./sandbox-config.ts";
+import type { SandboxProvider } from "../domain/sandbox-config.ts";
 import { recordSandboxAuditEvent } from "./sandbox-audit-events.ts";
 
 /** Convex mode is active only when both env vars are present (see CLAUDE.md). */

@@ -8,7 +8,7 @@
 const internal: any = require("@broods/convex/_generated/api").internal;
 import { getConvexClient } from "./client.ts";
 import { logError } from "../log.ts";
-import type { SandboxProvider } from "./sandbox-config.ts";
+import type { SandboxProvider } from "../domain/sandbox-config.ts";
 import type { SandboxInstanceStatus } from "./sandbox-instances.ts";
 
 /** Sandbox lifecycle actions represented in the audit stream. */

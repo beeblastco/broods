@@ -18,7 +18,7 @@ import type {
   AgentModelOutputConfig,
   AgentModelProviderOptions,
   AgentProviderSettings,
-} from "../shared/storage/index.ts";
+} from "../shared/domain/agent-config.ts";
 
 export interface ResolvedModelProvider {
   providerName: AccountModelProviderName;

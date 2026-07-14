@@ -1,9 +1,9 @@
 /** Account deletion cleanup across Convex runtime state and S3 workspaces. */
 
-import type { AccountRecord } from "../shared/storage/index.ts";
-import { getStorage } from "../shared/storage/index.ts";
+import type { AccountRecord } from "../shared/domain/accounts.ts";
+import { getCoreStore } from "../shared/core-store.ts";
 import { deleteS3Prefix } from "../shared/s3.ts";
-import type { WorkspaceStorageConfig } from "../shared/storage/workspace-config.ts";
+import type { WorkspaceStorageConfig } from "../shared/domain/workspace-config.ts";
 import { optionalEnv } from "../shared/env.ts";
 import { workspaceNamespace } from "../shared/workspaces.ts";
 import { releaseReservedSandboxes } from "../shared/sandbox-cleanup.ts";
@@ -11,7 +11,7 @@ import {
   resolveS3ReadTarget,
   workspaceReadContext,
 } from "../harness/sandbox/s3-mount.ts";
-import { runtimeMutation } from "../shared/storage/runtime.ts";
+import { runtimeMutation } from "../shared/convex/runtime.ts";
 
 export interface AccountCleanupSummary {
   conversationsDeleted: number;
@@ -27,7 +27,7 @@ export interface AccountCleanupSummary {
 export async function deleteAccountRuntimeData(
   account: AccountRecord,
 ): Promise<AccountCleanupSummary> {
-  const workspaces = await getStorage().workspaceConfigs.list(account.accountId);
+  const workspaces = await getCoreStore().workspaceConfigs.list(account.accountId);
   const reservedSandboxesReleased = await releaseReservedSandboxes(
     account.accountId,
     workspaces.map((w) => workspaceNamespace(account.accountId, w.workspaceId)),
@@ -37,8 +37,8 @@ export async function deleteAccountRuntimeData(
     deleteWorkspaceFilesystems(account.accountId, workspaces),
   ]);
   await Promise.all([
-    getStorage().sandboxConfigs.removeAllForAccount(account.accountId),
-    getStorage().workspaceConfigs.removeAllForAccount(account.accountId),
+    getCoreStore().sandboxConfigs.removeAllForAccount(account.accountId),
+    getCoreStore().workspaceConfigs.removeAllForAccount(account.accountId),
   ]);
   return { ...runtime, filesystemObjectsDeleted, reservedSandboxesReleased };
 }

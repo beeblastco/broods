@@ -56,7 +56,6 @@ mock.module("../src/shared/s3.ts", () => ({
 
 let workspaceHarnessEnabled = true;
 const testStorage = () => ({
-  kind: "convex",
   agents: { getById: getAgentMock },
   sandboxConfigs: { getById: async () => null },
   workspaceConfigs: {
@@ -71,8 +70,8 @@ const testStorage = () => ({
   },
 }) as never;
 
-const { setStorageForTests } = await import("../src/shared/storage/index.ts");
-setStorageForTests(testStorage());
+const { setCoreStoreForTests } = await import("../src/shared/core-store.ts");
+setCoreStoreForTests(testStorage());
 
 afterEach(() => {
   process.env = { ...ORIGINAL_ENV };
@@ -88,11 +87,11 @@ afterEach(() => {
   readS3TextMock.mockClear();
   getAgentMock.mockClear();
   workspaceHarnessEnabled = true;
-  setStorageForTests(testStorage());
+  setCoreStoreForTests(testStorage());
 });
 
 afterAll(() => {
-  setStorageForTests(null);
+  setCoreStoreForTests(null);
 });
 
 describe("session system context", () => {

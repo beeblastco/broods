@@ -10,7 +10,7 @@
 const internal: any = require("@broods/convex/_generated/api").internal;
 import { getConvexClient } from "./client.ts";
 import { logError } from "../log.ts";
-import type { SandboxProvider } from "./sandbox-config.ts";
+import type { SandboxProvider } from "../domain/sandbox-config.ts";
 
 /** Unified (Daytona-aligned) snapshot build status; mirrors sandboxSnapshotsFields.status. */
 export type SandboxSnapshotStatus =

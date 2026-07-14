@@ -20,7 +20,7 @@ import type {
 import { configString, isSandboxGoneError, sandboxReservationKey, shellQuote, stringRecord, truncateText } from "./utils.ts";
 import { callbackSnippet, generateJobId } from "./jobs.ts";
 import { claimSandboxInstance, deleteSandboxInstance, getSandboxExternalId, saveSandboxInstance } from "./instance-store.ts";
-import { upsertSandboxInstance } from "../../shared/storage/sandbox-instances.ts";
+import { upsertSandboxInstance } from "../../shared/convex/sandbox-instances.ts";
 
 export class E2BSandboxExecutor implements SandboxExecutor {
   readonly #config: SandboxExecutorConfig;

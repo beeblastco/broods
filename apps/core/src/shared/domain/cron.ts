@@ -1,6 +1,5 @@
 /**
- * Cron-job types, input normalization, and patch-merge helpers.
- * Shared validation and patch helpers for the Convex cron store.
+ * Cron-job records, input normalization, and patch-merge helpers.
  */
 
 import type { ModelMessage } from "ai";

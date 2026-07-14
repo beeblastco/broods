@@ -5,7 +5,7 @@
 
 import { generateText, type ModelMessage, type SystemModelMessage } from "ai";
 import { DEFAULT_COMPACTION_PROMPT } from "../shared/.generated/compaction-prompt.ts";
-import type { AgentConfig } from "../shared/storage/index.ts";
+import type { AgentConfig } from "../shared/domain/agent-config.ts";
 import { logInfo } from "../shared/log.ts";
 import {
   modelSettingsFromModelConfig,

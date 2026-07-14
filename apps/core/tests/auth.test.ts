@@ -5,9 +5,9 @@
 
 import { createHash } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import type { AgentRecord } from "../src/shared/storage/agents.ts";
-import { hashAccountSecret, type AccountRecord } from "../src/shared/storage/accounts.ts";
-import { resetStorageForTests, setStorageForTests, type StorageProvider } from "../src/shared/storage/index.ts";
+import type { AgentRecord } from "../src/shared/domain/agents.ts";
+import { hashAccountSecret, type AccountRecord } from "../src/shared/domain/accounts.ts";
+import { resetCoreStoreForTests, setCoreStoreForTests, type CoreStore } from "../src/shared/core-store.ts";
 import { extractBearerToken, resolveBearerAuth } from "../src/shared/auth.ts";
 
 const ACCOUNT: AccountRecord = {
@@ -39,7 +39,7 @@ beforeEach(() => {
   accountsById = { [ACCOUNT.accountId]: ACCOUNT };
   accountsBySecretHash = { [ACCOUNT.secretHash]: ACCOUNT };
   agentsById = { [AGENT.agentId]: AGENT };
-  setStorageForTests({
+  setCoreStoreForTests({
     accounts: {
       getById: async (accountId: string) => accountsById[accountId] ?? null,
       getBySecretHash: async (secretHash: string) => accountsBySecretHash[secretHash] ?? null,
@@ -58,11 +58,11 @@ beforeEach(() => {
           }
           : null,
     },
-  } as unknown as StorageProvider);
+  } as unknown as CoreStore);
 });
 
 afterEach(() => {
-  resetStorageForTests();
+  resetCoreStoreForTests();
 });
 
 describe("extractBearerToken", () => {

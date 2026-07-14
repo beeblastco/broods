@@ -3,7 +3,7 @@ import { policyInputForTool } from "../src/harness/policy.ts";
 import {
   normalizeAgentPolicyConfig,
   normalizeAgentPolicyDocument,
-} from "../src/shared/storage/agent-policy.ts";
+} from "../src/shared/domain/agent-policy.ts";
 import type { ResolvedWorkspace } from "../src/shared/workspaces.ts";
 
 const workspaces: ResolvedWorkspace[] = [{

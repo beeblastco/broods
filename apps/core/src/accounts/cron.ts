@@ -9,7 +9,7 @@ import {
   ResourceNotFoundException,
   SchedulerClient,
 } from "@aws-sdk/client-scheduler";
-import type { CronRecord } from "../shared/storage/index.ts";
+import type { CronRecord } from "../shared/domain/cron.ts";
 
 const scheduler = new SchedulerClient({ region: process.env.AWS_REGION });
 

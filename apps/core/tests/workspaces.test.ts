@@ -11,10 +11,10 @@ import {
   workspaceNamespace,
   workspaceNamespaceOwnsReservationKey,
 } from "../src/shared/workspaces.ts";
-import { setStorageForTests } from "../src/shared/storage/index.ts";
+import { setCoreStoreForTests } from "../src/shared/core-store.ts";
 
 afterEach(() => {
-  setStorageForTests(null);
+  setCoreStoreForTests(null);
 });
 
 describe("workspaceNamespace", () => {
@@ -95,7 +95,7 @@ describe("workspaceNamespace", () => {
 
 describe("resolveAgentRuntime", () => {
   it("resolves sandbox + workspace references through storage", async () => {
-    setStorageForTests({
+    setCoreStoreForTests({
       sandboxConfigs: {
         getById: async (_accountId: string, id: string) =>
           id === "sb_1" ? { sandboxId: "sb_1", name: "primary", config: { provider: "lambda", permissionMode: "ask", snapshot: "img_primary" } } : null,
@@ -139,7 +139,7 @@ describe("resolveAgentRuntime", () => {
   });
 
   it("resolves workspace isolation with the active channel workspace scope", async () => {
-    setStorageForTests({
+    setCoreStoreForTests({
       sandboxConfigs: { getById: async () => null },
       workspaceConfigs: {
         getById: async (_accountId: string, id: string) =>
@@ -165,7 +165,7 @@ describe("resolveAgentRuntime", () => {
   });
 
   it("resolves isolated workspaces at the root for non-channel runs", async () => {
-    setStorageForTests({
+    setCoreStoreForTests({
       sandboxConfigs: { getById: async () => null },
       workspaceConfigs: {
         getById: async (_accountId: string, id: string) =>
@@ -182,7 +182,7 @@ describe("resolveAgentRuntime", () => {
   });
 
   it("lets a workspace override the agent-level sandbox per agent", async () => {
-    setStorageForTests({
+    setCoreStoreForTests({
       sandboxConfigs: {
         getById: async (_accountId: string, id: string) => {
           if (id === "sb_default") return { config: { provider: "lambda", permissionMode: "ask" } };
@@ -206,7 +206,7 @@ describe("resolveAgentRuntime", () => {
   });
 
   it("lets a workspace opt out of the agent-level default with sandbox: null", async () => {
-    setStorageForTests({
+    setCoreStoreForTests({
       sandboxConfigs: {
         getById: async (_accountId: string, id: string) =>
           id === "sb_default" ? { config: { provider: "lambda", permissionMode: "ask" } } : null,
@@ -237,7 +237,7 @@ describe("resolveAgentRuntime", () => {
   });
 
   it("resolves a read-only workspace (no agent sandbox, no override) without a sandbox", async () => {
-    setStorageForTests({
+    setCoreStoreForTests({
       sandboxConfigs: { getById: async () => null },
       workspaceConfigs: {
         getById: async (_accountId: string, id: string) =>
@@ -257,7 +257,7 @@ describe("resolveAgentRuntime", () => {
   });
 
   it("reads a read-only workspace directly from S3 when the ref opts out with sandbox: null", async () => {
-    setStorageForTests({
+    setCoreStoreForTests({
       sandboxConfigs: { getById: async () => null },
       workspaceConfigs: {
         getById: async (_accountId: string, id: string) =>
@@ -276,7 +276,7 @@ describe("resolveAgentRuntime", () => {
   });
 
   it("throws a clear error when a referenced sandbox is missing", async () => {
-    setStorageForTests({
+    setCoreStoreForTests({
       sandboxConfigs: { getById: async () => null },
       workspaceConfigs: { getById: async () => null },
     } as never);

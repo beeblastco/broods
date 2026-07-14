@@ -12,7 +12,7 @@ import {
   toPublicWorkspaceConfig,
   type WorkspaceConfig,
   type WorkspaceConfigRecord,
-} from "../src/shared/storage/workspace-config.ts";
+} from "../src/shared/domain/workspace-config.ts";
 
 describe("workspace config", () => {
   it("defaults to an s3 workspace when config is empty or null", () => {

@@ -1,7 +1,7 @@
 /** Convex-backed async agent/tool wrapper contract tests. */
 
 import { afterEach, describe, expect, it, mock } from "bun:test";
-import { runtimePersistence } from "../src/shared/storage/runtime.ts";
+import { runtimePersistence } from "../src/shared/convex/runtime.ts";
 import {
   getAsyncAgentResult,
   markAsyncAgentResultAwaitingApproval,

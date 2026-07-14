@@ -9,16 +9,20 @@
  */
 
 import { normalizeFilesystemNamespace } from "./runtime-keys.ts";
-import { getStorage } from "./storage/index.ts";
+import { getCoreStore } from "./core-store.ts";
 import type {
   AgentChannelWorkspaceScope,
   AgentConfig,
   AgentWorkspaceRef,
+} from "./domain/agent-config.ts";
+import type {
   SandboxConfig,
   SandboxConfigRecord,
+} from "./domain/sandbox-config.ts";
+import type {
   WorkspaceConfig,
-} from "./storage/index.ts";
-import type { WorkspaceStorageConfig } from "./storage/workspace-config.ts";
+  WorkspaceStorageConfig,
+} from "./domain/workspace-config.ts";
 import { resolveSandboxSpecs, type SandboxControlPlane } from "./sandbox-sizes.ts";
 
 // The effective sandbox for a workspace, with the workspace's storage identity and
@@ -112,7 +116,7 @@ export async function resolveAgentRuntime(
   accountId: string | undefined,
   isolationScope: WorkspaceIsolationScope = {},
 ): Promise<ResolvedAgentRuntime> {
-  const storage = getStorage();
+  const storage = getCoreStore();
   const sandboxCache = new Map<string, WorkspaceSandboxConfig>();
 
   // Load (and memoize) a sandbox record so a sandbox shared across workspaces is

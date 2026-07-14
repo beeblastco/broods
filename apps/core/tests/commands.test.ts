@@ -4,7 +4,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
-import { runtimePersistence } from "../src/shared/storage/runtime.ts";
+import { runtimePersistence } from "../src/shared/convex/runtime.ts";
 import type { ChannelActions } from "../src/shared/channels.ts";
 import {
   commands,

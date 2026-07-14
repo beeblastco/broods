@@ -1,7 +1,6 @@
 /**
- * Agent types, input normalization, skill/subagent validation, and the
- * public/redacted projection. The Convex config plane and core storage adapter
- * both import the normalizer at their create/update entry points.
+ * Agent records, input normalization, runtime reference validation, and the
+ * public/redacted projection.
  */
 
 import {
@@ -17,7 +16,7 @@ import {
   SkillNotFoundError,
 } from "../skills.ts";
 import { isPlainObject } from "../object.ts";
-import { getStorage } from "./index.ts";
+import { getCoreStore } from "../core-store.ts";
 
 export type AgentStatus = "active" | "disabled";
 
@@ -94,7 +93,7 @@ export async function validateAgentSkillPaths(accountId: string, config: AgentCo
 
 export async function validateAgentSubagentIds(accountId: string, config: AgentConfig): Promise<void> {
   for (const agentId of config.subagent?.allowed ?? []) {
-    const agent = await getStorage().agents.getById(accountId, agentId);
+    const agent = await getCoreStore().agents.getById(accountId, agentId);
     if (!agent || agent.status !== "active") {
       throw new AgentSubagentNotFoundError(agentId);
     }
@@ -103,7 +102,7 @@ export async function validateAgentSubagentIds(accountId: string, config: AgentC
 
 export async function validateAgentPolicyIds(accountId: string, config: AgentConfig): Promise<void> {
   for (const policyId of config.policy?.policyIds ?? []) {
-    const policy = await getStorage().agentPolicies.getById(accountId, policyId);
+    const policy = await getCoreStore().agentPolicies.getById(accountId, policyId);
     if (!policy || policy.status !== "active") {
       throw new AgentPolicyNotFoundError(policyId);
     }

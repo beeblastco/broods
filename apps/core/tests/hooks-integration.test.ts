@@ -10,8 +10,8 @@ import { describe, expect, it, mock } from "bun:test";
 import { createHash } from "node:crypto";
 import type { ToolSet } from "ai";
 import * as realS3 from "../src/shared/s3.ts";
-import type { AccountHookRecord } from "../src/shared/storage/account-hooks.ts";
-import type { AgentHookEventName } from "../src/shared/storage/agent-config.ts";
+import type { AccountHookRecord } from "../src/shared/domain/account-hooks.ts";
+import type { AgentHookEventName } from "../src/shared/domain/agent-config.ts";
 
 const HOOK_BUNDLE = `export default {
   "agent.started": (ctx, event) => {

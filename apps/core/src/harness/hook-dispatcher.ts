@@ -9,9 +9,9 @@
 
 import type { JSONValue, ToolSet } from "ai";
 import { isPlainObject } from "../shared/object.ts";
-import type { AgentCodeHookConfig, AgentConfig, AgentHookEventName } from "../shared/storage/agent-config.ts";
-import type { AccountHookRecord } from "../shared/storage/account-hooks.ts";
-import { getStorage } from "../shared/storage/index.ts";
+import type { AgentCodeHookConfig, AgentConfig, AgentHookEventName } from "../shared/domain/agent-config.ts";
+import type { AccountHookRecord } from "../shared/domain/account-hooks.ts";
+import { getCoreStore } from "../shared/core-store.ts";
 import type { AgentLifecycleEventPayload } from "./lifecycle.ts";
 import { toLifecycleValue } from "./lifecycle.ts";
 import { runCodeHook } from "./hook-runner.ts";
@@ -178,7 +178,7 @@ export async function applyMessageSendingHook(
 /** Resolve the active hook records referenced by the run's config.hooks.code. */
 async function loadAgentHooks(accountId: string, refs: AgentCodeHookConfig[]): Promise<AccountHookRecord[]> {
   const ids = [...new Set(refs.map((ref) => ref.hookId))];
-  const store = getStorage().accountHooks;
+  const store = getCoreStore().accountHooks;
   const records = await Promise.all(ids.map((id) => store.getById(accountId, id)));
   return records.filter((record): record is AccountHookRecord => record != null && record.status === "active");
 }

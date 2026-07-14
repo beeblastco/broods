@@ -1,5 +1,5 @@
 /**
- * StorageProvider backed by Convex. All calls go through ConvexHttpClient with a
+ * CoreStore backed by Convex. All calls go through ConvexHttpClient with a
  * deploy-key admin auth header.
  *
  * Hosted account lifecycle normally runs through orgLifecycle. The admin-only
@@ -7,48 +7,27 @@
  */
 
 import {
-  encryptAgentConfig,
   decodeStoredAgentConfig,
-  encryptConfigObject,
   decodeStoredConfigObject,
-} from "./agent-config.ts";
-import {
-  normalizeCreateAgentInput,
-  normalizeUpdateAgentInput,
-} from "./agents.ts";
-import {
-  normalizeCreateCronInput,
-  normalizeSchedulerGroupName,
-  normalizeUpdateCronInput,
-} from "./cron.ts";
+} from "../domain/agent-config.ts";
 import type { ModelMessage } from "ai";
-import {
-  normalizeCreateSandboxConfigInput,
-  normalizeUpdateSandboxConfigInput,
-  type SandboxConfig,
-} from "./sandbox-config.ts";
-import {
-  normalizeCreateWorkspaceConfigInput,
-  normalizeUpdateWorkspaceConfigInput,
-  type WorkspaceConfig,
-} from "./workspace-config.ts";
-import {
-  normalizeCreateAccountToolInput,
-  normalizeUpdateAccountToolInput,
-  type AccountToolRecord,
-} from "./account-tools.ts";
-import {
-  normalizeCreateAccountHookInput,
-  normalizeUpdateAccountHookInput,
-  type AccountHookRecord,
-} from "./account-hooks.ts";
-import {
-  normalizeCreateAgentPolicyInput,
-  normalizeUpdateAgentPolicyInput,
-  type AgentPolicyRecord,
-} from "./agent-policy.ts";
+import type { SandboxConfig } from "../domain/sandbox-config.ts";
+import type { WorkspaceConfig } from "../domain/workspace-config.ts";
+import type { AccountToolRecord } from "../domain/account-tools.ts";
+import type { AccountHookRecord } from "../domain/account-hooks.ts";
+import type { AgentPolicyRecord } from "../domain/agent-policy.ts";
 import { usage } from "./usage.ts";
-import { createAccountId, createAccountSecret, hashAccountSecret, normalizeCreateAccountInput, normalizeUpdateAccountInput } from "./accounts.ts";
+import {
+  createAccountId,
+  createAccountSecret,
+  hashAccountSecret,
+  normalizeCreateAccountInput,
+  type AccountRecord,
+} from "../domain/accounts.ts";
+import type { AgentRecord } from "../domain/agents.ts";
+import type { CronRecord } from "../domain/cron.ts";
+import type { SandboxConfigRecord } from "../domain/sandbox-config.ts";
+import type { WorkspaceConfigRecord } from "../domain/workspace-config.ts";
 
 // ConvexHttpClient's typed `query`/`mutation` only accept public function
 // refs; the backend package exposes internalQuery / internalMutation, so we
@@ -59,24 +38,18 @@ import { createAccountId, createAccountSecret, hashAccountSecret, normalizeCreat
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const internal: any = require("@broods/convex/_generated/api").internal;
 import type {
-  AccountRecord,
   AgentDeploymentRecord,
   AgentDeploymentStore,
-  AgentRecord,
   AccountStore,
   AgentPolicyStore,
   AccountHookStore,
   AccountToolStore,
   AgentStore,
-  CronRecord,
-  CronRunRecord,
   CronStore,
-  SandboxConfigRecord,
   SandboxConfigStore,
-  StorageProvider,
-  WorkspaceConfigRecord,
+  CoreStore,
   WorkspaceConfigStore,
-} from "./types.ts";
+} from "../core-store.ts";
 import { getConvexClient } from "./client.ts";
 
 const ACCOUNT_DELETE_MAX_BATCHES = 100_000;
@@ -160,19 +133,6 @@ interface ConvexCronDoc {
   lastError?: string;
 }
 
-interface ConvexCronRunDoc {
-  _id: string;
-  accountId: string;
-  cronId: string;
-  eventId: string;
-  conversationKey: string;
-  status: "started" | "completed" | "failed";
-  result?: unknown;
-  error?: string;
-  startedAt: number;
-  completedAt?: number;
-}
-
 function cronFromConvex(doc: ConvexCronDoc | null): CronRecord | null {
   if (!doc) return null;
   return {
@@ -196,22 +156,6 @@ function cronFromConvex(doc: ConvexCronDoc | null): CronRecord | null {
   };
 }
 
-function cronRunFromConvex(doc: ConvexCronRunDoc | null): CronRunRecord | null {
-  if (!doc) return null;
-  return {
-    accountId: doc.accountId,
-    cronId: doc.cronId,
-    runId: doc._id,
-    eventId: doc.eventId,
-    conversationKey: doc.conversationKey,
-    status: doc.status,
-    ...(doc.result !== undefined ? { result: doc.result } : {}),
-    ...(doc.error ? { error: doc.error } : {}),
-    startedAt: new Date(doc.startedAt).toISOString(),
-    ...(doc.completedAt ? { completedAt: new Date(doc.completedAt).toISOString() } : {}),
-  };
-}
-
 const accounts: AccountStore = {
   async getById(accountId) {
     const doc = await getConvexClient().query(internal.accounts.getById, {
@@ -224,14 +168,6 @@ const accounts: AccountStore = {
       secretHash,
     });
     return accountFromConvex(doc as ConvexAccountDoc | null);
-  },
-  async getByOrgId(orgId) {
-    const doc = await getConvexClient().query(internal.accounts.getByOrgId, { orgId });
-    return accountFromConvex(doc as ConvexAccountDoc | null);
-  },
-  async list() {
-    const docs = (await getConvexClient().query(internal.accounts.list, {})) as ConvexAccountDoc[];
-    return docs.map((d) => accountFromConvex(d)!).filter(Boolean);
   },
   async create(input) {
     const normalized = normalizeCreateAccountInput(input);
@@ -247,29 +183,12 @@ const accounts: AccountStore = {
     if (!account) throw new Error("Failed to fetch created account");
     return { account, secret };
   },
-  async update(accountId, rawPatch) {
-    const patch = normalizeUpdateAccountInput(rawPatch);
-    const doc = await getConvexClient().mutation(internal.accounts.update, {
-      accountId: accountId as any,
-      ...patch,
-    });
-    return accountFromConvex(doc as ConvexAccountDoc | null);
-  },
   async disable(accountId) {
     const doc = await getConvexClient().mutation(internal.accounts.update, {
       accountId: accountId as any,
       status: "disabled",
     });
     return accountFromConvex(doc as ConvexAccountDoc | null);
-  },
-  async rotateSecret(accountId) {
-    const secret = createAccountSecret();
-    const doc = await getConvexClient().mutation(internal.accounts.update, {
-      accountId: accountId as any,
-      secretHash: hashAccountSecret(secret),
-    });
-    const account = accountFromConvex(doc as ConvexAccountDoc | null);
-    return account ? { account, secret } : null;
   },
   async remove(accountId) {
     for (let batch = 0; batch < ACCOUNT_DELETE_MAX_BATCHES; batch += 1) {
@@ -290,57 +209,17 @@ const agents: AgentStore = {
     });
     return agentFromConvex(doc as ConvexAgentDoc | null);
   },
-  async list(accountId) {
+  async removeAllForAccount(accountId) {
     const docs = (await getConvexClient().query(internal.agents.list, {
       accountId: accountId as any,
     })) as ConvexAgentDoc[];
-    return docs.map((d) => agentFromConvex(d)!).filter(Boolean);
-  },
-  async create(accountId, input) {
-    const normalized = await normalizeCreateAgentInput(accountId, input);
-    const encrypted = encryptAgentConfig(normalized.config);
-    const id = (await getConvexClient().mutation(internal.agents.create, {
-      accountId: accountId as any,
-      name: normalized.name,
-      description: normalized.description,
-      encryptedConfig: encrypted.ciphertext,
-      encryptionIv: encrypted.iv,
-      encryptionTag: encrypted.tag,
-    })) as string;
-    const created = await this.getById(accountId, id);
-    if (!created) throw new Error("Failed to fetch created agent");
-    return created;
-  },
-  async update(accountId, agentId, rawPatch) {
-    const existing = await this.getById(accountId, agentId);
-    if (!existing) return null;
-    const patch = await normalizeUpdateAgentInput(accountId, existing.config, rawPatch);
-    const encrypted = encryptAgentConfig(patch.config);
-    const args: Record<string, unknown> = {
-      accountId: accountId as any,
-      agentId: agentId as any,
-      encryptedConfig: encrypted.ciphertext,
-      encryptionIv: encrypted.iv,
-      encryptionTag: encrypted.tag,
-    };
-    if (patch.name !== undefined) args.name = patch.name;
-    if (patch.description !== undefined) args.description = patch.description ?? undefined;
-    await getConvexClient().mutation(internal.agents.update, args as any);
-    return this.getById(accountId, agentId);
-  },
-  async remove(accountId, agentId) {
-    await getConvexClient().mutation(internal.agents.remove, {
-      accountId: accountId as any,
-      agentId: agentId as any,
-    });
-    return true;
-  },
-  async removeAllForAccount(accountId) {
-    const list = await this.list(accountId);
-    for (const a of list) {
-      await this.remove(accountId, a.agentId);
+    for (const doc of docs) {
+      await getConvexClient().mutation(internal.agents.remove, {
+        accountId: accountId as any,
+        agentId: doc._id as any,
+      });
     }
-    return list.length;
+    return docs.length;
   },
 };
 
@@ -373,43 +252,6 @@ const crons: CronStore = {
       accountId: accountId as any,
     })) as ConvexCronDoc[];
     return docs.map((d) => cronFromConvex(d)!).filter(Boolean);
-  },
-  async create(accountId, input, options) {
-    const normalized = normalizeCreateCronInput(input);
-    const schedulerGroupName = normalizeSchedulerGroupName(options.schedulerGroupName);
-    const schedulerName = `${accountId}-${cryptoRandomId()}`;
-    const id = (await getConvexClient().mutation(internal.cron.create, {
-      accountId: accountId as any,
-      name: normalized.name,
-      description: normalized.description,
-      agentId: normalized.agentId as any,
-      events: normalized.events,
-      conversationKey: normalized.conversationKey,
-      scheduleExpression: normalized.scheduleExpression,
-      timezone: normalized.timezone,
-      status: normalized.status,
-      schedulerName,
-      schedulerGroupName,
-    })) as string;
-    const created = await this.getById(accountId, id);
-    if (!created) throw new Error("Failed to fetch created cron job");
-    return created;
-  },
-  async update(accountId, cronId, rawPatch) {
-    const patch = normalizeUpdateCronInput(rawPatch);
-    await getConvexClient().mutation(internal.cron.update, {
-      accountId: accountId as any,
-      cronId: cronId as any,
-      name: patch.name,
-      description: patch.description,
-      agentId: patch.agentId as any,
-      events: patch.events,
-      conversationKey: patch.conversationKey,
-      scheduleExpression: patch.scheduleExpression,
-      timezone: patch.timezone,
-      status: patch.status,
-    });
-    return this.getById(accountId, cronId);
   },
   async remove(accountId, cronId) {
     await getConvexClient().mutation(internal.cron.remove, {
@@ -470,19 +312,7 @@ const crons: CronStore = {
       error,
     });
   },
-  async listRuns(accountId, cronId, limit) {
-    const docs = await getConvexClient().query(internal.cron.listRuns, {
-      accountId: accountId as any,
-      cronId: cronId as any,
-      limit,
-    }) as ConvexCronRunDoc[];
-    return docs.map((d) => cronRunFromConvex(d)!).filter(Boolean);
-  },
 };
-
-function cryptoRandomId(): string {
-  return Math.random().toString(36).slice(2, 14);
-}
 
 interface ConvexSandboxConfigDoc {
   _id: string;
@@ -559,51 +389,17 @@ const sandboxConfigs: SandboxConfigStore = {
     })) as ConvexSandboxConfigDoc[];
     return docs.map((d) => sandboxConfigFromConvex(d)!).filter(Boolean);
   },
-  async create(accountId, input) {
-    const normalized = normalizeCreateSandboxConfigInput(input);
-    const encrypted = encryptConfigObject(normalized.config);
-    const id = (await getConvexClient().mutation(internal.sandboxConfigs.create, {
-      accountId: accountId as any,
-      name: normalized.name,
-      description: normalized.description,
-      encryptedConfig: encrypted.ciphertext,
-      encryptionIv: encrypted.iv,
-      encryptionTag: encrypted.tag,
-    })) as string;
-    const created = await this.getById(accountId, id);
-    if (!created) throw new Error("Failed to fetch created sandbox config");
-    return created;
-  },
-  async update(accountId, sandboxId, rawPatch) {
-    const existing = await this.getById(accountId, sandboxId);
-    if (!existing) return null;
-    const patch = normalizeUpdateSandboxConfigInput(existing.config, rawPatch);
-    const encrypted = encryptConfigObject(patch.config);
-    const args: Record<string, unknown> = {
-      accountId: accountId as any,
-      sandboxId: sandboxId as any,
-      encryptedConfig: encrypted.ciphertext,
-      encryptionIv: encrypted.iv,
-      encryptionTag: encrypted.tag,
-    };
-    if (patch.name !== undefined) args.name = patch.name;
-    if (patch.description !== undefined) args.description = patch.description ?? undefined;
-    await getConvexClient().mutation(internal.sandboxConfigs.update, args as any);
-    return this.getById(accountId, sandboxId);
-  },
-  async remove(accountId, sandboxId) {
-    await getConvexClient().mutation(internal.sandboxConfigs.remove, {
-      accountId: accountId as any,
-      sandboxId: sandboxId as any,
-    });
-    return true;
-  },
   async removeAllForAccount(accountId) {
-    const list = await this.list(accountId);
-    for (const r of list) {
-      await this.remove(accountId, r.sandboxId);
+    const docs = (await getConvexClient().query(internal.sandboxConfigs.list, {
+      accountId: accountId as any,
+    })) as ConvexSandboxConfigDoc[];
+    for (const doc of docs) {
+      await getConvexClient().mutation(internal.sandboxConfigs.remove, {
+        accountId: accountId as any,
+        sandboxId: doc._id as any,
+      });
     }
-    return list.length;
+    return docs.length;
   },
 };
 
@@ -621,45 +417,17 @@ const workspaceConfigs: WorkspaceConfigStore = {
     })) as ConvexWorkspaceConfigDoc[];
     return docs.map((d) => workspaceConfigFromConvex(d)!).filter(Boolean);
   },
-  async create(accountId, input) {
-    const normalized = normalizeCreateWorkspaceConfigInput(input);
-    const id = (await getConvexClient().mutation(internal.workspaceConfigs.create, {
-      accountId: accountId as any,
-      name: normalized.name,
-      description: normalized.description,
-      config: normalized.config as any,
-    })) as string;
-    const created = await this.getById(accountId, id);
-    if (!created) throw new Error("Failed to fetch created workspace config");
-    return created;
-  },
-  async update(accountId, workspaceId, rawPatch) {
-    const existing = await this.getById(accountId, workspaceId);
-    if (!existing) return null;
-    const patch = normalizeUpdateWorkspaceConfigInput(existing.config, rawPatch);
-    const args: Record<string, unknown> = {
-      accountId: accountId as any,
-      workspaceId: workspaceId as any,
-      config: patch.config,
-    };
-    if (patch.name !== undefined) args.name = patch.name;
-    if (patch.description !== undefined) args.description = patch.description ?? undefined;
-    await getConvexClient().mutation(internal.workspaceConfigs.update, args as any);
-    return this.getById(accountId, workspaceId);
-  },
-  async remove(accountId, workspaceId) {
-    await getConvexClient().mutation(internal.workspaceConfigs.remove, {
-      accountId: accountId as any,
-      workspaceId: workspaceId as any,
-    });
-    return true;
-  },
   async removeAllForAccount(accountId) {
-    const list = await this.list(accountId);
-    for (const r of list) {
-      await this.remove(accountId, r.workspaceId);
+    const docs = (await getConvexClient().query(internal.workspaceConfigs.list, {
+      accountId: accountId as any,
+    })) as ConvexWorkspaceConfigDoc[];
+    for (const doc of docs) {
+      await getConvexClient().mutation(internal.workspaceConfigs.remove, {
+        accountId: accountId as any,
+        workspaceId: doc._id as any,
+      });
     }
-    return list.length;
+    return docs.length;
   },
 };
 
@@ -764,59 +532,6 @@ const agentPolicies: AgentPolicyStore = {
 
     return agentPolicyFromConvex(doc as ConvexAgentPolicyDoc | null);
   },
-  async list(accountId) {
-    const docs = (await getConvexClient().query(internal.agentPolicies.list, {
-      accountId: accountId as any,
-    })) as ConvexAgentPolicyDoc[];
-
-    return docs.map((d) => agentPolicyFromConvex(d)!).filter(Boolean);
-  },
-  async create(accountId, input) {
-    const normalized = normalizeCreateAgentPolicyInput(input);
-    const id = (await getConvexClient().mutation(internal.agentPolicies.createInternal, {
-      accountId: accountId as any,
-      name: normalized.name,
-      description: normalized.description,
-      document: normalized.document as any,
-    })) as string;
-    const created = await this.getById(accountId, id);
-    if (!created) throw new Error("Failed to fetch created agent policy");
-
-    return created;
-  },
-  async update(accountId, policyId, rawPatch) {
-    const patch = normalizeUpdateAgentPolicyInput(rawPatch);
-    await getConvexClient().mutation(internal.agentPolicies.updateInternal, {
-      accountId: accountId as any,
-      policyId: policyId,
-      name: patch.name,
-      description: patch.description,
-      document: patch.document as any,
-      status: patch.status,
-    });
-
-    return this.getById(accountId, policyId);
-  },
-  async remove(accountId, policyId) {
-    // Missing/foreign/already-deleted policies must report false so the
-    // account-manage handler can answer 404 instead of a spurious success.
-    const existing = await this.getById(accountId, policyId);
-    if (!existing) return false;
-    await getConvexClient().mutation(internal.agentPolicies.removeInternal, {
-      accountId: accountId as any,
-      policyId: policyId,
-    });
-
-    return true;
-  },
-  async removeAllForAccount(accountId) {
-    const list = await this.list(accountId);
-    for (const policyRecord of list) {
-      await this.remove(accountId, policyRecord.policyId);
-    }
-
-    return list.length;
-  },
 };
 
 const accountTools: AccountToolStore = {
@@ -827,50 +542,17 @@ const accountTools: AccountToolStore = {
     });
     return accountToolFromConvex(doc as ConvexAccountToolDoc | null);
   },
-  async list(accountId) {
+  async removeAllForAccount(accountId) {
     const docs = (await getConvexClient().query(internal.accountTools.list, {
       accountId: accountId as any,
     })) as ConvexAccountToolDoc[];
-    return docs.map((d) => accountToolFromConvex(d)!).filter(Boolean);
-  },
-  async create(accountId, input) {
-    const normalized = normalizeCreateAccountToolInput(input);
-    const id = (await getConvexClient().mutation(internal.accountTools.create, {
-      accountId: accountId as any,
-      name: normalized.name,
-      description: normalized.description,
-      inputSchema: normalized.inputSchema as any,
-      bundleStorageKey: normalized.bundleStorageKey,
-      sha256: normalized.sha256,
-      runtime: normalized.runtime ?? "sandbox",
-      defaultConfig: normalized.defaultConfig,
-    })) as string;
-    const created = await this.getById(accountId, id);
-    if (!created) throw new Error("Failed to fetch created account tool");
-    return created;
-  },
-  async update(accountId, toolId, rawPatch) {
-    const patch = normalizeUpdateAccountToolInput(rawPatch);
-    await getConvexClient().mutation(internal.accountTools.update, {
-      accountId: accountId as any,
-      toolId: toolId as any,
-      ...patch,
-    } as any);
-    return this.getById(accountId, toolId);
-  },
-  async remove(accountId, toolId) {
-    await getConvexClient().mutation(internal.accountTools.remove, {
-      accountId: accountId as any,
-      toolId: toolId as any,
-    });
-    return true;
-  },
-  async removeAllForAccount(accountId) {
-    const list = await this.list(accountId);
-    for (const toolRecord of list) {
-      await this.remove(accountId, toolRecord.toolId);
+    for (const doc of docs) {
+      await getConvexClient().mutation(internal.accountTools.remove, {
+        accountId: accountId as any,
+        toolId: doc._id as any,
+      });
     }
-    return list.length;
+    return docs.length;
   },
 };
 
@@ -882,53 +564,21 @@ const accountHooks: AccountHookStore = {
     });
     return accountHookFromConvex(doc as ConvexAccountHookDoc | null);
   },
-  async list(accountId) {
+  async removeAllForAccount(accountId) {
     const docs = (await getConvexClient().query(internal.accountHooks.list, {
       accountId: accountId as any,
     })) as ConvexAccountHookDoc[];
-    return docs.map((d) => accountHookFromConvex(d)!).filter(Boolean);
-  },
-  async create(accountId, input) {
-    const normalized = normalizeCreateAccountHookInput(input);
-    const id = (await getConvexClient().mutation(internal.accountHooks.create, {
-      accountId: accountId as any,
-      name: normalized.name,
-      description: normalized.description,
-      events: normalized.events,
-      bundleStorageKey: normalized.bundleStorageKey,
-      sha256: normalized.sha256,
-    })) as string;
-    const created = await this.getById(accountId, id);
-    if (!created) throw new Error("Failed to fetch created account hook");
-    return created;
-  },
-  async update(accountId, hookId, rawPatch) {
-    const patch = normalizeUpdateAccountHookInput(rawPatch);
-    await getConvexClient().mutation(internal.accountHooks.update, {
-      accountId: accountId as any,
-      hookId: hookId as any,
-      ...patch,
-    } as any);
-    return this.getById(accountId, hookId);
-  },
-  async remove(accountId, hookId) {
-    await getConvexClient().mutation(internal.accountHooks.remove, {
-      accountId: accountId as any,
-      hookId: hookId as any,
-    });
-    return true;
-  },
-  async removeAllForAccount(accountId) {
-    const list = await this.list(accountId);
-    for (const hookRecord of list) {
-      await this.remove(accountId, hookRecord.hookId);
+    for (const doc of docs) {
+      await getConvexClient().mutation(internal.accountHooks.remove, {
+        accountId: accountId as any,
+        hookId: doc._id as any,
+      });
     }
-    return list.length;
+    return docs.length;
   },
 };
 
-export const storageProvider: StorageProvider = {
-  kind: "convex",
+export const convexCoreStore: CoreStore = {
   accounts,
   agents,
   agentDeployments,

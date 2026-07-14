@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, it } from "bun:test";
 import { handler } from "../src/accounts/handler.ts";
 import type { CoreRequest } from "../src/shared/http.ts";
-import { hashAccountSecret } from "../src/shared/storage/accounts.ts";
-import { resetStorageForTests, setStorageForTests } from "../src/shared/storage/index.ts";
+import { hashAccountSecret } from "../src/shared/domain/accounts.ts";
+import { resetCoreStoreForTests, setCoreStoreForTests } from "../src/shared/core-store.ts";
 
 const originalAdminSecret = process.env.ADMIN_ACCOUNT_SECRET;
 const originalServiceSecret = process.env.SERVICE_AUTH_SECRET;
@@ -42,8 +42,8 @@ afterEach(() => {
   } else {
     process.env.CRON_SCHEDULER_GROUP_NAME = originalSchedulerGroupName;
   }
-  setStorageForTests(null);
-  resetStorageForTests();
+  setCoreStoreForTests(null);
+  resetCoreStoreForTests();
 });
 
 describe("account management HTTP handler", () => {
@@ -62,7 +62,7 @@ describe("account management HTTP handler", () => {
   });
 
   it("requires bearer auth to create an account", async () => {
-    setStorageForTests(createFakeStorage({
+    setCoreStoreForTests(createFakeStorage({
       async create() {
         throw new Error("create should not be called");
       },
@@ -80,7 +80,7 @@ describe("account management HTTP handler", () => {
   it("rejects account-secret auth when creating an account", async () => {
     process.env.ADMIN_ACCOUNT_SECRET = "admin-secret";
     const accountSecret = "fp_acct_existing";
-    setStorageForTests(createFakeStorage({
+    setCoreStoreForTests(createFakeStorage({
       accounts: {
         async getBySecretHash(secretHash: string) {
           return secretHash === hashAccountSecret(accountSecret) ? fakeAccount() : null;
@@ -104,7 +104,7 @@ describe("account management HTTP handler", () => {
 
   it("returns create account one-time secret as secret for admin auth", async () => {
     process.env.ADMIN_ACCOUNT_SECRET = "admin-secret";
-    setStorageForTests(createFakeStorage({
+    setCoreStoreForTests(createFakeStorage({
       async create() {
         return {
           account: fakeAccount(),
@@ -134,7 +134,7 @@ describe("account management HTTP handler", () => {
   it("no longer serves account metadata or rotation routes", async () => {
     process.env.ADMIN_ACCOUNT_SECRET = "admin-secret";
     process.env.SERVICE_AUTH_SECRET = "service-secret";
-    setStorageForTests(createFakeStorage({}));
+    setCoreStoreForTests(createFakeStorage({}));
 
     for (const path of ["/accounts", "/accounts/acct_test", "/accounts/acct_test/rotate-secret"]) {
       const adminResponse = await handler(createEvent(path.endsWith("rotate-secret") ? "POST" : "GET", path, {
@@ -173,7 +173,7 @@ describe("account management HTTP handler", () => {
   it("no longer serves cron CRUD — those routes live in the Convex config plane", async () => {
     process.env.ADMIN_ACCOUNT_SECRET = "admin-secret";
     process.env.SERVICE_AUTH_SECRET = "service-secret";
-    setStorageForTests(createFakeStorage({}));
+    setCoreStoreForTests(createFakeStorage({}));
 
     // Admin cron routes were removed with the rest of the cron plane.
     const adminResponse = await handler(createEvent("GET", "/accounts/acct_test/crons", {
@@ -209,7 +209,7 @@ describe("account management HTTP handler", () => {
 
   it("rejects service tokens on retained account delete", async () => {
     process.env.SERVICE_AUTH_SECRET = "service-secret";
-    setStorageForTests(createFakeStorage({}));
+    setCoreStoreForTests(createFakeStorage({}));
     const serviceHeaders = {
       authorization: "Bearer service-secret",
       "x-account-id": "acct_test",
@@ -229,7 +229,7 @@ describe("account management HTTP handler", () => {
       status: "disabled" as const,
     };
     let disableCalls = 0;
-    setStorageForTests(createFakeStorage({
+    setCoreStoreForTests(createFakeStorage({
       accounts: {
         async getBySecretHash(secretHash: string) {
           return secretHash === disabledAccount.secretHash ? disabledAccount : null;
@@ -256,7 +256,7 @@ describe("account management HTTP handler", () => {
     process.env.ADMIN_ACCOUNT_SECRET = "admin-secret";
     const disabledAccount = { ...fakeAccount(), status: "disabled" as const };
     let disableCalls = 0;
-    setStorageForTests(createFakeStorage({
+    setCoreStoreForTests(createFakeStorage({
       accounts: {
         async getById(accountId: string) {
           return accountId === disabledAccount.accountId ? disabledAccount : null;
@@ -330,7 +330,6 @@ function fakeAgent(overrides: Partial<{ status: "active" | "disabled" }> = {}) {
 
 function createFakeStorage(overrides: Record<string, unknown>) {
   return {
-    kind: "fake",
     accounts: {
       async getById() { return fakeAccount(); },
       async getBySecretHash() { return null; },

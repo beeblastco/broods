@@ -1,7 +1,7 @@
 /**
  * Bearer-token auth: admin secret, service token (for cherry-coke
  * server-side actions), and account-secret hash lookup. Persistence is
- * reached via `getStorage().accounts.*` so the auth path is identical
+ * reached via `getCoreStore().accounts.*` so the auth path is identical
  * through the Convex-backed account store.
  */
 
@@ -10,8 +10,8 @@ import { optionalEnv } from "./env.ts";
 import {
   hashAccountSecret,
   type AccountRecord,
-} from "./storage/accounts.ts";
-import { getStorage } from "./storage/index.ts";
+} from "./domain/accounts.ts";
+import { getCoreStore } from "./core-store.ts";
 
 export type AuthContext =
   | { kind: "admin" }
@@ -55,14 +55,14 @@ export async function resolveBearerAuth(
   if (serviceSecret && timingSafeStringEqual(token, serviceSecret)) {
     const accountId = headers["x-account-id"] ?? headers["X-Account-Id"];
     if (!accountId) return null;
-    const account = await getStorage().accounts.getById(accountId);
+    const account = await getCoreStore().accounts.getById(accountId);
     if (!account || account.status !== "active") return null;
     return { kind: "account", account, viaServiceToken: true };
   }
 
-  const deployment = await getStorage().agentDeployments.getByApiKeyHash(sha256Hex(token));
+  const deployment = await getCoreStore().agentDeployments.getByApiKeyHash(sha256Hex(token));
   if (deployment) {
-    const account = await getStorage().accounts.getById(deployment.accountId);
+    const account = await getCoreStore().accounts.getById(deployment.accountId);
     if (!account || account.status !== "active") return null;
 
     return {
@@ -74,7 +74,7 @@ export async function resolveBearerAuth(
     };
   }
 
-  const account = await getStorage().accounts.getBySecretHash(hashAccountSecret(token));
+  const account = await getCoreStore().accounts.getBySecretHash(hashAccountSecret(token));
   if (!account || (account.status !== "active" && options.allowDisabledAccountSecret !== true)) return null;
   return { kind: "account", account };
 }

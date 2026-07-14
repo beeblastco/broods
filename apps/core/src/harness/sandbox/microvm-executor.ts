@@ -51,7 +51,7 @@ import type {
 import { configString, sandboxReservationKey, stringRecord, truncateText } from "./utils.ts";
 import { generateJobId, launchScript, lifecycleScript, logsScript, parseJobStatus, statusScript, stopScript } from "./jobs.ts";
 import { claimSandboxInstance, deleteSandboxInstance, getSandboxExternalId, saveSandboxInstance } from "./instance-store.ts";
-import { upsertSandboxInstance } from "../../shared/storage/sandbox-instances.ts";
+import { upsertSandboxInstance } from "../../shared/convex/sandbox-instances.ts";
 
 // The image serves the exec API on this port; the proxy maps external 443 -> 8080.
 const MICROVM_PROXY_PORT = 8080;

@@ -5,7 +5,7 @@
  */
 
 import type { JSONValue } from "ai";
-import type { AgentConfig, AgentLifecycleEventName } from "../shared/storage/index.ts";
+import type { AgentConfig, AgentLifecycleEventName } from "../shared/domain/agent-config.ts";
 import { logError } from "../shared/log.ts";
 import { fireWebhook } from "../shared/webhook.ts";
 import type { Session } from "./session.ts";
