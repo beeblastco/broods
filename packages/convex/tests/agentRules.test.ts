@@ -57,15 +57,32 @@ describe("agent rules", () => {
     });
 
     it("validates skills, subagents, policies, handoffs, and channels", () => {
-        expect(() => normalizeAgentConfig({ skills: { allowed: [1] } })).toThrow("config.skills.allowed must be an array of strings");
+        expect(() => normalizeAgentConfig({ skills: { allowed: [1] } })).toThrow("config.skills.allowed must be an array of non-empty strings");
         expect(() => normalizeAgentConfig({ subagent: { context: "same" } })).toThrow("config.subagent.context must be one of: new, inherited");
         expect(normalizeAgentConfig({ policy: { enabled: true } }).policy).toBeUndefined();
-        expect(() => normalizeAgentConfig({ policy: { policyIds: [1] } })).toThrow("config.policy.policyIds must be an array of strings");
+        expect(() => normalizeAgentConfig({ policy: { policyIds: [1] } })).toThrow("config.policy.policyIds must be an array of non-empty strings");
         expect(() => normalizeAgentConfig({ tools: { handoffs: {} } })).toThrow("config.tools.handoffs.pancake is required");
         expect(() => normalizeAgentConfig({ channels: { slack: { id: "slack", workspaceScope: { level: "channel", alias: "x" } } } }))
             .toThrow("config.channels.slack.workspaceScope.alias is only supported when config.channels.slack.workspaceScope.level is conversation");
         expect(() => normalizeAgentConfig({ channels: { zalo: { id: "zalo", webhookSecret: "short" } } }))
             .toThrow("config.channels.zalo.webhookSecret must be 8 to 256 characters");
+    });
+
+    it("accepts native Convex resource ids and rejects deprecated public ids", () => {
+        const toolId = "qs78zwc4z4q5ysxm74fgrhd13s88xxt";
+        const hookId = "k17zwc4z4q5ysxm74fgrhd13s88xxtv";
+
+        expect(normalizeAgentConfig({
+            tools: { [toolId]: { enabled: true } },
+            hooks: { code: [{ hookId }] },
+        })).toMatchObject({
+            tools: { [toolId]: { enabled: true } },
+            hooks: { code: [{ hookId }] },
+        });
+        expect(() => normalizeAgentConfig({ tools: { tool_legacy: { enabled: true } } }))
+            .toThrow("config.tools.tool_legacy is not a supported tool");
+        expect(() => normalizeAgentConfig({ hooks: { code: [{ hookId: "hook_legacy" }] } }))
+            .toThrow("config.hooks.code[0].hookId must be a native Convex document id");
     });
 
     it("merges patches and redacts secrets", () => {

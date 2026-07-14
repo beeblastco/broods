@@ -131,7 +131,7 @@ function fakeTool(execute: () => unknown): ToolSet[string] {
 function indexFor(events: AgentHookEventName[]): Map<AgentHookEventName, AccountHookRecord[]> {
   const record: AccountHookRecord = {
     accountId: "acct_test",
-    hookId: "hook_demo",
+    hookId: "k17zwc4z4q5ysxm74fgrhd13s88xxtv",
     name: "policy_hook",
     events,
     bundleStorageKey: "account-hooks/acct_test/bundles/x.mjs",

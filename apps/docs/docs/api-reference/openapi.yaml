@@ -3085,7 +3085,7 @@ components:
           type: string
         toolId:
           type: string
-          example: tool_abc123
+          example: qs78zwc4z4q5ysxm74fgrhd13s88xxt
         name:
           type: string
         description:

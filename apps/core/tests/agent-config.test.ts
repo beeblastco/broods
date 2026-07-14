@@ -13,4 +13,21 @@ describe("agent config validation", () => {
     expect(normalizeAgentConfigPatch({ skills: { allowed: ["acct_test/review"] } }))
       .toEqual({ skills: { allowed: ["acct_test/review"] } });
   });
+
+  it("accepts native Convex resource ids and rejects deprecated public ids", () => {
+    const toolId = "qs78zwc4z4q5ysxm74fgrhd13s88xxt";
+    const hookId = "k17zwc4z4q5ysxm74fgrhd13s88xxtv";
+
+    expect(normalizeAgentConfig({
+      tools: { [toolId]: { enabled: true } },
+      hooks: { code: [{ hookId }] },
+    })).toMatchObject({
+      tools: { [toolId]: { enabled: true } },
+      hooks: { code: [{ hookId }] },
+    });
+    expect(() => normalizeAgentConfig({ tools: { tool_legacy: { enabled: true } } }))
+      .toThrow("config.tools.tool_legacy is not a supported tool");
+    expect(() => normalizeAgentConfig({ hooks: { code: [{ hookId: "hook_legacy" }] } }))
+      .toThrow("config.hooks.code[0].hookId must be a native Convex document id");
+  });
 });

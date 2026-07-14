@@ -32,7 +32,7 @@ Deploy the full serverless infrastructure to your own AWS account for complete c
 
 ## Convex-only storage cutover
 
-Issue #32 removes the runtime's legacy DynamoDB tables and adapters. Deployment creates new Convex runtime tables and starts them empty; DynamoDB-only conversation and operational rows are not copied automatically. Review retention/export needs before applying the infrastructure diff, because the deploy removes the legacy tables from desired state.
+Issue #32 removes the runtime's legacy DynamoDB tables and adapters. Deployment creates new Convex runtime tables and starts them empty; DynamoDB-only conversation and operational rows are not copied automatically. Deprecated account tool and hook identifiers are not accepted after the cutover; recreate affected accounts or resources so their configurations use native Convex document IDs. Review retention/export needs before applying the infrastructure diff, because the deploy removes the legacy tables from desired state.
 
 ### Prerequisites
 

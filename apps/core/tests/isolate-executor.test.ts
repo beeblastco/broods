@@ -399,7 +399,7 @@ async function runRealRunner(
 function accountToolRecord(runtime: AccountToolRecord["runtime"]): AccountToolRecord {
   return {
     accountId: "acct_test",
-    toolId: "tool_abc123",
+    toolId: "qs78zwc4z4q5ysxm74fgrhd13s88xxt",
     name: "test_tool",
     description: "Uploaded tool.",
     inputSchema: { type: "object", properties: {} },

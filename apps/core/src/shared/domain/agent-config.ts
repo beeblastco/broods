@@ -30,6 +30,7 @@ const CONFIG_ENCRYPTION_ALGORITHM = "aes-256-gcm";
 const REDACTED_SECRET_VALUE = "********";
 const AGENT_MAX_TURN_LIMIT = 100;
 const SESSION_MAX_CONTEXT_LENGTH_LIMIT = 500_000;
+const CONVEX_DOCUMENT_ID_PATTERN = /^[a-z0-9]{20,}$/;
 
 const AGENT_LIFECYCLE_EVENT_NAMES = [
   "agent.started",
@@ -784,8 +785,8 @@ function normalizeCodeHookConfig(value: unknown, path: string): void {
   }
 
   const config = value as Record<string, unknown>;
-  if (typeof config.hookId !== "string" || config.hookId.trim().length === 0) {
-    throw new Error(`${path}.hookId is required`);
+  if (typeof config.hookId !== "string" || !CONVEX_DOCUMENT_ID_PATTERN.test(config.hookId)) {
+    throw new Error(`${path}.hookId must be a native Convex document id`);
   }
   assertOptionalBoolean(config.enabled, `${path}.enabled`);
   if (config.events !== undefined) {

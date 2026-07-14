@@ -4,7 +4,7 @@
  */
 
 import type { JSONSchema7 } from "ai";
-import { createHash, randomBytes } from "node:crypto";
+import { createHash } from "node:crypto";
 import { isPlainObject } from "../object.ts";
 
 export type AccountToolStatus = "active" | "deleted";
@@ -86,13 +86,9 @@ const NODE_BUILTIN_IMPORT_PATTERN = /(?:import\s+(?:[\s\S]*?\s+from\s*)?["']node
 const BARE_IMPORT_PATTERN = /(?:^|[\n;])\s*import\s+(?:[\s\S]*?\s+from\s*)?["'](?!\.{1,2}\/|\/|node:)[^"']+["']|import\s*\(\s*["'](?!\.{1,2}\/|\/|node:)[^"']+["']\s*\)/;
 const CONVEX_DOCUMENT_ID_PATTERN = /^[a-z0-9]{20,}$/;
 
-/** Accept legacy public ids and native Convex document ids during migration/sync. */
+/** Returns whether a value has the documented native Convex document-id shape. */
 export function isAccountToolId(value: string): boolean {
-  return /^tool_[A-Za-z0-9_-]+$/.test(value) || CONVEX_DOCUMENT_ID_PATTERN.test(value);
-}
-
-export function createAccountToolId(): string {
-  return `tool_${randomBytes(12).toString("hex")}`;
+  return CONVEX_DOCUMENT_ID_PATTERN.test(value);
 }
 
 export function normalizeAccountToolUpload(input: unknown, options: { requireBundle: boolean }): NormalizedAccountToolUpload {

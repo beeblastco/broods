@@ -6,7 +6,7 @@
  * loads a bundle and invokes its per-event handler in the V8 isolate pool.
  */
 
-import { createHash, randomBytes } from "node:crypto";
+import { createHash } from "node:crypto";
 import { isPlainObject } from "../object.ts";
 import { AGENT_HOOK_EVENT_NAMES, type AgentHookEventName } from "./agent-config.ts";
 import { inferAccountToolRuntime } from "./account-tools.ts";
@@ -74,15 +74,6 @@ export interface PublicAccountHookRecord {
 
 const HOOK_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_-]{0,63}$/;
 const MAX_BUNDLE_BYTES = 512 * 1024;
-
-/** Accept legacy public ids and native Convex document ids during migration/sync. */
-export function isAccountHookId(value: string): boolean {
-  return /^hook_[A-Za-z0-9_-]+$/.test(value) || /^[a-z0-9]{32}$/.test(value);
-}
-
-export function createAccountHookId(): string {
-  return `hook_${randomBytes(12).toString("hex")}`;
-}
 
 export function normalizeAccountHookUpload(input: unknown, options: { requireBundle: boolean }): NormalizedAccountHookUpload {
   if (!isPlainObject(input)) {
