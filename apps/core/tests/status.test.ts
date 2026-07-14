@@ -1,7 +1,7 @@
 /** Convex-backed async agent/tool wrapper contract tests. */
 
 import { afterEach, describe, expect, it, mock } from "bun:test";
-import { runtimePersistence } from "../src/shared/convex/runtime.ts";
+import { runtime } from "../src/shared/convex/runtime.ts";
 import {
   getAsyncAgentResult,
   markAsyncAgentResultAwaitingApproval,
@@ -15,22 +15,22 @@ import {
   verifyAsyncToolCompletionToken,
 } from "../src/harness/async-tool-result.ts";
 
-const originalQuery = runtimePersistence.query;
-const originalMutation = runtimePersistence.mutation;
+const originalQuery = runtime.query;
+const originalMutation = runtime.mutate;
 const queryMock = mock(async (_name: string, _args: Record<string, unknown>) => null);
 const mutationMock = mock(async (name: string, _args: Record<string, unknown>) =>
   name.startsWith("create") ? true : null);
 
 afterEach(() => {
-  runtimePersistence.query = originalQuery;
-  runtimePersistence.mutation = originalMutation;
+  runtime.query = originalQuery;
+  runtime.mutate = originalMutation;
   queryMock.mockClear();
   mutationMock.mockClear();
 });
 
 describe("async agent result persistence", () => {
   it("preserves approval and completed response shapes", async () => {
-    runtimePersistence.mutation = mutationMock as never;
+    runtime.mutate = mutationMock as never;
     const approvals = [{ approvalId: "approval-1", toolCallId: "call-1", toolName: "bash", input: { shell: "true" } }];
     await markAsyncAgentResultAwaitingApproval({ eventId: "event-1", approvals });
     await markAsyncAgentResultCompleted({ eventId: "event-1", response: { answer: "done" } });
@@ -49,7 +49,7 @@ describe("async agent result persistence", () => {
       updatedAt: "2026-05-10T00:00:01.000Z", expiresAt: 1770000000,
     };
     queryMock.mockResolvedValueOnce(record as never);
-    runtimePersistence.query = queryMock as never;
+    runtime.query = queryMock as never;
     await expect(getAsyncAgentResult("event-1")).resolves.toEqual(record);
     expect(queryMock).toHaveBeenCalledWith("getAsyncAgentResult", { eventId: "event-1" });
   });
@@ -57,7 +57,7 @@ describe("async agent result persistence", () => {
 
 describe("async tool result persistence", () => {
   it("forwards delivery and callback authorization to the transactional create", async () => {
-    runtimePersistence.mutation = mutationMock as never;
+    runtime.mutate = mutationMock as never;
     await createPendingAsyncToolResult({
       resultId: "result-1", parentEventId: "event-1", conversationKey: "conversation-1",
       toolName: "slowLookup", toolCallId: "call-1", input: { query: "alpha" },
@@ -70,8 +70,8 @@ describe("async tool result persistence", () => {
 
   it("verifies callback tokens and settles with processing-only CAS", async () => {
     queryMock.mockResolvedValueOnce(true as never);
-    runtimePersistence.query = queryMock as never;
-    runtimePersistence.mutation = mutationMock as never;
+    runtime.query = queryMock as never;
+    runtime.mutate = mutationMock as never;
     await expect(
       verifyAsyncToolCompletionToken("result-1", "token-1"),
     ).resolves.toBe(true);
@@ -88,8 +88,8 @@ describe("async tool result persistence", () => {
   it("sorts fan-in ids and exposes general results without callback-token reads", async () => {
     queryMock.mockResolvedValueOnce({ resultId: "result-1", status: "completed" } as never);
     mutationMock.mockResolvedValueOnce({ parentEventId: "event-1", resultIds: ["result-2", "result-1"], sealed: true } as never);
-    runtimePersistence.query = queryMock as never;
-    runtimePersistence.mutation = mutationMock as never;
+    runtime.query = queryMock as never;
+    runtime.mutate = mutationMock as never;
     await expect(getAsyncToolResult("result-1")).resolves.toMatchObject({ status: "completed" });
     await expect(sealDetachedAsyncToolGroup("event-1")).resolves.toEqual({
       parentEventId: "event-1", resultIds: ["result-1", "result-2"], sealed: true,

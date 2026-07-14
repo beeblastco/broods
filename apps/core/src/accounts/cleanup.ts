@@ -11,7 +11,7 @@ import {
   resolveS3ReadTarget,
   workspaceReadContext,
 } from "../harness/sandbox/s3-mount.ts";
-import { runtimeMutation } from "../shared/convex/runtime.ts";
+import { runtime } from "../shared/convex/runtime.ts";
 
 export interface AccountCleanupSummary {
   conversationsDeleted: number;
@@ -60,7 +60,7 @@ async function deleteConvexRuntimeRows(
     sandboxReservationDeleted: 0,
   };
   for (;;) {
-    const batch = await runtimeMutation<
+    const batch = await runtime.mutate<
       typeof totals & { totalDeleted: number }
     >("deleteAccountRuntimeData", { accountId });
     totals.conversationsDeleted += batch.conversationsDeleted;

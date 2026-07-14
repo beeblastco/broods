@@ -1,22 +1,19 @@
 /** Authoritative Convex mapping from sandbox reservations to provider ids. */
 
-import {
-  runtimeMutation,
-  runtimeQuery,
-} from "../../shared/convex/runtime.ts";
+import { runtime } from "../../shared/convex/runtime.ts";
 import type { SandboxProvider } from "./types.ts";
 export function getSandboxExternalId(
   provider: SandboxProvider,
   reservationKey: string,
 ): Promise<string | null> {
-  return runtimeQuery("getSandboxReservation", { provider, reservationKey });
+  return runtime.query("getSandboxReservation", { provider, reservationKey });
 }
 export function claimSandboxInstance(
   provider: SandboxProvider,
   reservationKey: string,
   externalId: string,
 ): Promise<boolean> {
-  return runtimeMutation("claimSandboxReservation", {
+  return runtime.mutate("claimSandboxReservation", {
     provider,
     reservationKey,
     externalId,
@@ -27,7 +24,7 @@ export async function saveSandboxInstance(
   reservationKey: string,
   externalId: string,
 ): Promise<void> {
-  await runtimeMutation("saveSandboxReservation", {
+  await runtime.mutate("saveSandboxReservation", {
     provider,
     reservationKey,
     externalId,
@@ -38,7 +35,7 @@ export async function deleteSandboxInstance(
   reservationKey: string,
   expectedExternalId?: string,
 ): Promise<void> {
-  await runtimeMutation("deleteSandboxReservation", {
+  await runtime.mutate("deleteSandboxReservation", {
     provider,
     reservationKey,
     expectedExternalId,

@@ -2,11 +2,11 @@
 
 import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
 import type { UserModelMessage } from "ai";
-import { runtimePersistence } from "../src/shared/convex/runtime.ts";
+import { runtime } from "../src/shared/convex/runtime.ts";
 import { Session } from "../src/harness/session.ts";
 
-const originalMutation = runtimePersistence.mutation;
-const originalQuery = runtimePersistence.query;
+const originalMutation = runtime.mutate;
+const originalQuery = runtime.query;
 const mutationMock = mock(async (name: string, _args: Record<string, unknown>) =>
   name === "takeIngress" ? [] : null);
 const queryMock = mock(
@@ -23,12 +23,12 @@ const queryMock = mock(
 const newSession = () => new Session("acct:acct:event-1", "acct:acct:agent:agent:tg:123", "acct", "agent");
 
 beforeEach(() => {
-  runtimePersistence.mutation = mutationMock as never;
-  runtimePersistence.query = queryMock as never;
+  runtime.mutate = mutationMock as never;
+  runtime.query = queryMock as never;
 });
 afterEach(() => {
-  runtimePersistence.mutation = originalMutation;
-  runtimePersistence.query = originalQuery;
+  runtime.mutate = originalMutation;
+  runtime.query = originalQuery;
   mutationMock.mockClear();
   queryMock.mockClear();
 });

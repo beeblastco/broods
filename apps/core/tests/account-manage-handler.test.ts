@@ -4,7 +4,7 @@ import { handler } from "../src/accounts/handler.ts";
 import type { CoreRequest } from "../src/shared/http.ts";
 import { hashAccountSecret } from "../src/shared/domain/accounts.ts";
 import { resetStorageForTests, setStorageForTests } from "../src/shared/storage.ts";
-import { runtimePersistence } from "../src/shared/convex/runtime.ts";
+import { runtime } from "../src/shared/convex/runtime.ts";
 
 const originalAdminSecret = process.env.ADMIN_ACCOUNT_SECRET;
 const originalServiceSecret = process.env.SERVICE_AUTH_SECRET;
@@ -14,7 +14,7 @@ const originalSchedulerTargetArn = process.env.CRON_SCHEDULER_TARGET_ARN;
 const originalSchedulerGroupName = process.env.CRON_SCHEDULER_GROUP_NAME;
 const originalSkillsBucketName = process.env.SKILLS_BUCKET_NAME;
 const originalToolBundlesBucketName = process.env.TOOL_BUNDLES_BUCKET_NAME;
-const originalRuntimeMutation = runtimePersistence.mutation;
+const originalRuntimeMutate = runtime.mutate;
 const originalS3Send = S3Client.prototype.send;
 
 afterEach(() => {
@@ -52,7 +52,7 @@ afterEach(() => {
   else process.env.SKILLS_BUCKET_NAME = originalSkillsBucketName;
   if (originalToolBundlesBucketName === undefined) delete process.env.TOOL_BUNDLES_BUCKET_NAME;
   else process.env.TOOL_BUNDLES_BUCKET_NAME = originalToolBundlesBucketName;
-  runtimePersistence.mutation = originalRuntimeMutation;
+  runtime.mutate = originalRuntimeMutate;
   S3Client.prototype.send = originalS3Send;
   setStorageForTests(null);
   resetStorageForTests();
@@ -389,7 +389,7 @@ function stubAccountDeletionDependencies(): void {
   process.env.SKILLS_BUCKET_NAME = "test-skills";
   process.env.TOOL_BUNDLES_BUCKET_NAME = "test-tool-bundles";
   S3Client.prototype.send = mock(async () => ({ Contents: [], IsTruncated: false })) as never;
-  runtimePersistence.mutation = mock(async (name) => {
+  runtime.mutate = mock(async (name) => {
     expect(name).toBe("deleteAccountRuntimeData");
     return {
       conversationsDeleted: 0,

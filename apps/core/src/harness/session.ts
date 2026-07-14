@@ -18,7 +18,7 @@ import { getStorage } from "../shared/storage.ts";
 import type { AsyncToolDelivery } from "./async-tool-result.ts";
 import { isMissingS3Error, readS3Text } from "../shared/s3.ts";
 import { resolveS3ReadTarget, workspaceReadContext } from "./sandbox/s3-mount.ts";
-import { runtimeMutation, runtimeQuery } from "../shared/convex/runtime.ts";
+import { runtime } from "../shared/convex/runtime.ts";
 import {
   channelScopeKeyFromConversation,
   conversationLeaseKey,
@@ -169,7 +169,7 @@ export class Session {
       throw new Error("Account ID is required for runtime claims");
     }
 
-    return runtimeMutation("claimEvent", { accountId: this.accountId, key: this.eventId, ttlSeconds: 86400 });
+    return runtime.mutate("claimEvent", { accountId: this.accountId, key: this.eventId, ttlSeconds: 86400 });
   }
 
   async release(): Promise<void> {
@@ -177,15 +177,15 @@ export class Session {
       throw new Error("Account ID is required for runtime claims");
     }
 
-    await runtimeMutation("releaseClaim", { accountId: this.accountId, key: this.eventId });
+    await runtime.mutate("releaseClaim", { accountId: this.accountId, key: this.eventId });
   }
 
   async acquireConversationLease(): Promise<boolean> {
-    return runtimeMutation("acquireLease", { key: this.conversationLeaseKey(), conversationKey: this.conversationKey, ownerEventId: this.eventId, ttlSeconds: CONVERSATION_LEASE_TTL_SECONDS });
+    return runtime.mutate("acquireLease", { key: this.conversationLeaseKey(), conversationKey: this.conversationKey, ownerEventId: this.eventId, ttlSeconds: CONVERSATION_LEASE_TTL_SECONDS });
   }
 
   async releaseConversationLease(): Promise<void> {
-    await runtimeMutation("releaseLease", { key: this.conversationLeaseKey(), ownerEventId: this.eventId });
+    await runtime.mutate("releaseLease", { key: this.conversationLeaseKey(), ownerEventId: this.eventId });
   }
 
   /**
@@ -197,7 +197,7 @@ export class Session {
     if (events.length === 0) {
       return;
     }
-    await runtimeMutation("enqueueIngress", { key: this.pendingIngressKey(), conversationKey: this.conversationKey, events, ttlSeconds: CONVERSATION_LEASE_TTL_SECONDS });
+    await runtime.mutate("enqueueIngress", { key: this.pendingIngressKey(), conversationKey: this.conversationKey, events, ttlSeconds: CONVERSATION_LEASE_TTL_SECONDS });
   }
 
   /**
@@ -206,7 +206,7 @@ export class Session {
    * or remains queued for the next drain, so nothing is lost or double-read.
    */
   async takePendingIngress(): Promise<ConversationIngressEvent[]> {
-    return runtimeMutation("takeIngress", { key: this.pendingIngressKey() });
+    return runtime.mutate("takeIngress", { key: this.pendingIngressKey() });
   }
 
   async appendIngressEvents(events: ConversationIngressEvent[]): Promise<SystemModelMessage[]> {
@@ -454,7 +454,7 @@ export class Session {
 
   private async persistStoredEvent(event: StoredConversationEvent): Promise<string> {
     const createdAt = this.nextCreatedAt();
-    await runtimeMutation("appendConversationEvent", { conversationKey: this.conversationKey, cursor: createdAt, event });
+    await runtime.mutate("appendConversationEvent", { conversationKey: this.conversationKey, cursor: createdAt, event });
     return createdAt;
   }
 
@@ -464,7 +464,7 @@ export class Session {
     const entries: StoredConversationEntry[] = [];
     let afterCursor = options.afterCreatedAt ?? undefined;
     for (;;) {
-      const result = await runtimeQuery<StoredConversationEventPage>("listConversationEvents", {
+      const result = await runtime.query<StoredConversationEventPage>("listConversationEvents", {
         conversationKey: this.conversationKey,
         afterCursor: afterCursor,
       });

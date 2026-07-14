@@ -1,9 +1,6 @@
 /** Async tool result, fan-in, callback, delivery, and observed state in Convex. */
 
-import {
-  runtimeMutation,
-  runtimeQuery,
-} from "../shared/convex/runtime.ts";
+import { runtime } from "../shared/convex/runtime.ts";
 export type AsyncToolStatus = "processing" | "completed" | "failed";
 export type AsyncToolDelivery =
   | { kind: "async" }
@@ -45,18 +42,18 @@ export function createPendingAsyncToolResult(options: {
   delivery?: AsyncToolDelivery;
   completionToken?: string;
 }): Promise<boolean> {
-  return runtimeMutation("createAsyncToolResult", options);
+  return runtime.mutate("createAsyncToolResult", options);
 }
 export function verifyAsyncToolCompletionToken(
   resultId: string,
   completionToken: string,
 ): Promise<boolean> {
-  return runtimeQuery("getAsyncToolToken", { resultId, completionToken });
+  return runtime.query("getAsyncToolToken", { resultId, completionToken });
 }
 export async function getDetachedAsyncToolGroup(
   parentEventId: string,
 ): Promise<DetachedAsyncToolGroup | null> {
-  const row = await runtimeQuery<DetachedAsyncToolGroup | null>(
+  const row = await runtime.query<DetachedAsyncToolGroup | null>(
     "getAsyncToolGroup",
     { parentEventId },
   );
@@ -71,7 +68,7 @@ export async function getDetachedAsyncToolGroup(
 export async function sealDetachedAsyncToolGroup(
   parentEventId: string,
 ): Promise<DetachedAsyncToolGroup | null> {
-  const row = await runtimeMutation<DetachedAsyncToolGroup | null>(
+  const row = await runtime.mutate<DetachedAsyncToolGroup | null>(
     "sealAsyncToolGroup",
     { parentEventId },
   );
@@ -86,19 +83,19 @@ export async function sealDetachedAsyncToolGroup(
 export function listAsyncToolResultsByParentEvent(
   parentEventId: string,
 ): Promise<AsyncToolResultRecord[]> {
-  return runtimeQuery("listAsyncToolResults", { parentEventId });
+  return runtime.query("listAsyncToolResults", { parentEventId });
 }
 export function getAsyncToolResult(
   resultId: string,
 ): Promise<AsyncToolResultRecord | null> {
-  return runtimeQuery("getAsyncToolResult", { resultId });
+  return runtime.query("getAsyncToolResult", { resultId });
 }
 export async function markAsyncToolResultObserved(
   resultId: string,
 ): Promise<void> {
   const row = await getAsyncToolResult(resultId);
   if (row && row.status !== "processing")
-    await runtimeMutation("updateAsyncToolResult", {
+    await runtime.mutate("updateAsyncToolResult", {
       resultId,
       status: row.status,
       observed: true,
@@ -108,7 +105,7 @@ export async function markAsyncToolResultCompleted(options: {
   resultId: string;
   response: unknown;
 }): Promise<void> {
-  await runtimeMutation("updateAsyncToolResult", {
+  await runtime.mutate("updateAsyncToolResult", {
     resultId: options.resultId,
     status: "completed",
     response: options.response,
@@ -119,7 +116,7 @@ export async function markAsyncToolResultFailed(options: {
   resultId: string;
   error: string;
 }): Promise<void> {
-  await runtimeMutation("updateAsyncToolResult", {
+  await runtime.mutate("updateAsyncToolResult", {
     resultId: options.resultId,
     status: "failed",
     error: options.error,
@@ -132,7 +129,7 @@ export function settleAsyncToolResultFromCallback(options: {
   response?: unknown;
   error?: string;
 }): Promise<AsyncToolResultRecord | null> {
-  return runtimeMutation("updateAsyncToolResult", {
+  return runtime.mutate("updateAsyncToolResult", {
     resultId: options.resultId,
     status: options.status,
     onlyWhenProcessing: true,

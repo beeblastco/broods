@@ -5,9 +5,9 @@
 
 import { afterEach, describe, expect, it, mock } from "bun:test";
 import { jsonSchema, tool, type UserModelMessage } from "ai";
-import { runtimePersistence } from "../src/shared/convex/runtime.ts";
+import { runtime } from "../src/shared/convex/runtime.ts";
 
-const originalMutation = runtimePersistence.mutation;
+const originalMutation = runtime.mutate;
 const mutationMock = mock(
   async (name: string, _args: Record<string, unknown>) =>
     name === "createAsyncToolResult" ? true : null,
@@ -20,13 +20,13 @@ type TestToolExecute = {
 };
 
 afterEach(() => {
-  runtimePersistence.mutation = originalMutation;
+  runtime.mutate = originalMutation;
   mutationMock.mockClear();
 });
 
 describe("AsyncToolCoordinator", () => {
   it("returns a pending result immediately and injects the completed output later", async () => {
-    runtimePersistence.mutation = mutationMock as never;
+    runtime.mutate = mutationMock as never;
     const { AsyncToolCoordinator } =
       await import("../src/harness/async-tools.ts");
     const persistModelMessages = mock(
@@ -109,7 +109,7 @@ describe("AsyncToolCoordinator", () => {
   });
 
   it("keeps provider-defined tools without local execute unchanged", async () => {
-    runtimePersistence.mutation = mutationMock as never;
+    runtime.mutate = mutationMock as never;
     const { AsyncToolCoordinator } =
       await import("../src/harness/async-tools.ts");
     const coordinator = new AsyncToolCoordinator(
@@ -143,7 +143,7 @@ describe("AsyncToolCoordinator", () => {
   });
 
   it("injects timeout failures for pending async tool calls", async () => {
-    runtimePersistence.mutation = mutationMock as never;
+    runtime.mutate = mutationMock as never;
     const { AsyncToolCoordinator } =
       await import("../src/harness/async-tools.ts");
     const persistModelMessages = mock(
@@ -211,7 +211,7 @@ describe("AsyncToolCoordinator", () => {
   });
 
   it("detaches uploaded async tools on delivered request paths", async () => {
-    runtimePersistence.mutation = mutationMock as never;
+    runtime.mutate = mutationMock as never;
     const { AsyncToolCoordinator } =
       await import("../src/harness/async-tools.ts");
     const persistModelMessages = mock(
@@ -310,7 +310,7 @@ describe("AsyncToolCoordinator", () => {
   });
 
   it("waits for built-in tools but detaches uploaded tools in delivered request paths", async () => {
-    runtimePersistence.mutation = mutationMock as never;
+    runtime.mutate = mutationMock as never;
     const { AsyncToolCoordinator } =
       await import("../src/harness/async-tools.ts");
     const coordinator = new AsyncToolCoordinator(

@@ -4,7 +4,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
-import { runtimePersistence } from "../src/shared/convex/runtime.ts";
+import { runtime } from "../src/shared/convex/runtime.ts";
 import type { ChannelActions } from "../src/shared/channels.ts";
 import {
   commands,
@@ -14,14 +14,14 @@ import {
   resolveDiscordCommand,
 } from "../src/shared/commands.ts";
 
-const originalMutation = runtimePersistence.mutation;
+const originalMutation = runtime.mutate;
 
 beforeEach(() => {
-  runtimePersistence.mutation = mock(() => Promise.resolve(0)) as never;
+  runtime.mutate = mock(() => Promise.resolve(0)) as never;
 });
 
 afterEach(() => {
-  runtimePersistence.mutation = originalMutation;
+  runtime.mutate = originalMutation;
   mock.restore();
 });
 
@@ -154,7 +154,7 @@ describe("executeCommand", () => {
     const channel = createMockChannelActions();
     const ctx = createCommandContext({ channel });
 
-    runtimePersistence.mutation = mock(() => Promise.reject(new Error("Convex connection failed"))) as never;
+    runtime.mutate = mock(() => Promise.reject(new Error("Convex connection failed"))) as never;
 
     await executeCommand("/new", ctx);
 
@@ -165,7 +165,7 @@ describe("executeCommand", () => {
     const channel = createMockChannelActions();
     const ctx = createCommandContext({ channel });
 
-    runtimePersistence.mutation = mock(() => Promise.reject("string error")) as never;
+    runtime.mutate = mock(() => Promise.reject("string error")) as never;
 
     await executeCommand("/new", ctx);
 
@@ -262,7 +262,7 @@ describe("clearConversation via /new command", () => {
       .mockResolvedValueOnce(100)
       .mockResolvedValueOnce(2)
       .mockResolvedValueOnce(0);
-    runtimePersistence.mutation = mutationMock as never;
+    runtime.mutate = mutationMock as never;
     const channel = createMockChannelActions();
     await executeCommand("/new", createCommandContext({ conversationKey: "key-1", channel }));
     expect(mutationMock).toHaveBeenCalledTimes(3);

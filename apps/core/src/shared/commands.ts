@@ -4,7 +4,7 @@
  */
 
 import type { ChannelActions } from "./channels.ts";
-import { runtimeMutation } from "./convex/runtime.ts";
+import { runtime } from "./convex/runtime.ts";
 import { logError } from "./log.ts";
 
 export interface CommandContext {
@@ -60,7 +60,7 @@ export const commands: CommandHandler[] = [
       description: "Clear conversation context and start fresh",
     },
     async execute(ctx) {
-      while (await runtimeMutation<number>("clearConversation", { conversationKey: ctx.conversationKey }) > 0) {
+      while (await runtime.mutate<number>("clearConversation", { conversationKey: ctx.conversationKey }) > 0) {
         // Convex mutations are bounded; keep deleting until the conversation is empty.
       }
       return "Context cleared. Starting fresh.";
