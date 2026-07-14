@@ -38,21 +38,21 @@ describe("runtime persistence", () => {
     const accountId = await createActiveAccount(t);
     const conversationKey = conversationKeyFor(accountId);
     expect(
-      await t.mutation(internal.runtimePersistence.claimEvent, {
+      await t.mutation(internal.runtime.claimEvent, {
         accountId,
         key: `acct:${accountId}:event`,
         ttlSeconds: 60,
       }),
     ).toBe(true);
     expect(
-      await t.mutation(internal.runtimePersistence.claimEvent, {
+      await t.mutation(internal.runtime.claimEvent, {
         accountId,
         key: `acct:${accountId}:event`,
         ttlSeconds: 60,
       }),
     ).toBe(false);
     expect(
-      await t.mutation(internal.runtimePersistence.acquireLease, {
+      await t.mutation(internal.runtime.acquireLease, {
         key: "lease",
         conversationKey,
         ownerEventId: "owner-1",
@@ -60,31 +60,31 @@ describe("runtime persistence", () => {
       }),
     ).toBe(true);
     expect(
-      await t.mutation(internal.runtimePersistence.acquireLease, {
+      await t.mutation(internal.runtime.acquireLease, {
         key: "lease",
         conversationKey,
         ownerEventId: "owner-2",
         ttlSeconds: 60,
       }),
     ).toBe(false);
-    await t.mutation(internal.runtimePersistence.releaseLease, {
+    await t.mutation(internal.runtime.releaseLease, {
       key: "lease",
       ownerEventId: "owner-2",
     });
     expect(
-      await t.mutation(internal.runtimePersistence.acquireLease, {
+      await t.mutation(internal.runtime.acquireLease, {
         key: "lease",
         conversationKey,
         ownerEventId: "owner-2",
         ttlSeconds: 60,
       }),
     ).toBe(false);
-    await t.mutation(internal.runtimePersistence.releaseLease, {
+    await t.mutation(internal.runtime.releaseLease, {
       key: "lease",
       ownerEventId: "owner-1",
     });
     expect(
-      await t.mutation(internal.runtimePersistence.acquireLease, {
+      await t.mutation(internal.runtime.acquireLease, {
         key: "lease",
         conversationKey,
         ownerEventId: "owner-2",
@@ -97,18 +97,18 @@ describe("runtime persistence", () => {
     const t = runtimeTest();
     const accountId = await createActiveAccount(t);
     const conversationKey = conversationKeyFor(accountId);
-    await t.mutation(internal.runtimePersistence.appendConversationEvent, {
+    await t.mutation(internal.runtime.appendConversationEvent, {
       conversationKey,
       cursor: "002",
       event: { message: "two" },
     });
-    await t.mutation(internal.runtimePersistence.appendConversationEvent, {
+    await t.mutation(internal.runtime.appendConversationEvent, {
       conversationKey,
       cursor: "001",
       event: { message: "one" },
     });
     expect(
-      await t.query(internal.runtimePersistence.listConversationEvents, {
+      await t.query(internal.runtime.listConversationEvents, {
         conversationKey,
       }),
     ).toEqual({
@@ -119,25 +119,25 @@ describe("runtime persistence", () => {
       isDone: true,
       continueCursor: null,
     });
-    await t.mutation(internal.runtimePersistence.enqueueIngress, {
+    await t.mutation(internal.runtime.enqueueIngress, {
       key: "pending",
       conversationKey,
       events: [{ role: "user", content: "a" }],
       ttlSeconds: 60,
     });
-    await t.mutation(internal.runtimePersistence.enqueueIngress, {
+    await t.mutation(internal.runtime.enqueueIngress, {
       key: "pending",
       conversationKey,
       events: [{ role: "user", content: "b" }],
       ttlSeconds: 60,
     });
     expect(
-      await t.mutation(internal.runtimePersistence.takeIngress, {
+      await t.mutation(internal.runtime.takeIngress, {
         key: "pending",
       }),
     ).toHaveLength(2);
     expect(
-      await t.mutation(internal.runtimePersistence.takeIngress, {
+      await t.mutation(internal.runtime.takeIngress, {
         key: "pending",
       }),
     ).toEqual([]);
@@ -162,7 +162,7 @@ describe("runtime persistence", () => {
     });
 
     const first = await t.query(
-      internal.runtimePersistence.listConversationEvents,
+      internal.runtime.listConversationEvents,
       { conversationKey: conversationKey },
     );
     expect(first.page).toHaveLength(512);
@@ -171,7 +171,7 @@ describe("runtime persistence", () => {
       continueCursor: "0511",
     });
     const second = await t.query(
-      internal.runtimePersistence.listConversationEvents,
+      internal.runtime.listConversationEvents,
       {
         conversationKey: conversationKey,
         afterCursor: first.continueCursor ?? undefined,
@@ -205,12 +205,12 @@ describe("runtime persistence", () => {
     });
 
     expect(
-      await t.mutation(internal.runtimePersistence.clearConversation, {
+      await t.mutation(internal.runtime.clearConversation, {
         conversationKey: conversationKey,
       }),
     ).toEqual({ deleted: 100, hasMore: true });
     expect(
-      await t.mutation(internal.runtimePersistence.clearConversation, {
+      await t.mutation(internal.runtime.clearConversation, {
         conversationKey: conversationKey,
       }),
     ).toEqual({ deleted: 1, hasMore: false });
@@ -222,7 +222,7 @@ describe("runtime persistence", () => {
     const conversationKey = conversationKeyFor(accountId);
     const parentEventId = `acct:${accountId}:parent`;
     expect(
-      await t.mutation(internal.runtimePersistence.createAsyncToolResult, {
+      await t.mutation(internal.runtime.createAsyncToolResult, {
         resultId: "result-1",
         parentEventId: parentEventId,
         conversationKey,
@@ -234,7 +234,7 @@ describe("runtime persistence", () => {
       }),
     ).toBe(true);
     expect(
-      await t.mutation(internal.runtimePersistence.createAsyncToolResult, {
+      await t.mutation(internal.runtime.createAsyncToolResult, {
         resultId: "result-1",
         parentEventId: parentEventId,
         conversationKey,
@@ -254,7 +254,7 @@ describe("runtime persistence", () => {
       await ctx.db.patch(group._id, { expiresAt: 1 });
     });
     expect(
-      await t.mutation(internal.runtimePersistence.createAsyncToolResult, {
+      await t.mutation(internal.runtime.createAsyncToolResult, {
         resultId: "result-2",
         parentEventId: parentEventId,
         conversationKey,
@@ -265,7 +265,7 @@ describe("runtime persistence", () => {
       }),
     ).toBe(true);
     expect(
-      await t.query(internal.runtimePersistence.getAsyncToolGroup, {
+      await t.query(internal.runtime.getAsyncToolGroup, {
         parentEventId: parentEventId,
       }),
     ).toMatchObject({
@@ -274,12 +274,12 @@ describe("runtime persistence", () => {
       expiresAt: expect.any(Number),
     });
     const refreshedGroup = await t.query(
-      internal.runtimePersistence.getAsyncToolGroup,
+      internal.runtime.getAsyncToolGroup,
       { parentEventId: parentEventId },
     );
     expect(refreshedGroup?.expiresAt).toBeGreaterThan(1);
     const group = await t.mutation(
-      internal.runtimePersistence.sealAsyncToolGroup,
+      internal.runtime.sealAsyncToolGroup,
       { parentEventId: parentEventId },
     );
     expect(group).toMatchObject({
@@ -287,7 +287,7 @@ describe("runtime persistence", () => {
       sealed: true,
     });
     expect(
-      await t.mutation(internal.runtimePersistence.updateAsyncToolResult, {
+      await t.mutation(internal.runtime.updateAsyncToolResult, {
         resultId: "result-1",
         status: "completed",
         response: { ok: true },
@@ -295,7 +295,7 @@ describe("runtime persistence", () => {
       }),
     ).toMatchObject({ status: "completed" });
     expect(
-      await t.mutation(internal.runtimePersistence.updateAsyncToolResult, {
+      await t.mutation(internal.runtime.updateAsyncToolResult, {
         resultId: "result-1",
         status: "failed",
         error: "late",
@@ -303,19 +303,19 @@ describe("runtime persistence", () => {
       }),
     ).toBeNull();
     expect(
-      await t.query(internal.runtimePersistence.getAsyncToolToken, {
+      await t.query(internal.runtime.getAsyncToolToken, {
         resultId: "result-1",
         completionToken: "secret",
       }),
     ).toBe(true);
     expect(
-      await t.query(internal.runtimePersistence.getAsyncToolToken, {
+      await t.query(internal.runtime.getAsyncToolToken, {
         resultId: "result-1",
         completionToken: "wrong-secret",
       }),
     ).toBe(false);
     expect(
-      await t.query(internal.runtimePersistence.getAsyncToolResult, {
+      await t.query(internal.runtime.getAsyncToolResult, {
         resultId: "result-1",
       }),
     ).not.toHaveProperty("completionTokenHash");
@@ -329,7 +329,7 @@ describe("runtime persistence", () => {
     expect(persisted?.completionTokenHash).toBeDefined();
     expect(persisted?.completionTokenHash).not.toBe("secret");
     await expect(
-      t.mutation(internal.runtimePersistence.createAsyncToolResult, {
+      t.mutation(internal.runtime.createAsyncToolResult, {
         resultId: "result-3",
         parentEventId: parentEventId,
         conversationKey,
@@ -340,17 +340,17 @@ describe("runtime persistence", () => {
       }),
     ).rejects.toThrow("sealed group");
     expect(
-      await t.query(internal.runtimePersistence.getAsyncToolResult, {
+      await t.query(internal.runtime.getAsyncToolResult, {
         resultId: "result-3",
       }),
     ).toBeNull();
-    await t.mutation(internal.runtimePersistence.updateAsyncToolResult, {
+    await t.mutation(internal.runtime.updateAsyncToolResult, {
       resultId: "result-1",
       status: "completed",
       observed: true,
     });
     expect(
-      await t.query(internal.runtimePersistence.getAsyncToolResult, {
+      await t.query(internal.runtime.getAsyncToolResult, {
         resultId: "result-1",
       }),
     ).toMatchObject({ observed: true, response: { ok: true } });
@@ -366,34 +366,34 @@ describe("runtime persistence", () => {
     };
     expect(
       await t.mutation(
-        internal.runtimePersistence.claimSandboxReservation,
+        internal.runtime.claimSandboxReservation,
         args,
       ),
     ).toBe(true);
     expect(
       await t.mutation(
-        internal.runtimePersistence.claimSandboxReservation,
+        internal.runtime.claimSandboxReservation,
         args,
       ),
     ).toBe(false);
-    await t.mutation(internal.runtimePersistence.deleteSandboxReservation, {
+    await t.mutation(internal.runtime.deleteSandboxReservation, {
       provider: args.provider,
       reservationKey: args.reservationKey,
       expectedExternalId: "sandbox-2",
     });
     expect(
-      await t.query(internal.runtimePersistence.getSandboxReservation, {
+      await t.query(internal.runtime.getSandboxReservation, {
         provider: args.provider,
         reservationKey: args.reservationKey,
       }),
     ).toBe("sandbox-1");
-    await t.mutation(internal.runtimePersistence.deleteSandboxReservation, {
+    await t.mutation(internal.runtime.deleteSandboxReservation, {
       provider: args.provider,
       reservationKey: args.reservationKey,
       expectedExternalId: "sandbox-1",
     });
     expect(
-      await t.query(internal.runtimePersistence.getSandboxReservation, {
+      await t.query(internal.runtime.getSandboxReservation, {
         provider: args.provider,
         reservationKey: args.reservationKey,
       }),
@@ -410,38 +410,38 @@ describe("runtime persistence", () => {
     const parentEventId = `acct:${accountId}:parent`;
     const reservationKey = `acct:${accountId}:workspace:one`;
 
-    await t.mutation(internal.runtimePersistence.claimEvent, {
+    await t.mutation(internal.runtime.claimEvent, {
       accountId: accountId,
       key: eventKey,
       ttlSeconds: 60,
     });
-    await t.mutation(internal.runtimePersistence.claimEvent, {
+    await t.mutation(internal.runtime.claimEvent, {
       accountId: accountId,
       key: rawEventKey,
       ttlSeconds: 60,
     });
-    await t.mutation(internal.runtimePersistence.acquireLease, {
+    await t.mutation(internal.runtime.acquireLease, {
       key: "existing-lease",
       conversationKey: conversationKey,
       ownerEventId: "owner",
       ttlSeconds: 60,
     });
-    await t.mutation(internal.runtimePersistence.enqueueIngress, {
+    await t.mutation(internal.runtime.enqueueIngress, {
       key: "existing-pending",
       conversationKey: conversationKey,
       events: [{ role: "user", content: "queued" }],
       ttlSeconds: 60,
     });
-    await t.mutation(internal.runtimePersistence.appendConversationEvent, {
+    await t.mutation(internal.runtime.appendConversationEvent, {
       conversationKey: conversationKey,
       cursor: "001",
       event: { role: "user", content: "existing" },
     });
-    await t.mutation(internal.runtimePersistence.createAsyncAgentResult, {
+    await t.mutation(internal.runtime.createAsyncAgentResult, {
       eventId: `acct:${accountId}:async-agent`,
       conversationKey: conversationKey,
     });
-    await t.mutation(internal.runtimePersistence.createAsyncToolResult, {
+    await t.mutation(internal.runtime.createAsyncToolResult, {
       resultId: `acct:${accountId}:async-tool`,
       parentEventId: parentEventId,
       conversationKey: conversationKey,
@@ -450,7 +450,7 @@ describe("runtime persistence", () => {
       input: {},
       delivery: { kind: "async" },
     });
-    await t.mutation(internal.runtimePersistence.claimSandboxReservation, {
+    await t.mutation(internal.runtime.claimSandboxReservation, {
       provider: "sandbox",
       reservationKey: reservationKey,
       externalId: "sandbox-existing",
@@ -466,72 +466,72 @@ describe("runtime persistence", () => {
 
     const blockedWrites = [
       () =>
-        t.mutation(internal.runtimePersistence.claimEvent, {
+        t.mutation(internal.runtime.claimEvent, {
           accountId: accountId,
           key: `acct:${accountId}:event:new`,
           ttlSeconds: 60,
         }),
       () =>
-        t.mutation(internal.runtimePersistence.claimEvent, {
+        t.mutation(internal.runtime.claimEvent, {
           accountId: accountId,
           key: "zalo:event:new",
           ttlSeconds: 60,
         }),
       () =>
-        t.mutation(internal.runtimePersistence.releaseClaim, {
+        t.mutation(internal.runtime.releaseClaim, {
           accountId: accountId,
           key: eventKey,
         }),
       () =>
-        t.mutation(internal.runtimePersistence.releaseClaim, {
+        t.mutation(internal.runtime.releaseClaim, {
           accountId: accountId,
           key: rawEventKey,
         }),
       () =>
-        t.mutation(internal.runtimePersistence.acquireLease, {
+        t.mutation(internal.runtime.acquireLease, {
           key: "new-lease",
           conversationKey: conversationKey,
           ownerEventId: "owner",
           ttlSeconds: 60,
         }),
       () =>
-        t.mutation(internal.runtimePersistence.releaseLease, {
+        t.mutation(internal.runtime.releaseLease, {
           key: "existing-lease",
           ownerEventId: "owner",
         }),
       () =>
-        t.mutation(internal.runtimePersistence.enqueueIngress, {
+        t.mutation(internal.runtime.enqueueIngress, {
           key: "new-pending",
           conversationKey: conversationKey,
           events: [{ role: "user", content: "late" }],
           ttlSeconds: 60,
         }),
       () =>
-        t.mutation(internal.runtimePersistence.takeIngress, {
+        t.mutation(internal.runtime.takeIngress, {
           key: "existing-pending",
         }),
       () =>
-        t.mutation(internal.runtimePersistence.appendConversationEvent, {
+        t.mutation(internal.runtime.appendConversationEvent, {
           conversationKey: conversationKey,
           cursor: "002",
           event: { role: "assistant", content: "late" },
         }),
       () =>
-        t.mutation(internal.runtimePersistence.clearConversation, {
+        t.mutation(internal.runtime.clearConversation, {
           conversationKey: conversationKey,
         }),
       () =>
-        t.mutation(internal.runtimePersistence.createAsyncAgentResult, {
+        t.mutation(internal.runtime.createAsyncAgentResult, {
           eventId: `acct:${accountId}:async-agent-new`,
           conversationKey: conversationKey,
         }),
       () =>
-        t.mutation(internal.runtimePersistence.updateAsyncAgentResult, {
+        t.mutation(internal.runtime.updateAsyncAgentResult, {
           eventId: `acct:${accountId}:async-agent`,
           status: "completed",
         }),
       () =>
-        t.mutation(internal.runtimePersistence.createAsyncToolResult, {
+        t.mutation(internal.runtime.createAsyncToolResult, {
           resultId: `acct:${accountId}:async-tool-new`,
           parentEventId: parentEventId,
           conversationKey: conversationKey,
@@ -540,28 +540,28 @@ describe("runtime persistence", () => {
           input: {},
         }),
       () =>
-        t.mutation(internal.runtimePersistence.sealAsyncToolGroup, {
+        t.mutation(internal.runtime.sealAsyncToolGroup, {
           parentEventId: parentEventId,
         }),
       () =>
-        t.mutation(internal.runtimePersistence.updateAsyncToolResult, {
+        t.mutation(internal.runtime.updateAsyncToolResult, {
           resultId: `acct:${accountId}:async-tool`,
           status: "completed",
         }),
       () =>
-        t.mutation(internal.runtimePersistence.claimSandboxReservation, {
+        t.mutation(internal.runtime.claimSandboxReservation, {
           provider: "sandbox",
           reservationKey: `acct:${accountId}:workspace:new`,
           externalId: "sandbox-new",
         }),
       () =>
-        t.mutation(internal.runtimePersistence.saveSandboxReservation, {
+        t.mutation(internal.runtime.saveSandboxReservation, {
           provider: "sandbox",
           reservationKey: reservationKey,
           externalId: "sandbox-late",
         }),
       () =>
-        t.mutation(internal.runtimePersistence.deleteSandboxReservation, {
+        t.mutation(internal.runtime.deleteSandboxReservation, {
           provider: "sandbox",
           reservationKey: reservationKey,
         }),
@@ -599,7 +599,7 @@ describe("runtime persistence", () => {
 
     await t.run(async (ctx) => await ctx.db.delete(accountId));
     await expect(
-      t.mutation(internal.runtimePersistence.appendConversationEvent, {
+      t.mutation(internal.runtime.appendConversationEvent, {
         conversationKey: conversationKey,
         cursor: "003",
         event: { role: "assistant", content: "orphan" },
@@ -638,7 +638,7 @@ describe("runtime persistence", () => {
     const results = [];
     for (;;) {
       const result = await t.mutation(
-        internal.runtimePersistence.deleteAccountRuntimeData,
+        internal.runtime.deleteAccountRuntimeData,
         { accountId },
       );
       results.push(result);
@@ -735,7 +735,7 @@ describe("runtime persistence", () => {
       }
     });
 
-    expect(await t.mutation(internal.runtimePersistence.pruneExpired, {})).toBe(
+    expect(await t.mutation(internal.runtime.pruneExpired, {})).toBe(
       5,
     );
     expect(
