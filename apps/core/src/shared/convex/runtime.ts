@@ -4,9 +4,8 @@ import { getConvexClient } from "./client.ts";
 
 const internal: any = require("@broods/convex/_generated/api").internal;
 
-// Exported so tests can pin each reference's function path to the module that
-// really exports it — `internal` is an anyApi proxy, so a wrong module name
-// here builds fine and only fails when production calls the missing path.
+// Exported so tests can verify each reference against the actual registered
+// Convex module export as well as the exact function path sent to Convex.
 export const runtimeQueries = {
   getAsyncAgentResult: internal.runtimePersistence.getAsyncAgentResult,
   getAsyncToolGroup: internal.runtimePersistence.getAsyncToolGroup,
