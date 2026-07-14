@@ -53,6 +53,13 @@ import type {
 import { getConvexClient } from "./client.ts";
 
 const ACCOUNT_DELETE_MAX_BATCHES = 100_000;
+const DELETE_CONCURRENCY = 20;
+
+async function removeInBatches<T>(docs: T[], remove: (doc: T) => Promise<unknown>): Promise<void> {
+  for (let offset = 0; offset < docs.length; offset += DELETE_CONCURRENCY) {
+    await Promise.all(docs.slice(offset, offset + DELETE_CONCURRENCY).map(remove));
+  }
+}
 
 interface ConvexAccountDoc {
   _id: string;
@@ -213,12 +220,12 @@ const agents: AgentStore = {
     const docs = (await getConvexClient().query(internal.agents.list, {
       accountId: accountId as any,
     })) as ConvexAgentDoc[];
-    await Promise.all(docs.map((doc) =>
+    await removeInBatches(docs, (doc) =>
       getConvexClient().mutation(internal.agents.remove, {
         accountId: accountId as any,
         agentId: doc._id as any,
       })
-    ));
+    );
     return docs.length;
   },
 };
@@ -393,12 +400,12 @@ const sandboxConfigs: SandboxConfigStore = {
     const docs = (await getConvexClient().query(internal.sandboxConfigs.list, {
       accountId: accountId as any,
     })) as ConvexSandboxConfigDoc[];
-    await Promise.all(docs.map((doc) =>
+    await removeInBatches(docs, (doc) =>
       getConvexClient().mutation(internal.sandboxConfigs.remove, {
         accountId: accountId as any,
         sandboxId: doc._id as any,
       })
-    ));
+    );
     return docs.length;
   },
 };
@@ -421,12 +428,12 @@ const workspaceConfigs: WorkspaceConfigStore = {
     const docs = (await getConvexClient().query(internal.workspaceConfigs.list, {
       accountId: accountId as any,
     })) as ConvexWorkspaceConfigDoc[];
-    await Promise.all(docs.map((doc) =>
+    await removeInBatches(docs, (doc) =>
       getConvexClient().mutation(internal.workspaceConfigs.remove, {
         accountId: accountId as any,
         workspaceId: doc._id as any,
       })
-    ));
+    );
     return docs.length;
   },
 };
@@ -546,12 +553,12 @@ const accountTools: AccountToolStore = {
     const docs = (await getConvexClient().query(internal.accountTools.list, {
       accountId: accountId as any,
     })) as ConvexAccountToolDoc[];
-    await Promise.all(docs.map((doc) =>
+    await removeInBatches(docs, (doc) =>
       getConvexClient().mutation(internal.accountTools.remove, {
         accountId: accountId as any,
         toolId: doc._id as any,
       })
-    ));
+    );
     return docs.length;
   },
 };
@@ -568,12 +575,12 @@ const accountHooks: AccountHookStore = {
     const docs = (await getConvexClient().query(internal.accountHooks.list, {
       accountId: accountId as any,
     })) as ConvexAccountHookDoc[];
-    await Promise.all(docs.map((doc) =>
+    await removeInBatches(docs, (doc) =>
       getConvexClient().mutation(internal.accountHooks.remove, {
         accountId: accountId as any,
         hookId: doc._id as any,
       })
-    ));
+    );
     return docs.length;
   },
 };

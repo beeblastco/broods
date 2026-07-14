@@ -371,16 +371,20 @@ function createFakeStorage(overrides: Record<string, unknown>) {
     },
     sandboxConfigs: {
       async removeAllForAccount() { return 0; },
+      ...(overrides.sandboxConfigs as Record<string, unknown> | undefined),
     },
     workspaceConfigs: {
       async list() { return []; },
       async removeAllForAccount() { return 0; },
+      ...(overrides.workspaceConfigs as Record<string, unknown> | undefined),
     },
     accountTools: {
       async removeAllForAccount() { return 0; },
+      ...(overrides.accountTools as Record<string, unknown> | undefined),
     },
     accountHooks: {
       async removeAllForAccount() { return 0; },
+      ...(overrides.accountHooks as Record<string, unknown> | undefined),
     },
   } as never;
 }

@@ -269,4 +269,18 @@ describe("clearConversation via /new command", () => {
     expect(mutationMock).toHaveBeenCalledWith("clearConversation", { conversationKey: "key-1" });
     expect(channel.sendText).toHaveBeenCalledWith("Context cleared. Starting fresh.");
   });
+
+  it("returns an error when conversation cleanup does not converge", async () => {
+    const mutationMock = mock(() => Promise.resolve(100));
+    runtime.mutate = mutationMock as never;
+    const channel = createMockChannelActions();
+
+    await executeCommand(
+      "/new",
+      createCommandContext({ conversationKey: "key-1", channel }),
+    );
+    expect(mutationMock).toHaveBeenCalledTimes(100);
+    expect(channel.sendText).toHaveBeenCalledWith("Something went wrong. Please try again.");
+    expect(channel.sendText).not.toHaveBeenCalledWith("Context cleared. Starting fresh.");
+  });
 });

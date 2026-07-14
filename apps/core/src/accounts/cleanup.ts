@@ -13,6 +13,8 @@ import {
 } from "../harness/sandbox/s3-mount.ts";
 import { runtime } from "../shared/convex/runtime.ts";
 
+const ACCOUNT_RUNTIME_DELETE_MAX_BATCHES = 100;
+
 export interface AccountCleanupSummary {
   conversationsDeleted: number;
   processedEventsDeleted: number;
@@ -32,7 +34,7 @@ export async function deleteAccountRuntimeData(
     account.accountId,
     workspaces.map((w) => workspaceNamespace(account.accountId, w.workspaceId)),
   );
-  const [runtime, filesystemObjectsDeleted] = await Promise.all([
+  const [runtimeDeleted, filesystemObjectsDeleted] = await Promise.all([
     deleteConvexRuntimeRows(account.accountId),
     deleteWorkspaceFilesystems(account.accountId, workspaces),
   ]);
@@ -40,7 +42,7 @@ export async function deleteAccountRuntimeData(
     getStorage().sandboxConfigs.removeAllForAccount(account.accountId),
     getStorage().workspaceConfigs.removeAllForAccount(account.accountId),
   ]);
-  return { ...runtime, filesystemObjectsDeleted, reservedSandboxesReleased };
+  return { ...runtimeDeleted, filesystemObjectsDeleted, reservedSandboxesReleased };
 }
 
 async function deleteConvexRuntimeRows(
@@ -59,7 +61,7 @@ async function deleteConvexRuntimeRows(
     asyncToolGroupDeleted: 0,
     sandboxReservationDeleted: 0,
   };
-  for (;;) {
+  for (let batchNumber = 0; batchNumber < ACCOUNT_RUNTIME_DELETE_MAX_BATCHES; batchNumber += 1) {
     const batch = await runtime.mutate<
       typeof totals & { totalDeleted: number }
     >("deleteAccountRuntimeData", { accountId });
@@ -71,6 +73,10 @@ async function deleteConvexRuntimeRows(
     totals.sandboxReservationDeleted += batch.sandboxReservationDeleted;
     if (batch.totalDeleted === 0) return totals;
   }
+
+  throw new Error(
+    `Account runtime cleanup exceeded ${ACCOUNT_RUNTIME_DELETE_MAX_BATCHES} Convex batches; retry deletion to continue`,
+  );
 }
 
 export async function deleteWorkspaceFilesystem(

@@ -50,6 +50,7 @@ export interface DiscordCommandResolution {
 
 const DEFAULT_DISCORD_INTEGRATION_TYPES = [0];
 const DEFAULT_DISCORD_CONTEXTS = [0, 1];
+const CLEAR_CONVERSATION_MAX_BATCHES = 100;
 
 export const commands: CommandHandler[] = [
   {
@@ -60,10 +61,16 @@ export const commands: CommandHandler[] = [
       description: "Clear conversation context and start fresh",
     },
     async execute(ctx) {
-      while (await runtime.mutate<number>("clearConversation", { conversationKey: ctx.conversationKey }) > 0) {
-        // Convex mutations are bounded; keep deleting until the conversation is empty.
+      for (let batchNumber = 0; batchNumber < CLEAR_CONVERSATION_MAX_BATCHES; batchNumber += 1) {
+        const deleted = await runtime.mutate<number>("clearConversation", {
+          conversationKey: ctx.conversationKey,
+        });
+        if (deleted === 0) return "Context cleared. Starting fresh.";
       }
-      return "Context cleared. Starting fresh.";
+
+      throw new Error(
+        `Conversation cleanup exceeded ${CLEAR_CONVERSATION_MAX_BATCHES} Convex batches; run /clear again to continue`,
+      );
     },
   },
   {
