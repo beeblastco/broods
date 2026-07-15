@@ -473,15 +473,21 @@ export const adoptExternalAccount = internalMutation({
         }
 
         const email = args.ownerEmail.trim().toLowerCase();
-        const owner = await ctx.db
+        const ownerMatches = await ctx.db
             .query("users")
-            .filter((q) => q.eq(q.field("email"), email))
-            .unique();
-        if (!owner) {
+            .withIndex("by_email", (q) => q.eq("email", email))
+            .collect();
+        if (ownerMatches.length === 0) {
             throw new Error(
                 `No user with email ${email}; they must sign in to the dashboard once first`,
             );
         }
+        if (ownerMatches.length > 1) {
+            throw new Error(
+                `Multiple users found with email ${email}; database integrity violation`,
+            );
+        }
+        const owner = ownerMatches[0];
 
         const now = Date.now();
         const slug = await uniqueOrgSlug(ctx, args.orgName);
@@ -507,7 +513,7 @@ export const adoptExternalAccount = internalMutation({
             username: account.username,
             previousOrgId: account.orgId,
             orgId: orgId,
-            ownerEmail: email,
+            ownerId: owner._id,
         });
 
         return { orgId: orgId, slug: slug, membershipId: membershipId };

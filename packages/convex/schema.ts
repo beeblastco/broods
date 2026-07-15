@@ -825,7 +825,10 @@ export const usageRollupsFields = {
 };
 
 export default defineSchema({
-    users: defineTable(usersFields).index("by_authId", ["authId"]).index("by_accountHandle", ["accountHandle"]),
+    users: defineTable(usersFields)
+        .index("by_authId", ["authId"])
+        .index("by_accountHandle", ["accountHandle"])
+        .index("by_email", ["email"]),
     projects: defineTable(projectsFields)
         .index("by_authId", ["authId"])
         .index("by_authId_and_slug", ["authId", "slug"])
