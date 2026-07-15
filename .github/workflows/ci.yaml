@@ -87,6 +87,12 @@ jobs:
       - name: Test gateway
         run: bun run --filter @broods/gateway test
 
+      - name: Check convex
+        run: bun run --filter @broods/convex check
+
+      - name: Test convex
+        run: bun run --filter @broods/convex test
+
       - name: Lint dashboard
         run: bun run --filter @broods/dashboard lint
 

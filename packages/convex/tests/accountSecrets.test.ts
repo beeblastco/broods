@@ -1,6 +1,6 @@
 /** Account secret helper parity tests for config HTTP account rotation. */
 
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it } from "vitest";
 import { createAccountSecret, hashAccountSecret, hexFromBytes } from "../model/accountSecrets";
 
 describe("account secrets", () => {

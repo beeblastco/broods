@@ -1,6 +1,6 @@
 /** Pagination and error-mapping tests for the Slack channel-directory fetcher. */
 
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it } from "vitest";
 import {
     fetchSlackChannelDirectory,
     SLACK_DIRECTORY_PAGE_CAP,
