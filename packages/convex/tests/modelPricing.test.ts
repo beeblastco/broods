@@ -1,6 +1,6 @@
 /** Shared model pricing resolution and token cost tests. */
 
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it } from "vitest";
 import { canonicalModelProvider, estimateModelTokenCost, resolveModelTokenRates } from "../modelPricing.ts";
 
 describe("model pricing", () => {

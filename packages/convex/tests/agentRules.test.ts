@@ -1,6 +1,6 @@
 /** Agent config normalizer parity tests for the Convex config plane. */
 
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it } from "vitest";
 import {
     mergeAgentConfig,
     normalizeAgentConfig,
