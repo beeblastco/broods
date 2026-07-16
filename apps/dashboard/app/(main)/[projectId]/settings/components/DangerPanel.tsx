@@ -3,8 +3,8 @@
 /** Danger panel: delete the active environment or the entire project, each behind a typed confirmation. */
 import { DeleteConfirmDialog } from "@/app/components/DeleteConfirmDialog";
 import { Section } from "@/app/components/Section";
-import { useEnvironment } from "@/app/hooks/useEnvironment";
 import { Button } from "@/app/components/ui/button";
+import { useEnvironment } from "@/app/hooks/useEnvironment";
 import { api } from "@broods/convex/_generated/api";
 import type { Doc, Id } from "@broods/convex/_generated/dataModel";
 import { useMutation, useQuery } from "convex/react";

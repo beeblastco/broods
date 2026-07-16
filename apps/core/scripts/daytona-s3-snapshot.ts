@@ -8,12 +8,12 @@ const snapshotName = process.env.DAYTONA_S3_SNAPSHOT_NAME!;
 const baseImage = process.env.DAYTONA_S3_SNAPSHOT_BASE_IMAGE!;
 const image = Image.base(baseImage).runCommands(
   "sudo apt-get update " +
-    "&& sudo apt-get install -y --no-install-recommends libfuse2 ca-certificates wget",
+  "&& sudo apt-get install -y --no-install-recommends libfuse2 ca-certificates wget",
   'arch="$(dpkg --print-architecture | sed s/amd64/x86_64/)" ' +
-    "&& wget -O /tmp/mount-s3.deb " +
-    '"https://s3.amazonaws.com/mountpoint-s3-release/latest/${arch}/mount-s3.deb" ' +
-    "&& sudo apt-get install -y /tmp/mount-s3.deb " +
-    "&& rm /tmp/mount-s3.deb",
+  "&& wget -O /tmp/mount-s3.deb " +
+  '"https://s3.amazonaws.com/mountpoint-s3-release/latest/${arch}/mount-s3.deb" ' +
+  "&& sudo apt-get install -y /tmp/mount-s3.deb " +
+  "&& rm /tmp/mount-s3.deb",
 );
 
 console.log(`Creating Daytona snapshot ${snapshotName} from ${baseImage}`);

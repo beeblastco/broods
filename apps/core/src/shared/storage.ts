@@ -3,17 +3,17 @@
  * domain records and configuration codecs live in `./domain/`.
  */
 
+import type { AccountHookRecord } from "./domain/account-hooks.ts";
+import type { AccountToolRecord } from "./domain/account-tools.ts";
 import type {
   AccountRecord,
   CreateAccountInput,
 } from "./domain/accounts.ts";
+import type { AgentPolicyRecord } from "./domain/agent-policy.ts";
 import type { AgentRecord } from "./domain/agents.ts";
 import type { CronRecord, CronRunRecord } from "./domain/cron.ts";
 import type { SandboxConfigRecord } from "./domain/sandbox-config.ts";
 import type { WorkspaceConfigRecord } from "./domain/workspace-config.ts";
-import type { AccountToolRecord } from "./domain/account-tools.ts";
-import type { AccountHookRecord } from "./domain/account-hooks.ts";
-import type { AgentPolicyRecord } from "./domain/agent-policy.ts";
 
 /** Safe deployment scope returned by Convex without stored credentials. */
 export interface AgentDeploymentScope {

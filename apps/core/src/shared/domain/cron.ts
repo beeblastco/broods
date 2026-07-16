@@ -127,19 +127,19 @@ export function normalizeUpdateCronInput(input: UpdateCronInput): NormalizedCron
     ...(input.name !== undefined ? { name: requireString(input.name, "name", 120) } : {}),
     ...(input.description !== undefined
       ? {
-          description:
-            input.description === null ? null : optionalString(input.description, "description", 500),
-        }
+        description:
+          input.description === null ? null : optionalString(input.description, "description", 500),
+      }
       : {}),
     ...(input.agentId !== undefined ? { agentId: requireString(input.agentId, "agentId", 120) } : {}),
     ...(events !== undefined ? { events } : {}),
     ...(input.conversationKey !== undefined
       ? {
-          conversationKey:
-            input.conversationKey === null
-              ? null
-              : optionalString(input.conversationKey, "conversationKey", 256),
-        }
+        conversationKey:
+          input.conversationKey === null
+            ? null
+            : optionalString(input.conversationKey, "conversationKey", 256),
+      }
       : {}),
     ...(input.scheduleExpression !== undefined
       ? { scheduleExpression: normalizeScheduleExpression(input.scheduleExpression) }

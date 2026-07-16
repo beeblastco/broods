@@ -4,17 +4,17 @@
  * stage: audit records decisions without blocking, enforce acts on them.
  */
 
-import type { ToolApprovalConfiguration, ToolApprovalStatus, ToolSet } from "ai";
 import { httpPolicyClient, opaPolicy, shadow, type PolicyClient } from "@ai-sdk/policy-opa";
-import { optionalEnv } from "../shared/env.ts";
-import { logDebug, logInfo, logWarn } from "../shared/log.ts";
-import { getStorage } from "../shared/storage.ts";
+import type { ToolApprovalConfiguration, ToolApprovalStatus, ToolSet } from "ai";
 import type { AgentConfig } from "../shared/domain/agent-config.ts";
 import type {
   AgentPolicyMode,
   PolicyDecisionInput,
 } from "../shared/domain/agent-policy.ts";
 import type { SandboxPermissionMode } from "../shared/domain/sandbox-config.ts";
+import { optionalEnv } from "../shared/env.ts";
+import { logDebug, logInfo, logWarn } from "../shared/log.ts";
+import { getStorage } from "../shared/storage.ts";
 import type { ResolvedWorkspace } from "../shared/workspaces.ts";
 import type { SandboxExecutorConfig } from "./sandbox/types.ts";
 import { bashNeedsApproval, editNeedsApproval, resolveWorkspace } from "./tools/filesystem-utils.ts";
@@ -211,8 +211,8 @@ export function policyInputForTool(
   if (toolName === "run_subagent") {
     const subagentId = Array.isArray(record.tasks)
       ? (record.tasks.find((task) =>
-          task && typeof task === "object" && typeof (task as { agentId?: unknown }).agentId === "string"
-        ) as { agentId?: string } | undefined)?.agentId
+        task && typeof task === "object" && typeof (task as { agentId?: unknown }).agentId === "string"
+      ) as { agentId?: string } | undefined)?.agentId
       : undefined;
     return { action: "subagent.run", ...base, ...(subagentId ? { subagentId } : {}) };
   }

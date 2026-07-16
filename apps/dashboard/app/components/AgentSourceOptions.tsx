@@ -1,8 +1,8 @@
 "use client";
 
 /** Shared list of agent config source options used by the empty canvas guide and the source picker dialog. */
-import { FileDown, FilePlus, GitBranch, LayoutTemplate } from "lucide-react";
 import { Button } from "@/app/components/ui/button";
+import { FileDown, FilePlus, GitBranch, LayoutTemplate } from "lucide-react";
 
 const SOURCE_OPTIONS = [
     { key: "github", label: "From GitHub", icon: GitBranch },

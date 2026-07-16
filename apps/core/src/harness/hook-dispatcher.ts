@@ -8,13 +8,13 @@
  */
 
 import type { JSONValue, ToolSet } from "ai";
-import { isPlainObject } from "../shared/object.ts";
-import type { AgentCodeHookConfig, AgentConfig, AgentHookEventName } from "../shared/domain/agent-config.ts";
 import type { AccountHookRecord } from "../shared/domain/account-hooks.ts";
+import type { AgentCodeHookConfig, AgentConfig, AgentHookEventName } from "../shared/domain/agent-config.ts";
+import { isPlainObject } from "../shared/object.ts";
 import { getStorage } from "../shared/storage.ts";
+import { runCodeHook } from "./hook-runner.ts";
 import type { AgentLifecycleEventPayload } from "./lifecycle.ts";
 import { toLifecycleValue } from "./lifecycle.ts";
-import { runCodeHook } from "./hook-runner.ts";
 
 export interface HookDispatcher {
   hasHooksFor(event: AgentHookEventName): boolean;

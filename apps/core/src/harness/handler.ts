@@ -3,15 +3,14 @@
  * Keep request orchestration, session setup, and response shaping here.
  */
 
-import type { SystemModelMessage, ToolModelMessage, JSONValue, UserModelMessage } from "ai";
+import type { JSONValue, SystemModelMessage, ToolModelMessage } from "ai";
 import { extractBearerToken, timingSafeStringEqual } from "../shared/auth.ts";
-import { markHandlerEntry } from "../shared/cold-start.ts";
 import { formatChannelErrorText } from "../shared/channels.ts";
+import { markHandlerEntry } from "../shared/cold-start.ts";
 import { executeCommand } from "../shared/commands.ts";
-import { getStorage } from "../shared/storage.ts";
 import { toRuntimeAgentConfig } from "../shared/domain/agent-config.ts";
 import type { CronRecord } from "../shared/domain/cron.ts";
-import { booleanEnv, optionalEnv, positiveIntegerEnv, requireEnv } from "../shared/env.ts";
+import { booleanEnv, optionalEnv, positiveIntegerEnv } from "../shared/env.ts";
 import { errorResponse, jsonResponse, parseJsonBody, type CoreRequest, type RequestContext } from "../shared/http.ts";
 import { logError, logInfo, logWarn } from "../shared/log.ts";
 import { LiveNatsPublisher, type NatsPublisher } from "../shared/nats.ts";
@@ -21,6 +20,25 @@ import {
   scopedDirectConversationKey,
   scopedDirectEventId,
 } from "../shared/runtime-keys.ts";
+import { getStorage } from "../shared/storage.ts";
+import {
+  createPendingAsyncAgentResult,
+  getAsyncAgentResult,
+  markAsyncAgentResultAwaitingApproval,
+  markAsyncAgentResultCompleted,
+  markAsyncAgentResultFailed,
+} from "./async-agent-result.ts";
+import {
+  getAsyncToolResult,
+  getDetachedAsyncToolGroup,
+  listAsyncToolResultsByParentEvent,
+  sealDetachedAsyncToolGroup,
+  settleAsyncToolResultFromCallback,
+  verifyAsyncToolCompletionToken,
+  type AsyncToolDelivery,
+  type AsyncToolResultRecord,
+} from "./async-tool-result.ts";
+import { AsyncToolCoordinator, completionToParentMessage } from "./async-tools.ts";
 import { runAgentLoop, type ToolApprovalSummary } from "./harness.ts";
 import { applyMessageSendingHook, createAgentHookDispatcher, type HookDispatcher } from "./hook-dispatcher.ts";
 import {
@@ -35,25 +53,7 @@ import {
   type StatusInboundEvent,
 } from "./integrations.ts";
 import { Session, type ConversationIngressEvent } from "./session.ts";
-import {
-  createPendingAsyncAgentResult,
-  getAsyncAgentResult,
-  markAsyncAgentResultAwaitingApproval,
-  markAsyncAgentResultCompleted,
-  markAsyncAgentResultFailed,
-} from "./async-agent-result.ts";
 import { SubagentCoordinator } from "./subagents.ts";
-import { AsyncToolCoordinator, completionToParentMessage } from "./async-tools.ts";
-import {
-  getDetachedAsyncToolGroup,
-  getAsyncToolResult,
-  listAsyncToolResultsByParentEvent,
-  sealDetachedAsyncToolGroup,
-  settleAsyncToolResultFromCallback,
-  type AsyncToolDelivery,
-  type AsyncToolResultRecord,
-  verifyAsyncToolCompletionToken,
-} from "./async-tool-result.ts";
 
 type AgentLoopStream = Awaited<ReturnType<typeof runAgentLoop>>;
 type ContinuationOutcome =
@@ -562,20 +562,20 @@ async function handleAsyncWorkerRequest(event: DirectInboundEvent, context?: Req
     }
     if (result.hasDetachedCallbacks) {
       await continueDetachedAsyncToolsIfReady(event, event.agentConfig);
-      }
-    } catch (err) {
-      if (err instanceof ConversationBusyError) {
-        logInfo("Async direct request rejected while conversation is busy", {
-          eventId: event.eventId,
-          conversationKey: event.conversationKey,
-        });
-        await settleAsyncFailure(event, CONVERSATION_BUSY);
-        return;
-      }
-
-      logError("Async direct request processing failed", {
+    }
+  } catch (err) {
+    if (err instanceof ConversationBusyError) {
+      logInfo("Async direct request rejected while conversation is busy", {
         eventId: event.eventId,
-        error: err instanceof Error ? err.message : String(err),
+        conversationKey: event.conversationKey,
+      });
+      await settleAsyncFailure(event, CONVERSATION_BUSY);
+      return;
+    }
+
+    logError("Async direct request processing failed", {
+      eventId: event.eventId,
+      error: err instanceof Error ? err.message : String(err),
     });
     await settleAsyncFailure(event, err instanceof Error ? err.message : "Async request failed");
     if (event.cronRun) {
@@ -1221,7 +1221,7 @@ export function dispatchInProcessWorker(
     deadlineMs: Date.now() + WORKER_TIMEOUT_BUDGET_MS,
     // Workers run detached; they never emit an HTTP response, so there is no
     // post-response tail to defer.
-    waitUntil: () => {},
+    waitUntil: () => { },
   }).then(
     () => undefined,
     (err) => {

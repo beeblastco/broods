@@ -35,18 +35,18 @@
  * Pass a token for token-auth servers.
  */
 
+import { connect as connectTcp } from "nats";
 import {
   connect as connectWebSocket,
-  headers as natsHeaders,
   DeliverPolicy,
   DiscardPolicy,
+  headers as natsHeaders,
   RetentionPolicy,
   StorageType,
   type ConsumerMessages,
   type NatsConnection,
   type Subscription,
 } from "nats.ws";
-import { connect as connectTcp } from "nats";
 
 export type { NatsConnection };
 
@@ -275,7 +275,7 @@ export async function ensureResponseStream(connection: NatsConnection): Promise<
       try {
         await jsm.streams.info(RESPONSE_STREAM_NAME);
         // Exists: best-effort sync of the mutable retention knobs.
-        await jsm.streams.update(RESPONSE_STREAM_NAME, config).catch(() => {});
+        await jsm.streams.update(RESPONSE_STREAM_NAME, config).catch(() => { });
         return;
       } catch {
         // Not found: create it below.
@@ -319,7 +319,7 @@ export async function ensureObservabilityStream(connection: NatsConnection): Pro
       };
       try {
         await jsm.streams.info(OBSERVABILITY_STREAM_NAME);
-        await jsm.streams.update(OBSERVABILITY_STREAM_NAME, config).catch(() => {});
+        await jsm.streams.update(OBSERVABILITY_STREAM_NAME, config).catch(() => { });
         return;
       } catch {
         // Not found: create it below.

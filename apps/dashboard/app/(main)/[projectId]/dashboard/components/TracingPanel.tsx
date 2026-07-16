@@ -2,11 +2,11 @@
 
 /** Tracing panel: full-height task timelines with an indented span tree, a waterfall bar column, and model/tool span details. */
 import { Badge } from "@/app/components/ui/badge";
-import { cn } from "@/app/lib/utils";
 import {
   useObservabilityStream,
   type ObservabilitySpanRow,
 } from "@/app/hooks/useObservabilityStream";
+import { cn } from "@/app/lib/utils";
 import { ChevronDown, ChevronRight, LoaderCircle } from "lucide-react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
@@ -307,9 +307,8 @@ function TimelineBar({
 
   const ttftMs = numericAttribute(span, "model.ttft_ms");
   const ttftFrac = ttftMs !== undefined && span.durationMs > 0 ? Math.min(1, ttftMs / span.durationMs) : 0;
-  const title = `${spanLabel(span)} · ${formatDuration(span.durationMs)} · started ${formatTime(span.startTimeMs)}${
-    ttftMs !== undefined ? ` · time to first token ${formatDuration(ttftMs)}` : ""
-  }`;
+  const title = `${spanLabel(span)} · ${formatDuration(span.durationMs)} · started ${formatTime(span.startTimeMs)}${ttftMs !== undefined ? ` · time to first token ${formatDuration(ttftMs)}` : ""
+    }`;
 
   return (
     <div className="relative h-4 w-full">

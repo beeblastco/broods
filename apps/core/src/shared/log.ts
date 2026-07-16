@@ -5,9 +5,9 @@
  * observability context from setObservabilityContext()).
  */
 
-import { emitOtelLog, getObservabilityContext } from "./otel.ts";
 import type { ObservabilityLogEntry } from "../../../../packages/broods/src/observability-contracts.ts";
-import { logsSubject, getObservabilityNatsConn, ensureObservabilityStream } from "./nats.ts";
+import { ensureObservabilityStream, getObservabilityNatsConn, logsSubject } from "./nats.ts";
+import { emitOtelLog, getObservabilityContext } from "./otel.ts";
 
 // Keys are matched after normalizing to lowercase with hyphens/underscores
 // stripped, against three lists: exact, prefix, and suffix.
@@ -208,7 +208,7 @@ function publishNats(
     .then(async (conn) => {
       // Ensure the durable stream captures this line for dashboard replay;
       // memoized, so ~free after the first call. Live publish proceeds regardless.
-      await ensureObservabilityStream(conn).catch(() => {});
+      await ensureObservabilityStream(conn).catch(() => { });
       conn.publish(subject, ENCODER.encode(JSON.stringify(entry)));
     })
     .catch(() => {

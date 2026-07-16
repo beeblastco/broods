@@ -4,26 +4,17 @@
 import { CanvasControls } from "@/app/components/canvas/CanvasControl";
 import { DeletableEdge } from "@/app/components/canvas/DeletableEdge";
 import { isCodeManagedEdgeId } from "@/app/components/canvas/edgeOwnership";
+import { EmptyCanvasGuide } from "@/app/components/canvas/EmptyCanvasGuide";
+import { InfraAnalysisProvider } from "@/app/components/canvas/InfraAnalysisContext";
 import { MountEdge } from "@/app/components/canvas/MountEdge";
 import { SubagentEdge } from "@/app/components/canvas/SubagentEdge";
-import { EmptyCanvasGuide } from "@/app/components/canvas/EmptyCanvasGuide";
-import type { BaseNodeData } from "@/app/components/node/BaseNode";
 import { AgentNode } from "@/app/components/node/Agent";
+import type { BaseNodeData } from "@/app/components/node/BaseNode";
 import { DatabaseNode } from "@/app/components/node/Database";
 import { SandboxNode } from "@/app/components/node/Sandbox";
 import { SkillNode } from "@/app/components/node/Skill";
 import { ToolNode } from "@/app/components/node/Tool";
 import { WorkspaceNode } from "@/app/components/node/Workspace";
-import { InfraAnalysisProvider } from "@/app/components/canvas/InfraAnalysisContext";
-import {
-  analyzeCanvasInfra,
-  defaultRuntimeNodeData,
-  deriveAgentRuntimeRefs,
-  deriveSubagentRefs,
-  serializeRuntimeRefs,
-  serializeSubagentRefs,
-} from "@/app/lib/canvasRuntimeRefs";
-import type { Id } from "@broods/convex/_generated/dataModel";
 import {
   ContextMenu,
   ContextMenuContent,
@@ -32,8 +23,17 @@ import {
   ContextMenuSeparator,
   ContextMenuTrigger,
 } from "@/app/components/ui/context-menu";
-import { api } from "@broods/convex/_generated/api";
 import { useEnvironment } from "@/app/hooks/useEnvironment";
+import {
+  analyzeCanvasInfra,
+  defaultRuntimeNodeData,
+  deriveAgentRuntimeRefs,
+  deriveSubagentRefs,
+  serializeRuntimeRefs,
+  serializeSubagentRefs,
+} from "@/app/lib/canvasRuntimeRefs";
+import { api } from "@broods/convex/_generated/api";
+import type { Id } from "@broods/convex/_generated/dataModel";
 import {
   addEdge,
   Background,
@@ -638,9 +638,9 @@ function CanvasInner({ projectId }: { projectId: Id<"projects"> }) {
     // pair allows a single edge either way.
     const duplicate = isAgentPair
       ? edgesRef.current.some(
-          (e) =>
-            e.source === connection.source && e.target === connection.target,
-        )
+        (e) =>
+          e.source === connection.source && e.target === connection.target,
+      )
       : hasEdgeBetween(edgesRef.current, connection.source, connection.target);
     if (duplicate) return false;
 
@@ -758,10 +758,10 @@ function CanvasInner({ projectId }: { projectId: Id<"projects"> }) {
       const wouldDoubleSandbox =
         type === "sandbox" && nearest
           ? agentHasDirectSandbox(
-              edgesRef.current,
-              nodesRef.current,
-              nearest.id,
-            )
+            edgesRef.current,
+            nodesRef.current,
+            nearest.id,
+          )
           : false;
       if (nearest && !wouldDoubleSandbox) {
         const newEdge: Edge = {

@@ -3,13 +3,13 @@
 /** Client-side providers for Convex, WorkOS AuthKit, and theming. */
 import {
     AuthKitProvider,
-    useAuth as useAuthKit,
     useAccessToken,
+    useAuth as useAuthKit,
 } from "@workos-inc/authkit-nextjs/components";
 import { ConvexProviderWithAuth, ConvexReactClient } from "convex/react";
 import { ThemeProvider } from "next-themes";
-import { useCallback } from "react";
 import type { ReactNode } from "react";
+import { useCallback } from "react";
 
 const convex = new ConvexReactClient(process.env.NEXT_PUBLIC_CONVEX_URL as string);
 

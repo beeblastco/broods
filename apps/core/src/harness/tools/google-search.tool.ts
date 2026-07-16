@@ -3,8 +3,8 @@
  * Keep Gemini provider-defined search configuration here.
  */
 
-import type { ToolSet } from "ai";
 import type { GoogleGenerativeAIProvider } from "@ai-sdk/google";
+import type { ToolSet } from "ai";
 import type { ToolContext } from "./index.ts";
 
 export default function googleSearchTool(context: ToolContext): ToolSet {

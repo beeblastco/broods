@@ -4,26 +4,26 @@
  * Account types and auth live in `./accounts.ts` and `../auth.ts`.
  */
 
-import type { JSONSchema7, LanguageModelCallOptions, RequestOptions, SystemModelMessage, streamText } from "ai";
-import { systemModelMessageSchema } from "ai";
 import type { DiscordAdapterConfig } from "@chat-adapter/discord";
 import type { GitHubAdapterConfig } from "@chat-adapter/github";
 import type { SlackAdapterConfig } from "@chat-adapter/slack";
 import type { TelegramAdapterConfig } from "@chat-adapter/telegram";
+import type { JSONSchema7, LanguageModelCallOptions, RequestOptions, SystemModelMessage, streamText } from "ai";
+import { systemModelMessageSchema } from "ai";
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto";
 import { requireEnv } from "../env.ts";
 import { assertPublicHttpsUrl } from "../http.ts";
 import { assertOptionalStringArray, isPlainObject, isStringRecord } from "../object.ts";
-import { isAccountToolId } from "./account-tools.ts";
-import {
-  normalizeAgentPolicyConfig,
-  type AgentPolicyConfig,
-} from "./agent-policy.ts";
 import {
   accountModelProviderNames,
   isAccountModelProviderName,
   type AccountModelProviderName,
 } from "../providers.ts";
+import { isAccountToolId } from "./account-tools.ts";
+import {
+  normalizeAgentPolicyConfig,
+  type AgentPolicyConfig,
+} from "./agent-policy.ts";
 export type { AccountModelProviderName } from "../providers.ts";
 
 const CONFIG_ENCRYPTION_ALGORITHM = "aes-256-gcm";
@@ -379,11 +379,11 @@ export interface AgentZaloChannelConfig {
 }
 
 interface EncryptedAgentConfig {
-    encrypted: true;
-    algorithm: typeof CONFIG_ENCRYPTION_ALGORITHM;
-    iv: string;
-    tag: string;
-    ciphertext: string;
+  encrypted: true;
+  algorithm: typeof CONFIG_ENCRYPTION_ALGORITHM;
+  iv: string;
+  tag: string;
+  ciphertext: string;
 }
 
 type AgentConfigPatch = Record<string, unknown>;
@@ -517,9 +517,8 @@ function validateAgentSystemConfig(value: unknown): void {
   for (const entry of values) {
     const parsed = systemModelMessageSchema.safeParse(entry);
     if (!parsed.success) {
-      throw new Error(`config.agent.system must be a string, SystemModelMessage, or SystemModelMessage[]: ${
-        parsed.error.issues[0]?.message ?? "invalid system message"
-      }`);
+      throw new Error(`config.agent.system must be a string, SystemModelMessage, or SystemModelMessage[]: ${parsed.error.issues[0]?.message ?? "invalid system message"
+        }`);
     }
   }
 }
@@ -1221,82 +1220,82 @@ function assertOptionalNumberArray(value: unknown, name: string): void {
 }
 
 export function decodeStoredAgentConfig(value: unknown): AgentConfig {
-    return decodeStoredConfigObject(value) as AgentConfig;
+  return decodeStoredConfigObject(value) as AgentConfig;
 }
 
 export function encryptAgentConfig(config: AgentConfig): EncryptedAgentConfig {
-    return encryptConfigObject(config);
+  return encryptConfigObject(config);
 }
 
 // Generic config encryption (aes-256-gcm) reused by the sandbox-config store so
 // account-scoped sandbox configs (which carry envVars secrets) are also encrypted
 // at rest. Workspace configs hold no secrets and are stored in plaintext.
 export function encryptConfigObject(config: object): EncryptedAgentConfig {
-    const iv = randomBytes(12);
-    const cipher = createCipheriv(CONFIG_ENCRYPTION_ALGORITHM, agentConfigEncryptionKey(), iv);
-    const plaintext = JSON.stringify(config);
-    const ciphertext = Buffer.concat([
-        cipher.update(plaintext, "utf-8"),
-        cipher.final(),
-    ]);
+  const iv = randomBytes(12);
+  const cipher = createCipheriv(CONFIG_ENCRYPTION_ALGORITHM, agentConfigEncryptionKey(), iv);
+  const plaintext = JSON.stringify(config);
+  const ciphertext = Buffer.concat([
+    cipher.update(plaintext, "utf-8"),
+    cipher.final(),
+  ]);
 
-    return {
-        encrypted: true,
-        algorithm: CONFIG_ENCRYPTION_ALGORITHM,
-        iv: iv.toString("base64url"),
-        tag: cipher.getAuthTag().toString("base64url"),
-        ciphertext: ciphertext.toString("base64url"),
-    };
+  return {
+    encrypted: true,
+    algorithm: CONFIG_ENCRYPTION_ALGORITHM,
+    iv: iv.toString("base64url"),
+    tag: cipher.getAuthTag().toString("base64url"),
+    ciphertext: ciphertext.toString("base64url"),
+  };
 }
 
 export function decodeStoredConfigObject(value: unknown): Record<string, unknown> {
-    if (isEncryptedAgentConfig(value)) {
-        return decryptConfigObject(value);
-    }
+  if (isEncryptedAgentConfig(value)) {
+    return decryptConfigObject(value);
+  }
 
-    throw new Error("Stored config must be encrypted");
+  throw new Error("Stored config must be encrypted");
 }
 
 function decryptConfigObject(config: EncryptedAgentConfig): Record<string, unknown> {
-    const decipher = createDecipheriv(
-        CONFIG_ENCRYPTION_ALGORITHM,
-        agentConfigEncryptionKey(),
-        Buffer.from(config.iv, "base64url"),
-    );
-    decipher.setAuthTag(Buffer.from(config.tag, "base64url"));
-    const plaintext = Buffer.concat([
-        decipher.update(Buffer.from(config.ciphertext, "base64url")),
-        decipher.final(),
-    ]).toString("utf-8");
+  const decipher = createDecipheriv(
+    CONFIG_ENCRYPTION_ALGORITHM,
+    agentConfigEncryptionKey(),
+    Buffer.from(config.iv, "base64url"),
+  );
+  decipher.setAuthTag(Buffer.from(config.tag, "base64url"));
+  const plaintext = Buffer.concat([
+    decipher.update(Buffer.from(config.ciphertext, "base64url")),
+    decipher.final(),
+  ]).toString("utf-8");
 
-    const parsed = JSON.parse(plaintext) as unknown;
-    if (!isPlainObject(parsed)) {
-        throw new Error("Stored config must be an object");
-    }
+  const parsed = JSON.parse(plaintext) as unknown;
+  if (!isPlainObject(parsed)) {
+    throw new Error("Stored config must be an object");
+  }
 
-    return parsed;
+  return parsed;
 }
 
 function agentConfigEncryptionKey(): Buffer {
-    return createHash("sha256")
-        .update(requireEnv("ACCOUNT_CONFIG_ENCRYPTION_SECRET"))
-        .digest();
+  return createHash("sha256")
+    .update(requireEnv("ACCOUNT_CONFIG_ENCRYPTION_SECRET"))
+    .digest();
 }
 
 function isEncryptedAgentConfig(value: unknown): value is EncryptedAgentConfig {
-    if (!isPlainObject(value)) {
-        return false;
-    }
+  if (!isPlainObject(value)) {
+    return false;
+  }
 
-    return value.encrypted === true &&
-        value.algorithm === CONFIG_ENCRYPTION_ALGORITHM &&
-        typeof value.iv === "string" &&
-        typeof value.tag === "string" &&
-        typeof value.ciphertext === "string";
+  return value.encrypted === true &&
+    value.algorithm === CONFIG_ENCRYPTION_ALGORITHM &&
+    typeof value.iv === "string" &&
+    typeof value.tag === "string" &&
+    typeof value.ciphertext === "string";
 }
 
 export function mergeAgentConfig(existing: AgentConfig, patch: AgentConfigPatch): AgentConfig {
-    return normalizeAgentConfig(mergeConfigValue(existing, patch));
+  return normalizeAgentConfig(mergeConfigValue(existing, patch));
 }
 
 /**
@@ -1306,45 +1305,45 @@ export function mergeAgentConfig(existing: AgentConfig, patch: AgentConfigPatch)
  * Returns the original config untouched when there are no model overrides.
  */
 export function applyRunOverrides(config: AgentConfig, overrides?: RunOverrides): AgentConfig {
-    if (!overrides || !(overrides.model && Object.keys(overrides.model).length > 0)) {
-        return config;
-    }
-    const next: AgentConfig = { ...config };
-    if (overrides.model && Object.keys(overrides.model).length > 0) {
-        next.model = { ...config.model, ...overrides.model };
-    }
-    return next;
+  if (!overrides || !(overrides.model && Object.keys(overrides.model).length > 0)) {
+    return config;
+  }
+  const next: AgentConfig = { ...config };
+  if (overrides.model && Object.keys(overrides.model).length > 0) {
+    next.model = { ...config.model, ...overrides.model };
+  }
+  return next;
 }
 
 function mergeConfigValue(existing: unknown, patch: unknown): unknown {
-    if (patch === undefined) {
-        return existing;
-    }
+  if (patch === undefined) {
+    return existing;
+  }
 
-    if (patch === REDACTED_SECRET_VALUE) {
-        return existing;
-    }
+  if (patch === REDACTED_SECRET_VALUE) {
+    return existing;
+  }
 
-    if (patch === null) {
-        return undefined;
-    }
+  if (patch === null) {
+    return undefined;
+  }
 
-    if (Array.isArray(patch) || !isPlainObject(patch)) {
-        return patch;
-    }
+  if (Array.isArray(patch) || !isPlainObject(patch)) {
+    return patch;
+  }
 
-    const existingObject = isPlainObject(existing) ? existing : {};
-    const merged = { ...existingObject };
-    for (const [key, value] of Object.entries(patch)) {
-        const mergedValue = mergeConfigValue(existingObject[key], value);
-        if (mergedValue === undefined) {
-            delete merged[key];
-        } else {
-            merged[key] = mergedValue;
-        }
+  const existingObject = isPlainObject(existing) ? existing : {};
+  const merged = { ...existingObject };
+  for (const [key, value] of Object.entries(patch)) {
+    const mergedValue = mergeConfigValue(existingObject[key], value);
+    if (mergedValue === undefined) {
+      delete merged[key];
+    } else {
+      merged[key] = mergedValue;
     }
+  }
 
-    return merged;
+  return merged;
 }
 
 export function redactAgentConfig(config: AgentConfig): AgentConfig {

@@ -5,22 +5,22 @@ import type { BaseNodeData } from "@/app/components/node/BaseNode";
 import { agentStatusConfig } from "@/app/components/node/BaseNode";
 import { ConfigTab } from "@/app/components/side-panel/ConfigTab";
 import {
+  DetailsTab,
+  type AgentProvider,
+} from "@/app/components/side-panel/DetailsTab";
+import {
   ResourceConfigTab,
   SandboxResourceDetailsTab,
   WorkspaceResourceDetailsTab,
 } from "@/app/components/side-panel/ResourceNodeTabs";
 import { SessionDetailsTab } from "@/app/components/side-panel/SessionDetailsTab";
+import { SettingsTab } from "@/app/components/side-panel/SettingsTab";
 import { SkillConfigTab } from "@/app/components/side-panel/SkillConfigTab";
 import { SkillDetailsTab } from "@/app/components/side-panel/SkillDetailsTab";
-import { WorkspaceFilesTab } from "@/app/components/side-panel/WorkspaceFilesTab";
 import { SkillFilesTab } from "@/app/components/side-panel/SkillFilesTab";
-import {
-  DetailsTab,
-  type AgentProvider,
-} from "@/app/components/side-panel/DetailsTab";
-import { SettingsTab } from "@/app/components/side-panel/SettingsTab";
 import { ToolConfigTab } from "@/app/components/side-panel/ToolConfigTab";
 import { ToolDetailsTab } from "@/app/components/side-panel/ToolDetailsTab";
+import { WorkspaceFilesTab } from "@/app/components/side-panel/WorkspaceFilesTab";
 import { Badge } from "@/app/components/ui/badge";
 import { Button } from "@/app/components/ui/button";
 import { Input } from "@/app/components/ui/input";
@@ -292,10 +292,10 @@ export const NodeSidePanel = memo(function NodeSidePanel({
     api.toolService.getByNode,
     canQueryToolStatus
       ? {
-          projectId: projectId,
-          environmentId: environmentId,
-          nodeId: nodeId,
-        }
+        projectId: projectId,
+        environmentId: environmentId,
+        nodeId: nodeId,
+      }
       : "skip",
   );
 
@@ -373,9 +373,9 @@ export const NodeSidePanel = memo(function NodeSidePanel({
     () =>
       Array.isArray(agentConfig?.runtimeVariables)
         ? agentConfig.runtimeVariables.filter(
-            (value: unknown): value is RuntimeVariable =>
-              isRuntimeVariable(value),
-          )
+          (value: unknown): value is RuntimeVariable =>
+            isRuntimeVariable(value),
+        )
         : [],
     [agentConfig],
   );
@@ -849,8 +849,8 @@ export const NodeSidePanel = memo(function NodeSidePanel({
             {(isWorkspace ||
               (isSkill &&
                 (nodeData?.config?.skillSource ?? "") === "files")) && (
-              <TabsTrigger value="files">Files</TabsTrigger>
-            )}
+                <TabsTrigger value="files">Files</TabsTrigger>
+              )}
             {(isAgent || isTool || isWorkspace || isSandbox || isSkill) && (
               <TabsTrigger value="config">Config</TabsTrigger>
             )}

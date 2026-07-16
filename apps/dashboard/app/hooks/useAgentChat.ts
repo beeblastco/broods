@@ -4,10 +4,10 @@
  * Streaming chat hook for testing a deployed agent via the core service API.
  * Uses AI SDK utilities to parse the UIMessage SSE stream.
  */
-import { useCallback, useEffect, useRef, useState } from "react";
-import { parseJsonEventStream, readUIMessageStream, uiMessageChunkSchema } from "ai";
-import type { UIMessage } from "ai";
 import { resolveCoreEndpoint } from "@/app/lib/coreEndpoint";
+import type { UIMessage } from "ai";
+import { parseJsonEventStream, readUIMessageStream, uiMessageChunkSchema } from "ai";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 type ChatStatus = "ready" | "streaming" | "error";
 const WEBSOCKET_CONNECT_TIMEOUT_MS = 2000;
@@ -821,9 +821,9 @@ export function useAgentChat({
             ? `Cannot reach core service at ${baseUrl}. Is the service running?`
             : err instanceof Error && err.message.includes("WebSocket")
               ? err.message
-            : err instanceof Error
-              ? err.message
-              : String(err);
+              : err instanceof Error
+                ? err.message
+                : String(err);
         setError(new Error(message));
         setStatus("error");
       }

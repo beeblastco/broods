@@ -1,9 +1,9 @@
 "use client";
 
 /** Settings tab with danger zone for node deletion. */
-import { useState } from "react";
-import { Button } from "@/app/components/ui/button";
 import { DeleteConfirmDialog } from "@/app/components/DeleteConfirmDialog";
+import { Button } from "@/app/components/ui/button";
+import { useState } from "react";
 
 type NodeType =
   | "agent"

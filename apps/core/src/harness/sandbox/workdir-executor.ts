@@ -17,9 +17,13 @@
  */
 
 import { Client, type CreateOptions, type Sandbox } from "@mv37/workdir";
+import { upsertSandboxInstance } from "../../shared/convex/sandbox-instances.ts";
 import { optionalEnv } from "../../shared/env.ts";
 import { isPlainObject } from "../../shared/object.ts";
+import { workdirSizeResources } from "../../shared/sandbox-sizes.ts";
 import { MAX_CONCURRENT_BACKGROUND_JOBS, resolveSandboxLifecycle } from "../../shared/sandbox.ts";
+import { claimSandboxInstance, deleteSandboxInstance, getSandboxExternalId, saveSandboxInstance } from "./instance-store.ts";
+import { generateJobId, launchScript, lifecycleScript, logsScript, parseJobStatus, statusScript, stopScript } from "./jobs.ts";
 import { type S3MountContext, mountRoleArn, resolveS3Mount, resolveS3MountIdentity } from "./s3-mount.ts";
 import type {
   SandboxExecutor,
@@ -36,10 +40,6 @@ import type {
   SandboxSnapshotResult,
 } from "./types.ts";
 import { assertSafeTenantProviderUrl, configString, isSandboxGoneError, sandboxReservationKey, shellQuote, stringRecord, truncateText, workspacePath } from "./utils.ts";
-import { generateJobId, launchScript, lifecycleScript, logsScript, parseJobStatus, statusScript, stopScript } from "./jobs.ts";
-import { claimSandboxInstance, deleteSandboxInstance, getSandboxExternalId, saveSandboxInstance } from "./instance-store.ts";
-import { upsertSandboxInstance } from "../../shared/convex/sandbox-instances.ts";
-import { workdirSizeResources } from "../../shared/sandbox-sizes.ts";
 
 const DEFAULT_WORKSPACE_ROOT = "/mnt/workspaces";
 const DEFAULT_S3_SECRET_NAMES = ["AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"];
@@ -79,7 +79,7 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
         provider: "sandbox",
       };
     } finally {
-      if (!persistent) await sandbox.delete().catch(() => {});
+      if (!persistent) await sandbox.delete().catch(() => { });
     }
   }
 
@@ -126,7 +126,7 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
   // forget: callers feature-detect and ignore failures.
   async prewarm(request: { namespace?: string; reservationKey?: string }): Promise<void> {
     if (!this.#persistent(request)) return;
-    await this.#acquire(request).catch(() => {});
+    await this.#acquire(request).catch(() => { });
   }
 
   async suspend(request: SandboxReservationRef): Promise<void> {
@@ -173,7 +173,7 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
       // caller iterating multiple configs can try the next one.
       if (!isSandboxGoneError(err)) throw err;
     }
-    await deleteSandboxInstance("sandbox", key).catch(() => {});
+    await deleteSandboxInstance("sandbox", key).catch(() => { });
   }
 
   #options(): Record<string, unknown> {
@@ -304,7 +304,7 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
     if (externalId) {
       try {
         const sandbox = await this.#reconnect(externalId);
-        await saveSandboxInstance("sandbox", ns, externalId).catch(() => {});
+        await saveSandboxInstance("sandbox", ns, externalId).catch(() => { });
         await upsertSandboxInstance(this.#config.controlPlane, "sandbox", ns, externalId, "metadata" in request ? request.metadata : undefined);
         return sandbox;
       } catch (error) {
@@ -312,7 +312,7 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
         // propagate or the still-live sandbox is orphaned at the provider. The
         // conditional delete keeps a row a concurrent call already re-claimed.
         if (!isSandboxGoneError(error)) throw error;
-        await deleteSandboxInstance("sandbox", ns, externalId).catch(() => {});
+        await deleteSandboxInstance("sandbox", ns, externalId).catch(() => { });
       }
     }
     const created = await this.#client.sandboxes.create(this.#createOptions(request, true));
@@ -323,7 +323,7 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
     // Lost a concurrent create race: discard our duplicate and reconnect to the
     // sandbox the winner recorded.
     const winner = await getSandboxExternalId("sandbox", ns);
-    await created.delete().catch(() => {});
+    await created.delete().catch(() => { });
     if (!winner) throw new Error("failed to reserve workdir sandbox (lost create race)");
     return this.#reconnect(winner);
   }

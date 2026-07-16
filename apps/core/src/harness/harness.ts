@@ -3,6 +3,14 @@
  * Keep turn context assembly, model invocation, and tools orchestration here.
  */
 
+import { NoSuchProviderReferenceError, UnsupportedFunctionalityError } from "@ai-sdk/provider";
+import {
+  context as otelContextApi,
+  trace as otelTraceApi,
+  SpanStatusCode,
+  type Context as OtelContext,
+  type Span,
+} from "@opentelemetry/api";
 import {
   isStepCount,
   streamText,
@@ -12,35 +20,30 @@ import {
   type ModelMessage,
   type StepResult,
   type SystemModelMessage,
-  type ToolCallPart,
   type ToolApprovalRequestOutput,
+  type ToolCallPart,
   type ToolSet,
 } from "ai";
-import { NoSuchProviderReferenceError, UnsupportedFunctionalityError } from "@ai-sdk/provider";
-import {
-  context as otelContextApi,
-  SpanStatusCode,
-  trace as otelTraceApi,
-  type Context as OtelContext,
-  type Span,
-} from "@opentelemetry/api";
+import type { ObservabilitySpanRow } from "../../../../packages/broods/src/observability-contracts.ts";
+import { consumeColdStart } from "../shared/cold-start.ts";
 import type { AgentConfig } from "../shared/domain/agent-config.ts";
 import { collectSecretValues, logError, logInfo, logWarn, redact, redactSensitiveText } from "../shared/log.ts";
+import { ensureObservabilityStream, flushObservabilityNats, getObservabilityNatsConn, tracesSubject } from "../shared/nats.ts";
 import { isPlainObject } from "../shared/object.ts";
-import { recordTaskUsage } from "../shared/telemetry.ts";
-import { extractCacheWriteTokens, usageTokenTotals } from "./usage-metering.ts";
 import {
-  getTracer,
   forceFlushOtel,
-  mintTraceId,
+  getObservabilityContext,
+  getTracer,
   mintSpanId,
+  mintTraceId,
   observabilityAttributes,
   setObservabilityContext,
-  getObservabilityContext,
 } from "../shared/otel.ts";
-import type { ObservabilitySpanRow } from "../../../../packages/broods/src/observability-contracts.ts";
-import { tracesSubject, getObservabilityNatsConn, ensureObservabilityStream, flushObservabilityNats } from "../shared/nats.ts";
-import { consumeColdStart } from "../shared/cold-start.ts";
+import { recordTaskUsage } from "../shared/telemetry.ts";
+import type { RunAsyncToolDispatch } from "./async-tools.ts";
+import { createAgentHookDispatcher, wrapToolsWithHooks, type HookDispatcher } from "./hook-dispatcher.ts";
+import { createAgentLifecycleEmitter, toLifecycleValue } from "./lifecycle.ts";
+import { createPolicyToolApproval, createRuntimeToolApproval } from "./policy.ts";
 import {
   modelOutputFromModelConfig,
   modelSettingsFromModelConfig,
@@ -48,14 +51,11 @@ import {
   resolveConfiguredModel,
 } from "./provider.ts";
 import { stripReasoningFromMessages } from "./pruning.ts";
-import type { Session, TurnContextSnapshot } from "./session.ts";
-import type { RunAsyncToolDispatch } from "./async-tools.ts";
-import { createAgentLifecycleEmitter, toLifecycleValue } from "./lifecycle.ts";
-import { createAgentHookDispatcher, wrapToolsWithHooks, type HookDispatcher } from "./hook-dispatcher.ts";
-import { createTools } from "./tools/index.ts";
-import { createPolicyToolApproval, createRuntimeToolApproval } from "./policy.ts";
 import type { SandboxCpuSample } from "./sandbox/types.ts";
+import type { Session, TurnContextSnapshot } from "./session.ts";
+import { createTools } from "./tools/index.ts";
 import type { RunSubagentDispatch } from "./tools/run-subagent.tool.ts";
+import { extractCacheWriteTokens, usageTokenTotals } from "./usage-metering.ts";
 
 // Default max agent iterations to prevent looping or too long execution.
 const MAX_AGENT_ITERATIONS = 30;
@@ -99,7 +99,7 @@ function publishSpan(row: ObservabilitySpanRow): Promise<void> {
       // Ensure the durable stream exists so even the first span of a cold
       // container is captured for replay; memoized, so this is ~free after the
       // first call. If it fails the live publish still reaches subscribers.
-      await ensureObservabilityStream(conn).catch(() => {});
+      await ensureObservabilityStream(conn).catch(() => { });
       conn.publish(subject, SPAN_ENCODER.encode(JSON.stringify(row)));
     })
     .catch(() => {

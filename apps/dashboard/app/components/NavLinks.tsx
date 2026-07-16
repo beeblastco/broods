@@ -1,15 +1,15 @@
 "use client";
 
 /** Right-side navigation links for the header bar. */
+import { FULL_ROUTE_PREFETCH } from "@/app/lib/prefetch";
+import { cn } from "@/app/lib/utils";
 import {
   useParams,
   usePathname,
   useRouter,
   useSearchParams,
 } from "next/navigation";
-import { cn } from "@/app/lib/utils";
 import { Suspense, useCallback, useEffect } from "react";
-import { FULL_ROUTE_PREFETCH } from "@/app/lib/prefetch";
 
 const NAV_ITEMS = [
   { segment: "", label: "Architecture" },

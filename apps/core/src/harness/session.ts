@@ -13,32 +13,32 @@ import type {
 import {
   systemModelMessageSchema,
 } from "ai";
-import type { AgentChannelWorkspaceScope, AgentConfig } from "../shared/domain/agent-config.ts";
-import { getStorage } from "../shared/storage.ts";
-import type { AsyncToolDelivery } from "./async-tool-result.ts";
-import { isMissingS3Error, readS3Text } from "../shared/s3.ts";
-import { resolveS3ReadTarget, workspaceReadContext } from "./sandbox/s3-mount.ts";
 import { runtime } from "../shared/convex/runtime.ts";
+import type { AgentChannelWorkspaceScope, AgentConfig } from "../shared/domain/agent-config.ts";
+import type { SandboxPermissionMode } from "../shared/domain/sandbox-config.ts";
+import { logError, logInfo } from "../shared/log.ts";
+import { isPlainObject } from "../shared/object.ts";
 import {
   channelScopeKeyFromConversation,
   conversationLeaseKey,
 } from "../shared/runtime-keys.ts";
-import { logError, logInfo } from "../shared/log.ts";
-import { isPlainObject } from "../shared/object.ts";
+import { isMissingS3Error, readS3Text } from "../shared/s3.ts";
+import { getStorage } from "../shared/storage.ts";
 import {
   resolveAgentRuntime,
   type ResolvedAgentRuntime,
   type ResolvedWorkspace,
 } from "../shared/workspaces.ts";
-import {
-  loadConfiguredSkillPrompt,
-  listConfiguredSkillMetadata,
-  type SkillMetadata,
-} from "./skills.ts";
+import type { AsyncToolDelivery } from "./async-tool-result.ts";
 import { compactSessionContext, isCompactionSummaryMessage } from "./compaction.ts";
 import { pruneSessionMessages } from "./pruning.ts";
+import { resolveS3ReadTarget, workspaceReadContext } from "./sandbox/s3-mount.ts";
 import type { SandboxExecutorConfig } from "./sandbox/types.ts";
-import type { SandboxPermissionMode } from "../shared/domain/sandbox-config.ts";
+import {
+  listConfiguredSkillMetadata,
+  loadConfiguredSkillPrompt,
+  type SkillMetadata,
+} from "./skills.ts";
 
 // Default conversation lease TTL of 15 minutes.
 const CONVERSATION_LEASE_TTL_SECONDS = 15 * 60;
@@ -463,7 +463,7 @@ export class Session {
   } = {}): Promise<StoredConversationEntry[]> {
     const entries: StoredConversationEntry[] = [];
     let afterCursor = options.afterCreatedAt ?? undefined;
-    for (;;) {
+    for (; ;) {
       const result = await runtime.query<StoredConversationEventPage>("listConversationEvents", {
         conversationKey: this.conversationKey,
         afterCursor: afterCursor,

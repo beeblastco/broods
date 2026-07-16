@@ -1,13 +1,7 @@
 "use client";
 
 /** Reusable dialog for creating a new project with a random name pre-filled. */
-import { useEffect, useState } from "react";
-import { useMutation } from "convex/react";
-import { useRouter } from "next/navigation";
-import { api } from "@broods/convex/_generated/api";
 import { Button } from "@/app/components/ui/button";
-import { Input } from "@/app/components/ui/input";
-import { Label } from "@/app/components/ui/label";
 import {
     Dialog,
     DialogContent,
@@ -16,6 +10,12 @@ import {
     DialogHeader,
     DialogTitle,
 } from "@/app/components/ui/dialog";
+import { Input } from "@/app/components/ui/input";
+import { Label } from "@/app/components/ui/label";
+import { api } from "@broods/convex/_generated/api";
+import { useMutation } from "convex/react";
+import { useRouter } from "next/navigation";
+import { useEffect, useState } from "react";
 
 /** Generate a random project name like "bold-panda-427". */
 export async function randomProjectName(): Promise<string> {

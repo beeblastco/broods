@@ -1,6 +1,7 @@
 "use client";
 
 /** Dialog for selecting how a new skill should be added. */
+import { Button } from "@/app/components/ui/button";
 import {
     Dialog,
     DialogContent,
@@ -8,7 +9,6 @@ import {
     DialogHeader,
     DialogTitle,
 } from "@/app/components/ui/dialog";
-import { Button } from "@/app/components/ui/button";
 import { FolderOpen, GitBranch, Sparkles } from "lucide-react";
 
 export type SkillSource = "files" | "github" | "json";

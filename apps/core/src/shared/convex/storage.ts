@@ -6,17 +6,9 @@
  * core POST /accounts path remains supported for standalone accounts.
  */
 
-import {
-  decodeStoredAgentConfig,
-  decodeStoredConfigObject,
-} from "../domain/agent-config.ts";
 import type { ModelMessage } from "ai";
-import type { SandboxConfig } from "../domain/sandbox-config.ts";
-import type { WorkspaceConfig } from "../domain/workspace-config.ts";
-import type { AccountToolRecord } from "../domain/account-tools.ts";
 import type { AccountHookRecord } from "../domain/account-hooks.ts";
-import type { AgentPolicyRecord } from "../domain/agent-policy.ts";
-import { taskUsage } from "./usage.ts";
+import type { AccountToolRecord } from "../domain/account-tools.ts";
 import {
   createAccountId,
   createAccountSecret,
@@ -24,10 +16,21 @@ import {
   normalizeCreateAccountInput,
   type AccountRecord,
 } from "../domain/accounts.ts";
+import {
+  decodeStoredAgentConfig,
+  decodeStoredConfigObject,
+} from "../domain/agent-config.ts";
+import type { AgentPolicyRecord } from "../domain/agent-policy.ts";
 import type { AgentRecord } from "../domain/agents.ts";
 import type { CronRecord } from "../domain/cron.ts";
-import type { SandboxConfigRecord } from "../domain/sandbox-config.ts";
-import type { WorkspaceConfigRecord } from "../domain/workspace-config.ts";
+import type { SandboxConfig, SandboxConfigRecord } from "../domain/sandbox-config.ts";
+import type { WorkspaceConfig, WorkspaceConfigRecord } from "../domain/workspace-config.ts";
+import type {
+  AgentDeploymentScope,
+  Storage,
+} from "../storage.ts";
+import { getConvexClient } from "./client.ts";
+import { taskUsage } from "./usage.ts";
 
 // ConvexHttpClient's typed `query`/`mutation` only accept public function
 // refs; the backend package exposes internalQuery / internalMutation, so we
@@ -37,11 +40,6 @@ import type { WorkspaceConfigRecord } from "../domain/workspace-config.ts";
 // tsconfig — while Bun still resolves and bundles the module statically.
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const internal: any = require("@broods/convex/_generated/api").internal;
-import type {
-  AgentDeploymentScope,
-  Storage,
-} from "../storage.ts";
-import { getConvexClient } from "./client.ts";
 
 const ACCOUNT_DELETE_MAX_BATCHES = 100_000;
 const DELETE_CONCURRENCY = 20;
@@ -92,12 +90,12 @@ function agentFromConvex(doc: ConvexAgentDoc | null): AgentRecord | null {
   if (!doc) return null;
   const config = doc.encryptedConfig && doc.encryptionIv && doc.encryptionTag
     ? decodeStoredAgentConfig({
-        encrypted: true as const,
-        algorithm: "aes-256-gcm",
-        ciphertext: doc.encryptedConfig,
-        iv: doc.encryptionIv,
-        tag: doc.encryptionTag,
-      })
+      encrypted: true as const,
+      algorithm: "aes-256-gcm",
+      ciphertext: doc.encryptedConfig,
+      iv: doc.encryptionIv,
+      tag: doc.encryptionTag,
+    })
     : {};
   return {
     accountId: doc.accountId,
@@ -330,12 +328,12 @@ function sandboxConfigFromConvex(doc: ConvexSandboxConfigDoc | null): SandboxCon
   if (!doc) return null;
   const config = doc.encryptedConfig && doc.encryptionIv && doc.encryptionTag
     ? (decodeStoredConfigObject({
-        encrypted: true as const,
-        algorithm: "aes-256-gcm",
-        ciphertext: doc.encryptedConfig,
-        iv: doc.encryptionIv,
-        tag: doc.encryptionTag,
-      }) as unknown as SandboxConfig)
+      encrypted: true as const,
+      algorithm: "aes-256-gcm",
+      ciphertext: doc.encryptedConfig,
+      iv: doc.encryptionIv,
+      tag: doc.encryptionTag,
+    }) as unknown as SandboxConfig)
     : ({ provider: "sandbox", permissionMode: "ask", network: { mode: "deny-all" } } as SandboxConfig);
   return {
     accountId: doc.accountId,

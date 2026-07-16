@@ -7,9 +7,9 @@
  * here.
  */
 
-import { mergeConfigObjects } from "./agent-config.ts";
 import { logError } from "../log.ts";
 import { isPlainObject } from "../object.ts";
+import { mergeConfigObjects } from "./agent-config.ts";
 
 // Implemented storage backends. The roadmap adds more (s3-compatible endpoints,
 // Cloudflare R2, Google Cloud Storage, Azure Blob): extend this list and wire the

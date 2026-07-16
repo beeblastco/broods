@@ -18,6 +18,7 @@
  */
 
 import { jsonSchema, tool, type ToolSet } from "ai";
+import type { ResolvedWorkspace } from "../../shared/workspaces.ts";
 import {
   getAsyncToolResult,
   markAsyncToolResultCompleted,
@@ -26,7 +27,6 @@ import {
 } from "../async-tool-result.ts";
 import { createSandboxExecutor } from "../sandbox/index.ts";
 import type { SandboxExecutor, SandboxExecutorConfig, SandboxJobStatus } from "../sandbox/types.ts";
-import type { ResolvedWorkspace } from "../../shared/workspaces.ts";
 import { toolError, toolText } from "./filesystem-utils.ts";
 
 const JOB_LOG_LIMIT_BYTES = 64 * 1024;

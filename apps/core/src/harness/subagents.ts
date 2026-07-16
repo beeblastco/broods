@@ -3,9 +3,8 @@
  * Keep parent/child orchestration here; the model-facing schema stays in tools.
  */
 
-import type { ModelMessage, SystemModelMessage, UserModelMessage, JSONValue } from "ai";
+import type { JSONValue, ModelMessage, SystemModelMessage, UserModelMessage } from "ai";
 import type { AgentConfig } from "../shared/domain/agent-config.ts";
-import { getStorage } from "../shared/storage.ts";
 import type { AgentRecord } from "../shared/domain/agents.ts";
 import { logError, logInfo } from "../shared/log.ts";
 import { getObservabilityContext } from "../shared/otel.ts";
@@ -13,15 +12,16 @@ import {
   scopedDirectConversationKey,
   scopedDirectEventId,
 } from "../shared/runtime-keys.ts";
-import { runAgentLoop, type SubagentParentContext } from "./harness.ts";
-import { createAgentLifecycleEmitter, type AgentLifecycleEmitter, toLifecycleValue } from "./lifecycle.ts";
-import { createAgentHookDispatcher, type HookDispatcher } from "./hook-dispatcher.ts";
-import { Session } from "./session.ts";
+import { getStorage } from "../shared/storage.ts";
 import {
   createPendingAsyncAgentResult,
   markAsyncAgentResultCompleted,
   markAsyncAgentResultFailed,
 } from "./async-agent-result.ts";
+import { runAgentLoop, type SubagentParentContext } from "./harness.ts";
+import { createAgentHookDispatcher, type HookDispatcher } from "./hook-dispatcher.ts";
+import { createAgentLifecycleEmitter, toLifecycleValue, type AgentLifecycleEmitter } from "./lifecycle.ts";
+import { Session } from "./session.ts";
 import type {
   RunSubagentDispatch,
   RunSubagentDispatchResult,

@@ -5,8 +5,8 @@
  * that only surface cache creation there.
  */
 
-import type { LanguageModelUsage } from "ai";
 import { canonicalModelProvider, PROVIDER_CACHE_WRITE_FIELDS } from "@broods/convex/modelPricing";
+import type { LanguageModelUsage } from "ai";
 import { isPlainObject } from "../shared/object.ts";
 
 export interface UsageTokenTotals {

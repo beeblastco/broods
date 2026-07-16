@@ -14,10 +14,10 @@ import {
   toNestedAgentConfig,
   type FlatAgentConfig,
 } from "@/app/lib/agentConfigCodec";
-import { api } from "@broods/convex/_generated/api";
-import type { Id } from "@broods/convex/_generated/dataModel";
 import { toErrorMessage } from "@/app/lib/errors";
 import { applyToolServiceUpsert } from "@/app/lib/toolServiceOptimistic";
+import { api } from "@broods/convex/_generated/api";
+import type { Id } from "@broods/convex/_generated/dataModel";
 import { useMutation, useQuery } from "convex/react";
 import { Check } from "lucide-react";
 import { useMemo, useState } from "react";
@@ -84,10 +84,10 @@ export function ToolConfigTab({
     api.toolService.getByNode,
     canQueryTool
       ? {
-          projectId: projectId,
-          environmentId: environmentId,
-          nodeId: nodeId,
-        }
+        projectId: projectId,
+        environmentId: environmentId,
+        nodeId: nodeId,
+      }
       : "skip",
   );
   const upsertToolService = useMutation(

@@ -1,21 +1,7 @@
 "use client";
 
 /** Dropdown selector for switching between project environments and creating new ones. */
-import { useEffect, useState } from "react";
-import { useMutation, useQuery } from "convex/react";
-import { useParams } from "next/navigation";
-import { api } from "@broods/convex/_generated/api";
-import type { Doc, Id } from "@broods/convex/_generated/dataModel";
-import { useEnvironment } from "@/app/hooks/useEnvironment";
-import { ChevronDown, Circle, Copy, Plus } from "lucide-react";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/app/components/ui/dropdown-menu";
+import { Button } from "@/app/components/ui/button";
 import {
   Dialog,
   DialogContent,
@@ -25,16 +11,30 @@ import {
   DialogTitle,
 } from "@/app/components/ui/dialog";
 import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/app/components/ui/dropdown-menu";
+import { Input } from "@/app/components/ui/input";
+import { Label } from "@/app/components/ui/label";
+import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
 } from "@/app/components/ui/select";
-import { Button } from "@/app/components/ui/button";
-import { Input } from "@/app/components/ui/input";
-import { Label } from "@/app/components/ui/label";
+import { useEnvironment } from "@/app/hooks/useEnvironment";
 import { cn } from "@/app/lib/utils";
+import { api } from "@broods/convex/_generated/api";
+import type { Doc, Id } from "@broods/convex/_generated/dataModel";
+import { useMutation, useQuery } from "convex/react";
+import { ChevronDown, Circle, Copy, Plus } from "lucide-react";
+import { useParams } from "next/navigation";
+import { useEffect, useState } from "react";
 
 type EnvironmentKind = "development" | "production" | "custom";
 type DeploymentRegion = "ap-southeast-1" | "eu-west-1" | "us-east-1";

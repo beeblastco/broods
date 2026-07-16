@@ -5,11 +5,14 @@
  * auto-pauses it on idle and connect resumes it).
  */
 
+import { Sandbox } from "e2b";
+import { Buffer } from "node:buffer";
+import { upsertSandboxInstance } from "../../shared/convex/sandbox-instances.ts";
 import { optionalEnv } from "../../shared/env.ts";
 import { isPlainObject } from "../../shared/object.ts";
 import { resolveSandboxLifecycle } from "../../shared/sandbox.ts";
-import { Buffer } from "node:buffer";
-import { Sandbox } from "e2b";
+import { claimSandboxInstance, deleteSandboxInstance, getSandboxExternalId, saveSandboxInstance } from "./instance-store.ts";
+import { callbackSnippet, generateJobId } from "./jobs.ts";
 import type {
   SandboxExecutor,
   SandboxExecutorConfig,
@@ -18,9 +21,6 @@ import type {
   SandboxRunResult,
 } from "./types.ts";
 import { configString, isSandboxGoneError, sandboxReservationKey, shellQuote, stringRecord, truncateText } from "./utils.ts";
-import { callbackSnippet, generateJobId } from "./jobs.ts";
-import { claimSandboxInstance, deleteSandboxInstance, getSandboxExternalId, saveSandboxInstance } from "./instance-store.ts";
-import { upsertSandboxInstance } from "../../shared/convex/sandbox-instances.ts";
 
 export class E2BSandboxExecutor implements SandboxExecutor {
   readonly #config: SandboxExecutorConfig;
@@ -65,7 +65,7 @@ export class E2BSandboxExecutor implements SandboxExecutor {
       timeoutMs: request.timeoutSeconds * 1000,
       envs: { ...stringRecord(this.#config.envVars), ...(request.envVars ?? {}) },
     });
-    await handle.disconnect().catch(() => {});
+    await handle.disconnect().catch(() => { });
     return { jobId };
   }
 
@@ -81,7 +81,7 @@ export class E2BSandboxExecutor implements SandboxExecutor {
       // caller iterating multiple configs can try the next one.
       if (!isSandboxGoneError(err)) throw err;
     }
-    await deleteSandboxInstance("e2b", key).catch(() => {});
+    await deleteSandboxInstance("e2b", key).catch(() => { });
   }
 
   #persistent(request: { namespace?: string; reservationKey?: string }): boolean {
@@ -103,7 +103,7 @@ export class E2BSandboxExecutor implements SandboxExecutor {
     if (externalId) {
       try {
         const sandbox = await Sandbox.connect(externalId, e2bApiOptions(this.#config));
-        await saveSandboxInstance("e2b", ns, externalId).catch(() => {});
+        await saveSandboxInstance("e2b", ns, externalId).catch(() => { });
         await upsertSandboxInstance(this.#config.controlPlane, "e2b", ns, externalId, request.metadata);
         return sandbox;
       } catch (error) {
@@ -111,7 +111,7 @@ export class E2BSandboxExecutor implements SandboxExecutor {
         // propagate or the still-live sandbox is orphaned at the provider. The
         // conditional delete keeps a row a concurrent call already re-claimed.
         if (!isSandboxGoneError(error)) throw error;
-        await deleteSandboxInstance("e2b", ns, externalId).catch(() => {});
+        await deleteSandboxInstance("e2b", ns, externalId).catch(() => { });
       }
     }
     const created = await Sandbox.create(e2bCreateOptions(this.#config, true));
@@ -122,7 +122,7 @@ export class E2BSandboxExecutor implements SandboxExecutor {
     // Lost a concurrent create race: discard our duplicate and reconnect to the
     // sandbox the winner recorded.
     const winner = await getSandboxExternalId("e2b", ns);
-    await Sandbox.kill(created.sandboxId, e2bApiOptions(this.#config)).catch(() => {});
+    await Sandbox.kill(created.sandboxId, e2bApiOptions(this.#config)).catch(() => { });
     if (!winner) throw new Error("failed to reserve e2b sandbox (lost create race)");
     return Sandbox.connect(winner, e2bApiOptions(this.#config));
   }

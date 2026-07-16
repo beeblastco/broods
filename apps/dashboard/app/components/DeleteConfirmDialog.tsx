@@ -1,10 +1,7 @@
 "use client";
 
 /** Reusable typed-confirm delete dialog. */
-import { useState } from "react";
 import { Button } from "@/app/components/ui/button";
-import { Input } from "@/app/components/ui/input";
-import { Label } from "@/app/components/ui/label";
 import {
   Dialog,
   DialogContent,
@@ -13,6 +10,9 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/app/components/ui/dialog";
+import { Input } from "@/app/components/ui/input";
+import { Label } from "@/app/components/ui/label";
+import { useState } from "react";
 
 export const CRITICAL_SAFETY_PHRASE =
   "I understand that it will delete all data and can't undo";
@@ -75,7 +75,7 @@ export function DeleteConfirmDialog({
               Confirmation text
             </Label>
             <div
-              className="select-text whitespace-pre-wrap break-words rounded-md border bg-muted/40 px-3 py-2 font-mono text-sm leading-6 text-foreground"
+              className="select-text whitespace-pre-wrap wrap-break-word rounded-md border bg-muted/40 px-3 py-2 font-mono text-sm leading-6 text-foreground"
               aria-label="Text to type for delete confirmation"
             >
               {deletePhrase}

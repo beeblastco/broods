@@ -1,6 +1,7 @@
 "use client";
 
 /** Test tab with a streaming chat window for testing a deployed agent. */
+import type { EnvironmentDeployment } from "@/app/components/side-panel/DetailsTab";
 import {
     Collapsible,
     CollapsibleContent,
@@ -13,7 +14,6 @@ import {
     InputGroupTextarea,
 } from "@/app/components/ui/input-group";
 import { useAgentChat } from "@/app/hooks/useAgentChat";
-import type { EnvironmentDeployment } from "@/app/components/side-panel/DetailsTab";
 import type { UIMessage } from "ai";
 import {
     ArrowUp,
@@ -98,20 +98,20 @@ function parseSubagentPanelPart(value: unknown): SubagentPanelPart | null {
 
     const events: SubagentPanelEvent[] = Array.isArray(raw.events)
         ? raw.events
-              .filter((entry) => entry && typeof entry === "object")
-              .map((entry) => {
-                  const record = entry as Record<string, unknown>;
-                  const phase: SubagentPanelEvent["phase"] =
-                      record.phase === "tool_call" || record.phase === "tool_result"
-                          ? record.phase
-                          : "started";
+            .filter((entry) => entry && typeof entry === "object")
+            .map((entry) => {
+                const record = entry as Record<string, unknown>;
+                const phase: SubagentPanelEvent["phase"] =
+                    record.phase === "tool_call" || record.phase === "tool_result"
+                        ? record.phase
+                        : "started";
 
-                  return {
-                      phase: phase,
-                      text: typeof record.text === "string" ? record.text : "",
-                  };
-              })
-              .filter((event) => event.text.trim().length > 0)
+                return {
+                    phase: phase,
+                    text: typeof record.text === "string" ? record.text : "",
+                };
+            })
+            .filter((event) => event.text.trim().length > 0)
         : [];
 
     return {
@@ -383,9 +383,9 @@ const MessageBubble = memo(function MessageBubble({ message, nodeColor }: { mess
     const isUser = message.role === "user";
     const userText = isUser
         ? message.parts
-              .filter((p) => p.type === "text")
-              .map((p) => ("text" in p ? p.text : ""))
-              .join("")
+            .filter((p) => p.type === "text")
+            .map((p) => ("text" in p ? p.text : ""))
+            .join("")
         : "";
 
     if (isUser) {
@@ -550,7 +550,7 @@ function SubagentPanelBlock({
                             {events.map((event, index) => (
                                 <p
                                     key={`subagent-event-${index}`}
-                                    className="text-[11px] text-cyan-200/90 break-words"
+                                    className="text-[11px] text-cyan-200/90 wrap-break-word"
                                 >
                                     {event.text}
                                 </p>
@@ -558,7 +558,7 @@ function SubagentPanelBlock({
                         </div>
                     )}
                     {text.trim().length > 0 && (
-                        <Streamdown className="min-w-0 break-words text-sm [&>*:first-child]:mt-0 [&>*:last-child]:mb-0 [&_code]:whitespace-pre-wrap [&_code]:wrap-break-word [&_pre]:max-w-full [&_pre]:overflow-x-auto">
+                        <Streamdown className="min-w-0 wrap-break-word text-sm [&>*:first-child]:mt-0 [&>*:last-child]:mb-0 [&_code]:whitespace-pre-wrap [&_code]:wrap-break-word [&_pre]:max-w-full [&_pre]:overflow-x-auto">
                             {text}
                         </Streamdown>
                     )}
@@ -634,13 +634,12 @@ function ToolInvocationBlock({
     return (
         <Collapsible open={open} onOpenChange={setUserOverride}>
             <CollapsibleTrigger
-                className={`group flex w-full items-center gap-1.5 rounded-md border px-2 py-1.5 text-xs transition-colors ${
-                    isError
-                        ? "border-red-500/30 bg-red-500/5 hover:bg-red-500/10"
-                        : hasOutput
-                          ? "border-emerald-500/30 bg-emerald-500/5 hover:bg-emerald-500/10"
-                          : "border-blue-500/30 bg-blue-500/5 hover:bg-blue-500/10"
-                }`}
+                className={`group flex w-full items-center gap-1.5 rounded-md border px-2 py-1.5 text-xs transition-colors ${isError
+                    ? "border-red-500/30 bg-red-500/5 hover:bg-red-500/10"
+                    : hasOutput
+                        ? "border-emerald-500/30 bg-emerald-500/5 hover:bg-emerald-500/10"
+                        : "border-blue-500/30 bg-blue-500/5 hover:bg-blue-500/10"
+                    }`}
             >
                 <ChevronRight className="size-3 shrink-0 transition-transform group-data-[state=open]:rotate-90" />
                 <Wrench className="size-3 shrink-0" />
@@ -672,16 +671,14 @@ function ToolInvocationBlock({
                     {/* Tool call result (shown once available) */}
                     {hasOutput && (
                         <div
-                            className={`rounded-md border px-2.5 py-2 ${
-                                isError
-                                    ? "border-red-500/20 bg-red-500/5"
-                                    : "border-emerald-500/20 bg-emerald-500/5"
-                            }`}
+                            className={`rounded-md border px-2.5 py-2 ${isError
+                                ? "border-red-500/20 bg-red-500/5"
+                                : "border-emerald-500/20 bg-emerald-500/5"
+                                }`}
                         >
                             <p
-                                className={`mb-1 flex items-center gap-1 text-[10px] font-medium uppercase tracking-wider ${
-                                    isError ? "text-red-400" : "text-emerald-400"
-                                }`}
+                                className={`mb-1 flex items-center gap-1 text-[10px] font-medium uppercase tracking-wider ${isError ? "text-red-400" : "text-emerald-400"
+                                    }`}
                             >
                                 <Terminal className="size-2.5" />
                                 {isError ? "Error" : "Result"}

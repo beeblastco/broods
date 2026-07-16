@@ -1,13 +1,8 @@
 "use client";
 
 /** Dropdown selector for switching between user projects with an option to create new ones. */
-import { useCallback, useEffect, useState } from "react";
-import { useConvexAuth, useQuery } from "convex/react";
-import { useParams, useRouter } from "next/navigation";
-import { api } from "@broods/convex/_generated/api";
-import type { Doc } from "@broods/convex/_generated/dataModel";
-import { ChevronDown, Plus, Folder } from "lucide-react";
-import { cn } from "@/app/lib/utils";
+import { CreateProjectDialog } from "@/app/components/CreateProjectDialog";
+import { Button } from "@/app/components/ui/button";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -16,9 +11,14 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/app/components/ui/dropdown-menu";
-import { Button } from "@/app/components/ui/button";
-import { CreateProjectDialog } from "@/app/components/CreateProjectDialog";
 import { FULL_ROUTE_PREFETCH } from "@/app/lib/prefetch";
+import { cn } from "@/app/lib/utils";
+import { api } from "@broods/convex/_generated/api";
+import type { Doc } from "@broods/convex/_generated/dataModel";
+import { useConvexAuth, useQuery } from "convex/react";
+import { ChevronDown, Folder, Plus } from "lucide-react";
+import { useParams, useRouter } from "next/navigation";
+import { useCallback, useEffect, useState } from "react";
 
 /** Dropdown to list, switch, and create projects. */
 export function ProjectSelector() {
@@ -94,18 +94,18 @@ export function ProjectSelector() {
 
           <div className="min-h-0 flex-1 overflow-y-auto">
             {projects.map((project: Doc<"projects">) => (
-            <DropdownMenuItem
-              key={project._id}
-              onClick={() => router.push(`/${project._id}`)}
-              onMouseEnter={() => prefetchProject(project._id)}
-              onFocus={() => prefetchProject(project._id)}
-              className={cn(
-                "cursor-pointer",
-                project._id === currentProjectId
-                  ? "bg-accent text-accent-foreground"
-                  : "",
-              )}
-            >
+              <DropdownMenuItem
+                key={project._id}
+                onClick={() => router.push(`/${project._id}`)}
+                onMouseEnter={() => prefetchProject(project._id)}
+                onFocus={() => prefetchProject(project._id)}
+                className={cn(
+                  "cursor-pointer",
+                  project._id === currentProjectId
+                    ? "bg-accent text-accent-foreground"
+                    : "",
+                )}
+              >
                 <Folder className="size-4" />
                 <span className="truncate max-w-60 block">
                   {project.name}

@@ -6,18 +6,18 @@
  * into a spinner on reconnect. Protocol: ../observability-contracts.ts.
  */
 
+import { resolveCoreEndpoint } from "@/app/lib/coreEndpoint";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type {
-  ObservabilityLogEntry,
-  ObservabilitySpanRow,
-  ObservabilityClientMessage,
-  ObservabilityServerMessage,
   LogLevel,
+  ObservabilityClientMessage,
+  ObservabilityLogEntry,
+  ObservabilityServerMessage,
+  ObservabilitySpanRow,
 } from "../../../../packages/broods/src/observability-contracts";
-import { resolveCoreEndpoint } from "@/app/lib/coreEndpoint";
 
 // Re-export for consumers.
-export type { ObservabilityLogEntry, ObservabilitySpanRow, LogLevel };
+export type { LogLevel, ObservabilityLogEntry, ObservabilitySpanRow };
 
 export type ObservabilityStreamStatus = "idle" | "connecting" | "live" | "error";
 
@@ -98,7 +98,7 @@ export function useObservabilityStream(
   // Holds the latest `connect` so the reconnect timer can call it without
   // `connect` referencing itself (which would capture a stale closure / trip the
   // "used before declared" lint).
-  const connectRef = useRef<() => void>(() => {});
+  const connectRef = useRef<() => void>(() => { });
 
   const coreEndpoint = resolveCoreEndpoint();
   // Extract the ok-guarded fields so the connect deps below stay stable primitives
@@ -246,7 +246,7 @@ export function useObservabilityStream(
         if (!destroyedRef.current) connectRef.current();
       }, RECONNECT_DELAY_MS);
     };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     coreEndpoint.ok,
     wsBaseUrl,
@@ -281,8 +281,8 @@ export function useObservabilityStream(
       clearReconnect();
       closeSocket();
     };
-  // Re-run when connection params change; connect is stable unless they change.
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // Re-run when connection params change; connect is stable unless they change.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectSlug, environmentSlug, apiKey, stream]);
 
   const refresh = useCallback(() => {

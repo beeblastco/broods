@@ -43,7 +43,7 @@ export function SandboxPolicyTable({ instances, dimension }: Props) {
     return (
         <>
             <div className="overflow-x-auto rounded-lg border border-border bg-card">
-                <table className="w-full min-w-[640px] text-sm">
+                <table className="w-full min-w-160 text-sm">
                     <thead className="bg-muted/40 text-xs text-muted-foreground">
                         <tr>
                             <th className="px-4 py-2 text-left font-medium">Name</th>

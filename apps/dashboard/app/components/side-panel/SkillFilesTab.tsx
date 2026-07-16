@@ -29,10 +29,6 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
 const ALLOWED_EXTENSIONS = new Set([
   "css",
   "csv",
@@ -66,10 +62,6 @@ function parseSkillMd(text: string): { name?: string; description?: string } {
 function buildSkillMdContent(name: string, description: string): string {
   return `---\nname: ${name}\ndescription: ${description}\n---\n\n# ${name}\n\nDescribe what this skill does and when the agent should use it.\n`;
 }
-
-// ---------------------------------------------------------------------------
-// Bearer token prompt (inline, not a modal)
-// ---------------------------------------------------------------------------
 
 function TokenPrompt({
   label,
@@ -209,10 +201,6 @@ function CreateSkillMdForm({
     </div>
   );
 }
-
-// ---------------------------------------------------------------------------
-// Main component
-// ---------------------------------------------------------------------------
 
 /** Skill file explorer with publish/import against the broods account-manage API. */
 export function SkillFilesTab({
@@ -452,11 +440,10 @@ export function SkillFilesTab({
       {/* Status message */}
       {status.type !== "idle" && status.message && (
         <div
-          className={`shrink-0 flex items-center gap-2 px-3 py-1.5 text-[11px] ${
-            status.type === "error"
-              ? "bg-destructive/10 text-destructive"
-              : "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
-          }`}
+          className={`shrink-0 flex items-center gap-2 px-3 py-1.5 text-[11px] ${status.type === "error"
+            ? "bg-destructive/10 text-destructive"
+            : "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
+            }`}
         >
           <span className="flex-1">{status.message}</span>
           <button

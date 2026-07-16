@@ -20,13 +20,9 @@ import {
   Trash2,
   Upload,
 } from "lucide-react";
-import { FileIcon, defaultStyles } from "react-file-icon";
-import type { StyleProps } from "react-file-icon";
 import { useCallback, useEffect, useRef, useState } from "react";
-
-// ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
+import type { StyleProps } from "react-file-icon";
+import { FileIcon, defaultStyles } from "react-file-icon";
 
 type FileRecord = {
   _id?: Id<"workspaceFiles">;
@@ -206,15 +202,11 @@ function ExtIcon({ name }: { name: string }) {
     (defaultStyles as Record<string, StyleProps>)[ext] ?? {};
 
   return (
-    <span className="mr-1.5 inline-flex size-[14px] shrink-0 items-center">
+    <span className="mr-1.5 inline-flex size-3.5 shrink-0 items-center">
       <FileIcon extension={ext} {...style} />
     </span>
   );
 }
-
-// ---------------------------------------------------------------------------
-// Inline rename input
-// ---------------------------------------------------------------------------
 
 function RenameInput({
   initialValue,
@@ -245,7 +237,7 @@ function RenameInput({
     <Input
       ref={ref}
       value={draft}
-      className="h-[18px] flex-1 rounded-sm border-primary px-1 py-0 font-mono text-[12px]"
+      className="h-4.5 flex-1 rounded-sm border-primary px-1 py-0 font-mono text-[12px]"
       onChange={(e) => setDraft(e.target.value)}
       onBlur={commit}
       onKeyDown={(e) => {
@@ -309,7 +301,7 @@ function TreeRow({
     <>
       <div
         className={cn(
-          "group flex h-[22px] select-none items-center gap-0 pr-1 text-[13px]",
+          "group flex h-5.5 select-none items-center gap-0 pr-1 text-[13px]",
           "cursor-pointer",
           isSelected
             ? "bg-accent text-accent-foreground"
@@ -333,9 +325,9 @@ function TreeRow({
         {/* icon */}
         {node.isFolder ? (
           isExpanded ? (
-            <FolderOpen className="mr-1.5 size-[14px] shrink-0 text-yellow-400" />
+            <FolderOpen className="mr-1.5 size-3.5 shrink-0 text-yellow-400" />
           ) : (
-            <Folder className="mr-1.5 size-[14px] shrink-0 text-yellow-400" />
+            <Folder className="mr-1.5 size-3.5 shrink-0 text-yellow-400" />
           )
         ) : (
           <ExtIcon name={node.name} />
@@ -435,10 +427,6 @@ function TreeRow({
     </>
   );
 }
-
-// ---------------------------------------------------------------------------
-// Main component
-// ---------------------------------------------------------------------------
 
 /** VSCode-style file explorer panel for a workspace canvas node. */
 export function WorkspaceFilesTab({
@@ -548,7 +536,7 @@ export function WorkspaceFilesTab({
     if (!workspaceId) return;
     const refreshWhenVisible = () => {
       if (document.visibilityState === "visible") {
-        void refreshRuntimeFiles().catch(() => {});
+        void refreshRuntimeFiles().catch(() => { });
       }
     };
     const interval = window.setInterval(refreshWhenVisible, 5000);
@@ -957,7 +945,7 @@ export function WorkspaceFilesTab({
               return (
                 <div
                   key={`uploading-${path}`}
-                  className="flex h-[22px] items-center gap-1.5 text-[12px] text-muted-foreground/60"
+                  className="flex h-5.5 items-center gap-1.5 text-[12px] text-muted-foreground/60"
                   style={{ paddingLeft: "20px" }}
                 >
                   <Loader2 className="size-3 animate-spin" />

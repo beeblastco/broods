@@ -3,8 +3,8 @@
  * Runtime decisions are made by OPA using the same document/input shape.
  */
 
-import { assertOptionalStringArray, isPlainObject } from "../object.ts";
 import { randomBytes } from "node:crypto";
+import { assertOptionalStringArray, isPlainObject } from "../object.ts";
 
 export const AGENT_POLICY_ACTIONS = [
   "tool.call",

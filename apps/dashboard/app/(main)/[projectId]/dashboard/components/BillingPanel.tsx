@@ -4,17 +4,17 @@
  * Billing & Plan panel — displays the user's current subscription and
  * provides Stripe Checkout / Customer Portal flows for upgrades.
  */
+import { Section } from "@/app/components/Section";
 import { Badge } from "@/app/components/ui/badge";
 import { Button } from "@/app/components/ui/button";
-import { Section } from "@/app/components/Section";
+import { toErrorMessage } from "@/app/lib/errors";
+import type { ConfiguredPlanTier, PlanTier } from "@/app/lib/pricing";
+import { isMaxPlan, PLAN_CONFIGS, resolvePlan } from "@/app/lib/pricing";
 import { api } from "@broods/convex/_generated/api";
 import type { Id } from "@broods/convex/_generated/dataModel";
 import { useAction, useQuery } from "convex/react";
 import { AlertTriangle, ArrowUpRight, CreditCard, ExternalLink } from "lucide-react";
 import { useState } from "react";
-import type { ConfiguredPlanTier, PlanTier } from "@/app/lib/pricing";
-import { isMaxPlan, PLAN_CONFIGS, resolvePlan } from "@/app/lib/pricing";
-import { toErrorMessage } from "@/app/lib/errors";
 
 interface Props {
     projectId: Id<"projects">;

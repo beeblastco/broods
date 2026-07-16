@@ -4,17 +4,17 @@
  * release path.
  */
 
-import { getStorage } from "./storage.ts";
-import type { SandboxConfig } from "./domain/sandbox-config.ts";
-import { workspaceNamespace } from "./workspaces.ts";
-import { logWarn } from "./log.ts";
-import { deleteSandboxInstance } from "../harness/sandbox/instance-store.ts";
-import { WorkdirSandboxExecutor } from "../harness/sandbox/workdir-executor.ts";
-import { MicrovmSandboxExecutor } from "../harness/sandbox/microvm-executor.ts";
 import { DaytonaSandboxExecutor } from "../harness/sandbox/daytona-executor.ts";
 import { E2BSandboxExecutor } from "../harness/sandbox/e2b-executor.ts";
+import { deleteSandboxInstance } from "../harness/sandbox/instance-store.ts";
+import { MicrovmSandboxExecutor } from "../harness/sandbox/microvm-executor.ts";
 import { VercelSandboxExecutor } from "../harness/sandbox/vercel-executor.ts";
+import { WorkdirSandboxExecutor } from "../harness/sandbox/workdir-executor.ts";
 import { removeSandboxInstance } from "./convex/sandbox-instances.ts";
+import type { SandboxConfig } from "./domain/sandbox-config.ts";
+import { logWarn } from "./log.ts";
+import { getStorage } from "./storage.ts";
+import { workspaceNamespace } from "./workspaces.ts";
 
 type ReleasableSandboxProvider = "sandbox" | "lambda" | "daytona" | "e2b" | "vercel";
 
@@ -42,11 +42,11 @@ export async function releaseReservedSandboxes(accountId: string, namespaces: st
     if (await releaseFromConfigs("e2b", e2b, namespace)) released++;
     if (await releaseFromConfigs("vercel", vercel, namespace)) released++;
     // Drop any orphaned instance rows (e.g. all configs deleted, or none owned it).
-    await deleteSandboxInstance("sandbox", namespace).catch(() => {});
-    await deleteSandboxInstance("lambda", namespace).catch(() => {});
-    await deleteSandboxInstance("daytona", namespace).catch(() => {});
-    await deleteSandboxInstance("e2b", namespace).catch(() => {});
-    await deleteSandboxInstance("vercel", namespace).catch(() => {});
+    await deleteSandboxInstance("sandbox", namespace).catch(() => { });
+    await deleteSandboxInstance("lambda", namespace).catch(() => { });
+    await deleteSandboxInstance("daytona", namespace).catch(() => { });
+    await deleteSandboxInstance("e2b", namespace).catch(() => { });
+    await deleteSandboxInstance("vercel", namespace).catch(() => { });
     await removeSandboxInstance(accountId, namespace);
   }
   return released;
@@ -86,12 +86,12 @@ async function releaseFromConfigs(
       const executor = provider === "sandbox"
         ? new WorkdirSandboxExecutor(config)
         : provider === "lambda"
-        ? new MicrovmSandboxExecutor(config)
-        : provider === "daytona"
-        ? new DaytonaSandboxExecutor(config)
-        : provider === "e2b"
-        ? new E2BSandboxExecutor(config)
-        : new VercelSandboxExecutor(config);
+          ? new MicrovmSandboxExecutor(config)
+          : provider === "daytona"
+            ? new DaytonaSandboxExecutor(config)
+            : provider === "e2b"
+              ? new E2BSandboxExecutor(config)
+              : new VercelSandboxExecutor(config);
       await executor.release({ namespace });
       return true;
     } catch (error) {

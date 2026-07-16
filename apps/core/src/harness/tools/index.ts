@@ -9,36 +9,36 @@
  */
 
 import type { ToolSet } from "ai";
-import { getStorage } from "../../shared/storage.ts";
+import { isAccountToolId } from "../../shared/domain/account-tools.ts";
 import {
-  type AgentConfig,
   type AccountModelProviderName,
+  type AgentConfig,
   type AgentToolConfig,
 } from "../../shared/domain/agent-config.ts";
 import type { SandboxPermissionMode } from "../../shared/domain/sandbox-config.ts";
 import { logWarn } from "../../shared/log.ts";
-import type { Session } from "../session.ts";
-import type { ResolvedWorkspace } from "../../shared/workspaces.ts";
-import type { SandboxCpuSample, SandboxExecutorConfig } from "../sandbox/types.ts";
 import type { SandboxRunMetadata } from "../../shared/sandbox-sizes.ts";
+import { getStorage } from "../../shared/storage.ts";
+import type { ResolvedWorkspace } from "../../shared/workspaces.ts";
 import type { AsyncToolModeMap, AsyncToolSource, RunAsyncToolDispatch } from "../async-tools.ts";
+import type { SandboxCpuSample, SandboxExecutorConfig } from "../sandbox/types.ts";
+import type { Session } from "../session.ts";
+import accountTool from "./account-tool.tool.ts";
+import asyncStatusTool from "./async-status.tool.ts";
 import bashTool from "./bash.tool.ts";
-import readTool from "./read.tool.ts";
-import writeTool from "./write.tool.ts";
 import editTool from "./edit.tool.ts";
+import { sandboxSupportsBackgroundJobs, sandboxSupportsJobControls } from "./filesystem-utils.ts";
 import globTool from "./glob.tool.ts";
-import grepTool from "./grep.tool.ts";
 import googleSearchTool from "./google-search.tool.ts";
+import grepTool from "./grep.tool.ts";
 import handoffsTool from "./handoffs.tool.ts";
 import loadSkillTool from "./load-skill.tool.ts";
+import readTool from "./read.tool.ts";
 import runSubagentTool, {
   type RunSubagentDispatch,
 } from "./run-subagent.tool.ts";
 import { tavilyExtractTool, tavilySearchTool } from "./tavily.tool.ts";
-import asyncStatusTool from "./async-status.tool.ts";
-import accountTool from "./account-tool.tool.ts";
-import { sandboxSupportsBackgroundJobs, sandboxSupportsJobControls } from "./filesystem-utils.ts";
-import { isAccountToolId } from "../../shared/domain/account-tools.ts";
+import writeTool from "./write.tool.ts";
 
 // Runtime dependencies shared by tool factories. Model-facing input schemas
 // stay inside each individual tool file.
@@ -103,7 +103,7 @@ export async function createTools(context: Omit<ToolContext, "config">, agentCon
     });
   }
   const sandboxTools: ToolSet = {};
-  
+
   // Reserved (persistent) workspaces can run detached background jobs; bash then
   // exposes a `background` flag and records each job under the parent session.
   const hasBackgroundWorkspace = workspaces.some((workspace) => sandboxSupportsBackgroundJobs(workspace.sandbox));
@@ -133,7 +133,7 @@ export async function createTools(context: Omit<ToolContext, "config">, agentCon
         ...(backgroundContext ? { background: backgroundContext } : {}),
         ...(context.onSandboxCpu ? { onSandboxCpu: context.onSandboxCpu } : {}),
       }
-    ));
+      ));
   }
   // read/glob: every workspace (sandbox-backed via the mount, read-only via S3).
   if (workspaces.length > 0) {

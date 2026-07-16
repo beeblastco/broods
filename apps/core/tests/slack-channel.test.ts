@@ -278,13 +278,86 @@ describe("slack channel adapter", () => {
     })()));
 
     expect(chunks).toEqual([
-      { type: "task_update", id: "reasoning:r1", title: "Thinking", status: "in_progress" },
-      { type: "task_update", id: "reasoning:r1", title: "Thinking", status: "in_progress", details: "checking context" },
-      { type: "task_update", id: "reasoning:r1", title: "Thinking", status: "complete" },
+      { type: "task_update", id: "reasoning:r1#1", title: "Thinking", status: "in_progress" },
+      { type: "task_update", id: "reasoning:r1#1", title: "Thinking", status: "in_progress", details: "checking context" },
+      { type: "task_update", id: "reasoning:r1#1", title: "Thinking", status: "complete" },
       { type: "task_update", id: "tool:tc1", title: "Using bash", status: "in_progress" },
       { type: "task_update", id: "tool:tc1", title: "Using bash", status: "in_progress" },
       { type: "task_update", id: "tool:tc1", title: "Using bash", status: "complete", output: "done" },
       "final",
+    ]);
+  });
+
+  it("keeps only the final step's text when earlier tool-call steps also answered", async () => {
+    // Some models repeat the answer alongside their tool calls; concatenating
+    // every step's text posts the reply twice ("I'm Bob!\n\nMy name is Bob!").
+    const chunks = await collect(toSlackStream((async function* () {
+      yield { type: "text-delta", id: "t1", text: "I'm Bob! Nice to meet you." };
+      yield { type: "tool-call", toolCallId: "tc1", toolName: "write", input: {} };
+      yield { type: "tool-result", toolCallId: "tc1", toolName: "write", output: "ok" };
+      yield { type: "finish-step", finishReason: "tool-calls" };
+      yield { type: "text-delta", id: "t2", text: "My name is Bob! Nice to meet you." };
+      yield { type: "finish-step", finishReason: "stop" };
+    })()));
+
+    const texts = chunks.filter((chunk) => typeof chunk === "string");
+    expect(texts).toEqual(["My name is Bob! Nice to meet you."]);
+  });
+
+  it("falls back to interim text when the final step produced none", async () => {
+    const chunks = await collect(toSlackStream((async function* () {
+      yield { type: "text-delta", id: "t1", text: "Answer lives in the tool step." };
+      yield { type: "tool-call", toolCallId: "tc1", toolName: "write", input: {} };
+      yield { type: "tool-result", toolCallId: "tc1", toolName: "write", output: "ok" };
+      yield { type: "finish-step", finishReason: "tool-calls" };
+      yield { type: "finish-step", finishReason: "stop" };
+    })()));
+
+    const texts = chunks.filter((chunk) => typeof chunk === "string");
+    expect(texts).toEqual(["Answer lives in the tool step."]);
+  });
+
+  it("treats a whitespace-only final step as empty and keeps the interim answer", async () => {
+    const chunks = await collect(toSlackStream((async function* () {
+      yield { type: "text-delta", id: "t1", text: "Answer lives in the tool step." };
+      yield { type: "tool-call", toolCallId: "tc1", toolName: "write", input: {} };
+      yield { type: "tool-result", toolCallId: "tc1", toolName: "write", output: "ok" };
+      yield { type: "finish-step", finishReason: "tool-calls" };
+      yield { type: "text-delta", id: "t2", text: " \n" };
+      yield { type: "finish-step", finishReason: "stop" };
+    })()));
+
+    const texts = chunks.filter((chunk) => typeof chunk === "string");
+    expect(texts).toEqual(["Answer lives in the tool step."]);
+  });
+
+  it("gives each thinking segment its own task so it interleaves with tools", async () => {
+    // Adapters reuse the same reasoning id (reasoning-0) on every step; a
+    // shared task id would merge all thinking into one block pinned at the
+    // top of the card instead of following the execution order.
+    const chunks = await collect(toSlackStream((async function* () {
+      yield { type: "reasoning-start", id: "reasoning-0" };
+      yield { type: "reasoning-delta", id: "reasoning-0", text: "planning" };
+      yield { type: "reasoning-end", id: "reasoning-0" };
+      yield { type: "tool-call", toolCallId: "tc1", toolName: "read", input: {} };
+      yield { type: "tool-result", toolCallId: "tc1", toolName: "read", output: "ok" };
+      yield { type: "reasoning-start", id: "reasoning-0" };
+      yield { type: "reasoning-delta", id: "reasoning-0", text: "wrapping up" };
+      yield { type: "reasoning-end", id: "reasoning-0" };
+    })()));
+
+    const taskIds = chunks
+      .filter((chunk) => typeof chunk === "object" && chunk !== null && "id" in chunk)
+      .map((chunk) => (chunk as { id: string }).id);
+    expect(taskIds).toEqual([
+      "reasoning:reasoning-0#1",
+      "reasoning:reasoning-0#1",
+      "reasoning:reasoning-0#1",
+      "tool:tc1",
+      "tool:tc1",
+      "reasoning:reasoning-0#2",
+      "reasoning:reasoning-0#2",
+      "reasoning:reasoning-0#2",
     ]);
   });
 
@@ -310,7 +383,7 @@ describe("slack channel adapter", () => {
     const complete = chunks.at(-1);
     expect(complete).toEqual({
       type: "task_update",
-      id: "reasoning:r1",
+      id: "reasoning:r1#1",
       title: "Thinking",
       status: "complete",
     });

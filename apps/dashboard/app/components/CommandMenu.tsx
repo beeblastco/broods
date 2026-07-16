@@ -1,7 +1,5 @@
 "use client";
 
-import { Search } from "lucide-react";
-import { useEffect, useState } from "react";
 import {
     CommandDialog,
     CommandEmpty,
@@ -10,6 +8,8 @@ import {
     CommandItem,
     CommandList,
 } from "@/app/components/ui/command";
+import { Search } from "lucide-react";
+import { useEffect, useState } from "react";
 
 /** Global Command+K search palette for searching nodes and actions. */
 export function CommandMenu() {

@@ -1,7 +1,7 @@
 "use client";
 
-import { useReactFlow } from "@xyflow/react";
 import { Button } from "@/app/components/ui/button";
+import { useReactFlow } from "@xyflow/react";
 
 /** Zoom and fit-view controls for the canvas. */
 export function CanvasControls() {
