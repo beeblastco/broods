@@ -9,6 +9,8 @@ import { authKit } from "./auth";
 import { encryptAgentConfigBlob, substituteEnvPlaceholders } from "./model/agentConfigCodec";
 import { backSyncCanvasFromAgentRow, mirrorAgentRowOntoConfig } from "./model/agentSync";
 import { getActiveOrgForUser } from "./model/ownership/org";
+import { getProjectForRole } from "./model/ownership/project";
+import { agentsInProject } from "./model/projectScope";
 import { agentsFields } from "./schema";
 
 const agentDoc = v.object({
@@ -159,6 +161,30 @@ export const create = internalMutation({
         await backSyncCanvasFromAgentRow(ctx, agentRowId);
 
         return agentRowId;
+    },
+});
+
+/**
+ * Public query: the agents belonging to one project.
+ *
+ * `agents` rows are account-scoped and carry no projectId; the link is
+ * `agentConfigs.projectId`, so this resolves project → configs → agents.
+ * Agents whose config row is missing (created while the account had no org,
+ * see `backfillCanvasLinks`) belong to no project and are absent here.
+ */
+export const listForProject = query({
+    args: { projectId: v.id("projects") },
+    returns: v.array(agentDoc),
+    handler: async (ctx, args) => {
+        const authUser = await authKit.getAuthUser(ctx);
+        if (!authUser) return [];
+
+        // Gate on project membership: projectId arrives from the URL, so an
+        // unauthorized id must return nothing rather than another org's agents.
+        const project = await getProjectForRole(ctx, authUser.id, args.projectId);
+        if (!project) return [];
+
+        return await agentsInProject(ctx, args.projectId);
     },
 });
 

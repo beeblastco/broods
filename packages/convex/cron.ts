@@ -11,6 +11,8 @@ import type { DataModel, Id } from "./_generated/dataModel";
 import { internalMutation, internalQuery, query } from "./_generated/server";
 import { authKit } from "./auth";
 import { getActiveOrgForUser } from "./model/ownership/org";
+import { getProjectForRole } from "./model/ownership/project";
+import { cronsInProject } from "./model/projectScope";
 import { cronRunsFields, cronsFields } from "./schema";
 
 const cronDoc = v.object({
@@ -74,6 +76,36 @@ export const listForActiveOrg = query({
             .query("crons")
             .withIndex("by_accountId", (q) => q.eq("accountId", account._id))
             .collect();
+    },
+});
+
+/**
+ * Public query: lists cron jobs whose agent belongs to `projectId`.
+ *
+ * A cron has no projectId of its own — it points at an agent, and the agent's
+ * project comes from `agentConfigs`. Deriving it rather than storing a copy is
+ * what keeps a cron from ever claiming a different project than the agent it
+ * actually runs. Crons whose agent has no config row (created before the
+ * account was adopted) belong to no project and are absent here.
+ */
+export const listForProject = query({
+    args: { projectId: v.id("projects") },
+    returns: v.array(cronDoc),
+    handler: async (ctx, args) => {
+        const authUser = await authKit.getAuthUser(ctx);
+        if (!authUser) return [];
+
+        const project = await getProjectForRole(ctx, authUser.id, args.projectId);
+        if (!project) return [];
+        if (!project.orgId) return [];
+
+        const account = await ctx.db
+            .query("accounts")
+            .withIndex("by_orgId", (q) => q.eq("orgId", project.orgId!))
+            .unique();
+        if (!account) return [];
+
+        return await cronsInProject(ctx, args.projectId, account._id);
     },
 });
 
