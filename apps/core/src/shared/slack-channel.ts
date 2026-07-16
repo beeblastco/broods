@@ -511,6 +511,11 @@ function cleanSlackText(value: string): string {
  * and sent once at the end so partial answer text does not jump below the
  * progress card while reasoning and tool chunks are still updating.
  *
+ * Only the final (stop) step's text becomes the reply. Some models repeat
+ * their answer alongside tool calls in earlier steps; concatenating every
+ * step's text posts the same answer twice. Interim text is kept as a fallback
+ * for models that put the whole answer in a tool-call step.
+ *
  * Slack's chat.appendStream APPENDS every task_update's `details` to the task
  * card — it never replaces. Reasoning must therefore stream as per-chunk
  * deltas: sending the accumulated text re-appends each snapshot and renders
@@ -519,15 +524,34 @@ function cleanSlackText(value: string): string {
 export async function* toSlackStream(
   textStream: AsyncIterable<unknown>,
 ): AsyncGenerator<string | StreamChunk> {
-  let needsSeparator = false;
-  let bufferedText = "";
+  let stepText = "";
+  let finalText = "";
+  let lastInterimText = "";
+  let stepHadToolCalls = false;
   let reasoningChars = 0;
+  let reasoningSegment = 0;
+  const reasoningTaskIds = new Map<string, string>();
   const toolNamesById = new Map<string, string>();
+
+  // Adapters reuse the same reasoning id (e.g. `reasoning-0`) on every step,
+  // which would merge all thinking segments into one task pinned wherever the
+  // first was created — the card then shows all thinking first and every tool
+  // after, instead of the real execution order. A per-segment task id keeps
+  // each thinking burst interleaved with the tool tasks.
+  const reasoningTaskId = (rawId: unknown, fresh: boolean): string => {
+    const key = stringValue(rawId) ?? "default";
+    let id = fresh ? undefined : reasoningTaskIds.get(key);
+    if (!id) {
+      reasoningSegment += 1;
+      id = taskId("reasoning", `${key}#${reasoningSegment}`);
+      reasoningTaskIds.set(key, id);
+    }
+    return id;
+  };
 
   for await (const chunk of textStream) {
     if (typeof chunk === "string") {
-      bufferedText = appendBufferedSlackText(bufferedText, chunk, needsSeparator);
-      needsSeparator = false;
+      stepText += chunk;
       continue;
     }
 
@@ -547,14 +571,25 @@ export async function* toSlackStream(
       case "text-delta": {
         const text = (event.text ?? event.delta ?? "") as string;
         if (text) {
-          bufferedText = appendBufferedSlackText(bufferedText, text, needsSeparator);
-          needsSeparator = false;
+          stepText += text;
         }
         break;
       }
 
       case "finish-step": {
-        needsSeparator = true;
+        // finishReason is absent on UI-stream chunks; the tool events seen
+        // during the step stand in for it there.
+        const finishReason = stringValue(event.finishReason);
+        const interim = finishReason ? finishReason === "tool-calls" : stepHadToolCalls;
+        if (interim) {
+          if (stepText.trim()) {
+            lastInterimText = stepText;
+          }
+        } else if (stepText) {
+          finalText = appendBufferedSlackText(finalText, stepText, true);
+        }
+        stepText = "";
+        stepHadToolCalls = false;
         break;
       }
 
@@ -562,7 +597,7 @@ export async function* toSlackStream(
         reasoningChars = 0;
         yield {
           type: "task_update",
-          id: taskId("reasoning", event.id),
+          id: reasoningTaskId(event.id, true),
           title: "Thinking",
           status: "in_progress",
         };
@@ -583,7 +618,7 @@ export async function* toSlackStream(
           reasoningChars += details.length;
           yield {
             type: "task_update",
-            id: taskId("reasoning", event.id),
+            id: reasoningTaskId(event.id, false),
             title: "Thinking",
             status: "in_progress",
             details,
@@ -597,15 +632,17 @@ export async function* toSlackStream(
         // and output would re-append the whole text as one more copy.
         yield {
           type: "task_update",
-          id: taskId("reasoning", event.id),
+          id: reasoningTaskId(event.id, false),
           title: "Thinking",
           status: "complete",
         };
+        reasoningTaskIds.delete(stringValue(event.id) ?? "default");
         reasoningChars = 0;
         break;
       }
 
       case "tool-input-start": {
+        stepHadToolCalls = true;
         const toolName = (event.toolName ?? "tool") as string;
         const id = stringValue(event.id) ?? toolName;
         toolNamesById.set(id, toolName);
@@ -624,6 +661,7 @@ export async function* toSlackStream(
       }
 
       case "tool-call": {
+        stepHadToolCalls = true;
         const toolName = (event.toolName ?? "tool") as string;
         const id = stringValue(event.toolCallId) ?? stringValue(event.id) ?? toolName;
         toolNamesById.set(id, toolName);
@@ -678,8 +716,12 @@ export async function* toSlackStream(
     }
   }
 
-  if (bufferedText) {
-    yield bufferedText;
+  // Trailing stepText covers streams that end without a finish-step event.
+  // When no kept step produced text, fall back to the last interim text so a
+  // model that answered only inside a tool-call step still gets a reply out.
+  const text = appendBufferedSlackText(finalText, stepText, true) || lastInterimText;
+  if (text) {
+    yield text;
   }
 }
 
