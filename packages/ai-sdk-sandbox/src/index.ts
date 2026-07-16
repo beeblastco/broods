@@ -298,9 +298,7 @@ class BroodsNetworkSandboxSession extends BroodsSandboxSession implements Harnes
       return this.#destroyPromise;
     }
 
-    const stopPromise = this.#stopPromise;
     this.#destroyPromise = Promise.resolve().then(async () => {
-      if (stopPromise) await stopPromise.catch(() => undefined);
       await this.#driverSession.destroy!();
     });
     return this.#destroyPromise;
@@ -324,11 +322,42 @@ async function collectStream(stream: ReadableStream<Uint8Array>, abortSignal?: A
   const reader = stream.getReader();
   const chunks: Uint8Array[] = [];
   let total = 0;
+  let aborted = false;
+  let onAbort: (() => void) | undefined;
+  let abortPromise: Promise<never> | undefined;
+
+  if (abortSignal) {
+    abortPromise = new Promise((_, reject) => {
+      onAbort = () => {
+        aborted = true;
+        const reason = abortSignal.reason ?? new DOMException("Aborted", "AbortError");
+        try {
+          const cancellation = reader.cancel(reason);
+          void cancellation
+            .finally(() => {
+              try {
+                reader.releaseLock();
+              } catch {
+                // A pending read still owns the lock; cancellation will settle it.
+              }
+            })
+            .catch(() => undefined);
+        } catch {
+          // Preserve the signal's abort reason even if stream cancellation fails.
+        }
+        reject(reason);
+      };
+
+      if (abortSignal.aborted) onAbort();
+      else abortSignal.addEventListener("abort", onAbort, { once: true });
+    });
+  }
 
   try {
     while (true) {
       abortSignal?.throwIfAborted();
-      const { value, done } = await reader.read();
+      const read = reader.read();
+      const { value, done } = abortPromise ? await Promise.race([read, abortPromise]) : await read;
       if (done) break;
       if (value) {
         chunks.push(value);
@@ -336,7 +365,8 @@ async function collectStream(stream: ReadableStream<Uint8Array>, abortSignal?: A
       }
     }
   } finally {
-    reader.releaseLock();
+    if (abortSignal && onAbort) abortSignal.removeEventListener("abort", onAbort);
+    if (!aborted) reader.releaseLock();
   }
 
   const content = new Uint8Array(total);

@@ -149,6 +149,68 @@ describe("BroodsSandboxProvider", () => {
     await expect(sandbox.run({ command: "fail" })).rejects.toBe(runFailure);
   });
 
+  test("aborts a stalled stream write and cancels its reader", async () => {
+    let cancelReason: unknown;
+    let writes = 0;
+    const session = fakeSession({
+      async writeFile() {
+        writes += 1;
+      },
+    });
+    const provider = createBroodsSandbox({
+      driver: { createSession: async () => ({ session, isFirstCreate: true }) },
+    });
+    const sandbox = await provider.createSession();
+    const controller = new AbortController();
+    const content = new ReadableStream<Uint8Array>({
+      cancel(reason) {
+        cancelReason = reason;
+      },
+    });
+    const failure = new DOMException("write cancelled", "AbortError");
+
+    const write = sandbox.writeFile({ path: "/stalled", content, abortSignal: controller.signal });
+    await Promise.resolve();
+    controller.abort(failure);
+
+    await expect(write).rejects.toBe(failure);
+    expect(cancelReason).toBe(failure);
+    expect(writes).toBe(0);
+  });
+
+  test("destroy escalates past an in-flight stop", async () => {
+    let releaseStop: (() => void) | undefined;
+    let stops = 0;
+    let destroys = 0;
+    const stopGate = new Promise<void>((resolve) => {
+      releaseStop = resolve;
+    });
+    const session = fakeSession({
+      async stop() {
+        stops += 1;
+        await stopGate;
+      },
+      async destroy() {
+        destroys += 1;
+      },
+    });
+    const provider = createBroodsSandbox({
+      driver: { createSession: async () => ({ session, isFirstCreate: true }) },
+    });
+    const sandbox = await provider.createSession();
+
+    const stopping = sandbox.stop();
+    await Promise.resolve();
+    const destroying = sandbox.destroy!();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(stops).toBe(1);
+    expect(destroys).toBe(1);
+    releaseStop?.();
+    await Promise.all([stopping, destroying]);
+  });
+
   test("maps resume only when the injected driver supports it", async () => {
     const resumeCalls: unknown[] = [];
     const resumed = fakeSession({ id: "resumed-sandbox" });
