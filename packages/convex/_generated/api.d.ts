@@ -63,6 +63,7 @@ import type * as model_ownership_environment from "../model/ownership/environmen
 import type * as model_ownership_org from "../model/ownership/org.js";
 import type * as model_ownership_project from "../model/ownership/project.js";
 import type * as model_policyRules from "../model/policyRules.js";
+import type * as model_projectScope from "../model/projectScope.js";
 import type * as model_s3 from "../model/s3.js";
 import type * as model_sandboxConfigSync from "../model/sandboxConfigSync.js";
 import type * as model_sandboxRules from "../model/sandboxRules.js";
@@ -157,6 +158,7 @@ declare const fullApi: ApiFromModules<{
   "model/ownership/org": typeof model_ownership_org;
   "model/ownership/project": typeof model_ownership_project;
   "model/policyRules": typeof model_policyRules;
+  "model/projectScope": typeof model_projectScope;
   "model/s3": typeof model_s3;
   "model/sandboxConfigSync": typeof model_sandboxConfigSync;
   "model/sandboxRules": typeof model_sandboxRules;

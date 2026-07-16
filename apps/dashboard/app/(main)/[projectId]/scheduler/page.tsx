@@ -1,24 +1,37 @@
 "use client";
 
 /**
- * Cron jobs management page. Lists the active org's scheduled agent runs and
- * lets the user create, edit, and remove them. CRUD goes through Convex
- * actions that proxy to broods's /v1/crons HTTP endpoints
+ * Cron jobs management page. Lists the scheduled runs of this project's
+ * agents and lets the user create, edit, and remove them. CRUD goes through
+ * Convex actions that proxy to broods's /v1/crons HTTP endpoints
  * to keep EventBridge Scheduler in sync.
+ *
+ * Scoped to the project in the URL, not the whole org: a cron's project is
+ * derived from the agent it runs, so the picker and the table only ever show
+ * agents this project owns.
  */
 
 import { Button } from "@/app/components/ui/button";
 import { api } from "@broods/convex/_generated/api";
+import type { Id } from "@broods/convex/_generated/dataModel";
 import { useQuery } from "convex/react";
 import { Plus } from "lucide-react";
-import { useState } from "react";
+import { use, useState } from "react";
 import { CronDialog } from "./components/CronDialog";
 import { CronsTable } from "./components/CronsTable";
 
-export default function CronsPage() {
-    const crons = useQuery(api.cron.listForActiveOrg, {});
-    const agents = useQuery(api.agents.listForActiveOrg, {});
+export default function CronsPage({
+    params,
+}: {
+    params: Promise<{ projectId: string }>;
+}) {
+    const { projectId } = use(params);
+    const typedProjectId = projectId as Id<"projects">;
+
+    const crons = useQuery(api.cron.listForProject, { projectId: typedProjectId });
+    const agents = useQuery(api.agents.listForProject, { projectId: typedProjectId });
     const account = useQuery(api.org.getActiveAccount, {});
+    const project = useQuery(api.project.getById, { projectId: typedProjectId });
 
     const [createOpen, setCreateOpen] = useState(false);
 
@@ -30,13 +43,20 @@ export default function CronsPage() {
                 <div>
                     <h2 className="text-xl font-semibold text-foreground">Scheduler</h2>
                     <p className="mt-1 text-xs text-muted-foreground">
-                        Scheduled agent runs powered by AWS EventBridge Scheduler.
+                        Scheduled runs for{" "}
+                        <span className="font-medium text-foreground">
+                            {project?.name ?? "this project"}
+                        </span>
+                        , powered by AWS EventBridge Scheduler.
                     </p>
                 </div>
                 <Button
                     size="sm"
                     className="cursor-pointer disabled:cursor-not-allowed"
-                    disabled={!account || account.status !== "active"}
+                    // A cron runs an agent, so with none in this project the
+                    // dialog's picker would be empty and the form unsubmittable.
+                    // Undefined means still loading, which is also not usable yet.
+                    disabled={!account || account.status !== "active" || !agents?.length}
                     onClick={() => setCreateOpen(true)}
                 >
                     <Plus className="size-4 mr-1" />
@@ -51,6 +71,14 @@ export default function CronsPage() {
                     <p className="text-sm text-muted-foreground">
                         Your organization is not provisioned yet. Provision the broods
                         account in settings before creating cron jobs.
+                    </p>
+                </div>
+            ) : agents.length === 0 ? (
+                <div className="rounded-lg border border-border bg-card px-4 py-8 text-center">
+                    <p className="text-sm text-foreground">This project has no agents yet.</p>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                        Add an agent on the Architecture canvas, or create one through the
+                        account API, before scheduling a run.
                     </p>
                 </div>
             ) : crons.length === 0 ? (

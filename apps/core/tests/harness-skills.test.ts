@@ -5,6 +5,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
 import type { S3ObjectInfo } from "../src/shared/s3.ts";
+import * as realS3 from "../src/shared/s3.ts";
 
 const ORIGINAL_ENV = { ...process.env };
 const s3Writes: Array<{ bucket: string; key: string; body: string | Uint8Array; options?: Record<string, unknown> }> = [];
@@ -47,7 +48,10 @@ const deleteS3ObjectMock = mock(async (bucket: string, key: string) => {
   s3Deletes.push({ bucket, key });
 });
 
+// Spread the real module first: mock.module is process-global, so any export
+// omitted here disappears for every test file that loads after this one.
 mock.module("../src/shared/s3.ts", () => ({
+  ...realS3,
   s3ObjectExists: s3ObjectExistsMock,
   isMissingS3Error: (error: unknown) =>
     error instanceof Error && error.message === "NoSuchKey",

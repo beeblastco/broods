@@ -7,11 +7,17 @@
 
 import { describe, expect, it, mock } from "bun:test";
 import type { AccountToolRecord } from "../src/shared/domain/account-tools.ts";
+import * as realS3 from "../src/shared/s3.ts";
 
 const bundleSource = "export default { name: 'echo', execute(ctx, input) { return input; } };";
 const readS3BytesMock = mock(async () => new TextEncoder().encode(bundleSource) as Uint8Array);
 
+// Spread the real module first: mock.module replaces it for the whole test
+// process, so overriding only readS3Bytes strips every other export from the
+// test files that load after this one — surfacing as an order-dependent
+// "Export named 'readS3Text' not found in module".
 mock.module("../src/shared/s3.ts", () => ({
+  ...realS3,
   readS3Bytes: readS3BytesMock,
 }));
 

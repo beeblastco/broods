@@ -5,6 +5,7 @@
 
 import { afterAll, afterEach, describe, expect, it, mock } from "bun:test";
 import * as actualAi from "ai";
+import * as realS3 from "../src/shared/s3.ts";
 
 const ORIGINAL_ENV = { ...process.env };
 const googleModelMock = mock((modelId: string) => ({ provider: "google", modelId }));
@@ -37,7 +38,10 @@ mock.module("ai", () => ({
   generateText: generateTextMock,
 }));
 
+// Spread the real module first: mock.module is process-global, so any export
+// omitted here disappears for every test file that loads after this one.
 mock.module("../src/shared/s3.ts", () => ({
+  ...realS3,
   isMissingS3Error: (error: unknown) =>
     typeof error === "object" &&
     error !== null &&

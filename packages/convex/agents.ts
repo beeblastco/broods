@@ -7,8 +7,11 @@ import { v } from "convex/values";
 import { internalMutation, internalQuery, query } from "./_generated/server";
 import { authKit } from "./auth";
 import { encryptAgentConfigBlob, substituteEnvPlaceholders } from "./model/agentConfigCodec";
+import { accountIdForProject } from "./model/auditEvents";
 import { backSyncCanvasFromAgentRow, mirrorAgentRowOntoConfig } from "./model/agentSync";
 import { getActiveOrgForUser } from "./model/ownership/org";
+import { getProjectForRole } from "./model/ownership/project";
+import { agentsInProject } from "./model/projectScope";
 import { agentsFields } from "./schema";
 
 const agentDoc = v.object({
@@ -159,6 +162,36 @@ export const create = internalMutation({
         await backSyncCanvasFromAgentRow(ctx, agentRowId);
 
         return agentRowId;
+    },
+});
+
+/**
+ * Lists the agents this project owns, for the project's scheduler.
+ *
+ * `agents` rows are account-scoped and carry no projectId; the link is
+ * `agentConfigs.projectId`, so this resolves project → configs → agents.
+ * Agents whose config row is missing belong to no project and are absent.
+ * @param projectId the project to list agents for
+ */
+export const listForProject = query({
+    args: { projectId: v.id("projects") },
+    returns: v.array(agentDoc),
+    handler: async (ctx, args) => {
+        // Check authenticated user
+        const user = await authKit.getAuthUser(ctx);
+        if (!user) {
+            throw new Error("User not found or not authenticated");
+        }
+
+        // Gate on project membership: projectId arrives from the URL, so an
+        // unauthorized id must return nothing rather than another org's agents.
+        const project = await getProjectForRole(ctx, user.id, args.projectId);
+        if (!project) return [];
+
+        const accountId = await accountIdForProject(ctx, args.projectId);
+        if (!accountId) return [];
+
+        return await agentsInProject(ctx, args.projectId, accountId);
     },
 });
 
