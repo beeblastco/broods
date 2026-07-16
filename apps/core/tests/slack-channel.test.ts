@@ -317,6 +317,20 @@ describe("slack channel adapter", () => {
     expect(texts).toEqual(["Answer lives in the tool step."]);
   });
 
+  it("treats a whitespace-only final step as empty and keeps the interim answer", async () => {
+    const chunks = await collect(toSlackStream((async function* () {
+      yield { type: "text-delta", id: "t1", text: "Answer lives in the tool step." };
+      yield { type: "tool-call", toolCallId: "tc1", toolName: "write", input: {} };
+      yield { type: "tool-result", toolCallId: "tc1", toolName: "write", output: "ok" };
+      yield { type: "finish-step", finishReason: "tool-calls" };
+      yield { type: "text-delta", id: "t2", text: " \n" };
+      yield { type: "finish-step", finishReason: "stop" };
+    })()));
+
+    const texts = chunks.filter((chunk) => typeof chunk === "string");
+    expect(texts).toEqual(["Answer lives in the tool step."]);
+  });
+
   it("gives each thinking segment its own task so it interleaves with tools", async () => {
     // Adapters reuse the same reasoning id (reasoning-0) on every step; a
     // shared task id would merge all thinking into one block pinned at the

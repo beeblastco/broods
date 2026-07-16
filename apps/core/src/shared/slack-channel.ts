@@ -4,18 +4,18 @@
  */
 
 import {
+  SlackAdapter,
+  SlackFormatConverter,
+  type SlackEvent,
+  type SlackThreadId,
+} from "@chat-adapter/slack";
+import {
   assertSlackOk,
   callSlackApi,
   postSlackMessage,
   sendSlackResponseUrl,
   SlackApiError,
 } from "@chat-adapter/slack/api";
-import {
-  SlackAdapter,
-  SlackFormatConverter,
-  type SlackEvent,
-  type SlackThreadId,
-} from "@chat-adapter/slack";
 import {
   parseSlackWebhookBody,
   verifySlackSignature,
@@ -581,11 +581,12 @@ export async function* toSlackStream(
         // during the step stand in for it there.
         const finishReason = stringValue(event.finishReason);
         const interim = finishReason ? finishReason === "tool-calls" : stepHadToolCalls;
+        const trimmedStepText = stepText.trim();
         if (interim) {
-          if (stepText.trim()) {
+          if (trimmedStepText) {
             lastInterimText = stepText;
           }
-        } else if (stepText) {
+        } else if (trimmedStepText) {
           finalText = appendBufferedSlackText(finalText, stepText, true);
         }
         stepText = "";
@@ -717,9 +718,11 @@ export async function* toSlackStream(
   }
 
   // Trailing stepText covers streams that end without a finish-step event.
-  // When no kept step produced text, fall back to the last interim text so a
-  // model that answered only inside a tool-call step still gets a reply out.
-  const text = appendBufferedSlackText(finalText, stepText, true) || lastInterimText;
+  // When no kept step produced visible text — whitespace-only counts as none —
+  // fall back to the last interim text so a model that answered only inside a
+  // tool-call step still gets a reply out.
+  const trailingText = stepText.trim() ? appendBufferedSlackText(finalText, stepText, true) : finalText;
+  const text = trailingText.trim() ? trailingText : lastInterimText;
   if (text) {
     yield text;
   }
