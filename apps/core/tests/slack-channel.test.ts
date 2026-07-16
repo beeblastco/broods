@@ -280,12 +280,58 @@ describe("slack channel adapter", () => {
     expect(chunks).toEqual([
       { type: "task_update", id: "reasoning:r1", title: "Thinking", status: "in_progress" },
       { type: "task_update", id: "reasoning:r1", title: "Thinking", status: "in_progress", details: "checking context" },
-      { type: "task_update", id: "reasoning:r1", title: "Thinking", status: "complete", output: "checking context" },
+      { type: "task_update", id: "reasoning:r1", title: "Thinking", status: "complete" },
       { type: "task_update", id: "tool:tc1", title: "Using bash", status: "in_progress" },
       { type: "task_update", id: "tool:tc1", title: "Using bash", status: "in_progress" },
       { type: "task_update", id: "tool:tc1", title: "Using bash", status: "complete", output: "done" },
       "final",
     ]);
+  });
+
+  it("streams reasoning as per-chunk deltas because Slack appends details", async () => {
+    // chat.appendStream appends every task_update's details to the card.
+    // Re-sending accumulated text renders "TheThe user isThe user is…".
+    const chunks = await collect(toSlackStream((async function* () {
+      yield { type: "reasoning-start", id: "r1" };
+      yield { type: "reasoning-delta", id: "r1", text: "The" };
+      yield { type: "reasoning-delta", id: "r1", text: " user is" };
+      yield { type: "reasoning-delta", id: "r1", text: " asking." };
+      yield { type: "reasoning-end", id: "r1" };
+    })()));
+
+    const details = chunks
+      .filter((chunk): chunk is Extract<typeof chunk, { type: string }> =>
+        typeof chunk === "object" && chunk !== null && "details" in chunk)
+      .map((chunk) => (chunk as { details?: string }).details);
+    // Each delta must stream as its own append — a joined match would also
+    // pass if the stream buffered everything into one update.
+    expect(details).toEqual(["The", " user is", " asking."]);
+
+    const complete = chunks.at(-1);
+    expect(complete).toEqual({
+      type: "task_update",
+      id: "reasoning:r1",
+      title: "Thinking",
+      status: "complete",
+    });
+  });
+
+  it("stops appending reasoning details once the task text budget is spent", async () => {
+    const long = "x".repeat(1300);
+    const chunks = await collect(toSlackStream((async function* () {
+      yield { type: "reasoning-start", id: "r1" };
+      yield { type: "reasoning-delta", id: "r1", text: long };
+      yield { type: "reasoning-delta", id: "r1", text: "overflow" };
+      yield { type: "reasoning-end", id: "r1" };
+    })()));
+
+    const details = chunks
+      .filter((chunk) => typeof chunk === "object" && chunk !== null && "details" in chunk)
+      .map((chunk) => (chunk as { details: string }).details);
+    expect(details).toHaveLength(1);
+    // The ellipsis is inside the 1200-char budget, not appended past it.
+    expect(details[0]).toBe(`${"x".repeat(1197)}...`);
+    expect(details[0]!.length).toBe(1200);
   });
 
   it("keeps direct messages channel-scoped instead of thread-scoped", async () => {
