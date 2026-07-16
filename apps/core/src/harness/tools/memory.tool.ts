@@ -118,14 +118,16 @@ Usage notes:
 
           const qFile = shellQuote(filePath);
           const qIndex = shellQuote(MEMORY_INDEX_PATH);
+          const qIndexTmp = shellQuote(`${MEMORY_INDEX_PATH}.tmp`);
           // Same base64 + `sync` discipline as the write tool: commit both files to
-          // the S3 Files server before the sandbox freezes. The index line is
-          // deduplicated by its link target, so re-saving a title rewrites the
-          // entry without stacking index lines.
+          // the S3 Files server before the sandbox freezes. The entry's index line
+          // is REPLACED (matched by its link target), so re-saving a title updates
+          // the summary future turns see instead of keeping the stale line.
           const code =
             `mkdir -p ${shellQuote(MEMORY_DIR)} && printf '%s' ${shellQuote(toBase64(entry))} | base64 -d > ${qFile} && sync ${qFile} && ` +
             `{ [ -f ${qIndex} ] || printf '%s\\n' ${shellQuote(indexHeader)} > ${qIndex}; } && ` +
-            `{ grep -qF ${shellQuote(`](${slug}.md)`)} ${qIndex} || printf '%s\\n' ${shellQuote(indexLine)} >> ${qIndex}; } && ` +
+            `{ grep -vF ${shellQuote(`](${slug}.md)`)} ${qIndex} > ${qIndexTmp} || true; } && ` +
+            `printf '%s\\n' ${shellQuote(indexLine)} >> ${qIndexTmp} && mv ${qIndexTmp} ${qIndex} && ` +
             `sync ${qIndex} && printf 'Saved memory %s (indexed in %s)\\n' ${qFile} ${qIndex}`;
           const result = await runSandbox(ws.sandbox, ws.namespace, code, {
             onSandboxCpu: context.onSandboxCpu,

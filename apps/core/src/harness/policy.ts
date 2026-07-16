@@ -18,6 +18,7 @@ import { getStorage } from "../shared/storage.ts";
 import type { ResolvedWorkspace } from "../shared/workspaces.ts";
 import type { SandboxExecutorConfig } from "./sandbox/types.ts";
 import { bashNeedsApproval, editNeedsApproval, resolveWorkspace } from "./tools/filesystem-utils.ts";
+import { MEMORY_DIR, memorySlug } from "./tools/memory.tool.ts";
 
 type RuntimeToolApproval = Extract<ToolApprovalConfiguration<ToolSet, unknown>, (...args: any[]) => unknown>;
 
@@ -166,7 +167,9 @@ export function compatibilityApprovalStatus(
     }, workspace) ? "user-approval" : undefined;
   }
 
-  if (toolName === "write" || toolName === "edit") {
+  // memory_save writes workspace files (memory/*.md + the index), so it follows
+  // the same approval path as write/edit.
+  if (toolName === "write" || toolName === "edit" || toolName === "memory_save") {
     return editNeedsApproval(options.workspaces, workspace) ? "user-approval" : undefined;
   }
 
@@ -203,6 +206,12 @@ export function policyInputForTool(
 
   if (toolName === "read" || toolName === "glob" || toolName === "grep") return { action: "workspace.read", ...base };
   if (toolName === "write" || toolName === "edit") return { action: "workspace.write", ...base };
+  if (toolName === "memory_save") {
+    // The tool derives its target path from the title, so mirror that here to give
+    // policies the same workspace.write + filePath surface as write/edit.
+    const title = typeof record.title === "string" ? record.title : "";
+    return { action: "workspace.write", ...base, filePath: `${MEMORY_DIR}/${memorySlug(title)}.md` };
+  }
   if (toolName === "bash") return { action: "workspace.exec", ...base };
   if (toolName === "load_skill") {
     const skillPath = typeof record.path === "string" ? record.path : undefined;
