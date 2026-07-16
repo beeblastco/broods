@@ -234,14 +234,20 @@ describe("session system context", () => {
     const workspacePrompt = writableContext.system.find((message) => message.content.includes("<workspace>"))?.content;
     expect(workspacePrompt).toContain("memory_save");
 
-    // harness.memory opt-out removes the tool, so the guidance disappears with it.
+    // harness.memory opt-out is total: no tool guidance, no index in context even
+    // when the file exists, and the workspace guidance stops recommending memory.
     setStorageForTests(storageWithSandbox({ storage: { provider: "s3" }, harness: { memory: { enabled: false } } }));
+    readS3TextMock.mockResolvedValue("MUST NOT REACH THE MODEL");
     const optedOut = new Session("event", "acct:acct_1:agent:agent_1:slack:T1:C2:11.22", "acct", "agent", {
       sandbox: "sb_1",
       workspaces: [{ name: "default", workspaceId: "ws_a" }],
     });
     const optedOutContext = await optedOut.createEphemeralTurnContext([{ role: "user", content: "hello" }]);
     expect(optedOutContext.system.some((message) => message.content.startsWith("<memory>"))).toBe(false);
+    expect(optedOutContext.system.some((message) => message.content.includes("MUST NOT REACH THE MODEL"))).toBe(false);
+    const optedOutWorkspacePrompt = optedOutContext.system.find((message) => message.content.includes("<workspace>"))?.content;
+    expect(optedOutWorkspacePrompt).toContain("Structured memory is disabled");
+    expect(optedOutWorkspacePrompt).not.toContain("memory_save");
   });
 
   it("allows disabling workspace harness guidance without disabling MEMORY.md loading", async () => {

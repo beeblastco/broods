@@ -59,6 +59,16 @@ export function workspaceMemoryHarnessEnabled(config: WorkspaceConfig | undefine
   return config?.harness?.enabled !== false && config?.harness?.memory?.enabled !== false;
 }
 
+/**
+ * Whether the memory index is loaded into the prompt for a workspace. Only the
+ * memory-specific toggle controls this: `harness.enabled: false` suppresses the
+ * guidance and the memory_save tool but keeps loading an existing index, while
+ * `harness.memory.enabled: false` opts out of memory entirely.
+ */
+export function workspaceMemoryIndexEnabled(config: WorkspaceConfig | undefined): boolean {
+  return config?.harness?.memory?.enabled !== false;
+}
+
 export interface WorkspaceConfigRecord {
   accountId: string;
   workspaceId: string;

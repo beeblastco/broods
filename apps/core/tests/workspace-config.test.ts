@@ -50,11 +50,15 @@ describe("workspace config", () => {
   });
 
   it("defaults the memory harness on and lets either toggle turn it off", async () => {
-    const { workspaceMemoryHarnessEnabled } = await import("../src/shared/domain/workspace-config.ts");
+    const { workspaceMemoryHarnessEnabled, workspaceMemoryIndexEnabled } = await import("../src/shared/domain/workspace-config.ts");
     expect(workspaceMemoryHarnessEnabled({ storage: { provider: "s3" } })).toBe(true);
     expect(workspaceMemoryHarnessEnabled(undefined)).toBe(true);
     expect(workspaceMemoryHarnessEnabled({ storage: { provider: "s3" }, harness: { enabled: false } })).toBe(false);
     expect(workspaceMemoryHarnessEnabled({ storage: { provider: "s3" }, harness: { memory: { enabled: false } } })).toBe(false);
+    // Index loading follows only the memory toggle: harness off keeps loading an
+    // existing index, memory off is a total opt-out.
+    expect(workspaceMemoryIndexEnabled({ storage: { provider: "s3" }, harness: { enabled: false } })).toBe(true);
+    expect(workspaceMemoryIndexEnabled({ storage: { provider: "s3" }, harness: { memory: { enabled: false } } })).toBe(false);
   });
 
   it("accepts boolean workspace isolation and rejects old string modes", () => {

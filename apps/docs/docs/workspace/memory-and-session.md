@@ -163,7 +163,7 @@ export const notes = defineWorkspace({
 });
 ```
 
-Keep the workspace harness but opt out of the structured memory (no `memory_save`, no `<memory>` guidance; the index is still loaded when the file exists):
+Keep the workspace harness but opt out of memory entirely (no `memory_save`, no `<memory>` guidance, and the index is not loaded into context):
 
 ```ts
 export const notesNoMemory = defineWorkspace({

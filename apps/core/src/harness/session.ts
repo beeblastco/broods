@@ -16,7 +16,7 @@ import {
 import { runtime } from "../shared/convex/runtime.ts";
 import type { AgentChannelWorkspaceScope, AgentConfig } from "../shared/domain/agent-config.ts";
 import type { SandboxPermissionMode } from "../shared/domain/sandbox-config.ts";
-import { workspaceMemoryHarnessEnabled } from "../shared/domain/workspace-config.ts";
+import { workspaceMemoryHarnessEnabled, workspaceMemoryIndexEnabled } from "../shared/domain/workspace-config.ts";
 import { logError, logInfo } from "../shared/log.ts";
 import { isPlainObject } from "../shared/object.ts";
 import {
@@ -502,6 +502,11 @@ export class Session {
 
     const memoryFiles: Array<{ workspace: ResolvedWorkspace; content: string }> = [];
     for (const workspace of this.resolvedWorkspaces()) {
+      // harness.memory.enabled: false is a full opt-out — the index is not
+      // loaded into the model context either.
+      if (!workspaceMemoryIndexEnabled(workspace.config)) {
+        continue;
+      }
       const content = await this.loadMemoryFile(workspace);
       if (content != null) {
         memoryFiles.push({ workspace, content });
@@ -678,9 +683,12 @@ function formatWorkspaceHarnessSystemPrompt(workspaces: ResolvedWorkspace[], mem
       ? "Use the file tools (read, write, edit, glob, grep) and bash to work with the mounted filesystem; bash starts in the current workspace directory."
       : "Use the file tools (read, glob) to read the mounted filesystem. These workspaces are read-only, attempt to modify will get error.";
 
+  const memoryIndexEnabled = workspaces.some((workspace) => workspaceMemoryIndexEnabled(workspace.config));
   const memoryGuidance = memoryToolEnabled
     ? `3. Durable memory is managed through the memory_save tool and the ${MEMORY_INDEX_PATH} index — see <memory>.`
-    : `3. Keep durable project facts, decisions, conventions, and context that should survive long-running work as markdown files under memory/, indexed in ${MEMORY_INDEX_PATH}.`;
+    : memoryIndexEnabled
+      ? `3. Keep durable project facts, decisions, conventions, and context that should survive long-running work as markdown files under memory/, indexed in ${MEMORY_INDEX_PATH}.`
+      : "3. Structured memory is disabled for this agent — do not create memory files unless explicitly asked.";
   const guidance = hasWritable
     ? `1. Use read/write/edit to inspect and change files, glob/grep to find files and content, and bash to run commands and programs (python3, node, and the usual tools are on PATH).
 2. When more than one workspace is configured, pass the workspace field to select one; omitted means the default workspace.

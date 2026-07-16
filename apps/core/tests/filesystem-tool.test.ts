@@ -460,10 +460,18 @@ describe("memory tool", () => {
     expect(microvmFetchMock).not.toHaveBeenCalled();
   });
 
-  it("kebab-cases titles into slugs and rejects blank titles", async () => {
+  it("kebab-cases titles into collision-free slugs and rejects blank titles", async () => {
     const { memorySlug } = await import("../src/harness/tools/memory.tool.ts");
     expect(memorySlug("Owner's Slack handle!")).toBe("owner-s-slack-handle");
-    expect(memorySlug("---")).toBe("memory");
+    // Diacritics fold into readable ASCII instead of dashes.
+    expect(memorySlug("Phích prefers tiếng Việt")).toBe("phich-prefers-tieng-viet");
+    // Capped or empty slugs get a stable hash suffix so distinct titles never share a file.
+    expect(memorySlug("---")).toMatch(/^memory-[0-9a-f]{8}$/);
+    expect(memorySlug("---")).toBe(memorySlug("---"));
+    const longA = `${"very long shared prefix ".repeat(4)}variant alpha`;
+    const longB = `${"very long shared prefix ".repeat(4)}variant beta`;
+    expect(memorySlug(longA)).not.toBe(memorySlug(longB));
+    expect(memorySlug(longA).length).toBeLessThanOrEqual(69);
     const memory_save = await memorySave(workspaceCtx() as unknown as Record<string, unknown>);
     const result = await memory_save.execute({ title: "   ", description: "d", content: "y" });
     expect(result).toEqual({ type: "error-text", value: "Error: title must not be empty" });

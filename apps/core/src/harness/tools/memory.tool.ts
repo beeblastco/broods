@@ -7,6 +7,7 @@
  * through the normal read/glob/grep tools plus the index the session loads.
  */
 
+import { createHash } from "node:crypto";
 import { jsonSchema, tool, type JSONSchema7, type ToolSet } from "ai";
 import { workspaceMemoryHarnessEnabled } from "../../shared/domain/workspace-config.ts";
 import { channelScopeKeyFromConversation } from "../../shared/runtime-keys.ts";
@@ -56,15 +57,22 @@ function inputSchema(context: MemoryToolContext): JSONSchema7 {
   };
 }
 
-// kebab-case file slug from the title; capped so index lines and paths stay short.
+// kebab-case file slug from the title (diacritics folded), capped so index lines
+// and paths stay short. A capped or empty slug is no longer unique per title, so
+// those get a stable hash suffix — distinct titles must never share a file.
 export function memorySlug(title: string): string {
-  const slug = title
+  const kebab = title
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 60)
-    .replace(/-+$/, "");
-  return slug.length > 0 ? slug : "memory";
+    .replace(/^-+|-+$/g, "");
+  const slug = kebab.slice(0, 60).replace(/-+$/, "");
+  if (slug.length > 0 && slug === kebab) {
+    return slug;
+  }
+  const hash = createHash("sha256").update(title, "utf8").digest("hex").slice(0, 8);
+  return slug.length > 0 ? `${slug}-${hash}` : `memory-${hash}`;
 }
 
 export default function memoryTool(context: MemoryToolContext): ToolSet {
