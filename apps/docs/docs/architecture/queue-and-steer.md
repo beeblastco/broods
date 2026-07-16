@@ -16,7 +16,9 @@ message per socket, and its `cancel` frame only stops gateway-side fetch/read
 work—it does not abort the core run.
 
 The v1 goal is to make those concurrency choices explicit and consistent while
-preserving current defaults. It is not to add distributed cancellation.
+the project is still under development. This decision intentionally replaces the
+current async accept-then-fail-on-busy behavior with the `reject` default below;
+there is no transition mode. It does not add distributed cancellation.
 
 ## Decision
 
@@ -43,19 +45,11 @@ Every ingress surface uses the same four modes:
 | `collect`  | Persist FIFO, then combine all envelopes available at the atomic drain cutoff into one next turn.    |
 | `steer`    | Offer the envelope at the next AI SDK step boundary; fall back to `followup` if no boundary remains. |
 
-Defaults stay compatible during the initial rollout:
+V1 defaults are:
 
-- direct sync HTTP and WebSocket execute use `reject` when `mode` is omitted;
-- async HTTP keeps a non-selectable `legacy-async` compatibility default when
-  `mode` is omitted: it durably accepts the request and returns `202`, then a
-  worker that finds the conversation busy settles its status as `failed` with
-  `CONVERSATION_BUSY`;
+- direct sync HTTP, async HTTP, and WebSocket execute use `reject` when `mode` is
+  omitted;
 - channel messages use `collect` when no channel/conversation preference exists;
-
-`legacy-async` is an internal rollout marker, not a fifth public mode. Once a
-caller explicitly supplies `mode`, async HTTP follows the selected public mode;
-in particular, explicit `reject` may return a synchronous busy conflict without
-creating an accepted envelope.
 
 `collect` is a real public mode, not an undocumented channel optimization.
 Collection preserves envelope and event order even though the model sees one
@@ -66,9 +60,9 @@ application relation records the ordered contributor event IDs.
 
 Authentication and transport parsing first produce an in-memory candidate.
 Parsing does not persist anything. The conversation coordinator resolves the
-explicit or compatibility-default mode and persists an envelope only when it
-authorizes acceptance. A busy `reject` candidate is discarded without an
-envelope or status row.
+explicit or default mode and persists an envelope only when it authorizes
+acceptance. A busy `reject` candidate is discarded without an envelope or status
+row.
 
 ```ts
 type IngressMode = "reject" | "followup" | "collect" | "steer";
@@ -88,7 +82,7 @@ interface IngressCandidate {
 }
 
 interface IngressEnvelope extends Omit<IngressCandidate, "requestedMode"> {
-  requestedMode: IngressMode | "legacy-async";
+  requestedMode: IngressMode;
   applicationId?: string;
   ownerGeneration?: number;
   status:
@@ -117,7 +111,7 @@ interface IngressApplication {
 ```
 
 `requestedMode` on the persisted envelope contains either the client's explicit
-selection or the resolved compatibility default shown above.
+selection or the resolved default shown above.
 
 The stored record also carries server-derived `accountId` and `agentId`; clients
 cannot select or override them. One canonical idempotency identity is used on
@@ -127,12 +121,12 @@ every transport:
 (accountId, agentId, scopedConversationKey, idempotencyKey)
 ```
 
-Clients may provide `idempotencyKey`; otherwise it defaults to `eventId` for
-compatibility. `eventId` remains the public correlation ID and is not a second
-idempotency identity. First acceptance binds the canonical identity to its
-`eventId`, payload digest, envelope, and status. A retry with the same identity
-and digest returns that existing `eventId` and status; the same identity with a
-different digest is a conflict.
+Clients may provide `idempotencyKey`; otherwise it defaults to `eventId`.
+`eventId` remains the public correlation ID and is not a second idempotency
+identity. First acceptance binds the canonical identity to its `eventId`, payload
+digest, envelope, and status. A retry with the same identity and digest returns
+that existing `eventId` and status; the same identity with a different digest is
+a conflict.
 
 The identity binding/tombstone is retained for at least the same seven-day
 window as the status row, including after `completed`, `failed`, or `expired`.
@@ -244,11 +238,11 @@ not keep the accepting HTTP connection open. For direct sync HTTP, omitted or
 explicit `reject` retains the existing busy conflict behavior and creates no
 accepted status record.
 
-For async HTTP, omitted `mode` keeps the `legacy-async` path: the status row and
-envelope are accepted before worker dispatch, and a later busy observation
-settles that row as `failed` with `CONVERSATION_BUSY`. Explicit modes use the new
-coordinator contract. In every case, async `202` means durable acceptance, never
-merely that an in-process worker was scheduled.
+Async HTTP uses the same coordinator contract. When `mode` is omitted it resolves
+to `reject`, so a busy request receives a synchronous conflict and creates no
+envelope or status row. An idle async request, or busy ingress explicitly using
+`followup`, `collect`, or `steer`, returns `202` only after durable acceptance;
+`202` never means merely that an in-process worker was scheduled.
 
 ### WebSocket control frames
 
@@ -361,17 +355,19 @@ Implement the contract in this dependency order:
 
 Do not implement [issue #95](https://github.com/beeblastco/broods/issues/95) in
 parallel. Its per-subagent WebSocket attach and JetStream lifecycle must first be
-made compatible with this decision's attach/control correlation, durable status,
+aligned with this decision's attach/control correlation, durable status,
 subject ownership, replay, and purge rules. Otherwise the two issues can encode
-incompatible meanings for attach, completion, and stream retention.
+conflicting meanings for attach, completion, and stream retention.
 
 ## Consequences
 
 - Accepted work becomes durable, bounded, observable, and idempotent across all
   transports.
 - Steering is predictable because it cannot split a model call or tool batch.
-- Existing direct sync, async, WebSocket, and channel defaults remain stable
-  while clients opt into new modes.
+- Direct sync, async, and WebSocket ingress share the `reject` default; channels
+  retain `collect`.
+- Busy async omission changes from accept-then-fail to a synchronous conflict;
+  the development contract has no transition mode.
 - Hard cancellation remains visibly unsupported instead of being approximated by
   disconnecting a gateway reader.
 - The implementation requires a coordinator and durable status transitions
