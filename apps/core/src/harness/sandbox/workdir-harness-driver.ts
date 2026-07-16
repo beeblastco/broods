@@ -400,8 +400,12 @@ function processFileStream(
             }
             const current = await status();
             if (current.state !== "running") {
-              const finalChunk = await readProcessChunk(sandbox, path, offset);
-              if (finalChunk.byteLength > 0) controller.enqueue(finalChunk);
+              while (true) {
+                const finalChunk = await readProcessChunk(sandbox, path, offset);
+                if (finalChunk.byteLength === 0) break;
+                controller.enqueue(finalChunk);
+                offset += finalChunk.byteLength;
+              }
               controller.close();
               completed.resolve();
               return;
