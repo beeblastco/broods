@@ -87,8 +87,6 @@ export function EnvironmentSelector() {
   const initializeProduction = useMutation(api.environment.initializeProduction);
 
   const [createOpen, setCreateOpen] = useState(false);
-  // Production panel starts closed; it opens only when the user selects an
-  // uninitialized Production environment or explicitly chooses the Production target.
   const [productionOpen, setProductionOpen] = useState(false);
   const [productionRegion, setProductionRegion] = useState<DeploymentRegion>("eu-west-1");
   const [newName, setNewName] = useState("");
@@ -100,10 +98,6 @@ export function EnvironmentSelector() {
 
   const developmentEnv = environments?.find((env) => environmentKind(env) === "development");
   const productionEnv = environments?.find((env) => environmentKind(env) === "production");
-
-  // URL query parameters no longer auto-open the Production panel. The panel opens
-  // only through explicit user actions: selecting an uninitialized Production
-  // environment or clicking the Production target in the dropdown.
 
   // Ensure default Development environment exists when project loads.
   useEffect(() => {
