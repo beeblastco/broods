@@ -68,7 +68,11 @@ export function EnvironmentDot({ kind }: { kind: EnvironmentKind }) {
   );
 }
 
-/** Dropdown to list, switch, and create project environments. */
+/**
+ * Dropdown to list, switch, and create project environments. The Initialize
+ * Production panel opens only when the user selects a Production environment
+ * that has no deployment region yet, so nothing else can prompt for one.
+ */
 export function EnvironmentSelector() {
   const params = useParams<{ projectId?: string }>();
   const projectId = params.projectId as Id<"projects"> | undefined;
