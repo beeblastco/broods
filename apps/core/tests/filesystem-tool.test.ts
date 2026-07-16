@@ -402,6 +402,72 @@ describe("write/edit approval policy", () => {
   });
 });
 
+describe("memory tool", () => {
+  // Slack conversation: originSessionId must be the channel scope (thread ts dropped).
+  const conversationKey = "acct:a1:agent:ag1:slack:T123:C456:1784216136.381309";
+
+  async function memorySave(ctx: Record<string, unknown>) {
+    const mod = await import("../src/harness/tools/memory.tool.ts");
+    return mod.default({ ...ctx, conversationKey } as never).memory_save as unknown as {
+      execute(input: Record<string, unknown>): Promise<{ type: string; value: string }>;
+    };
+  }
+
+  it("saves an entry into memory/ with frontmatter metadata and indexes it in memory/MEMORY.md", async () => {
+    const memory_save = await memorySave(workspaceCtx() as unknown as Record<string, unknown>);
+    const result = await memory_save.execute({
+      title: "Name in this channel",
+      description: "The assistant goes by Lily in #private-test-agent.",
+      content: "Here I go by Lily.",
+      type: "feedback",
+    });
+    const { payload } = lastSandboxExec();
+    expect(payload.namespace).toBe(NS);
+    expect(payload.code).toContain("memory/name-in-this-channel.md");
+    expect(payload.code).toContain("memory/MEMORY.md");
+    // Same durability discipline as write: base64-piped body, fsynced files, and
+    // an index append deduplicated by the entry's link target.
+    expect(payload.code).toContain("base64 -d");
+    expect(payload.code).toContain("grep -qF");
+    expect(payload.code).toContain("sync ");
+    expect(result.type).toBe("text");
+
+    const entryB64 = /printf '%s' '([A-Za-z0-9+/=]+)' \| base64 -d/.exec(payload.code)?.[1];
+    const entry = Buffer.from(entryB64 ?? "", "base64").toString("utf8");
+    expect(entry).toContain("name: name-in-this-channel");
+    expect(entry).toContain('description: "The assistant goes by Lily in #private-test-agent."');
+    expect(entry).toContain("node_type: memory");
+    expect(entry).toContain("type: feedback");
+    expect(entry).toContain("originSessionId: slack:T123:C456");
+    expect(entry).toContain("Here I go by Lily.");
+  });
+
+  it("errors cleanly on a read-only workspace without invoking the sandbox", async () => {
+    const memory_save = await memorySave(readonlyMountCtx() as unknown as Record<string, unknown>);
+    const result = await memory_save.execute({ title: "x", description: "d", content: "y" });
+    expect(result).toEqual({ type: "error-text", value: "Error: workspace is read-only" });
+    expect(microvmFetchMock).not.toHaveBeenCalled();
+  });
+
+  it("refuses a workspace whose memory harness is disabled", async () => {
+    const ctx = workspaceCtx() as unknown as { workspaces: Array<{ config: Record<string, unknown> }> };
+    ctx.workspaces[0]!.config = { storage: { provider: "s3" }, harness: { memory: { enabled: false } } };
+    const memory_save = await memorySave(ctx as unknown as Record<string, unknown>);
+    const result = await memory_save.execute({ title: "x", description: "d", content: "y" });
+    expect(result).toEqual({ type: "error-text", value: "Error: the memory harness is disabled for workspace notes" });
+    expect(microvmFetchMock).not.toHaveBeenCalled();
+  });
+
+  it("kebab-cases titles into slugs and rejects blank titles", async () => {
+    const { memorySlug } = await import("../src/harness/tools/memory.tool.ts");
+    expect(memorySlug("Owner's Slack handle!")).toBe("owner-s-slack-handle");
+    expect(memorySlug("---")).toBe("memory");
+    const memory_save = await memorySave(workspaceCtx() as unknown as Record<string, unknown>);
+    const result = await memory_save.execute({ title: "   ", description: "d", content: "y" });
+    expect(result).toEqual({ type: "error-text", value: "Error: title must not be empty" });
+  });
+});
+
 describe("toWorkspaceRelative", () => {
   it("normalizes leading slashes and dots to workspace-relative paths", async () => {
     const { toWorkspaceRelative } = await import("../src/harness/tools/filesystem-utils.ts");

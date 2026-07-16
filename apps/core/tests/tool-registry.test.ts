@@ -78,11 +78,23 @@ describe("createTools", () => {
     ], "bypass");
     const tools = await createTools(context, {});
 
-    expect(Object.keys(tools).sort()).toEqual(["bash", "edit", "glob", "grep", "read", "write"]);
+    expect(Object.keys(tools).sort()).toEqual(["bash", "edit", "glob", "grep", "memory_save", "read", "write"]);
     // bypass mode auto-approves everything.
     for (const name of Object.keys(tools)) {
       await expect(approvalStatus(name, {}, context)).resolves.toBeUndefined();
     }
+  });
+
+  it("drops memory_save when the workspace harness memory opts out", async () => {
+    const { createTools } = await import("../src/harness/tools/index.ts");
+
+    const context = sandboxContext([
+      { name: "notes", workspaceId: "ws_a", namespace: "fs-a" },
+    ], "bypass") as { workspaces: Array<{ config: Record<string, unknown> }> };
+    context.workspaces[0]!.config = { storage: { provider: "s3" }, harness: { memory: { enabled: false } } };
+    const tools = await createTools(context as never, {});
+
+    expect(Object.keys(tools).sort()).toEqual(["bash", "edit", "glob", "grep", "read", "write"]);
   });
 
   it("asks before write/edit/bash in `ask` mode but never for read/glob/grep", async () => {
@@ -131,8 +143,8 @@ describe("createTools", () => {
       modelProvider: { tools: {} },
     } as never, {});
 
-    // bash/write/edit/grep exist for the sandbox-backed workspace; read/glob span both.
-    expect(Object.keys(tools).sort()).toEqual(["bash", "edit", "glob", "grep", "read", "write"]);
+    // bash/write/edit/grep/memory_save exist for the sandbox-backed workspace; read/glob span both.
+    expect(Object.keys(tools).sort()).toEqual(["bash", "edit", "glob", "grep", "memory_save", "read", "write"]);
     // write preserves the real default workspace (ro) instead of silently selecting the
     // later writable one. Because ro is read-only there is no sandbox to approve against,
     // so omitting workspace does NOT prompt — it falls straight through to a clean

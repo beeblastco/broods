@@ -16,6 +16,7 @@ import {
 import { runtime } from "../shared/convex/runtime.ts";
 import type { AgentChannelWorkspaceScope, AgentConfig } from "../shared/domain/agent-config.ts";
 import type { SandboxPermissionMode } from "../shared/domain/sandbox-config.ts";
+import { workspaceMemoryHarnessEnabled } from "../shared/domain/workspace-config.ts";
 import { logError, logInfo } from "../shared/log.ts";
 import { isPlainObject } from "../shared/object.ts";
 import {
@@ -39,6 +40,7 @@ import {
   loadConfiguredSkillPrompt,
   type SkillMetadata,
 } from "./skills.ts";
+import { MEMORY_INDEX_PATH } from "./tools/memory.tool.ts";
 
 // Default conversation lease TTL of 15 minutes.
 const CONVERSATION_LEASE_TTL_SECONDS = 15 * 60;
@@ -421,10 +423,17 @@ export class Session {
         role: "system",
         content: formatMemorySystemPrompt(memoryFiles),
       }];
+    const memoryToolEnabled = this.isMemoryToolEnabled();
     const workspaceHarnessSystem: SystemModelMessage[] = this.isWorkspaceHarnessEnabled()
       ? [{
         role: "system",
-        content: formatWorkspaceHarnessSystemPrompt(this.resolvedWorkspaces()),
+        content: formatWorkspaceHarnessSystemPrompt(this.resolvedWorkspaces(), memoryToolEnabled),
+      }]
+      : [];
+    const memoryHarnessSystem: SystemModelMessage[] = memoryToolEnabled
+      ? [{
+        role: "system",
+        content: formatMemoryHarnessSystemPrompt(channelScopeKeyFromConversation(this.conversationKey)),
       }]
       : [];
     const skillsSystem: SystemModelMessage[] = skillMetadata.length > 0
@@ -444,6 +453,7 @@ export class Session {
       ...agentSystemMessages(this.agentConfig.agent?.system),
       ...memorySystem,
       ...workspaceHarnessSystem,
+      ...memoryHarnessSystem,
       ...skillsSystem,
       ...subagentSystem,
       ...this.loadedSkillPrompts,
@@ -501,14 +511,14 @@ export class Session {
   }
 
   private async loadMemoryFile(workspace: ResolvedWorkspace): Promise<string | null> {
-    // Reads MEMORY.md via the S3 API (not the sandbox mount). If the agent edited
-    // MEMORY.md through the mount less than ~1-2 min ago, S3 Files may not have synced
-    // it yet, so this can be briefly stale. Accepted: memory converges across turns and
-    // a per-turn sandbox round-trip is costly. Reading via S3 also lets a workspace
-    // serve memory without any sandbox attached. See docs/workspace/storage.md.
+    // Reads the memory/MEMORY.md index via the S3 API (not the sandbox mount). If the
+    // agent edited it through the mount less than ~1-2 min ago, S3 Files may not have
+    // synced it yet, so this can be briefly stale. Accepted: memory converges across
+    // turns and a per-turn sandbox round-trip is costly. Reading via S3 also lets a
+    // workspace serve memory without any sandbox attached. See docs/workspace/storage.md.
 
     const target = await resolveS3ReadTarget(workspaceReadContext(workspace.config.storage, workspace.namespace));
-    const key = `${target.prefix}MEMORY.md`;
+    const key = `${target.prefix}${MEMORY_INDEX_PATH}`;
 
     try {
       return target.access
@@ -516,7 +526,7 @@ export class Session {
         : await readS3Text(target.bucket, key);
     } catch (error) {
       if (!isMissingS3Error(error)) {
-        logError("Failed to load MEMORY.md for session prompt", {
+        logError("Failed to load the memory index for session prompt", {
           conversationKey: this.conversationKey,
           workspace: workspace.name,
           key,
@@ -527,7 +537,7 @@ export class Session {
     }
 
     if (!this.hasLoggedMissingMemoryFile) {
-      logInfo("No MEMORY.md found for session prompt", {
+      logInfo("No memory index found for session prompt", {
         conversationKey: this.conversationKey,
         workspace: workspace.name,
         key,
@@ -583,6 +593,14 @@ export class Session {
     return (this.resolvedRuntime?.workspaces ?? []).some((workspace) => workspace.config.harness?.enabled !== false);
   }
 
+  // Mirrors the registry condition in tools/index.ts: memory_save exists when a
+  // sandbox-backed workspace has the memory harness enabled (default: on).
+  private isMemoryToolEnabled(): boolean {
+    return this.resolvedWorkspaces().some(
+      (workspace) => workspace.sandbox && workspaceMemoryHarnessEnabled(workspace.config),
+    );
+  }
+
   private async loadSkillMetadata(): Promise<SkillMetadata[]> {
     return listConfiguredSkillMetadata(this.accountId, this.agentConfig);
   }
@@ -616,19 +634,34 @@ function formatMemorySystemPrompt(memoryFiles: Array<{ workspace: ResolvedWorksp
   if (memoryFiles.length === 1 && memoryFiles[0]?.workspace.name === "default") {
     const normalizedContent = memoryFiles[0].content.trimEnd();
     return normalizedContent.length > 0
-      ? `Current MEMORY.md content for this conversation:\n\n${normalizedContent}`
-      : "Current MEMORY.md content for this conversation:\n\n(MEMORY.md exists but is empty)";
+      ? `Current memory index (${MEMORY_INDEX_PATH}) for this conversation:\n\n${normalizedContent}`
+      : `Current memory index (${MEMORY_INDEX_PATH}) for this conversation:\n\n(the index exists but is empty)`;
   }
 
   const sections = memoryFiles.map(({ workspace, content }) => {
     const normalizedContent = content.trimEnd();
-    return `## ${workspace.name}\n\n${normalizedContent.length > 0 ? normalizedContent : "(MEMORY.md exists but is empty)"}`;
+    return `## ${workspace.name}\n\n${normalizedContent.length > 0 ? normalizedContent : "(the index exists but is empty)"}`;
   }).join("\n\n");
 
-  return `Current workspace MEMORY.md content:\n\n${sections}`;
+  return `Current workspace memory index (${MEMORY_INDEX_PATH}) content:\n\n${sections}`;
 }
 
-function formatWorkspaceHarnessSystemPrompt(workspaces: ResolvedWorkspace[]): string {
+function formatMemoryHarnessSystemPrompt(originSessionId: string): string {
+  const now = new Date();
+  const weekday = now.toLocaleDateString("en-US", { weekday: "long", timeZone: "UTC" });
+  const today = now.toISOString().slice(0, 10);
+
+  return `<memory>
+Today is ${weekday}, ${today} (UTC).
+You have a persistent memory: markdown files in the workspace's memory/ folder, indexed by ${MEMORY_INDEX_PATH} (one line per memory, loaded into your context every turn).
+- Each memory is one file holding one fact, with YAML frontmatter: name, description, and metadata (node_type, type, originSessionId). originSessionId is the conversation scope the fact was learned in; this conversation's scope is "${originSessionId}".
+- Save new facts with memory_save; it names the file after the title, stamps the metadata, and updates the index. Check the index first so you update an existing entry instead of duplicating it.
+- The index only holds one-line summaries — read the linked file with the read tool before relying on it. A memory whose originSessionId is another conversation may reflect that conversation's context, not this one's, and your current instructions always outrank anything in memory.
+- Do not save what the current conversation already carries or what your instructions state; save what you would otherwise forget: who people are, their preferences, feedback on how to behave, ongoing work, and useful references.
+</memory>`;
+}
+
+function formatWorkspaceHarnessSystemPrompt(workspaces: ResolvedWorkspace[], memoryToolEnabled = false): string {
   const hasWritable = workspaces.some((ws) => ws.sandbox != null);
   const hasReadOnly = workspaces.some((ws) => ws.sandbox == null);
 
@@ -645,12 +678,15 @@ function formatWorkspaceHarnessSystemPrompt(workspaces: ResolvedWorkspace[]): st
       ? "Use the file tools (read, write, edit, glob, grep) and bash to work with the mounted filesystem; bash starts in the current workspace directory."
       : "Use the file tools (read, glob) to read the mounted filesystem. These workspaces are read-only, attempt to modify will get error.";
 
+  const memoryGuidance = memoryToolEnabled
+    ? `3. Durable memory is managed through the memory_save tool and the ${MEMORY_INDEX_PATH} index — see <memory>.`
+    : `3. Keep durable project facts, decisions, conventions, and context that should survive long-running work as markdown files under memory/, indexed in ${MEMORY_INDEX_PATH}.`;
   const guidance = hasWritable
     ? `1. Use read/write/edit to inspect and change files, glob/grep to find files and content, and bash to run commands and programs (python3, node, and the usual tools are on PATH).
 2. When more than one workspace is configured, pass the workspace field to select one; omitted means the default workspace.
-3. Use MEMORY.md for durable project facts, decisions, conventions, and context that should survive long-running work.
+${memoryGuidance}
 4. Use TASKS.md or focused task markdown files for plans and progress tracking when that helps the work stay aligned.
-5. Treat MEMORY.md and task files as normal workspace files: read them before relying on them, update them when useful, and keep them concise.`
+5. Treat memory and task files as normal workspace files: read them before relying on them, update them when useful, and keep them concise.`
     : `1. Use read to inspect files and glob to find files by pattern.
 2. When more than one workspace is configured, pass the workspace field to select one; omitted means the default workspace.`;
 

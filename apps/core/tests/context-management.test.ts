@@ -173,7 +173,7 @@ describe("session system context", () => {
       workspaces: [{ name: "default", workspaceId: "ws_a" }],
     });
     const enabledContext = await enabledSession.createEphemeralTurnContext([{ role: "user", content: "hello" }]);
-    const memoryPrompt = enabledContext.system.find((message) => message.content.includes("Current MEMORY.md content"))
+    const memoryPrompt = enabledContext.system.find((message) => message.content.includes("Current memory index"))
       ?.content;
     const workspacePrompt = enabledContext.system.find((message) => message.content.includes("<workspace>"))
       ?.content;
@@ -182,9 +182,66 @@ describe("session system context", () => {
     expect(workspacePrompt).toContain("read, glob");
     expect(workspacePrompt).toContain("[read-only");
     expect(workspacePrompt).not.toContain("write");
-    // MEMORY.md is loaded as a separate system message, not wired into the workspace guidance.
+    // The memory index is loaded as a separate system message, not wired into the workspace guidance.
     expect(workspacePrompt).not.toContain("MEMORY.md");
-    expect(readS3TextMock).toHaveBeenCalledWith("filesystem", expect.stringContaining("/MEMORY.md"));
+    // The index lives inside the memory/ folder, not at the workspace root.
+    expect(readS3TextMock).toHaveBeenCalledWith("filesystem", expect.stringContaining("/memory/MEMORY.md"));
+    // Read-only workspace => no memory_save => no <memory> guidance block.
+    expect(enabledContext.system.some((message) => message.content.startsWith("<memory>"))).toBe(false);
+  });
+
+  it("adds <memory> guidance only when a sandbox-backed workspace exposes memory_save", async () => {
+    process.env.CONVERSATIONS_TABLE_NAME = "conversations";
+    process.env.PROCESSED_EVENTS_TABLE_NAME = "processed-events";
+    process.env.FILESYSTEM_BUCKET_NAME = "filesystem";
+    const { Session } = await import("../src/harness/session.ts");
+
+    const storageWithSandbox = (workspaceConfig: Record<string, unknown>) => ({
+      ...(testStorage() as object),
+      sandboxConfigs: {
+        getById: async (_accountId: string, sandboxId: string) => ({
+          accountId: "acct",
+          sandboxId,
+          name: "lambda",
+          config: { provider: "lambda", network: { mode: "deny-all" } },
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+        }),
+      },
+      workspaceConfigs: {
+        getById: async (_accountId: string, workspaceId: string) => ({
+          accountId: "acct",
+          workspaceId,
+          name: "default",
+          config: workspaceConfig,
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+        }),
+      },
+    }) as never;
+
+    // Sandbox-backed workspace: the block names this conversation's scope as originSessionId.
+    setStorageForTests(storageWithSandbox({ storage: { provider: "s3" } }));
+    const writable = new Session("event", "acct:acct_1:agent:agent_1:slack:T1:C2:11.22", "acct", "agent", {
+      sandbox: "sb_1",
+      workspaces: [{ name: "default", workspaceId: "ws_a" }],
+    });
+    const writableContext = await writable.createEphemeralTurnContext([{ role: "user", content: "hello" }]);
+    const memoryGuidance = writableContext.system.find((message) => message.content.startsWith("<memory>"))?.content;
+    expect(memoryGuidance).toContain('this conversation\'s scope is "slack:T1:C2"');
+    expect(memoryGuidance).toContain("memory/MEMORY.md");
+    expect(memoryGuidance).toContain("Today is");
+    const workspacePrompt = writableContext.system.find((message) => message.content.includes("<workspace>"))?.content;
+    expect(workspacePrompt).toContain("memory_save");
+
+    // harness.memory opt-out removes the tool, so the guidance disappears with it.
+    setStorageForTests(storageWithSandbox({ storage: { provider: "s3" }, harness: { memory: { enabled: false } } }));
+    const optedOut = new Session("event", "acct:acct_1:agent:agent_1:slack:T1:C2:11.22", "acct", "agent", {
+      sandbox: "sb_1",
+      workspaces: [{ name: "default", workspaceId: "ws_a" }],
+    });
+    const optedOutContext = await optedOut.createEphemeralTurnContext([{ role: "user", content: "hello" }]);
+    expect(optedOutContext.system.some((message) => message.content.startsWith("<memory>"))).toBe(false);
   });
 
   it("allows disabling workspace harness guidance without disabling MEMORY.md loading", async () => {

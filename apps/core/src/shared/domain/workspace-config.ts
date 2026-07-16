@@ -15,7 +15,8 @@ import { mergeConfigObjects } from "./agent-config.ts";
 // Cloudflare R2, Google Cloud Storage, Azure Blob): extend this list and wire the
 // provider's mount/read path — validation and the type follow automatically.
 export const WORKSPACE_STORAGE_PROVIDERS = ["s3"] as const;
-export type WorkspaceStorageProvider = (typeof WORKSPACE_STORAGE_PROVIDERS)[number];
+export type WorkspaceStorageProvider =
+  (typeof WORKSPACE_STORAGE_PROVIDERS)[number];
 
 // How the harness authenticates to the workspace bucket. `managed` (default) uses
 // the broods-operated bucket + platform role. `assumeRole` is the bring-your-own
@@ -46,8 +47,16 @@ export interface WorkspaceConfig {
   // Enables hierarchical alias-scoped workspace folders. Channel configs must
   // provide workspaceScope when an attached workspace sets this to true.
   isolation?: boolean;
-  // Whether the workspace harness prompt (memory/tasks guidance) is injected.
-  harness?: { enabled?: boolean };
+  // Whether the workspace harness prompt (memory/tasks guidance) is injected,
+  // and whether the structured memory harness (memory_save + memory/MEMORY.md
+  // index loading) ships with it. Memory rides on the harness: disabling the
+  // harness disables memory; `memory.enabled: false` opts out of memory alone.
+  harness?: { enabled?: boolean; memory?: { enabled?: boolean } };
+}
+
+/** Whether the structured memory harness is on for a workspace (default: on with the harness). */
+export function workspaceMemoryHarnessEnabled(config: WorkspaceConfig | undefined): boolean {
+  return config?.harness?.enabled !== false && config?.harness?.memory?.enabled !== false;
 }
 
 export interface WorkspaceConfigRecord {
@@ -85,14 +94,27 @@ export function normalizeWorkspaceConfig(value: unknown): WorkspaceConfig {
   assertOptionalBoolean(config.isolation, "config.isolation");
   const isolation = config.isolation as boolean | undefined;
 
-  let harness: { enabled?: boolean } | undefined;
+  let harness: { enabled?: boolean; memory?: { enabled?: boolean } } | undefined;
   if (config.harness !== undefined) {
     if (!isPlainObject(config.harness)) {
       throw new Error("config.harness must be an object");
     }
     assertOptionalBoolean(config.harness.enabled, "config.harness.enabled");
-    if (config.harness.enabled !== undefined) {
-      harness = { enabled: config.harness.enabled as boolean };
+    let memory: { enabled?: boolean } | undefined;
+    if (config.harness.memory !== undefined) {
+      if (!isPlainObject(config.harness.memory)) {
+        throw new Error("config.harness.memory must be an object");
+      }
+      assertOptionalBoolean(config.harness.memory.enabled, "config.harness.memory.enabled");
+      if (config.harness.memory.enabled !== undefined) {
+        memory = { enabled: config.harness.memory.enabled as boolean };
+      }
+    }
+    if (config.harness.enabled !== undefined || memory) {
+      harness = {
+        ...(config.harness.enabled !== undefined ? { enabled: config.harness.enabled as boolean } : {}),
+        ...(memory ? { memory } : {}),
+      };
     }
   }
 
@@ -119,7 +141,11 @@ function normalizeWorkspaceStorage(value: unknown): WorkspaceStorageConfig {
       'config.storage.provider "vercel" is not supported yet; Vercel Drive workspace storage is not wired. Use "s3" or omit config.storage.',
     );
   }
-  assertOptionalEnum(value.provider, "config.storage.provider", WORKSPACE_STORAGE_PROVIDERS);
+  assertOptionalEnum(
+    value.provider,
+    "config.storage.provider",
+    WORKSPACE_STORAGE_PROVIDERS,
+  );
 
   const bucket = optionalString(value.bucket, "config.storage.bucket");
   const region = optionalString(value.region, "config.storage.region");
@@ -136,7 +162,9 @@ function normalizeWorkspaceStorage(value: unknown): WorkspaceStorageConfig {
   };
 }
 
-function normalizeWorkspaceStorageAuth(value: unknown): WorkspaceStorageAuth | undefined {
+function normalizeWorkspaceStorageAuth(
+  value: unknown,
+): WorkspaceStorageAuth | undefined {
   if (value === undefined) {
     return undefined;
   }
@@ -148,10 +176,19 @@ function normalizeWorkspaceStorageAuth(value: unknown): WorkspaceStorageAuth | u
   }
   if (value.type === "assumeRole") {
     const roleArn = requireString(value.roleArn, "config.storage.auth.roleArn");
-    const externalId = optionalString(value.externalId, "config.storage.auth.externalId");
-    return { type: "assumeRole", roleArn, ...(externalId ? { externalId } : {}) };
+    const externalId = optionalString(
+      value.externalId,
+      "config.storage.auth.externalId",
+    );
+    return {
+      type: "assumeRole",
+      roleArn,
+      ...(externalId ? { externalId } : {}),
+    };
   }
-  throw new Error("config.storage.auth.type must be one of: managed, assumeRole");
+  throw new Error(
+    "config.storage.auth.type must be one of: managed, assumeRole",
+  );
 }
 
 export function normalizeCreateWorkspaceConfigInput(
@@ -170,20 +207,32 @@ export function normalizeUpdateWorkspaceConfigInput(
 ): UpdateWorkspaceConfigInput & { config: WorkspaceConfig } {
   if (!isPlainObject(value)) throw new Error("Request body must be an object");
 
-  const config = "config" in value
-    ? normalizeWorkspaceConfig(mergeConfigObjects(existingConfig, asObject(value.config)))
-    : existingConfig;
+  const config =
+    "config" in value
+      ? normalizeWorkspaceConfig(
+          mergeConfigObjects(existingConfig, asObject(value.config)),
+        )
+      : existingConfig;
 
   return {
-    ...(value.name !== undefined ? { name: requireString(value.name, "name") } : {}),
+    ...(value.name !== undefined
+      ? { name: requireString(value.name, "name") }
+      : {}),
     ...(value.description !== undefined
-      ? { description: value.description === null ? null : optionalString(value.description, "description") }
+      ? {
+          description:
+            value.description === null
+              ? null
+              : optionalString(value.description, "description"),
+        }
       : {}),
     config,
   };
 }
 
-export function toPublicWorkspaceConfig(record: WorkspaceConfigRecord): WorkspaceConfigRecord {
+export function toPublicWorkspaceConfig(
+  record: WorkspaceConfigRecord,
+): WorkspaceConfigRecord {
   // No secrets in workspace config — return as-is.
   return record;
 }
@@ -199,8 +248,15 @@ function assertOptionalBoolean(value: unknown, name: string): void {
   }
 }
 
-function assertOptionalEnum<T extends string>(value: unknown, name: string, allowed: readonly T[]): void {
-  if (value !== undefined && (typeof value !== "string" || !allowed.includes(value as T))) {
+function assertOptionalEnum<T extends string>(
+  value: unknown,
+  name: string,
+  allowed: readonly T[],
+): void {
+  if (
+    value !== undefined &&
+    (typeof value !== "string" || !allowed.includes(value as T))
+  ) {
     throw new Error(`${name} must be one of: ${allowed.join(", ")}`);
   }
 }
