@@ -1,7 +1,10 @@
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
-    "types": ["bun"]
+    "types": ["bun"],
+    "paths": {
+      "@broods/ai-sdk-sandbox": ["../../packages/ai-sdk-sandbox/src/index.ts"]
+    }
   },
   "include": [
     "src/**/*.ts",
