@@ -510,13 +510,18 @@ function cleanSlackText(value: string): string {
  * Converts the AI SDK full stream into Slack Chat SDK chunks. Text is buffered
  * and sent once at the end so partial answer text does not jump below the
  * progress card while reasoning and tool chunks are still updating.
+ *
+ * Slack's chat.appendStream APPENDS every task_update's `details` to the task
+ * card — it never replaces. Reasoning must therefore stream as per-chunk
+ * deltas: sending the accumulated text re-appends each snapshot and renders
+ * "TheThe user isThe user is asking…" (broods#115 follow-up).
  */
 export async function* toSlackStream(
   textStream: AsyncIterable<unknown>,
 ): AsyncGenerator<string | StreamChunk> {
   let needsSeparator = false;
   let bufferedText = "";
-  let reasoningText = "";
+  let reasoningChars = 0;
   const toolNamesById = new Map<string, string>();
 
   for await (const chunk of textStream) {
@@ -554,7 +559,7 @@ export async function* toSlackStream(
       }
 
       case "reasoning-start": {
-        reasoningText = "";
+        reasoningChars = 0;
         yield {
           type: "task_update",
           id: taskId("reasoning", event.id),
@@ -566,28 +571,31 @@ export async function* toSlackStream(
 
       case "reasoning-delta": {
         const text = (event.text ?? event.delta ?? "") as string;
-        if (text) {
-          reasoningText = truncateForSlackTask(`${reasoningText}${text}`);
+        if (text && reasoningChars < SLACK_TASK_TEXT_LIMIT) {
+          const remaining = SLACK_TASK_TEXT_LIMIT - reasoningChars;
+          const details = text.length <= remaining ? text : `${text.slice(0, remaining)}...`;
+          reasoningChars += details.length;
           yield {
             type: "task_update",
             id: taskId("reasoning", event.id),
             title: "Thinking",
             status: "in_progress",
-            details: reasoningText,
+            details,
           };
         }
         break;
       }
 
       case "reasoning-end": {
+        // No `output` here: the appended details already carry the reasoning,
+        // and output would re-append the whole text as one more copy.
         yield {
           type: "task_update",
           id: taskId("reasoning", event.id),
           title: "Thinking",
           status: "complete",
-          ...(reasoningText ? { output: reasoningText } : {}),
         };
-        reasoningText = "";
+        reasoningChars = 0;
         break;
       }
 
@@ -695,9 +703,15 @@ function formatToolOutput(value: unknown): string {
   }
 }
 
+// Cap on the text a single task accumulates in the card, whether appended
+// delta-by-delta (reasoning details) or set once (tool output).
+const SLACK_TASK_TEXT_LIMIT = 1200;
+
 function truncateForSlackTask(value: string): string {
   const normalized = value.trim();
-  return normalized.length <= 1200 ? normalized : `${normalized.slice(0, 1197)}...`;
+  return normalized.length <= SLACK_TASK_TEXT_LIMIT
+    ? normalized
+    : `${normalized.slice(0, SLACK_TASK_TEXT_LIMIT - 3)}...`;
 }
 
 function isStreamChunk(value: unknown): value is StreamChunk {
