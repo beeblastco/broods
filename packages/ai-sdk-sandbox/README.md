@@ -10,7 +10,10 @@ The package owns Harness-facing translation for commands, file streams, network
 sessions, restricted session views, and lifecycle calls. It does not import core
 runtime internals, select a real sandbox provider, access credentials, or manage
 Broods persistence. A future core integration will implement the small
-`BroodsSandboxDriver` port using the runtime's selected sandbox backend:
+`BroodsSandboxDriver` port inside `apps/core` by adapting
+`createSandboxExecutor()` and reusing the runtime's existing reservation,
+persistence, and cleanup paths. It must not add another provider registry or
+session-persistence layer:
 
 ```ts
 import { createBroodsSandbox, type BroodsSandboxDriver } from "@broods/ai-sdk-sandbox";
