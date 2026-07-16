@@ -42,6 +42,7 @@
     "@aws-sdk/client-ssm": "^3.1095.0",
     "@aws-sdk/client-sts": "3.1095.0",
     "@aws-sdk/s3-request-presigner": "3.1095.0",
+    "@broods/ai-sdk-sandbox": "workspace:*",
     "@broods/convex": "workspace:*",
     "@chat-adapter/discord": "^4.35.0",
     "@chat-adapter/github": "^4.35.0",
