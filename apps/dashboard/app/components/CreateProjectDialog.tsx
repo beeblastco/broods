@@ -80,7 +80,11 @@ export function CreateProjectDialog({
         try {
             const id = await createProject({ name: name.trim(), description: undefined });
             handleOpenChange(false);
-            router.push(`/${id}?initialize=production`);
+            // Land on the new project's Development canvas. Initializing
+            // Production is offered when the user actually selects the
+            // Production environment; prompting for a deployment region here
+            // asks them to copy a Development config that does not exist yet.
+            router.push(`/${id}`);
         } finally {
             setIsCreating(false);
         }
