@@ -3,6 +3,13 @@
  * public/redacted projection.
  */
 
+import { isPlainObject } from "../object.ts";
+import {
+  assertAccountOwnsSkillPath,
+  SkillAuthorizationError,
+  SkillNotFoundError,
+} from "../skills.ts";
+import { getStorage } from "../storage.ts";
 import {
   mergeAgentConfig,
   normalizeAgentConfig,
@@ -10,13 +17,6 @@ import {
   redactAgentConfig,
   type AgentConfig,
 } from "./agent-config.ts";
-import {
-  assertAccountOwnsSkillPath,
-  SkillAuthorizationError,
-  SkillNotFoundError,
-} from "../skills.ts";
-import { isPlainObject } from "../object.ts";
-import { getStorage } from "../storage.ts";
 
 export type AgentStatus = "active" | "disabled";
 

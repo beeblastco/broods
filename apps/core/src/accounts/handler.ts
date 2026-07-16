@@ -3,13 +3,20 @@
  * Keep account orchestration here and shared records/persistence at their boundaries.
  */
 
+import { createSandboxExecutor } from "../harness/sandbox/index.ts";
+import { getSandboxExternalId } from "../harness/sandbox/instance-store.ts";
+import { MICROVM_SHELL_AUTH_HEADER, microvmShellConnection } from "../harness/sandbox/microvm-executor.ts";
+import { workdirConnection, workdirPtyUrl } from "../harness/sandbox/workdir-executor.ts";
 import { resolveBearerAuth, type AuthContext } from "../shared/auth.ts";
-import { getStorage } from "../shared/storage.ts";
-import { isCronsConfigured } from "../shared/domain/cron.ts";
+import { recordSandboxAuditEvent, type SandboxAuditActor } from "../shared/convex/sandbox-audit-events.ts";
+import { removeSandboxInstance, setSandboxInstanceStatus } from "../shared/convex/sandbox-instances.ts";
+import { upsertSandboxSnapshot } from "../shared/convex/sandbox-snapshots.ts";
 import {
     normalizeCreateAccountInput,
     type AccountRecord,
 } from "../shared/domain/accounts.ts";
+import { isCronsConfigured } from "../shared/domain/cron.ts";
+import { requireEnv } from "../shared/env.ts";
 import {
     errorResponse,
     jsonResponse,
@@ -17,24 +24,17 @@ import {
     parseJsonBody,
     type CoreRequest,
 } from "../shared/http.ts";
-import { createSandboxExecutor } from "../harness/sandbox/index.ts";
-import { workdirConnection, workdirPtyUrl } from "../harness/sandbox/workdir-executor.ts";
-import { MICROVM_SHELL_AUTH_HEADER, microvmShellConnection } from "../harness/sandbox/microvm-executor.ts";
-import { getSandboxExternalId } from "../harness/sandbox/instance-store.ts";
-import { sealTerminalTicket, TERMINAL_TICKET_TTL_MS, TERMINAL_WEBSOCKET_PATH } from "../shared/terminal-ticket.ts";
-import { requireEnv } from "../shared/env.ts";
-import { removeSandboxInstance, setSandboxInstanceStatus } from "../shared/convex/sandbox-instances.ts";
-import { recordSandboxAuditEvent, type SandboxAuditActor } from "../shared/convex/sandbox-audit-events.ts";
-import { upsertSandboxSnapshot } from "../shared/convex/sandbox-snapshots.ts";
-import { workspaceSandboxLimits } from "../shared/sandbox.ts";
-import { deleteAccountRuntimeData } from "./cleanup.ts";
-import { workspaceNamespace, workspaceNamespaceOwnsReservationKey } from "../shared/workspaces.ts";
-import { isPlainObject } from "../shared/object.ts";
-import { deleteAccountSkills } from "./skills.ts";
-import { deleteAccountToolBundles } from "./bundles.ts";
-import { deleteCronSchedule } from "./cron.ts";
 import { logError, logInfo, logWarn } from "../shared/log.ts";
+import { isPlainObject } from "../shared/object.ts";
 import { runWithObservabilityScope } from "../shared/otel.ts";
+import { workspaceSandboxLimits } from "../shared/sandbox.ts";
+import { getStorage } from "../shared/storage.ts";
+import { sealTerminalTicket, TERMINAL_TICKET_TTL_MS, TERMINAL_WEBSOCKET_PATH } from "../shared/terminal-ticket.ts";
+import { workspaceNamespace, workspaceNamespaceOwnsReservationKey } from "../shared/workspaces.ts";
+import { deleteAccountToolBundles } from "./bundles.ts";
+import { deleteAccountRuntimeData } from "./cleanup.ts";
+import { deleteCronSchedule } from "./cron.ts";
+import { deleteAccountSkills } from "./skills.ts";
 
 type SandboxLifecycleAction = "suspend" | "resume" | "terminate" | "snapshot" | "refresh" | "exec" | "terminal";
 

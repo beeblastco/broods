@@ -1,8 +1,8 @@
 "use client";
 
 /** Settings page with sidebar navigation and panel-based content layout. */
-import { useEnvironment } from "@/app/hooks/useEnvironment";
 import { Button } from "@/app/components/ui/button";
+import { useEnvironment } from "@/app/hooks/useEnvironment";
 import { cn } from "@/app/lib/utils";
 import { api } from "@broods/convex/_generated/api";
 import type { Doc, Id } from "@broods/convex/_generated/dataModel";

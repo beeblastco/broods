@@ -16,10 +16,10 @@
  */
 
 import { AssumeRoleCommand, STSClient } from "@aws-sdk/client-sts";
-import { optionalEnv } from "../../shared/env.ts";
-import { workspaceNamespacePrefix } from "../../shared/sandbox.ts";
-import type { S3Access } from "../../shared/s3.ts";
 import type { WorkspaceStorageConfig } from "../../shared/domain/workspace-config.ts";
+import { optionalEnv } from "../../shared/env.ts";
+import type { S3Access } from "../../shared/s3.ts";
+import { workspaceNamespacePrefix } from "../../shared/sandbox.ts";
 
 export interface S3MountIdentity {
   bucket: string;

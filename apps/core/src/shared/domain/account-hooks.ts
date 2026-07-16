@@ -8,8 +8,8 @@
 
 import { createHash } from "node:crypto";
 import { isPlainObject } from "../object.ts";
-import { AGENT_HOOK_EVENT_NAMES, type AgentHookEventName } from "./agent-config.ts";
 import { inferAccountToolRuntime } from "./account-tools.ts";
+import { AGENT_HOOK_EVENT_NAMES, type AgentHookEventName } from "./agent-config.ts";
 
 export type AccountHookStatus = "active" | "deleted";
 

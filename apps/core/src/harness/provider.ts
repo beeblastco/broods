@@ -9,12 +9,12 @@ import { createGateway } from "@ai-sdk/gateway";
 import { createGoogle } from "@ai-sdk/google";
 import { createOpenAI } from "@ai-sdk/openai";
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
-import { createMinimax } from "vercel-minimax-ai-provider";
-import { jsonSchema, Output, wrapLanguageModel, type LanguageModel, type LanguageModelMiddleware } from "ai";
 import type { LanguageModelV4StreamPart } from "@ai-sdk/provider";
+import { jsonSchema, Output, wrapLanguageModel, type LanguageModel, type LanguageModelMiddleware } from "ai";
+import { createMinimax } from "vercel-minimax-ai-provider";
 import type {
-  AgentConfig,
   AccountModelProviderName,
+  AgentConfig,
   AgentModelOutputConfig,
   AgentModelProviderOptions,
   AgentProviderSettings,

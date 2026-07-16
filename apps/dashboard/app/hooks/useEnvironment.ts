@@ -5,9 +5,9 @@
  * Reads and writes the active environment ID via the ?env= search param so the
  * selection is shareable, bookmarkable, and survives page refreshes.
  */
-import { useCallback, useTransition } from "react";
-import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import type { Id } from "@broods/convex/_generated/dataModel";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { useCallback, useTransition } from "react";
 
 /**
  * Returns the current environment ID from the URL and a setter that updates the URL.

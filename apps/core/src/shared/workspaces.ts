@@ -8,8 +8,6 @@
  * workspaceId read and write the SAME files.
  */
 
-import { normalizeFilesystemNamespace } from "./runtime-keys.ts";
-import { getStorage } from "./storage.ts";
 import type {
   AgentChannelWorkspaceScope,
   AgentConfig,
@@ -23,7 +21,9 @@ import type {
   WorkspaceConfig,
   WorkspaceStorageConfig,
 } from "./domain/workspace-config.ts";
+import { normalizeFilesystemNamespace } from "./runtime-keys.ts";
 import { resolveSandboxSpecs, type SandboxControlPlane } from "./sandbox-sizes.ts";
+import { getStorage } from "./storage.ts";
 
 // The effective sandbox for a workspace, with the workspace's storage identity and
 // control-plane identity attached. Storage drives the S3 mount target/creds and

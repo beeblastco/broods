@@ -10,7 +10,6 @@
 import { DeleteConfirmDialog } from "@/app/components/DeleteConfirmDialog";
 import { Button } from "@/app/components/ui/button";
 import { Input } from "@/app/components/ui/input";
-import { Textarea } from "@/app/components/ui/textarea";
 import {
     Sheet,
     SheetContent,
@@ -19,6 +18,7 @@ import {
     SheetTitle,
 } from "@/app/components/ui/sheet";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/app/components/ui/tabs";
+import { Textarea } from "@/app/components/ui/textarea";
 import { api } from "@broods/convex/_generated/api";
 import type { Doc, Id } from "@broods/convex/_generated/dataModel";
 import { useAction, useQuery } from "convex/react";
@@ -345,69 +345,69 @@ export function SandboxInstanceSheet({ instance, projectId, onClose }: Props) {
                                 disabled={!commandRunnable}
                             />
                         ) : (
-                        <div className="space-y-3">
-                            <div className="rounded-lg border border-border bg-card p-3">
-                                <div className="mb-2 flex items-center gap-2 text-sm font-medium text-foreground">
-                                    <Terminal className="size-4" />
-                                    Shell command
-                                </div>
-                                <Textarea
-                                    value={command}
-                                    onChange={(event) => setCommand(event.target.value)}
-                                    disabled={!commandRunnable || commandPending}
-                                    rows={4}
-                                    className="cursor-text font-mono text-xs disabled:cursor-not-allowed"
-                                />
-                                <div className="mt-2 flex items-center justify-between gap-3">
-                                    <p className="text-xs text-muted-foreground">
-                                        Runs in the reserved sandbox with a 30s timeout and 64 KiB output cap.
-                                    </p>
-                                    <Button
-                                        type="button"
-                                        size="sm"
-                                        disabled={!commandRunnable || commandPending || !command.trim()}
-                                        onClick={handleCommand}
-                                        className="cursor-pointer disabled:cursor-not-allowed"
-                                    >
-                                        <Play className="mr-1 size-3.5" />
-                                        Run
-                                    </Button>
-                                </div>
-                                {!commandRunnable && (
-                                    <p className="mt-2 text-xs text-muted-foreground">
-                                        This instance cannot run commands from the dashboard in its current state.
-                                    </p>
-                                )}
-                            </div>
-
-                            <div className="space-y-2">
-                                {terminalEntries.length === 0 ? (
-                                    <div className="rounded-lg border border-border bg-muted/30 px-3 py-8 text-center text-xs text-muted-foreground">
-                                        Run a command to see stdout, stderr, and exit status here.
+                            <div className="space-y-3">
+                                <div className="rounded-lg border border-border bg-card p-3">
+                                    <div className="mb-2 flex items-center gap-2 text-sm font-medium text-foreground">
+                                        <Terminal className="size-4" />
+                                        Shell command
                                     </div>
-                                ) : terminalEntries.map((entry, index) => (
-                                    <div key={`${entry.command}-${index}`} className="rounded-lg border border-border bg-black p-3 text-xs text-white">
-                                        <div className="mb-2 flex items-center justify-between gap-3 text-[11px] text-zinc-400">
-                                            <code className="min-w-0 flex-1 truncate">$ {entry.command}</code>
-                                            {entry.result && (
-                                                <span className={entry.result.ok ? "shrink-0 text-emerald-300" : "shrink-0 text-red-300"}>
-                                                    exit {entry.result.exitCode ?? "?"} · {entry.result.durationMs}ms
-                                                </span>
+                                    <Textarea
+                                        value={command}
+                                        onChange={(event) => setCommand(event.target.value)}
+                                        disabled={!commandRunnable || commandPending}
+                                        rows={4}
+                                        className="cursor-text font-mono text-xs disabled:cursor-not-allowed"
+                                    />
+                                    <div className="mt-2 flex items-center justify-between gap-3">
+                                        <p className="text-xs text-muted-foreground">
+                                            Runs in the reserved sandbox with a 30s timeout and 64 KiB output cap.
+                                        </p>
+                                        <Button
+                                            type="button"
+                                            size="sm"
+                                            disabled={!commandRunnable || commandPending || !command.trim()}
+                                            onClick={handleCommand}
+                                            className="cursor-pointer disabled:cursor-not-allowed"
+                                        >
+                                            <Play className="mr-1 size-3.5" />
+                                            Run
+                                        </Button>
+                                    </div>
+                                    {!commandRunnable && (
+                                        <p className="mt-2 text-xs text-muted-foreground">
+                                            This instance cannot run commands from the dashboard in its current state.
+                                        </p>
+                                    )}
+                                </div>
+
+                                <div className="space-y-2">
+                                    {terminalEntries.length === 0 ? (
+                                        <div className="rounded-lg border border-border bg-muted/30 px-3 py-8 text-center text-xs text-muted-foreground">
+                                            Run a command to see stdout, stderr, and exit status here.
+                                        </div>
+                                    ) : terminalEntries.map((entry, index) => (
+                                        <div key={`${entry.command}-${index}`} className="rounded-lg border border-border bg-black p-3 text-xs text-white">
+                                            <div className="mb-2 flex items-center justify-between gap-3 text-[11px] text-zinc-400">
+                                                <code className="min-w-0 flex-1 truncate">$ {entry.command}</code>
+                                                {entry.result && (
+                                                    <span className={entry.result.ok ? "shrink-0 text-emerald-300" : "shrink-0 text-red-300"}>
+                                                        exit {entry.result.exitCode ?? "?"} · {entry.result.durationMs}ms
+                                                    </span>
+                                                )}
+                                            </div>
+                                            {entry.error ? (
+                                                <pre className="whitespace-pre-wrap break-words text-red-200">{entry.error}</pre>
+                                            ) : (
+                                                <>
+                                                    {entry.result?.stdout && <pre className="whitespace-pre-wrap break-words text-zinc-100">{entry.result.stdout}</pre>}
+                                                    {entry.result?.stderr && <pre className="mt-2 whitespace-pre-wrap break-words text-amber-200">{entry.result.stderr}</pre>}
+                                                    {entry.result?.truncated && <p className="mt-2 text-[11px] text-amber-200">Output truncated.</p>}
+                                                </>
                                             )}
                                         </div>
-                                        {entry.error ? (
-                                            <pre className="whitespace-pre-wrap break-words text-red-200">{entry.error}</pre>
-                                        ) : (
-                                            <>
-                                                {entry.result?.stdout && <pre className="whitespace-pre-wrap break-words text-zinc-100">{entry.result.stdout}</pre>}
-                                                {entry.result?.stderr && <pre className="mt-2 whitespace-pre-wrap break-words text-amber-200">{entry.result.stderr}</pre>}
-                                                {entry.result?.truncated && <p className="mt-2 text-[11px] text-amber-200">Output truncated.</p>}
-                                            </>
-                                        )}
-                                    </div>
-                                ))}
+                                    ))}
+                                </div>
                             </div>
-                        </div>
                         )}
                     </TabsContent>
                 </Tabs>

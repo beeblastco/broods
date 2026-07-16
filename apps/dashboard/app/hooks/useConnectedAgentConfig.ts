@@ -5,15 +5,15 @@
  * tabs can edit a slice of that agent's nested config (workspace, tools.X,
  * skills.X, workspace.sandbox, etc.).
  */
-import { api } from "@broods/convex/_generated/api";
-import type { Id } from "@broods/convex/_generated/dataModel";
 import type { AgentProvider } from "@/app/components/side-panel/DetailsTab";
-import { applyAgentConfigUpdate } from "@/app/lib/agentConfigOptimistic";
 import {
     fromNestedAgentConfig,
     toNestedAgentConfig,
     type FlatAgentConfig,
 } from "@/app/lib/agentConfigCodec";
+import { applyAgentConfigUpdate } from "@/app/lib/agentConfigOptimistic";
+import { api } from "@broods/convex/_generated/api";
+import type { Id } from "@broods/convex/_generated/dataModel";
 import { useStore } from "@xyflow/react";
 import { useMutation, useQuery } from "convex/react";
 import { useCallback, useEffect, useRef } from "react";

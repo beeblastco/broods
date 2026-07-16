@@ -4,10 +4,13 @@
  * sandbox per reservation key and uses Vercel's native lifecycle callbacks.
  */
 
+import type { CommandFinished, NetworkPolicy, Sandbox as VercelSandbox } from "@vercel/sandbox";
+import { upsertSandboxInstance } from "../../shared/convex/sandbox-instances.ts";
 import { optionalEnv } from "../../shared/env.ts";
 import { isPlainObject } from "../../shared/object.ts";
 import { MAX_CONCURRENT_BACKGROUND_JOBS, resolveSandboxLifecycle } from "../../shared/sandbox.ts";
-import type { CommandFinished, NetworkPolicy, Sandbox as VercelSandbox } from "@vercel/sandbox";
+import { claimSandboxInstance, deleteSandboxInstance, getSandboxExternalId, saveSandboxInstance } from "./instance-store.ts";
+import { generateJobId, launchScript, logsScript, parseJobStatus, statusScript, stopScript } from "./jobs.ts";
 import type {
   SandboxExecutor,
   SandboxExecutorConfig,
@@ -19,9 +22,6 @@ import type {
   SandboxRunResult,
 } from "./types.ts";
 import { configString, isSandboxGoneError, persistentSandboxName, sandboxReservationKey, shellQuote, stringRecord, truncateText, workspacePath } from "./utils.ts";
-import { generateJobId, launchScript, logsScript, parseJobStatus, statusScript, stopScript } from "./jobs.ts";
-import { claimSandboxInstance, deleteSandboxInstance, getSandboxExternalId, saveSandboxInstance } from "./instance-store.ts";
-import { upsertSandboxInstance } from "../../shared/convex/sandbox-instances.ts";
 
 type VercelSandboxClass = typeof import("@vercel/sandbox").Sandbox;
 
@@ -55,7 +55,7 @@ export class VercelSandboxExecutor implements SandboxExecutor {
       });
       return this.#adaptResult(result, request, startedAt);
     } finally {
-      if (!persistent) await sandbox.stop().catch(() => {});
+      if (!persistent) await sandbox.stop().catch(() => { });
     }
   }
 
@@ -117,7 +117,7 @@ export class VercelSandboxExecutor implements SandboxExecutor {
     } catch (err) {
       if (!isSandboxGoneError(err)) throw err;
     }
-    await deleteSandboxInstance("vercel", key).catch(() => {});
+    await deleteSandboxInstance("vercel", key).catch(() => { });
   }
 
   #persistent(request: { namespace?: string; reservationKey?: string }): boolean {
@@ -166,7 +166,7 @@ export class VercelSandboxExecutor implements SandboxExecutor {
           name: storedName,
           ...vercelAuthOptions(this.#config),
         });
-        await saveSandboxInstance("vercel", key, storedName).catch(() => {});
+        await saveSandboxInstance("vercel", key, storedName).catch(() => { });
         await upsertSandboxInstance(this.#config.controlPlane, "vercel", key, storedName, request.metadata);
         return sandbox;
       } catch (error) {
@@ -174,7 +174,7 @@ export class VercelSandboxExecutor implements SandboxExecutor {
         // propagate or the still-live sandbox is orphaned at the provider. The
         // conditional delete keeps a row a concurrent call already re-claimed.
         if (!isSandboxGoneError(error)) throw error;
-        await deleteSandboxInstance("vercel", key, storedName).catch(() => {});
+        await deleteSandboxInstance("vercel", key, storedName).catch(() => { });
       }
     }
 
@@ -191,7 +191,7 @@ export class VercelSandboxExecutor implements SandboxExecutor {
     if (!winner || winner === name) {
       return sandbox;
     }
-    await sandbox.delete().catch(() => {});
+    await sandbox.delete().catch(() => { });
     return Sandbox.get({
       name: winner,
       ...vercelAuthOptions(this.#config),

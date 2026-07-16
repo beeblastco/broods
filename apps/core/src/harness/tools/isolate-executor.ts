@@ -12,8 +12,8 @@
 
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { logInfo } from "../../shared/log.ts";
 import { optionalEnv, positiveIntegerEnv } from "../../shared/env.ts";
+import { logInfo } from "../../shared/log.ts";
 import { FrameQueue, createRunnerPayload, toolBundlesBucket, type ExecuteAccountToolOptions } from "./custom-tool-executor.ts";
 
 const DEFAULT_TIMEOUT_SECONDS = 30;
@@ -200,7 +200,7 @@ class IsolateWorker {
     this.child.stdout.setEncoding("utf8");
     this.child.stdout.on("data", (chunk: string) => this.#onData(chunk));
     this.child.stderr.setEncoding("utf8");
-    this.child.stderr.on("data", () => {});
+    this.child.stderr.on("data", () => { });
     const die = (error: Error) => {
       this.alive = false;
       this.#resolveReady();
@@ -280,7 +280,7 @@ class IsolateWorker {
     this.alive = false;
     try {
       this.child.kill("SIGKILL");
-    } catch {}
+    } catch { }
   }
 }
 
@@ -303,7 +303,7 @@ function ensurePool(): void {
 export async function prewarmIsolatePool(): Promise<void> {
   if (!isolatePoolEnabled()) return;
   ensurePool();
-  await Promise.all(pool.map((worker) => worker.ready.catch(() => {})));
+  await Promise.all(pool.map((worker) => worker.ready.catch(() => { })));
 }
 
 async function acquireWorker(tenantId: string): Promise<IsolateWorker> {
@@ -314,7 +314,7 @@ async function acquireWorker(tenantId: string): Promise<IsolateWorker> {
       pool.find((candidate) => !candidate.busy && candidate.alive);
     if (worker) {
       worker.busy = true;
-      await worker.ready.catch(() => {});
+      await worker.ready.catch(() => { });
       if (!worker.alive) {
         worker.busy = false;
         continue;

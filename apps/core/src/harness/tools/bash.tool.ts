@@ -6,14 +6,25 @@
  */
 
 import { jsonSchema, tool, type JSONSchema7, type ToolSet } from "ai";
+import { logInfo } from "../../shared/log.ts";
+import type { ResolvedWorkspace } from "../../shared/workspaces.ts";
+import {
+  createPendingAsyncToolResult,
+  markAsyncToolResultFailed,
+  sealDetachedAsyncToolGroup,
+} from "../async-tool-result.ts";
+import { generateJobId } from "../sandbox/jobs.ts";
+import type { SandboxExecutorConfig, SandboxJobCallback } from "../sandbox/types.ts";
+import { shellQuote } from "../sandbox/utils.ts";
+import { getHarnessPublicUrl } from "../self-url.ts";
 import {
   disallowedRuntimeCommand,
   formatRunText,
   outsideWorkspaceCommand,
   resolveWorkspace,
-  runtimeDescription,
   runSandbox,
   runSandboxBackground,
+  runtimeDescription,
   sandboxRunMetadata,
   sandboxSupportsBackgroundJobs,
   sandboxSupportsJobControls,
@@ -22,17 +33,6 @@ import {
   workspaceParamSchema,
   type SandboxToolContext,
 } from "./filesystem-utils.ts";
-import {
-  createPendingAsyncToolResult,
-  markAsyncToolResultFailed,
-  sealDetachedAsyncToolGroup,
-} from "../async-tool-result.ts";
-import { generateJobId } from "../sandbox/jobs.ts";
-import { shellQuote } from "../sandbox/utils.ts";
-import { getHarnessPublicUrl } from "../self-url.ts";
-import type { ResolvedWorkspace } from "../../shared/workspaces.ts";
-import type { SandboxExecutorConfig, SandboxJobCallback } from "../sandbox/types.ts";
-import { logInfo } from "../../shared/log.ts";
 
 interface BashInput {
   command: string;
@@ -70,11 +70,11 @@ function inputSchema(context: SandboxToolContext): JSONSchema7 {
       },
       ...(backgroundAvailable(context)
         ? {
-            background: {
-              type: "boolean",
-              description: "Run the command as a detached background job in the reserved sandbox and return immediately with a statusId. Use for long-running tasks in the background. The result is delivered back into the conversation automatically when the job finishes; you can also check progress meanwhile with async_status.",
-            } as JSONSchema7,
-          }
+          background: {
+            type: "boolean",
+            description: "Run the command as a detached background job in the reserved sandbox and return immediately with a statusId. Use for long-running tasks in the background. The result is delivered back into the conversation automatically when the job finishes; you can also check progress meanwhile with async_status.",
+          } as JSONSchema7,
+        }
         : {}),
     },
     required: ["command"],
@@ -102,12 +102,11 @@ Usage notes:
 - IMPORTANT: prefer the dedicated \`read\`, \`write\`, \`edit\`, \`glob\`, and \`grep\` tools over their bash equivalents (cat/sed/find/grep) — they are faster, safer, and return structured results.
 - Run programs directly, e.g. \`python3 script.py\` or \`node app.js\`. stdout and stderr are returned together; very large output is truncated.
 - Each command starts in the current workspace directory; use relative paths.
-- Files you write to the workspace persist across calls, but shell state does not: the working directory, environment variables, and background processes reset every call — chain dependent steps with && in a single command.${
-    backgroundAvailable(context)
+- Files you write to the workspace persist across calls, but shell state does not: the working directory, environment variables, and background processes reset every call — chain dependent steps with && in a single command.${backgroundAvailable(context)
       ? `
 - This workspace is reserved (persistent): packages installed under $HOME (e.g. a uv/venv or npm prefix) and files survive across calls. Set background:true for long-running commands; the result is delivered back automatically when it finishes, and you can check on it with async_status.`
       : ""
-  }`;
+    }`;
 }
 
 async function dispatchBackground(
@@ -171,7 +170,7 @@ async function dispatchBackground(
     });
   } catch (cause) {
     const error = cause instanceof Error ? cause.message : String(cause);
-    await markAsyncToolResultFailed({ resultId, error }).catch(() => {});
+    await markAsyncToolResultFailed({ resultId, error }).catch(() => { });
     return toolError(`Error: failed to start background job: ${error}`);
   }
 
@@ -182,10 +181,10 @@ async function dispatchBackground(
   const controls = sandboxSupportsJobControls(ws.sandbox)
     ? `You can also use async_status to check status, tail logs (action "logs"), or stop it (action "stop").`
     : `You can use async_status with this statusId to read the completed result after delivery; this sandbox does not support live log tailing or stop controls.`;
-  return toolText( 
+  return toolText(
     // We use statusId for model facing, but the database saved record as resultId for consistency with async tool results in general (not just status updates).
     `Started background job ${jobId} (statusId: ${resultId}). ${delivery} ` +
-      controls,
+    controls,
   );
 }
 

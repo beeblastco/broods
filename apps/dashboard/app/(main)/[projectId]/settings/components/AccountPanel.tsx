@@ -12,7 +12,6 @@ import { Button } from "@/app/components/ui/button";
 import { Input } from "@/app/components/ui/input";
 import { Label } from "@/app/components/ui/label";
 import { Separator } from "@/app/components/ui/separator";
-import { api } from "@broods/convex/_generated/api";
 import type { ConfiguredPlanTier, PlanTier } from "@/app/lib/pricing";
 import {
   isMaxPlan,
@@ -21,6 +20,7 @@ import {
   UPGRADE_URL,
 } from "@/app/lib/pricing";
 import { cn } from "@/app/lib/utils";
+import { api } from "@broods/convex/_generated/api";
 import { useAuth } from "@workos-inc/authkit-nextjs/components";
 import { useMutation, useQuery } from "convex/react";
 import { ArrowUpRight, Moon, Sun } from "lucide-react";

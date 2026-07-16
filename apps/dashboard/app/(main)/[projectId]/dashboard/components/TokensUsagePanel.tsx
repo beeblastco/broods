@@ -2,8 +2,8 @@
 
 /** Usage panel: live Convex usage rollups — tokens, activity, and compute — as charts and tables. */
 import { Section } from "@/app/components/Section";
-import { cn } from "@/app/lib/utils";
 import { useObservabilityStream, type ObservabilitySpanRow } from "@/app/hooks/useObservabilityStream";
+import { cn } from "@/app/lib/utils";
 import { api } from "@broods/convex/_generated/api";
 import type { Id } from "@broods/convex/_generated/dataModel";
 import { estimateModelTokenCost } from "@broods/convex/modelPricing";
@@ -143,9 +143,9 @@ const SANDBOX_CPU_SERIES: Array<{
   label: string;
   color: string;
 }> = [
-  { key: "agentSandboxCpuUsec", label: "Agent sandbox", color: "#2dd4bf" },
-  { key: "toolSandboxCpuUsec", label: "Tool sandbox", color: "#fb923c" },
-];
+    { key: "agentSandboxCpuUsec", label: "Agent sandbox", color: "#2dd4bf" },
+    { key: "toolSandboxCpuUsec", label: "Tool sandbox", color: "#fb923c" },
+  ];
 
 function formatNumber(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;

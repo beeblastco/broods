@@ -32,9 +32,12 @@ import {
   SuspendMicrovmCommand,
   TerminateMicrovmCommand,
 } from "@aws-sdk/client-lambda-microvms";
+import { upsertSandboxInstance } from "../../shared/convex/sandbox-instances.ts";
 import { optionalEnv } from "../../shared/env.ts";
 import { isPlainObject } from "../../shared/object.ts";
 import { DEFAULT_RELEASE_GRACE_SECONDS, MAX_CONCURRENT_BACKGROUND_JOBS, resolveSandboxLifecycle } from "../../shared/sandbox.ts";
+import { claimSandboxInstance, deleteSandboxInstance, getSandboxExternalId, saveSandboxInstance } from "./instance-store.ts";
+import { generateJobId, launchScript, lifecycleScript, logsScript, parseJobStatus, statusScript, stopScript } from "./jobs.ts";
 import { type S3MountContext, resolveS3Mount } from "./s3-mount.ts";
 import type {
   SandboxExecutor,
@@ -49,9 +52,6 @@ import type {
   SandboxRunResult,
 } from "./types.ts";
 import { configString, sandboxReservationKey, stringRecord, truncateText } from "./utils.ts";
-import { generateJobId, launchScript, lifecycleScript, logsScript, parseJobStatus, statusScript, stopScript } from "./jobs.ts";
-import { claimSandboxInstance, deleteSandboxInstance, getSandboxExternalId, saveSandboxInstance } from "./instance-store.ts";
-import { upsertSandboxInstance } from "../../shared/convex/sandbox-instances.ts";
 
 // The image serves the exec API on this port; the proxy maps external 443 -> 8080.
 const MICROVM_PROXY_PORT = 8080;
@@ -201,7 +201,7 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
     if (!key) return;
     const microvmId = await getSandboxExternalId(PROVIDER, key);
     if (microvmId) await this.#terminate(microvmId);
-    await deleteSandboxInstance(PROVIDER, key).catch(() => {});
+    await deleteSandboxInstance(PROVIDER, key).catch(() => { });
   }
 
   #optionOrEnv(option: string, env: string): string | undefined {
@@ -271,7 +271,7 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
     if (existing) {
       try {
         const reconnected = await this.#reconnect(existing);
-        await saveSandboxInstance(PROVIDER, key, existing).catch(() => {});
+        await saveSandboxInstance(PROVIDER, key, existing).catch(() => { });
         await upsertSandboxInstance(this.#config.controlPlane, PROVIDER, key, existing, request.metadata);
         return reconnected;
       } catch (error) {
@@ -280,7 +280,7 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
         // a still-allocated (e.g. suspended) VM leaks it and burns the account's
         // MicroVM memory quota until nothing can launch.
         if (!isMicrovmNotFound(error)) throw error;
-        await deleteSandboxInstance(PROVIDER, key, existing).catch(() => {});
+        await deleteSandboxInstance(PROVIDER, key, existing).catch(() => { });
       }
     }
     const created = await this.#runMicrovm(request);
@@ -426,7 +426,7 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
     const token = await this.#authToken(microvmId);
     const url = `https://${endpoint.replace(/^https?:\/\//, "")}/exec`;
     const deadline = Date.now() + WARMUP_BUDGET_MS;
-    for (;;) {
+    for (; ;) {
       const warming = await this.#postExec(url, token, payload);
       if (!warming.retry) return warming.response;
       if (Date.now() >= deadline) {
@@ -524,7 +524,7 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
   }
 
   async #terminate(microvmId: string): Promise<void> {
-    await this.#client.send(new TerminateMicrovmCommand({ microvmIdentifier: microvmId })).catch(() => {});
+    await this.#client.send(new TerminateMicrovmCommand({ microvmIdentifier: microvmId })).catch(() => { });
   }
 }
 

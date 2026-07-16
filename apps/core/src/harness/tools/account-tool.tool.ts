@@ -5,8 +5,8 @@
 
 import { jsonSchema, tool, type ToolSet } from "ai";
 import type { AccountToolRecord } from "../../shared/domain/account-tools.ts";
-import type { ToolContext } from "./index.ts";
 import { streamAccountTool } from "./custom-tool-executor.ts";
+import type { ToolContext } from "./index.ts";
 
 export default function accountTool(record: AccountToolRecord, context: ToolContext & { accountId: string }): ToolSet {
   return {

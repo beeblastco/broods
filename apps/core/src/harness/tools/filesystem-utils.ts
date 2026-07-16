@@ -11,16 +11,16 @@
 
 import type { JSONObject } from "@ai-sdk/provider";
 import type { Tool } from "ai";
-import { isPlainObject } from "../../shared/object.ts";
-import { workspaceSandboxLimits } from "../../shared/sandbox.ts";
-import { isMissingS3Error, listS3Prefix, readS3Text } from "../../shared/s3.ts";
-import { resolveS3ReadTarget, workspaceReadContext } from "../sandbox/s3-mount.ts";
-import { createSandboxExecutor } from "../sandbox/index.ts";
-import type { SandboxCpuSample, SandboxExecutorConfig, SandboxJobCallback, SandboxJobHandle, SandboxRunResult, SandboxRuntime } from "../sandbox/types.ts";
-import type { SandboxRunMetadata } from "../../shared/sandbox-sizes.ts";
-import type { ResolvedWorkspace } from "../../shared/workspaces.ts";
 import type { SandboxPermissionMode } from "../../shared/domain/sandbox-config.ts";
+import { isPlainObject } from "../../shared/object.ts";
+import { isMissingS3Error, listS3Prefix, readS3Text } from "../../shared/s3.ts";
+import type { SandboxRunMetadata } from "../../shared/sandbox-sizes.ts";
+import { workspaceSandboxLimits } from "../../shared/sandbox.ts";
+import type { ResolvedWorkspace } from "../../shared/workspaces.ts";
 import type { AsyncToolDelivery } from "../async-tool-result.ts";
+import { createSandboxExecutor } from "../sandbox/index.ts";
+import { resolveS3ReadTarget, workspaceReadContext } from "../sandbox/s3-mount.ts";
+import type { SandboxCpuSample, SandboxExecutorConfig, SandboxJobCallback, SandboxJobHandle, SandboxRunResult, SandboxRuntime } from "../sandbox/types.ts";
 
 export const DEFAULT_WORKSPACE_ROOT = "/mnt/workspaces";
 

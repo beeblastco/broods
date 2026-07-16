@@ -3,6 +3,7 @@
  * Keep request normalization, account/agent lookup, provider ACKs, and normalized channel events here.
  */
 
+import { context as otelContextApi } from "@opentelemetry/api";
 import type {
   SystemModelMessage,
   ToolModelMessage,
@@ -14,21 +15,7 @@ import {
   toolModelMessageSchema,
   userModelMessageSchema,
 } from "ai";
-import { context as otelContextApi } from "@opentelemetry/api";
 import { resolveBearerAuth, type AuthContext } from "../shared/auth.ts";
-import { getStorage } from "../shared/storage.ts";
-import {
-  applyRunOverrides,
-  MODEL_CONFIG_SETTING_KEYS,
-  RUN_OVERRIDE_RESERVED_MODEL_KEYS,
-  toChannelRuntimeAgentConfig,
-  toRuntimeAgentConfig,
-  type AgentChannelWorkspaceScope,
-  type AgentConfig,
-  type RunOverrides,
-} from "../shared/domain/agent-config.ts";
-import type { AccountRecord } from "../shared/domain/accounts.ts";
-import type { AgentRecord } from "../shared/domain/agents.ts";
 import type {
   ChannelActions,
   ChannelAdapter,
@@ -39,30 +26,36 @@ import type {
 import { extractText, formatChannelErrorText } from "../shared/channels.ts";
 import { parseCommand } from "../shared/commands.ts";
 import { createDiscordChannel } from "../shared/discord-channel.ts";
+import type { AccountRecord } from "../shared/domain/accounts.ts";
+import {
+  applyRunOverrides,
+  MODEL_CONFIG_SETTING_KEYS,
+  RUN_OVERRIDE_RESERVED_MODEL_KEYS,
+  toChannelRuntimeAgentConfig,
+  toRuntimeAgentConfig,
+  type AgentChannelWorkspaceScope,
+  type AgentConfig,
+  type RunOverrides,
+} from "../shared/domain/agent-config.ts";
+import type { AgentRecord } from "../shared/domain/agents.ts";
 import { createGitHubChannel } from "../shared/github-channel.ts";
 import {
   errorResponse,
   jsonResponse,
-  type CoreRequest,
-  type RequestContext,
+  type CoreRequest
 } from "../shared/http.ts";
 import { collectSecretValues, logError, logInfo, logWarn } from "../shared/log.ts";
 import { isPlainObject } from "../shared/object.ts";
-import { applyMessageSendingHook, createAgentHookDispatcher } from "./hook-dispatcher.ts";
-import { toLifecycleValue } from "./lifecycle.ts";
 import {
   getObservabilityContext,
   mintTraceId,
   setObservabilityContext,
 } from "../shared/otel.ts";
 import { createPancakeChannel } from "../shared/pancake-channel.ts";
-import { createSlackChannel } from "../shared/slack-channel.ts";
-import { createTelegramChannel } from "../shared/telegram-channel.ts";
-import { createZaloChannel } from "../shared/zalo-channel.ts";
 import {
+  accountAgentScopedKey,
   assertValidPublicConversationKey,
   assertValidPublicEventId,
-  accountAgentScopedKey,
   channelScopeKeyFromConversation,
   normalizeDirectIdentifier,
   scopedDirectConversationKey,
@@ -70,17 +63,23 @@ import {
 } from "../shared/runtime-keys.ts";
 import { deleteS3Prefix } from "../shared/s3.ts";
 import { releaseReservedSandboxes } from "../shared/sandbox-cleanup.ts";
+import { createSlackChannel } from "../shared/slack-channel.ts";
+import type { AgentDeploymentScope } from "../shared/storage.ts";
+import { getStorage } from "../shared/storage.ts";
+import { createTelegramChannel } from "../shared/telegram-channel.ts";
 import {
   isolatedWorkspaceNamespace,
   workspaceNamespace,
 } from "../shared/workspaces.ts";
+import { createZaloChannel } from "../shared/zalo-channel.ts";
+import { applyMessageSendingHook, createAgentHookDispatcher } from "./hook-dispatcher.ts";
+import { toLifecycleValue } from "./lifecycle.ts";
 import {
   resolveS3ReadTarget,
   workspaceReadContext,
 } from "./sandbox/s3-mount.ts";
-import type { ConversationIngressEvent } from "./session.ts";
 import { getHarnessPublicUrl } from "./self-url.ts";
-import type { AgentDeploymentScope } from "../shared/storage.ts";
+import type { ConversationIngressEvent } from "./session.ts";
 
 type DirectIngressEvent =
   | UserModelMessage
@@ -235,7 +234,7 @@ export function createIncomingEventRouter(options: IntegrationRoutingOptions = {
   const deploymentLoader = options.deploymentLoader ?? ((accountId: string, agentId: string) =>
     getStorage().agentDeployments.getByAgentId?.(accountId, agentId) ?? Promise.resolve(null));
   const directApiEnabled = options.directApiEnabled ?? true;
-  const waitUntil = options.waitUntil ?? (() => {});
+  const waitUntil = options.waitUntil ?? (() => { });
 
   return async (
     request: CoreRequest,
@@ -1145,9 +1144,8 @@ function parseSystemOverride(raw: unknown): SystemModelMessage[] {
   return values.map((value) => {
     const parsed = systemModelMessageSchema.safeParse(value);
     if (!parsed.success) {
-      throw new Error(`system must be a SystemModelMessage or array of SystemModelMessage: ${
-        parsed.error.issues[0]?.message ?? "invalid system message"
-      }`);
+      throw new Error(`system must be a SystemModelMessage or array of SystemModelMessage: ${parsed.error.issues[0]?.message ?? "invalid system message"
+        }`);
     }
 
     return parsed.data;

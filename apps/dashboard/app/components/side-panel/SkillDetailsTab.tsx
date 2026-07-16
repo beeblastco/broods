@@ -12,13 +12,13 @@ import { Input } from "@/app/components/ui/input";
 import { Separator } from "@/app/components/ui/separator";
 import { Textarea } from "@/app/components/ui/textarea";
 import { useConnectedAgentConfig } from "@/app/hooks/useConnectedAgentConfig";
+import { readAgentBranch, type FlatAgentConfig } from "@/app/lib/agentConfigCodec";
+import { includesSkillRef, withoutSkillRef } from "@/app/lib/skillRefs";
 import {
     clearSkillsBearerToken,
     getSkillsBearerToken,
     setSkillsBearerToken,
 } from "@/app/lib/skillsCredentials";
-import { readAgentBranch, type FlatAgentConfig } from "@/app/lib/agentConfigCodec";
-import { includesSkillRef, withoutSkillRef } from "@/app/lib/skillRefs";
 import { api } from "@broods/convex/_generated/api";
 import { useAction } from "convex/react";
 import { Eye, EyeOff, FolderOpen, GitBranch, Loader2, RotateCcw, Sparkles } from "lucide-react";
@@ -30,10 +30,6 @@ type SkillsSlice = {
     enabled?: boolean;
     allowed?: string[];
 };
-
-// ---------------------------------------------------------------------------
-// Inner: token input (reused for both GitHub and JSON forms)
-// ---------------------------------------------------------------------------
 
 function TokenInput({
     value,
@@ -67,10 +63,6 @@ function TokenInput({
     );
 }
 
-// ---------------------------------------------------------------------------
-// Inner: source picker cards
-// ---------------------------------------------------------------------------
-
 function SourceCard({
     icon,
     title,
@@ -95,10 +87,6 @@ function SourceCard({
         </button>
     );
 }
-
-// ---------------------------------------------------------------------------
-// Inner: GitHub import form
-// ---------------------------------------------------------------------------
 
 function GithubForm({
     onSuccess,
@@ -171,10 +159,6 @@ function GithubForm({
         </div>
     );
 }
-
-// ---------------------------------------------------------------------------
-// Inner: JSON / quick-create form
-// ---------------------------------------------------------------------------
 
 function JsonForm({
     existingPath,
@@ -260,7 +244,7 @@ function JsonForm({
                     value={content}
                     onChange={(e) => setContent(e.target.value)}
                     placeholder="# My Skill&#10;&#10;When the user asks about X, you should..."
-                    className="min-h-[100px] resize-y font-mono text-xs"
+                    className="min-h-25 resize-y font-mono text-xs"
                 />
             </div>
 
@@ -296,10 +280,6 @@ function JsonForm({
         </div>
     );
 }
-
-// ---------------------------------------------------------------------------
-// Main
-// ---------------------------------------------------------------------------
 
 /** Skill card Details tab — source picker then source-specific configuration. */
 export function SkillDetailsTab({

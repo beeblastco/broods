@@ -4,15 +4,15 @@
  */
 
 import type { SystemModelMessage } from "ai";
+import type { AgentConfig } from "../shared/domain/agent-config.ts";
 import { optionalEnv } from "../shared/env.ts";
-import { workspaceNamespacePrefix } from "../shared/sandbox.ts";
 import {
   copyS3Object,
   deleteS3Object,
   ensureS3DirectoryMarkers,
   listS3Prefix,
 } from "../shared/s3.ts";
-import type { AgentConfig } from "../shared/domain/agent-config.ts";
+import { workspaceNamespacePrefix } from "../shared/sandbox.ts";
 import {
   assertAccountOwnsSkillPath,
   contentTypeForSkillPath,
@@ -22,9 +22,9 @@ import {
   parseSkillPath,
   readSkillMarkdown,
   readSkillText,
+  SKILL_FILE,
   skillInstructionsFromMarkdown,
   skillsBucketName,
-  SKILL_FILE,
   type SkillMetadata,
 } from "../shared/skills.ts";
 

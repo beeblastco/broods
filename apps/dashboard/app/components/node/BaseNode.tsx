@@ -1,10 +1,10 @@
 "use client";
 
+import { useInfraAnalysis } from "@/app/components/canvas/InfraAnalysisContext";
 import { DitherAvatarSVG } from "@/app/components/DitherAvatar";
 import { JavaScript } from "@/app/components/icons/JavaScript";
 import { Python } from "@/app/components/icons/Python";
 import type { AgentHealthStatus } from "@/app/hooks/useAgentHealth";
-import { useInfraAnalysis } from "@/app/components/canvas/InfraAnalysisContext";
 import { Handle, Position, useConnection, useStore } from "@xyflow/react";
 import { CornerDownRight, Globe, Lock, Slash, Users } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -281,28 +281,28 @@ export function BaseNode({
                     style={{ transform: `scale(${scale})` }}
                 >
                     <div className="flex items-center gap-1.5 pr-7 min-w-0">
-                    {nodeType === "agent" ? (
-                        <DitherAvatarSVG seed={data.label} size={14} className="shrink-0" />
-                    ) : data.properties?.color ? (
+                        {nodeType === "agent" ? (
+                            <DitherAvatarSVG seed={data.label} size={14} className="shrink-0" />
+                        ) : data.properties?.color ? (
+                            <span
+                                className="inline-block size-3 rounded-full shrink-0"
+                                style={{ backgroundColor: data.properties.color }}
+                            />
+                        ) : (
+                            <span className="text-muted-foreground shrink-0">{icon}</span>
+                        )}
                         <span
-                            className="inline-block size-3 rounded-full shrink-0"
-                            style={{ backgroundColor: data.properties.color }}
-                        />
-                    ) : (
-                        <span className="text-muted-foreground shrink-0">{icon}</span>
-                    )}
-                    <span
-                        className="text-xs font-medium text-foreground truncate min-w-0"
-                        title={data.label}
-                    >
-                        {data.label}
-                    </span>
-                </div>
-                {subtitle && (
-                    <div className="mt-1 flex items-center gap-1.5 text-[11px] text-muted-foreground">
-                        {subtitle}
+                            className="text-xs font-medium text-foreground truncate min-w-0"
+                            title={data.label}
+                        >
+                            {data.label}
+                        </span>
                     </div>
-                )}
+                    {subtitle && (
+                        <div className="mt-1 flex items-center gap-1.5 text-[11px] text-muted-foreground">
+                            {subtitle}
+                        </div>
+                    )}
                     {featureRows && featureRows.length > 0 && (
                         <div className="mt-1.5 flex flex-col gap-0.5">
                             {featureRows.map((row) => (

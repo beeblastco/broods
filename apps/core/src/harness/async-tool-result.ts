@@ -5,11 +5,11 @@ export type AsyncToolStatus = "processing" | "completed" | "failed";
 export type AsyncToolDelivery =
   | { kind: "async" }
   | {
-      kind: "nats";
-      connectionId: string;
-      publicEventId: string;
-      publicConversationKey: string;
-    }
+    kind: "nats";
+    connectionId: string;
+    publicEventId: string;
+    publicConversationKey: string;
+  }
   | { kind: "channel"; channelName: string; source: Record<string, unknown> };
 export interface AsyncToolResultRecord {
   resultId: string;
@@ -59,10 +59,10 @@ export async function getDetachedAsyncToolGroup(
   );
   return row
     ? {
-        parentEventId: row.parentEventId,
-        resultIds: [...row.resultIds].sort(),
-        sealed: row.sealed,
-      }
+      parentEventId: row.parentEventId,
+      resultIds: [...row.resultIds].sort(),
+      sealed: row.sealed,
+    }
     : null;
 }
 export async function sealDetachedAsyncToolGroup(
@@ -74,10 +74,10 @@ export async function sealDetachedAsyncToolGroup(
   );
   return row
     ? {
-        parentEventId: row.parentEventId,
-        resultIds: [...row.resultIds].sort(),
-        sealed: row.sealed,
-      }
+      parentEventId: row.parentEventId,
+      resultIds: [...row.resultIds].sort(),
+      sealed: row.sealed,
+    }
     : null;
 }
 export function listAsyncToolResultsByParentEvent(

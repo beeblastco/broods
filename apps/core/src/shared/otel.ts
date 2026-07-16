@@ -4,16 +4,16 @@
  * never throws into the agent path.
  */
 
-import { AsyncLocalStorage } from "node:async_hooks";
-import { registerTelemetry } from "ai";
 import { OpenTelemetry } from "@ai-sdk/otel";
 import { trace, type Context, type Tracer } from "@opentelemetry/api";
 import { logs, SeverityNumber } from "@opentelemetry/api-logs";
-import { BasicTracerProvider, BatchSpanProcessor, RandomIdGenerator } from "@opentelemetry/sdk-trace-base";
-import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-proto";
-import { LoggerProvider, BatchLogRecordProcessor } from "@opentelemetry/sdk-logs";
 import { OTLPLogExporter } from "@opentelemetry/exporter-logs-otlp-proto";
+import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-proto";
 import { resourceFromAttributes } from "@opentelemetry/resources";
+import { BatchLogRecordProcessor, LoggerProvider } from "@opentelemetry/sdk-logs";
+import { BasicTracerProvider, BatchSpanProcessor, RandomIdGenerator } from "@opentelemetry/sdk-trace-base";
+import { registerTelemetry } from "ai";
+import { AsyncLocalStorage } from "node:async_hooks";
 
 export interface ObservabilityContext {
   accountId: string;

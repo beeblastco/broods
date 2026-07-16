@@ -10,10 +10,10 @@ import { Button } from "@/app/components/ui/button";
 import { resolveCoreEndpoint } from "@/app/lib/coreEndpoint";
 import { api } from "@broods/convex/_generated/api";
 import type { Id } from "@broods/convex/_generated/dataModel";
+import "@xterm/xterm/css/xterm.css";
 import { useAction } from "convex/react";
 import { Plug, RefreshCw } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import "@xterm/xterm/css/xterm.css";
 
 type TerminalStatus = "idle" | "connecting" | "live" | "ended" | "error";
 

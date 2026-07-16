@@ -3,8 +3,8 @@
 /** Account settings page: profile, preferences, and danger zone. */
 import { AccountPanel } from "@/app/(main)/[projectId]/settings/components/AccountPanel";
 import { DeleteConfirmDialog } from "@/app/components/DeleteConfirmDialog";
-import { Button } from "@/app/components/ui/button";
 import { Section } from "@/app/components/Section";
+import { Button } from "@/app/components/ui/button";
 import { cn } from "@/app/lib/utils";
 import { api } from "@broods/convex/_generated/api";
 import { useMutation, useQuery } from "convex/react";

@@ -14,6 +14,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/app/components/ui/dropdown-menu";
+import { FULL_ROUTE_PREFETCH } from "@/app/lib/prefetch";
 import { useAuth } from "@workos-inc/authkit-nextjs/components";
 import { useConvexAuth } from "convex/react";
 import {
@@ -30,7 +31,6 @@ import {
 import { useTheme } from "next-themes";
 import { useRouter } from "next/navigation";
 import { useCallback } from "react";
-import { FULL_ROUTE_PREFETCH } from "@/app/lib/prefetch";
 
 export function UserMenu() {
   const { isLoading, isAuthenticated } = useConvexAuth();

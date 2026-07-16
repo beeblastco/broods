@@ -3,8 +3,8 @@
  * Keep app-level defaults and environment overrides here.
  */
 
-import { optionalEnv } from "./env.ts";
 import type { SandboxProvider } from "./domain/sandbox-config.ts";
+import { optionalEnv } from "./env.ts";
 
 const DEFAULT_TIMEOUT_SECONDS = 30;
 const DEFAULT_OUTPUT_LIMIT_BYTES = 64 * 1024;

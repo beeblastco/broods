@@ -6,13 +6,13 @@
  * Stored encrypted at rest because `envVars`/`options` may hold secrets.
  */
 
+import { isPlainObject, isStringRecord } from "../object.ts";
+import { SANDBOX_SIZE_NAMES, type SandboxSize } from "../sandbox-sizes.ts";
 import {
   MAX_IDLE_TIMEOUT_SECONDS,
   MAX_LIFETIME_SECONDS,
   workspaceSandboxLimits,
 } from "../sandbox.ts";
-import { SANDBOX_SIZE_NAMES, type SandboxSize } from "../sandbox-sizes.ts";
-import { isPlainObject, isStringRecord } from "../object.ts";
 import { mergeConfigObjects, redactConfigSecrets } from "./agent-config.ts";
 
 // "sandbox" is the self-hosted workdir (Firecracker) provider — the vanilla,

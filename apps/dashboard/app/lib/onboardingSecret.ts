@@ -46,7 +46,7 @@ export function clearOnboardingSecret() {
  */
 export function subscribeOnboardingSecret(listener: () => void): () => void {
     if (typeof window === "undefined") {
-        return () => {};
+        return () => { };
     }
 
     window.addEventListener(EVENT_NAME, listener);

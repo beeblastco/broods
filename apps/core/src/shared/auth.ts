@@ -6,11 +6,11 @@
  */
 
 import { createHash, timingSafeEqual } from "node:crypto";
-import { optionalEnv } from "./env.ts";
 import {
   hashAccountSecret,
   type AccountRecord,
 } from "./domain/accounts.ts";
+import { optionalEnv } from "./env.ts";
 import { getStorage } from "./storage.ts";
 
 export type AuthContext =

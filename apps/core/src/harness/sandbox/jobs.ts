@@ -46,11 +46,11 @@ export function lifecycleScript(workDir: string, onCreate?: string[], onResume?:
     `cd ${shellQuote(workDir)}`,
     ...(onCreate?.length
       ? [
-          `if [ ! -f ${shellQuote(marker)} ]; then`,
-          ...onCreate,
-          `  touch ${shellQuote(marker)}`,
-          "fi",
-        ]
+        `if [ ! -f ${shellQuote(marker)} ]; then`,
+        ...onCreate,
+        `  touch ${shellQuote(marker)}`,
+        "fi",
+      ]
       : []),
     ...(onResume ?? []),
   ].join("\n");

@@ -3,8 +3,8 @@
  * Define the shared HTTP and channel adapter boundaries for inbound webhook traffic.
  */
 
-import type { StreamOptions } from "chat";
 import type { SystemModelMessage, UserContent, UserModelMessage } from "ai";
+import type { StreamOptions } from "chat";
 
 export type ChannelIngressEvent =
   | UserModelMessage

@@ -1,18 +1,18 @@
 "use client";
 
 /** Project card with a flush canvas preview on top and project info on the bottom. */
-import { useCoreServiceHealth } from "@/app/hooks/useAgentHealth";
-import dynamic from "next/dynamic";
 import {
     Card,
     CardDescription,
     CardHeader,
     CardTitle,
 } from "@/app/components/ui/card";
-import { Bot } from "lucide-react";
-import { memo, useCallback } from "react";
-import { useRouter } from "next/navigation";
+import { useCoreServiceHealth } from "@/app/hooks/useAgentHealth";
 import { FULL_ROUTE_PREFETCH } from "@/app/lib/prefetch";
+import { Bot } from "lucide-react";
+import dynamic from "next/dynamic";
+import { useRouter } from "next/navigation";
+import { memo, useCallback } from "react";
 
 // Defer loading React Flow preview code until cards render on the client.
 const CanvasPreview = dynamic(

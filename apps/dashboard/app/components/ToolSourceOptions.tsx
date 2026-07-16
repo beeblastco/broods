@@ -1,8 +1,8 @@
 "use client";
 
 /** Shared list of tool source options for the tool source picker dialog. */
-import { Box, Code, FileUp } from "lucide-react";
 import { Button } from "@/app/components/ui/button";
+import { Box, Code, FileUp } from "lucide-react";
 
 const SOURCE_OPTIONS = [
     { key: "docker", label: "From Docker image", icon: Box },

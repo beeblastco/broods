@@ -7,9 +7,9 @@ import type { ToolSet, UserModelMessage } from "ai";
 import { logError, logInfo, logWarn } from "../shared/log.ts";
 import {
   createPendingAsyncToolResult,
-  type AsyncToolDelivery,
   markAsyncToolResultCompleted,
   markAsyncToolResultFailed,
+  type AsyncToolDelivery,
 } from "./async-tool-result.ts";
 import type { Session } from "./session.ts";
 
@@ -165,7 +165,7 @@ export class AsyncToolCoordinator {
       toModelOutput: ({ output }: { output: AsyncToolPendingResult }) => ({
         type: "text" as const,
         value: pendingResultText(
-          output.resultId, 
+          output.resultId,
           output.status,
         ),
       }),
@@ -408,7 +408,7 @@ function pendingResultText(resultId: string, status: string): string {
     `Started in the background (statusId: ${resultId}, current status: ${status}).`,
     "The result will be delivered back into this conversation automatically when it finishes; You can stop to wait for result, or continue with other tasks. Only poll async_status tool with this statusId to check status if the user asks for it.",
   ].join("\n");
-} 
+}
 
 // Format the tool result from unknown to string
 function formatUnknown(value: unknown): string {

@@ -5,11 +5,14 @@
  * reconnecting by stored id (Daytona auto-stops it on idle; the harness restarts it).
  */
 
+import { Daytona, type Sandbox } from "@daytona/sdk";
+import { upsertSandboxInstance } from "../../shared/convex/sandbox-instances.ts";
 import { optionalEnv } from "../../shared/env.ts";
 import { logWarn } from "../../shared/log.ts";
 import { isPlainObject, isStringRecord } from "../../shared/object.ts";
 import { DEFAULT_RELEASE_GRACE_SECONDS, MAX_CONCURRENT_BACKGROUND_JOBS, resolveSandboxLifecycle } from "../../shared/sandbox.ts";
-import { Daytona, type Sandbox } from "@daytona/sdk";
+import { claimSandboxInstance, deleteSandboxInstance, getSandboxExternalId, saveSandboxInstance } from "./instance-store.ts";
+import { generateJobId, launchScript, lifecycleScript, logsScript, parseJobStatus, statusScript, stopScript } from "./jobs.ts";
 import { type S3MountContext, type S3MountIdentity, resolveS3Mount, resolveS3MountIdentity } from "./s3-mount.ts";
 import type {
   SandboxExecutor,
@@ -22,9 +25,6 @@ import type {
   SandboxRunResult,
 } from "./types.ts";
 import { assertSafeTenantProviderUrl, configString, isNoRunnersError, isSandboxGoneError, sandboxReservationKey, shellQuote, truncateText, workspacePath } from "./utils.ts";
-import { generateJobId, launchScript, lifecycleScript, logsScript, parseJobStatus, statusScript, stopScript } from "./jobs.ts";
-import { claimSandboxInstance, deleteSandboxInstance, getSandboxExternalId, saveSandboxInstance } from "./instance-store.ts";
-import { upsertSandboxInstance } from "../../shared/convex/sandbox-instances.ts";
 
 export class DaytonaSandboxExecutor implements SandboxExecutor {
   readonly #config: SandboxExecutorConfig;
@@ -115,7 +115,7 @@ export class DaytonaSandboxExecutor implements SandboxExecutor {
       // caller iterating multiple configs can try the next one.
       if (!isSandboxGoneError(err)) throw err;
     }
-    await deleteSandboxInstance("daytona", key).catch(() => {});
+    await deleteSandboxInstance("daytona", key).catch(() => { });
   }
 
   #persistent(request: { namespace?: string; reservationKey?: string }): boolean {
@@ -154,7 +154,7 @@ export class DaytonaSandboxExecutor implements SandboxExecutor {
     if (externalId) {
       try {
         const sandbox = await this.#reconnect(client, externalId);
-        await saveSandboxInstance("daytona", ns, externalId).catch(() => {});
+        await saveSandboxInstance("daytona", ns, externalId).catch(() => { });
         await upsertSandboxInstance(this.#config.controlPlane, "daytona", ns, externalId, request.metadata);
         return sandbox;
       } catch (error) {
@@ -162,7 +162,7 @@ export class DaytonaSandboxExecutor implements SandboxExecutor {
         // propagate or the still-live sandbox is orphaned at the provider. The
         // conditional delete keeps a row a concurrent call already re-claimed.
         if (!isSandboxGoneError(error)) throw error;
-        await deleteSandboxInstance("daytona", ns, externalId).catch(() => {});
+        await deleteSandboxInstance("daytona", ns, externalId).catch(() => { });
       }
     }
     const sandbox = await this.#create(client, await daytonaCreateOptions(this.#config, request, true));
@@ -173,7 +173,7 @@ export class DaytonaSandboxExecutor implements SandboxExecutor {
     // Lost a concurrent create race: discard our duplicate and reconnect to the
     // sandbox the winner recorded.
     const winner = await getSandboxExternalId("daytona", ns);
-    await sandbox.delete().catch(() => {});
+    await sandbox.delete().catch(() => { });
     if (!winner) throw new Error("failed to reserve daytona sandbox (lost create race)");
     return this.#reconnect(client, winner);
   }

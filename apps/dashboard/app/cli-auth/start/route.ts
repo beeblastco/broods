@@ -2,8 +2,8 @@
  * Authenticated browser bridge for `broods login`.
  */
 
-import { withAuth } from "@workos-inc/authkit-nextjs";
 import { api } from "@broods/convex/_generated/api";
+import { withAuth } from "@workos-inc/authkit-nextjs";
 import { ConvexHttpClient } from "convex/browser";
 import { NextRequest, NextResponse } from "next/server";
 

@@ -6,8 +6,8 @@
  */
 
 import { jsonSchema, tool, type ToolSet } from "ai";
-import { logInfo, logWarn } from "../../shared/log.ts";
 import type { AgentChannelsConfig } from "../../shared/domain/agent-config.ts";
+import { logInfo, logWarn } from "../../shared/log.ts";
 import type { ToolContext } from "./index.ts";
 
 const ZALO_API_BASE = "https://bot-api.zaloplatforms.com";
@@ -178,8 +178,7 @@ async function postPancakeConversationAction(
   body?: Record<string, unknown>,
 ): Promise<PancakeActionResponse | null> {
   const url = new URL(
-    `https://pages.fm/api/public_api/v1/pages/${encodeURIComponent(conversation.pageId)}/conversations/${
-      encodeURIComponent(conversation.conversationId)
+    `https://pages.fm/api/public_api/v1/pages/${encodeURIComponent(conversation.pageId)}/conversations/${encodeURIComponent(conversation.conversationId)
     }/${actionPath}`,
   );
   url.searchParams.set("page_access_token", pageAccessToken);

@@ -3,16 +3,16 @@
  * Keep executor construction here; provider implementations live beside it.
  */
 
-import { WorkdirSandboxExecutor } from "./workdir-executor.ts";
-import { MicrovmSandboxExecutor } from "./microvm-executor.ts";
-import { E2BSandboxExecutor } from "./e2b-executor.ts";
 import { DaytonaSandboxExecutor } from "./daytona-executor.ts";
-import { VercelSandboxExecutor } from "./vercel-executor.ts";
+import { E2BSandboxExecutor } from "./e2b-executor.ts";
+import { MicrovmSandboxExecutor } from "./microvm-executor.ts";
 import type {
   SandboxExecutor,
   SandboxExecutorConfig,
   SandboxProvider,
 } from "./types.ts";
+import { VercelSandboxExecutor } from "./vercel-executor.ts";
+import { WorkdirSandboxExecutor } from "./workdir-executor.ts";
 
 export const SANDBOX_PROVIDERS = ["sandbox", "lambda", "e2b", "daytona", "vercel"] as const satisfies readonly SandboxProvider[];
 

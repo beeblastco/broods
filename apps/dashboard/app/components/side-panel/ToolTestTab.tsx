@@ -3,9 +3,9 @@
 /** Tool test tab for executing the saved tool source code with custom JSON input. */
 import { Button } from "@/app/components/ui/button";
 import { Textarea } from "@/app/components/ui/textarea";
+import { toErrorMessage } from "@/app/lib/errors";
 import { api } from "@broods/convex/_generated/api";
 import type { Id } from "@broods/convex/_generated/dataModel";
-import { toErrorMessage } from "@/app/lib/errors";
 import { useAction, useQuery } from "convex/react";
 import { Loader2, Play } from "lucide-react";
 import { useEffect, useState } from "react";
@@ -229,8 +229,8 @@ export function ToolTestTab({
                     {isRunning
                         ? formatDuration(elapsedMs)
                         : lastDurationMs === null
-                          ? "No test run yet."
-                          : formatDuration(lastDurationMs)}
+                            ? "No test run yet."
+                            : formatDuration(lastDurationMs)}
                 </p>
             </div>
 

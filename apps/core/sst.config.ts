@@ -258,21 +258,21 @@ export default $config({
 
     const microvmArtifactsBucket = enableMicrovmPrereqs
       ? new sst.aws.Bucket("MicrovmArtifacts", {
-          versioning: true,
-          policy: [denyUnlessProjectPrincipal(stage, region)],
-          transform: {
-            bucket: {
-              bucket: names.microvmArtifacts,
-              bucketNamespace: "account-regional",
-            },
-            publicAccessBlock: {
-              blockPublicAcls: true,
-              ignorePublicAcls: true,
-              blockPublicPolicy: true,
-              restrictPublicBuckets: true,
-            },
+        versioning: true,
+        policy: [denyUnlessProjectPrincipal(stage, region)],
+        transform: {
+          bucket: {
+            bucket: names.microvmArtifacts,
+            bucketNamespace: "account-regional",
           },
-        })
+          publicAccessBlock: {
+            blockPublicAcls: true,
+            ignorePublicAcls: true,
+            blockPublicPolicy: true,
+            restrictPublicBuckets: true,
+          },
+        },
+      })
       : null;
 
     const microvmRoleTrustPolicy = JSON.stringify({
@@ -299,9 +299,9 @@ export default $config({
 
     const microvmBuildRole = enableMicrovmPrereqs
       ? new aws.iam.Role("MicrovmBuildRole", {
-          name: names.microvmBuildRole,
-          assumeRolePolicy: microvmRoleTrustPolicy,
-        })
+        name: names.microvmBuildRole,
+        assumeRolePolicy: microvmRoleTrustPolicy,
+      })
       : null;
 
     if (microvmBuildRole) {
@@ -341,9 +341,9 @@ export default $config({
 
     const microvmExecutionRole = enableMicrovmPrereqs
       ? new aws.iam.Role("MicrovmExecutionRole", {
-          name: names.microvmExecutionRole,
-          assumeRolePolicy: microvmRoleTrustPolicy,
-        })
+        name: names.microvmExecutionRole,
+        assumeRolePolicy: microvmRoleTrustPolicy,
+      })
       : null;
     const microvmLogGroupName = `/broods/${stage}/microvms`;
     if (enableMicrovmPrereqs) {
@@ -494,42 +494,42 @@ export default $config({
       },
       ...(microvmBuildRole && microvmExecutionRole
         ? [
-            {
-              actions: [
-                "lambda:CreateMicrovmImage",
-                "lambda:UpdateMicrovmImage",
-                "lambda:DeleteMicrovmImage",
-                "lambda:DeleteMicrovmImageVersion",
-                "lambda:GetMicrovmImage",
-                "lambda:ListMicrovmImages",
-                "lambda:ListMicrovmImageVersions",
-                "lambda:ListMicrovmImageBuilds",
-                "lambda:RunMicrovm",
-                "lambda:GetMicrovm",
-                "lambda:ListMicrovms",
-                "lambda:SuspendMicrovm",
-                "lambda:ResumeMicrovm",
-                "lambda:TerminateMicrovm",
-                "lambda:CreateMicrovmAuthToken",
-                "lambda:CreateMicrovmShellAuthToken",
-              ],
-              resources: [
-                `arn:aws:lambda:${region}:${AWS_ACCOUNT_ID}:microvm-image:*`,
-                `arn:aws:lambda:${region}:${AWS_ACCOUNT_ID}:microvm:*`,
-              ],
-            },
-            {
-              actions: ["lambda:PassNetworkConnector"],
-              resources: [
-                `arn:aws:lambda:${region}:aws:network-connector:aws-network-connector:*`,
-                `arn:aws:lambda:${region}:${AWS_ACCOUNT_ID}:network-connector:*`,
-              ],
-            },
-            {
-              actions: ["iam:PassRole"],
-              resources: [microvmBuildRole.arn, microvmExecutionRole.arn],
-            },
-          ]
+          {
+            actions: [
+              "lambda:CreateMicrovmImage",
+              "lambda:UpdateMicrovmImage",
+              "lambda:DeleteMicrovmImage",
+              "lambda:DeleteMicrovmImageVersion",
+              "lambda:GetMicrovmImage",
+              "lambda:ListMicrovmImages",
+              "lambda:ListMicrovmImageVersions",
+              "lambda:ListMicrovmImageBuilds",
+              "lambda:RunMicrovm",
+              "lambda:GetMicrovm",
+              "lambda:ListMicrovms",
+              "lambda:SuspendMicrovm",
+              "lambda:ResumeMicrovm",
+              "lambda:TerminateMicrovm",
+              "lambda:CreateMicrovmAuthToken",
+              "lambda:CreateMicrovmShellAuthToken",
+            ],
+            resources: [
+              `arn:aws:lambda:${region}:${AWS_ACCOUNT_ID}:microvm-image:*`,
+              `arn:aws:lambda:${region}:${AWS_ACCOUNT_ID}:microvm:*`,
+            ],
+          },
+          {
+            actions: ["lambda:PassNetworkConnector"],
+            resources: [
+              `arn:aws:lambda:${region}:aws:network-connector:aws-network-connector:*`,
+              `arn:aws:lambda:${region}:${AWS_ACCOUNT_ID}:network-connector:*`,
+            ],
+          },
+          {
+            actions: ["iam:PassRole"],
+            resources: [microvmBuildRole.arn, microvmExecutionRole.arn],
+          },
+        ]
         : []),
       {
         actions: ["s3:GetObject", "s3:HeadObject", "s3:PutObject", "s3:DeleteObject"],
@@ -557,15 +557,15 @@ export default $config({
       },
       ...(microvmArtifactsBucket
         ? [
-            {
-              actions: ["s3:GetObject", "s3:HeadObject", "s3:PutObject", "s3:DeleteObject"],
-              resources: [`${microvmArtifactsBucketArn}/microvm-images/*`],
-            },
-            {
-              actions: ["s3:ListBucket"],
-              resources: [microvmArtifactsBucketArn],
-            },
-          ]
+          {
+            actions: ["s3:GetObject", "s3:HeadObject", "s3:PutObject", "s3:DeleteObject"],
+            resources: [`${microvmArtifactsBucketArn}/microvm-images/*`],
+          },
+          {
+            actions: ["s3:ListBucket"],
+            resources: [microvmArtifactsBucketArn],
+          },
+        ]
         : []),
     ];
 
@@ -707,15 +707,15 @@ export default $config({
       },
       ...(microvmArtifactsBucket
         ? [
-            {
-              actions: ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"],
-              resources: [`${microvmArtifactsBucketArn}/microvm-images/*`],
-            },
-            {
-              actions: ["s3:ListBucket"],
-              resources: [microvmArtifactsBucketArn],
-            },
-          ]
+          {
+            actions: ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"],
+            resources: [`${microvmArtifactsBucketArn}/microvm-images/*`],
+          },
+          {
+            actions: ["s3:ListBucket"],
+            resources: [microvmArtifactsBucketArn],
+          },
+        ]
         : []),
     ];
 

@@ -218,8 +218,7 @@ async function sendPancakeMessage(
   senderId?: string,
 ): Promise<void> {
   const url = new URL(
-    `https://pages.fm/api/public_api/v1/pages/${encodeURIComponent(source.pageId)}/conversations/${
-      encodeURIComponent(source.conversationId)
+    `https://pages.fm/api/public_api/v1/pages/${encodeURIComponent(source.pageId)}/conversations/${encodeURIComponent(source.conversationId)
     }/messages`,
   );
   url.searchParams.set("page_access_token", pageAccessToken);

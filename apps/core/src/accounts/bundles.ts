@@ -3,8 +3,8 @@
  * the executable module bytes remain in account-prefixed S3 keys.
  */
 
-import { deleteS3Prefix } from "../shared/s3.ts";
 import { requireEnv } from "../shared/env.ts";
+import { deleteS3Prefix } from "../shared/s3.ts";
 
 /** Deletes all custom-tool and hook bundle objects belonging to one account. */
 export async function deleteAccountToolBundles(accountId: string): Promise<number> {

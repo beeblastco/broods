@@ -2,11 +2,11 @@
 
 /** Monitoring panel: dense, full-height log table streamed live from the gateway observability WS. */
 import { Badge } from "@/app/components/ui/badge";
-import { cn } from "@/app/lib/utils";
 import {
   useObservabilityStream,
   type ObservabilityLogEntry,
 } from "@/app/hooks/useObservabilityStream";
+import { cn } from "@/app/lib/utils";
 import { AlertTriangle, ArrowUpRight } from "lucide-react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useMemo, useState } from "react";
