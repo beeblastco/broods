@@ -124,6 +124,34 @@ describe("code hooks end-to-end (real isolate)", () => {
   });
 });
 
+describe("channel.message.received rewrite reaches the session", () => {
+  // The session persists and builds the turn from the ingress events, not from
+  // `content` — a rewrite that only lands in `content` never reaches the model.
+  it("rewrites the newest user ingress event", async () => {
+    const { rewriteLatestUserIngressText } = await import("../src/harness/integrations.ts");
+
+    const rewritten = rewriteLatestUserIngressText(
+      [
+        { role: "system" as const, content: "channel joined" },
+        { role: "user" as const, content: "hello" },
+      ],
+      "[channel-context slack:C1 sender:U1] hello",
+    );
+
+    expect(rewritten).toEqual([
+      { role: "system", content: "channel joined" },
+      { role: "user", content: "[channel-context slack:C1 sender:U1] hello" },
+    ]);
+  });
+
+  it("leaves events untouched when none are user messages", async () => {
+    const { rewriteLatestUserIngressText } = await import("../src/harness/integrations.ts");
+    const events = [{ role: "system" as const, content: "context only" }];
+
+    expect(rewriteLatestUserIngressText(events, "rewritten")).toEqual(events);
+  });
+});
+
 function fakeTool(execute: () => unknown): ToolSet[string] {
   return { execute: async () => execute() } as unknown as ToolSet[string];
 }

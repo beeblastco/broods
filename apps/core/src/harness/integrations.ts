@@ -820,6 +820,7 @@ async function processChannelMessage(
     // reaches the agent (spam filter, redaction). Cheap when unused: the
     // dispatcher is a no-op unless the agent configured code hooks.
     let content = event.content;
+    let events = event.events;
     if (event.agentConfig) {
       const hooks = await createAgentHookDispatcher(event.accountId, event.agentConfig);
       const mutation = await hooks.runMutation("channel.message.received", {
@@ -839,6 +840,10 @@ async function processChannelMessage(
       }
       if (typeof mutation?.text === "string") {
         content = mutation.text;
+        // The turn is persisted and built from the ingress events, not from
+        // `content` (handler.ts appendIngressEvents) — a rewrite that only
+        // touches `content` is computed and then dropped.
+        events = rewriteLatestUserIngressText(events, mutation.text);
       }
     }
 
@@ -848,6 +853,7 @@ async function processChannelMessage(
     await handlers.handleChannelRequest({
       ...event,
       content,
+      events,
       commandToken: resolveCommandToken(content, event.source, event.channelName) ?? undefined,
     });
     logInfo("Channel message processing completed", {
@@ -876,6 +882,26 @@ async function processChannelMessage(
       setObservabilityContext(previousObservabilityContext);
     }
   }
+}
+
+/**
+ * Applies a channel.message.received text rewrite to the ingress events that
+ * actually reach the session. The newest user event is the inbound message the
+ * hook saw; earlier events (context, prior turns a channel may batch) are kept.
+ */
+export function rewriteLatestUserIngressText(
+  events: ConversationIngressEvent[],
+  text: string,
+): ConversationIngressEvent[] {
+  for (let i = events.length - 1; i >= 0; i--) {
+    const event = events[i]!;
+    if (event.role !== "user") continue;
+    const next = [...events];
+    next[i] = { ...event, content: text };
+    return next;
+  }
+
+  return events;
 }
 
 function resolveCommandToken(
