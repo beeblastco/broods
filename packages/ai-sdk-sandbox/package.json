@@ -1,0 +1,44 @@
+{
+  "name": "@broods/ai-sdk-sandbox",
+  "version": "0.0.1",
+  "description": "AI SDK Harness sandbox adapter for Broods sandbox drivers.",
+  "type": "module",
+  "license": "MIT",
+  "homepage": "https://github.com/beeblastco/broods#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/beeblastco/broods.git",
+    "directory": "packages/ai-sdk-sandbox"
+  },
+  "bugs": {
+    "url": "https://github.com/beeblastco/broods/issues"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "rm -rf dist && bun build src/index.ts --outdir dist --target node --format esm --packages external && bunx tsc -p tsconfig.build.json",
+    "check": "bunx tsc --noEmit",
+    "test": "bun test"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "@ai-sdk/harness": "1.0.14",
+    "@ai-sdk/provider-utils": "5.0.3"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.3.14",
+    "typescript": "^7.0.2"
+  }
+}
