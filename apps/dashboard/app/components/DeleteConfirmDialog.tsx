@@ -75,7 +75,7 @@ export function DeleteConfirmDialog({
               Confirmation text
             </Label>
             <div
-              className="select-text whitespace-pre-wrap break-words rounded-md border bg-muted/40 px-3 py-2 font-mono text-sm leading-6 text-foreground"
+              className="select-text whitespace-pre-wrap wrap-break-word rounded-md border bg-muted/40 px-3 py-2 font-mono text-sm leading-6 text-foreground"
               aria-label="Text to type for delete confirmation"
             >
               {deletePhrase}

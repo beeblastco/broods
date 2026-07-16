@@ -550,7 +550,7 @@ function SubagentPanelBlock({
                             {events.map((event, index) => (
                                 <p
                                     key={`subagent-event-${index}`}
-                                    className="text-[11px] text-cyan-200/90 break-words"
+                                    className="text-[11px] text-cyan-200/90 wrap-break-word"
                                 >
                                     {event.text}
                                 </p>
@@ -558,7 +558,7 @@ function SubagentPanelBlock({
                         </div>
                     )}
                     {text.trim().length > 0 && (
-                        <Streamdown className="min-w-0 break-words text-sm [&>*:first-child]:mt-0 [&>*:last-child]:mb-0 [&_code]:whitespace-pre-wrap [&_code]:wrap-break-word [&_pre]:max-w-full [&_pre]:overflow-x-auto">
+                        <Streamdown className="min-w-0 wrap-break-word text-sm [&>*:first-child]:mt-0 [&>*:last-child]:mb-0 [&_code]:whitespace-pre-wrap [&_code]:wrap-break-word [&_pre]:max-w-full [&_pre]:overflow-x-auto">
                             {text}
                         </Streamdown>
                     )}
@@ -635,10 +635,10 @@ function ToolInvocationBlock({
         <Collapsible open={open} onOpenChange={setUserOverride}>
             <CollapsibleTrigger
                 className={`group flex w-full items-center gap-1.5 rounded-md border px-2 py-1.5 text-xs transition-colors ${isError
-                        ? "border-red-500/30 bg-red-500/5 hover:bg-red-500/10"
-                        : hasOutput
-                            ? "border-emerald-500/30 bg-emerald-500/5 hover:bg-emerald-500/10"
-                            : "border-blue-500/30 bg-blue-500/5 hover:bg-blue-500/10"
+                    ? "border-red-500/30 bg-red-500/5 hover:bg-red-500/10"
+                    : hasOutput
+                        ? "border-emerald-500/30 bg-emerald-500/5 hover:bg-emerald-500/10"
+                        : "border-blue-500/30 bg-blue-500/5 hover:bg-blue-500/10"
                     }`}
             >
                 <ChevronRight className="size-3 shrink-0 transition-transform group-data-[state=open]:rotate-90" />
@@ -672,8 +672,8 @@ function ToolInvocationBlock({
                     {hasOutput && (
                         <div
                             className={`rounded-md border px-2.5 py-2 ${isError
-                                    ? "border-red-500/20 bg-red-500/5"
-                                    : "border-emerald-500/20 bg-emerald-500/5"
+                                ? "border-red-500/20 bg-red-500/5"
+                                : "border-emerald-500/20 bg-emerald-500/5"
                                 }`}
                         >
                             <p

@@ -396,11 +396,11 @@ export function SandboxInstanceSheet({ instance, projectId, onClose }: Props) {
                                                 )}
                                             </div>
                                             {entry.error ? (
-                                                <pre className="whitespace-pre-wrap break-words text-red-200">{entry.error}</pre>
+                                                <pre className="whitespace-pre-wrap wrap-break-word text-red-200">{entry.error}</pre>
                                             ) : (
                                                 <>
-                                                    {entry.result?.stdout && <pre className="whitespace-pre-wrap break-words text-zinc-100">{entry.result.stdout}</pre>}
-                                                    {entry.result?.stderr && <pre className="mt-2 whitespace-pre-wrap break-words text-amber-200">{entry.result.stderr}</pre>}
+                                                    {entry.result?.stdout && <pre className="whitespace-pre-wrap wrap-break-word text-zinc-100">{entry.result.stdout}</pre>}
+                                                    {entry.result?.stderr && <pre className="mt-2 whitespace-pre-wrap wrap-break-word text-amber-200">{entry.result.stderr}</pre>}
                                                     {entry.result?.truncated && <p className="mt-2 text-[11px] text-amber-200">Output truncated.</p>}
                                                 </>
                                             )}
