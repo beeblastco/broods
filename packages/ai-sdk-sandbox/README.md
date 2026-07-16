@@ -2,14 +2,16 @@
 
 This package adapts an injected Broods sandbox driver to the experimental
 `HarnessV1SandboxProvider` contract in `@ai-sdk/harness@1.0.14`. It is a phase-1
-boundary only: nothing imports it from the Broods core run loop yet.
+boundary package: the bounded Workdir driver in
+`apps/core/src/harness/sandbox/workdir-harness-driver.ts` now imports it, but the
+Broods core run loop still does not.
 
 ## Boundary
 
 The package owns Harness-facing translation for commands, file streams, network
 sessions, restricted session views, and lifecycle calls. It does not import core
 runtime internals, select a real sandbox provider, access credentials, or manage
-Broods persistence. A future core integration will implement the small
+Broods persistence. The core-owned Workdir integration implements the small
 `BroodsSandboxDriver` port inside `apps/core` by adapting
 `createSandboxExecutor()` and reusing the runtime's existing reservation,
 persistence, and cleanup paths. It must not add another provider registry or
@@ -57,4 +59,6 @@ alone.
 
 This package deliberately does not define queueing, steering, cancellation,
 streaming, WebSocket control, or the live agent run loop. Those remain runtime
-integration concerns for later phases.
+integration concerns for later phases. The Workdir driver is likewise not wired
+into `HarnessAgent`; that live selection remains blocked on the queue/steer
+contract tracked in #71.

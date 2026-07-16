@@ -453,6 +453,31 @@ describe("WorkdirSandboxExecutor background jobs", () => {
 });
 
 describe("WorkdirSandboxExecutor lifecycle", () => {
+  it("reports whether a Harness reservation won the existing atomic create claim", async () => {
+    const executor = await newExecutor({ provider: "sandbox", persistent: true, options: { workdirUrl: BASE } });
+
+    const first = await executor.acquireHarnessReservation({ reservationKey: "harness:session-1" });
+    expect(first.sandbox.id).toBe("sbx_new");
+    expect(first.isFirstCreate).toBe(true);
+
+    fetchCalls = [];
+    const existing = await executor.acquireHarnessReservation({ reservationKey: "harness:session-1" });
+    expect(existing.sandbox.id).toBe("sbx_new");
+    expect(existing.isFirstCreate).toBe(false);
+    expect(fetchCalls.some((call) => call.method === "POST" && call.path === "/v1/sandboxes")).toBe(false);
+  });
+
+  it("resumes only an existing Harness reservation", async () => {
+    const executor = await newExecutor({ provider: "sandbox", persistent: true, options: { workdirUrl: BASE } });
+    await expect(executor.resumeHarnessReservation({ reservationKey: "harness:missing" }))
+      .rejects.toThrow("no reserved workdir sandbox");
+
+    storedSandboxExternalId = "sbx_stored";
+    reconnectState = "stopped";
+    expect((await executor.resumeHarnessReservation({ reservationKey: "harness:session-1" })).id).toBe("sbx_stored");
+    expect(fetchCalls.some((call) => call.path.endsWith("/resume"))).toBe(true);
+  });
+
   it("suspends, resumes, snapshots, and reports instance info for a reserved sandbox", async () => {
     storedSandboxExternalId = "sbx_stored";
     const executor = await newExecutor({ provider: "sandbox", persistent: true, options: { workdirUrl: BASE } });
