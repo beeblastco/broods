@@ -83,6 +83,49 @@ describe("WorkdirHarnessDriver", () => {
     expect(fake.killCalls).toBe(1);
   });
 
+  test("merges configured environment variables into each Harness command", async () => {
+    const fake = fakeWorkdir();
+    const executor = fakeExecutor(fake.sandbox, true);
+    const options = driverOptions();
+    options.config.envVars = {
+      CONFIGURED: "base",
+      OVERRIDDEN: "configured",
+      OMITTED: undefined,
+    };
+    const driver = new WorkdirHarnessDriver(options, executor.value as never);
+    const { session } = await driver.createSession({ identity: "bootstrap-v1" });
+
+    await session.runCommand({
+      command: "env",
+      env: { OVERRIDDEN: "per-command", COMMAND_ONLY: "value" },
+    });
+
+    expect(fake.launchEnvs).toEqual([{
+      CONFIGURED: "base",
+      OVERRIDDEN: "per-command",
+      COMMAND_ONLY: "value",
+    }]);
+  });
+
+  test("rejects a spawned process wait when its signal aborts after launch", async () => {
+    const launched = Promise.withResolvers<void>();
+    const fake = fakeWorkdir({ processRunsUntilKilled: true, onLaunch: launched.resolve });
+    const executor = fakeExecutor(fake.sandbox, true);
+    const driver = new WorkdirHarnessDriver(driverOptions(), executor.value as never);
+    const { session } = await driver.createSession({ identity: "bootstrap-v1" });
+    const controller = new AbortController();
+    const failure = new DOMException("spawn cancelled", "AbortError");
+
+    const process = await session.spawnCommand({ command: "sleep 60", abortSignal: controller.signal });
+    await launched.promise;
+    const waiting = process.wait();
+    controller.abort(failure);
+
+    await expect(waiting).rejects.toBe(failure);
+    await Bun.sleep(0);
+    expect(fake.killCalls).toBe(1);
+  });
+
   test("releases a newly claimed reservation when creation is aborted after allocation", async () => {
     const fake = fakeWorkdir();
     const controller = new AbortController();
@@ -145,13 +188,15 @@ function fakeWorkdir(options: { processRunsUntilKilled?: boolean; onLaunch?: () 
   const files = new Map<string, Uint8Array>();
   const temporaryFiles = new Map<string, string>();
   const processes = new Map<string, { stdout: Uint8Array; stderr: Uint8Array; exitCode: number; running: boolean }>();
+  const launchEnvs: Array<Record<string, string> | undefined> = [];
   let killCalls = 0;
 
   const sandbox = {
     id: "workdir-1",
-    async exec(command: string) {
+    async exec(command: string, execOptions?: { env?: Record<string, string> }) {
       const processRoot = command.match(/(\/tmp\/broods-harness-process-[0-9a-f-]+)/)?.[1];
       if (command.includes("setsid bash") && processRoot) {
+        launchEnvs.push(execOptions?.env);
         processes.set(processRoot, {
           stdout: encoder.encode("hello\n"),
           stderr: encoder.encode("warning\n"),
@@ -211,6 +256,7 @@ function fakeWorkdir(options: { processRunsUntilKilled?: boolean; onLaunch?: () 
 
   return {
     sandbox,
+    launchEnvs,
     get killCalls() {
       return killCalls;
     },

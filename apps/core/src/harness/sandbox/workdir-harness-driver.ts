@@ -20,7 +20,7 @@ import type {
 import type { Sandbox } from "@mv37/workdir";
 import { createSandboxExecutor } from "./index.ts";
 import type { SandboxExecutorConfig, SandboxReservationRef } from "./types.ts";
-import { shellQuote } from "./utils.ts";
+import { shellQuote, stringRecord } from "./utils.ts";
 import type { WorkdirHarnessReservation } from "./workdir-executor.ts";
 
 const DEFAULT_WORKING_DIRECTORY = "/workspace";
@@ -124,6 +124,7 @@ export class WorkdirHarnessDriver implements BroodsSandboxDriver {
       reservationKey: this.#options.reservationKey,
       description: `Broods Workdir sandbox ${sandbox.id}`,
       defaultWorkingDirectory: this.#options.defaultWorkingDirectory ?? DEFAULT_WORKING_DIRECTORY,
+      env: stringRecord(this.#options.config.envVars),
       ports: this.#options.ports ?? [],
     });
   }
@@ -135,6 +136,7 @@ interface WorkdirHarnessSessionOptions {
   reservationKey: string;
   description: string;
   defaultWorkingDirectory: string;
+  env: Record<string, string>;
   ports: ReadonlyArray<number>;
 }
 
@@ -143,6 +145,7 @@ class WorkdirHarnessSession implements BroodsSandboxDriverSession {
   readonly #executor: WorkdirHarnessExecutor;
   readonly #reservationKey: string;
   readonly #defaultWorkingDirectory: string;
+  readonly #env: Record<string, string>;
 
   readonly id: string;
   readonly description: string;
@@ -153,6 +156,7 @@ class WorkdirHarnessSession implements BroodsSandboxDriverSession {
     this.#executor = options.executor;
     this.#reservationKey = options.reservationKey;
     this.#defaultWorkingDirectory = options.defaultWorkingDirectory;
+    this.#env = options.env;
     this.id = options.sandbox.id;
     this.description = options.description;
     this.ports = [...options.ports];
@@ -174,7 +178,7 @@ class WorkdirHarnessSession implements BroodsSandboxDriverSession {
       readStreamText(process.stderr),
       process.wait(),
     ]).then(([stdout, stderr, result]) => ({ exitCode: result.exitCode, stdout, stderr }));
-    return await raceWithAbort(completion, options.abortSignal, () => process.kill());
+    return await completion;
   }
 
   async spawnCommand(options: BroodsSandboxCommandOptions): Promise<WorkdirHarnessProcess> {
@@ -183,7 +187,7 @@ class WorkdirHarnessSession implements BroodsSandboxDriverSession {
       sandbox: this.#sandbox,
       command: options.command,
       workingDirectory: options.workingDirectory ?? this.#defaultWorkingDirectory,
-      env: options.env,
+      env: { ...this.#env, ...(options.env ?? {}) },
       abortSignal: options.abortSignal,
     });
   }
@@ -255,15 +259,17 @@ class WorkdirHarnessProcess {
   readonly #root: string;
   readonly #stdoutDone: Promise<void>;
   readonly #stderrDone: Promise<void>;
+  readonly #abortSignal: AbortSignal | undefined;
   #waitPromise: Promise<{ exitCode: number }> | undefined;
   #killPromise: Promise<void> | undefined;
 
   readonly stdout: ReadableStream<Uint8Array>;
   readonly stderr: ReadableStream<Uint8Array>;
 
-  private constructor(sandbox: Sandbox, root: string) {
+  private constructor(sandbox: Sandbox, root: string, abortSignal: AbortSignal | undefined) {
     this.#sandbox = sandbox;
     this.#root = root;
+    this.#abortSignal = abortSignal;
     const stdout = processFileStream(sandbox, `${root}.stdout`, () => this.#status());
     const stderr = processFileStream(sandbox, `${root}.stderr`, () => this.#status());
     this.stdout = stdout.stream;
@@ -300,22 +306,17 @@ class WorkdirHarnessProcess {
     const result = await options.sandbox.exec(launch, { env: options.env });
     if (result.exit_code !== 0) throw workdirError("spawn command", result);
 
-    const process = new WorkdirHarnessProcess(options.sandbox, root);
+    const process = new WorkdirHarnessProcess(options.sandbox, root, options.abortSignal);
     if (options.abortSignal) {
-      const abort = () => void process.kill().catch(() => {});
-      if (options.abortSignal.aborted) abort();
-      else {
-        options.abortSignal.addEventListener("abort", abort, { once: true });
-        void Promise.resolve(process.wait())
-          .catch(() => {})
-          .finally(() => options.abortSignal?.removeEventListener("abort", abort));
-      }
+      // Start monitoring immediately so abort still terminates the process when
+      // the caller does not invoke wait() until later (or at all).
+      void process.wait().catch(() => {});
     }
     return process;
   }
 
   wait(): Promise<{ exitCode: number }> {
-    this.#waitPromise ??= this.#waitForExit();
+    this.#waitPromise ??= raceWithAbort(this.#waitForExit(), this.#abortSignal, () => this.kill());
     return this.#waitPromise;
   }
 
@@ -458,7 +459,10 @@ function raceWithAbort<T>(
   onAbort: () => PromiseLike<void>,
 ): Promise<T> {
   if (!abortSignal) return promise;
-  abortSignal.throwIfAborted();
+  if (abortSignal.aborted) {
+    void Promise.resolve(onAbort()).catch(() => {});
+    return Promise.reject(abortSignal.reason ?? new DOMException("Aborted", "AbortError"));
+  }
   return new Promise<T>((resolve, reject) => {
     const abort = () => {
       void Promise.resolve(onAbort()).catch(() => {});
